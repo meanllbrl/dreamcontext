@@ -25,6 +25,28 @@ hooks:
         - type: command
           command: "npx agentcontext hook subagent-start"
           timeout: 5
+  PreToolUse:
+    - matcher: "Agent"
+      hooks:
+        - type: command
+          command: "npx agentcontext hook pre-tool-use"
+          timeout: 5
+  UserPromptSubmit:
+    - hooks:
+        - type: command
+          command: "npx agentcontext hook user-prompt-submit"
+          timeout: 5
+  PostToolUse:
+    - matcher: "Edit|Write"
+      hooks:
+        - type: command
+          command: "npx agentcontext hook post-tool-use"
+          timeout: 30
+  PreCompact:
+    - hooks:
+        - type: command
+          command: "npx agentcontext hook pre-compact"
+          timeout: 5
 ---
 
 # Agent Context System
@@ -66,7 +88,7 @@ Every session start injects these automatically (zero tool calls needed):
 
 - **Soul, User, Memory** -- full content
 - **Extended core files index** -- names/types of style guide, tech stack, data structures
-- **Active tasks** -- status, priority, last updated
+- **Active tasks** -- status, priority, last updated (answer "which tasks are active?" directly from this, zero tool calls needed)
 - **Bookmarks** -- tagged important moments from previous sessions, ordered by salience
 - **Contextual reminders** -- matching triggers for active tasks (prospective memory)
 - **Sleep state** -- current debt level, sessions since last sleep, consolidation history
@@ -150,6 +172,9 @@ These files vary across projects. Do not assume a fixed list. Always discover dy
 6. **~200 line limit** on context files. Extract detail to knowledge, keep summary + reference.
 7. **Log every session** that modifies code or makes decisions. This is the cross-session continuity mechanism.
 8. **Features are sleep-only.** Never update feature PRDs during active work. All working context goes into the task body. The sleep agent consolidates task content into features.
+9. **All work needs a task.** Before starting non-trivial work, check if a matching task exists in `_agent_context/state/`. If not, create one. After plans are approved (ExitPlanMode), offer to save as a task. The sleep agent flags untracked work.
+10. **Use agentcontext-explore, not Explore.** The default Explore agent is blocked via PreToolUse hook. Use `agentcontext-explore` for all codebase exploration. It checks context files first, saving thousands of tokens.
+11. **Mark checkboxes as you go.** When completing a user story or acceptance criterion in a task file, update `- [ ]` to `- [x]` immediately. Don't wait for sleep consolidation. This is the live progress signal.
 
 ---
 
@@ -177,6 +202,11 @@ After reading a knowledge file, record the access: `agentcontext knowledge touch
 
 ## Sub-Agents
 
+**Explorer** (`agentcontext-explore`) -- context-aware codebase exploration:
+> Use this for ALL exploration tasks. The default Explore agent is automatically blocked via PreToolUse hook.
+
+Checks `_agent_context/` files first (data structures, tech stack, features, knowledge). Returns immediately if context answers the query. Falls back to full codebase search only when context is insufficient. Same tools and speed as the default Explorer, but context-aware.
+
 **Initializer** (`agentcontext-initializer`) -- dispatch when the project has no `_agent_context/`:
 > "This project needs an _agent_context/ directory. Scan the codebase and set it up."
 
@@ -187,12 +217,13 @@ Scans the codebase, asks the user questions, populates core files with real cont
 
 Consolidates, calls `agentcontext sleep done` to reset debt automatically.
 
-**Context Propagation**: All sub-agents (Explore, Plan, etc.) automatically receive a lightweight context briefing via the SubagentStart hook (project summary, features index, knowledge index, active tasks). However, this briefing is generic -- it lists everything but cannot prioritize for the current task.
+**Context Propagation**: All sub-agents receive a lightweight context briefing via the SubagentStart hook (project summary, features index, knowledge index, active tasks). The `agentcontext-explore` agent has context-first behavior built into its system prompt (highest priority), so it always checks context before searching.
 
-**When delegating to Explore/Plan agents, YOU must include relevant `_agent_context/` file paths in the prompt.** Match the user's request keywords against feature names/tags from the auto-loaded snapshot:
+**When delegating to Plan agents, include relevant `_agent_context/` file paths in the prompt.** Match the user's request keywords against feature names/tags from the auto-loaded snapshot:
 - User asks about "onboarding" -> feature `project-initialization` has tag `onboarding` -> include "Read `_agent_context/core/features/project-initialization.md` first" in the prompt
 - User asks about "auth" -> if a feature tagged `auth` exists, reference it explicitly
-- This takes 5 seconds and saves the sub-agent from a 20K-token search spiral
+
+**Plan-to-Task workflow**: After a plan is approved (ExitPlanMode), ask the user: "Would you like to save this plan as an agentcontext task?" If yes, create the task with `agentcontext tasks create <name>` and write the plan content into the task body.
 
 ---
 
@@ -200,22 +231,26 @@ Consolidates, calls `agentcontext sleep done` to reset debt automatically.
 
 Sleep debt accumulates automatically via hooks (tracks Write/Edit tool uses per session):
 
-| Session Changes | Debt | Debt Level | Action |
-|----------------|------|------------|--------|
-| 1-3 | +1 | 0-3 (Alert) | Work normally |
-| 4-8 | +2 | 4-6 (Drowsy) | Mention at natural breaks |
-| 9+ | +3 | 7-9 (Sleepy) | Suggest consolidation |
-| | | 10+ (Must sleep) | Consolidate immediately |
+| Session Changes | Score | Debt Level | Agent Behavior |
+|----------------|-------|------------|----------------|
+| 1-3 | +1 | 0-3 (Alert) | No action needed |
+| 4-8 | +2 | 4-6 (Drowsy) | After completing any task, MUST inform user and offer consolidation |
+| 9+ | +3 | 7-9 (Sleepy) | At session start, MUST inform user and recommend consolidation before new work |
+| | | 10+ (Must sleep) | MUST inform user and consolidate immediately |
 
-**Consolidation triggers:**
-- Debt >= 10 (strong directive)
-- Debt >= 7 (elevated advisory)
-- ★★★ bookmark exists (critical bookmark advisory, regardless of debt)
-- 5+ sessions since last sleep (rhythm advisory, regardless of debt)
-- Task completed / major implementation finished (auto-sleep)
+**Consolidation directives (injected at session start + every user message via UserPromptSubmit):**
+- **Debt >= 10**: "CONSOLIDATION REQUIRED" -- consolidate NOW, before or immediately after the current task
+- **Debt >= 7**: "CONSOLIDATION RECOMMENDED" -- inform user, recommend consolidation before starting new work
+- **Debt >= 4**: Offer consolidation after completing the current task
+- **★★★ bookmark exists**: Critical bookmark advisory fires regardless of debt level
+- **3+ sessions since last sleep**: Rhythm advisory, offer consolidation after current task
 
-**Auto-sleep** (act without asking): task completed, major implementation finished, switching to unrelated task.
-**Inform** (let user decide): accumulated smaller changes, learnings piling up, user wrapping up.
+Sleep debt reminders are injected on every user message (via UserPromptSubmit hook) when debt >= 4. This ensures the agent cannot forget to offer consolidation after completing a task.
+
+**MANDATORY -- Post-task consolidation check**: After completing any task or major implementation, check sleep debt. If debt >= 4, you MUST tell the user: "Sleep debt is [N]. I can consolidate now to preserve this work. Want me to run it?" Do NOT silently finish without mentioning it.
+
+**Auto-sleep** (act without asking): task completed with debt >= 7, major implementation finished with debt >= 4.
+**Ask first**: debt 4-6 after completing a task, accumulated smaller changes, user wrapping up.
 
 **Flow**: Tell user you're consolidating -> dispatch `agentcontext-rem-sleep` with brief -> wait for completion -> report back.
 
@@ -229,10 +264,12 @@ For non-file-change work (architecture discussions, decisions): `agentcontext sl
 
 Tasks are your **working documents**. All context, decisions, user stories, acceptance criteria, constraints, and notes go into the task body. Features are retrospective product documentation updated exclusively during sleep consolidation. Never update features during active work.
 
+**The auto-loaded snapshot already includes all non-completed tasks** with status, priority, and last update date. For "which tasks are active?" or "what am I working on?" questions, answer directly from the loaded context. No tool calls needed.
+
 ```bash
-# Discovery
-Glob _agent_context/state/*.md                                          # See all tasks
-Read _agent_context/state/<task>.md                                     # Load context (Why + Changelog = where you left off)
+# Discovery (only when you need full task body, not just the list)
+agentcontext tasks list                                                 # List non-completed tasks (or --all for everything)
+Read _agent_context/state/<task>.md                                     # Load full context (Why + Changelog = where you left off)
 
 # Create (rich task with Why, User Stories, Acceptance Criteria, Constraints, Technical Details, Notes, Changelog)
 agentcontext tasks create <name> --description "..." --priority medium --why "What this task accomplishes"
@@ -306,6 +343,7 @@ All commands prefixed with `agentcontext`. For reading/searching, use native too
 | `knowledge index [--tag <tag>]` | Show knowledge index |
 | `knowledge tags` | List standard tags |
 | `knowledge touch <slug>` | Record access to knowledge file (decay tracking) |
+| `tasks list [-s status] [--all]` | List tasks (default: excludes completed) |
 | `tasks create <name> [-d desc] [-p priority] [-s status] [-t tags] [-w why]` | Create task (defaults: priority=medium, status=todo) |
 | `tasks insert <name> <section> <content>` | Insert into task section |
 | `tasks complete <name>` | Complete task |
@@ -326,6 +364,10 @@ All commands prefixed with `agentcontext`. For reading/searching, use native too
 | `hook session-start` | SessionStart hook handler |
 | `hook stop` | Stop hook handler |
 | `hook subagent-start` | SubagentStart hook handler |
+| `hook pre-tool-use` | PreToolUse hook handler (blocks default Explorer when `_agent_context/` exists) |
+| `hook user-prompt-submit` | UserPromptSubmit hook handler (persistent sleep debt reminders) |
+| `hook post-tool-use` | PostToolUse hook handler (auto-format + TypeScript check on JS/TS files) |
+| `hook pre-compact` | PreCompact hook handler (saves sleep state before context compaction) |
 | `snapshot` | Output context snapshot |
 | `snapshot --tokens` | Estimate snapshot token count |
 | `doctor` | Validate `_agent_context/` structure |

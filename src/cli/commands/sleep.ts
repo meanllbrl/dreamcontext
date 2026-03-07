@@ -17,6 +17,7 @@ export interface SessionRecord {
   change_count: number | null;
   tool_count: number | null;
   score: number | null;
+  task_slugs: string[];
 }
 
 export interface Bookmark {
@@ -25,6 +26,7 @@ export interface Bookmark {
   salience: 1 | 2 | 3;
   created_at: string;
   session_id: string | null;
+  task_slug: string | null;
 }
 
 export interface Trigger {
@@ -51,6 +53,14 @@ export interface SleepHistoryEntry {
   sessions_processed: number;
   bookmarks_processed: number;
   session_ids: string[];
+}
+
+export interface CompactionRecord {
+  timestamp: string;
+  trigger: string;
+  debt_at_compaction: number;
+  sessions_count: number;
+  bookmarks_count: number;
 }
 
 export interface FieldChange {
@@ -80,6 +90,7 @@ export interface SleepState {
   triggers: Trigger[];
   knowledge_access: Record<string, KnowledgeAccessRecord>;
   dashboard_changes: DashboardChange[];
+  compaction_log: CompactionRecord[];
 }
 
 const DEFAULT_SLEEP_STATE: SleepState = {
@@ -93,6 +104,7 @@ const DEFAULT_SLEEP_STATE: SleepState = {
   triggers: [],
   knowledge_access: {},
   dashboard_changes: [],
+  compaction_log: [],
 };
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
@@ -118,6 +130,7 @@ function freshDefaults(): SleepState {
     triggers: [],
     knowledge_access: {},
     dashboard_changes: [],
+    compaction_log: [],
   };
 }
 
@@ -131,7 +144,7 @@ export function readSleepState(root: string): SleepState {
     return freshDefaults();
   }
   try {
-    const parsed = readJsonObject<Partial<SleepState> & { sleep_history?: SleepHistoryEntry[] }>(filePath);
+    const parsed = readJsonObject<Partial<SleepState> & { sleep_history?: SleepHistoryEntry[]; compaction_log?: CompactionRecord[] }>(filePath);
 
     // Migration: move sleep_history from .sleep.json to .sleep-history.json
     if (Array.isArray(parsed.sleep_history) && parsed.sleep_history.length > 0) {
@@ -159,6 +172,7 @@ export function readSleepState(root: string): SleepState {
         ? parsed.knowledge_access as Record<string, KnowledgeAccessRecord>
         : {},
       dashboard_changes: Array.isArray(parsed.dashboard_changes) ? parsed.dashboard_changes as DashboardChange[] : [],
+      compaction_log: Array.isArray(parsed.compaction_log) ? parsed.compaction_log as CompactionRecord[] : [],
     };
   } catch {
     return freshDefaults();

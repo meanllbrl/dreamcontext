@@ -629,7 +629,18 @@ export function generateSubagentBriefing(): string {
     parts.push('');
   }
 
-  // 7. Context directory reference
+  // 7. Task-awareness instruction (for Plan agents and all sub-agents)
+  parts.push('## Task Awareness\n');
+  parts.push('All significant work should be linked to a task in `_agent_context/state/`.');
+  parts.push('If you are creating a plan or completing an implementation:');
+  parts.push('- Check if an existing task in Active Tasks above relates to this work');
+  parts.push('- If planning: after the plan is approved, ask the user: "Would you like to save this plan as an agentcontext task?"');
+  parts.push('- To create: `agentcontext tasks create <name> --status pending --priority <p> --tags <t>`');
+  parts.push('- To log progress: `agentcontext tasks log <name> "what was done"`');
+  parts.push('Untracked work gets lost across sessions. Tasks are how knowledge persists.');
+  parts.push('');
+
+  // 8. Context directory reference
   parts.push('## Context Directory\n');
   parts.push('`_agent_context/core/` -- Core files: soul (0), user (1), memory (2), extended (3+), features/');
   parts.push('`_agent_context/knowledge/` -- Deep research documents on specific topics');

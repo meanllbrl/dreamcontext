@@ -202,6 +202,38 @@ parent_task: null
       const output = run('tasks create bad-prio -p urgent', tmpDir);
       expect(output).toContain('Priority must be one of');
     });
+
+    it('lists non-completed tasks by default', () => {
+      run('tasks create active-one -d "Active" -p high -s in_progress', tmpDir);
+      run('tasks create backlog-one -d "Backlog" -p low', tmpDir);
+      run('tasks create done-one -d "Done" -s completed', tmpDir);
+      const output = run('tasks list', tmpDir);
+      expect(output).toContain('active-one');
+      expect(output).toContain('backlog-one');
+      expect(output).not.toContain('done-one');
+    });
+
+    it('lists all tasks with --all flag', () => {
+      run('tasks create list-all-active -d "A" -p low', tmpDir);
+      run('tasks create list-all-done -d "D" -s completed', tmpDir);
+      const output = run('tasks list --all', tmpDir);
+      expect(output).toContain('list-all-active');
+      expect(output).toContain('list-all-done');
+    });
+
+    it('filters by status with --status flag', () => {
+      run('tasks create status-todo -d "Todo" -p low -s todo', tmpDir);
+      run('tasks create status-ip -d "IP" -p low -s in_progress', tmpDir);
+      const output = run('tasks list -s in_progress', tmpDir);
+      expect(output).toContain('status-ip');
+      expect(output).not.toContain('status-todo');
+    });
+
+    it('shows no active tasks message when all completed', () => {
+      run('tasks create only-done -d "D" -s completed', tmpDir);
+      const output = run('tasks list', tmpDir);
+      expect(output).toContain('No active tasks');
+    });
   });
 
   describe('features', () => {
@@ -316,7 +348,10 @@ parent_task: null
 
       // Existing settings preserved
       expect(settings.permissions.allow).toContain('Bash(npm test:*)');
-      expect(settings.hooks.PostToolUse).toHaveLength(1);
+      // Existing PostToolUse hook preserved + our new one added
+      expect(settings.hooks.PostToolUse).toHaveLength(2);
+      expect(settings.hooks.PostToolUse[0].hooks[0].command).toBe('echo done');
+      expect(settings.hooks.PostToolUse[1].hooks[0].command).toBe('npx agentcontext hook post-tool-use');
       // Hooks added
       expect(settings.hooks.SessionStart).toHaveLength(1);
       expect(settings.hooks.SessionStart[0].hooks[0].command).toBe('npx agentcontext hook session-start');
@@ -351,6 +386,23 @@ parent_task: null
       const settings = JSON.parse(readFileSync(join(tmpDir, '.claude', 'settings.json'), 'utf-8'));
       expect(settings.hooks.SessionStart).toHaveLength(1);
       expect(settings.hooks.Stop).toHaveLength(1);
+      expect(settings.hooks.PostToolUse).toHaveLength(1);
+      expect(settings.hooks.PreCompact).toHaveLength(1);
+    });
+
+    it('installs PostToolUse and PreCompact hooks', () => {
+      run('install-skill', tmpDir);
+      const settings = JSON.parse(readFileSync(join(tmpDir, '.claude', 'settings.json'), 'utf-8'));
+      expect(settings.hooks.PostToolUse).toBeDefined();
+      expect(settings.hooks.PostToolUse).toHaveLength(1);
+      expect(settings.hooks.PostToolUse[0].matcher).toBe('Edit|Write');
+      expect(settings.hooks.PostToolUse[0].hooks[0].command).toBe('npx agentcontext hook post-tool-use');
+      expect(settings.hooks.PostToolUse[0].hooks[0].timeout).toBe(30);
+
+      expect(settings.hooks.PreCompact).toBeDefined();
+      expect(settings.hooks.PreCompact).toHaveLength(1);
+      expect(settings.hooks.PreCompact[0].hooks[0].command).toBe('npx agentcontext hook pre-compact');
+      expect(settings.hooks.PreCompact[0].hooks[0].timeout).toBe(5);
     });
   });
 

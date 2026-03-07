@@ -53,6 +53,7 @@ And every session starts from scratch. Your agent greps for a decision it alread
 flowchart LR
     subgraph capture ["Capture"]
         STOP["Stop Hook\n(session ends)"]
+        POSTTOOL["PostToolUse Hook\n(auto-format + tsc)"]
         BOOKMARK["Bookmarks\n(awake ripples)"]
         SLEEP["RemSleep Agent\n(consolidates)"]
         HUMAN["You\n(edit files or dashboard)"]
@@ -66,12 +67,16 @@ flowchart LR
 
     subgraph inject ["Inject"]
         SESSION["SessionStart Hook"]
+        PROMPT["UserPromptSubmit\n(persistent reminders)"]
+        PRETOOL["PreToolUse Hook\n(context-first exploration)"]
+        PRECOMPACT["PreCompact Hook\n(save state)"]
         SNAPSHOT["Compiled Snapshot\n+ warm knowledge\n+ contextual reminders"]
         AGENT["Agent starts with\nfull context loaded"]
     end
 
     BOOKMARK --> STATE
     STOP --> STATE
+    POSTTOOL -.->|"feedback"| AGENT
     SLEEP --> CORE
     SLEEP --> KNOWLEDGE
     HUMAN --> CORE
@@ -81,14 +86,18 @@ flowchart LR
     CORE --> SESSION
     KNOWLEDGE --> SESSION
     STATE --> SESSION
+    STATE --> PROMPT
     SESSION --> SNAPSHOT
+    PROMPT --> AGENT
+    PRETOOL --> AGENT
+    PRECOMPACT --> STATE
     SNAPSHOT --> AGENT
 ```
 
-- **Hooks capture context automatically.** Stop hook records what happened, links bookmarks, tracks session rhythm. SessionStart hook injects everything before the agent's first message. SubagentStart hook briefs sub-agents on existing knowledge.
+- **Seven hooks capture context automatically.** Stop hook records what happened. SessionStart injects everything before the first message. SubagentStart briefs sub-agents. PreToolUse blocks blind exploration when curated context exists. UserPromptSubmit reminds about sleep debt on every user message. PostToolUse auto-formats and type-checks edited files. PreCompact saves state before context compaction.
 - **Bookmarks tag important moments.** During active work, the agent bookmarks decisions, constraints, and discoveries with salience levels. Critical bookmarks trigger immediate consolidation advisories.
 - **Files are structured by purpose.** Identity, preferences, decisions, knowledge, and active work each live in their own file with their own format.
-- **Sleep cycles consolidate knowledge.** A RemSleep agent reads bookmarks first, distills transcripts for high-signal content, promotes learnings, creates contextual triggers, cleans stale entries, and resets debt.
+- **Sleep cycles consolidate knowledge.** A RemSleep agent reads bookmarks first, distills transcripts for high-signal content, extracts recurring patterns, promotes learnings, creates contextual triggers, cleans stale entries, and resets debt.
 - **Everything is local markdown and JSON.** Readable, editable, git-tracked, owned by you.
 
 ## Quick Start
@@ -139,8 +148,9 @@ your-project/
 │   │   └── SKILL.md            # Teaches the agent the system
 │   ├── agents/
 │   │   ├── agentcontext-initializer.md
+│   │   ├── agentcontext-explore.md
 │   │   └── agentcontext-rem-sleep.md
-│   └── settings.json           # SessionStart + Stop + SubagentStart hooks
+│   └── settings.json           # 7 hooks (see below)
 ```
 
 ## Dashboard
@@ -199,6 +209,9 @@ Release creation auto-discovers unreleased tasks, features, and changelog entrie
 ### Tasks
 
 ```bash
+agentcontext tasks list                   # List active tasks (excludes completed)
+agentcontext tasks list --all             # List all tasks
+agentcontext tasks list --status in_progress  # Filter by status
 agentcontext tasks create <name>          # Create a task
 agentcontext tasks create <name> --priority high --status in_progress --tags "api,auth"
 agentcontext tasks log <name> <content>   # Log progress (newest first)
@@ -253,7 +266,7 @@ Triggers match against active task names, tags, and bookmark text. Auto-expire a
 
 ### Sleep
 
-Sleep debt is tracked automatically via hooks. Consolidation rhythm advisory fires after 5+ sessions since last sleep, even at low debt.
+Sleep debt is tracked automatically via hooks. The UserPromptSubmit hook reminds about debt on every user message, so the agent cannot dismiss the reminder. Consolidation rhythm advisory fires after 3+ sessions since last sleep, even at low debt.
 
 ```bash
 agentcontext sleep status                # Debt level, sessions, last sleep
@@ -284,6 +297,10 @@ agentcontext dashboard                   # Start the web dashboard
 agentcontext hook session-start          # SessionStart hook output
 agentcontext hook stop                   # Stop hook: capture + score
 agentcontext hook subagent-start         # SubagentStart hook output
+agentcontext hook pre-tool-use           # PreToolUse hook: block default Explorer
+agentcontext hook user-prompt-submit     # UserPromptSubmit hook: sleep debt reminder
+agentcontext hook post-tool-use          # PostToolUse hook: auto-format + tsc check
+agentcontext hook pre-compact            # PreCompact hook: save state before compaction
 agentcontext snapshot                    # Snapshot only (no hook processing)
 agentcontext snapshot --tokens           # Estimated token count
 agentcontext doctor                      # Validate structure
@@ -300,7 +317,7 @@ agentcontext install-skill               # Install Claude Code integration
 
 ## Works With
 
-- **Claude Code**: full support via skill, sub-agents, and hooks
+- **Claude Code**: full support via skill, 3 sub-agents, and 7 hooks
 - **Web Dashboard**: local UI for visual context management (ships in the package)
 
 More agents coming soon.

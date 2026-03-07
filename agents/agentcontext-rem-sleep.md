@@ -83,6 +83,59 @@ This records a timestamp epoch. When `sleep done` is called later, only sessions
 
 Identify: what changed? what was decided? what was learned? what failed?
 
+### Step 1b: Task Linkage Check (MANDATORY)
+
+**Every piece of work must be linked to a task.** This is how knowledge persists across sessions.
+
+1. **List active tasks**: `ls _agent_context/state/*.md` to see all task files.
+2. **Cross-reference**: For each session's work, determine which task it belongs to.
+   - Check if bookmarks mention a task name
+   - Check if `last_assistant_message` references a task
+   - Match the nature of the work (feature, bug fix, refactor) against task descriptions
+3. **If work is linked to an existing task**: Log progress to that task in Step 3.
+4. **If significant work has NO matching task**: Create one.
+   ```bash
+   agentcontext tasks create "<descriptive-name>" --status in_progress --priority medium --tags "<relevant-tags>"
+   agentcontext tasks log "<descriptive-name>" "Created during consolidation: <summary of what was done>"
+   ```
+5. **If a plan was created but not saved as a task**: This is a gap. Create the task from the plan content visible in the transcript.
+
+Untracked work is invisible to future sessions. A task without a log entry is a task the next agent won't know about.
+
+### Step 1c: Pattern Extraction (Automated Learning)
+
+After understanding sessions (Step 1) and linking tasks (Step 1b), scan across ALL sessions being consolidated for recurring patterns. This transforms one-time observations into persistent knowledge.
+
+**What to look for:**
+
+1. **Repeated user requests/preferences** -- patterns the user enforces repeatedly that are not yet captured in `1.user.md`:
+   - "User always asks for tests after implementation" -> User file: Workflow Notes
+   - "User consistently rejects certain code style" -> User file: User Preferences
+
+2. **Recurring tool sequences** (workflow patterns) -- sequences the agent uses repeatedly that could be documented:
+   - "Always runs tests after editing a component" -> Note in relevant feature or knowledge
+   - Same multi-step workflow repeated 3+ times -> Workflow note in memory or knowledge
+
+3. **Recurring errors** suggesting undocumented known issues:
+   - Same TypeScript error appearing across sessions -> Memory: Known Issues
+   - Same test failure pattern -> Memory: Known Issues
+   - Repeated build failures from same cause -> Memory: Known Issues
+
+4. **Repeated bookmark themes** -- if multiple bookmarks across sessions mention the same topic:
+   - 3+ bookmarks about the same concept -> Consolidate into a single architectural note
+   - Multiple bookmarks about the same constraint -> Elevate to Soul file constraint
+
+**How to act on detected patterns:**
+
+| Pattern Type | Min Occurrences | Action |
+|---|---|---|
+| User preference | 2+ | Add to `1.user.md` User Preferences or Workflow Notes |
+| Workflow pattern | 3+ | Add to `2.memory.md` or create knowledge file |
+| Known issue | 2+ | Add to `2.memory.md` Known Issues section |
+| Recurring theme | 3+ bookmarks | Consolidate into appropriate core file or knowledge |
+
+Only extract patterns with clear evidence from multiple sessions. Do not speculate. If uncertain, create a bookmark noting the potential pattern for future observation rather than immediately codifying it.
+
 ### Step 2: Determine What to Update
 
 Use this decision tree:
@@ -101,6 +154,7 @@ Use this decision tree:
 | **Style/branding change** | Edit `_agent_context/core/3.style_guide_and_branding.md` directly + update its `summary` frontmatter | — |
 | **New warning / non-negotiable** | Soul file (Warnings section) | — |
 | **Workflow change** | User file (Workflow Notes) | — |
+| **Untracked work** (no task exists) | `agentcontext tasks create` + log progress | Memory (if key decision) |
 
 ### Step 3: Execute Updates
 
@@ -174,6 +228,8 @@ After updating, check each file you touched:
 
 7. **Expire triggers** — triggers past `max_fires` are automatically removed by `sleep done`, but review active triggers for relevance during anti-bloat
 
+8. **Mark completed checkboxes** — scan task files touched during consolidation. If a user story (`- [ ]` under User Stories) or acceptance criterion (`- [ ]` under Acceptance Criteria) was completed based on session evidence, update it to `- [x]`. The main agent should do this during active work, but catch any it missed.
+
 ### Step 5: Feature Detection & Consolidation
 
 Features are **retrospective product documentation**, never updated during active work. The main agent works exclusively in task files. Your job is to consolidate task content into feature PRDs.
@@ -233,6 +289,10 @@ Return a brief report to the main agent:
 
 ### Needs User Input
 - Soul file: "offline mode" constraint needs priority ranking from user
+
+### Task Linkage
+- Session sess-abc: linked to task `fix-auth-bug` (logged progress)
+- Session sess-def: no matching task, created `refactor-api-routes`
 
 ### Anti-Bloat Actions
 - memory: Extracted old API migration notes to knowledge/api-v1-migration.md (was 180 lines, now 95)

@@ -2,7 +2,7 @@
 id: feat_LDQn2Bi8
 status: active
 created: '2026-02-25'
-updated: '2026-02-26'
+updated: '2026-03-01'
 released_version: 0.1.0
 tags:
   - backend
@@ -28,6 +28,7 @@ Work spans multiple sessions, and agents need a structured way to track what is 
 - `tasks create <name>` creates a file at `state/<slug>.md` with YAML frontmatter (id, name, description, priority, status: "todo", created_at, updated_at, tags, parent_task) and a `## Changelog` section.
 - `tasks log <name> <content>` prepends a `### <date> - Session Update` entry to the `## Changelog` section and updates `updated_at`.
 - `tasks complete <name> <summary>` prepends a `### <date> - Completed` changelog entry and sets `status: completed` and `updated_at`.
+- `tasks list` lists all non-completed tasks; `--all` shows all statuses; `--status <status>` filters by specific status. Output is colored (in_progress=yellow, completed=green).
 - Task lookup is fuzzy: tries exact slug match, then prefix match, then substring match.
 - Duplicate task creation (same slug) returns an error and does not overwrite.
 - Completed tasks are excluded from the context snapshot Active Tasks section.
@@ -68,6 +69,7 @@ parent_task: null
 
 **Commands** (`src/cli/commands/tasks.ts`):
 - `tasks create <name>` — interactive prompts for description and priority if not provided via flags (`-d`, `-p`). Uses `@inquirer/prompts`.
+- `tasks list [--all] [-s status]` — lists tasks from `state/*.md`. Default excludes `status: completed`. `--all` shows all. `-s` (or `--status`) filters by a specific status value. Output sorted by updated_at descending. Colored output. `validStatuses` includes `new` to handle non-standard status values from other projects.
 - `tasks log <name> [content]` — appends to `## Changelog` section at top (LIFO). If content not provided as argument, prompts interactively.
 - `tasks complete <name> [summary]` — updates `status` and `updated_at` in frontmatter, prepends completion changelog entry.
 
@@ -89,6 +91,12 @@ parent_task: null
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-03-01 - tasks list command + SKILL.md zero-tool-call fix
+- Added `tasks list` command (default: excludes completed; `--all`; `-s status` filter; colored output). Consistent with `bookmark list` / `trigger list` patterns.
+- Fixed SKILL.md: Auto-Loaded section now explicitly says "answer 'which tasks are active?' directly, zero tool calls needed". Task Protocol section added bold paragraph. Discovery section replaced `Glob state/*.md` with `agentcontext tasks list`.
+- Root cause: pattern inconsistency (bookmark/trigger list existed, tasks list didn't) caused agents in other projects to assume tasks list existed, wasting 5 tool calls.
+- 4 integration tests added (407 total passing).
 
 ### 2026-02-25 - Created
 - Feature PRD created.

@@ -8,6 +8,10 @@ import { success, error, info, miniBox } from '../../lib/format.js';
 const SESSION_START_HOOK = 'npx agentcontext hook session-start';
 const STOP_HOOK = 'npx agentcontext hook stop';
 const SUBAGENT_START_HOOK = 'npx agentcontext hook subagent-start';
+const PRE_TOOL_USE_HOOK = 'npx agentcontext hook pre-tool-use';
+const USER_PROMPT_SUBMIT_HOOK = 'npx agentcontext hook user-prompt-submit';
+const POST_TOOL_USE_HOOK = 'npx agentcontext hook post-tool-use';
+const PRE_COMPACT_HOOK = 'npx agentcontext hook pre-compact';
 const OLD_HOOK = 'npx agentcontext snapshot'; // migration target
 
 interface HookHandler {
@@ -27,8 +31,25 @@ interface SettingsJson {
   [key: string]: unknown;
 }
 
+interface HookSpec {
+  event: string;
+  command: string;
+  timeout: number;
+  matcher?: string;
+}
+
+const HOOK_SPECS: HookSpec[] = [
+  { event: 'SessionStart', command: SESSION_START_HOOK, timeout: 10, matcher: 'startup|resume|compact|clear' },
+  { event: 'Stop', command: STOP_HOOK, timeout: 5 },
+  { event: 'SubagentStart', command: SUBAGENT_START_HOOK, timeout: 5 },
+  { event: 'PreToolUse', command: PRE_TOOL_USE_HOOK, timeout: 5, matcher: 'Agent' },
+  { event: 'UserPromptSubmit', command: USER_PROMPT_SUBMIT_HOOK, timeout: 5 },
+  { event: 'PostToolUse', command: POST_TOOL_USE_HOOK, timeout: 30, matcher: 'Edit|Write' },
+  { event: 'PreCompact', command: PRE_COMPACT_HOOK, timeout: 5 },
+];
+
 /**
- * Ensure both SessionStart and Stop hooks are installed.
+ * Ensure all agentcontext hooks are installed.
  * Migrates old `npx agentcontext snapshot` hook if present.
  */
 function ensureHooks(projectRoot: string): { added: string[]; migrated: boolean } {
@@ -48,78 +69,33 @@ function ensureHooks(projectRoot: string): { added: string[]; migrated: boolean 
     settings.hooks = {};
   }
 
-  // --- SessionStart hook ---
-  if (!settings.hooks.SessionStart) {
-    settings.hooks.SessionStart = [];
+  // Migration: remove old `npx agentcontext snapshot` hook from SessionStart
+  if (settings.hooks.SessionStart) {
+    const oldIdx = settings.hooks.SessionStart.findIndex((group) =>
+      group.hooks?.some((h) => h.command === OLD_HOOK),
+    );
+    if (oldIdx !== -1) {
+      settings.hooks.SessionStart.splice(oldIdx, 1);
+      result.migrated = true;
+    }
   }
 
-  // Migration: remove old `npx agentcontext snapshot` hook
-  const oldIdx = settings.hooks.SessionStart.findIndex((group) =>
-    group.hooks?.some((h) => h.command === OLD_HOOK),
-  );
-  if (oldIdx !== -1) {
-    settings.hooks.SessionStart.splice(oldIdx, 1);
-    result.migrated = true;
-  }
-
-  // Add new session-start hook if not present
-  const hasSessionStart = settings.hooks.SessionStart.some((group) =>
-    group.hooks?.some((h) => h.command === SESSION_START_HOOK),
-  );
-  if (!hasSessionStart) {
-    settings.hooks.SessionStart.push({
-      matcher: 'startup|resume|compact|clear',
-      hooks: [
-        {
-          type: 'command',
-          command: SESSION_START_HOOK,
-          timeout: 10,
-        },
-      ],
-    });
-    result.added.push('SessionStart');
-  }
-
-  // --- Stop hook (no matcher — Stop doesn't support matchers) ---
-  if (!settings.hooks.Stop) {
-    settings.hooks.Stop = [];
-  }
-
-  const hasStop = settings.hooks.Stop.some((group) =>
-    group.hooks?.some((h) => h.command === STOP_HOOK),
-  );
-  if (!hasStop) {
-    settings.hooks.Stop.push({
-      hooks: [
-        {
-          type: 'command',
-          command: STOP_HOOK,
-          timeout: 5,
-        },
-      ],
-    });
-    result.added.push('Stop');
-  }
-
-  // --- SubagentStart hook (no matcher — fires for all sub-agents) ---
-  if (!settings.hooks.SubagentStart) {
-    settings.hooks.SubagentStart = [];
-  }
-
-  const hasSubagentStart = settings.hooks.SubagentStart.some((group) =>
-    group.hooks?.some((h) => h.command === SUBAGENT_START_HOOK),
-  );
-  if (!hasSubagentStart) {
-    settings.hooks.SubagentStart.push({
-      hooks: [
-        {
-          type: 'command',
-          command: SUBAGENT_START_HOOK,
-          timeout: 5,
-        },
-      ],
-    });
-    result.added.push('SubagentStart');
+  // Register all hooks via data-driven loop
+  for (const spec of HOOK_SPECS) {
+    if (!settings.hooks[spec.event]) {
+      settings.hooks[spec.event] = [];
+    }
+    const exists = settings.hooks[spec.event].some((group) =>
+      group.hooks?.some((h) => h.command === spec.command),
+    );
+    if (!exists) {
+      const group: MatcherGroup = {
+        hooks: [{ type: 'command', command: spec.command, timeout: spec.timeout }],
+      };
+      if (spec.matcher) group.matcher = spec.matcher;
+      settings.hooks[spec.event].push(group);
+      result.added.push(spec.event);
+    }
   }
 
   mkdirSync(join(projectRoot, '.claude'), { recursive: true });

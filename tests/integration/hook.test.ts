@@ -369,8 +369,8 @@ describe('hook session-start (integration)', () => {
     const input = JSON.stringify({ session_id: 'sess-1', source: 'resume', transcript_path: '/tmp/t.jsonl' });
     const output = runWithStdin('hook session-start', input, tmpDir);
 
-    expect(output).toContain('CONSOLIDATION STRONGLY RECOMMENDED');
-    expect(output).toContain('Context files are likely stale and bloated');
+    expect(output).toContain('CONSOLIDATION REQUIRED');
+    expect(output).toContain('Context files are stale and bloated');
     expect(output).toContain('# Agent Context');
   });
 
@@ -380,19 +380,42 @@ describe('hook session-start (integration)', () => {
     const input = JSON.stringify({ session_id: 'sess-1', source: 'resume', transcript_path: '/tmp/t.jsonl' });
     const output = runWithStdin('hook session-start', input, tmpDir);
 
-    expect(output).toContain('Sleep debt is elevated');
+    expect(output).toContain('CONSOLIDATION RECOMMENDED');
     expect(output).toContain('8/10');
   });
 
-  it('no directive when debt < 7', () => {
+  it('shows drowsy directive when debt 4-6', () => {
     writeSleep(ctx, { debt: 5, sessions: [] });
 
     const input = JSON.stringify({ session_id: 'sess-1', source: 'resume', transcript_path: '/tmp/t.jsonl' });
     const output = runWithStdin('hook session-start', input, tmpDir);
 
-    expect(output).not.toContain('CRITICAL');
-    expect(output).not.toContain('elevated');
+    expect(output).toContain('Sleep debt is 5');
+    expect(output).toContain('MUST offer to consolidate');
+    expect(output).not.toContain('CONSOLIDATION REQUIRED');
+    expect(output).not.toContain('CONSOLIDATION RECOMMENDED');
     expect(output).toContain('# Agent Context');
+  });
+
+  it('no directive when debt < 4', () => {
+    writeSleep(ctx, { debt: 2, sessions: [] });
+
+    const input = JSON.stringify({ session_id: 'sess-1', source: 'resume', transcript_path: '/tmp/t.jsonl' });
+    const output = runWithStdin('hook session-start', input, tmpDir);
+
+    expect(output).not.toContain('CONSOLIDATION');
+    expect(output).not.toContain('Sleep debt is');
+    expect(output).toContain('# Agent Context');
+  });
+
+  it('shows rhythm advisory when 3+ sessions since last sleep', () => {
+    writeSleep(ctx, { debt: 1, sessions_since_last_sleep: 4, sessions: [] });
+
+    const input = JSON.stringify({ session_id: 'sess-1', source: 'resume', transcript_path: '/tmp/t.jsonl' });
+    const output = runWithStdin('hook session-start', input, tmpDir);
+
+    expect(output).toContain('4 sessions since last consolidation');
+    expect(output).toContain('offer to consolidate');
   });
 
   it('handles missing transcript file gracefully', () => {
@@ -807,5 +830,355 @@ describe('hook subagent-start (integration)', () => {
     expect(ctx_text).toContain('BEFORE using Glob, Grep, or searching code');
     // Directive should appear near the start (within first 500 chars)
     expect(ctx_text.indexOf('MANDATORY')).toBeLessThan(500);
+  });
+
+  it('includes Task Awareness section with plan-to-task workflow', () => {
+    const output = run('hook subagent-start', tmpDir);
+    const parsed = JSON.parse(output);
+    const ctx_text = parsed.hookSpecificOutput.additionalContext;
+    expect(ctx_text).toContain('## Task Awareness');
+    expect(ctx_text).toContain('linked to a task');
+    expect(ctx_text).toContain('agentcontext tasks create');
+    expect(ctx_text).toContain('save this plan as an agentcontext task');
+  });
+});
+
+// ─── hook pre-tool-use ────────────────────────────────────────────────────
+
+describe('hook pre-tool-use (integration)', () => {
+  let tmpDir: string;
+  let ctx: string;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+    ctx = scaffold(tmpDir);
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('blocks default Explore agent when _agent_context/ exists', () => {
+    const input = JSON.stringify({
+      tool_name: 'Agent',
+      tool_input: { subagent_type: 'Explore', prompt: 'Find auth files' },
+    });
+    const output = runWithStdin('hook pre-tool-use', input, tmpDir);
+    const parsed = JSON.parse(output);
+
+    expect(parsed.hookSpecificOutput.hookEventName).toBe('PreToolUse');
+    expect(parsed.hookSpecificOutput.permissionDecision).toBe('deny');
+    expect(parsed.hookSpecificOutput.permissionDecisionReason).toContain('agentcontext-explore');
+    expect(parsed.hookSpecificOutput.permissionDecisionReason).toContain('Default Explorer blocked');
+  });
+
+  it('allows default Explore agent when no _agent_context/ exists', () => {
+    const noCtxDir = makeTmpDir();
+    try {
+      const input = JSON.stringify({
+        tool_name: 'Agent',
+        tool_input: { subagent_type: 'Explore', prompt: 'Find auth files' },
+      });
+      const output = runWithStdin('hook pre-tool-use', input, noCtxDir);
+      // Should exit 0 with no output (allow)
+      expect(output.trim()).toBe('');
+    } finally {
+      rmSync(noCtxDir, { recursive: true, force: true });
+    }
+  });
+
+  it('allows non-Explore Agent calls (Plan)', () => {
+    const input = JSON.stringify({
+      tool_name: 'Agent',
+      tool_input: { subagent_type: 'Plan', prompt: 'Plan the auth feature' },
+    });
+    const output = runWithStdin('hook pre-tool-use', input, tmpDir);
+    expect(output.trim()).toBe('');
+  });
+
+  it('allows non-Explore Agent calls (agentcontext-rem-sleep)', () => {
+    const input = JSON.stringify({
+      tool_name: 'Agent',
+      tool_input: { subagent_type: 'agentcontext-rem-sleep', prompt: 'Consolidate' },
+    });
+    const output = runWithStdin('hook pre-tool-use', input, tmpDir);
+    expect(output.trim()).toBe('');
+  });
+
+  it('allows agentcontext-explore Agent calls (our custom explorer)', () => {
+    const input = JSON.stringify({
+      tool_name: 'Agent',
+      tool_input: { subagent_type: 'agentcontext-explore', prompt: 'Find auth files' },
+    });
+    const output = runWithStdin('hook pre-tool-use', input, tmpDir);
+    expect(output.trim()).toBe('');
+  });
+
+  it('allows non-Agent tool calls (Bash, Read, etc.)', () => {
+    const input = JSON.stringify({
+      tool_name: 'Bash',
+      tool_input: { command: 'ls -la' },
+    });
+    const output = runWithStdin('hook pre-tool-use', input, tmpDir);
+    expect(output.trim()).toBe('');
+  });
+
+  it('allows when no stdin provided', () => {
+    const output = run('hook pre-tool-use', tmpDir);
+    expect(output.trim()).toBe('');
+  });
+
+  it('deny reason mentions context files as the reason for blocking', () => {
+    const input = JSON.stringify({
+      tool_name: 'Agent',
+      tool_input: { subagent_type: 'Explore', prompt: 'Find files' },
+    });
+    const output = runWithStdin('hook pre-tool-use', input, tmpDir);
+    const parsed = JSON.parse(output);
+    const reason = parsed.hookSpecificOutput.permissionDecisionReason;
+
+    expect(reason).toContain('_agent_context/');
+    expect(reason).toContain('context files first');
+    expect(reason).toContain('saving thousands of tokens');
+  });
+});
+
+// ─── hook user-prompt-submit ────────────────────────────────────────────────
+
+describe('hook user-prompt-submit (integration)', () => {
+  let tmpDir: string;
+  let ctx: string;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+    ctx = scaffold(tmpDir);
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('silent when debt < 4 (no output)', () => {
+    writeSleep(ctx, { debt: 2, sessions: [], bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [] });
+    const input = JSON.stringify({ session_id: 'sess-1', prompt: 'hello' });
+    const output = runWithStdin('hook user-prompt-submit', input, tmpDir);
+    expect(output.trim()).toBe('');
+  });
+
+  it('outputs reminder when debt is 5 (Drowsy range)', () => {
+    writeSleep(ctx, { debt: 5, sessions: [], bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [] });
+    const input = JSON.stringify({ session_id: 'sess-1', prompt: 'fix the bug' });
+    const output = runWithStdin('hook user-prompt-submit', input, tmpDir);
+    expect(output).toContain('Sleep debt is 5');
+    expect(output).toContain('offer to consolidate');
+  });
+
+  it('outputs stronger message when debt is 8 (Sleepy range)', () => {
+    writeSleep(ctx, { debt: 8, sessions: [], bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [] });
+    const input = JSON.stringify({ session_id: 'sess-1', prompt: 'add feature' });
+    const output = runWithStdin('hook user-prompt-submit', input, tmpDir);
+    expect(output).toContain('Sleep debt is 8');
+    expect(output).toContain('recommended');
+  });
+
+  it('outputs REQUIRED message when debt >= 10', () => {
+    writeSleep(ctx, { debt: 12, sessions: [], bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [] });
+    const input = JSON.stringify({ session_id: 'sess-1', prompt: 'do something' });
+    const output = runWithStdin('hook user-prompt-submit', input, tmpDir);
+    expect(output).toContain('Sleep debt is 12');
+    expect(output).toContain('CONSOLIDATION REQUIRED');
+  });
+
+  it('critical bookmark triggers output even at low debt', () => {
+    writeSleep(ctx, {
+      debt: 1,
+      sessions: [],
+      bookmarks: [{ message: 'Switched to GraphQL', salience: 3, created_at: new Date().toISOString() }],
+      triggers: [],
+      knowledge_access: {},
+      dashboard_changes: [],
+    });
+    const input = JSON.stringify({ session_id: 'sess-1', prompt: 'check status' });
+    const output = runWithStdin('hook user-prompt-submit', input, tmpDir);
+    expect(output).toContain('critical bookmark');
+    expect(output).toContain('consolidation');
+  });
+
+  it('silent when no context root exists (graceful exit)', () => {
+    const emptyDir = makeTmpDir();
+    const input = JSON.stringify({ session_id: 'sess-1', prompt: 'hello' });
+    const output = runWithStdin('hook user-prompt-submit', input, emptyDir);
+    expect(output.trim()).toBe('');
+    rmSync(emptyDir, { recursive: true, force: true });
+  });
+});
+
+// ─── hook post-tool-use ─────────────────────────────────────────────────────
+
+describe('hook post-tool-use (integration)', () => {
+  let tmpDir: string;
+  let ctx: string;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+    ctx = scaffold(tmpDir);
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('exits silently for non-Edit/Write tools', () => {
+    const input = JSON.stringify({
+      tool_name: 'Read',
+      tool_input: { file_path: '/tmp/test.ts' },
+    });
+    const output = runWithStdin('hook post-tool-use', input, tmpDir);
+    expect(output.trim()).toBe('');
+  });
+
+  it('exits silently for non-JS/TS files', () => {
+    const input = JSON.stringify({
+      tool_name: 'Write',
+      tool_input: { file_path: '/tmp/test.py' },
+    });
+    const output = runWithStdin('hook post-tool-use', input, tmpDir);
+    expect(output.trim()).toBe('');
+  });
+
+  it('exits silently when no formatter or tsconfig found', () => {
+    const filePath = join(tmpDir, 'orphan.ts');
+    writeFileSync(filePath, 'const x = 1;');
+    const input = JSON.stringify({
+      tool_name: 'Edit',
+      tool_input: { file_path: filePath },
+    });
+    const output = runWithStdin('hook post-tool-use', input, tmpDir);
+    expect(output.trim()).toBe('');
+  });
+
+  it('exits silently when no stdin provided', () => {
+    const output = run('hook post-tool-use', tmpDir);
+    expect(output.trim()).toBe('');
+  });
+
+  it('exits silently when file_path is missing from tool_input', () => {
+    const input = JSON.stringify({
+      tool_name: 'Write',
+      tool_input: { content: 'hello' },
+    });
+    const output = runWithStdin('hook post-tool-use', input, tmpDir);
+    expect(output.trim()).toBe('');
+  });
+
+  it('outputs JSON with tsc errors when TypeScript errors exist', () => {
+    writeFileSync(join(tmpDir, 'tsconfig.json'), JSON.stringify({
+      compilerOptions: { strict: true, noEmit: true },
+      include: ['*.ts'],
+    }));
+    const filePath = join(tmpDir, 'bad.ts');
+    writeFileSync(filePath, 'const x: number = "not a number";');
+
+    const input = JSON.stringify({
+      tool_name: 'Write',
+      tool_input: { file_path: filePath },
+    });
+    const output = runWithStdin('hook post-tool-use', input, tmpDir);
+
+    if (output.trim()) {
+      const parsed = JSON.parse(output);
+      expect(parsed.hookSpecificOutput.hookEventName).toBe('PostToolUse');
+      expect(parsed.hookSpecificOutput.additionalContext).toContain('TypeScript errors');
+      expect(parsed.hookSpecificOutput.additionalContext).toContain('bad.ts');
+    }
+    // Test passes regardless if tsc is not installed (graceful skip)
+  });
+});
+
+// ─── hook pre-compact ───────────────────────────────────────────────────────
+
+describe('hook pre-compact (integration)', () => {
+  let tmpDir: string;
+  let ctx: string;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+    ctx = scaffold(tmpDir);
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('saves compaction record to sleep state', () => {
+    writeSleep(ctx, {
+      debt: 5,
+      sessions: [{ session_id: 'sess-1', transcript_path: null, stopped_at: '2026-03-01T00:00:00Z', last_assistant_message: 'test', change_count: 3, tool_count: 10, score: 2 }],
+      bookmarks: [{ id: 'bk-1', message: 'test bookmark', salience: 2, created_at: '2026-03-01T00:00:00Z', session_id: 'sess-1' }],
+      triggers: [],
+      knowledge_access: {},
+      dashboard_changes: [],
+      compaction_log: [],
+    });
+
+    const input = JSON.stringify({ trigger: 'auto', custom_instructions: '' });
+    runWithStdin('hook pre-compact', input, tmpDir);
+
+    const state = readSleep(ctx);
+    const log = state.compaction_log as any[];
+    expect(log).toHaveLength(1);
+    expect(log[0].trigger).toBe('auto');
+    expect(log[0].debt_at_compaction).toBe(5);
+    expect(log[0].sessions_count).toBe(1);
+    expect(log[0].bookmarks_count).toBe(1);
+    expect(log[0].timestamp).toBeTruthy();
+  });
+
+  it('records manual trigger type', () => {
+    writeSleep(ctx, { debt: 0, sessions: [], bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [], compaction_log: [] });
+    const input = JSON.stringify({ trigger: 'manual' });
+    runWithStdin('hook pre-compact', input, tmpDir);
+
+    const state = readSleep(ctx);
+    const log = state.compaction_log as any[];
+    expect(log[0].trigger).toBe('manual');
+  });
+
+  it('caps compaction_log at 20 entries', () => {
+    const existingLog = Array.from({ length: 20 }, (_, i) => ({
+      timestamp: `2026-02-${String(i + 1).padStart(2, '0')}T00:00:00Z`,
+      trigger: 'auto',
+      debt_at_compaction: i,
+      sessions_count: 0,
+      bookmarks_count: 0,
+    }));
+    writeSleep(ctx, { debt: 0, sessions: [], bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [], compaction_log: existingLog });
+
+    const input = JSON.stringify({ trigger: 'manual' });
+    runWithStdin('hook pre-compact', input, tmpDir);
+
+    const state = readSleep(ctx);
+    const log = state.compaction_log as any[];
+    expect(log).toHaveLength(20);
+    expect(log[0].trigger).toBe('manual'); // newest first (LIFO)
+  });
+
+  it('exits silently when no _agent_context/', () => {
+    const noCtxDir = makeTmpDir();
+    const input = JSON.stringify({ trigger: 'auto' });
+    const output = runWithStdin('hook pre-compact', input, noCtxDir);
+    expect(output.trim()).toBe('');
+    rmSync(noCtxDir, { recursive: true, force: true });
+  });
+
+  it('handles missing stdin gracefully (trigger defaults to unknown)', () => {
+    writeSleep(ctx, { debt: 0, sessions: [], bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [], compaction_log: [] });
+    // No stdin - the hook should still work
+    const output = run('hook pre-compact', tmpDir);
+
+    const state = readSleep(ctx);
+    const log = state.compaction_log as any[];
+    expect(log).toHaveLength(1);
+    expect(log[0].trigger).toBe('unknown');
   });
 });

@@ -1,5 +1,68 @@
 [
   {
+    "date": "2026-03-02",
+    "type": "feat",
+    "scope": "src/cli/commands/hook.ts, src/cli/commands/sleep.ts, src/cli/commands/install-skill.ts, skill/SKILL.md, agents/agentcontext-rem-sleep.md",
+    "description": "Add PostToolUse hook (hook post-tool-use): auto-formats JS/TS files using Biome or Prettier (walk-up detection from edited file), then runs tsc --noEmit --incremental filtered to the edited file. Biome preferred when both configs exist. execFileSync (not execSync) prevents shell injection. resolveLocalBin() checks node_modules/.bin/ before npx fallback. Graceful silent failure. Single subcommand handles both format and tsc check. additionalContext JSON output. 30-second timeout. Registered as 6th hook (fires on Edit|Write). findProjectConfig() merges findFormatterConfig() + findTsconfig() into single walk-up pass. 451 tests total (450 passing, 1 pre-existing flaky nanoid test).",
+    "breaking": false
+  },
+  {
+    "date": "2026-03-02",
+    "type": "feat",
+    "scope": "src/cli/commands/hook.ts, src/cli/commands/sleep.ts, src/cli/commands/install-skill.ts, skill/SKILL.md",
+    "description": "Add PreCompact hook (hook pre-compact): saves a CompactionRecord (timestamp, trigger, debt, session count, bookmark count) to compaction_log[] in .sleep.json before Claude Code context compaction. LIFO, capped at 20 entries. New CompactionRecord interface and compaction_log field added to SleepState. Registered as 7th hook in install-skill (5-second timeout). SKILL.md frontmatter updated with 7 hooks total.",
+    "breaking": false
+  },
+  {
+    "date": "2026-03-02",
+    "type": "refactor",
+    "scope": "src/cli/commands/install-skill.ts",
+    "description": "Refactor ensureHooks() from 160 lines of copy-paste registration boilerplate to a data-driven HOOK_SPECS table + 15-line loop. Adding a new hook is now a one-line change in HOOK_SPECS. Behavior unchanged.",
+    "breaking": false
+  },
+  {
+    "date": "2026-03-02",
+    "type": "feat",
+    "scope": "agents/agentcontext-rem-sleep.md",
+    "description": "Add Step 1c Pattern Extraction to rem-sleep agent protocol: after task linkage check, agent scans distilled transcripts for repeated user preferences (2+ occurrences), workflow patterns (3+ occurrences), recurring errors (2+ occurrences), and bookmark themes (3+ occurrences). Prompt-level only, no new CLI code needed.",
+    "breaking": false
+  },
+  {
+    "date": "2026-03-01",
+    "type": "feat",
+    "scope": "src/cli/commands/hook.ts, src/cli/commands/install-skill.ts, skill/SKILL.md",
+    "description": "Add UserPromptSubmit hook: fires on every user message and outputs a one-line sleep debt reminder when debt >= 4. Same thresholds as SessionStart directive (4/7/10/critical bookmarks) but compact single-line format. Critical bookmarks override debt threshold. Read-only (no state writes). Registered as the 5th hook in install-skill (SessionStart, Stop, SubagentStart, PreToolUse, UserPromptSubmit). SKILL.md YAML frontmatter updated with hook declaration; Sleep System docs expanded to cover persistent reminders. 6 new integration tests (415 total, all passing).",
+    "breaking": false
+  },
+  {
+    "date": "2026-03-01",
+    "type": "feat",
+    "scope": "src/cli/commands/hook.ts, skill/SKILL.md",
+    "description": "Tighten sleep debt consolidation thresholds: debt >= 4 now triggers reminder directives (was >= 7). Rhythm check changed from 5+ to 3+ sessions since last sleep. SKILL.md mandatory language: Drowsy (4-6) MUST offer consolidation after any task, Sleepy (7-9) MUST inform user at session start. 409 tests passing.",
+    "breaking": false
+  },
+  {
+    "date": "2026-03-01",
+    "type": "feat",
+    "scope": "src/cli/commands/tasks.ts",
+    "description": "Add tasks list command: default excludes completed tasks, --all shows all statuses, --status <status> filters by specific status. Colored output (in_progress=yellow, completed=green). Consistent with bookmark list and trigger list patterns. 4 new integration tests added (407 total).",
+    "breaking": false
+  },
+  {
+    "date": "2026-03-01",
+    "type": "fix",
+    "scope": "skill/SKILL.md",
+    "description": "Fix 3 sources of wasted tool calls when querying active tasks: (1) added 'answer which tasks are active? directly from this, zero tool calls needed' to Auto-Loaded Context section, (2) added bold paragraph to Task Protocol reminding agents to answer from auto-loaded snapshot before using CLI, (3) replaced Glob _agent_context/state/*.md with agentcontext tasks list in Discovery section. Command Reference table updated with tasks list [-s status] [--all] row.",
+    "breaking": false
+  },
+  {
+    "date": "2026-03-01",
+    "type": "feat",
+    "scope": "src/cli/commands/hook.ts, src/cli/commands/install-skill.ts, src/cli/commands/snapshot.ts, agents/agentcontext-explore.md",
+    "description": "Context-aware sub-agent optimization: PreToolUse hook blocks default Explorer when _agent_context/ exists, redirecting to agentcontext-explore agent. Custom Explorer checks context files first (data structures, tech stack, features, knowledge), returns immediately if context answers query, falls back to full codebase search only if needed. SubagentStart briefing adds Task Awareness section (plan-to-task workflow) for all sub-agents. REM sleep agent updated with mandatory task linkage check. SKILL.md: PreToolUse hook in YAML, Rules 9-11, Sub-Agents section updated. 9 new integration tests (403 total).",
+    "breaking": false
+  },
+  {
     "date": "2026-02-28",
     "type": "feat",
     "scope": "src/cli/commands/sleep.ts",

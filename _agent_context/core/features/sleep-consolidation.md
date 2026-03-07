@@ -2,7 +2,7 @@
 id: feat_9qLM-gY_
 status: active
 created: '2026-02-25'
-updated: '2026-02-26'
+updated: '2026-03-02'
 released_version: 0.1.0
 tags:
   - architecture
@@ -25,6 +25,7 @@ Agents accumulate knowledge and make decisions across many sessions, but that kn
 - [x] As a developer, I want to manually add debt for non-file-change work (architecture discussions, decisions) so the debt meter reflects cognitive load accurately.
 - [x] As a developer, I want to reset debt after consolidation with a summary so the system knows when the last sleep happened.
 - [x] As an AI agent, I want a dedicated REM Sleep sub-agent to do the consolidation so the main agent can stay focused on the user's task.
+- [x] As an AI agent, I want persistent sleep debt reminders on every user message so consolidation urgency cannot be forgotten across a session.
 
 ## Acceptance Criteria
 
@@ -40,6 +41,7 @@ Agents accumulate knowledge and make decisions across many sessions, but that kn
 - `sleep debt` outputs the raw debt number for programmatic use.
 - If the same session_id stops twice, the old score is subtracted before the new score is added (no double-counting).
 - Transcripts over 50MB are skipped (safety cap).
+- `hook user-prompt-submit` fires on every user message, outputs a one-line reminder when debt >= 4 or critical bookmarks exist. Silent when debt < 4. Read-only (no state writes).
 
 ## Constraints & Decisions
 
@@ -47,6 +49,9 @@ Agents accumulate knowledge and make decisions across many sessions, but that kn
 - **[2026-02-27]** `freshDefaults()` replaces `DEFAULT_SLEEP_STATE` spread everywhere. Spreading a const with arrays shares references across calls -- this caused test pollution. Always call `freshDefaults()` when initializing an empty SleepState.
 - **[2026-02-27]** Trigger `fired_count` is persisted by `writeSleepState()` inside `generateSnapshot()`. Triggers expire (removed from state) in `sleep done` after hitting `max_fires`. This is intentional -- persistent triggers that always fire become noise.
 - **[2026-02-28]** `SleepHistoryEntry` extended with `consolidated_at: string` (ISO timestamp) and `session_ids: string[]`. `transcript distill` uses these to auto-filter: only shows content after `consolidated_at` for sessions that have already been consolidated. `--full` shows entire transcript; `--since <iso>` for manual cutoff.
+- **[2026-03-02]** PreCompact hook added as 7th hook. Saves `CompactionRecord` (timestamp, trigger, debt, session_count, bookmark_count) to `compaction_log[]` in `.sleep.json` before context compaction. LIFO, capped at 20 entries. Prevents silent loss of sleep state context during compaction. `CompactionRecord` interface in `sleep.ts`.
+- **[2026-03-02]** Pattern extraction (Step 1c) added to rem-sleep agent between Task Linkage Check and Step 2. Agent scans distilled transcripts for repeated preferences (2+), workflow patterns (3+), recurring errors (2+), bookmark themes (3+). Prompt-level only.
+- **[2026-03-01]** Debt thresholds tightened: debt >= 4 now triggers directives (was >= 7). Rhythm check is 3+ sessions (was 5+). SKILL.md updated to mandate consolidation offers at Drowsy level. UserPromptSubmit hook added as 5th hook — fires on every user message with compact one-line reminder. Read-only. PostToolUse was considered and rejected (fires mid-work, wrong timing). 415 tests.
 - **[2026-02-28]** Transcript distillation output quality improved: includes thinking blocks, subagent I/O (input+output, internal tool calls filtered), full content without truncation, byte deltas on Edit changes, line counts on Write. Trivial response filter removed.
 - **[2026-02-27]** Transcript distillation is pure Node.js structural filtering, no AI. Keeps user messages, agent text, Write/Edit calls, modifying Bash, bookmark calls, errors. Discards Read/Glob/Grep/WebFetch results, tool metadata.
 - **[2026-02-25]** Debt is tracked in `state/.sleep.json` (dot-prefixed to separate it from user task files in `state/`).
@@ -110,7 +115,16 @@ Agents accumulate knowledge and make decisions across many sessions, but that kn
       "bookmarks_processed": 3
     }
   ],
-  "dashboard_changes": []
+  "dashboard_changes": [],
+  "compaction_log": [
+    {
+      "timestamp": "2026-03-02T10:00:00.000Z",
+      "trigger": "manual",
+      "debt": 6,
+      "session_count": 2,
+      "bookmark_count": 1
+    }
+  ]
 }
 ```
 
@@ -133,7 +147,7 @@ Agents accumulate knowledge and make decisions across many sessions, but that kn
 - 41+ tools → +3
 
 **Key files**:
-- `src/cli/commands/hook.ts` — hook stop, hook session-start, transcript analysis, debt scoring, bookmark linking, rhythm counter
+- `src/cli/commands/hook.ts` — hook stop, hook session-start, hook user-prompt-submit, hook post-tool-use, hook pre-compact, transcript analysis, debt scoring, bookmark linking, rhythm counter, findProjectConfig(), resolveLocalBin()
 - `src/cli/commands/sleep.ts` — sleep status, sleep add, sleep done, sleep debt, sleep history, SleepState type (Bookmark, Trigger, SleepHistoryEntry, KnowledgeAccessRecord), readSleepState/writeSleepState, freshDefaults()
 - `src/cli/commands/bookmark.ts` — bookmark add/list/clear
 - `src/cli/commands/trigger.ts` — trigger add/list/remove
@@ -153,6 +167,20 @@ Agents accumulate knowledge and make decisions across many sessions, but that kn
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-03-02 - PostToolUse hook, PreCompact hook, pattern extraction
+- PostToolUse hook: auto-format (Biome/Prettier walk-up) + tsc --noEmit --incremental on JS/TS edits. execFileSync (no shell injection). resolveLocalBin() (npx fallback). findProjectConfig() merges walk-up. 30s timeout. 7th hook registered.
+- PreCompact hook: saves CompactionRecord to compaction_log[] (LIFO, cap 20). CompactionRecord interface + compaction_log field added to SleepState. 5s timeout.
+- rem-sleep Step 1c: pattern extraction from distilled transcripts (preferences 2+, workflows 3+, errors 2+, bookmark themes 3+)
+- ensureHooks() refactored: 160-line boilerplate -> data-driven HOOK_SPECS table
+- 451 tests (450 passing, 1 pre-existing flaky nanoid)
+
+### 2026-03-01 - UserPromptSubmit hook + tightened thresholds
+- hook user-prompt-submit added: fires on every user message, one-line debt reminder when debt >= 4. Critical bookmarks override. Read-only. 6 new tests.
+- Thresholds tightened: debt >= 4 triggers directives (was >= 7), rhythm check 3+ sessions (was 5+)
+- SKILL.md: Drowsy (4-6) mandatory consolidation offer language added
+- PostToolUse considered and rejected (fires mid-work)
+- 415 tests total, all passing
 
 ### 2026-02-28 - transcript distill: timestamp filter + SleepHistoryEntry fields + output quality
 - SleepHistoryEntry: added consolidated_at (ISO timestamp) and session_ids (string[]) fields

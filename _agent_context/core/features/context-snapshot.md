@@ -2,7 +2,7 @@
 id: feat_4NB3SlrK
 status: active
 created: '2026-02-25'
-updated: '2026-02-26'
+updated: '2026-03-01'
 released_version: 0.1.0
 tags:
   - architecture
@@ -56,7 +56,8 @@ Every AI session starts blind — no memory of previous work, no knowledge of pr
 **Hook integration**: Three hooks are registered by `install-skill`:
 - `hook session-start`: Analyzes previous session transcript for debt scoring, then calls `generateSnapshot()` and outputs plain text. Used by SessionStart hook.
 - `hook stop`: Records session_id + transcript_path for the next session's debt analysis. Used by Stop hook.
-- `hook subagent-start`: Calls `generateSubagentBriefing()` and outputs JSON per Claude Code's SubagentStart spec. Used by SubagentStart hook (no matcher, fires for all sub-agents).
+- `hook subagent-start`: Calls `generateSubagentBriefing()` and outputs JSON per Claude Code's SubagentStart spec. Used by SubagentStart hook (no matcher, fires for all sub-agents). Includes Task Awareness section with plan-to-task workflow instructions.
+- `hook pre-tool-use`: PreToolUse hook handler. Reads stdin JSON `{ tool_name, tool_input }`. If `tool_name === "Agent"` and `subagent_type === "Explore"` and `_agent_context/` exists, returns deny response redirecting to `agentcontext-explore`. Otherwise outputs nothing (allow).
 
 **Section generation order** (all sections are conditional — only emitted if data exists):
 1. Soul (`core/0.soul.md`) — full file content
@@ -88,6 +89,13 @@ Every AI session starts blind — no memory of previous work, no knowledge of pr
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-03-01 - Context-Aware Sub-Agent Optimization (PreToolUse + Task Awareness)
+- Added `hook pre-tool-use` subcommand. Blocks default Explorer (`subagent_type: "Explore"`) via JSON deny response when `_agent_context/` exists. Non-agentcontext projects unaffected.
+- Added Task Awareness section to SubagentStart briefing for all sub-agents: plan-to-task workflow, task creation commands, "All work should be linked to a task" directive.
+- `install-skill` now registers 4 hooks: SessionStart, Stop, SubagentStart, PreToolUse (matcher: "Agent").
+- `agents/agentcontext-explore.md` created: context-first Explorer. Checks _agent_context/ files first, returns immediately if context answers the query, falls back to full codebase search. Same tools as default Explorer.
+- 9 new integration tests; 403 total passing.
 
 ### 2026-02-26 - Latest Release Section + Changelog Limit
 - Added Latest Release section to snapshot (reads most recent entry from RELEASES.json, shows version/date/summary).

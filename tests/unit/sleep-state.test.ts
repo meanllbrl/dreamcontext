@@ -17,6 +17,7 @@ const NEW_DEFAULTS = {
   bookmarks: [],
   triggers: [],
   knowledge_access: {},
+  compaction_log: [],
 };
 
 describe('readSleepState', () => {

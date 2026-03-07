@@ -2,12 +2,13 @@ import { Command } from 'commander';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import { input } from '@inquirer/prompts';
+import chalk from 'chalk';
 import fg from 'fast-glob';
 import { ensureContextRoot } from '../../lib/context-path.js';
-import { updateFrontmatterFields } from '../../lib/frontmatter.js';
+import { readFrontmatter, updateFrontmatterFields } from '../../lib/frontmatter.js';
 import { insertToSection } from '../../lib/markdown.js';
 import { generateId, slugify, today } from '../../lib/id.js';
-import { success, error } from '../../lib/format.js';
+import { success, error, header } from '../../lib/format.js';
 
 function getStateDir(): string {
   const root = ensureContextRoot();
@@ -105,6 +106,61 @@ export function registerTasksCommand(program: Command): void {
   const tasks = program
     .command('tasks')
     .description('Create tasks, log progress, insert into sections, and mark complete');
+
+  // List tasks
+  tasks
+    .command('list')
+    .description('List tasks with optional status filter')
+    .option('-s, --status <status>', 'Filter by status (todo, in_progress, completed)')
+    .option('-a, --all', 'Show all tasks including completed')
+    .action((opts: { status?: string; all?: boolean }) => {
+      const dir = getStateDir();
+      const files = fg.sync('*.md', { cwd: dir, absolute: true });
+
+      if (files.length === 0) {
+        console.log(chalk.dim('No tasks.'));
+        return;
+      }
+
+      const validStatuses = ['todo', 'in_progress', 'completed', 'new'];
+      if (opts.status && !validStatuses.includes(opts.status)) {
+        error(`Status must be one of: ${validStatuses.join(', ')}`);
+        return;
+      }
+
+      const tasks: { name: string; status: string; priority: string; updated: string }[] = [];
+
+      for (const file of files) {
+        try {
+          const { data } = readFrontmatter(file);
+          const status = String(data.status ?? 'unknown');
+          const name = basename(file, '.md');
+          const priority = String(data.priority ?? '-');
+          const updated = String(data.updated_at ?? data.created_at ?? '-');
+
+          // Filter logic: --status wins, otherwise --all shows everything, default hides completed
+          if (opts.status) {
+            if (status !== opts.status) continue;
+          } else if (!opts.all) {
+            if (status === 'completed') continue;
+          }
+
+          tasks.push({ name, status, priority, updated });
+        } catch { /* skip unreadable */ }
+      }
+
+      if (tasks.length === 0) {
+        console.log(chalk.dim(opts.status ? `No tasks with status "${opts.status}".` : 'No active tasks.'));
+        return;
+      }
+
+      console.log(header('Tasks'));
+      for (const t of tasks) {
+        const statusColor = t.status === 'in_progress' ? chalk.yellow : t.status === 'completed' ? chalk.green : chalk.white;
+        const prio = t.priority !== '-' ? chalk.dim(` [${t.priority}]`) : '';
+        console.log(`  ${statusColor(t.status.padEnd(12))} ${t.name}${prio}  ${chalk.dim(t.updated)}`);
+      }
+    });
 
   // Create task
   tasks

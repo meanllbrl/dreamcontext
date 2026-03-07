@@ -130,7 +130,7 @@ The `_agent_context/` directory is the implementation. Everything lives in your 
 
 The core insight: **don't make the agent search for its own context.**
 
-`agentcontext` uses three shell hooks that run outside the agent's context window. They execute in the shell, not in the agent's reasoning loop. No tool calls, no token cost, no context window pressure.
+`agentcontext` uses seven hooks that run outside the agent's context window. They execute in the shell, not in the agent's reasoning loop. No tool calls, no token cost, no context window pressure.
 
 ### Stop Hook
 
@@ -168,13 +168,54 @@ Fires before the agent sees your first message. Compiles and injects a full cont
 
 Every file path is included in the output. If the agent needs more detail on something, it knows exactly where to look. One targeted read instead of a search spiral.
 
-Consolidation directives fire based on multiple signals: debt 7-9 (suggestion), debt 10+ (strong recommendation), critical bookmarks (immediate advisory regardless of debt), and 5+ sessions since last sleep (rhythm check). The agent sees these before your first message and can plan accordingly.
+Consolidation directives fire based on multiple signals: debt 4-6 (offers consolidation at natural breaks), debt 7-9 (actively suggests sleeping), debt 10+ (strong recommendation), critical bookmarks (immediate advisory regardless of debt), and 3+ sessions since last sleep (rhythm check). The agent sees these before your first message and can plan accordingly. The UserPromptSubmit hook repeats reminders on every user message for debt >= 4, making them persistent.
 
 ### SubagentStart Hook
 
 Fires when any sub-agent launches (Explore, Plan, or custom agents). Injects a lightweight briefing: project summary (capped at 120 characters), directory structure, active tasks, knowledge index, and pinned knowledge.
 
 This is intentionally lighter than the full snapshot. Sub-agents are task-focused and short-lived. They need enough context to check existing knowledge and avoid duplicating work, not the full project state. The briefing fires for all sub-agents, including agentcontext's own (the initializer and RemSleep agent). The extra context does not conflict with their dedicated prompts.
+
+### PreToolUse Hook
+
+Fires before a tool executes. Currently used for one purpose: blocking the default Explorer sub-agent when `_agent_context/` exists.
+
+The problem: Claude Code's default Explorer has its own built-in system prompt that cannot be overridden by `additionalContext` injection (SubagentStart context is lower priority). When exploring a project with curated context files, the default Explorer ignores the curated knowledge and burns 100K-150K tokens re-reading files that are already summarized in `_agent_context/`.
+
+The solution: the PreToolUse hook detects when `subagent_type` is `"Explore"` and `_agent_context/` exists, then returns a JSON deny response directing the main agent to use the `agentcontext-explore` custom agent instead. This agent has identical tool access but reads `_agent_context/` files first, returns immediately if the answer is already in the curated context, and only falls back to full codebase search when needed.
+
+This asymmetric strategy (full replacement for Explorer, additive injection for Plan) was a deliberate design choice. Explorer's behavior directly contradicts curated context. Plan's behavior (offering task creation) is additive and works fine with SubagentStart injection.
+
+### UserPromptSubmit Hook
+
+Fires on every user message. Reads sleep debt from `.sleep.json` and outputs a one-line reminder when debt is 4 or higher. Silent when debt is below the threshold. Read-only, no state writes.
+
+Why this hook and not SessionStart? SessionStart fires once per session. Agents can (and do) dismiss it as context pressure pushes out behavioral instructions. UserPromptSubmit fires on every user turn. When the user sends a message, the agent must process the reminder again before generating its next reply. This is the closest analog to persistent awareness.
+
+The reminder format is compact (one line) unlike the multi-line directives in the SessionStart snapshot. Same debt thresholds (4/7/10/critical bookmarks), but condensed for inline display. Critical bookmarks override the threshold and always trigger a reminder.
+
+### PostToolUse Hook
+
+Fires after every Edit or Write tool call on JS/TS files. Runs two checks sequentially:
+
+**Auto-format.** Walks up from the edited file (max 10 levels) looking for Biome config (`biome.json`, `biome.jsonc`) or Prettier config (11 variants: `.prettierrc`, `.prettierrc.json`, `.prettierrc.yaml`, etc.). Biome is preferred when both exist (faster, encompasses both formatting and linting). Runs the formatter via the project's local binary (`node_modules/.bin/`) with `npx` as fallback. Silent on failure.
+
+**Type-check.** Walks up for `tsconfig.json`, runs `tsc --noEmit --incremental --pretty false`, and filters output to only errors in the edited file (absolute and relative path matching). Errors are fed back to the agent via `additionalContext` JSON so it can self-correct on the next turn. First tsc run takes ~5 seconds (full type-check), subsequent runs under 1 second (incremental cache).
+
+The directory walk-up for both formatter and tsconfig detection is merged into a single pass (`findProjectConfig()`) to avoid redundant I/O. All subprocess calls use `execFileSync` with array arguments (no shell interpolation) to prevent command injection via file paths.
+
+PostToolUse cannot block (the tool already ran). It provides feedback, not gatekeeping.
+
+### PreCompact Hook
+
+Fires before Claude Code compacts the context window (both manual and auto-triggered). Saves a compaction record to `.sleep.json`:
+
+- Timestamp
+- Trigger type (manual or auto)
+- Current debt level
+- Session count and bookmark count at the time of compaction
+
+Records are stored in `compaction_log[]` (LIFO, capped at 20 entries). This provides an audit trail of when and why context was lost, which is useful for debugging agent behavior gaps after compaction events.
 
 ### The flow
 
@@ -200,10 +241,21 @@ Next session starts
     dashboard changes, latest release,
     features, changelog, knowledge index,
     warm knowledge, pinned docs
-  → Consolidation advisory if:                       critical bookmarks, debt >= 7,
+  → Consolidation advisory if:                       critical bookmarks, debt >= 4,
     debt >= 10, or 5+ sessions                       or rhythm check
   → You ask your question.
   → Agent is already at full capacity.
+
+During work
+  → UserPromptSubmit fires on each message           persistent debt reminder
+  → PostToolUse fires after Edit/Write               auto-format + tsc check
+  → Errors fed back via additionalContext             agent self-corrects
+  → PreToolUse fires before tool execution           blocks blind Explorer
+  → agentcontext-explore used instead                context-first exploration
+
+Before compaction
+  → PreCompact hook fires                            runs in shell
+  → Saves compaction record to .sleep.json           audit trail of context loss
 
 Sub-agent launches
   → SubagentStart hook fires                         runs in shell
@@ -223,7 +275,7 @@ Agents face the same challenge. Over multiple sessions, your agent accumulates k
 2. **Bookmarks prioritize what matters.** During active work, the agent tags important moments (decisions, constraints, bugs) with salience levels. The RemSleep agent reads bookmarks first, ordered by salience, so critical decisions are never lost in a pile of routine session summaries.
 3. **Transcript distillation provides depth on demand.** For sessions with critical bookmarks or unclear summaries, the sleep agent calls `transcript distill` to get a structurally filtered view: user messages, agent decisions, code changes, errors. No noise from Read results or Glob output.
 4. **The agent responds with graduated awareness.** Consolidation triggers fire based on multiple signals: debt level, critical bookmarks, and session rhythm (see table below).
-5. **RemSleep consolidates.** Reviews bookmarks first, then session records, promotes learnings to core files, extracts knowledge, creates contextual triggers for future sessions, updates summaries, cleans stale entries using knowledge access data, and keeps core files within size limits.
+5. **RemSleep consolidates.** Reviews bookmarks first, then session records, promotes learnings to core files, extracts knowledge, creates contextual triggers for future sessions, **detects recurring patterns** (repeated user preferences, workflow sequences, recurring errors, bookmark themes), updates summaries, cleans stale entries using knowledge access data, and keeps core files within size limits.
 6. **History is preserved.** Each consolidation cycle writes a history entry: date, summary, debt before/after, sessions and bookmarks processed. The snapshot shows the last 3 entries so the agent knows what was recently consolidated.
 7. **Debt resets.** After consolidation, debt recalculates (only post-epoch sessions count), bookmarks and sessions from before the epoch are cleared, triggers past their fire limit expire, the rhythm counter resets, and the cycle starts fresh.
 8. **Next session**, the agent wakes up knowing its debt level, consolidation history, any remaining bookmarks, active triggers, and what the previous session accomplished.
@@ -242,7 +294,7 @@ Agents face the same challenge. Over multiple sessions, your agent accumulates k
 | Signal | Advisory |
 |--------|----------|
 | Critical (salience 3) bookmark exists | Immediate advisory regardless of debt level |
-| 5+ sessions since last sleep | Rhythm check advisory |
+| 3+ sessions since last sleep | Rhythm check advisory |
 
 Each cycle, the agent's context gets cleaner and more structured. Not because the agent "learns" in a human sense, but because consolidation enforces discipline: promote what matters, archive what is done, delete what is stale. Over time, the context files become a progressively better representation of your project's state.
 
@@ -270,6 +322,10 @@ The key insight: **memory selection and memory consolidation are separate proces
 | Sleep consolidation | RemSleep agent (compressed replay into core files) |
 | Inhibitory neurons | Anti-bloat pass (200-line limit, prune stale knowledge) |
 | Synaptic plasticity | LIFO ordering (recent info surfaces first) |
+| Immune system (error correction) | PostToolUse hook (auto-format + tsc check on every edit) |
+| Attention gating | PreToolUse hook (blocks noisy exploration when curated context exists) |
+| Persistent neural signals | UserPromptSubmit hook (undismissable debt reminders) |
+| Autobiographical memory logging | PreCompact hook (audit trail of context loss events) |
 
 ### Bookmarks (awake ripples)
 
@@ -385,6 +441,12 @@ Every design choice was deliberate. Here is what I chose, what I chose it over, 
 | **Warm knowledge tier** | Binary pinned/indexed | A file you read yesterday should not be as cold as one from 6 months ago. First-paragraph previews give the agent enough context to decide without loading everything. |
 | **Triggers over memory scanning** | Agent re-reads memory.md | Prospective memory ("do X when Y") is a stored intention, not a recall task. Triggers surface automatically when the right context appears. |
 | **Session rhythm advisory** | Crisis-driven consolidation only | Regular small consolidations (every 5 sessions) keep context fresh. Waiting for debt 10+ means a massive catch-up job with reduced quality. |
+| **PreToolUse deny for Explorer** | SubagentStart injection only | Explorer's built-in system prompt overrides `additionalContext`. The only way to enforce context-first behavior is to replace the default Explorer entirely via a deny hook. Plan is additive and works fine with injection. |
+| **UserPromptSubmit for debt reminders** | SessionStart-only reminders | SessionStart fires once per session. Agents dismiss it under context pressure. UserPromptSubmit fires on every user turn, making the reminder persistent and undismissable. |
+| **PostToolUse auto-format + tsc** | Manual formatting and type-checking | Errors caught in real-time after each edit are cheaper to fix than accumulated errors found at test time. Single hook handles both (sequential execution, one process). |
+| **execFileSync over execSync** | Shell string interpolation | File paths with special characters (`$`, spaces, backticks) are safe with array arguments. Never regress to execSync with string interpolation in hooks. |
+| **PreCompact audit trail** | Ignoring context compaction | When the agent loses context mid-session, understanding when and why helps debug behavior gaps. 20-entry cap prevents unbounded growth. |
+| **Pattern extraction in sleep** | Manual knowledge curation only | Recurring patterns across sessions (user preferences, workflow sequences, errors) are automatically surfaced by the sleep agent and written to memory or knowledge files. |
 
 ---
 
@@ -392,7 +454,7 @@ Every design choice was deliberate. Here is what I chose, what I chose it over, 
 
 Right now, `agentcontext` supports Claude Code. The hook system, the skill format, and the agent integration are all built around Claude's tool ecosystem. But the core idea (structured files, pre-loaded context, consolidation cycles) is not tied to any one agent. The architecture is designed so that other agents (Gemini CLI, Copilot, custom agents) can plug into the same `_agent_context/` directory with their own integration layer.
 
-The neuroscience-inspired memory system (bookmarks, decay tracking, warm knowledge, triggers, transcript distillation) shipped in v0.1.x. The dashboard is built and shipping with the package. Remaining polish includes accessibility audit, responsive layout refinements, i18n token extraction for future localization, and bundle size optimization.
+The neuroscience-inspired memory system (bookmarks, decay tracking, warm knowledge, triggers, transcript distillation) shipped in v0.1.x. Seven hooks now cover the full session lifecycle: context injection, session recording, sub-agent briefing, context-first exploration, persistent debt reminders, post-edit code quality gates, and pre-compaction state preservation. The dashboard is built and shipping with the package. Remaining polish includes accessibility audit, responsive layout refinements, i18n token extraction for future localization, and bundle size optimization.
 
 The long-term vision: your project's context lives in your repo, structured and version-controlled, and any agent you choose to work with can pick it up. **The human stays in the loop. The context stays portable.** The agent gets better every session because the system enforces the discipline that makes that possible.
 

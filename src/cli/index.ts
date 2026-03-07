@@ -52,7 +52,7 @@ ${chalk.bold('Content')}
 ${chalk.bold('System')}
   ${chalk.magentaBright('snapshot')}          Output context snapshot (used by SessionStart hook)
   ${chalk.magentaBright('sleep')}             Track sleep debt and consolidation state
-  ${chalk.magentaBright('hook')}              Hook handlers (stop, session-start, subagent-start) for Claude Code
+  ${chalk.magentaBright('hook')}              Hook handlers (7 hooks) for Claude Code
   ${chalk.magentaBright('transcript')}        Process session transcripts
   ${chalk.magentaBright('doctor')}            Validate _agent_context/ structure and report issues
 

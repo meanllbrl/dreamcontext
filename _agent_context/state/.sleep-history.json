@@ -1,5 +1,47 @@
 [
   {
+    "date": "2026-03-02",
+    "consolidated_at": "2026-03-02T13:40:32.690Z",
+    "summary": "Consolidated 3 sessions: code-quality-hooks task completed (PostToolUse auto-format+tsc, PreCompact hook+compaction_log, rem-sleep Step 1c pattern extraction, data-driven HOOK_SPECS refactor). Code review fixes: execFileSync, resolveLocalBin, findProjectConfig merged walk-up, tsc --incremental. 451 tests, 450 passing. 4 changelog entries added. Soul updated to 7 hooks. Task marked completed.",
+    "debt_before": 8,
+    "debt_after": 0,
+    "sessions_processed": 3,
+    "bookmarks_processed": 0,
+    "session_ids": [
+      "b7b93244-f127-441c-8f4a-ba5f26f76020",
+      "5b00e036-dea3-44af-8d6d-a86c73b08a11",
+      "0d8900db-7e12-4048-86ad-cbb4745f6eb2"
+    ]
+  },
+  {
+    "date": "2026-03-01",
+    "consolidated_at": "2026-03-01T19:17:10.512Z",
+    "summary": "Consolidated 3 sessions: UserPromptSubmit hook (5th hook, fires on every user message, persistent debt reminders at debt >= 4, read-only, 415 tests); debt threshold changes (debt >= 4 triggers, 3+ session rhythm); tasks list command and SKILL.md zero-tool-call fixes (407 tests).",
+    "debt_before": 8,
+    "debt_after": 0,
+    "sessions_processed": 3,
+    "bookmarks_processed": 0,
+    "session_ids": [
+      "0d8900db-7e12-4048-86ad-cbb4745f6eb2",
+      "02e71997-432e-451d-8ca3-e7c7e13b8a92",
+      "d64aff02-6e46-481e-836e-f722b435ffb2"
+    ]
+  },
+  {
+    "date": "2026-03-01",
+    "consolidated_at": "2026-03-01T15:36:13.735Z",
+    "summary": "Consolidated 3 sessions: context-aware-subagent-optimization task complete (PreToolUse hook, agentcontext-explore agent, Task Awareness in SubagentStart, 403 tests); tasks list command added (default excludes completed, --all, --status flags, 407 tests); SKILL.md fixed to answer 'which tasks are active?' from auto-loaded context with zero tool calls.",
+    "debt_before": 8,
+    "debt_after": 0,
+    "sessions_processed": 3,
+    "bookmarks_processed": 0,
+    "session_ids": [
+      "d64aff02-6e46-481e-836e-f722b435ffb2",
+      "7381aa37-eef0-439f-896d-863f76cabcad",
+      "eaaab0da-618a-466d-8dfe-4f31a75ba0f2"
+    ]
+  },
+  {
     "date": "2026-02-28",
     "consolidated_at": "2026-02-28T14:15:12.300Z",
     "summary": "Consolidated 1 session: SleepHistoryEntry extended with consolidated_at + session_ids; transcript distill auto-filters by consolidated_at (--full to override, --since for manual cutoff). Updated 6.system_flow.md SleepHistoryEntry schema and transcript distillation flow description. 394 tests passing.",
