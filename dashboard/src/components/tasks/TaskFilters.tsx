@@ -152,6 +152,7 @@ function MilestoneIcon() {
 const STATUS_OPTIONS = [
   { value: 'todo', label: 'To Do', color: 'var(--color-status-todo)' },
   { value: 'in_progress', label: 'In Progress', color: 'var(--color-status-in-progress)' },
+  { value: 'in_review', label: 'In Review', color: 'var(--color-status-in-review)' },
   { value: 'completed', label: 'Completed', color: 'var(--color-status-completed)' },
 ];
 

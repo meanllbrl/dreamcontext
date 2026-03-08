@@ -12,6 +12,7 @@ const translations: Record<string, Record<string, string>> = {
     'tasks.filter': 'Filter',
     'tasks.todo': 'To Do',
     'tasks.in_progress': 'In Progress',
+    'tasks.in_review': 'In Review',
     'tasks.completed': 'Completed',
     'tasks.name': 'Task Name',
     'tasks.description': 'Description',

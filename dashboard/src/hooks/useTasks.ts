@@ -8,7 +8,7 @@ export interface Task {
   description: string;
   priority: 'critical' | 'high' | 'medium' | 'low';
   urgency: 'critical' | 'high' | 'medium' | 'low';
-  status: 'todo' | 'in_progress' | 'completed';
+  status: 'todo' | 'in_progress' | 'in_review' | 'completed';
   created_at: string;
   updated_at: string;
   tags: string[];

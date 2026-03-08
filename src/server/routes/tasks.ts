@@ -53,7 +53,7 @@ function readTask(filePath: string): TaskData {
 
   // Normalize status: accept both hyphens and underscores (e.g. "in-progress" → "in_progress")
   const rawStatus = ((data.status as string) ?? 'todo').replace(/-/g, '_');
-  const validStatuses = ['todo', 'in_progress', 'completed'];
+  const validStatuses = ['todo', 'in_progress', 'in_review', 'completed'];
   const status = validStatuses.includes(rawStatus) ? rawStatus : 'todo';
 
   return {
@@ -285,7 +285,7 @@ export async function handleTasksUpdate(
 
   // Validate status
   if (updates.status) {
-    const validStatuses = ['todo', 'in_progress', 'completed'];
+    const validStatuses = ['todo', 'in_progress', 'in_review', 'completed'];
     if (!validStatuses.includes(updates.status as string)) {
       sendError(res, 400, 'invalid_status', `Status must be one of: ${validStatuses.join(', ')}`);
       return;

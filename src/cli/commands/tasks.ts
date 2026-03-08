@@ -113,7 +113,7 @@ export function registerTasksCommand(program: Command): void {
   tasks
     .command('list')
     .description('List tasks with optional status filter')
-    .option('-s, --status <status>', 'Filter by status (todo, in_progress, completed)')
+    .option('-s, --status <status>', 'Filter by status (todo, in_progress, in_review, completed)')
     .option('-a, --all', 'Show all tasks including completed')
     .action((opts: { status?: string; all?: boolean }) => {
       const dir = getStateDir();
@@ -124,7 +124,7 @@ export function registerTasksCommand(program: Command): void {
         return;
       }
 
-      const validStatuses = ['todo', 'in_progress', 'completed', 'new'];
+      const validStatuses = ['todo', 'in_progress', 'in_review', 'completed', 'new'];
       if (opts.status && !validStatuses.includes(opts.status)) {
         error(`Status must be one of: ${validStatuses.join(', ')}`);
         return;
@@ -158,7 +158,7 @@ export function registerTasksCommand(program: Command): void {
 
       console.log(header('Tasks'));
       for (const t of tasks) {
-        const statusColor = t.status === 'in_progress' ? chalk.yellow : t.status === 'completed' ? chalk.green : chalk.white;
+        const statusColor = t.status === 'in_progress' ? chalk.yellow : t.status === 'in_review' ? chalk.magenta : t.status === 'completed' ? chalk.green : chalk.white;
         const prio = t.priority !== '-' ? chalk.dim(` [${t.priority}]`) : '';
         console.log(`  ${statusColor(t.status.padEnd(12))} ${t.name}${prio}  ${chalk.dim(t.updated)}`);
       }
@@ -172,7 +172,7 @@ export function registerTasksCommand(program: Command): void {
     .option('-d, --description <desc>', 'Task description')
     .option('-p, --priority <priority>', 'Priority (critical, high, medium, low)')
     .option('-u, --urgency <level>', 'Urgency (critical, high, medium, low)')
-    .option('-s, --status <status>', 'Status (todo, in_progress, completed)')
+    .option('-s, --status <status>', 'Status (todo, in_progress, in_review, completed)')
     .option('-t, --tags <tags>', 'Comma-separated tags')
     .option('-w, --why <why>', 'Why is this task needed?')
     .option('-v, --version <version>', 'Version/milestone')
@@ -187,7 +187,7 @@ export function registerTasksCommand(program: Command): void {
       }
 
       const validPriorities = ['critical', 'high', 'medium', 'low'];
-      const validStatuses = ['todo', 'in_progress', 'completed'];
+      const validStatuses = ['todo', 'in_progress', 'in_review', 'completed'];
 
       const priority = opts.priority || 'medium';
       if (!validPriorities.includes(priority)) {

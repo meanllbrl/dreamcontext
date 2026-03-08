@@ -1,10 +1,20 @@
 {
-  "debt": 3,
+  "debt": 6,
   "last_sleep": "2026-03-07",
   "last_sleep_summary": "Consolidated 4 sessions: Dashboard Phase 4b/4c (Eisenhower Matrix, MultiSelectFilter type-ahead, SubGroupSection, urgency+version fields, group-by-version/urgency/tags), Versions-as-Releases unification (VERSIONS.json deleted, ReleaseEntry.status field, planning/released VersionManager), Features/Core/Knowledge File/Preview tabs, task slug regex fix, README+DEEP-DIVE 7-hook update. 6 changelog entries added. web-dashboard task logged (4 entries). Feature PRD acceptance criteria updated. Memory condensed to 176 lines.",
   "sleep_started_at": null,
-  "sessions_since_last_sleep": 0,
+  "sessions_since_last_sleep": 1,
   "sessions": [
+    {
+      "session_id": "bb61b6c0-a04d-4a84-803b-e09b39a2ee6a",
+      "transcript_path": "/Users/mehmetnuraydin/.claude/projects/-Users-mehmetnuraydin-projects-agentcontext/bb61b6c0-a04d-4a84-803b-e09b39a2ee6a.jsonl",
+      "stopped_at": "2026-03-07T23:42:51.358Z",
+      "last_assistant_message": "All 469 tests passing (468 existing + 1 new). Build succeeded.\n\nDone. Here's the summary of changes:\n\n**12 files changed across CLI, server, dashboard, docs, and tests:**\n\n- **CLI**: `format.ts` (magenta color), `tasks.ts` (validation arrays, help text, list colors)\n- **Server**: `tasks.ts` (both validation arrays for read and update endpoints)\n- **Dashboard**: `useTasks.ts` (type), `tokens.css` (purple color token), `KanbanBoard.tsx` (new column), `TaskFilters.tsx` (filter option), `TaskDetailPanel.tsx` (dropdown option), `I18nContext.tsx` (i18n string)\n- **Docs**: `5.data_structures.sql` (schema comment)\n- **Tests**: `cli-commands.test.ts` (new `creates a task with --status in_review` test)\n\nThe workflow is now: **todo → in_progress → in_review → completed**. In-review tasks are treated as active (shown in snapshot, shown in default `tasks list`, shown in Eisenhower Matrix, included in Kanban as a 4th column with purple color).",
+      "change_count": 18,
+      "tool_count": 101,
+      "score": 3,
+      "task_slugs": []
+    },
     {
       "session_id": "575e5230-9163-494e-acae-8ad0bd0e4a96",
       "transcript_path": "/Users/mehmetnuraydin/.claude/projects/-Users-mehmetnuraydin-projects-agentcontext/575e5230-9163-494e-acae-8ad0bd0e4a96.jsonl",

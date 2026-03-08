@@ -5,6 +5,7 @@ import chalk from 'chalk';
 const STATUS_COLORS: Record<string, (s: string) => string> = {
   active: (s) => chalk.green(s),
   in_progress: (s) => chalk.cyan(s),
+  in_review: (s) => chalk.magenta(s),
   todo: (s) => chalk.yellow(s),
   blocked: (s) => chalk.red(s),
   completed: (s) => chalk.dim(s),

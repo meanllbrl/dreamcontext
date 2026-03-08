@@ -87,6 +87,7 @@
   /* ─── Status Colors ─── */
   --color-status-todo: hsl(38 80% 50%);
   --color-status-in-progress: hsl(220 90% 56%);
+  --color-status-in-review: hsl(276 70% 55%);
   --color-status-completed: hsl(142 71% 40%);
 
   /* ─── Shadows (Premium Depth) ─── */

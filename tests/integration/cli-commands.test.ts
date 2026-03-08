@@ -193,6 +193,12 @@ parent_task: null
       expect(content).toContain('status: "completed"');
     });
 
+    it('creates a task with --status in_review', () => {
+      run('tasks create review-task -d "Needs review" -s in_review', tmpDir);
+      const content = readFileSync(join(tmpDir, '_agent_context', 'state', 'review-task.md'), 'utf-8');
+      expect(content).toContain('status: "in_review"');
+    });
+
     it('rejects invalid status', () => {
       const output = run('tasks create bad-status -s done', tmpDir);
       expect(output).toContain('Status must be one of');

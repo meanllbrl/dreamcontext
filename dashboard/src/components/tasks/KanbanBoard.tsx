@@ -18,6 +18,7 @@ const URGENCY_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2,
 const STATUS_COLUMNS = [
   { key: 'todo', labelKey: 'tasks.todo', colorVar: '--color-status-todo' },
   { key: 'in_progress', labelKey: 'tasks.in_progress', colorVar: '--color-status-in-progress' },
+  { key: 'in_review', labelKey: 'tasks.in_review', colorVar: '--color-status-in-review' },
   { key: 'completed', labelKey: 'tasks.completed', colorVar: '--color-status-completed' },
 ];
 

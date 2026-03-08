@@ -16,7 +16,7 @@
 -- name:        "My Task Name"    -- original name as entered
 -- description: "What this task does"
 -- priority:    "critical" | "high" | "medium" | "low"
--- status:      "todo" | "in_progress" | "blocked" | "completed" | "backlog"
+-- status:      "todo" | "in_progress" | "in_review" | "blocked" | "completed" | "backlog"
 -- created_at:  "2026-02-24"      -- YYYY-MM-DD
 -- updated_at:  "2026-02-24"      -- YYYY-MM-DD, updated on every write
 -- tags:        []                -- array of strings

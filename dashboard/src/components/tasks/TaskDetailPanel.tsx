@@ -122,6 +122,7 @@ export function TaskDetailPanel({ task, onClose }: TaskDetailPanelProps) {
               >
                 <option value="todo">{t('tasks.todo')}</option>
                 <option value="in_progress">{t('tasks.in_progress')}</option>
+                <option value="in_review">{t('tasks.in_review')}</option>
                 <option value="completed">{t('tasks.completed')}</option>
               </select>
             </PropertyRow>
