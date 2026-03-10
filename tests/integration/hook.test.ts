@@ -509,6 +509,28 @@ describe('hook session-start (integration)', () => {
     expect(output).toContain('# Agent Context');
   });
 
+  it('suppresses consolidation directive when sleep is in progress and debt >= 4', () => {
+    writeSleep(ctx, { debt: 10, sleep_started_at: '2026-03-10T12:00:00.000Z', sessions: [] });
+
+    const input = JSON.stringify({ session_id: 'sess-1', source: 'resume', transcript_path: '/tmp/t.jsonl' });
+    const output = runWithStdin('hook session-start', input, tmpDir);
+
+    expect(output).toContain('Consolidation already in progress');
+    expect(output).toContain('Do NOT dispatch another sleep agent');
+    expect(output).not.toContain('CONSOLIDATION REQUIRED');
+    expect(output).not.toContain('CONSOLIDATION RECOMMENDED');
+  });
+
+  it('no directive when sleep is in progress and debt < 4', () => {
+    writeSleep(ctx, { debt: 2, sleep_started_at: '2026-03-10T12:00:00.000Z', sessions: [] });
+
+    const input = JSON.stringify({ session_id: 'sess-1', source: 'resume', transcript_path: '/tmp/t.jsonl' });
+    const output = runWithStdin('hook session-start', input, tmpDir);
+
+    expect(output).not.toContain('Consolidation already in progress');
+    expect(output).not.toContain('CONSOLIDATION');
+  });
+
   it('shows rhythm advisory when 3+ sessions since last sleep', () => {
     writeSleep(ctx, { debt: 1, sessions_since_last_sleep: 4, sessions: [] });
 
@@ -1111,6 +1133,22 @@ describe('hook user-prompt-submit (integration)', () => {
     const output = runWithStdin('hook user-prompt-submit', input, emptyDir);
     expect(output.trim()).toBe('');
     rmSync(emptyDir, { recursive: true, force: true });
+  });
+
+  it('suppresses debt reminder when sleep is in progress and debt >= 4', () => {
+    writeSleep(ctx, { debt: 10, sleep_started_at: '2026-03-10T12:00:00.000Z', sessions: [], bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [] });
+    const input = JSON.stringify({ session_id: 'sess-1', prompt: 'hello' });
+    const output = runWithStdin('hook user-prompt-submit', input, tmpDir);
+    expect(output).toContain('Consolidation already in progress');
+    expect(output).toContain('Do NOT dispatch another sleep agent');
+    expect(output).not.toContain('CONSOLIDATION REQUIRED');
+  });
+
+  it('silent when sleep is in progress and debt < 4', () => {
+    writeSleep(ctx, { debt: 2, sleep_started_at: '2026-03-10T12:00:00.000Z', sessions: [], bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [] });
+    const input = JSON.stringify({ session_id: 'sess-1', prompt: 'hello' });
+    const output = runWithStdin('hook user-prompt-submit', input, tmpDir);
+    expect(output.trim()).toBe('');
   });
 });
 

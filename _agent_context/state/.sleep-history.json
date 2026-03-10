@@ -1,5 +1,20 @@
 [
   {
+    "date": "2026-03-10",
+    "consolidated_at": "2026-03-10T19:09:14.203Z",
+    "summary": "Consolidated 3 sessions: sleep dispatch dedup fix (sleep_started_at guards in 2 hooks, 473 tests), explore agent rewrite (105->78 lines, Track A/B/C routing, budget caps), in_review task status (4th Kanban column). SKILL.md rule #12 Reuse before create. 4 changelog entries. 2 new tasks created. Memory condensed to 150 lines.",
+    "debt_before": 13,
+    "debt_after": 2,
+    "sessions_processed": 4,
+    "bookmarks_processed": 0,
+    "session_ids": [
+      "ec3d845e-851f-4563-873f-f6629bea6c5e",
+      "a6970601-218b-42cf-9560-ac59aa701935",
+      "bb61b6c0-a04d-4a84-803b-e09b39a2ee6a",
+      "575e5230-9163-494e-acae-8ad0bd0e4a96"
+    ]
+  },
+  {
     "date": "2026-03-07",
     "consolidated_at": "2026-03-07T18:46:13.280Z",
     "summary": "Consolidated 4 sessions: Dashboard Phase 4b/4c (Eisenhower Matrix, MultiSelectFilter type-ahead, SubGroupSection, urgency+version fields, group-by-version/urgency/tags), Versions-as-Releases unification (VERSIONS.json deleted, ReleaseEntry.status field, planning/released VersionManager), Features/Core/Knowledge File/Preview tabs, task slug regex fix, README+DEEP-DIVE 7-hook update. 6 changelog entries added. web-dashboard task logged (4 entries). Feature PRD acceptance criteria updated. Memory condensed to 176 lines.",

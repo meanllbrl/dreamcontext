@@ -266,7 +266,18 @@ function runTscCheckWithConfig(filePath: string, tsconfigPath: string): string |
 // ─── Consolidation Directives ───────────────────────────────────────────────
 
 function getConsolidationDirective(state: SleepState): string | null {
-  const { debt, bookmarks, sessions_since_last_sleep } = state;
+  const { debt, bookmarks, sessions_since_last_sleep, sleep_started_at } = state;
+
+  // If consolidation is already in progress, suppress all directives to prevent duplicate sleeps
+  if (sleep_started_at) {
+    if (debt >= 4) {
+      return [
+        `> Consolidation already in progress (started: ${sleep_started_at}). Do NOT dispatch another sleep agent.`,
+        '',
+      ].join('\n');
+    }
+    return null;
+  }
 
   // Check for critical (★★★) bookmarks that need immediate consolidation
   const criticalBookmarks = bookmarks.filter(b => b.salience === 3);
@@ -535,7 +546,16 @@ export function registerHookCommand(program: Command): void {
       if (!root) process.exit(0);
 
       const state = readSleepState(root);
-      const { debt, bookmarks } = state;
+      const { debt, bookmarks, sleep_started_at } = state;
+
+      // If consolidation is already in progress, suppress debt reminders to prevent duplicate sleeps
+      if (sleep_started_at) {
+        if (debt >= 4) {
+          console.log(`Consolidation already in progress (started: ${sleep_started_at}). Do NOT dispatch another sleep agent.`);
+        }
+        return;
+      }
+
       const criticalBookmarks = bookmarks.filter(b => b.salience === 3);
 
       // Only output when debt is actionable or critical bookmarks exist

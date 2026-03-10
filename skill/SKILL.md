@@ -175,6 +175,7 @@ These files vary across projects. Do not assume a fixed list. Always discover dy
 9. **All work needs a task.** Before starting non-trivial work, check if a matching task exists in `_agent_context/state/`. If not, create one. After plans are approved (ExitPlanMode), offer to save as a task. The sleep agent flags untracked work.
 10. **Use agentcontext-explore, not Explore.** The default Explore agent is blocked via PreToolUse hook. Use `agentcontext-explore` for all codebase exploration. It checks context files first, saving thousands of tokens.
 11. **Mark checkboxes as you go.** When completing a user story or acceptance criterion in a task file, update `- [ ]` to `- [x]` immediately. Don't wait for sleep consolidation. This is the live progress signal.
+12. **Reuse before create.** Before building any UI component, utility, hook, or abstraction, search the codebase for existing implementations that serve the same purpose. Use `agentcontext-explore` to find reusable candidates. If a match exists, use it or extend it. Never duplicate functionality that already exists. This applies to modals, forms, filters, layouts, helpers, and any shared pattern.
 
 ---
 

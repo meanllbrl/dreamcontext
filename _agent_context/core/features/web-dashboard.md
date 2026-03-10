@@ -2,7 +2,7 @@
 id: feat_O7LODr7O
 status: active
 created: '2026-02-25'
-updated: '2026-02-27'
+updated: '2026-03-10'
 released_version: 0.1.0
 tags:
   - frontend
@@ -41,7 +41,7 @@ Users need a visual interface to manage agent context without using the terminal
 ## Acceptance Criteria
 
 ### Kanban Board
-- [x] Board shows three columns by default: To Do, In Progress, Completed
+- [x] Board shows four columns: To Do, In Progress, In Review (purple), Completed
 - [x] Tasks can be dragged between columns, status updates on drop
 - [x] Filter by status (todo/in_progress/completed) works
 - [x] Filter by priority (critical/high/medium/low) works
@@ -111,6 +111,7 @@ Users need a visual interface to manage agent context without using the terminal
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
 
+- **[2026-03-07]** in_review is treated as active (not completed): shown in snapshot, default task list, and Eisenhower Matrix alongside todo and in_progress. This is intentional — in_review is a review gate before completion, not a done state.
 - **[2026-03-07]** Versions unified with Releases: no separate VERSIONS.json. Planning-stage versions are ReleaseEntries with `status: 'planning'`. Backward compat: entries without status field treated as released. One schema, one file, UI handles the separation.
 - **[2026-03-07]** Eisenhower Matrix excludes completed tasks: it's a prioritization view for future work, not a history. Completed tasks remain visible in the Kanban "Completed" column.
 - **[2026-03-07]** MultiSelectFilter search threshold: type-ahead search input shown when >5 options (list too long to scan). Hidden when ≤5 options.
@@ -163,6 +164,12 @@ Users need a visual interface to manage agent context without using the terminal
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-03-07 - in_review Status + Explore Agent Improvements
+- Added in_review as 4th task status (workflow: todo->in_progress->in_review->completed)
+- Kanban 4th column with purple color; in-review tasks included in snapshot, default tasks list, Eisenhower Matrix
+- CLI, server validation, dashboard (Kanban column, TaskFilters, TaskDetailPanel, I18n), SQL schema updated
+- 469 tests passing
 
 ### 2026-03-07 - Dashboard Phase 4c + Versions-as-Releases Unification
 - Eisenhower Matrix view: 2×2 priority×urgency grid, excludes completed tasks, quadrant color tokens

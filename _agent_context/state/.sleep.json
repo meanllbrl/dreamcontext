@@ -1,38 +1,18 @@
 {
-  "debt": 9,
-  "last_sleep": "2026-03-07",
-  "last_sleep_summary": "Consolidated 4 sessions: Dashboard Phase 4b/4c (Eisenhower Matrix, MultiSelectFilter type-ahead, SubGroupSection, urgency+version fields, group-by-version/urgency/tags), Versions-as-Releases unification (VERSIONS.json deleted, ReleaseEntry.status field, planning/released VersionManager), Features/Core/Knowledge File/Preview tabs, task slug regex fix, README+DEEP-DIVE 7-hook update. 6 changelog entries added. web-dashboard task logged (4 entries). Feature PRD acceptance criteria updated. Memory condensed to 176 lines.",
+  "debt": 2,
+  "last_sleep": "2026-03-10",
+  "last_sleep_summary": "Consolidated 3 sessions: sleep dispatch dedup fix (sleep_started_at guards in 2 hooks, 473 tests), explore agent rewrite (105->78 lines, Track A/B/C routing, budget caps), in_review task status (4th Kanban column). SKILL.md rule #12 Reuse before create. 4 changelog entries. 2 new tasks created. Memory condensed to 150 lines.",
   "sleep_started_at": null,
-  "sessions_since_last_sleep": 2,
+  "sessions_since_last_sleep": 0,
   "sessions": [
     {
-      "session_id": "a6970601-218b-42cf-9560-ac59aa701935",
-      "transcript_path": "/Users/mehmetnuraydin/.claude/projects/-Users-mehmetnuraydin-projects-agentcontext/a6970601-218b-42cf-9560-ac59aa701935.jsonl",
-      "stopped_at": "2026-03-08T13:54:54.184Z",
-      "last_assistant_message": "Done. Here's what changed and why:\n\n**Before vs After:**\n\n| Aspect | Old Agent (105 lines) | New Agent (78 lines) |\n|--------|----------------------|---------------------|\n| **Philosophy** | \"Read context files first, then search if needed\" | \"Use briefing knowledge to search smarter\" |\n| **Context usage** | Mandatory Step 1: read context file before any search | Two-track routing: documented knowledge (read one file) vs find code (skip straight to Glob/Grep) |\n| **File mapping** | Hardcoded 8-row table mapping keywords to specific file paths | Dynamic: uses already-injected SubagentStart briefing |\n| **Search strategy** | Vague \"maximize parallel calls\" | Explicit cost hierarchy (Glob -> Grep -> Read), parallel-always rule, progressive refinement |\n| **Budget** | No limits | Hard caps per thoroughness: Quick 1-3, Medium 4-8, Thorough 9-20 tool calls |\n| **Sleep debt** | Reads .sleep.json, wastes a tool call | Removed (UserPromptSubmit hook already handles this) |\n| **Hypothesis-driven** | No | Yes: form expectations before searching based on briefing knowledge |\n| **Bash restrictions** | 2-line allow/block lists | Single concise line |\n\n**Key research findings applied:**\n- AGENTS.md (arXiv 2602.11988): context files can hurt (-3%) if they increase exploration. Our new agent uses context to NARROW search, not as a mandatory extra read.\n- SWE-Search (ICLR 2025): breadth beats depth. Budget caps prevent deep spirals.\n- Claude Code's built-in agent: lean prompt = faster Haiku processing. We cut from 105 to 78 lines.\n- Token efficiency research: Glob -> Grep -> Read hierarchy reduces tokens by ~65% vs reading files blind.\n\n---\n\nSleep debt is 6. Want me to consolidate?",
+      "session_id": "cd9aa841-59da-4a78-84d5-46182d1df46d",
+      "transcript_path": "/Users/mehmetnuraydin/.claude/projects/-Users-mehmetnuraydin-projects-agentcontext/cd9aa841-59da-4a78-84d5-46182d1df46d.jsonl",
+      "stopped_at": "2026-03-10T19:09:36.092Z",
+      "last_assistant_message": "Consolidation done. Debt reduced from 13 to 2. Memory trimmed from 191 to 150 lines, 4 changelog entries added, 2 new completed tasks created (`explore-agent-rewrite`, `sleep-dispatch-dedup`), web-dashboard task updated.",
       "change_count": 3,
-      "tool_count": 70,
-      "score": 3,
-      "task_slugs": []
-    },
-    {
-      "session_id": "bb61b6c0-a04d-4a84-803b-e09b39a2ee6a",
-      "transcript_path": "/Users/mehmetnuraydin/.claude/projects/-Users-mehmetnuraydin-projects-agentcontext/bb61b6c0-a04d-4a84-803b-e09b39a2ee6a.jsonl",
-      "stopped_at": "2026-03-07T23:42:51.358Z",
-      "last_assistant_message": "All 469 tests passing (468 existing + 1 new). Build succeeded.\n\nDone. Here's the summary of changes:\n\n**12 files changed across CLI, server, dashboard, docs, and tests:**\n\n- **CLI**: `format.ts` (magenta color), `tasks.ts` (validation arrays, help text, list colors)\n- **Server**: `tasks.ts` (both validation arrays for read and update endpoints)\n- **Dashboard**: `useTasks.ts` (type), `tokens.css` (purple color token), `KanbanBoard.tsx` (new column), `TaskFilters.tsx` (filter option), `TaskDetailPanel.tsx` (dropdown option), `I18nContext.tsx` (i18n string)\n- **Docs**: `5.data_structures.sql` (schema comment)\n- **Tests**: `cli-commands.test.ts` (new `creates a task with --status in_review` test)\n\nThe workflow is now: **todo → in_progress → in_review → completed**. In-review tasks are treated as active (shown in snapshot, shown in default `tasks list`, shown in Eisenhower Matrix, included in Kanban as a 4th column with purple color).",
-      "change_count": 18,
-      "tool_count": 101,
-      "score": 3,
-      "task_slugs": []
-    },
-    {
-      "session_id": "575e5230-9163-494e-acae-8ad0bd0e4a96",
-      "transcript_path": "/Users/mehmetnuraydin/.claude/projects/-Users-mehmetnuraydin-projects-agentcontext/575e5230-9163-494e-acae-8ad0bd0e4a96.jsonl",
-      "stopped_at": "2026-03-07T18:46:49.664Z",
-      "last_assistant_message": "Sleep consolidation completed. Debt reduced from 15 to 3. Memory file trimmed from 212 to 176 lines, 6 changelog entries added, web-dashboard feature PRD and task updated.",
-      "change_count": 43,
-      "tool_count": 71,
-      "score": 3,
+      "tool_count": 17,
+      "score": 2,
       "task_slugs": []
     }
   ],

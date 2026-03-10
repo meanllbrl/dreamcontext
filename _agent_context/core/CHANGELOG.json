@@ -1,5 +1,33 @@
 [
   {
+    "date": "2026-03-10",
+    "type": "fix",
+    "scope": "src/cli/commands/hook.ts",
+    "description": "Prevent duplicate sleep agent dispatch when consolidation already in progress. Added sleep_started_at guard to getConsolidationDirective() and user-prompt-submit hook. When sleep is active: returns 'Do NOT dispatch another sleep agent' if debt>=4, silent if debt<4. 4 new integration tests, 473 total passing.",
+    "breaking": false
+  },
+  {
+    "date": "2026-03-08",
+    "type": "refactor",
+    "scope": "agents/agentcontext-explore.md",
+    "description": "Rewrite agentcontext-explore agent (105->78 lines). New philosophy: briefing-first with hypothesis-driven search. Budget caps per thoroughness level (Quick 1-3, Medium 4-8, Thorough 9-20 tool calls). Track A (documented knowledge, read one file) / Track B (find code, Glob->Grep->Read) / Track C (reusable component check) routing. Proactive Reusable output section flags existing components before the caller builds from scratch.",
+    "breaking": false
+  },
+  {
+    "date": "2026-03-08",
+    "type": "feat",
+    "scope": "skill/SKILL.md",
+    "description": "Add rule #12 'Reuse before create': before building any UI component, utility, hook, or abstraction, search for existing implementations via agentcontext-explore. Prevents duplicating existing components.",
+    "breaking": false
+  },
+  {
+    "date": "2026-03-07",
+    "type": "feat",
+    "scope": "src/cli/commands/tasks.ts, src/server/routes/tasks.ts, dashboard, skill/SKILL.md",
+    "description": "Add in_review status: 4th Kanban column (purple) with workflow todo->in_progress->in_review->completed. In-review tasks treated as active (shown in snapshot, default tasks list, Eisenhower Matrix). 12 files changed, 469 tests passing.",
+    "breaking": false
+  },
+  {
     "date": "2026-03-07",
     "type": "feat",
     "scope": "dashboard, src/server/routes/core.ts, src/cli/commands/snapshot.ts, agents/agentcontext-rem-sleep.md, skill/SKILL.md",

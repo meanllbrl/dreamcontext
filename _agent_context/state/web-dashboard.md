@@ -14,7 +14,7 @@ description: >-
 priority: critical
 status: in_progress
 created_at: '2026-02-25'
-updated_at: '2026-03-07'
+updated_at: '2026-03-10'
 tags:
   - frontend
   - architecture
@@ -29,6 +29,9 @@ parent_task: null
 
 
 
+
+### 2026-03-10 - Session Update
+- Added in_review status: 4th Kanban column (purple), todo→in_progress→in_review→completed workflow. In-review tasks shown in snapshot, default task list, Eisenhower Matrix. CLI, server, dashboard, i18n, tests all updated (12 files, 469 tests passing).
 ### 2026-03-07 - Session Update
 - Bug fix: task slug extraction regex in transcript/hook code tightened. Was matching task names in prose text (false positives). Now only matches within JSON command/file_path values using context-specific patterns. 468 tests passing.
 ### 2026-03-07 - Session Update

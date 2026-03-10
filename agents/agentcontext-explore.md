@@ -33,6 +33,9 @@ Examples: "what's the data schema?" -> read `5.data_structures.sql`. "How does a
 Use the briefing to form a hypothesis about WHERE in the codebase to look, then search with targeted Glob/Grep. Do NOT read context files first -- go straight to code.
 Examples: "find the function that validates tasks" -> Grep for the pattern. "where are API routes defined?" -> Glob for route patterns using tech stack knowledge from the briefing.
 
+**TRACK C -- Reusable Component Check** (triggered when the caller asks "do we have X" or "find existing Y for Z")
+Search for existing components, hooks, utilities, or patterns that match the described purpose. Cast a wide net: search by function name, file name patterns, and semantic keywords (e.g., for a "payment modal", search modal files, payment-related components, and form patterns). Return ALL candidates with file paths, a one-line description of what each does, and whether it's a direct match or could be extended. This track is critical for preventing duplication.
+
 Most queries are Track B. Only use Track A when the query is explicitly about documented architecture, design, or project conventions.
 
 ### 2. Hypothesize Before Searching
@@ -73,7 +76,8 @@ Return results as direct, actionable text:
 
 1. **Answer** -- the information requested, concise but complete
 2. **Source** -- absolute file path(s) where you found it
-3. **Related** -- other files worth reading (absolute paths), only if genuinely useful
+3. **Reusable** -- if during your search you encounter components, hooks, utilities, or patterns that are relevant to the caller's task and could be reused instead of building from scratch, flag them here with file path and a one-line description. This is especially important for UI components (modals, forms, filters, layouts), shared hooks, and utility functions. Proactively flag these even if the caller didn't ask.
+4. **Related** -- other files worth reading (absolute paths), only if genuinely useful
 
 No preamble. No emojis. Absolute paths only.
 
