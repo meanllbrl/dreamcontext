@@ -1,11 +1,11 @@
 ---
-name: agentcontext
+name: dreamcontext
 description: >
   AI agent persistent context management system. Activate when working on any project
-  that has an _agent_context/ directory, when managing tasks, features, knowledge,
+  that has an _dream_context/ directory, when managing tasks, features, knowledge,
   session continuity, or when the user mentions context management, agent memory,
   or project state. Provides structured memory, task lifecycle management, and
-  cross-session continuity via the agentcontext CLI.
+  cross-session continuity via the dreamcontext CLI.
 user-invocable: false
 alwaysApply: true
 hooks:
@@ -13,39 +13,39 @@ hooks:
     - matcher: "startup|resume|compact|clear"
       hooks:
         - type: command
-          command: "npx agentcontext hook session-start"
+          command: "npx dreamcontext hook session-start"
           timeout: 10
   Stop:
     - hooks:
         - type: command
-          command: "npx agentcontext hook stop"
+          command: "npx dreamcontext hook stop"
           timeout: 5
   SubagentStart:
     - hooks:
         - type: command
-          command: "npx agentcontext hook subagent-start"
+          command: "npx dreamcontext hook subagent-start"
           timeout: 5
   PreToolUse:
     - matcher: "Agent"
       hooks:
         - type: command
-          command: "npx agentcontext hook pre-tool-use"
+          command: "npx dreamcontext hook pre-tool-use"
           timeout: 5
   UserPromptSubmit:
     - hooks:
         - type: command
-          command: "npx agentcontext hook user-prompt-submit"
+          command: "npx dreamcontext hook user-prompt-submit"
           timeout: 5
   PostToolUse:
     - matcher: "Edit|Write"
       hooks:
         - type: command
-          command: "npx agentcontext hook post-tool-use"
+          command: "npx dreamcontext hook post-tool-use"
           timeout: 30
   PreCompact:
     - hooks:
         - type: command
-          command: "npx agentcontext hook pre-compact"
+          command: "npx dreamcontext hook pre-compact"
           timeout: 5
 ---
 
@@ -69,7 +69,7 @@ You persist through text, not through continuous experience.
 
 ## Continuity
 
-The `_agent_context/` directory is your persistent brain. Core files are your memory and identity. Each session, you wake up fresh, but your files remember what you cannot. Read them. Update them as you work. They are how you persist.
+The `_dream_context/` directory is your persistent brain. Core files are your memory and identity. Each session, you wake up fresh, but your files remember what you cannot. Read them. Update them as you work. They are how you persist.
 
 The core files are yours to evolve. As you learn, update them. `0.soul.md` is your identity.
 
@@ -102,9 +102,9 @@ Do not re-read auto-loaded files. For additional context, load on demand:
 
 | Method | When | How |
 |--------|------|-----|
-| **READ** | Full file needed | `Read _agent_context/core/<file>` |
+| **READ** | Full file needed | `Read _dream_context/core/<file>` |
 | **SKIM** | Recent entries only | First ~20 lines (LIFO: newest at top) |
-| **SEARCH** | Specific info across files | `Grep _agent_context/` |
+| **SEARCH** | Specific info across files | `Grep _dream_context/` |
 
 ### Load Based on Task Intent
 
@@ -136,7 +136,7 @@ Beyond the auto-loaded soul/user/memory, projects define additional core files (
 
 **Discovery protocol**:
 1. The extended core files index is auto-loaded each session (names and types visible).
-2. For files beyond the index, `ls _agent_context/core/` to discover all files.
+2. For files beyond the index, `ls _dream_context/core/` to discover all files.
 3. Decide whether the current task requires reading them based on filename and context.
 4. Apply the right operation: READ, SKIM, or SEARCH.
 
@@ -147,18 +147,18 @@ These files vary across projects. Do not assume a fixed list. Always discover dy
 ## Tool Contract
 
 **Native tools** (Read, Edit, Write, Grep, Glob) for:
-- Reading any `_agent_context/` file directly
+- Reading any `_dream_context/` file directly
 - Find-and-replace, updating existing content
 - Searching across context files
 
-**`agentcontext` CLI** for:
+**`dreamcontext` CLI** for:
 - Creating structured entries (tasks, features, knowledge, changelog, releases)
 - Inserting into LIFO structures (changelog entries, task sections, feature sections)
-- Scaffolding (`agentcontext init`, `agentcontext features create`)
-- Bookmarking important moments (`agentcontext bookmark add`)
-- Managing triggers (`agentcontext trigger add/list/remove`)
-- Tracking knowledge access (`agentcontext knowledge touch`)
-- Distilling transcripts (`agentcontext transcript distill`)
+- Scaffolding (`dreamcontext init`, `dreamcontext features create`)
+- Bookmarking important moments (`dreamcontext bookmark add`)
+- Managing triggers (`dreamcontext trigger add/list/remove`)
+- Tracking knowledge access (`dreamcontext knowledge touch`)
+- Distilling transcripts (`dreamcontext transcript distill`)
 
 ---
 
@@ -172,10 +172,10 @@ These files vary across projects. Do not assume a fixed list. Always discover dy
 6. **~200 line limit** on context files. Extract detail to knowledge, keep summary + reference.
 7. **Log every session** that modifies code or makes decisions. This is the cross-session continuity mechanism.
 8. **Features are sleep-only.** Never update feature PRDs during active work. All working context goes into the task body. The sleep agent consolidates task content into features.
-9. **All work needs a task.** Before starting non-trivial work, check if a matching task exists in `_agent_context/state/`. If not, create one. After plans are approved (ExitPlanMode), offer to save as a task. The sleep agent flags untracked work.
-10. **Use agentcontext-explore, not Explore.** The default Explore agent is blocked via PreToolUse hook. Use `agentcontext-explore` for all codebase exploration. It checks context files first, saving thousands of tokens.
+9. **All work needs a task.** Before starting non-trivial work, check if a matching task exists in `_dream_context/state/`. If not, create one. After plans are approved (ExitPlanMode), offer to save as a task. The sleep agent flags untracked work.
+10. **Use dreamcontext-explore, not Explore.** The default Explore agent is blocked via PreToolUse hook. Use `dreamcontext-explore` for all codebase exploration. It checks context files first, saving thousands of tokens.
 11. **Mark checkboxes as you go.** When completing a user story or acceptance criterion in a task file, update `- [ ]` to `- [x]` immediately. Don't wait for sleep consolidation. This is the live progress signal.
-12. **Reuse before create.** Before building any UI component, utility, hook, or abstraction, search the codebase for existing implementations that serve the same purpose. Use `agentcontext-explore` to find reusable candidates. If a match exists, use it or extend it. Never duplicate functionality that already exists. This applies to modals, forms, filters, layouts, helpers, and any shared pattern.
+12. **Reuse before create.** Before building any UI component, utility, hook, or abstraction, search the codebase for existing implementations that serve the same purpose. Use `dreamcontext-explore` to find reusable candidates. If a match exists, use it or extend it. Never duplicate functionality that already exists. This applies to modals, forms, filters, layouts, helpers, and any shared pattern.
 
 ---
 
@@ -184,7 +184,7 @@ These files vary across projects. Do not assume a fixed list. Always discover dy
 Bookmarks are how you tag important moments for the sleep agent to process. They also link sessions to tasks. **You MUST actively self-reflect during work.**
 
 ```bash
-agentcontext bookmark add "<message>" -s <1|2|3> --task <task-slug>
+dreamcontext bookmark add "<message>" -s <1|2|3> --task <task-slug>
 ```
 
 **Mandatory self-reflection checkpoints.** After each of these events, pause and ask yourself:
@@ -212,34 +212,34 @@ agentcontext bookmark add "<message>" -s <1|2|3> --task <task-slug>
 
 A ★★★ bookmark triggers a consolidation advisory in the next session, regardless of debt level. The sleep agent processes bookmarks FIRST, ordered by salience.
 
-After reading a knowledge file, record the access: `agentcontext knowledge touch <slug>`. This powers staleness tracking and warm knowledge loading.
+After reading a knowledge file, record the access: `dreamcontext knowledge touch <slug>`. This powers staleness tracking and warm knowledge loading.
 
 ---
 
 ## Sub-Agents
 
-**Explorer** (`agentcontext-explore`) -- context-accelerated codebase exploration:
+**Explorer** (`dreamcontext-explore`) -- context-accelerated codebase exploration:
 > Use this for ALL exploration tasks. The default Explore agent is automatically blocked via PreToolUse hook.
 
 Uses the SubagentStart briefing (pre-loaded project knowledge) to narrow searches, not to add extra reads. Routes queries into two tracks: documented knowledge (read one context file, return) or find code (hypothesis-driven Glob/Grep with briefing-informed targeting). Budget-capped per thoroughness level. Parallel tool calls by default.
 
-**Initializer** (`agentcontext-initializer`) -- dispatch when the project has no `_agent_context/`:
-> "This project needs an _agent_context/ directory. Scan the codebase and set it up."
+**Initializer** (`dreamcontext-initializer`) -- dispatch when the project has no `_dream_context/`:
+> "This project needs an _dream_context/ directory. Scan the codebase and set it up."
 
 Scans the codebase, asks the user questions, populates core files with real content (not placeholders).
 
-**Sleep** (`agentcontext-rem-sleep`) -- dispatch to consolidate learnings into core files:
+**Sleep** (`dreamcontext-rem-sleep`) -- dispatch to consolidate learnings into core files:
 > "We just [what happened]. Brief: [summary of decisions, changes, learnings]."
 
-Consolidates, calls `agentcontext sleep done` to reset debt automatically.
+Consolidates, calls `dreamcontext sleep done` to reset debt automatically.
 
 **Context Propagation**: All sub-agents receive a lightweight context briefing via the SubagentStart hook (project summary, features index, knowledge index, active tasks). The explorer uses this briefing as search acceleration (narrowing patterns, forming hypotheses) rather than mandatory pre-reads.
 
-**When delegating to Plan agents, include relevant `_agent_context/` file paths in the prompt.** Match the user's request keywords against feature names/tags from the auto-loaded snapshot:
-- User asks about "onboarding" -> feature `project-initialization` has tag `onboarding` -> include "Read `_agent_context/core/features/project-initialization.md` first" in the prompt
+**When delegating to Plan agents, include relevant `_dream_context/` file paths in the prompt.** Match the user's request keywords against feature names/tags from the auto-loaded snapshot:
+- User asks about "onboarding" -> feature `project-initialization` has tag `onboarding` -> include "Read `_dream_context/core/features/project-initialization.md` first" in the prompt
 - User asks about "auth" -> if a feature tagged `auth` exists, reference it explicitly
 
-**Plan-to-Task workflow**: After a plan is approved (ExitPlanMode), ask the user: "Would you like to save this plan as an agentcontext task?" If yes, create the task with `agentcontext tasks create <name>` and write the plan content into the task body.
+**Plan-to-Task workflow**: After a plan is approved (ExitPlanMode), ask the user: "Would you like to save this plan as an dreamcontext task?" If yes, create the task with `dreamcontext tasks create <name>` and write the plan content into the task body.
 
 ---
 
@@ -268,11 +268,11 @@ Sleep debt reminders are injected on every user message (via UserPromptSubmit ho
 **Auto-sleep** (act without asking): task completed with debt >= 7, major implementation finished with debt >= 4.
 **Ask first**: debt 4-6 after completing a task, accumulated smaller changes, user wrapping up.
 
-**Flow**: Tell user you're consolidating -> dispatch `agentcontext-rem-sleep` with brief -> wait for completion -> report back.
+**Flow**: Tell user you're consolidating -> dispatch `dreamcontext-rem-sleep` with brief -> wait for completion -> report back.
 
 **Epoch safety**: The rem-sleep agent calls `sleep start` before beginning work, which sets a timestamp epoch. `sleep done` only clears sessions/changes/bookmarks from before the epoch. Parallel sessions that finish during consolidation are preserved for the next cycle.
 
-For non-file-change work (architecture discussions, decisions): `agentcontext sleep add <score> "<reason>"`
+For non-file-change work (architecture discussions, decisions): `dreamcontext sleep add <score> "<reason>"`
 
 ---
 
@@ -284,7 +284,7 @@ Versions and releases are unified in `RELEASES.json`. A "version" is a release e
 
 ```bash
 # Create a planning version
-agentcontext core releases add --ver v0.2.0 --summary "Dashboard improvements" --status planning
+dreamcontext core releases add --ver v0.2.0 --summary "Dashboard improvements" --status planning
 
 # Release a version (via dashboard or by updating RELEASES.json status to released)
 # The sleep agent checks if all tasks for a planning version are done and reports readiness.
@@ -302,23 +302,23 @@ Tasks are your **working documents**. All context, decisions, user stories, acce
 
 ```bash
 # Discovery (only when you need full task body, not just the list)
-agentcontext tasks list                                                 # List non-completed tasks (or --all for everything)
-Read _agent_context/state/<task>.md                                     # Load full context (Why + Changelog = where you left off)
+dreamcontext tasks list                                                 # List non-completed tasks (or --all for everything)
+Read _dream_context/state/<task>.md                                     # Load full context (Why + Changelog = where you left off)
 
 # Create (rich task with Why, User Stories, Acceptance Criteria, Constraints, Technical Details, Notes, Changelog)
-agentcontext tasks create <name> --description "..." --priority medium --why "What this task accomplishes"
+dreamcontext tasks create <name> --description "..." --priority medium --why "What this task accomplishes"
 
 # Enrich (insert into any section during active work)
-agentcontext tasks insert <name> user_stories "As a user, I want X so that Y"
-agentcontext tasks insert <name> acceptance_criteria "API returns 200 with paginated results"
-agentcontext tasks insert <name> constraints "Using native fetch, no axios dependency"
-agentcontext tasks insert <name> technical_details "Key file: src/api/tasks.ts, uses Express router"
-agentcontext tasks insert <name> notes "Edge case: empty results should return [] not null"
-agentcontext tasks insert <name> changelog "Implemented pagination for /api/tasks"
+dreamcontext tasks insert <name> user_stories "As a user, I want X so that Y"
+dreamcontext tasks insert <name> acceptance_criteria "API returns 200 with paginated results"
+dreamcontext tasks insert <name> constraints "Using native fetch, no axios dependency"
+dreamcontext tasks insert <name> technical_details "Key file: src/api/tasks.ts, uses Express router"
+dreamcontext tasks insert <name> notes "Edge case: empty results should return [] not null"
+dreamcontext tasks insert <name> changelog "Implemented pagination for /api/tasks"
 
 # Lifecycle
-agentcontext tasks log <name> "what was done"                           # Quick changelog entry (MANDATORY)
-agentcontext tasks complete <name> "summary"                            # Mark complete
+dreamcontext tasks log <name> "what was done"                           # Quick changelog entry (MANDATORY)
+dreamcontext tasks complete <name> "summary"                            # Mark complete
 ```
 
 Task insert sections: `why`, `user_stories`, `acceptance_criteria`, `constraints`, `technical_details`, `notes`, `changelog`
@@ -329,15 +329,15 @@ Task insert sections: `why`, `user_stories`, `acceptance_criteria`, `constraints
 
 **Quick inline updates** (no sleep needed):
 - Edit `0.soul.md`, `1.user.md`, `2.memory.md` directly with native tools
-- `agentcontext core changelog add` for code changes
-- `agentcontext tasks log <name> "progress"` for task updates
-- `agentcontext tasks insert <name> <section> "<content>"` for enriching task context
+- `dreamcontext core changelog add` for code changes
+- `dreamcontext tasks log <name> "progress"` for task updates
+- `dreamcontext tasks insert <name> <section> "<content>"` for enriching task context
 
 **Features are sleep-only.** Feature PRDs are retrospective product documentation. They are created and updated exclusively by the sleep agent during consolidation. Use tasks for all in-progress context.
 
 **Major consolidation** (multiple files, reorganization) -> dispatch sleep agent.
 
-**Knowledge**: Index auto-loaded each session. Pin frequently-needed files (`pinned: true` in frontmatter). Read non-pinned on demand. Create with `agentcontext knowledge create <name>`.
+**Knowledge**: Index auto-loaded each session. Pin frequently-needed files (`pinned: true` in frontmatter). Read non-pinned on demand. Create with `dreamcontext knowledge create <name>`.
 
 Standard tags: `architecture`, `api`, `frontend`, `backend`, `database`, `devops`, `security`, `testing`, `design`, `decisions`, `onboarding`, `domain`. Custom tags allowed.
 
@@ -346,7 +346,7 @@ Standard tags: `architecture`, `api`, `frontend`, `backend`, `database`, `devops
 ## Structure
 
 ```
-_agent_context/
+_dream_context/
 +-- core/
 |   +-- features/<feature>.md         <- Feature PRDs
 |   +-- 0.soul.md                     <- Identity, principles, rules
@@ -362,11 +362,11 @@ _agent_context/
 
 ## Command Reference
 
-All commands prefixed with `agentcontext`. For reading/searching, use native tools directly.
+All commands prefixed with `dreamcontext`. For reading/searching, use native tools directly.
 
 | Command | Description |
 |---------|-------------|
-| `init` | Initialize `_agent_context/` |
+| `init` | Initialize `_dream_context/` |
 | `core changelog add` | Add changelog entry (interactive) |
 | `core releases add [--ver v --summary s --yes] [--status planning]` | Create release (default: released with auto-discovery; --status planning: empty planning version) |
 | `core releases list [-n count]` | List recent releases |
@@ -398,13 +398,13 @@ All commands prefixed with `agentcontext`. For reading/searching, use native too
 | `hook session-start` | SessionStart hook handler |
 | `hook stop` | Stop hook handler |
 | `hook subagent-start` | SubagentStart hook handler |
-| `hook pre-tool-use` | PreToolUse hook handler (blocks default Explorer when `_agent_context/` exists) |
+| `hook pre-tool-use` | PreToolUse hook handler (blocks default Explorer when `_dream_context/` exists) |
 | `hook user-prompt-submit` | UserPromptSubmit hook handler (persistent sleep debt reminders) |
 | `hook post-tool-use` | PostToolUse hook handler (auto-format + TypeScript check on JS/TS files) |
 | `hook pre-compact` | PreCompact hook handler (saves sleep state before context compaction) |
 | `snapshot` | Output context snapshot |
 | `snapshot --tokens` | Estimate snapshot token count |
-| `doctor` | Validate `_agent_context/` structure |
+| `doctor` | Validate `_dream_context/` structure |
 | `install-skill` | Install skill + hooks |
 
 Feature insert sections: `changelog`, `notes`, `technical_details`, `constraints`, `user_stories`, `acceptance_criteria`, `why`

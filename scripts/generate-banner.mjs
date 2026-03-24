@@ -10,10 +10,10 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const INPUT = join(__dirname, '..', 'public', 'image', 'agentcontext.png');
+const INPUT = join(__dirname, '..', 'public', 'image', 'dreamcontext.png');
 
-const TARGET_WIDTH = 48; // terminal columns
-const QUANT_STEP = 24;   // color quantization step (lower = more colors, higher = fewer)
+const TARGET_WIDTH = 70; // terminal columns
+const QUANT_STEP = 40;   // color quantization step (lower = more colors, higher = fewer)
 
 async function main() {
   const img = sharp(INPUT);

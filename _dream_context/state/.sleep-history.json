@@ -1,0 +1,124 @@
+[
+  {
+    "date": "2026-03-24",
+    "consolidated_at": "2026-03-24T12:17:49.431Z",
+    "summary": "Consolidated 2 sessions: (1) optional-skill-packs Phase 1+Level2 -- 42 files, 5 packs, 6 agents, catalog.json, build pipeline; (2) full rebrand agentcontext->dreamcontext (package, binary, GitHub, _dream_context/, agent files). 2 changelog entries added. Feature PRD created: optional-skill-packs. Task logged. 4 skill-packs technical decisions added to memory. Stale operational note removed from memory.",
+    "debt_before": 8,
+    "debt_after": 0,
+    "sessions_processed": 3,
+    "bookmarks_processed": 0,
+    "session_ids": [
+      "c64f7eb0-f8c9-43b0-90d1-7fee4538d4da",
+      "7913ae9d-6cea-4f0b-b9a1-77de4d1f8215",
+      "cd9aa841-59da-4a78-84d5-46182d1df46d"
+    ]
+  },
+  {
+    "date": "2026-03-10",
+    "consolidated_at": "2026-03-10T19:09:14.203Z",
+    "summary": "Consolidated 3 sessions: sleep dispatch dedup fix (sleep_started_at guards in 2 hooks, 473 tests), explore agent rewrite (105->78 lines, Track A/B/C routing, budget caps), in_review task status (4th Kanban column). SKILL.md rule #12 Reuse before create. 4 changelog entries. 2 new tasks created. Memory condensed to 150 lines.",
+    "debt_before": 13,
+    "debt_after": 2,
+    "sessions_processed": 4,
+    "bookmarks_processed": 0,
+    "session_ids": [
+      "ec3d845e-851f-4563-873f-f6629bea6c5e",
+      "a6970601-218b-42cf-9560-ac59aa701935",
+      "bb61b6c0-a04d-4a84-803b-e09b39a2ee6a",
+      "575e5230-9163-494e-acae-8ad0bd0e4a96"
+    ]
+  },
+  {
+    "date": "2026-03-07",
+    "consolidated_at": "2026-03-07T18:46:13.280Z",
+    "summary": "Consolidated 4 sessions: Dashboard Phase 4b/4c (Eisenhower Matrix, MultiSelectFilter type-ahead, SubGroupSection, urgency+version fields, group-by-version/urgency/tags), Versions-as-Releases unification (VERSIONS.json deleted, ReleaseEntry.status field, planning/released VersionManager), Features/Core/Knowledge File/Preview tabs, task slug regex fix, README+DEEP-DIVE 7-hook update. 6 changelog entries added. web-dashboard task logged (4 entries). Feature PRD acceptance criteria updated. Memory condensed to 176 lines.",
+    "debt_before": 15,
+    "debt_after": 3,
+    "sessions_processed": 4,
+    "bookmarks_processed": 0,
+    "session_ids": [
+      "e6aed1f7-e54e-4ec2-a12f-a4eaeb239f20",
+      "dca847b8-da9e-471c-aca1-20b926edb3a6",
+      "17c7ab93-6622-4164-97e1-a6e6331db6c0",
+      "b7b93244-f127-441c-8f4a-ba5f26f76020"
+    ]
+  },
+  {
+    "date": "2026-03-02",
+    "consolidated_at": "2026-03-02T13:40:32.690Z",
+    "summary": "Consolidated 3 sessions: code-quality-hooks task completed (PostToolUse auto-format+tsc, PreCompact hook+compaction_log, rem-sleep Step 1c pattern extraction, data-driven HOOK_SPECS refactor). Code review fixes: execFileSync, resolveLocalBin, findProjectConfig merged walk-up, tsc --incremental. 451 tests, 450 passing. 4 changelog entries added. Soul updated to 7 hooks. Task marked completed.",
+    "debt_before": 8,
+    "debt_after": 0,
+    "sessions_processed": 3,
+    "bookmarks_processed": 0,
+    "session_ids": [
+      "b7b93244-f127-441c-8f4a-ba5f26f76020",
+      "5b00e036-dea3-44af-8d6d-a86c73b08a11",
+      "0d8900db-7e12-4048-86ad-cbb4745f6eb2"
+    ]
+  },
+  {
+    "date": "2026-03-01",
+    "consolidated_at": "2026-03-01T19:17:10.512Z",
+    "summary": "Consolidated 3 sessions: UserPromptSubmit hook (5th hook, fires on every user message, persistent debt reminders at debt >= 4, read-only, 415 tests); debt threshold changes (debt >= 4 triggers, 3+ session rhythm); tasks list command and SKILL.md zero-tool-call fixes (407 tests).",
+    "debt_before": 8,
+    "debt_after": 0,
+    "sessions_processed": 3,
+    "bookmarks_processed": 0,
+    "session_ids": [
+      "0d8900db-7e12-4048-86ad-cbb4745f6eb2",
+      "02e71997-432e-451d-8ca3-e7c7e13b8a92",
+      "d64aff02-6e46-481e-836e-f722b435ffb2"
+    ]
+  },
+  {
+    "date": "2026-03-01",
+    "consolidated_at": "2026-03-01T15:36:13.735Z",
+    "summary": "Consolidated 3 sessions: context-aware-subagent-optimization task complete (PreToolUse hook, dreamcontext-explore agent, Task Awareness in SubagentStart, 403 tests); tasks list command added (default excludes completed, --all, --status flags, 407 tests); SKILL.md fixed to answer 'which tasks are active?' from auto-loaded context with zero tool calls.",
+    "debt_before": 8,
+    "debt_after": 0,
+    "sessions_processed": 3,
+    "bookmarks_processed": 0,
+    "session_ids": [
+      "d64aff02-6e46-481e-836e-f722b435ffb2",
+      "7381aa37-eef0-439f-896d-863f76cabcad",
+      "eaaab0da-618a-466d-8dfe-4f31a75ba0f2"
+    ]
+  },
+  {
+    "date": "2026-02-28",
+    "consolidated_at": "2026-02-28T14:15:12.300Z",
+    "summary": "Consolidated 1 session: SleepHistoryEntry extended with consolidated_at + session_ids; transcript distill auto-filters by consolidated_at (--full to override, --since for manual cutoff). Updated 6.system_flow.md SleepHistoryEntry schema and transcript distillation flow description. 394 tests passing.",
+    "debt_before": 3,
+    "debt_after": 0,
+    "sessions_processed": 1,
+    "bookmarks_processed": 0,
+    "session_ids": [
+      "eaaab0da-618a-466d-8dfe-4f31a75ba0f2"
+    ]
+  },
+  {
+    "date": "2026-02-28",
+    "summary": "Consolidated 3 sessions (2026-02-28): transcript distill improvements (full content, thinking blocks, subagent I/O, byte deltas, commit 443b944) + SleepHistoryEntry fields (consolidated_at, session_ids) + timestamp-based auto-filter in transcript distill. 394 tests passing. Updated memory, soul, CHANGELOG.json (3 entries), web-dashboard task log, sleep-consolidation feature PRD.",
+    "debt_before": 9,
+    "debt_after": 0,
+    "sessions_processed": 3,
+    "bookmarks_processed": 0
+  },
+  {
+    "date": "2026-02-27",
+    "summary": "Consolidated 3 sessions: SubagentStart hook root cause analysis + SKILL.md context propagation fix (main agent now includes _dream_context/ paths in sub-agent prompts), dashboard project-scoped localStorage + zoom controls, sleep_history extraction to separate file. Updated memory (2 new session entries + additionalContext technical decision), CHANGELOG.json (2 entries), web-dashboard feature PRD + task log.",
+    "debt_before": 9,
+    "debt_after": 0,
+    "sessions_processed": 3,
+    "bookmarks_processed": 0
+  },
+  {
+    "date": "2026-02-27",
+    "summary": "Consolidated 8-phase neuroscience-inspired memory system: bookmarks (awake ripples), knowledge decay, consolidation rhythm, warm knowledge tier, contextual triggers, transcript distillation, sleep history, and system flow documentation. Updated soul, memory, sleep-consolidation PRD, and CHANGELOG.json. 384 tests (383 passing). 13 commands now registered.",
+    "debt_before": 6,
+    "debt_after": 0,
+    "sessions_processed": 2,
+    "bookmarks_processed": 0
+  }
+]

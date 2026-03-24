@@ -4,7 +4,7 @@ import { useSleep, getSleepLevel, getSleepLevelKey } from '../../hooks/useSleep'
 import './Header.css';
 
 const ZOOM_LEVELS = [0.85, 0.9, 1.0, 1.1, 1.2];
-const ZOOM_STORAGE_KEY = 'agentcontext-zoom';
+const ZOOM_STORAGE_KEY = 'dreamcontext-zoom';
 
 function getStoredZoom(): number {
   try {
@@ -74,7 +74,7 @@ export function Header() {
           {levelKey === 'must_sleep' && <span className="zzz">zzz</span>}
         </div>
         <div className="header-brand">
-          <span className="brand-name">agentcontext</span>
+          <span className="brand-name">dreamcontext</span>
           <span className={`sleep-badge sleep-badge--${levelKey}`}>
             {level} ({debt})
           </span>

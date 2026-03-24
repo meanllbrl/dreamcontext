@@ -1,6 +1,23 @@
 # Changelog
 
-All notable changes to agentcontext will be documented in this file.
+All notable changes to dreamcontext will be documented in this file.
+
+## [Unreleased]
+
+### Optional Skill Pack CLI
+
+- Added `install-skill --packs` for interactive terminal checkbox UI to browse and install optional skill packs
+- Added `install-skill --packs <names...>` for direct pack installation by name
+- Added `install-skill --skill <name>` for installing individual sub-skills
+- Added `install-skill --list` to display all available packs with descriptions, sub-skill counts, and installed status
+- Cross-pack dependency warnings shown at install time
+- Related agents (e.g., reviewer, brand-voice agents) installed alongside their packs
+- Firebase sub-skills correctly copy reference directories
+- Base pack not-installed warning when installing individual sub-skills
+- Added "Install skill packs" and "List skill packs" to interactive mode Setup menu
+- Core `install-skill` (no flags) now hints about available optional packs after installation
+- 17 new integration tests covering pack install, sub-skill install, list, and error cases
+- Updated README and DEEP-DIVE with skill packs documentation
 
 ## [0.1.1] - 2026-02-24
 
@@ -17,7 +34,7 @@ Rewrote `skill/SKILL.md` from a mechanical command reference into a comprehensiv
 - **Quality Gate — Self-Review** — Converted reviewer agent into a self-check protocol. Three-tier classification: CRITICAL (security, data loss, breaking changes), MAJOR (N+1, missing validation), IGNORE (naming, style — linter territory).
 - **Code Standards** — Split rule (~200-300 lines per file), KISS, DRY, YAGNI, complete code only.
 - **Anti-Bloat Rules** — ~200 line limit on context files, no orphan files, no empty files, LIFO everywhere, summarize don't hoard.
-- **Context Injection for Sub-Agents** — Template for delegating work to sub-agents with `_agent_context/` awareness.
+- **Context Injection for Sub-Agents** — Template for delegating work to sub-agents with `_dream_context/` awareness.
 
 #### Enhanced Existing Sections
 
@@ -42,7 +59,7 @@ Rewrote `skill/SKILL.md` from a mechanical command reference into a comprehensiv
 
 ### Initial Release — Full CLI + Skill System
 
-First working version of `agentcontext` — a TypeScript CLI tool and Claude Code skill for AI agent persistent context management.
+First working version of `dreamcontext` — a TypeScript CLI tool and Claude Code skill for AI agent persistent context management.
 
 ---
 
@@ -52,7 +69,7 @@ First working version of `agentcontext` — a TypeScript CLI tool and Claude Cod
 - Configured `tsup` for bundling to single ESM file with shebang banner (`#!/usr/bin/env node`)
 - Set target to Node 18, dependencies externalized (not bundled)
 - Template files copied to `dist/templates/` via `tsup.onSuccess` hook
-- Global CLI binary registered as `agentcontext` via `package.json` `bin` field → `./dist/index.js`
+- Global CLI binary registered as `dreamcontext` via `package.json` `bin` field → `./dist/index.js`
 
 **Dependencies:**
 - `commander` ^13 — CLI command parsing and subcommands
@@ -60,7 +77,7 @@ First working version of `agentcontext` — a TypeScript CLI tool and Claude Cod
 - `gray-matter` ^4 — YAML frontmatter parsing and stringifying
 - `@inquirer/prompts` (via `inquirer` ^12) — Interactive prompts with multiline support
 - `nanoid` ^5 — Short unique ID generation (e.g., `feat_xK9pQ2mL`)
-- `fast-glob` ^3 — File discovery within `_agent_context/`
+- `fast-glob` ^3 — File discovery within `_dream_context/`
 
 **Dev dependencies:** `typescript` ^5.7, `tsup` ^8, `vitest` ^3, `@types/node` ^22
 
@@ -69,11 +86,11 @@ First working version of `agentcontext` — a TypeScript CLI tool and Claude Cod
 ### Core Library Modules (`src/lib/`)
 
 #### `context-path.ts`
-- `resolveContextRoot()` — walks up from cwd (max 5 levels) to find `_agent_context/`
+- `resolveContextRoot()` — walks up from cwd (max 5 levels) to find `_dream_context/`
 - `ensureContextRoot()` — resolves or throws with helpful error message
-- `contextPath(...segments)` — joins path segments within `_agent_context/`
+- `contextPath(...segments)` — joins path segments within `_dream_context/`
 - `contextExists()` — boolean check
-- `getInitPath()` — returns expected `_agent_context/` path in cwd (for init)
+- `getInitPath()` — returns expected `_dream_context/` path in cwd (for init)
 
 #### `frontmatter.ts`
 - Wraps `gray-matter` for consistent YAML frontmatter handling
@@ -125,7 +142,7 @@ First working version of `agentcontext` — a TypeScript CLI tool and Claude Cod
 ### Template Files (`src/templates/`)
 
 #### Init templates (`src/templates/init/`)
-Created with `{{TOKEN}}` placeholders replaced during `agentcontext init`:
+Created with `{{TOKEN}}` placeholders replaced during `dreamcontext init`:
 
 - `0.soul.md` — Project identity: name, description, target user, priority, principles, constraints
 - `1.user.md` — User preferences and workflow notes
@@ -152,7 +169,7 @@ Created with `{{TOKEN}}` placeholders replaced during `agentcontext init`:
 
 ### Interactive REPL Mode (`src/cli/interactive.ts`)
 
-- Uses `readline.createInterface` for persistent prompt (`agentcontext >` in cyan)
+- Uses `readline.createInterface` for persistent prompt (`dreamcontext >` in cyan)
 - Parses each line as CLI args via `commander.parseAsync(argv, { from: 'user' })`
 - Creates fresh program instance per command to avoid state leaks
 - Handles `exit`/`quit`/`q` and Ctrl+C gracefully
@@ -163,9 +180,9 @@ Created with `{{TOKEN}}` placeholders replaced during `agentcontext init`:
 
 ### Commands
 
-#### `agentcontext init` (`src/cli/commands/init.ts`)
+#### `dreamcontext init` (`src/cli/commands/init.ts`)
 
-Initializes `_agent_context/` directory structure in current working directory.
+Initializes `_dream_context/` directory structure in current working directory.
 
 - **Tech stack auto-detection:** Scans for `package.json` (React, Next.js, Vue, Nuxt, Svelte, Express, Fastify, TypeScript, Tailwind, Prisma), `pubspec.yaml` (Flutter/Dart), `Cargo.toml` (Rust), `go.mod` (Go), `requirements.txt`/`pyproject.toml` (Python)
 - **Interactive mode:** Asks 5 questions (project name, description, target user, tech stack, priority) via `@inquirer/prompts`
@@ -176,7 +193,7 @@ Initializes `_agent_context/` directory structure in current working directory.
 - Adds initial CHANGELOG.json entry: `{ type: "chore", scope: "project", description: "Agent context initialized" }`
 - Prints created directory tree on success
 
-#### `agentcontext core` (`src/cli/commands/core.ts`)
+#### `dreamcontext core` (`src/cli/commands/core.ts`)
 
 Read and update core context files.
 
@@ -192,9 +209,9 @@ Subcommands:
 - `core releases add` — Interactive: version, summary, comma-separated changes
 - `core releases list [-n count]` — Table of recent releases
 
-#### `agentcontext features` (`src/cli/commands/features.ts`)
+#### `dreamcontext features` (`src/cli/commands/features.ts`)
 
-Manage feature PRD documents in `_agent_context/core/features/`.
+Manage feature PRD documents in `_dream_context/core/features/`.
 
 Subcommands:
 - `features list [--status <s>] [--tag <t>]` — Table of all features with ID, name, status, tags, updated date; filterable
@@ -209,9 +226,9 @@ Subcommands:
   - Other sections → append (bottom)
   - Updates `updated` frontmatter field on every insert
 
-#### `agentcontext coderegistry` (`src/cli/commands/coderegistry.ts`)
+#### `dreamcontext coderegistry` (`src/cli/commands/coderegistry.ts`)
 
-Manage the reusable code component index at `_agent_context/core/6.code_registry.json`.
+Manage the reusable code component index at `_dream_context/core/6.code_registry.json`.
 
 Entry schema: `{ name, category, path, description, tags: string[], exports: string[] }`
 
@@ -222,9 +239,9 @@ Subcommands:
 - `coderegistry remove <name>` — Remove by name (case-insensitive)
 - `coderegistry update <name>` — Interactive: show current entry, select field, enter new value
 
-#### `agentcontext knowledge` (`src/cli/commands/knowledge.ts`)
+#### `dreamcontext knowledge` (`src/cli/commands/knowledge.ts`)
 
-Manage knowledge base documents in `_agent_context/knowledge/`.
+Manage knowledge base documents in `_dream_context/knowledge/`.
 
 Filenames slugified: `"JWT Research"` → `jwt-research.md`
 
@@ -235,9 +252,9 @@ Subcommands:
 - `knowledge create <name> [-d desc] [-t tags] [-c content]` — All fields as flags for non-interactive use, or interactive prompts
 - `knowledge update <name> [content...]` — Append content or update frontmatter fields interactively
 
-#### `agentcontext tasks` (`src/cli/commands/tasks.ts`)
+#### `dreamcontext tasks` (`src/cli/commands/tasks.ts`)
 
-Manage task lifecycle in `_agent_context/state/`.
+Manage task lifecycle in `_dream_context/state/`.
 
 Statuses: `backlog`, `todo`, `in_progress`, `blocked`, `completed`
 Priorities: `critical`, `high`, `medium`, `low`
@@ -251,9 +268,9 @@ Subcommands:
 - `tasks search <query>` — Keyword search across task files
 - `tasks log <name> [content...]` — **Critical command for cross-session continuity.** Adds LIFO changelog entry with auto-generated date header (`### YYYY-MM-DD - Session Update`). Falls back to appending if no Changelog section exists. Updates `updated_at` frontmatter.
 
-#### `agentcontext install-skill` (`src/cli/commands/install-skill.ts`)
+#### `dreamcontext install-skill` (`src/cli/commands/install-skill.ts`)
 
-- Copies `skill/SKILL.md` from the package to `~/.claude/skills/agentcontext/SKILL.md`
+- Copies `skill/SKILL.md` from the package to `~/.claude/skills/dreamcontext/SKILL.md`
 - Creates directory structure if it doesn't exist
 - Searches multiple candidate paths for the source SKILL.md (handles both dev and installed contexts)
 
@@ -261,11 +278,11 @@ Subcommands:
 
 ### Skill File (`skill/SKILL.md`)
 
-Claude Code skill file with `user-invocable: false` (background knowledge, not a slash command). Rich `description` field enables auto-activation when Claude detects `_agent_context/` or context-related conversation.
+Claude Code skill file with `user-invocable: false` (background knowledge, not a slash command). Rich `description` field enables auto-activation when Claude detects `_dream_context/` or context-related conversation.
 
 Sections:
-- **Prerequisites** — CLI installation check, `_agent_context/` initialization
-- **Directory Structure** — Full annotated tree of `_agent_context/`
+- **Prerequisites** — CLI installation check, `_dream_context/` initialization
+- **Directory Structure** — Full annotated tree of `_dream_context/`
 - **Context Loading Protocol** — Mandatory soul file read on every session start; task-based loading table (what to load when)
 - **Operation Types** — READ / LIST / SEARCH mapped to CLI commands
 - **Task Lifecycle Protocol** — Start → read → work → log → complete flow
@@ -294,19 +311,19 @@ Sections:
 ### File Inventory
 
 ```
-agentcontext/
+dreamcontext/
 ├── src/
 │   ├── cli/
 │   │   ├── index.ts                    # Entry point, ASCII art, commander setup
 │   │   ├── interactive.ts              # REPL mode
 │   │   └── commands/
-│   │       ├── init.ts                 # agentcontext init
-│   │       ├── core.ts                 # agentcontext core
-│   │       ├── features.ts             # agentcontext features
-│   │       ├── coderegistry.ts         # agentcontext coderegistry
-│   │       ├── knowledge.ts            # agentcontext knowledge
-│   │       ├── tasks.ts               # agentcontext tasks
-│   │       └── install-skill.ts        # agentcontext install-skill
+│   │       ├── init.ts                 # dreamcontext init
+│   │       ├── core.ts                 # dreamcontext core
+│   │       ├── features.ts             # dreamcontext features
+│   │       ├── coderegistry.ts         # dreamcontext coderegistry
+│   │       ├── knowledge.ts            # dreamcontext knowledge
+│   │       ├── tasks.ts               # dreamcontext tasks
+│   │       └── install-skill.ts        # dreamcontext install-skill
 │   ├── lib/
 │   │   ├── context-path.ts
 │   │   ├── frontmatter.ts

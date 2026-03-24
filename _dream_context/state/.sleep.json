@@ -1,0 +1,41 @@
+{
+  "debt": 3,
+  "last_sleep": "2026-03-24",
+  "last_sleep_summary": "Consolidated 2 sessions: (1) optional-skill-packs Phase 1+Level2 -- 42 files, 5 packs, 6 agents, catalog.json, build pipeline; (2) full rebrand agentcontext->dreamcontext (package, binary, GitHub, _dream_context/, agent files). 2 changelog entries added. Feature PRD created: optional-skill-packs. Task logged. 4 skill-packs technical decisions added to memory. Stale operational note removed from memory.",
+  "sleep_started_at": null,
+  "sessions_since_last_sleep": 2,
+  "sessions": [
+    {
+      "session_id": "3939ed44-3222-4315-88e2-78f20d36d95f",
+      "transcript_path": "/Users/mehmetnuraydin/.claude/projects/-Users-mehmetnuraydin-projects-dreamcontext/3939ed44-3222-4315-88e2-78f20d36d95f.jsonl",
+      "stopped_at": "2026-03-24T12:30:35.057Z",
+      "last_assistant_message": "490/490 passing (even the flaky nanoid test passed this time). \n\nNow the interactive menu has two new entries under Setup:\n- **Install skill packs** - opens the interactive checkbox browser (`--packs`)\n- **List skill packs** - shows all available packs (`--list`)\n\nYou can test it by running `dreamcontext` and navigating to Setup. You'll see the new options alongside the existing \"Initialize project\" and \"Install skill\".",
+      "change_count": 4,
+      "tool_count": 27,
+      "score": 2,
+      "task_slugs": [
+        "optional-skill-packs"
+      ]
+    },
+    {
+      "session_id": "6a6cf8ee-cbed-45b9-987d-4b430e643c40",
+      "transcript_path": "/Users/mehmetnuraydin/.claude/projects/-Users-mehmetnuraydin-projects-dreamcontext/6a6cf8ee-cbed-45b9-987d-4b430e643c40.jsonl",
+      "stopped_at": "2026-03-24T12:19:27.664Z",
+      "last_assistant_message": "Done. The old `agentcontext` hooks were still registered alongside the `dreamcontext` ones. Since `agentcontext` no longer exists as a package, those hooks were failing on every event.\n\nRemoved all 7 duplicate `agentcontext` hooks. Next `/clear` should work cleanly.",
+      "change_count": 1,
+      "tool_count": 6,
+      "score": 1,
+      "task_slugs": []
+    }
+  ],
+  "bookmarks": [],
+  "triggers": [],
+  "knowledge_access": {
+    "project-origin-and-prd": {
+      "last_accessed": "2026-02-27",
+      "count": 1
+    }
+  },
+  "dashboard_changes": [],
+  "compaction_log": []
+}

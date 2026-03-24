@@ -13,7 +13,7 @@ function makeTmpDir(): string {
 }
 
 function scaffold(root: string): string {
-  const ctx = join(root, '_agent_context');
+  const ctx = join(root, '_dream_context');
   mkdirSync(join(ctx, 'core', 'features'), { recursive: true });
   mkdirSync(join(ctx, 'state'), { recursive: true });
   return ctx;

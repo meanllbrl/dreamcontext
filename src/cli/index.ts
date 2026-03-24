@@ -22,7 +22,7 @@ import { renderBanner } from '../lib/pixel-banner.js';
 function getBanner(): string {
   const logo = renderBanner();
   // Logo visual center is ~col 19 (4-space pad + 15-char center of content)
-  const title = `${chalk.bold.magenta('A G E N T')}${chalk.bold.magentaBright('   C O N T E X T')}`;
+  const title = `${chalk.bold.cyan('D R E A M')}${chalk.bold.cyanBright('   C O N T E X T')}`;
   const sep = chalk.dim('━'.repeat(25));
   const tagline = chalk.dim('persistent memory for AI agents');
   const text = [
@@ -38,8 +38,8 @@ function getBanner(): string {
 
 const HELP_GROUPS = `
 ${chalk.bold('Setup')}
-  ${chalk.magentaBright('init')}              Initialize _agent_context/ in your project
-  ${chalk.magentaBright('install-skill')}     Install skill + agents to .claude/ (project-level)
+  ${chalk.magentaBright('init')}              Initialize _dream_context/ in your project
+  ${chalk.magentaBright('install-skill')}     Install skill + agents + optional packs to .claude/
 
 ${chalk.bold('Content')}
   ${chalk.magentaBright('core')}              Add changelog and release entries
@@ -54,12 +54,12 @@ ${chalk.bold('System')}
   ${chalk.magentaBright('sleep')}             Track sleep debt and consolidation state
   ${chalk.magentaBright('hook')}              Hook handlers (7 hooks) for Claude Code
   ${chalk.magentaBright('transcript')}        Process session transcripts
-  ${chalk.magentaBright('doctor')}            Validate _agent_context/ structure and report issues
+  ${chalk.magentaBright('doctor')}            Validate _dream_context/ structure and report issues
 
 ${chalk.bold('Dashboard')}
   ${chalk.magentaBright('dashboard')}         Open the web dashboard in your browser
 
-${chalk.dim('Run')} agentcontext ${chalk.dim('<command> --help')} ${chalk.dim('for details on a specific command.')}
+${chalk.dim('Run')} dreamcontext ${chalk.dim('<command> --help')} ${chalk.dim('for details on a specific command.')}
 `;
 
 // ─── Program ────────────────────────────────────────────────────────────────
@@ -68,7 +68,7 @@ export function createProgram(): Command {
   const program = new Command();
 
   program
-    .name('agentcontext')
+    .name('dreamcontext')
     .description('Persistent memory for AI agents')
     .version('0.1.0')
     .addHelpText('after', HELP_GROUPS)

@@ -1,14 +1,15 @@
 {
-  "name": "agentcontext",
+  "name": "dreamcontext",
   "version": "0.1.0",
   "description": "AI agent persistent context management CLI",
   "type": "module",
   "bin": {
-    "agentcontext": "./dist/index.js"
+    "dreamcontext": "./dist/index.js"
   },
   "files": [
     "dist",
     "skill",
+    "skill-packs",
     "agents",
     "README.md",
     "LICENSE"

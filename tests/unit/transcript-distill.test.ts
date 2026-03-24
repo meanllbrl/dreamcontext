@@ -194,12 +194,12 @@ describe('distillTranscript', () => {
   it('extracts bookmark bash commands', () => {
     const file = join(tmpDir, 'test.jsonl');
     writeFileSync(file, [
-      toolCall('Bash', { command: 'agentcontext bookmark add "Critical: always validate auth tokens" -s 3' }),
+      toolCall('Bash', { command: 'dreamcontext bookmark add "Critical: always validate auth tokens" -s 3' }),
     ].join('\n'));
 
     const result = distillTranscript(file);
     expect(result.bookmarks).toHaveLength(1);
-    expect(result.bookmarks[0]).toContain('agentcontext bookmark');
+    expect(result.bookmarks[0]).toContain('dreamcontext bookmark');
   });
 
   it('keeps full user messages (no truncation)', () => {
@@ -307,7 +307,7 @@ describe('formatDistilled', () => {
       agentDecisions: ['Chose token bucket algorithm'],
       codeChanges: ['WRITE /src/rate-limit.ts'],
       errors: ['express-rate-limit v7 API changed'],
-      bookmarks: ['agentcontext bookmark "critical constraint"'],
+      bookmarks: ['dreamcontext bookmark "critical constraint"'],
     });
 
     expect(output).toContain('## Session sess-123');

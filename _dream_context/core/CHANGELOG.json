@@ -1,0 +1,359 @@
+[
+  {
+    "date": "2026-03-24",
+    "type": "refactor",
+    "scope": "package.json, src/, agents/, skill/, skill-packs/, dashboard/, tests/, README.md, CHANGELOG.md, DEEP-DIVE.md, _dream_context/",
+    "description": "Rebrand from agentcontext to dreamcontext. Package name: agentcontext -> dreamcontext. CLI binary: agentcontext -> dreamcontext. GitHub repo and local folder renamed accordingly. Agent files renamed: agentcontext-explore.md -> dreamcontext-explore.md, agentcontext-initializer.md -> dreamcontext-initializer.md, agentcontext-rem-sleep.md -> dreamcontext-rem-sleep.md. Context directory renamed: _agent_context/ -> _dream_context/. All code, tests, skill/SKILL.md, agent files, dashboard, README, CHANGELOG, DEEP-DIVE updated. Sleeping cat image added (public/image/dreamcontext.png). Banner script updated. 473 tests passing.",
+    "breaking": true
+  },
+  {
+    "date": "2026-03-24",
+    "type": "feat",
+    "scope": "skill-packs/, package.json, tsup.config.ts",
+    "description": "Add optional skill-packs distribution system (Phase 1+2 complete). 5 packs: engineering (coding-principles base + backend-principles, web-app-frontend, firebase-cloud-functions, firebase-firestore sub-skills), design (design-principles base + frontend-principles, design-web, design-mobile, onboarding-design), growth (app-growth base + performance-marketing, lean-analytics-experiments, lean-analytics-metrics), brand-voice (enforcement base + discover-brand, guideline-generation + 6 ref files), system-prompts (standalone). 6 optional agents in skill-packs/agents/ (reviewer, discover-brand, document-analysis, conversation-analysis, content-generation, quality-assurance). catalog.json manifest. Agents separated from skills with top-level agents array and pack relatedAgents links. Build pipeline ships skill-packs/ to dist/skill-packs/ via tsup cpSync. 42 files. 473 tests passing.",
+    "breaking": false
+  },
+  {
+    "date": "2026-03-10",
+    "type": "fix",
+    "scope": "src/cli/commands/hook.ts",
+    "description": "Prevent duplicate sleep agent dispatch when consolidation already in progress. Added sleep_started_at guard to getConsolidationDirective() and user-prompt-submit hook. When sleep is active: returns 'Do NOT dispatch another sleep agent' if debt>=4, silent if debt<4. 4 new integration tests, 473 total passing.",
+    "breaking": false
+  },
+  {
+    "date": "2026-03-08",
+    "type": "refactor",
+    "scope": "agents/dreamcontext-explore.md",
+    "description": "Rewrite dreamcontext-explore agent (105->78 lines). New philosophy: briefing-first with hypothesis-driven search. Budget caps per thoroughness level (Quick 1-3, Medium 4-8, Thorough 9-20 tool calls). Track A (documented knowledge, read one file) / Track B (find code, Glob->Grep->Read) / Track C (reusable component check) routing. Proactive Reusable output section flags existing components before the caller builds from scratch.",
+    "breaking": false
+  },
+  {
+    "date": "2026-03-08",
+    "type": "feat",
+    "scope": "skill/SKILL.md",
+    "description": "Add rule #12 'Reuse before create': before building any UI component, utility, hook, or abstraction, search for existing implementations via dreamcontext-explore. Prevents duplicating existing components.",
+    "breaking": false
+  },
+  {
+    "date": "2026-03-07",
+    "type": "feat",
+    "scope": "src/cli/commands/tasks.ts, src/server/routes/tasks.ts, dashboard, skill/SKILL.md",
+    "description": "Add in_review status: 4th Kanban column (purple) with workflow todo->in_progress->in_review->completed. In-review tasks treated as active (shown in snapshot, default tasks list, Eisenhower Matrix). 12 files changed, 469 tests passing.",
+    "breaking": false
+  },
+  {
+    "date": "2026-03-07",
+    "type": "feat",
+    "scope": "dashboard, src/server/routes/core.ts, src/cli/commands/snapshot.ts, agents/dreamcontext-rem-sleep.md, skill/SKILL.md",
+    "description": "Versions unified with Releases: deleted VERSIONS.json system and src/server/routes/versions.ts. Extended ReleaseEntry with optional status: 'planning' | 'released' field (backward compat — entries without status treated as released). CLI 'core releases add --status planning' creates planning-stage versions. Snapshot 'Upcoming Versions' section shows planning releases separately from 'Latest Release'. VersionManager redesigned: full-width 680px modal, stats header, planning/released sections, Release button to promote planning entries. SKILL.md Versioning section added. rem-sleep agent updated with Step 5b (Version Readiness Check) and version in decision tree.",
+    "breaking": false
+  },
+  {
+    "date": "2026-03-07",
+    "type": "feat",
+    "scope": "dashboard/src/components/tasks/EisenhowerMatrix.tsx, dashboard/src/styles/tokens.css",
+    "description": "Eisenhower Matrix view: 2×2 priority×urgency grid (Do First, Schedule, Delegate, Don't Do quadrants). Excludes completed tasks. Axis labels, quadrant color tokens. Accessible via viewMode toggle in TaskFilters.",
+    "breaking": false
+  },
+  {
+    "date": "2026-03-07",
+    "type": "feat",
+    "scope": "dashboard/src/components/tasks/MultiSelectFilter.tsx",
+    "description": "MultiSelectFilter with type-ahead search: checkbox-based multi-select with search input that shows when >5 options. All/None toggle. Used for status, priority, urgency, tags, version filters in Kanban.",
+    "breaking": false
+  },
+  {
+    "date": "2026-03-07",
+    "type": "feat",
+    "scope": "dashboard/src/components/tasks, dashboard/src/hooks/useVersions.ts",
+    "description": "Kanban sub-grouping and extended views: SubGroupSection (collapsible nested sections with chevron/dot/count), group-by-tags (tasks appear in each applicable tag column), group-by-version, group-by-urgency. urgency field (critical/high/medium/low) and version field added to TaskData, CreateTaskInput, UpdateTaskInput, CLI tasks create --urgency and --version flags.",
+    "breaking": false
+  },
+  {
+    "date": "2026-03-07",
+    "type": "feat",
+    "scope": "dashboard/src/pages/CorePage.tsx, dashboard/src/pages/KnowledgePage.tsx, dashboard/src/components/core/",
+    "description": "File/Preview tab toggle added to Core, Knowledge, and Features pages: MarkdownPreview component renders markdown as HTML (via marked), JsonPreview renders formatted JSON. Consistent File/Preview tab pattern across all content pages.",
+    "breaking": false
+  },
+  {
+    "date": "2026-03-07",
+    "type": "fix",
+    "scope": "src/cli/commands/hook.ts",
+    "description": "Task slug extraction regex tightened: was matching task names in prose text (false positives from reading transcripts). Now only matches within JSON command/file_path values using context-specific patterns — regex anchored to '\"command\":\"...\"' and '\"file_path\":\"...\"' JSON keys. 468 tests passing.",
+    "breaking": false
+  },
+  {
+    "date": "2026-03-02",
+    "type": "feat",
+    "scope": "src/cli/commands/hook.ts, src/cli/commands/sleep.ts, src/cli/commands/install-skill.ts, skill/SKILL.md, agents/dreamcontext-rem-sleep.md",
+    "description": "Add PostToolUse hook (hook post-tool-use): auto-formats JS/TS files using Biome or Prettier (walk-up detection from edited file), then runs tsc --noEmit --incremental filtered to the edited file. Biome preferred when both configs exist. execFileSync (not execSync) prevents shell injection. resolveLocalBin() checks node_modules/.bin/ before npx fallback. Graceful silent failure. Single subcommand handles both format and tsc check. additionalContext JSON output. 30-second timeout. Registered as 6th hook (fires on Edit|Write). findProjectConfig() merges findFormatterConfig() + findTsconfig() into single walk-up pass. 451 tests total (450 passing, 1 pre-existing flaky nanoid test).",
+    "breaking": false
+  },
+  {
+    "date": "2026-03-02",
+    "type": "feat",
+    "scope": "src/cli/commands/hook.ts, src/cli/commands/sleep.ts, src/cli/commands/install-skill.ts, skill/SKILL.md",
+    "description": "Add PreCompact hook (hook pre-compact): saves a CompactionRecord (timestamp, trigger, debt, session count, bookmark count) to compaction_log[] in .sleep.json before Claude Code context compaction. LIFO, capped at 20 entries. New CompactionRecord interface and compaction_log field added to SleepState. Registered as 7th hook in install-skill (5-second timeout). SKILL.md frontmatter updated with 7 hooks total.",
+    "breaking": false
+  },
+  {
+    "date": "2026-03-02",
+    "type": "refactor",
+    "scope": "src/cli/commands/install-skill.ts",
+    "description": "Refactor ensureHooks() from 160 lines of copy-paste registration boilerplate to a data-driven HOOK_SPECS table + 15-line loop. Adding a new hook is now a one-line change in HOOK_SPECS. Behavior unchanged.",
+    "breaking": false
+  },
+  {
+    "date": "2026-03-02",
+    "type": "feat",
+    "scope": "agents/dreamcontext-rem-sleep.md",
+    "description": "Add Step 1c Pattern Extraction to rem-sleep agent protocol: after task linkage check, agent scans distilled transcripts for repeated user preferences (2+ occurrences), workflow patterns (3+ occurrences), recurring errors (2+ occurrences), and bookmark themes (3+ occurrences). Prompt-level only, no new CLI code needed.",
+    "breaking": false
+  },
+  {
+    "date": "2026-03-01",
+    "type": "feat",
+    "scope": "src/cli/commands/hook.ts, src/cli/commands/install-skill.ts, skill/SKILL.md",
+    "description": "Add UserPromptSubmit hook: fires on every user message and outputs a one-line sleep debt reminder when debt >= 4. Same thresholds as SessionStart directive (4/7/10/critical bookmarks) but compact single-line format. Critical bookmarks override debt threshold. Read-only (no state writes). Registered as the 5th hook in install-skill (SessionStart, Stop, SubagentStart, PreToolUse, UserPromptSubmit). SKILL.md YAML frontmatter updated with hook declaration; Sleep System docs expanded to cover persistent reminders. 6 new integration tests (415 total, all passing).",
+    "breaking": false
+  },
+  {
+    "date": "2026-03-01",
+    "type": "feat",
+    "scope": "src/cli/commands/hook.ts, skill/SKILL.md",
+    "description": "Tighten sleep debt consolidation thresholds: debt >= 4 now triggers reminder directives (was >= 7). Rhythm check changed from 5+ to 3+ sessions since last sleep. SKILL.md mandatory language: Drowsy (4-6) MUST offer consolidation after any task, Sleepy (7-9) MUST inform user at session start. 409 tests passing.",
+    "breaking": false
+  },
+  {
+    "date": "2026-03-01",
+    "type": "feat",
+    "scope": "src/cli/commands/tasks.ts",
+    "description": "Add tasks list command: default excludes completed tasks, --all shows all statuses, --status <status> filters by specific status. Colored output (in_progress=yellow, completed=green). Consistent with bookmark list and trigger list patterns. 4 new integration tests added (407 total).",
+    "breaking": false
+  },
+  {
+    "date": "2026-03-01",
+    "type": "fix",
+    "scope": "skill/SKILL.md",
+    "description": "Fix 3 sources of wasted tool calls when querying active tasks: (1) added 'answer which tasks are active? directly from this, zero tool calls needed' to Auto-Loaded Context section, (2) added bold paragraph to Task Protocol reminding agents to answer from auto-loaded snapshot before using CLI, (3) replaced Glob _dream_context/state/*.md with dreamcontext tasks list in Discovery section. Command Reference table updated with tasks list [-s status] [--all] row.",
+    "breaking": false
+  },
+  {
+    "date": "2026-03-01",
+    "type": "feat",
+    "scope": "src/cli/commands/hook.ts, src/cli/commands/install-skill.ts, src/cli/commands/snapshot.ts, agents/dreamcontext-explore.md",
+    "description": "Context-aware sub-agent optimization: PreToolUse hook blocks default Explorer when _dream_context/ exists, redirecting to dreamcontext-explore agent. Custom Explorer checks context files first (data structures, tech stack, features, knowledge), returns immediately if context answers query, falls back to full codebase search only if needed. SubagentStart briefing adds Task Awareness section (plan-to-task workflow) for all sub-agents. REM sleep agent updated with mandatory task linkage check. SKILL.md: PreToolUse hook in YAML, Rules 9-11, Sub-Agents section updated. 9 new integration tests (403 total).",
+    "breaking": false
+  },
+  {
+    "date": "2026-02-28",
+    "type": "feat",
+    "scope": "src/cli/commands/sleep.ts",
+    "description": "Add consolidated_at (ISO timestamp) and session_ids (string[]) to SleepHistoryEntry. sleep done now records which sessions were processed. Backward compatible — old entries without these fields remain valid. 7 new tests added (394 total).",
+    "breaking": false
+  },
+  {
+    "date": "2026-02-28",
+    "type": "feat",
+    "scope": "src/cli/commands/transcript.ts",
+    "description": "transcript distill now auto-filters by consolidated_at from sleep history: if a session was previously consolidated, only shows content after that timestamp. --full flag shows entire transcript. --since <iso> for manual cutoff. Entries without timestamps pass through. Prevents re-reading already-processed content in multi-cycle sessions.",
+    "breaking": false
+  },
+  {
+    "date": "2026-02-28",
+    "type": "feat",
+    "scope": "src/cli/commands/transcript.ts",
+    "description": "transcript distill: include thinking blocks, show full content without truncation, include trivial responses, show subagent I/O (input+output, not internal tool calls), show byte deltas on Edit changes and line count on Write. Commit 443b944.",
+    "breaking": false
+  },
+  {
+    "date": "2026-02-27",
+    "type": "fix",
+    "scope": "skill/SKILL.md",
+    "description": "Replaced 'Context Propagation' paragraph in Sub-Agents section: now explicitly instructs main agent to match user request keywords against feature tags/names and include specific _dream_context/ file paths in Explore/Plan sub-agent prompts. Root cause: the old paragraph said 'You do not need to repeat context when delegating to sub-agents', actively discouraging context propagation.",
+    "breaking": false
+  },
+  {
+    "date": "2026-02-27",
+    "type": "fix",
+    "scope": "src/cli/commands/snapshot.ts",
+    "description": "Strengthened SubagentStart briefing directive from IMPORTANT to MANDATORY, named specific tools (Glob, Grep), added actionable decision rule ('If any feature name or tag matches your task, Read that feature file first'). Feature format cleaned up: tags on own line, status removed to keep read path prominent. 3 integration tests updated.",
+    "breaking": false
+  },
+  {
+    "date": "2026-02-27",
+    "type": "feat",
+    "scope": "memory",
+    "description": "Implement neuroscience-inspired memory system (8 phases): bookmarks (awake ripples, salience-scored), knowledge decay tracking with staleness indicators, consolidation rhythm advisory at 5+ sessions, warm knowledge tier in snapshot (7-day recency + tag-overlap heuristic), contextual triggers with auto-expiry, transcript distillation (pure Node.js structural JSONL filter), sleep history (SleepHistoryEntry, sleep_history[] LIFO), and system flow core file (core/6.system_flow.md). New commands: bookmark add/list/clear, trigger add/list/remove, transcript distill, knowledge touch, sleep history. Fixed freshDefaults() shared-reference bug in readSleepState. 48 new tests (384 total, 383 passing).",
+    "breaking": false
+  },
+  {
+    "date": "2026-02-26",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "Enhance Kanban task filters: added status filter dropdown, text search (searches name + description), and date range filter with field selector (created_at/updated_at). Filter state persisted via usePersistedState hook (localStorage prefix: dreamcontext:). Clear Filters button with active-count badge. FilterState interface exported from TaskFilters.tsx; applyFilters() in KanbanBoard.tsx handles all filter logic.",
+    "breaking": false
+  },
+  {
+    "date": "2026-02-26",
+    "type": "fix",
+    "scope": "dashboard",
+    "description": "Fix selectedTask stale snapshot bug in KanbanBoard. Replaced storing a full Task object in React state with storing selectedSlug (string | null) and deriving the task via useMemo from live TanStack Query data. Detail panel now reflects post-mutation state automatically. 325 tests passing.",
+    "breaking": false
+  },
+  {
+    "date": "2026-02-26",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "Polish dashboard UI: animated radial brand gradient background with subtle-pulse animation, stagger entrance animations for Kanban columns (slide-up-fade with cubic-bezier spring), CSS refinements across Header, Sidebar, Shell, KanbanColumn, TaskCard, TaskCreateModal, TaskDetailPanel, TaskFilters, CorePage, FeaturesPage, SleepPage, tokens. 325 tests passing.",
+    "breaking": false
+  },
+  {
+    "date": "2026-02-26",
+    "type": "feat",
+    "scope": "releases",
+    "description": "Build release discovery system: src/lib/release-discovery.ts auto-discovers unreleased tasks, features, and changelog entries. New CLI commands: releases add --yes (non-interactive, auto-includes all unreleased items), releases list, releases show. 3 new API routes (GET /api/releases/unreleased, GET /api/releases/:version, POST /api/releases). release-backpopulate.ts sets released_version on features. Snapshot shows Latest Release section (changelog limit lowered from 5 to 3). 13 unit + 10 integration tests added; 325 total passing.",
+    "breaking": false
+  },
+  {
+    "date": "2026-02-26",
+    "type": "docs",
+    "scope": "readme",
+    "description": "Update README and DEEP-DIVE: added Dashboard nav link, interactive mode mention, expanded Mermaid lifecycle diagram (features/changelog/releases in store, dashboard in capture), full Dashboard section with usage and design notes, releases add --yes and releases list/show commands, release auto-discovery explanation, Dashboard command subsection, SubagentStart briefing in hook flow diagram.",
+    "breaking": false
+  },
+  {
+    "date": "2026-02-25",
+    "type": "feat",
+    "scope": "subagent",
+    "description": "Enrich SubagentStart briefing with full project structure context. Briefing now includes: system structure explanation (soul/user/memory/extended/features purpose), extended core files index, features listing (name, status, why snippet, related tasks), knowledge index, and prioritized usage instructions ('Check feature PRDs first'). 4 new tests; 301 tests passing.",
+    "breaking": false
+  },
+  {
+    "date": "2026-02-25",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "Add SQL ER diagram preview for 5.data_structures.sql in core file viewer. sql-parser.ts extracts entities, fields (enum/array/boolean/nullable/date type inference), and FK relationships from CREATE TABLE and comment-based schemas. SqlPreview.tsx renders entity cards in CSS grid with SVG bezier curves and arrowheads. CorePage.tsx shows File/Preview tab toggle for SQL files; Preview is default.",
+    "breaking": false
+  },
+  {
+    "date": "2026-02-25",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "Add field-level change tracking to change-tracker.ts. FieldChange interface with from/to values added to DashboardChange. Net-change detection: A->B->A entries cancelled (removed), A->B->C folded to A->C. Append-only actions and entries without fields bypass detection. Routes (tasks, knowledge, core, sleep) now capture old values before mutation. 19 new unit tests.",
+    "breaking": false
+  },
+  {
+    "date": "2026-02-25",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "Add comprehensive error handling: ErrorBoundary class component in App.tsx, res.ok checks before res.json() in API client, isError states on all 5 pages, mutation error feedback with 5s auto-dismiss in TaskDetailPanel, isPending disables insert/changelog buttons. Server hardening: 1MB body size limit with req.destroy() on overflow, graceful shutdown on SIGINT/SIGTERM with 5s force-exit, 30s socket timeout. 274 tests passing.",
+    "breaking": false
+  },
+  {
+    "date": "2026-02-25",
+    "type": "fix",
+    "scope": "sleep",
+    "description": "Fix race condition in sleep done where parallel sessions finishing during consolidation lost their records. Implemented epoch-based filtering: sleep_started_at timestamp added to SleepState, new sleep start command records epoch, sleep done only clears sessions/changes from before the epoch. Post-epoch records survive for the next consolidation cycle. Backward compatible when sleep start is not called.",
+    "breaking": false
+  },
+  {
+    "date": "2026-02-25",
+    "type": "fix",
+    "scope": "cli",
+    "description": "Make tasks create fully non-interactive. --description defaults to task name, --priority defaults to medium. New --status flag (todo/in_progress/completed, default todo) and --tags flag (comma-separated). Invalid status values produce a validation error. Agents can now create tasks without interactive prompts blocking execution.",
+    "breaking": false
+  },
+  {
+    "date": "2026-02-25",
+    "type": "fix",
+    "scope": "interactive",
+    "description": "Fix inquirer highlight styling bug where the full menu line was colored instead of only the item name. Root cause: style.highlight receives '  ' + name (cursor + space prefix), so Map key lookups failed silently. Fix: slice(2) strips the 2-char prefix before lookup, result wrapped with chalk.bgHex('#581C87') background fill. Focused items now show purple background fill; unfocused show category-colored label.",
+    "breaking": false
+  },
+  {
+    "date": "2026-02-25",
+    "type": "docs",
+    "scope": "readme",
+    "description": "Rewrite closed memory section: no longer claims agents cannot see/edit platform memory. Now frames friction as the real lock-in: platform dependency grows over time, workarounds exist but should not be necessary. Added bold punchline formatting throughout for scannability.",
+    "breaking": false
+  },
+  {
+    "date": "2026-02-25",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "Add 'dreamcontext dashboard' command. Node.js native HTTP server (zero new runtime deps) with 17 REST API endpoints covering tasks, sleep, core, knowledge, features, changelog, and health. React 19 + Vite 6 SPA with Kanban board (drag-drop, filter, sort, group), task CRUD, sleep state page, core file editor with markdown preview, knowledge manager with pin/unpin, and features PRD viewer. Design system: purple-magenta brand tokens (#641787 to #db04b4), Visby CF font, 4px grid, light/dark mode, i18n-ready (English). Change tracker records every mutating API call to .sleep.json dashboard_changes, cleared on sleep done. Build: npm run build = build:dashboard (Vite) + build:cli (tsup); tsup copies dashboard/dist to dist/dashboard. SleepState extended with dashboard_changes field. 258 tests passing.",
+    "breaking": false
+  },
+  {
+    "date": "2026-02-25",
+    "type": "feat",
+    "scope": "hook",
+    "description": "Add SubagentStart hook support. 'hook subagent-start' outputs JSON with hookSpecificOutput.additionalContext containing a lightweight context briefing (~25 lines) for sub-agents: project summary (120 char cap), directory structure, active tasks, knowledge index, pinned knowledge, and usage instructions. generateSubagentBriefing() added to snapshot.ts with shared getActiveTaskLines() helper. install-skill registers SubagentStart hook in .claude/settings.json (no matcher, fires for all sub-agents including our own, 5s timeout). SubagentStart JSON format differs from SessionStart plain text output. Briefing deliberately excludes soul/user/memory, sleep state, changelog, features detail. 10 new integration tests; 246 tests passing.",
+    "breaking": false
+  },
+  {
+    "date": "2026-02-25",
+    "type": "refactor",
+    "scope": "coderegistry",
+    "description": "Remove coderegistry command entirely. Deleted src/cli/commands/coderegistry.ts and src/templates/init/6.code_registry.json. Removed all references from index.ts, interactive.ts, init.ts. Rationale: static code registries go stale immediately when methods are renamed or moved; native Grep/Glob tools serve discovery better. Commands: 10 to 9. Tests: 246 passing.",
+    "breaking": true
+  },
+  {
+    "date": "2026-02-25",
+    "type": "feat",
+    "scope": "snapshot",
+    "description": "Enrich features section of snapshot with Why, related_tasks, and latest changelog entry per feature. Reads ## Why markdown section (first non-placeholder line, capped 120 chars), surfaces related_tasks from frontmatter, shows most recent non-creation changelog entry. Uses existing readSection from src/lib/markdown.ts. 2 integration tests added (225 total).",
+    "breaking": false
+  },
+  {
+    "date": "2026-02-25",
+    "type": "feat",
+    "scope": "hook",
+    "description": "Add hook-based sleep debt auto-tracking. 'hook stop' records session_id and transcript_path to .sleep.json (Stop hook). 'hook session-start' replaces raw 'dreamcontext snapshot': analyzes previous session transcript for Write/Edit tool uses, auto-scores debt (1-3 changes +1, 4-8 +2, 9+ +3), injects graduated consolidation directives (debt 7-9 suggestion, debt 10+ critical block), then outputs snapshot. SleepState extended with last_session_id and last_transcript_path. Spread-merge backward compat for old .sleep.json. install-skill migrates existing SessionStart hooks. 50MB transcript cap. 31 new tests (221 total passing).",
+    "breaking": false
+  },
+  {
+    "date": "2026-02-25",
+    "type": "feat",
+    "scope": "snapshot",
+    "description": "Add Smart Snapshot: knowledge index section surfaces slug + description + tags for every knowledge file (buildKnowledgeIndex in src/lib/knowledge-index.ts). Pinned knowledge files (pinned: true frontmatter) get full content loaded — zero agent tool calls. Extended core files index section surfaces names/types of core/[3-9]* files. Knowledge files are no longer invisible after write.",
+    "breaking": false
+  },
+  {
+    "date": "2026-02-25",
+    "type": "feat",
+    "scope": "knowledge",
+    "description": "Add `dreamcontext knowledge index` subcommand with --tag filter and --plain output mode. Add `dreamcontext knowledge tags` subcommand listing 12 standard tags. Add pinned field to knowledge create and template. Standard tags: architecture, api, frontend, backend, database, devops, security, testing, design, decisions, onboarding, domain.",
+    "breaking": false
+  },
+  {
+    "date": "2026-02-25",
+    "type": "feat",
+    "scope": "sleep",
+    "description": "Add persistent sleep state tracking via `dreamcontext sleep` command (status, add, done, debt subcommands). Sleep state stored in state/.sleep.json and surfaced in snapshot output between Active Tasks and Recent Changelog. Includes readJsonObject/writeJsonObject utilities in json-file.ts.",
+    "breaking": false
+  },
+  {
+    "date": "2026-02-25",
+    "type": "refactor",
+    "scope": "cli",
+    "description": "Strip list/read/search/update subcommands from core, tasks, features, knowledge, and coderegistry. Agents use native Read/Edit/Write tools for direct file access; CLI is reserved for structural operations only. Test count reduced from 203 to 162 (all passing).",
+    "breaking": true
+  },
+  {
+    "date": "2026-02-25",
+    "type": "docs",
+    "scope": "readme",
+    "description": "Rewrote README with true motivation (token-burning search spiral), brain-region mapping, RemSleep lifecycle diagram, and why existing solutions break",
+    "breaking": false
+  },
+  {
+    "date": "2026-02-24",
+    "type": "chore",
+    "scope": "project",
+    "description": "Agent context initialized",
+    "breaking": false
+  }
+]

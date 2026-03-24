@@ -1,0 +1,173 @@
+{
+  "version": "1.0",
+  "packs": [
+    {
+      "name": "engineering",
+      "description": "Coding standards, security, backend architecture, web app implementation, Firebase services",
+      "tags": ["coding", "backend", "api", "serverless", "firebase", "security", "testing", "react", "typescript"],
+      "alwaysApply": true,
+      "base": "Universal coding standards, security, testing, naming, error handling, architectural principles",
+      "subSkills": [
+        {
+          "name": "backend-principles",
+          "file": "backend-principles.md",
+          "description": "Backend/API/serverless architecture, production readiness, rate limiting"
+        },
+        {
+          "name": "web-app-frontend",
+          "file": "web-app-frontend.md",
+          "description": "Web apps with React, Vue, GSAP, ShadCN, Tailwind, TypeScript: state, animation, security"
+        },
+        {
+          "name": "firebase-cloud-functions",
+          "file": "firebase-cloud-functions/SKILL.md",
+          "description": "Cloud Functions for Firebase (2nd gen), idempotency, scaling, secrets",
+          "hasReferences": true
+        },
+        {
+          "name": "firebase-firestore",
+          "file": "firebase-firestore/SKILL.md",
+          "description": "Firestore provisioning, security rules, queries, indexing",
+          "hasReferences": true
+        }
+      ],
+      "relatedAgents": ["reviewer"],
+      "crossPackDeps": ["design (for UI work)"]
+    },
+    {
+      "name": "design",
+      "description": "Design system fundamentals, frontend principles, web/mobile design, onboarding UX",
+      "tags": ["design", "ui", "ux", "accessibility", "mobile", "web", "typography", "colors", "frontend", "tokens", "i18n"],
+      "alwaysApply": true,
+      "base": "Universal design system: spacing (4px grid), typography, colors (HSL/OKLCH), visual hierarchy, layout, accessibility, emotional design",
+      "subSkills": [
+        {
+          "name": "frontend-principles",
+          "file": "frontend-principles.md",
+          "description": "Universal frontend rules: zero hardcoded values, token architecture, translations, components, a11y"
+        },
+        {
+          "name": "design-web",
+          "file": "design-web.md",
+          "description": "Web design: responsive layouts, landing pages, animation, conversion optimization"
+        },
+        {
+          "name": "design-mobile",
+          "file": "design-mobile.md",
+          "description": "Mobile design: haptics, native transitions, widgets, App Store, gamification"
+        },
+        {
+          "name": "onboarding-design",
+          "file": "onboarding-design.md",
+          "description": "Onboarding flows, paywalls, signup funnels, first-run UX, rating prompts"
+        }
+      ],
+      "crossPackDeps": ["engineering (coding-principles prerequisite for frontend code)"]
+    },
+    {
+      "name": "growth",
+      "description": "Load when working on user acquisition, retention strategy, push notifications, TikTok/social distribution, content farming, paywall optimization, LTV, monetization, or organic viral loops",
+      "tags": ["growth", "marketing", "analytics", "retention", "ads", "experiments", "metrics", "tiktok"],
+      "alwaysApply": false,
+      "base": "App growth strategy: retention engineering, distribution, content-led growth, VSC framework, monetization, viral loops",
+      "subSkills": [
+        {
+          "name": "performance-marketing",
+          "file": "performance-marketing.md",
+          "description": "Paid ads, Meta/Facebook Ads, ROAS optimization, audience funnels, budget sizing"
+        },
+        {
+          "name": "lean-analytics-experiments",
+          "file": "lean-analytics-experiments.md",
+          "description": "Experiment design, MVPs, A/B testing, hypothesis validation, statistical methods"
+        },
+        {
+          "name": "lean-analytics-metrics",
+          "file": "lean-analytics-metrics.md",
+          "description": "Product analytics, KPIs, event schemas, Mixpanel, cohort/funnel analysis"
+        }
+      ],
+      "crossPackDeps": ["design/onboarding-design (for paywall priming)", "design/design-mobile (for widget/recording design)"]
+    },
+    {
+      "name": "brand-voice",
+      "description": "Load when writing emails, proposals, presentations, LinkedIn posts, sales content, pitch decks, or any brand-aligned content. Also triggers on brand discovery, guideline generation, brand content audits, and voice enforcement.",
+      "tags": ["brand", "voice", "content", "marketing", "sales", "copywriting", "guidelines", "discovery", "tone"],
+      "alwaysApply": false,
+      "base": "Brand voice enforcement: load guidelines from _dream_context/core/, apply voice constants and tone flexes, validate content, explain brand choices",
+      "subSkills": [
+        {
+          "name": "discover-brand",
+          "file": "discover-brand.md",
+          "description": "Orchestrate brand material discovery across enterprise platforms (Notion, Confluence, Google Drive, Box, SharePoint, Figma, Gong, Granola, Slack)"
+        },
+        {
+          "name": "guideline-generation",
+          "file": "guideline-generation.md",
+          "description": "Generate brand voice guidelines from documents, transcripts, discovery reports, or direct input. Saves as core file."
+        }
+      ],
+      "relatedAgents": ["discover-brand", "document-analysis", "conversation-analysis", "content-generation", "quality-assurance"],
+      "crossPackDeps": []
+    }
+  ],
+  "standalone": [
+    {
+      "name": "system-prompts",
+      "file": "system-prompts/SKILL.md",
+      "description": "Load when writing/reviewing system prompts, configuring AI agents, designing instruction hierarchies, optimizing for Claude/GPT/Gemini/DeepSeek, prompt injection defense, multi-stage agent flows (ReAct, AlphaCodium, LATS), or context engineering",
+      "tags": ["ai", "prompts", "agents", "cognitive-architecture", "security"],
+      "alwaysApply": false
+    }
+  ],
+  "agents": [
+    {
+      "name": "reviewer",
+      "file": "agents/reviewer.md",
+      "pack": "engineering",
+      "description": "Critical code reviewer and final quality gate. Only flags Critical and Major issues (security, data loss, memory leaks, breaking changes). Returns PASS or FAIL.",
+      "tags": ["code-review", "security", "quality"],
+      "model": "sonnet"
+    },
+    {
+      "name": "discover-brand",
+      "file": "agents/discover-brand.md",
+      "pack": "brand-voice",
+      "description": "Autonomous 4-phase brand material search across enterprise MCP platforms",
+      "tags": ["brand", "discovery", "mcp"],
+      "model": "sonnet"
+    },
+    {
+      "name": "document-analysis",
+      "file": "agents/document-analysis.md",
+      "pack": "brand-voice",
+      "description": "Parse brand documents to extract voice attributes, messaging, terminology",
+      "tags": ["brand", "documents", "analysis"],
+      "model": "sonnet"
+    },
+    {
+      "name": "conversation-analysis",
+      "file": "agents/conversation-analysis.md",
+      "pack": "brand-voice",
+      "description": "Analyze sales call transcripts for voice patterns and messaging effectiveness",
+      "tags": ["brand", "transcripts", "analysis"],
+      "model": "sonnet"
+    },
+    {
+      "name": "content-generation",
+      "file": "agents/content-generation.md",
+      "pack": "brand-voice",
+      "description": "Generate long-form or batch brand-aligned content with validation",
+      "tags": ["brand", "content", "generation"],
+      "model": "sonnet"
+    },
+    {
+      "name": "quality-assurance",
+      "file": "agents/quality-assurance.md",
+      "pack": "brand-voice",
+      "description": "Validate content and guidelines against brand standards",
+      "tags": ["brand", "validation", "quality"],
+      "model": "haiku"
+    }
+  ]
+}

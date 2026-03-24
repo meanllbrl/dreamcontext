@@ -23,6 +23,7 @@ export default defineConfig({
   onSuccess: async () => {
     cpSync('src/templates', 'dist/templates', { recursive: true });
     cpSync('agents', 'dist/agents', { recursive: true });
+    cpSync('skill-packs', 'dist/skill-packs', { recursive: true });
     // Copy pre-built dashboard into dist (if it exists)
     if (existsSync('dashboard/dist')) {
       cpSync('dashboard/dist', 'dist/dashboard', { recursive: true });

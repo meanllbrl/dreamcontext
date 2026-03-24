@@ -13,7 +13,7 @@ function makeTmpDir(): string {
 }
 
 function scaffold(root: string): string {
-  const ctx = join(root, '_agent_context');
+  const ctx = join(root, '_dream_context');
   mkdirSync(join(ctx, 'core', 'features'), { recursive: true });
   mkdirSync(join(ctx, 'state'), { recursive: true });
   // Minimal soul file so snapshot has content
@@ -211,7 +211,7 @@ describe('hook stop (integration)', () => {
     expect(sessions[0].last_assistant_message).toBe(longMessage);
   });
 
-  it('exits 0 when no _agent_context/ exists', () => {
+  it('exits 0 when no _dream_context/ exists', () => {
     const noCtxDir = makeTmpDir();
     try {
       const input = JSON.stringify({ session_id: 'sess-abc', transcript_path: '/tmp/t.jsonl' });
@@ -226,8 +226,8 @@ describe('hook stop (integration)', () => {
     const transcriptPath = join(tmpDir, 'task-transcript.jsonl');
     const content = [
       toolUseLine('Read'),
-      '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"agentcontext tasks log fix-auth \\"done\\""}}]}}',
-      '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"_agent_context/state/web-dashboard.md"}}]}}',
+      '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"dreamcontext tasks log fix-auth \\"done\\""}}]}}',
+      '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"_dream_context/state/web-dashboard.md"}}]}}',
     ].join('\n');
     writeFileSync(transcriptPath, content);
 
@@ -271,7 +271,7 @@ describe('hook stop (integration)', () => {
 
   it('merges task_slugs from both transcript and bookmarks', () => {
     const transcriptPath = join(tmpDir, 'merged-transcript.jsonl');
-    writeFileSync(transcriptPath, '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"agentcontext tasks log task-a \\"progress\\""}}]}}');
+    writeFileSync(transcriptPath, '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"dreamcontext tasks log task-a \\"progress\\""}}]}}');
 
     writeSleep(ctx, {
       debt: 0,
@@ -302,7 +302,7 @@ describe('hook stop (integration)', () => {
 
   it('deduplicates task_slugs on re-stop', () => {
     const transcriptPath = join(tmpDir, 'restop-transcript.jsonl');
-    writeFileSync(transcriptPath, '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"agentcontext tasks log my-task \\"stuff\\""}}]}}');
+    writeFileSync(transcriptPath, '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"dreamcontext tasks log my-task \\"stuff\\""}}]}}');
 
     const input = JSON.stringify({ session_id: 'sess-restop', transcript_path: transcriptPath });
     runWithStdin('hook stop', input, tmpDir);
@@ -631,7 +631,7 @@ describe('hook session-start (integration)', () => {
     expect(sessions[0].score).toBe(2);
   });
 
-  it('outputs empty when no _agent_context/', () => {
+  it('outputs empty when no _dream_context/', () => {
     const noCtxDir = makeTmpDir();
     try {
       const input = JSON.stringify({ session_id: 'sess-1', source: 'startup', transcript_path: '/tmp/t.jsonl' });
@@ -866,7 +866,7 @@ describe('hook subagent-start (integration)', () => {
     expect(ctx_text).not.toContain('Drowsy');
   });
 
-  it('exits silently when no _agent_context/', () => {
+  it('exits silently when no _dream_context/', () => {
     const noCtxDir = makeTmpDir();
     try {
       const output = run('hook subagent-start', noCtxDir);
@@ -890,8 +890,8 @@ describe('hook subagent-start (integration)', () => {
     const parsed = JSON.parse(output);
     const ctx_text = parsed.hookSpecificOutput.additionalContext;
     expect(ctx_text).toContain('Context Directory');
-    expect(ctx_text).toContain('_agent_context/core/');
-    expect(ctx_text).toContain('_agent_context/knowledge/');
+    expect(ctx_text).toContain('_dream_context/core/');
+    expect(ctx_text).toContain('_dream_context/knowledge/');
     expect(ctx_text).toContain('features/');
   });
 
@@ -941,7 +941,7 @@ describe('hook subagent-start (integration)', () => {
     expect(ctx_text).toContain('visual interface');
     expect(ctx_text).toContain('Tasks: web-dashboard');
     // Each feature includes a direct read path
-    expect(ctx_text).toContain('--> Read: _agent_context/core/features/web-dashboard.md');
+    expect(ctx_text).toContain('--> Read: _dream_context/core/features/web-dashboard.md');
   });
 
   it('includes top-priority directive to check context before searching', () => {
@@ -961,8 +961,8 @@ describe('hook subagent-start (integration)', () => {
     const ctx_text = parsed.hookSpecificOutput.additionalContext;
     expect(ctx_text).toContain('## Task Awareness');
     expect(ctx_text).toContain('linked to a task');
-    expect(ctx_text).toContain('agentcontext tasks create');
-    expect(ctx_text).toContain('save this plan as an agentcontext task');
+    expect(ctx_text).toContain('dreamcontext tasks create');
+    expect(ctx_text).toContain('save this plan as an dreamcontext task');
   });
 });
 
@@ -981,7 +981,7 @@ describe('hook pre-tool-use (integration)', () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('blocks default Explore agent when _agent_context/ exists', () => {
+  it('blocks default Explore agent when _dream_context/ exists', () => {
     const input = JSON.stringify({
       tool_name: 'Agent',
       tool_input: { subagent_type: 'Explore', prompt: 'Find auth files' },
@@ -991,11 +991,11 @@ describe('hook pre-tool-use (integration)', () => {
 
     expect(parsed.hookSpecificOutput.hookEventName).toBe('PreToolUse');
     expect(parsed.hookSpecificOutput.permissionDecision).toBe('deny');
-    expect(parsed.hookSpecificOutput.permissionDecisionReason).toContain('agentcontext-explore');
+    expect(parsed.hookSpecificOutput.permissionDecisionReason).toContain('dreamcontext-explore');
     expect(parsed.hookSpecificOutput.permissionDecisionReason).toContain('Default Explorer blocked');
   });
 
-  it('allows default Explore agent when no _agent_context/ exists', () => {
+  it('allows default Explore agent when no _dream_context/ exists', () => {
     const noCtxDir = makeTmpDir();
     try {
       const input = JSON.stringify({
@@ -1019,19 +1019,19 @@ describe('hook pre-tool-use (integration)', () => {
     expect(output.trim()).toBe('');
   });
 
-  it('allows non-Explore Agent calls (agentcontext-rem-sleep)', () => {
+  it('allows non-Explore Agent calls (dreamcontext-rem-sleep)', () => {
     const input = JSON.stringify({
       tool_name: 'Agent',
-      tool_input: { subagent_type: 'agentcontext-rem-sleep', prompt: 'Consolidate' },
+      tool_input: { subagent_type: 'dreamcontext-rem-sleep', prompt: 'Consolidate' },
     });
     const output = runWithStdin('hook pre-tool-use', input, tmpDir);
     expect(output.trim()).toBe('');
   });
 
-  it('allows agentcontext-explore Agent calls (our custom explorer)', () => {
+  it('allows dreamcontext-explore Agent calls (our custom explorer)', () => {
     const input = JSON.stringify({
       tool_name: 'Agent',
-      tool_input: { subagent_type: 'agentcontext-explore', prompt: 'Find auth files' },
+      tool_input: { subagent_type: 'dreamcontext-explore', prompt: 'Find auth files' },
     });
     const output = runWithStdin('hook pre-tool-use', input, tmpDir);
     expect(output.trim()).toBe('');
@@ -1060,7 +1060,7 @@ describe('hook pre-tool-use (integration)', () => {
     const parsed = JSON.parse(output);
     const reason = parsed.hookSpecificOutput.permissionDecisionReason;
 
-    expect(reason).toContain('_agent_context/');
+    expect(reason).toContain('_dream_context/');
     expect(reason).toContain('context files first');
     expect(reason).toContain('saving thousands of tokens');
   });
@@ -1302,7 +1302,7 @@ describe('hook pre-compact (integration)', () => {
     expect(log[0].trigger).toBe('manual'); // newest first (LIFO)
   });
 
-  it('exits silently when no _agent_context/', () => {
+  it('exits silently when no _dream_context/', () => {
     const noCtxDir = makeTmpDir();
     const input = JSON.stringify({ trigger: 'auto' });
     const output = runWithStdin('hook pre-compact', input, noCtxDir);

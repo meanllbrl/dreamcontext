@@ -1,12 +1,12 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useProject } from '../context/ProjectContext';
 
-const STORAGE_PREFIX = 'agentcontext:';
+const STORAGE_PREFIX = 'dreamcontext:';
 
 export function usePersistedState<T>(key: string, defaultValue: T): [T, (value: T | ((prev: T) => T)) => void] {
   const { projectId, ready } = useProject();
 
-  // Project-scoped key: agentcontext:{projectId}:{key}
+  // Project-scoped key: dreamcontext:{projectId}:{key}
   const storageKey = projectId
     ? `${STORAGE_PREFIX}${projectId}:${key}`
     : `${STORAGE_PREFIX}${key}`;

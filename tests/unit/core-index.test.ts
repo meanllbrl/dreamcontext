@@ -66,7 +66,7 @@ describe('buildCoreIndex', () => {
     expect(entries[0].name).toBe('custom data');
     expect(entries[0].type).toBe('data');
     expect(entries[0].summary).toBe('');
-    expect(entries[0].path).toBe('_agent_context/core/7.custom_data.json');
+    expect(entries[0].path).toBe('_dream_context/core/7.custom_data.json');
   });
 
   it('reads frontmatter from .md and .sql files', () => {
@@ -85,14 +85,14 @@ describe('buildCoreIndex', () => {
       name: 'tech-stack',
       type: 'tech',
       summary: 'Node.js + PostgreSQL',
-      path: '_agent_context/core/4.tech_stack.md',
+      path: '_dream_context/core/4.tech_stack.md',
     });
     expect(entries[1]).toEqual({
       filename: '5.data_structures.sql',
       name: 'data-structures',
       type: 'schema',
       summary: '',
-      path: '_agent_context/core/5.data_structures.sql',
+      path: '_dream_context/core/5.data_structures.sql',
     });
   });
 
@@ -115,8 +115,8 @@ describe('buildCoreIndex', () => {
     writeFileSync(join(tmpDir, 'core', '3.style.md'), '---\nname: style\ntype: style\n---\n\nS\n');
     writeFileSync(join(tmpDir, 'core', '4.tech.md'), '---\nname: tech\ntype: tech\n---\n\nT\n');
     const entries = buildCoreIndex(tmpDir);
-    expect(entries[0].path).toBe('_agent_context/core/3.style.md');
-    expect(entries[1].path).toBe('_agent_context/core/4.tech.md');
+    expect(entries[0].path).toBe('_dream_context/core/3.style.md');
+    expect(entries[1].path).toBe('_dream_context/core/4.tech.md');
   });
 
   it('sorts by filename', () => {
@@ -132,6 +132,6 @@ describe('buildCoreIndex', () => {
     const entries = buildCoreIndex(tmpDir);
     expect(entries).toHaveLength(1);
     expect(entries[0].filename).toBe('3.plain.md');
-    expect(entries[0].path).toBe('_agent_context/core/3.plain.md');
+    expect(entries[0].path).toBe('_dream_context/core/3.plain.md');
   });
 });

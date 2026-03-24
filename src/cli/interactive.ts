@@ -57,7 +57,7 @@ const CATEGORIES: MenuCategory[] = [
       {
         emoji: '\u{1F4E6}',
         name: 'Initialize project',
-        description: 'Create _agent_context/ directory',
+        description: 'Create _dream_context/ directory',
         argv: ['init'],
       },
       {
@@ -65,6 +65,18 @@ const CATEGORIES: MenuCategory[] = [
         name: 'Install skill',
         description: 'Install Claude Code skill + agents + hooks',
         argv: ['install-skill'],
+      },
+      {
+        emoji: '\u{1F4E6}',
+        name: 'Install skill packs',
+        description: 'Browse and install optional skill packs',
+        argv: ['install-skill', '--packs'],
+      },
+      {
+        emoji: '\u{1F4CB}',
+        name: 'List skill packs',
+        description: 'Show all available skill packs',
+        argv: ['install-skill', '--list'],
       },
     ],
   },
@@ -223,7 +235,7 @@ const CATEGORIES: MenuCategory[] = [
       {
         emoji: '\u{1FA7A}',
         name: 'Doctor',
-        description: 'Validate _agent_context/ structure',
+        description: 'Validate _dream_context/ structure',
         argv: ['doctor'],
       },
     ],

@@ -11,7 +11,7 @@ function makeTmpDir(): string {
 }
 
 function scaffold(root: string) {
-  const ctx = join(root, '_agent_context');
+  const ctx = join(root, '_dream_context');
   mkdirSync(join(ctx, 'core', 'features'), { recursive: true });
   mkdirSync(join(ctx, 'state'), { recursive: true });
   return ctx;
@@ -37,7 +37,7 @@ describe('snapshot (integration)', () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('returns empty output when _agent_context/ does not exist', () => {
+  it('returns empty output when _dream_context/ does not exist', () => {
     const output = runSnapshot(tmpDir);
     expect(output.trim()).toBe('');
   });
@@ -248,7 +248,7 @@ describe('snapshot (integration)', () => {
     );
     const output = runSnapshot(tmpDir);
     expect(output).toContain('## Knowledge Index');
-    expect(output).toContain('_agent_context/knowledge/auth-system.md');
+    expect(output).toContain('_dream_context/knowledge/auth-system.md');
     expect(output).toContain('JWT-based auth flow [auth, security]');
   });
 
@@ -289,8 +289,8 @@ describe('snapshot (integration)', () => {
     );
     const output = runSnapshot(tmpDir);
     expect(output).toContain('## Extended Core Files');
-    expect(output).toContain('_agent_context/core/3.style_guide.md');
-    expect(output).toContain('_agent_context/core/4.tech_stack.md');
+    expect(output).toContain('_dream_context/core/3.style_guide.md');
+    expect(output).toContain('_dream_context/core/4.tech_stack.md');
   });
 
   it('outputs extended core file summary when present', () => {

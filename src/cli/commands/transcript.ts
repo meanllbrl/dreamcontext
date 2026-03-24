@@ -140,7 +140,7 @@ export function distillTranscript(transcriptPath: string, sinceTimestamp?: strin
             // Bookmark calls
             if (toolName === 'Bash' && block.input) {
               const cmd = typeof block.input.command === 'string' ? block.input.command : '';
-              if (cmd.includes('agentcontext bookmark')) {
+              if (cmd.includes('dreamcontext bookmark')) {
                 result.bookmarks.push(cmd);
                 continue;
               }

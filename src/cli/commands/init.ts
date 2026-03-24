@@ -84,7 +84,7 @@ function replaceTokens(content: string, tokens: Record<string, string>): string 
 export function registerInitCommand(program: Command): void {
   program
     .command('init')
-    .description('Initialize _agent_context/ in the current directory')
+    .description('Initialize _dream_context/ in the current directory')
     .option('-y, --yes', 'Skip prompts and use defaults')
     .option('--name <name>', 'Project name')
     .option('--description <desc>', 'Project description')
@@ -102,7 +102,7 @@ export function registerInitCommand(program: Command): void {
       const contextDir = getInitPath();
 
       if (existsSync(contextDir)) {
-        error('_agent_context/ already exists in this directory.');
+        error('_dream_context/ already exists in this directory.');
         return;
       }
 
@@ -204,7 +204,7 @@ export function registerInitCommand(program: Command): void {
 
       console.log();
       console.log(`  ${chalk.bold('Created structure:')}`);
-      console.log(`  ${chalk.magentaBright.bold('_agent_context/')}`);
+      console.log(`  ${chalk.magentaBright.bold('_dream_context/')}`);
       console.log(`  ├── ${chalk.magentaBright.bold('core/')}`);
       console.log(`  │   ├── ${chalk.magentaBright.bold('features/')}`);
       console.log(`  │   ├── ${chalk.green('0.soul.md')}`);
@@ -220,8 +220,8 @@ export function registerInitCommand(program: Command): void {
 
       console.log();
       console.log(chalk.bold('  What\'s next:'));
-      console.log(`  ${chalk.dim('1.')} Run ${chalk.magentaBright('agentcontext install-skill')} to set up Claude Code integration`);
-      console.log(`  ${chalk.dim('2.')} Run ${chalk.magentaBright('agentcontext features create <name>')} to add features`);
-      console.log(`  ${chalk.dim('3.')} Edit ${chalk.green('_agent_context/core/0.soul.md')} to define agent identity`);
+      console.log(`  ${chalk.dim('1.')} Run ${chalk.magentaBright('dreamcontext install-skill')} to set up Claude Code integration`);
+      console.log(`  ${chalk.dim('2.')} Run ${chalk.magentaBright('dreamcontext features create <name>')} to add features`);
+      console.log(`  ${chalk.dim('3.')} Edit ${chalk.green('_dream_context/core/0.soul.md')} to define agent identity`);
     });
 }

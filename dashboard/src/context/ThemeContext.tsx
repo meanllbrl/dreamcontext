@@ -22,7 +22,7 @@ function resolveTheme(theme: Theme): ResolvedTheme {
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<Theme>(() => {
-    const stored = localStorage.getItem('agentcontext-theme') as Theme | null;
+    const stored = localStorage.getItem('dreamcontext-theme') as Theme | null;
     return stored || 'system';
   });
 
@@ -30,7 +30,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   const setTheme = (newTheme: Theme) => {
     setThemeState(newTheme);
-    localStorage.setItem('agentcontext-theme', newTheme);
+    localStorage.setItem('dreamcontext-theme', newTheme);
   };
 
   useEffect(() => {

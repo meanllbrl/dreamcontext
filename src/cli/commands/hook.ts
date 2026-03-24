@@ -57,14 +57,14 @@ export function analyzeTranscript(transcriptPath: string): TranscriptAnalysis {
     const changeMatches = content.match(/"name"\s*:\s*"(?:Write|Edit)"/g);
     const toolMatches = content.match(/"name"\s*:\s*"[A-Za-z_]+"/g);
 
-    // Extract task slugs from agentcontext CLI commands and task file paths.
+    // Extract task slugs from dreamcontext CLI commands and task file paths.
     // Only match within "command":"..." JSON values to avoid prose/explanation noise.
     const slugs = new Set<string>();
-    for (const m of content.matchAll(/"command"\s*:\s*"[^"]*agentcontext\s+tasks?\s+(?:log|insert|complete|create)\s+(?:\\?["'])?([a-z0-9][a-z0-9-]*)/g)) {
+    for (const m of content.matchAll(/"command"\s*:\s*"[^"]*dreamcontext\s+tasks?\s+(?:log|insert|complete|create)\s+(?:\\?["'])?([a-z0-9][a-z0-9-]*)/g)) {
       slugs.add(m[1]);
     }
     // Match task file paths in "file_path":"..." JSON values
-    for (const m of content.matchAll(/"file_path"\s*:\s*"[^"]*_agent_context\/state\/([a-z0-9][a-z0-9-]*)\.md"/g)) {
+    for (const m of content.matchAll(/"file_path"\s*:\s*"[^"]*_dream_context\/state\/([a-z0-9][a-z0-9-]*)\.md"/g)) {
       slugs.add(m[1]);
     }
 
@@ -291,7 +291,7 @@ function getConsolidationDirective(state: SleepState): string | null {
         ? [`${criticalBookmarks.length} critical bookmark(s) awaiting consolidation.`]
         : []),
       'You MUST inform the user and consolidate NOW.',
-      'Dispatch the agentcontext-rem-sleep agent with a brief of recent work.',
+      'Dispatch the dreamcontext-rem-sleep agent with a brief of recent work.',
       'If the user has an urgent task, consolidate IMMEDIATELY after completing it.',
       '',
     ].join('\n');
@@ -303,7 +303,7 @@ function getConsolidationDirective(state: SleepState): string | null {
       `${criticalBookmarks.length} critical (★★★) bookmark(s) tagged for consolidation:`,
       ...criticalBookmarks.slice(0, 3).map(b => `  - ${b.message}`),
       'These represent important decisions/constraints that should be consolidated into context files.',
-      'Dispatch the agentcontext-rem-sleep agent with a brief of recent work.',
+      'Dispatch the dreamcontext-rem-sleep agent with a brief of recent work.',
       '',
     ].join('\n');
   }
@@ -313,7 +313,7 @@ function getConsolidationDirective(state: SleepState): string | null {
       '',
       `Sleep debt is ${debt}/10. Context files are growing stale.`,
       'You MUST inform the user and recommend consolidation before starting new work.',
-      'Dispatch the agentcontext-rem-sleep agent with a brief of recent work.',
+      'Dispatch the dreamcontext-rem-sleep agent with a brief of recent work.',
       '',
     ].join('\n');
   }
@@ -476,7 +476,7 @@ export function registerHookCommand(program: Command): void {
   // --- hook pre-tool-use ---
   hook
     .command('pre-tool-use')
-    .description('Gate default sub-agents when _agent_context/ exists (called by Claude Code PreToolUse hook)')
+    .description('Gate default sub-agents when _dream_context/ exists (called by Claude Code PreToolUse hook)')
     .action(() => {
       const input = readStdin();
       if (!input) process.exit(0); // allow — no input means nothing to gate
@@ -495,7 +495,7 @@ export function registerHookCommand(program: Command): void {
       // Only gate the default Explore agent
       if (subagentType !== 'Explore') process.exit(0); // allow
 
-      // Only gate when _agent_context/ exists (context-managed projects)
+      // Only gate when _dream_context/ exists (context-managed projects)
       const root = resolveContextRoot();
       if (!root) process.exit(0); // allow — no context directory, default Explorer is fine
 
@@ -505,8 +505,8 @@ export function registerHookCommand(program: Command): void {
           hookEventName: 'PreToolUse',
           permissionDecision: 'deny',
           permissionDecisionReason: [
-            'Default Explorer blocked: this project has _agent_context/ with curated context.',
-            'Use Agent with subagent_type "agentcontext-explore" instead.',
+            'Default Explorer blocked: this project has _dream_context/ with curated context.',
+            'Use Agent with subagent_type "dreamcontext-explore" instead.',
             'It checks context files first (data structures, tech stack, features) before searching the codebase,',
             'saving thousands of tokens. Pass the same prompt — it has identical search capabilities.',
           ].join(' '),
@@ -560,9 +560,9 @@ export function registerHookCommand(program: Command): void {
 
       // Only output when debt is actionable or critical bookmarks exist
       if (debt >= 10) {
-        console.log(`Sleep debt is ${debt}. CONSOLIDATION REQUIRED. Run agentcontext-rem-sleep NOW.`);
+        console.log(`Sleep debt is ${debt}. CONSOLIDATION REQUIRED. Run dreamcontext-rem-sleep NOW.`);
       } else if (criticalBookmarks.length > 0) {
-        console.log(`${criticalBookmarks.length} critical bookmark(s) need consolidation. Run agentcontext-rem-sleep.`);
+        console.log(`${criticalBookmarks.length} critical bookmark(s) need consolidation. Run dreamcontext-rem-sleep.`);
       } else if (debt >= 7) {
         console.log(`Sleep debt is ${debt}. Consolidation recommended before starting new work.`);
       } else if (debt >= 4) {

@@ -29,7 +29,7 @@ export function buildCoreIndex(contextRoot: string): CoreFileEntry[] {
 
   for (const file of files) {
     const filename = basename(file);
-    const relativePath = `_agent_context/core/${filename}`;
+    const relativePath = `_dream_context/core/${filename}`;
 
     // JSON files don't have frontmatter — derive name from filename
     if (filename.endsWith('.json')) {

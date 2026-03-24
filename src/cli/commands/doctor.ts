@@ -71,11 +71,11 @@ function checkDirectory(root: string, relPath: string, label: string): CheckResu
 export function registerDoctorCommand(program: Command): void {
   program
     .command('doctor')
-    .description('Validate _agent_context/ structure and report issues')
+    .description('Validate _dream_context/ structure and report issues')
     .action(() => {
       const root = resolveContextRoot();
       if (!root) {
-        console.log(chalk.red('✗') + ' _agent_context/ not found. Run `agentcontext init` to create it.');
+        console.log(chalk.red('✗') + ' _dream_context/ not found. Run `dreamcontext init` to create it.');
         process.exit(1);
       }
 

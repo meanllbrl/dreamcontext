@@ -1,11 +1,11 @@
 <p align="center">
-  <img src="public/image/agentcontext.png" alt="agentcontext" width="120" />
+  <img src="public/image/dreamcontext.png" alt="dreamcontext" width="120" />
 </p>
 
 <h1 align="center">Deep Dive</h1>
 
 <p align="center">
-  The philosophy, architecture, and design decisions behind agentcontext.<br/>
+  The philosophy, architecture, and design decisions behind dreamcontext.<br/>
   For setup and commands, see the <a href="README.md">README</a>.
 </p>
 
@@ -25,7 +25,7 @@
 
 ## Why It Exists
 
-I built `agentcontext` because AI coding agents, even the best frontier models, make mistakes that require human judgment to catch. Not small mistakes. Mistakes that would be catastrophic in production.
+I built `dreamcontext` because AI coding agents, even the best frontier models, make mistakes that require human judgment to catch. Not small mistakes. Mistakes that would be catastrophic in production.
 
 Here is what I have seen them do, repeatedly, across real projects:
 
@@ -36,7 +36,7 @@ Here is what I have seen them do, repeatedly, across real projects:
 
 These are not edge cases from small models. These are the top-of-the-line frontier models on real projects. Maybe an agent can handle a simple frontend on its own, or wire up a small database. But the moment you have complex edge cases, serverless architectures with real scaling concerns, or acceptance criteria that require product judgment, **a human engineer needs to be steering.** And steering only works when both sides have clear visibility into what is happening: what decisions were made, what work is in progress, what rules to follow, and what was tried before.
 
-That is what `agentcontext` is. Not just memory for agents. **A shared context layer that both you and your agent can read, audit, and act on.** When I open my project's context files, I can see exactly what the agent knows, correct what it got wrong, and make sure the next session starts with accurate information.
+That is what `dreamcontext` is. Not just memory for agents. **A shared context layer that both you and your agent can read, audit, and act on.** When I open my project's context files, I can see exactly what the agent knows, correct what it got wrong, and make sure the next session starts with accurate information.
 
 The problems that make this necessary are not accidental. **They are structural limitations of how agent memory works today.**
 
@@ -55,12 +55,12 @@ Three minutes. Multiple tool calls. Context window already filling up. And then 
 <table>
 <tr>
 <td width="50%" align="center">
-<img src="public/image/agentcontext_disabled.png" alt="Without agentcontext" width="100%" /><br/>
-<em><strong>Without agentcontext</strong><br/>The agent does archaeology on decisions<br/>it already knew yesterday.</em>
+<img src="public/image/dreamcontext_disabled.png" alt="Without dreamcontext" width="100%" /><br/>
+<em><strong>Without dreamcontext</strong><br/>The agent does archaeology on decisions<br/>it already knew yesterday.</em>
 </td>
 <td width="50%" align="center">
-<img src="public/image/agentcontext_enabled.png" alt="With agentcontext" width="100%" /><br/>
-<em><strong>With agentcontext</strong><br/>The decision is already in the snapshot.<br/>One read if needed. No spiral.</em>
+<img src="public/image/dreamcontext_enabled.png" alt="With dreamcontext" width="100%" /><br/>
+<em><strong>With dreamcontext</strong><br/>The decision is already in the snapshot.<br/>One read if needed. No spiral.</em>
 </td>
 </tr>
 </table>
@@ -97,9 +97,9 @@ When you switch tools, or the service changes its API, or you want to work offli
 
 Human brains don't store everything in one region. Your prefrontal cortex handles identity and decision-making. Your temporal lobe stores facts and relationships. You have procedural memory for skills you don't think about, and working memory for what you are actively doing. Different types of knowledge, different storage.
 
-`agentcontext` takes inspiration from this structure:
+`dreamcontext` takes inspiration from this structure:
 
-| Brain Region | agentcontext | What it holds |
+| Brain Region | dreamcontext | What it holds |
 |---|---|---|
 | Prefrontal cortex | `0.soul.md` | Identity, principles, rules, constraints |
 | Episodic memory | `1.user.md` | Your preferences, project conventions, workflow |
@@ -110,7 +110,7 @@ Human brains don't store everything in one region. Your prefrontal cortex handle
 | Working memory | `state/` | Active tasks, in-progress work |
 | Skill memory | `SKILL.md` | Teaches the agent the system itself |
 
-The `_agent_context/` directory is the implementation. Everything lives in your repo, structured and version-controlled.
+The `_dream_context/` directory is the implementation. Everything lives in your repo, structured and version-controlled.
 
 ### How each piece works
 
@@ -130,7 +130,7 @@ The `_agent_context/` directory is the implementation. Everything lives in your 
 
 The core insight: **don't make the agent search for its own context.**
 
-`agentcontext` uses seven hooks that run outside the agent's context window. They execute in the shell, not in the agent's reasoning loop. No tool calls, no token cost, no context window pressure.
+`dreamcontext` uses seven hooks that run outside the agent's context window. They execute in the shell, not in the agent's reasoning loop. No tool calls, no token cost, no context window pressure.
 
 ### Stop Hook
 
@@ -174,15 +174,15 @@ Consolidation directives fire based on multiple signals: debt 4-6 (offers consol
 
 Fires when any sub-agent launches (Explore, Plan, or custom agents). Injects a lightweight briefing: project summary (capped at 120 characters), directory structure, active tasks, knowledge index, and pinned knowledge.
 
-This is intentionally lighter than the full snapshot. Sub-agents are task-focused and short-lived. They need enough context to check existing knowledge and avoid duplicating work, not the full project state. The briefing fires for all sub-agents, including agentcontext's own (the initializer and RemSleep agent). The extra context does not conflict with their dedicated prompts.
+This is intentionally lighter than the full snapshot. Sub-agents are task-focused and short-lived. They need enough context to check existing knowledge and avoid duplicating work, not the full project state. The briefing fires for all sub-agents, including dreamcontext's own (the initializer and RemSleep agent). The extra context does not conflict with their dedicated prompts.
 
 ### PreToolUse Hook
 
-Fires before a tool executes. Currently used for one purpose: blocking the default Explorer sub-agent when `_agent_context/` exists.
+Fires before a tool executes. Currently used for one purpose: blocking the default Explorer sub-agent when `_dream_context/` exists.
 
-The problem: Claude Code's default Explorer has its own built-in system prompt that cannot be overridden by `additionalContext` injection (SubagentStart context is lower priority). When exploring a project with curated context files, the default Explorer ignores the curated knowledge and burns 100K-150K tokens re-reading files that are already summarized in `_agent_context/`.
+The problem: Claude Code's default Explorer has its own built-in system prompt that cannot be overridden by `additionalContext` injection (SubagentStart context is lower priority). When exploring a project with curated context files, the default Explorer ignores the curated knowledge and burns 100K-150K tokens re-reading files that are already summarized in `_dream_context/`.
 
-The solution: the PreToolUse hook detects when `subagent_type` is `"Explore"` and `_agent_context/` exists, then returns a JSON deny response directing the main agent to use the `agentcontext-explore` custom agent instead. This agent has identical tool access but reads `_agent_context/` files first, returns immediately if the answer is already in the curated context, and only falls back to full codebase search when needed.
+The solution: the PreToolUse hook detects when `subagent_type` is `"Explore"` and `_dream_context/` exists, then returns a JSON deny response directing the main agent to use the `dreamcontext-explore` custom agent instead. This agent has identical tool access but reads `_dream_context/` files first, returns immediately if the answer is already in the curated context, and only falls back to full codebase search when needed.
 
 This asymmetric strategy (full replacement for Explorer, additive injection for Plan) was a deliberate design choice. Explorer's behavior directly contradicts curated context. Plan's behavior (offering task creation) is additive and works fine with SubagentStart injection.
 
@@ -251,7 +251,7 @@ During work
   → PostToolUse fires after Edit/Write               auto-format + tsc check
   → Errors fed back via additionalContext             agent self-corrects
   → PreToolUse fires before tool execution           blocks blind Explorer
-  → agentcontext-explore used instead                context-first exploration
+  → dreamcontext-explore used instead                context-first exploration
 
 Before compaction
   → PreCompact hook fires                            runs in shell
@@ -269,7 +269,7 @@ Humans consolidate memory during sleep. Your hippocampus replays the day, extrac
 
 Agents face the same challenge. Over multiple sessions, your agent accumulates knowledge: decisions, patterns, problems solved, tasks completed. Without consolidation, that knowledge either gets lost when the session ends or piles up in context files until they are too noisy to be useful. **Good context files don't happen by accident.** They need the same kind of maintenance a good engineer applies to their own notes.
 
-`agentcontext` ships with a **RemSleep** agent that handles this consolidation:
+`dreamcontext` ships with a **RemSleep** agent that handles this consolidation:
 
 1. **Debt accumulates automatically.** The Stop hook scores each session based on both file changes and total tool calls. No manual tracking needed. The score reflects how much new knowledge was generated.
 2. **Bookmarks prioritize what matters.** During active work, the agent tags important moments (decisions, constraints, bugs) with salience levels. The RemSleep agent reads bookmarks first, ordered by salience, so critical decisions are never lost in a pile of routine session summaries.
@@ -308,7 +308,7 @@ The key insight: **memory selection and memory consolidation are separate proces
 
 ### How the mapping works
 
-| Brain Mechanism | agentcontext Feature |
+| Brain Mechanism | dreamcontext Feature |
 |---|---|
 | Hippocampus (working memory) | `state/` files (active tasks, sleep state) |
 | Neocortex (long-term storage) | `core/` files (soul, user, memory), `knowledge/` files |
@@ -357,7 +357,7 @@ Raw JSONL transcripts can be tens of thousands of lines. The `transcript distill
 
 The CLI and hooks handle the agent side. But context is a shared layer, and the human needs a way to work with it too. Opening markdown files in a text editor works, but it is not the best experience for managing tasks, reviewing sleep state, or browsing features. The dashboard fills that gap.
 
-`agentcontext dashboard` starts a local HTTP server and opens a web UI. No external services, no accounts, no network calls. It reads and writes the same `_agent_context/` files the CLI uses. There is no separate database.
+`dreamcontext dashboard` starts a local HTTP server and opens a web UI. No external services, no accounts, no network calls. It reads and writes the same `_dream_context/` files the CLI uses. There is no separate database.
 
 ### What it provides
 
@@ -406,13 +406,13 @@ Making an agent edit structured files (JSON, frontmatter, LIFO-ordered lists) me
 The CLI handles structural operations in a single command:
 
 ```bash
-agentcontext tasks create auth-refactor     # Scaffolds task with frontmatter
-agentcontext tasks log auth-refactor "..."  # Appends log entry (LIFO)
-agentcontext tasks complete auth-refactor   # Updates status in frontmatter
-agentcontext core changelog add             # Adds entry with proper schema
-agentcontext features create payments       # Scaffolds feature PRD
-agentcontext features insert auth changelog "Added OAuth flow"  # LIFO section insert
-agentcontext knowledge create api-patterns  # Creates tagged knowledge doc
+dreamcontext tasks create auth-refactor     # Scaffolds task with frontmatter
+dreamcontext tasks log auth-refactor "..."  # Appends log entry (LIFO)
+dreamcontext tasks complete auth-refactor   # Updates status in frontmatter
+dreamcontext core changelog add             # Adds entry with proper schema
+dreamcontext features create payments       # Scaffolds feature PRD
+dreamcontext features insert auth changelog "Added OAuth flow"  # LIFO section insert
+dreamcontext knowledge create api-patterns  # Creates tagged knowledge doc
 ```
 
 One CLI call replaces a Read + reason + Edit + verify cycle. That difference compounds over a session. The CLI handles frontmatter parsing, LIFO ordering, JSON schema enforcement, and section insertion. The agent does not need to think about any of that.
@@ -420,6 +420,22 @@ One CLI call replaces a Read + reason + Edit + verify cycle. That difference com
 Direct content edits (rewriting a paragraph in soul.md, updating a decision in memory.md, adding detail to a knowledge doc) still use the agent's native Read/Edit/Write tools. The agent is good at content. It is wasteful at structure.
 
 The split is simple: **CLI for structure, native tools for content.**
+
+### Optional Skill Packs
+
+Beyond the core context management skill, `dreamcontext` ships curated skill packs for common workflows. Each pack contains a base skill (always-active principles) and on-demand sub-skills that Claude Code loads when relevant.
+
+Five packs ship in v0.1.0: **engineering** (coding standards, backend architecture, Firebase), **design** (design systems, web/mobile UX, onboarding), **growth** (retention, ads, analytics), **brand-voice** (enforcement, discovery, guideline generation), and **system-prompts** (prompt engineering, cognitive architecture). Some packs include related agents (e.g., a code reviewer for engineering, brand discovery agents for brand-voice).
+
+The install interface has three modes:
+
+- **Interactive browser** (`install-skill --packs`): a terminal checkbox UI showing all packs with descriptions, sub-skill counts, agent counts, installed status, and `[always active]` badges. Select what you want, confirm, done.
+- **Direct install** (`install-skill --packs engineering design`): skip the UI, install specific packs by name.
+- **Individual skills** (`install-skill --skill firebase-firestore`): install a single sub-skill without the full pack.
+
+Cross-pack dependencies are warned at install time (e.g., engineering recommends design for UI work). Skills install flat to `.claude/skills/{pack-name}/`, agents to `.claude/agents/`. Sub-skills with reference files (like Firebase packs) carry their references along.
+
+The catalog lives in `skill-packs/catalog.json` and ships with the npm package. The CLI reads it to discover available packs, resolve dependencies, and locate source files.
 
 ## Design Tradeoffs
 
@@ -455,14 +471,16 @@ Every design choice was deliberate. Here is what I chose, what I chose it over, 
 | **Pattern extraction in sleep** | Manual knowledge curation only | Recurring patterns across sessions (user preferences, workflow sequences, errors) are automatically surfaced by the sleep agent and written to memory or knowledge files. |
 | **Unified versions/releases** | Separate VERSIONS.json | A version is just a release that hasn't shipped yet. One file, one lifecycle (`planning` -> `released`). Less complexity, less code, and the sleep agent can check version readiness during consolidation. |
 | **Eisenhower matrix excludes completed** | Show all tasks | The matrix is for deciding what to do next. Completed tasks are noise in that context. Kanban still shows them for a complete project view. |
+| **Skill packs as flat file copies** | npm sub-packages, dynamic loading | Skills are markdown files. Copying them to `.claude/skills/` is the simplest install mechanism. No package resolution, no runtime dependency. The agent reads them as local files. |
+| **Interactive checkbox for pack selection** | CLI flags only | Developers want to browse what's available before committing. The terminal UI shows descriptions, sub-skill counts, installed status, and cross-pack warnings in one view. Direct flags (`--packs engineering`) still work for scripting. |
 
 ---
 
 ## What Comes Next
 
-Right now, `agentcontext` supports Claude Code. The hook system, the skill format, and the agent integration are all built around Claude's tool ecosystem. But the core idea (structured files, pre-loaded context, consolidation cycles) is not tied to any one agent. The architecture is designed so that other agents (Gemini CLI, Copilot, custom agents) can plug into the same `_agent_context/` directory with their own integration layer.
+Right now, `dreamcontext` supports Claude Code. The hook system, the skill format, and the agent integration are all built around Claude's tool ecosystem. But the core idea (structured files, pre-loaded context, consolidation cycles) is not tied to any one agent. The architecture is designed so that other agents (Gemini CLI, Copilot, custom agents) can plug into the same `_dream_context/` directory with their own integration layer.
 
-The neuroscience-inspired memory system (bookmarks, decay tracking, warm knowledge, triggers, transcript distillation) shipped in v0.1.x. Seven hooks now cover the full session lifecycle: context injection, session recording, sub-agent briefing, context-first exploration, persistent debt reminders, post-edit code quality gates, and pre-compaction state preservation. The dashboard is built and shipping with the package. Remaining polish includes accessibility audit, responsive layout refinements, i18n token extraction for future localization, and bundle size optimization.
+The neuroscience-inspired memory system (bookmarks, decay tracking, warm knowledge, triggers, transcript distillation) shipped in v0.1.x. Seven hooks now cover the full session lifecycle: context injection, session recording, sub-agent briefing, context-first exploration, persistent debt reminders, post-edit code quality gates, and pre-compaction state preservation. Optional skill packs (engineering, design, growth, brand-voice, system-prompts) ship with the package and install via an interactive terminal UI or direct CLI flags. The dashboard is built and shipping with the package. Remaining polish includes accessibility audit, responsive layout refinements, i18n token extraction for future localization, and bundle size optimization.
 
 The long-term vision: your project's context lives in your repo, structured and version-controlled, and any agent you choose to work with can pick it up. **The human stays in the loop. The context stays portable.** The agent gets better every session because the system enforces the discipline that makes that possible.
 

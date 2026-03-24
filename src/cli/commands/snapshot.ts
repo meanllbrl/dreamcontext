@@ -95,7 +95,7 @@ function getActiveTaskLines(root: string): string[] {
 /**
  * Output a plain-text context snapshot to stdout.
  * Designed for SessionStart hook consumption — no chalk, no interactivity.
- * If _agent_context/ doesn't exist, exits silently.
+ * If _dream_context/ doesn't exist, exits silently.
  */
 export function generateSnapshot(): string {
   const root = resolveContextRoot();
@@ -443,7 +443,7 @@ export function generateSnapshot(): string {
         }
       }
 
-      indexLines.push(`- **${entry.slug}** (_agent_context/knowledge/${entry.slug}.md): ${entry.description}${tagsStr}${stalenessNote}`);
+      indexLines.push(`- **${entry.slug}** (_dream_context/knowledge/${entry.slug}.md): ${entry.description}${tagsStr}${stalenessNote}`);
       if (entry.pinned) {
         pinnedEntries.push(entry);
       } else if (!stalenessNote) {
@@ -470,7 +470,7 @@ export function generateSnapshot(): string {
         if (firstParagraph) {
           parts.push(firstParagraph);
         }
-        parts.push(`-> Read full: _agent_context/knowledge/${entry.slug}.md`);
+        parts.push(`-> Read full: _dream_context/knowledge/${entry.slug}.md`);
         parts.push('');
       }
     }
@@ -558,7 +558,7 @@ export function generateSubagentBriefing(): string {
           ? data.related_tasks.join(', ')
           : '';
 
-        let featureLine = `- **${name}** --> Read: _agent_context/core/features/${name}.md`;
+        let featureLine = `- **${name}** --> Read: _dream_context/core/features/${name}.md`;
         const details: string[] = [];
         if (tags) details.push(`  Tags: ${tags}`);
         if (why) details.push(`  Why: ${why}`);
@@ -588,7 +588,7 @@ export function generateSubagentBriefing(): string {
 
     for (const entry of knowledgeEntries) {
       const tagsStr = entry.tags.length > 0 ? ` [${entry.tags.join(', ')}]` : '';
-      indexLines.push(`- **${entry.slug}** (_agent_context/knowledge/${entry.slug}.md): ${entry.description}${tagsStr}`);
+      indexLines.push(`- **${entry.slug}** (_dream_context/knowledge/${entry.slug}.md): ${entry.description}${tagsStr}`);
       if (entry.pinned) {
         pinnedEntries.push(entry);
       }
@@ -618,7 +618,7 @@ export function generateSubagentBriefing(): string {
       parts.push('## Core Files\n');
       for (const file of allCoreFiles) {
         const filename = basename(file);
-        const relativePath = `_agent_context/core/${filename}`;
+        const relativePath = `_dream_context/core/${filename}`;
 
         if (filename.endsWith('.json')) {
           const name = filename.replace(/^\d+\./, '').replace(/\.\w+$/, '').replace(/_/g, ' ');
@@ -649,20 +649,20 @@ export function generateSubagentBriefing(): string {
 
   // 7. Task-awareness instruction (for Plan agents and all sub-agents)
   parts.push('## Task Awareness\n');
-  parts.push('All significant work should be linked to a task in `_agent_context/state/`.');
+  parts.push('All significant work should be linked to a task in `_dream_context/state/`.');
   parts.push('If you are creating a plan or completing an implementation:');
   parts.push('- Check if an existing task in Active Tasks above relates to this work');
-  parts.push('- If planning: after the plan is approved, ask the user: "Would you like to save this plan as an agentcontext task?"');
-  parts.push('- To create: `agentcontext tasks create <name> --status pending --priority <p> --tags <t>`');
-  parts.push('- To log progress: `agentcontext tasks log <name> "what was done"`');
+  parts.push('- If planning: after the plan is approved, ask the user: "Would you like to save this plan as an dreamcontext task?"');
+  parts.push('- To create: `dreamcontext tasks create <name> --status pending --priority <p> --tags <t>`');
+  parts.push('- To log progress: `dreamcontext tasks log <name> "what was done"`');
   parts.push('Untracked work gets lost across sessions. Tasks are how knowledge persists.');
   parts.push('');
 
   // 8. Context directory reference
   parts.push('## Context Directory\n');
-  parts.push('`_agent_context/core/` -- Core files: soul (0), user (1), memory (2), extended (3+), features/');
-  parts.push('`_agent_context/knowledge/` -- Deep research documents on specific topics');
-  parts.push('`_agent_context/state/` -- Active task files with progress logs');
+  parts.push('`_dream_context/core/` -- Core files: soul (0), user (1), memory (2), extended (3+), features/');
+  parts.push('`_dream_context/knowledge/` -- Deep research documents on specific topics');
+  parts.push('`_dream_context/state/` -- Active task files with progress logs');
   parts.push('');
 
   return parts.join('\n').trim();
