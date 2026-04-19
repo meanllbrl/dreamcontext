@@ -14,6 +14,7 @@
   <a href="#how-it-works">How It Works</a> &nbsp;&middot;&nbsp;
   <a href="#quick-start">Quick Start</a> &nbsp;&middot;&nbsp;
   <a href="#dashboard">Dashboard</a> &nbsp;&middot;&nbsp;
+  <a href="#council">Council</a> &nbsp;&middot;&nbsp;
   <a href="#commands">Commands</a> &nbsp;&middot;&nbsp;
   <a href="DEEP-DIVE.md">Deep Dive</a>
 </p>
@@ -181,6 +182,20 @@ your-project/
 │   └── settings.json           # 7 hooks (see below)
 ```
 
+### Opening the context directory in Obsidian
+
+`dreamcontext init` scaffolds an `_dream_context/.obsidian/` vault config with curated graph, appearance, and app settings so you can open the directory directly in Obsidian and navigate the context as a knowledge graph. Links between files (tasks → features → knowledge → memory) render natively, and the Obsidian graph view works out of the box.
+
+### Claude Code integration without a skill install
+
+For projects that want dreamcontext context without installing the full skill + agent bundle, use:
+
+```bash
+dreamcontext install-claude-md
+```
+
+This writes a `CLAUDE.md` at the project root that references the dreamcontext context so Claude Code auto-loads it on session start. Useful for lightweight opt-in.
+
 ## Dashboard
 
 ```bash
@@ -216,9 +231,58 @@ A local web UI for managing agent context visually. Built with React 19, served 
 
 </td>
 </tr>
+<tr>
+<td width="50%">
+
+**Brain graph** visualizes your knowledge as an interactive network. Nodes are memory, knowledge, features, and decisions; edges are explicit and inferred links. Node drawer for full content, settings panel for layout and filters.
+
+</td>
+<td width="50%">
+
+**Council Hall** shows every multi-persona debate as a searchable card grid. Open a debate into a full-page detail view with three tabs: **Overview** (problem + synthesized final report + citation chips), **Agents** (per-persona transcripts with search), **Matrix** (persona × round grid with inline cell expansion).
+
+</td>
+</tr>
 </table>
 
 Light and dark mode with system preference detection. Brand palette: purple-to-magenta gradient. Visby CF font with system font fallback.
+
+## Council
+
+**Multi-persona debates for hard decisions.** When a question is too load-bearing for a single model pass — architecture calls, hiring reviews, risk-heavy migrations, brand critiques — a council lets you convene N personas, run them through N rounds of structured deliberation, and synthesize a verdict that cites the contributing voices.
+
+Each persona gets its own sub-agent with a scoped prompt, model choice, and aspects it advocates for. Between rounds, personas see a cross-context panel summarizing what everyone else said, so responses sharpen rather than repeat. A synthesizer produces the final report.
+
+```bash
+# Start a debate
+dreamcontext council create "Should we migrate from Postgres to Firestore?" \
+  --rounds 2
+
+# Add personas (each gets a sub-agent and persona file)
+dreamcontext council agent create migration-risk-auditor --model sonnet \
+  --aspects operational-risk,rollback-readiness,team-readiness
+dreamcontext council agent create dx-champion --model opus \
+  --aspects developer-experience,feature-velocity
+dreamcontext council agent create user-advocate --model haiku \
+  --aspects end-user-impact,reliability-perception
+
+# Drive rounds (the CLI orchestrates sub-agent dispatch; reports append as they return)
+dreamcontext council round start 1
+dreamcontext council round end 1              # Injects cross-context for R2+
+dreamcontext council round start 2
+dreamcontext council round end 2
+
+# Synthesize the final report
+dreamcontext council synthesize
+dreamcontext council complete
+
+# Optionally promote the verdict into knowledge
+dreamcontext council promote --to knowledge/migration-decision
+```
+
+Each debate stores its state in `_dream_context/council/<id>/` with `debate.md`, `round-log.md`, `final-report.md`, and per-persona folders containing `context-and-persona.md`, `report.md`, and `researches/`. The dashboard's **Council Hall** page renders this data as a searchable grid and full-page detail view.
+
+Ships with two sub-agents (`council-persona`, `council-synthesizer`) and a dedicated skill pack at `skill-packs/council/`.
 
 ## Commands
 
@@ -314,6 +378,27 @@ dreamcontext transcript distill <session_id>   # Structural filter of session tr
 
 Extracts high-signal content from raw JSONL transcripts: user messages, agent decisions, code changes, errors, bookmarks. Discards noise (Read results, Glob output, tool metadata). Pure Node.js, no AI. Used by the RemSleep agent for selective deep analysis of important sessions.
 
+### Council
+
+```bash
+dreamcontext council create <topic> [--rounds N]     # Open a new debate
+dreamcontext council list                             # List all debates
+dreamcontext council show <id>                        # Show a debate's current state
+dreamcontext council agent create <slug> --model <m> --aspects a,b,c
+dreamcontext council round start <n>                  # Dispatch round n to all personas
+dreamcontext council round end <n>                    # Close round n, inject cross-context for n+1
+dreamcontext council round round-context <n>          # Preview what personas will see at round n
+dreamcontext council report append <slug> <n> <path>  # Append a persona report from file
+dreamcontext council report summaries <n>             # Summaries of all reports in round n
+dreamcontext council research add <slug> <topic> <path>  # Persist a persona's research note
+dreamcontext council research list <slug>
+dreamcontext council synthesize                       # Produce the final synthesized report
+dreamcontext council complete                         # Mark the debate complete
+dreamcontext council promote --to <knowledge-slug>    # Promote verdict to knowledge
+```
+
+See the [Council](#council) section above for the full workflow.
+
 ### Dashboard
 
 ```bash
@@ -338,6 +423,7 @@ dreamcontext install-skill --packs       # Interactive skill pack browser
 dreamcontext install-skill --packs engineering design  # Install specific packs
 dreamcontext install-skill --skill <name>  # Install a single sub-skill
 dreamcontext install-skill --list        # Show available skill packs
+dreamcontext install-claude-md           # Write a CLAUDE.md at the project root
 ```
 
 ## Design Principles
@@ -350,8 +436,9 @@ dreamcontext install-skill --list        # Show available skill packs
 
 ## Works With
 
-- **Claude Code**: full support via skill, 3 sub-agents, and 7 hooks
-- **Web Dashboard**: local UI for visual context management (ships in the package)
+- **Claude Code**: full support via skill, 3 core sub-agents (initializer, explore, rem-sleep), 2 optional council sub-agents (persona, synthesizer), and 7 hooks
+- **Web Dashboard**: local UI with Kanban, Core editor, Knowledge, Features, Brain graph, Sleep tracker, and Council Hall (ships in the package)
+- **Obsidian**: `_dream_context/` can be opened as an Obsidian vault; the directory is scaffolded with curated vault settings at `dreamcontext init` time
 
 More agents coming soon.
 

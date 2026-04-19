@@ -17,6 +17,8 @@
   <a href="#the-sleep-cycle">Sleep Cycle</a> &nbsp;&middot;&nbsp;
   <a href="#neuroscience-inspired-memory">Neuroscience</a> &nbsp;&middot;&nbsp;
   <a href="#the-dashboard">Dashboard</a> &nbsp;&middot;&nbsp;
+  <a href="#council-debates">Council</a> &nbsp;&middot;&nbsp;
+  <a href="#obsidian-integration">Obsidian</a> &nbsp;&middot;&nbsp;
   <a href="#cli-design">CLI</a> &nbsp;&middot;&nbsp;
   <a href="#design-tradeoffs">Tradeoffs</a>
 </p>
@@ -373,6 +375,14 @@ The CLI and hooks handle the agent side. But context is a shared layer, and the 
 
 **Sleep tracker.** A debt gauge with color coding by level (green through red). Session history timeline showing what happened in each session. A list of every dashboard change made since the last consolidation.
 
+**Brain graph.** An interactive force-directed graph of your project's knowledge. Nodes are memory entries, knowledge docs, features, and core decisions; edges are explicit cross-references and inferred links from shared tags and slugs. A node drawer opens the full content inline when you click. A settings panel controls layout strength, link weighting, label visibility, and node-type filters. The graph view is what "scattered context" looks like when it's actually connected.
+
+**Council Hall.** Every multi-persona debate rendered as a searchable card grid. Click a card to open a full-page detail view with a back button and three tabs:
+
+- **Overview** — the Problem (the question that triggered the debate) as the hero block, followed by the synthesized final report. Sections are extracted dynamically from the report's `##` headings — the synthesizer is free to emit whatever sections fit the decision (Why, What was missing, Risks, Revision priorities, etc.) and they all render as cards. Citation chips in the format `slug in RN` jump to the matrix cell; inline `**slug**` mentions jump to the agent's full transcript.
+- **Agents** — a persona-centric, searchable, collapsible transcript. One block per persona with all rounds LIFO, plus the cross-context they received before each round and any research notes they persisted.
+- **Matrix** — persona × round grid. Each cell shows a compact position chip (GO / DEFER / HOLD / PIVOT, color-coded) plus the round's executive summary. Click a cell to expand it in place with the full Position / Reasoning / Reactions / Open questions sections. Peer reaction chips are clickable. Keyboard navigation: ← → across rounds, ↑ ↓ across personas, Esc to clear. Text filter dims non-matching cells.
+
 ### Change tracking
 
 This is the piece that ties the dashboard back to the agent. Every action taken through the dashboard (creating a task, editing a core file, pinning knowledge, updating a field) is recorded in `.sleep.json` as a `dashboard_changes` entry. Each entry captures the timestamp, entity type, action, target, and a human-readable summary.
@@ -398,6 +408,75 @@ The `core releases add` command auto-discovers unreleased items when creating a 
 After recording a released entry, the command back-populates `released_version` on included features. This means the next release correctly excludes already-released items. `core releases list` and `core releases show` let you review release history.
 
 The snapshot includes both "Upcoming Versions" (planning entries) and "Latest Release" (most recent released entry) so the agent always knows what is planned and what was last shipped. Tasks can be assigned to planning versions via the `version` field, and the sleep agent checks whether all tasks for a planning version are complete during consolidation.
+
+## Council Debates
+
+Some decisions are too load-bearing for a single model pass. Architecture choices that will shape the system for a year. Hiring reviews where the wrong read means the wrong hire. Risk-heavy migrations where one missed edge case is a production incident. Brand critiques where one loud voice can flatten dissent.
+
+For those, dreamcontext ships a **council**: a structured, multi-persona, multi-round deliberation with a synthesized verdict. Each persona is its own sub-agent with a scoped prompt, a model choice, and a set of aspects it advocates for. The council runs in rounds. Between rounds, each persona receives a cross-context panel summarizing what every other persona said, so round 2 is not a repeat of round 1 — it is personas responding to each other. At the end, a synthesizer produces the final report.
+
+### Why rounds
+
+A single-pass multi-agent debate collapses into either groupthink (if the model sees everyone's draft at once, it averages) or anchoring (whoever spoke first sets the frame). Rounds prevent both.
+
+- **Round 1** is blind. Every persona writes against the same prompt without seeing peers. You get genuine independent positions.
+- **Round 2+** is informed. Each persona sees a cross-context summary of every peer's round-1 submission, then writes a fresh round. Positions sharpen, converge, or explicitly dissent — but always with awareness of the room.
+
+Three rounds is the sweet spot for hard decisions. Two rounds is enough for tactical calls. One round with synthesis is a "council lite" for sanity checks.
+
+### Structure on disk
+
+Each debate lives in its own folder:
+
+```
+_dream_context/council/<id>/
+├── debate.md                    # frontmatter: topic, status, rounds_planned, current_round, personas[], timestamps
+├── round-log.md                 # append-only timeline: who submitted, when, with what exec summary
+├── final-report.md              # synthesizer output (emitted after all rounds close)
+└── <persona-slug>/
+    ├── context-and-persona.md   # persona prompt + injected "## Round N — Cross-context loaded" for N ≥ 2
+    ├── report.md                # LIFO round entries: Executive Summary / Position / Reasoning / Reactions / Open questions
+    └── researches/              # optional per-persona research notes, indexed in researches/index.json
+        └── <slug>.md
+```
+
+Lifecycle: `created → round_N_running → round_N_complete → synthesizing → complete` (+ optional `promoted_to_knowledge`).
+
+This shape is deliberate. The persona folder is the unit of truth for that voice — you can open any `context-and-persona.md` and see exactly what that persona was instructed to be and what cross-context it received. The `report.md` is LIFO so the newest round is always at the top. The `final-report.md` cites personas by `slug in RN` which the dashboard wires up as jump links.
+
+### Sub-agents
+
+Two sub-agents ship with the council feature:
+
+- **`council-persona`** — a generic persona runner. It's invoked per-round per-persona with the persona prompt, the round number, and (for N ≥ 2) the cross-context. It produces a report matching the five-section template: Executive Summary / Position / Reasoning / Reactions to peers / Open questions. The Reactions section uses `**slug**:` syntax so the dashboard can turn peer mentions into clickable chips.
+
+- **`council-synthesizer`** — reads every persona's `report.md`, the round log, and any research notes, and produces `final-report.md`. The synthesizer is free to structure the report however fits the decision. It always emits `## Verdict` and `## Appendix: per-agent per-round summaries`; the middle sections (`## Why`, `## What was missing`, `## Open risks`, `## Minority views`, whatever is load-bearing for this call) vary by debate. The dashboard parses whatever H2 sections exist rather than hardcoding a schema.
+
+### Synthesizer readability rules
+
+The synthesizer prompt includes explicit readability rules learned the hard way from early tests: short paragraphs, concrete names (not "the Opus persona"), position-first statements, citation format `slug in RN`, preserve dissent by name, surface unresolved risks explicitly. Without those rules, the synthesizer produced bureaucratic hedging. With them, it produces decision memos you can actually act on.
+
+### Promotion to knowledge
+
+When a debate resolves a real decision, `dreamcontext council promote --to <knowledge-slug>` copies the verdict and key sections into a knowledge doc with backlinks to the council folder. The knowledge doc is what the sleep agent and future sessions see; the council folder is the full audit trail. This matches the project's broader pattern: **synthesize the signal into knowledge; keep the noise where it's searchable but not loaded.**
+
+### The skill pack
+
+Council ships as an opt-in skill pack at `skill-packs/council/` with its own `SKILL.md` teaching the agent the debate protocol. You install it with `dreamcontext install-skill --packs council`. The pack includes the two sub-agents and a debate protocol reference so the agent knows how to orchestrate rounds, when to request research, and how to hand off to the synthesizer.
+
+## Obsidian Integration
+
+`_dream_context/` is a directory of markdown and JSON, shaped like a knowledge graph (memory links to decisions link to features link to knowledge). The most natural way to browse that graph is Obsidian, which is built for exactly this shape.
+
+`dreamcontext init` scaffolds an `_dream_context/.obsidian/` vault config with curated settings:
+
+- **`app.json`** — enables attachment folder, always update internal links, show frontmatter.
+- **`appearance.json`** — base theme alignment with the dreamcontext brand.
+- **`graph.json`** — pre-configured node coloring, link forces, and filters so the graph view is useful on open rather than requiring setup.
+
+Open `_dream_context/` as an Obsidian vault and you get: wiki-link navigation between files (`[[memory#decision-x]]` etc.), the Obsidian graph view showing explicit links, backlink panels, and full-text search that operates directly on the markdown. No sync, no plugin, no dependency on Obsidian to run dreamcontext — this is purely a "you can open it this way if you want" integration.
+
+The dashboard also ships with an Obsidian-style search library (`dashboard/src/lib/obsidian-search.ts`) that implements the same `[[link]]` and tag-query syntax so searching within the dashboard feels native if you also use Obsidian.
 
 ## CLI Design
 
@@ -473,6 +552,12 @@ Every design choice was deliberate. Here is what I chose, what I chose it over, 
 | **Eisenhower matrix excludes completed** | Show all tasks | The matrix is for deciding what to do next. Completed tasks are noise in that context. Kanban still shows them for a complete project view. |
 | **Skill packs as flat file copies** | npm sub-packages, dynamic loading | Skills are markdown files. Copying them to `.claude/skills/` is the simplest install mechanism. No package resolution, no runtime dependency. The agent reads them as local files. |
 | **Interactive checkbox for pack selection** | CLI flags only | Developers want to browse what's available before committing. The terminal UI shows descriptions, sub-skill counts, installed status, and cross-pack warnings in one view. Direct flags (`--packs engineering`) still work for scripting. |
+| **Council rounds over single-pass debate** | One-shot multi-agent debate | Single-pass collapses into averaging (if all personas see each other's drafts) or anchoring (whoever spoke first sets the frame). Rounds with blind R1 then cross-context R2+ produce genuinely independent positions that then sharpen against each other. |
+| **Dynamic final-report sections** | Hardcoded Why/Minority/Risks template | Real synthesizer output varies by decision: a hiring review needs "What was missing", a migration needs "Rollback strategy", a brand critique needs "Revision priorities". Parsing whatever `##` sections the synthesizer emits matches the shape of the decision. |
+| **Inline cell expand in matrix** | Side drawer or modal | Drawer pushes the matrix out of view. Modal breaks scan-ability. Expanding the cell in place lets you see full round content without losing the grid context. |
+| **Problem as hero on Overview tab** | Topic in the header | For a completed debate, the user is there to read the verdict against the original question. Making the Problem the visual anchor ensures "what did we decide about X" is always answerable in one scroll. |
+| **Obsidian integration by vault config, not plugin** | An Obsidian plugin | A plugin is installable-software the user has to manage. A `.obsidian/` config is a directory of JSON files that travels with the repo and works for anyone who opens the folder. |
+| **Full project build after dashboard changes** | Per-package build | The CLI serves from `dist/dashboard/` (sibling of `dist/index.js`). The tsup `onSuccess` hook copies `dashboard/dist/` → `dist/dashboard/`. Only the root `npm run build` triggers both. Building just the dashboard silently leaves the served version stale — learned the hard way. |
 
 ---
 
@@ -480,7 +565,11 @@ Every design choice was deliberate. Here is what I chose, what I chose it over, 
 
 Right now, `dreamcontext` supports Claude Code. The hook system, the skill format, and the agent integration are all built around Claude's tool ecosystem. But the core idea (structured files, pre-loaded context, consolidation cycles) is not tied to any one agent. The architecture is designed so that other agents (Gemini CLI, Copilot, custom agents) can plug into the same `_dream_context/` directory with their own integration layer.
 
-The neuroscience-inspired memory system (bookmarks, decay tracking, warm knowledge, triggers, transcript distillation) shipped in v0.1.x. Seven hooks now cover the full session lifecycle: context injection, session recording, sub-agent briefing, context-first exploration, persistent debt reminders, post-edit code quality gates, and pre-compaction state preservation. Optional skill packs (engineering, design, growth, brand-voice, system-prompts) ship with the package and install via an interactive terminal UI or direct CLI flags. The dashboard is built and shipping with the package. Remaining polish includes accessibility audit, responsive layout refinements, i18n token extraction for future localization, and bundle size optimization.
+The neuroscience-inspired memory system (bookmarks, decay tracking, warm knowledge, triggers, transcript distillation) shipped in v0.1.x. Seven hooks now cover the full session lifecycle: context injection, session recording, sub-agent briefing, context-first exploration, persistent debt reminders, post-edit code quality gates, and pre-compaction state preservation. Optional skill packs (engineering, design, growth, brand-voice, system-prompts) ship with the package and install via an interactive terminal UI or direct CLI flags. The dashboard is built and shipping with the package.
+
+**v0.2.0** shipped five additional features: **Council debates** (multi-persona deliberation with two sub-agents and a synthesized final report), the **Brain graph** (interactive knowledge-graph view on the dashboard), **Obsidian integration** (the context directory opens as a curated Obsidian vault), **`install-claude-md`** (lightweight Claude Code integration without the full skill install), and the **optional skill-packs CLI Phase 2** (catalog-driven on-demand pack install). The dashboard got a dedicated Council Hall with Hall-grid → full-page-detail navigation, and the synthesizer got readability rules that turn bureaucratic hedging into actionable decision memos.
+
+Remaining polish includes accessibility audit, responsive layout refinements, i18n token extraction for future localization, and bundle size optimization.
 
 The long-term vision: your project's context lives in your repo, structured and version-controlled, and any agent you choose to work with can pick it up. **The human stays in the loop. The context stays portable.** The agent gets better every session because the system enforces the discipline that makes that possible.
 
