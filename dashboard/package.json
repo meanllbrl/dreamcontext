@@ -8,10 +8,11 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@tanstack/react-query": "^5.64.0",
+    "marked": "^15.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "@tanstack/react-query": "^5.64.0",
-    "marked": "^15.0.0"
+    "react-force-graph-2d": "^1.29.1"
   },
   "devDependencies": {
     "@types/react": "^19.0.0",

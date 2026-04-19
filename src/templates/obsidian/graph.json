@@ -1,0 +1,58 @@
+{
+  "collapse-filter": false,
+  "search": "",
+  "showTags": true,
+  "showAttachments": false,
+  "hideUnresolved": false,
+  "showOrphans": true,
+  "collapse-color-groups": false,
+  "colorGroups": [
+    {
+      "query": "path:core/features",
+      "color": {
+        "a": 1,
+        "rgb": 1096577
+      }
+    },
+    {
+      "query": "path:core",
+      "color": {
+        "a": 1,
+        "rgb": 5223910
+      }
+    },
+    {
+      "query": "path:knowledge",
+      "color": {
+        "a": 1,
+        "rgb": 10980858
+      }
+    },
+    {
+      "query": "path:state",
+      "color": {
+        "a": 1,
+        "rgb": 16097803
+      }
+    },
+    {
+      "query": "path:inbox",
+      "color": {
+        "a": 1,
+        "rgb": 10265007
+      }
+    }
+  ],
+  "collapse-display": false,
+  "showArrow": true,
+  "textFadeMultiplier": 0,
+  "nodeSizeMultiplier": 1.2,
+  "lineSizeMultiplier": 1,
+  "collapse-forces": false,
+  "centerStrength": 0.5,
+  "repelStrength": 12,
+  "linkStrength": 1,
+  "linkDistance": 250,
+  "scale": 1,
+  "close": false
+}

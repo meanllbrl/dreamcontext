@@ -1,7 +1,7 @@
 import { useI18n } from '../../context/I18nContext';
 import './Sidebar.css';
 
-export type Page = 'tasks' | 'core' | 'knowledge' | 'features' | 'sleep';
+export type Page = 'tasks' | 'core' | 'knowledge' | 'features' | 'sleep' | 'brain' | 'council';
 
 interface SidebarProps {
   activePage: Page;
@@ -9,10 +9,12 @@ interface SidebarProps {
 }
 
 const NAV_ITEMS: { page: Page; icon: string; labelKey: string }[] = [
+  { page: 'brain', icon: '◉', labelKey: 'nav.brain' },
   { page: 'tasks', icon: '▦', labelKey: 'nav.tasks' },
   { page: 'core', icon: '◈', labelKey: 'nav.core' },
-  { page: 'knowledge', icon: '◉', labelKey: 'nav.knowledge' },
+  { page: 'knowledge', icon: '✦', labelKey: 'nav.knowledge' },
   { page: 'features', icon: '⚑', labelKey: 'nav.features' },
+  { page: 'council', icon: '⚔', labelKey: 'nav.council' },
   { page: 'sleep', icon: '◑', labelKey: 'nav.sleep' },
 ];
 

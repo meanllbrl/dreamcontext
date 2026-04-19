@@ -1,7 +1,8 @@
 import { Command } from 'commander';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { input } from '@inquirer/prompts';
+import { input, confirm } from '@inquirer/prompts';
+import { installClaudeMd } from './install-claude-md.js';
 import chalk from 'chalk';
 import { getInitPath } from '../../lib/context-path.js';
 import { today } from '../../lib/id.js';
@@ -11,13 +12,13 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
-function getTemplateDir(): string {
-  // In development: src/templates/init
+function getTemplateDir(subdir = 'init'): string {
+  // In development: src/templates/<subdir>
   // In dist: try to find templates relative to the compiled file
   const candidates = [
-    join(__dirname, '..', '..', 'templates', 'init'),
-    join(__dirname, '..', 'templates', 'init'),
-    join(__dirname, 'templates', 'init'),
+    join(__dirname, '..', '..', 'templates', subdir),
+    join(__dirname, '..', 'templates', subdir),
+    join(__dirname, 'templates', subdir),
   ];
 
   for (const dir of candidates) {
@@ -25,7 +26,22 @@ function getTemplateDir(): string {
   }
 
   // Fallback: use templates from the package
-  return join(__dirname, '..', '..', 'templates', 'init');
+  return join(__dirname, '..', '..', 'templates', subdir);
+}
+
+function copyObsidianConfig(destDir: string): boolean {
+  const src = getTemplateDir('obsidian');
+  if (!existsSync(src)) return false;
+
+  mkdirSync(destDir, { recursive: true });
+  for (const entry of readdirSync(src)) {
+    const from = join(src, entry);
+    const to = join(destDir, entry);
+    if (statSync(from).isFile()) {
+      copyFileSync(from, to);
+    }
+  }
+  return true;
 }
 
 function detectTechStack(): string | null {
@@ -153,6 +169,11 @@ export function registerInitCommand(program: Command): void {
       mkdirSync(join(contextDir, 'core', 'features'), { recursive: true });
       mkdirSync(join(contextDir, 'knowledge'), { recursive: true });
       mkdirSync(join(contextDir, 'state'), { recursive: true });
+      mkdirSync(join(contextDir, 'inbox'), { recursive: true });
+
+      // Seed as an Obsidian vault: `.obsidian/` makes _dream_context/ openable
+      // via "Open folder as vault". Graph colors distinguish soul/knowledge/state.
+      const obsidianInstalled = copyObsidianConfig(join(contextDir, '.obsidian'));
 
       // Copy and process template files
       const templateDir = getTemplateDir();
@@ -216,12 +237,44 @@ export function registerInitCommand(program: Command): void {
       console.log(`  │   ├── ${chalk.yellow('CHANGELOG.json')}`);
       console.log(`  │   └── ${chalk.yellow('RELEASES.json')}`);
       console.log(`  ├── ${chalk.magentaBright.bold('knowledge/')}`);
-      console.log(`  └── ${chalk.magentaBright.bold('state/')}`);
+      console.log(`  ├── ${chalk.magentaBright.bold('state/')}`);
+      if (obsidianInstalled) {
+        console.log(`  ├── ${chalk.magentaBright.bold('inbox/')}`);
+        console.log(`  └── ${chalk.dim('.obsidian/')} ${chalk.dim('(open as Obsidian vault)')}`);
+      } else {
+        console.log(`  └── ${chalk.magentaBright.bold('inbox/')}`);
+      }
+
+      // Optional: offer to install root CLAUDE.md
+      let claudeInstalled = false;
+      if (!useDefaults) {
+        const want = await confirm({
+          message: 'Install a terse CLAUDE.md at the project root? (Claude Code project memory, ~80 lines)',
+          default: false,
+        });
+        if (want) {
+          try {
+            const result = await installClaudeMd(process.cwd());
+            claudeInstalled = result.action !== 'skipped';
+          } catch (err: any) {
+            if (err.name !== 'ExitPromptError') {
+              info(`CLAUDE.md skipped: ${err.message}`);
+            }
+          }
+        }
+      }
 
       console.log();
       console.log(chalk.bold('  What\'s next:'));
       console.log(`  ${chalk.dim('1.')} Run ${chalk.magentaBright('dreamcontext install-skill')} to set up Claude Code integration`);
       console.log(`  ${chalk.dim('2.')} Run ${chalk.magentaBright('dreamcontext features create <name>')} to add features`);
       console.log(`  ${chalk.dim('3.')} Edit ${chalk.green('_dream_context/core/0.soul.md')} to define agent identity`);
+      let nextStep = 4;
+      if (!claudeInstalled) {
+        console.log(`  ${chalk.dim(nextStep++ + '.')} Optional: ${chalk.magentaBright('dreamcontext install-claude-md')} for a root CLAUDE.md`);
+      }
+      if (obsidianInstalled) {
+        console.log(`  ${chalk.dim(nextStep++ + '.')} In Obsidian: ${chalk.white('Open folder as vault')} → select ${chalk.green('_dream_context/')}`);
+      }
     });
 }

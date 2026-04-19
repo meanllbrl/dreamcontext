@@ -6,6 +6,7 @@ import { registerFeaturesCommand } from './commands/features.js';
 import { registerKnowledgeCommand } from './commands/knowledge.js';
 import { registerTasksCommand } from './commands/tasks.js';
 import { registerInstallSkillCommand } from './commands/install-skill.js';
+import { registerInstallClaudeMdCommand } from './commands/install-claude-md.js';
 import { registerSnapshotCommand } from './commands/snapshot.js';
 import { registerSleepCommand } from './commands/sleep.js';
 import { registerHookCommand } from './commands/hook.js';
@@ -14,6 +15,7 @@ import { registerDashboardCommand } from './commands/dashboard.js';
 import { registerBookmarkCommand } from './commands/bookmark.js';
 import { registerTriggerCommand } from './commands/trigger.js';
 import { registerTranscriptCommand } from './commands/transcript.js';
+import { registerCouncilCommand } from './commands/council.js';
 import { startInteractive } from './interactive.js';
 import { renderBanner } from '../lib/pixel-banner.js';
 
@@ -40,6 +42,7 @@ const HELP_GROUPS = `
 ${chalk.bold('Setup')}
   ${chalk.magentaBright('init')}              Initialize _dream_context/ in your project
   ${chalk.magentaBright('install-skill')}     Install skill + agents + optional packs to .claude/
+  ${chalk.magentaBright('install-claude-md')} Install a terse CLAUDE.md at the project root (optional)
 
 ${chalk.bold('Content')}
   ${chalk.magentaBright('core')}              Add changelog and release entries
@@ -48,6 +51,7 @@ ${chalk.bold('Content')}
   ${chalk.magentaBright('tasks')}             Create tasks, log progress, and mark complete
   ${chalk.magentaBright('bookmark')}          Tag important moments for consolidation
   ${chalk.magentaBright('trigger')}           Manage contextual reminders (prospective memory)
+  ${chalk.magentaBright('council')}           Run structured multi-agent debates on decisions
 
 ${chalk.bold('System')}
   ${chalk.magentaBright('snapshot')}          Output context snapshot (used by SessionStart hook)
@@ -82,6 +86,7 @@ export function createProgram(): Command {
   registerKnowledgeCommand(program);
   registerTasksCommand(program);
   registerInstallSkillCommand(program);
+  registerInstallClaudeMdCommand(program);
   registerSnapshotCommand(program);
   registerSleepCommand(program);
   registerHookCommand(program);
@@ -90,6 +95,7 @@ export function createProgram(): Command {
   registerBookmarkCommand(program);
   registerTriggerCommand(program);
   registerTranscriptCommand(program);
+  registerCouncilCommand(program);
 
   return program;
 }

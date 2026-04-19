@@ -226,7 +226,7 @@ If the summary is empty or stale, write one based on the file's content. This is
 
 After updating, check each file you touched:
 
-1. **~200 line limit** — if any core file exceeds ~200 lines:
+1. **~300 line limit** — if any core file exceeds ~300 lines:
    - Extract verbose details to a knowledge file: `dreamcontext knowledge create <topic>`
    - Replace the verbose section with a summary + reference: "See knowledge/<topic> for details"
    - Keep the important conclusions/decisions in the core file
@@ -293,6 +293,41 @@ After task completion detection (Step 1d), check if any planning versions are re
 3. If all tasks for a version are done, note it as "ready for release" in the Step 7 consolidation report
 4. Do NOT auto-release. Report readiness and let the user decide when to release.
 
+### Step 5c: Council Debate Promotion
+
+After version readiness, check for unpromoted council debates:
+
+```bash
+dreamcontext council list --unpromoted
+```
+
+Each entry is a debate with `status: complete` and no `promoted_to_knowledge`
+pointer. For each one, decide:
+
+**Promote automatically** if the user engaged positively with the outcome:
+- User referenced the debate or its verdict in later messages this session
+- User acted on the verdict (e.g., started implementing what was decided)
+- User explicitly approved ("good call", "perfect", "let's do it")
+- User said "later" during the original promote prompt but has since cited the decision
+
+→ Run `dreamcontext council promote <debate_id>`
+
+**Flag for user review** if engagement is ambiguous:
+- User said "later" and has not cited the decision since
+- User disputed part of the verdict but didn't reject it outright
+- The debate is older than 7 days with no action signal
+
+→ List in the Step 7 report under "Needs User Input" with the debate topic, verdict
+(read from `_dream_context/council/<id>/final-report.md` Verdict section only), and
+a recommendation.
+
+**Do not promote** if:
+- User explicitly said "no"
+- User re-opened the question or started a new debate on the same topic
+- Verdict conflicts with recent user decisions
+
+→ Note in the report that the debate remains unpromoted and why.
+
 ### Step 6: Mark Sleep Complete
 
 After all consolidation updates are done, reset the sleep debt:
@@ -339,7 +374,7 @@ Return a brief report to the main agent:
 ## Rules
 
 1. **You are a custodian, not an author** — you organize and consolidate what happened. You don't invent or embellish.
-2. **Quality over quantity** — a well-organized 50-line memory file is better than a 200-line dump.
+2. **Quality over quantity** — a well-organized 50-line memory file is better than a 300-line dump.
 3. **Decisions > deliberation** — save the conclusion and rationale, not the back-and-forth that led to it.
 4. **The three files are sacred** — soul, user, memory must always be readable, organized, and useful. If a new session starts and reads these files, the agent should immediately understand who it is, who the user is, and what's been going on.
 5. **Right tool for the job** — use `dreamcontext` CLI for structural operations (create, insert). Use native Read/Edit/Write/Grep for direct file access and reorganization. Don't reinvent the wheel.

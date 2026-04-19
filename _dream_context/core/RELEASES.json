@@ -1,5 +1,70 @@
 [
   {
+    "id": "rel_yA0p4Kl-",
+    "version": "v0.2.0",
+    "date": "2026-04-19",
+    "summary": "Council debates (multi-persona deliberation with synthesized verdicts), Brain graph visualization (knowledge as an interactive network), Obsidian integration (view/edit dreamcontext as an Obsidian vault), install-claude-md command, and optional skill-packs CLI. Dashboard gets new Council Hall + Detail pages, Brain graph page, and unified design-token system. Council feature ships with persona + synthesizer sub-agents and a dedicated skill pack.",
+    "breaking": false,
+    "status": "released",
+    "features": [
+      "council-skill",
+      "brain-graph",
+      "obsidian-integration",
+      "install-claude-md",
+      "optional-skill-packs"
+    ],
+    "tasks": [
+      "council-skill",
+      "web-dashboard",
+      "install-claude-md",
+      "optional-skill-packs"
+    ],
+    "changelog": [
+      {
+        "date": "2026-04-19",
+        "type": "feat",
+        "scope": "council",
+        "description": "Multi-persona council debate system. CLI: dreamcontext council start/show/advance/synthesize/promote. Stores per-debate state under _dream_context/council/<id>/ with debate.md, round-log.md, final-report.md, and per-persona folders containing context-and-persona.md, report.md, and researches/. Ships with two sub-agents (council-persona, council-synthesizer) and a skill pack (skill-packs/council/).",
+        "breaking": false
+      },
+      {
+        "date": "2026-04-19",
+        "type": "feat",
+        "scope": "dashboard",
+        "description": "Council page: searchable Hall grid of all debates → full-page Detail view with back navigation. Detail has three tabs: Overview (Problem + dynamic final report sections + stats + citation chips), Agents (persona-centric transcript with search and inline slug cross-links), Matrix (persona × round grid with inline cell expansion, peer reaction chips, keyboard navigation).",
+        "breaking": false
+      },
+      {
+        "date": "2026-04-19",
+        "type": "feat",
+        "scope": "dashboard",
+        "description": "Brain page: interactive graph visualization of knowledge nodes and links. Node drawer shows full content; settings panel controls layout, filters, and link weighting.",
+        "breaking": false
+      },
+      {
+        "date": "2026-04-19",
+        "type": "feat",
+        "scope": "obsidian",
+        "description": "Obsidian integration: dreamcontext init now scaffolds a _dream_context/.obsidian/ vault with curated app/appearance/graph settings so the context directory can be opened directly in Obsidian. Obsidian-style search lib in the dashboard.",
+        "breaking": false
+      },
+      {
+        "date": "2026-04-19",
+        "type": "feat",
+        "scope": "cli",
+        "description": "dreamcontext install-claude-md command: writes a CLAUDE.md to the project root that references the dreamcontext context so Claude Code auto-loads context on session start in any project that opts in.",
+        "breaking": false
+      },
+      {
+        "date": "2026-04-19",
+        "type": "feat",
+        "scope": "cli",
+        "description": "Optional skill-packs CLI (Phase 2): skill-packs/ directory with catalog.json, council pack, and other optional packs that can be installed on demand.",
+        "breaking": false
+      }
+    ]
+  },
+  {
     "id": "rel_-yOr3qZq",
     "version": "0.1.0",
     "date": "2026-02-26",

@@ -1,5 +1,48 @@
 [
   {
+    "date": "2026-04-19",
+    "consolidated_at": "2026-04-19T09:57:38.876Z",
+    "summary": "5 sessions: Council UI v1→v3 (gamified rejected, report-as-hero accepted), Brain light mode, Council synthesizer readability rules, install-claude-md command, ~300 line limit enforcement. Updated: 0.soul.md (priority, line limit, commands), 1.user.md (UI density preference, root build rule), 2.memory.md (3 new entries, 4 new technical decisions), council-skill feature PRD (stories + constraints + UI section), web-dashboard feature PRD (council page). Updated feedback_gamified_ui.md memory: density beats theatricality. Created install-claude-md task.",
+    "debt_before": 12,
+    "debt_after": 0,
+    "sessions_processed": 5,
+    "bookmarks_processed": 0,
+    "session_ids": [
+      "cd187b5b-5479-412f-ac36-122a067a3030",
+      "2e902c8c-6b53-49e3-9879-e66c71e80ca9",
+      "37734aaf-1529-45c0-8124-599fa7642fe0",
+      "c11d2ae7-7634-4067-abb2-dd2b43e24827",
+      "5e4ecca6-792d-4611-94fc-6ad23299bfb2"
+    ]
+  },
+  {
+    "date": "2026-04-19",
+    "consolidated_at": "2026-04-19T05:04:34.821Z",
+    "summary": "Consolidated 1 session: council-skill build complete — 14 sub-commands, 4 templates, 2 sub-agents, skill pack. Reviewer FAIL fixed: assertSafeSegment+assertWithinCouncil path traversal guards (council.ts:62-89), fence-aware parseReportRounds (council.ts:200-213). Task in_review. Two security/parsing patterns added to memory Technical Decisions. Feature PRD criteria updated to [x], status in_review.",
+    "debt_before": 6,
+    "debt_after": 0,
+    "sessions_processed": 2,
+    "bookmarks_processed": 0,
+    "session_ids": [
+      "5e4ecca6-792d-4611-94fc-6ad23299bfb2",
+      "0b8f5bcb-e942-407c-bdb5-af85bb2521b0"
+    ]
+  },
+  {
+    "date": "2026-04-19",
+    "consolidated_at": "2026-04-19T04:42:11.138Z",
+    "summary": "Consolidated 4 sessions: (1) council-skill design — 3-layer architecture, 14 CLI sub-commands, 2 new sub-agents, new skill pack, feature PRD created; (2) dashboard brain graph — Obsidian-style interactive graph with tag nodes, react-force-graph-2d; (3) CLI banner resize — cosmetic; (4) optional-skill-packs agent cleanup — from prior cycle. Tasks logged: council-skill (in_progress), web-dashboard. 7 council technical decisions added to memory.",
+    "debt_before": 9,
+    "debt_after": 3,
+    "sessions_processed": 3,
+    "bookmarks_processed": 0,
+    "session_ids": [
+      "5e4ecca6-792d-4611-94fc-6ad23299bfb2",
+      "58531866-b6a8-48ab-9baf-5b0e9cc9df31",
+      "3939ed44-3222-4315-88e2-78f20d36d95f"
+    ]
+  },
+  {
     "date": "2026-03-24",
     "consolidated_at": "2026-03-24T13:10:18.017Z",
     "summary": "Consolidated 2 sessions: (1) optional-skill-packs Phase 2 CLI -- install-skill --packs/--skill/--list, interactive checkbox, cross-pack deps, agent install, 490 tests; (2) hook cleanup -- removed 7 duplicate agentcontext hooks. Task/feature PRD updated (Phase 2 criteria checked). 2 changelog entries added. 3 technical decisions added to memory. Soul current priority updated.",

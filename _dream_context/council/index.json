@@ -1,0 +1,12 @@
+[
+  {
+    "id": "council_demo01",
+    "topic": "Should we migrate from Postgres to Firestore?",
+    "status": "complete",
+    "rounds_planned": 2,
+    "current_round": 2,
+    "promoted_to_knowledge": null,
+    "created_at": "2026-04-18",
+    "updated_at": "2026-04-19"
+  }
+]

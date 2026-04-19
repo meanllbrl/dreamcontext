@@ -12,14 +12,15 @@ description: >-
   passing. Phase 5 remaining: a11y audit, responsive layout, i18n token
   extraction, bundle audit.
 priority: critical
-status: in_progress
+status: in_review
 created_at: '2026-02-25'
-updated_at: '2026-03-10'
+updated_at: '2026-04-19'
 tags:
   - frontend
   - architecture
   - design
 parent_task: null
+version: v0.2.0
 ---
 
 ## Changelog
@@ -30,6 +31,18 @@ parent_task: null
 
 
 
+
+
+
+
+### 2026-04-19 - Session Update
+- Brain graph light mode: theme-aware node colors (dark/light palette variants), link/canvas colors switch on isDark, settings panel uses CSS tokens. Default group palette gains deeper light-mode colors (#0d7bb8, #047857, #b45309, #6d28d9, #be185d, #475569) replacing washed-out cyan/mint. Dimmed-node alpha bumped 0.18→0.3 on light.
+### 2026-04-19 - Session Update
+- Council UI v3 shipped: CouncilHall (searchable card grid) + CouncilDetail (back nav + 3 tabs). Overview tab: topic as Problem hero + dynamic final-report parsing (all ## sections, not hardcoded Why/Minority/Risks). Agents tab: TranscriptView persona-centric with search + inline slug chips to jump agents. Matrix tab: inline cell expand (no sidebar). Components: CouncilHall.tsx, CouncilDetail.tsx, OverviewTab.tsx, TranscriptView.tsx, ArenaMatrix.tsx, PersonaAvatar.tsx, StatTile.tsx, StatusBadge.tsx, ModelBadge.tsx. Backend routes: GET /api/council, /api/council/:id, /api/council/:id/:slug. Deleted v1 components (RoundTrackerBar, PersonaChip, ThinkingDrawer, MedalRow) and v2 components (Inspector, QuestList, SessionHeader). v1 rejected: gamified decoration (trading cards, medals, particles) - too theatrical. v2 rejected: final report buried, inefficient layout.
+### 2026-04-19 - Session Update
+- Brain graph view (Obsidian parity): tag nodes, settings panel (Filters/Groups/Display/Forces), search operators, dark canvas, collision + x/y forces, auto-fit, always-visible labels, hover-clear on pan/zoom/drag. Drawer renders file content via /api/graph/content. Moving to review.
+### 2026-04-19 - Session Update
+- Added Obsidian-style brain graph page to dashboard: tag nodes as first-class (26 tags -> 53 nodes, 73 links), dark canvas background (#151518), always-visible labels down to 55% zoom, bigger nodes, arrows on all links except has_tag, tag color feature-green #10b981. Uses react-force-graph-2d. Banner also resized from 70 to 44 columns in this session batch.
 ### 2026-03-10 - Session Update
 - Added in_review status: 4th Kanban column (purple), todo→in_progress→in_review→completed workflow. In-review tasks shown in snapshot, default task list, Eisenhower Matrix. CLI, server, dashboard, i18n, tests all updated (12 files, 469 tests passing).
 ### 2026-03-07 - Session Update

@@ -12,6 +12,8 @@ import { handleCoreList, handleCoreGet, handleCoreUpdate } from './routes/core.j
 import { handleKnowledgeList, handleKnowledgeGet, handleKnowledgeUpdate } from './routes/knowledge.js';
 import { handleFeaturesList, handleFeaturesGet } from './routes/features.js';
 import { handleChangelogGet, handleReleasesGet, handleUnreleasedGet, handleReleaseGet, handleReleasesCreate, handleReleasesUpdate } from './routes/changelog.js';
+import { handleGraphGet, handleGraphContentGet } from './routes/graph.js';
+import { handleCouncilList, handleCouncilGet, handleCouncilResearchGet } from './routes/council.js';
 
 export interface ServerOptions {
   port: number;
@@ -50,6 +52,15 @@ function buildRouter(): Router {
   // Features
   router.get('/api/features', handleFeaturesList);
   router.get('/api/features/:slug', handleFeaturesGet);
+
+  // Graph
+  router.get('/api/graph', handleGraphGet);
+  router.get('/api/graph/content', handleGraphContentGet);
+
+  // Council
+  router.get('/api/council', handleCouncilList);
+  router.get('/api/council/:debateId', handleCouncilGet);
+  router.get('/api/council/:debateId/:personaSlug/research/:researchSlug', handleCouncilResearchGet);
 
   // Changelog / Releases
   router.get('/api/changelog', handleChangelogGet);

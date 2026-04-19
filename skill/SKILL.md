@@ -169,7 +169,7 @@ These files vary across projects. Do not assume a fixed list. Always discover dy
 3. **Update over duplicate.** New information updates existing files.
 4. **Be surgical.** Only touch what changed. Use the most direct tool for the job.
 5. **LIFO everywhere.** Newest entries at top of changelogs, memory, constraints.
-6. **~200 line limit** on context files. Extract detail to knowledge, keep summary + reference.
+6. **~300 line limit** on context files. Extract detail to knowledge, keep summary + reference.
 7. **Log every session** that modifies code or makes decisions. This is the cross-session continuity mechanism.
 8. **Features are sleep-only.** Never update feature PRDs during active work. All working context goes into the task body. The sleep agent consolidates task content into features.
 9. **All work needs a task.** Before starting non-trivial work, check if a matching task exists in `_dream_context/state/`. If not, create one. After plans are approved (ExitPlanMode), offer to save as a task. The sleep agent flags untracked work.

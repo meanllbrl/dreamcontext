@@ -1,0 +1,15 @@
+{
+  "newFileLocation": "folder",
+  "newFileFolderPath": "inbox",
+  "attachmentFolderPath": "./",
+  "alwaysUpdateLinks": true,
+  "useMarkdownLinks": false,
+  "showLineNumber": true,
+  "foldHeading": true,
+  "foldIndent": true,
+  "showFrontmatter": true,
+  "tabSize": 2,
+  "readableLineLength": true,
+  "strictLineBreaks": false,
+  "promptDelete": true
+}

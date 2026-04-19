@@ -109,6 +109,22 @@
       ],
       "relatedAgents": ["discover-brand"],
       "crossPackDeps": []
+    },
+    {
+      "name": "council",
+      "description": "Load when the user wants to debate a non-trivial decision, asks for a second opinion, says 'help me decide', 'run this by council', or invokes /council. Orchestrates 3–10 persona sub-agents across multiple rounds, then a synthesizer writes a final decision report.",
+      "tags": ["council", "debate", "decision", "sub-agents", "orchestration"],
+      "alwaysApply": false,
+      "base": "Structured multi-agent debate: orchestrator dispatches persona sub-agents in parallel rounds, reads only exec summaries, then dispatches a synthesizer for the final report. File-based IPC keeps the main agent's context light.",
+      "subSkills": [
+        {
+          "name": "debate-protocol",
+          "file": "debate-protocol.md",
+          "description": "Detailed CLI protocol reference: 14 sub-commands, required report subsections, failure modes, file layout, context-budget discipline."
+        }
+      ],
+      "relatedAgents": ["council-persona", "council-synthesizer"],
+      "crossPackDeps": []
     }
   ],
   "standalone": [
@@ -136,6 +152,22 @@
       "description": "Autonomous 4-phase brand material search across enterprise MCP platforms",
       "tags": ["brand", "discovery", "mcp"],
       "model": "sonnet"
+    },
+    {
+      "name": "council-persona",
+      "file": "agents/council-persona.md",
+      "pack": "council",
+      "description": "A persona sub-agent in a council debate. Loads persona + peer cross-context via CLI, thinks from the assigned perspective, writes a structured round report. Dispatched in parallel, one per persona per round.",
+      "tags": ["council", "debate", "persona", "sub-agent"],
+      "model": "sonnet"
+    },
+    {
+      "name": "council-synthesizer",
+      "file": "agents/council-synthesizer.md",
+      "pack": "council",
+      "description": "Reads every report + persona + research in a council debate and writes the final decision report with traced Whys, position-shift timeline, and minority views.",
+      "tags": ["council", "debate", "synthesis", "reporting"],
+      "model": "opus"
     }
   ]
 }

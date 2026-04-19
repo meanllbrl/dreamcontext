@@ -153,6 +153,15 @@ Users need a visual interface to manage agent context without using the terminal
 3. tsup onSuccess copies dashboard/dist/ to dist/dashboard/
 4. dist/dashboard/ ships in npm package (covered by "files": ["dist"])
 
+### Council Page
+
+- [x] CouncilHall: searchable grid of debates with status badge, persona count, round progress indicator
+- [x] CouncilDetail: full-page view (back nav + 3 tabs: Overview, Agents, Matrix)
+- [x] Overview tab: StatTile row + full final-report as hero with dynamic section parsing
+- [x] Agents tab: TranscriptView with search + inline slug chips
+- [x] Matrix tab: inline cell expand (no sidebar drawer)
+- [x] Backend routes: GET /api/council, /api/council/:id, /api/council/:id/:slug
+
 ## Notes
 
 - Bundle size: ~80KB gzipped (React + app). Acceptable for a CLI tool.
@@ -164,6 +173,10 @@ Users need a visual interface to manage agent context without using the terminal
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-04-19 - Council UI + Brain Light Mode
+- Council page: CouncilHall (searchable card grid) + CouncilDetail (back nav + Overview/Agents/Matrix tabs). Overview = dynamic final-report rendering. Agents = searchable TranscriptView with persona slug chips. Matrix = inline cell expand. Backend routes added. 3 UI iterations to reach accepted design (v1 gamified rejected, v2 report-buried rejected, v3 accepted).
+- Brain graph light mode: theme-aware node color palettes (dark/light variants), link/canvas colors switch on isDark. Deeper light palette (#0d7bb8, #047857, #b45309, #6d28d9, #be185d, #475569).
 
 ### 2026-03-07 - in_review Status + Explore Agent Improvements
 - Added in_review as 4th task status (workflow: todo->in_progress->in_review->completed)

@@ -3,12 +3,14 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ThemeProvider } from './context/ThemeContext';
 import { I18nProvider } from './context/I18nContext';
 import { ProjectProvider } from './context/ProjectContext';
-import { Shell } from './components/layout/Shell';
+import { Shell, type ShellNavigation } from './components/layout/Shell';
 import { TasksPage } from './pages/TasksPage';
 import { SleepPage } from './pages/SleepPage';
 import { CorePage } from './pages/CorePage';
 import { KnowledgePage } from './pages/KnowledgePage';
 import { FeaturesPage } from './pages/FeaturesPage';
+import { BrainPage, type BrainNavigatePage } from './pages/BrainPage';
+import { CouncilPage } from './pages/CouncilPage';
 import type { Page } from './components/layout/Sidebar';
 import './styles/global.css';
 
@@ -25,13 +27,32 @@ const queryClient = new QueryClient({
   },
 });
 
-function PageRouter({ page }: { page: Page }) {
-  switch (page) {
-    case 'tasks': return <TasksPage />;
-    case 'sleep': return <SleepPage />;
-    case 'core': return <CorePage />;
-    case 'knowledge': return <KnowledgePage />;
-    case 'features': return <FeaturesPage />;
+function PageRouter({ nav }: { nav: ShellNavigation }) {
+  const handleBrainNavigate = (target: BrainNavigatePage, nodeId: string) => {
+    const pageMap: Record<BrainNavigatePage, Page> = {
+      tasks: 'tasks',
+      features: 'features',
+      knowledge: 'knowledge',
+      core: 'core',
+    };
+    nav.navigate(pageMap[target], nodeId);
+  };
+
+  switch (nav.page) {
+    case 'brain':
+      return <BrainPage onNavigate={handleBrainNavigate} />;
+    case 'tasks':
+      return <TasksPage />;
+    case 'sleep':
+      return <SleepPage />;
+    case 'core':
+      return <CorePage />;
+    case 'knowledge':
+      return <KnowledgePage />;
+    case 'features':
+      return <FeaturesPage />;
+    case 'council':
+      return <CouncilPage />;
   }
 }
 
@@ -68,7 +89,7 @@ export function App() {
           <ThemeProvider>
             <I18nProvider>
               <Shell>
-                {(page) => <PageRouter page={page} />}
+                {(nav) => <PageRouter nav={nav} />}
               </Shell>
             </I18nProvider>
           </ThemeProvider>

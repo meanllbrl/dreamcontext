@@ -9,14 +9,14 @@ priority: critical
 urgency: medium
 status: in_progress
 created_at: '2026-03-24'
-updated_at: '2026-03-24'
+updated_at: '2026-04-19'
 tags:
   - skills
   - cli
   - distribution
 parent_task: null
 related_feature: null
-version: null
+version: v0.2.0
 ---
 
 ## Why
