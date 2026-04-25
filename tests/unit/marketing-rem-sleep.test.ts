@@ -204,6 +204,50 @@ describe('marketing/rem-sleep', () => {
       ));
       expect(idx.entries.map((e: { id: string }) => e.id)).toContain(rec.id);
     });
+
+    it('is idempotent: re-running does not duplicate archived content', () => {
+      const oldNow = new Date('2026-03-01T00:00:00Z');
+      appendLearning({
+        type: 'ledger', body: 'archived ledger', agent: 'performance-monitor', now: oldNow,
+      });
+      const checkpoint = new Date('2026-04-25T00:00:00Z');
+
+      mergeDailyLearnings({ retainDays: 7, now: checkpoint });
+      const archivePath = join(
+        project, '_dream_context', 'knowledge', 'marketing-learnings', '_archive-2026-Q1.md',
+      );
+      const firstContent = readFileSync(archivePath, 'utf8');
+
+      // Simulate "we got killed before unlinking" by re-creating the daily file
+      const dailyFile = join(
+        project, '_dream_context', 'knowledge', 'marketing-learnings', '2026-03-01.md',
+      );
+      writeFileSync(dailyFile, '# Marketing learnings — 2026-03-01\n\nold content (replayed)');
+
+      // Second pass should detect the date marker is already in the archive and skip
+      mergeDailyLearnings({ retainDays: 7, now: checkpoint });
+      const secondContent = readFileSync(archivePath, 'utf8');
+
+      // Archive must still contain exactly one occurrence of the date marker
+      const occurrences = (secondContent.match(/# Marketing learnings — 2026-03-01/g) ?? []).length;
+      expect(occurrences).toBe(1);
+      // And the daily file should now be cleaned up
+      expect(existsSync(dailyFile)).toBe(false);
+      // First and second runs produce equivalent state
+      expect(secondContent).toBe(firstContent);
+    });
+
+    it('handles missing learnings directory gracefully (no ENOENT)', () => {
+      // Remove the learnings dir entirely (simulates first-run with seeded data
+      // where appendLearning was never called)
+      rmSync(
+        join(project, '_dream_context', 'knowledge', 'marketing-learnings'),
+        { recursive: true, force: true },
+      );
+      const result = mergeDailyLearnings({ retainDays: 7, now: new Date('2026-04-25') });
+      expect(result.scanned).toBe(0);
+      expect(result.merged).toBe(0);
+    });
   });
 
   describe('redactRunsSweep', () => {

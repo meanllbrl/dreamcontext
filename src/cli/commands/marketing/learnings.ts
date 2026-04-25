@@ -104,7 +104,17 @@ export function registerMarketingLearnings(parent: Command): void {
         process.exit(1);
       }
       try {
-        const entry = await withLock(async () => setStatus(id, newStatus as LearningStatus));
+        const entry = await withLock(async () => {
+          const run = beginRun('learnings-status', { id, status: newStatus });
+          try {
+            const e = setStatus(id, newStatus as LearningStatus);
+            run.succeed({ id: e.id, status: e.status });
+            return e;
+          } catch (err) {
+            run.fail((err as Error).message);
+            throw err;
+          }
+        });
         success(`Learning ${chalk.cyan(entry.id)} → status=${entry.status}`);
       } catch (e) {
         error(`Status flip failed: ${(e as Error).message}`);

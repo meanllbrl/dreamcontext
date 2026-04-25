@@ -23,7 +23,7 @@ import {
   existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync,
   statSync, unlinkSync, renameSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { MARKETING_PATHS, marketingRootIfExists } from './paths.js';
 import { redactSecrets } from './secrets.js';
@@ -32,6 +32,7 @@ import { loadIndex, type LearningEntry, type LearningsIndex } from './learnings.
 // ─── Atomic write helper ─────────────────────────────────────────────────────
 
 function atomicWriteFile(path: string, data: string): void {
+  mkdirSync(dirname(path), { recursive: true });
   const tmp = `${path}.tmp.${process.pid}.${randomBytes(4).toString('hex')}`;
   writeFileSync(tmp, data, 'utf8');
   renameSync(tmp, path);
@@ -253,24 +254,34 @@ export function mergeDailyLearnings(opts: MergeDailyLearningsOpts = {}): MergeDa
   for (const [q, list] of byQuarter) {
     const archivePath = join(dir, `_archive-${q}.md`);
     list.sort((a, b) => a.date.localeCompare(b.date));
-    const sections: string[] = [];
-    if (existsSync(archivePath)) {
-      sections.push(readFileSync(archivePath, 'utf8').trimEnd());
-    } else {
-      sections.push(`# Marketing learnings archive — ${q}\n`);
-    }
+
+    // Process one date at a time so a kill between append-and-unlink heals
+    // on retry: the archive content for already-merged dates is detected
+    // and the source file is unlinked without re-appending.
     for (const c of list) {
-      const body = readFileSync(c.p, 'utf8').trimEnd();
-      sections.push(body);
-    }
-    if (!opts.dryRun) {
-      atomicWriteFile(archivePath, sections.join('\n\n') + '\n');
-      for (const c of list) {
-        try { unlinkSync(c.p); mergedFiles.push(c.f); }
-        catch { /* ignore */ }
+      const existingArchive = existsSync(archivePath)
+        ? readFileSync(archivePath, 'utf8')
+        : `# Marketing learnings archive — ${q}\n`;
+
+      // Header marker for idempotency: each merged day starts with the per-day
+      // header `# Marketing learnings — <YYYY-MM-DD>` (written by appendLearning).
+      // If the archive already contains that marker, skip the append.
+      const dateMarker = `# Marketing learnings — ${c.date}`;
+      const alreadyMerged = existingArchive.includes(dateMarker);
+
+      if (opts.dryRun) {
+        mergedFiles.push(c.f);
+        continue;
       }
-    } else {
-      mergedFiles.push(...list.map((c) => c.f));
+
+      if (!alreadyMerged) {
+        const body = readFileSync(c.p, 'utf8').trimEnd();
+        const next = existingArchive.trimEnd() + '\n\n' + body + '\n';
+        atomicWriteFile(archivePath, next);
+      }
+      // Whether we appended or skipped (idempotent re-run), unlink the source.
+      try { unlinkSync(c.p); mergedFiles.push(c.f); }
+      catch { /* ignore */ }
     }
     lastArchivePath = archivePath;
   }

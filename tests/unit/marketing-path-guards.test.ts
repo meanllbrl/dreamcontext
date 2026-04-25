@@ -56,4 +56,11 @@ describe('marketing/path-guards', () => {
       rmSync(noCtx, { recursive: true, force: true });
     }
   });
+
+  it('does not falsely match unrelated system paths ending with marketing/.env', () => {
+    // /usr/local/marketing/.env or /opt/marketing/.env should NOT trip the
+    // guard even when a _dream_context/ exists in the cwd tree.
+    expect(isMarketingEnvPath('/usr/local/marketing/.env')).toBe(false);
+    expect(isMarketingEnvPath('/opt/marketing/.env')).toBe(false);
+  });
 });
