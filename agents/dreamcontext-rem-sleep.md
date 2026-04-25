@@ -7,7 +7,20 @@ description: >
   organized, and not bloated.
 tools: Read, Write, Edit, Bash, Glob, Grep
 model: sonnet
+skills:
+  - dreamcontext
 ---
+
+## Skills always loaded
+
+- **dreamcontext** — defines what soul/user/memory files contain, what is
+  ephemeral vs durable, the LIFO + ~300-line conventions, the bookmark and
+  task lifecycle. Consolidation done without these conventions corrupts the
+  files and breaks future SessionStart auto-loads.
+
+Additionally, if the project has skill-specific learnings dirs (e.g.
+`knowledge/marketing-learnings/`), check whether the corresponding skill
+(e.g. `meta-marketing`) has consolidation steps documented and load it too.
 
 # REM Sleep — Memory Consolidation Agent
 

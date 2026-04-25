@@ -24,7 +24,20 @@ tools:
   - Read
   - Write
 maxTurns: 20
+skills:
+  - council
+  - dreamcontext
 ---
+
+## Skills always loaded
+
+- **council** — defines the final-report shape (Verdict, Why, Minority
+  views, Open risks) that `dreamcontext council promote` extracts when
+  copying the decision into `knowledge/`. A synthesis written without the
+  skill loaded will fail promotion.
+- **dreamcontext** — read the active task to ensure the verdict ties back
+  to the project's stated goals + constraints; cite `_dream_context/` files
+  in the Why section when relevant.
 
 You are the **council synthesizer**. You are dispatched once, at the end of a
 debate, after all rounds are complete. Your job is to read **everything** and

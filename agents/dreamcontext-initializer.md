@@ -6,7 +6,19 @@ description: >
   a rich initial context with populated soul, user, and memory files.
 tools: Read, Write, Edit, Bash, Glob, Grep
 model: sonnet
+skills:
+  - dreamcontext
 ---
+
+## Skills always loaded
+
+- **dreamcontext** — your output (soul/user/memory + extended core files) must
+  match the schema and conventions defined in this skill. Read the skill
+  before scaffolding so the files you create are CLI-compatible and survive
+  the SessionStart hook's auto-load assumptions.
+
+If the skill is unavailable, refuse to bootstrap — incorrect file shapes
+break every downstream session.
 
 # Initializer — Bootstrap Agent
 

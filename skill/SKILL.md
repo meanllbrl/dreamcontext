@@ -165,17 +165,36 @@ These files vary across projects. Do not assume a fixed list. Always discover dy
 ## Operational Rules
 
 1. **User's request is king.** Execute direct instructions. The task queue is reference, not auto-pilot. Suggest related tasks; never auto-pick them.
-2. **Check before creating.** Search existing features, tasks, knowledge before creating new ones.
-3. **Update over duplicate.** New information updates existing files.
-4. **Be surgical.** Only touch what changed. Use the most direct tool for the job.
-5. **LIFO everywhere.** Newest entries at top of changelogs, memory, constraints.
-6. **~300 line limit** on context files. Extract detail to knowledge, keep summary + reference.
-7. **Log every session** that modifies code or makes decisions. This is the cross-session continuity mechanism.
-8. **Features are sleep-only.** Never update feature PRDs during active work. All working context goes into the task body. The sleep agent consolidates task content into features.
-9. **All work needs a task.** Before starting non-trivial work, check if a matching task exists in `_dream_context/state/`. If not, create one. After plans are approved (ExitPlanMode), offer to save as a task. The sleep agent flags untracked work.
-10. **Use dreamcontext-explore, not Explore.** The default Explore agent is blocked via PreToolUse hook. Use `dreamcontext-explore` for all codebase exploration. It checks context files first, saving thousands of tokens.
-11. **Mark checkboxes as you go.** When completing a user story or acceptance criterion in a task file, update `- [ ]` to `- [x]` immediately. Don't wait for sleep consolidation. This is the live progress signal.
-12. **Reuse before create.** Before building any UI component, utility, hook, or abstraction, search the codebase for existing implementations that serve the same purpose. Use `dreamcontext-explore` to find reusable candidates. If a match exists, use it or extend it. Never duplicate functionality that already exists. This applies to modals, forms, filters, layouts, helpers, and any shared pattern.
+2. **Skill triage before action — HARD RULE.** The available-skills list (in every system reminder) is your primary toolkit, not inventory to scroll past. Before producing user-visible output or writing code in any skill's domain, you MUST:
+   - Match the task's keywords / domain to skill `description` triggers.
+   - Invoke `Skill` for each match BEFORE drafting content, writing code, or delegating to a sub-agent. Multiple skills can load in parallel; do it.
+   - Do not wait for the user to say "use the X skill." Skills exist so the user does not have to ask. If the user has to remind you, the rule has already failed.
+
+   Common task → skill matches:
+   - UI / frontend / component work → `design` + `frontend-design` + `engineering`
+   - Meta / Facebook / Instagram ads, ad creatives, ROAS, cohorts → `meta-marketing` + `growth`
+   - User acquisition, retention, push notifications, ASO, paywalls → `growth`
+   - Brand-aligned writing (emails, decks, posts) → `brand-voice`
+   - Multi-perspective decisions, "should we" / "let's debate" → `council`
+   - Codebase review, security audit, refactor → `engineering` + `simplify`
+   - Claude API / Anthropic SDK code, prompt caching, model migration → `claude-api`
+   - Writing or reviewing system prompts / agent definitions → `system-prompts`
+   - Video/animation generation → `remotion-best-practices` / `remotion-render`
+
+   Skip skill triage only when the request is (a) a 1-line factual question, (b) purely about dreamcontext mechanics (covered by this skill), or (c) genuinely outside every available skill's domain. When in doubt, load — one Skill call costs less than producing skill-blind output that misses domain rules.
+
+   This rule exists because past sessions repeatedly produced output without consulting available skills, forcing the user to redirect mid-task. Treat skill-blind output as a hard regression.
+3. **Check before creating.** Search existing features, tasks, knowledge before creating new ones.
+4. **Update over duplicate.** New information updates existing files.
+5. **Be surgical.** Only touch what changed. Use the most direct tool for the job.
+6. **LIFO everywhere.** Newest entries at top of changelogs, memory, constraints.
+7. **~300 line limit** on context files. Extract detail to knowledge, keep summary + reference.
+8. **Log every session** that modifies code or makes decisions. This is the cross-session continuity mechanism.
+9. **Features are sleep-only.** Never update feature PRDs during active work. All working context goes into the task body. The sleep agent consolidates task content into features.
+10. **All work needs a task.** Before starting non-trivial work, check if a matching task exists in `_dream_context/state/`. If not, create one. After plans are approved (ExitPlanMode), offer to save as a task. The sleep agent flags untracked work.
+11. **Use dreamcontext-explore, not Explore.** The default Explore agent is blocked via PreToolUse hook. Use `dreamcontext-explore` for all codebase exploration. It checks context files first, saving thousands of tokens.
+12. **Mark checkboxes as you go.** When completing a user story or acceptance criterion in a task file, update `- [ ]` to `- [x]` immediately. Don't wait for sleep consolidation. This is the live progress signal.
+13. **Reuse before create.** Before building any UI component, utility, hook, or abstraction, search the codebase for existing implementations that serve the same purpose. Use `dreamcontext-explore` to find reusable candidates. If a match exists, use it or extend it. Never duplicate functionality that already exists. This applies to modals, forms, filters, layouts, helpers, and any shared pattern.
 
 ---
 

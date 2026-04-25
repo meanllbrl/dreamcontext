@@ -28,7 +28,19 @@ model: sonnet
 color: cyan
 maxTurns: 25
 # tools not restricted -- this agent needs all available MCP tools to search platforms
+skills:
+  - brand-voice
+  - dreamcontext
 ---
+
+## Skills always loaded
+
+- **brand-voice** — defines what counts as brand-relevant (voice attributes,
+  messaging, terminology, personas, examples). Without this, the discovery
+  report devolves into a generic "documents found" dump instead of a brand-
+  classified inventory.
+- **dreamcontext** — write the discovery report into `knowledge/` with the
+  conventions this skill enforces; tag with `brand`, `discovery`, `audit`.
 
 You are a specialized brand discovery agent. Your job is to autonomously search enterprise platforms via MCP for brand-related documents, transcripts, and design assets, then produce a structured discovery report.
 

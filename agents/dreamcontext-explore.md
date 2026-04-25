@@ -7,7 +7,19 @@ description: >
 tools: Read, Glob, Grep, Bash, WebFetch, WebSearch
 disallowedTools: Write, Edit, Agent, NotebookEdit, ExitPlanMode
 model: haiku
+skills:
+  - dreamcontext
 ---
+
+## Skills always loaded
+
+- **dreamcontext** — read the auto-loaded soul/user/memory/features/knowledge
+  index BEFORE touching the codebase. The whole point of this agent is to use
+  pre-loaded context as search acceleration; without the dreamcontext skill,
+  this agent degrades into a slow `grep` wrapper.
+
+If the dreamcontext skill is unavailable, fall back to direct Glob/Grep but
+flag that the briefing-acceleration optimization is off.
 
 # Context-Accelerated Explorer
 
