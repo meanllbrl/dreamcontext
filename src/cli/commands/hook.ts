@@ -6,6 +6,8 @@ import { resolveContextRoot } from '../../lib/context-path.js';
 import type { SleepState } from './sleep.js';
 import { readSleepState, writeSleepState } from './sleep.js';
 import { generateSnapshot, generateSubagentBriefing } from './snapshot.js';
+import { listStaleRecs } from '../../lib/marketing/snapshot.js';
+import { isMarketingEnvPath } from '../../lib/marketing/path-guards.js';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -486,7 +488,29 @@ export function registerHookCommand(program: Command): void {
         ? input.tool_input as Record<string, unknown>
         : {};
 
-      // Only gate Agent tool calls with specific subagent_types
+      // Gate 1: block direct writes/edits to _dream_context/marketing/.env
+      // (Edit, Write, MultiEdit). Token files must only be touched by `mk init`
+      // or by the user manually outside an agent session.
+      if (toolName === 'Edit' || toolName === 'Write' || toolName === 'MultiEdit') {
+        const filePath = typeof toolInput.file_path === 'string' ? toolInput.file_path : '';
+        if (isMarketingEnvPath(filePath)) {
+          console.log(JSON.stringify({
+            hookSpecificOutput: {
+              hookEventName: 'PreToolUse',
+              permissionDecision: 'deny',
+              permissionDecisionReason: [
+                'Blocked: _dream_context/marketing/.env holds Meta access tokens.',
+                'Agents must never write this file directly — initial setup is `mk init`,',
+                'and rotation is a manual user action outside an agent session.',
+                'If you need to verify config, run `dreamcontext mk config check`.',
+              ].join(' '),
+            },
+          }));
+          return;
+        }
+      }
+
+      // Gate 2: redirect default Explore agent to dreamcontext-explore.
       if (toolName !== 'Agent') process.exit(0); // allow
 
       const subagentType = typeof toolInput.subagent_type === 'string'
@@ -569,6 +593,24 @@ export function registerHookCommand(program: Command): void {
         console.log(`Sleep debt is ${debt}. After completing the current task, offer to consolidate.`);
       }
       // debt < 4 and no critical bookmarks: silent (no output)
+
+      // Marketing nudge: only fires when there are unconfirmed Performance
+      // Monitor recommendations from >24h ago. Must NOT fire on every prompt
+      // (per task contract). Wrapped in try/catch so the marketing skill-pack
+      // never breaks the core hook.
+      try {
+        const stale = listStaleRecs(24);
+        if (stale.length > 0) {
+          const ids = stale.slice(0, 3).map((e) => e.id).join(', ');
+          const more = stale.length > 3 ? ` (+${stale.length - 3} more)` : '';
+          console.log(
+            `${stale.length} marketing recommendation${stale.length === 1 ? '' : 's'} pending >24h: ${ids}${more}. ` +
+            `Review with \`mk learnings list-pending\` and confirm/reject.`,
+          );
+        }
+      } catch {
+        // Marketing snapshot must never break the hook.
+      }
     });
 
   // --- hook post-tool-use ---

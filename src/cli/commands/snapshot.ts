@@ -9,6 +9,7 @@ import { readSection } from '../../lib/markdown.js';
 import { readSleepState, writeSleepState, readSleepHistory } from './sleep.js';
 import { buildKnowledgeIndex } from '../../lib/knowledge-index.js';
 import { buildCoreIndex } from '../../lib/core-index.js';
+import { buildMarketingSnapshot } from '../../lib/marketing/snapshot.js';
 
 /**
  * Extract the first paragraph from markdown content.
@@ -484,6 +485,17 @@ export function generateSnapshot(): string {
         parts.push('');
       }
     }
+  }
+
+  // 11. Marketing snapshot (skill-pack scoped — only present when bootstrapped)
+  try {
+    const marketing = buildMarketingSnapshot();
+    if (marketing) {
+      parts.push(marketing);
+      parts.push('');
+    }
+  } catch {
+    // Marketing snapshot must never break the SessionStart hook.
   }
 
   return parts.join('\n').trim();

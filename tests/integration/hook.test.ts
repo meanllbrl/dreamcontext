@@ -509,6 +509,20 @@ describe('hook session-start (integration)', () => {
     expect(output).toContain('# Agent Context');
   });
 
+  it('omits ## Marketing section when marketing/ is not bootstrapped', () => {
+    const input = JSON.stringify({ session_id: 'sess-1', source: 'startup', transcript_path: '/tmp/t.jsonl' });
+    const output = runWithStdin('hook session-start', input, tmpDir);
+    expect(output).not.toContain('## Marketing');
+  });
+
+  it('includes ## Marketing section when marketing/ is bootstrapped', () => {
+    mkdirSync(join(ctx, 'marketing'), { recursive: true });
+    const input = JSON.stringify({ session_id: 'sess-1', source: 'startup', transcript_path: '/tmp/t.jsonl' });
+    const output = runWithStdin('hook session-start', input, tmpDir);
+    expect(output).toContain('## Marketing');
+    expect(output).toContain('No active cohorts');
+  });
+
   it('suppresses consolidation directive when sleep is in progress and debt >= 4', () => {
     writeSleep(ctx, { debt: 10, sleep_started_at: '2026-03-10T12:00:00.000Z', sessions: [] });
 
@@ -1064,6 +1078,49 @@ describe('hook pre-tool-use (integration)', () => {
     expect(reason).toContain('context files first');
     expect(reason).toContain('saving thousands of tokens');
   });
+
+  it('blocks Edit on _dream_context/marketing/.env', () => {
+    mkdirSync(join(ctx, 'marketing'), { recursive: true });
+    const input = JSON.stringify({
+      tool_name: 'Edit',
+      tool_input: {
+        file_path: join(ctx, 'marketing', '.env'),
+        old_string: 'X', new_string: 'Y',
+      },
+    });
+    const output = runWithStdin('hook pre-tool-use', input, tmpDir);
+    const parsed = JSON.parse(output);
+    expect(parsed.hookSpecificOutput.permissionDecision).toBe('deny');
+    expect(parsed.hookSpecificOutput.permissionDecisionReason).toContain('Meta access tokens');
+    expect(parsed.hookSpecificOutput.permissionDecisionReason).toContain('marketing/.env');
+  });
+
+  it('blocks Write on _dream_context/marketing/.env', () => {
+    mkdirSync(join(ctx, 'marketing'), { recursive: true });
+    const input = JSON.stringify({
+      tool_name: 'Write',
+      tool_input: {
+        file_path: join(ctx, 'marketing', '.env'),
+        content: 'META_ACCESS_TOKEN=evil',
+      },
+    });
+    const output = runWithStdin('hook pre-tool-use', input, tmpDir);
+    const parsed = JSON.parse(output);
+    expect(parsed.hookSpecificOutput.permissionDecision).toBe('deny');
+  });
+
+  it('allows Edit on other files in marketing/', () => {
+    mkdirSync(join(ctx, 'marketing'), { recursive: true });
+    const input = JSON.stringify({
+      tool_name: 'Edit',
+      tool_input: {
+        file_path: join(ctx, 'marketing', 'config.json'),
+        old_string: 'X', new_string: 'Y',
+      },
+    });
+    const output = runWithStdin('hook pre-tool-use', input, tmpDir);
+    expect(output.trim()).toBe('');
+  });
 });
 
 // ─── hook user-prompt-submit ────────────────────────────────────────────────
@@ -1149,6 +1206,59 @@ describe('hook user-prompt-submit (integration)', () => {
     const input = JSON.stringify({ session_id: 'sess-1', prompt: 'hello' });
     const output = runWithStdin('hook user-prompt-submit', input, tmpDir);
     expect(output.trim()).toBe('');
+  });
+
+  it('nudges when there is a stale (>24h) marketing recommendation', () => {
+    writeSleep(ctx, { debt: 0, sessions: [], bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [] });
+    // Seed a stale recommendation directly into the index file.
+    const learningsDir = join(ctx, 'knowledge', 'marketing-learnings');
+    mkdirSync(learningsDir, { recursive: true });
+    mkdirSync(join(ctx, 'marketing'), { recursive: true });
+    const stale = new Date(Date.now() - 30 * 60 * 60 * 1000).toISOString();
+    writeFileSync(join(learningsDir, '.index.json'), JSON.stringify({
+      version: 1,
+      entries: [{
+        id: 'rec_stale01',
+        type: 'recommendation',
+        cohort_id: 'coh_demo',
+        status: 'pending',
+        created_at: stale,
+        updated_at: stale,
+        date_file: stale.slice(0, 10),
+        summary: 'Pause adset 999 — CPR is 3x baseline.',
+      }],
+    }, null, 2));
+
+    const input = JSON.stringify({ session_id: 'sess-1', prompt: 'hello' });
+    const output = runWithStdin('hook user-prompt-submit', input, tmpDir);
+    expect(output).toContain('marketing recommendation');
+    expect(output).toContain('rec_stale01');
+    expect(output).toContain('mk learnings list-pending');
+  });
+
+  it('silent when only fresh marketing recommendations exist', () => {
+    writeSleep(ctx, { debt: 0, sessions: [], bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [] });
+    const learningsDir = join(ctx, 'knowledge', 'marketing-learnings');
+    mkdirSync(learningsDir, { recursive: true });
+    mkdirSync(join(ctx, 'marketing'), { recursive: true });
+    const fresh = new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString();
+    writeFileSync(join(learningsDir, '.index.json'), JSON.stringify({
+      version: 1,
+      entries: [{
+        id: 'rec_fresh01',
+        type: 'recommendation',
+        cohort_id: 'coh_demo',
+        status: 'pending',
+        created_at: fresh,
+        updated_at: fresh,
+        date_file: fresh.slice(0, 10),
+        summary: 'Fresh rec.',
+      }],
+    }, null, 2));
+
+    const input = JSON.stringify({ session_id: 'sess-1', prompt: 'hello' });
+    const output = runWithStdin('hook user-prompt-submit', input, tmpDir);
+    expect(output).not.toContain('marketing recommendation');
   });
 });
 
