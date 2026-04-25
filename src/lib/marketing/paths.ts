@@ -2,6 +2,8 @@ import { join } from 'node:path';
 import { ensureContextRoot, resolveContextRoot } from '../context-path.js';
 
 const MARKETING_DIR = 'marketing';
+const KNOWLEDGE_DIR = 'knowledge';
+const LEARNINGS_SUBDIR = 'marketing-learnings';
 
 export function marketingRoot(from?: string): string {
   return join(ensureContextRoot(from), MARKETING_DIR);
@@ -14,6 +16,15 @@ export function marketingRootIfExists(from?: string): string | null {
 
 export function marketingPath(...segments: string[]): string {
   return join(marketingRoot(), ...segments);
+}
+
+export function knowledgePath(...segments: string[]): string {
+  return join(ensureContextRoot(), KNOWLEDGE_DIR, ...segments);
+}
+
+export function knowledgePathIfExists(from?: string): string | null {
+  const ctx = resolveContextRoot(from);
+  return ctx ? join(ctx, KNOWLEDGE_DIR) : null;
 }
 
 export const MARKETING_PATHS = {
@@ -37,4 +48,7 @@ export const MARKETING_PATHS = {
   runsDir: () => marketingPath('runs'),
   byIdemDir: () => marketingPath('runs', 'by-idem'),
   runsIndex: () => marketingPath('runs', 'index.md'),
+  learningsDir: () => knowledgePath(LEARNINGS_SUBDIR),
+  learningsFile: (date: string) => knowledgePath(LEARNINGS_SUBDIR, `${date}.md`),
+  learningsIndex: () => knowledgePath(LEARNINGS_SUBDIR, '.index.json'),
 };

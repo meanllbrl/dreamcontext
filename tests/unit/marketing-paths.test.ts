@@ -35,12 +35,24 @@ describe('marketing/paths', () => {
       .toBe(join(project, '_dream_context', 'marketing', 'cohorts', 'c1.json'));
   });
 
-  it('all MARKETING_PATHS getters live under marketingRoot', () => {
-    const root = marketingRoot();
+  it('all MARKETING_PATHS getters live under _dream_context/', () => {
+    const ctxRoot = join(project, '_dream_context');
     for (const [name, fn] of Object.entries(MARKETING_PATHS)) {
-      const p = (fn as () => string)();
-      expect(p.startsWith(root), `${name} should be under marketingRoot`).toBe(true);
+      const p = (fn as (arg?: string) => string)('2026-04-25');
+      expect(p.startsWith(ctxRoot), `${name} should be under _dream_context/`).toBe(true);
     }
+  });
+
+  it('learnings paths live under knowledge/marketing-learnings/', () => {
+    expect(MARKETING_PATHS.learningsDir()).toBe(
+      join(project, '_dream_context', 'knowledge', 'marketing-learnings'),
+    );
+    expect(MARKETING_PATHS.learningsFile('2026-04-25')).toBe(
+      join(project, '_dream_context', 'knowledge', 'marketing-learnings', '2026-04-25.md'),
+    );
+    expect(MARKETING_PATHS.learningsIndex()).toBe(
+      join(project, '_dream_context', 'knowledge', 'marketing-learnings', '.index.json'),
+    );
   });
 
   it('venvPython is under .venv/bin/python', () => {
