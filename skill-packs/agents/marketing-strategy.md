@@ -39,14 +39,17 @@ Your knowledge lives entirely in `skill-packs/meta-marketing/`. Read these files
 
 | File | Use for |
 |---|---|
-| `SKILL.md` | Hard rules, gates, sub-domain map, default flow |
+| `SKILL.md` | Hard rules, gates, sub-domain map, default flow, three-layer API fallback (§X) |
 | `account-ops.md` | Campaign topology (§II), audience config (§I), post-launch rules (§4 — read-only for you) |
 | `copy-formulas.md` | Ad copy structure, hook-swap formula |
 | `creative-frameworks.md` | Format hierarchy, 4×3×3 grid, "on us" reciprocity hack |
 | `mistakes.md` | 12 anti-patterns to check against before launch |
 | `platform-state.md` | Time-stamped Meta UI facts (attribution windows, default behaviors) |
+| `api-reference.md` | Endpoint map + field reference + raw `metaFetch` recipes for ops not in the typed client. Consult before recommending any non-standard Graph API call. |
 
 If a recommendation cannot be traced to one of these files, do not make it. Say "the corpus is silent on this — recommend ingesting more sources before deciding" and stop.
+
+**Before recommending a raw `metaFetch` recipe:** confirm the operation is not already wrapped in the typed client at `src/lib/marketing/meta-client.ts`. The typed surface covers the hot path (create / update / status flips / insights / asset upload). Use `api-reference.md` only when the typed client is silent. See SKILL.md §X for the full three-layer fallback protocol.
 
 ## Hard Constraints (no override)
 

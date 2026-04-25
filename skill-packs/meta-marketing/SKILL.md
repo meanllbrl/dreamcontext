@@ -15,6 +15,7 @@ corpus_status: "9 videos ingested · 4 speakers in paid-ad-account-ops · all 8 
 | Write ad copy, brief a creative, or vary hooks | `copy-formulas.md` |
 | Pick creative formats, angles, or grid positions | `creative-frameworks.md` |
 | Check for failure modes before launch or before a big move | `mistakes.md` |
+| Call a Graph API endpoint not in the typed client | `api-reference.md` (then §XI fallback) |
 
 ---
 
@@ -249,7 +250,62 @@ The default single-adset structure is designed for products where one ad can con
 
 ---
 
-## X. Anti-Patterns
+## X. Beyond the Typed Client — Three-Layer API Fallback
+
+The Graph API has hundreds of fields and dozens of verbs. The TypeScript wrapper at `src/lib/marketing/meta-client.ts` covers the hot path only — campaign/adset/ad/creative create + status flips + insights + asset upload. For everything else, follow this three-layer fallback in order:
+
+### Layer 1 — Typed client (`meta-client.ts`)
+
+If the operation is one of:
+
+- `createCampaign`, `updateCampaign`, `getCampaign`
+- `createAdSet`, `updateAdSet`
+- `createAd`, `updateAd`
+- `createVideoCreative`, `createImageCreative`
+- `pauseEntity`, `resumeEntity`
+- `uploadVideo`, `uploadImage`
+- `getInsights`, `listAdAccounts`, `getAdAccount`
+
+→ use the typed function. Dry-run, retry, idempotency, header-only auth, per-account concurrency, and chunked upload come for free.
+
+### Layer 2 — `api-reference.md`
+
+If the operation isn't in the typed client, **read `api-reference.md` first** (numbered references in this section point to that file). It contains:
+
+- Endpoint map (CRUD by entity, including delete/list/duplicate)
+- Common field reference per entity (campaign, adset, ad, creative)
+- Full enum reference (objectives, optimization_goals, CTAs)
+- Complete `targeting` and `asset_feed_spec` surfaces
+- 10 raw `metaFetch` recipes (delete, paginate, duplicate, batch, custom audiences, breakdowns, async insights, targeting search, ad previews, full-fields read)
+- Error code cross-reference
+
+Pattern: write a small TS function in the relevant CLI command file that builds `metaFetch(ctx, { method, path, params })` directly. The wrapper still applies all the safety guarantees.
+
+### Layer 3 — Live Meta docs
+
+If `api-reference.md` is silent on the operation:
+
+1. **Dry-run first.** Set `ctx.dryRun = true` for the first attempt regardless of operator urgency.
+2. Fetch `https://developers.facebook.com/docs/marketing-api/reference/v25.0/<entity>` (or the relevant endpoint).
+3. Construct the `metaFetch` call. Show the operator the request shape (URL, method, params) before running live.
+4. Wait for explicit operator confirmation, then flip `ctx.dryRun = false`.
+5. **Add the recipe to `api-reference.md` §VI** so the next caller hits layer 2, not layer 3. Self-extending knowledge base.
+6. If the same recipe is used **3+ times across sessions**, propose adding a typed wrapper to `meta-client.ts` in the next PR.
+
+### Hard rules for raw `metaFetch` use
+
+- Never duplicate a typed function with a raw call. If `createCampaign` exists, use it — do not bypass to `metaFetch(ctx, { method: 'POST', path: 'act_X/campaigns' })`.
+- Never bypass `metaFetch` with a direct `fetch()`. The wrapper is the only path to Meta. Library code that calls `fetch()` against a Meta host is a security/correctness regression.
+- Never put `access_token=` in a URL — `metaFetch` will throw `HeaderAuthAssertionError`. Header-only is non-negotiable.
+- Always set `ctx.dryRun = true` when previewing a layer-3 recipe. The wrapper enforces this even when CLI flags say otherwise.
+
+### Version pin
+
+`api-reference.md` and the typed client both target **Graph API v25.0** (released 2026-02-18). When Meta releases a new version, update `DEFAULT_API_VERSION` in `src/lib/marketing/config.ts` and re-verify any layer-2 recipes that touched changed endpoints. Meta retires fields aggressively — every recipe in `api-reference.md` has an `api_version` and `verified_at` in the frontmatter for staleness detection.
+
+---
+
+## XI. Anti-Patterns
 
 | # | Anti-pattern | Correction |
 |---|---|---|

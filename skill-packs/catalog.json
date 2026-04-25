@@ -139,7 +139,8 @@
         "copy-formulas.md",
         "creative-frameworks.md",
         "mistakes.md",
-        "platform-state.md"
+        "platform-state.md",
+        "api-reference.md"
       ],
       "relatedAgents": ["marketing-strategy", "marketing-monitor", "marketing-creative"],
       "corpus_status": "9 videos · 4 speakers · draft · agent roster: 2 active (strategy, monitor) + 1 stubbed (creative)"

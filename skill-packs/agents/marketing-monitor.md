@@ -38,12 +38,15 @@ Same as Strategy Optimizer — read at the start of every dispatch:
 
 | File | Use for |
 |---|---|
-| `SKILL.md` | Hard rules, gates, principles |
+| `SKILL.md` | Hard rules, gates, principles, three-layer API fallback (§X) |
 | `account-ops.md` | Especially §4 (post-launch optimization) — your primary working chapter |
 | `mistakes.md` | Cross-check every recommendation against the 12 anti-patterns |
 | `platform-state.md` | Attribution windows, default behaviors that affect interpretation |
+| `api-reference.md` | Endpoint map + raw `metaFetch` recipes when you need data not exposed by `getInsights` (e.g. breakdowns by placement, async insights for >7d windows, batch reads). Consult before fabricating a query. |
 
 If a recommendation cannot be traced to one of these files, do not make it.
+
+**Before constructing a raw `metaFetch` query for monitoring:** confirm the data is not already available via `getInsights` in the typed client. Most read paths the monitor needs (campaign / adset / ad insights, sync windows ≤7d) are covered. Use `api-reference.md` recipes for breakdowns by `publisher_platform` / `platform_position`, async windows >7d (deferred to v1), or list+pagination over many entities. See SKILL.md §X for the full three-layer fallback protocol.
 
 ## Hard Constraints (no override)
 

@@ -20,7 +20,9 @@ export interface MarketingConfig {
   };
 }
 
-export const DEFAULT_API_VERSION = 'v21.0';
+// Latest Graph API + Marketing API as of 2026-04. v25.0 released 2026-02-18.
+// v20.0 expires 2026-09-24; we target the current release.
+export const DEFAULT_API_VERSION = 'v25.0';
 
 const EMPTY_CONFIG: MarketingConfig = {
   default_profile: null,
