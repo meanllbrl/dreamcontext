@@ -5,6 +5,7 @@ import { dirname, join, basename, extname } from 'node:path';
 import { MARKETING_PATHS } from './paths.js';
 import { isBootstrapped, subprocessEnv } from './bootstrap.js';
 import { writeJsonWithBridge, beginRun } from './store.js';
+import { runVisionPassOnPost } from './vision.js';
 
 // ─── Health probe ────────────────────────────────────────────────────────────
 
@@ -174,6 +175,7 @@ export async function ingestCompetitor(opts: IngestOptions): Promise<IngestSumma
 
   const warnings: string[] = [];
   const errors: string[] = [];
+  const visionTasks: Promise<void>[] = [];
   let postsIngested = 0;
 
   try {
@@ -207,8 +209,19 @@ export async function ingestCompetitor(opts: IngestOptions): Promise<IngestSumma
           run.appendEvent(evt as Record<string, unknown>);
           if (evt.event === 'post') {
             try {
-              persistPost(evt);
+              const jsonPath = persistPost(evt);
               postsIngested++;
+              // Vision pass — fire-and-forget; failure does not abort ingest.
+              if (jsonPath && evt.frames.some((f) => f.type === 'hook')) {
+                const task = (async () => {
+                  try {
+                    await runVisionPassOnPost(jsonPath);
+                  } catch (err) {
+                    warnings.push(`vision pass failed for ${evt.shortcode}: ${(err as Error).message}`);
+                  }
+                })();
+                visionTasks.push(task);
+              }
             } catch (e) {
               errors.push(`persist failed for ${evt.shortcode}: ${(e as Error).message}`);
             }
@@ -240,6 +253,9 @@ export async function ingestCompetitor(opts: IngestOptions): Promise<IngestSumma
         }
       });
     });
+
+    // Wait for any in-flight vision passes before declaring success.
+    if (visionTasks.length > 0) await Promise.allSettled(visionTasks);
 
     run.succeed({ posts_ingested: postsIngested, warnings: warnings.length, errors: errors.length });
   } catch (e) {
@@ -273,7 +289,7 @@ interface PostJson {
 
 type PostEvent = Extract<IngestEvent, { event: 'post' }>;
 
-function persistPost(evt: PostEvent): void {
+function persistPost(evt: PostEvent): string {
   const handleDir = join(MARKETING_PATHS.competitorsDir(), evt.handle);
   const postsDir = join(handleDir, 'posts');
   const mediaDir = join(handleDir, '_media', evt.shortcode);
@@ -322,6 +338,8 @@ function persistPost(evt: PostEvent): void {
       `---\nid: competitor_${evt.handle}\ntype: competitor_meta\nhandle: ${evt.handle}\n---\n\n# @${evt.handle}\n\nFirst seen: ${new Date().toISOString()}\n`,
     );
   }
+
+  return jsonPath;
 }
 
 function moveAsset(src: string, dest: string): string {
