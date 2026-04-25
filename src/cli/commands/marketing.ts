@@ -20,6 +20,7 @@ import { registerMarketingLaunch } from './marketing/launch.js';
 import { registerMarketingLearnings } from './marketing/learnings.js';
 import { registerMarketingRemSleep } from './marketing/rem-sleep.js';
 import { registerMarketingHooks } from './marketing/hooks.js';
+import { registerMarketingCouncil } from './marketing/council.js';
 
 export function registerMarketingCommand(program: Command): void {
   const cmd = program
@@ -56,6 +57,7 @@ export function registerMarketingCommand(program: Command): void {
   registerMarketingLearnings(cmd);
   registerMarketingRemSleep(cmd);
 
-  // PR 8 — git hooks
+  // PR 8 — git hooks + council wrapper
   registerMarketingHooks(cmd);
+  registerMarketingCouncil(cmd);
 }
