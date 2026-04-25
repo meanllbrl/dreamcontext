@@ -18,6 +18,7 @@ import { registerMarketingAsset } from './marketing/asset.js';
 import { registerMarketingAd } from './marketing/ad.js';
 import { registerMarketingLaunch } from './marketing/launch.js';
 import { registerMarketingLearnings } from './marketing/learnings.js';
+import { registerMarketingRemSleep } from './marketing/rem-sleep.js';
 
 export function registerMarketingCommand(program: Command): void {
   const cmd = program
@@ -50,6 +51,7 @@ export function registerMarketingCommand(program: Command): void {
   registerMarketingAd(cmd);
   registerMarketingLaunch(cmd);
 
-  // PR 4 — learnings
+  // PR 4 — learnings + rem-sleep
   registerMarketingLearnings(cmd);
+  registerMarketingRemSleep(cmd);
 }
