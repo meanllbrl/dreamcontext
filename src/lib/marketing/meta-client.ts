@@ -272,19 +272,27 @@ export async function updateAd(ctx: MetaCtx, adId: string, fields: { status?: Ad
 
 // ─── Status flip helpers (used by mk pause/resume) ───────────────────────────
 
-export async function pauseEntity(ctx: MetaCtx, entityId: string): Promise<{ success: boolean }> {
+export interface StatusFlipOptions {
+  /** Bypass metaFetch's retry loop. Required for launch flips per task PR 3
+   *  contract: "No silent retries on launch flips." Operator must decide. */
+  noRetry?: boolean;
+}
+
+export async function pauseEntity(ctx: MetaCtx, entityId: string, opts: StatusFlipOptions = {}): Promise<{ success: boolean }> {
   return metaFetch(ctx, {
     method: 'POST',
     path: entityId,
     params: { status: 'PAUSED' },
+    noRetry: opts.noRetry,
   }) as Promise<{ success: boolean }>;
 }
 
-export async function resumeEntity(ctx: MetaCtx, entityId: string): Promise<{ success: boolean }> {
+export async function resumeEntity(ctx: MetaCtx, entityId: string, opts: StatusFlipOptions = {}): Promise<{ success: boolean }> {
   return metaFetch(ctx, {
     method: 'POST',
     path: entityId,
     params: { status: 'ACTIVE' },
+    noRetry: opts.noRetry,
   }) as Promise<{ success: boolean }>;
 }
 

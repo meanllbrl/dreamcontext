@@ -29,6 +29,7 @@ export const MARKETING_PATHS = {
   cohortsDir: () => marketingPath('cohorts'),
   campaignsDir: () => marketingPath('campaigns'),
   adsetsDir: () => marketingPath('adsets'),
+  adsDir: () => marketingPath('ads'),
   creativesDir: () => marketingPath('creatives'),
   briefsDir: () => marketingPath('briefs'),
   insightsDir: () => marketingPath('insights'),

@@ -11,6 +11,12 @@ import { registerMarketingPause, registerMarketingResume } from './marketing/sta
 import { registerMarketingScale } from './marketing/scale.js';
 import { registerMarketingKill } from './marketing/kill.js';
 import { registerMarketingDoctor } from './marketing/doctor.js';
+import { registerMarketingCampaign } from './marketing/campaign.js';
+import { registerMarketingAdSet } from './marketing/adset.js';
+import { registerMarketingCreative } from './marketing/creative.js';
+import { registerMarketingAsset } from './marketing/asset.js';
+import { registerMarketingAd } from './marketing/ad.js';
+import { registerMarketingLaunch } from './marketing/launch.js';
 
 export function registerMarketingCommand(program: Command): void {
   const cmd = program
@@ -34,4 +40,12 @@ export function registerMarketingCommand(program: Command): void {
   registerMarketingScale(cmd);
   registerMarketingKill(cmd);
   registerMarketingDoctor(cmd);
+
+  // PR 3 — mutation verbs + launch
+  registerMarketingCampaign(cmd);
+  registerMarketingAdSet(cmd);
+  registerMarketingCreative(cmd);
+  registerMarketingAsset(cmd);
+  registerMarketingAd(cmd);
+  registerMarketingLaunch(cmd);
 }
