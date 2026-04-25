@@ -8,13 +8,13 @@ priority: high
 urgency: high
 status: in_progress
 created_at: '2026-04-25'
-updated_at: '2026-04-25T19:45Z'
+updated_at: '2026-04-25T20:55Z'
 status_pr0: shipped
 status_pr0_5: shipped
 status_pr1: shipped
 status_pr2: shipped
 status_pr3: shipped
-status_pr4: todo
+status_pr4: shipped
 status_pr5: partial (vision pass remaining)
 status_pr6: shipped (early — agent roster grounded in corpus)
 status_pr7: todo
@@ -38,11 +38,16 @@ council: council_7_ForDfS
 
 If you are starting a fresh session, **this section is your single source of context — read it before anything else.**
 
-**Status as of 2026-04-25 (PR 0 / 0.5 / 1 / 2 / 3 / 6 SHIPPED).** Working tree clean for marketing files. 6 marketing commits ahead of remote. 614/614 tests passing. mk CLI exposes 19 subcommands. Sleep debt at 4 (consolidated once mid-session) — PR 4 is safe to start fresh.
+**Status as of 2026-04-25 evening (PR 0 / 0.5 / 1 / 2 / 3 / 4 / 6 SHIPPED).** Working tree clean for marketing files. 10 marketing commits ahead of remote. 675/675 tests passing. mk CLI exposes 25 subcommands. Sleep debt at 7 — **CONSOLIDATE BEFORE STARTING PR 5/7/8.**
 
 ### Branch state
 
 ```
+c43f60d  [fix] PR 4 — reviewer-flagged issues (4 fixes: 2 critical, 2 major)
+153d157  [feat] PR 4c — rem-sleep marketing consolidation (mk rem-sleep + agent step 5d)
+270add7  [feat] PR 4b — SessionStart + UserPromptSubmit + PreToolUse hooks
+b8030d2  [feat] PR 4a — learnings ledger (per-day .md + .index.json + 5 mk verbs)
+4a212ff  [docs] task state refresh for PR 3 shipped
 323aa38  [feat] PR 3 — launch with full guardrails + 6 mutation verbs (13 files, 1788 ins)
 a5b1b51  [docs] task state refresh for PR 1/2/6 shipped
 69aadc5  [feat] PR 2 — CLI surface (13 verbs + 4 lib modules + 32 tests)
@@ -89,17 +94,54 @@ a5b1b51  [docs] task state refresh for PR 1/2/6 shipped
 - `mk launch resume <run_id>` — replays from WAL; rejects ctx mismatch (live WAL ↔ dry-run invocation, vice versa).
 - 17 unit tests (`marketing-entity-store`, `marketing-launch`); 614/614 suite passing.
 
+**PR 4 — `.md` bridge layer + hooks (SHIPPED 2026-04-25 across 4 commits, b8030d2 / 270add7 / 153d157 / c43f60d):**
+
+PR 4a — Learnings ledger (`b8030d2`):
+- `src/lib/marketing/learnings.ts` (251 lines) — typed `LearningEntry`, per-day `_dream_context/knowledge/marketing-learnings/<YYYY-MM-DD>.md` files plus sidecar `.index.json` for fast hook queries. Two types: `recommendation` (pending → confirmed | rejected) and `ledger` (evergreen, never pruned). Performance Monitor agent gated as the only writer (`--agent performance-monitor`); test-only override via `MARKETING_LEARNINGS_AGENT_OVERRIDE=1`. Atomic writes for both .md and index.
+- `src/lib/marketing/paths.ts` — added `learningsDir()`, `learningsFile(date)`, `learningsIndex()` (live under `knowledge/marketing-learnings/`, NOT under `marketing/`).
+- `src/cli/commands/marketing/learnings.ts` — 5 verbs: `mk learnings show [--date|--id]`, `mk learnings append --type --agent [--cohort] [--body|--body-file]`, `mk learnings status <id> <new-status>`, `mk learnings list-pending [--older-than <hours>]`, `mk learnings list [--type|--status]`. All mutations under `withLock` + `beginRun` WAL.
+- 21 unit tests + adjusted paths test (5 → 6).
+
+PR 4b — Hooks (`270add7`):
+- `src/lib/marketing/snapshot.ts` — `buildMarketingSnapshot(opts?)` returns a `## Marketing` markdown block (active cohorts launched/monitoring + planning, last `insights pull` ts with human age, pending PM recs with stale-flag for >24h). Wrapped in try/catch so it never breaks the SessionStart hook. Exports `listStaleRecs(hoursOld, now?)` convenience for the prompt-submit hook.
+- `src/lib/marketing/path-guards.ts` — `isMarketingEnvPath(filePath, from?)` — realpath's both root and candidate; returns true only when the path is inside the resolved `_dream_context/` and ends with `marketing/.env`. macOS /var ↔ /private/var symlink-safe.
+- `src/cli/commands/snapshot.ts` — appends `## Marketing` to the SessionStart context snapshot just before final return.
+- `src/cli/commands/hook.ts` — `pre-tool-use` now blocks Edit/Write/MultiEdit on `_dream_context/marketing/.env` BEFORE the Agent/Explore gate; `user-prompt-submit` now also nudges with `N marketing recommendation(s) pending >24h: <ids>` after the existing debt logic, only when stale recs exist.
+- 14 new unit tests + 6 new integration tests (3 pre-tool-use cases + 2 prompt-submit cases + 2 session-start cases).
+
+PR 4c — rem-sleep consolidation (`153d157`):
+- `src/lib/marketing/rem-sleep.ts` — pure functions:
+  - `pruneRuns({ keepLast=100, dryRun? })` — keeps latest N `runs/*.json` by mtime; deletes the rest. `runs/by-idem/` cache untouched (idempotency cache; pruning policy deferred to v1).
+  - `compactInsights({ weeklyAfterDays=14, dryRun?, now? })` — for each entity, keep latest snapshot per day for the recent window, then latest per ISO week for older. Always preserves the very latest live snapshot per entity (the live read).
+  - `mergeDailyLearnings({ retainDays=7, dryRun?, now? })` — appends per-day `.md` older than `retainDays` into the current-quarter `_archive-<YYYY-Q>.md` rollup, deletes the per-day file. Index hygiene: drops `rejected` recs whose date is archived; keeps `confirmed` recs + ledger (evergreen).
+  - `redactRunsSweep({ dryRun? })` — defense-in-depth re-redaction of `runs/*.json` bodies via `redactSecrets`.
+  - `runRemSleep(opts?)` — top-level driver; returns `{ marketingPresent, runs, insights, learnings, redaction }`. Skips silently when `_dream_context/marketing/` doesn't exist.
+- `src/cli/commands/marketing/rem-sleep.ts` — `mk rem-sleep [--keep-runs N] [--weekly-after-days N] [--retain-daily-learnings-days N] [--dry-run]`. Acquires the marketing lock.
+- `agents/dreamcontext-rem-sleep.md` (synced to `.codex/agents/prompts/`) — added Step 5d "Marketing Consolidation" between feature detection and Mark Sleep Complete. The agent invokes `dreamcontext mk rem-sleep` (dry-run preview, then apply).
+- 16 unit tests; 672/672 suite passing.
+
+PR 4 review fixes (`c43f60d`) — 2 critical + 2 major flagged by `reviewer` agent:
+1. **Critical** — `rem-sleep.ts` local `atomicWriteFile` now `mkdirSync(dirname(path), { recursive: true })` before write. Prevents ENOENT on first-run consolidation when learnings dir was never created by `appendLearning`.
+2. **Critical** — `mergeDailyLearnings` is now idempotent against partial-failure resumes. Per-date processing checks if the archive already contains the per-day header marker `# Marketing learnings — <YYYY-MM-DD>` before appending; unlinks the source file whether or not it appended (heals half-finished state). Without this, a kill mid-loop caused duplicate sections in the quarterly archive on resume.
+3. **Major** — `mk learnings status` now wraps `setStatus` in `beginRun/succeed/fail`. Prior version used `withLock` only, leaving the recommendation lifecycle transitions unauditable.
+4. **Major** — `isMarketingEnvPath` is now scoped to the resolved `_dream_context/` root with realpath on both sides. Eliminates false positives on system paths like `/usr/local/marketing/.env` while still working with macOS `/var` ↔ `/private/var` symlinks.
+- +3 new tests (idempotent merge, missing learnings dir, system-path false-positive); 675/675 suite passing.
+
 ### What's NOT shipped yet
 
-**PR 4 (NEXT) — `.md` bridge layer + hooks:**
-- SessionStart `## Marketing` snapshot section in the auto-loaded context (active cohorts + last insights pull ts + pending Performance Monitor recs count)
-- UserPromptSubmit hook nudge if unconfirmed Performance Monitor recommendations are >24h old
-- rem-sleep marketing rules: prune `runs/` >30d keeping last 100; compact `insights/` snapshots into per-campaign daily/weekly rollups; redact transcripts before consolidation; merge `marketing-learnings/<date>.md` into current-quarter rollup; archive on cap
-- Per-day `_dream_context/knowledge/marketing-learnings/<YYYY-MM-DD>.md` plumbing + `mk learnings show`/`mk learnings append` verbs (Performance Monitor agent only writer)
-- PreToolUse hook to block direct edits to `_dream_context/marketing/.env`
-**PR 5** — Reinfluence vision pass (mostly done; remaining: optional vision-pass behind env flag)
-**PR 7** — Dashboard v0 (3 tabs, uPlot, locked-down assets, Brain layer toggle)
-**PR 8** — Pre-commit hook + `mk doctor --scan` retroactive secret sweep + `mk council` wrapper
+**PR 5 (NEXT-eligible)** — Reinfluence vision pass. Almost everything subsumed by PR 0; remaining: optional vision-pass behind env-key flag (`OPENAI_VISION_API_KEY` / `GOOGLE_API_KEY`) — tags hook frames with pattern labels (face-zoom, text-only, prop-driven, etc.) and stores them on post JSON.
+
+**PR 7** — Dashboard v0 (3 tabs Overview/Performance with uPlot/Creatives with clipboard "Discuss in chat", locked-down asset static-serving, `last_synced_at` freshness badge, empty states, Brain graph layer toggle default-OFF, sidebar nav entry, KnowledgePage deep-link to `marketing-learnings/`).
+
+**PR 8** — Pre-commit hook (`dist/hooks/marketing-binary-guard.sh`) blocks `_assets/`/`_media/` paths + `mk doctor --scan` retroactive secret sweep across `_dream_context/` + `mk council "<topic>"` wrapper that pipes 4 marketing personas from `skill-packs/meta-marketing/council-personas/*.md` into `dreamcontext council` (NOT a `--preset` flag — architect MUST-CHANGE 6).
+
+**Backlog polish (not assigned to a PR):**
+- Tab-completion script for `mk` (deferred from PR 2).
+- `mk cohort close <id>` to flip cohort status to `closed_won/closed_lost/killed`.
+- Currency lookup so `mk scale` formats budgets correctly per profile.
+- Integration test for `mk insights pull --campaign <id>`.
+- End-to-end smoke against a Tilki sandbox ad account (dry-run first, then `--no-dry-run` once a sandbox is available).
+- Diff-vs-current preview for `mk launch` (full GET-vs-plan diff; v1 polish — the 6-line summary is the v0 substitute).
 
 ### Hard rules that carry forward
 
@@ -115,14 +157,15 @@ a5b1b51  [docs] task state refresh for PR 1/2/6 shipped
 ### Files that exist and should NOT be re-created
 
 - `tools/reinfluence/{__main__.py, __init__.py, requirements.txt, README.md}`
-- `src/lib/marketing/{paths,env-loader,secrets,config,store,bootstrap,competitors,meta-fetch,meta-client,hypothesis,budget,insights-cache,cohort,entity-store,launch}.ts`
+- `src/lib/marketing/{paths,env-loader,secrets,config,store,bootstrap,competitors,meta-fetch,meta-client,hypothesis,budget,insights-cache,cohort,entity-store,launch,learnings,snapshot,path-guards,rem-sleep}.ts`
 - `src/cli/commands/marketing.ts`
-- `src/cli/commands/marketing/{init,competitor,_ctx,config,account,cohort,insights,today,diff,status-flip,scale,kill,doctor,campaign,adset,creative,asset,ad,launch}.ts`
-- `tests/unit/marketing-{paths,env-loader,secrets,store,meta-fetch,hypothesis,budget,insights-cache,entity-store,launch}.test.ts`
+- `src/cli/commands/marketing/{init,competitor,_ctx,config,account,cohort,insights,today,diff,status-flip,scale,kill,doctor,campaign,adset,creative,asset,ad,launch,learnings,rem-sleep}.ts`
+- `tests/unit/marketing-{paths,env-loader,secrets,store,meta-fetch,hypothesis,budget,insights-cache,entity-store,launch,learnings,snapshot,path-guards,rem-sleep}.test.ts`
 - `skill-packs/meta-marketing/{SKILL.md, account-ops.md, copy-formulas.md, creative-frameworks.md, mistakes.md, platform-state.md, api-reference.md}`
 - `skill-packs/agents/{marketing-strategy.md, marketing-monitor.md, marketing-creative.md}`
 - `_dream_context/marketing/competitors/_youtube/posts/*.{json, md, learnings.md}` (9 videos)
 - `.gitignore` (marketing patterns), `src/cli/index.ts` (mk command registered), `skill-packs/catalog.json` (meta-marketing standalone + 3 agents under agents[])
+- `agents/dreamcontext-rem-sleep.md` (Step 5d already references `mk rem-sleep`; if you re-edit, sync to `.codex/agents/prompts/dreamcontext-rem-sleep.md` and `dist/agents/`/`.claude/agents/` if you have write access)
 
 ### Old PR-0.5-era state (preserved for reference)
 
@@ -233,25 +276,37 @@ for s in d['transcript']['segments']:
 
 ### What to do next when this section is read
 
-PR 3 is shipped. Sleep debt is at 4 (already partially consolidated mid-session). PR 4 is next per the task file.
+PR 4 is shipped (across 4 commits including reviewer-fix). Sleep debt is at **7 — CONSOLIDATE BEFORE STARTING PR 5/7/8.** Six PRs are now live; only PR 5 (vision pass), PR 7 (dashboard), and PR 8 (council wrapper + retroactive doctor scan) remain.
 
-1. **Greet the user, confirm state loaded, then ask:**
-   - Consolidate sleep (debt = 4) before PR 4, OR
-   - Start PR 4: `.md` bridge layer + hooks (SessionStart `## Marketing` snapshot, UserPromptSubmit nudge for stale recs >24h, rem-sleep marketing rules, per-day `marketing-learnings/<date>.md` plumbing, `mk learnings show/append`, PreToolUse block on `_dream_context/marketing/.env`), OR
-   - Smoke-test the end-to-end create→launch flow against a Tilki sandbox account (dry-run first, confirm 6-line summary + WAL works as expected, then re-run with `--no-dry-run` against a sandbox ad account if available), OR
-   - Backlog polish: tab-completion script for `mk` (deferred from PR 2), `mk cohort close <id>` to flip cohort to `closed_won/closed_lost/killed`, currency lookup so `mk scale` formats budgets correctly, integration test for `mk insights pull --campaign <id>`.
+1. **Greet the user, confirm state loaded, then ask which option:**
+   - **(STRONGLY RECOMMENDED)** Consolidate sleep (debt = 7) before any new PR. 10 marketing commits + reviewer fixes are unconsolidated. Run the `dreamcontext-rem-sleep` agent.
+   - **PR 7 — Dashboard v0.** Highest-leverage UX win. 3 tabs (Overview / Performance with uPlot / Creatives with clipboard "Discuss in chat"); locked-down asset static-serving (extension allowlist, realpath check, filename whitelist tied to creative JSON, localhost-bind, no listing); `last_synced_at` freshness badge; empty states for every tab; Brain graph layer toggle (default OFF); sidebar nav entry; KnowledgePage deep-link to `marketing-learnings/`. **PR 4's snapshot + learnings already provide the data layer the dashboard needs.**
+   - **PR 8 — `mk council` wrapper + pre-commit hook + `mk doctor --scan`.** Smaller surface than PR 7 but blocking-quality (commit hook prevents `_assets/`/`_media/` leaks; doctor scan finds historic token leaks; council wrapper unblocks marketing-specific debates). Council personas already exist as data files at `skill-packs/meta-marketing/council-personas/*.md` per the architect MUST-CHANGE 6 ruling — NOT a `--preset` flag on the council command.
+   - **PR 5 — Reinfluence vision pass.** Smallest scope of the three open PRs: tag hook frames with pattern labels (face-zoom, text-only, prop-driven) via OpenAI/Google vision behind an env-key gate. Stored on post JSON. Most of PR 5 is already done in PR 0; only this optional pass remains.
+   - **End-to-end smoke** against a Tilki sandbox ad account (`mk launch <cohort> --confirm <cohort>` dry-run first, then `--no-dry-run` if sandbox available). Will exercise PR 1 + 2 + 3 + 4 in one shot. Requires a sandbox; defer if not available.
+   - **Backlog polish** (any of: tab-completion for `mk`, `mk cohort close <id>`, currency lookup for `mk scale`, integration test for `mk insights pull --campaign <id>`, diff-vs-current preview for `mk launch`).
 
-2. **Hard constraints for PR 4:**
-   - SessionStart hook reads `_dream_context/marketing/cohorts/*.json` + insights cache; emits a `## Marketing` block with active cohort summary, last `insights pull` timestamp, and pending Performance Monitor rec count. Must complete in <500ms (SessionStart is in the hot path of every session).
-   - UserPromptSubmit hook nudge: only fires if there are unconfirmed Performance Monitor recommendations from >24h ago. Must NOT fire on every prompt.
-   - rem-sleep marketing rules go in `dist/agents/dreamcontext-rem-sleep.md` — prune `runs/` keeping latest 100, compact `insights/` snapshots into per-campaign daily/weekly rollups, redact transcripts via `redactSecrets` before consolidation, merge per-day `marketing-learnings/<date>.md` files into current-quarter rollup, archive on cap.
-   - Per-day learnings: `_dream_context/knowledge/marketing-learnings/<YYYY-MM-DD>.md`. Performance Monitor agent is the only writer. Hypothesis ledger entries are evergreen — never pruned, only archived.
+2. **Recommended next-PR order:** PR 7 → PR 8 → PR 5. Rationale: PR 7 is the user-facing payoff and PR 4's `## Marketing` snapshot + learnings index already give it most of the data plumbing. PR 8 is the safety/quality gate before any production launch. PR 5's vision pass is genuinely optional and behind an env-key flag — easiest to ship last.
 
-3. **Same-speaker discipline still applies** for any further corpus ingestion: Ben (4 videos), Charlie (1), Moonlighters (1), Optimizer (1).
+3. **Hard constraints carrying forward (unchanged):**
+   - **CLI is the only place that flips `ctx.dryRun = false`.** Verified in PR 1 (`metaFetch`) and PR 3 (`launch`). Library code accepts `ctx`, never constructs it.
+   - **Header-only auth.** `metaFetch` throws `HeaderAuthAssertionError` if any built URL contains `access_token=`.
+   - **Budget never defaults.** `BudgetMissingError` from `parseDailyBudget`. Strategy Optimizer emits `null + ASK_USER_FOR_BUDGET`.
+   - **Hypothesis shape validation.** All 4 fields must pass before strategy is written.
+   - **Three-layer API fallback.** Layer 1 typed client, Layer 2 `api-reference.md`, Layer 3 live Meta docs (dry-run first, write recipe back to layer 2 after use, propose typed wrapper after 3 uses).
+   - **Snow-globe rule.** No two structural changes within 3 days. `mk scale` warns >30%; `parseScalePct` rejects outside [-50, +500].
+   - **Same-speaker discipline.** Ben Heath (4 videos), Charlie (1), Moonlighters (1), Optimizer (1) = 4 voices. Single-speaker rules flagged as lower confidence.
+   - **Omnipresent content gate.** Don't recommend campaign structure above ₺30-40K/month spend until Ben's omnipresent content video is ingested.
+   - **Performance Monitor is the only writer of learnings.** CLI gate at `--agent performance-monitor` (test override `MARKETING_LEARNINGS_AGENT_OVERRIDE=1`). Agent prompts must not bypass via direct file writes.
+   - **`_dream_context/marketing/.env` is hook-protected.** PreToolUse hook denies Edit/Write/MultiEdit. Setup is `mk init`; rotation is manual user action outside an agent session.
 
-4. **Omnipresent content gate:** before recommending campaign structure above ₺30-40K/month, ingest Ben's omnipresent content video first.
+4. **PR 4 hooks runtime expectations** (verify after consolidation):
+   - SessionStart: opening a fresh Claude Code session in this repo prints a `## Marketing` block with current cohorts + insights staleness + pending recs. <500ms perf budget already verified by `tests/unit/marketing-snapshot.test.ts:117`.
+   - UserPromptSubmit: nudge fires ONLY when ≥1 PM rec is >24h old. Confirmed silent on every other prompt.
+   - PreToolUse: try `Edit _dream_context/marketing/.env` → must be denied with the "Meta access tokens" message.
+   - `mk rem-sleep --dry-run` runs in <100ms on a fresh repo (smoke-tested).
 
-**Hand-off rule:** when this section grows stale, update it; do not delete. The next refreshed session must be able to resume here without re-reading every learnings file.
+5. **Hand-off rule:** when this section grows stale, update it; do not delete. The next refreshed session must be able to resume here without re-reading every learnings file or commit.
 
 ---
 
@@ -313,8 +368,8 @@ A council debate (`_dream_context/council/council_7_ForDfS/final-report.md`) rev
 - [ ] Daily-ops verbs ship: `today`, `diff --since 24h`, `pause`, `resume`, `scale --pct`, `kill --bottom N --by <metric>`. Tab-completion and `mk` alias work.
 - [ ] Sub-agents `marketing-strategy-optimizer` and `marketing-performance-monitor` distributed via `install-skill`; CLI-first; library imports forbidden. `marketing-creative-director` stub shipped behind `marketing.creative_director.enabled = false` flag in `config.json`.
 - [ ] `.md` bridge files auto-generated atomic with JSON for cohort/campaign/adset/creative/competitor entities. Bridges contain frontmatter (id, type, fb_id, status, links) + 1-paragraph summary. `runs/index.md` is a single LIFO log (no per-run .md).
-- [ ] SessionStart hook emits `## Marketing` snapshot section (active cohorts, last insights pull ts, pending-recs count). UserPromptSubmit nudges if unconfirmed Performance Monitor recs > 24h old. rem-sleep marketing rules: prune `runs/` >30d keeping last 100, compact `insights/` into per-campaign rollups, redact transcripts, merge `marketing-learnings/<date>.md` into current-quarter rollup.
-- [ ] Per-day `_dream_context/knowledge/marketing-learnings/<YYYY-MM-DD>.md` writes work; rollup into `marketing-learnings.md`; archive on cap into `knowledge/marketing-archive-<YYYY-Q>.md`. Hypothesis-ledger entries are evergreen (never pruned, only archived).
+- [x] SessionStart hook emits `## Marketing` snapshot section (active cohorts, last insights pull ts, pending-recs count). UserPromptSubmit nudges if unconfirmed Performance Monitor recs > 24h old. rem-sleep marketing rules: prune `runs/` keeping last 100, compact `insights/` into per-campaign daily/weekly rollups, redact transcripts, merge `marketing-learnings/<date>.md` into current-quarter rollup. **(SHIPPED PR 4)**
+- [x] Per-day `_dream_context/knowledge/marketing-learnings/<YYYY-MM-DD>.md` writes work; rollup into `_archive-<YYYY-Q>.md` via `mk rem-sleep`. Hypothesis-ledger entries are evergreen (never pruned, only archived). PreToolUse hook blocks direct Edit/Write/MultiEdit on `_dream_context/marketing/.env`. **(SHIPPED PR 4)**
 - [ ] Reinfluence subprocess: `mk competitor ingest <url-or-handle>` runs end-to-end with `health()` probe (binary resolves, `--version` ≤5s, Whisper model present, yt-dlp ok, free disk >2GB; cached 60s); 600s wall-clock kill; concurrent ingests capped at 1; outputs normalized into `competitors/<handle>/posts/<shortcode>.{json,md}`; binaries land in `_media/` (gitignored). Optional vision pass behind env-key flag.
 - [ ] `mk council "<topic>"` wraps `dreamcontext council create` with 4 marketing personas loaded from `skill-packs/meta-marketing/council-personas/*.md` (data files). **No `--preset` flag added to council code.**
 - [ ] `mk doctor` validates: env present, FK integrity across JSON store, retroactive secret-scan of `_dream_context/`, Reinfluence health.
@@ -326,6 +381,15 @@ A council debate (`_dream_context/council/council_7_ForDfS/final-report.md`) rev
 
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
+
+### 2026-04-25 — Learnings live under `knowledge/`, not `marketing/`
+Per-day Performance Monitor learnings ship to `_dream_context/knowledge/marketing-learnings/<YYYY-MM-DD>.md` with a sidecar `.index.json` for hook queries. Quarterly archives go to `_archive-<YYYY-Q>.md` in the same directory. **Why outside `marketing/`:** learnings are user-facing, dashboard-readable, and survive after `marketing/` is wiped (e.g., regenerated from a fresh `mk init`). The marketing dir is for internal state (cohorts, runs, insights cache, lockfile, .env); the knowledge dir is the agent's long-term memory. This split was added in PR 4a; the path-coverage test (`marketing-paths.test.ts`) was updated to allow `knowledge/`-rooted entries.
+
+### 2026-04-25 — `mk rem-sleep` is a deterministic CLI verb, not an agent-prose checklist
+The `dreamcontext-rem-sleep` agent calls `dreamcontext mk rem-sleep` (Step 5d) instead of manually inspecting / rewriting marketing files. **Why:** prevents the agent from inventing pruning rules, makes the consolidation pass idempotent and testable, and means the sleep epoch can be replayed reliably. The verb is dry-run-capable (`mk rem-sleep --dry-run`) and the agent is instructed to preview first. All four passes (pruneRuns, compactInsights, mergeDailyLearnings, redactRunsSweep) are pure functions with explicit options exported from `src/lib/marketing/rem-sleep.ts`.
+
+### 2026-04-25 — Performance Monitor agent gate is enforced at the CLI, not the library
+`appendLearning()` throws `LearningsAgentError` unless `agent === 'performance-monitor'` OR `MARKETING_LEARNINGS_AGENT_OVERRIDE=1`. The CLI verb `mk learnings append` requires `--agent <name>`. **Why opt-in env override:** the only purpose is to let test fixtures avoid the agent name; production agents cannot set the env var because the marketing CLI doesn't read it from agent input — only from `process.env`. This is the same pattern the meta-fetch URL-auth assertion uses. The library is not the security boundary; the agent prompt + CLI gate is.
 
 ### 2026-04-25 — Strict containment: every artifact lives under `_dream_context/marketing/` (user override)
 No global pip / pipx / `~/.dreamcontext/` / external project paths. The dreamcontext npm package ships `tools/reinfluence/` as a static asset; on `mk init` it is copied to `_dream_context/marketing/.tools/reinfluence/`, a venv is created at `_dream_context/marketing/.venv/`, and Whisper / HF / yt-dlp caches are pinned via env vars (`XDG_CACHE_HOME`, `HF_HOME`, `WHISPER_CACHE_DIR`) into `_dream_context/marketing/.cache/`. **System prerequisites that cannot be bundled** (Node policy + disk cost): `python3 ≥ 3.10` and `ffmpeg`/`ffprobe`. Health-probe enforces both with one-line install hints.
@@ -702,11 +766,14 @@ TanStack Query: `staleTime: 60_000`, refetch on window focus. SSE for run-log �
 - [ ] Diff-vs-current preview: deferred — the 6-line summary is the v0 substitute. Full diff hits Meta GETs at scale and is v1 polish.
 - [ ] End-to-end manual test against Tilki sandbox: deferred — requires a sandbox ad account. Should run before any v0 production launch.
 
-**PR 4 — `.md` bridge layer + hooks.**
-- Bridge file generation atomic with JSON.
-- SessionStart `## Marketing` snapshot; UserPromptSubmit nudge.
-- rem-sleep marketing rules.
-- Per-day `marketing-learnings/<date>.md` plumbing.
+**PR 4 — `.md` bridge layer + hooks. SHIPPED 2026-04-25 across 4 commits (b8030d2 / 270add7 / 153d157 / c43f60d).**
+- ✅ SessionStart `## Marketing` block (active cohorts, planning cohorts, last insights pull, pending-recs with stale-flag); <500ms perf budget verified.
+- ✅ UserPromptSubmit nudge fires only when ≥1 PM rec is >24h old; silent otherwise.
+- ✅ PreToolUse hook denies Edit/Write/MultiEdit on `_dream_context/marketing/.env`; realpath-safe; scoped to resolved context root (no false positives on system paths).
+- ✅ Per-day `_dream_context/knowledge/marketing-learnings/<YYYY-MM-DD>.md` + sidecar `.index.json`; 5 mk verbs (`show`, `append`, `status`, `list-pending`, `list`); all mutations under withLock + WAL.
+- ✅ `mk rem-sleep` deterministic verb invoked from rem-sleep agent Step 5d. 4 passes: pruneRuns (keepLast=100), compactInsights (daily for 14d, then weekly), mergeDailyLearnings (retainDays=7, idempotent against partial-failure resume), redactRunsSweep. `--dry-run` supported.
+- ✅ 61 net new tests; 675/675 suite passing.
+- ✅ Reviewer-flagged 4 fixes shipped in c43f60d (2 critical: missing mkdirSync, non-idempotent merge; 2 major: missing WAL on `learnings status`, path-guard false-positives on system paths).
 
 **PR 5 — Reinfluence integration.** *(Largely subsumed by PR 0; remaining work: vision pass + index/list polish.)*
 - ✅ `competitors.ts` health-probe + subprocess + 600s timeout + concurrent cap (in PR 0).
@@ -785,7 +852,7 @@ TanStack Query: `staleTime: 60_000`, refetch on window focus. SSE for run-log �
 1. **PR 1** — unit tests for `metaFetch` (retry on 429 + backoff timing, idempotency cache hit, token-expiry no-retry, chunked upload threshold, ctx dry-run gate enforced even when CLI flag bypassed in test). `redactSecrets` test corpus passes.
 2. **PR 2** — `mk init` from fresh `_dream_context/`. `mk config check` hits real Graph `/me/adaccounts`. `mk doctor` clean.
 3. **PR 3** — dry-run campaign create matches Tilki known-good payload. Real campaign returns ID, JSON+MD bridge written, status PAUSED in Ads Manager. `mk launch` aborts without `--confirm`. With `--confirm`, prints 6-line summary, asks for budget, flips one entity at a time. Kill mid-flip → `mk launch resume` continues from WAL.
-4. **PR 4** — open Claude Code → SessionStart shows `## Marketing` section. After 24h pending rec, UserPromptSubmit nudges. `dreamcontext sleep done` prunes runs/, compacts insights/, merges per-day learnings.
+4. **PR 4** ✅ open Claude Code → SessionStart shows `## Marketing` section (verified by `tests/integration/hook.test.ts` "includes ## Marketing section when bootstrapped"). After 24h pending rec, UserPromptSubmit nudges (verified by "nudges when there is a stale (>24h) marketing recommendation"). `mk rem-sleep` (called from rem-sleep agent Step 5d) prunes runs/, compacts insights/, merges per-day learnings, redacts runs.
 5. **PR 5** — `mk competitor ingest <youtube-url>` end-to-end: health-probe passes, Whisper transcribes, frames extract, JSON+MD bridge written, vision pass tags hooks if API key present. Missing Reinfluence binary → one-screen install hint.
 6. **PR 6** — ask agent "let's plan a Q2 cohort" → SKILL.md auto-loads → Strategy Optimizer dispatches → refuses until hypothesis shape-valid → emits `daily_budget_usd: null` → main agent asks user for budget. Performance Monitor (after 24h insights) appends hypothesis-ledger entry to today's `marketing-learnings/<date>.md`.
 7. **PR 7** — `npm run dev` in `dashboard/` → `/marketing` renders 3 tabs. Empty states show on first run. Asset gallery loads thumbnails. "Discuss in chat" copies prompt. Brain layer toggles correctly. uPlot chart renders insights cleanly.
@@ -796,7 +863,7 @@ TanStack Query: `staleTime: 60_000`, refetch on window focus. SSE for run-log �
 ## Notes
 
 ### Open questions (non-blocking, address during implementation)
-- **Idempotency cache pruning** — currently no policy. Likely belongs in rem-sleep alongside runs/ pruning. Decide during PR 4.
+- **Idempotency cache pruning** — `runs/by-idem/*.json` is still un-pruned as of PR 4. The PR 4 `mk rem-sleep` deliberately leaves it alone (the cache backs idempotency keys; pruning by age requires a TTL we haven't decided yet). Open question: 30-day TTL on by-idem entries, or scan for orphaned (no matching `runs/<ts>__*.json`)? Defer to v1 after observing real cache size.
 - **Dashboard hosting** — assumed localhost-only in v0. If ever served bundled-prod over a non-localhost interface, asset rules need auth, not just bind-host. Document in PR 7.
 - **Token rotation** — System User tokens are long-lived but revocable. v0 ships manual `.env` edit; `mk config rotate-token` is v1.
 - **Hypothesis ledger archival cadence** — quarterly assumed, but if cohort velocity is high we may need monthly. Revisit after 6 months of real use.
@@ -819,6 +886,36 @@ TanStack Query: `staleTime: 60_000`, refetch on window focus. SSE for run-log �
 ## Changelog
 <!-- LIFO: newest entry at top -->
 
+### 2026-04-25T20:55Z — PR 4 shipped (.md bridge layer + hooks; reviewer-fix)
+Four commits — `b8030d2` (PR 4a learnings), `270add7` (PR 4b hooks), `153d157` (PR 4c rem-sleep), `c43f60d` (reviewer-fix). 1500+ insertions across 18 files.
+
+**PR 4a — learnings ledger.**
+- `src/lib/marketing/learnings.ts` — typed `LearningEntry`, per-day `_dream_context/knowledge/marketing-learnings/<YYYY-MM-DD>.md` + sidecar `.index.json`. Performance Monitor agent gated as the only writer (env override for tests). Atomic writes; idempotent index updates.
+- `src/lib/marketing/paths.ts` — added `learningsDir()`, `learningsFile(date)`, `learningsIndex()` (under `knowledge/marketing-learnings/`, NOT `marketing/`).
+- 5 mk verbs: `mk learnings show / append / status / list-pending / list`. All mutations under `withLock` + `beginRun` WAL.
+- 21 unit tests + paths-test patched.
+
+**PR 4b — hooks.**
+- `src/lib/marketing/snapshot.ts` (`buildMarketingSnapshot`, `listStaleRecs`) — `## Marketing` block for SessionStart context snapshot, <500ms perf budget, never-throws contract.
+- `src/lib/marketing/path-guards.ts` (`isMarketingEnvPath`) — realpath-aware, scoped to resolved `_dream_context/` root.
+- `src/cli/commands/snapshot.ts` — appends marketing block to context snapshot.
+- `src/cli/commands/hook.ts` — `pre-tool-use` denies Edit/Write/MultiEdit on `marketing/.env`; `user-prompt-submit` nudges only when ≥1 PM rec is >24h old.
+- 14 unit + 6 integration tests.
+
+**PR 4c — rem-sleep consolidation.**
+- `src/lib/marketing/rem-sleep.ts` — `pruneRuns({ keepLast=100 })`, `compactInsights({ weeklyAfterDays=14 })`, `mergeDailyLearnings({ retainDays=7 })`, `redactRunsSweep()`, `runRemSleep()` driver. All `--dry-run` capable; skips silently when `_dream_context/marketing/` doesn't exist.
+- `src/cli/commands/marketing/rem-sleep.ts` — `mk rem-sleep` verb under marketing lock.
+- `agents/dreamcontext-rem-sleep.md` (synced to `.codex/agents/prompts/`) — added Step 5d "Marketing Consolidation" calling `mk rem-sleep`.
+- 16 unit tests.
+
+**Reviewer-fix (`c43f60d`) — 4 issues from `reviewer` agent.**
+1. (critical) `rem-sleep.ts` local `atomicWriteFile` now `mkdirSync(dirname(...), { recursive: true })` before write. Without this, `mergeDailyLearnings` throws ENOENT on first-run consolidation when learnings dir was never created by `appendLearning`.
+2. (critical) `mergeDailyLearnings` is now idempotent against partial-failure resumes. Per-date processing checks for the per-day header marker before appending, and unlinks the source file whether or not it appended (heals the half-finished state). Without this, kill mid-loop produced duplicate sections in `_archive-<YYYY-Q>.md` on resume.
+3. (major) `mk learnings status` now wraps `setStatus` in `beginRun/succeed/fail`. Prior version had `withLock` only, leaving recommendation lifecycle transitions unauditable.
+4. (major) `isMarketingEnvPath` now scoped to resolved context root with realpath on both sides. Eliminates false positives on `/usr/local/marketing/.env`-style system paths while remaining macOS /var ↔ /private/var safe.
+- +3 new tests (idempotent merge, missing learnings dir, system-path false-positive). 675/675 suite passing.
+
+**Test count:** 614 → 675 (+61 net for PR 4 across 4 commits). **mk CLI:** 19 → 25 subcommands. **Sleep debt:** ended PR 4 at 7 — consolidation is the next action.
 
 ### 2026-04-25T19:45Z — PR 3 shipped (launch + mutation verbs)
 Commit `323aa38` — 13 files, 1788 insertions.
