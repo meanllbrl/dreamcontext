@@ -8,12 +8,12 @@ priority: high
 urgency: high
 status: in_progress
 created_at: '2026-04-25'
-updated_at: '2026-04-25T15:30Z'
+updated_at: '2026-04-25T19:45Z'
 status_pr0: shipped
 status_pr0_5: shipped
 status_pr1: shipped
 status_pr2: shipped
-status_pr3: todo
+status_pr3: shipped
 status_pr4: todo
 status_pr5: partial (vision pass remaining)
 status_pr6: shipped (early — agent roster grounded in corpus)
@@ -38,11 +38,13 @@ council: council_7_ForDfS
 
 If you are starting a fresh session, **this section is your single source of context — read it before anything else.**
 
-**Status as of 2026-04-25 (PR 0 / 0.5 / 1 / 2 / 6 SHIPPED).** Working tree clean for marketing files. 4 marketing commits ahead of remote. 582/582 tests passing. Sleep debt at 6 — consolidate before PR 3.
+**Status as of 2026-04-25 (PR 0 / 0.5 / 1 / 2 / 3 / 6 SHIPPED).** Working tree clean for marketing files. 6 marketing commits ahead of remote. 614/614 tests passing. mk CLI exposes 19 subcommands. Sleep debt at 4 (consolidated once mid-session) — PR 4 is safe to start fresh.
 
 ### Branch state
 
 ```
+323aa38  [feat] PR 3 — launch with full guardrails + 6 mutation verbs (13 files, 1788 ins)
+a5b1b51  [docs] task state refresh for PR 1/2/6 shipped
 69aadc5  [feat] PR 2 — CLI surface (13 verbs + 4 lib modules + 32 tests)
 17c279a  [feat] PR 1 — Graph API foundation + 3-layer fallback
 85b4a4d  [feat] PR 6 — agent roster (early, grounded in corpus)
@@ -77,17 +79,24 @@ If you are starting a fresh session, **this section is your single source of con
 - `skill-packs/agents/marketing-monitor.md` — Performance Monitor; reads insights, applies §4 post-launch rules, writes evergreen ledger entries via `mk learnings append`. No auto-mutation. Kill-by-spend not by-ROAS. Mandatory anti-pattern check section.
 - `skill-packs/agents/marketing-creative.md` — flag-gated stub; reads `marketing.creative_director.enabled` and refuses cleanly until v1.
 
+**PR 3 — launch with full guardrails (SHIPPED 2026-04-25 commit 323aa38):**
+- `src/lib/marketing/entity-store.ts` — generic store for campaign / adset / ad / creative. Local id (`cmp_/as_/ad_/cr_` prefix) decoupled from Meta `fb_id` so dry-run entities don't collide with live state. Atomic JSON+MD bridge writes. `gatherEntitiesByCohort` scoops the launch tree.
+- `src/lib/marketing/launch.ts` — `buildLaunchSummary` (6 lines), `createLaunchWal` (pre-flip), `executeFlips` (campaign → adset → ad order, one at a time, HALTS at first error using `noRetry: true` so metaFetch retry loop is bypassed for launch flips), `findWalByRunId`/`readWal`/`writeWal` for resume.
+- `src/lib/marketing/meta-client.ts` — `pauseEntity` / `resumeEntity` accept `{ noRetry?: boolean }` 3rd arg; required for launch flips per task contract.
+- `src/lib/marketing/paths.ts` — added `MARKETING_PATHS.adsDir()`.
+- 6 mutation CLI verbs: `mk campaign {create,list}`, `mk adset {create,list}` (REQUIRES `--daily-budget`, `BudgetMissingError` on omit), `mk creative {create-image,create-video,list}`, `mk asset upload <path>` (auto-detects video/image; chunked >50MB), `mk ad {create,list}`.
+- `mk launch <cohort_id> --confirm <cohort_id>` — `--confirm` must match verbatim (no `-y`/`--yes` shortcut). Prints 6-line summary BEFORE creating WAL. WAL written first, then flips one entity at a time. HALTS at first error.
+- `mk launch resume <run_id>` — replays from WAL; rejects ctx mismatch (live WAL ↔ dry-run invocation, vice versa).
+- 17 unit tests (`marketing-entity-store`, `marketing-launch`); 614/614 suite passing.
+
 ### What's NOT shipped yet
 
-**PR 3 — `launch` with full guardrails (NEXT):**
-- `mk launch <cohort_id> --confirm <cohort_id>` — typed-confirm verbatim
-- 6-line human summary before any flip
-- Per-entity budget prompt (`--daily-budget` required on `campaign create` / `adset create`)
-- Pre-flip WAL → flip one entity at a time → `mk launch resume <run_id>` after crash
-- No silent retries on the actual launch flip step
-- Plus mutation verbs: `mk campaign create`, `mk adset create`, `mk creative create`, `mk asset upload`, `mk ad create`
-
-**PR 4** — `.md` bridge layer + hooks (SessionStart marketing snapshot, UserPromptSubmit nudge, rem-sleep marketing rules, per-day learnings)
+**PR 4 (NEXT) — `.md` bridge layer + hooks:**
+- SessionStart `## Marketing` snapshot section in the auto-loaded context (active cohorts + last insights pull ts + pending Performance Monitor recs count)
+- UserPromptSubmit hook nudge if unconfirmed Performance Monitor recommendations are >24h old
+- rem-sleep marketing rules: prune `runs/` >30d keeping last 100; compact `insights/` snapshots into per-campaign daily/weekly rollups; redact transcripts before consolidation; merge `marketing-learnings/<date>.md` into current-quarter rollup; archive on cap
+- Per-day `_dream_context/knowledge/marketing-learnings/<YYYY-MM-DD>.md` plumbing + `mk learnings show`/`mk learnings append` verbs (Performance Monitor agent only writer)
+- PreToolUse hook to block direct edits to `_dream_context/marketing/.env`
 **PR 5** — Reinfluence vision pass (mostly done; remaining: optional vision-pass behind env flag)
 **PR 7** — Dashboard v0 (3 tabs, uPlot, locked-down assets, Brain layer toggle)
 **PR 8** — Pre-commit hook + `mk doctor --scan` retroactive secret sweep + `mk council` wrapper
@@ -106,10 +115,10 @@ If you are starting a fresh session, **this section is your single source of con
 ### Files that exist and should NOT be re-created
 
 - `tools/reinfluence/{__main__.py, __init__.py, requirements.txt, README.md}`
-- `src/lib/marketing/{paths,env-loader,secrets,config,store,bootstrap,competitors,meta-fetch,meta-client,hypothesis,budget,insights-cache,cohort}.ts`
+- `src/lib/marketing/{paths,env-loader,secrets,config,store,bootstrap,competitors,meta-fetch,meta-client,hypothesis,budget,insights-cache,cohort,entity-store,launch}.ts`
 - `src/cli/commands/marketing.ts`
-- `src/cli/commands/marketing/{init,competitor,_ctx,config,account,cohort,insights,today,diff,status-flip,scale,kill,doctor}.ts`
-- `tests/unit/marketing-{paths,env-loader,secrets,store,meta-fetch,hypothesis,budget,insights-cache}.test.ts`
+- `src/cli/commands/marketing/{init,competitor,_ctx,config,account,cohort,insights,today,diff,status-flip,scale,kill,doctor,campaign,adset,creative,asset,ad,launch}.ts`
+- `tests/unit/marketing-{paths,env-loader,secrets,store,meta-fetch,hypothesis,budget,insights-cache,entity-store,launch}.test.ts`
 - `skill-packs/meta-marketing/{SKILL.md, account-ops.md, copy-formulas.md, creative-frameworks.md, mistakes.md, platform-state.md, api-reference.md}`
 - `skill-packs/agents/{marketing-strategy.md, marketing-monitor.md, marketing-creative.md}`
 - `_dream_context/marketing/competitors/_youtube/posts/*.{json, md, learnings.md}` (9 videos)
@@ -224,20 +233,22 @@ for s in d['transcript']['segments']:
 
 ### What to do next when this section is read
 
-**Confirm sleep debt is resolved before starting PR 3** — it was at 6 when this state was written. PR 3 is the most error-prone PR (real money flows through `mk launch`); start it with a fresh memory.
+PR 3 is shipped. Sleep debt is at 4 (already partially consolidated mid-session). PR 4 is next per the task file.
 
 1. **Greet the user, confirm state loaded, then ask:**
-   - Consolidate sleep first (recommended), OR
-   - Start PR 3: `mk launch <cohort_id> --confirm <cohort_id>` with full guardrails (typed-confirm, 6-line summary, per-entity budget prompts, pre-flip WAL, `mk launch resume <run_id>`, no silent retries on flip), plus mutation verbs `mk campaign create / adset create / creative create / asset upload / ad create` (each requires `--daily-budget` — `BudgetMissingError` if missing), OR
-   - Polish remaining loose ends: tab-completion script, `mk cohort close <id>`, async insights stub for v1, `mk doctor --scan` smoke test, OR
-   - Continue ingesting more corpus videos (same flow as before — verdict + signal/noise, wait for "confirmed" before writing learnings).
-2. **Hard constraints when implementing PR 3:**
-   - `--confirm <cohort_id>` must match exactly; `--yes`/`-y` shortcuts forbidden.
-   - 6-line summary printed BEFORE any flip: cohort name, # campaigns, # adsets, # ads, total daily budget, target objective.
-   - Pre-flip WAL: write `runs/<ts>__launch.json` with planned ops first; only then flip entities one at a time.
-   - `mk launch resume <run_id>` replays from WAL after crash mid-flip.
-   - Override metaFetch retry behavior on the actual ACTIVE flip step — no silent retries; surface errors immediately so operator can decide.
+   - Consolidate sleep (debt = 4) before PR 4, OR
+   - Start PR 4: `.md` bridge layer + hooks (SessionStart `## Marketing` snapshot, UserPromptSubmit nudge for stale recs >24h, rem-sleep marketing rules, per-day `marketing-learnings/<date>.md` plumbing, `mk learnings show/append`, PreToolUse block on `_dream_context/marketing/.env`), OR
+   - Smoke-test the end-to-end create→launch flow against a Tilki sandbox account (dry-run first, confirm 6-line summary + WAL works as expected, then re-run with `--no-dry-run` against a sandbox ad account if available), OR
+   - Backlog polish: tab-completion script for `mk` (deferred from PR 2), `mk cohort close <id>` to flip cohort to `closed_won/closed_lost/killed`, currency lookup so `mk scale` formats budgets correctly, integration test for `mk insights pull --campaign <id>`.
+
+2. **Hard constraints for PR 4:**
+   - SessionStart hook reads `_dream_context/marketing/cohorts/*.json` + insights cache; emits a `## Marketing` block with active cohort summary, last `insights pull` timestamp, and pending Performance Monitor rec count. Must complete in <500ms (SessionStart is in the hot path of every session).
+   - UserPromptSubmit hook nudge: only fires if there are unconfirmed Performance Monitor recommendations from >24h ago. Must NOT fire on every prompt.
+   - rem-sleep marketing rules go in `dist/agents/dreamcontext-rem-sleep.md` — prune `runs/` keeping latest 100, compact `insights/` snapshots into per-campaign daily/weekly rollups, redact transcripts via `redactSecrets` before consolidation, merge per-day `marketing-learnings/<date>.md` files into current-quarter rollup, archive on cap.
+   - Per-day learnings: `_dream_context/knowledge/marketing-learnings/<YYYY-MM-DD>.md`. Performance Monitor agent is the only writer. Hypothesis ledger entries are evergreen — never pruned, only archived.
+
 3. **Same-speaker discipline still applies** for any further corpus ingestion: Ben (4 videos), Charlie (1), Moonlighters (1), Optimizer (1).
+
 4. **Omnipresent content gate:** before recommending campaign structure above ₺30-40K/month, ingest Ben's omnipresent content video first.
 
 **Hand-off rule:** when this section grows stale, update it; do not delete. The next refreshed session must be able to resume here without re-reading every learnings file.
@@ -679,8 +690,17 @@ TanStack Query: `staleTime: 60_000`, refetch on window focus. SSE for run-log �
 - ✅ 32 unit tests; 582/582 suite passing.
 - [ ] Tab-completion script (deferred — single-file follow-up).
 
-**PR 3 — `launch` with full guardrails.**
-- Typed-confirm, agent-asks-budget rule, diff-vs-current preview, pre-flip WAL, `launch resume`. End-to-end manual test against Tilki sandbox.
+**PR 3 — `launch` with full guardrails — SHIPPED 2026-04-25 (commit 323aa38).**
+- ✅ `mk launch <cohort_id> --confirm <cohort_id>` — `--confirm` matches verbatim, no `-y`/`--yes` shortcut.
+- ✅ 6-line human summary printed BEFORE WAL creation (cohort name, # campaigns, # adsets, # ads, total daily budget, objective).
+- ✅ Pre-flip WAL at `runs/<ts>__launch-<cohort_id>.json` with all planned ops; flips one entity at a time.
+- ✅ `mk launch resume <run_id>` replays from WAL; rejects ctx mismatch (live ↔ dry-run).
+- ✅ No silent retries on launch flips — `pauseEntity`/`resumeEntity` accept `{ noRetry: true }` to bypass metaFetch retry loop; first error halts and preserves WAL.
+- ✅ 6 mutation CLI verbs: `mk campaign create/list`, `mk adset create/list` (REQUIRES `--daily-budget`), `mk creative create-image/create-video/list`, `mk asset upload <path>` (auto-detects video/image), `mk ad create/list`.
+- ✅ `src/lib/marketing/{entity-store,launch}.ts` — generic entity store + launch flow library.
+- ✅ 17 unit tests (`marketing-entity-store`, `marketing-launch`); 614/614 suite passing.
+- [ ] Diff-vs-current preview: deferred — the 6-line summary is the v0 substitute. Full diff hits Meta GETs at scale and is v1 polish.
+- [ ] End-to-end manual test against Tilki sandbox: deferred — requires a sandbox ad account. Should run before any v0 production launch.
 
 **PR 4 — `.md` bridge layer + hooks.**
 - Bridge file generation atomic with JSON.
@@ -799,6 +819,18 @@ TanStack Query: `staleTime: 60_000`, refetch on window focus. SSE for run-log �
 ## Changelog
 <!-- LIFO: newest entry at top -->
 
+
+### 2026-04-25T19:45Z — PR 3 shipped (launch + mutation verbs)
+Commit `323aa38` — 13 files, 1788 insertions.
+- 2 new lib modules: `entity-store.ts` (generic store for campaign/adset/ad/creative; local id decoupled from Meta `fb_id`; atomic JSON+MD bridge writes; `gatherEntitiesByCohort` for launch tree); `launch.ts` (`buildLaunchSummary` 6-line, `createLaunchWal` pre-flip, `executeFlips` with `noRetry: true` on the actual flip step so metaFetch retry loop is bypassed; `findWalByRunId`/`readWal`/`writeWal` for resume).
+- `meta-client.ts` patched: `pauseEntity`/`resumeEntity` accept `{ noRetry?: boolean }` 3rd arg.
+- `paths.ts` patched: added `MARKETING_PATHS.adsDir()`.
+- 6 mutation CLI verbs: `mk campaign create/list`, `mk adset create/list` (REQUIRES `--daily-budget` per task line 227), `mk creative create-image/create-video/list`, `mk asset upload <path>` (auto-detects video/image; chunked >50MB via `uploadVideoFile`), `mk ad create/list`.
+- `mk launch <cohort_id> --confirm <cohort_id>` + `mk launch resume <run_id>`.
+- 17 unit tests verify: 6-line summary shape, missing cohort/campaigns/ads errors, plan ordering (campaign→adset→ad), WAL round-trip, dry-run flip-all + cohort flip to launched, ctx mismatch rejection, NO SILENT RETRIES on first error halt + WAL state preservation, refusal of live launch when fb_id empty, resume-from-partial.
+- Test count: 582 → 614 (+32 net for PR 3).
+- mk CLI now exposes 19 subcommands (was 13 after PR 2).
+- Sleep debt reached 6 mid-session, partially consolidated; ended at 4. PR 4 (`.md` bridges + hooks) is next.
 
 ### 2026-04-25 — PR 0.5 + PR 1 + PR 2 + PR 6 shipped (single session)
 Four commits in sequence:
