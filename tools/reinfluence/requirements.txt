@@ -1,0 +1,4 @@
+openai-whisper>=20231117
+yt-dlp>=2024.0
+instaloader>=4.15
+youtube-transcript-api>=1.0

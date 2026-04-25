@@ -6,3 +6,12 @@ dashboard/node_modules/
 dashboard/dist/
 .DS_Store
 .claude/
+
+# Marketing skill — per-project Python tooling, caches, secrets
+_dream_context/**/.env
+_dream_context/marketing/.lock
+_dream_context/marketing/.tools/
+_dream_context/marketing/.venv/
+_dream_context/marketing/.cache/
+_dream_context/marketing/**/_assets/
+_dream_context/marketing/**/_media/

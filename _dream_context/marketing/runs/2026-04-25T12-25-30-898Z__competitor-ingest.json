@@ -1,0 +1,2968 @@
+{
+  "id": "2026-04-25T12-25-30-898Z__competitor-ingest",
+  "verb": "competitor-ingest",
+  "started_at": "2026-04-25T12:25:30.899Z",
+  "completed_at": "2026-04-25T12:25:32.978Z",
+  "status": "success",
+  "inputs": {
+    "target": "https://www.youtube.com/watch?v=kuSq-pmNfnM",
+    "model": "medium",
+    "max": 0,
+    "skip_transcripts": false,
+    "skip_frames": false
+  },
+  "events": [
+    {
+      "event": "start",
+      "kind": "single_yt",
+      "input": "https://www.youtube.com/watch?v=kuSq-pmNfnM"
+    },
+    {
+      "event": "post",
+      "handle": "_youtube",
+      "shortcode": "kuSq-pmNfnM",
+      "url": "https://www.youtube.com/watch?v=kuSq-pmNfnM",
+      "caption": null,
+      "duration_seconds": 1055.919,
+      "video_path": null,
+      "thumbnail_url": null,
+      "transcript": {
+        "text": "Most Facebook advertisers are still using strategies that worked a couple of years ago, but just don't produce the best results anymore. In this video, I'm going to give you the Facebook ads playbook that we're using right now. The same framework that we use with our clients to generate tens of millions every month. So, I'm hearing from a lot of advertisers right now that are struggling to get great results. And there are a number of reasons for that. Firstly, you've got rising costs and CPMs, something that's not new, something that will continue, but something that does need to be overcome. Secondly, attribution issues. If you don't have accurate data coming into your ad account, you're going to run into problems with Meta's AI doing more and more of the targeting and optimization and things like that. Then you've got ad fatigue. Producing enough creative, enough highquality creative to not only keep things fresh, but also differentiate yourself from the competition can be really hard. And then we've just got reliance on outdated tactics. Often things advertisers are doing they don't even know they're doing wrong, like focusing on interest targeting or really segmenting out their audiences, for example. So, in this video, I've got a number of well, I've got a full playbook. I've got a number of steps, number of things I'd recommend you do that can help overcome all those issues and help you get significantly better results. Okay, so let's get into it and let's start by talking about campaign structure. So, I now think that the majority of advertisers should be using Advantage Plus campaigns. And where possible, you want to consolidate multiple campaigns into fewer campaigns, maybe even one campaign. We've got a lot of ad accounts that are producing great results that are operating literally with one advantage plus um campaign. Now, there are scenarios where that's not always going to be the best. So, if you want to break out multiple countries, for example, into different campaigns, absolutely fine. Or you want to do it by product range, absolutely fine. But the default when it comes to campaign structure should now be less campaigns. Less is more. Less allows you to consolidate ad spend. It allows Meta to learn faster because more of the conversions are happening within the one campaign or the one adset as opposed to having things spread out and segmented. And the way Meta's gone with their targeting being highly suggestion bases in Meta can choose to go with your targeting options or completely ignore them. A lot of different adsets, a lot of different campaigns very much end up targeting the same or similar people. A lot of audience overlap. Things get really difficult. Along those lines, by default, now we are targeting both cold and warm audiences in the same campaign and even within the same adset because of what I just mentioned. Even if you try and set up an adset to just target cold or just target warm, unless you really go those extra steps and and click all the sort of hidden buttons to mean that your targeting options are hard boundaries. Meta is going to treat those as suggestions and you're probably going to end up advertising to a mix of cold and warm in your cold audience adset and a mix of cold and warm in your warm audience adset. Why not just bring them all together? consolidate that data and get better results. You also want to add lots of different types of creative into those adsets. You don't necessarily want to segment it out and have, all right, I'll have this uh creative for this audience and this type of creative for this warm audience or for the middle of the funnel or anything like that. Lump it all in together. Meta can work it all out. We'll talk more about that later when we get to the creative step. And then when it comes in general to targeting and delivery, let Meta do its thing. you need a really good reason to go in and manually tweak with something or add in a schedule that affects like optimization and delivery or or do something that's aside from the default let meta get you what it is that you want. So play number two, let's talk about creative strategy. What we're seeing is that UGC style video, so user generated content style video is king right now. That's what's producing the best results across the board. Uh you want your ads to feel native to platform platform. You want them to feel more like content than an ad. If people get the sense in that first split second that what you're putting in front of them is an ad, they'll immediately scroll past or at least a higher percentage of people will immediately scroll past. If they feel more like it's a bit of content, more like it's something they might be interested in, they're much more likely to pay attention. You can do that through UGC, userenerated content, so stuff you get from your clients, your customers, you can hire UGC um actors effectively to create stuff for you. a lot. There's going to be a lot of AI developments in that space over the next few years. Or even better, and I've talked about this previously, go ahead and hire influencers to create your ads for you. They'll have that native content style feel, especially when that ad is put in front of people that follow that influencer because they're used to consuming their content. That makes it much more likely they're going to hear about your products and services. Makes it much more likely they're going to take action, buy, inquire, etc. This doesn't just apply to e-commerce, by the way. Big misconception within the the Facebook ad space. You can absolutely apply this to other types of businesses too. In fact, sometimes you get a greater competitive advantage there because your competitors aren't doing it. Now, one of the things that I know people find very daunting with producing a lot of creative a lot of video assets, which is now what's recommended, is just simply how do we pay for it? How do we find the time to do it? How do we develop the skill set? So, we've got a few techniques to do that. Firstly, if you're working with influencers, you just see you're you're sort of effectively outsourcing a lot of that creation process. So, that's the first thing I'd recommend. The second thing is that when you've got something that works, when you've got a video ad that works, a way to get a lot more out of it as opposed to having to create a load more stuff or pay for UGC influencer style content to be created again, is to use that same ad, but just add in a number of different hooks. Let's say it's a 45se secondond ad. You could have the same 42 seconds across 10 different ads, but the first 3 seconds be different. So when you're working with influencers, you just be like, \"Right, just record that again with a different intro line and do that five with these five different intro lines. Please record that again in five different locations.\" And the location could be as simple as record one with this way so it's got this background. Turn the camera around. Record it this way so it's got that background. It's just so that it visually looks different. 95 90 plus% of people are not going to make it past those first three seconds. So, when it comes to overcoming ad fatigue, if they've never seen those other 42 seconds with the original hook, if you just change out the hook and put that in front of people, that overcomes ad fatigue. That does the job. That gets past the, \"Oh, I've seen this before\" filter. Let me scroll past. A really easy way to take one ad that's working really well and creates 10 more versions of it that you can run for 10 times as long. And this is exactly the sort of thing that we teach you how to do in detail as part of my mentorship program. If you haven't heard about my mentorship program before, here's what it contains. exclusive content and material that you won't see anywhere else. At onetoone coaching, you literally have access via Slack to someone within my team that you can message anytime, ask any questions you got, get feedback, get improvements to your campaigns, recommendations, add account audits, all that sort of stuff. Someone available, me or one of my team members on a live call 9 to 10 hours per day across different time zones. We have people in my mentorship program AC all across the world. So, we've got uh availability for calls across different time zones to make it easy. So again, you can jump on and be like, \"I'm struggling with tracking. I'm struggling with attribution. Can you just jump on with me? Let's do a screen share and get this worked out.\" Basically, everything you need to get the best Facebook ad results possible. If that sounds interesting, there is a link in the video description below, click on that, come through to website, book in a free, no obligation call to find out more. Hopefully, we get a chance to work together. Play number three is budget and scaling. So, I'd always recommend that you start small, especially if you don't know whether or not something will work, either a new product or a new offer, or maybe you're just new to the platform in general. Start small. Start with a budget that you could afford to lose if it doesn't work out. Then once you've tweaked, you've worked it out, you've tested a few different things, and you've got something that's producing a positive return on ad spend, something that you're happy with, then look to scale it. Much better to do it that way round than going the other way and potentially losing too much money whilst you're in that testing phase. When you do scale, I'd recommend you scale existing campaigns as opposed to creating new ones. And when you scale your budget, it's important you don't just increase the budget. Be aware that when you're spending more, your ads are going to be put in front of people more often. They're also going to be put in front of more people. Therefore, you also need to scale with creatives. So, if you've got one ad that's performing really well, if you try and 10x the budget, it's unlikely that ad is going to perform as well to 10 times as many people for an extended period of time. You're going to need to introduce new creatives that can also do some of the heavy lifting, produce leads and sales as well. Play number four is data and attribution. So, at a minimum, I'd recommend that you get conversions API and the Metapixel installed and make sure they are both sending accurate conversions back into your ad account. I get a lot of questions, which one's better? No, no, it's not a it's not a either or when it comes to the pixel or Cappy. You want both set up and installed. Meta's AI needs accurate data. They need to know who's converting, what a conversion looks like, how valuable is that conversion, all that information in order for your campaigns to optimize properly. And because AI is doing more and more of the targeting, of the optimization, working out how many impressions does someone need to purchase, um, how old does someone need to be for them to be likely to be really interested in, where do they need to be located, all those various data points. Meta needs accurate data. They need to know who is actually taking the action that you want people to take um, from your advertising. Like, this sounds a bit boring, sounds like an afterthought. It absolutely isn't. And one of the things that you learn very quickly in this industry if you work with really high spenders like businesses that might be spending eight figures a year for example on their meta ad campaigns is that they obsess over data and their accuracy because they know that if they can improve their data accuracy and improve the inputs the meta's AI has by even 5% that might make a huge difference to the results um that they're able to get. And if you can improve the data inputs by 5%, it might give you a 25% improvement in return on ad spend. That might allow you to spend twice as much profitably. That might allow you to g gather up that much more market share. Um, really really important. I talk about this a lot. I don't want you to underestimate this and I just see advertisers do that again and again, which is why I'm sort of hammering this uh this point. Also important to get external data uploaded to your meta ad account. Meta doesn't have visibility over all your warm audiences. Email lists, particularly people who've interacted with the business a while ago, longer than the time frames that Meta is going to be able to track via the pixel, for example, longer than than 180 days. Uh customer lists, any external sources of data you think, okay, that's not on Facebook, that's not on Instagram, Meta won't already have that info. Get it uploaded into your ad account. Um I've got videos on how to do all that sort of stuff you can find on my channel. You also need to then segment out and let Meta know who is who, right? So, who is your engaged audience? Who are your existing customers? And then obviously everyone left over um is called. I've done another specific video on segmenting that out. We can show um on screen as I'm talking about it how what that looks like that section, but you can go and check out that video as well to uh set that up for your ad account. And then for the best data tracking and accuracy, I'd recommend you use Hyros. Hyro is the best tracking and attribution software for meta ads. It's a software all the big players in this industry use, including myself. I use it to track results for my own ads as well as all my organic results as well. So, if someone books a call for our done for you services, for example, I can see exactly where that person came from with a lot of accuracy. That allows me to make better decisions for my marketing and my business. Hyro has been able to track that from our ad spend in this campaign, we've generated £96,000, but £58,000 of that was not reported by Meta. So, if I was just looking at my data within my meta ad account, I might come to the conclusion that this campaign is doing okay. But in reality, this campaign is doing a lot lot better. Now this is a relatively extreme example because of the nature of our business. So most of our products services have recurring billing elements. Meta might be able to see what we make initially from our ad spend on that initial transaction but not those subsequent payments. That's why it it shows the importance here of being able to accurately see what we actually get from our ad spend in order to be able to make better decisions and optimize correctly. So if you want to improve the performance of your ad campaigns without having to touch your ads, go ahead and sign up to Hyros. There is a link in the video description. Plane number five is measurement and optimization. So you should be making most of your optimization decisions around return on ad spend or cost per conversion. If you can't measure return on ad spend or if all your conversions are equally valuable at the point of the conversion um being generated. And I'd really encourage you to not get lost in the weeds on vanity metrics like click-through rate, engagement. Sometimes they will correlate with your return on ad spend or your cost per conversion. Not always. And there are many scenarios where a higher CTR ad led to a worse return on ad spend or ad that seems to get lots of engagement maybe because it's a bit clickbaity or a bit engagement baity but does it actually translate to leads and sales? No, it doesn't matter then. Really focus in on those two metrics. Now there is some nuance to that and and a new development that we're seeing when it comes to meta advertising and that's actually some recommendations that have come out of meta and we've seen this within ad accounts a lot. If you've ever had a scenario where you say you've got five ads within an ad set and one ad is producing a much better return on ad spend than the other four. So you think, \"Okay, great. I'll turn the other four off. I'll leave the one on that's doing well.\" And then all of a sudden, as soon as you do that, that one ad that had previously been getting a great return on ad spend, the results fall off, like really significantly get worse. You think, well, why is that happening? Well, Met have come out and explained that. They will now take ads within one adset within the same adset and they will use them not always but sometimes in a funnel structure. So they might be using some ads as a topfunnel ad. That's what they put in front of people initially and then they use other ads within that adset to effectively retarget and get the conversion. Now when Meta does that, the ad they're using as topfunnel uh won't look very good from a return on ad spend standpoint. Whereas the ad that's using to get the conversion, that will look great from return on ad spend. And that's why when you turn off those other ads, you're not using you're not getting the advantage of those sort of top offunnel type uh experience and therefore the other ad isn't performing as well. So whilst you want to use return on ad spend, cost per conversion broadly to measure results and optimize, is this campaign performing better than this one? Is this offer performing better than this one? Well, broadly, yes, that's correct. Within an ad set, be very careful turning off ads that have a lower return on ad spend. Here's what you should do instead. Turn off ads. that Meta is not spending any money on. That's their recommendation. If Meta is continuing to spend money on it, even if it has a worse return on ad spend than the other ads, leave it on because Meta is probably using that in a funnel structure. If Meta doesn't feel like that ad's producing great results or not contributing to the the customer journey, they'll stop spending money on it. When Meta stops spending money on an ad, that's when you want to turn it off and introduce new ads uh to try and improve performance, learn from the ones that you can see are doing well, looking at the data, and introduce those. So, it's quite a an interesting shift. It does make optimization a little bit more difficult than just looking at rowass and turning things off and and going about it that way. But it totally makes sense when you think about how smart Meta's optimization process is that they can now take people and go, \"Right, we'll show them this ad first and this one.\" And here's the extra crazy part and where we're going with this, and this will become even even more clear. They're not going to do the same thing with everyone in your audience. Some people might have this ad, then this ad, then this ad, then this one that gets a conversion. Other people might be able to go straight to that ad and put that one that converts well in front of them and get them to convert. Meta's going to be able to work that out. That's why we want to give meta control over the optimization process and put that into the one ad set, maybe even within the one campaign as opposed to having things segmented out and being like, right, they'll see this ad and they'll see this ad, they'll see this ad. Because if you set things up manually that way, you're forcing everyone to go through the same process. And meta can work out. Some people need that, other people don't. Much better to go directly for the sale. If you then go through that process again and again, introduce new ads. Hm. Okay, meta is spending on this one and this one, but not these other two, right? Turn those off. Okay, these ones are doing better. Right, this one's got a really good hook. Let's create some other ads with a similar hook. Or let's recreate that ad with different hooks. Let's get that in there. And if you keep doing that again and again and again, you'd be amazed by the improvement in results. You can't often see it in the short run. It's a bit like going to the gym working out, right? No one ever noticed any muscle gain from one workout. you do it consistently over time and you can get to a significantly better place than you currently are. Absolutely the same happens with your meta ads. And play number six, and this might be the most important, is to go beyond the buttons. So getting everything set up right within your Facebook ad account is of course important. And the settings and the things that you change, they make a difference to your results. But just doing that alone is not enough to get fantastic results. The businesses that produce exceptional results, they always have something else extra. They always have a competitive advantage that's not just within the ad account. They have a brand that is much stronger and more powerful than their competition. They have a superior product, a superior offer. Many different ways that you can go about doing that, but just know that if you want incredible results, you have to have something that goes beyond the buttons. Our ads, for example, they produce a silly high return on ad spend. And that's because I have a personal brand. I have more than a million followers. I've got 25 plus million views on YouTube. So there's probably what three, four, maybe 5 million meta advertisers that might at least recognize my face a little bit. So when we put ads out into the world and that that recognition is there, of course, some will recognize me much more than others. They are far more likely to pay attention to the ad, far more likely to click, far more likely to go, \"Oh, we'll work with them. I've checked out his content. I know what he knows what he's talking about. I know they're good. Yeah, I'm going to join the mentorship program, etc., etc.\" Right? It doesn't have to be a personal brand. There are other ways to do it, but you have to find a way to have something better than your competition, not just get everything right within your ad account. And if you want a more advanced tactic that I didn't cover here, then you should check out my video on value rules. Value rules allow you to target exactly who you want, not in the way that you're thinking. Very different from traditional meta ads targeting. A very clever new feature. We're experimenting with it a lot right now. Really excited about it. If you don't know how it works, you haven't had a play, definitely check this",
+        "language": "en",
+        "segments": [
+          {
+            "start": 0.08,
+            "end": 3.04,
+            "text": "Most Facebook advertisers are still"
+          },
+          {
+            "start": 1.52,
+            "end": 4.7989999999999995,
+            "text": "using strategies that worked a couple of"
+          },
+          {
+            "start": 3.04,
+            "end": 6.720000000000001,
+            "text": "years ago, but just don't produce the"
+          },
+          {
+            "start": 4.799,
+            "end": 7.9190000000000005,
+            "text": "best results anymore. In this video, I'm"
+          },
+          {
+            "start": 6.72,
+            "end": 10.24,
+            "text": "going to give you the Facebook ads"
+          },
+          {
+            "start": 7.919,
+            "end": 11.599,
+            "text": "playbook that we're using right now. The"
+          },
+          {
+            "start": 10.24,
+            "end": 13.2,
+            "text": "same framework that we use with our"
+          },
+          {
+            "start": 11.599,
+            "end": 15.679,
+            "text": "clients to generate tens of millions"
+          },
+          {
+            "start": 13.2,
+            "end": 16.96,
+            "text": "every month. So, I'm hearing from a lot"
+          },
+          {
+            "start": 15.679,
+            "end": 18.240000000000002,
+            "text": "of advertisers right now that are"
+          },
+          {
+            "start": 16.96,
+            "end": 19.52,
+            "text": "struggling to get great results. And"
+          },
+          {
+            "start": 18.24,
+            "end": 21.038999999999998,
+            "text": "there are a number of reasons for that."
+          },
+          {
+            "start": 19.52,
+            "end": 22.8,
+            "text": "Firstly, you've got rising costs and"
+          },
+          {
+            "start": 21.039,
+            "end": 24,
+            "text": "CPMs, something that's not new,"
+          },
+          {
+            "start": 22.8,
+            "end": 26,
+            "text": "something that will continue, but"
+          },
+          {
+            "start": 24,
+            "end": 27.68,
+            "text": "something that does need to be overcome."
+          },
+          {
+            "start": 26,
+            "end": 29.198999999999998,
+            "text": "Secondly, attribution issues. If you"
+          },
+          {
+            "start": 27.68,
+            "end": 30.48,
+            "text": "don't have accurate data coming into"
+          },
+          {
+            "start": 29.199,
+            "end": 32.160000000000004,
+            "text": "your ad account, you're going to run"
+          },
+          {
+            "start": 30.48,
+            "end": 33.6,
+            "text": "into problems with Meta's AI doing more"
+          },
+          {
+            "start": 32.16,
+            "end": 35.279999999999994,
+            "text": "and more of the targeting and"
+          },
+          {
+            "start": 33.6,
+            "end": 37.44,
+            "text": "optimization and things like that. Then"
+          },
+          {
+            "start": 35.28,
+            "end": 39.760000000000005,
+            "text": "you've got ad fatigue. Producing enough"
+          },
+          {
+            "start": 37.44,
+            "end": 41.28,
+            "text": "creative, enough highquality creative to"
+          },
+          {
+            "start": 39.76,
+            "end": 42.8,
+            "text": "not only keep things fresh, but also"
+          },
+          {
+            "start": 41.28,
+            "end": 44.719,
+            "text": "differentiate yourself from the"
+          },
+          {
+            "start": 42.8,
+            "end": 46.559,
+            "text": "competition can be really hard. And then"
+          },
+          {
+            "start": 44.719,
+            "end": 48.32,
+            "text": "we've just got reliance on outdated"
+          },
+          {
+            "start": 46.559,
+            "end": 49.599999999999994,
+            "text": "tactics. Often things advertisers are"
+          },
+          {
+            "start": 48.32,
+            "end": 51.28,
+            "text": "doing they don't even know they're doing"
+          },
+          {
+            "start": 49.6,
+            "end": 53.36,
+            "text": "wrong, like focusing on interest"
+          },
+          {
+            "start": 51.28,
+            "end": 55.120000000000005,
+            "text": "targeting or really segmenting out their"
+          },
+          {
+            "start": 53.36,
+            "end": 56.879,
+            "text": "audiences, for example. So, in this"
+          },
+          {
+            "start": 55.12,
+            "end": 58.16,
+            "text": "video, I've got a number of well, I've"
+          },
+          {
+            "start": 56.879,
+            "end": 59.68,
+            "text": "got a full playbook. I've got a number"
+          },
+          {
+            "start": 58.16,
+            "end": 61.68,
+            "text": "of steps, number of things I'd recommend"
+          },
+          {
+            "start": 59.68,
+            "end": 63.44,
+            "text": "you do that can help overcome all those"
+          },
+          {
+            "start": 61.68,
+            "end": 65.199,
+            "text": "issues and help you get significantly"
+          },
+          {
+            "start": 63.44,
+            "end": 66.72,
+            "text": "better results. Okay, so let's get into"
+          },
+          {
+            "start": 65.199,
+            "end": 68.56,
+            "text": "it and let's start by talking about"
+          },
+          {
+            "start": 66.72,
+            "end": 70.4,
+            "text": "campaign structure. So, I now think that"
+          },
+          {
+            "start": 68.56,
+            "end": 73.04,
+            "text": "the majority of advertisers should be"
+          },
+          {
+            "start": 70.4,
+            "end": 75.36,
+            "text": "using Advantage Plus campaigns. And"
+          },
+          {
+            "start": 73.04,
+            "end": 78.4,
+            "text": "where possible, you want to consolidate"
+          },
+          {
+            "start": 75.36,
+            "end": 80,
+            "text": "multiple campaigns into fewer campaigns,"
+          },
+          {
+            "start": 78.4,
+            "end": 81.43900000000001,
+            "text": "maybe even one campaign. We've got a lot"
+          },
+          {
+            "start": 80,
+            "end": 83.28,
+            "text": "of ad accounts that are producing great"
+          },
+          {
+            "start": 81.439,
+            "end": 86.24,
+            "text": "results that are operating literally"
+          },
+          {
+            "start": 83.28,
+            "end": 87.759,
+            "text": "with one advantage plus um campaign."
+          },
+          {
+            "start": 86.24,
+            "end": 89.52,
+            "text": "Now, there are scenarios where that's"
+          },
+          {
+            "start": 87.759,
+            "end": 91.04,
+            "text": "not always going to be the best. So, if"
+          },
+          {
+            "start": 89.52,
+            "end": 92.72,
+            "text": "you want to break out multiple"
+          },
+          {
+            "start": 91.04,
+            "end": 94.4,
+            "text": "countries, for example, into different"
+          },
+          {
+            "start": 92.72,
+            "end": 96,
+            "text": "campaigns, absolutely fine. Or you want"
+          },
+          {
+            "start": 94.4,
+            "end": 97.92,
+            "text": "to do it by product range, absolutely"
+          },
+          {
+            "start": 96,
+            "end": 99.92,
+            "text": "fine. But the default when it comes to"
+          },
+          {
+            "start": 97.92,
+            "end": 101.84,
+            "text": "campaign structure should now be less"
+          },
+          {
+            "start": 99.92,
+            "end": 104.07900000000001,
+            "text": "campaigns. Less is more. Less allows you"
+          },
+          {
+            "start": 101.84,
+            "end": 105.60000000000001,
+            "text": "to consolidate ad spend. It allows Meta"
+          },
+          {
+            "start": 104.079,
+            "end": 107.36,
+            "text": "to learn faster because more of the"
+          },
+          {
+            "start": 105.6,
+            "end": 109.439,
+            "text": "conversions are happening within the one"
+          },
+          {
+            "start": 107.36,
+            "end": 111.68,
+            "text": "campaign or the one adset as opposed to"
+          },
+          {
+            "start": 109.439,
+            "end": 113.119,
+            "text": "having things spread out and segmented."
+          },
+          {
+            "start": 111.68,
+            "end": 115.84,
+            "text": "And the way Meta's gone with their"
+          },
+          {
+            "start": 113.119,
+            "end": 117.439,
+            "text": "targeting being highly suggestion bases"
+          },
+          {
+            "start": 115.84,
+            "end": 118.88000000000001,
+            "text": "in Meta can choose to go with your"
+          },
+          {
+            "start": 117.439,
+            "end": 120.55999999999999,
+            "text": "targeting options or completely ignore"
+          },
+          {
+            "start": 118.88,
+            "end": 122.15899999999999,
+            "text": "them. A lot of different adsets, a lot"
+          },
+          {
+            "start": 120.56,
+            "end": 124.479,
+            "text": "of different campaigns very much end up"
+          },
+          {
+            "start": 122.159,
+            "end": 126.07900000000001,
+            "text": "targeting the same or similar people. A"
+          },
+          {
+            "start": 124.479,
+            "end": 128.16,
+            "text": "lot of audience overlap. Things get"
+          },
+          {
+            "start": 126.079,
+            "end": 130.64,
+            "text": "really difficult. Along those lines, by"
+          },
+          {
+            "start": 128.16,
+            "end": 133.2,
+            "text": "default, now we are targeting both cold"
+          },
+          {
+            "start": 130.64,
+            "end": 135.599,
+            "text": "and warm audiences in the same campaign"
+          },
+          {
+            "start": 133.2,
+            "end": 136.879,
+            "text": "and even within the same adset because"
+          },
+          {
+            "start": 135.599,
+            "end": 138.48,
+            "text": "of what I just mentioned. Even if you"
+          },
+          {
+            "start": 136.879,
+            "end": 140.79999999999998,
+            "text": "try and set up an adset to just target"
+          },
+          {
+            "start": 138.48,
+            "end": 142.79999999999998,
+            "text": "cold or just target warm, unless you"
+          },
+          {
+            "start": 140.8,
+            "end": 144.48000000000002,
+            "text": "really go those extra steps and and"
+          },
+          {
+            "start": 142.8,
+            "end": 146.239,
+            "text": "click all the sort of hidden buttons to"
+          },
+          {
+            "start": 144.48,
+            "end": 147.84,
+            "text": "mean that your targeting options are"
+          },
+          {
+            "start": 146.239,
+            "end": 149.28,
+            "text": "hard boundaries. Meta is going to treat"
+          },
+          {
+            "start": 147.84,
+            "end": 150.8,
+            "text": "those as suggestions and you're probably"
+          },
+          {
+            "start": 149.28,
+            "end": 152.319,
+            "text": "going to end up advertising to a mix of"
+          },
+          {
+            "start": 150.8,
+            "end": 154,
+            "text": "cold and warm in your cold audience"
+          },
+          {
+            "start": 152.319,
+            "end": 155.599,
+            "text": "adset and a mix of cold and warm in your"
+          },
+          {
+            "start": 154,
+            "end": 157.519,
+            "text": "warm audience adset. Why not just bring"
+          },
+          {
+            "start": 155.599,
+            "end": 159.44,
+            "text": "them all together? consolidate that data"
+          },
+          {
+            "start": 157.519,
+            "end": 161.59900000000002,
+            "text": "and get better results. You also want to"
+          },
+          {
+            "start": 159.44,
+            "end": 164.319,
+            "text": "add lots of different types of creative"
+          },
+          {
+            "start": 161.599,
+            "end": 165.92,
+            "text": "into those adsets. You don't necessarily"
+          },
+          {
+            "start": 164.319,
+            "end": 167.67999999999998,
+            "text": "want to segment it out and have, all"
+          },
+          {
+            "start": 165.92,
+            "end": 169.44,
+            "text": "right, I'll have this uh creative for"
+          },
+          {
+            "start": 167.68,
+            "end": 171.20000000000002,
+            "text": "this audience and this type of creative"
+          },
+          {
+            "start": 169.44,
+            "end": 172.8,
+            "text": "for this warm audience or for the middle"
+          },
+          {
+            "start": 171.2,
+            "end": 174.56,
+            "text": "of the funnel or anything like that."
+          },
+          {
+            "start": 172.8,
+            "end": 176.08,
+            "text": "Lump it all in together. Meta can work"
+          },
+          {
+            "start": 174.56,
+            "end": 177.44,
+            "text": "it all out. We'll talk more about that"
+          },
+          {
+            "start": 176.08,
+            "end": 178.72,
+            "text": "later when we get to the creative step."
+          },
+          {
+            "start": 177.44,
+            "end": 180.879,
+            "text": "And then when it comes in general to"
+          },
+          {
+            "start": 178.72,
+            "end": 182.48,
+            "text": "targeting and delivery, let Meta do its"
+          },
+          {
+            "start": 180.879,
+            "end": 184.56,
+            "text": "thing. you need a really good reason to"
+          },
+          {
+            "start": 182.48,
+            "end": 187.11999999999998,
+            "text": "go in and manually tweak with something"
+          },
+          {
+            "start": 184.56,
+            "end": 188.879,
+            "text": "or add in a schedule that affects like"
+          },
+          {
+            "start": 187.12,
+            "end": 191.44,
+            "text": "optimization and delivery or or do"
+          },
+          {
+            "start": 188.879,
+            "end": 193.35999999999999,
+            "text": "something that's aside from the default"
+          },
+          {
+            "start": 191.44,
+            "end": 195.12,
+            "text": "let meta get you what it is that you"
+          },
+          {
+            "start": 193.36,
+            "end": 196.959,
+            "text": "want. So play number two, let's talk"
+          },
+          {
+            "start": 195.12,
+            "end": 199.84,
+            "text": "about creative strategy. What we're"
+          },
+          {
+            "start": 196.959,
+            "end": 202.48,
+            "text": "seeing is that UGC style video, so user"
+          },
+          {
+            "start": 199.84,
+            "end": 204.159,
+            "text": "generated content style video is king"
+          },
+          {
+            "start": 202.48,
+            "end": 206.23899999999998,
+            "text": "right now. That's what's producing the"
+          },
+          {
+            "start": 204.159,
+            "end": 208.79999999999998,
+            "text": "best results across the board. Uh you"
+          },
+          {
+            "start": 206.239,
+            "end": 210.239,
+            "text": "want your ads to feel native to platform"
+          },
+          {
+            "start": 208.8,
+            "end": 212.799,
+            "text": "platform. You want them to feel more"
+          },
+          {
+            "start": 210.239,
+            "end": 215.36,
+            "text": "like content than an ad. If people get"
+          },
+          {
+            "start": 212.799,
+            "end": 216.56,
+            "text": "the sense in that first split second"
+          },
+          {
+            "start": 215.36,
+            "end": 218.08,
+            "text": "that what you're putting in front of"
+          },
+          {
+            "start": 216.56,
+            "end": 219.36,
+            "text": "them is an ad, they'll immediately"
+          },
+          {
+            "start": 218.08,
+            "end": 220.4,
+            "text": "scroll past or at least a higher"
+          },
+          {
+            "start": 219.36,
+            "end": 221.84,
+            "text": "percentage of people will immediately"
+          },
+          {
+            "start": 220.4,
+            "end": 223.12,
+            "text": "scroll past. If they feel more like it's"
+          },
+          {
+            "start": 221.84,
+            "end": 224.879,
+            "text": "a bit of content, more like it's"
+          },
+          {
+            "start": 223.12,
+            "end": 226.31900000000002,
+            "text": "something they might be interested in,"
+          },
+          {
+            "start": 224.879,
+            "end": 228.159,
+            "text": "they're much more likely to pay"
+          },
+          {
+            "start": 226.319,
+            "end": 230.07999999999998,
+            "text": "attention. You can do that through UGC,"
+          },
+          {
+            "start": 228.159,
+            "end": 231.67999999999998,
+            "text": "userenerated content, so stuff you get"
+          },
+          {
+            "start": 230.08,
+            "end": 235.44000000000003,
+            "text": "from your clients, your customers, you"
+          },
+          {
+            "start": 231.68,
+            "end": 236.56,
+            "text": "can hire UGC um actors effectively to"
+          },
+          {
+            "start": 235.44,
+            "end": 238,
+            "text": "create stuff for you. a lot. There's"
+          },
+          {
+            "start": 236.56,
+            "end": 239.92000000000002,
+            "text": "going to be a lot of AI developments in"
+          },
+          {
+            "start": 238,
+            "end": 241.36,
+            "text": "that space over the next few years. Or"
+          },
+          {
+            "start": 239.92,
+            "end": 243.28,
+            "text": "even better, and I've talked about this"
+          },
+          {
+            "start": 241.36,
+            "end": 245.68,
+            "text": "previously, go ahead and hire"
+          },
+          {
+            "start": 243.28,
+            "end": 247.599,
+            "text": "influencers to create your ads for you."
+          },
+          {
+            "start": 245.68,
+            "end": 250.959,
+            "text": "They'll have that native content style"
+          },
+          {
+            "start": 247.599,
+            "end": 252.23899999999998,
+            "text": "feel, especially when that ad is put in"
+          },
+          {
+            "start": 250.959,
+            "end": 253.76,
+            "text": "front of people that follow that"
+          },
+          {
+            "start": 252.239,
+            "end": 255.519,
+            "text": "influencer because they're used to"
+          },
+          {
+            "start": 253.76,
+            "end": 256.479,
+            "text": "consuming their content. That makes it"
+          },
+          {
+            "start": 255.519,
+            "end": 257.919,
+            "text": "much more likely they're going to hear"
+          },
+          {
+            "start": 256.479,
+            "end": 258.88,
+            "text": "about your products and services. Makes"
+          },
+          {
+            "start": 257.919,
+            "end": 261.12,
+            "text": "it much more likely they're going to"
+          },
+          {
+            "start": 258.88,
+            "end": 262.639,
+            "text": "take action, buy, inquire, etc. This"
+          },
+          {
+            "start": 261.12,
+            "end": 264.56,
+            "text": "doesn't just apply to e-commerce, by the"
+          },
+          {
+            "start": 262.639,
+            "end": 266,
+            "text": "way. Big misconception within the the"
+          },
+          {
+            "start": 264.56,
+            "end": 268.08,
+            "text": "Facebook ad space. You can absolutely"
+          },
+          {
+            "start": 266,
+            "end": 269.36,
+            "text": "apply this to other types of businesses"
+          },
+          {
+            "start": 268.08,
+            "end": 270.71999999999997,
+            "text": "too. In fact, sometimes you get a"
+          },
+          {
+            "start": 269.36,
+            "end": 272.47900000000004,
+            "text": "greater competitive advantage there"
+          },
+          {
+            "start": 270.72,
+            "end": 274.8,
+            "text": "because your competitors aren't doing"
+          },
+          {
+            "start": 272.479,
+            "end": 277.28,
+            "text": "it. Now, one of the things that I know"
+          },
+          {
+            "start": 274.8,
+            "end": 279.44,
+            "text": "people find very daunting with producing"
+          },
+          {
+            "start": 277.28,
+            "end": 281.44,
+            "text": "a lot of creative a lot of video assets,"
+          },
+          {
+            "start": 279.44,
+            "end": 283.52,
+            "text": "which is now what's recommended, is just"
+          },
+          {
+            "start": 281.44,
+            "end": 284.96,
+            "text": "simply how do we pay for it? How do we"
+          },
+          {
+            "start": 283.52,
+            "end": 286.4,
+            "text": "find the time to do it? How do we"
+          },
+          {
+            "start": 284.96,
+            "end": 287.52,
+            "text": "develop the skill set? So, we've got a"
+          },
+          {
+            "start": 286.4,
+            "end": 288.96,
+            "text": "few techniques to do that. Firstly, if"
+          },
+          {
+            "start": 287.52,
+            "end": 289.919,
+            "text": "you're working with influencers, you"
+          },
+          {
+            "start": 288.96,
+            "end": 291.35999999999996,
+            "text": "just see you're you're sort of"
+          },
+          {
+            "start": 289.919,
+            "end": 292.96,
+            "text": "effectively outsourcing a lot of that"
+          },
+          {
+            "start": 291.36,
+            "end": 295.04,
+            "text": "creation process. So, that's the first"
+          },
+          {
+            "start": 292.96,
+            "end": 296.79999999999995,
+            "text": "thing I'd recommend. The second thing is"
+          },
+          {
+            "start": 295.04,
+            "end": 298.24,
+            "text": "that when you've got something that"
+          },
+          {
+            "start": 296.8,
+            "end": 300.56,
+            "text": "works, when you've got a video ad that"
+          },
+          {
+            "start": 298.24,
+            "end": 302.16,
+            "text": "works, a way to get a lot more out of it"
+          },
+          {
+            "start": 300.56,
+            "end": 305.04,
+            "text": "as opposed to having to create a load"
+          },
+          {
+            "start": 302.16,
+            "end": 307.68,
+            "text": "more stuff or pay for UGC influencer"
+          },
+          {
+            "start": 305.04,
+            "end": 310.96000000000004,
+            "text": "style content to be created again, is to"
+          },
+          {
+            "start": 307.68,
+            "end": 312.32,
+            "text": "use that same ad, but just add in a"
+          },
+          {
+            "start": 310.96,
+            "end": 314.4,
+            "text": "number of different hooks. Let's say"
+          },
+          {
+            "start": 312.32,
+            "end": 317.28,
+            "text": "it's a 45se secondond ad. You could have"
+          },
+          {
+            "start": 314.4,
+            "end": 319.039,
+            "text": "the same 42 seconds across 10 different"
+          },
+          {
+            "start": 317.28,
+            "end": 320.15999999999997,
+            "text": "ads, but the first 3 seconds be"
+          },
+          {
+            "start": 319.039,
+            "end": 321.52,
+            "text": "different. So when you're working with"
+          },
+          {
+            "start": 320.16,
+            "end": 323.12,
+            "text": "influencers, you just be like, \"Right,"
+          },
+          {
+            "start": 321.52,
+            "end": 324.88,
+            "text": "just record that again with a different"
+          },
+          {
+            "start": 323.12,
+            "end": 326.32,
+            "text": "intro line and do that five with these"
+          },
+          {
+            "start": 324.88,
+            "end": 327.84,
+            "text": "five different intro lines. Please"
+          },
+          {
+            "start": 326.32,
+            "end": 329.44,
+            "text": "record that again in five different"
+          },
+          {
+            "start": 327.84,
+            "end": 331.28,
+            "text": "locations.\" And the location could be as"
+          },
+          {
+            "start": 329.44,
+            "end": 332.71999999999997,
+            "text": "simple as record one with this way so"
+          },
+          {
+            "start": 331.28,
+            "end": 334.15999999999997,
+            "text": "it's got this background. Turn the"
+          },
+          {
+            "start": 332.72,
+            "end": 335.68,
+            "text": "camera around. Record it this way so"
+          },
+          {
+            "start": 334.16,
+            "end": 338.72,
+            "text": "it's got that background. It's just so"
+          },
+          {
+            "start": 335.68,
+            "end": 340.8,
+            "text": "that it visually looks different. 95 90"
+          },
+          {
+            "start": 338.72,
+            "end": 342.40000000000003,
+            "text": "plus% of people are not going to make it"
+          },
+          {
+            "start": 340.8,
+            "end": 344.72,
+            "text": "past those first three seconds. So, when"
+          },
+          {
+            "start": 342.4,
+            "end": 346.4,
+            "text": "it comes to overcoming ad fatigue, if"
+          },
+          {
+            "start": 344.72,
+            "end": 348.24,
+            "text": "they've never seen those other 42"
+          },
+          {
+            "start": 346.4,
+            "end": 349.52,
+            "text": "seconds with the original hook, if you"
+          },
+          {
+            "start": 348.24,
+            "end": 350.96000000000004,
+            "text": "just change out the hook and put that in"
+          },
+          {
+            "start": 349.52,
+            "end": 352.639,
+            "text": "front of people, that overcomes ad"
+          },
+          {
+            "start": 350.96,
+            "end": 354.23999999999995,
+            "text": "fatigue. That does the job. That gets"
+          },
+          {
+            "start": 352.639,
+            "end": 356.24,
+            "text": "past the, \"Oh, I've seen this before\""
+          },
+          {
+            "start": 354.24,
+            "end": 358.479,
+            "text": "filter. Let me scroll past. A really"
+          },
+          {
+            "start": 356.24,
+            "end": 360.72,
+            "text": "easy way to take one ad that's working"
+          },
+          {
+            "start": 358.479,
+            "end": 362.56,
+            "text": "really well and creates 10 more versions"
+          },
+          {
+            "start": 360.72,
+            "end": 364.16,
+            "text": "of it that you can run for 10 times as"
+          },
+          {
+            "start": 362.56,
+            "end": 365.52,
+            "text": "long. And this is exactly the sort of"
+          },
+          {
+            "start": 364.16,
+            "end": 367.84000000000003,
+            "text": "thing that we teach you how to do in"
+          },
+          {
+            "start": 365.52,
+            "end": 369.19899999999996,
+            "text": "detail as part of my mentorship program."
+          },
+          {
+            "start": 367.84,
+            "end": 371.039,
+            "text": "If you haven't heard about my mentorship"
+          },
+          {
+            "start": 369.199,
+            "end": 373.12,
+            "text": "program before, here's what it contains."
+          },
+          {
+            "start": 371.039,
+            "end": 375.68,
+            "text": "exclusive content and material that you"
+          },
+          {
+            "start": 373.12,
+            "end": 377.6,
+            "text": "won't see anywhere else. At onetoone"
+          },
+          {
+            "start": 375.68,
+            "end": 379.6,
+            "text": "coaching, you literally have access via"
+          },
+          {
+            "start": 377.6,
+            "end": 381.52000000000004,
+            "text": "Slack to someone within my team that you"
+          },
+          {
+            "start": 379.6,
+            "end": 383.44,
+            "text": "can message anytime, ask any questions"
+          },
+          {
+            "start": 381.52,
+            "end": 385.039,
+            "text": "you got, get feedback, get improvements"
+          },
+          {
+            "start": 383.44,
+            "end": 386.71999999999997,
+            "text": "to your campaigns, recommendations, add"
+          },
+          {
+            "start": 385.039,
+            "end": 388.56,
+            "text": "account audits, all that sort of stuff."
+          },
+          {
+            "start": 386.72,
+            "end": 392.16,
+            "text": "Someone available, me or one of my team"
+          },
+          {
+            "start": 388.56,
+            "end": 394.16,
+            "text": "members on a live call 9 to 10 hours per"
+          },
+          {
+            "start": 392.16,
+            "end": 396,
+            "text": "day across different time zones. We have"
+          },
+          {
+            "start": 394.16,
+            "end": 397.36,
+            "text": "people in my mentorship program AC all"
+          },
+          {
+            "start": 396,
+            "end": 398.8,
+            "text": "across the world. So, we've got uh"
+          },
+          {
+            "start": 397.36,
+            "end": 400.24,
+            "text": "availability for calls across different"
+          },
+          {
+            "start": 398.8,
+            "end": 401.52000000000004,
+            "text": "time zones to make it easy. So again,"
+          },
+          {
+            "start": 400.24,
+            "end": 402.8,
+            "text": "you can jump on and be like, \"I'm"
+          },
+          {
+            "start": 401.52,
+            "end": 404.15999999999997,
+            "text": "struggling with tracking. I'm struggling"
+          },
+          {
+            "start": 402.8,
+            "end": 405.91900000000004,
+            "text": "with attribution. Can you just jump on"
+          },
+          {
+            "start": 404.16,
+            "end": 407.36,
+            "text": "with me? Let's do a screen share and get"
+          },
+          {
+            "start": 405.919,
+            "end": 409.28,
+            "text": "this worked out.\" Basically, everything"
+          },
+          {
+            "start": 407.36,
+            "end": 410.56,
+            "text": "you need to get the best Facebook ad"
+          },
+          {
+            "start": 409.28,
+            "end": 411.84,
+            "text": "results possible. If that sounds"
+          },
+          {
+            "start": 410.56,
+            "end": 413.039,
+            "text": "interesting, there is a link in the"
+          },
+          {
+            "start": 411.84,
+            "end": 414.56,
+            "text": "video description below, click on that,"
+          },
+          {
+            "start": 413.039,
+            "end": 416.479,
+            "text": "come through to website, book in a free,"
+          },
+          {
+            "start": 414.56,
+            "end": 417.6,
+            "text": "no obligation call to find out more."
+          },
+          {
+            "start": 416.479,
+            "end": 419.35999999999996,
+            "text": "Hopefully, we get a chance to work"
+          },
+          {
+            "start": 417.6,
+            "end": 420.8,
+            "text": "together. Play number three is budget"
+          },
+          {
+            "start": 419.36,
+            "end": 422.639,
+            "text": "and scaling. So, I'd always recommend"
+          },
+          {
+            "start": 420.8,
+            "end": 423.759,
+            "text": "that you start small, especially if you"
+          },
+          {
+            "start": 422.639,
+            "end": 425.36,
+            "text": "don't know whether or not something will"
+          },
+          {
+            "start": 423.759,
+            "end": 426.72,
+            "text": "work, either a new product or a new"
+          },
+          {
+            "start": 425.36,
+            "end": 428.72,
+            "text": "offer, or maybe you're just new to the"
+          },
+          {
+            "start": 426.72,
+            "end": 430.16,
+            "text": "platform in general. Start small. Start"
+          },
+          {
+            "start": 428.72,
+            "end": 432.319,
+            "text": "with a budget that you could afford to"
+          },
+          {
+            "start": 430.16,
+            "end": 434,
+            "text": "lose if it doesn't work out. Then once"
+          },
+          {
+            "start": 432.319,
+            "end": 435.03900000000004,
+            "text": "you've tweaked, you've worked it out,"
+          },
+          {
+            "start": 434,
+            "end": 436.08,
+            "text": "you've tested a few different things,"
+          },
+          {
+            "start": 435.039,
+            "end": 438.56,
+            "text": "and you've got something that's"
+          },
+          {
+            "start": 436.08,
+            "end": 440,
+            "text": "producing a positive return on ad spend,"
+          },
+          {
+            "start": 438.56,
+            "end": 441.44,
+            "text": "something that you're happy with, then"
+          },
+          {
+            "start": 440,
+            "end": 443.44,
+            "text": "look to scale it. Much better to do it"
+          },
+          {
+            "start": 441.44,
+            "end": 445.039,
+            "text": "that way round than going the other way"
+          },
+          {
+            "start": 443.44,
+            "end": 446.71999999999997,
+            "text": "and potentially losing too much money"
+          },
+          {
+            "start": 445.039,
+            "end": 448.24,
+            "text": "whilst you're in that testing phase."
+          },
+          {
+            "start": 446.72,
+            "end": 450,
+            "text": "When you do scale, I'd recommend you"
+          },
+          {
+            "start": 448.24,
+            "end": 451.759,
+            "text": "scale existing campaigns as opposed to"
+          },
+          {
+            "start": 450,
+            "end": 453.36,
+            "text": "creating new ones. And when you scale"
+          },
+          {
+            "start": 451.759,
+            "end": 455.599,
+            "text": "your budget, it's important you don't"
+          },
+          {
+            "start": 453.36,
+            "end": 457.44,
+            "text": "just increase the budget. Be aware that"
+          },
+          {
+            "start": 455.599,
+            "end": 458.639,
+            "text": "when you're spending more, your ads are"
+          },
+          {
+            "start": 457.44,
+            "end": 460.08,
+            "text": "going to be put in front of people more"
+          },
+          {
+            "start": 458.639,
+            "end": 461.759,
+            "text": "often. They're also going to be put in"
+          },
+          {
+            "start": 460.08,
+            "end": 463.84,
+            "text": "front of more people. Therefore, you"
+          },
+          {
+            "start": 461.759,
+            "end": 465.199,
+            "text": "also need to scale with creatives. So,"
+          },
+          {
+            "start": 463.84,
+            "end": 466.79999999999995,
+            "text": "if you've got one ad that's performing"
+          },
+          {
+            "start": 465.199,
+            "end": 468.72,
+            "text": "really well, if you try and 10x the"
+          },
+          {
+            "start": 466.8,
+            "end": 471.759,
+            "text": "budget, it's unlikely that ad is going"
+          },
+          {
+            "start": 468.72,
+            "end": 473.36,
+            "text": "to perform as well to 10 times as many"
+          },
+          {
+            "start": 471.759,
+            "end": 474.56,
+            "text": "people for an extended period of time."
+          },
+          {
+            "start": 473.36,
+            "end": 476.319,
+            "text": "You're going to need to introduce new"
+          },
+          {
+            "start": 474.56,
+            "end": 477.759,
+            "text": "creatives that can also do some of the"
+          },
+          {
+            "start": 476.319,
+            "end": 479.759,
+            "text": "heavy lifting, produce leads and sales"
+          },
+          {
+            "start": 477.759,
+            "end": 482.16,
+            "text": "as well. Play number four is data and"
+          },
+          {
+            "start": 479.759,
+            "end": 484.8,
+            "text": "attribution. So, at a minimum, I'd"
+          },
+          {
+            "start": 482.16,
+            "end": 487.44,
+            "text": "recommend that you get conversions API"
+          },
+          {
+            "start": 484.8,
+            "end": 490.16,
+            "text": "and the Metapixel installed and make"
+          },
+          {
+            "start": 487.44,
+            "end": 492.56,
+            "text": "sure they are both sending accurate"
+          },
+          {
+            "start": 490.16,
+            "end": 493.759,
+            "text": "conversions back into your ad account. I"
+          },
+          {
+            "start": 492.56,
+            "end": 495.12,
+            "text": "get a lot of questions, which one's"
+          },
+          {
+            "start": 493.759,
+            "end": 497.039,
+            "text": "better? No, no, it's not a it's not a"
+          },
+          {
+            "start": 495.12,
+            "end": 499.12,
+            "text": "either or when it comes to the pixel or"
+          },
+          {
+            "start": 497.039,
+            "end": 502.24,
+            "text": "Cappy. You want both set up and"
+          },
+          {
+            "start": 499.12,
+            "end": 503.36,
+            "text": "installed. Meta's AI needs accurate"
+          },
+          {
+            "start": 502.24,
+            "end": 504.8,
+            "text": "data. They need to know who's"
+          },
+          {
+            "start": 503.36,
+            "end": 506.8,
+            "text": "converting, what a conversion looks"
+          },
+          {
+            "start": 504.8,
+            "end": 508.24,
+            "text": "like, how valuable is that conversion,"
+          },
+          {
+            "start": 506.8,
+            "end": 510.24,
+            "text": "all that information in order for your"
+          },
+          {
+            "start": 508.24,
+            "end": 512.24,
+            "text": "campaigns to optimize properly. And"
+          },
+          {
+            "start": 510.24,
+            "end": 514.32,
+            "text": "because AI is doing more and more of the"
+          },
+          {
+            "start": 512.24,
+            "end": 515.839,
+            "text": "targeting, of the optimization, working"
+          },
+          {
+            "start": 514.32,
+            "end": 519.279,
+            "text": "out how many impressions does someone"
+          },
+          {
+            "start": 515.839,
+            "end": 520.8800000000001,
+            "text": "need to purchase, um, how old does"
+          },
+          {
+            "start": 519.279,
+            "end": 522,
+            "text": "someone need to be for them to be likely"
+          },
+          {
+            "start": 520.88,
+            "end": 523.4399999999999,
+            "text": "to be really interested in, where do"
+          },
+          {
+            "start": 522,
+            "end": 525.76,
+            "text": "they need to be located, all those"
+          },
+          {
+            "start": 523.44,
+            "end": 528.08,
+            "text": "various data points. Meta needs accurate"
+          },
+          {
+            "start": 525.76,
+            "end": 529.36,
+            "text": "data. They need to know who is actually"
+          },
+          {
+            "start": 528.08,
+            "end": 531.279,
+            "text": "taking the action that you want people"
+          },
+          {
+            "start": 529.36,
+            "end": 532.8000000000001,
+            "text": "to take um, from your advertising. Like,"
+          },
+          {
+            "start": 531.279,
+            "end": 535.04,
+            "text": "this sounds a bit boring, sounds like an"
+          },
+          {
+            "start": 532.8,
+            "end": 537.04,
+            "text": "afterthought. It absolutely isn't. And"
+          },
+          {
+            "start": 535.04,
+            "end": 538.48,
+            "text": "one of the things that you learn very"
+          },
+          {
+            "start": 537.04,
+            "end": 539.8389999999999,
+            "text": "quickly in this industry if you work"
+          },
+          {
+            "start": 538.48,
+            "end": 541.6,
+            "text": "with really high spenders like"
+          },
+          {
+            "start": 539.839,
+            "end": 543.6,
+            "text": "businesses that might be spending eight"
+          },
+          {
+            "start": 541.6,
+            "end": 545.36,
+            "text": "figures a year for example on their meta"
+          },
+          {
+            "start": 543.6,
+            "end": 547.0400000000001,
+            "text": "ad campaigns is that they obsess over"
+          },
+          {
+            "start": 545.36,
+            "end": 548.64,
+            "text": "data and their accuracy because they"
+          },
+          {
+            "start": 547.04,
+            "end": 551.1999999999999,
+            "text": "know that if they can improve their data"
+          },
+          {
+            "start": 548.64,
+            "end": 555.519,
+            "text": "accuracy and improve the inputs the"
+          },
+          {
+            "start": 551.2,
+            "end": 557.6,
+            "text": "meta's AI has by even 5% that might make"
+          },
+          {
+            "start": 555.519,
+            "end": 559.12,
+            "text": "a huge difference to the results um that"
+          },
+          {
+            "start": 557.6,
+            "end": 561.2,
+            "text": "they're able to get. And if you can"
+          },
+          {
+            "start": 559.12,
+            "end": 563.519,
+            "text": "improve the data inputs by 5%, it might"
+          },
+          {
+            "start": 561.2,
+            "end": 565.2,
+            "text": "give you a 25% improvement in return on"
+          },
+          {
+            "start": 563.519,
+            "end": 566.64,
+            "text": "ad spend. That might allow you to spend"
+          },
+          {
+            "start": 565.2,
+            "end": 568.1600000000001,
+            "text": "twice as much profitably. That might"
+          },
+          {
+            "start": 566.64,
+            "end": 570.3199999999999,
+            "text": "allow you to g gather up that much more"
+          },
+          {
+            "start": 568.16,
+            "end": 572.7199999999999,
+            "text": "market share. Um, really really"
+          },
+          {
+            "start": 570.32,
+            "end": 574.32,
+            "text": "important. I talk about this a lot. I"
+          },
+          {
+            "start": 572.72,
+            "end": 576.1600000000001,
+            "text": "don't want you to underestimate this and"
+          },
+          {
+            "start": 574.32,
+            "end": 577.36,
+            "text": "I just see advertisers do that again and"
+          },
+          {
+            "start": 576.16,
+            "end": 579.12,
+            "text": "again, which is why I'm sort of"
+          },
+          {
+            "start": 577.36,
+            "end": 581.04,
+            "text": "hammering this uh this point. Also"
+          },
+          {
+            "start": 579.12,
+            "end": 582.8,
+            "text": "important to get external data uploaded"
+          },
+          {
+            "start": 581.04,
+            "end": 584.3199999999999,
+            "text": "to your meta ad account. Meta doesn't"
+          },
+          {
+            "start": 582.8,
+            "end": 586.16,
+            "text": "have visibility over all your warm"
+          },
+          {
+            "start": 584.32,
+            "end": 587.519,
+            "text": "audiences. Email lists, particularly"
+          },
+          {
+            "start": 586.16,
+            "end": 588.88,
+            "text": "people who've interacted with the"
+          },
+          {
+            "start": 587.519,
+            "end": 590.16,
+            "text": "business a while ago, longer than the"
+          },
+          {
+            "start": 588.88,
+            "end": 591.68,
+            "text": "time frames that Meta is going to be"
+          },
+          {
+            "start": 590.16,
+            "end": 594.16,
+            "text": "able to track via the pixel, for"
+          },
+          {
+            "start": 591.68,
+            "end": 596.2399999999999,
+            "text": "example, longer than than 180 days. Uh"
+          },
+          {
+            "start": 594.16,
+            "end": 598.3199999999999,
+            "text": "customer lists, any external sources of"
+          },
+          {
+            "start": 596.24,
+            "end": 600.24,
+            "text": "data you think, okay, that's not on"
+          },
+          {
+            "start": 598.32,
+            "end": 602.1600000000001,
+            "text": "Facebook, that's not on Instagram, Meta"
+          },
+          {
+            "start": 600.24,
+            "end": 604.16,
+            "text": "won't already have that info. Get it"
+          },
+          {
+            "start": 602.16,
+            "end": 605.68,
+            "text": "uploaded into your ad account. Um I've"
+          },
+          {
+            "start": 604.16,
+            "end": 607.76,
+            "text": "got videos on how to do all that sort of"
+          },
+          {
+            "start": 605.68,
+            "end": 609.92,
+            "text": "stuff you can find on my channel. You"
+          },
+          {
+            "start": 607.76,
+            "end": 611.6,
+            "text": "also need to then segment out and let"
+          },
+          {
+            "start": 609.92,
+            "end": 612.8,
+            "text": "Meta know who is who, right? So, who is"
+          },
+          {
+            "start": 611.6,
+            "end": 614.16,
+            "text": "your engaged audience? Who are your"
+          },
+          {
+            "start": 612.8,
+            "end": 615.76,
+            "text": "existing customers? And then obviously"
+          },
+          {
+            "start": 614.16,
+            "end": 617.4399999999999,
+            "text": "everyone left over um is called. I've"
+          },
+          {
+            "start": 615.76,
+            "end": 619.36,
+            "text": "done another specific video on"
+          },
+          {
+            "start": 617.44,
+            "end": 621.7600000000001,
+            "text": "segmenting that out. We can show um on"
+          },
+          {
+            "start": 619.36,
+            "end": 623.2,
+            "text": "screen as I'm talking about it how what"
+          },
+          {
+            "start": 621.76,
+            "end": 624.88,
+            "text": "that looks like that section, but you"
+          },
+          {
+            "start": 623.2,
+            "end": 626.9590000000001,
+            "text": "can go and check out that video as well"
+          },
+          {
+            "start": 624.88,
+            "end": 628.399,
+            "text": "to uh set that up for your ad account."
+          },
+          {
+            "start": 626.959,
+            "end": 630.2399999999999,
+            "text": "And then for the best data tracking and"
+          },
+          {
+            "start": 628.399,
+            "end": 631.68,
+            "text": "accuracy, I'd recommend you use Hyros."
+          },
+          {
+            "start": 630.24,
+            "end": 633.519,
+            "text": "Hyro is the best tracking and"
+          },
+          {
+            "start": 631.68,
+            "end": 635.04,
+            "text": "attribution software for meta ads. It's"
+          },
+          {
+            "start": 633.519,
+            "end": 636.72,
+            "text": "a software all the big players in this"
+          },
+          {
+            "start": 635.04,
+            "end": 638.399,
+            "text": "industry use, including myself. I use it"
+          },
+          {
+            "start": 636.72,
+            "end": 640,
+            "text": "to track results for my own ads as well"
+          },
+          {
+            "start": 638.399,
+            "end": 641.44,
+            "text": "as all my organic results as well. So,"
+          },
+          {
+            "start": 640,
+            "end": 643.279,
+            "text": "if someone books a call for our done for"
+          },
+          {
+            "start": 641.44,
+            "end": 645.0400000000001,
+            "text": "you services, for example, I can see"
+          },
+          {
+            "start": 643.279,
+            "end": 646.72,
+            "text": "exactly where that person came from with"
+          },
+          {
+            "start": 645.04,
+            "end": 648.16,
+            "text": "a lot of accuracy. That allows me to"
+          },
+          {
+            "start": 646.72,
+            "end": 649.9200000000001,
+            "text": "make better decisions for my marketing"
+          },
+          {
+            "start": 648.16,
+            "end": 651.76,
+            "text": "and my business. Hyro has been able to"
+          },
+          {
+            "start": 649.92,
+            "end": 654.88,
+            "text": "track that from our ad spend in this"
+          },
+          {
+            "start": 651.76,
+            "end": 658.16,
+            "text": "campaign, we've generated £96,000,"
+          },
+          {
+            "start": 654.88,
+            "end": 660.16,
+            "text": "but £58,000 of that was not reported by"
+          },
+          {
+            "start": 658.16,
+            "end": 662,
+            "text": "Meta. So, if I was just looking at my"
+          },
+          {
+            "start": 660.16,
+            "end": 663.04,
+            "text": "data within my meta ad account, I might"
+          },
+          {
+            "start": 662,
+            "end": 665.68,
+            "text": "come to the conclusion that this"
+          },
+          {
+            "start": 663.04,
+            "end": 668.3199999999999,
+            "text": "campaign is doing okay. But in reality,"
+          },
+          {
+            "start": 665.68,
+            "end": 669.92,
+            "text": "this campaign is doing a lot lot better."
+          },
+          {
+            "start": 668.32,
+            "end": 671.36,
+            "text": "Now this is a relatively extreme example"
+          },
+          {
+            "start": 669.92,
+            "end": 673.1999999999999,
+            "text": "because of the nature of our business."
+          },
+          {
+            "start": 671.36,
+            "end": 675.279,
+            "text": "So most of our products services have"
+          },
+          {
+            "start": 673.2,
+            "end": 677.44,
+            "text": "recurring billing elements. Meta might"
+          },
+          {
+            "start": 675.279,
+            "end": 678.88,
+            "text": "be able to see what we make initially"
+          },
+          {
+            "start": 677.44,
+            "end": 680.5600000000001,
+            "text": "from our ad spend on that initial"
+          },
+          {
+            "start": 678.88,
+            "end": 682.48,
+            "text": "transaction but not those subsequent"
+          },
+          {
+            "start": 680.56,
+            "end": 684.399,
+            "text": "payments. That's why it it shows the"
+          },
+          {
+            "start": 682.48,
+            "end": 686.48,
+            "text": "importance here of being able to"
+          },
+          {
+            "start": 684.399,
+            "end": 688.079,
+            "text": "accurately see what we actually get from"
+          },
+          {
+            "start": 686.48,
+            "end": 690.16,
+            "text": "our ad spend in order to be able to make"
+          },
+          {
+            "start": 688.079,
+            "end": 691.12,
+            "text": "better decisions and optimize correctly."
+          },
+          {
+            "start": 690.16,
+            "end": 692.56,
+            "text": "So if you want to improve the"
+          },
+          {
+            "start": 691.12,
+            "end": 694.24,
+            "text": "performance of your ad campaigns without"
+          },
+          {
+            "start": 692.56,
+            "end": 695.76,
+            "text": "having to touch your ads, go ahead and"
+          },
+          {
+            "start": 694.24,
+            "end": 697.36,
+            "text": "sign up to Hyros. There is a link in the"
+          },
+          {
+            "start": 695.76,
+            "end": 699.279,
+            "text": "video description. Plane number five is"
+          },
+          {
+            "start": 697.36,
+            "end": 700.32,
+            "text": "measurement and optimization. So you"
+          },
+          {
+            "start": 699.279,
+            "end": 702.32,
+            "text": "should be making most of your"
+          },
+          {
+            "start": 700.32,
+            "end": 704,
+            "text": "optimization decisions around return on"
+          },
+          {
+            "start": 702.32,
+            "end": 705.36,
+            "text": "ad spend or cost per conversion. If you"
+          },
+          {
+            "start": 704,
+            "end": 706.8,
+            "text": "can't measure return on ad spend or if"
+          },
+          {
+            "start": 705.36,
+            "end": 708.88,
+            "text": "all your conversions are equally"
+          },
+          {
+            "start": 706.8,
+            "end": 710.64,
+            "text": "valuable at the point of the conversion"
+          },
+          {
+            "start": 708.88,
+            "end": 712.32,
+            "text": "um being generated. And I'd really"
+          },
+          {
+            "start": 710.64,
+            "end": 714.56,
+            "text": "encourage you to not get lost in the"
+          },
+          {
+            "start": 712.32,
+            "end": 716.48,
+            "text": "weeds on vanity metrics like"
+          },
+          {
+            "start": 714.56,
+            "end": 718.8,
+            "text": "click-through rate, engagement."
+          },
+          {
+            "start": 716.48,
+            "end": 720.8000000000001,
+            "text": "Sometimes they will correlate with your"
+          },
+          {
+            "start": 718.8,
+            "end": 722.8,
+            "text": "return on ad spend or your cost per"
+          },
+          {
+            "start": 720.8,
+            "end": 726.24,
+            "text": "conversion. Not always. And there are"
+          },
+          {
+            "start": 722.8,
+            "end": 728.7199999999999,
+            "text": "many scenarios where a higher CTR ad led"
+          },
+          {
+            "start": 726.24,
+            "end": 730.0790000000001,
+            "text": "to a worse return on ad spend or ad that"
+          },
+          {
+            "start": 728.72,
+            "end": 731.9200000000001,
+            "text": "seems to get lots of engagement maybe"
+          },
+          {
+            "start": 730.079,
+            "end": 733.8389999999999,
+            "text": "because it's a bit clickbaity or a bit"
+          },
+          {
+            "start": 731.92,
+            "end": 735.76,
+            "text": "engagement baity but does it actually"
+          },
+          {
+            "start": 733.839,
+            "end": 737.9200000000001,
+            "text": "translate to leads and sales? No, it"
+          },
+          {
+            "start": 735.76,
+            "end": 741.4399999999999,
+            "text": "doesn't matter then. Really focus in on"
+          },
+          {
+            "start": 737.92,
+            "end": 744.16,
+            "text": "those two metrics. Now there is some"
+          },
+          {
+            "start": 741.44,
+            "end": 746.1600000000001,
+            "text": "nuance to that and and a new development"
+          },
+          {
+            "start": 744.16,
+            "end": 747.279,
+            "text": "that we're seeing when it comes to meta"
+          },
+          {
+            "start": 746.16,
+            "end": 748.24,
+            "text": "advertising and that's actually some"
+          },
+          {
+            "start": 747.279,
+            "end": 749.4399999999999,
+            "text": "recommendations that have come out of"
+          },
+          {
+            "start": 748.24,
+            "end": 751.279,
+            "text": "meta and we've seen this within ad"
+          },
+          {
+            "start": 749.44,
+            "end": 752.5600000000001,
+            "text": "accounts a lot. If you've ever had a"
+          },
+          {
+            "start": 751.279,
+            "end": 754.88,
+            "text": "scenario where you say you've got five"
+          },
+          {
+            "start": 752.56,
+            "end": 756.16,
+            "text": "ads within an ad set and one ad is"
+          },
+          {
+            "start": 754.88,
+            "end": 757.76,
+            "text": "producing a much better return on ad"
+          },
+          {
+            "start": 756.16,
+            "end": 759.04,
+            "text": "spend than the other four. So you think,"
+          },
+          {
+            "start": 757.76,
+            "end": 760.48,
+            "text": "\"Okay, great. I'll turn the other four"
+          },
+          {
+            "start": 759.04,
+            "end": 762,
+            "text": "off. I'll leave the one on that's doing"
+          },
+          {
+            "start": 760.48,
+            "end": 763.76,
+            "text": "well.\" And then all of a sudden, as soon"
+          },
+          {
+            "start": 762,
+            "end": 764.88,
+            "text": "as you do that, that one ad that had"
+          },
+          {
+            "start": 763.76,
+            "end": 767.68,
+            "text": "previously been getting a great return"
+          },
+          {
+            "start": 764.88,
+            "end": 769.8389999999999,
+            "text": "on ad spend, the results fall off, like"
+          },
+          {
+            "start": 767.68,
+            "end": 771.1999999999999,
+            "text": "really significantly get worse. You"
+          },
+          {
+            "start": 769.839,
+            "end": 772.48,
+            "text": "think, well, why is that happening?"
+          },
+          {
+            "start": 771.2,
+            "end": 775.9200000000001,
+            "text": "Well, Met have come out and explained"
+          },
+          {
+            "start": 772.48,
+            "end": 778.0790000000001,
+            "text": "that. They will now take ads within one"
+          },
+          {
+            "start": 775.92,
+            "end": 780.959,
+            "text": "adset within the same adset and they"
+          },
+          {
+            "start": 778.079,
+            "end": 782.8,
+            "text": "will use them not always but sometimes"
+          },
+          {
+            "start": 780.959,
+            "end": 784.399,
+            "text": "in a funnel structure. So they might be"
+          },
+          {
+            "start": 782.8,
+            "end": 785.68,
+            "text": "using some ads as a topfunnel ad. That's"
+          },
+          {
+            "start": 784.399,
+            "end": 787.44,
+            "text": "what they put in front of people"
+          },
+          {
+            "start": 785.68,
+            "end": 789.279,
+            "text": "initially and then they use other ads"
+          },
+          {
+            "start": 787.44,
+            "end": 791.12,
+            "text": "within that adset to effectively"
+          },
+          {
+            "start": 789.279,
+            "end": 792.56,
+            "text": "retarget and get the conversion. Now"
+          },
+          {
+            "start": 791.12,
+            "end": 794.72,
+            "text": "when Meta does that, the ad they're"
+          },
+          {
+            "start": 792.56,
+            "end": 795.8389999999999,
+            "text": "using as topfunnel uh won't look very"
+          },
+          {
+            "start": 794.72,
+            "end": 797.279,
+            "text": "good from a return on ad spend"
+          },
+          {
+            "start": 795.839,
+            "end": 799.0400000000001,
+            "text": "standpoint. Whereas the ad that's using"
+          },
+          {
+            "start": 797.279,
+            "end": 800.16,
+            "text": "to get the conversion, that will look"
+          },
+          {
+            "start": 799.04,
+            "end": 801.5999999999999,
+            "text": "great from return on ad spend. And"
+          },
+          {
+            "start": 800.16,
+            "end": 803.519,
+            "text": "that's why when you turn off those other"
+          },
+          {
+            "start": 801.6,
+            "end": 804.72,
+            "text": "ads, you're not using you're not getting"
+          },
+          {
+            "start": 803.519,
+            "end": 807.2,
+            "text": "the advantage of those sort of top"
+          },
+          {
+            "start": 804.72,
+            "end": 808.88,
+            "text": "offunnel type uh experience and"
+          },
+          {
+            "start": 807.2,
+            "end": 811.279,
+            "text": "therefore the other ad isn't performing"
+          },
+          {
+            "start": 808.88,
+            "end": 813.76,
+            "text": "as well. So whilst you want to use"
+          },
+          {
+            "start": 811.279,
+            "end": 816.32,
+            "text": "return on ad spend, cost per conversion"
+          },
+          {
+            "start": 813.76,
+            "end": 817.519,
+            "text": "broadly to measure results and optimize,"
+          },
+          {
+            "start": 816.32,
+            "end": 818.639,
+            "text": "is this campaign performing better than"
+          },
+          {
+            "start": 817.519,
+            "end": 819.92,
+            "text": "this one? Is this offer performing"
+          },
+          {
+            "start": 818.639,
+            "end": 822.8,
+            "text": "better than this one? Well, broadly,"
+          },
+          {
+            "start": 819.92,
+            "end": 824.959,
+            "text": "yes, that's correct. Within an ad set,"
+          },
+          {
+            "start": 822.8,
+            "end": 826.8,
+            "text": "be very careful turning off ads that"
+          },
+          {
+            "start": 824.959,
+            "end": 828.7199999999999,
+            "text": "have a lower return on ad spend. Here's"
+          },
+          {
+            "start": 826.8,
+            "end": 830.8,
+            "text": "what you should do instead. Turn off"
+          },
+          {
+            "start": 828.72,
+            "end": 832.48,
+            "text": "ads. that Meta is not spending any money"
+          },
+          {
+            "start": 830.8,
+            "end": 834.4799999999999,
+            "text": "on. That's their recommendation. If Meta"
+          },
+          {
+            "start": 832.48,
+            "end": 836.24,
+            "text": "is continuing to spend money on it, even"
+          },
+          {
+            "start": 834.48,
+            "end": 838.0790000000001,
+            "text": "if it has a worse return on ad spend"
+          },
+          {
+            "start": 836.24,
+            "end": 839.6800000000001,
+            "text": "than the other ads, leave it on because"
+          },
+          {
+            "start": 838.079,
+            "end": 841.519,
+            "text": "Meta is probably using that in a funnel"
+          },
+          {
+            "start": 839.68,
+            "end": 843.199,
+            "text": "structure. If Meta doesn't feel like"
+          },
+          {
+            "start": 841.519,
+            "end": 845.12,
+            "text": "that ad's producing great results or not"
+          },
+          {
+            "start": 843.199,
+            "end": 846.88,
+            "text": "contributing to the the customer"
+          },
+          {
+            "start": 845.12,
+            "end": 848.72,
+            "text": "journey, they'll stop spending money on"
+          },
+          {
+            "start": 846.88,
+            "end": 850.079,
+            "text": "it. When Meta stops spending money on an"
+          },
+          {
+            "start": 848.72,
+            "end": 852.399,
+            "text": "ad, that's when you want to turn it off"
+          },
+          {
+            "start": 850.079,
+            "end": 854.4799999999999,
+            "text": "and introduce new ads uh to try and"
+          },
+          {
+            "start": 852.399,
+            "end": 856,
+            "text": "improve performance, learn from the ones"
+          },
+          {
+            "start": 854.48,
+            "end": 857.9200000000001,
+            "text": "that you can see are doing well, looking"
+          },
+          {
+            "start": 856,
+            "end": 861.12,
+            "text": "at the data, and introduce those. So,"
+          },
+          {
+            "start": 857.92,
+            "end": 862.56,
+            "text": "it's quite a an interesting shift. It"
+          },
+          {
+            "start": 861.12,
+            "end": 863.92,
+            "text": "does make optimization a little bit more"
+          },
+          {
+            "start": 862.56,
+            "end": 865.5189999999999,
+            "text": "difficult than just looking at rowass"
+          },
+          {
+            "start": 863.92,
+            "end": 867.8389999999999,
+            "text": "and turning things off and and going"
+          },
+          {
+            "start": 865.519,
+            "end": 870.24,
+            "text": "about it that way. But it totally makes"
+          },
+          {
+            "start": 867.839,
+            "end": 872.639,
+            "text": "sense when you think about how smart"
+          },
+          {
+            "start": 870.24,
+            "end": 874.32,
+            "text": "Meta's optimization process is that they"
+          },
+          {
+            "start": 872.639,
+            "end": 875.6,
+            "text": "can now take people and go, \"Right,"
+          },
+          {
+            "start": 874.32,
+            "end": 878.1600000000001,
+            "text": "we'll show them this ad first and this"
+          },
+          {
+            "start": 875.6,
+            "end": 879.6,
+            "text": "one.\" And here's the extra crazy part"
+          },
+          {
+            "start": 878.16,
+            "end": 882,
+            "text": "and where we're going with this, and"
+          },
+          {
+            "start": 879.6,
+            "end": 882.9590000000001,
+            "text": "this will become even even more clear."
+          },
+          {
+            "start": 882,
+            "end": 884.72,
+            "text": "They're not going to do the same thing"
+          },
+          {
+            "start": 882.959,
+            "end": 886.079,
+            "text": "with everyone in your audience. Some"
+          },
+          {
+            "start": 884.72,
+            "end": 887.36,
+            "text": "people might have this ad, then this ad,"
+          },
+          {
+            "start": 886.079,
+            "end": 888.7199999999999,
+            "text": "then this ad, then this one that gets a"
+          },
+          {
+            "start": 887.36,
+            "end": 890.8000000000001,
+            "text": "conversion. Other people might be able"
+          },
+          {
+            "start": 888.72,
+            "end": 892.1600000000001,
+            "text": "to go straight to that ad and put that"
+          },
+          {
+            "start": 890.8,
+            "end": 894.079,
+            "text": "one that converts well in front of them"
+          },
+          {
+            "start": 892.16,
+            "end": 895.76,
+            "text": "and get them to convert. Meta's going to"
+          },
+          {
+            "start": 894.079,
+            "end": 897.3599999999999,
+            "text": "be able to work that out. That's why we"
+          },
+          {
+            "start": 895.76,
+            "end": 899.04,
+            "text": "want to give meta control over the"
+          },
+          {
+            "start": 897.36,
+            "end": 900.88,
+            "text": "optimization process and put that into"
+          },
+          {
+            "start": 899.04,
+            "end": 902.959,
+            "text": "the one ad set, maybe even within the"
+          },
+          {
+            "start": 900.88,
+            "end": 904.079,
+            "text": "one campaign as opposed to having things"
+          },
+          {
+            "start": 902.959,
+            "end": 905.199,
+            "text": "segmented out and being like, right,"
+          },
+          {
+            "start": 904.079,
+            "end": 906.959,
+            "text": "they'll see this ad and they'll see this"
+          },
+          {
+            "start": 905.199,
+            "end": 908.959,
+            "text": "ad, they'll see this ad. Because if you"
+          },
+          {
+            "start": 906.959,
+            "end": 910.4799999999999,
+            "text": "set things up manually that way, you're"
+          },
+          {
+            "start": 908.959,
+            "end": 912.6389999999999,
+            "text": "forcing everyone to go through the same"
+          },
+          {
+            "start": 910.48,
+            "end": 914.24,
+            "text": "process. And meta can work out. Some"
+          },
+          {
+            "start": 912.639,
+            "end": 916.399,
+            "text": "people need that, other people don't."
+          },
+          {
+            "start": 914.24,
+            "end": 917.6800000000001,
+            "text": "Much better to go directly for the sale."
+          },
+          {
+            "start": 916.399,
+            "end": 920.24,
+            "text": "If you then go through that process"
+          },
+          {
+            "start": 917.68,
+            "end": 921.519,
+            "text": "again and again, introduce new ads. Hm."
+          },
+          {
+            "start": 920.24,
+            "end": 922.48,
+            "text": "Okay, meta is spending on this one and"
+          },
+          {
+            "start": 921.519,
+            "end": 924.16,
+            "text": "this one, but not these other two,"
+          },
+          {
+            "start": 922.48,
+            "end": 925.76,
+            "text": "right? Turn those off. Okay, these ones"
+          },
+          {
+            "start": 924.16,
+            "end": 926.88,
+            "text": "are doing better. Right, this one's got"
+          },
+          {
+            "start": 925.76,
+            "end": 928.399,
+            "text": "a really good hook. Let's create some"
+          },
+          {
+            "start": 926.88,
+            "end": 929.8389999999999,
+            "text": "other ads with a similar hook. Or let's"
+          },
+          {
+            "start": 928.399,
+            "end": 931.6,
+            "text": "recreate that ad with different hooks."
+          },
+          {
+            "start": 929.839,
+            "end": 932.9590000000001,
+            "text": "Let's get that in there. And if you keep"
+          },
+          {
+            "start": 931.6,
+            "end": 934.48,
+            "text": "doing that again and again and again,"
+          },
+          {
+            "start": 932.959,
+            "end": 936.4799999999999,
+            "text": "you'd be amazed by the improvement in"
+          },
+          {
+            "start": 934.48,
+            "end": 937.6,
+            "text": "results. You can't often see it in the"
+          },
+          {
+            "start": 936.48,
+            "end": 939.6,
+            "text": "short run. It's a bit like going to the"
+          },
+          {
+            "start": 937.6,
+            "end": 941.279,
+            "text": "gym working out, right? No one ever"
+          },
+          {
+            "start": 939.6,
+            "end": 942.72,
+            "text": "noticed any muscle gain from one"
+          },
+          {
+            "start": 941.279,
+            "end": 945.6,
+            "text": "workout. you do it consistently over"
+          },
+          {
+            "start": 942.72,
+            "end": 947.279,
+            "text": "time and you can get to a significantly"
+          },
+          {
+            "start": 945.6,
+            "end": 948.9590000000001,
+            "text": "better place than you currently are."
+          },
+          {
+            "start": 947.279,
+            "end": 950.88,
+            "text": "Absolutely the same happens with your"
+          },
+          {
+            "start": 948.959,
+            "end": 953.1199999999999,
+            "text": "meta ads. And play number six, and this"
+          },
+          {
+            "start": 950.88,
+            "end": 955.199,
+            "text": "might be the most important, is to go"
+          },
+          {
+            "start": 953.12,
+            "end": 956.5600000000001,
+            "text": "beyond the buttons. So getting"
+          },
+          {
+            "start": 955.199,
+            "end": 958.24,
+            "text": "everything set up right within your"
+          },
+          {
+            "start": 956.56,
+            "end": 959.8389999999999,
+            "text": "Facebook ad account is of course"
+          },
+          {
+            "start": 958.24,
+            "end": 961.36,
+            "text": "important. And the settings and the"
+          },
+          {
+            "start": 959.839,
+            "end": 963.44,
+            "text": "things that you change, they make a"
+          },
+          {
+            "start": 961.36,
+            "end": 966.5600000000001,
+            "text": "difference to your results. But just"
+          },
+          {
+            "start": 963.44,
+            "end": 968.639,
+            "text": "doing that alone is not enough to get"
+          },
+          {
+            "start": 966.56,
+            "end": 971.3599999999999,
+            "text": "fantastic results. The businesses that"
+          },
+          {
+            "start": 968.639,
+            "end": 974.24,
+            "text": "produce exceptional results, they always"
+          },
+          {
+            "start": 971.36,
+            "end": 976.32,
+            "text": "have something else extra. They always"
+          },
+          {
+            "start": 974.24,
+            "end": 979.199,
+            "text": "have a competitive advantage that's not"
+          },
+          {
+            "start": 976.32,
+            "end": 981.12,
+            "text": "just within the ad account. They have a"
+          },
+          {
+            "start": 979.199,
+            "end": 982.56,
+            "text": "brand that is much stronger and more"
+          },
+          {
+            "start": 981.12,
+            "end": 984.48,
+            "text": "powerful than their competition. They"
+          },
+          {
+            "start": 982.56,
+            "end": 986.2399999999999,
+            "text": "have a superior product, a superior"
+          },
+          {
+            "start": 984.48,
+            "end": 987.9200000000001,
+            "text": "offer. Many different ways that you can"
+          },
+          {
+            "start": 986.24,
+            "end": 990.5600000000001,
+            "text": "go about doing that, but just know that"
+          },
+          {
+            "start": 987.92,
+            "end": 992.4799999999999,
+            "text": "if you want incredible results, you have"
+          },
+          {
+            "start": 990.56,
+            "end": 994.16,
+            "text": "to have something that goes beyond the"
+          },
+          {
+            "start": 992.48,
+            "end": 996.5600000000001,
+            "text": "buttons. Our ads, for example, they"
+          },
+          {
+            "start": 994.16,
+            "end": 998.24,
+            "text": "produce a silly high return on ad spend."
+          },
+          {
+            "start": 996.56,
+            "end": 999.3599999999999,
+            "text": "And that's because I have a personal"
+          },
+          {
+            "start": 998.24,
+            "end": 1001.44,
+            "text": "brand. I have more than a million"
+          },
+          {
+            "start": 999.36,
+            "end": 1004.24,
+            "text": "followers. I've got 25 plus million"
+          },
+          {
+            "start": 1001.44,
+            "end": 1007.36,
+            "text": "views on YouTube. So there's probably"
+          },
+          {
+            "start": 1004.24,
+            "end": 1008.88,
+            "text": "what three, four, maybe 5 million meta"
+          },
+          {
+            "start": 1007.36,
+            "end": 1011.279,
+            "text": "advertisers that might at least"
+          },
+          {
+            "start": 1008.88,
+            "end": 1012.88,
+            "text": "recognize my face a little bit. So when"
+          },
+          {
+            "start": 1011.279,
+            "end": 1014.24,
+            "text": "we put ads out into the world and that"
+          },
+          {
+            "start": 1012.88,
+            "end": 1015.519,
+            "text": "that recognition is there, of course,"
+          },
+          {
+            "start": 1014.24,
+            "end": 1017.199,
+            "text": "some will recognize me much more than"
+          },
+          {
+            "start": 1015.519,
+            "end": 1018.88,
+            "text": "others. They are far more likely to pay"
+          },
+          {
+            "start": 1017.199,
+            "end": 1020.24,
+            "text": "attention to the ad, far more likely to"
+          },
+          {
+            "start": 1018.88,
+            "end": 1021.279,
+            "text": "click, far more likely to go, \"Oh, we'll"
+          },
+          {
+            "start": 1020.24,
+            "end": 1022.399,
+            "text": "work with them. I've checked out his"
+          },
+          {
+            "start": 1021.279,
+            "end": 1023.4399999999999,
+            "text": "content. I know what he knows what he's"
+          },
+          {
+            "start": 1022.399,
+            "end": 1024.559,
+            "text": "talking about. I know they're good."
+          },
+          {
+            "start": 1023.44,
+            "end": 1026.16,
+            "text": "Yeah, I'm going to join the mentorship"
+          },
+          {
+            "start": 1024.559,
+            "end": 1027.36,
+            "text": "program, etc., etc.\" Right? It doesn't"
+          },
+          {
+            "start": 1026.16,
+            "end": 1028.72,
+            "text": "have to be a personal brand. There are"
+          },
+          {
+            "start": 1027.36,
+            "end": 1031.6789999999999,
+            "text": "other ways to do it, but you have to"
+          },
+          {
+            "start": 1028.72,
+            "end": 1033.199,
+            "text": "find a way to have something better than"
+          },
+          {
+            "start": 1031.679,
+            "end": 1034.64,
+            "text": "your competition, not just get"
+          },
+          {
+            "start": 1033.199,
+            "end": 1036.319,
+            "text": "everything right within your ad account."
+          },
+          {
+            "start": 1034.64,
+            "end": 1037.679,
+            "text": "And if you want a more advanced tactic"
+          },
+          {
+            "start": 1036.319,
+            "end": 1039.4389999999999,
+            "text": "that I didn't cover here, then you"
+          },
+          {
+            "start": 1037.679,
+            "end": 1041.76,
+            "text": "should check out my video on value"
+          },
+          {
+            "start": 1039.439,
+            "end": 1043.919,
+            "text": "rules. Value rules allow you to target"
+          },
+          {
+            "start": 1041.76,
+            "end": 1045.039,
+            "text": "exactly who you want, not in the way"
+          },
+          {
+            "start": 1043.919,
+            "end": 1047.199,
+            "text": "that you're thinking. Very different"
+          },
+          {
+            "start": 1045.039,
+            "end": 1048.48,
+            "text": "from traditional meta ads targeting. A"
+          },
+          {
+            "start": 1047.199,
+            "end": 1050.4,
+            "text": "very clever new feature. We're"
+          },
+          {
+            "start": 1048.48,
+            "end": 1051.679,
+            "text": "experimenting with it a lot right now."
+          },
+          {
+            "start": 1050.4,
+            "end": 1052.88,
+            "text": "Really excited about it. If you don't"
+          },
+          {
+            "start": 1051.679,
+            "end": 1055.919,
+            "text": "know how it works, you haven't had a"
+          },
+          {
+            "start": 1052.88,
+            "end": 1055.919,
+            "text": "play, definitely check this"
+          }
+        ],
+        "model": "yt-transcript-api:en:auto"
+      },
+      "frames": []
+    },
+    {
+      "event": "done",
+      "posts": 1
+    }
+  ],
+  "outputs": {
+    "posts_ingested": 1,
+    "warnings": 0,
+    "errors": 0
+  }
+}

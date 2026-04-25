@@ -129,6 +129,21 @@
   ],
   "standalone": [
     {
+      "name": "meta-marketing",
+      "file": "meta-marketing/SKILL.md",
+      "description": "Load when planning, launching, or optimizing Meta (Facebook/Instagram) ad campaigns for Tilki Öğretmen. Covers campaign structure, audience, creative strategy, post-launch optimization, and common failure modes.",
+      "tags": ["meta", "facebook", "instagram", "ads", "marketing", "ROAS", "creative", "campaign", "adset", "CAPI", "pixel"],
+      "alwaysApply": false,
+      "references": [
+        "account-ops.md",
+        "copy-formulas.md",
+        "creative-frameworks.md",
+        "mistakes.md",
+        "platform-state.md"
+      ],
+      "corpus_status": "9 videos · 4 speakers · draft · agent roster stubbed (not yet generated)"
+    },
+    {
       "name": "system-prompts",
       "file": "system-prompts/SKILL.md",
       "description": "Load when writing/reviewing system prompts, configuring AI agents, designing instruction hierarchies, optimizing for Claude/GPT/Gemini/DeepSeek, prompt injection defense, multi-stage agent flows (ReAct, AlphaCodium, LATS), or context engineering",

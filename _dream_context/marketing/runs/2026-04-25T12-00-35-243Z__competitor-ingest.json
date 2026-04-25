@@ -1,0 +1,3808 @@
+{
+  "id": "2026-04-25T12-00-35-243Z__competitor-ingest",
+  "verb": "competitor-ingest",
+  "started_at": "2026-04-25T12:00:35.244Z",
+  "completed_at": "2026-04-25T12:00:36.756Z",
+  "status": "success",
+  "inputs": {
+    "target": "https://www.youtube.com/watch?v=13s-G9Uj51A",
+    "model": "medium",
+    "max": 0,
+    "skip_transcripts": false,
+    "skip_frames": false
+  },
+  "events": [
+    {
+      "event": "start",
+      "kind": "single_yt",
+      "input": "https://www.youtube.com/watch?v=13s-G9Uj51A"
+    },
+    {
+      "event": "post",
+      "handle": "_youtube",
+      "shortcode": "13s-G9Uj51A",
+      "url": "https://www.youtube.com/watch?v=13s-G9Uj51A",
+      "caption": null,
+      "duration_seconds": 1409.52,
+      "video_path": null,
+      "thumbnail_url": null,
+      "transcript": {
+        "text": "Facebook ads have changed so much over the past 6 to 12 months that have completely changed my recommended Facebook ad campaign structure. Right now, there's a very good chance that you are using an old campaign structure and that it's hurting your results. So, in this video, I'm going to show you my new and updated campaign structure for Facebook ads and Instagram ads. So, one of the biggest changes when we're looking at my new recommended campaign structure in comparison to what we used to recommend is that we now rarely separate out cold and warm audiences. Warm audiences being people that have interacted with your business before. could be website visitors, people on your email list, people who have watched a video of yours on Facebook or Instagram, lots of different types of of warm audiences. And we used to separate those out and we would uh be very specific with the messaging and the budget that we'd allocate to each. And we'd see, okay, we're getting this return on ad spend from our warm audiences versus this return on ad spend from our cold audiences. We rarely do that anymore because of the way that Meta's targeting systems have changed. Um, so just quickly demonstrate what I'm talking about, I'm in an example ad account here. I've created a quick example sales campaign. And if we just jump to the adset level of this, uh, click edit and then go down to the targeting section, we've got controls and we've got suggest an audience being the two main parts of of targeting now. And in the suggestion audience section, if we go ahead and click show settings, we can see custom audiences in here. If I click on this, custom audiences are your warm audiences. Those are the audiences that contain people that have interacted with your business before. So in custom audiences is where you set up things like website, email list, people who follow you on Instagram, etc., etc., Right now, if for example within this ads sets we say I want to target my website visitors. You can come in here and I can it's an example ad account. So I've got all these set up websites visitors 180. Right? You might think okay this adset is now only going to advertise to people that are within that audience that have visited my website in this case within the last 180 days. That is not true. This is within the suggest an audience section. So meta will reach people within this audience. They'll put ads in front of people, but they will also go beyond that to reach other people that Meta believes are going to, in this case, generate a sale because that's what this campaign is set up for. Basically, Meta is going to go beyond your targeting criteria um so that they can help you achieve the objective you've told Meta that you want. Now, because the the custom audience, the warm audience part is within this suggested audience section, if we tried to have say a warm audience adset and a cold audience ads set or a warm audience campaign and a cold audience campaign, there's going to be an enormous amount of overlap because within the cold audience, Meta is going to target your warm audience anyway. Within the warm audience, Meta is going to target your cold audience anyway. Um, so it seems silly to have the two separate options when we're effectively targeting the same people when we could just consolidate that and benefit from it. I'll talk more about consolidation later on. And you can run experiments to see just how strong the impact of this change is in comparison to what we used to see. What you want to do is you want to go into your advertising settings which I've done here just got up on on another tab. If you just go ahead all tools you'll see advertising settings or you can get it from all tools and then once you come in here you go into audience segments and then what you want to do is make sure that you've got your engaged audience and your existing customers defined. to basically create those custom audiences and then say this is engaged audience, this is existing customers. And you do that within here. And you can see we've got a drop down. You can add in your your custom audiences to uh to both of these. And that basically lets Meta know okay these are people that are customers. These are people that are engaged audience that haven't yet uh made a purchase, haven't become become a customer. And then when you run your ad campaigns, you can see the breakdown of new audience, engaged audience and existing customers of where Meta is spending the money, your budget split, your frequency, etc., etc. Right? In fact, let me quickly show you what this looks like. Right? So, if we look at this ad set here, we can see the breakdown um in results. In this case, website purchase. Of the 93, we can see that nine came from engaged audience, 59 from existing customers. So, this is retargeting heavy. uh 20 from new audience and then we've got a few uncatategorized and unknown but that's not surprising because uh data is you rarely able to track with 100% accuracy. Um and what you will see that's that's really interesting and you run this experiment is that if you set up an adset to target warm audiences so you add in your custom audiences website visitors email list etc etc and then you run that alongside another adset that is set up to target cold audiences. If you look at the data between those two adsets, the split between the conversions and the impressions that come from engaged, existing, and new is often very consistent. As in, with the one adset that's set up for cold audiences, you get the same split as with the other adset set up for warm audiences. In other words, Meta's kind of not paying much attention to the fact that you are trying to advertise cold audience in this adset and warm audience in adset. They're just trying to go out and get you results. They're using your inputs and suggestions and doing their own thing. And that makes it silly to have separate adsets or separate campaigns for cold and warm audiences where Meta is going to target a mixture of the two anyway. Right? So, that's one of the big changes that we're now making is that there are still some rare circumstances where we will separate them out if we really want to change the messaging between different stages of a salesunnel, for example. But that's rare. By default, we're absolutely going to combine both cold and warm audiences into the same campaign and the same adset. So, the next thing we're trying to do with the new campaign structure is consolidate as much as possible. And that applies to both campaigns and adsets. We're going to try and run as few campaigns and as few adsets as possible. Often just using the one campaign and the one adset. I'll explain later on when we do and don't want to uh to do that. Why are we doing that? Well, it's best to combine the data into as few elements as possible. Let's say you generate 70 conversions in a week. Instead of having that spread across 10 different adsets, so seven conversions roughly per adset per week, Meta is going to struggle to optimize those adsets. Going to struggle to get out of the learning phase. Whereas, if that's in one adset, you're generating 70 conversions per week in that one adset. Meta is able to fully optimize. They're able to work out the best time of day to advertise, what ad impression frequency is required, advertise to this person instead of this person, use this ad instead of this ad. all the various points that Meta's system optimizes to get us more of what we want, more sales, more leads, whatever it is we've set up our campaign to optimize for, Meta can do that better with more conversion data. So much better to have that consolidated data into the one campaign, one adset as opposed to spread across lots of different elements that will struggle uh to optimize. Second reason why we want to consolidate is because we want to avoid auction overlap. Now, there's some misconceptions around overlap. A lot of people think I'm talking about audience overlap. When I say auction overlap, I'm not audience overlap would be you've got two different campaigns, two different adsets, and they're targeting a lot of the same audience. Now, that's not ideal, but the whole idea of that's going to increase the cost because you're bidding against yourself is a bit silly. There are thousands of advertisers trying to reach the same people. One extra campaign ad setting that not going to make much difference. But you can run into issues with auction overlap, which is a different thing. Meta systems are now very sophisticated at working out what ad impression frequency is required to get the outcome that you want. So Meta might work out, you know what, we're better off at generating four or five ad impressions for a single individual over a 24 48 hour time period as opposed to spreading out those ad impressions over a week. Well, Meta could plan that really well if it's just got the one campaign, one adset targeting a person, a group of people obviously, but we're talking about one individual user in this case, but targeting um a group of people. If you've got some ad impressions coming from one adset, some ad impressions coming from another adset or different campaigns, much more difficult for Meta to work out that delivery system of right, let's put an ad in front of this person four times over the next 48 hours. Much more difficult for them to be able to uh to do that. So, that's that's the issue that comes up with auction overlap. and you want to take advantage of what Meta's delivery system um is able to do. Okay. So, the next thing we've changed is that we very rarely now test different audiences at the adset or even the campaign level. And that has a lot to do with what we described previously when we're talking about separating out cold and warm audiences. For the same reason that we don't separate those out, meta is kind of going to ignore a lot of your suggestions. They're going to do their own thing when it comes to targeting anyway. is why we won't test different interest targeting options in different adsets or interest targeting versus lookalike versus open targeting. We used to do a lot of that sort of stuff. We don't do that anymore because all of that falls within the suggested audience section unless it's going to do its own thing. There is an exception and that's location-based targeting. We will often test different locations. Now, this would going to depend on the business. Um, so it might be that a business just advertises in one country, that's who they can serve and we're happy just to advertise to the entire country. We're not going to bother testing that. But if we have a business that's international and they want to be able to test between different markets, okay, we want to see how our campaigns perform in the US versus the UK versus Australia, etc., we'll have different campaigns for those. Or if it's a lo local b locally based business that has multiple locations. So, if it's a gym franchise, for example, you might want to test, right, we're going to advertise in this city versus this city versus this city for that that individual unit uh in the local area, people might be interested, and we're going to separate out performance. Now, it's not a coincidence, if I jump back into my example ad account, jump to the adset level, go back into targeting. It's not a coincidence that we will test different um targeting options when it comes to a location basis across different adsets, maybe different campaigns and the location targeting falls within the control section. Like that is not a coincidence. Basically, we are able to do that testing accurately on a location basis whereas we aren't with say different interests or interests versus lookalikes and stuff like that because the control section within targeting here those are hard boundaries. So, we're saying, look, in this adset, just advertise to this local area. In this adset, just advertise to this local area or doing so on a country level or a state level. Um, Meta is going to, for the most part, only advertise to people within that that location. They're not going to treat that as a suggestion and go beyond it where they think it'll help you get um your desired outcome. So, we will do it for location, very rarely for this other stuff, even though we used to do a lot of that. Another reason why we're able to consolidate and use fewer campaigns, fewer adsets, is because Meta can now handle a lot more ads within an adset. So, they used to have a recommendation of don't have five or six ads live in an adset at any one time. Uh the system was less sophisticated before and it would struggle to be able to test those properly and put them in front of people and work out how to do it. It was basically too many variables for the system. That has now changed with Andromeda. with some other updates. Meta is able to handle a lot more ad creative and different ads within um an adset. So the recommendation typically is 20 plus and we will often run adsets with 20 plus. So very different to how we used to have we used to have lots of different campaigns, lots of different adsets and limited number of ads within each adset. Now much fewer campaigns, much fewer adsets, often one campaign, one adset, but then a ton of ads within um that one adset set. In fact, Meta not only says they can handle that, but it's recommended because Meta now wants much more creative diversity. So, they want different ads within an ad set, they have different types of creative, different formats. You have a mixture of images and video, different video styles. You might have some UGC, you might have um some founder, some demonstration videos, some customer testimonial videos. And Meta is going to they want that so that they can test to see which works best. But they also are now able to personalize ad delivery a lot more. say we're to work out, you know, for this person, they seem to really respond to UGC style ads, so we're going to put more of those in front of them. This person seems to respond to product demonstration style ads. We're going to put the more of those in front of them. If they have the different ads and the different types of creative within the one ad set, Meta can start to do a better job of personalizing ad delivery and working out that it's not a one-sizefits-all. There are different people within your target audience and different people respond um to different um creative. So that's one of the big big shifts that have come from the change in the platform, the updated campaign structure is a lot more ads within an adset. I don't worry about an upper limit anymore. The constraining factor is usually how many good quality ads can be created. What are the resources available? And we will run those and look to introduce new ones over time as we test and learn from the data that we see. Within the new campaign structure, we've also changed how we test different ad copy variations. So, we used to have separate ads for different headlines would be one of the things that we test or different primary text. We're not going to have separate ads for those anymore. Instead, we're going to take advantage of the variation option. So, if I jump into the ad level and then scroll down to where we set up our ad copy, we can see that if we click into primary text, you can see we have one of five. So we can have up to five different primary text variations within this one ad. We can do the same for headlines. Click in there, you see one of five. And do the same for descriptions. So really, you want to think of separate ads as testing different ad creative or maybe not even just testing, but being able to have that different creative diversity. So have different types of ads like I just described. Uh when it comes to testing, I wonder which headline works best for this offer or this ad. You want to do that within the ad, not have separate ads for that. um and do so using these primary text headline description variations. This is a much cleaner, neater way to do your ad copy testing, which is still something that you want to do. Um as opposed to needing to have an enormous amount of ads cuz if you've got all this different ad creative and then let's say for each ad creative you needed three or four different ads to test different headline variations, you very quickly get into just silly numbers of ads and too difficult for you as the advertiser to be able to to monitor that and keep up with it. much better to do it within these text variations and have that copy testing done within an ad unit as opposed to separate ads. Hyro is the best tracking and attribution software for meta ads. It's a software all the big players in this industry use, including myself. I use it to track results for my own ads as well as all my organic results as well. So, if someone books a call for our done for you services, for example, I can see exactly where that person came from with a lot of accuracy. That allows me to make better decisions for my marketing and my business. Hyro has been able to track that from our ad spend in this campaign, we've generated £96,000, but £58,000 of that was not reported by Meta. So if I was just looking at my data within my meta ad account, I might come to the conclusion that this campaign is doing okay, but in reality, this campaign is doing a lot lot better. Now, this is a relatively extreme example because of the nature of our business. So most of our products, services have recurring billing elements. Meta might be able to see what we make initially from our ad spend on that initial transaction, but not those subsequent payments. That's why it it shows the importance here of being able to accurately see what we actually get from our ad spend in order to be able to make better decisions and optimize correctly. So, if you want to improve the performance of your ad campaigns without having to touch your ads, go ahead and sign up to Hyros. There is a link in the video description. One of the things we used to do with our old Facebook ad campaign structure, and I still see this come up when I take a look at at people's ad accounts often is to have uh different campaigns for different stages of the salesunnel. So, you might have had a top offunnel campaign, a middle ofunnel campaign, and a bottom of campaign. And different stages would have different ads. So, in the top of funnel, you might have uh like a founder story video that explains why the company was great in the first place. Middle of funnel might be more product demonstration. And then the bottom funnel might be a customer testimonial trying to get you to convert and people would go through the sequence. Now, we don't do that because of what we've already described in terms of meta targeting and a lot of it being suggestions and they're kind of going to show different ads to different people anyway. So, it's not as easy to neatly move people um through the system anymore. But that doesn't mean that we've completely thrown away the top of funnel, middle of funnel, bottom of funnel ideas because the logic is still there from a marketing standpoint of often you need to introduce people to an idea, but they won't be ready to convert straight away. You then need to warm them up with evidence of why it's great, why they should buy it, and then they have the extra call to action based ads and the and the customer testimonials and things that are going to really help them take action now, right? That still applies because that's something that warms up people. If you think about your relationship with another person, you start off not knowing them very well and it takes time and many interactions to get to the point where they become a really good friend or something for example. Okay. So we can still do that but we can actually do that within the one campaign and one ad set now. So we will create ads. I just mentioned we might have 20 plus ads in an ad set. We will create some ads thinking these are more likely to be top ofunnel ads. We will create some that more like to be middle of funnel and then some that are going to be bottom of funnel. So just like I talked about, you're kind of two birds, one stone situation here, right? You're adding a lot of creative diversity by doing this, but you're also allowing for that journey to take place because you could have those ads that are founderled, storybased, why we created the company in the first place. You could have those ads that are product demonstration. You could have those ads that are uh customer testimonial. Now there's variations on those depending on your business. Like I've used a product ecom example there, but you can absolutely find examples of that um for info or lead genen. There there are variations on a theme and meta is now sophisticated enough to work that out. So they will add sequence for you automatically. They will use some ads initially put in front of people first off then other ads in more of a retargeting capacity. And the way you can see if this is happening within your ad account because it happens in some ad accounts more than others. The ad accounts where this happens more are ones where the ask is larger. So if you're selling something that has a higher price point or you're selling a service that's more involved, people need more steps to get to the point where they're willing to inquire, buy, etc. If you're selling an inexpensive e-commerce product, it's going to be much more just directly buy it if you're interested. If not, fine. But what you'll often see in those businesses that that see this automatic ad sequencing taking place within the one ad set is that some ads will consistently have money spent on them, but they don't have many conversions. Looks like their cost per lead or cost per sale isn't very good. And you think, why is Meta doing this? It's because they're using that in a top offunnel capacity and then using other ads to retarget and get the conversion because you might have money being spent on that one. You look at the other ads, you're thinking, but this other ad is performing really well on a return on ad spend basis, cost per lead basis, etc. But why is it matter spending more money on that? Now, you don't want to make the mistake of turning off the ad that is being used in a topunnel capacity because then your other ad performance will massively worsen because it isn't benefiting from that other ad being used in a topunnel capacity. So, we still use that process, but instead of doing it in different campaigns, different adsets, we're going to consolidate that into one adset. And Meta is smart enough to sequence those ads and uh and work it out. So, I've talked a lot about consolidating less. When do we actually have separate campaigns, separate adsets? I've talked about the location example. Here's another example. By default, I like to use one campaign per product or service range. So, we're not going to have a different campaign for red hats versus blue hats. We are going to have a different campaign for hats versus shoes because those campaigns we want to optimize differently. We want meta to treat them as as we might need to target slightly different people. We might need to advertise them in a different way. People might need more convincing to buy shoes than a hat. So, we need more ad impression. We want them to learn under different conditions and then and then optimize um accordingly. An exception to that would be a general dynamic catalog campaign. Um where if you run those typically with a relatively small budget, then Meta is going to spend the majority or all of that budget on retargeting depending on the size of your of your warm audiences. And I'm perfectly happy to that span your product and service ranges and just you know this is more like to be used in a product capacity as opposed to service based businesses. But you know put the thing that someone's most like to be interested or has just had a look at in front of them even if we are crossing between shoes and hats and belts and whatever it is that you know you might be selling in this example. So happy for that to be businesswide but otherwise we're going to to be more specific and have different product ranges. So not variations but different product ranges or different services. um in different campaigns that we're going to separate out that way. It also gives you a lot of nice control as an advertiser to be like, \"All right, we're out of stock on this. Turn this off.\" Or, \"We're at capacity for this service. Turn this off.\" So, if we look at our business, for example, we offer both done for you meta ad services. We create manage optimizer campaigns for you. And we have done with you program, which my mentorship program, where you still manage your own ads, but we coach and very hands-on in terms of making recommendations. You can ask us questions and all that sort of stuff. So, those are separate offers. We would have those in separate campaigns. We want them to optimize differently. The target market is typically a bit different. Uh the the big spenders are typically going to be on the done for you services, the larger businesses. Others are going to be with the with the mentorship program. So we want Meta to optimize accordingly. And then also like I said, we have flexibility in terms of capacity. So we could oh we're absolutely capacity. We're done for you. Let's turn that off for a little while. Um and we'll start that up again once we uh once we're ready. By the way, if you're interested in either of those, want us to run your ad campaigns for you or want us to teach you how to run better ad campaigns, get better results, um, links in the description for both. There are also times where you might need a different campaign structure to what I've recommended. So, the things I've been through here and what I've recommended would be the default. That's going to apply to most businesses, but there are times where you might want to do something differently. For example, my omnipresent content campaign strategy requires a very different structure. You can't have the one adset. You need multiple adsets. So, if you're not familiar with that, I've got videos on my channel in case you want to check it out. It's typically a strategy that works really well for businesses with a very um involved purchasing decision for your customer. So, think high ticket service, for example. Something that people really going to have to think about, need a lot of convincing. You need a different campaign structure. If you're selling a $10,000, $20,000 service, for example, right? So, in that instance, you're going to want to go away from this default. When you go away from this default that I've uh talked about in this video, meta is also going to pop up with lots of warnings. It's fine to ignore those, but just do it very intentionally. Know why you're doing it as opposed to just I'm going to do this because I heard 3 years ago this is how you're supposed to do it or such and such said this would work and know why you're doing it. Follow a specific strategy like omniresent content and understand the process and therefore you're fine to ignore warnings. Remember that warnings that pop up in your ad account saying change this to improve performance. they are done with like the masses in mind and what's best on average and they're right. It might not be right for your um specific scenario. Testing is the other big example where we might deviate from this. So a lot of ad accounts run into the issue when they just have the one campaign, one ad set where they really struggle to test new ad creative. So they find that okay, I've got my ads in there, meta spending on one or two ads. I try and introduce new ads. I've been told I need creative diversity. I'm spending all this time producing new ads. I put them in there and just nothing happens. Met doesn't spend any money on them. They just spend money on my previous best performers, but those are slowly fatiguing and performance is dropping. What do I do? That's where we will entertain a different campaign structure. In fact, I go through how I'd recommend you test and the various options to overcome that problem, allow you to test new ad creative, which is super super important in this video here. So, I'd strongly recommend checking that out next. Often we will still use this campaign structure and test within it, but there are scenarios where we will deviate from that. Anyway, I cover it all in this video.",
+        "language": "en",
+        "segments": [
+          {
+            "start": 0.08,
+            "end": 3.04,
+            "text": "Facebook ads have changed so much over"
+          },
+          {
+            "start": 1.52,
+            "end": 4.720000000000001,
+            "text": "the past 6 to 12 months that have"
+          },
+          {
+            "start": 3.04,
+            "end": 6.5600000000000005,
+            "text": "completely changed my recommended"
+          },
+          {
+            "start": 4.72,
+            "end": 7.919,
+            "text": "Facebook ad campaign structure. Right"
+          },
+          {
+            "start": 6.56,
+            "end": 9.92,
+            "text": "now, there's a very good chance that you"
+          },
+          {
+            "start": 7.919,
+            "end": 11.44,
+            "text": "are using an old campaign structure and"
+          },
+          {
+            "start": 9.92,
+            "end": 12.719,
+            "text": "that it's hurting your results. So, in"
+          },
+          {
+            "start": 11.44,
+            "end": 14.32,
+            "text": "this video, I'm going to show you my new"
+          },
+          {
+            "start": 12.719,
+            "end": 16.48,
+            "text": "and updated campaign structure for"
+          },
+          {
+            "start": 14.32,
+            "end": 17.68,
+            "text": "Facebook ads and Instagram ads. So, one"
+          },
+          {
+            "start": 16.48,
+            "end": 19.359,
+            "text": "of the biggest changes when we're"
+          },
+          {
+            "start": 17.68,
+            "end": 20.8,
+            "text": "looking at my new recommended campaign"
+          },
+          {
+            "start": 19.359,
+            "end": 23.359,
+            "text": "structure in comparison to what we used"
+          },
+          {
+            "start": 20.8,
+            "end": 25.92,
+            "text": "to recommend is that we now rarely"
+          },
+          {
+            "start": 23.359,
+            "end": 27.119,
+            "text": "separate out cold and warm audiences."
+          },
+          {
+            "start": 25.92,
+            "end": 28.560000000000002,
+            "text": "Warm audiences being people that have"
+          },
+          {
+            "start": 27.119,
+            "end": 29.92,
+            "text": "interacted with your business before."
+          },
+          {
+            "start": 28.56,
+            "end": 31.038999999999998,
+            "text": "could be website visitors, people on"
+          },
+          {
+            "start": 29.92,
+            "end": 32.64,
+            "text": "your email list, people who have watched"
+          },
+          {
+            "start": 31.039,
+            "end": 34.160000000000004,
+            "text": "a video of yours on Facebook or"
+          },
+          {
+            "start": 32.64,
+            "end": 36.32,
+            "text": "Instagram, lots of different types of of"
+          },
+          {
+            "start": 34.16,
+            "end": 38,
+            "text": "warm audiences. And we used to separate"
+          },
+          {
+            "start": 36.32,
+            "end": 39.68,
+            "text": "those out and we would uh be very"
+          },
+          {
+            "start": 38,
+            "end": 41.12,
+            "text": "specific with the messaging and the"
+          },
+          {
+            "start": 39.68,
+            "end": 42.559,
+            "text": "budget that we'd allocate to each. And"
+          },
+          {
+            "start": 41.12,
+            "end": 44.32,
+            "text": "we'd see, okay, we're getting this"
+          },
+          {
+            "start": 42.559,
+            "end": 45.839999999999996,
+            "text": "return on ad spend from our warm"
+          },
+          {
+            "start": 44.32,
+            "end": 47.6,
+            "text": "audiences versus this return on ad spend"
+          },
+          {
+            "start": 45.84,
+            "end": 49.6,
+            "text": "from our cold audiences. We rarely do"
+          },
+          {
+            "start": 47.6,
+            "end": 52.079,
+            "text": "that anymore because of the way that"
+          },
+          {
+            "start": 49.6,
+            "end": 53.760000000000005,
+            "text": "Meta's targeting systems have changed."
+          },
+          {
+            "start": 52.079,
+            "end": 55.28,
+            "text": "Um, so just quickly demonstrate what I'm"
+          },
+          {
+            "start": 53.76,
+            "end": 56.8,
+            "text": "talking about, I'm in an example ad"
+          },
+          {
+            "start": 55.28,
+            "end": 58.160000000000004,
+            "text": "account here. I've created a quick"
+          },
+          {
+            "start": 56.8,
+            "end": 60.64,
+            "text": "example sales campaign. And if we just"
+          },
+          {
+            "start": 58.16,
+            "end": 63.199,
+            "text": "jump to the adset level of this, uh,"
+          },
+          {
+            "start": 60.64,
+            "end": 65.36,
+            "text": "click edit and then go down to the"
+          },
+          {
+            "start": 63.199,
+            "end": 66.96,
+            "text": "targeting section, we've got controls"
+          },
+          {
+            "start": 65.36,
+            "end": 69.76,
+            "text": "and we've got suggest an audience being"
+          },
+          {
+            "start": 66.96,
+            "end": 71.91999999999999,
+            "text": "the two main parts of of targeting now."
+          },
+          {
+            "start": 69.76,
+            "end": 73.68,
+            "text": "And in the suggestion audience section,"
+          },
+          {
+            "start": 71.92,
+            "end": 75.68,
+            "text": "if we go ahead and click show settings,"
+          },
+          {
+            "start": 73.68,
+            "end": 77.68,
+            "text": "we can see custom audiences in here. If"
+          },
+          {
+            "start": 75.68,
+            "end": 79.119,
+            "text": "I click on this, custom audiences are"
+          },
+          {
+            "start": 77.68,
+            "end": 80.88000000000001,
+            "text": "your warm audiences. Those are the"
+          },
+          {
+            "start": 79.119,
+            "end": 81.92,
+            "text": "audiences that contain people that have"
+          },
+          {
+            "start": 80.88,
+            "end": 83.439,
+            "text": "interacted with your business before. So"
+          },
+          {
+            "start": 81.92,
+            "end": 85.68,
+            "text": "in custom audiences is where you set up"
+          },
+          {
+            "start": 83.439,
+            "end": 87.19999999999999,
+            "text": "things like website, email list, people"
+          },
+          {
+            "start": 85.68,
+            "end": 89.84,
+            "text": "who follow you on Instagram, etc., etc.,"
+          },
+          {
+            "start": 87.2,
+            "end": 91.68,
+            "text": "Right now, if for example within this"
+          },
+          {
+            "start": 89.84,
+            "end": 93.60000000000001,
+            "text": "ads sets we say I want to target my"
+          },
+          {
+            "start": 91.68,
+            "end": 95.759,
+            "text": "website visitors. You can come in here"
+          },
+          {
+            "start": 93.6,
+            "end": 97.28,
+            "text": "and I can it's an example ad account. So"
+          },
+          {
+            "start": 95.759,
+            "end": 99.6,
+            "text": "I've got all these set up websites"
+          },
+          {
+            "start": 97.28,
+            "end": 101.759,
+            "text": "visitors 180. Right? You might think"
+          },
+          {
+            "start": 99.6,
+            "end": 104.32,
+            "text": "okay this adset is now only going to"
+          },
+          {
+            "start": 101.759,
+            "end": 106.24,
+            "text": "advertise to people that are within that"
+          },
+          {
+            "start": 104.32,
+            "end": 108.55999999999999,
+            "text": "audience that have visited my website in"
+          },
+          {
+            "start": 106.24,
+            "end": 112.079,
+            "text": "this case within the last 180 days. That"
+          },
+          {
+            "start": 108.56,
+            "end": 115.68,
+            "text": "is not true. This is within the suggest"
+          },
+          {
+            "start": 112.079,
+            "end": 117.119,
+            "text": "an audience section. So meta will reach"
+          },
+          {
+            "start": 115.68,
+            "end": 118.71900000000001,
+            "text": "people within this audience. They'll put"
+          },
+          {
+            "start": 117.119,
+            "end": 121.68,
+            "text": "ads in front of people, but they will"
+          },
+          {
+            "start": 118.719,
+            "end": 123.6,
+            "text": "also go beyond that to reach other"
+          },
+          {
+            "start": 121.68,
+            "end": 125.2,
+            "text": "people that Meta believes are going to,"
+          },
+          {
+            "start": 123.6,
+            "end": 126.399,
+            "text": "in this case, generate a sale because"
+          },
+          {
+            "start": 125.2,
+            "end": 127.84,
+            "text": "that's what this campaign is set up for."
+          },
+          {
+            "start": 126.399,
+            "end": 131.039,
+            "text": "Basically, Meta is going to go beyond"
+          },
+          {
+            "start": 127.84,
+            "end": 132.48,
+            "text": "your targeting criteria um so that they"
+          },
+          {
+            "start": 131.039,
+            "end": 134.79999999999998,
+            "text": "can help you achieve the objective"
+          },
+          {
+            "start": 132.48,
+            "end": 136.39999999999998,
+            "text": "you've told Meta that you want. Now,"
+          },
+          {
+            "start": 134.8,
+            "end": 138.4,
+            "text": "because the the custom audience, the"
+          },
+          {
+            "start": 136.4,
+            "end": 140.48000000000002,
+            "text": "warm audience part is within this"
+          },
+          {
+            "start": 138.4,
+            "end": 142.31900000000002,
+            "text": "suggested audience section, if we tried"
+          },
+          {
+            "start": 140.48,
+            "end": 144,
+            "text": "to have say a warm audience adset and a"
+          },
+          {
+            "start": 142.319,
+            "end": 146,
+            "text": "cold audience ads set or a warm audience"
+          },
+          {
+            "start": 144,
+            "end": 147.2,
+            "text": "campaign and a cold audience campaign,"
+          },
+          {
+            "start": 146,
+            "end": 148.959,
+            "text": "there's going to be an enormous amount"
+          },
+          {
+            "start": 147.2,
+            "end": 150.56,
+            "text": "of overlap because within the cold"
+          },
+          {
+            "start": 148.959,
+            "end": 152.31900000000002,
+            "text": "audience, Meta is going to target your"
+          },
+          {
+            "start": 150.56,
+            "end": 153.76,
+            "text": "warm audience anyway. Within the warm"
+          },
+          {
+            "start": 152.319,
+            "end": 155.83999999999997,
+            "text": "audience, Meta is going to target your"
+          },
+          {
+            "start": 153.76,
+            "end": 157.35999999999999,
+            "text": "cold audience anyway. Um, so it seems"
+          },
+          {
+            "start": 155.84,
+            "end": 159.04,
+            "text": "silly to have the two separate options"
+          },
+          {
+            "start": 157.36,
+            "end": 160.48000000000002,
+            "text": "when we're effectively targeting the"
+          },
+          {
+            "start": 159.04,
+            "end": 161.92,
+            "text": "same people when we could just"
+          },
+          {
+            "start": 160.48,
+            "end": 163.67999999999998,
+            "text": "consolidate that and benefit from it."
+          },
+          {
+            "start": 161.92,
+            "end": 166.64,
+            "text": "I'll talk more about consolidation later"
+          },
+          {
+            "start": 163.68,
+            "end": 169.84,
+            "text": "on. And you can run experiments to see"
+          },
+          {
+            "start": 166.64,
+            "end": 171.51899999999998,
+            "text": "just how strong the impact of this"
+          },
+          {
+            "start": 169.84,
+            "end": 172.72,
+            "text": "change is in comparison to what we used"
+          },
+          {
+            "start": 171.519,
+            "end": 173.84,
+            "text": "to see. What you want to do is you want"
+          },
+          {
+            "start": 172.72,
+            "end": 175.2,
+            "text": "to go into your advertising settings"
+          },
+          {
+            "start": 173.84,
+            "end": 176.72,
+            "text": "which I've done here just got up on on"
+          },
+          {
+            "start": 175.2,
+            "end": 178.16,
+            "text": "another tab. If you just go ahead all"
+          },
+          {
+            "start": 176.72,
+            "end": 179.92,
+            "text": "tools you'll see advertising settings or"
+          },
+          {
+            "start": 178.16,
+            "end": 181.12,
+            "text": "you can get it from all tools and then"
+          },
+          {
+            "start": 179.92,
+            "end": 183.11999999999998,
+            "text": "once you come in here you go into"
+          },
+          {
+            "start": 181.12,
+            "end": 184.4,
+            "text": "audience segments and then what you want"
+          },
+          {
+            "start": 183.12,
+            "end": 186.239,
+            "text": "to do is make sure that you've got your"
+          },
+          {
+            "start": 184.4,
+            "end": 187.84,
+            "text": "engaged audience and your existing"
+          },
+          {
+            "start": 186.239,
+            "end": 189.68,
+            "text": "customers defined. to basically create"
+          },
+          {
+            "start": 187.84,
+            "end": 191.20000000000002,
+            "text": "those custom audiences and then say this"
+          },
+          {
+            "start": 189.68,
+            "end": 192.31900000000002,
+            "text": "is engaged audience, this is existing"
+          },
+          {
+            "start": 191.2,
+            "end": 193.599,
+            "text": "customers. And you do that within here."
+          },
+          {
+            "start": 192.319,
+            "end": 195.04,
+            "text": "And you can see we've got a drop down."
+          },
+          {
+            "start": 193.599,
+            "end": 196.79999999999998,
+            "text": "You can add in your your custom"
+          },
+          {
+            "start": 195.04,
+            "end": 198.48,
+            "text": "audiences to uh to both of these. And"
+          },
+          {
+            "start": 196.8,
+            "end": 200.48000000000002,
+            "text": "that basically lets Meta know okay these"
+          },
+          {
+            "start": 198.48,
+            "end": 201.84,
+            "text": "are people that are customers. These are"
+          },
+          {
+            "start": 200.48,
+            "end": 204.23899999999998,
+            "text": "people that are engaged audience that"
+          },
+          {
+            "start": 201.84,
+            "end": 206.72,
+            "text": "haven't yet uh made a purchase, haven't"
+          },
+          {
+            "start": 204.239,
+            "end": 208.159,
+            "text": "become become a customer. And then when"
+          },
+          {
+            "start": 206.72,
+            "end": 210.64,
+            "text": "you run your ad campaigns, you can see"
+          },
+          {
+            "start": 208.159,
+            "end": 213.12,
+            "text": "the breakdown of new audience, engaged"
+          },
+          {
+            "start": 210.64,
+            "end": 215.599,
+            "text": "audience and existing customers of where"
+          },
+          {
+            "start": 213.12,
+            "end": 218.08,
+            "text": "Meta is spending the money, your budget"
+          },
+          {
+            "start": 215.599,
+            "end": 219.28,
+            "text": "split, your frequency, etc., etc. Right?"
+          },
+          {
+            "start": 218.08,
+            "end": 220.48000000000002,
+            "text": "In fact, let me quickly show you what"
+          },
+          {
+            "start": 219.28,
+            "end": 222.239,
+            "text": "this looks like. Right? So, if we look"
+          },
+          {
+            "start": 220.48,
+            "end": 224.23899999999998,
+            "text": "at this ad set here, we can see the"
+          },
+          {
+            "start": 222.239,
+            "end": 226.159,
+            "text": "breakdown um in results. In this case,"
+          },
+          {
+            "start": 224.239,
+            "end": 228.799,
+            "text": "website purchase. Of the 93, we can see"
+          },
+          {
+            "start": 226.159,
+            "end": 230.239,
+            "text": "that nine came from engaged audience, 59"
+          },
+          {
+            "start": 228.799,
+            "end": 232.72,
+            "text": "from existing customers. So, this is"
+          },
+          {
+            "start": 230.239,
+            "end": 234,
+            "text": "retargeting heavy. uh 20 from new"
+          },
+          {
+            "start": 232.72,
+            "end": 235.28,
+            "text": "audience and then we've got a few"
+          },
+          {
+            "start": 234,
+            "end": 237.28,
+            "text": "uncatategorized and unknown but that's"
+          },
+          {
+            "start": 235.28,
+            "end": 239.68,
+            "text": "not surprising because uh data is you"
+          },
+          {
+            "start": 237.28,
+            "end": 241.439,
+            "text": "rarely able to track with 100% accuracy."
+          },
+          {
+            "start": 239.68,
+            "end": 242.48000000000002,
+            "text": "Um and what you will see that's that's"
+          },
+          {
+            "start": 241.439,
+            "end": 243.92,
+            "text": "really interesting and you run this"
+          },
+          {
+            "start": 242.48,
+            "end": 246.159,
+            "text": "experiment is that if you set up an"
+          },
+          {
+            "start": 243.92,
+            "end": 247.599,
+            "text": "adset to target warm audiences so you"
+          },
+          {
+            "start": 246.159,
+            "end": 249.76,
+            "text": "add in your custom audiences website"
+          },
+          {
+            "start": 247.599,
+            "end": 251.439,
+            "text": "visitors email list etc etc and then you"
+          },
+          {
+            "start": 249.76,
+            "end": 253.76,
+            "text": "run that alongside another adset that is"
+          },
+          {
+            "start": 251.439,
+            "end": 255.76,
+            "text": "set up to target cold audiences. If you"
+          },
+          {
+            "start": 253.76,
+            "end": 258.639,
+            "text": "look at the data between those two"
+          },
+          {
+            "start": 255.76,
+            "end": 260.56,
+            "text": "adsets, the split between the"
+          },
+          {
+            "start": 258.639,
+            "end": 264.24,
+            "text": "conversions and the impressions that"
+          },
+          {
+            "start": 260.56,
+            "end": 267.36,
+            "text": "come from engaged, existing, and new is"
+          },
+          {
+            "start": 264.24,
+            "end": 268.72,
+            "text": "often very consistent. As in, with the"
+          },
+          {
+            "start": 267.36,
+            "end": 270.72,
+            "text": "one adset that's set up for cold"
+          },
+          {
+            "start": 268.72,
+            "end": 272.16,
+            "text": "audiences, you get the same split as"
+          },
+          {
+            "start": 270.72,
+            "end": 274.8,
+            "text": "with the other adset set up for warm"
+          },
+          {
+            "start": 272.16,
+            "end": 277.28000000000003,
+            "text": "audiences. In other words, Meta's kind"
+          },
+          {
+            "start": 274.8,
+            "end": 278.8,
+            "text": "of not paying much attention to the fact"
+          },
+          {
+            "start": 277.28,
+            "end": 280.55999999999995,
+            "text": "that you are trying to advertise cold"
+          },
+          {
+            "start": 278.8,
+            "end": 282.40000000000003,
+            "text": "audience in this adset and warm audience"
+          },
+          {
+            "start": 280.56,
+            "end": 283.919,
+            "text": "in adset. They're just trying to go out"
+          },
+          {
+            "start": 282.4,
+            "end": 285.67999999999995,
+            "text": "and get you results. They're using your"
+          },
+          {
+            "start": 283.919,
+            "end": 287.59999999999997,
+            "text": "inputs and suggestions and doing their"
+          },
+          {
+            "start": 285.68,
+            "end": 289.04,
+            "text": "own thing. And that makes it silly to"
+          },
+          {
+            "start": 287.6,
+            "end": 290.40000000000003,
+            "text": "have separate adsets or separate"
+          },
+          {
+            "start": 289.04,
+            "end": 291.91900000000004,
+            "text": "campaigns for cold and warm audiences"
+          },
+          {
+            "start": 290.4,
+            "end": 293.919,
+            "text": "where Meta is going to target a mixture"
+          },
+          {
+            "start": 291.919,
+            "end": 296.71999999999997,
+            "text": "of the two anyway. Right? So, that's one"
+          },
+          {
+            "start": 293.919,
+            "end": 298.56,
+            "text": "of the big changes that we're now making"
+          },
+          {
+            "start": 296.72,
+            "end": 299.84000000000003,
+            "text": "is that there are still some rare"
+          },
+          {
+            "start": 298.56,
+            "end": 301.759,
+            "text": "circumstances where we will separate"
+          },
+          {
+            "start": 299.84,
+            "end": 303.919,
+            "text": "them out if we really want to change the"
+          },
+          {
+            "start": 301.759,
+            "end": 305.68,
+            "text": "messaging between different stages of a"
+          },
+          {
+            "start": 303.919,
+            "end": 307.75899999999996,
+            "text": "salesunnel, for example. But that's"
+          },
+          {
+            "start": 305.68,
+            "end": 309.759,
+            "text": "rare. By default, we're absolutely going"
+          },
+          {
+            "start": 307.759,
+            "end": 311.199,
+            "text": "to combine both cold and warm audiences"
+          },
+          {
+            "start": 309.759,
+            "end": 312.47900000000004,
+            "text": "into the same campaign and the same"
+          },
+          {
+            "start": 311.199,
+            "end": 314.24,
+            "text": "adset. So, the next thing we're trying"
+          },
+          {
+            "start": 312.479,
+            "end": 315.919,
+            "text": "to do with the new campaign structure is"
+          },
+          {
+            "start": 314.24,
+            "end": 317.759,
+            "text": "consolidate as much as possible. And"
+          },
+          {
+            "start": 315.919,
+            "end": 319.84,
+            "text": "that applies to both campaigns and"
+          },
+          {
+            "start": 317.759,
+            "end": 321.759,
+            "text": "adsets. We're going to try and run as"
+          },
+          {
+            "start": 319.84,
+            "end": 323.28,
+            "text": "few campaigns and as few adsets as"
+          },
+          {
+            "start": 321.759,
+            "end": 325.039,
+            "text": "possible. Often just using the one"
+          },
+          {
+            "start": 323.28,
+            "end": 327.039,
+            "text": "campaign and the one adset. I'll explain"
+          },
+          {
+            "start": 325.039,
+            "end": 329.759,
+            "text": "later on when we do and don't want to uh"
+          },
+          {
+            "start": 327.039,
+            "end": 332.479,
+            "text": "to do that. Why are we doing that? Well,"
+          },
+          {
+            "start": 329.759,
+            "end": 334.96000000000004,
+            "text": "it's best to combine the data into as"
+          },
+          {
+            "start": 332.479,
+            "end": 336.56,
+            "text": "few elements as possible. Let's say you"
+          },
+          {
+            "start": 334.96,
+            "end": 338.4,
+            "text": "generate 70 conversions in a week."
+          },
+          {
+            "start": 336.56,
+            "end": 340.56,
+            "text": "Instead of having that spread across 10"
+          },
+          {
+            "start": 338.4,
+            "end": 342.79999999999995,
+            "text": "different adsets, so seven conversions"
+          },
+          {
+            "start": 340.56,
+            "end": 344.56,
+            "text": "roughly per adset per week, Meta is"
+          },
+          {
+            "start": 342.8,
+            "end": 346.32,
+            "text": "going to struggle to optimize those"
+          },
+          {
+            "start": 344.56,
+            "end": 347.919,
+            "text": "adsets. Going to struggle to get out of"
+          },
+          {
+            "start": 346.32,
+            "end": 349.84,
+            "text": "the learning phase. Whereas, if that's"
+          },
+          {
+            "start": 347.919,
+            "end": 352.639,
+            "text": "in one adset, you're generating 70"
+          },
+          {
+            "start": 349.84,
+            "end": 354.56,
+            "text": "conversions per week in that one adset."
+          },
+          {
+            "start": 352.639,
+            "end": 356.56,
+            "text": "Meta is able to fully optimize. They're"
+          },
+          {
+            "start": 354.56,
+            "end": 358.72,
+            "text": "able to work out the best time of day to"
+          },
+          {
+            "start": 356.56,
+            "end": 360.4,
+            "text": "advertise, what ad impression frequency"
+          },
+          {
+            "start": 358.72,
+            "end": 361.91900000000004,
+            "text": "is required, advertise to this person"
+          },
+          {
+            "start": 360.4,
+            "end": 363.28,
+            "text": "instead of this person, use this ad"
+          },
+          {
+            "start": 361.919,
+            "end": 366.08,
+            "text": "instead of this ad. all the various"
+          },
+          {
+            "start": 363.28,
+            "end": 368.31899999999996,
+            "text": "points that Meta's system optimizes to"
+          },
+          {
+            "start": 366.08,
+            "end": 369.84,
+            "text": "get us more of what we want, more sales,"
+          },
+          {
+            "start": 368.319,
+            "end": 372.08000000000004,
+            "text": "more leads, whatever it is we've set up"
+          },
+          {
+            "start": 369.84,
+            "end": 373.75899999999996,
+            "text": "our campaign to optimize for, Meta can"
+          },
+          {
+            "start": 372.08,
+            "end": 375.59999999999997,
+            "text": "do that better with more conversion"
+          },
+          {
+            "start": 373.759,
+            "end": 377.84000000000003,
+            "text": "data. So much better to have that"
+          },
+          {
+            "start": 375.6,
+            "end": 380,
+            "text": "consolidated data into the one campaign,"
+          },
+          {
+            "start": 377.84,
+            "end": 381.59999999999997,
+            "text": "one adset as opposed to spread across"
+          },
+          {
+            "start": 380,
+            "end": 384.08,
+            "text": "lots of different elements that will"
+          },
+          {
+            "start": 381.6,
+            "end": 385.759,
+            "text": "struggle uh to optimize. Second reason"
+          },
+          {
+            "start": 384.08,
+            "end": 388.08,
+            "text": "why we want to consolidate is because we"
+          },
+          {
+            "start": 385.759,
+            "end": 389.28000000000003,
+            "text": "want to avoid auction overlap. Now,"
+          },
+          {
+            "start": 388.08,
+            "end": 390.479,
+            "text": "there's some misconceptions around"
+          },
+          {
+            "start": 389.28,
+            "end": 392.23999999999995,
+            "text": "overlap. A lot of people think I'm"
+          },
+          {
+            "start": 390.479,
+            "end": 394.31899999999996,
+            "text": "talking about audience overlap. When I"
+          },
+          {
+            "start": 392.24,
+            "end": 395.759,
+            "text": "say auction overlap, I'm not audience"
+          },
+          {
+            "start": 394.319,
+            "end": 396.56,
+            "text": "overlap would be you've got two"
+          },
+          {
+            "start": 395.759,
+            "end": 398.72,
+            "text": "different campaigns, two different"
+          },
+          {
+            "start": 396.56,
+            "end": 400.24,
+            "text": "adsets, and they're targeting a lot of"
+          },
+          {
+            "start": 398.72,
+            "end": 402.56,
+            "text": "the same audience. Now, that's not"
+          },
+          {
+            "start": 400.24,
+            "end": 403.759,
+            "text": "ideal, but the whole idea of that's"
+          },
+          {
+            "start": 402.56,
+            "end": 405.28000000000003,
+            "text": "going to increase the cost because"
+          },
+          {
+            "start": 403.759,
+            "end": 406.639,
+            "text": "you're bidding against yourself is a bit"
+          },
+          {
+            "start": 405.28,
+            "end": 407.919,
+            "text": "silly. There are thousands of"
+          },
+          {
+            "start": 406.639,
+            "end": 410.16,
+            "text": "advertisers trying to reach the same"
+          },
+          {
+            "start": 407.919,
+            "end": 411.919,
+            "text": "people. One extra campaign ad setting"
+          },
+          {
+            "start": 410.16,
+            "end": 414.40000000000003,
+            "text": "that not going to make much difference."
+          },
+          {
+            "start": 411.919,
+            "end": 416.56,
+            "text": "But you can run into issues with auction"
+          },
+          {
+            "start": 414.4,
+            "end": 418.31899999999996,
+            "text": "overlap, which is a different thing."
+          },
+          {
+            "start": 416.56,
+            "end": 420,
+            "text": "Meta systems are now very sophisticated"
+          },
+          {
+            "start": 418.319,
+            "end": 422.96000000000004,
+            "text": "at working out what ad impression"
+          },
+          {
+            "start": 420,
+            "end": 424.96,
+            "text": "frequency is required to get the outcome"
+          },
+          {
+            "start": 422.96,
+            "end": 426.88,
+            "text": "that you want. So Meta might work out,"
+          },
+          {
+            "start": 424.96,
+            "end": 429.28,
+            "text": "you know what, we're better off at"
+          },
+          {
+            "start": 426.88,
+            "end": 432.24,
+            "text": "generating four or five ad impressions"
+          },
+          {
+            "start": 429.28,
+            "end": 434.4,
+            "text": "for a single individual over a 24 48"
+          },
+          {
+            "start": 432.24,
+            "end": 436.88,
+            "text": "hour time period as opposed to spreading"
+          },
+          {
+            "start": 434.4,
+            "end": 439.039,
+            "text": "out those ad impressions over a week."
+          },
+          {
+            "start": 436.88,
+            "end": 440.8,
+            "text": "Well, Meta could plan that really well"
+          },
+          {
+            "start": 439.039,
+            "end": 443.039,
+            "text": "if it's just got the one campaign, one"
+          },
+          {
+            "start": 440.8,
+            "end": 444.16,
+            "text": "adset targeting a person, a group of"
+          },
+          {
+            "start": 443.039,
+            "end": 445.44,
+            "text": "people obviously, but we're talking"
+          },
+          {
+            "start": 444.16,
+            "end": 448.16,
+            "text": "about one individual user in this case,"
+          },
+          {
+            "start": 445.44,
+            "end": 449.599,
+            "text": "but targeting um a group of people. If"
+          },
+          {
+            "start": 448.16,
+            "end": 451.36,
+            "text": "you've got some ad impressions coming"
+          },
+          {
+            "start": 449.599,
+            "end": 452.639,
+            "text": "from one adset, some ad impressions"
+          },
+          {
+            "start": 451.36,
+            "end": 455.36,
+            "text": "coming from another adset or different"
+          },
+          {
+            "start": 452.639,
+            "end": 457.599,
+            "text": "campaigns, much more difficult for Meta"
+          },
+          {
+            "start": 455.36,
+            "end": 459.12,
+            "text": "to work out that delivery system of"
+          },
+          {
+            "start": 457.599,
+            "end": 460.56,
+            "text": "right, let's put an ad in front of this"
+          },
+          {
+            "start": 459.12,
+            "end": 462.479,
+            "text": "person four times over the next 48"
+          },
+          {
+            "start": 460.56,
+            "end": 464.319,
+            "text": "hours. Much more difficult for them to"
+          },
+          {
+            "start": 462.479,
+            "end": 465.68,
+            "text": "be able to uh to do that. So, that's"
+          },
+          {
+            "start": 464.319,
+            "end": 467.28000000000003,
+            "text": "that's the issue that comes up with"
+          },
+          {
+            "start": 465.68,
+            "end": 469.52,
+            "text": "auction overlap. and you want to take"
+          },
+          {
+            "start": 467.28,
+            "end": 471.28,
+            "text": "advantage of what Meta's delivery system"
+          },
+          {
+            "start": 469.52,
+            "end": 472.56,
+            "text": "um is able to do. Okay. So, the next"
+          },
+          {
+            "start": 471.28,
+            "end": 475.84,
+            "text": "thing we've changed is that we very"
+          },
+          {
+            "start": 472.56,
+            "end": 477.84,
+            "text": "rarely now test different audiences at"
+          },
+          {
+            "start": 475.84,
+            "end": 479.67999999999995,
+            "text": "the adset or even the campaign level."
+          },
+          {
+            "start": 477.84,
+            "end": 481.039,
+            "text": "And that has a lot to do with what we"
+          },
+          {
+            "start": 479.68,
+            "end": 482.639,
+            "text": "described previously when we're talking"
+          },
+          {
+            "start": 481.039,
+            "end": 484.479,
+            "text": "about separating out cold and warm"
+          },
+          {
+            "start": 482.639,
+            "end": 486.08,
+            "text": "audiences. For the same reason that we"
+          },
+          {
+            "start": 484.479,
+            "end": 487.35999999999996,
+            "text": "don't separate those out, meta is kind"
+          },
+          {
+            "start": 486.08,
+            "end": 488.56,
+            "text": "of going to ignore a lot of your"
+          },
+          {
+            "start": 487.36,
+            "end": 489.68,
+            "text": "suggestions. They're going to do their"
+          },
+          {
+            "start": 488.56,
+            "end": 492,
+            "text": "own thing when it comes to targeting"
+          },
+          {
+            "start": 489.68,
+            "end": 493.759,
+            "text": "anyway. is why we won't test different"
+          },
+          {
+            "start": 492,
+            "end": 496.4,
+            "text": "interest targeting options in different"
+          },
+          {
+            "start": 493.759,
+            "end": 498.319,
+            "text": "adsets or interest targeting versus"
+          },
+          {
+            "start": 496.4,
+            "end": 499.919,
+            "text": "lookalike versus open targeting. We used"
+          },
+          {
+            "start": 498.319,
+            "end": 501.44,
+            "text": "to do a lot of that sort of stuff. We"
+          },
+          {
+            "start": 499.919,
+            "end": 503.35999999999996,
+            "text": "don't do that anymore because all of"
+          },
+          {
+            "start": 501.44,
+            "end": 505.28,
+            "text": "that falls within the suggested audience"
+          },
+          {
+            "start": 503.36,
+            "end": 507.759,
+            "text": "section unless it's going to do its own"
+          },
+          {
+            "start": 505.28,
+            "end": 510,
+            "text": "thing. There is an exception and that's"
+          },
+          {
+            "start": 507.759,
+            "end": 511.36,
+            "text": "location-based targeting. We will often"
+          },
+          {
+            "start": 510,
+            "end": 512.88,
+            "text": "test different locations. Now, this"
+          },
+          {
+            "start": 511.36,
+            "end": 514.719,
+            "text": "would going to depend on the business."
+          },
+          {
+            "start": 512.88,
+            "end": 517.279,
+            "text": "Um, so it might be that a business just"
+          },
+          {
+            "start": 514.719,
+            "end": 520.1590000000001,
+            "text": "advertises in one country, that's who"
+          },
+          {
+            "start": 517.279,
+            "end": 521.4399999999999,
+            "text": "they can serve and we're happy just to"
+          },
+          {
+            "start": 520.159,
+            "end": 522.8,
+            "text": "advertise to the entire country. We're"
+          },
+          {
+            "start": 521.44,
+            "end": 524.08,
+            "text": "not going to bother testing that. But if"
+          },
+          {
+            "start": 522.8,
+            "end": 525.92,
+            "text": "we have a business that's international"
+          },
+          {
+            "start": 524.08,
+            "end": 527.839,
+            "text": "and they want to be able to test between"
+          },
+          {
+            "start": 525.92,
+            "end": 529.279,
+            "text": "different markets, okay, we want to see"
+          },
+          {
+            "start": 527.839,
+            "end": 531.44,
+            "text": "how our campaigns perform in the US"
+          },
+          {
+            "start": 529.279,
+            "end": 532.48,
+            "text": "versus the UK versus Australia, etc.,"
+          },
+          {
+            "start": 531.44,
+            "end": 536.1600000000001,
+            "text": "we'll have different campaigns for"
+          },
+          {
+            "start": 532.48,
+            "end": 537.9200000000001,
+            "text": "those. Or if it's a lo local b locally"
+          },
+          {
+            "start": 536.16,
+            "end": 540.399,
+            "text": "based business that has multiple"
+          },
+          {
+            "start": 537.92,
+            "end": 541.8389999999999,
+            "text": "locations. So, if it's a gym franchise,"
+          },
+          {
+            "start": 540.399,
+            "end": 542.959,
+            "text": "for example, you might want to test,"
+          },
+          {
+            "start": 541.839,
+            "end": 545.2,
+            "text": "right, we're going to advertise in this"
+          },
+          {
+            "start": 542.959,
+            "end": 548.2399999999999,
+            "text": "city versus this city versus this city"
+          },
+          {
+            "start": 545.2,
+            "end": 549.9200000000001,
+            "text": "for that that individual unit uh in the"
+          },
+          {
+            "start": 548.24,
+            "end": 551.04,
+            "text": "local area, people might be interested,"
+          },
+          {
+            "start": 549.92,
+            "end": 552.16,
+            "text": "and we're going to separate out"
+          },
+          {
+            "start": 551.04,
+            "end": 553.519,
+            "text": "performance. Now, it's not a"
+          },
+          {
+            "start": 552.16,
+            "end": 555.36,
+            "text": "coincidence, if I jump back into my"
+          },
+          {
+            "start": 553.519,
+            "end": 557.519,
+            "text": "example ad account, jump to the adset"
+          },
+          {
+            "start": 555.36,
+            "end": 560.08,
+            "text": "level, go back into targeting. It's not"
+          },
+          {
+            "start": 557.519,
+            "end": 562.88,
+            "text": "a coincidence that we will test"
+          },
+          {
+            "start": 560.08,
+            "end": 564.88,
+            "text": "different um targeting options when it"
+          },
+          {
+            "start": 562.88,
+            "end": 566,
+            "text": "comes to a location basis across"
+          },
+          {
+            "start": 564.88,
+            "end": 568.8,
+            "text": "different adsets, maybe different"
+          },
+          {
+            "start": 566,
+            "end": 570.399,
+            "text": "campaigns and the location targeting"
+          },
+          {
+            "start": 568.8,
+            "end": 572.3199999999999,
+            "text": "falls within the control section. Like"
+          },
+          {
+            "start": 570.399,
+            "end": 574.56,
+            "text": "that is not a coincidence. Basically, we"
+          },
+          {
+            "start": 572.32,
+            "end": 576.5600000000001,
+            "text": "are able to do that testing accurately"
+          },
+          {
+            "start": 574.56,
+            "end": 578.16,
+            "text": "on a location basis whereas we aren't"
+          },
+          {
+            "start": 576.56,
+            "end": 579.4399999999999,
+            "text": "with say different interests or"
+          },
+          {
+            "start": 578.16,
+            "end": 581.8389999999999,
+            "text": "interests versus lookalikes and stuff"
+          },
+          {
+            "start": 579.44,
+            "end": 584.399,
+            "text": "like that because the control section"
+          },
+          {
+            "start": 581.839,
+            "end": 585.839,
+            "text": "within targeting here those are hard"
+          },
+          {
+            "start": 584.399,
+            "end": 587.519,
+            "text": "boundaries. So, we're saying, look, in"
+          },
+          {
+            "start": 585.839,
+            "end": 589.2790000000001,
+            "text": "this adset, just advertise to this local"
+          },
+          {
+            "start": 587.519,
+            "end": 591.279,
+            "text": "area. In this adset, just advertise to"
+          },
+          {
+            "start": 589.279,
+            "end": 593.68,
+            "text": "this local area or doing so on a country"
+          },
+          {
+            "start": 591.279,
+            "end": 595.76,
+            "text": "level or a state level. Um, Meta is"
+          },
+          {
+            "start": 593.68,
+            "end": 597.519,
+            "text": "going to, for the most part, only"
+          },
+          {
+            "start": 595.76,
+            "end": 598.8,
+            "text": "advertise to people within that that"
+          },
+          {
+            "start": 597.519,
+            "end": 600.64,
+            "text": "location. They're not going to treat"
+          },
+          {
+            "start": 598.8,
+            "end": 602.3199999999999,
+            "text": "that as a suggestion and go beyond it"
+          },
+          {
+            "start": 600.64,
+            "end": 604.56,
+            "text": "where they think it'll help you get um"
+          },
+          {
+            "start": 602.32,
+            "end": 607.36,
+            "text": "your desired outcome. So, we will do it"
+          },
+          {
+            "start": 604.56,
+            "end": 608.959,
+            "text": "for location, very rarely for this other"
+          },
+          {
+            "start": 607.36,
+            "end": 610.8000000000001,
+            "text": "stuff, even though we used to do a lot"
+          },
+          {
+            "start": 608.959,
+            "end": 612.959,
+            "text": "of that. Another reason why we're able"
+          },
+          {
+            "start": 610.8,
+            "end": 615.519,
+            "text": "to consolidate and use fewer campaigns,"
+          },
+          {
+            "start": 612.959,
+            "end": 618.88,
+            "text": "fewer adsets, is because Meta can now"
+          },
+          {
+            "start": 615.519,
+            "end": 620,
+            "text": "handle a lot more ads within an adset."
+          },
+          {
+            "start": 618.88,
+            "end": 623.12,
+            "text": "So, they used to have a recommendation"
+          },
+          {
+            "start": 620,
+            "end": 625.76,
+            "text": "of don't have five or six ads live in an"
+          },
+          {
+            "start": 623.12,
+            "end": 627.44,
+            "text": "adset at any one time. Uh the system was"
+          },
+          {
+            "start": 625.76,
+            "end": 628.72,
+            "text": "less sophisticated before and it would"
+          },
+          {
+            "start": 627.44,
+            "end": 630,
+            "text": "struggle to be able to test those"
+          },
+          {
+            "start": 628.72,
+            "end": 631.44,
+            "text": "properly and put them in front of people"
+          },
+          {
+            "start": 630,
+            "end": 632.88,
+            "text": "and work out how to do it. It was"
+          },
+          {
+            "start": 631.44,
+            "end": 634.8000000000001,
+            "text": "basically too many variables for the"
+          },
+          {
+            "start": 632.88,
+            "end": 636.88,
+            "text": "system. That has now changed with"
+          },
+          {
+            "start": 634.8,
+            "end": 639.279,
+            "text": "Andromeda. with some other updates. Meta"
+          },
+          {
+            "start": 636.88,
+            "end": 642.48,
+            "text": "is able to handle a lot more ad creative"
+          },
+          {
+            "start": 639.279,
+            "end": 644.72,
+            "text": "and different ads within um an adset. So"
+          },
+          {
+            "start": 642.48,
+            "end": 646.8000000000001,
+            "text": "the recommendation typically is 20 plus"
+          },
+          {
+            "start": 644.72,
+            "end": 648.399,
+            "text": "and we will often run adsets with 20"
+          },
+          {
+            "start": 646.8,
+            "end": 649.279,
+            "text": "plus. So very different to how we used"
+          },
+          {
+            "start": 648.399,
+            "end": 650.16,
+            "text": "to have we used to have lots of"
+          },
+          {
+            "start": 649.279,
+            "end": 652.64,
+            "text": "different campaigns, lots of different"
+          },
+          {
+            "start": 650.16,
+            "end": 654.959,
+            "text": "adsets and limited number of ads within"
+          },
+          {
+            "start": 652.64,
+            "end": 656.64,
+            "text": "each adset. Now much fewer campaigns,"
+          },
+          {
+            "start": 654.959,
+            "end": 660.16,
+            "text": "much fewer adsets, often one campaign,"
+          },
+          {
+            "start": 656.64,
+            "end": 661.92,
+            "text": "one adset, but then a ton of ads within"
+          },
+          {
+            "start": 660.16,
+            "end": 663.8389999999999,
+            "text": "um that one adset set. In fact, Meta not"
+          },
+          {
+            "start": 661.92,
+            "end": 665.68,
+            "text": "only says they can handle that, but it's"
+          },
+          {
+            "start": 663.839,
+            "end": 667.2,
+            "text": "recommended because Meta now wants much"
+          },
+          {
+            "start": 665.68,
+            "end": 669.519,
+            "text": "more creative diversity. So, they want"
+          },
+          {
+            "start": 667.2,
+            "end": 671.36,
+            "text": "different ads within an ad set, they"
+          },
+          {
+            "start": 669.519,
+            "end": 672.64,
+            "text": "have different types of creative,"
+          },
+          {
+            "start": 671.36,
+            "end": 674.5600000000001,
+            "text": "different formats. You have a mixture of"
+          },
+          {
+            "start": 672.64,
+            "end": 676.48,
+            "text": "images and video, different video"
+          },
+          {
+            "start": 674.56,
+            "end": 678.399,
+            "text": "styles. You might have some UGC, you"
+          },
+          {
+            "start": 676.48,
+            "end": 680,
+            "text": "might have um some founder, some"
+          },
+          {
+            "start": 678.399,
+            "end": 682.8,
+            "text": "demonstration videos, some customer"
+          },
+          {
+            "start": 680,
+            "end": 684.56,
+            "text": "testimonial videos. And Meta is going to"
+          },
+          {
+            "start": 682.8,
+            "end": 686.8,
+            "text": "they want that so that they can test to"
+          },
+          {
+            "start": 684.56,
+            "end": 688.959,
+            "text": "see which works best. But they also are"
+          },
+          {
+            "start": 686.8,
+            "end": 690.4799999999999,
+            "text": "now able to personalize ad delivery a"
+          },
+          {
+            "start": 688.959,
+            "end": 691.92,
+            "text": "lot more. say we're to work out, you"
+          },
+          {
+            "start": 690.48,
+            "end": 693.76,
+            "text": "know, for this person, they seem to"
+          },
+          {
+            "start": 691.92,
+            "end": 694.8,
+            "text": "really respond to UGC style ads, so"
+          },
+          {
+            "start": 693.76,
+            "end": 696.3199999999999,
+            "text": "we're going to put more of those in"
+          },
+          {
+            "start": 694.8,
+            "end": 697.8389999999999,
+            "text": "front of them. This person seems to"
+          },
+          {
+            "start": 696.32,
+            "end": 699.279,
+            "text": "respond to product demonstration style"
+          },
+          {
+            "start": 697.839,
+            "end": 701.12,
+            "text": "ads. We're going to put the more of"
+          },
+          {
+            "start": 699.279,
+            "end": 702.64,
+            "text": "those in front of them. If they have the"
+          },
+          {
+            "start": 701.12,
+            "end": 704.64,
+            "text": "different ads and the different types of"
+          },
+          {
+            "start": 702.64,
+            "end": 705.8389999999999,
+            "text": "creative within the one ad set, Meta can"
+          },
+          {
+            "start": 704.64,
+            "end": 708.079,
+            "text": "start to do a better job of"
+          },
+          {
+            "start": 705.839,
+            "end": 710.24,
+            "text": "personalizing ad delivery and working"
+          },
+          {
+            "start": 708.079,
+            "end": 711.279,
+            "text": "out that it's not a one-sizefits-all."
+          },
+          {
+            "start": 710.24,
+            "end": 712.48,
+            "text": "There are different people within your"
+          },
+          {
+            "start": 711.279,
+            "end": 715.519,
+            "text": "target audience and different people"
+          },
+          {
+            "start": 712.48,
+            "end": 718.16,
+            "text": "respond um to different um creative. So"
+          },
+          {
+            "start": 715.519,
+            "end": 720.079,
+            "text": "that's one of the big big shifts that"
+          },
+          {
+            "start": 718.16,
+            "end": 722.16,
+            "text": "have come from the change in the"
+          },
+          {
+            "start": 720.079,
+            "end": 724.7199999999999,
+            "text": "platform, the updated campaign structure"
+          },
+          {
+            "start": 722.16,
+            "end": 726,
+            "text": "is a lot more ads within an adset. I"
+          },
+          {
+            "start": 724.72,
+            "end": 727.839,
+            "text": "don't worry about an upper limit"
+          },
+          {
+            "start": 726,
+            "end": 730.48,
+            "text": "anymore. The constraining factor is"
+          },
+          {
+            "start": 727.839,
+            "end": 731.9200000000001,
+            "text": "usually how many good quality ads can be"
+          },
+          {
+            "start": 730.48,
+            "end": 733.9200000000001,
+            "text": "created. What are the resources"
+          },
+          {
+            "start": 731.92,
+            "end": 735.76,
+            "text": "available? And we will run those and"
+          },
+          {
+            "start": 733.92,
+            "end": 738.079,
+            "text": "look to introduce new ones over time as"
+          },
+          {
+            "start": 735.76,
+            "end": 740,
+            "text": "we test and learn from the data that we"
+          },
+          {
+            "start": 738.079,
+            "end": 743.12,
+            "text": "see. Within the new campaign structure,"
+          },
+          {
+            "start": 740,
+            "end": 745.44,
+            "text": "we've also changed how we test different"
+          },
+          {
+            "start": 743.12,
+            "end": 746.9590000000001,
+            "text": "ad copy variations. So, we used to have"
+          },
+          {
+            "start": 745.44,
+            "end": 748.24,
+            "text": "separate ads for different headlines"
+          },
+          {
+            "start": 746.959,
+            "end": 749.76,
+            "text": "would be one of the things that we test"
+          },
+          {
+            "start": 748.24,
+            "end": 751.12,
+            "text": "or different primary text. We're not"
+          },
+          {
+            "start": 749.76,
+            "end": 752.399,
+            "text": "going to have separate ads for those"
+          },
+          {
+            "start": 751.12,
+            "end": 754.639,
+            "text": "anymore. Instead, we're going to take"
+          },
+          {
+            "start": 752.399,
+            "end": 757.2,
+            "text": "advantage of the variation option. So,"
+          },
+          {
+            "start": 754.639,
+            "end": 759.279,
+            "text": "if I jump into the ad level and then"
+          },
+          {
+            "start": 757.2,
+            "end": 761.6800000000001,
+            "text": "scroll down to where we set up our ad"
+          },
+          {
+            "start": 759.279,
+            "end": 764.16,
+            "text": "copy, we can see that if we click into"
+          },
+          {
+            "start": 761.68,
+            "end": 765.5999999999999,
+            "text": "primary text, you can see we have one of"
+          },
+          {
+            "start": 764.16,
+            "end": 768.3199999999999,
+            "text": "five. So we can have up to five"
+          },
+          {
+            "start": 765.6,
+            "end": 769.839,
+            "text": "different primary text variations within"
+          },
+          {
+            "start": 768.32,
+            "end": 771.0400000000001,
+            "text": "this one ad. We can do the same for"
+          },
+          {
+            "start": 769.839,
+            "end": 772.32,
+            "text": "headlines. Click in there, you see one"
+          },
+          {
+            "start": 771.04,
+            "end": 774.16,
+            "text": "of five. And do the same for"
+          },
+          {
+            "start": 772.32,
+            "end": 776.0790000000001,
+            "text": "descriptions. So really, you want to"
+          },
+          {
+            "start": 774.16,
+            "end": 778.079,
+            "text": "think of separate ads as testing"
+          },
+          {
+            "start": 776.079,
+            "end": 779.3599999999999,
+            "text": "different ad creative or maybe not even"
+          },
+          {
+            "start": 778.079,
+            "end": 781.1999999999999,
+            "text": "just testing, but being able to have"
+          },
+          {
+            "start": 779.36,
+            "end": 782.5600000000001,
+            "text": "that different creative diversity. So"
+          },
+          {
+            "start": 781.2,
+            "end": 784.639,
+            "text": "have different types of ads like I just"
+          },
+          {
+            "start": 782.56,
+            "end": 786.7199999999999,
+            "text": "described. Uh when it comes to testing,"
+          },
+          {
+            "start": 784.639,
+            "end": 788.48,
+            "text": "I wonder which headline works best for"
+          },
+          {
+            "start": 786.72,
+            "end": 790.8000000000001,
+            "text": "this offer or this ad. You want to do"
+          },
+          {
+            "start": 788.48,
+            "end": 794.16,
+            "text": "that within the ad, not have separate"
+          },
+          {
+            "start": 790.8,
+            "end": 796,
+            "text": "ads for that. um and do so using these"
+          },
+          {
+            "start": 794.16,
+            "end": 798.079,
+            "text": "primary text headline description"
+          },
+          {
+            "start": 796,
+            "end": 800.639,
+            "text": "variations. This is a much cleaner,"
+          },
+          {
+            "start": 798.079,
+            "end": 801.68,
+            "text": "neater way to do your ad copy testing,"
+          },
+          {
+            "start": 800.639,
+            "end": 804.32,
+            "text": "which is still something that you want"
+          },
+          {
+            "start": 801.68,
+            "end": 806,
+            "text": "to do. Um as opposed to needing to have"
+          },
+          {
+            "start": 804.32,
+            "end": 808.48,
+            "text": "an enormous amount of ads cuz if you've"
+          },
+          {
+            "start": 806,
+            "end": 810.32,
+            "text": "got all this different ad creative and"
+          },
+          {
+            "start": 808.48,
+            "end": 812.5600000000001,
+            "text": "then let's say for each ad creative you"
+          },
+          {
+            "start": 810.32,
+            "end": 814,
+            "text": "needed three or four different ads to"
+          },
+          {
+            "start": 812.56,
+            "end": 815.76,
+            "text": "test different headline variations, you"
+          },
+          {
+            "start": 814,
+            "end": 817.76,
+            "text": "very quickly get into just silly numbers"
+          },
+          {
+            "start": 815.76,
+            "end": 819.519,
+            "text": "of ads and too difficult for you as the"
+          },
+          {
+            "start": 817.76,
+            "end": 820.88,
+            "text": "advertiser to be able to to monitor that"
+          },
+          {
+            "start": 819.519,
+            "end": 823.519,
+            "text": "and keep up with it. much better to do"
+          },
+          {
+            "start": 820.88,
+            "end": 825.6,
+            "text": "it within these text variations and have"
+          },
+          {
+            "start": 823.519,
+            "end": 827.519,
+            "text": "that copy testing done within an ad unit"
+          },
+          {
+            "start": 825.6,
+            "end": 828.9590000000001,
+            "text": "as opposed to separate ads. Hyro is the"
+          },
+          {
+            "start": 827.519,
+            "end": 830.8,
+            "text": "best tracking and attribution software"
+          },
+          {
+            "start": 828.959,
+            "end": 832.079,
+            "text": "for meta ads. It's a software all the"
+          },
+          {
+            "start": 830.8,
+            "end": 833.5999999999999,
+            "text": "big players in this industry use,"
+          },
+          {
+            "start": 832.079,
+            "end": 835.279,
+            "text": "including myself. I use it to track"
+          },
+          {
+            "start": 833.6,
+            "end": 836.8000000000001,
+            "text": "results for my own ads as well as all my"
+          },
+          {
+            "start": 835.279,
+            "end": 838.16,
+            "text": "organic results as well. So, if someone"
+          },
+          {
+            "start": 836.8,
+            "end": 840.16,
+            "text": "books a call for our done for you"
+          },
+          {
+            "start": 838.16,
+            "end": 841.76,
+            "text": "services, for example, I can see exactly"
+          },
+          {
+            "start": 840.16,
+            "end": 843.36,
+            "text": "where that person came from with a lot"
+          },
+          {
+            "start": 841.76,
+            "end": 845.12,
+            "text": "of accuracy. That allows me to make"
+          },
+          {
+            "start": 843.36,
+            "end": 846.639,
+            "text": "better decisions for my marketing and my"
+          },
+          {
+            "start": 845.12,
+            "end": 848.8,
+            "text": "business. Hyro has been able to track"
+          },
+          {
+            "start": 846.639,
+            "end": 851.36,
+            "text": "that from our ad spend in this campaign,"
+          },
+          {
+            "start": 848.8,
+            "end": 854.639,
+            "text": "we've generated £96,000,"
+          },
+          {
+            "start": 851.36,
+            "end": 856.639,
+            "text": "but £58,000 of that was not reported by"
+          },
+          {
+            "start": 854.639,
+            "end": 858.48,
+            "text": "Meta. So if I was just looking at my"
+          },
+          {
+            "start": 856.639,
+            "end": 859.44,
+            "text": "data within my meta ad account, I might"
+          },
+          {
+            "start": 858.48,
+            "end": 862.16,
+            "text": "come to the conclusion that this"
+          },
+          {
+            "start": 859.44,
+            "end": 864.8000000000001,
+            "text": "campaign is doing okay, but in reality,"
+          },
+          {
+            "start": 862.16,
+            "end": 866.079,
+            "text": "this campaign is doing a lot lot better."
+          },
+          {
+            "start": 864.8,
+            "end": 867.4399999999999,
+            "text": "Now, this is a relatively extreme"
+          },
+          {
+            "start": 866.079,
+            "end": 868.88,
+            "text": "example because of the nature of our"
+          },
+          {
+            "start": 867.44,
+            "end": 870.72,
+            "text": "business. So most of our products,"
+          },
+          {
+            "start": 868.88,
+            "end": 872.56,
+            "text": "services have recurring billing"
+          },
+          {
+            "start": 870.72,
+            "end": 874.72,
+            "text": "elements. Meta might be able to see what"
+          },
+          {
+            "start": 872.56,
+            "end": 876.56,
+            "text": "we make initially from our ad spend on"
+          },
+          {
+            "start": 874.72,
+            "end": 878.399,
+            "text": "that initial transaction, but not those"
+          },
+          {
+            "start": 876.56,
+            "end": 880.6389999999999,
+            "text": "subsequent payments. That's why it it"
+          },
+          {
+            "start": 878.399,
+            "end": 882.8,
+            "text": "shows the importance here of being able"
+          },
+          {
+            "start": 880.639,
+            "end": 884.48,
+            "text": "to accurately see what we actually get"
+          },
+          {
+            "start": 882.8,
+            "end": 886,
+            "text": "from our ad spend in order to be able to"
+          },
+          {
+            "start": 884.48,
+            "end": 887.44,
+            "text": "make better decisions and optimize"
+          },
+          {
+            "start": 886,
+            "end": 888.72,
+            "text": "correctly. So, if you want to improve"
+          },
+          {
+            "start": 887.44,
+            "end": 890.399,
+            "text": "the performance of your ad campaigns"
+          },
+          {
+            "start": 888.72,
+            "end": 891.839,
+            "text": "without having to touch your ads, go"
+          },
+          {
+            "start": 890.399,
+            "end": 893.44,
+            "text": "ahead and sign up to Hyros. There is a"
+          },
+          {
+            "start": 891.839,
+            "end": 894.8000000000001,
+            "text": "link in the video description. One of"
+          },
+          {
+            "start": 893.44,
+            "end": 896.48,
+            "text": "the things we used to do with our old"
+          },
+          {
+            "start": 894.8,
+            "end": 897.92,
+            "text": "Facebook ad campaign structure, and I"
+          },
+          {
+            "start": 896.48,
+            "end": 900.48,
+            "text": "still see this come up when I take a"
+          },
+          {
+            "start": 897.92,
+            "end": 902.88,
+            "text": "look at at people's ad accounts often is"
+          },
+          {
+            "start": 900.48,
+            "end": 905.04,
+            "text": "to have uh different campaigns for"
+          },
+          {
+            "start": 902.88,
+            "end": 906.48,
+            "text": "different stages of the salesunnel. So,"
+          },
+          {
+            "start": 905.04,
+            "end": 908.3199999999999,
+            "text": "you might have had a top offunnel"
+          },
+          {
+            "start": 906.48,
+            "end": 909.839,
+            "text": "campaign, a middle ofunnel campaign, and"
+          },
+          {
+            "start": 908.32,
+            "end": 911.279,
+            "text": "a bottom of campaign. And different"
+          },
+          {
+            "start": 909.839,
+            "end": 913.36,
+            "text": "stages would have different ads. So, in"
+          },
+          {
+            "start": 911.279,
+            "end": 916.399,
+            "text": "the top of funnel, you might have uh"
+          },
+          {
+            "start": 913.36,
+            "end": 917.6800000000001,
+            "text": "like a founder story video that explains"
+          },
+          {
+            "start": 916.399,
+            "end": 919.04,
+            "text": "why the company was great in the first"
+          },
+          {
+            "start": 917.68,
+            "end": 920.079,
+            "text": "place. Middle of funnel might be more"
+          },
+          {
+            "start": 919.04,
+            "end": 921.5999999999999,
+            "text": "product demonstration. And then the"
+          },
+          {
+            "start": 920.079,
+            "end": 923.519,
+            "text": "bottom funnel might be a customer"
+          },
+          {
+            "start": 921.6,
+            "end": 924.88,
+            "text": "testimonial trying to get you to convert"
+          },
+          {
+            "start": 923.519,
+            "end": 927.199,
+            "text": "and people would go through the"
+          },
+          {
+            "start": 924.88,
+            "end": 928.72,
+            "text": "sequence. Now, we don't do that because"
+          },
+          {
+            "start": 927.199,
+            "end": 931.199,
+            "text": "of what we've already described in terms"
+          },
+          {
+            "start": 928.72,
+            "end": 932.5600000000001,
+            "text": "of meta targeting and a lot of it being"
+          },
+          {
+            "start": 931.199,
+            "end": 934.16,
+            "text": "suggestions and they're kind of going to"
+          },
+          {
+            "start": 932.56,
+            "end": 936.6389999999999,
+            "text": "show different ads to different people"
+          },
+          {
+            "start": 934.16,
+            "end": 938.639,
+            "text": "anyway. So, it's not as easy to neatly"
+          },
+          {
+            "start": 936.639,
+            "end": 940.88,
+            "text": "move people um through the system"
+          },
+          {
+            "start": 938.639,
+            "end": 943.199,
+            "text": "anymore. But that doesn't mean that"
+          },
+          {
+            "start": 940.88,
+            "end": 944.959,
+            "text": "we've completely thrown away the top of"
+          },
+          {
+            "start": 943.199,
+            "end": 948.639,
+            "text": "funnel, middle of funnel, bottom of"
+          },
+          {
+            "start": 944.959,
+            "end": 950.56,
+            "text": "funnel ideas because the logic is still"
+          },
+          {
+            "start": 948.639,
+            "end": 952.32,
+            "text": "there from a marketing standpoint of"
+          },
+          {
+            "start": 950.56,
+            "end": 954.16,
+            "text": "often you need to introduce people to an"
+          },
+          {
+            "start": 952.32,
+            "end": 956.0790000000001,
+            "text": "idea, but they won't be ready to convert"
+          },
+          {
+            "start": 954.16,
+            "end": 958.48,
+            "text": "straight away. You then need to warm"
+          },
+          {
+            "start": 956.079,
+            "end": 960.88,
+            "text": "them up with evidence of why it's great,"
+          },
+          {
+            "start": 958.48,
+            "end": 963.6800000000001,
+            "text": "why they should buy it, and then they"
+          },
+          {
+            "start": 960.88,
+            "end": 965.68,
+            "text": "have the extra call to action based ads"
+          },
+          {
+            "start": 963.68,
+            "end": 966.959,
+            "text": "and the and the customer testimonials"
+          },
+          {
+            "start": 965.68,
+            "end": 969.279,
+            "text": "and things that are going to really help"
+          },
+          {
+            "start": 966.959,
+            "end": 971.199,
+            "text": "them take action now, right? That still"
+          },
+          {
+            "start": 969.279,
+            "end": 972.8,
+            "text": "applies because that's something that"
+          },
+          {
+            "start": 971.199,
+            "end": 974.7199999999999,
+            "text": "warms up people. If you think about your"
+          },
+          {
+            "start": 972.8,
+            "end": 976,
+            "text": "relationship with another person, you"
+          },
+          {
+            "start": 974.72,
+            "end": 977.519,
+            "text": "start off not knowing them very well and"
+          },
+          {
+            "start": 976,
+            "end": 978.48,
+            "text": "it takes time and many interactions to"
+          },
+          {
+            "start": 977.519,
+            "end": 979.839,
+            "text": "get to the point where they become a"
+          },
+          {
+            "start": 978.48,
+            "end": 982.8000000000001,
+            "text": "really good friend or something for"
+          },
+          {
+            "start": 979.839,
+            "end": 984.639,
+            "text": "example. Okay. So we can still do that"
+          },
+          {
+            "start": 982.8,
+            "end": 987.7589999999999,
+            "text": "but we can actually do that within the"
+          },
+          {
+            "start": 984.639,
+            "end": 990.0790000000001,
+            "text": "one campaign and one ad set now. So we"
+          },
+          {
+            "start": 987.759,
+            "end": 992.24,
+            "text": "will create ads. I just mentioned we"
+          },
+          {
+            "start": 990.079,
+            "end": 994.56,
+            "text": "might have 20 plus ads in an ad set. We"
+          },
+          {
+            "start": 992.24,
+            "end": 996.639,
+            "text": "will create some ads thinking these are"
+          },
+          {
+            "start": 994.56,
+            "end": 997.8389999999999,
+            "text": "more likely to be top ofunnel ads. We"
+          },
+          {
+            "start": 996.639,
+            "end": 999.04,
+            "text": "will create some that more like to be"
+          },
+          {
+            "start": 997.839,
+            "end": 1000.5600000000001,
+            "text": "middle of funnel and then some that are"
+          },
+          {
+            "start": 999.04,
+            "end": 1002.48,
+            "text": "going to be bottom of funnel. So just"
+          },
+          {
+            "start": 1000.56,
+            "end": 1004.8,
+            "text": "like I talked about, you're kind of two"
+          },
+          {
+            "start": 1002.48,
+            "end": 1006.0790000000001,
+            "text": "birds, one stone situation here, right?"
+          },
+          {
+            "start": 1004.8,
+            "end": 1007.8389999999999,
+            "text": "You're adding a lot of creative"
+          },
+          {
+            "start": 1006.079,
+            "end": 1011.199,
+            "text": "diversity by doing this, but you're also"
+          },
+          {
+            "start": 1007.839,
+            "end": 1012.5600000000001,
+            "text": "allowing for that journey to take place"
+          },
+          {
+            "start": 1011.199,
+            "end": 1014.959,
+            "text": "because you could have those ads that"
+          },
+          {
+            "start": 1012.56,
+            "end": 1015.92,
+            "text": "are founderled, storybased, why we"
+          },
+          {
+            "start": 1014.959,
+            "end": 1016.88,
+            "text": "created the company in the first place."
+          },
+          {
+            "start": 1015.92,
+            "end": 1017.8389999999999,
+            "text": "You could have those ads that are"
+          },
+          {
+            "start": 1016.88,
+            "end": 1019.36,
+            "text": "product demonstration. You could have"
+          },
+          {
+            "start": 1017.839,
+            "end": 1021.0400000000001,
+            "text": "those ads that are uh customer"
+          },
+          {
+            "start": 1019.36,
+            "end": 1022.5600000000001,
+            "text": "testimonial. Now there's variations on"
+          },
+          {
+            "start": 1021.04,
+            "end": 1024.799,
+            "text": "those depending on your business. Like"
+          },
+          {
+            "start": 1022.56,
+            "end": 1026.48,
+            "text": "I've used a product ecom example there,"
+          },
+          {
+            "start": 1024.799,
+            "end": 1029.52,
+            "text": "but you can absolutely find examples of"
+          },
+          {
+            "start": 1026.48,
+            "end": 1032.72,
+            "text": "that um for info or lead genen. There"
+          },
+          {
+            "start": 1029.52,
+            "end": 1034.72,
+            "text": "there are variations on a theme and meta"
+          },
+          {
+            "start": 1032.72,
+            "end": 1037.439,
+            "text": "is now sophisticated enough to work that"
+          },
+          {
+            "start": 1034.72,
+            "end": 1039.76,
+            "text": "out. So they will add sequence for you"
+          },
+          {
+            "start": 1037.439,
+            "end": 1041.919,
+            "text": "automatically. They will use some ads"
+          },
+          {
+            "start": 1039.76,
+            "end": 1043.839,
+            "text": "initially put in front of people first"
+          },
+          {
+            "start": 1041.919,
+            "end": 1046.72,
+            "text": "off then other ads in more of a"
+          },
+          {
+            "start": 1043.839,
+            "end": 1048.079,
+            "text": "retargeting capacity. And the way you"
+          },
+          {
+            "start": 1046.72,
+            "end": 1049.28,
+            "text": "can see if this is happening within your"
+          },
+          {
+            "start": 1048.079,
+            "end": 1050.24,
+            "text": "ad account because it happens in some ad"
+          },
+          {
+            "start": 1049.28,
+            "end": 1051.76,
+            "text": "accounts more than others. The ad"
+          },
+          {
+            "start": 1050.24,
+            "end": 1055.44,
+            "text": "accounts where this happens more are"
+          },
+          {
+            "start": 1051.76,
+            "end": 1056.799,
+            "text": "ones where the ask is larger. So if"
+          },
+          {
+            "start": 1055.44,
+            "end": 1058.4,
+            "text": "you're selling something that has a"
+          },
+          {
+            "start": 1056.799,
+            "end": 1060.32,
+            "text": "higher price point or you're selling a"
+          },
+          {
+            "start": 1058.4,
+            "end": 1062.799,
+            "text": "service that's more involved, people"
+          },
+          {
+            "start": 1060.32,
+            "end": 1064.96,
+            "text": "need more steps to get to the point"
+          },
+          {
+            "start": 1062.799,
+            "end": 1066.799,
+            "text": "where they're willing to inquire, buy,"
+          },
+          {
+            "start": 1064.96,
+            "end": 1068,
+            "text": "etc. If you're selling an inexpensive"
+          },
+          {
+            "start": 1066.799,
+            "end": 1070.32,
+            "text": "e-commerce product, it's going to be"
+          },
+          {
+            "start": 1068,
+            "end": 1072.48,
+            "text": "much more just directly buy it if you're"
+          },
+          {
+            "start": 1070.32,
+            "end": 1074.1599999999999,
+            "text": "interested. If not, fine. But what"
+          },
+          {
+            "start": 1072.48,
+            "end": 1076,
+            "text": "you'll often see in those businesses"
+          },
+          {
+            "start": 1074.16,
+            "end": 1078.24,
+            "text": "that that see this automatic ad"
+          },
+          {
+            "start": 1076,
+            "end": 1080.32,
+            "text": "sequencing taking place within the one"
+          },
+          {
+            "start": 1078.24,
+            "end": 1081.76,
+            "text": "ad set is that some ads will"
+          },
+          {
+            "start": 1080.32,
+            "end": 1083.4399999999998,
+            "text": "consistently have money spent on them,"
+          },
+          {
+            "start": 1081.76,
+            "end": 1084.72,
+            "text": "but they don't have many conversions."
+          },
+          {
+            "start": 1083.44,
+            "end": 1086.0800000000002,
+            "text": "Looks like their cost per lead or cost"
+          },
+          {
+            "start": 1084.72,
+            "end": 1087.919,
+            "text": "per sale isn't very good. And you think,"
+          },
+          {
+            "start": 1086.08,
+            "end": 1089.52,
+            "text": "why is Meta doing this? It's because"
+          },
+          {
+            "start": 1087.919,
+            "end": 1091.76,
+            "text": "they're using that in a top offunnel"
+          },
+          {
+            "start": 1089.52,
+            "end": 1093.679,
+            "text": "capacity and then using other ads to"
+          },
+          {
+            "start": 1091.76,
+            "end": 1095.2,
+            "text": "retarget and get the conversion because"
+          },
+          {
+            "start": 1093.679,
+            "end": 1096.3200000000002,
+            "text": "you might have money being spent on that"
+          },
+          {
+            "start": 1095.2,
+            "end": 1098,
+            "text": "one. You look at the other ads, you're"
+          },
+          {
+            "start": 1096.32,
+            "end": 1099.6,
+            "text": "thinking, but this other ad is"
+          },
+          {
+            "start": 1098,
+            "end": 1101.36,
+            "text": "performing really well on a return on ad"
+          },
+          {
+            "start": 1099.6,
+            "end": 1102.7199999999998,
+            "text": "spend basis, cost per lead basis, etc."
+          },
+          {
+            "start": 1101.36,
+            "end": 1104.9599999999998,
+            "text": "But why is it matter spending more money"
+          },
+          {
+            "start": 1102.72,
+            "end": 1107.1200000000001,
+            "text": "on that? Now, you don't want to make the"
+          },
+          {
+            "start": 1104.96,
+            "end": 1109.1200000000001,
+            "text": "mistake of turning off the ad that is"
+          },
+          {
+            "start": 1107.12,
+            "end": 1111.52,
+            "text": "being used in a topunnel capacity"
+          },
+          {
+            "start": 1109.12,
+            "end": 1113.6789999999999,
+            "text": "because then your other ad performance"
+          },
+          {
+            "start": 1111.52,
+            "end": 1115.76,
+            "text": "will massively worsen because it isn't"
+          },
+          {
+            "start": 1113.679,
+            "end": 1118.4,
+            "text": "benefiting from that other ad being used"
+          },
+          {
+            "start": 1115.76,
+            "end": 1119.919,
+            "text": "in a topunnel capacity. So, we still use"
+          },
+          {
+            "start": 1118.4,
+            "end": 1121.919,
+            "text": "that process, but instead of doing it in"
+          },
+          {
+            "start": 1119.919,
+            "end": 1123.3600000000001,
+            "text": "different campaigns, different adsets,"
+          },
+          {
+            "start": 1121.919,
+            "end": 1125.2800000000002,
+            "text": "we're going to consolidate that into one"
+          },
+          {
+            "start": 1123.36,
+            "end": 1127.6,
+            "text": "adset. And Meta is smart enough to"
+          },
+          {
+            "start": 1125.28,
+            "end": 1130.48,
+            "text": "sequence those ads and uh and work it"
+          },
+          {
+            "start": 1127.6,
+            "end": 1133.28,
+            "text": "out. So, I've talked a lot about"
+          },
+          {
+            "start": 1130.48,
+            "end": 1134.72,
+            "text": "consolidating less. When do we actually"
+          },
+          {
+            "start": 1133.28,
+            "end": 1136.6399999999999,
+            "text": "have separate campaigns, separate"
+          },
+          {
+            "start": 1134.72,
+            "end": 1139.039,
+            "text": "adsets? I've talked about the location"
+          },
+          {
+            "start": 1136.64,
+            "end": 1142.48,
+            "text": "example. Here's another example. By"
+          },
+          {
+            "start": 1139.039,
+            "end": 1145.12,
+            "text": "default, I like to use one campaign per"
+          },
+          {
+            "start": 1142.48,
+            "end": 1146.4,
+            "text": "product or service range. So, we're not"
+          },
+          {
+            "start": 1145.12,
+            "end": 1148.799,
+            "text": "going to have a different campaign for"
+          },
+          {
+            "start": 1146.4,
+            "end": 1150.64,
+            "text": "red hats versus blue hats. We are going"
+          },
+          {
+            "start": 1148.799,
+            "end": 1153.28,
+            "text": "to have a different campaign for hats"
+          },
+          {
+            "start": 1150.64,
+            "end": 1155.2800000000002,
+            "text": "versus shoes because those campaigns we"
+          },
+          {
+            "start": 1153.28,
+            "end": 1157.28,
+            "text": "want to optimize differently. We want"
+          },
+          {
+            "start": 1155.28,
+            "end": 1158.72,
+            "text": "meta to treat them as as we might need"
+          },
+          {
+            "start": 1157.28,
+            "end": 1159.84,
+            "text": "to target slightly different people. We"
+          },
+          {
+            "start": 1158.72,
+            "end": 1160.96,
+            "text": "might need to advertise them in a"
+          },
+          {
+            "start": 1159.84,
+            "end": 1162.6399999999999,
+            "text": "different way. People might need more"
+          },
+          {
+            "start": 1160.96,
+            "end": 1164.08,
+            "text": "convincing to buy shoes than a hat. So,"
+          },
+          {
+            "start": 1162.64,
+            "end": 1165.679,
+            "text": "we need more ad impression. We want them"
+          },
+          {
+            "start": 1164.08,
+            "end": 1168,
+            "text": "to learn under different conditions and"
+          },
+          {
+            "start": 1165.679,
+            "end": 1169.76,
+            "text": "then and then optimize um accordingly."
+          },
+          {
+            "start": 1168,
+            "end": 1172.72,
+            "text": "An exception to that would be a general"
+          },
+          {
+            "start": 1169.76,
+            "end": 1174.16,
+            "text": "dynamic catalog campaign. Um where if"
+          },
+          {
+            "start": 1172.72,
+            "end": 1175.919,
+            "text": "you run those typically with a"
+          },
+          {
+            "start": 1174.16,
+            "end": 1177.44,
+            "text": "relatively small budget, then Meta is"
+          },
+          {
+            "start": 1175.919,
+            "end": 1179.2800000000002,
+            "text": "going to spend the majority or all of"
+          },
+          {
+            "start": 1177.44,
+            "end": 1180.88,
+            "text": "that budget on retargeting depending on"
+          },
+          {
+            "start": 1179.28,
+            "end": 1182.8799999999999,
+            "text": "the size of your of your warm audiences."
+          },
+          {
+            "start": 1180.88,
+            "end": 1184.96,
+            "text": "And I'm perfectly happy to that span"
+          },
+          {
+            "start": 1182.88,
+            "end": 1186.16,
+            "text": "your product and service ranges and just"
+          },
+          {
+            "start": 1184.96,
+            "end": 1187.76,
+            "text": "you know this is more like to be used in"
+          },
+          {
+            "start": 1186.16,
+            "end": 1189.44,
+            "text": "a product capacity as opposed to service"
+          },
+          {
+            "start": 1187.76,
+            "end": 1190.72,
+            "text": "based businesses. But you know put the"
+          },
+          {
+            "start": 1189.44,
+            "end": 1192.96,
+            "text": "thing that someone's most like to be"
+          },
+          {
+            "start": 1190.72,
+            "end": 1195.039,
+            "text": "interested or has just had a look at in"
+          },
+          {
+            "start": 1192.96,
+            "end": 1196.88,
+            "text": "front of them even if we are crossing"
+          },
+          {
+            "start": 1195.039,
+            "end": 1198.48,
+            "text": "between shoes and hats and belts and"
+          },
+          {
+            "start": 1196.88,
+            "end": 1200.24,
+            "text": "whatever it is that you know you might"
+          },
+          {
+            "start": 1198.48,
+            "end": 1202,
+            "text": "be selling in this example. So happy for"
+          },
+          {
+            "start": 1200.24,
+            "end": 1204.4,
+            "text": "that to be businesswide but otherwise"
+          },
+          {
+            "start": 1202,
+            "end": 1206.96,
+            "text": "we're going to to be more specific and"
+          },
+          {
+            "start": 1204.4,
+            "end": 1208.64,
+            "text": "have different product ranges. So not"
+          },
+          {
+            "start": 1206.96,
+            "end": 1211.52,
+            "text": "variations but different product ranges"
+          },
+          {
+            "start": 1208.64,
+            "end": 1212.7990000000002,
+            "text": "or different services. um in different"
+          },
+          {
+            "start": 1211.52,
+            "end": 1214.32,
+            "text": "campaigns that we're going to separate"
+          },
+          {
+            "start": 1212.799,
+            "end": 1215.76,
+            "text": "out that way. It also gives you a lot of"
+          },
+          {
+            "start": 1214.32,
+            "end": 1216.96,
+            "text": "nice control as an advertiser to be"
+          },
+          {
+            "start": 1215.76,
+            "end": 1218.799,
+            "text": "like, \"All right, we're out of stock on"
+          },
+          {
+            "start": 1216.96,
+            "end": 1220.48,
+            "text": "this. Turn this off.\" Or, \"We're at"
+          },
+          {
+            "start": 1218.799,
+            "end": 1221.76,
+            "text": "capacity for this service. Turn this"
+          },
+          {
+            "start": 1220.48,
+            "end": 1224.4,
+            "text": "off.\" So, if we look at our business,"
+          },
+          {
+            "start": 1221.76,
+            "end": 1225.919,
+            "text": "for example, we offer both done for you"
+          },
+          {
+            "start": 1224.4,
+            "end": 1228,
+            "text": "meta ad services. We create manage"
+          },
+          {
+            "start": 1225.919,
+            "end": 1229.8400000000001,
+            "text": "optimizer campaigns for you. And we have"
+          },
+          {
+            "start": 1228,
+            "end": 1231.52,
+            "text": "done with you program, which my"
+          },
+          {
+            "start": 1229.84,
+            "end": 1233.36,
+            "text": "mentorship program, where you still"
+          },
+          {
+            "start": 1231.52,
+            "end": 1234.72,
+            "text": "manage your own ads, but we coach and"
+          },
+          {
+            "start": 1233.36,
+            "end": 1235.9189999999999,
+            "text": "very hands-on in terms of making"
+          },
+          {
+            "start": 1234.72,
+            "end": 1237.52,
+            "text": "recommendations. You can ask us"
+          },
+          {
+            "start": 1235.919,
+            "end": 1239.44,
+            "text": "questions and all that sort of stuff."
+          },
+          {
+            "start": 1237.52,
+            "end": 1241.28,
+            "text": "So, those are separate offers. We would"
+          },
+          {
+            "start": 1239.44,
+            "end": 1242.96,
+            "text": "have those in separate campaigns. We"
+          },
+          {
+            "start": 1241.28,
+            "end": 1244.48,
+            "text": "want them to optimize differently. The"
+          },
+          {
+            "start": 1242.96,
+            "end": 1246.72,
+            "text": "target market is typically a bit"
+          },
+          {
+            "start": 1244.48,
+            "end": 1247.76,
+            "text": "different. Uh the the big spenders are"
+          },
+          {
+            "start": 1246.72,
+            "end": 1249.3600000000001,
+            "text": "typically going to be on the done for"
+          },
+          {
+            "start": 1247.76,
+            "end": 1250.799,
+            "text": "you services, the larger businesses."
+          },
+          {
+            "start": 1249.36,
+            "end": 1253.36,
+            "text": "Others are going to be with the with the"
+          },
+          {
+            "start": 1250.799,
+            "end": 1255.039,
+            "text": "mentorship program. So we want Meta to"
+          },
+          {
+            "start": 1253.36,
+            "end": 1256.4799999999998,
+            "text": "optimize accordingly. And then also like"
+          },
+          {
+            "start": 1255.039,
+            "end": 1258.24,
+            "text": "I said, we have flexibility in terms of"
+          },
+          {
+            "start": 1256.48,
+            "end": 1259.76,
+            "text": "capacity. So we could oh we're"
+          },
+          {
+            "start": 1258.24,
+            "end": 1261.36,
+            "text": "absolutely capacity. We're done for you."
+          },
+          {
+            "start": 1259.76,
+            "end": 1263.679,
+            "text": "Let's turn that off for a little while."
+          },
+          {
+            "start": 1261.36,
+            "end": 1264.9599999999998,
+            "text": "Um and we'll start that up again once we"
+          },
+          {
+            "start": 1263.679,
+            "end": 1266,
+            "text": "uh once we're ready. By the way, if"
+          },
+          {
+            "start": 1264.96,
+            "end": 1267.28,
+            "text": "you're interested in either of those,"
+          },
+          {
+            "start": 1266,
+            "end": 1268.88,
+            "text": "want us to run your ad campaigns for you"
+          },
+          {
+            "start": 1267.28,
+            "end": 1270.48,
+            "text": "or want us to teach you how to run"
+          },
+          {
+            "start": 1268.88,
+            "end": 1272.0800000000002,
+            "text": "better ad campaigns, get better results,"
+          },
+          {
+            "start": 1270.48,
+            "end": 1273.84,
+            "text": "um, links in the description for both."
+          },
+          {
+            "start": 1272.08,
+            "end": 1275.6789999999999,
+            "text": "There are also times where you might"
+          },
+          {
+            "start": 1273.84,
+            "end": 1277.039,
+            "text": "need a different campaign structure to"
+          },
+          {
+            "start": 1275.679,
+            "end": 1278.3200000000002,
+            "text": "what I've recommended. So, the things"
+          },
+          {
+            "start": 1277.039,
+            "end": 1280.24,
+            "text": "I've been through here and what I've"
+          },
+          {
+            "start": 1278.32,
+            "end": 1282.08,
+            "text": "recommended would be the default. That's"
+          },
+          {
+            "start": 1280.24,
+            "end": 1283.2,
+            "text": "going to apply to most businesses, but"
+          },
+          {
+            "start": 1282.08,
+            "end": 1284.72,
+            "text": "there are times where you might want to"
+          },
+          {
+            "start": 1283.2,
+            "end": 1288.24,
+            "text": "do something differently. For example,"
+          },
+          {
+            "start": 1284.72,
+            "end": 1290.559,
+            "text": "my omnipresent content campaign strategy"
+          },
+          {
+            "start": 1288.24,
+            "end": 1291.919,
+            "text": "requires a very different structure. You"
+          },
+          {
+            "start": 1290.559,
+            "end": 1292.96,
+            "text": "can't have the one adset. You need"
+          },
+          {
+            "start": 1291.919,
+            "end": 1294,
+            "text": "multiple adsets. So, if you're not"
+          },
+          {
+            "start": 1292.96,
+            "end": 1295.039,
+            "text": "familiar with that, I've got videos on"
+          },
+          {
+            "start": 1294,
+            "end": 1296.64,
+            "text": "my channel in case you want to check it"
+          },
+          {
+            "start": 1295.039,
+            "end": 1299.28,
+            "text": "out. It's typically a strategy that"
+          },
+          {
+            "start": 1296.64,
+            "end": 1303.8400000000001,
+            "text": "works really well for businesses with a"
+          },
+          {
+            "start": 1299.28,
+            "end": 1306,
+            "text": "very um involved purchasing decision for"
+          },
+          {
+            "start": 1303.84,
+            "end": 1307.12,
+            "text": "your customer. So, think high ticket"
+          },
+          {
+            "start": 1306,
+            "end": 1307.919,
+            "text": "service, for example. Something that"
+          },
+          {
+            "start": 1307.12,
+            "end": 1309.52,
+            "text": "people really going to have to think"
+          },
+          {
+            "start": 1307.919,
+            "end": 1311.1200000000001,
+            "text": "about, need a lot of convincing. You"
+          },
+          {
+            "start": 1309.52,
+            "end": 1313.28,
+            "text": "need a different campaign structure. If"
+          },
+          {
+            "start": 1311.12,
+            "end": 1315.76,
+            "text": "you're selling a $10,000, $20,000"
+          },
+          {
+            "start": 1313.28,
+            "end": 1317.12,
+            "text": "service, for example, right? So, in that"
+          },
+          {
+            "start": 1315.76,
+            "end": 1318.96,
+            "text": "instance, you're going to want to go"
+          },
+          {
+            "start": 1317.12,
+            "end": 1321.36,
+            "text": "away from this default. When you go away"
+          },
+          {
+            "start": 1318.96,
+            "end": 1323.2,
+            "text": "from this default that I've uh talked"
+          },
+          {
+            "start": 1321.36,
+            "end": 1324.799,
+            "text": "about in this video, meta is also going"
+          },
+          {
+            "start": 1323.2,
+            "end": 1326.559,
+            "text": "to pop up with lots of warnings. It's"
+          },
+          {
+            "start": 1324.799,
+            "end": 1328.6399999999999,
+            "text": "fine to ignore those, but just do it"
+          },
+          {
+            "start": 1326.559,
+            "end": 1330.799,
+            "text": "very intentionally. Know why you're"
+          },
+          {
+            "start": 1328.64,
+            "end": 1332.72,
+            "text": "doing it as opposed to just I'm going to"
+          },
+          {
+            "start": 1330.799,
+            "end": 1334.32,
+            "text": "do this because I heard 3 years ago this"
+          },
+          {
+            "start": 1332.72,
+            "end": 1336.72,
+            "text": "is how you're supposed to do it or such"
+          },
+          {
+            "start": 1334.32,
+            "end": 1338.24,
+            "text": "and such said this would work and know"
+          },
+          {
+            "start": 1336.72,
+            "end": 1340.72,
+            "text": "why you're doing it. Follow a specific"
+          },
+          {
+            "start": 1338.24,
+            "end": 1342.72,
+            "text": "strategy like omniresent content and"
+          },
+          {
+            "start": 1340.72,
+            "end": 1344.4,
+            "text": "understand the process and therefore"
+          },
+          {
+            "start": 1342.72,
+            "end": 1345.76,
+            "text": "you're fine to ignore warnings. Remember"
+          },
+          {
+            "start": 1344.4,
+            "end": 1347.1200000000001,
+            "text": "that warnings that pop up in your ad"
+          },
+          {
+            "start": 1345.76,
+            "end": 1349.44,
+            "text": "account saying change this to improve"
+          },
+          {
+            "start": 1347.12,
+            "end": 1352.2399999999998,
+            "text": "performance. they are done with like the"
+          },
+          {
+            "start": 1349.44,
+            "end": 1354.48,
+            "text": "masses in mind and what's best on"
+          },
+          {
+            "start": 1352.24,
+            "end": 1357.28,
+            "text": "average and they're right. It might not"
+          },
+          {
+            "start": 1354.48,
+            "end": 1359.28,
+            "text": "be right for your um specific scenario."
+          },
+          {
+            "start": 1357.28,
+            "end": 1361.12,
+            "text": "Testing is the other big example where"
+          },
+          {
+            "start": 1359.28,
+            "end": 1363.039,
+            "text": "we might deviate from this. So a lot of"
+          },
+          {
+            "start": 1361.12,
+            "end": 1365.12,
+            "text": "ad accounts run into the issue when they"
+          },
+          {
+            "start": 1363.039,
+            "end": 1367.2,
+            "text": "just have the one campaign, one ad set"
+          },
+          {
+            "start": 1365.12,
+            "end": 1369.12,
+            "text": "where they really struggle to test new"
+          },
+          {
+            "start": 1367.2,
+            "end": 1371.1200000000001,
+            "text": "ad creative. So they find that okay,"
+          },
+          {
+            "start": 1369.12,
+            "end": 1373.52,
+            "text": "I've got my ads in there, meta spending"
+          },
+          {
+            "start": 1371.12,
+            "end": 1375.12,
+            "text": "on one or two ads. I try and introduce"
+          },
+          {
+            "start": 1373.52,
+            "end": 1376.32,
+            "text": "new ads. I've been told I need creative"
+          },
+          {
+            "start": 1375.12,
+            "end": 1378.32,
+            "text": "diversity. I'm spending all this time"
+          },
+          {
+            "start": 1376.32,
+            "end": 1379.6789999999999,
+            "text": "producing new ads. I put them in there"
+          },
+          {
+            "start": 1378.32,
+            "end": 1380.8799999999999,
+            "text": "and just nothing happens. Met doesn't"
+          },
+          {
+            "start": 1379.679,
+            "end": 1382.64,
+            "text": "spend any money on them. They just spend"
+          },
+          {
+            "start": 1380.88,
+            "end": 1384.3200000000002,
+            "text": "money on my previous best performers,"
+          },
+          {
+            "start": 1382.64,
+            "end": 1386.5590000000002,
+            "text": "but those are slowly fatiguing and"
+          },
+          {
+            "start": 1384.32,
+            "end": 1388.48,
+            "text": "performance is dropping. What do I do?"
+          },
+          {
+            "start": 1386.559,
+            "end": 1390.08,
+            "text": "That's where we will entertain a"
+          },
+          {
+            "start": 1388.48,
+            "end": 1392.159,
+            "text": "different campaign structure. In fact, I"
+          },
+          {
+            "start": 1390.08,
+            "end": 1394.1589999999999,
+            "text": "go through how I'd recommend you test"
+          },
+          {
+            "start": 1392.159,
+            "end": 1395.6000000000001,
+            "text": "and the various options to overcome that"
+          },
+          {
+            "start": 1394.159,
+            "end": 1397.2800000000002,
+            "text": "problem, allow you to test new ad"
+          },
+          {
+            "start": 1395.6,
+            "end": 1399.36,
+            "text": "creative, which is super super important"
+          },
+          {
+            "start": 1397.28,
+            "end": 1401.6,
+            "text": "in this video here. So, I'd strongly"
+          },
+          {
+            "start": 1399.36,
+            "end": 1402.8799999999999,
+            "text": "recommend checking that out next. Often"
+          },
+          {
+            "start": 1401.6,
+            "end": 1404.24,
+            "text": "we will still use this campaign"
+          },
+          {
+            "start": 1402.88,
+            "end": 1405.6000000000001,
+            "text": "structure and test within it, but there"
+          },
+          {
+            "start": 1404.24,
+            "end": 1407.28,
+            "text": "are scenarios where we will deviate from"
+          },
+          {
+            "start": 1405.6,
+            "end": 1409.52,
+            "text": "that. Anyway, I cover it all in this"
+          },
+          {
+            "start": 1407.28,
+            "end": 1409.52,
+            "text": "video."
+          }
+        ],
+        "model": "yt-transcript-api:en:auto"
+      },
+      "frames": []
+    },
+    {
+      "event": "done",
+      "posts": 1
+    }
+  ],
+  "outputs": {
+    "posts_ingested": 1,
+    "warnings": 0,
+    "errors": 0
+  }
+}

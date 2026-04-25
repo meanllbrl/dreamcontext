@@ -16,6 +16,7 @@ import { registerBookmarkCommand } from './commands/bookmark.js';
 import { registerTriggerCommand } from './commands/trigger.js';
 import { registerTranscriptCommand } from './commands/transcript.js';
 import { registerCouncilCommand } from './commands/council.js';
+import { registerMarketingCommand } from './commands/marketing.js';
 import { startInteractive } from './interactive.js';
 import { renderBanner } from '../lib/pixel-banner.js';
 
@@ -96,6 +97,7 @@ export function createProgram(): Command {
   registerTriggerCommand(program);
   registerTranscriptCommand(program);
   registerCouncilCommand(program);
+  registerMarketingCommand(program);
 
   return program;
 }

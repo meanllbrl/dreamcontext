@@ -1,5 +1,15 @@
 [
   {
+    "id": "council_7_ForDfS",
+    "topic": "Should we adopt the meta-marketing skill plan at /Users/mehmetnuraydin/.claude/plans/like-council-now-we-serialized-petal.md as-is, or what must change before commit? Critique: (1) DX across CLI + agent chat, (2) edge cases (auth, rate limits, env, multi-account, asset binaries, dry-run safety), (3) dreamcontext architectural fit (folder convention, JSON-vs-MD, council reuse, sleep consolidation, hooks), (4) dashboard visibility (Brain graph nodes, read-only chat-back UX, perf charts, recharts dep), (5) implementation sequencing (ship-first slice, risky bits, what to defer).",
+    "status": "complete",
+    "rounds_planned": 2,
+    "current_round": 1,
+    "promoted_to_knowledge": null,
+    "created_at": "2026-04-25",
+    "updated_at": "2026-04-25"
+  },
+  {
     "id": "council_demo01",
     "topic": "Should we migrate from Postgres to Firestore?",
     "status": "complete",

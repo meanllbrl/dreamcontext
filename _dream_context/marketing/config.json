@@ -1,0 +1,7 @@
+{
+  "default_profile": null,
+  "profiles": {},
+  "feature_flags": {
+    "creative_director_enabled": false
+  }
+}
