@@ -141,7 +141,8 @@
         "mistakes.md",
         "platform-state.md"
       ],
-      "corpus_status": "9 videos · 4 speakers · draft · agent roster stubbed (not yet generated)"
+      "relatedAgents": ["marketing-strategy", "marketing-monitor", "marketing-creative"],
+      "corpus_status": "9 videos · 4 speakers · draft · agent roster: 2 active (strategy, monitor) + 1 stubbed (creative)"
     },
     {
       "name": "system-prompts",
@@ -182,6 +183,30 @@
       "pack": "council",
       "description": "Reads every report + persona + research in a council debate and writes the final decision report with traced Whys, position-shift timeline, and minority views.",
       "tags": ["council", "debate", "synthesis", "reporting"],
+      "model": "opus"
+    },
+    {
+      "name": "marketing-strategy",
+      "file": "agents/marketing-strategy.md",
+      "pack": "meta-marketing",
+      "description": "Strategy Optimizer for Meta ads — plans cohort hypotheses (shape-validated), drafts campaign briefs grounded in the meta-marketing skill-pack corpus, always asks for budget, never launches.",
+      "tags": ["meta", "ads", "strategy", "cohort", "hypothesis", "marketing"],
+      "model": "opus"
+    },
+    {
+      "name": "marketing-monitor",
+      "file": "agents/marketing-monitor.md",
+      "pack": "meta-marketing",
+      "description": "Performance Monitor for live Meta campaigns — reads insights, applies post-launch rules from account-ops.md §4, writes hypothesis-ledger entries to per-day learnings, recommends moves but never auto-mutates.",
+      "tags": ["meta", "ads", "monitoring", "optimization", "marketing"],
+      "model": "opus"
+    },
+    {
+      "name": "marketing-creative",
+      "file": "agents/marketing-creative.md",
+      "pack": "meta-marketing",
+      "description": "Creative Director for Meta ads — STUBBED in v0. Refuses all requests until marketing.creative_director.enabled = true. v1 will merge brainstorming + copy + asset generation.",
+      "tags": ["meta", "ads", "creative", "stub", "marketing"],
       "model": "opus"
     }
   ]
