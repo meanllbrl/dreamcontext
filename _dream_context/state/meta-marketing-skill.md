@@ -6,19 +6,19 @@ description: >-
   Reinfluence, and dashboard. Single source of truth for v0.
 priority: high
 urgency: high
-status: in_progress
+status: completed
 created_at: '2026-04-25'
-updated_at: '2026-04-25T20:55Z'
+updated_at: '2026-04-25T22:45Z'
 status_pr0: shipped
 status_pr0_5: shipped
 status_pr1: shipped
 status_pr2: shipped
 status_pr3: shipped
 status_pr4: shipped
-status_pr5: partial (vision pass remaining)
+status_pr5: shipped
 status_pr6: shipped (early — agent roster grounded in corpus)
-status_pr7: todo
-status_pr8: todo
+status_pr7: deferred (lifted to standalone task — see Notes)
+status_pr8: shipped
 tags:
   - skill
   - marketing
@@ -38,7 +38,7 @@ council: council_7_ForDfS
 
 If you are starting a fresh session, **this section is your single source of context — read it before anything else.**
 
-**Status as of 2026-04-25 evening (PR 0 / 0.5 / 1 / 2 / 3 / 4 / 6 SHIPPED).** Working tree clean for marketing files. 10 marketing commits ahead of remote. 675/675 tests passing. mk CLI exposes 25 subcommands. Sleep debt at 7 — **CONSOLIDATE BEFORE STARTING PR 5/7/8.**
+**Status as of 2026-04-25 night — TASK CLOSED.** PR 0 / 0.5 / 1 / 2 / 3 / 4 / 5 / 6 / 8 ALL SHIPPED. PR 7 lifted to standalone task `Marketing Dashboard v0 (deferred from PR 7)`. 13 marketing commits ahead of remote (10 prior + PR 8a/8b/5). 743/743 tests passing. mk CLI exposes 28 subcommands (added `mk hooks`, `mk council`, `mk competitor relabel/relabel-all`).
 
 ### Branch state
 
@@ -129,11 +129,22 @@ PR 4 review fixes (`c43f60d`) — 2 critical + 2 major flagged by `reviewer` age
 
 ### What's NOT shipped yet
 
-**PR 5 (NEXT-eligible)** — Reinfluence vision pass. Almost everything subsumed by PR 0; remaining: optional vision-pass behind env-key flag (`OPENAI_VISION_API_KEY` / `GOOGLE_API_KEY`) — tags hook frames with pattern labels (face-zoom, text-only, prop-driven, etc.) and stores them on post JSON.
+**PR 5 — SHIPPED 2026-04-25 (`3c2b2d2`)** — Reinfluence vision pass behind env-key flag (`OPENAI_VISION_API_KEY` > `GOOGLE_API_KEY`). New `src/lib/marketing/vision.ts` (300L) with `pickVisionProvider`, `parseLabelsFromText` (allowlist filter, 2-cap, code-fence-tolerant), `labelHookFrame` (gpt-4o-mini + gemini-1.5-flash via injectable fetcher), `runVisionPassOnPost` (atomic JSON+MD update, skip cases). Auto-runs after `persistPost` in `ingestCompetitor`; per-frame failures degrade gracefully. New CLI verbs `mk competitor relabel <shortcode>` + `mk competitor relabel-all` (--dry-run / --force). 27 unit tests. YouTube ingest is transcript-only so this is a no-op for the existing 9-video corpus; runs on Instagram videos only.
 
-**PR 7** — Dashboard v0 (3 tabs Overview/Performance with uPlot/Creatives with clipboard "Discuss in chat", locked-down asset static-serving, `last_synced_at` freshness badge, empty states, Brain graph layer toggle default-OFF, sidebar nav entry, KnowledgePage deep-link to `marketing-learnings/`).
+**PR 7 — DEFERRED** to standalone task `Marketing Dashboard v0 (deferred from PR 7)`. Removed from this task's roadmap. Brief preserved in the new task; full v0 spec still lives at `_dream_context/council/council_7_ForDfS/dashboard-lead/report.md`.
 
-**PR 8** — Pre-commit hook (`dist/hooks/marketing-binary-guard.sh`) blocks `_assets/`/`_media/` paths + `mk doctor --scan` retroactive secret sweep across `_dream_context/` + `mk council "<topic>"` wrapper that pipes 4 marketing personas from `skill-packs/meta-marketing/council-personas/*.md` into `dreamcontext council` (NOT a `--preset` flag — architect MUST-CHANGE 6).
+**PR 8 — SHIPPED 2026-04-25 across 2 commits:**
+
+PR 8a — Pre-commit binary guard (`ac56e53`):
+- `hooks/marketing-binary-guard.sh` shipped to `dist/hooks/` via tsup. `src/lib/marketing/git-guard.ts` — pure functions (`isBlockedMarketingPath`, `findBlockedPaths`, `getStagedFiles` with NUL-delimited git diff parsing). `src/cli/commands/marketing/hooks.ts` — `mk hooks check-staged` (hook entry, exit-1 with offender list) + `mk hooks install [--force]` (writes `.git/hooks/pre-commit` launcher; refuses to overwrite a non-managed hook without --force; idempotent refresh of managed hooks). 14 unit + 8 integration tests including end-to-end git commit refusal.
+- `mk doctor --scan` was already shipped in PR 3 era (existing in `src/cli/commands/marketing/doctor.ts`).
+
+PR 8b — `mk council` wrapper + 4 personas (`a8966d7`):
+- 4 persona data files at `skill-packs/meta-marketing/council-personas/{strategy-optimizer,performance-monitor,creative-director,risk-officer}.md`. Each has frontmatter (slug, model, aspects, **skills**) + `## Skills always loaded` body section + persona-perspective body grounded in corpus rules. Per architect MUST-CHANGE 6: data files, NOT a `--preset` flag.
+- `src/lib/marketing/council-personas.ts` — `findPersonasDir` (walks bundle candidates), `parsePersonaFile`, `loadAllPersonas`, `selectPersonas`.
+- `src/cli/commands/marketing/council.ts` — `mk council "<topic>"` wrapper that re-invokes `dreamcontext council create` then `council agent create` per persona via spawnSync (stdin body to avoid shell escapes); supports `-p/--persona` subset and `--rounds`/`--interrupt` pass-through.
+- Also added `skills:` frontmatter + `## Skills always loaded` to the 3 PR 6 marketing agents (`marketing-strategy.md`, `marketing-monitor.md`, `marketing-creative.md`) per user feedback.
+- 14 unit + 5 integration tests.
 
 **Backlog polish (not assigned to a PR):**
 - Tab-completion script for `mk` (deferred from PR 2).
@@ -276,17 +287,15 @@ for s in d['transcript']['segments']:
 
 ### What to do next when this section is read
 
-PR 4 is shipped (across 4 commits including reviewer-fix). Sleep debt is at **7 — CONSOLIDATE BEFORE STARTING PR 5/7/8.** Six PRs are now live; only PR 5 (vision pass), PR 7 (dashboard), and PR 8 (council wrapper + retroactive doctor scan) remain.
+**Task closed.** Nine of ten PRs shipped (0, 0.5, 1, 2, 3, 4, 5, 6, 8). PR 7 (Dashboard v0) was lifted to its own task — see `Marketing Dashboard v0 (deferred from PR 7)` task #1. No further work in this task; resume the dashboard task or pivot to a new initiative.
 
-1. **Greet the user, confirm state loaded, then ask which option:**
-   - **(STRONGLY RECOMMENDED)** Consolidate sleep (debt = 7) before any new PR. 10 marketing commits + reviewer fixes are unconsolidated. Run the `dreamcontext-rem-sleep` agent.
-   - **PR 7 — Dashboard v0.** Highest-leverage UX win. 3 tabs (Overview / Performance with uPlot / Creatives with clipboard "Discuss in chat"); locked-down asset static-serving (extension allowlist, realpath check, filename whitelist tied to creative JSON, localhost-bind, no listing); `last_synced_at` freshness badge; empty states for every tab; Brain graph layer toggle (default OFF); sidebar nav entry; KnowledgePage deep-link to `marketing-learnings/`. **PR 4's snapshot + learnings already provide the data layer the dashboard needs.**
-   - **PR 8 — `mk council` wrapper + pre-commit hook + `mk doctor --scan`.** Smaller surface than PR 7 but blocking-quality (commit hook prevents `_assets/`/`_media/` leaks; doctor scan finds historic token leaks; council wrapper unblocks marketing-specific debates). Council personas already exist as data files at `skill-packs/meta-marketing/council-personas/*.md` per the architect MUST-CHANGE 6 ruling — NOT a `--preset` flag on the council command.
-   - **PR 5 — Reinfluence vision pass.** Smallest scope of the three open PRs: tag hook frames with pattern labels (face-zoom, text-only, prop-driven) via OpenAI/Google vision behind an env-key gate. Stored on post JSON. Most of PR 5 is already done in PR 0; only this optional pass remains.
-   - **End-to-end smoke** against a Tilki sandbox ad account (`mk launch <cohort> --confirm <cohort>` dry-run first, then `--no-dry-run` if sandbox available). Will exercise PR 1 + 2 + 3 + 4 in one shot. Requires a sandbox; defer if not available.
-   - **Backlog polish** (any of: tab-completion for `mk`, `mk cohort close <id>`, currency lookup for `mk scale`, integration test for `mk insights pull --campaign <id>`, diff-vs-current preview for `mk launch`).
+If a fresh session lands here:
 
-2. **Recommended next-PR order:** PR 7 → PR 8 → PR 5. Rationale: PR 7 is the user-facing payoff and PR 4's `## Marketing` snapshot + learnings index already give it most of the data plumbing. PR 8 is the safety/quality gate before any production launch. PR 5's vision pass is genuinely optional and behind an env-key flag — easiest to ship last.
+1. **Don't reopen this task.** The marketing skill v0 is feature-complete from this task's POV. Open issues / polish should go to:
+   - **`Marketing Dashboard v0 (deferred from PR 7)` (task #1)** — the dashboard surface (3 tabs, hardened static serving, Brain layer, freshness badge, KnowledgePage deep-link).
+   - **A new task** for any backlog polish: tab-completion for `mk`, `mk cohort close <id>`, currency lookup for `mk scale`, integration test for `mk insights pull --campaign <id>`, diff-vs-current preview for `mk launch`, end-to-end sandbox smoke once Tilki provides one.
+
+2. **Production smoke** against a Tilki sandbox ad account is still pending — requires sandbox provisioning. When available, run `mk launch <cohort> --confirm <cohort>` dry-run first, then `--no-dry-run`. This exercises PR 1 + 2 + 3 + 4 in one shot.
 
 3. **Hard constraints carrying forward (unchanged):**
    - **CLI is the only place that flips `ctx.dryRun = false`.** Verified in PR 1 (`metaFetch`) and PR 3 (`launch`). Library code accepts `ctx`, never constructs it.
@@ -862,6 +871,10 @@ TanStack Query: `staleTime: 60_000`, refetch on window focus. SSE for run-log �
 
 ## Notes
 
+### PR 7 lifted to standalone task (2026-04-25)
+
+The dashboard work that was originally PR 7 has been moved out of this task into its own task: **`Marketing Dashboard v0 (deferred from PR 7)`**. Reasons: dashboard scope (3 tabs + hardened static serving + Brain layer + freshness badge + KnowledgePage deep-link + ~4 sub-PRs) is large enough to be its own thing, and gating PR 5/PR 8 ship behind it isn't useful. PR 4's snapshot + learnings index already give the dashboard its data layer, so the dashboard task can be picked up at any time without further work in this task. Full v0 spec preserved at `_dream_context/council/council_7_ForDfS/dashboard-lead/report.md`.
+
 ### Open questions (non-blocking, address during implementation)
 - **Idempotency cache pruning** — `runs/by-idem/*.json` is still un-pruned as of PR 4. The PR 4 `mk rem-sleep` deliberately leaves it alone (the cache backs idempotency keys; pruning by age requires a TTL we haven't decided yet). Open question: 30-day TTL on by-idem entries, or scan for orphaned (no matching `runs/<ts>__*.json`)? Defer to v1 after observing real cache size.
 - **Dashboard hosting** — assumed localhost-only in v0. If ever served bundled-prod over a non-localhost interface, asset rules need auth, not just bind-host. Document in PR 7.
@@ -886,6 +899,17 @@ TanStack Query: `staleTime: 60_000`, refetch on window focus. SSE for run-log �
 ## Changelog
 <!-- LIFO: newest entry at top -->
 
+### 2026-04-25 night — Task closed: PR 8 + PR 5 shipped
+- **PR 8a (`ac56e53`)** — pre-commit binary guard hook: `hooks/marketing-binary-guard.sh` + `src/lib/marketing/git-guard.ts` (pure functions) + `src/cli/commands/marketing/hooks.ts` (`mk hooks check-staged` + `mk hooks install [--force]`). 14 unit + 8 integration tests (end-to-end git commit refusal verified).
+- **PR 8b (`a8966d7`)** — `mk council "<topic>"` wrapper + 4 marketing personas at `skill-packs/meta-marketing/council-personas/*.md` (strategy-optimizer, performance-monitor, creative-director, risk-officer). Per architect MUST-CHANGE 6: personas are data files, not a `--preset` flag. Each persona has frontmatter `skills:` + `## Skills always loaded` body section per user feedback. Same skills declaration added to the 3 PR 6 agents (marketing-strategy / -monitor / -creative). 14 unit + 5 integration tests.
+- **PR 5 (`3c2b2d2`)** — Reinfluence vision pass: `src/lib/marketing/vision.ts` (allowlist filter, 2-cap, OpenAI gpt-4o-mini + Google gemini-1.5-flash, injectable fetcher) + auto-pass after `persistPost` in `ingestCompetitor` (per-frame failures degrade gracefully, awaits visionTasks before run.succeed) + `mk competitor relabel <shortcode>` + `mk competitor relabel-all` (--dry-run, --force). 27 unit tests. No-op for existing YouTube corpus (transcript-only); runs on IG videos.
+- 743/743 tests passing. mk CLI now exposes 28 subcommands. Task is **CLOSED**; only PR 7 remains and was lifted to a standalone task.
+
+### 2026-04-25 — PR 7 lifted to standalone task
+Dashboard v0 (originally PR 7) moved out of this task into a new task: `Marketing Dashboard v0 (deferred from PR 7)`. Active next step is now PR 8 (council wrapper + pre-commit hook + `mk doctor --scan`), then PR 5 (vision pass). Full v0 spec preserved at `_dream_context/council/council_7_ForDfS/dashboard-lead/report.md`. Status_pr7 in frontmatter flipped to `deferred`. Updated all "Resume here" navigation pointers.
+
+### 2026-04-25 - Session Update
+- Consolidated PRs 1-4+6 shipped: Graph API foundation (meta-fetch 525L + meta-client 270L, v25.0, header-only auth, retry/backoff/idempotency), CLI surface (13 verbs + 4 lib modules: hypothesis, budget, insights-cache, cohort), launch with full guardrails (entity-store, launch.ts, 6 mutation verbs, WAL+resume), learnings ledger + PR 4 hooks (snapshot.ts, path-guards.ts, mk rem-sleep with 4 pure functions), agent roster (marketing-strategy, marketing-monitor, marketing-creative stub). 4 reviewer-flagged issues fixed (mkdirSync in atomicWriteFile, idempotent merge, status WAL, realpath scoping). 675/675 tests. mk CLI exposes 25 subcommands. PR 7 (Dashboard v0) is next.
 ### 2026-04-25T20:55Z — PR 4 shipped (.md bridge layer + hooks; reviewer-fix)
 Four commits — `b8030d2` (PR 4a learnings), `270add7` (PR 4b hooks), `153d157` (PR 4c rem-sleep), `c43f60d` (reviewer-fix). 1500+ insertions across 18 files.
 
