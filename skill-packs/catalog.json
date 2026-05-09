@@ -131,7 +131,7 @@
     {
       "name": "meta-marketing",
       "file": "meta-marketing/SKILL.md",
-      "description": "Load when planning, launching, or optimizing Meta (Facebook/Instagram) ad campaigns for Tilki Öğretmen. Covers campaign structure, audience, creative strategy, post-launch optimization, and common failure modes.",
+      "description": "Load when planning, launching, or optimizing Meta (Facebook/Instagram) ad campaigns. Covers campaign structure, audience, creative strategy, post-launch optimization, and common failure modes.",
       "tags": ["meta", "facebook", "instagram", "ads", "marketing", "ROAS", "creative", "campaign", "adset", "CAPI", "pixel"],
       "alwaysApply": false,
       "references": [

@@ -33,6 +33,7 @@ These are facts about Meta's current platform behavior — UI defaults, algorith
 | Targeting inputs are suggestions, not constraints | Even if you set interests or custom audience targeting, Meta may deliver outside those boundaries unless you explicitly force hard constraints via hidden settings. | 2025–2026 | Ben Heath, Charlie, Moonlighters (all 3 speakers) |
 | Advantage+ Shopping YoY improvement | Meta reported ~70% YoY improvement in Advantage+ Shopping campaign performance in Q4 2024 | Q4 2024 | mistakes-report-2026 |
 | Andromeda algorithm rollout | Meta's new AI delivery system (Andromeda) rolled out broadly. Affects targeting, delivery sequencing, and optimization. Heavily favors broad signals over narrow ones. | 2025-12 | mistakes-report-2026 |
+| Andromeda creative-pool reweighting | Andromeda rewards larger creative pools per adset (15–30 ads) over the pre-Andromeda 3–10 norm. Smaller pools starve the algorithm of optimization signal. The 3–10 figure in older corpus sources predates this shift. | 2026 | SKILL.md §III update 2026-04-26; user-flagged gap |
 
 ---
 

@@ -12,6 +12,46 @@ import { buildCoreIndex } from '../../lib/core-index.js';
 import { buildMarketingSnapshot } from '../../lib/marketing/snapshot.js';
 
 /**
+ * Default line cap when inlining pinned knowledge into the auto-context snapshot.
+ * Per-entry overrides via frontmatter `pinned_preview_lines: N` or `pinned_preview: "all"`.
+ */
+export const DEFAULT_PINNED_PREVIEW_LINES = 60;
+
+/**
+ * Strip leading YAML frontmatter and surrounding blank lines from markdown content.
+ * Used by the preview helpers below.
+ */
+function stripFrontmatter(content: string): string {
+  const lines = content.split('\n');
+  let i = 0;
+  if (lines[0]?.trim() === '---') {
+    i = 1;
+    while (i < lines.length && lines[i].trim() !== '---') i++;
+    if (i < lines.length) i++;
+  }
+  while (i < lines.length && lines[i].trim() === '') i++;
+  return lines.slice(i).join('\n');
+}
+
+/**
+ * Take up to `maxLines` lines of body content (after frontmatter).
+ * Returns `truncated: true` if the original body was longer than `maxLines`.
+ * Preserves markdown structure — no paragraph joining, no char cap.
+ */
+export function extractPinnedPreview(
+  content: string,
+  maxLines: number,
+): { preview: string; truncated: boolean; totalLines: number } {
+  const body = stripFrontmatter(content).replace(/\s+$/, '');
+  const lines = body.split('\n');
+  const totalLines = lines.length;
+  if (totalLines <= maxLines) {
+    return { preview: body, truncated: false, totalLines };
+  }
+  return { preview: lines.slice(0, maxLines).join('\n'), truncated: true, totalLines };
+}
+
+/**
  * Extract the first paragraph from markdown content.
  * Skips headings, blank lines, and frontmatter blocks.
  * Returns the first block of contiguous body text.
@@ -476,12 +516,21 @@ export function generateSnapshot(): string {
       }
     }
 
-    // 10. Pinned Knowledge (full content, only if any)
+    // 10. Pinned Knowledge (capped preview by default, full only when opted-in)
     if (pinnedEntries.length > 0) {
       parts.push('## Pinned Knowledge\n');
       for (const entry of pinnedEntries) {
         parts.push(`### ${entry.name}\n`);
-        parts.push(entry.content);
+        if (entry.pinnedPreviewAll) {
+          parts.push(entry.content);
+        } else {
+          const cap = entry.pinnedPreviewLines ?? DEFAULT_PINNED_PREVIEW_LINES;
+          const { preview, truncated, totalLines } = extractPinnedPreview(entry.content, cap);
+          parts.push(preview);
+          if (truncated) {
+            parts.push(`\n→ Read full: _dream_context/knowledge/${entry.slug}.md (${totalLines} lines total, showing first ${cap})`);
+          }
+        }
         parts.push('');
       }
     }
@@ -614,7 +663,16 @@ export function generateSubagentBriefing(): string {
       parts.push('## Pinned Knowledge\n');
       for (const entry of pinnedEntries) {
         parts.push(`### ${entry.name}\n`);
-        parts.push(entry.content);
+        if (entry.pinnedPreviewAll) {
+          parts.push(entry.content);
+        } else {
+          const cap = entry.pinnedPreviewLines ?? DEFAULT_PINNED_PREVIEW_LINES;
+          const { preview, truncated, totalLines } = extractPinnedPreview(entry.content, cap);
+          parts.push(preview);
+          if (truncated) {
+            parts.push(`\n→ Read full: _dream_context/knowledge/${entry.slug}.md (${totalLines} lines total, showing first ${cap})`);
+          }
+        }
         parts.push('');
       }
     }

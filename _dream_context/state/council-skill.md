@@ -6,9 +6,9 @@ description: >-
   sub-agents + synthesizer, file-based IPC
 priority: high
 urgency: medium
-status: in_review
+status: completed
 created_at: '2026-04-19'
-updated_at: '2026-04-19'
+updated_at: '2026-05-02'
 tags:
   - skill
   - council
@@ -217,6 +217,12 @@ _dream_context/council/
 
 
 
+
+
+### 2026-05-02 - Completed
+- Shipped in v0.2.0 (2026-04-19): 14 CLI sub-commands, council skill pack, Council UI v3 (CouncilHall grid + CouncilDetail tabs), security fixes (assertSafeSegment + assertWithinCouncil), fence-aware markdown parser. README + DEEP-DIVE updated. Tag v0.2.0 pushed. Status moved to in_review post-ship; no open work remains.
+### 2026-04-25 - Session Update
+- v0.2.0 shipped (session 2e902c8c): Full implementation committed and tagged. 14 CLI sub-commands, council skill pack, Council UI v3 (CouncilHall grid + CouncilDetail full-page), security fixes (assertSafeSegment + assertWithinCouncil), fence-aware markdown parser. README and DEEP-DIVE updated. v0.2.0 tag pushed.
 ### 2026-04-19 - Session Update
 - Council synthesizer readability rules: 6 rules added to council-synthesizer.md and council-final-report.md template. Rules: sources go inline after bullets/paragraphs (not mid-sentence), consensus lines collapse 5+ same-source bullets, max 1 verbatim quote per section, 'Why it X' max 1-2 sentences, meta-narration banned (Surfaced by/Echoed by/Synthesizer call patterns), human prose first then source tags. Enforces final-report.md readability on real council output.
 ### 2026-04-19 - Session Update

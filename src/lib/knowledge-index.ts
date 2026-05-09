@@ -36,6 +36,8 @@ export interface KnowledgeEntry {
   date: string;
   pinned: boolean;
   content: string;
+  pinnedPreviewLines?: number;
+  pinnedPreviewAll?: boolean;
 }
 
 // ─── Index Builder ─────────────────────────────────────────────────────────
@@ -55,7 +57,7 @@ export function buildKnowledgeIndex(contextRoot: string): KnowledgeEntry[] {
   for (const file of files) {
     try {
       const { data, content } = readFrontmatter(file);
-      entries.push({
+      const entry: KnowledgeEntry = {
         slug: basename(file, '.md'),
         name: String(data.name ?? basename(file, '.md')),
         description: String(data.description ?? ''),
@@ -63,7 +65,14 @@ export function buildKnowledgeIndex(contextRoot: string): KnowledgeEntry[] {
         date: String(data.date ?? ''),
         pinned: data.pinned === true,
         content: content.trim(),
-      });
+      };
+      if (typeof data.pinned_preview_lines === 'number' && data.pinned_preview_lines > 0) {
+        entry.pinnedPreviewLines = data.pinned_preview_lines;
+      }
+      if (data.pinned_preview === 'all') {
+        entry.pinnedPreviewAll = true;
+      }
+      entries.push(entry);
     } catch {
       // skip unreadable files
     }

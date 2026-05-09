@@ -131,3 +131,108 @@ export function insertToSection(
   const output = matter.stringify(lines.join('\n'), parsed.data);
   writeFileSync(filePath, output, 'utf-8');
 }
+
+export interface MermaidNode {
+  id: string;
+  label: string;
+  classes: string[];
+}
+
+const NODE_CLASSES = ['done', 'active', 'todo', 'blocked'] as const;
+export type NodeStatus = typeof NODE_CLASSES[number];
+
+/**
+ * Extract nodes from the first ```mermaid flowchart block in `content`.
+ * Recognises `Id[Label]:::class` and `Id["Label"]:::class` (and `(...)`, `{...}`).
+ * `:::class` may also be applied via a separate `class A1,B2 done;` line.
+ */
+export function extractMermaidNodes(content: string): MermaidNode[] {
+  const fence = content.match(/```mermaid\s+([\s\S]*?)```/);
+  if (!fence) return [];
+  let body = fence[1];
+
+  if (!/^\s*flowchart\b/m.test(body) && !/^\s*graph\b/m.test(body)) return [];
+
+  // Strip `subgraph Id [Label]` headers — their bracketed labels would otherwise
+  // be picked up as nodes. Keep `end` lines (harmless).
+  body = body.replace(/^\s*subgraph\b.*$/gm, '');
+
+  const nodes = new Map<string, MermaidNode>();
+
+  // Inline node defs: Id[Label] / Id(Label) / Id{Label}, optional :::class, label may be quoted.
+  const nodeRe = /\b([A-Za-z_][A-Za-z0-9_]*)\s*[\[\(\{]\s*"?([^"\]\)\}\n]*?)"?\s*[\]\)\}](?::::([A-Za-z_][A-Za-z0-9_]*))?/g;
+  let m: RegExpExecArray | null;
+  while ((m = nodeRe.exec(body)) !== null) {
+    const [, id, label, klass] = m;
+    if (id === 'subgraph' || id === 'flowchart' || id === 'graph') continue;
+    const existing = nodes.get(id);
+    const classes = klass ? [klass] : [];
+    if (existing) {
+      if (klass && !existing.classes.includes(klass)) existing.classes.push(klass);
+      if (!existing.label && label) existing.label = label.trim();
+    } else {
+      nodes.set(id, { id, label: label.trim(), classes });
+    }
+  }
+
+  // Bare references with class: `A1:::done` (no brackets)
+  const bareRe = /(?:^|[\s>])([A-Za-z_][A-Za-z0-9_]*):::([A-Za-z_][A-Za-z0-9_]*)/g;
+  while ((m = bareRe.exec(body)) !== null) {
+    const [, id, klass] = m;
+    const existing = nodes.get(id);
+    if (existing) {
+      if (!existing.classes.includes(klass)) existing.classes.push(klass);
+    } else {
+      nodes.set(id, { id, label: '', classes: [klass] });
+    }
+  }
+
+  // Separate-line class assignments: `class A1,B2 done`
+  const classLineRe = /^\s*class\s+([A-Za-z0-9_,\s]+)\s+([A-Za-z_][A-Za-z0-9_]*)\s*;?\s*$/gm;
+  while ((m = classLineRe.exec(body)) !== null) {
+    const ids = m[1].split(',').map((s) => s.trim()).filter(Boolean);
+    const klass = m[2];
+    for (const id of ids) {
+      const existing = nodes.get(id);
+      if (existing) {
+        if (!existing.classes.includes(klass)) existing.classes.push(klass);
+      } else {
+        nodes.set(id, { id, label: '', classes: [klass] });
+      }
+    }
+  }
+
+  // Drop classDef definitions accidentally captured (they have id === 'classDef'-style noise)
+  // The regex above already excludes the `classDef` keyword because it isn't followed by `[(...{`.
+
+  return Array.from(nodes.values());
+}
+
+/**
+ * Status class assigned to a node, if any. Returns null if no recognised
+ * status class is attached (raw classDef-only nodes excluded).
+ */
+export function nodeStatus(node: MermaidNode): NodeStatus | null {
+  for (const c of node.classes) {
+    if ((NODE_CLASSES as readonly string[]).includes(c)) return c as NodeStatus;
+  }
+  return null;
+}
+
+/**
+ * Count acceptance-criteria checkboxes (- [ ] / - [x]) in a markdown body.
+ * Returns { total, done }.
+ */
+export function countCheckboxes(sectionBody: string): { total: number; done: number } {
+  const lines = sectionBody.split('\n');
+  let total = 0;
+  let done = 0;
+  for (const line of lines) {
+    const m = line.match(/^\s*[-*]\s+\[([ xX])\]\s+/);
+    if (!m) continue;
+    total++;
+    if (m[1].toLowerCase() === 'x') done++;
+  }
+  return { total, done };
+}
+

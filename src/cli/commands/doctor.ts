@@ -106,6 +106,9 @@ export function registerDoctorCommand(program: Command): void {
         ...(existsSync(join(root, 'state', '.sleep.json'))
           ? [checkJson(root, 'state/.sleep.json', 'Sleep state')]
           : []),
+        ...(existsSync(join(root, 'state', '.platforms.json'))
+          ? [checkJson(root, 'state/.platforms.json', 'Platform defaults')]
+          : []),
       ];
 
       // Sleep state specific check: detect corruption

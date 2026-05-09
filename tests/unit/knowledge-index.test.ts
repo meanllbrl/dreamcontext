@@ -46,7 +46,7 @@ describe('buildKnowledgeIndex', () => {
     );
     const entries = buildKnowledgeIndex(tmpDir);
     expect(entries).toHaveLength(1);
-    expect(entries[0]).toEqual({
+    expect(entries[0]).toMatchObject({
       slug: 'auth-system',
       name: 'Auth System',
       description: 'JWT-based auth flow',
@@ -55,6 +55,37 @@ describe('buildKnowledgeIndex', () => {
       pinned: false,
       content: 'Detailed auth content.',
     });
+    expect(entries[0].pinnedPreviewLines).toBeUndefined();
+    expect(entries[0].pinnedPreviewAll).toBeUndefined();
+  });
+
+  it('reads pinned_preview_lines override from frontmatter', () => {
+    writeKnowledge(tmpDir, 'capped',
+      'name: Capped\npinned: true\npinned_preview_lines: 100',
+      'Body.',
+    );
+    const entries = buildKnowledgeIndex(tmpDir);
+    expect(entries[0].pinnedPreviewLines).toBe(100);
+    expect(entries[0].pinnedPreviewAll).toBeUndefined();
+  });
+
+  it('reads pinned_preview: all opt-out from frontmatter', () => {
+    writeKnowledge(tmpDir, 'fullpin',
+      'name: Full\npinned: true\npinned_preview: all',
+      'Body.',
+    );
+    const entries = buildKnowledgeIndex(tmpDir);
+    expect(entries[0].pinnedPreviewAll).toBe(true);
+    expect(entries[0].pinnedPreviewLines).toBeUndefined();
+  });
+
+  it('ignores invalid pinned_preview_lines values', () => {
+    writeKnowledge(tmpDir, 'bad',
+      'name: Bad\npinned: true\npinned_preview_lines: "not-a-number"',
+      'Body.',
+    );
+    const entries = buildKnowledgeIndex(tmpDir);
+    expect(entries[0].pinnedPreviewLines).toBeUndefined();
   });
 
   it('handles files with missing frontmatter fields gracefully', () => {

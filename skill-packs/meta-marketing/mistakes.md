@@ -126,7 +126,7 @@ Completely absent from corpus. High-severity, low-frequency but catastrophic whe
 - Meta policy violations: ads with "miracle health claims", personal attribute targeting ("are you diabetic?"), misleading promotions → account suspension
 - GDPR/CCPA: cookie consent banners required; without them, pixel tracking is illegally blocked in EU/CA
 
-**Tilki-specific:** Turkey does not currently have GDPR-equivalent enforcement, but Tilki operates in the EU App Store. Review Meta's "Prohibited content" list before any new campaign. Do not reference specific personal attributes in ad copy.
+**Operator action:** Before any new campaign, review Meta's "Prohibited content" list. Do not reference specific personal attributes in ad copy. If the operator's primary market is outside the EU but the product ships in EU app stores or has EU users, GDPR still applies — wire cookie consent and CAPI server-side regardless of the launch country.
 
 ---
 

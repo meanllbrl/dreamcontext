@@ -7,7 +7,7 @@ import { withLock } from '../../../lib/marketing/store.js';
 export function registerMarketingRemSleep(parent: Command): void {
   parent
     .command('rem-sleep')
-    .description('Marketing consolidation pass (called by dreamcontext-rem-sleep agent).')
+    .description('Marketing consolidation pass (called during sleep consolidation flow).')
     .option('--keep-runs <n>', 'Keep latest N runs/*.json files', (v) => parseInt(v, 10))
     .option('--weekly-after-days <n>', 'Drop insights to weekly resolution after N days', (v) => parseInt(v, 10))
     .option('--retain-daily-learnings-days <n>', 'Retain per-day learnings for N days', (v) => parseInt(v, 10))

@@ -1,5 +1,16 @@
 [
   {
+    "id": "rel_05DfNctF",
+    "version": "v0.3.0",
+    "date": "",
+    "summary": "Sleep cycle fan-out: orchestrator + 5 specialists, marketing/council passes, plan-mode-to-task import",
+    "breaking": false,
+    "status": "planning",
+    "features": [],
+    "tasks": [],
+    "changelog": []
+  },
+  {
     "id": "rel_yA0p4Kl-",
     "version": "v0.2.0",
     "date": "2026-04-19",

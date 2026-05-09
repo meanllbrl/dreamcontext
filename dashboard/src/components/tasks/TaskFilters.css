@@ -420,3 +420,33 @@
 [data-theme='dark'] .filter-chip--active:hover {
   background: hsl(287 100% 33% / 0.22);
 }
+
+/* ─── Min RICE popover ─── */
+.filter-min-rice {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+}
+
+.filter-min-rice-label {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.filter-min-rice-clear {
+  align-self: flex-end;
+  padding: 2px 8px;
+  border: none;
+  background: transparent;
+  color: var(--color-brand-vivid);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+}
+
+.filter-min-rice-clear:hover {
+  text-decoration: underline;
+}

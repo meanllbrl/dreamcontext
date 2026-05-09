@@ -1,13 +1,17 @@
 import { Command } from 'commander';
-import { select, input } from '@inquirer/prompts';
+import { select, input, checkbox } from '@inquirer/prompts';
 import chalk from 'chalk';
+import { PLATFORM_CATALOG } from '../lib/platforms.js';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 interface MenuArg {
   name: string;
-  type: 'input' | 'select';
-  choices?: Array<{ value: string; name: string }>;
+  type: 'input' | 'select' | 'multiselect';
+  choices?: Array<{ value: string; name: string; checked?: boolean }>;
+  flag?: string;
+  optional?: boolean;
+  defaultValue?: string;
 }
 
 interface MenuCommand {
@@ -40,6 +44,12 @@ const SECTION_CHOICES = [
   { value: 'why', name: 'Why' },
 ];
 
+const PLATFORM_CHOICES = PLATFORM_CATALOG.map((p) => ({
+  value: p.id,
+  name: `${p.label} — ${p.description}`,
+  checked: p.id === 'claude',
+}));
+
 const EXIT_SENTINEL = '__EXIT__';
 const BACK_SENTINEL = '__BACK__';
 
@@ -59,24 +69,80 @@ const CATEGORIES: MenuCategory[] = [
         name: 'Initialize project',
         description: 'Create _dream_context/ directory',
         argv: ['init'],
+        args: [
+          {
+            name: 'Platforms',
+            type: 'multiselect',
+            choices: PLATFORM_CHOICES,
+            flag: '--platforms',
+            optional: true,
+            defaultValue: 'claude',
+          },
+        ],
       },
       {
         emoji: '\u{1F9E9}',
         name: 'Install skill',
-        description: 'Install Claude Code skill + agents + hooks',
+        description: 'Install selected platform integrations',
         argv: ['install-skill'],
+        args: [
+          {
+            name: 'Platforms',
+            type: 'multiselect',
+            choices: PLATFORM_CHOICES,
+            flag: '--platforms',
+            optional: true,
+            defaultValue: 'claude',
+          },
+        ],
       },
       {
         emoji: '\u{1F4E6}',
         name: 'Install skill packs',
         description: 'Browse and install optional skill packs',
         argv: ['install-skill', '--packs'],
+        args: [
+          {
+            name: 'Platforms',
+            type: 'multiselect',
+            choices: PLATFORM_CHOICES,
+            flag: '--platforms',
+            optional: true,
+            defaultValue: 'claude',
+          },
+        ],
       },
       {
         emoji: '\u{1F4CB}',
         name: 'List skill packs',
         description: 'Show all available skill packs',
         argv: ['install-skill', '--list'],
+        args: [
+          {
+            name: 'Platforms',
+            type: 'multiselect',
+            choices: PLATFORM_CHOICES,
+            flag: '--platforms',
+            optional: true,
+            defaultValue: 'claude',
+          },
+        ],
+      },
+      {
+        emoji: '\u{1F4D6}',
+        name: 'Install root instructions',
+        description: 'Install managed CLAUDE.md / AGENTS.md blocks',
+        argv: ['install-instructions'],
+        args: [
+          {
+            name: 'Platforms',
+            type: 'multiselect',
+            choices: PLATFORM_CHOICES,
+            flag: '--platforms',
+            optional: true,
+            defaultValue: 'claude',
+          },
+        ],
       },
     ],
   },
@@ -389,11 +455,37 @@ async function collectArgs(args: MenuArg[]): Promise<string[] | null> {
   for (const arg of args) {
     if (arg.type === 'select' && arg.choices) {
       const value = await select({ message: arg.name + ':', choices: arg.choices });
-      collected.push(value);
+      if (arg.flag) {
+        collected.push(arg.flag, value);
+      } else {
+        collected.push(value);
+      }
+    } else if (arg.type === 'multiselect' && arg.choices) {
+      const values = await checkbox<string>({
+        message: arg.name + ':',
+        choices: arg.choices,
+        pageSize: Math.max(6, arg.choices.length),
+      });
+      let value = values.join(',');
+      if (!value && arg.defaultValue) value = arg.defaultValue;
+      if (!value && arg.optional) continue;
+      if (!value) return null;
+      if (arg.flag) {
+        collected.push(arg.flag, value);
+      } else {
+        collected.push(value);
+      }
     } else {
       const value = await input({ message: arg.name + ':' });
-      if (!value.trim()) return null;
-      collected.push(value);
+      if (!value.trim()) {
+        if (arg.optional) continue;
+        return null;
+      }
+      if (arg.flag) {
+        collected.push(arg.flag, value);
+      } else {
+        collected.push(value);
+      }
     }
   }
   return collected;

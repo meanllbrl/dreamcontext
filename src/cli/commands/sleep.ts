@@ -63,10 +63,18 @@ export interface CompactionRecord {
   bookmarks_count: number;
 }
 
+export type FieldValue =
+  | string
+  | number
+  | boolean
+  | string[]
+  | Record<string, unknown>
+  | null;
+
 export interface FieldChange {
   field: string;
-  from: string | number | boolean | string[] | null;
-  to: string | number | boolean | string[] | null;
+  from: FieldValue;
+  to: FieldValue;
 }
 
 export interface DashboardChange {

@@ -1,5 +1,124 @@
 [
   {
+    "date": "2026-05-09",
+    "type": "feat",
+    "scope": "skill",
+    "description": "Codify proactive skill triage as a hard rule and backfill skill declarations across all agents. SKILL.md gains new rule #2 — 'Skill triage before action — HARD RULE': before drafting content, writing code, or delegating to a sub-agent, the agent MUST scan the available-skills list, match task keywords to skill descriptions, and invoke Skill for each match. Includes 9 common task→skill trigger mappings (UI/design, Meta ads, growth, brand voice, council, codebase review, Claude API, system prompts, video). Existing rules 2-12 renumbered to 3-13. All 10 agent files (dreamcontext-explore, dreamcontext-initializer, dreamcontext-rem-sleep, council-persona, council-synthesizer, discover-brand, reviewer, marketing-creative, marketing-monitor, marketing-strategy) now declare required skills in frontmatter skills: array and a '## Skills always loaded' body section. 743/743 tests passing (commit d293d93).",
+    "breaking": false
+  },
+  {
+    "date": "2026-05-09",
+    "type": "feat",
+    "scope": "meta-marketing",
+    "description": "Add vision pass on hook frames (meta-marketing PR 5). Behind env-key flag (OPENAI_VISION_API_KEY > GOOGLE_API_KEY fallback): tags each hook frame at t={0,1,2,3}s with pattern labels from a fixed allowlist — face-zoom, talking-head, text-only, prop-driven, group-shot, environment, pattern-interrupt, b-roll. YouTube ingest is transcript-only (no-op for existing corpus); runs on Instagram videos only. Key new code: src/lib/marketing/vision.ts (300L — pickVisionProvider, parseLabelsFromText with allowlist filter + dedup + 2-cap + code-fence tolerance, labelHookFrame for OpenAI gpt-4o-mini and Google gemini-1.5-flash with injectable fetcher, runVisionPassOnPost with atomic JSON+MD bridge update, updatePatternTagsInBridge). src/lib/marketing/competitors.ts fires vision pass after persistPost and awaits all in-flight tasks before exiting (commit 3c2b2d2).",
+    "breaking": false
+  },
+  {
+    "date": "2026-05-09",
+    "type": "feat",
+    "scope": "meta-marketing",
+    "description": "Add mk council command and 4 marketing council personas (meta-marketing PR 8a + 8b). Personas live as data files in skill-packs/meta-marketing/council-personas/*.md — strategy-optimizer, performance-monitor, creative-director, risk-officer — each with frontmatter (slug, model, aspects, skills) + '## Skills always loaded' body section grounded in corpus rules. New lib: src/lib/marketing/council-personas.ts (findPersonasDir, parsePersonaFile, loadAllPersonas, selectPersonas). New CLI command src/cli/commands/marketing/council.ts: mk council \"<topic>\" re-invokes dreamcontext council create then council agent create per persona via spawnSync (stdin body to avoid shell-escape issues). Pre-commit binary guard also shipped in PR 8a: hooks/marketing-binary-guard.sh blocks commits of assets/_media paths; mk hooks install writes the .git/hooks/pre-commit launcher. src/lib/marketing/git-guard.ts provides pure functions (isBlockedMarketingPath, findBlockedPaths, getStagedFiles). 743/743 tests passing after both PRs (commits ac56e53, a8966d7).",
+    "breaking": false
+  },
+  {
+    "date": "2026-05-09",
+    "type": "refactor",
+    "scope": "sleep",
+    "description": "Remove the dreamcontext-rem-sleep serial fallback agent entirely. The refactor/rem-sleep entry earlier this cycle rewrote it as an explicit fallback; the sleep-fanout-architecture cleanup session then concluded one path with no fallback is cleaner — the fallback creates ambiguity and maintenance overhead. agents/dreamcontext-rem-sleep.md and .codex/agents/prompts/dreamcontext-rem-sleep.md deleted. The five specialist agents (sleep-tasks, sleep-changelog, sleep-core, sleep-knowledge, sleep-features) are now the only sleep implementation. Main-agent SKILL.md fan-out flow is the canonical and only path.",
+    "breaking": false
+  },
+  {
+    "date": "2026-05-09",
+    "type": "feat",
+    "scope": "sleep",
+    "description": "Sleep fan-out architecture: orchestration moves from a single rem-sleep agent into the main agent, which dispatches 5 specialist sub-agents in parallel — sleep-tasks, sleep-changelog, sleep-core, sleep-knowledge, sleep-features. SKILL.md Sleep section now spells out the full flow (sleep start, build brief inline from .sleep.json + git, parallel Agent dispatch with always-fire vs conditional-fire rules for knowledge/features, marketing pass, council promote check, sleep done). Each specialist owns one domain (no overlapping writes), distills its own transcripts, and returns a short structured report. New agent files: agents/sleep-tasks.md, sleep-changelog.md, sleep-core.md, sleep-knowledge.md, sleep-features.md. The original dreamcontext-rem-sleep agent is retained as a serial fallback path for environments where main-agent fan-out isn't possible.",
+    "breaking": false
+  },
+  {
+    "date": "2026-05-09",
+    "type": "refactor",
+    "scope": "rem-sleep",
+    "description": "Rewrite agents/dreamcontext-rem-sleep.md as the explicit fallback path. Description, role intro, and protocol now state up front that fan-out from the main agent is the preferred flow; this single agent only runs when fan-out is unavailable, in which case it serializes the same five domains. Trimmed from ~412 lines to ~182 by removing duplicated explanations now centralized in SKILL.md and the per-specialist agent files.",
+    "breaking": false
+  },
+  {
+    "date": "2026-05-09",
+    "type": "feat",
+    "scope": "platforms",
+    "description": "Multi-platform installer: dreamcontext now installs to Claude Code AND Codex CLI from one source of truth. New src/lib/platforms.ts (PLATFORM_CATALOG, parsePlatformList, ensurePlatformSelection, formatSupportedPlatforms) and src/lib/platform-defaults.ts (state/.platforms.json read/write). install-skill mirrors agents into .codex/agents/*.toml + prompts/*.md and writes Codex hooks (SessionStart, Stop, UserPromptSubmit, PostToolUse) without Claude-specific bits (SubagentStart, PreCompact, agent-gating PreToolUse). New install-instructions command writes managed root files for the selected platforms (CLAUDE.md and/or AGENTS.md); install-claude-md kept as a legacy alias. New AGENTS.md template at src/templates/AGENTS.md. Doctor checks state/.platforms.json when present.",
+    "breaking": false
+  },
+  {
+    "date": "2026-05-09",
+    "type": "feat",
+    "scope": "cli",
+    "description": "Add `dreamcontext update` command (src/cli/commands/update.ts): refreshes installed skill, agents, hooks, packs, and root instructions in place for all configured platforms. Help groups in src/cli/index.ts reorganized — install-skill / install-instructions / update / install-claude-md (legacy) — and `hook` description generalized to 'used by platform integrations'. Interactive menu (src/cli/interactive.ts) gains a multiselect arg type for platform pickers backed by PLATFORM_CATALOG.",
+    "breaking": false
+  },
+  {
+    "date": "2026-05-09",
+    "type": "feat",
+    "scope": "releases",
+    "description": "Add active planning version state. New src/lib/active-version.ts plus state/.active-version.json track which planning version new tasks auto-attach to. `dreamcontext core releases active` prints, switches (`active <ver>`), or clears (`--clear`) the active planning version. `releases add --status planning` auto-activates only when no active version is set, to avoid clobbering an intentional choice. Tasks created without --version auto-attach to the active planning version (via getActivePlanningVersion in tasks.ts), so new work is always linked to a milestone.",
+    "breaking": false
+  },
+  {
+    "date": "2026-05-09",
+    "type": "feat",
+    "scope": "tasks",
+    "description": "Task model overhaul. (1) RICE prioritization: new src/lib/rice.ts (RiceFields, normalizeRice, validateRiceInput, mergeRice, computeScore = reach × impact × confidence ÷ effort) wired into tasks create/update with reach/impact/confidence/effort flags. (2) Workflow flowchart: every task template now starts with a `## Workflow` mermaid block — one node per acceptance criterion grouped under milestone subgraphs, status classes done/active/todo/blocked. (3) `dreamcontext tasks doctor <name>` validates that flowchart node count matches acceptance-criteria count and that statuses are in sync. (4) New `dreamcontext tasks status <name> <todo|in_progress|in_review|completed>` command. (5) Task template body rewritten to current-truth voice with explicit per-section guidance (Why, User Stories, Acceptance Criteria, Constraints, Technical Details, Notes). New tests: tests/unit/rice.test.ts, tests/unit/tasks-doctor.test.ts.",
+    "breaking": false
+  },
+  {
+    "date": "2026-05-09",
+    "type": "feat",
+    "scope": "snapshot",
+    "description": "Pinned-knowledge preview cap. extractPinnedPreview() in src/cli/commands/snapshot.ts caps each pinned file inlined into the auto-context snapshot at DEFAULT_PINNED_PREVIEW_LINES (60), with per-entry overrides via frontmatter `pinned_preview_lines: N` or `pinned_preview: \"all\"`. Frontmatter is stripped before counting; markdown structure is preserved (no paragraph joining). Prevents one huge pinned file from blowing the snapshot budget while still making knowledge zero-tool-call accessible.",
+    "breaking": false
+  },
+  {
+    "date": "2026-05-09",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "Render task Workflow flowcharts inline. TaskDetailPanel.tsx now initializes mermaid (theme-matched to prefers-color-scheme, securityLevel:strict, htmlLabels) and uses panzoom for the rendered diagram; unquoted node labels are auto-quoted before parse to handle brackets/regex chars in criterion text. New TaskDetailPanel.css adds workflow viewer styling (105 lines added). Shell.tsx now persists the active page to localStorage under dreamcontext.dashboard.activePage so reloads land on the user's last view (Brain default for first run). useTasks.ts gains supporting hook updates. dashboard/package.json adds mermaid + panzoom deps.",
+    "breaking": false
+  },
+  {
+    "date": "2026-05-09",
+    "type": "feat",
+    "scope": "meta-marketing",
+    "description": "Make the meta-marketing skill pack project-agnostic. SKILL.md role no longer hardcodes Tilki Öğretmen; the calling project supplies offer/ICP/geography/budget. Pre-launch checklist gains 2026-current guardrails: Special Ad Categories as a hard block (wrong setting = ad-account disapproval, not just rejected ads), legal-minimum age rule, auto-translate off unless fulfillable, audience-breakdown segmentation (define for reporting + exclusions, not adset fragmentation — Meta mixes anyway), hard-exclude existing customers from prospecting, optional value rules instead of narrow targeting. Adset structure now aims for 20+ ads/adset under Andromeda. creative-frameworks.md, copy-formulas.md, mistakes.md, api-reference.md, platform-state.md, council-personas/risk-officer.md updated to remove project-specific examples. Marketing agents (creative/monitor/strategy) and skill-packs catalog refreshed to match.",
+    "breaking": false
+  },
+  {
+    "date": "2026-05-09",
+    "type": "feat",
+    "scope": "skill",
+    "description": "SKILL.md updates beyond the sleep section: new rule 12a — keep the per-task Workflow mermaid flowchart in sync with checkbox state, run `dreamcontext tasks doctor` to verify. Status convention spelled out: `todo -> in_progress -> in_review -> completed`; sleep agent bumps to `in_review` only, never auto-completes (user verifies). Releases section documents `releases active`/`active <ver>`/`active --clear` and the auto-attach behavior for new tasks.",
+    "breaking": false
+  },
+  {
+    "date": "2026-05-09",
+    "type": "docs",
+    "scope": "state",
+    "description": "Six new state task files capture in-flight work the fan-out architecture depends on: sleep-fanout-architecture (in_review — this redesign), rice-prioritization (todo — RICE rollout to dashboard + report views), plan-mode-to-task-import (todo — convert ~/.claude/plans/<slug>.md into dreamcontext tasks), marketing-dashboard-v0 (todo — marketing-specific dashboard view), meta-mcp-migration (todo — adopt Meta's official MCP server, 29 tools, OAuth via Meta Business), snapshot-pinned-preview (closed — implemented this cycle).",
+    "breaking": false
+  },
+  {
+    "date": "2026-05-09",
+    "type": "docs",
+    "scope": "core",
+    "description": "Refresh core identity files for the fan-out era. 0.soul.md trimmed (10-line delta) to remove single-agent rem-sleep wording. 2.memory.md compacted by ~165 lines (LIFO trim of stale operational details now living in feature PRDs and knowledge files). New knowledge files: technical-decisions-archive.md (granular dashboard/skill-packs/council/infra decisions from 2026-03 through 2026-04), decision-should-we-adopt-the-meta-marketing-skill-plan-... (council outcome). README updates explain the new fan-out flow.",
+    "breaking": false
+  },
+  {
+    "date": "2026-05-09",
+    "type": "test",
+    "scope": "platforms",
+    "description": "New test coverage for the multi-platform installer and task model: tests/integration/platform-install.test.ts (codex mirror correctness), tests/unit/platforms.test.ts (catalog + parse helpers), tests/unit/platform-defaults.test.ts (state/.platforms.json round-trip), tests/unit/rice.test.ts (score arithmetic + validation), tests/unit/tasks-doctor.test.ts (workflow-vs-criteria sync). Existing snapshot/knowledge-index/snapshot-helpers tests updated for pinned-preview cap and new index shape.",
+    "breaking": false
+  },
+  {
     "date": "2026-03-24",
     "type": "feat",
     "scope": "src/cli/commands/install-skill.ts, src/cli/interactive.ts, tests/integration/",

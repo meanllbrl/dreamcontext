@@ -7,9 +7,9 @@ description: >-
   install via CLI.
 priority: critical
 urgency: medium
-status: in_progress
+status: completed
 created_at: '2026-03-24'
-updated_at: '2026-04-19'
+updated_at: '2026-05-02'
 tags:
   - skills
   - cli
@@ -165,6 +165,18 @@ brand-voice-enforcement, discover-brand, guideline-generation, reviewer agent, d
 
 
 
+
+
+
+
+### 2026-05-02 - Completed
+- Phase 1+2 shipped in v0.2.0: 4 packs (engineering, design, growth, brand-voice) + council pack + agents. catalog.json, --packs/--skill/--list CLI flags, interactive pack selection, cross-pack dependency warnings, 490 tests. Remaining criterion (official source evaluation) deferred to ecc-inspired-roadmap.
+### 2026-04-25 - Session Update
+- Fixed Codex hook registration: the installer was emitting invalid shorthand in .codex/config.toml, so SessionStart never registered and the snapshot was not injected before the first prompt. Updated the generator to emit proper inline TOML hook tables, enabled [features].codex_hooks, removed Codex PreToolUse parity claims, patched the repo's live .codex/config.toml, and added regression coverage.
+### 2026-04-25 - Session Update
+- Fixed Codex subagent role generation for codex-cli 0.125.0 by replacing invalid instructions_file pointers with supported developer_instructions, patched installed .codex/agents/*.toml files, and added regression coverage for Codex agent output.
+### 2026-04-25 - Session Update
+- v0.2.0 shipped (session 2e902c8c): Phase 2 complete — install-skill extended with --packs (interactive checkbox browser), --skill (individual sub-skill), --list. Cross-pack dependency warnings, related agents copied, Firebase references. 17 new integration tests. 490 total. README and DEEP-DIVE updated.
 ### 2026-03-24 - Session Update
 - Phase 2 CLI complete. install-skill extended with --packs (interactive checkbox browser + direct pack names), --skill (individual sub-skill install), --list (show available packs). Cross-pack dependency warnings, related agent installation, firebase reference directory copying, base-pack-missing warnings. 'Install skill packs' and 'List skill packs' added to interactive mode Setup menu. Core install-skill now hints about available optional packs after base install. 17 new integration tests, 490 total passing. README updated (skill packs section + command reference). DEEP-DIVE updated (architecture section + 2 design tradeoffs). CHANGELOG.md updated. Committed and pushed to GitHub (111 files, rebrand + skill-packs CLI).
 ### 2026-03-24 - Session Update

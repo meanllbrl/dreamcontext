@@ -293,7 +293,7 @@ function getConsolidationDirective(state: SleepState): string | null {
         ? [`${criticalBookmarks.length} critical bookmark(s) awaiting consolidation.`]
         : []),
       'You MUST inform the user and consolidate NOW.',
-      'Dispatch the dreamcontext-rem-sleep agent with a brief of recent work.',
+      'Run sleep consolidation: follow SKILL.md "Sleep" flow — main agent does `sleep start`, then dispatches sleep-tasks/sleep-changelog/sleep-core (and sleep-knowledge/sleep-features when signals warrant) in parallel, then `sleep done`.',
       'If the user has an urgent task, consolidate IMMEDIATELY after completing it.',
       '',
     ].join('\n');
@@ -305,7 +305,7 @@ function getConsolidationDirective(state: SleepState): string | null {
       `${criticalBookmarks.length} critical (★★★) bookmark(s) tagged for consolidation:`,
       ...criticalBookmarks.slice(0, 3).map(b => `  - ${b.message}`),
       'These represent important decisions/constraints that should be consolidated into context files.',
-      'Dispatch the dreamcontext-rem-sleep agent with a brief of recent work.',
+      'Run sleep consolidation: follow SKILL.md "Sleep" flow — main agent does `sleep start`, then dispatches sleep-tasks/sleep-changelog/sleep-core (and sleep-knowledge/sleep-features when signals warrant) in parallel, then `sleep done`.',
       '',
     ].join('\n');
   }
@@ -315,7 +315,7 @@ function getConsolidationDirective(state: SleepState): string | null {
       '',
       `Sleep debt is ${debt}/10. Context files are growing stale.`,
       'You MUST inform the user and recommend consolidation before starting new work.',
-      'Dispatch the dreamcontext-rem-sleep agent with a brief of recent work.',
+      'Run sleep consolidation: follow SKILL.md "Sleep" flow — main agent does `sleep start`, then dispatches sleep-tasks/sleep-changelog/sleep-core (and sleep-knowledge/sleep-features when signals warrant) in parallel, then `sleep done`.',
       '',
     ].join('\n');
   }
@@ -584,9 +584,9 @@ export function registerHookCommand(program: Command): void {
 
       // Only output when debt is actionable or critical bookmarks exist
       if (debt >= 10) {
-        console.log(`Sleep debt is ${debt}. CONSOLIDATION REQUIRED. Run dreamcontext-rem-sleep NOW.`);
+        console.log(`Sleep debt is ${debt}. CONSOLIDATION REQUIRED. Run sleep flow per SKILL.md (parallel specialist fan-out) NOW.`);
       } else if (criticalBookmarks.length > 0) {
-        console.log(`${criticalBookmarks.length} critical bookmark(s) need consolidation. Run dreamcontext-rem-sleep.`);
+        console.log(`${criticalBookmarks.length} critical bookmark(s) need consolidation. Run sleep flow per SKILL.md.`);
       } else if (debt >= 7) {
         console.log(`Sleep debt is ${debt}. Consolidation recommended before starting new work.`);
       } else if (debt >= 4) {

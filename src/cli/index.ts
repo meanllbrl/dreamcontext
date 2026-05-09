@@ -6,7 +6,8 @@ import { registerFeaturesCommand } from './commands/features.js';
 import { registerKnowledgeCommand } from './commands/knowledge.js';
 import { registerTasksCommand } from './commands/tasks.js';
 import { registerInstallSkillCommand } from './commands/install-skill.js';
-import { registerInstallClaudeMdCommand } from './commands/install-claude-md.js';
+import { registerInstallClaudeMdCommand, registerInstallInstructionsCommand } from './commands/install-claude-md.js';
+import { registerUpdateCommand } from './commands/update.js';
 import { registerSnapshotCommand } from './commands/snapshot.js';
 import { registerSleepCommand } from './commands/sleep.js';
 import { registerHookCommand } from './commands/hook.js';
@@ -42,8 +43,10 @@ function getBanner(): string {
 const HELP_GROUPS = `
 ${chalk.bold('Setup')}
   ${chalk.magentaBright('init')}              Initialize _dream_context/ in your project
-  ${chalk.magentaBright('install-skill')}     Install skill + agents + optional packs to .claude/
-  ${chalk.magentaBright('install-claude-md')} Install a terse CLAUDE.md at the project root (optional)
+  ${chalk.magentaBright('install-skill')}     Install skill + agents + optional packs for selected platforms
+  ${chalk.magentaBright('install-instructions')} Install managed root instruction files (CLAUDE.md / AGENTS.md)
+  ${chalk.magentaBright('install-claude-md')} Legacy alias for CLAUDE.md-only install
+  ${chalk.magentaBright('update')}            Refresh installed skill, agents, hooks, packs, and root instructions
 
 ${chalk.bold('Content')}
   ${chalk.magentaBright('core')}              Add changelog and release entries
@@ -57,7 +60,7 @@ ${chalk.bold('Content')}
 ${chalk.bold('System')}
   ${chalk.magentaBright('snapshot')}          Output context snapshot (used by SessionStart hook)
   ${chalk.magentaBright('sleep')}             Track sleep debt and consolidation state
-  ${chalk.magentaBright('hook')}              Hook handlers (7 hooks) for Claude Code
+  ${chalk.magentaBright('hook')}              Hook handlers used by platform integrations
   ${chalk.magentaBright('transcript')}        Process session transcripts
   ${chalk.magentaBright('doctor')}            Validate _dream_context/ structure and report issues
 
@@ -87,7 +90,9 @@ export function createProgram(): Command {
   registerKnowledgeCommand(program);
   registerTasksCommand(program);
   registerInstallSkillCommand(program);
+  registerInstallInstructionsCommand(program);
   registerInstallClaudeMdCommand(program);
+  registerUpdateCommand(program);
   registerSnapshotCommand(program);
   registerSleepCommand(program);
   registerHookCommand(program);

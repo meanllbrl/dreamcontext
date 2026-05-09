@@ -1,15 +1,10 @@
 # Meta Ads Creative Frameworks
 
-**Purpose**: External strategic frameworks from practitioners, adapted to Tilki Öğretmen. Read alongside `meta-ads-creative-playbook.md` — this file is the *playbook the playbook pulls from*.
-
-**Relationship to main playbook**:
-- `meta-ads-creative-playbook.md` = our tactical ledger (cohort data, named ads, ship status, Turkish hooks)
-- This file = strategic frameworks from external sources we copy and remix
-- When generating new creative: read both. This decides WHAT to test; the playbook decides HOW it maps to our ads.
+**Purpose**: External strategic frameworks from practitioners. This file is *project-agnostic* — it describes the frameworks themselves; the calling project supplies its own ICP, offer, language, and worked examples.
 
 ---
 
-## 1. The 4×3×3 Creative Grid (Sam Maxwell, $4.2M ad spend)
+## 1. The Angle × Format × Hook Creative Grid (Sam Maxwell, $4.2M ad spend)
 
 > "This one creative framework is responsible for almost every winner. 4 angles × 3 formats × 3 hooks = 36 unique creatives from one product."
 
@@ -23,79 +18,87 @@
 
 **36 creatives from one product.** Not 36 products. Not 36 pains. Same product, same pain — rotated through every axis.
 
-### Why this matters for us (brutal audit)
+### Why this matters (the diagnostic)
 
-All 14 Cohort 1 creatives + 10 Cohort 2 creatives occupy ONE cell of this grid:
+If you've shipped 20+ ads and "creative fatigue" hits at low spend, audit which cells of the grid you've actually tested. The common failure is shipping 20 hook variants of the **same** angle × **same** format. Maxwell's diagnosis: *"You're feeding the algorithm the same angles over and over."* That isn't creative fatigue — it's *angle fatigue*.
 
-- **Angle**: 100% Pain (PA/PR/ID/CO are all pain-adjacent)
-- **Format**: 100% Demo (product screenshot + headline)
-- **Hook**: 100% Question
+### Diagnostic test: angle fatigue vs algorithmic fatigue
 
-We have tested 1 cell out of 12 (ignoring the 3 hook axis) or 1 out of 36 (full grid). Every cohort has been a hook variation *inside one cell*.
+Run this before assuming Meta is the problem:
 
-**Implication**: our "creative fatigue" after ~₺5,500 spend is not creative fatigue — it is *angle fatigue*. The algorithm sees the same story with different words. Maxwell's core diagnosis lands exactly: "You're feeding the algorithm the same angles over and over."
+1. **Count distinct cells shipped.** Take every ad in the account, tag it `(angle, format, hook)`, and count unique tuples. Deduplicate variants of the same tuple.
+2. **Compare to spend at fatigue.** If fatigue (rising frequency, falling ROAS, plateaued CPL) hit before you exhausted the budget you'd expect for ~12 cells worth of testing, **it is angle fatigue, not algorithmic fatigue**. Meta hasn't run out of buyers — your library has run out of angles.
+3. **The threshold rule:** if you have shipped ≥10 ads inside the same `(angle, format, hook)` cell and none has broken out, **stop adding to that cell.** The next ad must change at least one axis. Adding a 41st variant of Question-Pain-Demo is the waste pattern Maxwell named.
 
-### Tilki-specific application of each axis
+This is the most common misdiagnosis in low-budget accounts: operators blame the algorithm for what is actually a coverage problem.
+
+### Each axis explained
 
 #### Angles (what story)
 
-| Angle | What it is | Tilki example (untested) |
-|---|---|---|
-| **Pain** | The problem state. "Here's what's wrong." | ✅ Already our whole library. "Hocam, geçen ay ödemedik mi?" |
-| **Transformation** | Before → After. Life with the product. | ⚠️ Never tried. *"Pazar akşamları ders planı yapmak 3 saatimi alırdı. Artık 4 dakika."* |
-| **Social Proof** | Other teachers / students / parents endorse. | ⚠️ Never tried. *"247 özel ders öğretmeni artık velilerle ödeme konuşmuyor."* or a teacher quote card. |
-| **Authority** | Expert / institutional legitimacy. | ⚠️ Never tried. Founder credentials, teacher-advisor quote, press mention, Tilki main-brand halo ("Tilki'den öğretmenler için"). |
+| Angle | What it is |
+|---|---|
+| **Pain** | The problem state. "Here's what's wrong." Easy to write; usually overused. |
+| **Transformation** | Before → After. Life with the product. Concrete, time-bound. |
+| **Social Proof** | Other customers / users / domain experts endorse. Quote cards, testimonial UGC, count-of-users. |
+| **Authority** | Expert / institutional legitimacy. Founder credentials, advisor quote, press mention, parent-brand halo. |
 
-Our Pain library is strong. The other three are zero. Even one working ad per missing angle would multiply learning.
+If your library is 100% Pain, even one working ad per missing angle multiplies learning.
 
 #### Formats (who is on screen / how it's shown)
 
-| Format | What it is | Tilki status |
-|---|---|---|
-| **Founder** | Mehmet on camera, talking to the teacher directly. Selfie-style or studio. | ❌ Never produced. Highest-leverage missing format for B2B SaaS sold to small operators. |
-| **UGC** | A real teacher (or actor playing one) filming themselves using / describing / complaining about the product domain. | ❌ Never produced. Teachers trust teachers. |
-| **Demo** | Product-centric. Screenshot card, feature grid, screen recording. | ✅ 100% of our library. |
+| Format | What it is |
+|---|---|
+| **Founder** | Operator on camera, talking to the customer directly. Selfie-style or studio. Highest-leverage missing format for B2B SaaS sold to small operators. |
+| **UGC** | A real customer (or actor playing one) filming themselves using / describing / complaining about the product domain. Customers trust customers. |
+| **Demo** | Product-centric. Screenshot card, feature grid, screen recording. Easy to produce, plateaus fast. |
 
-**Priority recommendation**: Founder format next. One 20-30s vertical of Mehmet explaining "Here's what Tilki does and why we built it" is table-stakes for a founder-led B2B tool — and we have never run one.
+**Founder format priority:** for founder-led B2B tools, one 20–30s vertical of the founder explaining "Here's what we built and why" is table-stakes. If you've never run one, that's the highest-leverage missing creative regardless of angle/hook expansion.
 
 #### Hooks (the first 2 seconds)
 
-| Hook | Pattern | Tilki status | Examples to test |
-|---|---|---|---|
-| **Question** | Question mark in headline / voiceover | ✅ All current hooks | (current library) |
-| **Stat** | A specific number that stops the scroll | ❌ Never tried | *"Özel ders öğretmenleri haftada 11 saatini takibe harcıyor."* / *"10 öğretmenden 7'si geçen ayın ödemelerini hâlâ hatırlamıyor."* |
-| **Contrarian** | A statement that violates the default assumption | ❌ Never tried | *"Excel öğretmenin düşmanı değil. Gerçek düşman veli grubu."* / *"Ödev takibi önemli değil. Ödeme takibi önemli."* |
+| Hook | Pattern | Notes |
+|---|---|---|
+| **Question** | Question mark in headline / voiceover | Easy default; often the only hook type a library has. |
+| **Stat** | A specific number that stops the scroll | Low-effort to add — pair a number with an existing Pain angle on Demo format. Unlocks 4 new cells immediately. |
+| **Contrarian** | A statement that violates the default assumption | High-craft; lands hard when right. *"X is not the problem. Y is."* / *"Stop doing X. Do Y instead."* |
 
-Stat hooks are the easiest to add immediately — pair a number with our existing Pain angle on the same Demo format. That alone is 4 new cells unlocked.
+### Minimum expansion plan (when stuck in one cell)
 
-### Minimum expansion plan (before generating hook #40)
+**Trigger:** apply this whenever the diagnostic above flags angle fatigue, OR proactively whenever the cell-coverage count is ≤3 of 36. Before generating the Nth variant inside a single cell, ship at least:
 
-Before we generate the 40th Question-Pain-Demo variant, ship at least:
-
-1. **1 Founder ad** — Mehmet, 20-30s selfie, pain opener + product reveal + CTA
-2. **1 UGC ad** — scripted teacher monologue, phone-shot aesthetic (can be a hired creator in 2026 TR market via BiLira/Kolektif)
-3. **1 Stat hook** — same Demo format as current library, but lead with a number
-4. **1 Transformation angle** — before/after framing, not pain-only
-5. **1 Social Proof angle** — testimonial card format
+1. **1 Founder ad** — operator on camera, 20–30s selfie, pain opener + product reveal + CTA.
+2. **1 UGC ad** — scripted customer monologue, phone-shot aesthetic. Hire a creator if you don't have a real one yet.
+3. **1 Stat hook** — same format you already have, but lead with a number.
+4. **1 Transformation angle** — before/after framing, not pain-only.
+5. **1 Social Proof angle** — testimonial card format.
 
 5 new creatives, 5 new cells, first real multi-cell test.
 
 ### Cadence discipline (from Maxwell)
 
-- **Weekly cadence**: Mon/Wed/Fri fixed creative review, no matter what.
-- **First 5-10 min**: audit what's working over the last 72 hours.
-- **72-hour rule**: any new creative gets 72 hours to show signal before judgment.
-- **FB Ad Library spy**: on each call, look at brands with similar *demographic* (not similar product) to pull angle ideas.
-  - For us: Turkish K-12 edtech → TonguçAkademi, Kunduz, Codeş, Okuyorum
-  - Small-business tools to Turkish solopreneurs → Paraşüt, İyzico, Logo
-  - Adjacent coach/tutor SaaS globally → TeachWorks, Teachable, Kajabi ads in Turkish markets
+- **Weekly cadence**: Mon/Wed/Fri fixed creative review, no matter what. Solo operators run the same cadence at 10 min/session.
+- **First 5–10 min**: audit what's working over the last 72 hours. Tag each surviving ad's grid cell.
+- **72-hour rule**: any new creative gets 72 hours to show signal before judgment. Day-1 silence is not a kill signal.
 - **"It's not Meta, it's your creative"**: bidding and campaign structure matter, but the real lever is angle diversity.
+
+### FB Ad Library spy — three bucket method
+
+On each weekly review, pull angle ideas from **three categories of brands**, not one. Same-vertical brands give you the angles you already know. The richer signal comes from buyers-in-common, vertical-different.
+
+| Bucket | Definition | What you're looking for |
+|---|---|---|
+| **1. Same demographic, different vertical** | Brands targeting your buyer with a non-competing product (e.g., a small-business CRM and a small-business invoicing tool both target solopreneurs). | Pain framings, agitation specificity, ICP language. Your buyer recognizes themselves in their ad → that ad's *callout structure* is portable. |
+| **2. Adjacent vertical, similar buyer journey** | Same buyer-decision shape (considered purchase, monthly subscription, hand-over-a-workflow) in a different industry. | Trust-building structures, founder formats, social proof formats — the journey-shape lessons transfer cleanly. |
+| **3. Same product category, different geography or language** | Direct competitors operating in markets you don't compete in. | Format choices (UGC / founder / demo mix), CTA conventions, hook patterns localized to that market. |
+
+**Pick one brand per bucket per review. Three brands × weekly = ~12 inputs/month — enough cross-pollination without becoming a research rabbit hole.**
 
 ### The waste pattern Maxwell names
 
 > "I would just randomly get on a huddle on Slack with my creative director. Randomly send messages when ideas came to mind. We'd throw out any and every type of ad. Hoping and praying."
 
-This is our default. Fix: replace "when I think of a hook" with "which empty grid cell is next."
+The fix: replace "when I think of a hook" with "which empty grid cell is next."
 
 ---
 
@@ -112,56 +115,62 @@ This is our default. Fix: replace "when I think of a hook" with "which empty gri
 
 The two words "on us" reframe the same offer as active generosity instead of passive terms.
 
-### Visual reference (Sturtevant's examples)
+### Typographic treatment
 
-Both Snif and Salt & Straw ship the same Black-Friday offer but phrase it:
-- Snif: *"Shipping is On Us This Year."* — "On Us" italicized, stands out
-- Salt & Straw: *"Shipping's On Us"* — same italic treatment
+Brands that use this reframe well *italicize* "on us" (or its localized equivalent) to draw the eye to the emotionally loaded phrase:
 
-Italicization on "On Us" draws the eye to the emotionally loaded phrase.
+- *"Shipping is **On Us** This Year."*
+- *"Shipping's **On Us**."*
 
-### Tilki application (hypotheses to test)
+The italicization isolates the reciprocity word so the brain registers it as the gift-cue, separate from the rest of the sentence. Apply this in the headline, primary text, and on the CTA button itself when the platform allows formatting. On platforms without italic support (most ad-button text), use ALL CAPS or a different color treatment on the same words.
 
-Current CTA copy: **`30 Gün Ücretsiz Dene`** (30 days free trial)
+### Where this generalizes
 
-This is the "free shipping" phrasing. Passive. Customer has to do something ("dene" = try). "Ücretsiz" is the generic word every SaaS uses.
+The "free X" → "X on us" reframe applies anywhere an offer is currently phrased as a feature:
 
-**Variant hypotheses (NONE tested — treat as A/B proposals):**
+| Feature phrasing | Reciprocity reframe |
+|---|---|
+| `Free 30-day trial` | `First 30 days on us.` |
+| `Free shipping` | `Shipping on us.` |
+| `No setup fee` | `Setup on us.` |
+| `Includes onboarding` | `Onboarding on us.` |
 
-| Current | Proposed reframe | Psychology |
+**Cultural-language note:** When localizing, look for the language's native word for *gift / hospitality / treat-from-the-host* — that word usually carries warmer reciprocity weight than the literal translation of "free." Examples worth translating into: gift, treat, on the house, our shout. The right word is rarely the dictionary equivalent of "free."
+
+### Risk
+
+The word "free" is a scan-word people look for on signup pages. Removing it from the CTA could drop click-through even if the psychology is better. **Test in ads first** before changing the signup page CTA.
+
+### Where else "on us" framing applies (cross-funnel reciprocity)
+
+The reciprocity reframe compounds when applied consistently across every operator-to-customer touchpoint, not just the ad. Each touch reinforces the gift framing the ad started.
+
+| Touchpoint | Default phrasing (feature) | Reciprocity reframe |
 |---|---|---|
-| `30 Gün Ücretsiz Dene` | `İlk 30 gün bizden.` | Brand is paying; tutor is receiving |
-| `30 Gün Ücretsiz Dene` | `İlk ay Tilki'den.` | Gift framing, owner-voice |
-| `30 Gün Ücretsiz Dene` | `30 gün bizim ikramımız.` | "İkram" = treat/hospitality, culturally warm |
+| Ad CTA | `Try free for 30 days` | `First 30 days on us.` |
+| Confirmation email subject | `Your free account is ready` | `Welcome. First month on us.` |
+| Trial-end reminder | `Your trial expires in 3 days` | `Your free month ends soon. Want to stay?` |
+| Onboarding milestone | `You completed setup!` | `Take it easy this first month. We'll talk later.` |
+| Support reply | `Sure, I can help with that.` | `Of course — that one's on us.` |
+| Receipt for refund | `Your refund has been processed.` | `Refund's on us. No hard feelings.` |
 
-**"İkram" is interesting for Turkey specifically.** It carries cultural weight — ikram is what you give a guest, a customer, a friend. No Turkish SaaS uses this word as CTA language. It is both on-psychology (reciprocity) and culturally native.
+**Test ads first** (the CTA is the highest-traffic surface and the cheapest A/B). If ad-level CTR holds or improves with the reframe, propagate to email, in-app, and support touches in that order.
 
-**Risk**: "Ücretsiz" is the scan-word people look for on signup pages. Removing it from the CTA could drop click-through even if the psychology is better. Test on the button in ads first before changing on the signup page.
-
-**Test recommendation**: one ad with current CTA, one identical ad with `İlk ay bizden.` or `30 gün ikramımız.`. Measure CTR + CPR. Cheap A/B inside our existing framework.
-
-### Where else "on us" framing applies
-
-- Confirmation email subject: *"Hoş geldin. İlk ay bizden."* (not "Ücretsiz hesabın hazır")
-- Trial-end reminder: *"İkram süren bitiyor. Devam etmek ister misin?"* (warmer than "Deneme süren doluyor")
-- Onboarding completion: *"İlk ayı rahat geçir. Gerisini konuşuruz."* (implies: no pressure, we got you)
-
-These are not ad changes — they're product/email touches. Worth considering as reciprocity accumulates across the funnel.
+**Don't half-do it.** A reciprocity-framed ad that lands the user on a "Free Trial" signup page wastes the priming. The user reads the page in the ad's voice for ~3 seconds — make those 3 seconds match.
 
 ---
 
 ## 3. How this file gets used
 
-1. **Before writing new ad concept**: open this file, pick the empty grid cell (§1) that has zero coverage. Generate for that cell. Do not generate a 41st Question-Pain-Demo.
-2. **Before writing CTA / offer copy**: check §2. If current phrasing is "free / try / test", consider the "on us / bizden / ikram" reframe.
-3. **Weekly creative review**: run Maxwell's M/W/F cadence even if solo. 10 min. Audit last 72h. Check FB Ad Library for one similar-demographic brand.
-4. **When this file updates**: append, do not rewrite. Add new frameworks as they surface. Source attribution stays in frontmatter.
+1. **Before writing a new ad concept**: open §1, run the angle-fatigue diagnostic, pick an empty (or under-covered) grid cell. Generate for that cell. Do not generate the Nth variant of the cell you've already tested.
+2. **Before writing CTA / offer copy**: check §2. If the current phrasing is "free / try / test", consider the "on us" reframe — and if you adopt it, propagate the reframe to the signup page, confirmation email, and trial-end reminder so the priming compounds.
+3. **Weekly creative review**: run Maxwell's M/W/F cadence even if solo. 10 min. Audit last 72h. Run §1's three-bucket FB Ad Library spy — one brand per bucket — to seed next week's grid expansion.
+4. **When this file updates**: append, do not rewrite. Add new frameworks as they surface. Source attribution stays in frontmatter or section heading.
 
 ## 4. What's NOT in here
 
-- Our cohort data, named ads, ship status, ad-naming system → see `meta-ads-creative-playbook.md`
-- Private tutor mental model / hook writing rules → see `meta-ads-creative-playbook.md §2b`
-- Image generation prompts / Gemini pipeline → see `meta-ads-creative-playbook.md §6`
-- Turkish copy rules (no em-dashes, no fox emoji, verbatim hooks) → user memory + main playbook
+- Calling project's specific cohort data, named ads, ship status, naming system — those live in the calling project, not in this skill.
+- Localized copy rules and language-specific style — operator-supplied.
+- Image generation prompts / asset pipelines — out of scope for this skill.
 
-This file is frameworks only. The main playbook is application.
+This file is frameworks only. The calling project supplies the application.

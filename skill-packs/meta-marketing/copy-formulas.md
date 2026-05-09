@@ -26,13 +26,13 @@ This is the strongest single cross-source signal in the corpus: two speakers fro
 
 ### The structure
 
-| Part | Purpose | Length | Example (generic) |
+| Part | Purpose | Length | Example shape |
 |---|---|---|---|
-| **Callout** | Identify the target person. Make them feel "that's me." | 1 line | *"Özel ders öğretmenleri buraya."* |
-| **Agitation** | Name the pain they already feel. Don't introduce a new problem — confirm the one they're living. | 1–3 lines | *"Her ay tahsilat, velilere hatırlatma, takip. Saatlerce."* |
-| **Benefit** | What changes with your product. Concrete and specific — not "save time", but "4 dakika". | 1–2 lines | *"Tilki Öğretmen tüm bunları otomatik halleder."* |
-| **Scarcity** | A real reason to act now. Deadline, limited availability, price window, or first-mover framing. | 1 line | *"Bu ay kayıt olanlara ilk 30 gün ikramımız."* |
-| **CTA** | Single, clear, imperative action. No options. | 1 line | *"Şimdi ücretsiz başla."* |
+| **Callout** | Identify the target person. Make them feel "that's me." | 1 line | *"[Role] who [specific situation], read this."* |
+| **Agitation** | Name the pain they already feel. Don't introduce a new problem — confirm the one they're living. | 1–3 lines | Specific moment + channel + frequency the pain shows up. |
+| **Benefit** | What changes with your product. Concrete and specific — not "save time", but a measurable outcome ("4 minutes", "0 follow-ups", "Sunday back"). | 1–2 lines | *"[Product] handles all of that automatically."* |
+| **Scarcity** | A real reason to act now. Deadline, limited availability, price window, or first-mover framing. **Avoid fake scarcity** (no "limited seats" on a SaaS product). | 1 line | Time-bound offer / first-mover framing / social proof + FOMO. |
+| **CTA** | Single, clear, imperative action. No options. | 1 line | *"Start free today."* / *"Book a demo."* — one verb, one path. |
 
 ### Why it works
 
@@ -51,28 +51,30 @@ This is the strongest single cross-source signal in the corpus: two speakers fro
 
 ---
 
-### Tilki application notes
+### Application notes (callout / agitation / benefit / scarcity craftsmanship)
 
-**Callout options (untested — pick one per creative, not all):**
-- `Özel ders öğretmeniyseniz okuyun.`
-- `Her ay aynı muhabbet: ödeme, hatırlatma, takip.` (leads with agitation — skip callout if hook is strong enough)
-- `247 öğretmen artık bu sorunu yaşamıyor.` (social proof variant of callout)
+**Callout — three shapes that work (pick one per creative, not all):**
+- Direct ICP address: `[Role/situation], read this.`
+- Lead with agitation: `Same conversation every month: [specific pain]. Hours of it.` — skip the explicit callout when the agitation already tags the ICP.
+- Social-proof callout: `[N] [role]s already stopped doing this.`
 
-**Agitation specificity rule:** The more specific the agitation, the more it lands. "Zaman alıyor" is weak. "Pazar akşamları velilere WhatsApp atmak" is strong — it names a specific moment and channel.
+**Agitation specificity rule:** The more specific the agitation, the more it lands. *"It takes time"* is weak. *"Sunday evenings messaging customers on WhatsApp"* is strong — it names a specific moment, channel, and frequency. Specificity proves you actually know the ICP.
 
 **Benefit — avoid feature-first phrasing:**
 
 | Weak (feature) | Strong (outcome) |
 |---|---|
-| Otomatik ödeme hatırlatması | Velilere bir daha siz yazmayın |
-| Öğrenci takip sistemi | Hangi öğrencinin arkasında kaldığını 10 saniyede gör |
-| Dijital yoklama | Derse kim gelmedi, 30 saniyede öğren |
+| `Automated payment reminders` | `Stop chasing customers entirely` |
+| `Student progress tracking` | `See which student is falling behind in 10 seconds` |
+| `Digital attendance` | `Know who didn't show up in 30 seconds` |
+
+The pattern: features describe what the product *has*; outcomes describe what the user *no longer has to do*. Lead with the absence, not the presence.
 
 **Scarcity — real vs fake:**
-Fake scarcity ("sınırlı kontenjan" for a SaaS product) degrades trust. Use:
-- Time-bound offers tied to actual promotions (`Nisan sonuna kadar`)
-- First-mover framing (`Beta döneminde fiyatı donduruyoruz`)
-- Social proof + FOMO (`Bu ay 37 öğretmen daha katıldı`)
+Fake scarcity ("limited seats" on an unlimited SaaS product) degrades trust. Use:
+- Time-bound offers tied to actual promotions (`Through end of month`).
+- First-mover / lock-in framing (`Beta pricing locked for early adopters`).
+- Social proof + FOMO (`37 more joined this month`) — only if the number is real and verifiable.
 
 ---
 
@@ -107,7 +109,7 @@ Location change + line change = 10 combinations from 2 short reshoot sessions.
 
 **Ad fatigue use case:** When a winning ad starts to tire (rising frequency, falling ROAS), introduce hook variants before replacing the whole creative. The body has already proven it converts — swap the hook before replacing what works.
 
-**Tilki application:** For any video ad that performs (teacher-facing UGC or founder video), produce hook variants before assuming the ad has run its course. The 4×3×3 grid in `meta-ads-creative-frameworks.md` can be extended with hook-swap variants within each cell (same angle + format, multiple hook types).
+**Application:** For any video ad that performs, produce hook variants before assuming the ad has run its course. The angle × format × hook grid in `creative-frameworks.md` can be extended with hook-swap variants within each cell (same angle + format, multiple hook types).
 
 **Source:** Ben Heath (`_youtube__kuSq-pmNfnM` §1) — single speaker; not yet corroborated. Treat as a high-confidence production heuristic pending second source.
 
@@ -115,7 +117,7 @@ Location change + line change = 10 combinations from 2 short reshoot sessions.
 
 ## What this file does NOT cover
 
-- Account structure, targeting, campaign topology → `meta-ads-account-ops.md`
-- Creative grid framework (4×3×3), "on us" reciprocity hack → `meta-ads-creative-frameworks.md`
-- Our actual cohort copy, named ads, Turkish hooks → `meta-ads-creative-playbook.md` (user-maintained)
-- Skill-pack generation → blocked on user decision #1 (lane consolidation/split) and #2 (cross-lane copy rule promotion path)
+- Account structure, targeting, campaign topology → `account-ops.md`
+- Creative grid framework (angle × format × hook), reciprocity offer framing → `creative-frameworks.md`
+- Project-specific cohort copy, named ads, language-specific hooks → maintained by the calling project, not by this skill
+- Failure modes / common mistakes → `mistakes.md`

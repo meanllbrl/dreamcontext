@@ -1,0 +1,147 @@
+.rice-scatter {
+  position: relative;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.rice-scatter-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+}
+
+.rice-axis {
+  stroke: var(--color-border);
+  stroke-width: 1;
+}
+
+.rice-tick {
+  font-size: 11px;
+  fill: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.rice-axis-label {
+  font-size: 12px;
+  fill: var(--color-text-secondary);
+  font-weight: var(--font-weight-medium);
+}
+
+.rice-quad {
+  fill: var(--color-bg-secondary);
+  fill-opacity: 0.4;
+}
+
+.rice-quad--quick-wins {
+  fill: hsl(140 60% 45%);
+  fill-opacity: 0.06;
+}
+
+.rice-quad--big-bets {
+  fill: hsl(220 80% 55%);
+  fill-opacity: 0.06;
+}
+
+.rice-quad--fill-ins {
+  fill: hsl(40 90% 55%);
+  fill-opacity: 0.06;
+}
+
+.rice-quad--time-sinks {
+  fill: hsl(0 70% 55%);
+  fill-opacity: 0.05;
+}
+
+.rice-quad-divider {
+  stroke: var(--color-border);
+  stroke-width: 1;
+  stroke-dasharray: 3 4;
+}
+
+.rice-quad-label {
+  font-size: 10px;
+  font-weight: var(--font-weight-semibold);
+  fill: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  pointer-events: none;
+}
+
+.rice-dot {
+  cursor: pointer;
+  transition: stroke-width var(--transition-fast), fill-opacity var(--transition-fast);
+  outline: none;
+}
+
+.rice-dot:hover {
+  fill-opacity: 1 !important;
+}
+
+.rice-dot:focus-visible {
+  stroke: var(--color-brand-vivid);
+  stroke-width: 2.5;
+}
+
+/* SR-only ordered list */
+.rice-scatter-sr-list {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Unscored tray */
+.rice-unscored {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+}
+
+.rice-unscored-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text);
+}
+
+.rice-unscored-toggle:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.rice-unscored-cards {
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-top: 1px solid var(--color-border);
+  overflow-x: auto;
+}
+
+.rice-unscored-cards > * {
+  flex: 0 0 220px;
+}
+
+.rice-chevron {
+  transition: transform var(--transition-fast);
+  color: var(--color-text-tertiary);
+}
+
+.rice-chevron--open {
+  transform: rotate(180deg);
+}

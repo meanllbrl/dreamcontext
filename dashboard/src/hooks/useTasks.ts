@@ -1,6 +1,16 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 
+export interface RiceFields {
+  reach: number | null;
+  impact: number | null;
+  confidence: number | null;
+  effort: number | null;
+  score: number | null;
+}
+
+export type RiceInput = Partial<Omit<RiceFields, 'score'>>;
+
 export interface Task {
   slug: string;
   id: string;
@@ -15,6 +25,7 @@ export interface Task {
   parent_task: string | null;
   related_feature: string | null;
   version: string | null;
+  rice: RiceFields | null;
   why: string;
   user_stories: string;
   acceptance_criteria: string;
@@ -46,7 +57,9 @@ interface CreateTaskInput {
 
 interface UpdateTaskInput {
   slug: string;
-  updates: Partial<Pick<Task, 'status' | 'priority' | 'urgency' | 'description' | 'tags' | 'name' | 'related_feature' | 'version'>>;
+  updates: Partial<Pick<Task, 'status' | 'priority' | 'urgency' | 'description' | 'tags' | 'name' | 'related_feature' | 'version'>> & {
+    rice?: RiceInput | null;
+  };
 }
 
 interface InsertTaskSectionInput {

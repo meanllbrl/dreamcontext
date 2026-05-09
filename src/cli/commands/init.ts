@@ -1,14 +1,23 @@
 import { Command } from 'commander';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, readdirSync, statSync } from 'node:fs';
-import { join, resolve } from 'node:path';
-import { input, confirm } from '@inquirer/prompts';
-import { installClaudeMd } from './install-claude-md.js';
+import { join } from 'node:path';
+import { input, confirm, checkbox } from '@inquirer/prompts';
+import { installInstructions } from './install-claude-md.js';
 import chalk from 'chalk';
 import { getInitPath } from '../../lib/context-path.js';
 import { today } from '../../lib/id.js';
-import { success, error, info, miniBox } from '../../lib/format.js';
+import { error, info, miniBox } from '../../lib/format.js';
 import { insertToJsonArray } from '../../lib/json-file.js';
 import { fileURLToPath } from 'node:url';
+import {
+  DEFAULT_PLATFORMS,
+  PLATFORM_CATALOG,
+  ensurePlatformSelection,
+  formatSupportedPlatforms,
+  parsePlatformList,
+  type PlatformId,
+} from '../../lib/platforms.js';
+import { writeProjectPlatformDefaults } from '../../lib/platform-defaults.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
@@ -107,6 +116,7 @@ export function registerInitCommand(program: Command): void {
     .option('--user <user>', 'Target user')
     .option('--stack <stack>', 'Tech stack')
     .option('--priority <priority>', 'Current priority')
+    .option('--platforms <list>', `Comma-separated platforms: ${formatSupportedPlatforms()}`)
     .action(async (opts: {
       yes?: boolean;
       name?: string;
@@ -114,6 +124,7 @@ export function registerInitCommand(program: Command): void {
       user?: string;
       stack?: string;
       priority?: string;
+      platforms?: string;
     }) => {
       const contextDir = getInitPath();
 
@@ -154,6 +165,27 @@ export function registerInitCommand(program: Command): void {
         message: 'Current priority / focus:',
         default: 'Initial setup',
       }));
+
+      let selectedPlatforms: PlatformId[] = [...DEFAULT_PLATFORMS];
+      if (opts.platforms) {
+        const parsed = parsePlatformList(opts.platforms);
+        if (parsed.invalid.length > 0) {
+          error(`Unknown platform(s): ${parsed.invalid.join(', ')}. Supported: ${formatSupportedPlatforms()}`);
+          return;
+        }
+        selectedPlatforms = ensurePlatformSelection(parsed.platforms);
+      } else if (!useDefaults) {
+        const picked = await checkbox<PlatformId>({
+          message: 'Select platform support (multi-select)',
+          choices: PLATFORM_CATALOG.map((p) => ({
+            value: p.id,
+            name: `${chalk.bold(p.label)} ${chalk.dim('— ' + p.description)}`,
+            checked: DEFAULT_PLATFORMS.includes(p.id),
+          })),
+          pageSize: PLATFORM_CATALOG.length,
+        });
+        selectedPlatforms = ensurePlatformSelection(picked);
+      }
 
       const dateStr = today();
       const tokens: Record<string, string> = {
@@ -205,6 +237,9 @@ export function registerInitCommand(program: Command): void {
         writeFileSync(join(contextDir, 'core', file), '[]\n', 'utf-8');
       }
 
+      // Persist project platform defaults
+      writeProjectPlatformDefaults(process.cwd(), selectedPlatforms);
+
       // Add initial changelog entry
       insertToJsonArray(join(contextDir, 'core', 'CHANGELOG.json'), {
         date: dateStr,
@@ -221,6 +256,7 @@ export function registerInitCommand(program: Command): void {
         `  Project: ${chalk.magentaBright(projectName)}`,
         `  Stack:   ${chalk.white(techStack || 'Not specified')}`,
         `  Focus:   ${chalk.white(priority)}`,
+        `  Platforms: ${chalk.white(selectedPlatforms.join(', '))}`,
       ], { color: 'green' }));
 
       console.log();
@@ -245,20 +281,22 @@ export function registerInitCommand(program: Command): void {
         console.log(`  └── ${chalk.magentaBright.bold('inbox/')}`);
       }
 
-      // Optional: offer to install root CLAUDE.md
-      let claudeInstalled = false;
+      // Optional: offer to install root instruction files for selected platforms
+      let instructionsInstalled = false;
       if (!useDefaults) {
         const want = await confirm({
-          message: 'Install a terse CLAUDE.md at the project root? (Claude Code project memory, ~80 lines)',
+          message: 'Install managed root instruction file(s) now? (CLAUDE.md / AGENTS.md)',
           default: false,
         });
         if (want) {
-          try {
-            const result = await installClaudeMd(process.cwd());
-            claudeInstalled = result.action !== 'skipped';
-          } catch (err: any) {
-            if (err.name !== 'ExitPromptError') {
-              info(`CLAUDE.md skipped: ${err.message}`);
+          for (const platform of selectedPlatforms) {
+            try {
+              const result = await installInstructions(process.cwd(), platform, 'append');
+              instructionsInstalled = instructionsInstalled || result.action !== 'skipped';
+            } catch (err: any) {
+              if (err.name !== 'ExitPromptError') {
+                info(`${platform} root instructions skipped: ${err.message}`);
+              }
             }
           }
         }
@@ -266,12 +304,12 @@ export function registerInitCommand(program: Command): void {
 
       console.log();
       console.log(chalk.bold('  What\'s next:'));
-      console.log(`  ${chalk.dim('1.')} Run ${chalk.magentaBright('dreamcontext install-skill')} to set up Claude Code integration`);
+      console.log(`  ${chalk.dim('1.')} Run ${chalk.magentaBright('dreamcontext install-skill')} to set up platform integrations`);
       console.log(`  ${chalk.dim('2.')} Run ${chalk.magentaBright('dreamcontext features create <name>')} to add features`);
       console.log(`  ${chalk.dim('3.')} Edit ${chalk.green('_dream_context/core/0.soul.md')} to define agent identity`);
       let nextStep = 4;
-      if (!claudeInstalled) {
-        console.log(`  ${chalk.dim(nextStep++ + '.')} Optional: ${chalk.magentaBright('dreamcontext install-claude-md')} for a root CLAUDE.md`);
+      if (!instructionsInstalled) {
+        console.log(`  ${chalk.dim(nextStep++ + '.')} Optional: ${chalk.magentaBright('dreamcontext install-instructions')} to add managed root guidance`);
       }
       if (obsidianInstalled) {
         console.log(`  ${chalk.dim(nextStep++ + '.')} In Obsidian: ${chalk.white('Open folder as vault')} → select ${chalk.green('_dream_context/')}`);

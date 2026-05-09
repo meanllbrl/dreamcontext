@@ -194,6 +194,7 @@ These files vary across projects. Do not assume a fixed list. Always discover dy
 10. **All work needs a task.** Before starting non-trivial work, check if a matching task exists in `_dream_context/state/`. If not, create one. After plans are approved (ExitPlanMode), offer to save as a task. The sleep agent flags untracked work.
 11. **Use dreamcontext-explore, not Explore.** The default Explore agent is blocked via PreToolUse hook. Use `dreamcontext-explore` for all codebase exploration. It checks context files first, saving thousands of tokens.
 12. **Mark checkboxes as you go.** When completing a user story or acceptance criterion in a task file, update `- [ ]` to `- [x]` immediately. Don't wait for sleep consolidation. This is the live progress signal.
+12a. **Keep the Workflow flowchart in sync.** Every task file has a `## Workflow` mermaid block at the top — one node per acceptance criterion, grouped under milestone subgraphs, with status classes `done` / `active` / `todo` / `blocked`. Whenever you check off a criterion, start work on one, add/remove a criterion, or hit a blocker: update the corresponding node's `:::class`. Run `dreamcontext tasks doctor <name>` to verify sync. The flowchart is the load-bearing summary of the task — drift makes future sessions misread progress.
 13. **Reuse before create.** Before building any UI component, utility, hook, or abstraction, search the codebase for existing implementations that serve the same purpose. Use `dreamcontext-explore` to find reusable candidates. If a match exists, use it or extend it. Never duplicate functionality that already exists. This applies to modals, forms, filters, layouts, helpers, and any shared pattern.
 
 ---
@@ -247,10 +248,7 @@ Uses the SubagentStart briefing (pre-loaded project knowledge) to narrow searche
 
 Scans the codebase, asks the user questions, populates core files with real content (not placeholders).
 
-**Sleep** (`dreamcontext-rem-sleep`) -- dispatch to consolidate learnings into core files:
-> "We just [what happened]. Brief: [summary of decisions, changes, learnings]."
-
-Consolidates, calls `dreamcontext sleep done` to reset debt automatically.
+**Sleep** -- main agent runs the fan-out flow directly (see "Sleep System" section below). Dispatches `sleep-tasks` + `sleep-changelog` + `sleep-core` always, plus `sleep-knowledge` / `sleep-features` when signals warrant. Each specialist owns one non-overlapping file domain. Closes with `dreamcontext sleep done` to reset debt.
 
 **Context Propagation**: All sub-agents receive a lightweight context briefing via the SubagentStart hook (project summary, features index, knowledge index, active tasks). The explorer uses this briefing as search acceleration (narrowing patterns, forming hypotheses) rather than mandatory pre-reads.
 
@@ -287,9 +285,28 @@ Sleep debt reminders are injected on every user message (via UserPromptSubmit ho
 **Auto-sleep** (act without asking): task completed with debt >= 7, major implementation finished with debt >= 4.
 **Ask first**: debt 4-6 after completing a task, accumulated smaller changes, user wrapping up.
 
-**Flow**: Tell user you're consolidating -> dispatch `dreamcontext-rem-sleep` with brief -> wait for completion -> report back.
+**Flow — main agent performs this directly.** Sub-agents cannot reliably fan out to other sub-agents, so orchestration runs from the main agent context. Specialist file ownership is non-overlapping (no stomping); they run in parallel.
 
-**Epoch safety**: The rem-sleep agent calls `sleep start` before beginning work, which sets a timestamp epoch. `sleep done` only clears sessions/changes/bookmarks from before the epoch. Parallel sessions that finish during consolidation are preserved for the next cycle.
+1. Tell the user you're consolidating.
+2. `dreamcontext sleep start` — pins the epoch timestamp.
+3. Build the brief inline (cheap CLI calls):
+   - `cat _dream_context/state/.sleep.json` — session IDs, task slugs, last_assistant_message, knowledge_access
+   - `git status --short` and `git log --oneline --since=$(jq -r '.sleep_started_at // .last_sleep' _dream_context/state/.sleep.json)`
+   - `dreamcontext core releases active` — current planning version (create one with `dreamcontext core releases add --ver vX.Y.Z --status planning --summary "<theme>" --yes` if missing)
+4. Dispatch specialists in **parallel** — one message with multiple Agent tool calls:
+   - **Always fire**: `sleep-tasks`, `sleep-changelog`, `sleep-core`
+   - **Conditional fire** based on signals from the brief:
+     - `sleep-knowledge` if: `last_assistant_message` mentions research/analysis/decision; a `knowledge_access` entry hasn't been touched in 30+ days; a research bookmark exists; user hint mentions knowledge.
+     - `sleep-features` if: a task slug matches an existing feature PRD filename; `git status` shows changes under `_dream_context/core/features/`; user hint names a feature; a session advanced ≥1 acceptance criterion or shipped a buildable concept without a PRD.
+   - When unsure, **over-fire** the optional ones — they no-op cheaply.
+   - Pass each specialist a small text brief in its prompt: epoch, session IDs, active task slugs, planning version, signals relevant to that specialist, optional user hint. Do **not** include transcript content — specialists call `dreamcontext transcript distill <id>` themselves.
+5. Wait for all specialist reports. Each returns a short structured report.
+6. Marketing pass if `_dream_context/marketing/` exists: `dreamcontext mk rem-sleep`.
+7. Council promote check: `dreamcontext council list --unpromoted` — promote if user engaged positively.
+8. `dreamcontext sleep done "<one-paragraph summary stitched from specialist reports>"` — clears pre-epoch state, resets debt.
+9. Report consolidated summary back to the user.
+
+**Epoch safety**: `sleep start` pins a timestamp epoch. `sleep done` only clears sessions/changes/bookmarks from before the epoch. Parallel sessions that finish during consolidation are preserved for the next cycle.
 
 For non-file-change work (architecture discussions, decisions): `dreamcontext sleep add <score> "<reason>"`
 
@@ -302,14 +319,19 @@ Versions and releases are unified in `RELEASES.json`. A "version" is a release e
 **Lifecycle**: `planning` -> `released`
 
 ```bash
-# Create a planning version
+# Create a planning version (auto-becomes the active planning version)
 dreamcontext core releases add --ver v0.2.0 --summary "Dashboard improvements" --status planning
+
+# Inspect / change / clear the active planning version
+dreamcontext core releases active                # print current
+dreamcontext core releases active v0.3.0         # switch to another existing planning version
+dreamcontext core releases active --clear        # unset
 
 # Release a version (via dashboard or by updating RELEASES.json status to released)
 # The sleep agent checks if all tasks for a planning version are done and reports readiness.
 ```
 
-Tasks can be assigned to a planning version via the `version` field. The dashboard's Version Manager shows planning vs released versions and provides a "Release" action.
+Tasks created without an explicit `--version` flag auto-attach to the **active planning version**. This means new work is always linked to a milestone; if no active planning version exists, the sleep agent will create one. The dashboard's Version Manager shows planning vs released versions and provides a "Release" action.
 
 ---
 
@@ -327,6 +349,19 @@ Read _dream_context/state/<task>.md                                     # Load f
 # Create (rich task with Why, User Stories, Acceptance Criteria, Constraints, Technical Details, Notes, Changelog)
 dreamcontext tasks create <name> --description "..." --priority medium --why "What this task accomplishes"
 
+# Optional RICE prioritization on create (additive to priority/urgency; powers Scatter view + RICE sort)
+dreamcontext tasks create <name> --reach 5 --impact 3 --confidence 75 --effort 2
+#   --reach      integer 1–10  (how many users/sessions/units affected)
+#   --impact     integer 1–5   (how much per affected unit)
+#   --confidence one of 25, 50, 75, 100 (percent)
+#   --effort     person-weeks > 0 and ≤ 52 (0.5 step OK)
+# Score = (reach × impact × confidence/100) / effort, computed server-side.
+
+# Retro-rate or update RICE on an existing task
+dreamcontext tasks rice <name>                                          # Print current values
+dreamcontext tasks rice <name> --effort 4                               # Update one field, recompute score
+dreamcontext tasks rice <name> --clear                                  # Clear all RICE values
+
 # Enrich (insert into any section during active work)
 dreamcontext tasks insert <name> user_stories "As a user, I want X so that Y"
 dreamcontext tasks insert <name> acceptance_criteria "API returns 200 with paginated results"
@@ -337,8 +372,11 @@ dreamcontext tasks insert <name> changelog "Implemented pagination for /api/task
 
 # Lifecycle
 dreamcontext tasks log <name> "what was done"                           # Quick changelog entry (MANDATORY)
-dreamcontext tasks complete <name> "summary"                            # Mark complete
+dreamcontext tasks status <name> in_review "Ready for review"           # Bump status (todo|in_progress|in_review|completed)
+dreamcontext tasks complete <name> "summary"                            # Mark complete (user only; sleep agent never auto-completes)
 ```
+
+**Status convention:** `todo` -> `in_progress` -> `in_review` -> `completed`. The sleep agent bumps tasks it touched to `in_review` (never `completed`) so the user can verify before declaring done. This prevents the "task rotting in todo" failure mode.
 
 Task insert sections: `why`, `user_stories`, `acceptance_criteria`, `constraints`, `technical_details`, `notes`, `changelog`
 
@@ -387,7 +425,8 @@ All commands prefixed with `dreamcontext`. For reading/searching, use native too
 |---------|-------------|
 | `init` | Initialize `_dream_context/` |
 | `core changelog add` | Add changelog entry (interactive) |
-| `core releases add [--ver v --summary s --yes] [--status planning]` | Create release (default: released with auto-discovery; --status planning: empty planning version) |
+| `core releases add [--ver v --summary s --yes] [--status planning]` | Create release (default: released with auto-discovery; --status planning: empty planning version, auto-becomes active) |
+| `core releases active [<version>] [--clear]` | Get/set/clear the active planning version (default for new tasks' `version` field) |
 | `core releases list [-n count]` | List recent releases |
 | `core releases show <version>` | Show release details |
 | `features create <name>` | Create feature PRD |
@@ -397,9 +436,11 @@ All commands prefixed with `dreamcontext`. For reading/searching, use native too
 | `knowledge tags` | List standard tags |
 | `knowledge touch <slug>` | Record access to knowledge file (decay tracking) |
 | `tasks list [-s status] [--all]` | List tasks (default: excludes completed) |
-| `tasks create <name> [-d desc] [-p priority] [-s status] [-t tags] [-w why]` | Create task (defaults: priority=medium, status=todo) |
+| `tasks create <name> [-d desc] [-p priority] [-s status] [-t tags] [-w why] [--reach N --impact N --confidence N --effort N]` | Create task (defaults: priority=medium, status=todo). RICE flags optional and additive. |
+| `tasks rice <name> [--reach N] [--impact N] [--confidence N] [--effort N] [--clear]` | Print or update RICE values; no flags prints current values |
 | `tasks insert <name> <section> <content>` | Insert into task section |
-| `tasks complete <name>` | Complete task |
+| `tasks status <name> <todo\|in_progress\|in_review\|completed> [reason...]` | Change task status (logs to changelog) |
+| `tasks complete <name>` | Complete task (user only; sleep agent uses `tasks status ... in_review`) |
 | `tasks log <name> <content>` | Log task progress |
 | `bookmark add "<message>" [-s 1\|2\|3] [--task <slug>]` | Bookmark an important moment with optional task link |
 | `bookmark list` | Show current bookmarks |

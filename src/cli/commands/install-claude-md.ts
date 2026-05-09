@@ -5,20 +5,50 @@ import { fileURLToPath } from 'node:url';
 import chalk from 'chalk';
 import { select } from '@inquirer/prompts';
 import { error, info, miniBox } from '../../lib/format.js';
+import {
+  DEFAULT_PLATFORMS,
+  formatSupportedPlatforms,
+  parsePlatformList,
+  type PlatformId,
+} from '../../lib/platforms.js';
 
-const FENCE_START = '<!-- dreamcontext:start -->';
-const FENCE_END = '<!-- dreamcontext:end -->';
+export type Mode = 'append' | 'replace' | 'skip';
 
-type Mode = 'append' | 'replace' | 'skip';
+interface InstructionSpec {
+  platform: PlatformId;
+  targetFile: string;
+  templateFile: string;
+}
+
+const INSTRUCTION_SPECS: Record<PlatformId, InstructionSpec> = {
+  claude: {
+    platform: 'claude',
+    targetFile: 'CLAUDE.md',
+    templateFile: 'CLAUDE.md',
+  },
+  codex: {
+    platform: 'codex',
+    targetFile: 'AGENTS.md',
+    templateFile: 'AGENTS.md',
+  },
+};
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
-function findTemplate(): string | null {
+function getFenceStart(platform: PlatformId): string {
+  return `<!-- dreamcontext:${platform}:start -->`;
+}
+
+function getFenceEnd(platform: PlatformId): string {
+  return `<!-- dreamcontext:${platform}:end -->`;
+}
+
+function findTemplate(filename: string): string | null {
   const candidates = [
-    join(__dirname, '..', '..', 'templates', 'CLAUDE.md'),
-    join(__dirname, '..', 'templates', 'CLAUDE.md'),
-    join(__dirname, 'templates', 'CLAUDE.md'),
-    join(__dirname, '..', '..', '..', 'src', 'templates', 'CLAUDE.md'),
+    join(__dirname, '..', '..', 'templates', filename),
+    join(__dirname, '..', 'templates', filename),
+    join(__dirname, 'templates', filename),
+    join(__dirname, '..', '..', '..', 'src', 'templates', filename),
   ];
   for (const p of candidates) {
     if (existsSync(p)) return p;
@@ -26,21 +56,22 @@ function findTemplate(): string | null {
   return null;
 }
 
-function buildBlock(templateBody: string): string {
-  return `${FENCE_START}\n${templateBody.trim()}\n${FENCE_END}\n`;
+function buildBlock(platform: PlatformId, templateBody: string): string {
+  return `${getFenceStart(platform)}\n${templateBody.trim()}\n${getFenceEnd(platform)}\n`;
 }
 
-function hasFence(content: string): boolean {
-  return content.includes(FENCE_START) && content.includes(FENCE_END);
+function hasFence(content: string, platform: PlatformId): boolean {
+  return content.includes(getFenceStart(platform)) && content.includes(getFenceEnd(platform));
 }
 
-function replaceFence(content: string, block: string): string {
-  const startIdx = content.indexOf(FENCE_START);
-  const endIdx = content.indexOf(FENCE_END);
+function replaceFence(content: string, platform: PlatformId, block: string): string {
+  const startFence = getFenceStart(platform);
+  const endFence = getFenceEnd(platform);
+  const startIdx = content.indexOf(startFence);
+  const endIdx = content.indexOf(endFence);
   if (startIdx === -1 || endIdx === -1 || endIdx < startIdx) return content;
   const before = content.slice(0, startIdx);
-  const after = content.slice(endIdx + FENCE_END.length);
-  // Trim a single trailing newline from `before` if present, then re-add structure.
+  const after = content.slice(endIdx + endFence.length);
   const trimmedBefore = before.replace(/\n+$/, '');
   const trimmedAfter = after.replace(/^\n+/, '');
   const head = trimmedBefore ? trimmedBefore + '\n\n' : '';
@@ -56,7 +87,7 @@ function backupPath(target: string): string {
 async function resolveMode(target: string, requested?: Mode): Promise<Mode> {
   if (requested) return requested;
   const choice = await select<Mode>({
-    message: `CLAUDE.md exists at ${target}. What should I do?`,
+    message: `${target} exists. What should I do?`,
     choices: [
       {
         name: 'Append — add a managed dreamcontext block at the end (your content untouched)',
@@ -72,90 +103,99 @@ async function resolveMode(target: string, requested?: Mode): Promise<Mode> {
   return choice;
 }
 
-interface InstallResult {
+export interface InstallResult {
   action: 'created' | 'updated' | 'appended' | 'replaced' | 'skipped';
   target: string;
+  platform: PlatformId;
   backup?: string;
 }
 
-export async function installClaudeMd(
+export async function installInstructions(
   projectRoot: string,
+  platform: PlatformId,
   requestedMode?: Mode,
 ): Promise<InstallResult> {
-  const templatePath = findTemplate();
+  const spec = INSTRUCTION_SPECS[platform];
+  const templatePath = findTemplate(spec.templateFile);
   if (!templatePath) {
-    throw new Error('CLAUDE.md template not found. Try reinstalling dreamcontext.');
+    throw new Error(`${spec.templateFile} template not found. Try reinstalling dreamcontext.`);
   }
 
   const templateBody = readFileSync(templatePath, 'utf-8');
-  const block = buildBlock(templateBody);
-  const target = join(projectRoot, 'CLAUDE.md');
+  const block = buildBlock(platform, templateBody);
+  const target = join(projectRoot, spec.targetFile);
 
-  // Case 1: no existing CLAUDE.md
   if (!existsSync(target)) {
     writeFileSync(target, block, 'utf-8');
-    return { action: 'created', target };
+    return { action: 'created', target, platform };
   }
 
   const existing = readFileSync(target, 'utf-8');
 
-  // Case 2: existing file has our fence — idempotent re-install
-  if (hasFence(existing)) {
-    const next = replaceFence(existing, block);
+  if (hasFence(existing, platform)) {
+    const next = replaceFence(existing, platform, block);
     writeFileSync(target, next, 'utf-8');
-    return { action: 'updated', target };
+    return { action: 'updated', target, platform };
   }
 
-  // Case 3: existing file, no fence — ask or use requested mode
-  const mode = await resolveMode(target, requestedMode);
+  const mode = await resolveMode(spec.targetFile, requestedMode);
 
   if (mode === 'skip') {
-    return { action: 'skipped', target };
+    return { action: 'skipped', target, platform };
   }
 
   if (mode === 'replace') {
     const backup = backupPath(target);
     copyFileSync(target, backup);
     writeFileSync(target, block, 'utf-8');
-    return { action: 'replaced', target, backup };
+    return { action: 'replaced', target, platform, backup };
   }
 
-  // append
   const sep = existing.endsWith('\n') ? '\n' : '\n\n';
   writeFileSync(target, existing + sep + block, 'utf-8');
-  return { action: 'appended', target };
+  return { action: 'appended', target, platform };
+}
+
+export async function installClaudeMd(
+  projectRoot: string,
+  requestedMode?: Mode,
+): Promise<InstallResult> {
+  return installInstructions(projectRoot, 'claude', requestedMode);
 }
 
 function printResult(result: InstallResult): void {
   const lines: string[] = [];
+  const fileLabel = INSTRUCTION_SPECS[result.platform].targetFile;
+  const platformLabel = result.platform === 'claude' ? 'Claude' : 'Codex';
+
   switch (result.action) {
     case 'created':
-      lines.push(chalk.green.bold('✓ CLAUDE.md created'));
+      lines.push(chalk.green.bold(`✓ ${fileLabel} created (${platformLabel})`));
       lines.push('', `  ${chalk.green('✓')} ${chalk.magentaBright(result.target)}`);
       break;
     case 'updated':
-      lines.push(chalk.green.bold('✓ CLAUDE.md managed block updated'));
+      lines.push(chalk.green.bold(`✓ ${fileLabel} managed block updated (${platformLabel})`));
       lines.push(
         '',
         `  ${chalk.green('✓')} ${chalk.magentaBright(result.target)} ${chalk.dim('(content outside fence preserved)')}`,
       );
       break;
     case 'appended':
-      lines.push(chalk.green.bold('✓ CLAUDE.md updated (append)'));
+      lines.push(chalk.green.bold(`✓ ${fileLabel} updated (append, ${platformLabel})`));
       lines.push(
         '',
         `  ${chalk.green('✓')} ${chalk.magentaBright(result.target)} ${chalk.dim('(your content preserved, dreamcontext block added)')}`,
       );
       break;
     case 'replaced':
-      lines.push(chalk.green.bold('✓ CLAUDE.md replaced'));
+      lines.push(chalk.green.bold(`✓ ${fileLabel} replaced (${platformLabel})`));
       lines.push('', `  ${chalk.green('✓')} ${chalk.magentaBright(result.target)}`);
       if (result.backup) {
         lines.push(`  ${chalk.yellow('↑')} ${chalk.dim('Backup: ' + result.backup)}`);
       }
       break;
     case 'skipped':
-      lines.push(chalk.dim('CLAUDE.md unchanged.'));
+      lines.push(chalk.dim(`${fileLabel} unchanged.`));
       break;
   }
 
@@ -164,10 +204,53 @@ function printResult(result: InstallResult): void {
   console.log();
 }
 
+function parsePlatformsOption(raw?: string): PlatformId[] {
+  if (!raw) return [...DEFAULT_PLATFORMS];
+  const parsed = parsePlatformList(raw);
+  if (parsed.invalid.length > 0) {
+    throw new Error(
+      `Unknown platform(s): ${parsed.invalid.join(', ')}. Supported: ${formatSupportedPlatforms()}`,
+    );
+  }
+  return parsed.platforms.length > 0 ? parsed.platforms : [...DEFAULT_PLATFORMS];
+}
+
+export function registerInstallInstructionsCommand(program: Command): void {
+  program
+    .command('install-instructions')
+    .description('Install managed root instruction files (CLAUDE.md / AGENTS.md)')
+    .option('--platforms <list>', `Comma-separated platforms: ${formatSupportedPlatforms()}`)
+    .option('--mode <mode>', 'Conflict mode when file exists: append | replace | skip')
+    .action(async (opts: { platforms?: string; mode?: string }) => {
+      try {
+        const projectRoot = process.cwd();
+        const mode = opts.mode as Mode | undefined;
+
+        if (mode && !['append', 'replace', 'skip'].includes(mode)) {
+          error(`Invalid --mode "${mode}". Use: append | replace | skip`);
+          return;
+        }
+
+        const platforms = parsePlatformsOption(opts.platforms);
+        for (const platform of platforms) {
+          const result = await installInstructions(projectRoot, platform, mode);
+          printResult(result);
+        }
+      } catch (err: any) {
+        if (err.name === 'ExitPromptError') {
+          console.log();
+          info('Cancelled.');
+          return;
+        }
+        error(err.message);
+      }
+    });
+}
+
 export function registerInstallClaudeMdCommand(program: Command): void {
   program
     .command('install-claude-md')
-    .description('Install a terse CLAUDE.md at the project root (optional, separate from skill packs)')
+    .description('Install a terse CLAUDE.md at the project root (legacy alias; use install-instructions)')
     .option('--mode <mode>', 'Conflict mode when CLAUDE.md exists: append | replace | skip')
     .action(async (opts: { mode?: string }) => {
       try {
@@ -182,7 +265,11 @@ export function registerInstallClaudeMdCommand(program: Command): void {
         const result = await installClaudeMd(projectRoot, mode);
         printResult(result);
 
-        if (result.action === 'appended' || result.action === 'replaced' || result.action === 'created') {
+        if (
+          result.action === 'appended'
+          || result.action === 'replaced'
+          || result.action === 'created'
+        ) {
           info(
             `Re-running ${chalk.dim('dreamcontext install-claude-md')} updates only the fenced block.`,
           );

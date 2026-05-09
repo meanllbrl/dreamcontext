@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdirSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execSync } from 'node:child_process';
+import { readFrontmatter, writeFrontmatter } from '../../src/lib/frontmatter.js';
 
 function makeTmpDir(): string {
   const dir = join(tmpdir(), `ac-snap-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -252,7 +253,7 @@ describe('snapshot (integration)', () => {
     expect(output).toContain('JWT-based auth flow [auth, security]');
   });
 
-  it('outputs pinned knowledge in full', () => {
+  it('outputs pinned knowledge in full when under default cap', () => {
     const ctx = scaffold(tmpDir);
     mkdirSync(join(ctx, 'knowledge'), { recursive: true });
     writeFileSync(
@@ -263,6 +264,53 @@ describe('snapshot (integration)', () => {
     expect(output).toContain('## Pinned Knowledge');
     expect(output).toContain('### API Contract');
     expect(output).toContain('GET /users - List users');
+    expect(output).not.toContain('→ Read full:');
+  });
+
+  it('truncates long pinned knowledge to default cap with read-full pointer', () => {
+    const ctx = scaffold(tmpDir);
+    mkdirSync(join(ctx, 'knowledge'), { recursive: true });
+    const longBody = Array.from({ length: 200 }, (_, i) => `Line ${i + 1}`).join('\n');
+    writeFileSync(
+      join(ctx, 'knowledge', 'big-playbook.md'),
+      `---\nid: k4\nname: Big Playbook\ndescription: Long doc\npinned: true\n---\n\n${longBody}\n`,
+    );
+    const output = runSnapshot(tmpDir);
+    expect(output).toContain('### Big Playbook');
+    expect(output).toContain('Line 1');
+    expect(output).toContain('Line 60');
+    expect(output).not.toContain('Line 61');
+    expect(output).not.toContain('Line 200');
+    expect(output).toContain('→ Read full: _dream_context/knowledge/big-playbook.md');
+    expect(output).toContain('200 lines total');
+  });
+
+  it('honors per-entry pinned_preview_lines override', () => {
+    const ctx = scaffold(tmpDir);
+    mkdirSync(join(ctx, 'knowledge'), { recursive: true });
+    const longBody = Array.from({ length: 200 }, (_, i) => `Line ${i + 1}`).join('\n');
+    writeFileSync(
+      join(ctx, 'knowledge', 'custom-cap.md'),
+      `---\nname: Custom Cap\ndescription: D\npinned: true\npinned_preview_lines: 100\n---\n\n${longBody}\n`,
+    );
+    const output = runSnapshot(tmpDir);
+    expect(output).toContain('Line 100');
+    expect(output).not.toContain('Line 101');
+    expect(output).toContain('showing first 100');
+  });
+
+  it('inlines full pinned content when pinned_preview is "all"', () => {
+    const ctx = scaffold(tmpDir);
+    mkdirSync(join(ctx, 'knowledge'), { recursive: true });
+    const longBody = Array.from({ length: 150 }, (_, i) => `Line ${i + 1}`).join('\n');
+    writeFileSync(
+      join(ctx, 'knowledge', 'full-pinned.md'),
+      `---\nname: Full Pinned\ndescription: D\npinned: true\npinned_preview: all\n---\n\n${longBody}\n`,
+    );
+    const output = runSnapshot(tmpDir);
+    expect(output).toContain('Line 1');
+    expect(output).toContain('Line 150');
+    expect(output).not.toContain('→ Read full:');
   });
 
   it('does not output pinned section when no files are pinned', () => {
@@ -301,6 +349,104 @@ describe('snapshot (integration)', () => {
     );
     const output = runSnapshot(tmpDir);
     expect(output).toContain('Next.js 14 + PostgreSQL + Redis on AWS');
+  });
+
+  it('round-trips a task with full RICE block without mangling', () => {
+    const ctx = scaffold(tmpDir);
+    const file = join(ctx, 'state', 'rice-full.md');
+    writeFileSync(
+      file,
+      [
+        '---',
+        'name: rice-full',
+        'status: todo',
+        'priority: high',
+        'urgency: medium',
+        'rice:',
+        '  reach: 5',
+        '  impact: 3',
+        '  confidence: 75',
+        '  effort: 2',
+        '  score: 5.63',
+        '---',
+        '',
+        '## Why',
+        '',
+        'Body.',
+        '',
+      ].join('\n'),
+    );
+
+    const { data, content } = readFrontmatter<Record<string, unknown>>(file);
+    expect(data.rice).toEqual({ reach: 5, impact: 3, confidence: 75, effort: 2, score: 5.63 });
+    writeFrontmatter(file, data, content);
+
+    const after = readFrontmatter<Record<string, unknown>>(file);
+    expect(after.data.rice).toEqual({ reach: 5, impact: 3, confidence: 75, effort: 2, score: 5.63 });
+    expect(after.content.trim()).toContain('Body.');
+
+    // Snapshot CLI must not crash on this task
+    const output = runSnapshot(tmpDir);
+    expect(output).toContain('rice-full');
+  });
+
+  it('round-trips a task with partial RICE block', () => {
+    const ctx = scaffold(tmpDir);
+    const file = join(ctx, 'state', 'rice-partial.md');
+    writeFileSync(
+      file,
+      [
+        '---',
+        'name: rice-partial',
+        'status: todo',
+        'rice:',
+        '  reach: 5',
+        '  impact: null',
+        '  confidence: null',
+        '  effort: null',
+        '  score: null',
+        '---',
+        '',
+        '## Why',
+        '',
+        'Body.',
+        '',
+      ].join('\n'),
+    );
+
+    const { data, content } = readFrontmatter<Record<string, unknown>>(file);
+    expect((data.rice as Record<string, unknown>).reach).toBe(5);
+    writeFrontmatter(file, data, content);
+
+    const after = readFrontmatter<Record<string, unknown>>(file);
+    expect((after.data.rice as Record<string, unknown>).reach).toBe(5);
+  });
+
+  it('round-trips a task with no RICE block', () => {
+    const ctx = scaffold(tmpDir);
+    const file = join(ctx, 'state', 'rice-none.md');
+    writeFileSync(
+      file,
+      [
+        '---',
+        'name: rice-none',
+        'status: todo',
+        'priority: medium',
+        '---',
+        '',
+        '## Why',
+        '',
+        'Body.',
+        '',
+      ].join('\n'),
+    );
+
+    const { data, content } = readFrontmatter<Record<string, unknown>>(file);
+    expect(data.rice).toBeUndefined();
+    writeFrontmatter(file, data, content);
+    const after = readFileSync(file, 'utf-8');
+    expect(after).not.toContain('rice:');
+    expect(after).toContain('Body.');
   });
 
   it('does not show extended core section when no 3+ files exist', () => {

@@ -13,6 +13,11 @@ import {
 } from '../../lib/release-discovery.js';
 import type { ReleaseEntry } from '../../lib/release-discovery.js';
 import { backPopulateFeatures } from '../../lib/release-backpopulate.js';
+import {
+  getActivePlanningVersion,
+  setActivePlanningVersion,
+  clearActivePlanningVersion,
+} from '../../lib/active-version.js';
 
 export function registerCoreCommand(program: Command): void {
   const core = program
@@ -114,7 +119,19 @@ export function registerCoreCommand(program: Command): void {
           changelog: [],
         };
         insertToJsonArray(releasesPath, releaseEntry);
-        success(`Planning version ${version.trim()} created.`);
+        // Only auto-activate if no active planning version is currently set, to avoid
+        // silently clobbering an intentional choice. User can switch with `releases active <ver>`.
+        const currentActive = getActivePlanningVersion();
+        if (!currentActive) {
+          try {
+            setActivePlanningVersion(version.trim());
+            success(`Planning version ${version.trim()} created and set as active.`);
+          } catch (err: any) {
+            error(`Created planning version but could not set as active: ${err.message}`);
+          }
+        } else {
+          success(`Planning version ${version.trim()} created. Active planning version remains ${currentActive} — switch with: dreamcontext core releases active ${version.trim()}`);
+        }
         return;
       }
 
@@ -236,6 +253,34 @@ export function registerCoreCommand(program: Command): void {
           r.breaking ? 'YES' : 'no',
         ]),
       ));
+    });
+
+  releases
+    .command('active')
+    .argument('[version]', 'Version to set as active planning version (omit to print current)')
+    .option('--clear', 'Unset the active planning version')
+    .description('Get or set the active planning version (used as default for new tasks)')
+    .action((version: string | undefined, opts: { clear?: boolean }) => {
+      if (opts.clear) {
+        clearActivePlanningVersion();
+        success('Active planning version cleared.');
+        return;
+      }
+      if (!version) {
+        const current = getActivePlanningVersion();
+        if (current) {
+          console.log(current);
+        } else {
+          info('No active planning version set.');
+        }
+        return;
+      }
+      try {
+        setActivePlanningVersion(version);
+        success(`Active planning version set to ${version}.`);
+      } catch (err: any) {
+        error(err.message);
+      }
     });
 
   releases

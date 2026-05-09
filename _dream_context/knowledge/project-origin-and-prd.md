@@ -4,6 +4,8 @@ name: "Project Origin & PRD Knowledge"
 description: "Preserved knowledge from the original PRD.md (now deleted). Covers the project's evolution, original vision, and key design rationales."
 tags: ["prd", "origin", "design-rationale", "history", "cli-philosophy", "skill"]
 date: "2026-02-25"
+last_reviewed: "2026-05-09"
+pinned: true
 ---
 
 ## Origin: The Pre-dreamcontext System

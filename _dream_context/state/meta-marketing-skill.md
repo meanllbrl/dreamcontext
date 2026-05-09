@@ -8,7 +8,7 @@ priority: high
 urgency: high
 status: completed
 created_at: '2026-04-25'
-updated_at: '2026-04-25T22:45Z'
+updated_at: '2026-04-26'
 status_pr0: shipped
 status_pr0_5: shipped
 status_pr1: shipped
@@ -899,6 +899,12 @@ The dashboard work that was originally PR 7 has been moved out of this task into
 ## Changelog
 <!-- LIFO: newest entry at top -->
 
+
+
+### 2026-04-26 - Session Update
+- Post-closure corpus audit (all 9 YouTube videos) and project-agnostic scrub (9 skill files). Fixed §III creative volume, §II retargeting default, §IV full decision-window rewrite, §I/VII/VIII sharpened. All Tilki/Turkish/project-specific examples scrubbed. creative-frameworks.md restored with 4 structural frameworks (angle-fatigue diagnostic, Ad Library spy 3-bucket, On Us typographic, cross-funnel reciprocity table). Build: dist/index.js 479 KB. Skill ready for 0.2-corpus version tag.
+### 2026-04-26 - Session Update
+- TASK CLOSED. PRs 0/0.5/1/2/3/4/5/6/8 all shipped (743/743 tests). PR 7 lifted to standalone task marketing-dashboard-v0. mk CLI exposes 28 subcommands. Build confirmed on machine (npm run build success: 598KB JS / 105KB CSS dashboard + 479KB ESM CLI). Global npm link propagates rebuilds to all projects automatically. SKILL.md PR 8 additions: skill-triage hard rule (#2) + all 10 agents backfilled with skills: frontmatter and ## Skills always loaded section.
 ### 2026-04-25 night — Task closed: PR 8 + PR 5 shipped
 - **PR 8a (`ac56e53`)** — pre-commit binary guard hook: `hooks/marketing-binary-guard.sh` + `src/lib/marketing/git-guard.ts` (pure functions) + `src/cli/commands/marketing/hooks.ts` (`mk hooks check-staged` + `mk hooks install [--force]`). 14 unit + 8 integration tests (end-to-end git commit refusal verified).
 - **PR 8b (`a8966d7`)** — `mk council "<topic>"` wrapper + 4 marketing personas at `skill-packs/meta-marketing/council-personas/*.md` (strategy-optimizer, performance-monitor, creative-director, risk-officer). Per architect MUST-CHANGE 6: personas are data files, not a `--preset` flag. Each persona has frontmatter `skills:` + `## Skills always loaded` body section per user feedback. Same skills declaration added to the 3 PR 6 agents (marketing-strategy / -monitor / -creative). 14 unit + 5 integration tests.

@@ -20,3 +20,14 @@
   color: var(--color-text-tertiary);
   font-size: var(--font-size-sm);
 }
+
+/* ─── List view ─── */
+.task-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.task-list > * {
+  width: 100%;
+}

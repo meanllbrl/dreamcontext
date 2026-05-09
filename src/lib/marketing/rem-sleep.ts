@@ -1,6 +1,6 @@
 /**
  * Marketing rem-sleep consolidation rules. Called by `mk rem-sleep`
- * (which the dreamcontext-rem-sleep agent invokes during sleep).
+ * (which the main agent invokes during the sleep consolidation flow).
  *
  * Four passes:
  *   1. pruneRuns           — keep latest N runs/*.json by mtime, delete rest.

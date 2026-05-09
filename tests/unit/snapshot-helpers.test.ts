@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { extractFirstParagraph } from '../../src/cli/commands/snapshot.js';
+import {
+  extractFirstParagraph,
+  extractPinnedPreview,
+  DEFAULT_PINNED_PREVIEW_LINES,
+} from '../../src/cli/commands/snapshot.js';
 
 describe('extractFirstParagraph', () => {
   it('extracts first paragraph from markdown content', () => {
@@ -65,5 +69,43 @@ Next paragraph.`;
 
     const result = extractFirstParagraph(content);
     expect(result).toBe('Line one of paragraph. Line two of paragraph. Line three.');
+  });
+});
+
+describe('extractPinnedPreview', () => {
+  it('returns full content untruncated when under cap', () => {
+    const body = ['## Heading', '', 'Line 1', 'Line 2'].join('\n');
+    const result = extractPinnedPreview(body, 60);
+    expect(result.truncated).toBe(false);
+    expect(result.totalLines).toBe(4);
+    expect(result.preview).toBe(body);
+  });
+
+  it('truncates to maxLines when over cap', () => {
+    const body = Array.from({ length: 200 }, (_, i) => `Line ${i + 1}`).join('\n');
+    const result = extractPinnedPreview(body, 60);
+    expect(result.truncated).toBe(true);
+    expect(result.totalLines).toBe(200);
+    expect(result.preview.split('\n')).toHaveLength(60);
+    expect(result.preview).toContain('Line 60');
+    expect(result.preview).not.toContain('Line 61');
+  });
+
+  it('strips leading frontmatter before counting', () => {
+    const body = ['---', 'name: Test', 'pinned: true', '---', '', 'Real line 1', 'Real line 2'].join('\n');
+    const result = extractPinnedPreview(body, 60);
+    expect(result.preview).toBe('Real line 1\nReal line 2');
+    expect(result.totalLines).toBe(2);
+  });
+
+  it('handles empty content', () => {
+    const result = extractPinnedPreview('', 60);
+    expect(result.preview).toBe('');
+    expect(result.truncated).toBe(false);
+    expect(result.totalLines).toBe(1);
+  });
+
+  it('exposes default cap as 60', () => {
+    expect(DEFAULT_PINNED_PREVIEW_LINES).toBe(60);
   });
 });

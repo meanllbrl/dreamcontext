@@ -2,13 +2,14 @@
 id: feat_9qLM-gY_
 status: active
 created: '2026-02-25'
-updated: '2026-03-02'
+updated: '2026-05-09'
 released_version: 0.1.0
 tags:
   - architecture
   - backend
   - decisions
-related_tasks: []
+related_tasks:
+  - sleep-fanout-architecture
 ---
 
 ## Why
@@ -24,7 +25,7 @@ Agents accumulate knowledge and make decisions across many sessions, but that kn
 - [x] As an AI agent, I want the SessionStart hook to auto-analyze any unanalyzed sessions so debt scoring happens even if the Stop hook missed a session.
 - [x] As a developer, I want to manually add debt for non-file-change work (architecture discussions, decisions) so the debt meter reflects cognitive load accurately.
 - [x] As a developer, I want to reset debt after consolidation with a summary so the system knows when the last sleep happened.
-- [x] As an AI agent, I want a dedicated REM Sleep sub-agent to do the consolidation so the main agent can stay focused on the user's task.
+- [x] As an AI agent, I want consolidation done by dedicated specialists so the main agent stays focused. Currently implemented as main-agent fan-out to 5 domain specialists (`sleep-tasks`, `sleep-changelog`, `sleep-core`, `sleep-knowledge`, `sleep-features`). `dreamcontext-rem-sleep` was removed — one authoritative path only. See [sleep-fanout-architecture](sleep-fanout-architecture.md) for the orchestration design.
 - [x] As an AI agent, I want persistent sleep debt reminders on every user message so consolidation urgency cannot be forgotten across a session.
 
 ## Acceptance Criteria
@@ -45,6 +46,9 @@ Agents accumulate knowledge and make decisions across many sessions, but that kn
 
 ## Constraints & Decisions
 
+- **[2026-05-09]** Consolidation is orchestrated by the **main agent** via `skill/SKILL.md`'s "Sleep" section, fanning out to 5 domain specialists in parallel. An earlier design used a thin `dreamcontext-rem-sleep` orchestrator that dispatched specialists, but sub-agent → sub-agent dispatch did not fan out reliably in Claude Code. `dreamcontext-rem-sleep` was subsequently removed entirely — the main-agent SKILL.md flow is the only consolidation path. See `sleep-fanout-architecture` PRD for full design.
+- **[2026-05-09]** Each specialist owns a non-overlapping file domain. `sleep-tasks` → `state/*.md`; `sleep-changelog` → `CHANGELOG.json` + `RELEASES.json`; `sleep-core` → `0.soul.md`/`1.user.md`/`2.memory.md`; `sleep-knowledge` → `knowledge/`; `sleep-features` → `core/features/`. Specialists never edit outside their domain.
+- **[2026-05-09]** No shared digest file. Each specialist calls the `dreamcontext` CLI directly to fetch its context. The orchestrator passes only a small text brief (epoch, session IDs, task slugs, planning version, signals, optional user hint).
 - **[2026-02-27]** Bookmarks (awake ripples) are now the primary consolidation signal. Critical (salience 3) bookmarks trigger the consolidation advisory regardless of debt level. The rem-sleep agent processes bookmarks first.
 - **[2026-02-27]** `freshDefaults()` replaces `DEFAULT_SLEEP_STATE` spread everywhere. Spreading a const with arrays shares references across calls -- this caused test pollution. Always call `freshDefaults()` when initializing an empty SleepState.
 - **[2026-02-27]** Trigger `fired_count` is persisted by `writeSleepState()` inside `generateSnapshot()`. Triggers expire (removed from state) in `sleep done` after hitting `max_fires`. This is intentional -- persistent triggers that always fire become noise.
@@ -153,10 +157,30 @@ Agents accumulate knowledge and make decisions across many sessions, but that kn
 - `src/cli/commands/trigger.ts` — trigger add/list/remove
 - `src/cli/commands/transcript.ts` — transcript distill (structural JSONL filter)
 - `src/cli/commands/snapshot.ts` — bookmarks section, warm knowledge tier, contextual reminders, sleep history in output, extractFirstParagraph(), trigger matching + fired_count persistence
-- `agents/dreamcontext-rem-sleep.md` — the REM sleep consolidation sub-agent instructions (bookmark-first processing, transcript distillation, trigger creation, access-based anti-bloat)
+- `skill/SKILL.md` — "Sleep" section defines the main-agent orchestration flow (parallel fan-out to specialists)
+- `agents/sleep-tasks.md` — domain: `_dream_context/state/*.md`. Logs progress, bumps statuses (max `in_review`), reconciles task bodies, updates Mermaid Workflow nodes.
+- `agents/sleep-changelog.md` — domain: `_dream_context/core/CHANGELOG.json` + `RELEASES.json`. Appends entries, checks planning-version readiness.
+- `agents/sleep-core.md` — domain: `_dream_context/core/0.soul.md`, `1.user.md`, `2.memory.md`. Surgical updates, anti-bloat sweep.
+- `agents/sleep-knowledge.md` — domain: `_dream_context/knowledge/`. Creates/updates knowledge files, staleness sweep. Conditional dispatch.
+- `agents/sleep-features.md` — domain: `_dream_context/core/features/*.md`. Updates feature PRDs, creates new ones for buildable concepts. Conditional dispatch.
+- `.codex/agents/prompts/` — mirror of the 5 specialist agent files for the codex harness. `dreamcontext-rem-sleep.md` was removed.
 - `_dream_context/core/6.system_flow.md` — complete system lifecycle and data flow documentation
 
-**REM Sleep agent protocol**: When dispatched, the agent reads the brief from the main agent, reads session records from `.sleep.json` (using `last_assistant_message` as primary input), determines what files to update, executes updates (soul, user, memory, changelog, task logs, feature PRDs), then calls `dreamcontext sleep done "<summary>"` to reset debt.
+**Consolidation flow** (main-agent orchestration, primary path):
+
+1. Main agent calls `dreamcontext sleep start` to pin the epoch.
+2. Main agent builds a small text brief from `cat _dream_context/state/.sleep.json`, `git status --short`, `git log --since=...`, and `dreamcontext core releases active`.
+3. Main agent dispatches in **parallel** from a single message:
+   - **Always**: `sleep-tasks`, `sleep-changelog`, `sleep-core`.
+   - **Conditional** based on signals: `sleep-knowledge` (research/decision in `last_assistant_message`, `knowledge_access` ≥30 days stale, knowledge bookmarks, git changes under `knowledge/`); `sleep-features` (task slug matches a PRD filename, git changes under `core/features/`, user hint names a feature, criterion advanced or buildable concept lacks a PRD).
+   - When unsure on optional ones, **over-fire** — they no-op cheaply.
+4. Each specialist returns a short structured report. The main agent waits for all of them.
+5. Marketing pass if `_dream_context/marketing/` exists; council promote check.
+6. Main agent calls `dreamcontext sleep done "<summary>"` with a one-paragraph summary stitched from specialist reports. This clears pre-epoch state and resets debt.
+
+**No fallback**: `dreamcontext-rem-sleep` was removed (2026-05-09 cleanup). If fan-out is impossible, specialists may be invoked manually in sequence. The main-agent SKILL.md flow is the only supported path.
+
+**Specialist context**: each specialist receives only the small text brief in its prompt — never transcript content. Specialists call `dreamcontext transcript distill <id>` themselves if they need session detail. The `dreamcontext` CLI is the single source of truth; there is no shared digest file.
 
 ## Notes
 

@@ -3,6 +3,22 @@ import { Header } from './Header';
 import { Sidebar, type Page } from './Sidebar';
 import './Shell.css';
 
+const ACTIVE_PAGE_STORAGE_KEY = 'dreamcontext.dashboard.activePage';
+const VALID_PAGES: readonly Page[] = ['tasks', 'core', 'knowledge', 'features', 'sleep', 'brain', 'council'];
+
+function readStoredPage(): Page {
+  if (typeof window === 'undefined') return 'brain';
+  try {
+    const stored = window.localStorage.getItem(ACTIVE_PAGE_STORAGE_KEY);
+    if (stored && (VALID_PAGES as readonly string[]).includes(stored)) {
+      return stored as Page;
+    }
+  } catch {
+    // localStorage unavailable (private mode, etc.) — fall through to default
+  }
+  return 'brain';
+}
+
 export interface ShellNavigation {
   page: Page;
   focusId: string | null;
@@ -17,7 +33,7 @@ interface ShellProps {
 }
 
 export function Shell({ children }: ShellProps) {
-  const [activePage, setActivePage] = useState<Page>('brain');
+  const [activePage, setActivePage] = useState<Page>(readStoredPage);
   const [focusId, setFocusId] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
 
@@ -25,6 +41,11 @@ export function Shell({ children }: ShellProps) {
     setActivePage(page);
     setFocusId(id);
     setNonce((n) => n + 1);
+    try {
+      window.localStorage.setItem(ACTIVE_PAGE_STORAGE_KEY, page);
+    } catch {
+      // localStorage unavailable — ignore
+    }
   }, []);
 
   const handleSidebarNavigate = useCallback(

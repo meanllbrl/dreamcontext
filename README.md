@@ -107,14 +107,17 @@ flowchart LR
 npm install -g dreamcontext
 ```
 
-> Requires **Node.js >= 18**. Currently supports **Claude Code**.
+> Requires **Node.js >= 18**. Currently supports **Claude Code** and **Codex**.
 
 ```bash
 # 1. Initialize the context structure
 dreamcontext init
 
-# 2. Install the Claude Code integration (skill, agents, hooks)
+# 2. Install platform integration (multi-select prompt; defaults to Claude)
 dreamcontext install-skill
+
+# Explicit platform selection (comma-separated)
+dreamcontext install-skill --platforms claude,codex
 ```
 
 Two commands. Next session, the hook fires, context loads, and the agent is ready.
@@ -145,7 +148,11 @@ dreamcontext install-skill --list
 | **brand-voice** | Brand enforcement, discovery, guideline generation | discover-brand, guideline-generation |
 | **system-prompts** | Prompt engineering, cognitive architecture, agent design | *(standalone)* |
 
-Packs install to `.claude/skills/{pack-name}/` with related agents to `.claude/agents/`. Cross-pack dependencies are warned at install time.
+Packs install to platform-specific paths:
+- Claude: `.claude/skills/{pack-name}/` (+ related agents in `.claude/agents/`)
+- Codex: `.agents/skills/{pack-name}/` (+ related agents in `.codex/agents/`)
+
+Cross-pack dependencies are warned at install time.
 
 ### Interactive mode
 
@@ -186,15 +193,15 @@ your-project/
 
 `dreamcontext init` scaffolds an `_dream_context/.obsidian/` vault config with curated graph, appearance, and app settings so you can open the directory directly in Obsidian and navigate the context as a knowledge graph. Links between files (tasks → features → knowledge → memory) render natively, and the Obsidian graph view works out of the box.
 
-### Claude Code integration without a skill install
+### Root instruction files without full skill install
 
-For projects that want dreamcontext context without installing the full skill + agent bundle, use:
+For projects that want managed root instruction files without installing the full skill + agent bundle:
 
 ```bash
-dreamcontext install-claude-md
+dreamcontext install-instructions --platforms claude,codex
 ```
 
-This writes a `CLAUDE.md` at the project root that references the dreamcontext context so Claude Code auto-loads it on session start. Useful for lightweight opt-in.
+This writes managed fenced blocks into `CLAUDE.md` and/or `AGENTS.md` at the project root, preserving existing non-managed content.
 
 ## Dashboard
 
@@ -418,12 +425,14 @@ dreamcontext hook pre-compact            # PreCompact hook: save state before co
 dreamcontext snapshot                    # Snapshot only (no hook processing)
 dreamcontext snapshot --tokens           # Estimated token count
 dreamcontext doctor                      # Validate structure
-dreamcontext install-skill               # Install core skill + agents + hooks
+dreamcontext install-skill               # Install core integration for selected platforms
+dreamcontext install-skill --platforms claude,codex  # Explicit platform selection
 dreamcontext install-skill --packs       # Interactive skill pack browser
 dreamcontext install-skill --packs engineering design  # Install specific packs
 dreamcontext install-skill --skill <name>  # Install a single sub-skill
 dreamcontext install-skill --list        # Show available skill packs
-dreamcontext install-claude-md           # Write a CLAUDE.md at the project root
+dreamcontext install-instructions --platforms claude,codex  # Write managed root instruction blocks
+dreamcontext install-claude-md           # Legacy alias: CLAUDE.md only
 ```
 
 ## Design Principles
@@ -437,6 +446,7 @@ dreamcontext install-claude-md           # Write a CLAUDE.md at the project root
 ## Works With
 
 - **Claude Code**: full support via skill, 3 core sub-agents (initializer, explore, rem-sleep), 2 optional council sub-agents (persona, synthesizer), and 7 hooks
+- **Codex**: project-level skills (`.agents/skills`), managed `AGENTS.md`, native `.codex/agents/*.toml`, and managed `.codex/config.toml` hooks (best-effort parity where event semantics differ)
 - **Web Dashboard**: local UI with Kanban, Core editor, Knowledge, Features, Brain graph, Sleep tracker, and Council Hall (ships in the package)
 - **Obsidian**: `_dream_context/` can be opened as an Obsidian vault; the directory is scaffolded with curated vault settings at `dreamcontext init` time
 

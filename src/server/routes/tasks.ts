@@ -8,6 +8,7 @@ import { generateId, slugify, today } from '../../lib/id.js';
 import { parseJsonBody, sendJson, sendError } from '../middleware.js';
 import { recordDashboardChange, buildFieldSummary } from '../change-tracker.js';
 import type { FieldChange } from '../change-tracker.js';
+import { normalizeRice, mergeRice, validateRiceInput, type RiceFields, type RiceInput } from '../../lib/rice.js';
 
 interface TaskData {
   slug: string;
@@ -23,6 +24,7 @@ interface TaskData {
   parent_task: string | null;
   related_feature: string | null;
   version: string | null;
+  rice: RiceFields | null;
   why: string;
   user_stories: string;
   acceptance_criteria: string;
@@ -70,6 +72,7 @@ function readTask(filePath: string): TaskData {
     parent_task: (data.parent_task as string) ?? null,
     related_feature: (data.related_feature as string) ?? null,
     version: (data.version as string) ?? null,
+    rice: normalizeRice(data.rice),
     why: readSectionSafe(filePath, 'Why'),
     user_stories: readSectionSafe(filePath, 'User Stories'),
     acceptance_criteria: readSectionSafe(filePath, 'Acceptance Criteria'),
@@ -145,6 +148,17 @@ export async function handleTasksCreate(
     return;
   }
 
+  let riceBlock: RiceFields | null = null;
+  if (body.rice !== undefined && body.rice !== null) {
+    const riceInput = body.rice as RiceInput;
+    const errs = validateRiceInput(riceInput);
+    if (errs.length > 0) {
+      sendError(res, 400, 'invalid_rice', errs.map(e => `${e.field}: ${e.message}`).join('; '));
+      return;
+    }
+    riceBlock = mergeRice(null, riceInput);
+  }
+
   const slug = slugify(name.trim());
   const stateDir = getStateDir(contextRoot);
   const filePath = join(stateDir, `${slug}.md`);
@@ -157,6 +171,9 @@ export async function handleTasksCreate(
   const dateStr = today();
   const tagsYaml = tags.length > 0 ? `[${tags.map(t => `"${t}"`).join(', ')}]` : '[]';
   const versionYaml = version ? `"${version}"` : 'null';
+  const riceYaml = riceBlock
+    ? `\nrice:\n  reach: ${riceBlock.reach ?? 'null'}\n  impact: ${riceBlock.impact ?? 'null'}\n  confidence: ${riceBlock.confidence ?? 'null'}\n  effort: ${riceBlock.effort ?? 'null'}\n  score: ${riceBlock.score ?? 'null'}`
+    : '';
   const content = `---
 id: "${generateId('task')}"
 name: "${name.trim()}"
@@ -169,7 +186,7 @@ updated_at: "${dateStr}"
 tags: ${tagsYaml}
 parent_task: null
 related_feature: null
-version: ${versionYaml}
+version: ${versionYaml}${riceYaml}
 ---
 
 ## Why
@@ -275,6 +292,34 @@ export async function handleTasksUpdate(
         updates[field] = body[field];
         fieldChanges.push({ field, from: oldVal, to: newVal });
       }
+    }
+  }
+
+  // RICE update: either a partial object (merge) or null (clear).
+  if (body.rice !== undefined) {
+    const existing = normalizeRice(oldData.rice);
+    let next: RiceFields | null;
+    if (body.rice === null) {
+      next = null;
+    } else if (typeof body.rice === 'object') {
+      const riceInput = body.rice as RiceInput;
+      const errs = validateRiceInput(riceInput);
+      if (errs.length > 0) {
+        sendError(res, 400, 'invalid_rice', errs.map(e => `${e.field}: ${e.message}`).join('; '));
+        return;
+      }
+      next = mergeRice(existing, riceInput);
+    } else {
+      sendError(res, 400, 'invalid_rice', 'rice must be an object or null');
+      return;
+    }
+    if (JSON.stringify(existing) !== JSON.stringify(next)) {
+      updates.rice = next;
+      fieldChanges.push({
+        field: 'rice',
+        from: existing as FieldChange['from'],
+        to: next as FieldChange['to'],
+      });
     }
   }
 

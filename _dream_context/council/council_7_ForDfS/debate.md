@@ -20,9 +20,10 @@ personas:
   - staff-ts-engineer
   - dashboard-lead
   - risk-skeptic
-promoted_to_knowledge: null
+promoted_to_knowledge: >-
+  knowledge/decision-should-we-adopt-the-meta-marketing-skill-plan-at-users-mehmetnuraydin-claude-pla.md
 created_at: '2026-04-25'
-updated_at: '2026-04-25'
+updated_at: '2026-05-02'
 ---
 
 ## Question

@@ -1,9 +1,17 @@
 import { readSleepState, writeSleepState } from '../cli/commands/sleep.js';
 
+export type FieldValue =
+  | string
+  | number
+  | boolean
+  | string[]
+  | Record<string, unknown>
+  | null;
+
 export interface FieldChange {
   field: string;
-  from: string | number | boolean | string[] | null;
-  to: string | number | boolean | string[] | null;
+  from: FieldValue;
+  to: FieldValue;
 }
 
 export interface DashboardChange {
@@ -16,12 +24,13 @@ export interface DashboardChange {
   summary: string;
 }
 
-type FieldValue = FieldChange['from'];
-
 function valuesEqual(a: FieldValue, b: FieldValue): boolean {
   if (a === b) return true;
   if (Array.isArray(a) && Array.isArray(b)) {
     return a.length === b.length && a.every((v, i) => v === b[i]);
+  }
+  if (a && b && typeof a === 'object' && typeof b === 'object' && !Array.isArray(a) && !Array.isArray(b)) {
+    return JSON.stringify(a) === JSON.stringify(b);
   }
   return false;
 }

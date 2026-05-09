@@ -1,12 +1,26 @@
 import { Command } from 'commander';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, cpSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import chalk from 'chalk';
-import { checkbox } from '@inquirer/prompts';
-import { success, error, info, warn, miniBox, header } from '../../lib/format.js';
+import matter from 'gray-matter';
+import { checkbox, confirm } from '@inquirer/prompts';
+import { error, info, warn, miniBox, header } from '../../lib/format.js';
+import {
+  PLATFORM_CATALOG,
+  ensurePlatformSelection,
+  formatSupportedPlatforms,
+  parsePlatformList,
+  type PlatformId,
+} from '../../lib/platforms.js';
+import {
+  readProjectPlatformDefaults,
+  writeProjectPlatformDefaults,
+  getPlatformDefaultsPath,
+} from '../../lib/platform-defaults.js';
+import { installInstructions } from './install-claude-md.js';
 
-// ─── Hook Constants ─────────────────────────────────────────────────────────
+// ─── Hook Constants (Claude) ───────────────────────────────────────────────
 
 const SESSION_START_HOOK = 'npx dreamcontext hook session-start';
 const STOP_HOOK = 'npx dreamcontext hook stop';
@@ -16,6 +30,115 @@ const USER_PROMPT_SUBMIT_HOOK = 'npx dreamcontext hook user-prompt-submit';
 const POST_TOOL_USE_HOOK = 'npx dreamcontext hook post-tool-use';
 const PRE_COMPACT_HOOK = 'npx dreamcontext hook pre-compact';
 const OLD_HOOK = 'npx dreamcontext snapshot'; // migration target
+
+// ─── Codex Config ──────────────────────────────────────────────────────────
+
+const CODEX_BLOCK_START = '# dreamcontext:codex:start';
+const CODEX_BLOCK_END = '# dreamcontext:codex:end';
+
+interface CodexHookSpec {
+  event: 'SessionStart' | 'Stop' | 'UserPromptSubmit' | 'PostToolUse';
+  command: string;
+  timeout: number;
+  matcher?: string;
+  statusMessage?: string;
+}
+
+const CODEX_HOOK_SPECS: CodexHookSpec[] = [
+  { event: 'SessionStart', command: SESSION_START_HOOK, timeout: 10, matcher: 'startup|resume|clear' },
+  { event: 'Stop', command: STOP_HOOK, timeout: 5 },
+  { event: 'UserPromptSubmit', command: USER_PROMPT_SUBMIT_HOOK, timeout: 5 },
+  { event: 'PostToolUse', command: POST_TOOL_USE_HOOK, timeout: 30, matcher: 'Edit|Write' },
+];
+
+function codexHooksBlock(): string {
+  const lines = [
+    CODEX_BLOCK_START,
+    '# dreamcontext managed hooks for Codex',
+    '# SubagentStart, PreCompact, and agent-gating PreToolUse are Claude-specific and omitted here.',
+  ];
+
+  for (const spec of CODEX_HOOK_SPECS) {
+    lines.push(`[[hooks.${spec.event}]]`);
+    if (spec.matcher) lines.push(`matcher = ${JSON.stringify(spec.matcher)}`);
+    lines.push('');
+    lines.push(`[[hooks.${spec.event}.hooks]]`);
+    lines.push('type = "command"');
+    lines.push(`command = ${JSON.stringify(spec.command)}`);
+    lines.push(`timeout = ${spec.timeout}`);
+    if (spec.statusMessage) lines.push(`statusMessage = ${JSON.stringify(spec.statusMessage)}`);
+    lines.push('');
+  }
+
+  lines.push(CODEX_BLOCK_END, '');
+  return lines.join('\n');
+}
+
+function ensureCodexHooksFeatureEnabled(content: string): { content: string; updated: boolean } {
+  const normalized = content.replace(/\r\n/g, '\n');
+  const lines = normalized.split('\n');
+  const featureIdx = lines.findIndex((line) => line.trim() === '[features]');
+
+  if (featureIdx === -1) {
+    const prefix = ['[features]', 'codex_hooks = true', ''].join('\n');
+    const suffix = normalized.trimStart();
+    return {
+      content: suffix ? `${prefix}\n${suffix}` : `${prefix}\n`,
+      updated: true,
+    };
+  }
+
+  let sectionEnd = lines.length;
+  for (let i = featureIdx + 1; i < lines.length; i++) {
+    if (/^\s*\[\[?.+\]\]?\s*$/.test(lines[i])) {
+      sectionEnd = i;
+      break;
+    }
+  }
+
+  for (let i = featureIdx + 1; i < sectionEnd; i++) {
+    if (/^\s*codex_hooks\s*=/.test(lines[i])) {
+      if (lines[i].trim() === 'codex_hooks = true') {
+        return { content: normalized, updated: false };
+      }
+      lines[i] = 'codex_hooks = true';
+      return { content: lines.join('\n'), updated: true };
+    }
+  }
+
+  lines.splice(featureIdx + 1, 0, 'codex_hooks = true');
+  return { content: lines.join('\n'), updated: true };
+}
+
+function ensureCodexConfig(projectRoot: string): { created: boolean; updated: boolean } {
+  const configDir = join(projectRoot, '.codex');
+  const configPath = join(configDir, 'config.toml');
+  const block = codexHooksBlock();
+
+  mkdirSync(configDir, { recursive: true });
+
+  if (!existsSync(configPath)) {
+    const initial = ensureCodexHooksFeatureEnabled('').content.trimEnd();
+    writeFileSync(configPath, `${initial}\n\n${block}`, 'utf-8');
+    return { created: true, updated: true };
+  }
+
+  const existing = readFileSync(configPath, 'utf-8');
+  const startIdx = existing.indexOf(CODEX_BLOCK_START);
+  const endIdx = existing.indexOf(CODEX_BLOCK_END);
+
+  let withoutManaged = existing;
+  if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
+    const before = existing.slice(0, startIdx).replace(/\n+$/, '');
+    const after = existing.slice(endIdx + CODEX_BLOCK_END.length).replace(/^\n+/, '');
+    withoutManaged = `${before}${before && after ? '\n\n' : ''}${after}`;
+  }
+
+  const withFeatures = ensureCodexHooksFeatureEnabled(withoutManaged).content.replace(/\n+$/, '');
+  const merged = `${withFeatures ? `${withFeatures}\n\n` : ''}${block}`;
+  writeFileSync(configPath, merged, 'utf-8');
+  return { created: false, updated: true };
+}
 
 // ─── Hook Types ─────────────────────────────────────────────────────────────
 
@@ -97,13 +220,83 @@ interface Catalog {
   agents: CatalogAgent[];
 }
 
-// ─── Hook Installation ──────────────────────────────────────────────────────
+// ─── Platform Helpers ───────────────────────────────────────────────────────
+
+function platformLabel(platform: PlatformId): string {
+  return platform === 'claude' ? 'Claude' : 'Codex';
+}
+
+export function platformSkillRoot(projectRoot: string, platform: PlatformId): string {
+  if (platform === 'claude') return join(projectRoot, '.claude', 'skills');
+  return join(projectRoot, '.agents', 'skills');
+}
+
+function isPackInstalledForPlatform(projectRoot: string, platform: PlatformId, name: string): boolean {
+  return existsSync(join(platformSkillRoot(projectRoot, platform), name, 'SKILL.md'));
+}
+
+function platformPrefixed(platform: PlatformId, relPath: string): string {
+  return `${chalk.dim(`[${platform}]`)} ${relPath}`;
+}
+
+function arraysEqual(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((v, i) => v === b[i]);
+}
+
+function parsePlatformsOption(raw?: string): PlatformId[] {
+  if (!raw) return [];
+  const parsed = parsePlatformList(raw);
+  if (parsed.invalid.length > 0) {
+    throw new Error(
+      `Unknown platform(s): ${parsed.invalid.join(', ')}. Supported: ${formatSupportedPlatforms()}`,
+    );
+  }
+  return ensurePlatformSelection(parsed.platforms);
+}
+
+async function resolvePlatforms(projectRoot: string, raw?: string): Promise<PlatformId[]> {
+  const explicit = parsePlatformsOption(raw);
+  if (explicit.length > 0) return explicit;
+
+  const defaults = readProjectPlatformDefaults(projectRoot);
+  if (!process.stdin.isTTY) {
+    return defaults;
+  }
+
+  const selected = await checkbox<PlatformId>({
+    message: 'Select platform support to install',
+    choices: PLATFORM_CATALOG.map((p) => ({
+      value: p.id,
+      name: `${chalk.bold(p.label)} ${chalk.dim('— ' + p.description)}`,
+      checked: defaults.includes(p.id),
+    })),
+    pageSize: PLATFORM_CATALOG.length,
+  });
+
+  const platforms = ensurePlatformSelection(selected);
+  const defaultsPath = getPlatformDefaultsPath(projectRoot);
+  if (defaultsPath && !arraysEqual(platforms, defaults)) {
+    const shouldSave = await confirm({
+      message: `Save selected platforms as project defaults (${platforms.join(', ')})?`,
+      default: true,
+    });
+    if (shouldSave) {
+      writeProjectPlatformDefaults(projectRoot, platforms);
+      info(`Saved platform defaults to ${chalk.dim(defaultsPath)}`);
+    }
+  }
+
+  return platforms;
+}
+
+// ─── Hook Installation (Claude) ────────────────────────────────────────────
 
 /**
  * Ensure all dreamcontext hooks are installed.
  * Migrates old `npx dreamcontext snapshot` hook if present.
  */
-function ensureHooks(projectRoot: string): { added: string[]; migrated: boolean } {
+function ensureClaudeHooks(projectRoot: string): { added: string[]; migrated: boolean } {
   const settingsPath = join(projectRoot, '.claude', 'settings.json');
   const result = { added: [] as string[], migrated: false };
 
@@ -186,7 +379,7 @@ function findPackageDir(subdir: string): string | null {
 
 // ─── Catalog Loading ────────────────────────────────────────────────────────
 
-function loadCatalog(): { catalog: Catalog; packsDir: string } | null {
+export function loadCatalog(): { catalog: Catalog; packsDir: string } | null {
   const packsDir = findPackageDir('skill-packs');
   if (!packsDir) return null;
 
@@ -201,6 +394,76 @@ function loadCatalog(): { catalog: Catalog; packsDir: string } | null {
   }
 }
 
+// ─── Agent Installation ─────────────────────────────────────────────────────
+
+interface ParsedAgent {
+  name: string;
+  description: string;
+  model: string;
+  body: string;
+}
+
+function parseAgentFile(agentPath: string): ParsedAgent {
+  const raw = readFileSync(agentPath, 'utf-8');
+  const parsed = matter(raw);
+  const data = parsed.data as Record<string, unknown>;
+
+  const name = typeof data.name === 'string' && data.name.trim().length > 0
+    ? data.name.trim()
+    : basename(agentPath, '.md');
+
+  const description = typeof data.description === 'string'
+    ? data.description.replace(/\s+/g, ' ').trim()
+    : '';
+
+  const model = typeof data.model === 'string' && data.model.trim().length > 0
+    ? data.model.trim()
+    : 'sonnet';
+
+  return {
+    name,
+    description,
+    model,
+    body: parsed.content.trim(),
+  };
+}
+
+function writeCodexAgent(projectRoot: string, agentPath: string): string {
+  const parsed = parseAgentFile(agentPath);
+  const agentsDir = join(projectRoot, '.codex', 'agents');
+  mkdirSync(agentsDir, { recursive: true });
+
+  const configPath = join(agentsDir, `${parsed.name}.toml`);
+  const lines = [
+    `name = ${JSON.stringify(parsed.name)}`,
+    `description = ${JSON.stringify(parsed.description)}`,
+    `model = ${JSON.stringify(parsed.model)}`,
+    `developer_instructions = ${JSON.stringify(parsed.body)}`,
+    '',
+  ];
+  writeFileSync(configPath, lines.join('\n'), 'utf-8');
+
+  return `.codex/agents/${parsed.name}.toml`;
+}
+
+function installAgentForPlatform(
+  platform: PlatformId,
+  projectRoot: string,
+  agentPath: string,
+  agentName?: string,
+): string {
+  if (platform === 'claude') {
+    const agentsDestDir = join(projectRoot, '.claude', 'agents');
+    mkdirSync(agentsDestDir, { recursive: true });
+    const file = agentName ? `${agentName}.md` : basename(agentPath);
+    const dest = join(agentsDestDir, file);
+    writeFileSync(dest, readFileSync(agentPath, 'utf-8'), 'utf-8');
+    return `.claude/agents/${file}`;
+  }
+
+  return writeCodexAgent(projectRoot, agentPath);
+}
+
 // ─── Pack Installation Logic ────────────────────────────────────────────────
 
 function installPackFiles(
@@ -208,17 +471,18 @@ function installPackFiles(
   packsDir: string,
   projectRoot: string,
   catalog: Catalog,
+  platform: PlatformId,
 ): string[] {
   const installed: string[] = [];
   const packSourceDir = join(packsDir, pack.name);
-  const skillDestDir = join(projectRoot, '.claude', 'skills', pack.name);
+  const skillDestDir = join(platformSkillRoot(projectRoot, platform), pack.name);
 
   // Install base SKILL.md
   const baseSrc = join(packSourceDir, 'SKILL.md');
   if (existsSync(baseSrc)) {
     mkdirSync(skillDestDir, { recursive: true });
     writeFileSync(join(skillDestDir, 'SKILL.md'), readFileSync(baseSrc, 'utf-8'), 'utf-8');
-    installed.push(`.claude/skills/${pack.name}/SKILL.md`);
+    installed.push(platformPrefixed(platform, `${platformSkillRoot(projectRoot, platform).replace(projectRoot + '/', '')}/${pack.name}/SKILL.md`));
   }
 
   // Install sub-skills
@@ -230,7 +494,10 @@ function installPackFiles(
     mkdirSync(dirname(subDest), { recursive: true });
     writeFileSync(subDest, readFileSync(subSrc, 'utf-8'), 'utf-8');
 
-    let label = `.claude/skills/${pack.name}/${sub.file}`;
+    let label = platformPrefixed(
+      platform,
+      `${platformSkillRoot(projectRoot, platform).replace(projectRoot + '/', '')}/${pack.name}/${sub.file}`,
+    );
 
     // Copy references/ directory if present
     if (sub.hasReferences) {
@@ -248,9 +515,6 @@ function installPackFiles(
 
   // Install related agents
   if (pack.relatedAgents?.length) {
-    const agentsDestDir = join(projectRoot, '.claude', 'agents');
-    mkdirSync(agentsDestDir, { recursive: true });
-
     for (const agentName of pack.relatedAgents) {
       const agentEntry = catalog.agents.find((a) => a.name === agentName);
       if (!agentEntry) continue;
@@ -258,9 +522,7 @@ function installPackFiles(
       const agentSrc = join(packsDir, agentEntry.file);
       if (!existsSync(agentSrc)) continue;
 
-      const agentDest = join(agentsDestDir, `${agentName}.md`);
-      writeFileSync(agentDest, readFileSync(agentSrc, 'utf-8'), 'utf-8');
-      installed.push(`.claude/agents/${agentName}.md`);
+      installed.push(platformPrefixed(platform, installAgentForPlatform(platform, projectRoot, agentSrc, agentName)));
     }
   }
 
@@ -271,19 +533,21 @@ function installStandaloneFiles(
   standalone: CatalogStandalone,
   packsDir: string,
   projectRoot: string,
+  platform: PlatformId,
 ): string[] {
   const src = join(packsDir, standalone.file);
   if (!existsSync(src)) return [];
 
-  const destDir = join(projectRoot, '.claude', 'skills', standalone.name);
+  const skillRoot = platformSkillRoot(projectRoot, platform);
+  const destDir = join(skillRoot, standalone.name);
   mkdirSync(destDir, { recursive: true });
   writeFileSync(join(destDir, 'SKILL.md'), readFileSync(src, 'utf-8'), 'utf-8');
-  return [`.claude/skills/${standalone.name}/SKILL.md`];
+  return [platformPrefixed(platform, `${skillRoot.replace(projectRoot + '/', '')}/${standalone.name}/SKILL.md`)];
 }
 
 // ─── Interactive Pack Browser ───────────────────────────────────────────────
 
-async function interactivePackInstall(projectRoot: string): Promise<void> {
+async function interactivePackInstall(projectRoot: string, platforms: PlatformId[]): Promise<void> {
   const loaded = loadCatalog();
   if (!loaded) {
     error('skill-packs not found. Try reinstalling dreamcontext.');
@@ -292,9 +556,9 @@ async function interactivePackInstall(projectRoot: string): Promise<void> {
 
   const { catalog, packsDir } = loaded;
 
-  // Check what's already installed
+  // Check what's already installed for selected platforms
   const isInstalled = (name: string) =>
-    existsSync(join(projectRoot, '.claude', 'skills', name, 'SKILL.md'));
+    platforms.every((p) => isPackInstalledForPlatform(projectRoot, p, name));
 
   // Build choices: packs + standalone
   const packChoices = catalog.packs.map((p) => {
@@ -324,6 +588,7 @@ async function interactivePackInstall(projectRoot: string): Promise<void> {
   });
 
   console.log(header('Optional Skill Packs'));
+  console.log(chalk.dim(`Platforms: ${platforms.join(', ')}`));
   console.log();
 
   const selected = await checkbox({
@@ -359,14 +624,17 @@ async function interactivePackInstall(projectRoot: string): Promise<void> {
 
       console.log();
       info(`Installing ${chalk.bold(name)} pack...`);
-      const files = installPackFiles(pack, packsDir, projectRoot, catalog);
-      allInstalled.push(...files);
+      for (const platform of platforms) {
+        const files = installPackFiles(pack, packsDir, projectRoot, catalog, platform);
+        allInstalled.push(...files);
+      }
 
       // Cross-pack dependency warnings
       if (pack.crossPackDeps?.length) {
         for (const dep of pack.crossPackDeps) {
           const depPack = dep.split(/[\s/(]/)[0];
-          if (!selectedPackNames.has(depPack) && !isInstalled(depPack)) {
+          const depInstalled = platforms.every((p) => isPackInstalledForPlatform(projectRoot, p, depPack));
+          if (!selectedPackNames.has(depPack) && !depInstalled) {
             warnings.push(`${chalk.bold(name)} recommends: ${dep}`);
           }
         }
@@ -377,8 +645,10 @@ async function interactivePackInstall(projectRoot: string): Promise<void> {
 
       console.log();
       info(`Installing ${chalk.bold(name)}...`);
-      const files = installStandaloneFiles(standalone, packsDir, projectRoot);
-      allInstalled.push(...files);
+      for (const platform of platforms) {
+        const files = installStandaloneFiles(standalone, packsDir, projectRoot, platform);
+        allInstalled.push(...files);
+      }
     }
   }
 
@@ -387,7 +657,7 @@ async function interactivePackInstall(projectRoot: string): Promise<void> {
 
 // ─── Direct Pack Install ────────────────────────────────────────────────────
 
-function directPackInstall(packNames: string[], projectRoot: string): void {
+export function directPackInstall(packNames: string[], projectRoot: string, platforms: PlatformId[]): void {
   const loaded = loadCatalog();
   if (!loaded) {
     error('skill-packs not found. Try reinstalling dreamcontext.');
@@ -404,13 +674,15 @@ function directPackInstall(packNames: string[], projectRoot: string): void {
     const pack = catalog.packs.find((p) => p.name === name);
     if (pack) {
       info(`Installing ${chalk.bold(name)} pack...`);
-      const files = installPackFiles(pack, packsDir, projectRoot, catalog);
-      allInstalled.push(...files);
+      for (const platform of platforms) {
+        const files = installPackFiles(pack, packsDir, projectRoot, catalog, platform);
+        allInstalled.push(...files);
+      }
 
       if (pack.crossPackDeps?.length) {
         for (const dep of pack.crossPackDeps) {
           const depPack = dep.split(/[\s/(]/)[0];
-          const depInstalled = existsSync(join(projectRoot, '.claude', 'skills', depPack, 'SKILL.md'));
+          const depInstalled = platforms.every((p) => isPackInstalledForPlatform(projectRoot, p, depPack));
           if (!selectedPackNames.has(depPack) && !depInstalled) {
             warnings.push(`${chalk.bold(name)} recommends: ${dep}`);
           }
@@ -423,8 +695,10 @@ function directPackInstall(packNames: string[], projectRoot: string): void {
     const standalone = catalog.standalone.find((s) => s.name === name);
     if (standalone) {
       info(`Installing ${chalk.bold(name)}...`);
-      const files = installStandaloneFiles(standalone, packsDir, projectRoot);
-      allInstalled.push(...files);
+      for (const platform of platforms) {
+        const files = installStandaloneFiles(standalone, packsDir, projectRoot, platform);
+        allInstalled.push(...files);
+      }
       continue;
     }
 
@@ -443,7 +717,7 @@ function directPackInstall(packNames: string[], projectRoot: string): void {
 
 // ─── Individual Skill Install ───────────────────────────────────────────────
 
-function installSingleSkill(skillName: string, projectRoot: string): void {
+function installSingleSkill(skillName: string, projectRoot: string, platforms: PlatformId[]): void {
   const loaded = loadCatalog();
   if (!loaded) {
     error('skill-packs not found. Try reinstalling dreamcontext.');
@@ -458,7 +732,6 @@ function installSingleSkill(skillName: string, projectRoot: string): void {
     if (!sub) continue;
 
     const packSourceDir = join(packsDir, pack.name);
-    const skillDestDir = join(projectRoot, '.claude', 'skills', pack.name);
     const subSrc = join(packSourceDir, sub.file);
 
     if (!existsSync(subSrc)) {
@@ -466,20 +739,28 @@ function installSingleSkill(skillName: string, projectRoot: string): void {
       return;
     }
 
-    const subDest = join(skillDestDir, sub.file);
-    mkdirSync(dirname(subDest), { recursive: true });
-    writeFileSync(subDest, readFileSync(subSrc, 'utf-8'), 'utf-8');
+    const installed: string[] = [];
 
-    const installed = [`.claude/skills/${pack.name}/${sub.file}`];
+    for (const platform of platforms) {
+      const skillRoot = platformSkillRoot(projectRoot, platform);
+      const skillDestDir = join(skillRoot, pack.name);
+      const subDest = join(skillDestDir, sub.file);
+      mkdirSync(dirname(subDest), { recursive: true });
+      writeFileSync(subDest, readFileSync(subSrc, 'utf-8'), 'utf-8');
 
-    if (sub.hasReferences) {
-      const refSrcDir = join(dirname(subSrc), 'references');
-      if (existsSync(refSrcDir)) {
-        const refDestDir = join(dirname(subDest), 'references');
-        cpSync(refSrcDir, refDestDir, { recursive: true });
-        const refCount = readdirSync(refSrcDir).filter((f) => f.endsWith('.md')).length;
-        installed[0] += chalk.dim(` (+ ${refCount} references)`);
+      let label = platformPrefixed(platform, `${skillRoot.replace(projectRoot + '/', '')}/${pack.name}/${sub.file}`);
+
+      if (sub.hasReferences) {
+        const refSrcDir = join(dirname(subSrc), 'references');
+        if (existsSync(refSrcDir)) {
+          const refDestDir = join(dirname(subDest), 'references');
+          cpSync(refSrcDir, refDestDir, { recursive: true });
+          const refCount = readdirSync(refSrcDir).filter((f) => f.endsWith('.md')).length;
+          label += chalk.dim(` (+ ${refCount} references)`);
+        }
       }
+
+      installed.push(label);
     }
 
     console.log();
@@ -490,10 +771,13 @@ function installSingleSkill(skillName: string, projectRoot: string): void {
     ], { color: 'green' }));
 
     // Warn if base pack not installed
-    const baseInstalled = existsSync(join(skillDestDir, 'SKILL.md'));
-    if (!baseInstalled) {
+    const baseMissing = platforms.filter((p) => !isPackInstalledForPlatform(projectRoot, p, pack.name));
+    if (baseMissing.length > 0) {
       console.log();
-      warn(`Base ${chalk.bold(pack.name)} pack not installed. Run: dreamcontext install-skill --packs ${pack.name}`);
+      warn(
+        `Base ${chalk.bold(pack.name)} pack not installed for ${baseMissing.join(', ')}. `
+        + `Run: dreamcontext install-skill --packs ${pack.name} --platforms ${baseMissing.join(',')}`,
+      );
     }
     console.log();
     return;
@@ -502,7 +786,10 @@ function installSingleSkill(skillName: string, projectRoot: string): void {
   // Check standalone
   const standalone = catalog.standalone.find((s) => s.name === skillName);
   if (standalone) {
-    const files = installStandaloneFiles(standalone, packsDir, projectRoot);
+    const files: string[] = [];
+    for (const platform of platforms) {
+      files.push(...installStandaloneFiles(standalone, packsDir, projectRoot, platform));
+    }
     console.log();
     console.log(miniBox([
       chalk.green.bold(`Skill "${skillName}" installed`),
@@ -529,7 +816,7 @@ function installSingleSkill(skillName: string, projectRoot: string): void {
 
 // ─── List Available Packs ───────────────────────────────────────────────────
 
-function listAvailablePacks(projectRoot: string): void {
+function listAvailablePacks(projectRoot: string, platforms: PlatformId[]): void {
   const loaded = loadCatalog();
   if (!loaded) {
     error('skill-packs not found. Try reinstalling dreamcontext.');
@@ -539,9 +826,10 @@ function listAvailablePacks(projectRoot: string): void {
   const { catalog } = loaded;
 
   const isInstalled = (name: string) =>
-    existsSync(join(projectRoot, '.claude', 'skills', name, 'SKILL.md'));
+    platforms.every((p) => isPackInstalledForPlatform(projectRoot, p, name));
 
   console.log(header('Available Skill Packs'));
+  console.log(chalk.dim(`Platforms: ${platforms.join(', ')}`));
 
   for (const pack of catalog.packs) {
     const installed = isInstalled(pack.name);
@@ -553,7 +841,9 @@ function listAvailablePacks(projectRoot: string): void {
     console.log(`  ${chalk.dim(pack.base)}`);
 
     for (const sub of pack.subSkills) {
-      const subInstalled = existsSync(join(projectRoot, '.claude', 'skills', pack.name, sub.file));
+      const subInstalled = platforms.every((platform) =>
+        existsSync(join(platformSkillRoot(projectRoot, platform), pack.name, sub.file)),
+      );
       const subStatus = subInstalled ? chalk.green(' ✓') : '';
       console.log(`    ${chalk.dim('•')} ${sub.name}${subStatus} ${chalk.dim('- ' + sub.description)}`);
     }
@@ -596,93 +886,123 @@ function printInstallSummary(installed: string[], warnings: string[]): void {
   console.log();
 }
 
+export async function installCoreForPlatform(
+  platform: PlatformId,
+  projectRoot: string,
+): Promise<{ installed: string[]; notes: string[] }> {
+  const installed: string[] = [];
+  const notes: string[] = [];
+
+  const skillSource = findPackageFile('skill', 'SKILL.md');
+  if (!skillSource) {
+    throw new Error('SKILL.md not found in package. Try reinstalling dreamcontext.');
+  }
+
+  const skillRoot = platformSkillRoot(projectRoot, platform);
+  const skillDestDir = join(skillRoot, 'dreamcontext');
+  mkdirSync(skillDestDir, { recursive: true });
+  writeFileSync(join(skillDestDir, 'SKILL.md'), readFileSync(skillSource, 'utf-8'), 'utf-8');
+  installed.push(platformPrefixed(platform, `${skillRoot.replace(projectRoot + '/', '')}/dreamcontext/SKILL.md`));
+
+  const agentsSourceDir = findPackageDir('agents');
+  if (agentsSourceDir) {
+    const agentFiles = readdirSync(agentsSourceDir).filter((f) => f.endsWith('.md'));
+    for (const file of agentFiles) {
+      const source = join(agentsSourceDir, file);
+      installed.push(platformPrefixed(platform, installAgentForPlatform(platform, projectRoot, source)));
+    }
+  }
+
+  if (platform === 'claude') {
+    const hookResult = ensureClaudeHooks(projectRoot);
+    if (hookResult.added.length > 0) {
+      installed.push(platformPrefixed(platform, `.claude/settings.json ${chalk.dim(`(${hookResult.added.join(' + ')} hooks)`)}`));
+    }
+    if (hookResult.migrated) {
+      notes.push(platformPrefixed(platform, `${chalk.yellow('↑')} ${chalk.dim('Migrated old snapshot hook -> session-start hook')}`));
+    }
+    if (hookResult.added.length === 0 && !hookResult.migrated) {
+      notes.push(platformPrefixed(platform, chalk.dim('Hooks already present — skipped')));
+    }
+  } else {
+    const codexResult = ensureCodexConfig(projectRoot);
+    if (codexResult.updated) {
+      installed.push(platformPrefixed(platform, '.codex/config.toml (managed hooks block)'));
+    }
+
+    // Codex relies on AGENTS.md; use append to avoid destructive replacement in automated installs.
+    try {
+      const result = await installInstructions(projectRoot, 'codex', 'append');
+      if (result.action !== 'skipped') {
+        notes.push(platformPrefixed(platform, `Root guidance synced: ${result.target}`));
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      notes.push(platformPrefixed(platform, `${chalk.yellow('⚠')} AGENTS.md install skipped: ${msg}`));
+    }
+
+    notes.push(platformPrefixed(platform, chalk.dim('Codex gap: SubagentStart + PreCompact hooks are Claude-only.')));
+  }
+
+  return { installed, notes };
+}
+
 // ─── Command Registration ───────────────────────────────────────────────────
 
 export function registerInstallSkillCommand(program: Command): void {
   program
     .command('install-skill')
-    .description('Install dreamcontext skill, agents, and optional skill packs for Claude Code')
+    .description('Install dreamcontext skill, agents, and optional packs for selected platforms')
+    .option('--platforms <list>', `Comma-separated platforms: ${formatSupportedPlatforms()}`)
     .option('--packs [names...]', 'Install optional skill packs (interactive if no names given)')
     .option('--skill <name>', 'Install a specific sub-skill by name')
     .option('--list', 'List all available skill packs')
-    .action(async (opts: { packs?: boolean | string[]; skill?: string; list?: boolean }) => {
+    .action(async (opts: { platforms?: string; packs?: boolean | string[]; skill?: string; list?: boolean }) => {
       try {
         const projectRoot = process.cwd();
+        const platforms = await resolvePlatforms(projectRoot, opts.platforms);
 
         // --list: show available packs
         if (opts.list) {
-          listAvailablePacks(projectRoot);
+          listAvailablePacks(projectRoot, platforms);
           return;
         }
 
         // --skill: install a single sub-skill
         if (opts.skill) {
-          installSingleSkill(opts.skill, projectRoot);
+          installSingleSkill(opts.skill, projectRoot, platforms);
           return;
         }
 
         // --packs: install optional skill packs
         if (opts.packs !== undefined) {
           if (Array.isArray(opts.packs)) {
-            directPackInstall(opts.packs, projectRoot);
+            directPackInstall(opts.packs, projectRoot, platforms);
           } else {
-            await interactivePackInstall(projectRoot);
+            await interactivePackInstall(projectRoot, platforms);
           }
           return;
         }
 
-        // Default: install core dreamcontext skill + agents + hooks
-        const skillSource = findPackageFile('skill', 'SKILL.md');
-        if (!skillSource) {
-          throw new Error('SKILL.md not found in package. Try reinstalling dreamcontext.');
-        }
-
-        const skillDestDir = join(projectRoot, '.claude', 'skills', 'dreamcontext');
-        const skillDestFile = join(skillDestDir, 'SKILL.md');
-
-        mkdirSync(skillDestDir, { recursive: true });
-        writeFileSync(skillDestFile, readFileSync(skillSource, 'utf-8'), 'utf-8');
-
-        const installed: string[] = [`.claude/skills/dreamcontext/SKILL.md`];
-
-        // Install core agents
-        const agentsSourceDir = findPackageDir('agents');
-        if (agentsSourceDir) {
-          const agentsDestDir = join(projectRoot, '.claude', 'agents');
-          mkdirSync(agentsDestDir, { recursive: true });
-
-          const agentFiles = readdirSync(agentsSourceDir).filter((f) => f.endsWith('.md'));
-          for (const file of agentFiles) {
-            const source = join(agentsSourceDir, file);
-            const dest = join(agentsDestDir, file);
-            writeFileSync(dest, readFileSync(source, 'utf-8'), 'utf-8');
-            installed.push(`.claude/agents/${file}`);
-          }
-        }
-
-        // Install hooks
-        const hookResult = ensureHooks(projectRoot);
-        if (hookResult.added.length > 0) {
-          installed.push(`.claude/settings.json ${chalk.dim(`(${hookResult.added.join(' + ')} hooks)`)}`);
-        }
-
+        // Default: install core dreamcontext skill + agents + hooks for selected platforms
+        const installed: string[] = [];
         const notes: string[] = [];
-        if (hookResult.migrated) {
-          notes.push(`  ${chalk.yellow('↑')} ${chalk.dim('Migrated old snapshot hook -> session-start hook')}`);
-        }
-        if (hookResult.added.length === 0 && !hookResult.migrated) {
-          notes.push(`  ${chalk.dim('Hooks already present — skipped')}`);
+
+        for (const platform of platforms) {
+          const result = await installCoreForPlatform(platform, projectRoot);
+          installed.push(...result.installed);
+          notes.push(...result.notes);
         }
 
         console.log();
         console.log(miniBox([
-          chalk.green.bold('✓ Claude Code integration installed!'),
+          chalk.green.bold(`✓ Integration installed for ${platforms.map(platformLabel).join(', ')}!`),
           '',
           ...installed.map((f) => `  ${chalk.green('✓')} ${chalk.magentaBright(f)}`),
-          ...(notes.length > 0 ? ['', ...notes] : []),
+          ...(notes.length > 0 ? ['', ...notes.map((n) => `  ${n}`)] : []),
         ], { color: 'green' }));
         console.log();
-        info('Claude Code will auto-detect these when working in this project.');
+        info(`Platforms active for this install: ${chalk.dim(platforms.join(', '))}`);
 
         // Hint about optional packs
         const loaded = loadCatalog();

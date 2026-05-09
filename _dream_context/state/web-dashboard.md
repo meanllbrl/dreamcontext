@@ -12,9 +12,9 @@ description: >-
   passing. Phase 5 remaining: a11y audit, responsive layout, i18n token
   extraction, bundle audit.
 priority: critical
-status: in_review
+status: completed
 created_at: '2026-02-25'
-updated_at: '2026-04-19'
+updated_at: '2026-05-02'
 tags:
   - frontend
   - architecture
@@ -35,6 +35,12 @@ version: v0.2.0
 
 
 
+
+
+### 2026-05-02 - Completed
+- Shipped phases 1-4c in v0.2.0. Kanban, Eisenhower Matrix, Versions-as-Releases, Council Hall/Detail pages, Brain graph, light mode. Phase 5 (a11y, responsive, i18n, bundle audit) deferred — no active sprint. Dashboard localStorage page-persistence added 2026-05-02 (Shell.tsx).
+### 2026-04-25 - Session Update
+- v0.2.0 shipped (session 2e902c8c): Council UI v3 (CouncilHall + CouncilDetail with Overview/Agents/Matrix tabs), Brain graph light mode support, dashboard council routes wired. Phases 1-4c complete. Phase 5 (a11y, responsive, i18n, bundle audit) still pending.
 ### 2026-04-19 - Session Update
 - Brain graph light mode: theme-aware node colors (dark/light palette variants), link/canvas colors switch on isDark, settings panel uses CSS tokens. Default group palette gains deeper light-mode colors (#0d7bb8, #047857, #b45309, #6d28d9, #be185d, #475569) replacing washed-out cyan/mint. Dimmed-node alpha bumped 0.18→0.3 on light.
 ### 2026-04-19 - Session Update

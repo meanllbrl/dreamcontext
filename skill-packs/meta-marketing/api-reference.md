@@ -295,7 +295,7 @@ The typed `Targeting` interface in `meta-client.ts` is a slim subset. Below is t
   "captions": [{ "text": "<caption>" }],
   "link_descriptions": [{ "text": "<link description>" }],
 
-  "link_urls": [{ "website_url": "https://...", "display_url": "tilki.app" }],
+  "link_urls": [{ "website_url": "https://...", "display_url": "example.com" }],
   "call_to_action_types": ["SIGN_UP"],
 
   "ad_formats": ["SINGLE_VIDEO", "SINGLE_IMAGE", "CAROUSEL"],
@@ -407,7 +407,7 @@ await metaFetch(ctx, {
     rule: JSON.stringify({
       inclusions: {
         operator: 'or',
-        rules: [{ event_sources: [{ id: ctx.pixelId, type: 'pixel' }], retention_seconds: 30 * 86400, filter: { operator: 'and', filters: [{ field: 'url', operator: 'i_contains', value: 'tilki.app' }] } }],
+        rules: [{ event_sources: [{ id: ctx.pixelId, type: 'pixel' }], retention_seconds: 30 * 86400, filter: { operator: 'and', filters: [{ field: 'url', operator: 'i_contains', value: 'example.com' }] } }],
       },
     }),
     retention_days: 30,

@@ -5,9 +5,9 @@ import { MultiSelectFilter } from './MultiSelectFilter';
 import { MiniCalendar } from './MiniCalendar';
 import './TaskFilters.css';
 
-export type SortField = 'updated_at' | 'created_at' | 'priority' | 'urgency' | 'name';
+export type SortField = 'updated_at' | 'created_at' | 'priority' | 'urgency' | 'name' | 'rice';
 export type GroupBy = 'status' | 'priority' | 'urgency' | 'tags' | 'version' | 'none';
-export type ViewMode = 'kanban' | 'eisenhower';
+export type ViewMode = 'kanban' | 'eisenhower' | 'scatter' | 'list';
 export type DateField = 'created_at' | 'updated_at';
 
 export interface FilterState {
@@ -20,6 +20,7 @@ export interface FilterState {
   dateField: DateField;
   dateFrom: string;
   dateTo: string;
+  minRice: number | null;
   sortField: SortField;
   groupBy: GroupBy;
   subGroupBy: GroupBy;
@@ -36,6 +37,7 @@ export const DEFAULT_FILTERS: FilterState = {
   dateField: 'updated_at',
   dateFrom: '',
   dateTo: '',
+  minRice: null,
   sortField: 'updated_at',
   groupBy: 'status',
   subGroupBy: 'none',
@@ -138,6 +140,25 @@ function MatrixIcon() {
   );
 }
 
+function ScatterIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
+      <circle cx="3" cy="11" r="1.4" fill="currentColor"/>
+      <circle cx="6" cy="6" r="1.6" fill="currentColor"/>
+      <circle cx="10" cy="8" r="1.2" fill="currentColor"/>
+      <circle cx="11" cy="3" r="1" fill="currentColor"/>
+    </svg>
+  );
+}
+
+function ListIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
+      <path d="M2 3.5H12M2 7H12M2 10.5H12" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
+    </svg>
+  );
+}
+
 function MilestoneIcon() {
   return (
     <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
@@ -175,6 +196,7 @@ const SORT_OPTIONS = [
   { value: 'created_at', label: 'Date created' },
   { value: 'priority', label: 'Priority' },
   { value: 'urgency', label: 'Urgency' },
+  { value: 'rice', label: 'RICE score' },
   { value: 'name', label: 'Name' },
 ];
 
@@ -196,6 +218,7 @@ function countActiveFilters(f: FilterState): number {
   if (f.versionFilter.length > 0) n++;
   if (f.searchQuery.trim()) n++;
   if (f.dateFrom || f.dateTo) n++;
+  if (f.minRice !== null && f.minRice !== undefined) n++;
   return n;
 }
 
@@ -363,6 +386,58 @@ export function TaskFilters({
         }
       />
 
+      {/* Min RICE chip */}
+      <FilterPopover
+        isOpen={openPopover === 'minRice'}
+        onClose={close}
+        width={220}
+        trigger={
+          <button
+            className={`filter-chip ${filters.minRice !== null ? 'filter-chip--active' : ''}`}
+            onClick={() => toggle('minRice')}
+          >
+            <span className="filter-chip-label">
+              {filters.minRice !== null ? `${t('filter.min_rice')} ≥ ${filters.minRice}` : t('filter.min_rice')}
+            </span>
+            <ChevronIcon open={openPopover === 'minRice'} />
+          </button>
+        }
+        content={
+          <div className="filter-min-rice">
+            <label className="filter-min-rice-label" htmlFor="filter-min-rice-input">
+              {t('filter.min_rice')}
+            </label>
+            <input
+              id="filter-min-rice-input"
+              type="number"
+              min="0"
+              step="0.1"
+              className="field-input"
+              value={filters.minRice ?? ''}
+              placeholder="e.g. 5"
+              onChange={e => {
+                const v = e.target.value.trim();
+                if (v === '') {
+                  onFilterChange('minRice', null);
+                  return;
+                }
+                const n = Number(v);
+                onFilterChange('minRice', Number.isFinite(n) ? n : null);
+              }}
+            />
+            {filters.minRice !== null && (
+              <button
+                type="button"
+                className="filter-min-rice-clear"
+                onClick={() => onFilterChange('minRice', null)}
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        }
+      />
+
       {activeCount > 0 && (
         <button className="filter-clear-all" onClick={onClearFilters}>
           Clear <span className="filter-clear-count">{activeCount}</span>
@@ -386,6 +461,20 @@ export function TaskFilters({
           title="Eisenhower matrix"
         >
           <MatrixIcon />
+        </button>
+        <button
+          className={`filter-view-btn ${filters.viewMode === 'scatter' ? 'filter-view-btn--active' : ''}`}
+          onClick={() => onFilterChange('viewMode', 'scatter')}
+          title="RICE scatter (Impact × Effort)"
+        >
+          <ScatterIcon />
+        </button>
+        <button
+          className={`filter-view-btn ${filters.viewMode === 'list' ? 'filter-view-btn--active' : ''}`}
+          onClick={() => onFilterChange('viewMode', 'list')}
+          title="List view"
+        >
+          <ListIcon />
         </button>
       </div>
 

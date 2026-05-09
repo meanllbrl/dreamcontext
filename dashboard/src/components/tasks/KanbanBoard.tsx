@@ -9,6 +9,8 @@ import { TaskFilters, DEFAULT_FILTERS, type FilterState, type FilterPreset, type
 import { TaskCreateModal } from './TaskCreateModal';
 import { TaskDetailPanel } from './TaskDetailPanel';
 import { EisenhowerMatrix } from './EisenhowerMatrix';
+import { RiceScatter } from './RiceScatter';
+import { TaskCard } from './TaskCard';
 import { VersionManager } from './VersionManager';
 import './KanbanBoard.css';
 
@@ -48,6 +50,12 @@ function sortTasks(tasks: Task[], field: SortField): Task[] {
         return (URGENCY_ORDER[a.urgency] ?? 9) - (URGENCY_ORDER[b.urgency] ?? 9);
       case 'name':
         return a.name.localeCompare(b.name);
+      case 'rice': {
+        // Higher score first; unscored tasks sink to the bottom.
+        const sa = a.rice?.score ?? -Infinity;
+        const sb = b.rice?.score ?? -Infinity;
+        return sb - sa;
+      }
     }
   });
 }
@@ -92,6 +100,11 @@ function applyFilters(tasks: Task[], filters: FilterState): Task[] {
     }
   }
 
+  if (filters.minRice !== null && filters.minRice !== undefined) {
+    const min = filters.minRice;
+    result = result.filter(t => t.rice?.score !== null && t.rice?.score !== undefined && t.rice.score >= min);
+  }
+
   return sortTasks(result, filters.sortField);
 }
 
@@ -121,6 +134,7 @@ function migrateFilters(raw: unknown): FilterState {
   // Ensure new fields have defaults
   if (migrated.viewMode === undefined) migrated.viewMode = 'kanban';
   if (migrated.subGroupBy === undefined) migrated.subGroupBy = 'none';
+  if (migrated.minRice === undefined) migrated.minRice = null;
 
   return migrated;
 }
@@ -394,6 +408,22 @@ export function KanbanBoard() {
           tasks={filtered}
           onTaskClick={(task) => setSelectedSlug(task.slug)}
         />
+      ) : filters.viewMode === 'scatter' ? (
+        <RiceScatter
+          tasks={filtered}
+          onTaskClick={(task) => setSelectedSlug(task.slug)}
+        />
+      ) : filters.viewMode === 'list' ? (
+        <div className="task-list">
+          {filtered.map(task => (
+            <TaskCard
+              key={task.slug}
+              task={task}
+              onClick={() => setSelectedSlug(task.slug)}
+              onDragStart={() => { /* no drag in list view */ }}
+            />
+          ))}
+        </div>
       ) : (
         <div className="kanban-columns">
           {renderColumns()}

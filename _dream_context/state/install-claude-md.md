@@ -4,9 +4,9 @@ name: install-claude-md
 description: install-claude-md
 priority: medium
 urgency: medium
-status: in_progress
+status: completed
 created_at: '2026-04-19'
-updated_at: '2026-04-19'
+updated_at: '2026-05-02'
 tags:
   - cli
   - onboarding
@@ -43,6 +43,12 @@ version: null
 <!-- LIFO: newest entry at top -->
 
 
+
+
+### 2026-05-02 - Completed
+- Shipped in v0.2.0 (2026-04-19): dreamcontext install-claude-md command, terse CLAUDE.md template (~84 lines / ~3k tokens), three modes (append/replace/skip), idempotency via HTML comment fences. Optional y/n prompt at end of dreamcontext init. Saves ~11k tokens/session vs old template.
+### 2026-04-25 - Session Update
+- v0.2.0 shipped (session 2e902c8c): install-claude-md command implemented (src/cli/commands/install-claude-md.ts). Terse CLAUDE.md template ~84 lines / ~3k tokens. Three modes: append (idempotent via HTML comment fences), replace (backups first), skip. Optional y/n prompt at end of dreamcontext init. Registered in src/cli/index.ts.
 ### 2026-04-19 - Session Update
 - Created install-claude-md command: dreamcontext install-claude-md installs a terse CLAUDE.md template (84 lines / ~3k tokens) to project root. Three modes: append (default interactive, idempotent via <!-- dreamcontext:start -->...<!-- dreamcontext:end --> fence), replace (always backups as CLAUDE.md.bak-<timestamp>), skip. Template sections: role, limitations, security, dreamcontext, coding, communication, rules, pushback, decisions, sub_agents. Registered in src/cli/index.ts. Optional setup step added to init.ts (y/n prompt, default no). Token savings: ~11k tokens per session (vs old ~14k template). All 6 idempotency test cases pass.
 ### 2026-04-19 - Created
