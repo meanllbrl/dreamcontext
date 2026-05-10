@@ -3,7 +3,7 @@
     "id": "rel_05DfNctF",
     "version": "v0.3.0",
     "date": "",
-    "summary": "Sleep cycle fan-out: orchestrator + 5 specialists, marketing/council passes, plan-mode-to-task import",
+    "summary": "Sleep cycle fan-out: 3 specialists (sleep-tasks always, sleep-state always, sleep-product conditional) — collapsed from original 5 (sleep-core+sleep-changelog merged into sleep-state; sleep-knowledge+sleep-features merged into sleep-product) to cut launch + synthesis overhead; non-overlapping file domains preserve no-stomp guarantee. Main agent fans out directly, no orchestrator. Plus marketing/council passes, plan-mode-to-task import.",
     "breaking": false,
     "status": "planning",
     "features": [],
