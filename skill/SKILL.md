@@ -248,7 +248,7 @@ Uses the SubagentStart briefing (pre-loaded project knowledge) to narrow searche
 
 Scans the codebase, asks the user questions, populates core files with real content (not placeholders).
 
-**Sleep** -- main agent runs the fan-out flow directly (see "Sleep System" section below). Dispatches `sleep-tasks` + `sleep-changelog` + `sleep-core` always, plus `sleep-knowledge` / `sleep-features` when signals warrant. Each specialist owns one non-overlapping file domain. Closes with `dreamcontext sleep done` to reset debt.
+**Sleep** -- main agent runs the fan-out flow directly (see "Sleep System" section below). Dispatches `sleep-tasks` + `sleep-state` always, plus `sleep-product` when signals warrant. Each specialist owns one non-overlapping file domain. Closes with `dreamcontext sleep done` to reset debt.
 
 **Context Propagation**: All sub-agents receive a lightweight context briefing via the SubagentStart hook (project summary, features index, knowledge index, active tasks). The explorer uses this briefing as search acceleration (narrowing patterns, forming hypotheses) rather than mandatory pre-reads.
 
@@ -294,11 +294,16 @@ Sleep debt reminders are injected on every user message (via UserPromptSubmit ho
    - `git status --short` and `git log --oneline --since=$(jq -r '.sleep_started_at // .last_sleep' _dream_context/state/.sleep.json)`
    - `dreamcontext core releases active` — current planning version (create one with `dreamcontext core releases add --ver vX.Y.Z --status planning --summary "<theme>" --yes` if missing)
 4. Dispatch specialists in **parallel** — one message with multiple Agent tool calls:
-   - **Always fire**: `sleep-tasks`, `sleep-changelog`, `sleep-core`
-   - **Conditional fire** based on signals from the brief:
-     - `sleep-knowledge` if: `last_assistant_message` mentions research/analysis/decision; a `knowledge_access` entry hasn't been touched in 30+ days; a research bookmark exists; user hint mentions knowledge.
-     - `sleep-features` if: a task slug matches an existing feature PRD filename; `git status` shows changes under `_dream_context/core/features/`; user hint names a feature; a session advanced ≥1 acceptance criterion or shipped a buildable concept without a PRD.
-   - When unsure, **over-fire** the optional ones — they no-op cheaply.
+   - **Always fire**: `sleep-tasks`, `sleep-state` (state owns core 0-6, changelog, releases)
+   - **Conditional fire**: `sleep-product` (owns knowledge + feature PRDs) if **any** of:
+     - `last_assistant_message` mentions research/analysis/decision
+     - a `knowledge_access` entry hasn't been touched in 30+ days
+     - a research bookmark exists
+     - a task slug matches an existing feature PRD filename
+     - `git status` shows changes under `_dream_context/core/features/`
+     - a session advanced ≥1 acceptance criterion or shipped a buildable concept without a PRD
+     - user hint mentions knowledge or a feature
+   - When unsure, **over-fire** `sleep-product` — it no-ops cheaply.
    - Pass each specialist a small text brief in its prompt: epoch, session IDs, active task slugs, planning version, signals relevant to that specialist, optional user hint. Do **not** include transcript content — specialists call `dreamcontext transcript distill <id>` themselves.
 5. Wait for all specialist reports. Each returns a short structured report.
 6. Marketing pass if `_dream_context/marketing/` exists: `dreamcontext mk rem-sleep`.

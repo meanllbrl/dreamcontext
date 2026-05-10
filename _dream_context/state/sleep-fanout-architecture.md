@@ -9,7 +9,7 @@ priority: high
 urgency: medium
 status: in_review
 created_at: '2026-05-09'
-updated_at: '2026-05-09'
+updated_at: '2026-05-10'
 tags:
   - agents
   - sleep
@@ -139,6 +139,9 @@ Hook debt messages (in `src/cli/commands/hook.ts` / sleep CLI surfaces) instruct
 
 
 
+
+### 2026-05-10 - Session Update
+- 2026-05-10 follow-up: 5-specialist design collapsed to 3 (sleep-state + sleep-product + sleep-tasks) in task sleep-fanout-3specialist-collapse. sleep-core+sleep-changelog merged into sleep-state; sleep-knowledge+sleep-features merged into sleep-product. Original task remains accurate for the v0.3.0 5-specialist architecture; collapse is tracked separately.
 ### 2026-05-09 - Session Update
 - Session 6fb301ee: deleted dreamcontext-rem-sleep agent entirely (no fallback path), updated all 5 specialist agent files with skills: frontmatter + Skills always loaded body section, mirrored to .codex/agents/prompts/, rebuilt + dreamcontext update. Templates CLAUDE.md/AGENTS.md updated to reference fan-out flow. SKILL.md fallback sentence removed. One path, no degradation vector.
 ### 2026-05-09 - Session Update

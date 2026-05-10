@@ -293,7 +293,7 @@ function getConsolidationDirective(state: SleepState): string | null {
         ? [`${criticalBookmarks.length} critical bookmark(s) awaiting consolidation.`]
         : []),
       'You MUST inform the user and consolidate NOW.',
-      'Run sleep consolidation: follow SKILL.md "Sleep" flow — main agent does `sleep start`, then dispatches sleep-tasks/sleep-changelog/sleep-core (and sleep-knowledge/sleep-features when signals warrant) in parallel, then `sleep done`.',
+      'Run sleep consolidation: follow SKILL.md "Sleep" flow — main agent does `sleep start`, then dispatches sleep-tasks/sleep-state (and sleep-product when signals warrant) in parallel, then `sleep done`.',
       'If the user has an urgent task, consolidate IMMEDIATELY after completing it.',
       '',
     ].join('\n');
@@ -305,7 +305,7 @@ function getConsolidationDirective(state: SleepState): string | null {
       `${criticalBookmarks.length} critical (★★★) bookmark(s) tagged for consolidation:`,
       ...criticalBookmarks.slice(0, 3).map(b => `  - ${b.message}`),
       'These represent important decisions/constraints that should be consolidated into context files.',
-      'Run sleep consolidation: follow SKILL.md "Sleep" flow — main agent does `sleep start`, then dispatches sleep-tasks/sleep-changelog/sleep-core (and sleep-knowledge/sleep-features when signals warrant) in parallel, then `sleep done`.',
+      'Run sleep consolidation: follow SKILL.md "Sleep" flow — main agent does `sleep start`, then dispatches sleep-tasks/sleep-state (and sleep-product when signals warrant) in parallel, then `sleep done`.',
       '',
     ].join('\n');
   }
@@ -315,7 +315,7 @@ function getConsolidationDirective(state: SleepState): string | null {
       '',
       `Sleep debt is ${debt}/10. Context files are growing stale.`,
       'You MUST inform the user and recommend consolidation before starting new work.',
-      'Run sleep consolidation: follow SKILL.md "Sleep" flow — main agent does `sleep start`, then dispatches sleep-tasks/sleep-changelog/sleep-core (and sleep-knowledge/sleep-features when signals warrant) in parallel, then `sleep done`.',
+      'Run sleep consolidation: follow SKILL.md "Sleep" flow — main agent does `sleep start`, then dispatches sleep-tasks/sleep-state (and sleep-product when signals warrant) in parallel, then `sleep done`.',
       '',
     ].join('\n');
   }

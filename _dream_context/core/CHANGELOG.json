@@ -1,5 +1,12 @@
 [
   {
+    "date": "2026-05-10",
+    "type": "refactor",
+    "scope": "sleep",
+    "description": "Collapse 5-specialist sleep fan-out into 3 specialists (sleep-state, sleep-product, sleep-tasks). sleep-core and sleep-changelog merged into sleep-state, which now owns core files 0-6, CHANGELOG.json, RELEASES.json, and triggers; sleep-knowledge and sleep-features merged into sleep-product, which owns knowledge/ and feature PRDs. sleep-tasks is unchanged. Motivation: parallel agents help wall-clock only to the slowest (sleep-tasks); the other four had significant launch + synthesis overhead without proportional benefit. Non-overlapping file domains preserve the no-stomp guarantee. Implementation: 4 old agent files deleted from agents/, .codex/agents/prompts/, .claude/agents/, plus 4 .toml config files from .codex/agents/; sleep-state.md and sleep-product.md created and mirrored to all 4 locations. hook.ts debt-prompt strings updated (3 occurrences). AGENTS.md, src/templates/AGENTS.md, src/templates/CLAUDE.md sub-agents tables updated. SKILL.md fan-out section rewritten. 0.soul.md lines 11+19 updated to describe 3 specialists. Reviewer found 2 MAJOR issues (over-fire wording in SKILL.md:306 + stale '5 specialists' count in soul.md:19) — both fixed. Third stale mirror (.claude/skills/dreamcontext/SKILL.md) was an older revision missing RICE sections — fully synced to canonical. Build passed: dashboard 5.16s, CLI tsup ESM 503KB.",
+    "breaking": false
+  },
+  {
     "date": "2026-05-09",
     "type": "feat",
     "scope": "skill",

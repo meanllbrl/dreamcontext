@@ -1,5 +1,18 @@
 [
   {
+    "date": "2026-05-10",
+    "consolidated_at": "2026-05-10T18:18:39.244Z",
+    "summary": "Sleep #1 of 2026-05-10 — first live test of the new 3-specialist fan-out (sleep-tasks + sleep-state + sleep-product). Specialists ran clean in parallel. Tasks: created sleep-fanout-3specialist-collapse (in_review, attached v0.3.0, full body + Workflow mermaid); sleep-fanout-architecture logged with downstream pointer (no body pivot — collapse is a distinct second-order decision). State: +1 changelog refactor(sleep) covering the entire 5→3 collapse + reviewer fixes + .claude/skills mirror sync; +1 Technical Decision in 2.memory.md (parallel-overhead rationale); 0.soul.md Current Priority bumped; flagged stale RELEASES.json v0.3.0 summary string still says 'orchestrator + 5 specialists'. Product: reconciled both feature PRDs (sleep-fanout-architecture.md + sleep-consolidation.md) — Technical Details replaced, Constraints stamped 2026-05-10, no new knowledge file (rationale captured in PRDs + memory entry). Marketing: 10 runs scanned, no redactions. Council: council_demo01 still unpromoted (no fresh engagement). v0.3.0 NOT release-ready: 4 todo (meta-mcp-migration, plan-mode-to-task-import, marketing-dashboard-v0, ecc-inspired-roadmap), 3 in_review.",
+    "debt_before": 5,
+    "debt_after": 0,
+    "sessions_processed": 2,
+    "bookmarks_processed": 0,
+    "session_ids": [
+      "d332f782-6e5e-4f5c-884c-a38fde1a1ca7",
+      "841ec81b-5c3d-4d2c-bea1-0db0a407f422"
+    ]
+  },
+  {
     "date": "2026-05-09",
     "consolidated_at": "2026-05-09T19:51:54.329Z",
     "summary": "Sleep #2 of the day. 5 specialists fan-out (sleep-changelog + sleep-core resumed after stream timeouts). Tasks: rice-prioritization + sleep-fanout-architecture reconciled to current truth (workflows fully ticked, ACs/user stories checked, in_review). 3 untracked tasks attached to v0.3.0 (marketing-dashboard-v0, meta-mcp-migration, plan-mode-to-task-import). Changelog: 3 new entries (skill triage hard rule, meta-marketing PR 5, mk council + 4 marketing personas) — total 70. Core: 2.memory.md frontmatter date bumped; rem-sleep deletion already captured. Knowledge: project-origin-and-prd refreshed (last_reviewed), long-slug decision file renamed to decision-meta-marketing-skill-adoption + enriched. Features: rice-prioritization PRD created (durable cross-cutting capability); sleep-fanout-architecture + sleep-consolidation reconciled to one-path-no-fallback. Marketing: 10 runs scanned, no redactions. Council: council_demo01 unpromoted (no fresh engagement). v0.3.0 NOT release-ready: 4 todo tasks remain (ecc-inspired-roadmap surfaced too).",

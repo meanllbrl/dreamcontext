@@ -23,7 +23,7 @@ This project uses **dreamcontext** — persistent memory for AI agents.
 
 - `_dream_context/` is your brain. Soul/user/memory auto-load every session via SessionStart hook. Trust the snapshot — do not re-read what is already injected.
 - Use the `dreamcontext` CLI for structured ops: `tasks create/log/complete`, `features create`, `knowledge create/touch`, `bookmark add`, `core changelog add`. Never hand-edit task/feature files.
-- Sleep debt is auto-tracked. When prompted, run the sleep flow per the `dreamcontext` skill (parallel fan-out: dispatch `sleep-tasks`, `sleep-changelog`, `sleep-core`, and conditionally `sleep-knowledge` / `sleep-features`). Do not ignore consolidation prompts.
+- Sleep debt is auto-tracked. When prompted, run the sleep flow per the `dreamcontext` skill (parallel fan-out: dispatch `sleep-tasks`, `sleep-state`, and conditionally `sleep-product`). Do not ignore consolidation prompts.
 - Use `dreamcontext-explore` for codebase exploration (default Explorer is blocked).
 - All non-trivial work needs a task. Check existing first; create if missing.
 </dreamcontext>
@@ -74,8 +74,8 @@ All pass → confirm briefly, execute. No ceremony.
 | Agent | When | What |
 |---|---|---|
 | `dreamcontext-explore` | All codebase exploration | Context-accelerated search using pre-loaded knowledge |
-| `sleep-tasks` / `sleep-changelog` / `sleep-core` | Sleep debt prompt fires, or after major work | Always-fire specialists during sleep fan-out — own task files / changelog+releases / core identity files respectively |
-| `sleep-knowledge` / `sleep-features` | Conditionally during sleep fan-out (research/feature signals) | Knowledge files / feature PRDs |
+| `sleep-tasks` / `sleep-state` | Sleep debt prompt fires, or after major work | Always-fire specialists during sleep fan-out — own task files / (core identity + changelog + releases) respectively |
+| `sleep-product` | Conditionally during sleep fan-out (research/decision/feature signals) | Knowledge files + feature PRDs |
 | `dreamcontext-initializer` | Project lacks `_dream_context/` | Bootstraps the structure |
 | `Reviewer` | Code is written and ready for PR | Flags Critical/Major only. Never mid-implementation. |
 </sub_agents>

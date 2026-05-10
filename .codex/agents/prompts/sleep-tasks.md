@@ -119,7 +119,7 @@ If every task linked to the active version is `completed` (or only `in_review` r
 - Created: <slug> (status: in_progress, attached to vX.Y.Z)
 - Body reconciled: <slug> (dropped phase 1 from User Stories; replaced Technical Details auth section)
 - Version readiness: vX.Y.Z — 4/5 tasks ready for review
-- Cross-domain mentions: <slug> includes a memory-worthy decision about JWT — flagging for sleep-core
+- Cross-domain mentions: <slug> includes a memory-worthy decision about JWT — flagging for sleep-state
 - Skipped: <session_id> had no actionable task signal
 ```
 
