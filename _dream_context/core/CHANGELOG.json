@@ -1,5 +1,162 @@
 [
   {
+    "date": "2026-05-23",
+    "type": "refactor",
+    "scope": "docs",
+    "summary": "Cross-repo audit: align all skill/agent/template/doc surfaces with today's memory+changelog+snapshot+anti-bloat changes",
+    "description": "All v0.4.0+ documentation surfaces synced to new reality (memory recall + CHANGELOG schema + tiered snapshot + default-on hook + 150-line cap). 5 parallel cluster agents updated: skill/SKILL.md (1 fix), agents/dreamcontext-{explore,initializer}.md (5 edits), .codex/ mirrors (5 prompts + 5 toml fully rewritten), src/templates/{CLAUDE.md,AGENTS.md,init/2.memory.md} (template-level fixes for new projects), root README+DEEP-DIVE+AGENTS+CHANGELOG.md, feature PRDs memory-recall-bm25 + context-snapshot + sleep-consolidation. Final stale-reference grep clean. Build green (555.12 KB).",
+    "breaking": false,
+    "references": [
+      "file:skill/SKILL.md",
+      "file:agents/dreamcontext-explore.md",
+      "file:agents/dreamcontext-initializer.md",
+      "file:.codex/agents/sleep-state.toml",
+      "file:src/templates/init/2.memory.md",
+      "file:src/templates/CLAUDE.md",
+      "file:README.md",
+      "file:DEEP-DIVE.md",
+      "feature:memory-recall-bm25",
+      "feature:context-snapshot"
+    ]
+  },
+  {
+    "date": "2026-05-23",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "Add saved graph views to Brain page. Users can name, save, and restore combinations of filter state in the Brain graph. View definitions are persisted to localStorage (key: dreamcontext:brain-saved-views). A badge on the Settings panel shows the count of saved views. Tested against headless Chromium, Brave binary, and Brave with user's full profile — localStorage write/read cycle verified stable. Bug surface during fix: Brave Incognito blocks localStorage by default (by design, not a code bug).",
+    "breaking": false
+  },
+  {
+    "date": "2026-05-23",
+    "type": "fix",
+    "scope": "dashboard",
+    "description": "Fix mermaid rendering not working in MarkdownPreview and theme mismatch in TaskDetailPanel. Root causes: (1) MarkdownPreview had no mermaid rendering at all — flowcharts in Knowledge, Features, and Core pages rendered as raw <pre><code> blocks. (2) TaskDetailPanel's ensureMermaid() read prefers-color-scheme (OS theme) while the site uses data-theme; mermaid diagrams rendered in wrong color mode. (3) TaskDetailPanel.css had @media (prefers-color-scheme: light) rules that applied light styles even on dark-mode site. Fix: extracted a shared dashboard/src/lib/mermaidRender.ts module (useMermaidRender hook, initMermaid(theme), renderMermaidIn(root, idPrefix)) with ClickUp-styled themeVariables (Plus Jakarta Sans, deep-violet primary, theme-aware background). MarkdownPreview now uses useTheme().resolved via the shared hook. TaskDetailPanel drops ensureMermaid, calls initMermaid(theme), adds theme to effect deps — re-themes cleanly without duplicating wrappers. TaskDetailPanel.css replaces all prefers-color-scheme media queries with CSS variables (--color-bg-secondary, --color-border, --glass-bg). MarkdownPreview.css gains .mermaid-rendered wrapper, stage, and error styles. Semantic classDef overrides (done=green, active=yellow, todo=grey, blocked=red) in user content are preserved. Validated with Playwright: 1 wrapper, 1 SVG stage, 0 raw code blocks, 0 errors in both light and dark mode.",
+    "breaking": false
+  },
+  {
+    "date": "2026-05-23",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "Add 2D/3D toggle to Brain page with lazy-loaded Three.js chunk. New dashboard/src/components/brain/BrainCanvas3D.tsx renders the knowledge graph using react-force-graph-3d with custom force configuration (charge, link, center, collide, forceX/Y/Z), billboard Three.js Sprite labels that always face camera (dimmed when node is not highlighted), scene fog for depth perception, and click-to-focus camera fly-to animation. BrainSettings.tsx gains a 'View' segmented control (2D | 3D) at the top of the Display section, backed by display.view: '2d' | '3d' in useGraphSettings.ts (default 2d). BrainPage.tsx imports BrainCanvas3D via React.lazy so the Three.js bundle (~334 KB gzip) is loaded on demand only when the user switches to 3D — the main index chunk stays at its pre-3D size. All existing Brain features (filtering, neighbor highlighting, click-to-drawer, color rules, hover-dim) work identically in 3D. New task file: _dream_context/state/brain-3d-view.md.",
+    "breaking": false
+  },
+  {
+    "date": "2026-05-23",
+    "type": "note",
+    "scope": "quick",
+    "summary": "test capture from option E refactor verification",
+    "description": "test capture from option E refactor verification",
+    "breaking": false,
+    "references": [
+      "file:src/cli/commands/memory.ts"
+    ]
+  },
+  {
+    "date": "2026-05-23",
+    "type": "refactor",
+    "scope": "memory",
+    "summary": "Drop LIFO ship narrative from 2.memory.md; CHANGELOG indexed by memory recall replaces it. Keep Technical Decisions + Known Issues only.",
+    "description": "After reviewer attack on initial refactor plan (Option D rename rejected, descriptionDetailed rejected via planner), shipped Option E: (1) CHANGELOG.json schema gains 3 optional fields — `summary` (≤200 char soft target for snapshot display; soft warn at 200, never reject), `references[]` (flat string array with prefix convention `commit:|file:|knowledge:|feature:|task:|url:` — no `note:` escape hatch), `supersedes` (optional pointer to prior entry this one reverses or replaces); (2) src/lib/recall.ts gains `'changelog'` as a CorpusType — each CHANGELOG entry becomes one indexed doc with body = summary + description + references. Without this, deleting LIFO from memory.md would have LOST recall coverage. (3) src/cli/commands/memory.ts: byType/counts records updated; memory status now shows changelog entry count. (4) src/cli/commands/core.ts: `core changelog add` accepts --type/--scope/--description/--summary/--references/--supersedes/--breaking flags (interactive prompts still work). (5) 2.memory.md restructured: LIFO ship-narrative section deleted; Technical Decisions + Known Issues retained per user override of reviewer's split-Known-Issues recommendation. (6) NO file rename (reviewer killed it: blast radius was 40 files not 18, doctor migration code was vapor, CORE_ALIASES hallucinated). Corpus grew 47→130 docs (added 82 CHANGELOG entries + 1 new memory archive knowledge file).",
+    "references": [
+      "file:src/lib/recall.ts",
+      "file:src/lib/release-discovery.ts",
+      "file:src/cli/commands/core.ts",
+      "file:src/cli/commands/memory.ts",
+      "file:_dream_context/core/2.memory.md",
+      "file:agents/sleep-state.md"
+    ],
+    "breaking": false
+  },
+  {
+    "date": "2026-05-23",
+    "type": "refactor",
+    "scope": "snapshot",
+    "summary": "Drop Sleep State section (UserPromptSubmit hook already delivers debt) and stop inlining Pinned Knowledge body; pinned files now surface at top of Knowledge Index with prominent warning.",
+    "description": "src/cli/commands/snapshot.ts: (1) Sleep State block (debt + sessions + history) deleted because the UserPromptSubmit hook already injects `Sleep debt is X` every prompt — duplicate signal that bloated the snapshot. (2) Pinned Knowledge full-content inlining removed; pinned entries now appear at the TOP of Knowledge Index under a `> !!! ÇOK ÖNEMLİ !!! Kullanıcı bu bilgiyi pinlemiş — yapacağın bir işle ilişkisi varsa MUTLAKA OKU!` callout, marked with 📌, body fetched on demand via Read or memory recall. (3) Active task `Why:` cap raised 100→250 chars + HTML template comments stripped (template placeholders like `<!-- What problem does this solve? -->` no longer leak in). Same treatment applied to feature `Why:`. Snapshot shrank from ~700 → ~575 lines.",
+    "references": [
+      "file:src/cli/commands/snapshot.ts",
+      "knowledge:decision-mem0-vs-bm25-recall"
+    ],
+    "breaking": false
+  },
+  {
+    "date": "2026-05-23",
+    "type": "change",
+    "scope": "sleep",
+    "description": "Tighten anti-bloat ceiling from ~300 lines to ~150 lines per core file (0.soul, 1.user, 2.memory). Sleep-state's Pass C C1 sweep now extracts at the new lower threshold. Rationale: with `dreamcontext memory recall` (BM25, default-on hook injection) in v0.4.0+, archived content stays findable on demand — the snapshot only needs the freshest, most-cited material always-loaded; everything else can live in knowledge files and surface via recall. Aggressive pruning is now preferred over generous retention. Current 2.memory.md is 285 lines — next sleep cycle will extract older LIFO sections to knowledge/. Files updated: agents/sleep-state.md (C1 heading + paragraph + rule #7), _dream_context/core/6.system_flow.md (Anti-bloat bullet).",
+    "breaking": false
+  },
+  {
+    "date": "2026-05-23",
+    "type": "change",
+    "scope": "memory",
+    "description": "Flip UserPromptSubmit hook memory-recall injection from opt-in to default-on (same-day decision reversal). Code: src/cli/commands/hook.ts user-prompt-submit handler now runs the injection unless DREAMCONTEXT_MEMORY_HOOK=0 (previously required =1). Existing safeguards retained: ≥8 char prompt, ≥2.0 top-hit score, try/catch never breaks user prompt flow. Docs propagated: PRD memory-recall-bm25.md, knowledge decision-mem0-vs-bm25-recall.md, 2.memory.md LIFO entry, 6.system_flow.md, skill/SKILL.md, README.md, DEEP-DIVE.md. Rationale: dogfood on the dreamcontext repo (47-doc corpus, score ≥2.0 filter, short-prompt skip) showed strong hits consistently surfaced relevant docs with negligible noise — the noise/utility tradeoff favoured always-on.",
+    "breaking": false
+  },
+  {
+    "date": "2026-05-23",
+    "type": "feat",
+    "scope": "memory",
+    "description": "Add `dreamcontext memory` CLI namespace with deterministic BM25 recall over the curated corpus (Path A; no mem0). New subcommands: recall <query> [--top N] [--types knowledge,feature,task,memory] [--json|--plain], remember <text> [--title] [--tasks], update <slug> [--description|--tags|--content|--append|--pin|--unpin], delete <slug> [--force], list [--types ...], status. New src/lib/recall.ts (corpus loader + light TR/EN tokenizer + BM25 scorer k1=1.5/b=0.75 + snippet extractor). New src/cli/commands/memory.ts. Registered in src/cli/index.ts. UserPromptSubmit hook (src/cli/commands/hook.ts) extended with opt-in recall injection gated by DREAMCONTEXT_MEMORY_HOOK=1 env var (off by default; top-3 hits with score ≥2.0 only). Zero new npm dependencies. PRD at _dream_context/core/features/memory-recall-bm25.md (in_review). 20-query benchmark on dreamcontext repo's 44-doc corpus: 94.7% top-1, 100% top-5. Cold start <100ms. Explicit rejection of mem0 after 3 parallel adversarial reviewers (critic+pragmatist+security) converged on 5 issue categories: Python+Ollama cliff, determinism tier leakage, sleep-finalizer reversing 5→3 collapse, mem0 LLM-extraction non-determinism+unreliable-dedup, 5 critical security blockers (embedding inversion, redaction order, rebase data loss, crash recovery, OpenAI exfil-by-config).",
+    "breaking": false
+  },
+  {
+    "date": "2026-05-23",
+    "type": "docs",
+    "scope": "memory",
+    "description": "Propagate memory namespace through all documentation surfaces. skill/SKILL.md: new H2 section 'Memory Recall (BM25)' + new operational rule #14 'Recall before grep' + 6 new Command Reference table rows. agents/dreamcontext-explore.md: new prominent Step 0 'Recall FIRST before Glob/Grep/Read' + new Rule #2. agents/dreamcontext-initializer.md: closing tip mentioning recall is immediately usable post-init. agents/sleep-tasks.md + agents/sleep-state.md + agents/sleep-product.md: surgical dedup-pre-check pointers and CLI-shortcut notes per specialist domain (no responsibility changes). README.md: new Memory Recall section + Commands subsection with full surface. DEEP-DIVE.md: ~90 lines covering BM25-over-mem0 rationale (steel-manned reviewer rejection) + corpus layout + command surface table + 3 new Design Tradeoffs rows. AGENTS.md: 1-line in managed system-instructions block making memory recall agents' first-line lookup before Glob/Grep. All edits surgical, no existing content removed.",
+    "breaking": false
+  },
+  {
+    "date": "2026-05-22",
+    "type": "feat",
+    "scope": "install",
+    "description": "Add manifest system and setup command for reliable install/update tracking. New src/lib/manifest.ts defines the Manifest type (version, createdAt, updatedAt, platforms, files: Record<path,{version,kind}>, packs: Record<name,{version}>) with helpers read/write/diff/recordFile/recordPack/dreamcontextVersion/isSafeDeletePath. New src/lib/setup-config.ts owns _dream_context/state/.config.json (platforms, packs, multiProduct, setupVersion). New src/cli/commands/setup.ts provides a one-shot init + install-skill + install-instructions flow with flags --defaults, --multi-product, --platforms, --packs, --yes. update.ts rewritten: reads old manifest, runs install recording new state, diffs, prunes stale system-managed files inside .claude/.agents/.codex/ with user confirmation. First-run-after-migration detects but does not delete (safe upgrade path). Manifest written after prune so cancelled prune re-offers next run. Deprecation warnings added to init/install-skill/install-instructions/install-claude-md; suppressed under DREAMCONTEXT_SETUP_INTERNAL=1 when setup invokes them. First live run on this repo: 0.2.0 baseline bootstrapped, 44 system files tracked, claude+codex platforms, 4 stale brand-voice agents pruned.",
+    "breaking": false
+  },
+  {
+    "date": "2026-05-22",
+    "type": "feat",
+    "scope": "multiproduct",
+    "description": "Add multi-product support across init, snapshot, and data-structures layout. init.ts gains monorepo prompt and --multi-product flag; creates per-product data-structures/<product>.md files and seeds knowledge/products/ stubs. snapshot.ts adds getActiveProductKnowledge: reads .config.json multiProduct list, resolves active task via .active-task override or mtime-sorted in_progress tasks, injects matching knowledge/products/<product>.md into snapshot under an 'Active Product Knowledge: <name>' section (capped 200 lines with read-full pointer); null-safe for legacy projects without .config.json. Template src/templates/init/5.data_structures.sql deleted; replaced by src/templates/init/data-structures/default.md as the canonical single-product schema template. doctor.ts gains checkDataStructures: validates new data-structures/ directory, warns on legacy file presence with migration hint. SKILL.md gains Multi-Product Binding section describing auto-injection and per-product knowledge/data-structures layout.",
+    "breaking": false
+  },
+  {
+    "date": "2026-05-22",
+    "type": "feat",
+    "scope": "sleep",
+    "description": "Refine sleep specialist prompts with B0a/B0b recurrence gate split and broadened PRD creation trigger. sleep-state.md: B0a two-observation gate retained for 1.user.md and 2.memory.md (preferences and decisions); new B0b single-observation gate added for 3.style_guide, 4.tech_stack, core/data-structures/*, 6.system_flow (code reality files that should track shipped changes immediately); B1 priority row removed (priority is volatile user intent, not soul material); B2 legacy migration block added for 5.data_structures.sql -> data-structures/ transition. sleep-product.md: A4 PRD creation trigger broadened from 'shipped buildable concept' to three OR conditions: (a) concept has >= 2 acceptance criteria, (b) user named it as a feature, (c) task has dangling feature: frontmatter pointing to missing PRD; Acceptance Criteria section may be empty placeholder on first creation; A5 multi-product awareness added; B5 per-product knowledge stub bootstrapping. Both agent files mirrored to agents/ and .codex/agents/prompts/.",
+    "breaking": false
+  },
+  {
+    "date": "2026-05-22",
+    "type": "fix",
+    "scope": "dashboard",
+    "description": "Fix three race conditions and edge cases in dashboard task management. usePersistedState: projectId hydration timing fixed (no writes until projectId ready; on projectId change, snap to default then re-read; multi-tab migration race-safe). TaskDetailPanel: pendingBodyRef pattern for race-free rapid checkbox toggles so in-flight PATCH requests do not clobber each other; refs for updateTask/onMutationError eliminate stale closure bugs. src/server/routes/tasks.ts: PATCH body capped at 1 MB to prevent unbounded request processing; --- first-line sanitization prevents frontmatter injection.",
+    "breaking": false
+  },
+  {
+    "date": "2026-05-22",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "Add flowchart-to-criterion sync in TaskDetailPanel. HTML comment convention <!-- node:<id> --> links acceptance criteria checkboxes to mermaid flowchart nodes; toggling a checkbox updates the matching node class (done/active/todo/blocked) in the mermaid source and re-renders the SVG in place. Mermaid edge-line corruption fix: arrow lines and non-node-def lines are skipped during node-class patching; node-def regex is anchored to avoid false matches on label text. useTasks hook updated to surface mutation error state.",
+    "breaking": false
+  },
+  {
+    "date": "2026-05-22",
+    "type": "chore",
+    "scope": "dashboard",
+    "description": "Linear Midnight design system overhaul on dashboard CSS (scope creep in WS-4, confirmed non-breaking by holistic reviewer). Design token sweep across tokens.css, global.css, Header.css, Sidebar.css, Shell.css and all component CSS files: replaced purple-magenta brand gradient with Linear's Midnight palette (pitch-black base, neon-lime accent --color-accent, aether-blue syntax highlight); glassmorphism surfaces flattened to solid layered backgrounds; Inter variable font added via Google Fonts CDN with font-weight 510/590 (graceful fallback to 500/600 if not loaded); 193 token reference changes across 22 files. Legacy --glass-* and --color-brand-* variables preserved for backward compatibility. Build: 4.89s.",
+    "breaking": false
+  },
+  {
+    "date": "2026-05-22",
+    "type": "feat",
+    "scope": "agents",
+    "description": "Update dreamcontext-explore and dreamcontext-initializer agent prompts to stop referencing legacy 5.data_structures.sql; now point to core/data-structures/<product>.md (or default.md for single-product projects). Both files mirrored to agents/ and .codex/agents/prompts/ and their .toml configs bumped.",
+    "breaking": false
+  },
+  {
     "date": "2026-05-10",
     "type": "refactor",
     "scope": "sleep",

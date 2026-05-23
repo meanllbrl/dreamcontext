@@ -9,12 +9,15 @@
   },
   "dependencies": {
     "@tanstack/react-query": "^5.64.0",
+    "@types/three": "^0.184.1",
     "marked": "^15.0.0",
     "mermaid": "^11.14.0",
     "panzoom": "^9.4.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "react-force-graph-2d": "^1.29.1"
+    "react-force-graph-2d": "^1.29.1",
+    "react-force-graph-3d": "^1.29.1",
+    "three": "^0.184.0"
   },
   "devDependencies": {
     "@types/react": "^19.0.0",

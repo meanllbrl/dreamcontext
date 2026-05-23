@@ -1,11 +1,9 @@
 .sidebar {
   width: var(--sidebar-width);
   height: calc(100vh - var(--header-height));
-  border-right: 1px solid var(--glass-border);
-  background: var(--glass-bg);
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
-  padding: var(--space-3);
+  border-right: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  padding: var(--space-2);
   overflow-y: auto;
   flex-shrink: 0;
 }
@@ -13,21 +11,28 @@
 .sidebar-nav {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: 2px;
 }
 
 .sidebar-item {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-2);
   width: 100%;
-  padding: var(--space-2) var(--space-3);
+  padding: 6px var(--space-3);
   border-radius: var(--radius-md);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
+  line-height: 1.2;
   color: var(--color-text-secondary);
-  transition: background var(--transition-fast), color var(--transition-fast);
+  background: transparent;
+  border: none;
+  cursor: pointer;
   text-align: left;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
 }
 
 .sidebar-item:hover {
@@ -36,29 +41,42 @@
 }
 
 .sidebar-item--active {
-  background: var(--gradient-brand-subtle);
-  color: var(--color-brand-vivid);
-  box-shadow: inset 3px 0 0 0 var(--color-brand-vivid);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+  font-weight: var(--font-weight-semibold);
 }
 
-[data-theme='dark'] .sidebar-item--active {
-  color: var(--color-brand-hot);
+.sidebar-item--active::before {
+  content: '';
+  position: absolute;
+  left: -2px;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  border-radius: var(--radius-full);
+  background: var(--color-accent);
 }
 
-.sidebar-item:hover .sidebar-icon {
-  transform: scale(1.15) rotate(-5deg);
+.sidebar-item--active .sidebar-icon {
+  color: var(--color-accent);
 }
 
 .sidebar-icon {
-  font-size: var(--font-size-lg);
-  width: 24px;
+  font-size: var(--font-size-base);
+  width: 18px;
   text-align: center;
   flex-shrink: 0;
-  transition: transform var(--transition-bounce);
+  color: var(--color-text-tertiary);
+  transition: color var(--transition-fast);
+}
+
+.sidebar-item:hover .sidebar-icon {
+  color: var(--color-text);
 }
 
 .sidebar-label {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  letter-spacing: var(--letter-spacing-body);
 }

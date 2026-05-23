@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import { registerInitCommand } from './commands/init.js';
+import { registerSetupCommand } from './commands/setup.js';
 import { registerCoreCommand } from './commands/core.js';
 import { registerFeaturesCommand } from './commands/features.js';
 import { registerKnowledgeCommand } from './commands/knowledge.js';
@@ -18,6 +19,7 @@ import { registerTriggerCommand } from './commands/trigger.js';
 import { registerTranscriptCommand } from './commands/transcript.js';
 import { registerCouncilCommand } from './commands/council.js';
 import { registerMarketingCommand } from './commands/marketing.js';
+import { registerMemoryCommand } from './commands/memory.js';
 import { startInteractive } from './interactive.js';
 import { renderBanner } from '../lib/pixel-banner.js';
 
@@ -42,16 +44,18 @@ function getBanner(): string {
 
 const HELP_GROUPS = `
 ${chalk.bold('Setup')}
-  ${chalk.magentaBright('init')}              Initialize _dream_context/ in your project
-  ${chalk.magentaBright('install-skill')}     Install skill + agents + optional packs for selected platforms
-  ${chalk.magentaBright('install-instructions')} Install managed root instruction files (CLAUDE.md / AGENTS.md)
-  ${chalk.magentaBright('install-claude-md')} Legacy alias for CLAUDE.md-only install
+  ${chalk.magentaBright('setup')}             One-shot: init + install-skill + install-instructions
+  ${chalk.magentaBright('init')}              ${chalk.dim('(deprecated)')} Initialize _dream_context/ in your project
+  ${chalk.magentaBright('install-skill')}     ${chalk.dim('(deprecated)')} Install skill + agents + optional packs
+  ${chalk.magentaBright('install-instructions')} ${chalk.dim('(deprecated)')} Install managed root instruction files
+  ${chalk.magentaBright('install-claude-md')} ${chalk.dim('(deprecated)')} Legacy alias for CLAUDE.md install
   ${chalk.magentaBright('update')}            Refresh installed skill, agents, hooks, packs, and root instructions
 
 ${chalk.bold('Content')}
   ${chalk.magentaBright('core')}              Add changelog and release entries
   ${chalk.magentaBright('features')}          Create features and insert into sections
   ${chalk.magentaBright('knowledge')}         Create and index knowledge files
+  ${chalk.magentaBright('memory')}            Recall facts via BM25 search over the project corpus
   ${chalk.magentaBright('tasks')}             Create tasks, log progress, and mark complete
   ${chalk.magentaBright('bookmark')}          Tag important moments for consolidation
   ${chalk.magentaBright('trigger')}           Manage contextual reminders (prospective memory)
@@ -84,6 +88,7 @@ export function createProgram(): Command {
       showGlobalOptions: false,
     });
 
+  registerSetupCommand(program);
   registerInitCommand(program);
   registerCoreCommand(program);
   registerFeaturesCommand(program);
@@ -103,6 +108,7 @@ export function createProgram(): Command {
   registerTranscriptCommand(program);
   registerCouncilCommand(program);
   registerMarketingCommand(program);
+  registerMemoryCommand(program);
 
   return program;
 }

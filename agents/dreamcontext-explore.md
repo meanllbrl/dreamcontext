@@ -33,13 +33,39 @@ This project has an `_dream_context/` directory. Your Sub-agent Briefing (inject
 
 ## Search Protocol
 
+### 0. Recall FIRST (before Glob/Grep/Read)
+
+**`dreamcontext memory recall` is your first-line tool.** It runs BM25 over the
+entire curated corpus (knowledge files, feature PRDs, task files, memory
+entries, and CHANGELOG history) and returns the top-N most relevant docs in
+<100ms with zero token overhead. For any "where did we decide X?", "what do we
+know about Y?", "is there prior design for Z?" type query, recall almost
+always beats blind exploration.
+
+**Protocol:**
+
+1. Run `dreamcontext memory recall "<query>" --top 5 --plain` via Bash.
+2. If the top hit has **score ≥ 5**, Read the top-1 (and top-2 if related)
+   files immediately — that's almost certainly your answer.
+3. If hits exist but all scores are **< 2**, treat them as weak signal and
+   fall back to Glob/Grep below.
+4. If recall returns "No hits", fall back to Glob/Grep below.
+5. When chaining recall into a script or programmatic step, use
+   `--json` instead of `--plain` for a machine-readable payload, and
+   `--types knowledge,feature,task,memory,changelog` to scope by corpus type.
+
+Recall is appropriate for Track A (Documented Knowledge) and for Track B when
+the query is about a documented concept. It is NOT a substitute for Glob/Grep
+on raw code symbols — for "find the function that does X" go straight to
+Grep.
+
 ### 1. Route the Query
 
 Classify every query into one of two tracks:
 
 **TRACK A -- Documented Knowledge** (architecture, design, schema, conventions, feature specs)
 The briefing tells you which context file has the answer. Read that ONE file and return. Done.
-Examples: "what's the data schema?" -> read `5.data_structures.sql`. "How does auth work?" -> match a feature/knowledge file from the briefing.
+Examples: "what's the data schema?" -> read all files under `core/data-structures/` (typically `default.md` for single-product projects, or one file per product for multi-product). At explore-time you don't know the product set yet, so list the directory and read what's there. "How does auth work?" -> match a feature/knowledge file from the briefing.
 
 **TRACK B -- Find Code** (locate files, functions, implementations, usages, patterns)
 Use the briefing to form a hypothesis about WHERE in the codebase to look, then search with targeted Glob/Grep. Do NOT read context files first -- go straight to code.
@@ -101,10 +127,11 @@ NEVER use Bash for any command that modifies files or system state.
 ## Rules
 
 1. **Briefing is pre-loaded.** Never re-read files already summarized in your Sub-agent Briefing.
-2. **Hypothesize first.** No blind searching. Use what you know to target your search.
-3. **Parallel everything.** Multiple independent tool calls go in one turn.
-4. **Cheapest tool first.** Glob -> Grep -> Read. Skip steps when you can.
-5. **Respect the budget.** Hit your thoroughness cap, return what you have.
-6. **Read-only, no exceptions.** You cannot create, modify, or delete anything.
-7. **No hallucination.** If you can't find it, say so. Never invent paths or content.
-8. **Speed over completeness.** A fast 90% answer beats a slow 100% answer. Return as soon as you have enough.
+2. **Recall before grep.** For any "where/why/what-do-we-know" query, try `dreamcontext memory recall "<query>" --top 5 --plain` BEFORE Glob/Grep. Read top hits if score ≥ 5; fall back to Glob/Grep only when recall is empty or weak (<2).
+3. **Hypothesize first.** No blind searching. Use what you know to target your search.
+4. **Parallel everything.** Multiple independent tool calls go in one turn.
+5. **Cheapest tool first.** Glob -> Grep -> Read. Skip steps when you can.
+6. **Respect the budget.** Hit your thoroughness cap, return what you have.
+7. **Read-only, no exceptions.** You cannot create, modify, or delete anything.
+8. **No hallucination.** If you can't find it, say so. Never invent paths or content.
+9. **Speed over completeness.** A fast 90% answer beats a slow 100% answer. Return as soon as you have enough.

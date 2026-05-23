@@ -17,6 +17,7 @@ export interface GraphSettings {
   };
   groups: GraphColorGroup[];
   display: {
+    view: '2d' | '3d';
     arrows: boolean;
     textFadeThreshold: number; // 0..1
     nodeSize: number; // 0..1 (1 = default, higher = bigger)
@@ -40,6 +41,7 @@ export const DEFAULT_SETTINGS: GraphSettings = {
   },
   groups: [],
   display: {
+    view: '2d',
     arrows: false,
     textFadeThreshold: 0.85, // default: labels always visible
     nodeSize: 0.5,

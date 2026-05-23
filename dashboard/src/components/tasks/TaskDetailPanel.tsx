@@ -6,29 +6,13 @@ import type { Task, RiceFields, RiceInput } from '../../hooks/useTasks';
 import { useUpdateTask, useAddTaskChangelog } from '../../hooks/useTasks';
 import { usePlanningVersions } from '../../hooks/useVersions';
 import { useI18n } from '../../context/I18nContext';
+import { useTheme } from '../../context/ThemeContext';
+import { tagHue } from '../../lib/tagColor';
+import { initMermaid, normalizeMermaidSvg } from '../../lib/mermaidRender';
 import './TaskDetailPanel.css';
 
 marked.setOptions({ gfm: true, breaks: true });
 
-let mermaidInited = false;
-function ensureMermaid() {
-  if (mermaidInited) return;
-  const isDark =
-    typeof window !== 'undefined' &&
-    window.matchMedia?.('(prefers-color-scheme: dark)').matches;
-  mermaid.initialize({
-    startOnLoad: false,
-    theme: isDark ? 'dark' : 'default',
-    securityLevel: 'strict',
-    flowchart: {
-      htmlLabels: true,
-      curve: 'basis',
-      nodeSpacing: 40,
-      rankSpacing: 60,
-    },
-  });
-  mermaidInited = true;
-}
 
 const CLOSE_FOR: Record<string, string> = { '[': ']', '(': ')', '{': '}' };
 
@@ -89,6 +73,132 @@ function quoteLabelsInLine(line: string): string {
 
 function sanitizeMermaid(src: string): string {
   return src.split('\n').map(quoteLabelsInLine).join('\n');
+}
+
+/* ---------------------------------------------------------------------------
+ * Acceptance-criteria <-> mermaid sync
+ *
+ * Convention:
+ *   - An acceptance criterion line in markdown ends with `<!-- node:<id> -->`.
+ *   - The mermaid block uses node IDs matching those `<id>` values.
+ *   - Toggling a checkbox finds the corresponding mermaid node and rewrites
+ *     its trailing `:::done|:::todo|:::active|:::blocked` class:
+ *       - unchecked  -> `:::todo`
+ *       - checked    -> `:::done`
+ *     (`:::active` / `:::blocked` are not auto-detected; manual edits in the
+ *      markdown source are preserved if the toggled checkbox doesn't reference
+ *      them.)
+ *
+ * Example:
+ *
+ *   - [ ] Wire up auth <!-- node:step1 -->
+ *
+ *   ```mermaid
+ *   flowchart TD
+ *     step1[Auth]:::todo --> step2[Dashboard]
+ *   ```
+ *
+ *   Checking the box rewrites `step1[Auth]:::todo` -> `step1[Auth]:::done`
+ *   and flips the markdown line to `- [x]` in the same PATCH.
+ *
+ * Reverse direction (mermaid click -> checkbox) is intentionally NOT
+ * implemented yet; mermaid's strict securityLevel disables `click` handlers
+ * and binding them via the rendered SVG requires a non-trivial amount of code.
+ * Treat this as future work.
+ * ------------------------------------------------------------------------- */
+
+const CHECKBOX_LINE_RE = /^(\s*[-*+]\s+)\[( |x|X)\](\s+)(.*)$/;
+
+/** Toggle the Nth markdown checkbox line. Returns null if index out of bounds. */
+function toggleCheckboxLine(body: string, index: number, checked: boolean): { body: string; nodeId: string | null } | null {
+  const lines = body.split('\n');
+  let count = 0;
+  let inFence = false;
+  let fenceChar = '';
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    // Track fenced code blocks so we ignore checkboxes inside them.
+    const fenceMatch = /^(\s*)(```|~~~)/.exec(line);
+    if (fenceMatch) {
+      if (!inFence) {
+        inFence = true;
+        fenceChar = fenceMatch[2];
+      } else if (line.includes(fenceChar)) {
+        inFence = false;
+        fenceChar = '';
+      }
+      continue;
+    }
+    if (inFence) continue;
+    const m = CHECKBOX_LINE_RE.exec(line);
+    if (!m) continue;
+    if (count === index) {
+      const [, prefix, , spacing, rest] = m;
+      const newBox = checked ? '[x]' : '[ ]';
+      lines[i] = `${prefix}${newBox}${spacing}${rest}`;
+      const nodeMatch = /<!--\s*node:([A-Za-z0-9_-]+)\s*-->/.exec(rest);
+      return {
+        body: lines.join('\n'),
+        nodeId: nodeMatch ? nodeMatch[1] : null,
+      };
+    }
+    count++;
+  }
+  return null;
+}
+
+/**
+ * In every ```mermaid``` fenced block of `body`, find lines that contain
+ * `nodeId` (as a whole word, not a substring) and rewrite the trailing
+ * `:::status` class to `:::done` or `:::todo`. If no class is present, append
+ * one. Lines like `classDef`, `class`, `style`, `linkStyle`, `click`, and
+ * `subgraph` headers are skipped to avoid clobbering class definitions.
+ */
+// Edge-line operators in mermaid flowcharts. If a line contains any of these,
+// it's an edge (link) statement rather than a node definition, and we MUST NOT
+// rewrite `:::status` on it: e.g. `step1[A] --> step2[B]` would otherwise turn
+// into `step1:::todo --> step2:::done` which is malformed and silently flips
+// the wrong nodes. Node definitions never contain arrow operators.
+const MERMAID_EDGE_RE = /-->|---|==>|==|-\.|~~~|\.->/;
+
+function updateMermaidNodeStatus(body: string, nodeId: string, checked: boolean): string {
+  const status = checked ? 'done' : 'todo';
+  const escapedId = nodeId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // Match the node ID in NODE DEFINITION position only: followed by `[label]`,
+  // `(label)`, `{label}`, `:::class`, OR alone before whitespace/EOL.
+  // Anchored to start-of-line (optional indent) so we don't match the ID
+  // anywhere on a line that might also contain other tokens.
+  const nodeDefRe = new RegExp(
+    `^(\\s*)(${escapedId})((?:\\[[^\\]]*\\]|\\([^)]*\\)|\\{[^}]*\\})?)(\\s*:::(?:done|todo|active|blocked)\\b)?\\s*$`,
+  );
+  const lines = body.split('\n');
+  let inMermaid = false;
+  let fenceChar = '';
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!inMermaid) {
+      const open = /^(\s*)(```|~~~)\s*mermaid\b/i.exec(line);
+      if (open) {
+        inMermaid = true;
+        fenceChar = open[2];
+      }
+      continue;
+    }
+    if (line.trim().startsWith(fenceChar)) {
+      inMermaid = false;
+      fenceChar = '';
+      continue;
+    }
+    // Skip lines that wouldn't be a node definition / usage in flowchart.
+    if (/^\s*(classDef|class|style|linkStyle|click|subgraph|end)\b/.test(line)) continue;
+    // Skip edge lines entirely — node definitions never have arrows.
+    if (MERMAID_EDGE_RE.test(line)) continue;
+    const m = nodeDefRe.exec(line);
+    if (!m) continue;
+    const [, indent, id, label] = m;
+    lines[i] = `${indent}${id}${label ?? ''}:::${status}`;
+  }
+  return lines.join('\n');
 }
 
 interface TaskDetailPanelProps {
@@ -248,12 +358,14 @@ function ExpandableText({ text }: { text: string }) {
 
 export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDetailPanelProps) {
   const { t } = useI18n();
+  const { resolved: theme } = useTheme();
   const updateTask = useUpdateTask();
   const addChangelog = useAddTaskChangelog();
   const { data: versions } = usePlanningVersions();
   const [changelogEntry, setChangelogEntry] = useState('');
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [riceExpanded, setRiceExpanded] = useState(initialRiceExpanded ?? !!task.rice);
+  const [fullScreen, setFullScreen] = useState(false);
 
   const onMutationError = (err: Error) => {
     setMutationError(err.message);
@@ -310,61 +422,173 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
   }, [task.body]);
 
   const bodyRef = useRef<HTMLDivElement>(null);
+  // bodySourceRef: last known SERVER body. Updated whenever the task prop
+  // changes (i.e. after a successful PATCH + React Query invalidation).
+  // Used as the rollback target if a PATCH fails.
+  const bodySourceRef = useRef(task.body ?? '');
+  // pendingBodyRef: optimistic body that successive checkbox toggles compute
+  // against. Updated SYNCHRONOUSLY in onChange before the PATCH fires so that
+  // rapid clicks on different checkboxes don't each compute from the same
+  // pre-PATCH server snapshot (which would silently overwrite earlier toggles
+  // once the later PATCH resolved).
+  const pendingBodyRef = useRef<string>(task.body ?? '');
+  useEffect(() => {
+    // Server response arrived: refresh both refs to the fresh body.
+    bodySourceRef.current = task.body ?? '';
+    pendingBodyRef.current = task.body ?? '';
+  }, [task.body]);
+
+  // Stable refs to the latest mutation + error handler so the long-lived
+  // 'change' listener never holds stale closures over them. We update these
+  // every render (cheap) and the listener reads `.current` at event time.
+  const updateTaskRef = useRef(updateTask);
+  const onMutationErrorRef = useRef(onMutationError);
+  useEffect(() => {
+    updateTaskRef.current = updateTask;
+    onMutationErrorRef.current = onMutationError;
+  });
+
+  // Enable inline acceptance-criterion checkboxes + delegate change events.
+  // marked emits `<input type="checkbox" disabled>` for `- [ ]` / `- [x]`
+  // task list items; we strip the disabled attr and index each input so we
+  // can map a click back to the Nth checkbox in the markdown source.
+  useEffect(() => {
+    const root = bodyRef.current;
+    if (!root || !bodyHtml) return;
+
+    const inputs = root.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
+    inputs.forEach((el, i) => {
+      el.removeAttribute('disabled');
+      el.dataset.criterionIndex = String(i);
+    });
+
+    const onChange = (e: Event) => {
+      const target = e.target as HTMLInputElement;
+      if (!(target instanceof HTMLInputElement) || target.type !== 'checkbox') return;
+      const indexAttr = target.dataset.criterionIndex;
+      if (indexAttr === undefined) return;
+      const index = Number(indexAttr);
+      const checked = target.checked;
+      // Read from pendingBodyRef (optimistic, latest in-flight body) NOT
+      // bodySourceRef. This avoids a race where a second toggle computes from
+      // the pre-first-PATCH server body and silently overwrites the first
+      // toggle when its PATCH resolves later.
+      const current = pendingBodyRef.current;
+      const toggled = toggleCheckboxLine(current, index, checked);
+      if (!toggled) return;
+      let nextBody = toggled.body;
+      if (toggled.nodeId) {
+        nextBody = updateMermaidNodeStatus(nextBody, toggled.nodeId, checked);
+      }
+      if (nextBody === current) return;
+      // Commit optimistic body SYNCHRONOUSLY so the very next toggle (even if
+      // fired before this PATCH resolves) sees it.
+      pendingBodyRef.current = nextBody;
+      // Optimistic: keep DOM checked state; persist via PATCH. On error we
+      // revert the checkbox + roll pendingBodyRef back to the server source.
+      updateTaskRef.current.mutate(
+        { slug: task.slug, updates: { body: nextBody } },
+        {
+          onError: (err: Error) => {
+            target.checked = !checked;
+            pendingBodyRef.current = bodySourceRef.current;
+            onMutationErrorRef.current(err);
+          },
+        },
+      );
+    };
+
+    root.addEventListener('change', onChange);
+    return () => root.removeEventListener('change', onChange);
+  }, [bodyHtml, task.slug]);
 
   useEffect(() => {
     const root = bodyRef.current;
     if (!root || !bodyHtml) return;
-    ensureMermaid();
-
-    const blocks = root.querySelectorAll<HTMLElement>('pre > code.language-mermaid');
-    if (blocks.length === 0) return;
+    initMermaid(theme);
 
     let cancelled = false;
     const disposers: Array<() => void> = [];
+    let rendering = false;
 
-    blocks.forEach((code, i) => {
-      const pre = code.parentElement!;
-      if (pre.dataset.mermaidRendered === '1') return;
-      const source = sanitizeMermaid(code.textContent ?? '');
-      const id = `mmd-${task.slug}-${i}-${Date.now()}`;
+    const renderAll = async () => {
+      if (cancelled || rendering) return;
+      // Restore any previously-rendered mermaid wrappers to source form so a
+      // theme change triggers a fresh render with the new palette.
+      root.querySelectorAll<HTMLElement>('.mermaid-rendered').forEach((wrap) => {
+        const src = wrap.dataset.mermaidSource;
+        if (!src) return;
+        const pre = document.createElement('pre');
+        const code = document.createElement('code');
+        code.className = 'language-mermaid';
+        code.textContent = src;
+        pre.appendChild(code);
+        wrap.replaceWith(pre);
+      });
 
-      const wrap = document.createElement('div');
-      wrap.className = 'mermaid-rendered';
+      const blocks = root.querySelectorAll<HTMLElement>('pre > code.language-mermaid');
+      if (blocks.length === 0) return;
 
-      const stage = document.createElement('div');
-      stage.className = 'mermaid-stage';
-      wrap.appendChild(stage);
+      rendering = true;
+      // Tear down any prior panzoom/observer attachments before re-rendering.
+      while (disposers.length) {
+        const d = disposers.pop();
+        try { d?.(); } catch { /* noop */ }
+      }
 
-      const controls = document.createElement('div');
-      controls.className = 'mermaid-controls';
-      controls.innerHTML = `
-        <button type="button" data-act="out" title="Zoom out">−</button>
-        <button type="button" data-act="reset" title="Fit">⤢</button>
-        <button type="button" data-act="in" title="Zoom in">+</button>
-      `;
-      wrap.appendChild(controls);
+      for (let i = 0; i < blocks.length; i++) {
+        if (cancelled) break;
+        const code = blocks[i] as HTMLElement;
+        const pre = code.parentElement;
+        if (!pre) continue;
+        const source = sanitizeMermaid(code.textContent ?? '');
+        const id = `mmd-${task.slug}-${i}-${Date.now().toString(36)}`;
 
-      pre.replaceWith(wrap);
+        const wrap = document.createElement('div');
+        wrap.className = 'mermaid-rendered';
+        wrap.dataset.mermaidSource = source;
 
-      mermaid
-        .render(id, source)
-        .then(({ svg, bindFunctions }) => {
-          if (cancelled) return;
+        const stage = document.createElement('div');
+        stage.className = 'mermaid-stage';
+        wrap.appendChild(stage);
+
+        const controls = document.createElement('div');
+        controls.className = 'mermaid-controls';
+        controls.innerHTML = `
+          <button type="button" data-act="out" title="Zoom out">−</button>
+          <button type="button" data-act="reset" title="Fit">⤢</button>
+          <button type="button" data-act="in" title="Zoom in">+</button>
+        `;
+        wrap.appendChild(controls);
+
+        pre.replaceWith(wrap);
+
+        try {
+          const { svg, bindFunctions } = await mermaid.render(id, source);
+          if (cancelled) break;
           stage.innerHTML = svg;
           bindFunctions?.(stage);
           wrap.dataset.mermaidRendered = '1';
 
           const svgEl = stage.querySelector('svg') as SVGSVGElement | null;
-          if (!svgEl) return;
-          // Make svg fill the stage so panzoom transforms scale meaningfully.
+          if (!svgEl) continue;
+          normalizeMermaidSvg(svgEl);
+          // Lock SVG to its natural (viewBox) pixel size so panzoom transforms
+          // scale predictably. Mermaid emits width="100%" which competes with
+          // the panzoom transform and breaks the fit math.
+          const vb = svgEl.viewBox.baseVal;
+          const svgW = vb && vb.width > 0 ? vb.width : svgEl.getBoundingClientRect().width;
+          const svgH = vb && vb.height > 0 ? vb.height : svgEl.getBoundingClientRect().height;
+          svgEl.removeAttribute('width');
           svgEl.removeAttribute('height');
-          svgEl.style.width = '100%';
-          svgEl.style.height = '100%';
+          svgEl.style.width = `${svgW}px`;
+          svgEl.style.height = `${svgH}px`;
           svgEl.style.maxWidth = 'none';
+          svgEl.style.transformOrigin = '0 0';
 
           const pz = panzoom(svgEl, {
-            maxZoom: 8,
-            minZoom: 0.2,
+            maxZoom: 12,
+            minZoom: 0.15,
             bounds: false,
             zoomDoubleClickSpeed: 1.6,
             smoothScroll: false,
@@ -373,29 +597,74 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
           const fit = () => {
             try {
               const stageBox = stage.getBoundingClientRect();
-              const bbox = svgEl.getBBox();
-              if (bbox.width === 0 || bbox.height === 0) return;
-              const padding = 24;
+              if (stageBox.width === 0 || stageBox.height === 0) return;
+              const padding = 32;
               const scale = Math.min(
-                (stageBox.width - padding) / bbox.width,
-                (stageBox.height - padding) / bbox.height,
+                (stageBox.width - padding) / svgW,
+                (stageBox.height - padding) / svgH,
+                1,
               );
               pz.zoomAbs(0, 0, 1);
               pz.moveTo(0, 0);
-              pz.zoomAbs(stageBox.width / 2, stageBox.height / 2, scale);
+              pz.zoomAbs(0, 0, scale);
+              const tx = (stageBox.width - svgW * scale) / 2;
+              const ty = (stageBox.height - svgH * scale) / 2;
+              pz.moveTo(tx, ty);
+            } catch { /* noop */ }
+          };
+          requestAnimationFrame(() => requestAnimationFrame(fit));
+          const ro = new ResizeObserver(() => fit());
+          ro.observe(stage);
+
+          // ── Click-to-zoom on individual nodes.
+          // Animates the panzoom transform so the clicked node fills ~60% of the
+          // stage. Clicking the stage background (or the SAME node twice) fits
+          // back to the full diagram view.
+          let zoomedNode: Element | null = null;
+          const zoomToNode = (node: Element) => {
+            try {
+              const nodeRect = node.getBoundingClientRect();
+              const stageBox = stage.getBoundingClientRect();
+              if (nodeRect.width === 0) return;
+              const cx = nodeRect.left + nodeRect.width / 2 - stageBox.left;
+              const cy = nodeRect.top + nodeRect.height / 2 - stageBox.top;
+              const desiredScale = Math.min(
+                (stageBox.width * 0.6) / nodeRect.width,
+                (stageBox.height * 0.6) / nodeRect.height,
+                6,
+              );
               const t = pz.getTransform();
-              const cx = (stageBox.width - bbox.width * scale) / 2 - bbox.x * scale;
-              const cy = (stageBox.height - bbox.height * scale) / 2 - bbox.y * scale;
-              pz.moveTo(cx, cy);
-              void t;
-            } catch {
-              /* noop */
+              const mult = desiredScale / t.scale;
+              if (Math.abs(mult - 1) < 0.01) return;
+              pz.smoothZoom(cx, cy, mult);
+            } catch { /* noop */ }
+          };
+
+          const onStageClick = (e: MouseEvent) => {
+            const target = e.target as Element | null;
+            const node = target?.closest('g.node, g.cluster') ?? null;
+            if (!node) {
+              // Click on empty stage — reset to fit.
+              if (zoomedNode) { zoomedNode = null; fit(); }
+              return;
+            }
+            if (zoomedNode === node) {
+              // Second click on same node — unzoom.
+              zoomedNode = null;
+              fit();
+            } else {
+              zoomedNode = node;
+              zoomToNode(node);
             }
           };
-          // Fit after layout settles.
-          requestAnimationFrame(fit);
+          stage.addEventListener('click', onStageClick);
+          // Visual affordance: zoomable nodes get a pointer cursor.
+          svgEl.querySelectorAll<HTMLElement>('g.node, g.cluster').forEach((n) => {
+            n.style.cursor = 'zoom-in';
+          });
 
           controls.addEventListener('click', (e) => {
+            e.stopPropagation();
             const btn = (e.target as HTMLElement).closest('button');
             if (!btn) return;
             const stageBox = stage.getBoundingClientRect();
@@ -404,29 +673,75 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
             const act = btn.getAttribute('data-act');
             if (act === 'in') pz.smoothZoom(cx, cy, 1.4);
             else if (act === 'out') pz.smoothZoom(cx, cy, 1 / 1.4);
-            else if (act === 'reset') fit();
+            else if (act === 'reset') { zoomedNode = null; fit(); }
           });
 
-          disposers.push(() => pz.dispose());
-        })
-        .catch((err) => {
-          if (cancelled) return;
-          stage.innerHTML = `<pre class="mermaid-error">Mermaid render failed: ${String(err?.message ?? err)}</pre>`;
-        });
+          disposers.push(() => {
+            ro.disconnect();
+            stage.removeEventListener('click', onStageClick);
+            pz.dispose();
+          });
+        } catch (err) {
+          if (cancelled) break;
+          const msg = err instanceof Error ? err.message : String(err);
+          stage.innerHTML = `<pre class="mermaid-error">Mermaid render failed: ${msg.replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' })[c] ?? c)}</pre>`;
+        }
+      }
+      rendering = false;
+    };
+
+    // Initial render.
+    renderAll();
+
+    // Self-healing: if React re-injects bodyHtml (or HMR), raw <pre><code> may
+    // reappear without the effect re-firing. A MutationObserver triggers a
+    // re-render whenever raw mermaid code exists but no rendered SVG.
+    const observer = new MutationObserver(() => {
+      if (cancelled || rendering) return;
+      const hasRaw = root.querySelector('pre > code.language-mermaid');
+      const hasRendered = root.querySelector('.mermaid-rendered .mermaid-stage svg');
+      if (hasRaw && (!hasRendered || hasRaw)) {
+        // Only re-render if there's actually raw code waiting.
+        if (hasRaw) renderAll();
+      }
     });
+    observer.observe(root, { childList: true, subtree: true });
 
     return () => {
       cancelled = true;
-      disposers.forEach((d) => d());
+      observer.disconnect();
+      while (disposers.length) {
+        const d = disposers.pop();
+        try { d?.(); } catch { /* noop */ }
+      }
     };
-  }, [bodyHtml, task.slug]);
+  }, [bodyHtml, task.slug, theme]);
 
   return (
-    <div className="detail-overlay" onClick={onClose}>
-      <div className="detail-panel" onClick={e => e.stopPropagation()}>
+    <div className={`detail-overlay ${fullScreen ? 'detail-overlay--fullscreen' : ''}`} onClick={onClose}>
+      <div className={`detail-panel ${fullScreen ? 'detail-panel--fullscreen' : ''}`} onClick={e => e.stopPropagation()}>
         <div className="detail-header">
           <h2 className="detail-title">{task.name}</h2>
-          <button className="modal-close" onClick={onClose}>&times;</button>
+          <div className="detail-header-actions">
+            <button
+              type="button"
+              className="detail-icon-btn"
+              onClick={() => setFullScreen((v) => !v)}
+              title={fullScreen ? 'Exit full-page view' : 'Open in full page'}
+              aria-label={fullScreen ? 'Exit full-page view' : 'Open in full page'}
+            >
+              {fullScreen ? (
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M6 3v3H3M10 3v3h3M6 13v-3H3M10 13v-3h3" />
+                </svg>
+              ) : (
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 6V3h3M13 6V3h-3M3 10v3h3M13 10v3h-3" />
+                </svg>
+              )}
+            </button>
+            <button className="modal-close" onClick={onClose} aria-label="Close">&times;</button>
+          </div>
         </div>
 
         <div className="detail-body">
@@ -488,7 +803,7 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
               <PropertyRow label="Tags">
                 <div className="prop-tags">
                   {task.tags.map(tag => (
-                    <span key={tag} className="task-tag">{tag}</span>
+                    <span key={tag} className="task-tag" data-hue={tagHue(tag)}>{tag}</span>
                   ))}
                 </div>
               </PropertyRow>

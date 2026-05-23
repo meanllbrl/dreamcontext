@@ -17,7 +17,7 @@
 }
 
 .knowledge-search:focus {
-  border-color: var(--color-brand-vivid);
+  border-color: var(--color-accent);
   outline: none;
 }
 
@@ -51,8 +51,8 @@
 }
 
 .knowledge-card--active {
-  border-color: var(--color-brand-vivid);
-  box-shadow: 0 0 0 1px var(--color-brand-vivid);
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 1px var(--color-accent);
 }
 
 .knowledge-card-header {
@@ -77,11 +77,11 @@
 }
 
 .pin-btn:hover {
-  color: var(--color-brand-hot);
+  color: var(--color-accent);
 }
 
 .pin-btn--active {
-  color: var(--color-brand-hot);
+  color: var(--color-accent);
 }
 
 .knowledge-card-desc {

@@ -8,6 +8,7 @@ import { readSleepState, writeSleepState } from './sleep.js';
 import { generateSnapshot, generateSubagentBriefing } from './snapshot.js';
 import { listStaleRecs } from '../../lib/marketing/snapshot.js';
 import { isMarketingEnvPath } from '../../lib/marketing/path-guards.js';
+import { buildCorpus, bm25Search } from '../../lib/recall.js';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -610,6 +611,30 @@ export function registerHookCommand(program: Command): void {
         }
       } catch {
         // Marketing snapshot must never break the hook.
+      }
+
+      // Memory recall injection — Path A deterministic BM25 over knowledge +
+      // features + tasks + memory.md LIFO sections. ON by default. Users can
+      // opt out by setting DREAMCONTEXT_MEMORY_HOOK=0. Skipped for short prompts
+      // (under 8 chars) and weak matches (top score below 2.0) to avoid noise.
+      if (process.env.DREAMCONTEXT_MEMORY_HOOK !== '0') {
+        try {
+          const prompt = String((input as Record<string, unknown>).prompt ?? '');
+          if (prompt.trim().length >= 8) {
+            const corpus = buildCorpus(root);
+            const hits = bm25Search(prompt, corpus, 3);
+            if (hits.length > 0 && hits[0].score >= 2.0) {
+              const lines: string[] = ['', '— Memory recall (BM25, top 3) —'];
+              for (const h of hits) {
+                lines.push(`  [${h.doc.type}] ${h.doc.relPath} (score ${h.score.toFixed(2)})`);
+                if (h.doc.description) lines.push(`    ${h.doc.description}`);
+              }
+              console.log(lines.join('\n'));
+            }
+          }
+        } catch {
+          // Memory hook must never break the user prompt flow.
+        }
       }
     });
 

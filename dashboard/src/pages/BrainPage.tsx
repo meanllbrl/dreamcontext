@@ -1,5 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
+
+// Lazy-load the 3D renderer — pulls in three.js (~600KB) only on demand.
+const BrainCanvas3D = lazy(() =>
+  import('../components/brain/BrainCanvas3D').then((m) => ({ default: m.BrainCanvas3D })),
+);
 // d3-force-3d ships the same API as d3-force (forceCollide, forceX, forceY, …)
 // and is the simulation engine react-force-graph already uses under the hood.
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
@@ -51,14 +56,17 @@ const DEFAULT_GROUP_COLORS_LIGHT: Record<GraphGroup, string> = {
   tag: '#047857',
 };
 
-// Runtime node — force-graph mutates x/y/vx/vy
+// Runtime node — force-graph mutates x/y/z/vx/vy/vz
 interface RuntimeNode extends GraphNode {
   x?: number;
   y?: number;
+  z?: number;
   vx?: number;
   vy?: number;
+  vz?: number;
   fx?: number | null;
   fy?: number | null;
+  fz?: number | null;
   __inDegree?: number;
   __totalDegree?: number;
   __color?: string;
@@ -428,7 +436,7 @@ export function BrainPage({ onNavigate }: BrainPageProps) {
         {data && filteredData.nodes.length === 0 && !isLoading && (
           <div className="brain-empty">No nodes match the current filters.</div>
         )}
-        {data && filteredData.nodes.length > 0 && dims.w > 0 && (
+        {data && filteredData.nodes.length > 0 && dims.w > 0 && settings.display.view !== '3d' && (
           <ForceGraph2D<RuntimeNode, RuntimeLink>
             ref={fgRef}
             graphData={filteredData as unknown as Graph}
@@ -497,6 +505,32 @@ export function BrainPage({ onNavigate }: BrainPageProps) {
               ctx.fillText(label, node.x ?? 0, y);
             }}
           />
+        )}
+
+        {data && filteredData.nodes.length > 0 && dims.w > 0 && settings.display.view === '3d' && (
+          <Suspense fallback={<div className="brain-loading">Loading 3D engine…</div>}>
+            <BrainCanvas3D
+              graphData={filteredData}
+              width={dims.w}
+              height={dims.h}
+              isDark={isDark}
+              nodeColor={nodeColor}
+              nodeVal={nodeVal}
+              linkColor={linkColor}
+              linkWidth={linkWidth}
+              showArrows={settings.display.arrows}
+              forces={forces}
+              nodeSizeScale={nodeSizeScale}
+              isDimmed={isDimmed}
+              neighborsById={neighborsById}
+              onNodeClick={handleNodeClick}
+              onNodeHover={(n) => setHoverId(n ? n.id : null)}
+              onBackgroundClick={() => {
+                setSelectedId(null);
+                setHoverId(null);
+              }}
+            />
+          </Suspense>
         )}
 
         {/* Obsidian doesn't show a legend — colors are controlled via the Groups

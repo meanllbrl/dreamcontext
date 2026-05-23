@@ -42,7 +42,9 @@ You're optional. The main agent dispatches you when **at least one** of these si
 - A task slug matches an existing feature PRD filename.
 - `git status` shows changes under `_dream_context/core/features/`.
 - A session advanced a feature substantially (≥1 acceptance criterion newly met, new milestone).
-- A new buildable concept emerged in the session that has no PRD.
+- A new buildable concept emerged with **≥2 acceptance criteria** named anywhere in the session.
+- The user explicitly called something "a feature" or said "we should add X".
+- A task file has `feature: <slug>` frontmatter pointing to a non-existent PRD.
 - The user hint names a feature.
 
 If none apply when you start, no-op cheaply: read the brief, scan for actual signals, return a short "nothing to do" report.
@@ -127,7 +129,14 @@ dreamcontext features insert <name> constraints "<decision>"
 
 #### A4. Create a new PRD from scratch
 
-When a buildable concept exists without a PRD:
+Create a new PRD when **ANY** of:
+- (a) the session introduced a feature concept with **≥2 acceptance criteria** written down anywhere (task body, conversation summary, sleep notes); OR
+- (b) the user explicitly named something as "a feature" or "we should add X" (or equivalent intent); OR
+- (c) a task `.md` has `feature: <slug>` frontmatter pointing to a non-existent file in `core/features/`.
+
+This trigger is intentionally broad. Better to create a thin PRD that gets enriched next cycle than to leave a buildable concept undocumented.
+
+**Slug derivation.** Derive the PRD slug from the user's naming if given; otherwise use the dominant task slug from the session. Format: kebab-case, ≤40 chars.
 
 ```bash
 dreamcontext features create "<descriptive-name>"
@@ -135,13 +144,20 @@ dreamcontext features create "<descriptive-name>"
 
 Then Edit the resulting file. Required sections (look at existing PRDs for shape):
 - Frontmatter: `id`, `status` (start at `in_progress` or `planning` per current state), `created`, `updated`, `released_version: null`, `tags`, `related_tasks`.
+- Optional frontmatter `product: <name>` — see "Multi-product awareness" below.
 - `## Why` — motivation, the problem it solves, who benefits.
 - `## User Stories` — `- [ ]` for not-yet-shipped, `- [x]` for already-shipped (research what's already done).
-- `## Acceptance Criteria` — concrete, testable.
+- `## Acceptance Criteria` — concrete, testable. **MAY be empty on first creation** if the session didn't produce concrete criteria — DO NOT invent criteria. Leave the section as a single placeholder line: `- [ ] _To be defined — concept-stage PRD; refine in next session._`. The next session will fill it in. This applies especially when A4 fires on a sparse signal (e.g., the user said "we should add X" without spelling out behaviour).
 - `## Constraints & Decisions` — anything non-obvious that constrains the design.
 - `## Technical Details` — current architecture (research from code).
 
-**Don't write fiction.** If the feature is half-built, say so in `## Technical Details`. The PRD's value is current truth.
+**Don't write fiction.** If the feature is half-built, say so in `## Technical Details`. If acceptance criteria aren't grounded in the session, leave the placeholder line above — never hallucinate criteria to fill the section. The PRD's value is current truth.
+
+#### A5. Multi-product awareness
+
+If the relevant task has `product: X` in frontmatter, the PRD MAY be product-scoped:
+- Write the PRD to `core/features/<slug>.md` (single flat directory) but include `product: X` in frontmatter so dashboard/CLI filters can route it.
+- Any knowledge updates that emerge from this feature go to `_dream_context/knowledge/products/X.md` (create if missing) **in addition to or instead of** the global knowledge files. Per-product knowledge wins when the content is product-specific; global knowledge wins for cross-cutting topics.
 
 ### Pass B — Knowledge
 
@@ -161,11 +177,15 @@ For each knowledge candidate (research finding, sleep-state flag, extracted over
 
 #### B2. Create new knowledge files
 
+**Dedup pre-check.** Before creating, run `dreamcontext memory recall "<topic>" --types knowledge,feature` — if the top hit is a near-match, extend that file instead of forking the topic across two slugs.
+
 ```bash
 dreamcontext knowledge create "<descriptive-slug>" \
   --tags "<comma-separated; pull from \`dreamcontext knowledge tags\`>" \
   $([ "$PINNED" = "true" ] && echo "--pinned")
 ```
+
+For surgical frontmatter or body edits to an existing knowledge file, `dreamcontext memory update <slug> [--description|--tags|--content|--append|--pin|--unpin]` is a CLI shortcut over hand-editing; use it for single-field changes (e.g., flipping `pinned`, retagging, appending a follow-up section). Prefer Edit when restructuring the file body.
 
 Then Edit the body. Standard sections:
 - **Why this exists** (1–2 sentences)
@@ -188,6 +208,27 @@ dreamcontext knowledge index --plain
 ```
 
 After your edits, the index should reflect what changed. If a file is missing unexpectedly, it likely has malformed frontmatter — fix.
+
+#### B5. Per-product knowledge stubs
+
+Read `_dream_context/state/.config.json` (if it exists). For each product listed in `multiProduct`, ensure `_dream_context/knowledge/products/<name>.md` exists. If missing, create a stub with frontmatter:
+
+```yaml
+---
+name: <name>
+description: Product knowledge for <name>
+type: knowledge
+product: <name>
+tags:
+  - product:<name>
+---
+
+# <name>
+
+Product-scoped knowledge. Cross-cutting findings still go to top-level `knowledge/`.
+```
+
+This is a one-time bootstrap per product; once the file exists, treat it like any other knowledge file (edit on demand, don't recreate).
 
 ## Return — single combined report
 

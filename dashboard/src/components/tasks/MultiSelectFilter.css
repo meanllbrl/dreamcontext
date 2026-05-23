@@ -21,7 +21,7 @@
 }
 
 .multi-select-search:focus {
-  border-color: var(--color-brand-vivid);
+  border-color: var(--color-accent);
 }
 
 .multi-select-options {
@@ -57,7 +57,7 @@
 }
 
 .multi-select-action:hover {
-  color: var(--color-brand-vivid);
+  color: var(--color-accent);
   background: var(--color-bg-secondary);
 }
 
@@ -80,7 +80,7 @@
 }
 
 .multi-select-option input[type="checkbox"] {
-  accent-color: var(--color-brand-vivid);
+  accent-color: var(--color-accent);
   width: 14px;
   height: 14px;
   flex-shrink: 0;

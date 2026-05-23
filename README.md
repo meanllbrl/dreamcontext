@@ -15,6 +15,7 @@
   <a href="#quick-start">Quick Start</a> &nbsp;&middot;&nbsp;
   <a href="#dashboard">Dashboard</a> &nbsp;&middot;&nbsp;
   <a href="#council">Council</a> &nbsp;&middot;&nbsp;
+  <a href="#memory-recall">Memory Recall</a> &nbsp;&middot;&nbsp;
   <a href="#commands">Commands</a> &nbsp;&middot;&nbsp;
   <a href="DEEP-DIVE.md">Deep Dive</a>
 </p>
@@ -291,6 +292,34 @@ Each debate stores its state in `_dream_context/council/<id>/` with `debate.md`,
 
 Ships with two sub-agents (`council-persona`, `council-synthesizer`) and a dedicated skill pack at `skill-packs/council/`.
 
+## Memory Recall
+
+Recall and remember across your project's curated context. BM25 ranking over knowledge files, feature PRDs, task files, `2.memory.md` sections, and `CHANGELOG.json` entries — deterministic, instant, no setup.
+
+```bash
+# Ask a question, get top-5 hits with snippets
+dreamcontext memory recall "how did we decide on the sleep fan-out"
+
+# Filter by corpus type (knowledge | feature | task | memory | changelog)
+dreamcontext memory recall "auth flow" --types knowledge,feature
+dreamcontext memory recall "deprecated" --types changelog
+
+# Machine-readable output for scripts
+dreamcontext memory recall "rice prioritization" --json --top 3
+
+# Quick-capture a decision or note — writes a CHANGELOG entry (type=note, scope=quick)
+dreamcontext memory remember "Chose BM25 over mem0 after 3-reviewer review"
+
+# Inspect the corpus
+dreamcontext memory status
+```
+
+**Why not a vector DB or mem0.** dreamcontext content is already curated atomic facts — knowledge docs, feature PRDs, closed tasks, memory entries, CHANGELOG entries. The LLM-extraction step a mem0-style stack provides solves a problem this system already solved. BM25 over the live corpus gives ~80% of the value at 1% of the complexity: zero new npm dependencies, no Python, no Ollama, no API keys, no embeddings to invalidate, version-controllable. Cold start is under 100ms on a 40-doc corpus; the index is rebuilt in memory on every call.
+
+Hook injection is **ON by default**: top hits are auto-surfaced to the agent on every non-trivial user prompt via the UserPromptSubmit hook. Opt out with `DREAMCONTEXT_MEMORY_HOOK=0` if you want raw prompts without context augmentation.
+
+**Recent CHANGELOG in the snapshot is tiered**: top 3 entries detailed (summary + ~300 char body), next 10 titles-only under an "Older" subheading. Everything older still lives in `CHANGELOG.json` and is reachable through `memory recall --types changelog`.
+
 ## Commands
 
 ### Core
@@ -339,6 +368,28 @@ dreamcontext knowledge touch <slug>       # Record access (staleness tracking)
 ```
 
 Set `pinned: true` in frontmatter to auto-load a knowledge file in every snapshot. Knowledge files not accessed in 30+ days are flagged as stale. Recently accessed files appear in a "warm knowledge" tier with first-paragraph previews.
+
+### Memory
+
+```bash
+dreamcontext memory recall <query...>                # BM25 search over knowledge + features + tasks + memory + changelog
+dreamcontext memory recall <query...> --top 10       # Number of hits (1-50, default 5)
+dreamcontext memory recall <query...> --types knowledge,task,changelog
+dreamcontext memory recall <query...> --json         # Machine-readable
+dreamcontext memory recall <query...> --plain        # No ANSI colors
+dreamcontext memory remember "<text>"                # Writes a CHANGELOG entry (type=note, scope=quick by default)
+dreamcontext memory remember "<text>" --type fix --scope api --summary "..." --references commit:abc,task:auth-refactor
+dreamcontext memory update <slug> --description "..." --tags a,b --append "..."
+dreamcontext memory update <slug> --pin              # or --unpin
+dreamcontext memory delete <slug> --force
+dreamcontext memory list                              # List indexed docs
+dreamcontext memory list --types feature,task
+dreamcontext memory status                           # Corpus stats by type
+```
+
+`memory remember` writes a CHANGELOG entry instead of appending to a LIFO section in `2.memory.md` (the LIFO section was removed in 2026-05-23 — `2.memory.md` now holds Decisions + Known Issues only). The new CHANGELOG schema supports optional `summary` (≤200 char soft cap), `references[]` (prefixed: `commit:|file:|knowledge:|feature:|task:|url:`), and `supersedes` (entry-id pointer).
+
+Recall has no setup step — no init, no daemon, no API keys. The corpus is rebuilt in memory on every call (under 100ms on a 40-doc corpus). UserPromptSubmit hook injection of top hits is **ON by default**; set `DREAMCONTEXT_MEMORY_HOOK=0` to opt out.
 
 ### Bookmarks
 

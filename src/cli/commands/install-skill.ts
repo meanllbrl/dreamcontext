@@ -19,6 +19,18 @@ import {
   getPlatformDefaultsPath,
 } from '../../lib/platform-defaults.js';
 import { installInstructions } from './install-claude-md.js';
+import {
+  readManifest,
+  writeManifest,
+  recordFile,
+  recordPack,
+  recordPlatform,
+  emptyManifest,
+  dreamcontextVersion,
+  type Manifest,
+  type ManagedFileKind,
+} from '../../lib/manifest.js';
+import { updateSetupConfig } from '../../lib/setup-config.js';
 
 // ─── Hook Constants (Claude) ───────────────────────────────────────────────
 
@@ -464,6 +476,23 @@ function installAgentForPlatform(
   return writeCodexAgent(projectRoot, agentPath);
 }
 
+// ─── Manifest Helpers ───────────────────────────────────────────────────────
+
+export function getOrCreateManifest(projectRoot: string): Manifest {
+  const existing = readManifest(projectRoot);
+  if (existing) return existing;
+  return emptyManifest();
+}
+
+function recordIfManifest(
+  manifest: Manifest | undefined,
+  relPath: string,
+  kind: ManagedFileKind,
+): void {
+  if (!manifest) return;
+  recordFile(manifest, relPath, dreamcontextVersion(), kind);
+}
+
 // ─── Pack Installation Logic ────────────────────────────────────────────────
 
 function installPackFiles(
@@ -472,17 +501,22 @@ function installPackFiles(
   projectRoot: string,
   catalog: Catalog,
   platform: PlatformId,
+  manifest?: Manifest,
 ): string[] {
   const installed: string[] = [];
   const packSourceDir = join(packsDir, pack.name);
-  const skillDestDir = join(platformSkillRoot(projectRoot, platform), pack.name);
+  const skillRoot = platformSkillRoot(projectRoot, platform);
+  const skillDestDir = join(skillRoot, pack.name);
+  const skillRootRel = skillRoot.replace(projectRoot + '/', '');
 
   // Install base SKILL.md
   const baseSrc = join(packSourceDir, 'SKILL.md');
   if (existsSync(baseSrc)) {
     mkdirSync(skillDestDir, { recursive: true });
     writeFileSync(join(skillDestDir, 'SKILL.md'), readFileSync(baseSrc, 'utf-8'), 'utf-8');
-    installed.push(platformPrefixed(platform, `${platformSkillRoot(projectRoot, platform).replace(projectRoot + '/', '')}/${pack.name}/SKILL.md`));
+    const rel = `${skillRootRel}/${pack.name}/SKILL.md`;
+    recordIfManifest(manifest, rel, 'pack-skill');
+    installed.push(platformPrefixed(platform, rel));
   }
 
   // Install sub-skills
@@ -493,11 +527,10 @@ function installPackFiles(
     const subDest = join(skillDestDir, sub.file);
     mkdirSync(dirname(subDest), { recursive: true });
     writeFileSync(subDest, readFileSync(subSrc, 'utf-8'), 'utf-8');
+    const subRel = `${skillRootRel}/${pack.name}/${sub.file}`;
+    recordIfManifest(manifest, subRel, 'pack-skill');
 
-    let label = platformPrefixed(
-      platform,
-      `${platformSkillRoot(projectRoot, platform).replace(projectRoot + '/', '')}/${pack.name}/${sub.file}`,
-    );
+    let label = platformPrefixed(platform, subRel);
 
     // Copy references/ directory if present
     if (sub.hasReferences) {
@@ -505,8 +538,12 @@ function installPackFiles(
       if (existsSync(refSrcDir)) {
         const refDestDir = join(dirname(subDest), 'references');
         cpSync(refSrcDir, refDestDir, { recursive: true });
-        const refCount = readdirSync(refSrcDir).filter((f) => f.endsWith('.md')).length;
-        label += chalk.dim(` (+ ${refCount} references)`);
+        const refFiles = readdirSync(refSrcDir).filter((f) => f.endsWith('.md'));
+        for (const rf of refFiles) {
+          const refRel = `${skillRootRel}/${pack.name}/${dirname(sub.file) === '.' ? '' : dirname(sub.file) + '/'}references/${rf}`;
+          recordIfManifest(manifest, refRel, 'pack-skill');
+        }
+        label += chalk.dim(` (+ ${refFiles.length} references)`);
       }
     }
 
@@ -522,8 +559,14 @@ function installPackFiles(
       const agentSrc = join(packsDir, agentEntry.file);
       if (!existsSync(agentSrc)) continue;
 
-      installed.push(platformPrefixed(platform, installAgentForPlatform(platform, projectRoot, agentSrc, agentName)));
+      const agentRel = installAgentForPlatform(platform, projectRoot, agentSrc, agentName);
+      recordIfManifest(manifest, agentRel, 'pack-agent');
+      installed.push(platformPrefixed(platform, agentRel));
     }
+  }
+
+  if (manifest) {
+    recordPack(manifest, pack.name, dreamcontextVersion());
   }
 
   return installed;
@@ -534,6 +577,7 @@ function installStandaloneFiles(
   packsDir: string,
   projectRoot: string,
   platform: PlatformId,
+  manifest?: Manifest,
 ): string[] {
   const src = join(packsDir, standalone.file);
   if (!existsSync(src)) return [];
@@ -542,12 +586,19 @@ function installStandaloneFiles(
   const destDir = join(skillRoot, standalone.name);
   mkdirSync(destDir, { recursive: true });
   writeFileSync(join(destDir, 'SKILL.md'), readFileSync(src, 'utf-8'), 'utf-8');
-  return [platformPrefixed(platform, `${skillRoot.replace(projectRoot + '/', '')}/${standalone.name}/SKILL.md`)];
+  const rel = `${skillRoot.replace(projectRoot + '/', '')}/${standalone.name}/SKILL.md`;
+  recordIfManifest(manifest, rel, 'pack-skill');
+  if (manifest) recordPack(manifest, standalone.name, dreamcontextVersion());
+  return [platformPrefixed(platform, rel)];
 }
 
 // ─── Interactive Pack Browser ───────────────────────────────────────────────
 
-async function interactivePackInstall(projectRoot: string, platforms: PlatformId[]): Promise<void> {
+async function interactivePackInstall(
+  projectRoot: string,
+  platforms: PlatformId[],
+  manifest?: Manifest,
+): Promise<void> {
   const loaded = loadCatalog();
   if (!loaded) {
     error('skill-packs not found. Try reinstalling dreamcontext.');
@@ -625,7 +676,7 @@ async function interactivePackInstall(projectRoot: string, platforms: PlatformId
       console.log();
       info(`Installing ${chalk.bold(name)} pack...`);
       for (const platform of platforms) {
-        const files = installPackFiles(pack, packsDir, projectRoot, catalog, platform);
+        const files = installPackFiles(pack, packsDir, projectRoot, catalog, platform, manifest);
         allInstalled.push(...files);
       }
 
@@ -646,23 +697,32 @@ async function interactivePackInstall(projectRoot: string, platforms: PlatformId
       console.log();
       info(`Installing ${chalk.bold(name)}...`);
       for (const platform of platforms) {
-        const files = installStandaloneFiles(standalone, packsDir, projectRoot, platform);
+        const files = installStandaloneFiles(standalone, packsDir, projectRoot, platform, manifest);
         allInstalled.push(...files);
       }
     }
   }
 
+  if (manifest) writeManifest(projectRoot, manifest);
   printInstallSummary(allInstalled, warnings);
 }
 
 // ─── Direct Pack Install ────────────────────────────────────────────────────
 
-export function directPackInstall(packNames: string[], projectRoot: string, platforms: PlatformId[]): void {
+export function directPackInstall(
+  packNames: string[],
+  projectRoot: string,
+  platforms: PlatformId[],
+  manifest?: Manifest,
+): void {
   const loaded = loadCatalog();
   if (!loaded) {
     error('skill-packs not found. Try reinstalling dreamcontext.');
     return;
   }
+
+  const localManifest = manifest ?? getOrCreateManifest(projectRoot);
+  for (const platform of platforms) recordPlatform(localManifest, platform);
 
   const { catalog, packsDir } = loaded;
   const allInstalled: string[] = [];
@@ -675,7 +735,7 @@ export function directPackInstall(packNames: string[], projectRoot: string, plat
     if (pack) {
       info(`Installing ${chalk.bold(name)} pack...`);
       for (const platform of platforms) {
-        const files = installPackFiles(pack, packsDir, projectRoot, catalog, platform);
+        const files = installPackFiles(pack, packsDir, projectRoot, catalog, platform, localManifest);
         allInstalled.push(...files);
       }
 
@@ -696,7 +756,7 @@ export function directPackInstall(packNames: string[], projectRoot: string, plat
     if (standalone) {
       info(`Installing ${chalk.bold(name)}...`);
       for (const platform of platforms) {
-        const files = installStandaloneFiles(standalone, packsDir, projectRoot, platform);
+        const files = installStandaloneFiles(standalone, packsDir, projectRoot, platform, localManifest);
         allInstalled.push(...files);
       }
       continue;
@@ -709,6 +769,9 @@ export function directPackInstall(packNames: string[], projectRoot: string, plat
     ];
     error(`Pack "${name}" not found.`, `Available: ${available.join(', ')}`);
   }
+
+  // Only persist if we own the manifest (caller didn't pass one in).
+  if (!manifest) writeManifest(projectRoot, localManifest);
 
   if (allInstalled.length > 0) {
     printInstallSummary(allInstalled, warnings);
@@ -725,6 +788,8 @@ function installSingleSkill(skillName: string, projectRoot: string, platforms: P
   }
 
   const { catalog, packsDir } = loaded;
+  const manifest = getOrCreateManifest(projectRoot);
+  for (const platform of platforms) recordPlatform(manifest, platform);
 
   // Search packs for the sub-skill
   for (const pack of catalog.packs) {
@@ -748,20 +813,29 @@ function installSingleSkill(skillName: string, projectRoot: string, platforms: P
       mkdirSync(dirname(subDest), { recursive: true });
       writeFileSync(subDest, readFileSync(subSrc, 'utf-8'), 'utf-8');
 
-      let label = platformPrefixed(platform, `${skillRoot.replace(projectRoot + '/', '')}/${pack.name}/${sub.file}`);
+      const skillRootRel = skillRoot.replace(projectRoot + '/', '');
+      const subRel = `${skillRootRel}/${pack.name}/${sub.file}`;
+      recordFile(manifest, subRel, dreamcontextVersion(), 'pack-skill');
+      let label = platformPrefixed(platform, subRel);
 
       if (sub.hasReferences) {
         const refSrcDir = join(dirname(subSrc), 'references');
         if (existsSync(refSrcDir)) {
           const refDestDir = join(dirname(subDest), 'references');
           cpSync(refSrcDir, refDestDir, { recursive: true });
-          const refCount = readdirSync(refSrcDir).filter((f) => f.endsWith('.md')).length;
-          label += chalk.dim(` (+ ${refCount} references)`);
+          const refFiles = readdirSync(refSrcDir).filter((f) => f.endsWith('.md'));
+          for (const rf of refFiles) {
+            const refRel = `${skillRootRel}/${pack.name}/${dirname(sub.file) === '.' ? '' : dirname(sub.file) + '/'}references/${rf}`;
+            recordFile(manifest, refRel, dreamcontextVersion(), 'pack-skill');
+          }
+          label += chalk.dim(` (+ ${refFiles.length} references)`);
         }
       }
 
       installed.push(label);
     }
+
+    writeManifest(projectRoot, manifest);
 
     console.log();
     console.log(miniBox([
@@ -788,8 +862,9 @@ function installSingleSkill(skillName: string, projectRoot: string, platforms: P
   if (standalone) {
     const files: string[] = [];
     for (const platform of platforms) {
-      files.push(...installStandaloneFiles(standalone, packsDir, projectRoot, platform));
+      files.push(...installStandaloneFiles(standalone, packsDir, projectRoot, platform, manifest));
     }
+    writeManifest(projectRoot, manifest);
     console.log();
     console.log(miniBox([
       chalk.green.bold(`Skill "${skillName}" installed`),
@@ -889,6 +964,7 @@ function printInstallSummary(installed: string[], warnings: string[]): void {
 export async function installCoreForPlatform(
   platform: PlatformId,
   projectRoot: string,
+  manifest?: Manifest,
 ): Promise<{ installed: string[]; notes: string[] }> {
   const installed: string[] = [];
   const notes: string[] = [];
@@ -898,23 +974,31 @@ export async function installCoreForPlatform(
     throw new Error('SKILL.md not found in package. Try reinstalling dreamcontext.');
   }
 
+  if (manifest) recordPlatform(manifest, platform);
+
   const skillRoot = platformSkillRoot(projectRoot, platform);
   const skillDestDir = join(skillRoot, 'dreamcontext');
+  const skillRootRel = skillRoot.replace(projectRoot + '/', '');
   mkdirSync(skillDestDir, { recursive: true });
   writeFileSync(join(skillDestDir, 'SKILL.md'), readFileSync(skillSource, 'utf-8'), 'utf-8');
-  installed.push(platformPrefixed(platform, `${skillRoot.replace(projectRoot + '/', '')}/dreamcontext/SKILL.md`));
+  const coreSkillRel = `${skillRootRel}/dreamcontext/SKILL.md`;
+  recordIfManifest(manifest, coreSkillRel, 'core');
+  installed.push(platformPrefixed(platform, coreSkillRel));
 
   const agentsSourceDir = findPackageDir('agents');
   if (agentsSourceDir) {
     const agentFiles = readdirSync(agentsSourceDir).filter((f) => f.endsWith('.md'));
     for (const file of agentFiles) {
       const source = join(agentsSourceDir, file);
-      installed.push(platformPrefixed(platform, installAgentForPlatform(platform, projectRoot, source)));
+      const agentRel = installAgentForPlatform(platform, projectRoot, source);
+      recordIfManifest(manifest, agentRel, 'agent');
+      installed.push(platformPrefixed(platform, agentRel));
     }
   }
 
   if (platform === 'claude') {
     const hookResult = ensureClaudeHooks(projectRoot);
+    recordIfManifest(manifest, '.claude/settings.json', 'hook');
     if (hookResult.added.length > 0) {
       installed.push(platformPrefixed(platform, `.claude/settings.json ${chalk.dim(`(${hookResult.added.join(' + ')} hooks)`)}`));
     }
@@ -926,6 +1010,7 @@ export async function installCoreForPlatform(
     }
   } else {
     const codexResult = ensureCodexConfig(projectRoot);
+    recordIfManifest(manifest, '.codex/config.toml', 'hook');
     if (codexResult.updated) {
       installed.push(platformPrefixed(platform, '.codex/config.toml (managed hooks block)'));
     }
@@ -949,6 +1034,25 @@ export async function installCoreForPlatform(
 
 // ─── Command Registration ───────────────────────────────────────────────────
 
+/**
+ * When set, the install-skill / install-instructions / install-claude-md /
+ * init commands suppress their deprecation hint. The `setup` command sets
+ * this so the chained calls don't nag.
+ */
+export const SETUP_INTERNAL_ENV = 'DREAMCONTEXT_SETUP_INTERNAL';
+
+export function printDeprecationHint(commandName: string): void {
+  if (process.env[SETUP_INTERNAL_ENV] === '1') return;
+  console.log();
+  console.log(
+    chalk.magentaBright('ℹ')
+      + '  Tip: '
+      + chalk.bold('dreamcontext setup')
+      + ' runs init + install-skill + install-instructions in one step.'
+      + ` The standalone ${chalk.dim(commandName)} command will be removed in v0.5.`,
+  );
+}
+
 export function registerInstallSkillCommand(program: Command): void {
   program
     .command('install-skill')
@@ -971,28 +1075,38 @@ export function registerInstallSkillCommand(program: Command): void {
         // --skill: install a single sub-skill
         if (opts.skill) {
           installSingleSkill(opts.skill, projectRoot, platforms);
+          printDeprecationHint('install-skill');
           return;
         }
 
         // --packs: install optional skill packs
         if (opts.packs !== undefined) {
+          const manifest = getOrCreateManifest(projectRoot);
+          for (const p of platforms) recordPlatform(manifest, p);
           if (Array.isArray(opts.packs)) {
-            directPackInstall(opts.packs, projectRoot, platforms);
+            directPackInstall(opts.packs, projectRoot, platforms, manifest);
+            writeManifest(projectRoot, manifest);
+            updateSetupConfig(projectRoot, { platforms, packs: Array.from(new Set([...(opts.packs ?? [])])) });
           } else {
-            await interactivePackInstall(projectRoot, platforms);
+            await interactivePackInstall(projectRoot, platforms, manifest);
           }
+          printDeprecationHint('install-skill');
           return;
         }
 
         // Default: install core dreamcontext skill + agents + hooks for selected platforms
+        const manifest = getOrCreateManifest(projectRoot);
         const installed: string[] = [];
         const notes: string[] = [];
 
         for (const platform of platforms) {
-          const result = await installCoreForPlatform(platform, projectRoot);
+          const result = await installCoreForPlatform(platform, projectRoot, manifest);
           installed.push(...result.installed);
           notes.push(...result.notes);
         }
+
+        writeManifest(projectRoot, manifest);
+        updateSetupConfig(projectRoot, { platforms, setupVersion: dreamcontextVersion() });
 
         console.log();
         console.log(miniBox([
@@ -1011,6 +1125,8 @@ export function registerInstallSkillCommand(program: Command): void {
           console.log();
           info(`${packCount} optional skill packs available. Run: ${chalk.dim('dreamcontext install-skill --packs')}`);
         }
+
+        printDeprecationHint('install-skill');
       } catch (err: any) {
         if (err.name === 'ExitPromptError') {
           // User pressed Ctrl+C during interactive prompt

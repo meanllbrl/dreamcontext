@@ -32,11 +32,18 @@ export function registerCoreCommand(program: Command): void {
   changelog
     .command('add')
     .description('Add a changelog entry')
-    .action(async () => {
+    .option('--type <type>', 'Type (feat|fix|refactor|chore|docs|perf|test|change)')
+    .option('--scope <scope>', 'Scope (e.g., auth, ui, api)')
+    .option('--description <desc>', 'Description (long-form, full body)')
+    .option('--summary <summary>', 'Optional ≤200-char one-liner for snapshot display')
+    .option('--references <refs>', 'Optional comma-separated references (commit:<sha>, file:<path>, knowledge:<slug>, feature:<slug>, task:<slug>, url:<href>)')
+    .option('--supersedes <key>', 'Optional pointer to prior entry this supersedes (e.g., "2026-05-09|sleep")')
+    .option('--breaking', 'Mark as a breaking change', false)
+    .action(async (opts: { type?: string; scope?: string; description?: string; summary?: string; references?: string; supersedes?: string; breaking?: boolean }) => {
       const root = ensureContextRoot();
       const filePath = join(root, 'core', 'CHANGELOG.json');
 
-      const type = await select({
+      const type = opts.type ?? await select({
         message: 'Type:',
         choices: [
           { value: 'feat', name: 'feat - New feature' },
@@ -46,26 +53,50 @@ export function registerCoreCommand(program: Command): void {
           { value: 'docs', name: 'docs - Documentation' },
           { value: 'perf', name: 'perf - Performance' },
           { value: 'test', name: 'test - Tests' },
+          { value: 'change', name: 'change - Behavior change or reversal' },
         ],
       });
 
-      const scope = await input({ message: 'Scope (e.g., auth, ui, api):' });
-      const description = await input({ message: 'Description:' });
-      const breaking = await select({
-        message: 'Breaking change?',
-        choices: [
-          { value: false, name: 'No' },
-          { value: true, name: 'Yes' },
-        ],
-      });
+      const scope = opts.scope ?? await input({ message: 'Scope (e.g., auth, ui, api):' });
+      const description = opts.description ?? await input({ message: 'Description:' });
+      const summary = opts.summary;
+      if (summary && summary.length > 200) {
+        info(`Warning: summary is ${summary.length} chars (soft target ≤200). Will be stored as-is; snapshot may truncate.`);
+      }
+      const references = opts.references
+        ? opts.references.split(',').map((s) => s.trim()).filter(Boolean)
+        : undefined;
+      if (references) {
+        const validPrefixes = ['commit:', 'file:', 'knowledge:', 'feature:', 'task:', 'url:'];
+        const bad = references.filter((r) => !validPrefixes.some((p) => r.startsWith(p)));
+        if (bad.length > 0) {
+          info(`Warning: ${bad.length} reference(s) missing a known prefix (${validPrefixes.join('|')}): ${bad.join(', ')}. Stored anyway.`);
+        }
+      }
+      const supersedes = opts.supersedes ?? undefined;
+      const breaking = opts.breaking ?? (typeof opts.breaking === 'boolean'
+        ? opts.breaking
+        : await select({
+            message: 'Breaking change?',
+            choices: [
+              { value: false, name: 'No' },
+              { value: true, name: 'Yes' },
+            ],
+          })
+      );
 
-      insertToJsonArray(filePath, {
+      const entry: Record<string, unknown> = {
         date: today(),
         type,
         scope,
         description,
-        breaking,
-      });
+        breaking: !!breaking,
+      };
+      if (summary) entry.summary = summary;
+      if (references && references.length > 0) entry.references = references;
+      if (supersedes) entry.supersedes = supersedes;
+
+      insertToJsonArray(filePath, entry);
 
       success('Changelog entry added.');
     });

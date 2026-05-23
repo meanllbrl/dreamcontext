@@ -57,7 +57,7 @@ interface CreateTaskInput {
 
 interface UpdateTaskInput {
   slug: string;
-  updates: Partial<Pick<Task, 'status' | 'priority' | 'urgency' | 'description' | 'tags' | 'name' | 'related_feature' | 'version'>> & {
+  updates: Partial<Pick<Task, 'status' | 'priority' | 'urgency' | 'description' | 'tags' | 'name' | 'related_feature' | 'version' | 'body'>> & {
     rice?: RiceInput | null;
   };
 }
@@ -100,8 +100,9 @@ export function useUpdateTask() {
   return useMutation({
     mutationFn: ({ slug, updates }: UpdateTaskInput) =>
       api.patch<TaskResponse>(`/tasks/${slug}`, updates),
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      queryClient.invalidateQueries({ queryKey: ['tasks', variables.slug] });
     },
   });
 }

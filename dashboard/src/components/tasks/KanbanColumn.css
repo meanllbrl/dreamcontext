@@ -4,10 +4,8 @@
   max-width: 400px;
   display: flex;
   flex-direction: column;
-  background: var(--glass-bg);
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
-  border: 1px solid var(--glass-border);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   padding: var(--space-3);
   box-shadow: var(--shadow-md);
@@ -15,7 +13,7 @@
 }
 
 .kanban-column--dragover {
-  background: var(--gradient-brand-subtle);
+  background: var(--color-accent-soft);
 }
 
 .kanban-column-header {

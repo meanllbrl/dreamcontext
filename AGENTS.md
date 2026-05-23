@@ -24,6 +24,7 @@ This project uses **dreamcontext** — persistent memory for AI agents.
 
 - `_dream_context/` is your brain. Soul/user/memory auto-load every session via SessionStart hook. Trust the snapshot — do not re-read what is already injected.
 - Use the `dreamcontext` CLI for structured ops: `tasks create/log/complete`, `features create`, `knowledge create/touch`, `bookmark add`, `core changelog add`. Never hand-edit task/feature files.
+- **First-line lookup before Glob/Grep: `dreamcontext memory recall "<query>"`.** BM25 over knowledge + features + tasks + memory.md sections + CHANGELOG entries. Deterministic, under 100ms, no setup. Use `--types` to scope (`knowledge,feature,task,memory,changelog`), `--json` for scripted use. `memory remember "<text>"` writes a CHANGELOG entry (`type=note`, `scope=quick` by default) — no longer a LIFO append to `2.memory.md`. `memory status` shows corpus size.
 - Sleep debt is auto-tracked. When prompted, run the sleep flow per the `dreamcontext` skill (parallel fan-out: dispatch `sleep-tasks`, `sleep-state`, and conditionally `sleep-product`). Do not ignore consolidation prompts.
 - Use `dreamcontext-explore` for codebase exploration.
 - All non-trivial work needs a task. Check existing first; create if missing.

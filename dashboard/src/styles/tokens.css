@@ -1,145 +1,277 @@
+/*
+ * Design System — ClickUp (Vibrant Productivity Hub)
+ * Canvas White (#ffffff) surfaces, Midnight Charcoal (#292d34) ink,
+ * Deep Violet (#7b68ee) accent for interactive states, Dark Onyx (#202023) filled CTAs.
+ * Compact density: 12px card padding, 9px element gap.
+ * Plus Jakarta Sans for headings (negative tracking at scale), Inter for body/UI.
+ *
+ * All existing token NAMES are preserved so the 30+ component CSS files don't break;
+ * only VALUES are remapped to the ClickUp palette.
+ */
+
 :root {
-  /* ─── 4px Grid Spacing ─── */
+  /* ─── Spacing (4px grid; ClickUp: 4/8/12/16/20/24/32/40/48/52/56/60/80/100/128) ─── */
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
   --space-4: 16px;
   --space-5: 20px;
   --space-6: 24px;
+  --space-7: 28px;
   --space-8: 32px;
   --space-10: 40px;
+  --space-11: 44px;
   --space-12: 48px;
-  --space-16: 64px;
+  --space-13: 52px;
+  --space-16: 76px;
   --space-20: 80px;
+  --space-24: 120px;
+  --space-28: 144px;
 
-  /* ─── Typography ─── */
-  --font-family: 'Visby CF', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-  --font-mono: 'SF Mono', 'Fira Code', 'JetBrains Mono', monospace;
+  /* ─── Typography — ClickUp dual-stack: Plus Jakarta Sans display, Inter body ─── */
+  --font-family-display: 'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Inter Variable', 'Inter', 'Segoe UI', Roboto, sans-serif;
+  --font-family-text: 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-family: var(--font-family-text);
+  --font-mono: 'Sometype Mono', 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
   --zoom: 1;
-  --font-size-xs: calc(11px * var(--zoom));
-  --font-size-sm: calc(13px * var(--zoom));
-  --font-size-base: calc(15px * var(--zoom));
-  --font-size-lg: calc(18px * var(--zoom));
-  --font-size-xl: calc(24px * var(--zoom));
-  --font-size-2xl: calc(32px * var(--zoom));
+
+  /* ClickUp type scale: 12 / 14 / 16 / 26 / 34 / 40 / 52 / 76 */
+  --font-size-xs: calc(12px * var(--zoom));   /* caption */
+  --font-size-sm: calc(14px * var(--zoom));   /* body-sm — UI labels */
+  --font-size-base: calc(16px * var(--zoom)); /* body */
+  --font-size-lg: calc(20px * var(--zoom));   /* subheading-sm (interpolated) */
+  --font-size-xl: calc(26px * var(--zoom));   /* subheading */
+  --font-size-2xl: calc(40px * var(--zoom));  /* heading */
+  --font-size-3xl: calc(52px * var(--zoom));  /* heading-lg */
+  --font-size-display: calc(76px * var(--zoom)); /* display */
+
+  --font-weight-light: 300;
   --font-weight-normal: 400;
   --font-weight-medium: 500;
   --font-weight-semibold: 600;
   --font-weight-bold: 700;
-  --line-height-tight: 1.2;
-  --line-height-normal: 1.5;
-  --line-height-relaxed: 1.6;
 
-  /* ─── Border Radius ─── */
-  --radius-sm: 4px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
-  --radius-xl: 16px;
-  --radius-full: 9999px;
+  --line-height-display: 1.05;      /* display 76px */
+  --line-height-tight: 1.12;        /* heading-lg 52px */
+  --line-height-snug: 1.14;         /* heading 40px */
+  --line-height-heading-sm: 1.18;   /* heading-sm 34px */
+  --line-height-normal: 1.5;        /* body 16px */
+  --line-height-relaxed: 1.43;      /* body-sm */
 
-  /* ─── Brand Colors (Purple-to-Magenta) ─── */
-  --color-brand-deep: hsl(276 74% 31%);
-  --color-brand-mid: hsl(278 72% 38%);
-  --color-brand-vivid: hsl(287 100% 33%);
-  --color-brand-hot: hsl(311 97% 43%);
-  --gradient-brand: linear-gradient(135deg, hsl(287 100% 33%), hsl(311 97% 43%));
-  --gradient-brand-subtle: linear-gradient(135deg, hsl(287 100% 33% / 0.1), hsl(311 97% 43% / 0.1));
+  /* ClickUp's negative tracking scaled to size — Plus Jakarta Sans signature */
+  --letter-spacing-display: -3.8px;       /* 76px */
+  --letter-spacing-heading-lg: -1.82px;   /* 52px */
+  --letter-spacing-heading: -1.6px;       /* 40px */
+  --letter-spacing-heading-sm: -1.19px;   /* 34px */
+  --letter-spacing-subheading: -0.91px;   /* 26px */
+  --letter-spacing-tight: -0.26px;        /* legacy alias → body */
+  --letter-spacing-body: -0.26px;         /* 16px body */
+  --letter-spacing-caption: -0.14px;      /* 12px caption */
 
-  /* ─── Light Mode ─── */
-  --color-bg: hsl(0 0% 100%);
-  --color-bg-secondary: hsl(0 0% 97.5%);
-  --color-bg-tertiary: hsl(0 0% 94%);
-  --color-bg-elevated: hsl(0 0% 100%);
-  --color-text: hsl(0 0% 9%);
-  --color-text-secondary: hsl(0 0% 40%);
-  --color-text-tertiary: hsl(0 0% 55%);
-  --color-text-on-brand: hsl(0 0% 100%);
-  --color-border: hsl(0 0% 90%);
-  --color-border-hover: hsl(0 0% 78%);
-  --color-border-focus: var(--color-brand-vivid);
+  /* ─── Border Radius — ClickUp's compact-pill signature ─── */
+  --radius-sm: 6px;        /* small chip */
+  --radius-md: 9px;        /* buttons, default */
+  --radius-lg: 12px;       /* cards */
+  --radius-xl: 16px;       /* large cards */
+  --radius-2xl: 24px;      /* feature cards */
+  --radius-full: 999px;    /* pills (54px+ rounds to fully pill) */
+  --radius-nav: 9px;       /* nav items match buttons */
 
-  /* ─── Semantic Colors ─── */
+  /* ─── ClickUp Palette (raw tokens) ─── */
+  --color-ink: #292d34;            /* Midnight Charcoal — primary text */
+  --color-deep-space: #090c1d;     /* Deep Space Charcoal — display headings */
+  --color-onyx: #202023;           /* Dark Onyx — filled CTAs */
+  --color-graphite: #646464;       /* Charcoal Gray — pill text */
+  --color-smoke: #b3b3b3;          /* Smoke Gray — muted/disabled */
+  --color-ash: #e8e8e8;            /* Ash Gray — borders, dividers */
+  --color-snow: #ffffff;           /* Canvas White */
+  --color-fog: #e9ebf0;            /* Hint of Sky — alternate section bg */
+  --color-tint-blue: #edf6fd;      /* Shadow Tint Blue — focus/hover surfaces */
+  --color-deep-violet: #7b68ee;    /* primary accent */
+  --color-vivid-purple: #6647f0;
+  --color-rich-plum: #514b81;
+  --color-electric-blue: #0091ff;
+  --color-warm-coral: #ff5b36;
+  --color-obsidian: #000000;
+  --color-porcelain: #f7f8f8;
+
+  /* Legacy aliases (preserved for code preview components — map to ClickUp palette) */
+  --color-aether-blue: var(--color-electric-blue);
+  --color-azure: var(--color-electric-blue);
+  --color-cobalt-link: var(--color-deep-violet);
+  --color-emerald: hsl(142 71% 40%);
+  --color-cyan-spark: var(--color-electric-blue);
+  --color-amethyst: var(--color-deep-violet);
+  --color-caution: #ff7a00;
+  --color-silver-mist: var(--color-ash);
+  --color-slate: #474747;
+
+  /* Product finish swatches (decorative) */
+  --color-citrus-finish: #dddc8c;
+  --color-blush-finish: #e8d0d0;
+  --color-indigo-finish: #596680;
+  --color-silver-finish: #e3e4e5;
+
+  /* Decorative gradients (full-bleed backdrops only) */
+  --gradient-citrus: linear-gradient(184deg, #292d34 0%, #dfe74f 33%, #5e9c2a 66%, #0a8619 95%);
+  --gradient-indigo: linear-gradient(184deg, #292d34 20%, #a8d3fb 43%, #0012f9 76%, #2535e2 95%);
+  --gradient-blush: linear-gradient(184deg, #292d34 20%, #f3c4f6 43%, #f500b4 76%, #cc29bc 95%);
+  --gradient-warm-fade: linear-gradient(rgba(246, 233, 232, 0), rgba(255, 91, 54, 0.23));
+  --gradient-dark-onyx: linear-gradient(97deg, rgb(32, 32, 32) 43.17%, rgb(143, 143, 143) 110.86%);
+
+  /* ─── Brand (mapped to ClickUp violet + onyx CTA) ─── */
+  --color-brand-deep: var(--color-vivid-purple);
+  --color-brand-mid: var(--color-deep-violet);
+  --color-brand-vivid: var(--color-deep-violet);
+  --color-brand-hot: var(--color-electric-blue);
+  --gradient-brand: linear-gradient(135deg, #6647f0, #7b68ee);
+  --gradient-brand-subtle: linear-gradient(135deg, rgba(123, 104, 238, 0.08), rgba(0, 145, 255, 0.08));
+
+  /* ─── Surfaces — ClickUp's white-canvas layered system ─── */
+  --color-bg: var(--color-snow);               /* #ffffff page canvas */
+  --color-bg-secondary: var(--color-snow);     /* #ffffff cards */
+  --color-bg-tertiary: var(--color-fog);       /* #e9ebf0 chips / inputs on card */
+  --color-bg-elevated: var(--color-snow);      /* modals / popovers */
+
+  --color-text: var(--color-ink);              /* #292d34 primary */
+  --color-text-secondary: var(--color-graphite); /* #646464 captions — AA on white */
+  --color-text-tertiary: var(--color-slate);   /* #474747 chip/tag text — AA on hint-of-sky */
+  --color-text-on-brand: var(--color-snow);
+
+  --color-border: var(--color-ash);            /* #e8e8e8 1px dividers */
+  --color-border-hover: #d4d4d4;
+  --color-border-focus: var(--color-deep-violet);
+
+  /* ─── Accent — Deep Violet for links/active, Onyx for filled CTAs ─── */
+  --color-accent: var(--color-deep-violet);    /* #7b68ee — interactive */
+  --color-accent-text: var(--color-snow);
+  --color-accent-soft: rgba(123, 104, 238, 0.12);
+
+  /* ─── Semantic Colors (data viz) ─── */
   --color-success: hsl(142 71% 40%);
   --color-success-subtle: hsl(142 71% 95%);
-  --color-warning: hsl(38 92% 50%);
-  --color-warning-subtle: hsl(38 92% 95%);
-  --color-error: hsl(0 84% 60%);
-  --color-error-subtle: hsl(0 84% 96%);
+  --color-warning: var(--color-caution);
+  --color-warning-subtle: hsl(22 100% 95%);
+  --color-error: hsl(0 72% 51%);
+  --color-error-subtle: hsl(0 72% 96%);
 
   /* ─── Priority Colors ─── */
-  --color-priority-critical: hsl(0 84% 60%);
-  --color-priority-high: hsl(38 92% 50%);
-  --color-priority-medium: hsl(0 0% 50%);
-  --color-priority-low: hsl(0 0% 70%);
+  --color-priority-critical: hsl(0 72% 51%);
+  --color-priority-high: var(--color-caution);
+  --color-priority-medium: var(--color-graphite);
+  --color-priority-low: var(--color-smoke);
 
   /* ─── Urgency Colors ─── */
-  --color-urgency-critical: hsl(0 84% 60%);
-  --color-urgency-high: hsl(38 92% 50%);
-  --color-urgency-medium: hsl(0 0% 50%);
-  --color-urgency-low: hsl(0 0% 70%);
+  --color-urgency-critical: hsl(0 72% 51%);
+  --color-urgency-high: var(--color-caution);
+  --color-urgency-medium: var(--color-graphite);
+  --color-urgency-low: var(--color-smoke);
 
-  /* ─── Eisenhower Quadrant Colors ─── */
-  --color-quadrant-do: hsl(0 84% 60%);
-  --color-quadrant-schedule: hsl(220 90% 56%);
-  --color-quadrant-delegate: hsl(38 92% 50%);
-  --color-quadrant-eliminate: hsl(0 0% 50%);
+  /* ─── Eisenhower Quadrants ─── */
+  --color-quadrant-do: hsl(0 72% 51%);
+  --color-quadrant-schedule: var(--color-deep-violet);
+  --color-quadrant-delegate: var(--color-caution);
+  --color-quadrant-eliminate: var(--color-graphite);
 
-  /* ─── Status Colors ─── */
-  --color-status-todo: hsl(38 80% 50%);
-  --color-status-in-progress: hsl(220 90% 56%);
-  --color-status-in-review: hsl(276 70% 55%);
+  /* ─── Status Colors (workflow) ─── */
+  --color-status-todo: var(--color-caution);
+  --color-status-in-progress: var(--color-deep-violet);
+  --color-status-in-review: var(--color-vivid-purple);
   --color-status-completed: hsl(142 71% 40%);
 
-  /* ─── Shadows (Premium Depth) ─── */
-  --shadow-sm: 0 2px 4px hsl(276 20% 10% / 0.04), 0 1px 2px hsl(276 20% 10% / 0.08);
-  --shadow-md: 0 4px 12px hsl(276 20% 10% / 0.06), 0 2px 4px hsl(276 20% 10% / 0.08);
-  --shadow-lg: 0 12px 24px hsl(276 20% 10% / 0.08), 0 4px 8px hsl(276 20% 10% / 0.06);
-  --shadow-xl: 0 24px 48px hsl(276 20% 10% / 0.12), 0 12px 24px hsl(276 20% 10% / 0.08);
-  --shadow-glow: 0 0 24px hsl(287 100% 33% / 0.3);
+  /* ─── Shadows — ClickUp's subtle elevation philosophy ─── */
+  --shadow-sm: rgba(13, 21, 48, 0.04) 0px 4px 4px 0px;
+  --shadow-md: rgba(0, 0, 0, 0.1) 0px 1px 3px 0px, rgba(0, 0, 0, 0.1) 0px 1px 2px -1px;
+  --shadow-lg: rgba(18, 43, 165, 0.04) 0px 1px 1px -0.5px, rgba(18, 43, 165, 0.04) 0px 3px 3px -1.5px, rgba(18, 43, 165, 0.04) 0px 6px 6px -3px, rgba(18, 43, 165, 0.04) 0px 12px 12px -6px;
+  --shadow-xl: rgba(0, 0, 0, 0.12) 0px 12px 32px -8px, rgba(0, 0, 0, 0.06) 0px 4px 12px -4px;
+  --shadow-inset: inset 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-glow: 0 0 0 3px rgba(123, 104, 238, 0.18);
 
-  /* ─── Glassmorphism ─── */
-  --glass-bg: hsl(0 0% 100% / 0.75);
-  --glass-bg-hover: hsl(0 0% 100% / 0.85);
-  --glass-border: hsl(0 0% 100% / 0.4);
+  /* ─── Frosted overlay (floating selectors) ─── */
+  --glass-bg: rgba(255, 255, 255, 0.84);
+  --glass-bg-hover: rgba(255, 255, 255, 0.94);
+  --glass-border: rgba(232, 232, 232, 0.8);
   --glass-blur: blur(16px);
 
-  /* ─── Transitions (Sub-millisecond Easing) ─── */
-  --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
-  --transition-normal: 250ms cubic-bezier(0.4, 0, 0.2, 1);
-  --transition-slow: 400ms cubic-bezier(0.4, 0, 0.2, 1);
+  /* ─── Transitions ─── */
+  --transition-fast: 120ms ease;
+  --transition-normal: 240ms ease;
+  --transition-slow: 400ms ease;
   --transition-bounce: 500ms cubic-bezier(0.34, 1.56, 0.64, 1);
 
-  /* ─── Layout ─── */
-  --sidebar-width: 240px;
-  --header-height: 56px;
+  /* ─── Layout (compact density) ─── */
+  --sidebar-width: 220px;
+  --header-height: 52px;
+  --page-max-width: 1200px;
+  --card-padding: 12px;
 }
 
-/* ─── Dark Mode ─── */
+/* ─── Dark Mode — ClickUp doesn't ship a canonical dark, so we derive:
+   deep navy canvas → slightly lifted cards → tinted chips with high-contrast text.
+   Keep Deep Violet accent (it pops against dark). All chip/tag text must be AA on chip bg. */
 [data-theme='dark'] {
-  --color-bg: hsl(240 6% 9%);
-  --color-bg-secondary: hsl(240 5% 12%);
-  --color-bg-tertiary: hsl(240 4% 16%);
-  --color-bg-elevated: hsl(240 5% 14%);
-  --color-text: hsl(0 0% 93%);
-  --color-text-secondary: hsl(0 0% 63%);
-  --color-text-tertiary: hsl(0 0% 45%);
-  --color-border: hsl(240 4% 20%);
-  --color-border-hover: hsl(240 4% 30%);
-  --gradient-brand-subtle: linear-gradient(135deg, hsl(287 100% 33% / 0.15), hsl(311 97% 43% / 0.15));
-  --color-success-subtle: hsl(142 71% 12%);
-  --color-warning-subtle: hsl(38 80% 12%);
-  --color-error-subtle: hsl(0 84% 12%);
-  --color-error-subtle: hsl(0 84% 12%);
+  --color-bg: #14171f;                         /* deep navy canvas */
+  --color-bg-secondary: #1c1f2a;               /* card surface */
+  --color-bg-tertiary: #2a2f3d;                /* chip / tag / input on card */
+  --color-bg-elevated: #1c1f2a;                /* modals / popovers */
 
-  /* ─── Dark Mode Shadows ─── */
-  --shadow-sm: 0 2px 4px hsl(0 0% 0% / 0.3), 0 1px 2px hsl(0 0% 0% / 0.4);
-  --shadow-md: 0 4px 12px hsl(0 0% 0% / 0.4), 0 2px 4px hsl(0 0% 0% / 0.5);
-  --shadow-lg: 0 12px 24px hsl(0 0% 0% / 0.5), 0 4px 8px hsl(0 0% 0% / 0.4);
-  --shadow-xl: 0 24px 48px hsl(0 0% 0% / 0.6), 0 12px 24px hsl(0 0% 0% / 0.5);
-  --shadow-glow: 0 0 24px hsl(287 100% 33% / 0.4);
+  --color-text: #f5f6fa;                       /* primary */
+  --color-text-secondary: #c8ccd9;             /* high-contrast secondary */
+  --color-text-tertiary: #9aa0b3;              /* AA on #2a2f3d chip */
+  --color-text-on-brand: var(--color-snow);
 
-  /* ─── Dark Mode Glassmorphism ─── */
-  --glass-bg: hsl(240 5% 12% / 0.65);
-  --glass-bg-hover: hsl(240 5% 16% / 0.75);
-  --glass-border: hsl(0 0% 100% / 0.08);
+  --color-border: #2f3445;
+  --color-border-hover: #3d4358;
+  --color-border-focus: #9d8cff;
+
+  /* Deep Violet brightened a touch for dark contrast */
+  --color-accent: #9d8cff;
+  --color-accent-text: var(--color-snow);
+  --color-accent-soft: rgba(157, 140, 255, 0.18);
+
+  --gradient-brand: linear-gradient(135deg, #6647f0, #9d8cff);
+  --gradient-brand-subtle: linear-gradient(135deg, rgba(157, 140, 255, 0.16), rgba(0, 145, 255, 0.16));
+
+  /* Semantic colors lifted for dark contrast */
+  --color-success: hsl(142 71% 55%);
+  --color-success-subtle: rgba(39, 200, 90, 0.14);
+  --color-warning: #ffae3b;
+  --color-warning-subtle: rgba(255, 174, 59, 0.14);
+  --color-error: #ff5a5f;
+  --color-error-subtle: rgba(255, 90, 95, 0.14);
+  --color-caution: #ffae3b;
+
+  --color-status-todo: #ffae3b;
+  --color-status-in-progress: #9d8cff;
+  --color-status-in-review: #c4b5fd;
+  --color-status-completed: #4ade80;
+
+  --color-priority-critical: #ff5a5f;
+  --color-priority-high: #ffae3b;
+  --color-priority-medium: #c8ccd9;
+  --color-priority-low: #6e7388;
+
+  --color-urgency-critical: #ff5a5f;
+  --color-urgency-high: #ffae3b;
+  --color-urgency-medium: #c8ccd9;
+  --color-urgency-low: #6e7388;
+
+  --color-quadrant-do: #ff5a5f;
+  --color-quadrant-schedule: #9d8cff;
+  --color-quadrant-delegate: #ffae3b;
+  --color-quadrant-eliminate: #9aa0b3;
+
+  /* Shadows on dark — almost imperceptible, use border-hover for elevation instead */
+  --shadow-sm: rgba(0, 0, 0, 0.32) 0px 1px 2px 0px;
+  --shadow-md: rgba(0, 0, 0, 0.4) 0px 2px 8px -2px, rgba(0, 0, 0, 0.28) 0px 1px 3px -1px;
+  --shadow-lg: rgba(0, 0, 0, 0.5) 0px 8px 24px -8px, rgba(0, 0, 0, 0.32) 0px 4px 8px -4px;
+  --shadow-xl: rgba(0, 0, 0, 0.6) 0px 16px 40px -12px, rgba(0, 0, 0, 0.4) 0px 6px 16px -6px;
+  --shadow-inset: inset 0 1px 2px rgba(0, 0, 0, 0.32);
+  --shadow-glow: 0 0 0 3px rgba(157, 140, 255, 0.28);
+
+  /* Frosted overlay tinted dark */
+  --glass-bg: rgba(28, 31, 42, 0.78);
+  --glass-bg-hover: rgba(28, 31, 42, 0.92);
+  --glass-border: rgba(255, 255, 255, 0.08);
 }

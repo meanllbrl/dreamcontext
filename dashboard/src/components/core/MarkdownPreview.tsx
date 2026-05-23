@@ -1,5 +1,7 @@
-import { useMemo } from 'react';
+import { useMemo, useRef } from 'react';
 import { marked } from 'marked';
+import { useTheme } from '../../context/ThemeContext';
+import { useMermaidRender } from '../../lib/mermaidRender';
 import './MarkdownPreview.css';
 
 marked.setOptions({ gfm: true, breaks: true });
@@ -11,6 +13,9 @@ interface Props {
 
 export function MarkdownPreview({ content, frontmatter }: Props) {
   const html = useMemo(() => marked.parse(content) as string, [content]);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const { resolved } = useTheme();
+  useMermaidRender(bodyRef, html, resolved, 'md-mmd');
 
   const fmEntries = frontmatter
     ? Object.entries(frontmatter).filter(([, v]) => v !== undefined && v !== null && v !== '')
@@ -29,6 +34,7 @@ export function MarkdownPreview({ content, frontmatter }: Props) {
         </div>
       )}
       <div
+        ref={bodyRef}
         className="markdown-body"
         dangerouslySetInnerHTML={{ __html: html }}
       />

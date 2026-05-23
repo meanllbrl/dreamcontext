@@ -18,6 +18,7 @@
   <a href="#neuroscience-inspired-memory">Neuroscience</a> &nbsp;&middot;&nbsp;
   <a href="#the-dashboard">Dashboard</a> &nbsp;&middot;&nbsp;
   <a href="#council-debates">Council</a> &nbsp;&middot;&nbsp;
+  <a href="#memory-recall-bm25-over-the-curated-corpus">Memory Recall</a> &nbsp;&middot;&nbsp;
   <a href="#obsidian-integration">Obsidian</a> &nbsp;&middot;&nbsp;
   <a href="#cli-design">CLI</a> &nbsp;&middot;&nbsp;
   <a href="#design-tradeoffs">Tradeoffs</a>
@@ -155,18 +156,18 @@ Saves the full session record to `.sleep.json`: session ID, transcript path, tim
 
 Fires before the agent sees your first message. Compiles and injects a full context snapshot:
 
-1. **Soul + User + Memory** loaded in full (the agent's identity, your preferences, accumulated decisions)
+1. **Soul + User + Memory** loaded in full (the agent's identity, your preferences, accumulated decisions). `2.memory.md` now contains only Decisions + Known Issues — the LIFO section was removed 2026-05-23; quick captures route through CHANGELOG via `memory remember`.
 2. **Extended core files** surfaced as summaries with paths (style guide, tech stack, data structures, system flow)
-3. **Active tasks** with status, priority, and last update timestamp
+3. **Active tasks** with status, priority, last update timestamp, and `why:` excerpt (capped at 250 chars, HTML template comments stripped)
 4. **Bookmarks** sorted by salience (critical first), showing tagged moments from previous sessions
 5. **Contextual reminders** from triggers matching active task names, tags, or bookmark text
-6. **Sleep state** with debt level, sessions since last sleep, consolidation history, and per-session records
-7. **Recent changelog** (last 3 entries from CHANGELOG.json)
-8. **Upcoming versions** (planning releases) and **latest release** with version, date, summary, and included task/feature counts
-9. **Features** with the Why, related tasks, and latest changelog entry per feature
-10. **Knowledge index** with slug, description, tags, and staleness indicators (30+ days without access)
-11. **Warm knowledge** for recently accessed or task-relevant files (first paragraph preview)
-12. **Pinned knowledge** loaded in full for files marked `pinned: true`
+6. **Recent CHANGELOG (tiered)** — top 3 entries detailed (summary + first ~300 chars of description), next 10 entries titles-only under an `### Older` subheading. Tier sizes configurable via constants at the top of `src/cli/commands/snapshot.ts`. Older entries remain searchable through `memory recall --types changelog`.
+7. **Upcoming versions** (planning releases) and **latest release** with version, date, summary, and included task/feature counts
+8. **Features** with the `Why:` excerpt (capped at 250 chars, HTML template comments stripped), related tasks, and latest changelog entry per feature
+9. **Knowledge index** with slug, description, tags, and staleness indicators (30+ days without access). **Pinned files surface at the top of the index with a prominent warning** — the agent loads the body on demand via the surfaced path (body inlining removed 2026-05-23 to keep snapshot bounded).
+10. **Warm knowledge** for recently accessed or task-relevant files (first paragraph preview)
+
+A dedicated **Sleep State** block used to appear here. It was removed 2026-05-23 — consolidation pressure now lives in the SessionStart consolidation directive prepend (when debt is high or critical bookmarks exist) and the persistent UserPromptSubmit hook one-liner. The standalone block was duplicative.
 
 Every file path is included in the output. If the agent needs more detail on something, it knows exactly where to look. One targeted read instead of a search spiral.
 
@@ -464,6 +465,96 @@ When a debate resolves a real decision, `dreamcontext council promote --to <know
 
 Council ships as an opt-in skill pack at `skill-packs/council/` with its own `SKILL.md` teaching the agent the debate protocol. You install it with `dreamcontext install-skill --packs council`. The pack includes the two sub-agents and a debate protocol reference so the agent knows how to orchestrate rounds, when to request research, and how to hand off to the synthesizer.
 
+## Memory Recall (BM25 over the curated corpus)
+
+The SessionStart snapshot pre-loads everything an agent needs to start work. But once a project's corpus crosses ~50 documents, there is a second question: *"Where did we decide X?"* or *"What do we know about Y?"* The agent cannot rely on the snapshot alone; the answer is in the corpus, just not in the always-loaded tier. Memory recall is the second-tier retrieval layer for exactly this case.
+
+```bash
+dreamcontext memory recall "how did we decide on the sleep fan-out"
+```
+
+Top-5 hits across knowledge files, feature PRDs, task files, and `2.memory.md` LIFO entries. Snippets included. Under 100ms on a 40-doc corpus. No init step, no daemon, no API key.
+
+### Why BM25 and not a vector store / mem0
+
+The original exploration was a full mem0 integration: Python + Ollama runtime, LLM-extracted facts on every `add()`, vector store for semantic recall. Three independent adversarial reviewers (critic, pragmatist, security) converged on rejecting it. The decisive argument:
+
+> **dreamcontext's content is already curated atomic facts.** Knowledge docs are written deliberately. PRDs follow a structured template. Closed tasks have changelogs. The `2.memory.md` file is LIFO-ordered, hand-vetted decisions. The LLM extraction step that mem0 provides is solving a problem dreamcontext has already solved at write time. Stacking a non-deterministic 1.5–4s LLM call on top of already-curated content is paying twice for the same value.
+
+Specific issues the reviewers flagged with the vector approach:
+
+- **Runtime cliff.** Python + Ollama dependency for what is otherwise a Node CLI. Cold start, model download, port management, all for a 44-doc corpus.
+- **Non-determinism.** Same query, different ranking depending on which facts mem0 happened to extract from your input. Hard to debug, hard to test, hard to trust.
+- **Cost.** Every `add()` is an LLM call. Every recall is a vector search. For content that does not need semantic generalization (most slugs and decisions are exact-match queries), the spend buys little.
+- **Security surface.** Embedding inversion, redaction order bugs, finalizer crash on rebase, and OpenAI exfil paths if a cloud embedding provider was used. Five critical hardening items just to make it safe.
+- **Documented dedup unreliability.** mem0's own native dedup is documented as best-effort. Curated knowledge corpora need reliable dedup, not best-effort.
+
+BM25 over the curated corpus gives ~80% of the value at 1% of the complexity: zero new npm dependencies, deterministic ranking, version-controllable, instant. The full decision trace lives at `_dream_context/core/features/memory-recall-bm25.md`.
+
+### What is indexed
+
+The corpus is deliberately narrower than "everything in `_dream_context/`":
+
+| Type | Source | Doc unit |
+|---|---|---|
+| `knowledge` | `_dream_context/knowledge/*.md` | 1 doc per file |
+| `feature` | `_dream_context/core/features/*.md` | 1 doc per file |
+| `task` | `_dream_context/state/*.md` | 1 doc per file |
+| `memory` | `_dream_context/core/2.memory.md` | 1 doc per H2 section (Decisions, Known Issues — LIFO section removed 2026-05-23) |
+| `changelog` | `_dream_context/core/CHANGELOG.json` | 1 doc per entry; body = `summary` + `description` + `references[]` joined |
+
+`0.soul.md`, `1.user.md`, the remaining core 3–6 files, `RELEASES.json`, and the sleep state are **intentionally not indexed.** They are always-loaded in the snapshot and belong to the deterministic tier. Recall is a complement to the snapshot, not a replacement. CHANGELOG joined the corpus 2026-05-23 because (a) the snapshot's tiered changelog block only surfaces the top 13 entries, so older history needs an on-demand path, and (b) `memory remember` now writes CHANGELOG entries directly, making CHANGELOG the durable home for quick-capture notes.
+
+**CHANGELOG schema (2026-05-23 additions, all optional):**
+
+| Field | Type | Purpose |
+|---|---|---|
+| `summary` | string (≤200 char soft cap) | One-line headline rendered in the snapshot's tiered display and in recall snippets. |
+| `references[]` | string[] | Prefixed evidence tokens: `commit:<sha>`, `file:<path>`, `knowledge:<slug>`, `feature:<slug>`, `task:<slug>`, `url:<href>`. Searchable. |
+| `supersedes` | string (entry id) | Points at a prior entry this decision replaces — surfaces "this was overridden" relationships during recall. |
+
+### Ranking
+
+Standard BM25 with `k1=1.5`, `b=0.75`, scoring across `(title + description + tags + body)` of each doc. IDF uses the `log(1 + (N - df + 0.5) / (df + 0.5))` form so it stays non-negative on small corpora. Snippet extraction picks the line with the most query-term hits and includes ±1 line of context.
+
+The tokenizer is light and Turkish-aware: standard English stopwords plus Turkish particles (`ve`, `ile`, `ki`, `için`, `gibi`) since the user codes in mixed Turkish/English. **Stemming is intentionally not applied** — slug-like terms (e.g., `manifest-bootstrap-safety-pattern`) need to exact-match in queries. There is no synonym table and no semantic recall by design: "ML practitioner" will not match "data scientist." If future evidence shows that gap is painful, a deterministic local-embedding overlay (`@xenova/transformers` with a 30MB MiniLM model, no Python dep) is the v2 path — not mem0.
+
+There is no persistent index file. The inverted index is rebuilt in memory on every `recall` call. For corpora up to ~500 docs the rebuild is under 100ms; storing an index file would introduce gitignore complications and cache-invalidation bugs for negligible speedup.
+
+### Command surface
+
+| Command | Purpose |
+|---|---|
+| `memory recall <query...> [--top N] [--types ...] [--json] [--plain]` | BM25 search; `--top` clamped to 1–50, default 5 |
+| `memory remember <text...> [--type T] [--scope S] [--summary] [--references] [--supersedes]` | Write a CHANGELOG entry. Defaults: `type=note`, `scope=quick`. Replaces the old LIFO append to `2.memory.md` (LIFO section removed 2026-05-23). |
+| `memory update <slug> [--description] [--tags] [--content] [--append] [--pin\|--unpin]` | Edit an indexed doc by slug |
+| `memory delete <slug> [--force]` | Remove an indexed doc |
+| `memory list [--types ...]` | List indexed docs (no scoring) |
+| `memory status` | Corpus stats broken down by type |
+
+`--json` returns `{ score, type, path, title, snippet }` per hit for scripted use. `--plain` strips ANSI for piping into other tools or grep. `--types` accepts a comma-separated subset of `knowledge,feature,task,memory,changelog`.
+
+### Hook integration (default ON)
+
+The `UserPromptSubmit` hook handler injects the top-3 recall hits into the agent's context for every non-trivial user prompt. **ON by default; opt out with `DREAMCONTEXT_MEMORY_HOOK=0`.** Originally shipped opt-in per the security reviewer's recommendation, but flipped to default-on the same day (2026-05-23) after the noise/utility tradeoff proved favourable on the live dreamcontext benchmark — strong hits (score ≥2.0) consistently surfaced the right docs, and short prompts are filtered.
+
+Behavior:
+
+- Reads the prompt from stdin (the Claude Code hook payload).
+- Skips if the prompt is shorter than 8 characters (filters "hi", "ok", short replies).
+- Runs `bm25Search(prompt, corpus, 3)` against the same corpus as `memory recall`.
+- Emits the block only if the top hit's score ≥ 2.0 (filters weak matches that would just be noise).
+- Output is a 5–9 line context block prefixed with `— Memory recall (BM25, top 3) —`.
+- Wrapped in try/catch — recall is best-effort and never breaks the user-prompt flow.
+
+Verified latency budget is under 100ms on a 44-doc corpus with no persistent index.
+
+### Why this fits the broader architecture
+
+Memory recall mirrors the pattern the rest of dreamcontext uses: **deterministic structure beats clever retrieval, and humans plus agents both need to read what is happening.** The corpus is files in your repo. The ranker is the standard formula every information-retrieval textbook teaches. The output cites paths, not opaque vector IDs. If a query ranks something unexpectedly, you can open the file, see what is indexed, and either edit the doc or refine the query. There is no embedding model whose weights you cannot inspect.
+
+The sleep-product specialist (`agents/sleep-product.md`) needs no changes — it already maintains knowledge files, feature PRDs, and the tag set. Recall reads what sleep-product already maintains. Same pattern as the snapshot: the deterministic tier curates, the on-demand tier queries.
+
 ## Obsidian Integration
 
 `_dream_context/` is a directory of markdown and JSON, shaped like a knowledge graph (memory links to decisions link to features link to knowledge). The most natural way to browse that graph is Obsidian, which is built for exactly this shape.
@@ -558,6 +649,9 @@ Every design choice was deliberate. Here is what I chose, what I chose it over, 
 | **Problem as hero on Overview tab** | Topic in the header | For a completed debate, the user is there to read the verdict against the original question. Making the Problem the visual anchor ensures "what did we decide about X" is always answerable in one scroll. |
 | **Obsidian integration by vault config, not plugin** | An Obsidian plugin | A plugin is installable-software the user has to manage. A `.obsidian/` config is a directory of JSON files that travels with the repo and works for anyone who opens the folder. |
 | **Full project build after dashboard changes** | Per-package build | The CLI serves from `dist/dashboard/` (sibling of `dist/index.js`). The tsup `onSuccess` hook copies `dashboard/dist/` → `dist/dashboard/`. Only the root `npm run build` triggers both. Building just the dashboard silently leaves the served version stale — learned the hard way. |
+| **BM25 over the curated corpus** | mem0 / Python + Ollama vector store | Three independent reviewers rejected the vector plan: the LLM extraction step solves a problem dreamcontext already solved (content is already curated atomic facts). BM25 is deterministic, instant, version-controllable, zero new deps. ~80% of the value at 1% of the complexity. |
+| **In-memory index rebuild per query** | Persistent index file | At ≤500 docs the rebuild is under 100ms. A persistent index would add gitignore complications and cache-invalidation bugs for negligible speedup. |
+| **Memory hook ON by default** | Off-by-default opt-in | Initially shipped opt-in per the security reviewer's "off by default" recommendation. Flipped to default-on the same day after dogfood showed the score ≥2.0 filter + 8-char minimum keep noise low and utility high. Opt out with `DREAMCONTEXT_MEMORY_HOOK=0`. |
 
 ---
 

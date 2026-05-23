@@ -45,7 +45,7 @@
   max-width: 520px;
 }
 
-.council-hall-search:focus-within { border-color: var(--color-brand-vivid); }
+.council-hall-search:focus-within { border-color: var(--color-accent); }
 
 .council-hall-search input {
   flex: 1;
@@ -97,7 +97,7 @@
 }
 
 .council-hall-card:hover {
-  border-color: var(--color-brand-vivid);
+  border-color: var(--color-accent);
   transform: translateY(-2px);
   box-shadow: var(--shadow-md);
 }
@@ -132,8 +132,8 @@
 .council-hall-status--complete .council-hall-status-dot { background: hsl(142 71% 40%); }
 .council-hall-status--running  { background: hsl(220 90% 56% / 0.12); color: hsl(220 90% 42%); }
 .council-hall-status--running .council-hall-status-dot { background: hsl(220 90% 56%); }
-.council-hall-status--synth    { background: hsl(287 100% 33% / 0.12); color: hsl(287 100% 38%); }
-.council-hall-status--synth .council-hall-status-dot { background: hsl(287 100% 45%); }
+.council-hall-status--synth    { background: var(--color-accent-soft); color: var(--color-accent); }
+.council-hall-status--synth .council-hall-status-dot { background: var(--color-accent); }
 .council-hall-status--pending  { background: var(--color-bg-tertiary); color: var(--color-text-secondary); }
 .council-hall-status--pending .council-hall-status-dot { background: var(--color-text-tertiary); }
 
@@ -237,7 +237,7 @@
 }
 
 .council-detail-back:hover {
-  border-color: var(--color-brand-vivid);
+  border-color: var(--color-accent);
   background: var(--color-bg-secondary);
 }
 
@@ -307,8 +307,8 @@
 .council-tab:hover { color: var(--color-text); }
 
 .council-tab.is-active {
-  color: var(--color-brand-vivid);
-  border-bottom-color: var(--color-brand-vivid);
+  color: var(--color-accent);
+  border-bottom-color: var(--color-accent);
 }
 
 /* ────────────────────────────────────────
@@ -329,14 +329,14 @@
   font-size: 10px;
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: var(--color-brand-vivid);
+  color: var(--color-accent);
   margin-bottom: 6px;
 }
 
 .council-ov-problem {
   padding: var(--space-3) var(--space-4);
-  border-left: 3px solid var(--color-brand-vivid);
-  background: var(--gradient-brand-subtle);
+  border-left: 3px solid var(--color-accent);
+  background: var(--color-accent-soft);
   border-radius: var(--radius-sm);
 }
 
@@ -360,7 +360,7 @@
 .council-ov-verdict {
   padding: var(--space-4);
   border: 1px solid var(--color-border);
-  border-top: 3px solid var(--color-brand-vivid);
+  border-top: 3px solid var(--color-accent);
   border-radius: var(--radius-sm);
   background: var(--color-bg);
 }
@@ -403,7 +403,7 @@
   margin: 0 0 var(--space-2);
 }
 
-.council-ov-card--why h3 { color: var(--color-brand-vivid); }
+.council-ov-card--why h3 { color: var(--color-accent); }
 .council-ov-card--minority {
   border-color: hsl(280 70% 55% / 0.3);
   background: hsl(280 70% 55% / 0.02);
@@ -472,7 +472,7 @@
   max-width: 480px;
 }
 
-.council-matrix-search-input:focus-within { border-color: var(--color-brand-vivid); }
+.council-matrix-search-input:focus-within { border-color: var(--color-accent); }
 
 .council-matrix-search-input input {
   flex: 1;
@@ -604,8 +604,8 @@
 .council-cell:hover { border-color: var(--color-border-hover); }
 
 .council-cell.is-active {
-  border-color: var(--color-brand-vivid);
-  box-shadow: 0 0 0 1px var(--color-brand-vivid);
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 1px var(--color-accent);
   max-height: none;
   background: var(--color-bg);
   grid-column: auto;
@@ -793,8 +793,8 @@
 }
 
 .council-transcript-block.is-highlighted {
-  border-color: var(--color-brand-vivid);
-  box-shadow: 0 0 0 1px var(--color-brand-vivid);
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 1px var(--color-accent);
 }
 
 .council-transcript-block-head {
@@ -915,8 +915,8 @@
 .council-crosscontext {
   margin: 0;
   padding: var(--space-2) var(--space-3);
-  border-left: 3px solid var(--color-brand-vivid);
-  background: var(--gradient-brand-subtle);
+  border-left: 3px solid var(--color-accent);
+  background: var(--color-accent-soft);
   border-radius: var(--radius-sm);
   font-size: var(--font-size-xs);
 }
@@ -928,7 +928,7 @@
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.12em;
-  color: var(--color-brand-vivid);
+  color: var(--color-accent);
 }
 
 .council-research-list {
@@ -1029,8 +1029,8 @@
 .council-status--running .council-status-dot { background: hsl(220 90% 56%); }
 .council-status--complete { background: hsl(142 71% 40% / 0.12); color: hsl(142 71% 35%); }
 .council-status--complete .council-status-dot { background: hsl(142 71% 40%); }
-.council-status--synth    { background: hsl(287 100% 33% / 0.12); color: hsl(287 100% 38%); }
-.council-status--synth .council-status-dot { background: hsl(287 100% 45%); }
+.council-status--synth    { background: var(--color-accent-soft); color: var(--color-accent); }
+.council-status--synth .council-status-dot { background: var(--color-accent); }
 .council-status--pending  { background: var(--color-bg-tertiary); color: var(--color-text-secondary); }
 .council-status--pending .council-status-dot { background: var(--color-text-tertiary); }
 
@@ -1045,7 +1045,7 @@
 
 .council-stat-tile--warning { border-color: hsl(38 92% 50% / 0.3);  background: hsl(38 92% 50% / 0.04); }
 .council-stat-tile--dissent { border-color: hsl(280 70% 55% / 0.3); background: hsl(280 70% 55% / 0.04); }
-.council-stat-tile--brand   { border-color: hsl(287 100% 33% / 0.3); background: var(--gradient-brand-subtle); }
+.council-stat-tile--brand   { border-color: var(--color-accent-soft); background: var(--color-accent-soft); }
 
 .council-stat-value {
   font-family: var(--font-mono);
@@ -1057,7 +1057,7 @@
 
 .council-stat-tile--warning .council-stat-value { color: hsl(38 92% 40%); }
 .council-stat-tile--dissent .council-stat-value { color: hsl(280 70% 48%); }
-.council-stat-tile--brand   .council-stat-value { color: var(--color-brand-vivid); }
+.council-stat-tile--brand   .council-stat-value { color: var(--color-accent); }
 
 .council-stat-label {
   font-family: var(--font-mono);
@@ -1087,31 +1087,31 @@
 }
 
 .council-cite-chip:hover {
-  border-color: var(--color-brand-vivid);
-  background: var(--gradient-brand-subtle);
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
 }
 
 .council-cite-round {
   font-weight: var(--font-weight-bold);
-  color: var(--color-brand-vivid);
+  color: var(--color-accent);
 }
 
 .council-inline-slug {
   display: inline;
   padding: 1px 6px;
   border-radius: var(--radius-sm);
-  background: var(--gradient-brand-subtle);
-  color: var(--color-brand-vivid);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
   font-family: var(--font-mono);
   font-size: 11px;
   font-weight: var(--font-weight-semibold);
-  border: 1px solid hsl(287 100% 33% / 0.2);
+  border: 1px solid var(--color-accent-soft);
   cursor: pointer;
   margin: 0 1px;
   vertical-align: baseline;
 }
 
-.council-inline-slug:hover { background: hsl(287 100% 33% / 0.2); }
+.council-inline-slug:hover { background: var(--color-accent-soft); }
 
 .council-citation-prose { line-height: 1.75; }
 

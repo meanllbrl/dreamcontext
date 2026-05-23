@@ -4,6 +4,19 @@ All notable changes to dreamcontext will be documented in this file.
 
 ## [Unreleased]
 
+### Memory Recall: CHANGELOG corpus + tiered display + hook default-on (2026-05-23)
+
+- `dreamcontext memory` CLI namespace: `recall` / `remember` / `update` / `delete` / `list` / `status`.
+- `memory remember` writes a CHANGELOG entry (`type=note`, `scope=quick` by default; override via `--type`/`--scope`). The LIFO marker in `2.memory.md` is gone — `2.memory.md` now contains Decisions + Known Issues only.
+- UserPromptSubmit memory-recall hook is **ON by default**. Opt out with `DREAMCONTEXT_MEMORY_HOOK=0`.
+- CHANGELOG schema gained optional `summary` (≤200 char soft cap), `references[]` (prefixed: `commit:|file:|knowledge:|feature:|task:|url:`), and `supersedes` (entry-id pointer). All backwards-compatible.
+- CHANGELOG entries indexed in the recall corpus as their own `changelog` type. `recall --types changelog` is now valid; `CorpusType` in `recall.ts` extended.
+- Snapshot's Recent CHANGELOG section is **tiered**: top 3 detailed (summary + ~300 char body), next 10 titles-only under `### Older`. Tier sizes configurable via constants at the top of `src/cli/commands/snapshot.ts`.
+- Snapshot **Sleep State block removed** — consolidation pressure surfaces via the SessionStart consolidation directive prepend and the persistent UserPromptSubmit hook one-liner.
+- Snapshot **Pinned Knowledge body inlining removed** — pinned files surface at the top of the Knowledge Index with a prominent warning; agent loads bodies on demand via the surfaced path.
+- Snapshot active-task / feature `Why:` excerpt cap raised 100 → 250 chars. HTML template comments stripped from excerpts.
+- Anti-bloat cap on core files tightened from 300 → 150 lines. Sleep specialists enforce during consolidation (promote / archive / condense rather than append).
+
 ### Optional Skill Pack CLI
 
 - Added `install-skill --packs` for interactive terminal checkbox UI to browse and install optional skill packs

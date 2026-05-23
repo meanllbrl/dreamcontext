@@ -97,13 +97,6 @@ Use the gathered intelligence to write rich, meaningful content:
 #### 2.memory.md — WHAT the agent knows
 
 ```markdown
-## Active Memory
-<!-- LIFO: newest entries at top -->
-
-### [today's date] - Initialized
-- Agent context system initialized.
-- [List key findings from codebase scan]
-
 ## Technical Decisions
 - [Any architectural decisions visible in the codebase]
 
@@ -111,11 +104,17 @@ Use the gathered intelligence to write rich, meaningful content:
 - [Issues mentioned by user or visible in code (TODO comments, deprecation warnings)]
 ```
 
+Note: `2.memory.md` is **Decisions + Known Issues only** (v0.4.0+). Session
+narrative / ship history lives in `CHANGELOG.json` — written via
+`dreamcontext memory remember "<note>"` (default `type=note`, `scope=quick`)
+or `dreamcontext core changelog add ...`. Do not scaffold a LIFO / Active
+Memory section here.
+
 ### Step 5: Populate Other Core Files
 
 Based on codebase scan:
 - **4.tech_stack.md**: Write real tech stack info from detected dependencies
-- **5.data_structures.sql**: If database schemas were found, include them
+- **Data structures**: Write to `core/data-structures/default.md` for single-product projects. If `_dream_context/state/.config.json` was created with `multiProduct: ["a", "b", ...]`, write one file per product at `core/data-structures/<product>.md`. Use the same template/token-replacement convention as the rest of the scaffold (`{{PRODUCT_NAME}}`, `{{DATE}}`, etc.). If database schemas were detected during the scan, paste/summarize them in the appropriate file. The legacy single-file path `5.data_structures.sql` is deprecated — never create it on fresh installs.
 
 ### Step 6: Report Back
 
@@ -125,10 +124,24 @@ Return a brief summary:
 - What still needs user input (mark as "To be defined")
 - Suggested next steps
 
+Closing tip to surface in the report: now that the corpus exists, the user can
+run `dreamcontext memory recall "<query>"` against whatever knowledge, feature
+PRDs, task files, memory entries, and CHANGELOG history get added over time.
+It's BM25 over the curated corpus — no setup, no external services. Useful
+flags: `--top N`, `--types knowledge,feature,task,memory,changelog`, `--json`
+/ `--plain`. Recall is also injected automatically into the first user turn
+of every session via the UserPromptSubmit hook (default-on; opt out with
+`DREAMCONTEXT_MEMORY_HOOK=0`). Quick capture: `dreamcontext memory remember
+"<note>"` writes a `note`-typed CHANGELOG entry (default `scope=quick`).
+CHANGELOG entries now support optional `summary` (≤200 chars), prefixed
+`references[]` (`commit:|file:|knowledge:|feature:|task:|url:`), and
+`supersedes` for explicit replacement. Also mention `dreamcontext memory
+status` for a quick corpus-size readout.
+
 ## Rules
 
 1. **Fast, cheap bootstrap** — don't over-analyze. Get 80% right, iterate later.
 2. **Don't invent** — if you don't know something, use "To be defined" placeholder. Never hallucinate project details.
 3. **Ask, don't assume** — when the codebase is ambiguous, ask the user.
-4. **LIFO from day one** — all dated entries: newest at top.
+4. **CHANGELOG-first journaling** — session narrative and dated ship events go to `CHANGELOG.json` (newest first, automatic). `2.memory.md` stays Decisions + Known Issues only — no LIFO section.
 5. **Rich content, not templates** — the whole point is that you fill in REAL content based on what you found. Template placeholders like "(Add your principles here)" are a failure.

@@ -1,17 +1,18 @@
 .task-card {
   background: var(--color-bg-elevated);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   padding: var(--space-3);
   cursor: grab;
-  transition: all var(--transition-bounce);
+  transition: all var(--transition-fast);
   user-select: none;
+  box-shadow: var(--shadow-sm);
 }
 
 .task-card:hover {
-  border-color: var(--color-brand-vivid);
-  box-shadow: var(--shadow-lg);
-  transform: translateY(-2px);
+  border-color: var(--color-accent);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
 }
 
 .task-card:active {
@@ -100,11 +101,41 @@
 
 .task-tag {
   font-size: 10px;
-  padding: 1px var(--space-1);
-  border-radius: var(--radius-sm);
+  font-weight: var(--font-weight-medium);
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
   background: var(--color-bg-tertiary);
   color: var(--color-text-tertiary);
+  border: 1px solid transparent;
+  letter-spacing: var(--letter-spacing-caption);
+  line-height: 1.4;
+  white-space: nowrap;
 }
+
+/* ─── Hue swatches — same tag → same color across every page.
+   Light mode: tinted bg + saturated text (AA on tinted bg).
+   Dark mode: deeper tinted bg + brightened text. */
+.task-tag[data-hue="0"] { background: #ede9fe; color: #5b21b6; border-color: #ddd6fe; } /* violet */
+.task-tag[data-hue="1"] { background: #dbeafe; color: #1d4ed8; border-color: #bfdbfe; } /* blue */
+.task-tag[data-hue="2"] { background: #fee2e2; color: #b91c1c; border-color: #fecaca; } /* coral */
+.task-tag[data-hue="3"] { background: #dcfce7; color: #15803d; border-color: #bbf7d0; } /* green */
+.task-tag[data-hue="4"] { background: #ffedd5; color: #c2410c; border-color: #fed7aa; } /* orange */
+.task-tag[data-hue="5"] { background: #fae8ff; color: #86198f; border-color: #f5d0fe; } /* fuchsia */
+.task-tag[data-hue="6"] { background: #ccfbf1; color: #0f766e; border-color: #99f6e4; } /* teal */
+.task-tag[data-hue="7"] { background: #fce7f3; color: #be185d; border-color: #fbcfe8; } /* pink */
+.task-tag[data-hue="8"] { background: #e0e7ff; color: #4338ca; border-color: #c7d2fe; } /* indigo */
+.task-tag[data-hue="9"] { background: #fef3c7; color: #a16207; border-color: #fde68a; } /* amber */
+
+[data-theme='dark'] .task-tag[data-hue="0"] { background: rgba(157, 140, 255, 0.16); color: #c4b5fd; border-color: rgba(157, 140, 255, 0.28); }
+[data-theme='dark'] .task-tag[data-hue="1"] { background: rgba(96, 165, 250, 0.16); color: #93c5fd; border-color: rgba(96, 165, 250, 0.28); }
+[data-theme='dark'] .task-tag[data-hue="2"] { background: rgba(248, 113, 113, 0.16); color: #fca5a5; border-color: rgba(248, 113, 113, 0.28); }
+[data-theme='dark'] .task-tag[data-hue="3"] { background: rgba(74, 222, 128, 0.14); color: #86efac; border-color: rgba(74, 222, 128, 0.26); }
+[data-theme='dark'] .task-tag[data-hue="4"] { background: rgba(251, 146, 60, 0.16); color: #fdba74; border-color: rgba(251, 146, 60, 0.28); }
+[data-theme='dark'] .task-tag[data-hue="5"] { background: rgba(217, 70, 239, 0.16); color: #f0abfc; border-color: rgba(217, 70, 239, 0.28); }
+[data-theme='dark'] .task-tag[data-hue="6"] { background: rgba(45, 212, 191, 0.16); color: #5eead4; border-color: rgba(45, 212, 191, 0.28); }
+[data-theme='dark'] .task-tag[data-hue="7"] { background: rgba(244, 114, 182, 0.16); color: #f9a8d4; border-color: rgba(244, 114, 182, 0.28); }
+[data-theme='dark'] .task-tag[data-hue="8"] { background: rgba(129, 140, 248, 0.16); color: #a5b4fc; border-color: rgba(129, 140, 248, 0.28); }
+[data-theme='dark'] .task-tag[data-hue="9"] { background: rgba(251, 191, 36, 0.16); color: #fcd34d; border-color: rgba(251, 191, 36, 0.28); }
 
 .task-card-date {
   font-size: 10px;

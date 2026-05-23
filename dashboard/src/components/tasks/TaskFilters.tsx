@@ -44,11 +44,9 @@ export const DEFAULT_FILTERS: FilterState = {
   viewMode: 'kanban',
 };
 
-export interface FilterPreset {
-  id: string;
-  name: string;
-  filters: FilterState;
-}
+import type { SavedView } from '../../stores/savedViews';
+
+export type FilterPreset = SavedView;
 
 interface TaskFiltersProps {
   filters: FilterState;

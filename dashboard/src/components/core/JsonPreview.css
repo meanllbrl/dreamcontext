@@ -58,8 +58,8 @@
 }
 
 .json-stat-chip--active {
-  background: var(--gradient-brand-subtle);
-  border-color: var(--color-brand-vivid);
+  background: var(--color-accent-soft);
+  border-color: var(--color-accent);
   color: var(--color-text);
 }
 
@@ -149,7 +149,7 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--color-brand-vivid);
+  background: var(--color-accent);
   flex-shrink: 0;
 }
 
@@ -246,7 +246,7 @@
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-3) var(--space-4);
-  background: var(--gradient-brand-subtle);
+  background: var(--color-accent-soft);
   cursor: pointer;
   transition: background var(--transition-fast);
 }
@@ -331,7 +331,7 @@
 
 .json-id-chip--feature {
   background: hsl(278 72% 38% / 0.1);
-  color: var(--color-brand-mid);
+  color: var(--color-aether-blue);
 }
 
 .json-id-chip--task {

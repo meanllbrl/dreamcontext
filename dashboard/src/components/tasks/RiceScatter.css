@@ -83,7 +83,7 @@
 }
 
 .rice-dot:focus-visible {
-  stroke: var(--color-brand-vivid);
+  stroke: var(--color-accent);
   stroke-width: 2.5;
 }
 

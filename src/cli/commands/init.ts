@@ -18,6 +18,9 @@ import {
   type PlatformId,
 } from '../../lib/platforms.js';
 import { writeProjectPlatformDefaults } from '../../lib/platform-defaults.js';
+import { updateSetupConfig } from '../../lib/setup-config.js';
+import { dreamcontextVersion } from '../../lib/manifest.js';
+import { printDeprecationHint } from './install-skill.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
@@ -117,6 +120,7 @@ export function registerInitCommand(program: Command): void {
     .option('--stack <stack>', 'Tech stack')
     .option('--priority <priority>', 'Current priority')
     .option('--platforms <list>', `Comma-separated platforms: ${formatSupportedPlatforms()}`)
+    .option('--multi-product <list>', 'Comma-separated product names for monorepos (lowercase kebab-case). Skips the interactive prompt.')
     .action(async (opts: {
       yes?: boolean;
       name?: string;
@@ -125,6 +129,7 @@ export function registerInitCommand(program: Command): void {
       stack?: string;
       priority?: string;
       platforms?: string;
+      multiProduct?: string | string[] | false;
     }) => {
       const contextDir = getInitPath();
 
@@ -187,6 +192,59 @@ export function registerInitCommand(program: Command): void {
         selectedPlatforms = ensurePlatformSelection(picked);
       }
 
+      // Multi-product: monorepo product-list resolution.
+      // Accepts (a) WS-1's pre-resolved multiProduct value (string[] | false),
+      // (b) the --multi-product CLI flag as a comma-separated string,
+      // or (c) interactive prompts.
+      const SLUG_RE = /^[a-z][a-z0-9-]*$/;
+      const validateProductNames = (raw: string): { ok: string[]; bad: string[] } => {
+        const ok: string[] = [];
+        const bad: string[] = [];
+        for (const piece of raw.split(',').map((s) => s.trim()).filter(Boolean)) {
+          if (SLUG_RE.test(piece)) ok.push(piece);
+          else bad.push(piece);
+        }
+        return { ok, bad };
+      };
+
+      let multiProduct: string[] | false = false;
+      if (Array.isArray(opts.multiProduct)) {
+        multiProduct = opts.multiProduct.filter((s) => SLUG_RE.test(s));
+        if (multiProduct.length === 0) multiProduct = false;
+      } else if (opts.multiProduct === false) {
+        multiProduct = false;
+      } else if (typeof opts.multiProduct === 'string') {
+        const { ok, bad } = validateProductNames(opts.multiProduct);
+        if (bad.length > 0) {
+          error(`Invalid product name(s): ${bad.join(', ')}. Use lowercase kebab-case (e.g. "web", "ios", "ai-backend").`);
+          return;
+        }
+        multiProduct = ok.length > 0 ? ok : false;
+      } else if (!useDefaults) {
+        const isMonorepo = await confirm({
+          message: 'Is this a monorepo with multiple products?',
+          default: false,
+        });
+        if (isMonorepo) {
+          while (true) {
+            const raw = await input({
+              message: 'Enter product names (comma-separated, lowercase kebab-case):',
+            });
+            const { ok, bad } = validateProductNames(raw);
+            if (ok.length === 0) {
+              error('At least one valid product name is required (lowercase kebab-case).');
+              continue;
+            }
+            if (bad.length > 0) {
+              error(`Invalid name(s): ${bad.join(', ')}. Try again.`);
+              continue;
+            }
+            multiProduct = ok;
+            break;
+          }
+        }
+      }
+
       const dateStr = today();
       const tokens: Record<string, string> = {
         PROJECT_NAME: projectName,
@@ -199,7 +257,9 @@ export function registerInitCommand(program: Command): void {
 
       // Create directory structure
       mkdirSync(join(contextDir, 'core', 'features'), { recursive: true });
+      mkdirSync(join(contextDir, 'core', 'data-structures'), { recursive: true });
       mkdirSync(join(contextDir, 'knowledge'), { recursive: true });
+      mkdirSync(join(contextDir, 'knowledge', 'products'), { recursive: true });
       mkdirSync(join(contextDir, 'state'), { recursive: true });
       mkdirSync(join(contextDir, 'inbox'), { recursive: true });
 
@@ -207,7 +267,7 @@ export function registerInitCommand(program: Command): void {
       // via "Open folder as vault". Graph colors distinguish soul/knowledge/state.
       const obsidianInstalled = copyObsidianConfig(join(contextDir, '.obsidian'));
 
-      // Copy and process template files
+      // Copy and process top-level template files
       const templateDir = getTemplateDir();
       const templateFiles = [
         '0.soul.md',
@@ -215,7 +275,6 @@ export function registerInitCommand(program: Command): void {
         '2.memory.md',
         '3.style_guide_and_branding.md',
         '4.tech_stack.md',
-        '5.data_structures.sql',
       ];
 
       for (const file of templateFiles) {
@@ -231,11 +290,42 @@ export function registerInitCommand(program: Command): void {
         }
       }
 
+      // Data structures: per-product file (or default.md for single-product).
+      const dataStructuresTemplate = join(templateDir, 'data-structures', 'default.md');
+      const dataStructuresFallback = '---\nname: {{PRODUCT_NAME}}\ndescription: Data structures for {{PRODUCT_NAME}}\ntype: data-structures\nproduct: {{PRODUCT_NAME}}\nupdated: {{DATE}}\n---\n\n# Data Structures — {{PRODUCT_NAME}}\n\nDocument schemas, models, and API contracts here.\n';
+      const dsTemplateContent = existsSync(dataStructuresTemplate)
+        ? readFileSync(dataStructuresTemplate, 'utf-8')
+        : dataStructuresFallback;
+
+      const productList: string[] = multiProduct === false ? ['default'] : multiProduct;
+      for (const product of productList) {
+        const productTokens = { ...tokens, PRODUCT_NAME: product };
+        const destPath = join(contextDir, 'core', 'data-structures', `${product}.md`);
+        writeFileSync(destPath, replaceTokens(dsTemplateContent, productTokens), 'utf-8');
+      }
+
+      // Per-product knowledge stubs (multi-product only).
+      if (multiProduct !== false) {
+        for (const product of multiProduct) {
+          const knowledgeStub = `---\nname: ${product}\ndescription: Product knowledge for ${product}\ntype: knowledge\nproduct: ${product}\ntags:\n  - product:${product}\n---\n\n# ${product}\n\nProduct-scoped knowledge. Cross-cutting findings still go to top-level \`knowledge/\`.\n`;
+          writeFileSync(join(contextDir, 'knowledge', 'products', `${product}.md`), knowledgeStub, 'utf-8');
+        }
+      }
+
       // JSON files
       const jsonFiles = ['CHANGELOG.json', 'RELEASES.json'];
       for (const file of jsonFiles) {
         writeFileSync(join(contextDir, 'core', file), '[]\n', 'utf-8');
       }
+
+      // Write/merge state/.config.json via WS-1's helper (preserves any
+      // platforms/packs/setupVersion WS-1 already wrote during a setup flow).
+      // Init always sets platforms (we just collected them) and multiProduct (we own this field).
+      updateSetupConfig(process.cwd(), {
+        platforms: selectedPlatforms,
+        multiProduct,
+        setupVersion: dreamcontextVersion(),
+      });
 
       // Persist project platform defaults
       writeProjectPlatformDefaults(process.cwd(), selectedPlatforms);
@@ -249,6 +339,7 @@ export function registerInitCommand(program: Command): void {
         breaking: false,
       });
 
+      const productSummary = multiProduct === false ? 'single (default)' : multiProduct.join(', ');
       console.log();
       console.log(miniBox([
         chalk.green.bold('✓ Agent context initialized!'),
@@ -257,6 +348,7 @@ export function registerInitCommand(program: Command): void {
         `  Stack:   ${chalk.white(techStack || 'Not specified')}`,
         `  Focus:   ${chalk.white(priority)}`,
         `  Platforms: ${chalk.white(selectedPlatforms.join(', '))}`,
+        `  Products: ${chalk.white(productSummary)}`,
       ], { color: 'green' }));
 
       console.log();
@@ -264,16 +356,26 @@ export function registerInitCommand(program: Command): void {
       console.log(`  ${chalk.magentaBright.bold('_dream_context/')}`);
       console.log(`  ├── ${chalk.magentaBright.bold('core/')}`);
       console.log(`  │   ├── ${chalk.magentaBright.bold('features/')}`);
+      console.log(`  │   ├── ${chalk.magentaBright.bold('data-structures/')}`);
+      for (const product of productList) {
+        console.log(`  │   │   ├── ${chalk.green(product + '.md')}`);
+      }
       console.log(`  │   ├── ${chalk.green('0.soul.md')}`);
       console.log(`  │   ├── ${chalk.green('1.user.md')}`);
       console.log(`  │   ├── ${chalk.green('2.memory.md')}`);
       console.log(`  │   ├── ${chalk.green('3.style_guide_and_branding.md')}`);
       console.log(`  │   ├── ${chalk.green('4.tech_stack.md')}`);
-      console.log(`  │   ├── ${chalk.dim('5.data_structures.sql')}`);
       console.log(`  │   ├── ${chalk.yellow('CHANGELOG.json')}`);
       console.log(`  │   └── ${chalk.yellow('RELEASES.json')}`);
       console.log(`  ├── ${chalk.magentaBright.bold('knowledge/')}`);
+      if (multiProduct !== false) {
+        console.log(`  │   └── ${chalk.magentaBright.bold('products/')}`);
+        for (const product of multiProduct) {
+          console.log(`  │       ├── ${chalk.green(product + '.md')}`);
+        }
+      }
       console.log(`  ├── ${chalk.magentaBright.bold('state/')}`);
+      console.log(`  │   └── ${chalk.dim('.config.json')}`);
       if (obsidianInstalled) {
         console.log(`  ├── ${chalk.magentaBright.bold('inbox/')}`);
         console.log(`  └── ${chalk.dim('.obsidian/')} ${chalk.dim('(open as Obsidian vault)')}`);
@@ -314,5 +416,7 @@ export function registerInitCommand(program: Command): void {
       if (obsidianInstalled) {
         console.log(`  ${chalk.dim(nextStep++ + '.')} In Obsidian: ${chalk.white('Open folder as vault')} → select ${chalk.green('_dream_context/')}`);
       }
+
+      printDeprecationHint('init');
     });
 }

@@ -1,5 +1,59 @@
 [
   {
+    "date": "2026-05-23",
+    "consolidated_at": "2026-05-23T07:43:38.396Z",
+    "summary": "Sleep #4 — cross-repo audit pass. 5 parallel cluster agents synced all stale references after today's memory recall + CHANGELOG schema + tiered snapshot + default-on hook + 150-line cap changes. Updated: skill/SKILL.md (1 fix), agents/dreamcontext-{explore,initializer}.md (5 edits), all 5 .codex/agents/prompts/*.md + corresponding .toml mirrors (full rewrite), src/templates/{CLAUDE.md,AGENTS.md,init/2.memory.md} (new-project scaffolds aligned), README+DEEP-DIVE+AGENTS+CHANGELOG.md (root), memory-recall-bm25 PRD (heavy update with new schema/tiering/CHANGELOG corpus ACs), context-snapshot PRD (Sleep State + Pinned Knowledge change), sleep-consolidation PRD (150-line cap). Final grep clean. Build green 555.12 KB. Memory.md unchanged (43 lines, well under 150). Snapshot 353 lines (down from ~700 baseline, ~50% reduction). Corpus 130 docs (CHANGELOG indexing added 82 entries).",
+    "debt_before": 0,
+    "debt_after": 0,
+    "sessions_processed": 0,
+    "bookmarks_processed": 0,
+    "session_ids": []
+  },
+  {
+    "date": "2026-05-23",
+    "consolidated_at": "2026-05-23T07:43:30.984Z",
+    "summary": "Sleep #4 — 4 sessions consolidated. (1) Brain page 3D view toggle shipped: react-force-graph-3d + three lazy-loaded (~334KB gzip on-demand chunk), 2D/3D segmented control, billboard sprite labels, scene fog for depth (near=900, far=4200 after blackness fix), click-to-fit-subtree camera (zoomToFit with neighbor filter). (2) Mermaid render bug fix across MarkdownPreview/TaskDetailPanel — shared useMermaidRender hook, removed prefers-color-scheme drift, Playwright-verified. (3) Dashboard 'Apple Gallery Wall' design system rewrite (v04-ws4) + saved graph views feature with localStorage persistence. (4) Strategic deferral: link-aware BM25 boost (~2h) vs embedding overlay (~1day) — both deferred pending gold-set of BM25 misses; new knowledge file decision-link-aware-vs-embedding-recall.md captures the call. Core: 4.tech_stack gained dashboard deps + mermaid/marked/panzoom backfill; 6.system_flow updated for snapshot Sleep-State removal + pinned-callout change; 2.memory got 3 LIFO entries. Legacy 5.data_structures.sql migrated to data-structures/default.md. Features: web-dashboard.md absorbed Brain 3D as a sub-capability (PRD section, 7 acceptance criteria all ticked); sleep-fanout-architecture confirmed stable; project-initialization verified current. Tasks: brain-3d-view + mermaid-render-fix + snapshot-changelog-refactor bodies fully reconciled with workflow mermaid + full PRD sections, all in_review. v0.4.0: 6/6 formally tagged tasks in_review — release-ready pending user browser verification. Needs user attention: (a) browser verify Brain 3D in dev server, (b) confirm saved-views in Brave Incognito, (c) Phase 2/3 direction on snapshot-changelog-refactor (CHANGELOG schema + memory.md rename).",
+    "debt_before": 10,
+    "debt_after": 0,
+    "sessions_processed": 4,
+    "bookmarks_processed": 0,
+    "session_ids": [
+      "1f431354-3eee-40d1-88f2-b4c9ec0b6699",
+      "0459cdb8-a810-463f-b885-d082d475e824",
+      "cbea2a55-9d38-4a20-83a7-976d07a625f0",
+      "fa67d942-c84b-49f3-aa5c-601195197390"
+    ]
+  },
+  {
+    "date": "2026-05-23",
+    "consolidated_at": "2026-05-23T06:19:34.118Z",
+    "summary": "Sleep #3 — memory recall (BM25, Path A) shipped; mem0 explicitly rejected after 3-reviewer adversarial review (critic/pragmatist/security all rejected). New CLI namespace: dreamcontext memory recall/remember/update/delete/list/status. Zero new deps. 20-query benchmark on 44-doc corpus: 94.7% top-1, 100% top-5. PRD memory-recall-bm25.md (in_review). UserPromptSubmit hook extended opt-in via DREAMCONTEXT_MEMORY_HOOK=1. Docs propagated: SKILL.md, dreamcontext-explore/initializer agents, 3 sleep agents, README, DEEP-DIVE, AGENTS. 2 new knowledge files: decision-mem0-vs-bm25-recall, three-reviewer-parallel-mandates-pattern. CHANGELOG entries for feat(memory) + docs(memory). 4.tech_stack updated to mention BM25 + recall.ts. 6.system_flow updated with query-time recall in ACTIVE WORK section.",
+    "debt_before": 12,
+    "debt_after": 0,
+    "sessions_processed": 4,
+    "bookmarks_processed": 0,
+    "session_ids": [
+      "cbea2a55-9d38-4a20-83a7-976d07a625f0",
+      "fa67d942-c84b-49f3-aa5c-601195197390",
+      "bdb5cee6-b531-4986-b775-cc753c6f43cc",
+      "2d3b13d1-1faa-4ee8-a879-9573c632c719"
+    ]
+  },
+  {
+    "date": "2026-05-22",
+    "consolidated_at": "2026-05-22T07:27:03.639Z",
+    "summary": "Sleep #2 — v0.4 consolidation. WS-1 manifest install/update, WS-2 sleep gate split + multi-product + SessionStart product injection, WS-4 dashboard race fixes + flowchart sync + Linear Midnight design overhaul. 3 v0.4 tasks (in_review) attached v0.4.0. Core 0/1/2/4/6 updated. 7 changelog entries. 2 new features PRD (manifest-based-install-update, multi-product-support), 3 existing PRDs refreshed. 2 new knowledge files (sub-agent-iterative-reviewer-pattern, manifest-bootstrap-safety-pattern). Backlog hygiene flagged ecc-inspired-roadmap stale 82 days. Update run on this repo: manifest bootstrapped, 4 stale brand-voice agents deleted.",
+    "debt_before": 9,
+    "debt_after": 0,
+    "sessions_processed": 3,
+    "bookmarks_processed": 0,
+    "session_ids": [
+      "2d3b13d1-1faa-4ee8-a879-9573c632c719",
+      "bdb5cee6-b531-4986-b775-cc753c6f43cc",
+      "d332f782-6e5e-4f5c-884c-a38fde1a1ca7"
+    ]
+  },
+  {
     "date": "2026-05-10",
     "consolidated_at": "2026-05-10T18:18:39.244Z",
     "summary": "Sleep #1 of 2026-05-10 — first live test of the new 3-specialist fan-out (sleep-tasks + sleep-state + sleep-product). Specialists ran clean in parallel. Tasks: created sleep-fanout-3specialist-collapse (in_review, attached v0.3.0, full body + Workflow mermaid); sleep-fanout-architecture logged with downstream pointer (no body pivot — collapse is a distinct second-order decision). State: +1 changelog refactor(sleep) covering the entire 5→3 collapse + reviewer fixes + .claude/skills mirror sync; +1 Technical Decision in 2.memory.md (parallel-overhead rationale); 0.soul.md Current Priority bumped; flagged stale RELEASES.json v0.3.0 summary string still says 'orchestrator + 5 specialists'. Product: reconciled both feature PRDs (sleep-fanout-architecture.md + sleep-consolidation.md) — Technical Details replaced, Constraints stamped 2026-05-10, no new knowledge file (rationale captured in PRDs + memory entry). Marketing: 10 runs scanned, no redactions. Council: council_demo01 still unpromoted (no fresh engagement). v0.3.0 NOT release-ready: 4 todo (meta-mcp-migration, plan-mode-to-task-import, marketing-dashboard-v0, ecc-inspired-roadmap), 3 in_review.",

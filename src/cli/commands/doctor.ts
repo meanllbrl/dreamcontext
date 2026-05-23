@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import chalk from 'chalk';
 import { resolveContextRoot } from '../../lib/context-path.js';
@@ -68,6 +68,79 @@ function checkDirectory(root: string, relPath: string, label: string): CheckResu
   return { name: label, status: 'ok', message: relPath };
 }
 
+/**
+ * Validate that core/data-structures/ exists and contains at least one .md file
+ * (e.g., default.md for single-product OR <product>.md for multi-product).
+ *
+ * Also emits a migration hint when the legacy core/5.data_structures.sql is still
+ * present, pointing at the sleep-state Pass B2 migration block.
+ */
+function checkDataStructures(root: string): CheckResult[] {
+  const results: CheckResult[] = [];
+  const dirRel = 'core/data-structures';
+  const dirAbs = join(root, dirRel);
+  const legacyRel = 'core/5.data_structures.sql';
+  const legacyAbs = join(root, legacyRel);
+  const legacyExists = existsSync(legacyAbs);
+
+  if (!existsSync(dirAbs)) {
+    if (legacyExists) {
+      results.push({
+        name: 'Data structures',
+        status: 'warn',
+        message:
+          `Legacy ${legacyRel} present; new layout core/data-structures/ missing. `
+          + `Run a sleep cycle — sleep-state Pass B2 migrates the legacy file to core/data-structures/default.md.`,
+      });
+    } else {
+      results.push({
+        name: 'Data structures',
+        status: 'warn',
+        message: `Optional directory not found: ${dirRel}`,
+      });
+    }
+    return results;
+  }
+
+  let mdCount = 0;
+  try {
+    mdCount = readdirSync(dirAbs).filter((f) => f.endsWith('.md')).length;
+  } catch {
+    results.push({
+      name: 'Data structures',
+      status: 'error',
+      message: `Unreadable directory: ${dirRel}`,
+    });
+    return results;
+  }
+
+  if (mdCount === 0) {
+    results.push({
+      name: 'Data structures',
+      status: 'warn',
+      message: `${dirRel}/ exists but contains no .md files (expected default.md or <product>.md)`,
+    });
+  } else {
+    results.push({
+      name: 'Data structures',
+      status: 'ok',
+      message: `${dirRel}/ (${mdCount} file${mdCount > 1 ? 's' : ''})`,
+    });
+  }
+
+  if (legacyExists) {
+    results.push({
+      name: 'Data structures (legacy)',
+      status: 'warn',
+      message:
+        `Legacy ${legacyRel} still present alongside new layout. `
+        + `sleep-state Pass B2 leaves the file in place after migration; delete it once you've confirmed core/data-structures/default.md is current.`,
+    });
+  }
+
+  return results;
+}
+
 export function registerDoctorCommand(program: Command): void {
   program
     .command('doctor')
@@ -100,7 +173,7 @@ export function registerDoctorCommand(program: Command): void {
         // Optional extended core files
         checkFile(root, 'core/3.style_guide_and_branding.md', 'Style guide', false),
         checkFile(root, 'core/4.tech_stack.md', 'Tech stack', false),
-        checkFile(root, 'core/5.data_structures.sql', 'Data structures', false),
+        ...checkDataStructures(root),
 
         // Sleep state (optional — created on first Stop hook)
         ...(existsSync(join(root, 'state', '.sleep.json'))

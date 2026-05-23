@@ -9,9 +9,9 @@ description: >-
   detail-panel editor + list sort, scatter view.
 priority: high
 urgency: medium
-status: in_review
+status: completed
 created_at: '2026-05-09'
-updated_at: '2026-05-09'
+updated_at: '2026-05-23'
 tags:
   - tasks
   - prioritization

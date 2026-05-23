@@ -1,0 +1,378 @@
+{
+  "version": "0.2.0",
+  "createdAt": "2026-05-22T07:17:39.740Z",
+  "updatedAt": "2026-05-22T07:17:55.309Z",
+  "platforms": [
+    "claude",
+    "codex"
+  ],
+  "files": {
+    ".claude/skills/dreamcontext/SKILL.md": {
+      "version": "0.2.0",
+      "kind": "core"
+    },
+    ".claude/agents/dreamcontext-explore.md": {
+      "version": "0.2.0",
+      "kind": "agent"
+    },
+    ".claude/agents/dreamcontext-initializer.md": {
+      "version": "0.2.0",
+      "kind": "agent"
+    },
+    ".claude/agents/sleep-product.md": {
+      "version": "0.2.0",
+      "kind": "agent"
+    },
+    ".claude/agents/sleep-state.md": {
+      "version": "0.2.0",
+      "kind": "agent"
+    },
+    ".claude/agents/sleep-tasks.md": {
+      "version": "0.2.0",
+      "kind": "agent"
+    },
+    ".claude/settings.json": {
+      "version": "0.2.0",
+      "kind": "hook"
+    },
+    ".agents/skills/dreamcontext/SKILL.md": {
+      "version": "0.2.0",
+      "kind": "core"
+    },
+    ".codex/agents/dreamcontext-explore.toml": {
+      "version": "0.2.0",
+      "kind": "agent"
+    },
+    ".codex/agents/dreamcontext-initializer.toml": {
+      "version": "0.2.0",
+      "kind": "agent"
+    },
+    ".codex/agents/sleep-product.toml": {
+      "version": "0.2.0",
+      "kind": "agent"
+    },
+    ".codex/agents/sleep-state.toml": {
+      "version": "0.2.0",
+      "kind": "agent"
+    },
+    ".codex/agents/sleep-tasks.toml": {
+      "version": "0.2.0",
+      "kind": "agent"
+    },
+    ".codex/config.toml": {
+      "version": "0.2.0",
+      "kind": "hook"
+    },
+    ".claude/skills/brand-voice/SKILL.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".claude/skills/brand-voice/discover-brand.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".claude/skills/brand-voice/guideline-generation.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".claude/agents/discover-brand.md": {
+      "version": "0.2.0",
+      "kind": "pack-agent"
+    },
+    ".agents/skills/brand-voice/SKILL.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".agents/skills/brand-voice/discover-brand.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".agents/skills/brand-voice/guideline-generation.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".codex/agents/discover-brand.toml": {
+      "version": "0.2.0",
+      "kind": "pack-agent"
+    },
+    ".claude/skills/council/SKILL.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".claude/skills/council/debate-protocol.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".claude/agents/council-persona.md": {
+      "version": "0.2.0",
+      "kind": "pack-agent"
+    },
+    ".claude/agents/council-synthesizer.md": {
+      "version": "0.2.0",
+      "kind": "pack-agent"
+    },
+    ".agents/skills/council/SKILL.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".agents/skills/council/debate-protocol.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".codex/agents/council-persona.toml": {
+      "version": "0.2.0",
+      "kind": "pack-agent"
+    },
+    ".codex/agents/council-synthesizer.toml": {
+      "version": "0.2.0",
+      "kind": "pack-agent"
+    },
+    ".claude/skills/design/SKILL.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".claude/skills/design/frontend-principles.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".claude/skills/design/design-web.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".claude/skills/design/design-mobile.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".claude/skills/design/onboarding-design.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".agents/skills/design/SKILL.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".agents/skills/design/frontend-principles.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".agents/skills/design/design-web.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".agents/skills/design/design-mobile.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".agents/skills/design/onboarding-design.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".claude/skills/engineering/SKILL.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".claude/skills/engineering/backend-principles.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".claude/skills/engineering/web-app-frontend.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".claude/skills/engineering/firebase-cloud-functions/SKILL.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".claude/skills/engineering/firebase-cloud-functions/references/gen_comparison.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".claude/skills/engineering/firebase-cloud-functions/references/idempotency.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".claude/skills/engineering/firebase-cloud-functions/references/local_testing.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".claude/skills/engineering/firebase-cloud-functions/references/scaling.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".claude/skills/engineering/firebase-cloud-functions/references/secrets.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".claude/skills/engineering/firebase-cloud-functions/references/triggers_and_deployment.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".claude/skills/engineering/firebase-firestore/SKILL.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".claude/skills/engineering/firebase-firestore/references/indexes.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".claude/skills/engineering/firebase-firestore/references/provisioning.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".claude/skills/engineering/firebase-firestore/references/query_mechanics.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".claude/skills/engineering/firebase-firestore/references/security_rules.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".claude/skills/engineering/firebase-firestore/references/web_sdk_usage.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".claude/agents/reviewer.md": {
+      "version": "0.2.0",
+      "kind": "pack-agent"
+    },
+    ".agents/skills/engineering/SKILL.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".agents/skills/engineering/backend-principles.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".agents/skills/engineering/web-app-frontend.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".agents/skills/engineering/firebase-cloud-functions/SKILL.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".agents/skills/engineering/firebase-cloud-functions/references/gen_comparison.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".agents/skills/engineering/firebase-cloud-functions/references/idempotency.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".agents/skills/engineering/firebase-cloud-functions/references/local_testing.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".agents/skills/engineering/firebase-cloud-functions/references/scaling.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".agents/skills/engineering/firebase-cloud-functions/references/secrets.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".agents/skills/engineering/firebase-cloud-functions/references/triggers_and_deployment.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".agents/skills/engineering/firebase-firestore/SKILL.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".agents/skills/engineering/firebase-firestore/references/indexes.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".agents/skills/engineering/firebase-firestore/references/provisioning.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".agents/skills/engineering/firebase-firestore/references/query_mechanics.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".agents/skills/engineering/firebase-firestore/references/security_rules.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".agents/skills/engineering/firebase-firestore/references/web_sdk_usage.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".codex/agents/reviewer.toml": {
+      "version": "0.2.0",
+      "kind": "pack-agent"
+    },
+    ".claude/skills/growth/SKILL.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".claude/skills/growth/performance-marketing.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".claude/skills/growth/lean-analytics-experiments.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".claude/skills/growth/lean-analytics-metrics.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".agents/skills/growth/SKILL.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".agents/skills/growth/performance-marketing.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".agents/skills/growth/lean-analytics-experiments.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".agents/skills/growth/lean-analytics-metrics.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".claude/skills/meta-marketing/SKILL.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".agents/skills/meta-marketing/SKILL.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".claude/skills/system-prompts/SKILL.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".agents/skills/system-prompts/SKILL.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    }
+  },
+  "packs": {
+    "brand-voice": {
+      "version": "0.2.0"
+    },
+    "council": {
+      "version": "0.2.0"
+    },
+    "design": {
+      "version": "0.2.0"
+    },
+    "engineering": {
+      "version": "0.2.0"
+    },
+    "growth": {
+      "version": "0.2.0"
+    },
+    "meta-marketing": {
+      "version": "0.2.0"
+    },
+    "system-prompts": {
+      "version": "0.2.0"
+    }
+  }
+}

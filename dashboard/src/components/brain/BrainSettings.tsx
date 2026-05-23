@@ -108,6 +108,15 @@ export function BrainSettings({ settings, patch, setGroups, reset, onClose }: Br
           open={open.display}
           onToggle={() => toggle('display')}
         >
+          <SegmentedRow
+            label="View"
+            value={settings.display.view === '3d' ? '3d' : '2d'}
+            options={[
+              { value: '2d', label: '2D' },
+              { value: '3d', label: '3D' },
+            ]}
+            onChange={(v) => patch('display', { view: v as '2d' | '3d' })}
+          />
           <ToggleRow
             label="Arrows"
             checked={settings.display.arrows}
@@ -196,6 +205,38 @@ function ToggleRow({
         <span className="brain-toggle-knob" />
       </span>
     </label>
+  );
+}
+
+function SegmentedRow({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: Array<{ value: string; label: string }>;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div className="brain-segmented-row">
+      <span className="brain-segmented-label">{label}</span>
+      <div className="brain-segmented" role="tablist">
+        {options.map((opt) => (
+          <button
+            key={opt.value}
+            type="button"
+            role="tab"
+            aria-selected={value === opt.value}
+            className={`brain-segmented-btn ${value === opt.value ? 'brain-segmented-btn--active' : ''}`}
+            onClick={() => onChange(opt.value)}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 

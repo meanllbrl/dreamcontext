@@ -88,6 +88,8 @@ The task body (Why, User Stories, Acceptance Criteria, Constraints & Decisions, 
 
 A fresh session opening this task file should see the *current plan*.
 
+**Tip — recall before reconciling.** If you're unsure whether a decision observed this session was already captured elsewhere (memory entry, sibling task, knowledge file), run `dreamcontext memory recall "<topic>"` to surface the top hits across the corpus before you edit. Cheaper than grep, deterministic, and helps you avoid duplicating a decision that already lives in `2.memory.md` (which `sleep-state` owns).
+
 ### 4. Status — never auto-complete
 
 Default rule: if work meaningfully advanced the task, bump to `in_review`:

@@ -7,9 +7,9 @@ description: >-
   skipping changelog/release/feature updates
 priority: high
 urgency: medium
-status: in_review
+status: completed
 created_at: '2026-05-09'
-updated_at: '2026-05-10'
+updated_at: '2026-05-23'
 tags:
   - agents
   - sleep

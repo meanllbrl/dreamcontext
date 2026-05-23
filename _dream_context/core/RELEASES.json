@@ -1,5 +1,20 @@
 [
   {
+    "id": "rel_US_Hptq7",
+    "version": "v0.4.0",
+    "date": "",
+    "summary": "Manifest-aware install/update system (setup command, .install-manifest.json, stale-file pruning), multi-product support (monorepo init, per-product data-structures and knowledge injection in snapshot), BM25 memory recall (deterministic, zero new deps, hook-injected by default), snapshot improvements (pinned knowledge index, sleep state removed from snapshot, CHANGELOG schema adds summary + references + supersedes), anti-bloat ceiling tightened to 150 lines, 3D Brain graph view (react-force-graph-3d + three, lazy-loaded chunk), mermaid rendering fixed across all dashboard pages via shared useMermaidRender hook.",
+    "breaking": false,
+    "status": "planning",
+    "features": [],
+    "tasks": [
+      "v04-ws1-install-update-overhaul",
+      "v04-ws2-sleep-specialist-multiproduct",
+      "v04-ws4-dashboard-ux"
+    ],
+    "changelog": []
+  },
+  {
     "id": "rel_05DfNctF",
     "version": "v0.3.0",
     "date": "",

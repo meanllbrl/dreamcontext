@@ -2,7 +2,7 @@
 id: feat_O7LODr7O
 status: active
 created: '2026-02-25'
-updated: '2026-03-10'
+updated: '2026-05-23'
 released_version: 0.1.0
 tags:
   - frontend
@@ -37,6 +37,7 @@ Users need a visual interface to manage agent context without using the terminal
 - [ ] As a user, I want all manual changes I make in the dashboard to be recorded in the sleep file so that the agent consolidates them during the next sleep cycle
 - [ ] As a user, I want light and dark mode (with system preference detection) so that the UI matches my OS settings
 - [ ] As a user, I want multi-language support (English initially, i18n-ready) so that the dashboard can be localized in the future
+- [x] As a user, I want to toggle the Brain graph to a 3D rendering mode so that I can perceive relationship depth and cluster density that 2D layouts obscure when nodes overlap
 
 ## Acceptance Criteria
 
@@ -58,6 +59,10 @@ Users need a visual interface to manage agent context without using the terminal
 - [x] Eisenhower Matrix view: 2×2 priority×urgency grid, excludes completed tasks
 - [x] MultiSelectFilter: checkbox-based, type-ahead search shown when >5 options, All/None toggle
 - [x] Version Manager: planning/released sections, stats header, Release button to promote
+- [x] Flowchart-to-acceptance-criteria sync: `<!-- node:<id> -->` markers in task body link mermaid node IDs to checkboxes; toggling a checkbox updates the corresponding mermaid node's `:::class` (done/active/todo/blocked) and vice versa.
+- [x] Race-safe rapid checkbox toggles: `pendingBodyRef` pattern computes successive optimistic bodies from the latest in-flight state (not stale server state); reverts on API failure.
+- [x] Server PATCH body size limit raised to 1 MB; `---` front-matter delimiters sanitized from body before writing to prevent parse corruption.
+- [x] Mermaid edge-line corruption fix: lines containing edge operators (`-->`, `---`, `-.->`, etc.) are never treated as node definitions during class-injection pass.
 
 ### Sleep State
 - [ ] Agent avatar (diamond logo) in header: full color when alert, dims progressively, pulses with "zzz" when must_sleep
@@ -92,10 +97,8 @@ Users need a visual interface to manage agent context without using the terminal
 
 ### Design
 - [ ] Lightweight, minimal UI inspired by Notion and Linear
-- [ ] Purple-to-magenta brand gradient: #641787, #781ca3, #8200a6, #db04b4
-- [ ] Font: Visby CF with system font fallback
-- [ ] 4px grid spacing system
-- [ ] HSL/OKLCH color system (no hex in CSS custom properties)
+- [x] Linear Midnight design system applied: Neon Lime (#e4f222) as sole accent, Inter Variable typeface (weight 510/590 with 500/600 fallback), pitch-black/graphite/deep-slate layered surfaces, muted Storm Cloud secondary text, flat surfaces (glassmorphism removed), Berkeley Mono for code.
+- [ ] Purple-to-magenta brand gradient: #641787, #781ca3, #8200a6, #db04b4 (retained as legacy variable; Neon Lime replaces as primary action color)
 - [ ] Light and dark mode with system preference detection and manual toggle
 - [ ] WCAG AA contrast ratios
 - [ ] Responsive layout (sidebar collapses on small screens)
@@ -111,6 +114,10 @@ Users need a visual interface to manage agent context without using the terminal
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
 
+- **[2026-05-23]** Brain 3D view is a toggle on the existing Brain page, not a separate route. `react-force-graph-3d` + `three` are dashboard-only deps (isolated from CLI). Labels use `THREE.Sprite` (billboard) to stay legible at all camera angles. `fog: true` on `SpriteMaterial` ties label opacity to scene fog so distant labels auto-fade with their nodes. Fly-to on click uses `fgRef.current.cameraPosition()` (ForceGraph3D's imperative API), not Three.js directly.
+- **[2026-05-22]** Linear Midnight design system (additive, non-breaking): old `--glass-*` and `--color-brand-*` CSS variables retained for backward compatibility; no selectors deleted. Google Fonts CDN loads Inter in browser; air-gapped environments fall back to system font. `font-weight: 510/590` uses Inter variable font axis; falls back to `500/600` if Inter is not a variable font instance.
+- **[2026-05-22]** Flowchart sync uses `<!-- node:<id> -->` comment markers embedded in task body (between a checkbox and its label) to bind checkbox state to a mermaid node ID. Edge-line corruption guard: lines containing `-->`, `---`, `-.->`, `==>`, `--`, `==` operators are skipped during node-class injection. `sanitizeMermaid()` strips problematic characters before passing to `mermaid.render()`.
+- **[2026-05-22]** `pendingBodyRef` race safety: PATCH mutations read from `pendingBodyRef.current` (last optimistic value) rather than stale server data. On failure, `bodySourceRef.current` (last confirmed server value) is used to revert.
 - **[2026-03-07]** in_review is treated as active (not completed): shown in snapshot, default task list, and Eisenhower Matrix alongside todo and in_progress. This is intentional — in_review is a review gate before completion, not a done state.
 - **[2026-03-07]** Versions unified with Releases: no separate VERSIONS.json. Planning-stage versions are ReleaseEntries with `status: 'planning'`. Backward compat: entries without status field treated as released. One schema, one file, UI handles the separation.
 - **[2026-03-07]** Eisenhower Matrix excludes completed tasks: it's a prioritization view for future work, not a history. Completed tasks remain visible in the Kanban "Completed" column.
@@ -153,6 +160,36 @@ Users need a visual interface to manage agent context without using the terminal
 3. tsup onSuccess copies dashboard/dist/ to dist/dashboard/
 4. dist/dashboard/ ships in npm package (covered by "files": ["dist"])
 
+### Brain 3D View (v0.4)
+
+- `dashboard/src/pages/BrainPage.tsx` — `React.lazy(() => import('../components/brain/BrainCanvas3D'))` behind `<Suspense>`. Conditional render on `settings.display.view === '3d'`. Runtime node type extended with `z/vz/fz` fields for 3D force simulation state.
+- `dashboard/src/components/brain/BrainCanvas3D.tsx` — owns `ForceGraph3D` instance, 3D force config (`d3-force-3d`: `forceCollide`, `forceX/Y/Z`), billboard label sprites (`makeLabelSprite()` → `THREE.Sprite` via `THREE.CanvasTexture`), scene fog setup, and click fly-to camera animation via `fgRef.current.cameraPosition()`.
+- `dashboard/src/components/brain/BrainSettings.tsx` — `SegmentedRow` component added; View 2D/3D row at top of Display section.
+- `dashboard/src/hooks/useGraphSettings.ts` — `display.view: '2d' | '3d'` field added (default `'2d'`); persisted in `brain:settings:v1` localStorage blob; old persisted state without `view` falls back to `'2d'` via falsy check.
+- **Dependencies** (dashboard-only): `react-force-graph-3d@^1.29.1`, `three@^0.184.0`, `@types/three@^0.184.1`.
+- **Chunk**: Vite splits `BrainCanvas3D` into its own async chunk (`~334 KB gzip`). Initial bundle size unchanged.
+- **Fog**: `THREE.Fog(color, 320, 1100)` — linear fog from distance 320 to 1100. Fog color: dark `#0d0d10`, light `#f7f7fa`. `SpriteMaterial.fog = true` ties label opacity to fog, so far labels auto-fade with their nodes.
+- **Fly-to**: `handleNodeClickInternal` positions camera along the node's radial vector from origin at `targetDistance=90` world units, animated over 900 ms.
+
+### Flowchart-AC Sync (v0.4)
+
+- `dashboard/src/components/tasks/TaskDetailPanel.tsx`
+  - `syncCriteriaToMermaid(body, id, checked)`: finds `<!-- node:<id> -->` markers in the body; replaces the node's `:::class` in the mermaid block.
+  - `sanitizeMermaid(src)`: strips characters that break mermaid parsing.
+  - Edge-line guard: `EDGE_OPS_RE` regex skips lines with flowchart edge operators during class-injection.
+  - `pendingBodyRef`: `useRef<string>` initialized from `task.body`; reset when `task.body` changes from server; all successive checkbox toggles read/write this ref, not component state.
+- Server: `src/server/routes/tasks.ts` PATCH body limit 1 MB; `---` at start/end of body stripped before frontmatter write.
+
+### Brain — 3D View
+
+- [x] `BrainSettings → Display → View` segmented control lets the user flip between `2d` (default) and `3d` modes without leaving the page.
+- [x] 3D renderer (`BrainCanvas3D`) is lazy-loaded via `React.lazy` + `Suspense`; `three` + `react-force-graph-3d` ship as a separate Vite chunk (~334 KB gzip) fetched only on first toggle to 3D; initial bundle size unaffected.
+- [x] Node labels in 3D mode are `THREE.Sprite` billboard objects (text-on-canvas → CanvasTexture) that always face the camera and are positioned below each node sphere. Dimmed nodes receive lower-opacity labels.
+- [x] Scene fog (`THREE.Fog`) fades far nodes toward the background color, providing depth perception: near nodes pop forward, far nodes recede. Fog color is theme-aware (dark: `#0d0d10`, light: `#f7f7fa`).
+- [x] Clicking a node triggers a camera fly-to animation (`cameraPosition()` over 900 ms): camera moves along the node's radial vector from origin to a fixed close distance (90 units) while looking at the node.
+- [x] All shared Brain behaviors carry over to 3D: filtering, neighbor highlighting, hover-dim, `onNodeClick` → NodeDrawer, group color palette, force-simulation settings sliders, `view` persisted to `brain:settings:v1` localStorage blob (missing key falls back to `'2d'`).
+- [x] `npm run build` produces a distinct `BrainCanvas3D-*.js` chunk, confirming lazy separation.
+
 ### Council Page
 
 - [x] CouncilHall: searchable grid of debates with status badge, persona count, round progress indicator
@@ -173,6 +210,22 @@ Users need a visual interface to manage agent context without using the terminal
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-05-23 - Brain 3D view toggle (v0.4)
+- `BrainCanvas3D` component added: `react-force-graph-3d` + `three`-powered renderer, lazy-loaded as a separate Vite chunk.
+- Billboard sprite labels (THREE.Sprite / CanvasTexture) always face camera, positioned below node sphere, opacity-dimmed on hover.
+- Scene fog (`THREE.Fog 320–1100`) provides near/far depth perception; SpriteMaterial.fog=true ties label fade to scene fog.
+- Click → camera fly-to: `cameraPosition()` over 900 ms moves camera along node's radial vector to 90-unit close distance.
+- View toggle (`2d` | `3d`) persisted to `brain:settings:v1` localStorage; old state without `view` falls back to `'2d'`.
+- `BrainSettings` extended with `SegmentedRow` component and View row at top of Display section.
+
+### 2026-05-22 - v0.4 Dashboard: Flowchart-AC Sync + Design System + Bug Fixes
+- Flowchart-to-acceptance-criteria sync: `<!-- node:<id> -->` markers bind mermaid nodes to checkboxes (bidirectional pending; checkbox→node live).
+- Race-safe rapid checkbox toggles via `pendingBodyRef` pattern; failure reverts to `bodySourceRef`.
+- Server PATCH body limit raised to 1 MB; `---` separator sanitization added.
+- Mermaid edge-line corruption fix: EDGE_OPS_RE guard skips operator lines during node-class injection.
+- Linear Midnight design system overhaul: Neon Lime accent, Inter Variable font, flat surfaces (glassmorphism removed), layered dark palette. Additive and non-breaking — old brand variables preserved.
+- Filter persistence projectId hydration timing fix: filters no longer reset on page reload when projectId hydrates asynchronously.
 
 ### 2026-04-19 - Council UI + Brain Light Mode
 - Council page: CouncilHall (searchable card grid) + CouncilDetail (back nav + Overview/Agents/Matrix tabs). Overview = dynamic final-report rendering. Agents = searchable TranscriptView with persona slug chips. Matrix = inline cell expand. Backend routes added. 3 UI iterations to reach accepted design (v1 gamified rejected, v2 report-buried rejected, v3 accepted).

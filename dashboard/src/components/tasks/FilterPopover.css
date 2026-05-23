@@ -63,7 +63,7 @@
 }
 
 .filter-option--selected {
-  color: var(--color-brand-vivid);
+  color: var(--color-accent);
   font-weight: var(--font-weight-medium);
 }
 
@@ -76,7 +76,7 @@
 
 .filter-option-check {
   margin-left: auto;
-  color: var(--color-brand-vivid);
+  color: var(--color-accent);
   flex-shrink: 0;
 }
 

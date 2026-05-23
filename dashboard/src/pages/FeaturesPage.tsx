@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
 import { useI18n } from '../context/I18nContext';
 import { MarkdownPreview } from '../components/core/MarkdownPreview';
+import { tagHue } from '../lib/tagColor';
 import './FeaturesPage.css';
 
 interface Feature {
@@ -64,7 +65,7 @@ export function FeaturesPage() {
               </div>
               <div className="knowledge-card-tags">
                 {feature.tags.map(tag => (
-                  <span key={tag} className="task-tag">{tag}</span>
+                  <span key={tag} className="task-tag" data-hue={tagHue(tag)}>{tag}</span>
                 ))}
               </div>
             </button>

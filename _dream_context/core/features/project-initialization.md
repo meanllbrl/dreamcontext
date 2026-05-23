@@ -2,7 +2,7 @@
 id: feat_cSWvTF1K
 status: active
 created: '2026-02-25'
-updated: '2026-02-26'
+updated: '2026-05-23'
 released_version: 0.1.0
 tags:
   - devops
@@ -24,6 +24,8 @@ Setting up the _dream_context/ directory structure correctly is tedious and erro
 - [x] As a developer, I want the Initializer sub-agent to do the full setup interactively — scanning the codebase, asking targeted questions, and writing rich content — so I get a meaningful context, not just scaffolding.
 - [x] As a developer, I want the `--yes` flag to skip all prompts and use sensible defaults so the init can be scripted non-interactively.
 - [x] As a developer, I want `install-skill` to migrate the old `npx dreamcontext snapshot` hook to the new `hook session-start` format so upgrading from older versions is automatic.
+- [x] As a developer, I want `dreamcontext setup` to run init + install-skill in one command so I don't need to chain two separate commands for a fresh project.
+- [x] As a developer, I want `dreamcontext init --multi-product=a,b` to scaffold per-product data-structures and knowledge files so multi-product projects are fully set up from init.
 
 ## Acceptance Criteria
 
@@ -34,6 +36,8 @@ Setting up the _dream_context/ directory structure correctly is tedious and erro
 - Template tokens replaced: `{{PROJECT_NAME}}`, `{{PROJECT_DESCRIPTION}}`, `{{TARGET_USER}}`, `{{TECH_STACK}}`, `{{PRIORITY}}`, `{{DATE}}`.
 - Tech stack auto-detected from `package.json` (React, Next.js, Vue, Express, TypeScript, Tailwind, Prisma, etc.), `pubspec.yaml`, `Cargo.toml`, `go.mod`, `requirements.txt`/`pyproject.toml`.
 - Running init on a directory that already has `_dream_context/` returns an error and does not overwrite.
+- `dreamcontext init --multi-product=a,b` creates `_dream_context/core/data-structures/a.md`, `_dream_context/core/data-structures/b.md`, `_dream_context/knowledge/products/a.md`, `_dream_context/knowledge/products/b.md`.
+- `dreamcontext setup` runs init then install-skill in one orchestrated flow, supporting `--defaults`, `--yes`, `--platforms`, `--packs`, `--multi-product` flags; writes `.config.json` with full setup state.
 - `install-skill` copies `SKILL.md` to `.claude/skills/dreamcontext/SKILL.md`.
 - `install-skill` copies all `agents/*.md` files to `.claude/agents/`.
 - `install-skill` writes `SessionStart` and `Stop` hooks to `.claude/settings.json`, creating or merging with existing settings.
@@ -42,6 +46,8 @@ Setting up the _dream_context/ directory structure correctly is tedious and erro
 
 ## Constraints & Decisions
 
+- **[2026-05-22]** `dreamcontext setup` is the recommended first-run command. It orchestrates init + install-skill internally via the `SETUP_INTERNAL_ENV` flag to suppress deprecation hints from child commands.
+- **[2026-05-22]** `install-skill` and `install-claude-md` are deprecated but not removed until v0.5. They still work; print a hint directing to `setup` unless invoked internally by `setup`.
 - **[2026-02-25]** `init` and `install-skill` are separate commands by design. `init` sets up `_dream_context/` (data/context); `install-skill` sets up `.claude/` (Claude Code integration). A project might use `init` without Claude Code, or update the skill without reinitializing.
 - **[2026-02-25]** Templates live in `src/templates/init/` in source and are bundled via tsup into `dist/templates/init/`. The command resolves template paths relative to the compiled file location using multiple candidate paths.
 - **[2026-02-25]** The Initializer sub-agent (`agents/dreamcontext-initializer.md`) is the preferred setup path for new projects. `dreamcontext init` provides the scaffold; the agent provides the rich content. The SKILL.md directs main agents to dispatch the Initializer when no `_dream_context/` is detected.

@@ -35,8 +35,8 @@
 }
 
 .core-list-item--active {
-  background: var(--gradient-brand-subtle);
-  box-shadow: inset 4px 0 0 0 var(--color-brand-vivid);
+  background: var(--color-accent-soft);
+  box-shadow: inset 4px 0 0 0 var(--color-accent);
 }
 
 .core-list-name {
@@ -49,8 +49,17 @@
 }
 
 .core-list-type {
-  font-size: var(--font-size-xs);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: var(--font-weight-medium);
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-tertiary);
   color: var(--color-text-tertiary);
+  border: 1px solid var(--color-border);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .core-detail {
@@ -120,7 +129,7 @@
 }
 
 .core-tab--active {
-  background: var(--gradient-brand-subtle);
+  background: var(--color-accent-soft);
   color: var(--color-text);
   font-weight: var(--font-weight-semibold);
 }
@@ -136,12 +145,10 @@
   line-height: var(--line-height-relaxed);
   white-space: pre-wrap;
   word-break: break-word;
-  background: var(--glass-bg);
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
+  background: var(--color-bg-elevated);
   padding: var(--space-4);
   border-radius: var(--radius-md);
-  border: 1px solid var(--glass-border);
+  border: 1px solid var(--color-border);
   box-shadow: var(--shadow-sm);
   overflow-y: auto;
   flex: 1;
@@ -160,10 +167,9 @@
   font-family: var(--font-mono);
   line-height: var(--line-height-relaxed);
   padding: var(--space-3);
-  border: 1px solid var(--glass-border);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
-  background: var(--glass-bg);
-  backdrop-filter: var(--glass-blur);
+  background: var(--color-bg-elevated);
   box-shadow: inset 0 2px 4px hsl(0 0% 0% / 0.05);
   resize: none;
   overflow-y: auto;
@@ -171,7 +177,7 @@
 }
 
 .core-editor-textarea:focus {
-  border-color: var(--color-brand-vivid);
+  border-color: var(--color-accent);
   outline: none;
 }
 
@@ -181,11 +187,10 @@
   line-height: var(--line-height-relaxed);
   white-space: pre-wrap;
   word-break: break-word;
-  background: var(--glass-bg);
-  backdrop-filter: var(--glass-blur);
+  background: var(--color-bg-elevated);
   padding: var(--space-3);
   border-radius: var(--radius-md);
-  border: 1px solid var(--glass-border);
+  border: 1px solid var(--color-border);
   box-shadow: var(--shadow-sm);
   overflow-y: auto;
 }

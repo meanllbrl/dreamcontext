@@ -1,19 +1,43 @@
 {
-  "debt": 3,
-  "last_sleep": "2026-05-10",
-  "last_sleep_summary": "Sleep #1 of 2026-05-10 — first live test of the new 3-specialist fan-out (sleep-tasks + sleep-state + sleep-product). Specialists ran clean in parallel. Tasks: created sleep-fanout-3specialist-collapse (in_review, attached v0.3.0, full body + Workflow mermaid); sleep-fanout-architecture logged with downstream pointer (no body pivot — collapse is a distinct second-order decision). State: +1 changelog refactor(sleep) covering the entire 5→3 collapse + reviewer fixes + .claude/skills mirror sync; +1 Technical Decision in 2.memory.md (parallel-overhead rationale); 0.soul.md Current Priority bumped; flagged stale RELEASES.json v0.3.0 summary string still says 'orchestrator + 5 specialists'. Product: reconciled both feature PRDs (sleep-fanout-architecture.md + sleep-consolidation.md) — Technical Details replaced, Constraints stamped 2026-05-10, no new knowledge file (rationale captured in PRDs + memory entry). Marketing: 10 runs scanned, no redactions. Council: council_demo01 still unpromoted (no fresh engagement). v0.3.0 NOT release-ready: 4 todo (meta-mcp-migration, plan-mode-to-task-import, marketing-dashboard-v0, ecc-inspired-roadmap), 3 in_review.",
+  "debt": 9,
+  "last_sleep": "2026-05-23",
+  "last_sleep_summary": "Sleep #4 — cross-repo audit pass. 5 parallel cluster agents synced all stale references after today's memory recall + CHANGELOG schema + tiered snapshot + default-on hook + 150-line cap changes. Updated: skill/SKILL.md (1 fix), agents/dreamcontext-{explore,initializer}.md (5 edits), all 5 .codex/agents/prompts/*.md + corresponding .toml mirrors (full rewrite), src/templates/{CLAUDE.md,AGENTS.md,init/2.memory.md} (new-project scaffolds aligned), README+DEEP-DIVE+AGENTS+CHANGELOG.md (root), memory-recall-bm25 PRD (heavy update with new schema/tiering/CHANGELOG corpus ACs), context-snapshot PRD (Sleep State + Pinned Knowledge change), sleep-consolidation PRD (150-line cap). Final grep clean. Build green 555.12 KB. Memory.md unchanged (43 lines, well under 150). Snapshot 353 lines (down from ~700 baseline, ~50% reduction). Corpus 130 docs (CHANGELOG indexing added 82 entries).",
   "sleep_started_at": null,
-  "sessions_since_last_sleep": 1,
+  "sessions_since_last_sleep": 3,
   "sessions": [
     {
-      "session_id": "d332f782-6e5e-4f5c-884c-a38fde1a1ca7",
-      "transcript_path": "/Users/mehmetnuraydin/.claude/projects/-Users-mehmetnuraydin-projects-dreamcontext/d332f782-6e5e-4f5c-884c-a38fde1a1ca7.jsonl",
-      "stopped_at": "2026-05-10T18:29:17.852Z",
-      "last_assistant_message": "Updated. Want me to commit + push this fix as a small follow-up?",
-      "change_count": 25,
-      "tool_count": 122,
+      "session_id": "fa67d942-c84b-49f3-aa5c-601195197390",
+      "transcript_path": "/Users/mehmetnuraydin/.claude/projects/-Users-mehmetnuraydin-projects-dreamcontext/fa67d942-c84b-49f3-aa5c-601195197390.jsonl",
+      "stopped_at": "2026-05-23T17:15:14.346Z",
+      "last_assistant_message": "**Tüm fixes production'da (port 4173) aktif:**\n\n```\nLight:  hasExpandBtn ✓  fullScreenActive ✓  rendered:1 raw:0\n        doneRectFill #dcfce7  doneTextColor #14532d (AA contrast)\n        9 clickable nodes (zoom-in cursor)\nDark:   hasExpandBtn ✓  fullScreenActive ✓  rendered:1 raw:0\n        doneRectFill rgba(74,222,128,0.16) + doneTextColor #86efac\n        9 clickable nodes\n```\n\n**Kök neden:** `dreamcontext dashboard` CLI komutu global symlink üzerinden `dist/dashboard/`'yi serve ediyor. `dashboard/dist/` (Vite output) sadece kaynak. **`tsup` CLI build** `dashboard/dist` → `dist/dashboard` kopyalıyor. CLI build atlanmıştı.\n\n**Yapılan:**\n1. `dashboard/dist/` clean rebuild — Vite assets fresh\n2. `npm run build:cli` (tsup) → `dist/dashboard/` kopyalandı\n3. Eski dashboard server process (PID 55065) öldürüldü\n4. Yeni server `nohup`'la persistent başlatıldı (PID 55946, port 4173, log: `/tmp/dc-dashboard.log`)\n5. Playwright doğrulama: yeni asset hash'leri (`BHp63EMw.js`/`CdnDt_7U.css`) serve ediliyor\n\nTarayıcıda `Cmd+R` ya da `Cmd+Shift+R` yap — yeni production build geliyor. Görmen gerekenler:\n- Header sağında **expand iconu** (4-corner arrows)\n- Tıklayınca full-page mode (1100px centered)\n- Dark mode'da text **#86efac** (parlak yeşil) — okunabilir\n- Node'a tıkla → smooth zoom\n\nSleep debt 9, consolidation devam ediyor.",
+      "change_count": 90,
+      "tool_count": 483,
+      "score": 3,
+      "task_slugs": [
+        "sleep-fanout-3specialist-collapse"
+      ]
+    },
+    {
+      "session_id": "cbea2a55-9d38-4a20-83a7-976d07a625f0",
+      "transcript_path": "/Users/mehmetnuraydin/.claude/projects/-Users-mehmetnuraydin-projects-dreamcontext/cbea2a55-9d38-4a20-83a7-976d07a625f0.jsonl",
+      "stopped_at": "2026-05-23T07:44:58.280Z",
+      "last_assistant_message": "No response requested.",
+      "change_count": 69,
+      "tool_count": 280,
       "score": 3,
       "task_slugs": []
+    },
+    {
+      "session_id": "1f431354-3eee-40d1-88f2-b4c9ec0b6699",
+      "transcript_path": "/Users/mehmetnuraydin/.claude/projects/-Users-mehmetnuraydin-projects-dreamcontext/1f431354-3eee-40d1-88f2-b4c9ec0b6699.jsonl",
+      "stopped_at": "2026-05-23T07:48:59.717Z",
+      "last_assistant_message": "Temiz. HMR ile gitti.\n\n**Yeni mantık**: \n- Focused set'in (clicked + neighbors) gerçek bbox'ını manuel hesaplıyorum.\n- `half` = en geniş eksenin yarısı (bbox yarıçapı).\n- `targetDist = (half / tan(25°)) × 2.2` — yani bbox tam olarak FOV'a sığacak mesafe + %120 padding (subtree etrafında nefes alma).\n- `minDist = 90` — tek node (komşusuz) durumda çok yaklaşmasın diye taban mesafe.\n- Kamera *mevcut bakış yönü* boyunca yeni mesafeye yerleştiriliyor; orbit oryantasyonun korunuyor.\n\nImage #6'daki gibi 3 node'luk subtree artık frame'i dolduracak. Daha geniş bir subtree (8-10 node) tıklarsan da otomatik geriye çekilir — `half` büyüdükçe mesafe büyür.\n\nSleep debt **9** (bu son birkaç edit). Tamamen iteratif polish ama biriksin, yarın yine konsolidasyon olur. Yeni iş başlatmadan önce öneririm ama şu an aynı feature'da iteratif düzeltme yapıyoruz, bu cycle içinde kalalım.",
+      "change_count": 21,
+      "tool_count": 88,
+      "score": 3,
+      "task_slugs": [
+        "brain-3d-view"
+      ]
     }
   ],
   "bookmarks": [],
@@ -26,10 +50,119 @@
     "decision-meta-marketing-skill-adoption": {
       "last_accessed": "2026-05-09",
       "count": 1
+    },
+    "decision-mem0-vs-bm25-recall": {
+      "last_accessed": "2026-05-23",
+      "count": 1
     }
   },
-  "dashboard_changes": [],
+  "dashboard_changes": [
+    {
+      "entity": "task",
+      "action": "update",
+      "target": "state/rice-prioritization.md",
+      "field": "status",
+      "fields": [
+        {
+          "field": "status",
+          "from": "in_review",
+          "to": "completed"
+        }
+      ],
+      "summary": "task 'rice-prioritization': status in_review -> completed",
+      "timestamp": "2026-05-23T08:00:11.866Z"
+    },
+    {
+      "entity": "task",
+      "action": "update",
+      "target": "state/sleep-fanout-architecture.md",
+      "field": "status",
+      "fields": [
+        {
+          "field": "status",
+          "from": "in_review",
+          "to": "completed"
+        }
+      ],
+      "summary": "task 'sleep-fanout-architecture': status in_review -> completed",
+      "timestamp": "2026-05-23T08:00:10.523Z"
+    },
+    {
+      "entity": "task",
+      "action": "update",
+      "target": "state/v04-ws4-dashboard-ux.md",
+      "field": "status",
+      "fields": [
+        {
+          "field": "status",
+          "from": "in_review",
+          "to": "completed"
+        }
+      ],
+      "summary": "task 'v04-ws4-dashboard-ux': status in_review -> completed",
+      "timestamp": "2026-05-23T07:59:43.647Z"
+    },
+    {
+      "entity": "task",
+      "action": "update",
+      "target": "state/snapshot-changelog-refactor.md",
+      "field": "status",
+      "fields": [
+        {
+          "field": "status",
+          "from": "in_review",
+          "to": "in_progress"
+        }
+      ],
+      "summary": "task 'snapshot-changelog-refactor': status in_review -> in_progress",
+      "timestamp": "2026-05-23T07:59:29.811Z"
+    },
+    {
+      "entity": "task",
+      "action": "update",
+      "target": "state/sleep-fanout-3specialist-collapse.md",
+      "field": "status",
+      "fields": [
+        {
+          "field": "status",
+          "from": "in_review",
+          "to": "completed"
+        }
+      ],
+      "summary": "task 'sleep-fanout-3specialist-collapse': status in_review -> completed",
+      "timestamp": "2026-05-23T07:59:08.072Z"
+    },
+    {
+      "entity": "task",
+      "action": "update",
+      "target": "state/brain-3d-view.md",
+      "field": "status",
+      "fields": [
+        {
+          "field": "status",
+          "from": "in_review",
+          "to": "completed"
+        }
+      ],
+      "summary": "task 'brain-3d-view': status in_review -> completed",
+      "timestamp": "2026-05-23T07:58:51.123Z"
+    }
+  ],
   "compaction_log": [
+    {
+      "timestamp": "2026-05-23T06:53:03.468Z",
+      "trigger": "manual",
+      "debt_at_compaction": 6,
+      "sessions_count": 2,
+      "bookmarks_count": 0
+    },
+    {
+      "timestamp": "2026-05-22T20:50:46.862Z",
+      "trigger": "manual",
+      "debt_at_compaction": 9,
+      "sessions_count": 4,
+      "bookmarks_count": 0
+    },
     {
       "timestamp": "2026-04-25T08:42:03.333Z",
       "trigger": "manual",

@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { useKnowledgeList, useKnowledge, useToggleKnowledgePin } from '../hooks/useKnowledge';
 import { useI18n } from '../context/I18nContext';
 import { MarkdownPreview } from '../components/core/MarkdownPreview';
+import { tagHue } from '../lib/tagColor';
 import './KnowledgePage.css';
 
 export function KnowledgePage() {
@@ -68,7 +69,7 @@ export function KnowledgePage() {
               )}
               <div className="knowledge-card-tags">
                 {entry.tags.map(tag => (
-                  <span key={tag} className="task-tag">{tag}</span>
+                  <span key={tag} className="task-tag" data-hue={tagHue(tag)}>{tag}</span>
                 ))}
               </div>
             </button>

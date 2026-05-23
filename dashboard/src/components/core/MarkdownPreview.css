@@ -120,7 +120,7 @@
 
 .md-preview .markdown-body li input[type="checkbox"] {
   margin-right: var(--space-2);
-  accent-color: var(--color-brand-vivid);
+  accent-color: var(--color-accent);
 }
 
 .md-preview .markdown-body code {
@@ -170,7 +170,7 @@
 }
 
 .md-preview .markdown-body blockquote {
-  border-left: 3px solid var(--color-brand-vivid);
+  border-left: 3px solid var(--color-accent);
   padding-left: var(--space-4);
   margin: 0 0 var(--space-3) 0;
   color: var(--color-text-secondary);
@@ -184,13 +184,13 @@
 }
 
 .md-preview .markdown-body a {
-  color: var(--color-brand-vivid);
+  color: var(--color-accent);
   text-decoration: underline;
   text-underline-offset: 2px;
 }
 
 .md-preview .markdown-body a:hover {
-  color: var(--color-brand-hot);
+  color: var(--color-accent);
 }
 
 .md-preview .markdown-body strong {
@@ -200,4 +200,49 @@
 .md-preview .markdown-body img {
   max-width: 100%;
   border-radius: var(--radius-md);
+}
+
+/* ─── Mermaid Diagrams — ClickUp styled, theme-aware ─── */
+.md-preview .markdown-body .mermaid-rendered {
+  margin: var(--space-4) 0;
+  padding: var(--space-4);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+  position: relative;
+  transition: box-shadow var(--transition-fast), border-color var(--transition-fast);
+}
+
+.md-preview .markdown-body .mermaid-rendered:hover {
+  border-color: var(--color-border-hover);
+  box-shadow: var(--shadow-md);
+}
+
+.md-preview .markdown-body .mermaid-stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+  width: 100%;
+  overflow: auto;
+}
+
+.md-preview .markdown-body .mermaid-stage > svg {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
+.md-preview .markdown-body .mermaid-error {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-error);
+  background: var(--color-error-subtle);
+  border: 1px solid var(--color-error);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  white-space: pre-wrap;
+  word-break: break-word;
 }

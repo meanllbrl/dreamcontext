@@ -11,6 +11,7 @@ import {
   parsePlatformList,
   type PlatformId,
 } from '../../lib/platforms.js';
+import { printDeprecationHint } from './install-skill.js';
 
 export type Mode = 'append' | 'replace' | 'skip';
 
@@ -236,6 +237,7 @@ export function registerInstallInstructionsCommand(program: Command): void {
           const result = await installInstructions(projectRoot, platform, mode);
           printResult(result);
         }
+        printDeprecationHint('install-instructions');
       } catch (err: any) {
         if (err.name === 'ExitPromptError') {
           console.log();
@@ -275,6 +277,7 @@ export function registerInstallClaudeMdCommand(program: Command): void {
           );
           console.log();
         }
+        printDeprecationHint('install-claude-md');
       } catch (err: any) {
         if (err.name === 'ExitPromptError') {
           console.log();

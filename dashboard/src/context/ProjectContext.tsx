@@ -9,13 +9,11 @@ interface HealthResponse {
 interface ProjectContextValue {
   projectId: string;
   contextRoot: string;
-  ready: boolean;
 }
 
 const ProjectContext = createContext<ProjectContextValue>({
   projectId: '',
   contextRoot: '',
-  ready: false,
 });
 
 function hashString(str: string): string {
@@ -26,28 +24,47 @@ function hashString(str: string): string {
   return Math.abs(hash).toString(36);
 }
 
+type LoadState =
+  | { kind: 'loading' }
+  | { kind: 'ready'; value: ProjectContextValue };
+
 export function ProjectProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<ProjectContextValue>({
-    projectId: '',
-    contextRoot: '',
-    ready: false,
-  });
+  const [state, setState] = useState<LoadState>({ kind: 'loading' });
 
   useEffect(() => {
     api.get<HealthResponse>('/health').then((data) => {
       setState({
-        contextRoot: data.contextRoot,
-        projectId: hashString(data.contextRoot),
-        ready: true,
+        kind: 'ready',
+        value: {
+          contextRoot: data.contextRoot,
+          projectId: hashString(data.contextRoot),
+        },
       });
     }).catch(() => {
-      // Fallback: no project scoping
-      setState(prev => ({ ...prev, ready: true }));
+      // Fallback: no project scoping (still render the app)
+      setState({ kind: 'ready', value: { projectId: '', contextRoot: '' } });
     });
   }, []);
 
+  if (state.kind === 'loading') {
+    return (
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          height: '100vh',
+          color: 'var(--color-text-secondary, #888)',
+          fontSize: '14px',
+        }}
+      >
+        Loading project…
+      </div>
+    );
+  }
+
   return (
-    <ProjectContext.Provider value={state}>
+    <ProjectContext.Provider value={state.value}>
       {children}
     </ProjectContext.Provider>
   );

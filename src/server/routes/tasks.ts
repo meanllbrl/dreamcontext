@@ -2,7 +2,7 @@ import { IncomingMessage, ServerResponse } from 'node:http';
 import { existsSync, writeFileSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import fg from 'fast-glob';
-import { readFrontmatter, updateFrontmatterFields } from '../../lib/frontmatter.js';
+import { readFrontmatter, updateFrontmatterFields, writeFrontmatter } from '../../lib/frontmatter.js';
 import { readSection, listSections, insertToSection } from '../../lib/markdown.js';
 import { generateId, slugify, today } from '../../lib/id.js';
 import { parseJsonBody, sendJson, sendError } from '../middleware.js';
@@ -277,10 +277,48 @@ export async function handleTasksUpdate(
   }
 
   // Read old values BEFORE mutation for change tracking
-  const { data: oldData } = readFrontmatter<Record<string, unknown>>(filePath);
+  const { data: oldData, content: oldContent } = readFrontmatter<Record<string, unknown>>(filePath);
 
   const updates: Record<string, unknown> = {};
   const fieldChanges: FieldChange[] = [];
+  let bodyChanged = false;
+  let newBody: string | null = null;
+
+  // Body update: replaces the full markdown body (everything after frontmatter).
+  // Used by the dashboard for inline edits like acceptance-criteria checkbox
+  // toggles + the synced mermaid flowchart node status updates.
+  if (body.body !== undefined) {
+    if (typeof body.body !== 'string') {
+      sendError(res, 400, 'invalid_body_field', 'body must be a string');
+      return;
+    }
+    // Length-bound to prevent runaway / abusive writes. 1 MB is generous for a
+    // single task markdown body (typical task is <10 KB).
+    const MAX_BODY_BYTES = 1024 * 1024;
+    if (Buffer.byteLength(body.body, 'utf-8') > MAX_BODY_BYTES) {
+      sendError(res, 413, 'body_too_large', `body exceeds ${MAX_BODY_BYTES} byte limit`);
+      return;
+    }
+    // Sanitize: gray-matter treats a leading `---` (or `...`) as a frontmatter
+    // delimiter when round-tripping. If the body's first non-blank line is
+    // `---` or `...`, the next read would parse the body's delimiter as a
+    // SECOND frontmatter block and truncate the body. Prepend a blank line in
+    // that case — markdown renders identically (leading blanks collapse).
+    let sanitized = body.body;
+    const firstNonBlank = sanitized.split('\n').find(l => l.trim().length > 0);
+    if (firstNonBlank !== undefined && /^(-{3,}|\.{3,})\s*$/.test(firstNonBlank.trim())) {
+      sanitized = '\n' + sanitized;
+    }
+    if (sanitized !== oldContent) {
+      newBody = sanitized;
+      bodyChanged = true;
+      fieldChanges.push({
+        field: 'body',
+        from: null,
+        to: null,
+      });
+    }
+  }
 
   const allowedFields = ['status', 'priority', 'urgency', 'description', 'tags', 'name', 'related_feature', 'version'];
   for (const field of allowedFields) {
@@ -356,7 +394,13 @@ export async function handleTasksUpdate(
   }
 
   updates.updated_at = today();
-  updateFrontmatterFields(filePath, updates);
+  if (bodyChanged && newBody !== null) {
+    // Merge frontmatter updates + body in a single write so we don't read-after-write twice.
+    const merged = { ...oldData, ...updates };
+    writeFrontmatter(filePath, merged, newBody);
+  } else {
+    updateFrontmatterFields(filePath, updates);
+  }
 
   const changedFieldNames = fieldChanges.map(f => f.field);
   recordDashboardChange(contextRoot, {

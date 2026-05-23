@@ -2,7 +2,7 @@
 id: "feat_I4gU7kKs"
 status: "in_review"
 created: "2026-05-09"
-updated: "2026-05-10"
+updated: "2026-05-23"
 released_version: null
 tags: ["agents", "sleep", "consolidation"]
 related_tasks: ["sleep-fanout-architecture"]
@@ -27,7 +27,7 @@ Each specialist runs with its own narrow context, owns one domain, and cannot st
 - [x] As the main agent running the SKILL.md sleep flow, I can dispatch tasks and state specialists in parallel from a single message so consolidation is faster and each specialist stays focused.
 - [x] As the tasks specialist, I can update task statuses, log progress, and reconcile task bodies without touching changelog or core files.
 - [x] As the state specialist (sleep-state), I can update soul/user/memory files and append changelog/release entries surgically in a single pass — merging two formerly separate specialist concerns without stepping on task changes.
-- [x] As an orchestrator, I can conditionally fire sleep-product based on signals (knowledge access staleness, git status under `core/features/`, task slug overlap, research in session) so cheap sessions stay cheap.
+- [x] As an orchestrator, I can conditionally fire sleep-product based on signals (knowledge access staleness, git status under `core/features/`, task slug overlap, research in session, ≥2 ACs on a new concept, user named feature, task `feature:` frontmatter) so cheap sessions stay cheap.
 - [x] As an environment that cannot fan out, I previously could run the full consolidation via `dreamcontext-rem-sleep`; that fallback was removed in the cleanup pass — one authoritative path only.
 - [ ] As the user, I see a single consolidated report at the end of sleep showing what each specialist did, so I know exactly what changed.
 
@@ -47,6 +47,9 @@ Each specialist runs with its own narrow context, owns one domain, and cannot st
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
 
+- **[2026-05-22]** `sleep-state` B0 split into two gates: B0a (two-observation recurrence threshold) for preference/decision updates to `1.user.md` + `2.memory.md`; B0b (single-observation, code-reality) for `3.style_guide`, `4.tech_stack`, `core/data-structures/*`, `6.system_flow`. This prevents stale data-structure docs from requiring two sessions before a refresh. B1 priority row removed from the sleep-state protocol (was confusing, removed as dead weight).
+- **[2026-05-22]** `sleep-product` A4 broadened: new PRD triggers are now OR(a) ≥2 acceptance criteria, (b) user named feature explicitly, (c) dangling `feature:` frontmatter in a task file. ACs in a newly-created PRD may be empty placeholder stubs — PRDs are created speculatively and filled during subsequent sessions.
+- **[2026-05-22]** `sleep-product` A5 multi-product pass added: when multiple products are detected, each product may receive its own product-specific PRD/knowledge updates. B5 per-product knowledge stubs: if `multiProduct` lists products, ensure `knowledge/products/<name>.md` exists for each; create stub if missing.
 - **[2026-05-10]** 5→3 specialist collapse. Domain merges: sleep-state = old sleep-core + sleep-changelog (both always-fire, non-overlapping file sets — CHANGELOG/RELEASES vs soul/user/memory). sleep-product = old sleep-knowledge + sleep-features (both conditional, both retrospective documentation). Collapse rationale: parallel agents reduce wall-clock only to the slowest (sleep-tasks); collapsing always-fire pairs reduces sub-agent launch overhead without slowing the consolidation floor. Files removed: `agents/sleep-changelog.md`, `agents/sleep-core.md`, `agents/sleep-knowledge.md`, `agents/sleep-features.md` (and all `.codex/` mirrors). Files created: `agents/sleep-state.md`, `agents/sleep-product.md`.
 - **[2026-05-09]** Orchestrator role lives in the **main agent**, not a sub-agent. An earlier design used a thin `dreamcontext-rem-sleep` orchestrator that dispatched specialists. In practice, sub-agent → sub-agent dispatch did not fan out reliably (Claude Code sub-agents cannot consistently spawn parallel sub-agents). Driving fan-out from the main agent's `skill/SKILL.md` flow is the primary path.
 - **[2026-05-09]** `dreamcontext-rem-sleep` was preserved temporarily as a single-agent serial fallback, then removed in the cleanup pass. The decision to remove: maintaining two paths created confusion about which is authoritative. The main-agent SKILL.md flow is sufficient; if fan-out is unavailable, users can invoke specialists manually. Files removed: `agents/dreamcontext-rem-sleep.md` and `.codex/agents/prompts/dreamcontext-rem-sleep.md`.
@@ -69,7 +72,7 @@ Each specialist runs with its own narrow context, owns one domain, and cannot st
 **Dispatch signals** (built by the main agent from the brief, evaluated against `cat _dream_context/state/.sleep.json` and `git status --short`):
 
 - **Always fire**: `sleep-tasks`, `sleep-state`.
-- **Fire `sleep-product` if** (union of old knowledge + features signals): `last_assistant_message` mentions research/analysis/decision; a `knowledge_access` entry hasn't been touched in 30+ days; a research bookmark exists; a task slug matches an existing feature PRD filename; `git status` shows changes under `_dream_context/core/features/`; user hint mentions knowledge or a feature; a session advanced ≥1 acceptance criterion or shipped a buildable concept without a PRD. When unsure, over-fire — sleep-product no-ops cheaply.
+- **Fire `sleep-product` if** (union of old knowledge + features signals): `last_assistant_message` mentions research/analysis/decision; a `knowledge_access` entry hasn't been touched in 30+ days; a research bookmark exists; a task slug matches an existing feature PRD filename; `git status` shows changes under `_dream_context/core/features/`; user hint mentions knowledge or a feature; a session advanced ≥1 acceptance criterion OR introduced a buildable concept with ≥2 acceptance criteria OR user named something "a feature" OR a task has `feature:` frontmatter pointing to a non-existent PRD. When unsure, over-fire — sleep-product no-ops cheaply.
 
 **Brief contents** (small text passed in each specialist's prompt):
 - Sleep epoch (from `sleep start`)
@@ -86,12 +89,18 @@ Each specialist runs with its own narrow context, owns one domain, and cannot st
 
 ## Notes
 
-- First live consolidation cycle (2026-05-09) validated the fan-out flow. This second cycle (2026-05-10) is the first live test of the 3-specialist design.
+- The 3-specialist design has run across multiple consolidation cycles (first live test 2026-05-10; confirmed stable as of 2026-05-23).
 - Open question: the conditional-dispatch heuristics may need tuning. If `sleep-product` no-ops too often, signals are too aggressive; if it misses real updates, signals are too narrow.
 - If a future environment cannot fan out, the mitigation is manual sequential invocation of the 3 specialists. `dreamcontext-rem-sleep` has been removed and will not be restored.
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-05-22 - v0.4 specialist protocol refinements
+- sleep-state B0 split: B0a two-observation gate (prefs/decisions) vs B0b single-observation (code reality: style_guide, tech_stack, data-structures, system_flow). B1 priority row removed.
+- sleep-product A4 broadened: new PRD now created on OR(≥2 ACs, user named feature, dangling feature: frontmatter). ACs may be empty placeholder.
+- sleep-product A5 multi-product pass added; B5 per-product knowledge stub creation.
+- Dispatch signal updated to match broadened A4 trigger.
 
 ### 2026-05-10 - 5→3 specialist collapse
 - Merged sleep-core + sleep-changelog → sleep-state (always-fire, non-overlapping domains combined).

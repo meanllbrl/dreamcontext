@@ -1,11 +1,12 @@
-import { useState, useMemo, useCallback, useEffect } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import type { Task } from '../../hooks/useTasks';
 import { useTasks, useUpdateTask } from '../../hooks/useTasks';
 import { useVersions } from '../../hooks/useVersions';
-import { usePersistedState } from '../../hooks/usePersistedState';
+import { useProject } from '../../context/ProjectContext';
 import { useI18n } from '../../context/I18nContext';
+import { useSavedViews, saveView, deleteView, type SavedView } from '../../stores/savedViews';
 import { KanbanColumn } from './KanbanColumn';
-import { TaskFilters, DEFAULT_FILTERS, type FilterState, type FilterPreset, type SortField, type GroupBy } from './TaskFilters';
+import { TaskFilters, DEFAULT_FILTERS, type FilterState, type SortField, type GroupBy } from './TaskFilters';
 import { TaskCreateModal } from './TaskCreateModal';
 import { TaskDetailPanel } from './TaskDetailPanel';
 import { EisenhowerMatrix } from './EisenhowerMatrix';
@@ -195,28 +196,60 @@ function getSubGroups(tasks: Task[], subGroupBy: GroupBy): { key: string; label:
   return [];
 }
 
+function storageKeyFor(projectId: string, key: string): string {
+  return projectId ? `dreamcontext:${projectId}:${key}` : `dreamcontext:${key}`;
+}
+
+function readJson<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw === null) return fallback;
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeJson(key: string, value: unknown): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // quota exceeded or storage disabled
+  }
+}
+
 export function KanbanBoard() {
   const { t } = useI18n();
+  const { projectId } = useProject();
   const { data: tasks, isLoading, isError, error } = useTasks();
   const { data: versions } = useVersions();
   const updateTask = useUpdateTask();
   const [showCreate, setShowCreate] = useState(false);
   const [showVersionManager, setShowVersionManager] = useState(false);
   const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
-  const [rawFilters, setRawFilters] = usePersistedState<FilterState>('kanban-filters', DEFAULT_FILTERS);
-  const [presets, setPresets] = usePersistedState<FilterPreset[]>('kanban-presets', []);
 
-  // Migrate on first load
-  const [filters, setFilters] = useState(() => migrateFilters(rawFilters));
+  // ─── Filters: inline write-through. ProjectProvider gates render on `ready`. ───
+  const filtersKey = useMemo(() => storageKeyFor(projectId, 'kanban-filters'), [projectId]);
 
-  // Sync migrated filters back to persisted state
-  useEffect(() => {
-    setRawFilters(filters);
-  }, [filters, setRawFilters]);
+  const [filters, setFiltersState] = useState<FilterState>(() => {
+    const raw = readJson<unknown>(filtersKey, DEFAULT_FILTERS);
+    return migrateFilters(raw);
+  });
+
+  const setFilters = useCallback((updater: FilterState | ((prev: FilterState) => FilterState)) => {
+    setFiltersState(prev => {
+      const next = typeof updater === 'function' ? (updater as (p: FilterState) => FilterState)(prev) : updater;
+      writeJson(filtersKey, next);
+      return next;
+    });
+  }, [filtersKey]);
+
+  // ─── Saved Views: external store via useSyncExternalStore. ───
+  const presets = useSavedViews(projectId);
 
   const handleFilterChange = useCallback(<K extends keyof FilterState>(key: K, value: FilterState[K]) => {
     setFilters(prev => ({ ...prev, [key]: value }));
-  }, []);
+  }, [setFilters]);
 
   const handleClearFilters = useCallback(() => {
     setFilters(prev => ({
@@ -226,24 +259,19 @@ export function KanbanBoard() {
       subGroupBy: prev.subGroupBy,
       viewMode: prev.viewMode,
     }));
-  }, []);
+  }, [setFilters]);
 
   const handleSavePreset = useCallback((name: string) => {
-    const preset: FilterPreset = {
-      id: Date.now().toString(36),
-      name,
-      filters: { ...filters },
-    };
-    setPresets(prev => [...prev, preset]);
-  }, [filters, setPresets]);
+    saveView(projectId, name, { ...filters });
+  }, [filters, projectId]);
 
-  const handleLoadPreset = useCallback((preset: FilterPreset) => {
+  const handleLoadPreset = useCallback((preset: SavedView) => {
     setFilters(migrateFilters(preset.filters));
-  }, []);
+  }, [setFilters]);
 
   const handleDeletePreset = useCallback((id: string) => {
-    setPresets(prev => prev.filter(p => p.id !== id));
-  }, [setPresets]);
+    deleteView(projectId, id);
+  }, [projectId]);
 
   const filtered = useMemo(() => {
     return applyFilters(tasks ?? [], filters);

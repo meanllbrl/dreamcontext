@@ -1,4 +1,5 @@
 import type { Task } from '../../hooks/useTasks';
+import { tagHue } from '../../lib/tagColor';
 import './TaskCard.css';
 
 interface TaskCardProps {
@@ -32,7 +33,7 @@ export function TaskCard({ task, onClick, onDragStart }: TaskCardProps) {
         {task.tags.length > 0 && (
           <div className="task-card-tags">
             {task.tags.slice(0, 3).map(tag => (
-              <span key={tag} className="task-tag">{tag}</span>
+              <span key={tag} className="task-tag" data-hue={tagHue(tag)}>{tag}</span>
             ))}
           </div>
         )}

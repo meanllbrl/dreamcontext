@@ -32,7 +32,7 @@
 
 .sql-preview-line {
   fill: none;
-  stroke: var(--color-brand-mid);
+  stroke: var(--color-aether-blue);
   stroke-width: 2;
   opacity: 0.6;
 }
@@ -51,7 +51,7 @@
 }
 
 .sql-preview-arrowhead {
-  fill: var(--color-brand-mid);
+  fill: var(--color-aether-blue);
   opacity: 0.6;
 }
 
@@ -80,7 +80,7 @@
 
 .entity-card-header {
   padding: var(--space-3) var(--space-4);
-  background: var(--gradient-brand-subtle);
+  background: var(--color-accent-soft);
   border-bottom: 1px solid var(--color-border);
   display: flex;
   align-items: center;
@@ -213,7 +213,7 @@
 }
 
 .entity-field-icon--ref {
-  color: var(--color-brand-vivid);
+  color: var(--color-accent);
 }
 
 .entity-field-name {
@@ -228,7 +228,7 @@
 }
 
 .entity-field-type[data-type="enum"] {
-  color: var(--color-brand-mid);
+  color: var(--color-aether-blue);
 }
 
 .entity-field-type[data-type="array"] {
@@ -299,7 +299,7 @@
   font-size: 9px;
   font-family: var(--font-mono);
   background: hsl(278 72% 38% / 0.1);
-  color: var(--color-brand-mid);
+  color: var(--color-aether-blue);
   line-height: 1.6;
   white-space: nowrap;
 }
@@ -368,7 +368,7 @@
 .sql-preview-legend-line {
   width: 24px;
   height: 2px;
-  background: var(--color-brand-mid);
+  background: var(--color-aether-blue);
   opacity: 0.6;
   border-radius: 1px;
 }
@@ -377,8 +377,8 @@
   font-size: 10px;
   font-family: var(--font-mono);
   font-weight: var(--font-weight-semibold);
-  color: var(--color-brand-vivid);
+  color: var(--color-accent);
   padding: 1px 4px;
-  background: hsl(287 100% 33% / 0.08);
+  background: var(--color-accent-soft);
   border-radius: 3px;
 }

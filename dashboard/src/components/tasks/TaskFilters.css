@@ -37,8 +37,8 @@
 }
 
 .filter-search:focus-within {
-  border-color: var(--color-brand-vivid);
-  box-shadow: 0 0 0 3px hsl(287 100% 33% / 0.08);
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-accent-soft);
 }
 
 .filter-search-input {
@@ -100,13 +100,13 @@
 }
 
 .filter-chip--active {
-  border-color: var(--color-brand-vivid);
+  border-color: var(--color-accent);
   color: var(--color-text);
-  background: hsl(287 100% 33% / 0.06);
+  background: var(--color-accent-soft);
 }
 
 .filter-chip--active:hover {
-  background: hsl(287 100% 33% / 0.1);
+  background: var(--color-accent-soft);
 }
 
 .filter-chip--subtle {
@@ -148,7 +148,7 @@
   height: 16px;
   padding: 0 4px;
   border-radius: var(--radius-full);
-  background: var(--color-brand-vivid);
+  background: var(--color-accent);
   color: var(--color-text-on-brand);
   font-size: 9px;
   font-weight: var(--font-weight-bold);
@@ -175,7 +175,7 @@
 }
 
 .filter-tag-input:focus {
-  border-color: var(--color-brand-vivid);
+  border-color: var(--color-accent);
   outline: none;
   width: 120px;
 }
@@ -221,7 +221,7 @@
 }
 
 .filter-clear-all:hover {
-  color: var(--color-brand-vivid);
+  color: var(--color-accent);
 }
 
 .filter-clear-count {
@@ -320,7 +320,7 @@
 
 .filter-views-input:focus {
   outline: none;
-  border-color: var(--color-brand-vivid);
+  border-color: var(--color-accent);
 }
 
 .filter-views-input::placeholder {
@@ -331,7 +331,7 @@
   padding: 5px 10px;
   border: none;
   border-radius: 6px;
-  background: var(--color-brand-vivid);
+  background: var(--color-accent);
   color: var(--color-text-on-brand);
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-medium);
@@ -381,12 +381,12 @@
 }
 
 .filter-view-btn--active {
-  color: var(--color-brand-vivid);
-  background: hsl(287 100% 33% / 0.08);
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
 }
 
 .filter-view-btn--active:hover {
-  background: hsl(287 100% 33% / 0.12);
+  background: var(--color-accent-soft);
 }
 
 /* ─── Create Button ─── */
@@ -397,8 +397,8 @@
   padding: 6px 14px;
   border: none;
   border-radius: var(--radius-md);
-  background: var(--gradient-brand);
-  color: var(--color-text-on-brand);
+  background: var(--color-accent);
+  color: var(--color-accent-text);
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);
   font-family: var(--font-family);
@@ -414,11 +414,11 @@
 
 /* ─── Dark Mode Adjustments ─── */
 [data-theme='dark'] .filter-chip--active {
-  background: hsl(287 100% 33% / 0.15);
+  background: var(--color-accent-soft);
 }
 
 [data-theme='dark'] .filter-chip--active:hover {
-  background: hsl(287 100% 33% / 0.22);
+  background: var(--color-accent-soft);
 }
 
 /* ─── Min RICE popover ─── */
@@ -442,7 +442,7 @@
   padding: 2px 8px;
   border: none;
   background: transparent;
-  color: var(--color-brand-vivid);
+  color: var(--color-accent);
   font-size: var(--font-size-xs);
   cursor: pointer;
 }

@@ -10,6 +10,26 @@ export interface ChangelogEntry {
   scope: string;
   description: string;
   breaking: boolean;
+  /**
+   * Optional ≤200-char one-liner used by the snapshot's Recent Changelog
+   * section. When absent, the snapshot truncates `description`. Backwards
+   * compatible — older entries without `summary` continue to work.
+   */
+  summary?: string;
+  /**
+   * Optional references that pin the entry to concrete artifacts. Flat string
+   * array with prefix convention: `commit:<sha>`, `file:<path>`, `knowledge:<slug>`,
+   * `feature:<slug>`, `task:<slug>`, `url:<href>`. No `note:` escape hatch —
+   * free-form text belongs in `description`.
+   */
+  references?: string[];
+  /**
+   * Optional pointer to a prior entry this one supersedes (e.g.,
+   * `<date>|<scope>` or a coarser "{date}-{scope}" key). Used when a later
+   * decision reverses or replaces an earlier one and the LIFO chain matters.
+   * Captures the meta-annotation semantic the old 2.memory.md LIFO carried.
+   */
+  supersedes?: string | null;
 }
 
 export interface ReleaseEntry {

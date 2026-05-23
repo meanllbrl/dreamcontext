@@ -25,22 +25,20 @@
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   text-align: left;
-  background: var(--glass-bg);
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
+  background: var(--color-bg-elevated);
   transition: all var(--transition-bounce);
 }
 
 .feature-card:hover {
-  border-color: var(--color-brand-vivid);
+  border-color: var(--color-accent);
   box-shadow: var(--shadow-lg);
   transform: translateX(4px);
 }
 
 .feature-card--active {
-  border-color: var(--color-brand-vivid);
-  box-shadow: inset 4px 0 0 0 var(--color-brand-vivid), var(--shadow-md);
-  background: var(--gradient-brand-subtle);
+  border-color: var(--color-accent);
+  box-shadow: inset 4px 0 0 0 var(--color-accent), var(--shadow-md);
+  background: var(--color-accent-soft);
 }
 
 .feature-card-header {
@@ -58,20 +56,58 @@
 
 .feature-status {
   font-size: 10px;
-  padding: 1px var(--space-2);
+  padding: 2px 8px;
   border-radius: var(--radius-full);
-  font-weight: var(--font-weight-medium);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border: 1px solid transparent;
+  white-space: nowrap;
 }
 
 .feature-status--active,
 .feature-status--planning {
-  background: var(--color-success-subtle);
-  color: var(--color-success);
+  background: #dcfce7;
+  color: #15803d;
+  border-color: #bbf7d0;
 }
 
-.feature-status--shipped {
+.feature-status--in_review {
+  background: #dbeafe;
+  color: #1d4ed8;
+  border-color: #bfdbfe;
+}
+
+.feature-status--in_progress {
+  background: #ffedd5;
+  color: #c2410c;
+  border-color: #fed7aa;
+}
+
+.feature-status--shipped,
+.feature-status--archived {
   background: var(--color-bg-tertiary);
   color: var(--color-text-tertiary);
+  border-color: var(--color-border);
+}
+
+[data-theme='dark'] .feature-status--active,
+[data-theme='dark'] .feature-status--planning {
+  background: rgba(74, 222, 128, 0.14);
+  color: #86efac;
+  border-color: rgba(74, 222, 128, 0.28);
+}
+
+[data-theme='dark'] .feature-status--in_review {
+  background: rgba(96, 165, 250, 0.16);
+  color: #93c5fd;
+  border-color: rgba(96, 165, 250, 0.28);
+}
+
+[data-theme='dark'] .feature-status--in_progress {
+  background: rgba(251, 146, 60, 0.16);
+  color: #fdba74;
+  border-color: rgba(251, 146, 60, 0.28);
 }
 
 .features-detail {

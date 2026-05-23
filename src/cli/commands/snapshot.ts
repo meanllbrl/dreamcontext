@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, statSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import fg from 'fast-glob';
 import { resolveContextRoot } from '../../lib/context-path.js';
@@ -10,6 +10,7 @@ import { readSleepState, writeSleepState, readSleepHistory } from './sleep.js';
 import { buildKnowledgeIndex } from '../../lib/knowledge-index.js';
 import { buildCoreIndex } from '../../lib/core-index.js';
 import { buildMarketingSnapshot } from '../../lib/marketing/snapshot.js';
+import { readSetupConfig } from '../../lib/setup-config.js';
 
 /**
  * Default line cap when inlining pinned knowledge into the auto-context snapshot.
@@ -112,13 +113,16 @@ function getActiveTaskLines(root: string): string[] {
 
       let line = `- ${name} (status: ${status}, priority: ${priority}, updated: ${updated})`;
 
-      // Why (from ## Why section, first non-placeholder line)
+      // Why (from ## Why section, first real line)
+      // Strip HTML comments first (template placeholders like
+      // `<!-- What problem does this solve? ... -->` would otherwise leak in).
       try {
         const whyContent = readSection(file, 'Why');
         if (whyContent) {
-          const firstLine = whyContent.split('\n').find(l => l.trim() && !l.trim().startsWith('('))?.trim();
+          const stripped = whyContent.replace(/<!--[\s\S]*?-->/g, '');
+          const firstLine = stripped.split('\n').find(l => l.trim() && !l.trim().startsWith('('))?.trim();
           if (firstLine) {
-            const capped = firstLine.length > 100 ? firstLine.slice(0, 97) + '...' : firstLine;
+            const capped = firstLine.length > 250 ? firstLine.slice(0, 247) + '...' : firstLine;
             line += `\n  Why: ${capped}`;
           }
         }
@@ -131,6 +135,142 @@ function getActiveTaskLines(root: string): string[] {
   }
 
   return lines;
+}
+
+/**
+ * Resolve the "active task" for the current session.
+ *
+ * Heuristic, in order of preference:
+ *   1. `_dream_context/state/.active-task` file (plain text containing the task slug),
+ *      if present. Lets the user/CLI override the heuristic explicitly.
+ *   2. Otherwise, scan `_dream_context/state/*.md` for tasks with status `in_progress`
+ *      and pick the most recently modified one (mtime fallback to frontmatter
+ *      `updated_at` if mtime is unreliable).
+ *
+ * Returns the absolute task file path, or null if none matches.
+ *
+ * Edge cases / fragility:
+ * - Multiple in_progress tasks across products: we pick the most recent.
+ *   If the user switched products mid-session, the snapshot will reflect the
+ *   last-edited task, not the one they're about to resume. Workaround: write
+ *   the slug to `.active-task`.
+ * - All tasks `todo`/`in_review`: no active task -> no product knowledge injected.
+ * - Frontmatter without `product:`: no injection (single-product fallback).
+ */
+function resolveActiveTaskPath(root: string): string | null {
+  const stateDir = join(root, 'state');
+  if (!existsSync(stateDir)) return null;
+
+  // 1. Explicit override
+  const overridePath = join(stateDir, '.active-task');
+  if (existsSync(overridePath)) {
+    try {
+      const slug = readFileSync(overridePath, 'utf-8').trim();
+      if (slug) {
+        const taskPath = join(stateDir, `${slug}.md`);
+        if (existsSync(taskPath)) return taskPath;
+      }
+    } catch { /* fall through to heuristic */ }
+  }
+
+  // 2. Heuristic: most recently modified in_progress task
+  const taskFiles = fg.sync('*.md', { cwd: stateDir, absolute: true });
+  type Candidate = { path: string; mtime: number };
+  const candidates: Candidate[] = [];
+
+  for (const file of taskFiles) {
+    try {
+      const { data } = readFrontmatter(file);
+      const status = String(data.status ?? '');
+      if (status !== 'in_progress') continue;
+      let mtime = 0;
+      try {
+        mtime = statSync(file).mtimeMs;
+      } catch { /* skip */ }
+      candidates.push({ path: file, mtime });
+    } catch {
+      // skip unreadable
+    }
+  }
+
+  if (candidates.length === 0) return null;
+  candidates.sort((a, b) => b.mtime - a.mtime);
+  return candidates[0].path;
+}
+
+/**
+ * Build the "Active Product Knowledge" section if the active task is bound to
+ * a configured product. Returns an empty array when not applicable.
+ *
+ * Trigger:
+ *   - `_dream_context/state/.config.json` has `multiProduct: string[]`
+ *   - resolveActiveTaskPath() returns a task whose frontmatter `product: X`
+ *     is one of the configured products
+ *   - `_dream_context/knowledge/products/<X>.md` exists
+ *
+ * Cap the injected content at ~200 lines to avoid blowing up the snapshot;
+ * direct the agent to read the full file if truncated.
+ */
+function getActiveProductKnowledge(root: string): string[] {
+  const config = readSetupConfig(root);
+  if (!config || !Array.isArray(config.multiProduct) || config.multiProduct.length === 0) {
+    return [];
+  }
+
+  const activeTaskPath = resolveActiveTaskPath(root);
+  if (!activeTaskPath) return [];
+
+  let product = '';
+  try {
+    const { data } = readFrontmatter(activeTaskPath);
+    if (typeof data.product === 'string' && data.product.trim()) {
+      product = data.product.trim();
+    }
+  } catch {
+    return [];
+  }
+
+  if (!product) return [];
+  if (!config.multiProduct.includes(product)) return [];
+
+  const productKnowledgePath = join(root, 'knowledge', 'products', `${product}.md`);
+  if (!existsSync(productKnowledgePath)) return [];
+
+  let raw: string;
+  try {
+    raw = readFileSync(productKnowledgePath, 'utf-8');
+  } catch {
+    return [];
+  }
+
+  // Strip frontmatter for the snapshot body
+  const body = (() => {
+    const lines = raw.split('\n');
+    if (lines[0]?.trim() !== '---') return raw;
+    let i = 1;
+    while (i < lines.length && lines[i].trim() !== '---') i++;
+    if (i < lines.length) i++;
+    return lines.slice(i).join('\n').replace(/^\s+/, '');
+  })();
+
+  const MAX_LINES = 200;
+  const bodyLines = body.split('\n');
+  let injected: string;
+  let truncatedNote = '';
+  if (bodyLines.length > MAX_LINES) {
+    injected = bodyLines.slice(0, MAX_LINES).join('\n');
+    truncatedNote = `\n→ Truncated; read full: _dream_context/knowledge/products/${product}.md (${bodyLines.length} lines total)`;
+  } else {
+    injected = body;
+  }
+
+  return [
+    `## Active Product Knowledge: ${product}\n`,
+    `_Auto-injected because the active task has \`product: ${product}\` and \`_dream_context/state/.config.json\` lists ${product} under \`multiProduct\`._\n`,
+    injected.trim(),
+    truncatedNote ? truncatedNote.trim() : '',
+    '',
+  ].filter((s) => s !== '');
 }
 
 /**
@@ -195,6 +335,16 @@ export function generateSnapshot(): string {
     parts.push('');
   }
 
+  // 5.1 Active Product Knowledge (multi-product binding)
+  // If the active in_progress task has `product: X` frontmatter AND
+  // state/.config.json lists X under multiProduct, inject
+  // knowledge/products/X.md into the snapshot so the agent never has to
+  // remember to load it manually.
+  const productKnowledge = getActiveProductKnowledge(root);
+  if (productKnowledge.length > 0) {
+    parts.push(...productKnowledge);
+  }
+
   // 5.5 Read sleep state (used by multiple sections below)
   const sleepState = readSleepState(root);
 
@@ -253,74 +403,63 @@ export function generateSnapshot(): string {
     }
   }
 
-  // 6. Sleep State
-  if (sleepState.debt > 0 || sleepState.last_sleep || sleepState.sessions.length > 0 || sleepState.sleep_started_at) {
-    const level = sleepState.debt <= 3 ? 'Alert'
-      : sleepState.debt <= 6 ? 'Drowsy'
-      : sleepState.debt <= 9 ? 'Sleepy'
-      : 'Must Sleep';
-    parts.push('## Sleep State\n');
-    parts.push(`- Debt: ${sleepState.debt} (${level})`);
-    if (sleepState.sessions_since_last_sleep > 0) {
-      parts.push(`- Sessions since last sleep: ${sleepState.sessions_since_last_sleep}`);
-    }
-    if (sleepState.sleep_started_at) {
-      parts.push(`- Consolidation in progress (started: ${sleepState.sleep_started_at})`);
-    }
-    if (sleepState.last_sleep) {
-      parts.push(`- Last sleep: ${sleepState.last_sleep}`);
-    }
-    if (sleepState.sessions.length > 0) {
-      const lastSession = sleepState.sessions[0];
-      if (lastSession.stopped_at) {
-        parts.push(`- Last session ended: ${lastSession.stopped_at}`);
-      }
-      if (lastSession.last_assistant_message) {
-        parts.push(`- Last session summary: ${lastSession.last_assistant_message}`);
-      }
-      parts.push(`- Entries since last sleep:`);
-      for (const s of sleepState.sessions) {
-        const scoreStr = s.score !== null ? `(+${s.score})` : '(pending)';
-        const changePart = s.change_count !== null ? `${s.change_count} changes` : '';
-        const toolPart = s.tool_count != null ? `${s.tool_count} tools` : '';
-        const metricsStr = [changePart, toolPart].filter(Boolean).join(', ');
-        const taskStr = s.task_slugs?.length ? ` [tasks: ${s.task_slugs.join(', ')}]` : '';
-        parts.push(`  - ${s.stopped_at ?? 'active'} ${scoreStr}${metricsStr ? ` ${metricsStr}` : ''}${taskStr}`);
-        if (s.last_assistant_message) {
-          const preview = s.last_assistant_message.length > 200
-            ? s.last_assistant_message.slice(0, 200) + '...'
-            : s.last_assistant_message;
-          parts.push(`    ${preview}`);
-        }
-      }
-    }
-    // Sleep history (last 3 entries from separate file)
-    const sleepHistory = readSleepHistory(root);
-    if (sleepHistory.length > 0) {
-      parts.push(`- Recent consolidation history:`);
-      for (const h of sleepHistory.slice(0, 3)) {
-        parts.push(`  - ${h.date}: debt ${h.debt_before} -> ${h.debt_after}, ${h.sessions_processed} session(s), ${h.bookmarks_processed} bookmark(s)`);
-        const summary = h.summary.length > 120 ? h.summary.slice(0, 117) + '...' : h.summary;
-        parts.push(`    ${summary}`);
-      }
-    }
-    parts.push('');
-  }
+  // 6. Sleep State — DEPRECATED in snapshot (v0.4.0+).
+  // Sleep debt + critical bookmark reminders are delivered by the
+  // UserPromptSubmit hook on every prompt; rendering them here too would
+  // duplicate the signal and bloat the snapshot. Kept as a no-op block for
+  // clarity; remove entirely in a later cleanup if the hook stays stable.
 
-  // 7. Recent changelog (last 5 entries)
+  // 7. Recent changelog — tiered display (2026-05-23):
+  //   Tier 1 (top 3): summary headline + first ~300 chars of description.
+  //   Tier 2 (next 10): one-line headline only (summary or truncated desc).
+  //   Rationale: recent events deserve narrative; older events stay on the
+  //   horizon as titles so the agent knows what shipped without paying full
+  //   description token cost. Full text always recoverable via
+  //   `dreamcontext memory recall --types changelog`.
+  const CHANGELOG_TIER1 = 3;
+  const CHANGELOG_TIER2 = 10;
+  const TIER1_BODY_CHARS = 300;
+  const TIER2_LINE_CHARS = 140;
   const changelogPath = join(root, 'core', 'CHANGELOG.json');
   if (existsSync(changelogPath)) {
     try {
       const entries = readJsonArray<Record<string, unknown>>(changelogPath);
-      const recent = entries.slice(0, 3);
-      if (recent.length > 0) {
+      const tier1 = entries.slice(0, CHANGELOG_TIER1);
+      const tier2 = entries.slice(CHANGELOG_TIER1, CHANGELOG_TIER1 + CHANGELOG_TIER2);
+      if (tier1.length > 0) {
         parts.push('## Recent Changelog\n');
-        for (const e of recent) {
+        for (const e of tier1) {
           const date = String(e.date ?? '');
           const type = String(e.type ?? '');
           const scope = String(e.scope ?? '');
+          const summary = typeof e.summary === 'string' ? e.summary : '';
           const desc = String(e.description ?? '');
-          parts.push(`- ${date} [${type}] ${scope}: ${desc}`);
+          const headline = summary || (desc.length > 200 ? desc.slice(0, 197) + '...' : desc);
+          parts.push(`- ${date} [${type}] ${scope}: ${headline}`);
+          // Body preview only when summary is present (otherwise headline is
+          // already the description). Avoids printing the same text twice.
+          if (summary && desc && desc !== summary) {
+            const body = desc.length > TIER1_BODY_CHARS
+              ? desc.slice(0, TIER1_BODY_CHARS - 3) + '...'
+              : desc;
+            parts.push(`    ${body}`);
+          }
+        }
+        if (tier2.length > 0) {
+          parts.push('');
+          parts.push('### Older (titles only — use `dreamcontext memory recall --types changelog` for detail):');
+          for (const e of tier2) {
+            const date = String(e.date ?? '');
+            const type = String(e.type ?? '');
+            const scope = String(e.scope ?? '');
+            const summary = typeof e.summary === 'string' ? e.summary : '';
+            const desc = String(e.description ?? '');
+            const raw = summary || desc;
+            const line = raw.length > TIER2_LINE_CHARS
+              ? raw.slice(0, TIER2_LINE_CHARS - 3) + '...'
+              : raw;
+            parts.push(`- ${date} [${type}] ${scope}: ${line}`);
+          }
         }
         parts.push('');
       }
@@ -383,14 +522,15 @@ export function generateSnapshot(): string {
         const status = String(data.status ?? 'unknown');
         const tags = Array.isArray(data.tags) ? data.tags.join(', ') : '';
 
-        // Why (from ## Why section)
+        // Why (from ## Why section, first real line; HTML template comments stripped)
         let why = '';
         try {
           const whyContent = readSection(file, 'Why');
           if (whyContent) {
-            const firstLine = whyContent.split('\n').find(l => l.trim() && !l.trim().startsWith('('))?.trim();
+            const stripped = whyContent.replace(/<!--[\s\S]*?-->/g, '');
+            const firstLine = stripped.split('\n').find(l => l.trim() && !l.trim().startsWith('('))?.trim();
             if (firstLine) {
-              why = firstLine.length > 120 ? firstLine.slice(0, 117) + '...' : firstLine;
+              why = firstLine.length > 250 ? firstLine.slice(0, 247) + '...' : firstLine;
             }
           }
         } catch { /* skip */ }
@@ -499,7 +639,25 @@ export function generateSnapshot(): string {
     }
 
     parts.push('## Knowledge Index\n');
-    parts.push(indexLines.join('\n'));
+
+    // Pinned entries surface at the TOP with a prominent warning. Body is
+    // intentionally NOT inlined — `memory recall` fetches on demand and the
+    // agent can Read the file when the warning applies.
+    if (pinnedEntries.length > 0) {
+      parts.push('> !!! ÇOK ÖNEMLİ !!! Kullanıcı bu bilgiyi pinlemiş — yapacağın bir işle ilişkisi varsa MUTLAKA OKU!\n');
+      for (const entry of pinnedEntries) {
+        const tagsStr = entry.tags.length > 0 ? ` [${entry.tags.join(', ')}]` : '';
+        parts.push(`- 📌 **${entry.slug}** (_dream_context/knowledge/${entry.slug}.md): ${entry.description}${tagsStr}`);
+      }
+      parts.push('');
+    }
+
+    const pinnedSlugs = new Set(pinnedEntries.map(e => e.slug));
+    const nonPinnedLines = indexLines.filter((_, i) => !pinnedSlugs.has(knowledgeEntries[i]?.slug));
+    if (nonPinnedLines.length > 0) {
+      if (pinnedEntries.length > 0) parts.push('### Other knowledge:\n');
+      parts.push(nonPinnedLines.join('\n'));
+    }
     parts.push('');
 
     // 9.5 Warm Knowledge (recently relevant, first paragraph only)
@@ -512,25 +670,6 @@ export function generateSnapshot(): string {
           parts.push(firstParagraph);
         }
         parts.push(`-> Read full: _dream_context/knowledge/${entry.slug}.md`);
-        parts.push('');
-      }
-    }
-
-    // 10. Pinned Knowledge (capped preview by default, full only when opted-in)
-    if (pinnedEntries.length > 0) {
-      parts.push('## Pinned Knowledge\n');
-      for (const entry of pinnedEntries) {
-        parts.push(`### ${entry.name}\n`);
-        if (entry.pinnedPreviewAll) {
-          parts.push(entry.content);
-        } else {
-          const cap = entry.pinnedPreviewLines ?? DEFAULT_PINNED_PREVIEW_LINES;
-          const { preview, truncated, totalLines } = extractPinnedPreview(entry.content, cap);
-          parts.push(preview);
-          if (truncated) {
-            parts.push(`\n→ Read full: _dream_context/knowledge/${entry.slug}.md (${totalLines} lines total, showing first ${cap})`);
-          }
-        }
         parts.push('');
       }
     }
@@ -656,26 +795,23 @@ export function generateSubagentBriefing(): string {
     }
 
     parts.push('## Knowledge Index\n');
-    parts.push(indexLines.join('\n'));
-    parts.push('');
 
     if (pinnedEntries.length > 0) {
-      parts.push('## Pinned Knowledge\n');
+      parts.push('> !!! ÇOK ÖNEMLİ !!! Kullanıcı bu bilgiyi pinlemiş — yapacağın bir işle ilişkisi varsa MUTLAKA OKU!\n');
       for (const entry of pinnedEntries) {
-        parts.push(`### ${entry.name}\n`);
-        if (entry.pinnedPreviewAll) {
-          parts.push(entry.content);
-        } else {
-          const cap = entry.pinnedPreviewLines ?? DEFAULT_PINNED_PREVIEW_LINES;
-          const { preview, truncated, totalLines } = extractPinnedPreview(entry.content, cap);
-          parts.push(preview);
-          if (truncated) {
-            parts.push(`\n→ Read full: _dream_context/knowledge/${entry.slug}.md (${totalLines} lines total, showing first ${cap})`);
-          }
-        }
-        parts.push('');
+        const tagsStr = entry.tags.length > 0 ? ` [${entry.tags.join(', ')}]` : '';
+        parts.push(`- 📌 **${entry.slug}** (_dream_context/knowledge/${entry.slug}.md): ${entry.description}${tagsStr}`);
       }
+      parts.push('');
     }
+
+    const pinnedSlugs2 = new Set(pinnedEntries.map(e => e.slug));
+    const nonPinnedLines2 = indexLines.filter((_, i) => !pinnedSlugs2.has(knowledgeEntries[i]?.slug));
+    if (nonPinnedLines2.length > 0) {
+      if (pinnedEntries.length > 0) parts.push('### Other knowledge:\n');
+      parts.push(nonPinnedLines2.join('\n'));
+    }
+    parts.push('');
   }
 
   // 5. All Core Files index (so sub-agents know what exists to read/update)

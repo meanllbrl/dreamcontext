@@ -76,7 +76,7 @@ The core files are yours to evolve. As you learn, update them. `0.soul.md` is yo
 Three files define your awareness:
 - **soul** (`0.soul.md`) -- WHO you are: identity, principles, behaviors, rules, warnings
 - **user** (`1.user.md`) -- WHO uses you: preferences, project details, project rules
-- **memory** (`2.memory.md`) -- WHAT you know: technical decisions, known issues, critical choices
+- **memory** (`2.memory.md`) -- WHAT you know: technical decisions + known issues only (ship narrative lives in CHANGELOG since 2026-05-23 — use `memory recall` to surface it)
 
 All three are auto-loaded every session via the SessionStart hook.
 
@@ -115,7 +115,7 @@ Decide dynamically. Match the task to what you need. Choose the right operation 
 | `core/features/<name>.md` | READ | Feature scoping, sprint work, planning, "what's next" questions |
 | `core/3.style_guide_and_branding.md` | READ | UI/UX work, frontend, branding, copy, design tasks |
 | `core/4.tech_stack.md` | READ | Architecture decisions, integrations, dependency questions, infra |
-| `core/5.data_structures.sql` | READ or SEARCH | Database work, API design, schema changes, data modeling |
+| `core/data-structures/<product>.md` (or `default.md`) | READ or SEARCH | Database work, API design, schema changes, data modeling |
 | `core/CHANGELOG.json` | SEARCH | Bug investigations, "what changed recently?" |
 | `core/RELEASES.json` | SEARCH | "Which release shipped this?", rollback decisions |
 | `state/<task>.md` | READ | Continuing previous work. Changelog section = where you left off |
@@ -129,6 +129,18 @@ When debugging (e.g., "notifications are broken"):
 3. READ `core/4.tech_stack.md` -- how is the system wired?
 4. SEARCH `knowledge/` for the module -- any deep research on this?
 5. Now you have the full picture. Diagnose.
+
+### Multi-Product Binding
+
+Some projects are monorepos with multiple products. Init asks "Is this a monorepo with multiple products?" and records the product list in `_dream_context/state/.config.json` under `multiProduct: string[] | false`. When products are configured:
+
+- **Per-product data structures** live at `_dream_context/core/data-structures/<product>.md` (single-product projects use `default.md`).
+- **Per-product knowledge** lives at `_dream_context/knowledge/products/<product>.md`. Cross-cutting knowledge still lives at the top-level `knowledge/`.
+- **Tasks** MAY include `product: <name>` in frontmatter. The dashboard / CLI surfaces a product filter when `.config.json` lists products.
+- **Auto-injection — handled by the SessionStart hook.** The hook (`npx dreamcontext hook session-start` → `generateSnapshot()`) resolves the active task (override file `_dream_context/state/.active-task`, or fallback: most recently modified task with status `in_progress`). If that task's frontmatter has `product: <name>` and `<name>` is listed under `multiProduct`, the hook injects the body of `_dream_context/knowledge/products/<name>.md` into the snapshot under an `## Active Product Knowledge: <name>` section (capped at 200 lines, with a "read full" pointer if truncated). You don't need to remember to load it — it's already in your context. Cross-cutting knowledge still lives at the top-level `knowledge/`.
+- **Feature PRDs** MAY include `product: <name>` in frontmatter for product scoping; they still live in the flat `core/features/` directory.
+
+If `multiProduct` is `false` or missing, treat the project as single-product and use `data-structures/default.md` exclusively. The SessionStart hook no-ops the product-knowledge injection in that case.
 
 ### Extended Core Files (3+)
 
@@ -187,8 +199,8 @@ These files vary across projects. Do not assume a fixed list. Always discover dy
 3. **Check before creating.** Search existing features, tasks, knowledge before creating new ones.
 4. **Update over duplicate.** New information updates existing files.
 5. **Be surgical.** Only touch what changed. Use the most direct tool for the job.
-6. **LIFO everywhere.** Newest entries at top of changelogs, memory, constraints.
-7. **~300 line limit** on context files. Extract detail to knowledge, keep summary + reference.
+6. **LIFO at top in append-only stores**: CHANGELOG.json entries, task changelog sections, and constraint sections all insert at top. (Note: as of 2026-05-23, `2.memory.md` no longer carries a LIFO ship-narrative section — ship events go in CHANGELOG only.)
+7. **~150 line limit** on context files. Extract detail to knowledge, keep summary + reference. Archived content stays findable via `dreamcontext memory recall`.
 8. **Log every session** that modifies code or makes decisions. This is the cross-session continuity mechanism.
 9. **Features are sleep-only.** Never update feature PRDs during active work. All working context goes into the task body. The sleep agent consolidates task content into features.
 10. **All work needs a task.** Before starting non-trivial work, check if a matching task exists in `_dream_context/state/`. If not, create one. After plans are approved (ExitPlanMode), offer to save as a task. The sleep agent flags untracked work.
@@ -196,6 +208,7 @@ These files vary across projects. Do not assume a fixed list. Always discover dy
 12. **Mark checkboxes as you go.** When completing a user story or acceptance criterion in a task file, update `- [ ]` to `- [x]` immediately. Don't wait for sleep consolidation. This is the live progress signal.
 12a. **Keep the Workflow flowchart in sync.** Every task file has a `## Workflow` mermaid block at the top — one node per acceptance criterion, grouped under milestone subgraphs, with status classes `done` / `active` / `todo` / `blocked`. Whenever you check off a criterion, start work on one, add/remove a criterion, or hit a blocker: update the corresponding node's `:::class`. Run `dreamcontext tasks doctor <name>` to verify sync. The flowchart is the load-bearing summary of the task — drift makes future sessions misread progress.
 13. **Reuse before create.** Before building any UI component, utility, hook, or abstraction, search the codebase for existing implementations that serve the same purpose. Use `dreamcontext-explore` to find reusable candidates. If a match exists, use it or extend it. Never duplicate functionality that already exists. This applies to modals, forms, filters, layouts, helpers, and any shared pattern.
+14. **Recall before grep.** Before grepping `_dream_context/` for prior decisions, design rationale, or "did we already address X?", run `dreamcontext memory recall "<query>"`. BM25 ranks across knowledge, features, tasks, and memory entries in one shot — cheaper and more on-target than blind Grep.
 
 ---
 
@@ -301,7 +314,7 @@ Sleep debt reminders are injected on every user message (via UserPromptSubmit ho
      - a research bookmark exists
      - a task slug matches an existing feature PRD filename
      - `git status` shows changes under `_dream_context/core/features/`
-     - a session advanced ≥1 acceptance criterion or shipped a buildable concept without a PRD
+     - a session advanced ≥1 acceptance criterion, OR introduced a feature concept with ≥2 acceptance criteria, OR the user named something "a feature" / "we should add X", OR a task has `feature:` frontmatter pointing to a non-existent PRD
      - user hint mentions knowledge or a feature
    - When unsure, **over-fire** `sleep-product` — it no-ops cheaply.
    - Pass each specialist a small text brief in its prompt: epoch, session IDs, active task slugs, planning version, signals relevant to that specialist, optional user hint. Do **not** include transcript content — specialists call `dreamcontext transcript distill <id>` themselves.
@@ -405,19 +418,52 @@ Standard tags: `architecture`, `api`, `frontend`, `backend`, `database`, `devops
 
 ---
 
+## Memory Recall (BM25)
+
+Deterministic keyword recall over the curated corpus: `_dream_context/knowledge/*`, `core/features/*`, `state/*.md`, `core/2.memory.md` (Technical Decisions + Known Issues), and every entry in `core/CHANGELOG.json` (added 2026-05-23). No setup, no index file, no external services — rebuilt in-memory on every call (<100ms on ~130 docs). Use `--types changelog` to scope to ship events when you specifically want history.
+
+```bash
+dreamcontext memory recall <query...> [--top N] [--types knowledge,feature,task,memory,changelog] [--json|--plain]
+dreamcontext memory remember <text...> [--title <t>] [--tasks <slugs>]
+dreamcontext memory update <slug> [--description] [--tags] [--content] [--append] [--pin|--unpin]
+dreamcontext memory delete <slug> [--force]
+dreamcontext memory list [--types ...]
+dreamcontext memory status
+```
+
+**Use `memory recall` as the first-line discovery tool** when the user asks "where did we decide X?", "have we discussed Y?", "what do we know about Z?", or before duplicating work. Try it BEFORE grepping or reading files blindly. Pass `--json` when consuming output programmatically; narrow with `--types task` or `--types knowledge,feature` when you know roughly where the answer lives.
+
+**Use `memory remember <text>`** for one-off captures during a session that would otherwise be lost. As of 2026-05-23 this writes a CHANGELOG entry (type `note`, scope `quick` by default) rather than a LIFO section in `2.memory.md` (which no longer exists). The sleep cycle reconciles later; you do not need to edit `2.memory.md` by hand. Override with `--type` / `--scope` / `--summary` / `--references` for richer captures.
+
+**`memory update` / `memory delete`** are shortcuts when surgically editing or removing knowledge files mid-session. Heavy maintenance (merging, deduping, restructuring) still belongs to sleep-product.
+
+**Recall hook (default ON).** The UserPromptSubmit handler auto-injects the top-3 recall hits per prompt (filtered to score ≥ 2.0, skipped for prompts under 8 chars). Opt out with `DREAMCONTEXT_MEMORY_HOOK=0` if you want raw prompts without context augmentation.
+
+**What recall is NOT.** Not semantic, not synonym-aware — pure BM25 keyword scoring; "ML practitioner" will not match "data scientist." Not a replacement for the SessionStart snapshot (soul/user/memory/active-tasks/knowledge-index are still always pre-loaded). Not a vector DB. The recall corpus is the same set the sleep agents already curate; no new files, no new state.
+
+---
+
 ## Structure
 
 ```
 _dream_context/
 +-- core/
-|   +-- features/<feature>.md         <- Feature PRDs
+|   +-- features/<feature>.md         <- Feature PRDs (may include product: <name>)
+|   +-- data-structures/              <- Per-product schemas
+|   |   +-- default.md                <-   single-product fallback
+|   |   +-- <product>.md              <-   one per product if monorepo
 |   +-- 0.soul.md                     <- Identity, principles, rules
 |   +-- 1.user.md                     <- Preferences, project details
-|   +-- 2.memory.md                   <- Decisions, issues, session log
-|   +-- 3-5: style guide, tech stack, data structures
+|   +-- 2.memory.md                   <- Decisions + Known Issues (ship narrative moved to CHANGELOG 2026-05-23)
+|   +-- 3.style_guide_and_branding.md
+|   +-- 4.tech_stack.md
+|   +-- 6.system_flow.md
 |   +-- CHANGELOG.json, RELEASES.json
-+-- knowledge/<topic>.md              <- Deep research, resources
-+-- state/<task>.md                   <- Active tasks
++-- knowledge/<topic>.md              <- Deep research, resources (global)
+|   +-- products/<product>.md         <- Per-product knowledge (multi-product)
++-- state/
+|   +-- <task>.md                     <- Active tasks (frontmatter may include product:)
+|   +-- .config.json                  <- { platforms, packs, multiProduct, setupVersion }
 ```
 
 ---
@@ -428,7 +474,7 @@ All commands prefixed with `dreamcontext`. For reading/searching, use native too
 
 | Command | Description |
 |---------|-------------|
-| `init` | Initialize `_dream_context/` |
+| `init [--multi-product=a,b,c]` | Initialize `_dream_context/`. Prompts interactively whether the project is a monorepo with multiple products; `--multi-product=a,b,c` skips the prompt and provides kebab-case product names directly. Creates `core/data-structures/<product>.md` per product (or `default.md` for single-product) and seeds `knowledge/products/`. |
 | `core changelog add` | Add changelog entry (interactive) |
 | `core releases add [--ver v --summary s --yes] [--status planning]` | Create release (default: released with auto-discovery; --status planning: empty planning version, auto-becomes active) |
 | `core releases active [<version>] [--clear]` | Get/set/clear the active planning version (default for new tasks' `version` field) |
@@ -440,6 +486,12 @@ All commands prefixed with `dreamcontext`. For reading/searching, use native too
 | `knowledge index [--tag <tag>]` | Show knowledge index |
 | `knowledge tags` | List standard tags |
 | `knowledge touch <slug>` | Record access to knowledge file (decay tracking) |
+| `memory recall <query...> [--top N] [--types ...] [--json\|--plain]` | BM25 recall across knowledge, features, tasks, memory entries |
+| `memory remember <text...> [--title t] [--tasks slugs]` | Capture a one-off knowledge entry mid-session (sleep reconciles later) |
+| `memory update <slug> [--description] [--tags] [--content] [--append] [--pin\|--unpin]` | Surgically edit a knowledge entry |
+| `memory delete <slug> [--force]` | Remove a knowledge entry |
+| `memory list [--types ...]` | List indexable memory corpus by type |
+| `memory status` | Show corpus size broken down by type |
 | `tasks list [-s status] [--all]` | List tasks (default: excludes completed) |
 | `tasks create <name> [-d desc] [-p priority] [-s status] [-t tags] [-w why] [--reach N --impact N --confidence N --effort N]` | Create task (defaults: priority=medium, status=todo). RICE flags optional and additive. |
 | `tasks rice <name> [--reach N] [--impact N] [--confidence N] [--effort N] [--clear]` | Print or update RICE values; no flags prints current values |
