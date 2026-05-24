@@ -79,7 +79,8 @@ All pass → confirm briefly, execute. No ceremony.
 | `sleep-tasks` / `sleep-state` | Sleep debt prompt fires, or after major work | Always-fire specialists during sleep fan-out — own task files / (core identity + changelog + releases) respectively |
 | `sleep-product` | Conditionally during sleep fan-out (research/decision/feature signals) | Knowledge files + feature PRDs |
 | `dreamcontext-initializer` | Project lacks `_dream_context/` | Bootstraps the structure |
-| `Reviewer` | Code is written and ready for PR | Flags Critical/Major only. Never mid-implementation. |
+| `Reviewer` | Code is written and ready for PR, tiny/single-domain diff | Flags Critical/Major only. Never mid-implementation. |
+| `/multi-review` skill | Non-trivial diff spanning multiple domains (Cloud Functions + frontend + security) | Router → niche specialists in parallel (security, cloud-functions, frontend, edge-cases) → coordinator dedupes. Each specialist auto-loads its declared dreamcontext skills. |
 </sub_agents>
 
 </system_instructions>

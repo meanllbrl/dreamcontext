@@ -67,6 +67,7 @@ This was the first use of the pattern and it worked exactly as designed: three r
 ## Relationship to other review patterns
 
 - **vs `sub-agent-iterative-reviewer-pattern`** (existing): that pattern is POST-implementation, ONE holistic reviewer reading parallel workstream outputs for cross-domain regressions. This pattern is PRE-implementation, THREE parallel reviewers with different mandates. Both are useful; they apply at different stages.
+- **vs `/multi-review` skill** (2026-05-24): the `/multi-review` skill is POST-implementation, router-dispatched **niche specialists** (security / cloud-functions / frontend / edge-cases) with a coordinator that dedupes. This pattern is PRE-implementation, **mandate-diverse generalists** (critic / pragmatist / security) attacking a plan. The two are complementary: this one decides whether to build; `/multi-review` reviews what was built.
 - **vs council debates** (`/council` skill): council is for decisions WITHOUT a draft plan — N personas debating across rounds. This pattern is for decisions WITH a draft plan — N reviewers attacking the plan with different mandates. If you don't have a plan yet, run council. If you have a plan and want to know whether to ship it, run this pattern.
 
 ## Sources

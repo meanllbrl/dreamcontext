@@ -47,6 +47,11 @@ Skip when:
 - Work is a single coherent workstream (reviewer adds no value over a self-review pass).
 - Workstreams share file domains (parallel writes cause conflicts; serialize instead).
 
+## Relationship to other review patterns
+
+- **vs `multi-review` skill** (2026-05-24): the `/multi-review` skill is the productized, post-implementation evolution of this pattern. It adds a **router** (classifies tier + picks specialists by domain) and a **niche-specialist roster** (security / cloud-functions / frontend / edge-cases) instead of one holistic reviewer. Use `/multi-review` for any non-trivial diff that crosses domains; this pattern survives for in-session multi-workstream orchestration where the work itself is sub-agent-driven.
+- **vs `three-reviewer-parallel-mandates-pattern`**: that pattern is pre-implementation (critic/pragmatist/security against a draft plan). This and `/multi-review` are post-implementation.
+
 ## Sources
 
 - v0.4 session (2026-05-22): session IDs `2d3b13d1-1faa-4ee8-a879-9573c632c719`, `bdb5cee6-b531-4986-b775-cc753c6f43cc`.

@@ -1,5 +1,19 @@
 [
   {
+    "date": "2026-05-24",
+    "type": "chore",
+    "scope": "multi-review",
+    "description": "Update cross-references for multi-review skill. Added multi-review to AGENTS.md sub-agent roster table. Added Relationship sections to knowledge/sub-agent-iterative-reviewer-pattern.md and knowledge/three-reviewer-parallel-mandates-pattern.md distinguishing those pre-implementation adversarial patterns from the new post-implementation /multi-review diff-review skill.",
+    "breaking": false
+  },
+  {
+    "date": "2026-05-24",
+    "type": "feat",
+    "scope": "multi-review",
+    "description": "Add /multi-review skill — router + 4 niche specialists + coordinator. Shipped 8 new files: .claude/skills/multi-review/SKILL.md (orchestration entry, fires on /multi-review), REVIEWER_SHARED.md (shared severity rubric + output format + what-not-to-flag rules), and 6 agents — review-router.md (classifies tier Trivial/Lite/Full and emits JSON dispatch plan), review-security.md (secrets, auth, injection, env leaks, weak crypto), review-cloud-functions.md (idempotency, infinite loops, billing footguns, trigger-loop hazards), review-frontend.md (file size, hooks, a11y, design tokens, XSS sinks), review-edge-cases.md (null/empty, concurrency, partial fails, retries — default-on at tier >= Lite), review-coordinator.md (only reader of full specialist reports; dedupes, re-ranks, emits READY_TO_MERGE / NEEDS_ATTENTION / NEEDS_WORK verdict). Each specialist declares dreamcontext skills in YAML frontmatter and loads them before reviewing, making this skill-aware in a way that generic multi-agent review frameworks are not.",
+    "breaking": false
+  },
+  {
     "date": "2026-05-23",
     "type": "refactor",
     "scope": "docs",

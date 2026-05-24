@@ -1,5 +1,16 @@
 [
   {
+    "id": "rel_NbcqV3la",
+    "version": "v0.5.0",
+    "date": "",
+    "summary": "Multi-agent /multi-review skill: router + 4 niche specialists + coordinator",
+    "breaking": false,
+    "status": "planning",
+    "features": [],
+    "tasks": [],
+    "changelog": []
+  },
+  {
     "id": "rel_US_Hptq7",
     "version": "v0.4.0",
     "date": "",

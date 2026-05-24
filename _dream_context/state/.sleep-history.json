@@ -1,5 +1,20 @@
 [
   {
+    "date": "2026-05-24",
+    "consolidated_at": "2026-05-24T10:06:01.457Z",
+    "summary": "Sleep #5 — multi-review skill productized. Built /multi-review (router + 4 niche specialists + coordinator) from web research (Cloudflare, HAMY, Qodo) + dreamcontext's existing conventions. 8 new files: skills/multi-review/SKILL.md + REVIEWER_SHARED.md, and 6 agents (review-router/security/cloud-functions/frontend/edge-cases/coordinator). Cross-refs added to AGENTS.md sub-agent table and the two existing reviewer-pattern knowledge files. Opened v0.5.0 planning version (active) — multi-review is its anchor work. New knowledge file: multi-reviewer-pattern.md. New feature PRD: multi-review-skill.md. Retro-task created at in_review awaiting user verification on a real diff. 2 changelog entries. memory.md +1 entry (47 lines, well under cap). All 6 agents pass feedback_agent_skills_declaration rule (skills frontmatter + Skills always loaded body). Skill-aware specialists are the dreamcontext-native angle vs Cloudflare/HAMY hardcoded prompts.",
+    "debt_before": 12,
+    "debt_after": 0,
+    "sessions_processed": 4,
+    "bookmarks_processed": 0,
+    "session_ids": [
+      "79bddcc5-e485-4de6-ad45-e7afd7cb8dc2",
+      "fa67d942-c84b-49f3-aa5c-601195197390",
+      "cbea2a55-9d38-4a20-83a7-976d07a625f0",
+      "1f431354-3eee-40d1-88f2-b4c9ec0b6699"
+    ]
+  },
+  {
     "date": "2026-05-23",
     "consolidated_at": "2026-05-23T07:43:38.396Z",
     "summary": "Sleep #4 — cross-repo audit pass. 5 parallel cluster agents synced all stale references after today's memory recall + CHANGELOG schema + tiered snapshot + default-on hook + 150-line cap changes. Updated: skill/SKILL.md (1 fix), agents/dreamcontext-{explore,initializer}.md (5 edits), all 5 .codex/agents/prompts/*.md + corresponding .toml mirrors (full rewrite), src/templates/{CLAUDE.md,AGENTS.md,init/2.memory.md} (new-project scaffolds aligned), README+DEEP-DIVE+AGENTS+CHANGELOG.md (root), memory-recall-bm25 PRD (heavy update with new schema/tiering/CHANGELOG corpus ACs), context-snapshot PRD (Sleep State + Pinned Knowledge change), sleep-consolidation PRD (150-line cap). Final grep clean. Build green 555.12 KB. Memory.md unchanged (43 lines, well under 150). Snapshot 353 lines (down from ~700 baseline, ~50% reduction). Corpus 130 docs (CHANGELOG indexing added 82 entries).",
