@@ -8,7 +8,9 @@ import { readSleepState, writeSleepState } from './sleep.js';
 import { generateSnapshot, generateSubagentBriefing } from './snapshot.js';
 import { listStaleRecs } from '../../lib/marketing/snapshot.js';
 import { isMarketingEnvPath } from '../../lib/marketing/path-guards.js';
-import { buildCorpus, bm25Search } from '../../lib/recall.js';
+import { buildCorpus, bm25Search, type RecallHit } from '../../lib/recall.js';
+import { extractRecallQueries } from '../../lib/recall-query-extractor.js';
+import { multiQueryBm25 } from '../../lib/recall-multi-query.js';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -613,23 +615,43 @@ export function registerHookCommand(program: Command): void {
         // Marketing snapshot must never break the hook.
       }
 
-      // Memory recall injection — Path A deterministic BM25 over knowledge +
-      // features + tasks + memory.md LIFO sections. ON by default. Users can
-      // opt out by setting DREAMCONTEXT_MEMORY_HOOK=0. Skipped for short prompts
-      // (under 8 chars) and weak matches (top score below 2.0) to avoid noise.
+      // Memory recall injection — extracts focused keywords via Haiku (claude CLI),
+      // then runs multi-query BM25. Falls back to raw BM25 if Haiku fails.
+      // OFF when DREAMCONTEXT_MEMORY_HOOK=0. Mode: DREAMCONTEXT_RECALL_MODE=haiku|raw|off.
       if (process.env.DREAMCONTEXT_MEMORY_HOOK !== '0') {
         try {
           const prompt = String((input as Record<string, unknown>).prompt ?? '');
           if (prompt.trim().length >= 8) {
-            const corpus = buildCorpus(root);
-            const hits = bm25Search(prompt, corpus, 3);
-            if (hits.length > 0 && hits[0].score >= 2.0) {
-              const lines: string[] = ['', '— Memory recall (BM25, top 3) —'];
-              for (const h of hits) {
-                lines.push(`  [${h.doc.type}] ${h.doc.relPath} (score ${h.score.toFixed(2)})`);
-                if (h.doc.description) lines.push(`    ${h.doc.description}`);
+            const recallMode = process.env.DREAMCONTEXT_RECALL_MODE ?? 'haiku';
+
+            if (recallMode !== 'off') {
+              let hits: RecallHit[] = [];
+              let mode = 'BM25';
+
+              if (recallMode === 'haiku') {
+                const extraction = extractRecallQueries(prompt);
+                if (extraction.skip) {
+                  // Haiku says no searchable intent — skip
+                } else if (extraction.queries.length > 0) {
+                  hits = multiQueryBm25(extraction.queries, root, 3);
+                  mode = 'Haiku+BM25';
+                } else {
+                  const corpus = buildCorpus(root);
+                  hits = bm25Search(prompt, corpus, 3);
+                }
+              } else {
+                const corpus = buildCorpus(root);
+                hits = bm25Search(prompt, corpus, 3);
               }
-              console.log(lines.join('\n'));
+
+              if (hits.length > 0 && hits[0].score >= 2.0) {
+                const lines: string[] = ['', `— Memory recall (${mode}, top 3) —`];
+                for (const h of hits) {
+                  lines.push(`  [${h.doc.type}] ${h.doc.relPath} (score ${h.score.toFixed(2)})`);
+                  if (h.doc.description) lines.push(`    ${h.doc.description}`);
+                }
+                console.log(lines.join('\n'));
+              }
             }
           }
         } catch {
