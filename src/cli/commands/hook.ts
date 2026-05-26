@@ -9,8 +9,7 @@ import { generateSnapshot, generateSubagentBriefing } from './snapshot.js';
 import { listStaleRecs } from '../../lib/marketing/snapshot.js';
 import { isMarketingEnvPath } from '../../lib/marketing/path-guards.js';
 import { buildCorpus, bm25Search, type RecallHit } from '../../lib/recall.js';
-import { extractRecallQueries } from '../../lib/recall-query-extractor.js';
-import { multiQueryBm25 } from '../../lib/recall-multi-query.js';
+import { haikuRecall } from '../../lib/recall-query-extractor.js';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -615,27 +614,30 @@ export function registerHookCommand(program: Command): void {
         // Marketing snapshot must never break the hook.
       }
 
-      // Memory recall injection — extracts focused keywords via Haiku (claude CLI),
-      // then runs multi-query BM25. Falls back to raw BM25 if Haiku fails.
-      // OFF when DREAMCONTEXT_MEMORY_HOOK=0. Mode: DREAMCONTEXT_RECALL_MODE=haiku|raw|off.
+      // Memory recall injection — single Haiku call sees corpus index + prompt,
+      // returns only relevant docs. Falls back to raw BM25 if Haiku fails.
+      // Priority: env var > state file > default 'haiku'.
       if (process.env.DREAMCONTEXT_MEMORY_HOOK !== '0') {
         try {
           const prompt = String((input as Record<string, unknown>).prompt ?? '');
           if (prompt.trim().length >= 8) {
-            const recallMode = process.env.DREAMCONTEXT_RECALL_MODE ?? 'haiku';
+            const recallMode = process.env.DREAMCONTEXT_RECALL_MODE ?? state.recall_mode ?? 'haiku';
 
             if (recallMode !== 'off') {
               let hits: RecallHit[] = [];
               let mode = 'BM25';
 
               if (recallMode === 'haiku') {
-                const extraction = extractRecallQueries(prompt);
-                if (extraction.skip) {
-                  // Haiku says no searchable intent — skip
-                } else if (extraction.queries.length > 0) {
-                  hits = multiQueryBm25(extraction.queries, root, 3);
-                  mode = 'Haiku+BM25';
-                } else {
+                const result = haikuRecall(prompt, root);
+                if (result === 'skip') {
+                  if (process.env.DREAMCONTEXT_DEBUG) console.error('[recall] Haiku: skip (no searchable intent)');
+                } else if (result !== null && result.length > 0) {
+                  hits = result;
+                  mode = 'Haiku';
+                } else if (result !== null && result.length === 0) {
+                  if (process.env.DREAMCONTEXT_DEBUG) console.error('[recall] Haiku: 0 docs selected');
+                } else if (result === null) {
+                  if (process.env.DREAMCONTEXT_DEBUG) console.error('[recall] Haiku failed, falling back to BM25');
                   const corpus = buildCorpus(root);
                   hits = bm25Search(prompt, corpus, 3);
                 }
@@ -644,18 +646,27 @@ export function registerHookCommand(program: Command): void {
                 hits = bm25Search(prompt, corpus, 3);
               }
 
-              if (hits.length > 0 && hits[0].score >= 2.0) {
-                const lines: string[] = ['', `— Memory recall (${mode}, top 3) —`];
+              if (hits.length > 0 && (mode === 'Haiku' || hits[0].score >= 2.0)) {
+                const lines: string[] = ['', `— Memory recall (${mode}, top ${hits.length}) —`];
                 for (const h of hits) {
-                  lines.push(`  [${h.doc.type}] ${h.doc.relPath} (score ${h.score.toFixed(2)})`);
-                  if (h.doc.description) lines.push(`    ${h.doc.description}`);
+                  lines.push(`  [${h.doc.type}] ${h.doc.relPath}`);
+                  if (h.snippet) lines.push(`    Why: ${h.snippet}`);
+                  else if (h.doc.description) lines.push(`    ${h.doc.description}`);
+                  const excerpt = h.doc.body
+                    .split('\n')
+                    .map(l => l.trim())
+                    .filter(l => l.length > 0 && !l.startsWith('#') && !l.startsWith('---') && !l.startsWith('|'))
+                    .slice(0, 3)
+                    .join(' ')
+                    .slice(0, 200);
+                  if (excerpt) lines.push(`    > ${excerpt}${excerpt.length >= 200 ? '…' : ''}`);
                 }
                 console.log(lines.join('\n'));
               }
             }
           }
-        } catch {
-          // Memory hook must never break the user prompt flow.
+        } catch (recallErr) {
+          if (process.env.DREAMCONTEXT_DEBUG) console.error('[recall] error:', (recallErr as Error).message ?? recallErr);
         }
       }
     });

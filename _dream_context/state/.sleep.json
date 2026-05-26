@@ -1,81 +1,29 @@
 {
-  "debt": 14,
-  "last_sleep": "2026-05-24",
-  "last_sleep_summary": "Sleep #5 — multi-review skill productized. Built /multi-review (router + 4 niche specialists + coordinator) from web research (Cloudflare, HAMY, Qodo) + dreamcontext's existing conventions. 8 new files: skills/multi-review/SKILL.md + REVIEWER_SHARED.md, and 6 agents (review-router/security/cloud-functions/frontend/edge-cases/coordinator). Cross-refs added to AGENTS.md sub-agent table and the two existing reviewer-pattern knowledge files. Opened v0.5.0 planning version (active) — multi-review is its anchor work. New knowledge file: multi-reviewer-pattern.md. New feature PRD: multi-review-skill.md. Retro-task created at in_review awaiting user verification on a real diff. 2 changelog entries. memory.md +1 entry (47 lines, well under cap). All 6 agents pass feedback_agent_skills_declaration rule (skills frontmatter + Skills always loaded body). Skill-aware specialists are the dreamcontext-native angle vs Cloudflare/HAMY hardcoded prompts.",
+  "debt": 6,
+  "last_sleep": "2026-05-26",
+  "last_sleep_summary": "Sleep #6 — Haiku single-call recall, multi-review refactor, BID/BIV skill packs. Created haiku-recall-architecture knowledge file documenting the single claude CLI call design (corpus index in system prompt, 8K cap, execFileSync safety, mode matrix). Updated memory-recall-bm25 feature PRD with 9 new acceptance criteria. Updated multi-reviewer-pattern knowledge (coordinator removed, v1.1). Updated decision-mem0-vs-bm25-recall with Haiku evolution note. 3 new tasks created (haiku-recall-extraction, business-idea-discovery-skill, business-idea-validation-skill). multi-review-skill body reconciled (coordinator references removed throughout). All 4 tasks at in_review under v0.5.0. 3 changelog entries added. 2 memory decisions recorded. soul.md priority updated to v0.5.0.",
   "sleep_started_at": null,
-  "sessions_since_last_sleep": 7,
+  "sessions_since_last_sleep": 0,
   "sessions": [
     {
-      "session_id": "1cace19b-b03f-4df8-83cc-956c4abf80c8",
-      "transcript_path": "/Users/mehmetnuraydin/.claude/projects/-Users-mehmetnuraydin-projects-dreamcontext/1cace19b-b03f-4df8-83cc-956c4abf80c8.jsonl",
-      "stopped_at": "2026-05-26T08:05:53.223Z",
-      "last_assistant_message": "Committed as `6b22c84`. 8 files changed — coordinator agent deleted, SKILL.md flow simplified, all references updated across specialists, catalog, shared rubric, and knowledge file.",
-      "change_count": 26,
-      "tool_count": 47,
-      "score": 3,
-      "task_slugs": []
-    },
-    {
-      "session_id": "8d1c1dcb-e68f-41af-b4c5-0a2ba0c52c75",
-      "transcript_path": "/Users/mehmetnuraydin/.claude/projects/-Users-mehmetnuraydin-projects-dreamcontext/8d1c1dcb-e68f-41af-b4c5-0a2ba0c52c75.jsonl",
-      "stopped_at": "2026-05-26T07:53:37.636Z",
-      "last_assistant_message": "I'd be happy to help you understand the login page authentication! However, I don't see authentication documentation in the context that was loaded.\n\nTo help you effectively, I could:\n\n1. **Search your codebase** — Point me to where your login/auth code lives (e.g., a specific file or directory)\n2. **Check your docs** — If you have authentication documented in Notion, Slack, or a repo README, I can fetch it\n3. **Walk through the code** — Share the relevant authentication flow files and I'll explain how they work\n\n**What I know so far:**\n- dreamcontext is a TypeScript CLI tool for AI agents\n- The context doesn't contain login/auth implementation details yet\n\n**Quick questions:**\n- Is this auth for a web UI, the CLI itself, or an API?\n- Is it token-based, OAuth, or credential-based?\n- Where should I look for the code (GitHub repo, specific folder)?\n\nOnce you point me to the authentication code or docs, I can give you a detailed explanation of how it works! 🔐",
-      "change_count": 0,
-      "tool_count": 0,
-      "score": 0,
-      "task_slugs": []
-    },
-    {
-      "session_id": "187f47ce-b0e1-490a-904f-44a75721ef86",
-      "transcript_path": "/Users/mehmetnuraydin/.claude/projects/-Users-mehmetnuraydin-projects-dreamcontext/187f47ce-b0e1-490a-904f-44a75721ef86.jsonl",
-      "stopped_at": "2026-05-26T07:52:51.283Z",
-      "last_assistant_message": "Hey! 👋\n\nI see you've got some accumulated context in the dreamcontext project — sleep debt is at 9/10. Before we dive into any new work, I'd recommend running a **sleep consolidation** to clean up the knowledge base. This refreshes the structured context and keeps things efficient.\n\nBut first: **what are you working on today?** Whether it's a new feature, a bug fix, or something else entirely, I'm ready to help. If you want to consolidate first, just say the word — it'll only take a minute.",
-      "change_count": 0,
-      "tool_count": 0,
-      "score": 0,
-      "task_slugs": []
-    },
-    {
-      "session_id": "bbadbac1-b517-469c-9f5a-fbf71486d934",
-      "transcript_path": "/Users/mehmetnuraydin/.claude/projects/-Users-mehmetnuraydin-projects-dreamcontext/bbadbac1-b517-469c-9f5a-fbf71486d934.jsonl",
-      "stopped_at": "2026-05-26T08:05:25.735Z",
-      "last_assistant_message": "Yes, the BIV skill pack is complete. Here's what shipped:\n\n**8 files created + catalog registered:**\n- Orchestrator (`SKILL.md`) — 9-stage sequential pipeline with kill gates\n- Stage definitions — all 9 stages with inputs, outputs, success criteria, kill signals, confidence rubrics\n- 6 specialist agents — researcher, customer-analyst, market-analyst, strategist, financial-analyst, decision-gate\n- All cross-references verified and consistent after the audit fixes\n\n**What's ready to use:**\n- `/validate-idea` or natural language triggers like \"validate this business idea\"\n- Sequential dispatch with PASS/WEAK/KILL gates between every stage\n- Artifacts persist to `_biv/{slug}/` — resumable across conversations\n- Final scorecard: GO (30-40) / PIVOT (18-29) / NO-GO (8-17)\n\n**Not yet done (future work if you want it):**\n- Wiring `/validate-idea` as a slash command in settings.json\n- Testing with a real idea end-to-end\n\n---\n\nSleep debt is at 14 — that's critical. Want me to run consolidation now?",
-      "change_count": 18,
-      "tool_count": 63,
+      "session_id": "7d8e4dc2-bba3-4777-96d3-7c7f63d2d7ca",
+      "transcript_path": "/Users/mehmetnuraydin/.claude/projects/-Users-mehmetnuraydin-projects-dreamcontext/7d8e4dc2-bba3-4777-96d3-7c7f63d2d7ca.jsonl",
+      "stopped_at": "2026-05-26T08:46:52.661Z",
+      "last_assistant_message": "Tamam. System kategorisine eklendi:\n\n- **Recall status** — mevcut modu gösterir\n- **Recall mode** — select menüsüyle haiku / raw / off arasından seç\n\nTUI'da System > Recall status veya System > Recall mode ile erişebilirsin. CLI'dan da `dreamcontext recall on/off/raw/status` aynı şekilde çalışıyor.",
+      "change_count": 24,
+      "tool_count": 96,
       "score": 3,
       "task_slugs": []
     },
     {
       "session_id": "fcaa4dbc-0f95-4314-bae8-f61a53a7bad4",
       "transcript_path": "/Users/mehmetnuraydin/.claude/projects/-Users-mehmetnuraydin-projects-dreamcontext/fcaa4dbc-0f95-4314-bae8-f61a53a7bad4.jsonl",
-      "stopped_at": "2026-05-26T08:05:35.308Z",
-      "last_assistant_message": "Honest answer: it's **partially** what you described, but not exactly. Let me break down what's actually happening vs. what you want.\n\n**What you described:**\n1. Call claude with bare (empty context, no skills, no CLAUDE.md) ✓ mostly\n2. Extract English keywords from any language input — **not explicitly in the prompt**\n3. Run BM25 with those keywords ✓\n4. Haiku **evaluates results** and picks only relevant ones — **not happening**\n5. Zero noise to main agent — partially\n\n**What's actually happening:**\n1. We're NOT using `--bare` because it requires `ANTHROPIC_API_KEY`. We use `--setting-sources \"\" --tools \"\" --no-session-persistence` instead — similar effect but still ~413 tokens overhead\n2. Haiku extracts keywords, but the system prompt doesn't say \"translate to English\" explicitly\n3. BM25 runs and returns top 3 by score — **no relevance filtering by Haiku**\n4. The score >= 2.0 threshold is the only filter\n\n**Is it working really well?** Mixed. Sometimes better than raw BM25, sometimes comparable. The scores were 14.70 vs 13.98 — only a marginal improvement.\n\nThe **big missing piece** in the current implementation is what you described: Haiku should see the BM25 results AND the original prompt, then decide which docs are actually relevant. That's a two-pass architecture:\n\n```\nPass 1: Prompt → Haiku → keywords → BM25 → candidate docs\nPass 2: Prompt + candidate docs → Haiku → filtered relevant docs only\n```\n\nThis would cost 2 claude calls (~15s total) but would actually solve the noise problem. Or we could do both passes in a single call if we give Haiku access to the corpus somehow.\n\nDo you want me to restructure this as a **single claude call** that does everything — gets the prompt, has access to search, and returns only the relevant doc paths? Or keep the two-pass approach?",
-      "change_count": 6,
-      "tool_count": 70,
+      "stopped_at": "2026-05-26T08:27:10.177Z",
+      "last_assistant_message": "## Sleep #6 Complete\n\n**Debt:** 16 → 5 (2 post-epoch sessions preserved)\n\n### What was consolidated\n\n| Specialist | Key actions |\n|---|---|\n| **sleep-state** | 3 changelog entries (recall refactor, multi-review coordinator removal, BID/BIV skills). 2 memory decisions (Haiku single-call, coordinator removal). soul.md priority → v0.5.0. RELEASES.json summary updated. |\n| **sleep-tasks** | 3 new tasks created: `haiku-recall-extraction`, `business-idea-discovery-skill`, `business-idea-validation-skill`. `multi-review-skill` body reconciled (coordinator references purged). All 4 at `in_review` under v0.5.0. |\n| **sleep-product** | New knowledge: `haiku-recall-architecture.md` (full design doc). Feature PRD `memory-recall-bm25` updated with 9 acceptance criteria. `multi-reviewer-pattern` updated to v1.1 (coordinator removal). `decision-mem0-vs-bm25-recall` updated with Haiku evolution note. |\n\n**v0.5.0 status:** 4 tasks in_review, 0 in_progress. Ready for your verification before release.",
+      "change_count": 14,
+      "tool_count": 114,
       "score": 3,
       "task_slugs": []
-    },
-    {
-      "session_id": "76a35fde-c1f4-4046-a927-75912363815a",
-      "transcript_path": "/Users/mehmetnuraydin/.claude/projects/-Users-mehmetnuraydin-projects-dreamcontext/76a35fde-c1f4-4046-a927-75912363815a.jsonl",
-      "stopped_at": "2026-05-26T07:59:43.047Z",
-      "last_assistant_message": "No issues. The skill is clean:\n\n- **All 3 mirrors** in sync (same 23,863 bytes): `skill-packs/`, `.claude/skills/`, `.agents/skills/`\n- **Catalog entry** valid JSON with correct file path, tags, and cross-pack deps\n- **Already showing in the skills list** (you can see `business-idea-discovery` in the available skills above)\n- **One dangling crossPackDep**: `business-idea-validation` is referenced but that skill exists as an untracked directory from a previous session — it'll resolve once that's committed\n\nThe skill is ready to use. Want to move on to the second skill (business idea validation), or should we consolidate first? Sleep debt is at 11.",
-      "change_count": 2,
-      "tool_count": 33,
-      "score": 2,
-      "task_slugs": []
-    },
-    {
-      "session_id": "79bddcc5-e485-4de6-ad45-e7afd7cb8dc2",
-      "transcript_path": "/Users/mehmetnuraydin/.claude/projects/-Users-mehmetnuraydin-projects-dreamcontext/79bddcc5-e485-4de6-ad45-e7afd7cb8dc2.jsonl",
-      "stopped_at": "2026-05-24T13:54:38.715Z",
-      "last_assistant_message": "Commit edilecek yeni bir şey yok — son iki commit (`8b2d9a7` ve `df22557`) zaten remote'ta. `unpushed` listesi boş.\n\nDisk'te kalanlar:\n- `_dream_context/state/.sleep.json` — dreamcontext hook'unun otomatik güncellediği session metadata (manuel commit edilmez, sleep cycle'da yönetiliyor)\n- `.agents/` — Nisan 25'ten kalma boş eski dizin (bu session'la alakası yok)\n\nİkisi de elle commit'lenecek şeyler değil.\n\n**Remote'ta `main` durumu**:\n```\ndf22557 [feat] multi-review pack — template into skill-packs/ for npm distribution\n8b2d9a7 [feat] multi-review skill — router + 4 niche specialists + coordinator (v0.5.0 anchor)\n9d78cfd [feat] v0.4.0 — ClickUp dashboard overhaul, mermaid hardening, manifest install, memory CLI\n```\n\nMulti-review işi tamamen senkron. Diğer projende `dreamcontext install-skill multi-review` çalıştırabilirsin.",
-      "change_count": 29,
-      "tool_count": 110,
-      "score": 3,
-      "task_slugs": [
-        "multi-review-skill"
-      ]
     }
   ],
   "bookmarks": [],
@@ -90,12 +38,12 @@
       "count": 1
     },
     "decision-mem0-vs-bm25-recall": {
-      "last_accessed": "2026-05-23",
-      "count": 1
+      "last_accessed": "2026-05-26",
+      "count": 2
     },
     "multi-reviewer-pattern": {
-      "last_accessed": "2026-05-24",
-      "count": 1
+      "last_accessed": "2026-05-26",
+      "count": 2
     }
   },
   "dashboard_changes": [],
@@ -135,5 +83,6 @@
       "sessions_count": 4,
       "bookmarks_count": 0
     }
-  ]
+  ],
+  "recall_mode": "haiku"
 }

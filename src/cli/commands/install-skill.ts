@@ -59,7 +59,7 @@ interface CodexHookSpec {
 const CODEX_HOOK_SPECS: CodexHookSpec[] = [
   { event: 'SessionStart', command: SESSION_START_HOOK, timeout: 10, matcher: 'startup|resume|clear' },
   { event: 'Stop', command: STOP_HOOK, timeout: 5 },
-  { event: 'UserPromptSubmit', command: USER_PROMPT_SUBMIT_HOOK, timeout: 5 },
+  { event: 'UserPromptSubmit', command: USER_PROMPT_SUBMIT_HOOK, timeout: 120 },
   { event: 'PostToolUse', command: POST_TOOL_USE_HOOK, timeout: 30, matcher: 'Edit|Write' },
 ];
 
@@ -183,7 +183,7 @@ const HOOK_SPECS: HookSpec[] = [
   { event: 'Stop', command: STOP_HOOK, timeout: 5 },
   { event: 'SubagentStart', command: SUBAGENT_START_HOOK, timeout: 5 },
   { event: 'PreToolUse', command: PRE_TOOL_USE_HOOK, timeout: 5, matcher: 'Agent' },
-  { event: 'UserPromptSubmit', command: USER_PROMPT_SUBMIT_HOOK, timeout: 5 },
+  { event: 'UserPromptSubmit', command: USER_PROMPT_SUBMIT_HOOK, timeout: 120 },
   { event: 'PostToolUse', command: POST_TOOL_USE_HOOK, timeout: 30, matcher: 'Edit|Write' },
   { event: 'PreCompact', command: PRE_COMPACT_HOOK, timeout: 5 },
 ];

@@ -99,6 +99,7 @@ export interface SleepState {
   knowledge_access: Record<string, KnowledgeAccessRecord>;
   dashboard_changes: DashboardChange[];
   compaction_log: CompactionRecord[];
+  recall_mode: 'haiku' | 'raw' | 'off';
 }
 
 const DEFAULT_SLEEP_STATE: SleepState = {
@@ -113,6 +114,7 @@ const DEFAULT_SLEEP_STATE: SleepState = {
   knowledge_access: {},
   dashboard_changes: [],
   compaction_log: [],
+  recall_mode: 'haiku',
 };
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
@@ -139,6 +141,7 @@ function freshDefaults(): SleepState {
     knowledge_access: {},
     dashboard_changes: [],
     compaction_log: [],
+    recall_mode: 'haiku',
   };
 }
 
@@ -447,5 +450,65 @@ export function registerSleepCommand(program: Command): void {
         console.log(`    ${entry.summary}`);
       }
       console.log(`\n  ${chalk.dim(`${history.length} total consolidation(s)`)}`);
+    });
+}
+
+// ─── Recall Command ───────────────────────────────────────────────────────
+
+const RECALL_MODES = ['haiku', 'raw', 'off'] as const;
+type RecallMode = typeof RECALL_MODES[number];
+
+export function registerRecallCommand(program: Command): void {
+  const recall = program
+    .command('recall')
+    .description('Control memory recall mode (haiku / raw / off)');
+
+  recall
+    .command('status')
+    .description('Show current recall mode')
+    .action(() => {
+      const root = ensureContextRoot();
+      const state = readSleepState(root);
+      const mode = state.recall_mode ?? 'haiku';
+      const labels: Record<RecallMode, string> = {
+        haiku: `${chalk.green('haiku')} — Haiku LLM picks relevant docs per prompt`,
+        raw: `${chalk.yellow('raw')} — BM25 keyword search only (no LLM call)`,
+        off: `${chalk.red('off')} — memory recall disabled`,
+      };
+      console.log(header('Memory Recall'));
+      console.log(`  Mode: ${labels[mode]}`);
+    });
+
+  recall
+    .command('on')
+    .description('Enable Haiku-powered recall (default)')
+    .action(() => {
+      const root = ensureContextRoot();
+      const state = readSleepState(root);
+      state.recall_mode = 'haiku';
+      writeSleepState(root, state);
+      success('Recall mode set to haiku — Haiku LLM picks relevant docs per prompt');
+    });
+
+  recall
+    .command('off')
+    .description('Disable memory recall entirely')
+    .action(() => {
+      const root = ensureContextRoot();
+      const state = readSleepState(root);
+      state.recall_mode = 'off';
+      writeSleepState(root, state);
+      success('Recall mode set to off — no memory injection on prompts');
+    });
+
+  recall
+    .command('raw')
+    .description('Use BM25 keyword search only (no LLM call)')
+    .action(() => {
+      const root = ensureContextRoot();
+      const state = readSleepState(root);
+      state.recall_mode = 'raw';
+      writeSleepState(root, state);
+      success('Recall mode set to raw — BM25 keyword search, no Haiku call');
     });
 }

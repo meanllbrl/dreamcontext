@@ -1,5 +1,22 @@
 [
   {
+    "date": "2026-05-26",
+    "consolidated_at": "2026-05-26T08:27:01.466Z",
+    "summary": "Sleep #6 — Haiku single-call recall, multi-review refactor, BID/BIV skill packs. Created haiku-recall-architecture knowledge file documenting the single claude CLI call design (corpus index in system prompt, 8K cap, execFileSync safety, mode matrix). Updated memory-recall-bm25 feature PRD with 9 new acceptance criteria. Updated multi-reviewer-pattern knowledge (coordinator removed, v1.1). Updated decision-mem0-vs-bm25-recall with Haiku evolution note. 3 new tasks created (haiku-recall-extraction, business-idea-discovery-skill, business-idea-validation-skill). multi-review-skill body reconciled (coordinator references removed throughout). All 4 tasks at in_review under v0.5.0. 3 changelog entries added. 2 memory decisions recorded. soul.md priority updated to v0.5.0.",
+    "debt_before": 16,
+    "debt_after": 5,
+    "sessions_processed": 6,
+    "bookmarks_processed": 0,
+    "session_ids": [
+      "1cace19b-b03f-4df8-83cc-956c4abf80c8",
+      "8d1c1dcb-e68f-41af-b4c5-0a2ba0c52c75",
+      "187f47ce-b0e1-490a-904f-44a75721ef86",
+      "bbadbac1-b517-469c-9f5a-fbf71486d934",
+      "76a35fde-c1f4-4046-a927-75912363815a",
+      "79bddcc5-e485-4de6-ad45-e7afd7cb8dc2"
+    ]
+  },
+  {
     "date": "2026-05-24",
     "consolidated_at": "2026-05-24T10:06:01.457Z",
     "summary": "Sleep #5 — multi-review skill productized. Built /multi-review (router + 4 niche specialists + coordinator) from web research (Cloudflare, HAMY, Qodo) + dreamcontext's existing conventions. 8 new files: skills/multi-review/SKILL.md + REVIEWER_SHARED.md, and 6 agents (review-router/security/cloud-functions/frontend/edge-cases/coordinator). Cross-refs added to AGENTS.md sub-agent table and the two existing reviewer-pattern knowledge files. Opened v0.5.0 planning version (active) — multi-review is its anchor work. New knowledge file: multi-reviewer-pattern.md. New feature PRD: multi-review-skill.md. Retro-task created at in_review awaiting user verification on a real diff. 2 changelog entries. memory.md +1 entry (47 lines, well under cap). All 6 agents pass feedback_agent_skills_declaration rule (skills frontmatter + Skills always loaded body). Skill-aware specialists are the dreamcontext-native angle vs Cloudflare/HAMY hardcoded prompts.",

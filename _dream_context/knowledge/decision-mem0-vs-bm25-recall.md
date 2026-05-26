@@ -65,8 +65,12 @@ Pragmatist reviewer summarized it: "BM25 keyword search may be a stronger move t
 
 - **CLI**: `dreamcontext memory recall <query>` (BM25 top-K), `remember`, `update`, `delete`, `list`, `status`. Zero new npm dependencies (uses existing `fast-glob` + `gray-matter`).
 - **Library**: `src/lib/recall.ts` — corpus loader (knowledge + features + tasks + 2.memory.md LIFO sections), light TR/EN tokenizer, BM25 scorer (k1=1.5, b=0.75), snippet extractor.
-- **Hook integration (default ON)**: UserPromptSubmit hook auto-injects top-3 hits (score ≥2.0) per non-trivial prompt. Opt-out via `DREAMCONTEXT_MEMORY_HOOK=0`. Initially shipped opt-in but flipped to default-on the same day after the noise/utility tradeoff proved favourable on the dreamcontext benchmark.
+- **Hook integration (default ON, Haiku mode as of 2026-05-26)**: UserPromptSubmit hook auto-injects top-3 hits per non-trivial prompt. Originally raw BM25 (default-on since 2026-05-23). Upgraded to Haiku single-call mode: a single `claude --model haiku -p` call receives the full prompt + corpus index (slug/desc/tags, ≤8K chars), returns 0–3 relevant doc keys. Falls back to raw BM25 if `claude` CLI unavailable. Opt-out: `DREAMCONTEXT_MEMORY_HOOK=0`. Mode selection: `DREAMCONTEXT_RECALL_MODE=haiku|raw|off` (default: `haiku`).
 - **Storage**: NONE. The corpus is the live `_dream_context/` files; the inverted index is rebuilt in-memory per query. No cache invalidation bugs possible.
+
+## Haiku Mode — Evolution, Not Reversal
+
+The 2026-05-26 Haiku upgrade does NOT change the Path A decision. BM25 remains the fallback and is still used for direct `dreamcontext memory recall` CLI calls. Haiku mode is an intent-extraction layer on top of BM25: instead of tokenizing the raw prompt into BM25 queries, Haiku understands intent across languages and vocabulary variants, then resolves to the same BM25 corpus. The `recall.ts` library is unchanged; only the hook's query strategy changed. The Path A architecture (curated corpus, deterministic ranking, zero new persistent deps) is unchanged. See `knowledge/haiku-recall-architecture.md` for the full Haiku design.
 
 ## Benchmark (2026-05-23)
 
@@ -98,4 +102,4 @@ This decision should be re-opened ONLY if:
 
 ## Last verified
 
-2026-05-23.
+2026-05-26.

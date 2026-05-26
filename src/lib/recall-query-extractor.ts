@@ -1,34 +1,31 @@
 import { execFileSync } from 'node:child_process';
-import type { CorpusType } from './recall.js';
-
-export interface ExtractedQuery {
-  q: string;
-  types?: CorpusType[];
-}
-
-export interface ExtractionResult {
-  queries: ExtractedQuery[];
-  skip: boolean;
-}
+import { buildCorpus, type CorpusDoc, type RecallHit } from './recall.js';
 
 export type ClaudeExecutor = (prompt: string, systemPrompt: string) => string;
 
-const FALLBACK: ExtractionResult = { queries: [], skip: false };
+// 'skip' = no recall needed, null = fallback to raw BM25
+export type HaikuRecallResult = RecallHit[] | 'skip' | null;
 
-const VALID_CORPUS_TYPES = new Set<string>([
-  'knowledge', 'feature', 'task', 'memory', 'changelog',
-]);
+const SYSTEM_TEMPLATE = `You are a memory recall filter for an AI coding agent. Given a user prompt and a corpus index of project documents, decide which documents (0-3) are DIRECTLY relevant to what the user needs.
 
-export const SYSTEM_PROMPT = `Extract 1-3 BM25 search queries from the user's message for a project memory system.
+Rules:
+- Return 0 docs if nothing is relevant — zero noise is better than wrong context
+- skip=true ONLY for pure greetings/acknowledgments ("ok", "evet", "tamam", "devam", "yes", "no")
+- The user may write in Turkish, English, or mixed — understand intent in any language
+- The corpus is in English — match concepts across languages
+- Prefer specific docs over generic ones
+- For each selected doc, write a short reason (1 sentence) explaining WHY it is relevant to this specific prompt
 
-Corpus types: knowledge, feature, task, memory, changelog.
+Corpus:
+{INDEX}
 
-Return ONLY valid JSON: {"queries":[{"q":"2-4 keywords"}],"skip":false}
-- Extract domain-relevant keywords, strip conversational filler
-- skip=true ONLY if prompt has zero searchable intent (greetings, "ok", "yes")
-- Do NOT add "types" filtering — always search all types`;
+Return ONLY valid JSON:
+{"docs":[{"key":"type/slug","reason":"why this doc matters for the prompt"}],"skip":false}
 
-const DEFAULT_TIMEOUT_MS = 15_000;
+If nothing is relevant: {"docs":[],"skip":false}
+If pure greeting: {"skip":true}`;
+
+const DEFAULT_TIMEOUT_MS = 120_000;
 
 const defaultExecutor: ClaudeExecutor = (prompt, systemPrompt) => {
   return execFileSync('claude', [
@@ -47,50 +44,77 @@ const defaultExecutor: ClaudeExecutor = (prompt, systemPrompt) => {
   });
 };
 
+export function buildCorpusIndex(corpus: CorpusDoc[]): string {
+  return corpus.map(d => {
+    const desc = d.description ? ` — ${d.description}` : '';
+    const tags = d.tags.length > 0 ? `. Tags: ${d.tags.join(', ')}` : '';
+    return `[${d.type}] ${d.slug}${desc}${tags}`;
+  }).join('\n');
+}
+
 function stripCodeBlock(text: string): string {
-  const match = text.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
+  const match = text.match(/```(?:\w+)?\s*\n?([\s\S]*?)\n?\s*```/i);
   if (match) return match[1].trim();
   return text.trim();
 }
 
-function parseExtractionResult(raw: string): ExtractionResult {
-  const json = stripCodeBlock(raw);
-  const parsed = JSON.parse(json) as unknown;
-  if (!parsed || typeof parsed !== 'object') return FALLBACK;
-
-  const obj = parsed as Record<string, unknown>;
-  const skip = obj.skip === true;
-  const rawQueries = Array.isArray(obj.queries) ? obj.queries : [];
-
-  const queries: ExtractedQuery[] = [];
-  for (const entry of rawQueries) {
-    if (!entry || typeof entry !== 'object') continue;
-    const e = entry as Record<string, unknown>;
-    if (typeof e.q !== 'string' || !e.q.trim()) continue;
-    const extracted: ExtractedQuery = { q: e.q.trim() };
-    if (Array.isArray(e.types)) {
-      const filtered = e.types
-        .filter((t): t is string => typeof t === 'string' && VALID_CORPUS_TYPES.has(t));
-      if (filtered.length > 0) extracted.types = filtered as CorpusType[];
-    }
-    queries.push(extracted);
-  }
-
-  return { queries, skip };
-}
-
-export function extractRecallQueries(
+export function haikuRecall(
   rawPrompt: string,
-  opts?: {
-    executor?: ClaudeExecutor;
-    timeoutMs?: number;
-  },
-): ExtractionResult {
+  contextRoot: string,
+  opts?: { executor?: ClaudeExecutor },
+): HaikuRecallResult {
   try {
+    const corpus = buildCorpus(contextRoot);
+    if (corpus.length === 0) return null;
+
+    const MAX_INDEX_CHARS = 8_000;
+    const fullIndex = buildCorpusIndex(corpus);
+    const index = fullIndex.length > MAX_INDEX_CHARS
+      ? fullIndex.slice(0, MAX_INDEX_CHARS) + '\n[...truncated]'
+      : fullIndex;
+    const systemPrompt = SYSTEM_TEMPLATE.replace('{INDEX}', index);
+
     const executor = opts?.executor ?? defaultExecutor;
-    const output = executor(rawPrompt, SYSTEM_PROMPT);
-    return parseExtractionResult(output);
-  } catch {
-    return FALLBACK;
+    const output = executor(rawPrompt, systemPrompt);
+
+    const json = stripCodeBlock(output);
+    const parsed = JSON.parse(json) as unknown;
+    if (!parsed || typeof parsed !== 'object') return null;
+
+    const obj = parsed as Record<string, unknown>;
+    if (obj.skip === true) return 'skip';
+
+    const rawDocs = Array.isArray(obj.docs) ? obj.docs : [];
+    if (rawDocs.length === 0) return [];
+
+    const lookup = new Map<string, CorpusDoc>();
+    for (const doc of corpus) {
+      lookup.set(`${doc.type}/${doc.slug}`, doc);
+    }
+
+    const hits: RecallHit[] = [];
+    for (const entry of rawDocs) {
+      let key: string;
+      let reason = '';
+      if (typeof entry === 'string') {
+        key = entry;
+      } else if (entry && typeof entry === 'object' && typeof (entry as Record<string, unknown>).key === 'string') {
+        key = (entry as Record<string, unknown>).key as string;
+        reason = String((entry as Record<string, unknown>).reason ?? '');
+      } else {
+        continue;
+      }
+      const doc = lookup.get(key);
+      if (!doc) continue;
+      hits.push({ doc, score: 0, snippet: reason });
+      if (hits.length >= 3) break;
+    }
+
+    return hits;
+  } catch (err) {
+    if (process.env.DREAMCONTEXT_DEBUG) {
+      console.error('[haikuRecall]', (err as Error).message ?? err);
+    }
+    return null;
   }
 }

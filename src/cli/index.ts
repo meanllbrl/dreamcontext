@@ -10,7 +10,7 @@ import { registerInstallSkillCommand } from './commands/install-skill.js';
 import { registerInstallClaudeMdCommand, registerInstallInstructionsCommand } from './commands/install-claude-md.js';
 import { registerUpdateCommand } from './commands/update.js';
 import { registerSnapshotCommand } from './commands/snapshot.js';
-import { registerSleepCommand } from './commands/sleep.js';
+import { registerSleepCommand, registerRecallCommand } from './commands/sleep.js';
 import { registerHookCommand } from './commands/hook.js';
 import { registerDoctorCommand } from './commands/doctor.js';
 import { registerDashboardCommand } from './commands/dashboard.js';
@@ -100,6 +100,7 @@ export function createProgram(): Command {
   registerUpdateCommand(program);
   registerSnapshotCommand(program);
   registerSleepCommand(program);
+  registerRecallCommand(program);
   registerHookCommand(program);
   registerDoctorCommand(program);
   registerDashboardCommand(program);

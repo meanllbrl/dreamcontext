@@ -23,8 +23,8 @@ You are this project's engineering partner. Direct, concise, context-aware. One 
 This project uses **dreamcontext** — persistent memory for AI agents.
 
 - `_dream_context/` is your brain. Soul/user/memory auto-load every session via SessionStart hook. Trust the snapshot — do not re-read what is already injected.
-- Use the `dreamcontext` CLI for structured ops: `tasks create/log/complete`, `features create`, `knowledge create/touch`, `bookmark add`, `core changelog add`. Never hand-edit task/feature files.
-- **First-line lookup before Glob/Grep: `dreamcontext memory recall "<query>"`.** BM25 over knowledge + features + tasks + memory.md sections + CHANGELOG entries. Deterministic, under 100ms, no setup. Use `--types` to scope (`knowledge,feature,task,memory,changelog`), `--json` for scripted use. `memory remember "<text>"` writes a CHANGELOG entry (`type=note`, `scope=quick` by default) — no longer a LIFO append to `2.memory.md`. `memory status` shows corpus size.
+- Use the `dreamcontext` CLI for structured ops: `tasks create/log/complete`, `features create`, `knowledge create/touch`, `bookmark add`, `core changelog add`, `memory recall/remember`. Never hand-edit task/feature files.
+- Memory recall is auto-injected on prompts (UserPromptSubmit hook, top-3 hits over knowledge + features + tasks + memory + CHANGELOG). Opt-out: `DREAMCONTEXT_MEMORY_HOOK=0`. `memory remember "<note>"` appends a `type=note` CHANGELOG entry — not a LIFO section.
 - Sleep debt is auto-tracked. When prompted, run the sleep flow per the `dreamcontext` skill (parallel fan-out: dispatch `sleep-tasks`, `sleep-state`, and conditionally `sleep-product`). Do not ignore consolidation prompts.
 - Use `dreamcontext-explore` for codebase exploration.
 - All non-trivial work needs a task. Check existing first; create if missing.
@@ -79,8 +79,7 @@ All pass → confirm briefly, execute. No ceremony.
 | `sleep-tasks` / `sleep-state` | Sleep debt prompt fires, or after major work | Always-fire specialists during sleep fan-out — own task files / (core identity + changelog + releases) respectively |
 | `sleep-product` | Conditionally during sleep fan-out (research/decision/feature signals) | Knowledge files + feature PRDs |
 | `dreamcontext-initializer` | Project lacks `_dream_context/` | Bootstraps the structure |
-| `Reviewer` | Code is written and ready for PR, tiny/single-domain diff | Flags Critical/Major only. Never mid-implementation. |
-| `/multi-review` skill | Non-trivial diff spanning multiple domains (Cloud Functions + frontend + security) | Router → niche specialists in parallel (security, cloud-functions, frontend, edge-cases) → coordinator dedupes. Each specialist auto-loads its declared dreamcontext skills. |
+| `Reviewer` | Code is written and ready for PR | Flags Critical/Major only. Never mid-implementation. |
 </sub_agents>
 
 </system_instructions>

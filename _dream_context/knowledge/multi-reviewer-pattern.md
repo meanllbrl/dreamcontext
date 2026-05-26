@@ -1,10 +1,10 @@
 ---
 id: multi-reviewer-pattern
 name: "Multi-Reviewer Pattern (router + niche specialists)"
-description: "Productized multi-agent code review pattern: router classifies diffs by tier + domain, dispatches niche skill-aware specialists in parallel, main agent dedupes findings into one report. No coordinator sub-agent — the main agent already has full context. Dreamcontext-native innovation: each specialist declares required skills in YAML frontmatter. Distinct from the pre-implementation three-reviewer-parallel-mandates pattern and the post-implementation sub-agent-iterative-reviewer pattern."
+description: "Productized multi-agent code review pattern: router classifies diffs by tier + domain, dispatches niche skill-aware specialists in parallel, main agent reads all reports and synthesizes directly (no coordinator sub-agent). Dreamcontext-native innovation: each specialist declares required skills in YAML frontmatter. Distinct from the pre-implementation three-reviewer-parallel-mandates pattern and the post-implementation sub-agent-iterative-reviewer pattern. v1.1: coordinator removed 2026-05-26."
 tags: ["architecture", "decisions", "agents"]
 pinned: false
-date: "2026-05-24"
+date: "2026-05-26"
 ---
 
 ## Why This Exists
@@ -77,17 +77,19 @@ Concrete consequences:
 
 This means the reviewers are **in sync with the project's own standards**, not frozen at the time the agent was written. It is a documentation-driven review — the same documentation the author consults.
 
-## Roster of Files Shipped (v1, 2026-05-24)
+## Roster of Files Shipped (v1.1, 2026-05-26)
 
 | File | Role |
 |---|---|
-| `.claude/skills/multi-review/SKILL.md` | Orchestration entry; invoked by `/multi-review` or natural-language triggers |
-| `.claude/skills/multi-review/REVIEWER_SHARED.md` | Shared rubric: severity levels (critical/major/minor/nit), output format, what NOT to flag |
-| `.claude/agents/review-router.md` | Classifies diff into tier + domain; emits JSON dispatch plan |
-| `.claude/agents/review-security.md` | Secrets, auth/authz, injection, SSRF/CSRF/XSS, env leaks, weak crypto |
-| `.claude/agents/review-cloud-functions.md` | Infinite loops, idempotency, cold-start, scaling traps, billing gotchas |
-| `.claude/agents/review-frontend.md` | File size, hook rules, a11y, design tokens, XSS sinks |
-| `.claude/agents/review-edge-cases.md` | Null/empty, concurrency, partial failures, retries; default-on for tier >= Lite |
+| `skill-packs/multi-review/SKILL.md` | Orchestration entry; invoked by `/multi-review` or natural-language triggers |
+| `skill-packs/multi-review/REVIEWER_SHARED.md` | Shared rubric: severity levels (critical/major/minor/nit), output format, what NOT to flag |
+| `skill-packs/agents/review-router.md` | Classifies diff into tier + domain; emits JSON dispatch plan |
+| `skill-packs/agents/review-security.md` | Secrets, auth/authz, injection, SSRF/CSRF/XSS, env leaks, weak crypto |
+| `skill-packs/agents/review-cloud-functions.md` | Infinite loops, idempotency, cold-start, scaling traps, billing gotchas |
+| `skill-packs/agents/review-frontend.md` | File size, hook rules, a11y, design tokens, XSS sinks |
+| `skill-packs/agents/review-edge-cases.md` | Null/empty, concurrency, partial failures, retries; default-on for tier >= Lite |
+
+Note: `review-coordinator.md` was removed in v1.1. Main agent reads all specialist reports directly and synthesizes the final verdict inline.
 
 ## Comparison to Peer Patterns
 
@@ -131,6 +133,20 @@ Key distinctions vs external peers: dreamcontext specialists are skill-document-
 - Qodo benchmark articles: qodo.ai/blog/multi-agent-code-review
 - Session: `79bddcc5-e485-4de6-ad45-e7afd7cb8dc2` (2026-05-24) — architecture design and file shipping
 
+## Coordinator Removal (2026-05-26)
+
+The `review-coordinator.md` agent was deleted in session `1cace19b`. Rationale: the main agent already receives every specialist report as a tool result in its context. The coordinator's only job was deduplication + re-ranking, which the main agent can do inline. The extra agent dispatch added latency and token cost without a quality gain. The one theoretical advantage of the coordinator — a clean context with only the reports, no conversation history — was judged insufficient to justify the overhead.
+
+**Impact on the pattern:**
+- `skill-packs/agents/review-coordinator.md` — deleted.
+- `skill-packs/multi-review/SKILL.md` — flow updated: step 3 "dispatch coordinator" replaced by "main agent synthesizes directly."
+- `skill-packs/multi-review/REVIEWER_SHARED.md` — "coordinator" references replaced with "main agent."
+- `skill-packs/catalog.json` — `relatedAgents` no longer lists `review-coordinator`.
+
+The shipped file roster is now 7 files (was 8): SKILL.md, REVIEWER_SHARED.md, review-router.md, review-security.md, review-cloud-functions.md, review-frontend.md, review-edge-cases.md.
+
+The architecture summary in "The Pattern" section above remains correct with the coordinator row removed from the flow.
+
 ## Last Verified
 
-2026-05-24.
+2026-05-26.

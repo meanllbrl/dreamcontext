@@ -304,6 +304,29 @@ const CATEGORIES: MenuCategory[] = [
         description: 'Validate _dream_context/ structure',
         argv: ['doctor'],
       },
+      {
+        emoji: '\u{1F9E0}',
+        name: 'Recall status',
+        description: 'Show current memory recall mode',
+        argv: ['recall', 'status'],
+      },
+      {
+        emoji: '\u{1F9E0}',
+        name: 'Recall mode',
+        description: 'Switch memory recall mode (haiku / raw / off)',
+        argv: ['recall'],
+        args: [
+          {
+            name: 'Mode',
+            type: 'select',
+            choices: [
+              { value: 'on', name: 'haiku — Haiku LLM picks relevant docs per prompt' },
+              { value: 'raw', name: 'raw — BM25 keyword search only (no LLM call)' },
+              { value: 'off', name: 'off — disable memory recall' },
+            ],
+          },
+        ],
+      },
     ],
   },
   {

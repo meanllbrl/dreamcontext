@@ -1,5 +1,26 @@
 [
   {
+    "date": "2026-05-26",
+    "type": "feat",
+    "scope": "skill-packs",
+    "description": "Add business-idea-discovery and business-idea-validation skill packs under skill-packs/ for npm distribution. business-idea-discovery/SKILL.md: structured ideation framework. business-idea-validation/SKILL.md: 9-stage sequential validation pipeline (problem discovery, customer analysis, market sizing, competitive intel, simulated validation, synthesis, GTM, financials, go/no-go) with 6 specialist sub-agents (biv-researcher, biv-customer-analyst, biv-market-analyst, biv-financial-analyst, biv-strategist, biv-decision-gate) and kill gates between stages. Each stage produces a structured artifact building a cumulative dossier that ends in a scored GO/PIVOT/NO-GO verdict. catalog.json updated with both pack entries.",
+    "breaking": false
+  },
+  {
+    "date": "2026-05-26",
+    "type": "feat",
+    "scope": "recall",
+    "description": "Replace multi-query BM25 keyword extraction with a single claude CLI call (Haiku model) for memory recall. src/lib/recall-query-extractor.ts completely rewritten: haikuRecall() builds a corpus index (capped at 8,000 chars), embeds it in a system prompt, calls claude --model haiku -p with no tools and no session persistence, and parses a JSON response of 0-3 doc keys. Falls back silently to raw BM25 when the claude CLI is not available (null return). src/lib/recall-multi-query.ts deleted. hook.ts updated to call haikuRecall() instead of the old multi-query path. Key design choices: execFileSync over SDK to avoid ANTHROPIC_API_KEY dependency (claude CLI uses its own auth); single call over multi-query because Haiku sees the full corpus index and understands intent cross-language (Turkish/English mixed prompts work correctly); AbortController + clearTimeout for clean timeout on the CLI path. Security and edge-case reviews applied; 4 findings fixed. 66 tests pass.",
+    "breaking": false
+  },
+  {
+    "date": "2026-05-26",
+    "type": "refactor",
+    "scope": "multi-review",
+    "description": "Remove coordinator sub-agent from multi-review skill; main agent synthesizes specialist reports directly. Coordinator added latency and token cost without clear value — the main agent already receives all specialist reports and has full diff context to dedupe and re-rank findings. Deleted skill-packs/agents/review-coordinator.md, simplified SKILL.md flow, updated REVIEWER_SHARED.md rubric, catalog.json, and knowledge/multi-reviewer-pattern.md to reflect the new direct-synthesis architecture. 8 files changed.",
+    "breaking": false
+  },
+  {
     "date": "2026-05-24",
     "type": "chore",
     "scope": "multi-review",

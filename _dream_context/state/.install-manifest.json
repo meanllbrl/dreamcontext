@@ -1,7 +1,7 @@
 {
   "version": "0.2.0",
   "createdAt": "2026-05-22T07:17:39.740Z",
-  "updatedAt": "2026-05-22T07:17:55.309Z",
+  "updatedAt": "2026-05-26T08:25:48.998Z",
   "platforms": [
     "claude",
     "codex"
@@ -94,6 +94,14 @@
     ".codex/agents/discover-brand.toml": {
       "version": "0.2.0",
       "kind": "pack-agent"
+    },
+    ".claude/skills/business-idea-discovery/SKILL.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".agents/skills/business-idea-discovery/SKILL.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
     },
     ".claude/skills/council/SKILL.md": {
       "version": "0.2.0",
@@ -343,6 +351,62 @@
       "version": "0.2.0",
       "kind": "pack-skill"
     },
+    ".claude/skills/multi-review/SKILL.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".claude/skills/multi-review/REVIEWER_SHARED.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".claude/agents/review-router.md": {
+      "version": "0.2.0",
+      "kind": "pack-agent"
+    },
+    ".claude/agents/review-security.md": {
+      "version": "0.2.0",
+      "kind": "pack-agent"
+    },
+    ".claude/agents/review-cloud-functions.md": {
+      "version": "0.2.0",
+      "kind": "pack-agent"
+    },
+    ".claude/agents/review-frontend.md": {
+      "version": "0.2.0",
+      "kind": "pack-agent"
+    },
+    ".claude/agents/review-edge-cases.md": {
+      "version": "0.2.0",
+      "kind": "pack-agent"
+    },
+    ".agents/skills/multi-review/SKILL.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".agents/skills/multi-review/REVIEWER_SHARED.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".codex/agents/review-router.toml": {
+      "version": "0.2.0",
+      "kind": "pack-agent"
+    },
+    ".codex/agents/review-security.toml": {
+      "version": "0.2.0",
+      "kind": "pack-agent"
+    },
+    ".codex/agents/review-cloud-functions.toml": {
+      "version": "0.2.0",
+      "kind": "pack-agent"
+    },
+    ".codex/agents/review-frontend.toml": {
+      "version": "0.2.0",
+      "kind": "pack-agent"
+    },
+    ".codex/agents/review-edge-cases.toml": {
+      "version": "0.2.0",
+      "kind": "pack-agent"
+    },
     ".claude/skills/system-prompts/SKILL.md": {
       "version": "0.2.0",
       "kind": "pack-skill"
@@ -354,6 +418,9 @@
   },
   "packs": {
     "brand-voice": {
+      "version": "0.2.0"
+    },
+    "business-idea-discovery": {
       "version": "0.2.0"
     },
     "council": {
@@ -369,6 +436,9 @@
       "version": "0.2.0"
     },
     "meta-marketing": {
+      "version": "0.2.0"
+    },
+    "multi-review": {
       "version": "0.2.0"
     },
     "system-prompts": {
