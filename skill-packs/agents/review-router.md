@@ -151,7 +151,7 @@ agent will follow that.
 - **Output is exactly one JSON block.** No leading "Here's the plan:", no
   trailing explanation. The main agent parses your last code block.
 - **Don't over-specialize.** If a single file's domain is ambiguous, include it
-  in both relevant specialists' scope — the coordinator dedupes.
+  in both relevant specialists' scope — the main agent dedupes.
 - **`edge-cases` is included by default** for tier ≥ Lite. The other three are
   conditional on path triggers.
 - **Hot-path override always wins.** If any hot-path file is touched, tier

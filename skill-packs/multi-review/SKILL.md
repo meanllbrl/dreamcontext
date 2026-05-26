@@ -1,13 +1,13 @@
 ---
 name: multi-review
 description: >
-  Multi-agent code review with a router, niche specialists, and a coordinator.
+  Multi-agent code review with a router and niche specialists.
   Load when the user invokes `/multi-review`, says "multi-reviewer", "review with
   a team", "review this PR with specialists", "team review", "thorough review",
   or otherwise asks for a multi-aspect code review (security + cloud-functions
-  + frontend + edge-cases) of a diff or branch. Routes the diff to the relevant
-  specialist sub-agents in parallel, then a coordinator dedupes findings into
-  one greptile-style report.
+  + frontend + edge-cases) of a diff or branch. Routes the diff to relevant
+  specialist sub-agents in parallel, then the main agent synthesizes findings
+  into one greptile-style report.
 tags: [review, multi-agent, sub-agents, orchestration, code-review]
 alwaysApply: false
 ---
@@ -15,10 +15,9 @@ alwaysApply: false
 # Multi-Reviewer — orchestrated specialist code review
 
 You are orchestrating a **multi-reviewer team**: a small cast of niche specialist
-sub-agents that each review the diff from a single angle, then a dedicated
-coordinator dedupes the findings and emits one final report. You stay **light** —
-you do not read full specialist reports, only their executive summaries.
-Specialists run **in parallel**. The coordinator is a dedicated sub-agent.
+sub-agents that each review the diff from a single angle. **You** read the full
+specialist reports, dedupe findings, and produce the final report directly.
+Specialists run **in parallel**.
 
 This skill is distinct from the existing single-reviewer `reviewer` agent and the
 pre-implementation `three-reviewer-parallel-mandates-pattern` knowledge entry:
@@ -80,12 +79,11 @@ a dispatch plan (JSON) with:
 
 **Short-circuit rules:**
 - If `tier == "trivial"` and only one specialist is named → dispatch that one
-  specialist alone, skip the coordinator, present its report directly.
+  specialist alone, present its report directly.
 - If `tier == "trivial"` and the router judges no specialist is needed →
   fall through to the existing `reviewer` agent and stop here.
-- If `tier == "lite"` → dispatch the named specialists (usually 2–3) in parallel,
-  then run the coordinator.
-- If `tier == "full"` → dispatch all four specialists in parallel, then coordinator.
+- If `tier == "lite"` → dispatch the named specialists (usually 2–3) in parallel.
+- If `tier == "full"` → dispatch all four specialists in parallel.
 
 **Hot-path override**: any file under `auth/`, `crypto/`, files matching
 `*.env*`, or migration files (`*.sql`, `migrations/**`) forces `security` to be
@@ -98,50 +96,72 @@ In a single message, fire one `Agent` call per named specialist:
 `review-edge-cases`. Pass each one only the files in *its* scope from the
 dispatch plan (do not give every specialist every file — niche is the point).
 
-Each specialist returns:
-- **Executive summary** (≤120 words) — you read this.
-- **Full report** (bounded, greptile-style markdown ≤1000 words) — you store it
-  verbatim to pass through to the coordinator; you do **not** read its body.
+Each specialist returns a full report (bounded, greptile-style markdown ≤1000
+words) with an executive summary up top. You read the full reports to
+synthesize the final report in step 3.
 
-### 3. Show executive summaries to the user
+### 3. Synthesize the final report
 
-Surface each specialist's executive summary as a one-paragraph bullet so the
-user can see what each lens found before the coordinator runs. This is the
-"are we converging?" checkpoint.
+Read every specialist's full report. Dedupe, re-rank, and produce one final
+report yourself — no coordinator sub-agent. Apply these rules:
 
-### 4. Dispatch the coordinator
+**Deduplicate**: for each (file, line, ~topic) flagged by multiple specialists,
+keep one finding from the specialist whose domain best fits, cite all sources.
 
-Dispatch **one** `review-coordinator` sub-agent. Its prompt contains:
-- The original diff scope (file count, line count, base ref).
-- Each specialist's **full report** verbatim, labeled by specialist name.
-- The shared rubric path: `.claude/skills/multi-review/REVIEWER_SHARED.md`.
+**Re-rank severity**: a specialist's `Major` may downgrade to `Minor` in the
+full diff context (e.g. already rate-limited upstream). Downgrades need a
+one-line justification. Upgrades are fine without justification.
 
-The coordinator returns the final greptile-style report (single document) with
-a top-line verdict: `READY_TO_MERGE` / `NEEDS_ATTENTION` / `NEEDS_WORK`.
+**Drop false positives**: if a finding contradicts the diff context or loaded
+skills, drop it. Note all drops in **Coordinator notes** so the user can verify.
 
-### 5. Present the final report inline
+**Compute verdict** per `REVIEWER_SHARED.md` §5:
+- **`READY_TO_MERGE`** — every specialist returned PASS, no Critical, no Major.
+- **`NEEDS_ATTENTION`** — any specialist returned CONCERNS, no Critical.
+- **`NEEDS_WORK`** — any specialist returned FAIL (at least one Critical).
 
-Paste the coordinator's report into the chat verbatim. Add **one line** above it
-naming which specialists ran. Do not edit or summarize the coordinator's report —
-that's the point of having a coordinator.
+**Emit the report** inline using this structure:
+
+```markdown
+# Multi-Reviewer Report — <verdict>
+
+**Verdict:** READY_TO_MERGE | NEEDS_ATTENTION | NEEDS_WORK
+**Diff:** <files_changed> files, +<added>/-<deleted> lines, <base>...<head>
+**Specialists ran:** <list>
+**Dispatch tier:** <trivial|lite|full>
+
+## Summary
+<2–4 sentences.>
+
+## Findings
+### 🔴 Critical / ### 🟠 Major / ### 🟡 Minor / ### ⚪ Nits
+<deduped findings, each with source tag e.g. *(security, edge-cases)*>
+
+## What looks good
+<1–3 bullets aggregated across specialists.>
+
+## Open questions
+<Aggregated, deduped. Only real questions.>
+
+## Coordinator notes
+<Drops, downgrades, upgrades and why. ≤5 bullets. Skip if none.>
+```
+
+**Critical never gets dropped silently** — downgrade explicitly with a reason.
+Report ≤2000 words total.
 
 If the user wants to act on findings, follow up by editing the relevant files
-(do not auto-fix without confirmation on Critical findings — same caution as a
-human review would warrant).
+(do not auto-fix without confirmation on Critical findings).
 
 ## Hard rules
 
-- **You never read full specialist reports.** Only their Executive Summaries.
-  Pass full reports through to the coordinator verbatim; do not paraphrase.
+- **You read full specialist reports and synthesize yourself.** No coordinator
+  sub-agent — you have full context and produce the final report directly.
 - **Specialists run in parallel** in a single message with multiple Agent calls.
   Sequential dispatch defeats the architecture.
-- **The coordinator is a dedicated sub-agent.** You do not synthesize yourself.
 - **The router is mandatory** for tier ≥ lite. Skipping it means every specialist
   sees every file, which is exactly the noise this design eliminates.
 - **Hot paths always get security**, regardless of tier.
-- **Context budget**: your main-agent context for the whole review should stay
-  under ~15K tokens. If it grows beyond that, you're reading full reports
-  somewhere — stop and re-route.
 - **Use `dreamcontext` skill** to look up the active task before starting — the
   review is scoped to what the task actually asked for, not a generic "things I'd
   prefer."

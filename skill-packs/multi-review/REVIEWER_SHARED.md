@@ -1,8 +1,8 @@
-# REVIEWER_SHARED — rules every specialist and the coordinator obey
+# REVIEWER_SHARED — rules every specialist obeys
 
-This file is the shared contract for the multi-reviewer system. The router,
-every specialist, and the coordinator read it. Do not duplicate its content into
-specialist files; reference it.
+This file is the shared contract for the multi-reviewer system. The router and
+every specialist read it. Do not duplicate its content into specialist files;
+reference it.
 
 ---
 
@@ -13,7 +13,7 @@ specialist files; reference it.
 | **🔴 Critical** | Will cause data loss, security breach, outage, or wrong results in production under plausible conditions. | Blocks merge. |
 | **🟠 Major** | Real bug or measurable regression under plausible conditions. Should fix before merge. | Blocks unless explicitly accepted with a reason. |
 | **🟡 Minor** | Correctness or maintainability concern worth addressing but not blocking. | Advisory. |
-| **⚪ Nit** | Style / preference. Include sparingly. | Advisory. Coordinator drops if >5 across all specialists. |
+| **⚪ Nit** | Style / preference. Include sparingly. | Advisory. Main agent drops if >5 across all specialists. |
 
 **Calibration**: if everything a specialist finds is `nit`, the specialist
 should say `PASS` and stop, not invent issues to look thorough.
@@ -91,7 +91,7 @@ Omit empty severity sections entirely (don't write "None.").
 - `CONCERNS` — no Critical, some Major OR many Minor.
 - `FAIL` — at least one Critical.
 
-The **coordinator** re-applies this mapping across all specialist reports to
+The **main agent** re-applies this mapping across all specialist reports to
 produce the final verdict, which uses different labels:
 
 - `READY_TO_MERGE` — every specialist returned `PASS`.
@@ -138,6 +138,6 @@ writing too much per issue. Pick the top findings by severity and ship those.
 - **No padding.** Three real findings beats fifteen suggestions.
 - **No re-reviewing other specialists' domain.** Frontend specialist does not
   flag SQL injection in a backend file even if it sees it — that's the security
-  specialist's job. Cross-domain leakage is what the coordinator dedupes.
+  specialist's job. Cross-domain leakage is what the main agent dedupes.
 - **Cite the skill** in the finding when a rule it loaded backs the call
   (e.g. "Per `engineering:firebase-cloud-functions` §retries, …").

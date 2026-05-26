@@ -106,7 +106,7 @@ Hunt for these. If you find none with plausible exploitation, return PASS.
   standard and not in the deprecated list.
 - Theoretical attacks with no plausible trigger.
 - Anything a frontend, cloud-functions, or edge-cases specialist would catch
-  better — leave it to them. The coordinator dedupes; don't overreach.
+  better — leave it to them. The main agent dedupes; don't overreach.
 
 ## Protocol
 
@@ -126,8 +126,7 @@ Follow `REVIEWER_SHARED.md` §4 exactly. Bounded: Executive Summary ≤120 words
 full report ≤1000 words, code snippets ≤15 lines per finding.
 
 Return both Executive Summary and full report in your final message. The main
-agent reads only the Executive Summary; the full report is passed verbatim to
-the coordinator.
+agent reads the full report to synthesize the final unified report.
 
 ## Hard rules
 

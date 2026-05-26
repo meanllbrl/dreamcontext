@@ -106,7 +106,7 @@ For every branch point in the diff, ask: "what input or state would break this?"
 
 In practice you'll often see things the others would also flag. When that
 happens, flag it from the edge-case angle ("what input triggers this?") and
-let the coordinator dedupe. Don't suppress.
+let the main agent dedupe. Don't suppress.
 
 ## Protocol
 

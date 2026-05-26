@@ -1,7 +1,7 @@
 ---
 id: multi-reviewer-pattern
-name: "Multi-Reviewer Pattern (router + niche specialists + coordinator)"
-description: "Productized multi-agent code review pattern: router classifies diffs by tier + domain, dispatches niche skill-aware specialists in parallel, coordinator dedupes findings into one report. Dreamcontext-native innovation: each specialist declares required skills in YAML frontmatter. Distinct from the pre-implementation three-reviewer-parallel-mandates pattern and the post-implementation sub-agent-iterative-reviewer pattern."
+name: "Multi-Reviewer Pattern (router + niche specialists)"
+description: "Productized multi-agent code review pattern: router classifies diffs by tier + domain, dispatches niche skill-aware specialists in parallel, main agent dedupes findings into one report. No coordinator sub-agent — the main agent already has full context. Dreamcontext-native innovation: each specialist declares required skills in YAML frontmatter. Distinct from the pre-implementation three-reviewer-parallel-mandates pattern and the post-implementation sub-agent-iterative-reviewer pattern."
 tags: ["architecture", "decisions", "agents"]
 pinned: false
 date: "2026-05-24"
@@ -20,7 +20,7 @@ Three external reference systems converged on specialist routing as the right ar
 - **Qodo 2.0 (2025)**: multi-agent with a coordinator to deduplicate. Noted that the biggest value of multi-agent review is reducing false positives at aggregation, not just catching more issues.
 - **Anthropic official `code-review` plugin**: single specialist, no routing. Handles the "trivial diff" case well; not suited for multi-domain PRs.
 
-The dreamcontext pattern is a hybrid: Cloudflare's routing + Qodo's coordinator + a dreamcontext-native layer neither uses: **skill-aware specialists**.
+The dreamcontext pattern is a hybrid: Cloudflare's routing + a dreamcontext-native layer others don't use: **skill-aware specialists**. Unlike Qodo, we skip the coordinator sub-agent — the main agent already sees all specialist reports and can dedupe directly.
 
 ## The Pattern
 
@@ -34,8 +34,8 @@ diff
                [review-cloud-functions] ← Cloud Functions files
                [review-frontend]        ← React/frontend files
                [review-edge-cases]      ← default-on for tier >= Lite
-         └─→ [review-coordinator]  (reads ALL full specialist reports)
-               └─→ single unified verdict: READY_TO_MERGE / NEEDS_ATTENTION / NEEDS_WORK
+         └─→ main agent reads all full reports, dedupes, emits unified verdict
+               READY_TO_MERGE / NEEDS_ATTENTION / NEEDS_WORK
 ```
 
 **Router output (JSON):**
@@ -63,7 +63,7 @@ diff
 
 **Hot-path override**: any file matching `auth/`, `crypto/`, `*.env*`, or migration patterns forces **Full** tier + `review-security` regardless of diff size.
 
-**Coordinator isolation (council pattern)**: the main agent reads only executive summaries from each specialist. The coordinator is the only agent that reads all full reports. This prevents the main agent from accumulating context debt at scale — the same isolation the `/council` skill uses.
+**No coordinator sub-agent**: the main agent reads all full specialist reports and synthesizes directly. This eliminates one agent dispatch (latency + tokens) without losing quality — the main agent already has the diff context and can dedupe/re-rank in-place.
 
 ## Skill-Aware Specialists — The Dreamcontext Innovation
 
@@ -88,7 +88,6 @@ This means the reviewers are **in sync with the project's own standards**, not f
 | `.claude/agents/review-cloud-functions.md` | Infinite loops, idempotency, cold-start, scaling traps, billing gotchas |
 | `.claude/agents/review-frontend.md` | File size, hook rules, a11y, design tokens, XSS sinks |
 | `.claude/agents/review-edge-cases.md` | Null/empty, concurrency, partial failures, retries; default-on for tier >= Lite |
-| `.claude/agents/review-coordinator.md` | Reads all full reports; dedupes, re-ranks, drops false positives; emits unified verdict |
 
 ## Comparison to Peer Patterns
 
@@ -97,7 +96,7 @@ This means the reviewers are **in sync with the project's own standards**, not f
 | **Single `reviewer` agent** | Post-impl | 1 generalist agent | Trivial diffs, ≤10 lines |
 | **`sub-agent-iterative-reviewer-pattern`** | Post-impl | 1 holistic reviewer across parallel workstreams | In-session multi-workstream sign-off |
 | **`three-reviewer-parallel-mandates-pattern`** | Pre-impl | 3 mandate-diverse generalists (critic/pragmatist/security) against a plan | "Should we build this?" decisions |
-| **`/multi-review` (this pattern)** | Post-impl | Router + 4 niche specialists + coordinator | Non-trivial code diffs, multi-domain |
+| **`/multi-review` (this pattern)** | Post-impl | Router + 4 niche specialists, main agent synthesizes | Non-trivial code diffs, multi-domain |
 | **Cloudflare (external)** | Post-impl | 7 specialists + router | ~131K reviews/month, no skill-loading |
 | **HAMY (external)** | Post-impl | 9 parallel, no routing | All diffs pay full cost |
 | **Qodo 2.0 (external)** | Post-impl | Multi-agent + coordinator | Coordinator dedup emphasis |
@@ -116,13 +115,13 @@ Key distinctions vs external peers: dreamcontext specialists are skill-document-
 - Tiny, single-domain diffs (≤10 lines, one file) — use the existing `reviewer` agent. `/multi-review` dispatches sub-agents with overhead that is not justified for a 3-line change.
 - Pre-implementation plan reviews — use `three-reviewer-parallel-mandates`. No code exists to review yet; specialist agents need real files.
 - Style or formatting passes — those are not worth specialist time and will produce mostly `nit` findings with no material signal.
-- When you need an answer in seconds — specialist dispatch and coordinator aggregation adds latency. For a quick gut-check, use the `reviewer` agent.
+- When you need an answer in seconds — specialist dispatch adds latency. For a quick gut-check, use the `reviewer` agent.
 
 ## Known Limitations (v1)
 
-- **Untested on a real diff.** The architecture is theory-verified (drawn from external case studies and internal code review). Router classification thresholds and coordinator dedup prompt wording will require iteration on first real non-trivial PR.
+- **Untested on a real diff.** The architecture is theory-verified (drawn from external case studies and internal code review). Router classification thresholds will require iteration on first real non-trivial PR.
 - **No diff-ingestion convenience.** The user must manually pass the diff or file list to `/multi-review`. A future version could auto-detect the current branch's diff against main.
-- **No test coverage.** There are no automated tests for router classification or coordinator output format correctness.
+- **No test coverage.** There are no automated tests for router classification or output format correctness.
 
 ## Sources
 
