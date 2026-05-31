@@ -16,6 +16,8 @@
   <a href="#why">Why</a> &nbsp;&middot;&nbsp;
   <a href="#how-it-works">How It Works</a> &nbsp;&middot;&nbsp;
   <a href="#quick-start">Quick Start</a> &nbsp;&middot;&nbsp;
+  <a href="#skills">Skills</a> &nbsp;&middot;&nbsp;
+  <a href="#staying-up-to-date">Updating</a> &nbsp;&middot;&nbsp;
   <a href="#dashboard">Dashboard</a> &nbsp;&middot;&nbsp;
   <a href="#council">Council</a> &nbsp;&middot;&nbsp;
   <a href="#memory-recall">Memory Recall</a> &nbsp;&middot;&nbsp;
@@ -134,38 +136,6 @@ dreamcontext install-skill --platforms claude,codex
 
 Two commands. Next session, the hook fires, context loads, and the agent is ready.
 
-### Optional Skill Packs
-
-Beyond the core context management skill, dreamcontext ships with curated skill packs you can install for your team's workflow:
-
-```bash
-# Browse and install interactively (terminal checkbox UI)
-dreamcontext install-skill --packs
-
-# Install specific packs directly
-dreamcontext install-skill --packs engineering design
-
-# Install a single sub-skill
-dreamcontext install-skill --skill firebase-firestore
-
-# See what's available
-dreamcontext install-skill --list
-```
-
-| Pack | What it covers | Sub-skills |
-|------|---------------|------------|
-| **engineering** | Coding standards, security, testing, architecture | backend-principles, web-app-frontend, firebase-cloud-functions, firebase-firestore |
-| **design** | Design systems, typography, colors, accessibility | frontend-principles, design-web, design-mobile, onboarding-design |
-| **growth** | Retention, distribution, monetization, analytics | performance-marketing, lean-analytics-experiments, lean-analytics-metrics |
-| **brand-voice** | Brand enforcement, discovery, guideline generation | discover-brand, guideline-generation |
-| **system-prompts** | Prompt engineering, cognitive architecture, agent design | *(standalone)* |
-
-Packs install to platform-specific paths:
-- Claude: `.claude/skills/{pack-name}/` (+ related agents in `.claude/agents/`)
-- Codex: `.agents/skills/{pack-name}/` (+ related agents in `.codex/agents/`)
-
-Cross-pack dependencies are warned at install time.
-
 ### Interactive mode
 
 Run `dreamcontext` with no arguments to enter interactive mode with a visual menu for all commands.
@@ -176,20 +146,22 @@ Run `dreamcontext` with no arguments to enter interactive mode with a visual men
 your-project/
 ├── _dream_context/              # Structured context (git-tracked)
 │   ├── core/
-│   │   ├── 0.soul.md           # Identity, principles, rules
-│   │   ├── 1.user.md           # Your preferences, project details
-│   │   ├── 2.memory.md         # Decisions, issues, learnings
-│   │   ├── 3.style_guide.md    # Style & branding
-│   │   ├── 4.tech_stack.md     # Tech decisions
+│   │   ├── 0.soul.md                    # Identity, principles, rules
+│   │   ├── 1.user.md                    # Your preferences, project details
+│   │   ├── 2.memory.md                  # Decisions & known issues
+│   │   ├── 3.style_guide_and_branding.md
+│   │   ├── 4.tech_stack.md              # Tech decisions
 │   │   ├── 5.data_structures.sql
-│   │   ├── 6.system_flow.md    # Session lifecycle, data flows
+│   │   ├── 6.system_flow.md             # Session lifecycle, data flows
 │   │   ├── CHANGELOG.json
 │   │   ├── RELEASES.json
-│   │   └── features/           # Feature PRDs
-│   ├── knowledge/              # Tagged docs (index in snapshot)
-│   │   └── *.md                # pinned: true → auto-loaded in full
-│   └── state/                  # Active tasks, sleep state
-│       └── .sleep.json
+│   │   └── features/                    # Feature PRDs
+│   ├── knowledge/                       # Tagged docs (index in snapshot)
+│   │   └── *.md                         # pinned: true → auto-loaded in full
+│   └── state/                           # Active tasks + working state
+│       ├── *.md                         # Active task files
+│       ├── .sleep.json                  # Sleep debt, session history
+│       └── .version-check.json          # Cached update check (24h)
 │
 ├── .claude/
 │   ├── skills/dreamcontext/
@@ -214,6 +186,69 @@ dreamcontext install-instructions --platforms claude,codex
 ```
 
 This writes managed fenced blocks into `CLAUDE.md` and/or `AGENTS.md` at the project root, preserving existing non-managed content.
+
+## Skills
+
+The core `dreamcontext` skill (installed by `install-skill`) teaches your agent the context system itself. On top of that, dreamcontext ships **curated skill packs and standalone skills** that give your agent domain expertise — loaded on demand, only when the work calls for it, so they cost nothing the rest of the time.
+
+```bash
+# Browse and install interactively (terminal checkbox UI)
+dreamcontext install-skill --packs
+
+# Install specific packs directly
+dreamcontext install-skill --packs engineering design
+
+# Install one orchestration pack (council, multi-review, goal-skill)
+dreamcontext install-skill --packs goal-skill
+
+# Install a single sub-skill or standalone skill
+dreamcontext install-skill --skill firebase-firestore
+dreamcontext install-skill --skill system-prompts
+
+# See everything available
+dreamcontext install-skill --list
+```
+
+**Skill packs** (a base skill + on-demand sub-skills or sub-agents):
+
+| Pack | What it covers | Inside |
+|------|---------------|--------|
+| **engineering** _(always-on)_ | Coding standards, security, testing, architecture | backend-principles, web-app-frontend, firebase-cloud-functions, firebase-firestore |
+| **design** _(always-on)_ | Design systems, typography, color, accessibility | frontend-principles, design-web, design-mobile, onboarding-design |
+| **growth** | Retention, distribution, monetization, analytics | performance-marketing, lean-analytics-experiments, lean-analytics-metrics |
+| **brand-voice** | Brand enforcement, discovery, guideline generation | discover-brand, guideline-generation |
+| **council** | Multi-persona debate for hard decisions | `council-persona`, `council-synthesizer` agents |
+| **multi-review** | Multi-agent code review (router + niche specialists) | `review-router` + security / cloud-functions / frontend / edge-cases agents |
+| **goal-skill** | Sub-agent-orchestrated execution: plan → review → implement → validate | `goal-planner`, `goal-plan-reviewer`, `goal-implementer`, `goal-validator` agents |
+
+**Standalone skills** (install individually with `--skill <name>`):
+
+| Skill | What it covers |
+|-------|----------------|
+| **business-idea-discovery** | Market selection, trend validation, competitor intel, pain-point mining, MVP scoping |
+| **business-idea-validation** | Demand testing via landing page + waitlist, quick validation loops |
+| **meta-marketing** | Meta / Facebook / Instagram ad campaigns end to end |
+| **system-prompts** | Prompt engineering, cognitive architecture, agent design |
+
+_Always-on_ packs apply their base principles to every relevant task; the rest load only when the work matches. Packs install to platform-specific paths — Claude: `.claude/skills/{pack}/` (+ agents in `.claude/agents/`); Codex: `.agents/skills/{pack}/` (+ agents in `.codex/agents/`). Cross-pack dependencies are warned at install time.
+
+## Staying Up to Date
+
+dreamcontext tells you when a new version ships, and updating is one command. There are two distinct things to update: the **CLI** (the `dreamcontext` binary) and your **project's installed files** (the skill, agents, and hooks copied into `.claude/` or `.agents/`).
+
+```bash
+dreamcontext upgrade            # Upgrade the CLI to the latest published version
+dreamcontext upgrade --check    # Just print "current: X  latest: Y" and exit
+dreamcontext update             # Refresh this project's skill/agent/hook files to match the CLI
+```
+
+Or re-run the one-command installer — it detects an existing `_dream_context/` and updates in place:
+
+```bash
+curl -fsSL https://cdn.jsdelivr.net/npm/dreamcontext/install.sh | sh
+```
+
+**In-session update nudge.** When a newer version is published, your agent sees a single-line nudge at the top of its loaded context — so you find out while you're working, not months later. The version check is deliberately unobtrusive: it runs **at most once every 24 hours**, never during the context-loading hot path (so session start is never slowed or blocked), and fails silent if npm is unreachable. Opt out entirely with `DREAMCONTEXT_VERSION_CHECK=0`.
 
 ## Dashboard
 
@@ -487,6 +522,9 @@ dreamcontext hook pre-compact            # PreCompact hook: save state before co
 dreamcontext snapshot                    # Snapshot only (no hook processing)
 dreamcontext snapshot --tokens           # Estimated token count
 dreamcontext doctor                      # Validate structure
+dreamcontext upgrade                     # Upgrade the CLI to the latest published version
+dreamcontext upgrade --check             # Print current vs latest version, no install
+dreamcontext update                      # Refresh installed skill/agent/hook files to match the CLI
 dreamcontext install-skill               # Install core integration for selected platforms
 dreamcontext install-skill --platforms claude,codex  # Explicit platform selection
 dreamcontext install-skill --packs       # Interactive skill pack browser

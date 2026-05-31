@@ -21,6 +21,7 @@
   <a href="#memory-recall-bm25-over-the-curated-corpus">Memory Recall</a> &nbsp;&middot;&nbsp;
   <a href="#obsidian-integration">Obsidian</a> &nbsp;&middot;&nbsp;
   <a href="#cli-design">CLI</a> &nbsp;&middot;&nbsp;
+  <a href="#install--update">Install &amp; Update</a> &nbsp;&middot;&nbsp;
   <a href="#design-tradeoffs">Tradeoffs</a>
 </p>
 
@@ -107,7 +108,7 @@ Human brains don't store everything in one region. Your prefrontal cortex handle
 | Prefrontal cortex | `0.soul.md` | Identity, principles, rules, constraints |
 | Episodic memory | `1.user.md` | Your preferences, project conventions, workflow |
 | Semantic memory | `2.memory.md` | Decisions, known issues, technical context |
-| Sensory cortex | `3.style_guide.md`, `4.tech_stack.md` | Style, tech stack, data structures |
+| Sensory cortex | `3.style_guide_and_branding.md`, `4.tech_stack.md` | Style, tech stack, data structures |
 | Declarative memory | `features/` | Feature PRDs with user stories, acceptance criteria, constraints |
 | Long-term knowledge | `knowledge/` | Deep docs, tagged with standard categories, pinnable for auto-loading |
 | Working memory | `state/` | Active tasks, in-progress work |
@@ -123,7 +124,7 @@ The `_dream_context/` directory is the implementation. Everything lives in your 
 
 **Memory** (`2.memory.md`) is the working log of technical decisions, known issues, and session-level learnings. For example: *"Chose Postgres over MongoDB because the data is highly relational"* or *"The auth middleware must run before rate limiting, not after."* It follows LIFO ordering (newest at top) and is the file that changes most frequently. The sleep cycle keeps it from growing out of control.
 
-**Extended core files** (slots 3-5) hold specialized context: style guide, tech stack, data structures. These are loaded as summaries in the snapshot with paths included, so the agent knows they exist without burning tokens loading the full content every session.
+**Extended core files** (slots 3-6) hold specialized context: style guide and branding, tech stack, data structures, and the system-flow reference. These are loaded as summaries in the snapshot with paths included, so the agent knows they exist without burning tokens loading the full content every session.
 
 **Knowledge** (`knowledge/`) is where deep reference docs live. Architectural context, domain knowledge, research, design rationales. For example: a doc on *"payment-flow-architecture"* tagged with `[architecture, payments, api]` explaining the full Stripe integration and edge cases. Each file has frontmatter with tags and descriptions. The snapshot surfaces a complete index so the agent knows what docs exist. Files marked `pinned: true` get loaded in full every session for frequently-needed reference.
 
@@ -196,6 +197,12 @@ Fires on every user message. Reads sleep debt from `.sleep.json` and outputs a o
 Why this hook and not SessionStart? SessionStart fires once per session. Agents can (and do) dismiss it as context pressure pushes out behavioral instructions. UserPromptSubmit fires on every user turn. When the user sends a message, the agent must process the reminder again before generating its next reply. This is the closest analog to persistent awareness.
 
 The reminder format is compact (one line) unlike the multi-line directives in the SessionStart snapshot. Same debt thresholds (4/7/10/critical bookmarks), but condensed for inline display. Critical bookmarks override the threshold and always trigger a reminder.
+
+This hook has grown to carry three responsibilities, all read-only and all best-effort (wrapped in try/catch so a failure never breaks the prompt):
+
+1. **Sleep-debt reminder** — the one-liner described above.
+2. **Memory recall injection** — top BM25 hits for the prompt, surfaced inline (see [Memory Recall](#memory-recall-bm25-over-the-curated-corpus)).
+3. **The context gate** — on a non-trivial prompt that matches a skill domain, the hook prepends a short "get the full picture first" block: read the recalled knowledge in full, **review the entire skill catalog already injected by the harness and invoke whatever fits** (explicitly *not* a pre-picked subset), recall more if needed, and check whether a task already exists before starting untracked work. An earlier version listed a top-3 skill subset; that was removed after four iterations because narrowing the agent's view of its own toolkit was worse than telling it to scan everything and decide. The hook's internal relevance check only decides *whether* to fire the gate — it never narrows *which* skills the agent considers.
 
 ### PostToolUse Hook
 
@@ -323,7 +330,7 @@ The key insight: **memory selection and memory consolidation are separate proces
 | Prospective memory ("do X when Y") | Contextual triggers (remind about X when task Y is active) |
 | Hippocampal filtering | Transcript distillation (structural filter keeps signal, discards noise) |
 | Sleep consolidation | RemSleep agent (compressed replay into core files) |
-| Inhibitory neurons | Anti-bloat pass (200-line limit, prune stale knowledge) |
+| Inhibitory neurons | Anti-bloat pass (~150-line ceiling on core files, prune stale knowledge) |
 | Synaptic plasticity | LIFO ordering (recent info surfaces first) |
 | Immune system (error correction) | PostToolUse hook (auto-format + tsc check on every edit) |
 | Attention gating | PreToolUse hook (blocks noisy exploration when curated context exists) |
@@ -400,6 +407,17 @@ The design uses a custom CSS system with design tokens (purple-to-magenta brand 
 
 **Version manager.** A full-width modal showing planning and released versions with task counts and status badges. Planning versions have a "Release" button that transitions their status and sets the release date. Create new planning versions directly from the dashboard. Versions and releases are unified in `RELEASES.json` (a version is a release entry with `status: planning`).
 
+### Security model
+
+The dashboard is a **local-only tool** with no login — it reads and writes your `_dream_context/` files (soul, tasks, sleep state) over unauthenticated routes. That is the right tradeoff *only* if the server is reachable by you and nothing else, so the server is locked down to enforce exactly that. These four mitigations were hardened before the first public release:
+
+- **Loopback bind.** `server.listen` binds to `127.0.0.1`, not `0.0.0.0`. The dashboard is reachable only from your own machine — never from other devices on the same Wi-Fi or LAN. (Binding to `0.0.0.0` would have exposed read/write access to your project files to anyone on the network.)
+- **CSRF guard.** Mutating routes (`POST`/`PUT`/`PATCH`/`DELETE`) check the request's `Origin`/`Host` and reject cross-site writes. Without this, any website you visit with the dashboard open could silently `POST` to `localhost` and edit your project.
+- **CORS lockdown.** No wildcard `Access-Control-Allow-Origin: *`. The server reflects only the loopback origin, so cross-origin reads are refused.
+- **Path-traversal guard.** Request-derived file paths (e.g. `/api/core/:filename`) pass through `safeChildPath`, which resolves the target and confirms it stays inside the context directory. `../` escape attempts are rejected before any file is touched.
+
+The full threat model and the anti-regression invariants live in `_dream_context/knowledge/dashboard-server-security.md`, backed by `tests/unit/server-security.test.ts`.
+
 ### Release management
 
 Versions and releases live in a single `RELEASES.json` file. A "version" is a release entry with `status: planning`. When released, the status changes to `released` and the date is set automatically. This eliminates the need for a separate versioning system.
@@ -473,7 +491,7 @@ The SessionStart snapshot pre-loads everything an agent needs to start work. But
 dreamcontext memory recall "how did we decide on the sleep fan-out"
 ```
 
-Top-5 hits across knowledge files, feature PRDs, task files, and `2.memory.md` LIFO entries. Snippets included. Under 100ms on a 40-doc corpus. No init step, no daemon, no API key.
+Top-5 hits across knowledge files, feature PRDs, task files, `2.memory.md` sections (Decisions + Known Issues), and `CHANGELOG.json` entries. Snippets included. Under 100ms on a 40-doc corpus. No init step, no daemon, no API key.
 
 ### Why BM25 and not a vector store / mem0
 
@@ -593,9 +611,11 @@ The split is simple: **CLI for structure, native tools for content.**
 
 ### Optional Skill Packs
 
-Beyond the core context management skill, `dreamcontext` ships curated skill packs for common workflows. Each pack contains a base skill (always-active principles) and on-demand sub-skills that Claude Code loads when relevant.
+Beyond the core context management skill, `dreamcontext` ships curated skill packs for common workflows. Each pack contains a base skill (principles, sometimes always-active) and on-demand sub-skills or sub-agents that the agent loads only when the work matches.
 
-Five packs ship in v0.1.0: **engineering** (coding standards, backend architecture, Firebase), **design** (design systems, web/mobile UX, onboarding), **growth** (retention, ads, analytics), **brand-voice** (enforcement, discovery, guideline generation), and **system-prompts** (prompt engineering, cognitive architecture). Some packs include related agents (e.g., a code reviewer for engineering, brand discovery agents for brand-voice).
+Seven packs ship today: **engineering** (coding standards, security, testing, Firebase) and **design** (design systems, web/mobile UX, onboarding) — both *always-on* base principles — plus **growth** (retention, ads, analytics), **brand-voice** (enforcement, discovery, guideline generation), and three sub-agent **orchestration packs**: **council** (multi-persona debate), **multi-review** (router + niche code-review specialists), and **goal-skill** (plan → review → implement → validate execution). Four standalone skills install individually: **system-prompts**, **business-idea-discovery**, **business-idea-validation**, and **meta-marketing**. Several packs ship their own agents (e.g. a code reviewer for engineering, the council persona/synthesizer pair, the goal-skill orchestration agents).
+
+The three orchestration packs share a shape: instead of one model doing everything in one pass, they decompose the work across **isolated sub-agents** — each with its own clean context, scoped prompt, and (often) a different model tier — then synthesize. Council debates a decision across persona sub-agents and rounds; multi-review fans a diff out to security/cloud-functions/frontend/edge-case specialists and re-ranks their findings; goal-skill runs a goal through a planner, an independent plan reviewer, an implementer, and a validator. The pattern is the same insight as the rest of dreamcontext — structure beats volume — applied to *reasoning* rather than *memory*.
 
 The install interface has three modes:
 
@@ -606,6 +626,45 @@ The install interface has three modes:
 Cross-pack dependencies are warned at install time (e.g., engineering recommends design for UI work). Skills install flat to `.claude/skills/{pack-name}/`, agents to `.claude/agents/`. Sub-skills with reference files (like Firebase packs) carry their references along.
 
 The catalog lives in `skill-packs/catalog.json` and ships with the npm package. The CLI reads it to discover available packs, resolve dependencies, and locate source files.
+
+## Install & Update
+
+A tool that is hard to install never gets adopted, and a tool that silently goes stale loses the trust that made it useful. Both the first install and every update are designed to be one command, with the surprising-failure modes engineered out.
+
+### One-command install
+
+```bash
+curl -fsSL https://cdn.jsdelivr.net/npm/dreamcontext/install.sh | sh
+```
+
+`install.sh` ships *inside the npm tarball* and is served through the jsdelivr CDN. That detail matters: the CDN serves the published package, so the installer works even when the source repo is private — no GitHub access, no auth, no clone. The script is deliberately conservative:
+
+- **POSIX `sh`**, not bash — runs on the default shell everywhere.
+- **Node ≥ 18 gate.** Checks the version up front and exits with a clear message rather than failing halfway.
+- **No `sudo`, no `eval`, no nested remote pipe.** Nothing in the script escalates privileges or pipes a second remote payload into a shell. You can read the whole thing before running it.
+- **Idempotent and non-TTY safe.** Re-running it is harmless, and it works in CI or any non-interactive shell.
+- **Install-or-update by detection.** If `_dream_context/` already exists, the script updates in place; otherwise it does a fresh install. The same one-liner is both your install and your upgrade path.
+
+### Two things to update
+
+There are two distinct artifacts, and conflating them is the usual source of "I updated but nothing changed":
+
+1. **The CLI binary** — installed globally via npm. `dreamcontext upgrade` runs `npm install -g dreamcontext@latest`. `dreamcontext upgrade --check` prints `current: X  latest: Y` and exits without installing.
+2. **The project's installed files** — the skill, agents, and hooks copied into `.claude/` or `.agents/` at install time. These are per-project snapshots; upgrading the global CLI does not retroactively rewrite them. `dreamcontext update` refreshes them to match the newly-installed CLI, preserving your own non-managed content.
+
+So a full update is `dreamcontext upgrade` (get the new CLI) followed by `dreamcontext update` (propagate it into this project) — or just re-run the `curl … | sh` one-liner, which does both.
+
+### The in-session update nudge
+
+The hard constraint: tell the user about a new version **without ever slowing session start**. Session start is the hot path — it runs on every single session, and the whole point of dreamcontext is that the agent wakes up instantly with context already loaded. A blocking network call there would defeat the product.
+
+The design separates the two concerns:
+
+- **The SessionStart snapshot reads a *cached* result only.** `buildNudge()` looks at `_dream_context/state/.version-check.json` and, if a newer version is recorded, prepends a single-line nudge to the agent's context. It never makes a network call. If there is no cache, there is no nudge — session start is never blocked or slowed.
+- **The actual npm lookup runs off the hot path.** The single network call fires from the `UserPromptSubmit` hook, at most **once every 24 hours**, and writes the result to the cache for the snapshot to read next time. It is wrapped in try/catch and fails silent — if npm is unreachable, nothing breaks and no error surfaces.
+- **Fully opt-out.** Set `DREAMCONTEXT_VERSION_CHECK=0` and no check ever runs.
+
+One related fix shipped alongside this: the CLI version string used to be hardcoded (`.version('0.1.0')`), which drifted from `package.json`. It now reads from the manifest via `dreamcontextVersion()`, so `--version`, the nudge comparison, and the published package can never disagree.
 
 ## Design Tradeoffs
 
@@ -652,18 +711,26 @@ Every design choice was deliberate. Here is what I chose, what I chose it over, 
 | **BM25 over the curated corpus** | mem0 / Python + Ollama vector store | Three independent reviewers rejected the vector plan: the LLM extraction step solves a problem dreamcontext already solved (content is already curated atomic facts). BM25 is deterministic, instant, version-controllable, zero new deps. ~80% of the value at 1% of the complexity. |
 | **In-memory index rebuild per query** | Persistent index file | At ≤500 docs the rebuild is under 100ms. A persistent index would add gitignore complications and cache-invalidation bugs for negligible speedup. |
 | **Memory hook ON by default** | Off-by-default opt-in | Initially shipped opt-in per the security reviewer's "off by default" recommendation. Flipped to default-on the same day after dogfood showed the score ≥2.0 filter + 8-char minimum keep noise low and utility high. Opt out with `DREAMCONTEXT_MEMORY_HOOK=0`. |
+| **Loopback bind + CSRF/CORS guard** | `0.0.0.0` bind, wildcard CORS | The dashboard edits local files over unauthenticated routes — safe only if it is reachable by you alone. Binding to `127.0.0.1`, an `Origin`/`Host` check on writes, and loopback-only CORS close LAN exposure and browser-CSRF-to-localhost. Hardened before first publish. |
+| **Version check off the hot path** | Check at session start | Session start must stay instant. The snapshot reads a *cached* result only; the one npm call runs ≤1×/24h from `UserPromptSubmit`, fail-silent, opt-out via `DREAMCONTEXT_VERSION_CHECK=0`. A blocking check at session start would defeat the product's core promise. |
+| **CLI/project update split** | One "update" command | The global CLI and the per-project installed files are different artifacts. `upgrade` moves the binary; `update` propagates it into a project. Conflating them is the usual "I updated but nothing changed" trap. The `curl … \| sh` one-liner does both. |
+| **Full skill catalog in the context gate** | Pre-picked top-3 skills | An earlier gate listed a top-3 skill subset; removed after four iterations. Narrowing the agent's view of its own toolkit was worse than telling it to scan the whole (already-injected) catalog and decide. The relevance check only gates *whether* to fire, never *which* skills are visible. |
+| **CDN-served `install.sh`** | GitHub raw / git clone | The installer ships in the npm tarball and is served via jsdelivr, so `curl … \| sh` works with a private source repo — no GitHub access, no auth, no clone. POSIX, Node-gated, no `sudo`/`eval`/nested-pipe. |
 
 ---
 
 ## What Comes Next
 
-Right now, `dreamcontext` supports Claude Code. The hook system, the skill format, and the agent integration are all built around Claude's tool ecosystem. But the core idea (structured files, pre-loaded context, consolidation cycles) is not tied to any one agent. The architecture is designed so that other agents (Gemini CLI, Copilot, custom agents) can plug into the same `_dream_context/` directory with their own integration layer.
+`dreamcontext` ships first-class support for **Claude Code** and **Codex**. The hook system, the skill format, and the agent integration are richest on Claude (seven hooks, three core sub-agents, optional pack agents); Codex gets project-level skills (`.agents/skills`), a managed `AGENTS.md`, native `.codex/agents/*.toml`, and managed `.codex/config.toml` hooks (best-effort parity where event semantics differ). The core idea — structured files, pre-loaded context, consolidation cycles — is not tied to any one agent, and the architecture is designed so that others (Gemini CLI, Copilot, custom agents) can plug into the same `_dream_context/` directory with their own integration layer.
 
-The neuroscience-inspired memory system (bookmarks, decay tracking, warm knowledge, triggers, transcript distillation) shipped in v0.1.x. Seven hooks now cover the full session lifecycle: context injection, session recording, sub-agent briefing, context-first exploration, persistent debt reminders, post-edit code quality gates, and pre-compaction state preservation. Optional skill packs (engineering, design, growth, brand-voice, system-prompts) ship with the package and install via an interactive terminal UI or direct CLI flags. The dashboard is built and shipping with the package.
+**How it got here.** The neuroscience-inspired memory system (bookmarks, decay tracking, warm knowledge, triggers, transcript distillation) shipped in **v0.1.x**, along with the dashboard and the first skill packs. **v0.2.0** added Council debates, the Brain graph, Obsidian integration, lightweight root-instruction installs, and the catalog-driven skill-pack CLI. The releases since then have widened both retrieval and orchestration:
 
-**v0.2.0** shipped five additional features: **Council debates** (multi-persona deliberation with two sub-agents and a synthesized final report), the **Brain graph** (interactive knowledge-graph view on the dashboard), **Obsidian integration** (the context directory opens as a curated Obsidian vault), **`install-claude-md`** (lightweight Claude Code integration without the full skill install), and the **optional skill-packs CLI Phase 2** (catalog-driven on-demand pack install). The dashboard got a dedicated Council Hall with Hall-grid → full-page-detail navigation, and the synthesizer got readability rules that turn bureaucratic hedging into actionable decision memos.
+- **Memory recall (BM25)** — a deterministic second-tier retrieval layer over the curated corpus (see above), with an optional Haiku-assisted recall mode that adds short reasons and body excerpts, toggleable from the CLI and the dashboard's System menu.
+- **Sub-agent orchestration packs** — **multi-review** (a router that fans a diff out to security / cloud-functions / frontend / edge-case specialists) and **goal-skill** (plan → review → implement → validate), joining Council under one pattern: decompose reasoning across isolated sub-agents, then synthesize.
+- **v0.5.0** locked the **"persistent brain" positioning**, shipped the **one-command install** and the **in-session update nudge** (both covered in [Install & Update](#install--update)), and redesigned the context gate to surface the *full* skill catalog instead of a pre-picked subset.
+- **v0.5.1** hardened the dashboard server — loopback bind, CSRF guard, CORS lockdown, and a path-traversal guard — before the first public release (see [Security model](#security-model)).
 
-Remaining polish includes accessibility audit, responsive layout refinements, i18n token extraction for future localization, and bundle size optimization.
+**What's next.** The other half of the vision is a **desktop control panel**: managing multiple project vaults, per-project settings, update and skill management, and a graphical view of context — packaged as a native app (Tauri) rather than a localhost server. Alongside it, the remaining defense-in-depth path hardening and the dashboard polish (accessibility audit, responsive layout, i18n token extraction, bundle size).
 
 The long-term vision: your project's context lives in your repo, structured and version-controlled, and any agent you choose to work with can pick it up. **The human stays in the loop. The context stays portable.** The agent gets better every session because the system enforces the discipline that makes that possible.
 
