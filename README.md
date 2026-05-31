@@ -108,10 +108,10 @@ flowchart LR
 ## Quick Start
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/meanllbrl/dreamcontext/main/install.sh | sh
+curl -fsSL https://cdn.jsdelivr.net/npm/dreamcontext/install.sh | sh
 ```
 
-> (goes live once published to npm & merged to main)
+> Served from the published npm package via CDN — works with a private repo, no GitHub access needed.
 
 **Manual install (npm):**
 

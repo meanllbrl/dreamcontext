@@ -1,6 +1,6 @@
 #!/bin/sh
 # dreamcontext install script
-# Review this script before piping it to sh: https://github.com/meanllbrl/dreamcontext
+# Review this script before piping it to sh: https://www.npmjs.com/package/dreamcontext
 set -e
 
 say() {
