@@ -56,7 +56,7 @@ Replace dreamcontext dashboard with an installable always-on control panel: mult
 
 
 - **[2026-05-31]** DEFER: bundling a standalone agent runtime for non-technical users (multi-month, separate epic); in-panel SKILL.md editing (view/install/update only in v1); Windows/Linux packaging beyond one dev target.
-- **[2026-05-31]** SECURITY (do FIRST in this run, HIGH priority, carried from the v0.5 plan review): the dashboard server (src/server/index.ts) binds 0.0.0.0 with Access-Control-Allow-Origin:* and exposes mutating routes (PUT /api/core/:filename, PATCH /api/sleep, etc.) — a CSRF/drive-by-write surface. Bind 127.0.0.1 by default, drop wildcard CORS, add an Origin/Host allowlist (or CSRF token) on all mutating routes, and add a path-traversal guard (reject .. ) on routes that build filesystem paths from request input. The new PATCH /api/config must strict-pick {platforms,packs} from the body, never pass-through.
+- **[2026-05-31] SECURITY DONE (v0.5.0):** Central server hardening was pulled forward and shipped in v0.5.0 before public release: loopback bind (127.0.0.1), wildcard CORS removed + localhost Origin allowlist, Origin/Host check on mutating routes, safe-path traversal guard on /api/core/:filename. Tracked in task server-security-hardening (in_review). REMAINING for v0.6 (defense-in-depth, not blocking v0.5.0): apply safeChildPath to slug/param path-joins in tasks.ts, knowledge.ts, features.ts, council.ts; add auth/origin-token when the control plane gains write actions; PATCH /api/config must strict-pick {platforms,packs}.
 ## Technical Details
 <!-- Where the work lives. Files, services, key functions to reuse. Body is current truth — update in place; don't append. -->
 
@@ -74,5 +74,11 @@ v1b (Tauri shell, manual-validation): CREATE desktop/ Tauri project that spawns 
 ## Changelog
 <!-- LIFO: newest at top. Auto-prepended by `dreamcontext tasks log`. -->
 
+
+
+### 2026-05-31 - Session Update
+- Central server security hardening pulled forward to v0.5.0 — loopback bind, CORS lockdown, Origin/Host guard, safe-path on /api/core. Tracked in server-security-hardening task (in_review). Remaining defense-in-depth (slug path joins, auth token) stays in v0.6 scope.
+### 2026-05-31 - Session Update
+- v0.5.1 landed the CENTRAL server security fix (loopback bind + CSRF Origin guard + non-wildcard CORS + safeChildPath on /api/core + picomatch audit fix; reviewed PASS). REMAINING for this task (defense-in-depth, currently gated by CSRF+loopback+URL-normalization): apply safeChildPath to slug/param path-joins in tasks.ts, knowledge.ts, features.ts, council.ts; add auth/origin-token when the control plane gains write actions.
 ### 2026-05-31 - Created
 - Task created.

@@ -2,10 +2,10 @@
 id: "feat_mBa5T4nU"
 status: "in_review"
 created: "2026-05-22"
-updated: "2026-05-22"
+updated: "2026-05-31"
 released_version: null
 tags: ["devops", "onboarding", "architecture"]
-related_tasks: []
+related_tasks: ["v04-ws1-install-update-overhaul"]
 ---
 
 ## Why
@@ -13,6 +13,8 @@ related_tasks: []
 When dreamcontext ships a new version, stale files from previous installs linger silently in user projects — old agent prompts, deprecated skill files, removed hook configs. The old `install-skill` and `update` commands updated and added files but never removed files that the new version dropped. Stale files cause confused behavior (old agents shadowing new ones, removed commands still visible) and make each upgrade an imperfect overlay instead of a clean replacement.
 
 A manifest-based install/update solves this by tracking every file dreamcontext owns at write time (`_dream_context/state/.install-manifest.json`). On the next `update`, a diff against the newly-computed manifest identifies stale entries; safe-path stale files are offered for deletion (or auto-deleted with `--yes`). First-run safety: if no manifest exists yet, bootstrap from a scan and flag candidates rather than delete.
+
+v0.5.0 extended this with: (1) a one-command `install.sh` curl script, (2) a `dreamcontext upgrade` command that refreshes the globally-installed CLI, and (3) a non-blocking in-session update nudge (`## Update Available` injected into the SessionStart snapshot when a newer version is available, sourced from a disk cache populated by the UserPromptSubmit hook at most once per 24h).
 
 ## User Stories
 
@@ -23,6 +25,9 @@ A manifest-based install/update solves this by tracking every file dreamcontext 
 - [x] As a developer, I want manifest writes to be cancel-safe so a Ctrl+C mid-install doesn't leave a corrupted manifest.
 - [x] As a developer, I want filter persistence across update: installed packs and platform flags are preserved in `.config.json` and re-applied so an update doesn't forget my configuration.
 - [ ] As a developer, I want `dreamcontext update --dry-run` to show what would change without writing anything, so I can audit before committing.
+- [x] As a developer, I want a single `curl | sh` install script so I can install dreamcontext without running npm manually.
+- [x] As a developer, I want `dreamcontext upgrade` to update the globally-installed CLI binary and then refresh project files in one command.
+- [x] As an agent, I want the SessionStart snapshot to tell me when a newer dreamcontext is available so I can inform the user to run `dreamcontext upgrade`.
 
 ## Acceptance Criteria
 
@@ -37,6 +42,11 @@ A manifest-based install/update solves this by tracking every file dreamcontext 
 - [x] `setup` threads manifest through every copy so the resulting manifest is complete after a single command.
 - [x] Partial-flag partition preservation: when platforms/packs are passed as flags, the partitions not covered by the flags remain in the manifest (existing files not clobbered).
 - [ ] `dreamcontext update --dry-run` lists changes without writing.
+- [x] `install.sh` at repo root: POSIX sh, `set -e`, checks Node ≥18, runs `npm install -g dreamcontext`, calls `dreamcontext update` if `_dream_context/` exists or prompts `setup` otherwise, prints a success banner with the positioning one-liner. No `sudo`, no `eval`, no nested remote fetch.
+- [x] `dreamcontext upgrade` command (`src/cli/commands/upgrade.ts`): runs `npm install -g dreamcontext@latest` then instructs the user to run `dreamcontext update` in each project. `--check` flag prints current vs available version without installing.
+- [x] `src/lib/version-check.ts`: `readVersionCache`, `isCacheFresh` (TTL 24h), `compareVersions` (semver-lite), `buildNudge` (pure, returns string or null), `refreshVersionCache` (only networked function, runs from UserPromptSubmit hook). Cache stored at `_dream_context/state/.version-check.json`.
+- [x] `generateSnapshot()` in `snapshot.ts` injects `## Update Available` block when a fresh cache indicates installed < latest. Never makes a network call — reads only the cache file.
+- [x] UserPromptSubmit hook lazy-refreshes the version cache (at most once per 24h TTL, wrapped in try/catch, failure writes `latestCli: null` silently).
 
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
@@ -44,15 +54,25 @@ A manifest-based install/update solves this by tracking every file dreamcontext 
 - **[2026-05-22]** Manifest is written atomically via temp-file + rename pattern to prevent corruption on cancellation. If the write is interrupted, the old manifest remains intact.
 - **[2026-05-22]** `isSafeDeletePath` only returns true for paths under `.claude/`, `.agents/`, `.codex/`. Files outside these prefixes (including `_dream_context/` itself) are never candidates for auto-deletion — user-owned data is protected by design.
 - **[2026-05-22]** `setup` and `install-skill` share the same internal install logic; `setup` is a thin orchestrator that calls `init` then `install-skill`. The `SETUP_INTERNAL_ENV` env var suppresses deprecation hints from child commands when invoked via `setup`.
+- **[2026-05-31]** `refreshVersionCache` is the ONLY function allowed to make a network call (npm view). `generateSnapshot()` is on the SessionStart hot path and must never call it. The UserPromptSubmit hook calls it lazily, gated by `isCacheFresh`. Any future refactor must preserve this separation.
+- **[2026-05-31]** `dreamcontext upgrade` does NOT auto-exec `dreamcontext update` after installing the new binary — the freshly-replaced binary cannot reliably re-exec the old process. It prints the instruction and exits. This is intentional; do not change.
 - **[2026-05-22]** Old `install-skill` and `install-claude-md` commands are deprecated but not removed until v0.5. They print a deprecation hint directing users to `setup` unless invoked via `setup` itself.
 - **[2026-05-22]** Bootstrap scan on first migration: scans `.claude/`, `.agents/`, `.codex/` for files matching known dreamcontext-owned path patterns. This heuristic is best-effort; the first post-upgrade `update` only flags, never deletes.
 
 ## Technical Details
 
-**Key new files**:
+**Key files** (v0.4 manifest foundation):
 - `src/lib/manifest.ts` — manifest type definitions, read/write/diff/bootstrap/record helpers.
 - `src/lib/setup-config.ts` — typed `.config.json` read/write/merge. Adds `setupVersion` field.
 - `src/cli/commands/setup.ts` — `dreamcontext setup` one-shot command.
+
+**Key files** (v0.5.0 install/update/nudge additions):
+- `install.sh` (repo root) — POSIX sh one-command install script. Checks Node ≥18, runs `npm install -g dreamcontext`, calls `dreamcontext update` or `setup` as appropriate.
+- `src/cli/commands/upgrade.ts` — `dreamcontext upgrade [--check] [-y]`. Uses `execFileSync('npm', ['install','-g','dreamcontext@latest'])`, no shell string interpolation.
+- `src/lib/version-check.ts` — `VersionCache` type + pure functions: `readVersionCache`, `isCacheFresh`, `compareVersions` (semver-lite, handles `0.0.0` sentinel), `buildNudge`, `writeVersionCache`, `refreshVersionCache`.
+- Cache file: `_dream_context/state/.version-check.json` (machine-local, gitignored).
+- `snapshot.ts` → `getVersionNudge(root)` reads cache, calls `buildNudge`, emits `## Update Available` section or nothing.
+- `hook.ts` UserPromptSubmit → lazy `refreshVersionCache` behind `isCacheFresh` check, wrapped in try/catch.
 
 **Manifest diff logic** (`diffManifests(old, new)`):
 - `added`: in new but not old.

@@ -26,8 +26,18 @@ version: v0.5.0
 
 ```mermaid
 flowchart TD
-  subgraph M1 ["Milestone 1 — rename me"]
-    A1[First criterion]:::todo
+  subgraph M1 ["Milestone 1 — Related-skills recall hook (D1)"]
+    A1[Hook emits context-gate: full skill list, no top-3 limit]:::done
+    A2[alwaysApply:true skills excluded from BM25 gate]:::done
+    A3[Silent when no skills match, existing hook behavior intact]:::done
+  end
+  subgraph M2 ["Milestone 2 — goal-skill orchestration pack (D2)"]
+    B1[goal-skill orchestration: Phase0-6 with iteration caps]:::done
+    B2[4 goal agents + catalog.json updated]:::done
+    B3[SKILL.md: flowchart, Red Flags table, hard rules]:::done
+  end
+  subgraph M3 ["Milestone 3 — Build validation"]
+    C1[Build clean + tests green + install integration]:::done
   end
 
   classDef done fill:#86efac,stroke:#15803d,color:#052e16
@@ -44,27 +54,20 @@ Our SessionStart injects a knowledge snapshot but nothing makes the agent USE th
 ## User Stories
 <!-- As a <role>, I can <action>, so that <outcome>. Tick when demonstrably true in the running system. -->
 
-- [ ] As a [role], I can [action], so that [outcome]
+- [x] As an agent, I see relevant installed skills surfaced on every substantive prompt, so I invoke them before acting rather than producing skill-blind output.
+- [x] As a user, I can invoke `goal-skill` to drive a non-trivial goal through a plan->review->implement->validate loop with sub-agents, so risky or complex goals get proper orchestration discipline.
+- [x] As a user, the hook is silent when no skills match, so greetings and off-topic prompts are not polluted with skill noise.
 
 ## Acceptance Criteria
 <!-- The contract. Each line is testable and gets a node in the Workflow flowchart above. -->
 
-- [ ] First criterion (matches node A1 in Workflow)
-
-
-D1: On UserPromptSubmit (prompt length >= 8, not a greeting, env DREAMCONTEXT_SKILLS_HOOK != 0, sleep not in progress), the hook emits a '— Related skills —' block listing up to 3 relevant installed skills by their exact Skill-tool name, with the instruction to invoke them via the Skill tool BEFORE acting.
-
-D1: Skills with alwaysApply:true (engineering, design) are EXCLUDED from the Related-skills line (they are always loaded; surfacing them is noise).
-
-D1: When no skills are installed / .claude/skills is missing / no skill clears the score threshold, the block is silent and the hook still exits 0 with all existing behavior (sleep-debt, marketing, memory recall) intact.
-
-D2: A new skill-pack goal-skill (description = triggering conditions only, never a workflow summary) instructs the MAIN agent to orchestrate: Phase0 ask user (confirm goal + choose validation method) -> Phase1 PLAN (goal-planner, opus) -> Phase2 PLAN-REVIEW (2 goal-plan-reviewer lenses in parallel, iterate until SOLID or cap=3 then escalate) -> Phase3 persist validated plan into a dreamcontext task -> Phase4 IMPLEMENT (goal-implementer) -> Phase5 CODE-REVIEW (reuse existing reviewer agent, iterate until PASS or cap=3) -> Phase6 VALIDATE (goal-validator runs the user-chosen method; FAIL routes back to Phase4) until validation PASSES.
-
-D2: goal-skill ships 4 new agents in skill-packs/agents/ (goal-planner opus, goal-plan-reviewer, goal-implementer, goal-validator), each declaring skills: frontmatter + '## Skills always loaded' body, and reuses the existing reviewer agent for code review. catalog.json has a goal-skill packs[] entry with subSkills:[] + base + relatedAgents (incl. reviewer).
-
-D2: SKILL.md contains an orchestration mermaid flowchart, a Red Flags table, a rationalization table, explicit iteration caps with TodoWrite-tracked 'iteration N/cap', and hard rules (orchestrator never writes code; never skip Phase0 validation question; never auto-complete the task — user-only; tell reviewer to run git diff itself).
-
-Validation of THIS build: npm run build (tsup) clean + npm test (vitest) green, including new unit tests for the skill corpus loader and integration tests for the Related-skills hook output; goal-skill installs into a tmp project (.claude/skills/goal-skill/SKILL.md + 4 goal agents + reviewer.md present) and catalog.json parses.
+- [x] D1: On UserPromptSubmit (prompt length >= 8, not a greeting, env DREAMCONTEXT_SKILLS_HOOK != 0, sleep not in progress), the hook emits a context-gate block telling the agent to review the full skill list already in context and invoke any that fit — NO top-3 pre-selection, NO listing specific skills by name.
+- [x] D1: Skills with alwaysApply:true (engineering, design) are EXCLUDED from the BM25 gate check (they are always loaded; surfacing them is noise).
+- [x] D1: When no skills are installed / .claude/skills is missing / no skill clears the score threshold, the block is silent and the hook still exits 0 with all existing behavior (sleep-debt, marketing, memory recall) intact.
+- [x] D2: A new skill-pack goal-skill instructs the MAIN agent to orchestrate: Phase0 ask user -> Phase1 PLAN (goal-planner, opus) -> Phase2 PLAN-REVIEW (2 parallel lenses, iterate until SOLID or cap=3) -> Phase3 persist plan into dreamcontext task -> Phase4 IMPLEMENT (goal-implementer) -> Phase5 CODE-REVIEW (reuse existing reviewer, cap=3) -> Phase6 VALIDATE (goal-validator; FAIL -> Phase4).
+- [x] D2: goal-skill ships 4 new agents (goal-planner opus, goal-plan-reviewer, goal-implementer, goal-validator), each with `skills:` frontmatter + `## Skills always loaded`. catalog.json updated with packs[] entry (subSkills:[], base, relatedAgents incl. reviewer) and 4 agents[] entries.
+- [x] D2: SKILL.md contains orchestration mermaid flowchart, Red Flags table, rationalization table, iteration caps with TodoWrite tracking, hard rules (orchestrator never writes code; never skip Phase0; never auto-complete task).
+- [x] Validation: npm run build clean + npm test green; goal-skill installs into tmp project (SKILL.md + 4 goal agents + reviewer.md present, catalog.json parses).
 ## Constraints & Decisions
 <!-- LIFO: newest at top. Capture the why, not just the what. -->
 
@@ -72,6 +75,8 @@ Validation of THIS build: npm run build (tsup) clean + npm test (vitest) green, 
 
 
 
+
+- **[2026-05-31]** [2026-05-31] Context-gate final design (iteration 4): hook no longer lists a top-3 subset of skills — that arbitrary pre-selection is gone. The gate now tells the agent to review the full skill list already in context and decide which to invoke. Internal BM25 check retained only to decide WHETHER to fire the gate (silent on greetings). This ensures the agent sees ALL skills, not a pre-curated few.
 - **[2026-05-31]** Build sequence: A = recall.ts loadSkillDocs + CorpusType + unit tests (pure lib, lowest risk). B = hook.ts Related-skills block + integration tests (completes D1). C = goal-skill SKILL.md + 4 agents + catalog.json + install assertion (completes D2). D = install goal-skill into dev repo (npx dreamcontext install-skill --packs goal-skill) + manual smoke run. Verify build+test green after each of A/B/C.
 - **[2026-05-31]** Decisions pending user confirmation (recorded, not blocking): iteration cap = 3 per loop; SKILL_SCORE_THRESHOLD = 1.0; plan-reviewer parallel lenses default = 2; goal-planner stays opus per explicit user request despite cost.
 - **[2026-05-31]** Skill name is goal-skill (NOT goal) to avoid colliding with the built-in /goal harness command. Invoked via description trigger phrases (no .claude/commands or settings.json wiring needed — confirmed council/multi-review work the same way).
@@ -100,12 +105,17 @@ Tests — CREATE tests/unit/recall-skill-corpus.test.ts (tmpdir+fs; loadSkillDoc
 
 
 Plan was produced by an opus plan agent and reviewed by 3 parallel reviewers (correctness / pragmatism-YAGNI / risk-edge-cases), all NEEDS_WORK on first pass; findings consolidated into the technical_details above (converged on: alwaysApply exclusion mandatory; use process.cwd() not dirname(contextRoot); don't route skills through buildCorpus; catalog subSkills:[]+base required; runWithStdin needs env param; loop cost controls). This task itself was built by dogfooding the goal-skill loop.
+
+Untracked addition: .codex/agents/review-{cloud-functions,edge-cases,frontend,router,security}.toml — 5 new Codex review-lens agents created alongside this work. These extend the multi-review pattern with domain-specific lenses. No separate task needed — they're infrastructure additions. If Codex agent management becomes significant work, a dedicated task should be created.
 ## Changelog
 <!-- LIFO: newest at top. Auto-prepended by `dreamcontext tasks log`. -->
 
 
 
 
+
+### 2026-05-31 - Session Update
+- Context-gate redesign (iteration 4): hook now tells agent to review full skill list already in context — removed top-3 pre-selection entirely. Agent decides from everything, not a pre-picked few. Internal BM25 check retained only to decide whether to fire the gate (silent on greetings/unrelated). 17 user-prompt-submit tests green including new 'fires gate / no specific skill listing' assertion.
 ### 2026-05-31 - Status → in_review
 - all acceptance criteria met; validation passed via unit+integration tests + build + install check
 ### 2026-05-31 - Session Update

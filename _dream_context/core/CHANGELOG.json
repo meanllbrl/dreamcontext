@@ -1,5 +1,70 @@
 [
   {
+    "date": "2026-05-31",
+    "type": "change",
+    "scope": "hook",
+    "description": "The UserPromptSubmit context gate iterated four times in a single session before landing on this design. The old gate identified a top-3 relevant skill subset and listed them by name — an arbitrary pre-selection that constrained which skills the agent considered. The new gate removes that list entirely and instead tells the agent: 'review the skills available to you (the full list is already in your context) and INVOKE any that fit this task via the Skill tool — do NOT limit yourself to a pre-selected few; scan them all and decide.' The full skill catalog is already injected by the harness on every session start, so the agent chooses from the complete set. The BM25 skill-relevance check is retained internally to decide WHETHER to fire the gate at all (suppressed for greetings and unrelated prompts) but never used to narrow WHICH skills the agent considers. Tests/integration/hook.test.ts updated; 17 user-prompt-submit tests green including 'fires gate / review full list / no listing' assertion.",
+    "breaking": false,
+    "summary": "Redesign user-prompt-submit context gate: drop pre-selected top-3 skills, tell agent to review full catalog and decide",
+    "references": [
+      "commit:23c28a2",
+      "file:src/cli/commands/hook.ts",
+      "file:tests/integration/hook.test.ts",
+      "task:goal-skill-and-related-skills-recall"
+    ]
+  },
+  {
+    "date": "2026-05-31",
+    "type": "fix",
+    "scope": "server",
+    "description": "Security fast-follow for v0.5.0 dashboard server, pulled forward from v0.6 task after security review flagged the live attack surface before npm publish. Four fixes: (1) server.listen now binds 127.0.0.1 by default (--host flag opts in to 0.0.0.0); eliminates LAN exposure entirely. (2) CSRF guard in src/server/middleware.ts: state-changing requests (PUT/PATCH/DELETE/POST) are rejected if Origin/Referer does not match a loopback host; closes cross-site write vector from any website open while the dashboard is running. (3) CORS: wildcard Access-Control-Allow-Origin:* removed; handleCors() now reflects loopback origins only (sendJson updated). (4) New src/server/safe-path.ts (safeChildPath) guards /api/core/:filename against path-traversal; same URL-normalization defense applied in src/server/routes/core.ts. Also: npm audit fix eliminates picomatch ReDoS advisory (0 vulnerabilities). 8 new tests in tests/unit/server-security.test.ts, all green. Independent security review: PASS, no bypass found. Residual per-route traversal hardening for tasks/knowledge/features tracked in v06 (already gated by CSRF + loopback + URL-normalization defenses).",
+    "breaking": false,
+    "summary": "v0.5.1: harden dashboard server — loopback bind, CSRF guard, CORS lockdown, path-traversal guard, dep audit",
+    "references": [
+      "commit:0bb6d7c",
+      "file:src/server/index.ts",
+      "file:src/server/middleware.ts",
+      "file:src/server/safe-path.ts",
+      "file:src/server/routes/core.ts",
+      "file:tests/unit/server-security.test.ts",
+      "task:v06-control-panel-vaults-tauri"
+    ]
+  },
+  {
+    "date": "2026-05-31",
+    "type": "feat",
+    "scope": "skill-packs",
+    "description": "Two additions shipped together. (1) goal-skill skill-pack: subagent-driven goal completion orchestrator. Main agent dispatches goal-planner (opus) for a file-by-file plan, then 2 parallel goal-plan-reviewers iterate until SOLID (cap 3, then escalate), persists plan as a dreamcontext task, dispatches goal-implementer, runs reviewer until PASS (cap 3), then goal-validator against user-agreed criteria (unit/integration tests or manual checklist). Ships 4 sub-agents: goal-planner (opus), goal-plan-reviewer, goal-implementer, goal-validator. Reuses existing reviewer agent for code review. Trigger-only description with Red Flags + rationalization tables to prevent premature short-circuiting of convergence loops. (2) Related-skills recall hook injected into UserPromptSubmit: surfaces installed skills matching the prompt via BM25 (loadSkillDocs() corpus loader, top-level SKILL.md only, excludes alwaysApply packs), instructs agent to invoke matching skills via Skill tool BEFORE acting; self-contained never-throws block; DREAMCONTEXT_SKILLS_HOOK=0 opt-out. Gate redesigned in same session: no longer pre-lists a top-3 subset — tells agent to review the FULL skill catalog already in context and decide. 13 new test specs (7 unit recall-skill-corpus + 6 integration hook) green.",
+    "breaking": false,
+    "summary": "Add goal-skill orchestration pack (plan→review→implement→validate loop) and Related-skills recall hook",
+    "references": [
+      "commit:23c28a2",
+      "file:skill-packs/goal-skill/SKILL.md",
+      "file:skill-packs/agents/goal-planner.md",
+      "file:skill-packs/agents/goal-implementer.md",
+      "file:skill-packs/agents/goal-validator.md",
+      "file:src/cli/commands/hook.ts",
+      "file:src/lib/recall.ts",
+      "task:goal-skill-and-related-skills-recall"
+    ]
+  },
+  {
+    "date": "2026-05-31",
+    "type": "feat",
+    "scope": "positioning",
+    "description": "Add three workstreams shipped together as v0.5.0. WS1 positioning: 'persistent brain — remembers, knows, learning to act' one-liner locked into 0.soul.md, knowledge/positioning.md, package.json description, and README; 'autonomous' banned (tested-absent) via positioning-doc.test.ts. WS2 one-command install: install.sh (POSIX, Node>=18 gate, no sudo/eval/nested-pipe, idempotent, non-TTY safe) ships in the npm tarball; curl|sh installs or updates based on presence of _dream_context/. WS3 in-session update nudge: dreamcontext upgrade [--check], pure src/lib/version-check.ts; non-blocking SessionStart nudge reads a cached check only — the single npm network call runs >=once/24h from UserPromptSubmit hook, never in the snapshot hot path; fail-safe (try/catch -> silent), opt-out via DREAMCONTEXT_VERSION_CHECK=0. Also fixes hardcoded CLI .version('0.1.0') -> dreamcontextVersion(); bumps package 0.2.0 -> 0.5.0. 63 new test specs pass.",
+    "breaking": false,
+    "summary": "v0.5.0: lock 'persistent brain — remembers, knows, learning to act' positioning; one-command curl|sh install; in-session update nudge",
+    "references": [
+      "commit:0f3965f",
+      "file:install.sh",
+      "file:src/lib/version-check.ts",
+      "file:src/cli/commands/upgrade.ts",
+      "file:_dream_context/knowledge/positioning.md",
+      "task:v05-positioning-easy-install-update-nudge"
+    ]
+  },
+  {
     "date": "2026-05-26",
     "type": "feat",
     "scope": "skill-packs",

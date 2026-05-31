@@ -1,41 +1,52 @@
 {
   "debt": 6,
-  "last_sleep": "2026-05-26",
-  "last_sleep_summary": "Sleep #6 — Haiku single-call recall, multi-review refactor, BID/BIV skill packs. Created haiku-recall-architecture knowledge file documenting the single claude CLI call design (corpus index in system prompt, 8K cap, execFileSync safety, mode matrix). Updated memory-recall-bm25 feature PRD with 9 new acceptance criteria. Updated multi-reviewer-pattern knowledge (coordinator removed, v1.1). Updated decision-mem0-vs-bm25-recall with Haiku evolution note. 3 new tasks created (haiku-recall-extraction, business-idea-discovery-skill, business-idea-validation-skill). multi-review-skill body reconciled (coordinator references removed throughout). All 4 tasks at in_review under v0.5.0. 3 changelog entries added. 2 memory decisions recorded. soul.md priority updated to v0.5.0.",
+  "last_sleep": "2026-05-31",
+  "last_sleep_summary": "Sleep #7 — v0.5.0/v0.5.1 ship + security hardening + context-gate redesign. sleep-state: 4 changelog entries (v0.5.0 positioning/install/update-nudge, goal-skill+related-skills-recall hook, v0.5.1 dashboard security hardening, context-gate redesign), 2 memory decisions (loopback-bind+CSRF+CORS+safeChildPath hardening pulled forward from v0.6; context gate must show full skill catalog never pre-select — enforced over 4 iterations), 'CLI version hardcoded' known-issue marked FIXED, soul priority → next v0.6.0, RELEASES v0.5.0 summary updated. sleep-tasks: created server-security-hardening task (in_review, v0.5.0, 5/5 nodes done), reconciled goal-skill-and-related-skills-recall to current truth (7/7 done, in_review), updated v06-control-panel-vaults-tauri (security marked DONE). sleep-product: new knowledge dashboard-server-security.md (threat model + 3 mitigations), new feature context-gate-and-goal-skill.md, updated web-dashboard.md (+4 security criteria) and manifest-based-install-update.md (+v0.5.0 install/upgrade/nudge), staleness flags cleared. Marketing rem-sleep clean. Open flag: 6.system_flow.md 6 lines over ceiling + missing new hook blocks (deferred). v0.5.0/v0.5.1 published to npm per session transcripts; RELEASES entry still status=planning awaiting user release call.",
   "sleep_started_at": null,
-  "sessions_since_last_sleep": 0,
+  "sessions_since_last_sleep": 1,
   "sessions": [
     {
-      "session_id": "7d8e4dc2-bba3-4777-96d3-7c7f63d2d7ca",
-      "transcript_path": "/Users/mehmetnuraydin/.claude/projects/-Users-mehmetnuraydin-projects-dreamcontext/7d8e4dc2-bba3-4777-96d3-7c7f63d2d7ca.jsonl",
-      "stopped_at": "2026-05-26T08:46:52.661Z",
-      "last_assistant_message": "Tamam. System kategorisine eklendi:\n\n- **Recall status** — mevcut modu gösterir\n- **Recall mode** — select menüsüyle haiku / raw / off arasından seç\n\nTUI'da System > Recall status veya System > Recall mode ile erişebilirsin. CLI'dan da `dreamcontext recall on/off/raw/status` aynı şekilde çalışıyor.",
-      "change_count": 24,
-      "tool_count": 96,
+      "session_id": "80a49139-4a0e-444c-aac7-3c90aa645f3a",
+      "transcript_path": "/Users/mehmetnuraydin/.claude/projects/-Users-mehmetnuraydin-projects-dreamcontext/80a49139-4a0e-444c-aac7-3c90aa645f3a.jsonl",
+      "stopped_at": "2026-05-31T20:23:53.368Z",
+      "last_assistant_message": "Done. Both docs are now comprehensive *and* readable, fact-checked against the actual v0.5.1 code, and ready to publish.\n\n## What changed\n\n**README.md** (523 → 559 lines)\n- **New `## Skills` section** — the catalog was stale (listed 5 packs). Now shows the real **7 packs** (engineering, design, growth, brand-voice, council, multi-review, goal-skill) with always-on flags, plus the **4 standalone skills** (business-idea-discovery/-validation, meta-marketing, system-prompts). Fixed the install examples (`goal-skill` is a pack, not a `--skill`).\n- **New `## Staying Up to Date` section** — the whole update story was undocumented. Now covers `upgrade` (CLI) vs `update` (project files), the `curl … | sh` re-run, and the in-session nudge with its opt-out.\n- Fixed the stale \"What gets created\" tree (`3.style_guide_and_branding.md`, added `.version-check.json`); added `upgrade`/`update` to the command reference; updated nav.\n\n**DEEP-DIVE.md** (670 → 737 lines)\n- **New `## Install & Update` section** — install.sh safety design (POSIX, Node-gate, no sudo/eval/nested-pipe, CDN-served so it works with a private repo), the CLI-vs-project update split, and the version-check **hot-path separation** (cached read at session start, the one npm call ≤1×/24h off the hot path, fail-silent).\n- **New `### Security model`** under Dashboard — the loopback bind, CSRF guard, CORS lockdown, and path-traversal guard that landed in v0.5.1, with the threat model each one closes.\n- Extended the **UserPromptSubmit hook** section (its three jobs now: debt reminder + recall injection + the full-catalog context gate) and the **skill-packs** section (the orchestration-pack pattern: council/multi-review/goal-skill).\n- **5 new Design Tradeoff rows** (loopback bind, version-check off hot path, CLI/project split, full-catalog gate, CDN install).\n- Rewrote **What Comes Next** — Codex is now first-class; narrates v0.3→v0.5; sets the v0.6 control-panel/Tauri direction.\n- Fixed stale facts: file names, the 200→~150-line ceiling, the `2.memory.md` LIFO reference.\n\n## Verified\n- ✅ 16/16 positioning-doc tests pass\n- ✅ No banned positioning framing (\"autonomous\"/self-directed) — the \"learning to act\" roadmap framing is preserved\n- ✅ All internal anchor links resolve\n\nYou're clear to deploy. The task is at `in_review` for you to skim first if you want.\n\nOne note: sleep debt ticked to **4** from this work, but we just ran Sleep #7 a few minutes ago — I'd let these doc changes roll into the next natural consolidation rather than sleeping again now. Up to you.",
+      "change_count": 19,
+      "tool_count": 50,
       "score": 3,
-      "task_slugs": []
+      "task_slugs": [
+        "readme-deepdive-v05-refresh"
+      ]
     },
     {
-      "session_id": "fcaa4dbc-0f95-4314-bae8-f61a53a7bad4",
-      "transcript_path": "/Users/mehmetnuraydin/.claude/projects/-Users-mehmetnuraydin-projects-dreamcontext/fcaa4dbc-0f95-4314-bae8-f61a53a7bad4.jsonl",
-      "stopped_at": "2026-05-26T08:27:10.177Z",
-      "last_assistant_message": "## Sleep #6 Complete\n\n**Debt:** 16 → 5 (2 post-epoch sessions preserved)\n\n### What was consolidated\n\n| Specialist | Key actions |\n|---|---|\n| **sleep-state** | 3 changelog entries (recall refactor, multi-review coordinator removal, BID/BIV skills). 2 memory decisions (Haiku single-call, coordinator removal). soul.md priority → v0.5.0. RELEASES.json summary updated. |\n| **sleep-tasks** | 3 new tasks created: `haiku-recall-extraction`, `business-idea-discovery-skill`, `business-idea-validation-skill`. `multi-review-skill` body reconciled (coordinator references purged). All 4 at `in_review` under v0.5.0. |\n| **sleep-product** | New knowledge: `haiku-recall-architecture.md` (full design doc). Feature PRD `memory-recall-bm25` updated with 9 acceptance criteria. `multi-reviewer-pattern` updated to v1.1 (coordinator removal). `decision-mem0-vs-bm25-recall` updated with Haiku evolution note. |\n\n**v0.5.0 status:** 4 tasks in_review, 0 in_progress. Ready for your verification before release.",
-      "change_count": 14,
-      "tool_count": 114,
+      "session_id": "f007d91a-b861-47c2-8154-033cf8899871",
+      "transcript_path": "/Users/mehmetnuraydin/.claude/projects/-Users-mehmetnuraydin-projects-dreamcontext/f007d91a-b861-47c2-8154-033cf8899871.jsonl",
+      "stopped_at": "2026-05-31T16:11:53.933Z",
+      "last_assistant_message": "I'll be brief, because you've heard the detail and I won't manufacture busywork:\n\n**This slice is done, shipped-ready, and secured** — positioning + one-command install + easy update + the in-session nudge, all reviewed; the dashboard hardened in v0.5.1; the repo stays private via the CDN install URL. The npm package leaks nothing.\n\n**The control panel (vaults, per-project settings, update UI, skill management, Tauri) is the other half of your vision — and it's genuinely a separate multi-session build.** You've chosen, each time I asked, to ship this slice first; I'm respecting that rather than auto-launching a weeks-long orchestration that would also collide with the sleep consolidation currently running. It's fully specced in task `v06-control-panel-vaults-tauri` and starts the instant you say **\"start v6.\"**\n\nSo there are exactly two things outstanding, both yours:\n1. **Publish v0.5.1** (supersedes the live 0.5.0): `! npm publish --otp=<code>`\n2. **Say \"start v6\"** when you want the control panel built — or leave it queued.\n\nI'm not going to keep re-summarizing on each hook fire. Tell me which one you want, and I'll move.",
+      "change_count": 18,
+      "tool_count": 128,
       "score": 3,
       "task_slugs": []
     }
   ],
-  "bookmarks": [],
+  "bookmarks": [
+    {
+      "id": "bm_-D674orc",
+      "message": "Doc overhaul for v0.5.x deploy: README+DEEP-DIVE made comprehensive+clear. Currency gaps closed (update flow, skills catalog, security model, v0.3-v0.5 narrative). Positioning rule respected (no 'autonomous'/self-directed). 16/16 positioning tests pass.",
+      "salience": 2,
+      "created_at": "2026-05-31T20:23:31.691Z",
+      "session_id": "80a49139-4a0e-444c-aac7-3c90aa645f3a",
+      "task_slug": "readme-deepdive-v05-refresh"
+    }
+  ],
   "triggers": [],
   "knowledge_access": {
     "project-origin-and-prd": {
-      "last_accessed": "2026-05-09",
-      "count": 2
+      "last_accessed": "2026-05-31",
+      "count": 3
     },
     "decision-meta-marketing-skill-adoption": {
-      "last_accessed": "2026-05-09",
-      "count": 1
+      "last_accessed": "2026-05-31",
+      "count": 2
     },
     "decision-mem0-vs-bm25-recall": {
       "last_accessed": "2026-05-26",
@@ -44,6 +55,10 @@
     "multi-reviewer-pattern": {
       "last_accessed": "2026-05-26",
       "count": 2
+    },
+    "dashboard-server-security": {
+      "last_accessed": "2026-05-31",
+      "count": 1
     }
   },
   "dashboard_changes": [],

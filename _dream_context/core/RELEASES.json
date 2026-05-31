@@ -3,7 +3,7 @@
     "id": "rel_NbcqV3la",
     "version": "v0.5.0",
     "date": "",
-    "summary": "Multi-review skill (router + 4 specialists, direct synthesis), BIV skill packs, Haiku single-call recall",
+    "summary": "Positioning locked ('persistent brain — remembers, knows, learning to act'), one-command curl|sh install, in-session update nudge (upgrade command + version-check), goal-skill orchestration pack (plan→review→implement→validate), Related-skills recall hook, multi-review skill (router + 4 specialists, direct synthesis), BIV/BID skill packs, Haiku single-call recall, server security hardening (loopback bind, CSRF guard, CORS lockdown, path-traversal guard — shipped as v0.5.1 fast-follow).",
     "breaking": false,
     "status": "planning",
     "features": [],

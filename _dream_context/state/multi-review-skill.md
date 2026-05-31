@@ -1,12 +1,14 @@
 ---
 id: task_pmxW-HAz
 name: multi-review-skill
-description: 'Multi-agent code review skill with router and niche specialists — main agent synthesizes'
+description: >-
+  Multi-agent code review skill with router and niche specialists — main agent
+  synthesizes
 priority: medium
 urgency: medium
-status: in_review
+status: completed
 created_at: '2026-05-24'
-updated_at: '2026-05-26'
+updated_at: '2026-05-31'
 tags: []
 parent_task: null
 related_feature: null

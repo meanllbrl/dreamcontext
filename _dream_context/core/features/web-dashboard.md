@@ -2,7 +2,7 @@
 id: feat_O7LODr7O
 status: active
 created: '2026-02-25'
-updated: '2026-05-23'
+updated: '2026-05-31'
 released_version: 0.1.0
 tags:
   - frontend
@@ -104,8 +104,12 @@ Users need a visual interface to manage agent context without using the terminal
 - [ ] Responsive layout (sidebar collapses on small screens)
 
 ### Technical
-- [ ] Command: `dreamcontext dashboard` starts HTTP server on localhost:4173 (configurable with --port)
-- [ ] Server: Node.js native http module, zero new runtime dependencies
+- [x] Command: `dreamcontext dashboard` starts HTTP server on localhost:4173 (configurable with --port)
+- [x] Server: Node.js native http module, zero new runtime dependencies
+- [x] Server binds to `127.0.0.1` by default (loopback only); a `--host` flag allows overriding with a visible warning.
+- [x] Mutating endpoints (`POST/PUT/PATCH/DELETE`) reject requests whose `Origin` header is present but not a loopback origin — CSRF defense.
+- [x] CORS reflects only loopback origins (never `*`).
+- [x] All filesystem paths built from request input go through `safeChildPath()` — path-traversal guard.
 - [ ] Frontend: React 19 + Vite 6 + TypeScript strict
 - [ ] State: TanStack Query for server data, Context for theme/i18n
 - [ ] Build: `npm run build` builds dashboard then CLI, dashboard output copied to dist/dashboard/
@@ -114,6 +118,7 @@ Users need a visual interface to manage agent context without using the terminal
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
 
+- **[2026-05-31]** Server hardening decisions: (1) default host=127.0.0.1 (not 0.0.0.0) — LAN access requires explicit `--host`; (2) CSRF guard via Origin/Host check at server level (not per-route) so all new mutating routes inherit it automatically; (3) `safeChildPath()` in `src/server/safe-path.ts` is the single path-validation function — every route that builds a path from request input MUST use it. These are security invariants; do not regress. See knowledge file `dashboard-server-security.md` for full threat model.
 - **[2026-05-23]** Brain 3D view is a toggle on the existing Brain page, not a separate route. `react-force-graph-3d` + `three` are dashboard-only deps (isolated from CLI). Labels use `THREE.Sprite` (billboard) to stay legible at all camera angles. `fog: true` on `SpriteMaterial` ties label opacity to scene fog so distant labels auto-fade with their nodes. Fly-to on click uses `fgRef.current.cameraPosition()` (ForceGraph3D's imperative API), not Three.js directly.
 - **[2026-05-22]** Linear Midnight design system (additive, non-breaking): old `--glass-*` and `--color-brand-*` CSS variables retained for backward compatibility; no selectors deleted. Google Fonts CDN loads Inter in browser; air-gapped environments fall back to system font. `font-weight: 510/590` uses Inter variable font axis; falls back to `500/600` if Inter is not a variable font instance.
 - **[2026-05-22]** Flowchart sync uses `<!-- node:<id> -->` comment markers embedded in task body (between a checkbox and its label) to bind checkbox state to a mermaid node ID. Edge-line corruption guard: lines containing `-->`, `---`, `-.->`, `==>`, `--`, `==` operators are skipped during node-class injection. `sanitizeMermaid()` strips problematic characters before passing to `mermaid.render()`.

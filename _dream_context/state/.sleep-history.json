@@ -1,5 +1,19 @@
 [
   {
+    "date": "2026-05-31",
+    "consolidated_at": "2026-05-31T16:13:23.614Z",
+    "summary": "Sleep #7 — v0.5.0/v0.5.1 ship + security hardening + context-gate redesign. sleep-state: 4 changelog entries (v0.5.0 positioning/install/update-nudge, goal-skill+related-skills-recall hook, v0.5.1 dashboard security hardening, context-gate redesign), 2 memory decisions (loopback-bind+CSRF+CORS+safeChildPath hardening pulled forward from v0.6; context gate must show full skill catalog never pre-select — enforced over 4 iterations), 'CLI version hardcoded' known-issue marked FIXED, soul priority → next v0.6.0, RELEASES v0.5.0 summary updated. sleep-tasks: created server-security-hardening task (in_review, v0.5.0, 5/5 nodes done), reconciled goal-skill-and-related-skills-recall to current truth (7/7 done, in_review), updated v06-control-panel-vaults-tauri (security marked DONE). sleep-product: new knowledge dashboard-server-security.md (threat model + 3 mitigations), new feature context-gate-and-goal-skill.md, updated web-dashboard.md (+4 security criteria) and manifest-based-install-update.md (+v0.5.0 install/upgrade/nudge), staleness flags cleared. Marketing rem-sleep clean. Open flag: 6.system_flow.md 6 lines over ceiling + missing new hook blocks (deferred). v0.5.0/v0.5.1 published to npm per session transcripts; RELEASES entry still status=planning awaiting user release call.",
+    "debt_before": 12,
+    "debt_after": 3,
+    "sessions_processed": 3,
+    "bookmarks_processed": 0,
+    "session_ids": [
+      "dc0d95a9-e933-4025-b9c0-45e15eef164c",
+      "7d8e4dc2-bba3-4777-96d3-7c7f63d2d7ca",
+      "fcaa4dbc-0f95-4314-bae8-f61a53a7bad4"
+    ]
+  },
+  {
     "date": "2026-05-26",
     "consolidated_at": "2026-05-26T08:27:01.466Z",
     "summary": "Sleep #6 — Haiku single-call recall, multi-review refactor, BID/BIV skill packs. Created haiku-recall-architecture knowledge file documenting the single claude CLI call design (corpus index in system prompt, 8K cap, execFileSync safety, mode matrix). Updated memory-recall-bm25 feature PRD with 9 new acceptance criteria. Updated multi-reviewer-pattern knowledge (coordinator removed, v1.1). Updated decision-mem0-vs-bm25-recall with Haiku evolution note. 3 new tasks created (haiku-recall-extraction, business-idea-discovery-skill, business-idea-validation-skill). multi-review-skill body reconciled (coordinator references removed throughout). All 4 tasks at in_review under v0.5.0. 3 changelog entries added. 2 memory decisions recorded. soul.md priority updated to v0.5.0.",

@@ -6,9 +6,9 @@ description: >-
   deprecation warnings on old commands
 priority: high
 urgency: medium
-status: in_review
+status: completed
 created_at: '2026-05-22'
-updated_at: '2026-05-22'
+updated_at: '2026-05-31'
 tags: []
 parent_task: null
 related_feature: null

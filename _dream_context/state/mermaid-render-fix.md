@@ -6,9 +6,9 @@ description: >-
   shared useMermaidRender hook, theme-aware init, SVG paint normalization
 priority: high
 urgency: medium
-status: in_review
+status: completed
 created_at: '2026-05-23'
-updated_at: '2026-05-23'
+updated_at: '2026-05-31'
 tags: []
 parent_task: null
 related_feature: null
