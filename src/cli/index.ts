@@ -21,6 +21,7 @@ import { registerCouncilCommand } from './commands/council.js';
 import { registerMarketingCommand } from './commands/marketing.js';
 import { registerMemoryCommand } from './commands/memory.js';
 import { registerUpgradeCommand } from './commands/upgrade.js';
+import { registerVaultsCommand } from './commands/vaults.js';
 import { startInteractive } from './interactive.js';
 import { renderBanner } from '../lib/pixel-banner.js';
 import { dreamcontextVersion } from '../lib/manifest.js';
@@ -74,6 +75,9 @@ ${chalk.bold('System')}
 ${chalk.bold('Dashboard')}
   ${chalk.magentaBright('dashboard')}         Open the web dashboard in your browser
 
+${chalk.bold('Vaults')}
+  ${chalk.magentaBright('vaults')}            Manage the global vault registry (multi-project)
+
 ${chalk.dim('Run')} dreamcontext ${chalk.dim('<command> --help')} ${chalk.dim('for details on a specific command.')}
 `;
 
@@ -114,6 +118,7 @@ export function createProgram(): Command {
   registerCouncilCommand(program);
   registerMarketingCommand(program);
   registerMemoryCommand(program);
+  registerVaultsCommand(program);
 
   return program;
 }

@@ -4,8 +4,13 @@ import { join } from 'node:path';
 import { buildKnowledgeIndex } from '../../lib/knowledge-index.js';
 import { readFrontmatter, updateFrontmatterFields } from '../../lib/frontmatter.js';
 import { parseJsonBody, sendJson, sendError } from '../middleware.js';
+import { safeChildPath } from '../safe-path.js';
 import { recordDashboardChange, buildFieldSummary } from '../change-tracker.js';
 import type { FieldChange } from '../change-tracker.js';
+
+function getKnowledgeDir(contextRoot: string): string {
+  return join(contextRoot, 'knowledge');
+}
 
 /**
  * GET /api/knowledge - List knowledge index
@@ -30,7 +35,8 @@ export async function handleKnowledgeGet(
   contextRoot: string,
 ): Promise<void> {
   const { slug } = params;
-  const filePath = join(contextRoot, 'knowledge', `${slug}.md`);
+  const filePath = safeChildPath(getKnowledgeDir(contextRoot), `${slug}.md`);
+  if (!filePath) { sendError(res, 400, 'invalid_path', `Invalid knowledge slug: ${slug}`); return; }
 
   if (!existsSync(filePath)) {
     sendError(res, 404, 'not_found', `Knowledge file not found: ${slug}`);
@@ -61,7 +67,8 @@ export async function handleKnowledgeUpdate(
   contextRoot: string,
 ): Promise<void> {
   const { slug } = params;
-  const filePath = join(contextRoot, 'knowledge', `${slug}.md`);
+  const filePath = safeChildPath(getKnowledgeDir(contextRoot), `${slug}.md`);
+  if (!filePath) { sendError(res, 400, 'invalid_path', `Invalid knowledge slug: ${slug}`); return; }
 
   if (!existsSync(filePath)) {
     sendError(res, 404, 'not_found', `Knowledge file not found: ${slug}`);

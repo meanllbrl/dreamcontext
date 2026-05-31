@@ -32,6 +32,14 @@ describe('isCrossSiteWrite (CSRF guard)', () => {
     expect(isCrossSiteWrite(req('PATCH', 'http://localhost.evil.com'))).toBe(true);
     expect(isCrossSiteWrite(req('DELETE', 'http://notlocalhost'))).toBe(true);
   });
+
+  // A10 — CSRF coverage for PATCH /api/config.
+  // The guard at src/server/index.ts:103 runs isCrossSiteWrite BEFORE routing,
+  // so any PATCH /api/config from a cross-site origin is blocked at the server
+  // level before handleConfigUpdate is ever called.
+  it('A10: blocks PATCH /api/config from a cross-site origin (covers handleConfigUpdate)', () => {
+    expect(isCrossSiteWrite(req('PATCH', 'https://evil.com'))).toBe(true);
+  });
 });
 
 describe('safeChildPath (path traversal guard)', () => {

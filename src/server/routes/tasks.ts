@@ -6,6 +6,7 @@ import { readFrontmatter, updateFrontmatterFields, writeFrontmatter } from '../.
 import { readSection, listSections, insertToSection } from '../../lib/markdown.js';
 import { generateId, slugify, today } from '../../lib/id.js';
 import { parseJsonBody, sendJson, sendError } from '../middleware.js';
+import { safeChildPath } from '../safe-path.js';
 import { recordDashboardChange, buildFieldSummary } from '../change-tracker.js';
 import type { FieldChange } from '../change-tracker.js';
 import { normalizeRice, mergeRice, validateRiceInput, type RiceFields, type RiceInput } from '../../lib/rice.js';
@@ -87,6 +88,14 @@ function readTask(filePath: string): TaskData {
 
 function getStateDir(contextRoot: string): string {
   return join(contextRoot, 'state');
+}
+
+/**
+ * Resolve a task slug to an absolute path inside the state dir.
+ * Returns null if the slug attempts path traversal.
+ */
+function resolveTaskPath(contextRoot: string, slug: string): string | null {
+  return safeChildPath(getStateDir(contextRoot), `${slug}.md`);
 }
 
 function getTaskFiles(contextRoot: string): string[] {
@@ -242,7 +251,8 @@ export async function handleTasksGet(
   contextRoot: string,
 ): Promise<void> {
   const { slug } = params;
-  const filePath = join(getStateDir(contextRoot), `${slug}.md`);
+  const filePath = resolveTaskPath(contextRoot, slug);
+  if (!filePath) { sendError(res, 400, 'invalid_path', `Invalid task slug: ${slug}`); return; }
 
   if (!existsSync(filePath)) {
     sendError(res, 404, 'not_found', `Task not found: ${slug}`);
@@ -263,7 +273,8 @@ export async function handleTasksUpdate(
   contextRoot: string,
 ): Promise<void> {
   const { slug } = params;
-  const filePath = join(getStateDir(contextRoot), `${slug}.md`);
+  const filePath = resolveTaskPath(contextRoot, slug);
+  if (!filePath) { sendError(res, 400, 'invalid_path', `Invalid task slug: ${slug}`); return; }
 
   if (!existsSync(filePath)) {
     sendError(res, 404, 'not_found', `Task not found: ${slug}`);
@@ -426,7 +437,8 @@ export async function handleTasksChangelog(
   contextRoot: string,
 ): Promise<void> {
   const { slug } = params;
-  const filePath = join(getStateDir(contextRoot), `${slug}.md`);
+  const filePath = resolveTaskPath(contextRoot, slug);
+  if (!filePath) { sendError(res, 400, 'invalid_path', `Invalid task slug: ${slug}`); return; }
 
   if (!existsSync(filePath)) {
     sendError(res, 404, 'not_found', `Task not found: ${slug}`);
@@ -471,7 +483,8 @@ export async function handleTasksInsert(
   contextRoot: string,
 ): Promise<void> {
   const { slug } = params;
-  const filePath = join(getStateDir(contextRoot), `${slug}.md`);
+  const filePath = resolveTaskPath(contextRoot, slug);
+  if (!filePath) { sendError(res, 400, 'invalid_path', `Invalid task slug: ${slug}`); return; }
 
   if (!existsSync(filePath)) {
     sendError(res, 404, 'not_found', `Task not found: ${slug}`);

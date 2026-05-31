@@ -5,6 +5,7 @@ import fg from 'fast-glob';
 import { readFrontmatter } from '../../lib/frontmatter.js';
 import { listSections, readSection } from '../../lib/markdown.js';
 import { sendJson, sendError } from '../middleware.js';
+import { safeChildPath } from '../safe-path.js';
 
 function getFeaturesDir(contextRoot: string): string {
   return join(contextRoot, 'core', 'features');
@@ -53,7 +54,8 @@ export async function handleFeaturesGet(
   contextRoot: string,
 ): Promise<void> {
   const { slug } = params;
-  const filePath = join(getFeaturesDir(contextRoot), `${slug}.md`);
+  const filePath = safeChildPath(getFeaturesDir(contextRoot), `${slug}.md`);
+  if (!filePath) { sendError(res, 400, 'invalid_path', `Invalid feature slug: ${slug}`); return; }
 
   if (!existsSync(filePath)) {
     sendError(res, 404, 'not_found', `Feature not found: ${slug}`);

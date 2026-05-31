@@ -1,7 +1,6 @@
 import { Command } from 'commander';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, cpSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import chalk from 'chalk';
 import matter from 'gray-matter';
 import { checkbox, confirm } from '@inquirer/prompts';
@@ -359,8 +358,21 @@ function ensureClaudeHooks(projectRoot: string): { added: string[]; migrated: bo
   return result;
 }
 
-// ─── File Resolution ────────────────────────────────────────────────────────
+// ─── Catalog (re-exported from lib/catalog) ──────────────────────────────────
 
+export {
+  loadCatalog,
+  findPackageDir,
+  type Catalog,
+  type CatalogPack,
+  type CatalogStandalone,
+  type CatalogSubSkill,
+  type CatalogAgent,
+} from '../../lib/catalog.js';
+import { loadCatalog, findPackageDir } from '../../lib/catalog.js';
+
+// ─── File Resolution ────────────────────────────────────────────────────────
+import { fileURLToPath } from 'node:url';
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
 function findPackageFile(subdir: string, filename: string): string | null {
@@ -374,36 +386,6 @@ function findPackageFile(subdir: string, filename: string): string | null {
     if (existsSync(path)) return path;
   }
   return null;
-}
-
-function findPackageDir(subdir: string): string | null {
-  const candidates = [
-    join(__dirname, '..', '..', '..', subdir),
-    join(__dirname, '..', '..', subdir),
-    join(__dirname, '..', subdir),
-  ];
-
-  for (const path of candidates) {
-    if (existsSync(path)) return path;
-  }
-  return null;
-}
-
-// ─── Catalog Loading ────────────────────────────────────────────────────────
-
-export function loadCatalog(): { catalog: Catalog; packsDir: string } | null {
-  const packsDir = findPackageDir('skill-packs');
-  if (!packsDir) return null;
-
-  const catalogPath = join(packsDir, 'catalog.json');
-  if (!existsSync(catalogPath)) return null;
-
-  try {
-    const catalog = JSON.parse(readFileSync(catalogPath, 'utf-8')) as Catalog;
-    return { catalog, packsDir };
-  } catch {
-    return null;
-  }
 }
 
 // ─── Agent Installation ─────────────────────────────────────────────────────
