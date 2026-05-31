@@ -101,10 +101,10 @@ describe('dreamcontextVersion()', () => {
     expect(dreamcontextVersion()).toBe(String(pkg.version));
   });
 
-  it('returns 0.5.0 (not 0.0.0 sentinel, not old 0.1.0 literal)', async () => {
+  it('matches package.json and is not the 0.0.0 sentinel or the old 0.1.0 literal', async () => {
     const { dreamcontextVersion } = await import('../../src/lib/manifest.js');
     const version = dreamcontextVersion();
-    expect(version).toBe('0.5.0');
+    expect(version).toBe(String(readPkg().version));
     expect(version).not.toBe('0.0.0');
     expect(version).not.toBe('0.1.0');
   });

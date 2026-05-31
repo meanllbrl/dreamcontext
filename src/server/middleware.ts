@@ -42,7 +42,6 @@ export function sendJson(res: ServerResponse, statusCode: number, data: unknown)
   res.writeHead(statusCode, {
     'Content-Type': 'application/json',
     'Content-Length': Buffer.byteLength(body),
-    'Access-Control-Allow-Origin': '*',
   });
   res.end(body);
 }
@@ -54,13 +53,36 @@ export function sendError(res: ServerResponse, statusCode: number, error: string
   sendJson(res, statusCode, { error, message });
 }
 
+/** Origins allowed to call the local dashboard API — loopback only. */
+const LOCAL_ORIGIN_RE = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i;
+
 /**
- * Handle CORS preflight.
+ * True for a state-changing request issued from a cross-site origin.
+ * Browsers always attach Origin on POST/PUT/PATCH/DELETE; a non-browser
+ * client (curl, the CLI itself) sends none and is not a CSRF vector.
+ * Used to block drive-by writes from a malicious page in the user's browser.
+ */
+export function isCrossSiteWrite(req: IncomingMessage): boolean {
+  const method = (req.method || 'GET').toUpperCase();
+  if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return false;
+  const origin = req.headers.origin;
+  if (!origin) return false;
+  return !LOCAL_ORIGIN_RE.test(origin);
+}
+
+/**
+ * CORS for the local dashboard. Reflects ONLY loopback origins — never a
+ * wildcard — so a third-party web page cannot read API responses.
+ * Returns true if the request was a handled OPTIONS preflight.
  */
 export function handleCors(req: IncomingMessage, res: ServerResponse): boolean {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  const origin = req.headers.origin;
+  if (origin && LOCAL_ORIGIN_RE.test(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  }
 
   if (req.method === 'OPTIONS') {
     res.writeHead(204);

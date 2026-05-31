@@ -7,8 +7,9 @@ export function registerDashboardCommand(program: Command): void {
     .command('dashboard')
     .description('Open the web dashboard in your browser')
     .option('-p, --port <port>', 'Port number', '4173')
+    .option('--host <host>', 'Interface to bind (default loopback). Use 0.0.0.0 to expose on your network.', '127.0.0.1')
     .option('--no-open', 'Do not open browser automatically')
-    .action(async (opts: { port: string; open: boolean }) => {
+    .action(async (opts: { port: string; host: string; open: boolean }) => {
       const contextRoot = ensureContextRoot();
       const port = parseInt(opts.port, 10);
 
@@ -16,6 +17,6 @@ export function registerDashboardCommand(program: Command): void {
         throw new Error('Invalid port number. Must be between 1 and 65535.');
       }
 
-      await startDashboardServer({ port, contextRoot, open: opts.open });
+      await startDashboardServer({ port, contextRoot, open: opts.open, host: opts.host });
     });
 }

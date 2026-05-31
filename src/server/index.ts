@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { exec } from 'node:child_process';
 import { Router } from './router.js';
-import { handleCors, sendError } from './middleware.js';
+import { handleCors, isCrossSiteWrite, sendError } from './middleware.js';
 import { serveStatic } from './static.js';
 import { handleHealthGet } from './routes/health.js';
 import { handleTasksList, handleTasksCreate, handleTasksGet, handleTasksUpdate, handleTasksChangelog, handleTasksInsert } from './routes/tasks.js';
@@ -19,6 +19,8 @@ export interface ServerOptions {
   port: number;
   contextRoot: string;
   open: boolean;
+  /** Network interface to bind. Defaults to loopback (127.0.0.1). */
+  host?: string;
 }
 
 function buildRouter(): Router {
@@ -87,7 +89,7 @@ function openBrowser(url: string): void {
 }
 
 export function startDashboardServer(options: ServerOptions): Promise<void> {
-  const { port, contextRoot, open } = options;
+  const { port, contextRoot, open, host = '127.0.0.1' } = options;
   const router = buildRouter();
   const dashboardDir = getDashboardDir();
 
@@ -96,6 +98,12 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
       try {
         // Handle CORS preflight
         if (handleCors(req, res)) return;
+
+        // CSRF defense: reject state-changing requests from a cross-site origin.
+        if (isCrossSiteWrite(req)) {
+          sendError(res, 403, 'forbidden', 'Cross-site request blocked.');
+          return;
+        }
 
         const url = new URL(req.url || '/', `http://${req.headers.host}`);
         const method = req.method || 'GET';
@@ -129,9 +137,13 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
 
     server.setTimeout(30000);
 
-    server.listen(port, () => {
-      const url = `http://localhost:${port}`;
+    server.listen(port, host, () => {
+      const shownHost = host === '127.0.0.1' ? 'localhost' : host;
+      const url = `http://${shownHost}:${port}`;
       console.log(`\n  Dashboard: ${url}\n`);
+      if (host !== '127.0.0.1') {
+        console.log(`  WARNING: bound to ${host} — the dashboard API is reachable from your network.\n`);
+      }
       console.log('  Press Ctrl+C to stop.\n');
 
       if (open) {

@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { readFrontmatter, writeFrontmatter } from '../../lib/frontmatter.js';
 import { listSections, readSection } from '../../lib/markdown.js';
 import { parseJsonBody, sendJson, sendError } from '../middleware.js';
+import { safeChildPath } from '../safe-path.js';
 import { recordDashboardChange } from '../change-tracker.js';
 
 function getCoreDir(contextRoot: string): string {
@@ -58,7 +59,11 @@ export async function handleCoreGet(
   contextRoot: string,
 ): Promise<void> {
   const { filename } = params;
-  const filePath = join(getCoreDir(contextRoot), filename);
+  const filePath = safeChildPath(getCoreDir(contextRoot), filename);
+  if (!filePath) {
+    sendError(res, 400, 'invalid_path', 'Invalid filename.');
+    return;
+  }
 
   if (!existsSync(filePath)) {
     sendError(res, 404, 'not_found', `Core file not found: ${filename}`);
@@ -119,7 +124,11 @@ export async function handleCoreUpdate(
   contextRoot: string,
 ): Promise<void> {
   const { filename } = params;
-  const filePath = join(getCoreDir(contextRoot), filename);
+  const filePath = safeChildPath(getCoreDir(contextRoot), filename);
+  if (!filePath) {
+    sendError(res, 400, 'invalid_path', 'Invalid filename.');
+    return;
+  }
 
   if (!existsSync(filePath)) {
     sendError(res, 404, 'not_found', `Core file not found: ${filename}`);
