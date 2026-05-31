@@ -4,7 +4,7 @@ import { Sidebar, type Page } from './Sidebar';
 import './Shell.css';
 
 const ACTIVE_PAGE_STORAGE_KEY = 'dreamcontext.dashboard.activePage';
-const VALID_PAGES: readonly Page[] = ['tasks', 'core', 'knowledge', 'features', 'sleep', 'brain', 'council'];
+const VALID_PAGES: readonly Page[] = ['tasks', 'core', 'knowledge', 'features', 'sleep', 'brain', 'council', 'settings', 'packs'];
 
 function readStoredPage(): Page {
   if (typeof window === 'undefined') return 'brain';

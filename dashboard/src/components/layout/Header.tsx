@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useTheme } from '../../context/ThemeContext';
 import { useSleep, getSleepLevel, getSleepLevelKey } from '../../hooks/useSleep';
+import { UpdateBadge } from './UpdateBadge';
 import './Header.css';
 
 const ZOOM_LEVELS = [0.85, 0.9, 1.0, 1.1, 1.2];
@@ -81,6 +82,7 @@ export function Header() {
         </div>
       </div>
       <div className="header-right">
+        <UpdateBadge />
         <div className="zoom-controls">
           <button
             className="zoom-btn"

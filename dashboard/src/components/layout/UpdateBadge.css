@@ -1,0 +1,105 @@
+.update-badge {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.update-badge-trigger {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  background: var(--color-warning-subtle);
+  border: 1px solid var(--color-warning);
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.update-badge-trigger:hover {
+  background: var(--color-warning);
+  border-color: var(--color-warning);
+}
+
+.update-badge-trigger:hover .update-badge-label {
+  color: var(--color-text-on-brand);
+}
+
+.update-badge-dot {
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--color-warning);
+  flex-shrink: 0;
+  /* Subtle pulse animation — reduced-motion guard */
+  animation: update-badge-pulse 2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .update-badge-dot {
+    animation: none;
+  }
+}
+
+@keyframes update-badge-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.update-badge-label {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-warning);
+  white-space: nowrap;
+}
+
+.update-badge-popover {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  right: 0;
+  width: 360px;
+  max-width: 90vw;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xl);
+  z-index: 100;
+}
+
+.update-badge-popover-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.update-badge-popover-title {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+}
+
+.update-badge-dismiss {
+  width: var(--space-6);
+  height: var(--space-6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-base);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.update-badge-dismiss:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
+
+.update-badge-content {
+  padding: var(--space-4);
+  max-height: 320px;
+  overflow-y: auto;
+}

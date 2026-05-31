@@ -1,7 +1,7 @@
 import { useI18n } from '../../context/I18nContext';
 import './Sidebar.css';
 
-export type Page = 'tasks' | 'core' | 'knowledge' | 'features' | 'sleep' | 'brain' | 'council';
+export type Page = 'tasks' | 'core' | 'knowledge' | 'features' | 'sleep' | 'brain' | 'council' | 'settings' | 'packs';
 
 interface SidebarProps {
   activePage: Page;
@@ -16,6 +16,8 @@ const NAV_ITEMS: { page: Page; icon: string; labelKey: string }[] = [
   { page: 'features', icon: '⚑', labelKey: 'nav.features' },
   { page: 'council', icon: '⚔', labelKey: 'nav.council' },
   { page: 'sleep', icon: '◑', labelKey: 'nav.sleep' },
+  { page: 'packs', icon: '◳', labelKey: 'nav.packs' },
+  { page: 'settings', icon: '⚙', labelKey: 'nav.settings' },
 ];
 
 export function Sidebar({ activePage, onNavigate }: SidebarProps) {

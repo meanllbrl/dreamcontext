@@ -11,6 +11,8 @@ import { KnowledgePage } from './pages/KnowledgePage';
 import { FeaturesPage } from './pages/FeaturesPage';
 import { BrainPage, type BrainNavigatePage } from './pages/BrainPage';
 import { CouncilPage } from './pages/CouncilPage';
+import { SettingsPage } from './pages/SettingsPage';
+import { PacksPage } from './pages/PacksPage';
 import type { Page } from './components/layout/Sidebar';
 import './styles/global.css';
 
@@ -53,6 +55,10 @@ function PageRouter({ nav }: { nav: ShellNavigation }) {
       return <FeaturesPage />;
     case 'council':
       return <CouncilPage />;
+    case 'settings':
+      return <SettingsPage />;
+    case 'packs':
+      return <PacksPage />;
   }
 }
 
