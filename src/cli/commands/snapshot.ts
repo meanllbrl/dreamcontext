@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { readFileSync, existsSync, statSync } from 'node:fs';
-import { join, basename } from 'node:path';
+import { join, basename, dirname } from 'node:path';
 import fg from 'fast-glob';
 import { resolveContextRoot } from '../../lib/context-path.js';
 import { readFrontmatter } from '../../lib/frontmatter.js';
@@ -11,6 +11,8 @@ import { buildKnowledgeIndex } from '../../lib/knowledge-index.js';
 import { buildCoreIndex } from '../../lib/core-index.js';
 import { buildMarketingSnapshot } from '../../lib/marketing/snapshot.js';
 import { readSetupConfig } from '../../lib/setup-config.js';
+import { readVersionCache, isCacheFresh, buildNudge } from '../../lib/version-check.js';
+import { dreamcontextVersion } from '../../lib/manifest.js';
 
 /**
  * Default line cap when inlining pinned knowledge into the auto-context snapshot.
@@ -212,7 +214,8 @@ function resolveActiveTaskPath(root: string): string | null {
  * direct the agent to read the full file if truncated.
  */
 function getActiveProductKnowledge(root: string): string[] {
-  const config = readSetupConfig(root);
+  // root = _dream_context/ dir; readSetupConfig expects project root
+  const config = readSetupConfig(dirname(root));
   if (!config || !Array.isArray(config.multiProduct) || config.multiProduct.length === 0) {
     return [];
   }
@@ -271,6 +274,37 @@ function getActiveProductKnowledge(root: string): string[] {
     truncatedNote ? truncatedNote.trim() : '',
     '',
   ].filter((s) => s !== '');
+}
+
+/**
+ * Read-only version nudge for the snapshot.
+ * Uses only the on-disk cache — NO network, NO subprocess, NO catalog load.
+ * Returns '' when the cache is absent/stale or when there is nothing to report.
+ * Never throws.
+ *
+ * NOTE: `root` here is the `_dream_context/` directory path (as returned by
+ * resolveContextRoot). readVersionCache and readSetupConfig both expect a
+ * project root (parent of _dream_context/), so we derive it via dirname(root).
+ */
+function getVersionNudge(root: string): string {
+  try {
+    // root = /path/to/project/_dream_context
+    // projectRoot = /path/to/project
+    const projectRoot = dirname(root);
+    const cache = readVersionCache(projectRoot);
+    if (!cache || !isCacheFresh(cache)) return '';
+
+    const installedCli = dreamcontextVersion();
+    const config = readSetupConfig(projectRoot);
+    const installedPacks: string[] = config?.packs ?? [];
+    // availablePacks was stored by refreshVersionCache — no catalog needed here
+    const catalogPackNames = cache.availablePacks;
+
+    const nudge = buildNudge(installedCli, cache, installedPacks, catalogPackNames);
+    return nudge ?? '';
+  } catch {
+    return '';
+  }
 }
 
 /**
@@ -343,6 +377,13 @@ export function generateSnapshot(): string {
   const productKnowledge = getActiveProductKnowledge(root);
   if (productKnowledge.length > 0) {
     parts.push(...productKnowledge);
+  }
+
+  // 5.2 Version nudge (read-only — no network, uses cached data only)
+  const versionNudge = getVersionNudge(root);
+  if (versionNudge) {
+    parts.push(versionNudge);
+    parts.push('');
   }
 
   // 5.5 Read sleep state (used by multiple sections below)

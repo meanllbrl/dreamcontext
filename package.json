@@ -1,7 +1,7 @@
 {
   "name": "dreamcontext",
-  "version": "0.2.0",
-  "description": "AI agent persistent context management CLI",
+  "version": "0.5.0",
+  "description": "dreamcontext — the persistent brain for your AI agents. Remembers what you built, knows how your project works.",
   "type": "module",
   "bin": {
     "dreamcontext": "./dist/index.js"
@@ -12,7 +12,8 @@
     "skill-packs",
     "agents",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "install.sh"
   ],
   "scripts": {
     "build:dashboard": "cd dashboard && npm run build",
@@ -28,6 +29,7 @@
     "agent",
     "context",
     "memory",
+    "brain",
     "cli",
     "claude",
     "gemini",

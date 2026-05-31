@@ -20,8 +20,10 @@ import { registerTranscriptCommand } from './commands/transcript.js';
 import { registerCouncilCommand } from './commands/council.js';
 import { registerMarketingCommand } from './commands/marketing.js';
 import { registerMemoryCommand } from './commands/memory.js';
+import { registerUpgradeCommand } from './commands/upgrade.js';
 import { startInteractive } from './interactive.js';
 import { renderBanner } from '../lib/pixel-banner.js';
+import { dreamcontextVersion } from '../lib/manifest.js';
 
 // ─── Logo ────────────────────────────────────────────────────────────────────
 
@@ -50,6 +52,7 @@ ${chalk.bold('Setup')}
   ${chalk.magentaBright('install-instructions')} ${chalk.dim('(deprecated)')} Install managed root instruction files
   ${chalk.magentaBright('install-claude-md')} ${chalk.dim('(deprecated)')} Legacy alias for CLAUDE.md install
   ${chalk.magentaBright('update')}            Refresh installed skill, agents, hooks, packs, and root instructions
+  ${chalk.magentaBright('upgrade')}           Upgrade the dreamcontext CLI itself to the latest version
 
 ${chalk.bold('Content')}
   ${chalk.magentaBright('core')}              Add changelog and release entries
@@ -82,7 +85,7 @@ export function createProgram(): Command {
   program
     .name('dreamcontext')
     .description('Persistent memory for AI agents')
-    .version('0.1.0')
+    .version(dreamcontextVersion())
     .addHelpText('after', HELP_GROUPS)
     .configureHelp({
       showGlobalOptions: false,
@@ -98,6 +101,7 @@ export function createProgram(): Command {
   registerInstallInstructionsCommand(program);
   registerInstallClaudeMdCommand(program);
   registerUpdateCommand(program);
+  registerUpgradeCommand(program);
   registerSnapshotCommand(program);
   registerSleepCommand(program);
   registerRecallCommand(program);

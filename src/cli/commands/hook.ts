@@ -10,6 +10,8 @@ import { listStaleRecs } from '../../lib/marketing/snapshot.js';
 import { isMarketingEnvPath } from '../../lib/marketing/path-guards.js';
 import { buildCorpus, bm25Search, loadSkillDocs, type RecallHit } from '../../lib/recall.js';
 import { haikuRecall } from '../../lib/recall-query-extractor.js';
+import { readVersionCache, isCacheFresh, refreshVersionCache } from '../../lib/version-check.js';
+import { loadCatalog } from './install-skill.js';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -619,6 +621,37 @@ export function registerHookCommand(program: Command): void {
         // Marketing snapshot must never break the hook.
       }
 
+      // Version refresh — lazy, gated (at most once per 24h TTL).
+      // Only runs when cache is absent or stale. Never throws — version check is
+      // best-effort and must not affect hook reliability. Honor opt-out env var.
+      // NOTE: root = _dream_context/ dir; readVersionCache / refreshVersionCache
+      // expect project root (parent of _dream_context/), hence dirname(root).
+      if (process.env.DREAMCONTEXT_VERSION_CHECK !== '0') {
+        try {
+          const projectRoot = dirname(root);
+          const vcache = readVersionCache(projectRoot);
+          if (!isCacheFresh(vcache)) {
+            const loaded = loadCatalog();
+            const packNames: string[] = loaded
+              ? [
+                  ...loaded.catalog.packs.map((p) => p.name),
+                  ...loaded.catalog.standalone.map((s) => s.name),
+                ]
+              : [];
+            refreshVersionCache(projectRoot, { catalogPackNames: packNames });
+          }
+        } catch {
+          // Version check must never break the hook.
+        }
+      }
+
+      // Context gate accumulators — drive the hard "read before code" directive
+      // emitted after the recall + skills blocks below. gatedDocs collects the
+      // surfaced knowledge/feature docs the agent MUST read first; gatedSkills
+      // flags that a related skill was surfaced and must be invoked if it fits.
+      const gatedDocs: string[] = [];
+      let gatedSkills = false;
+
       // Memory recall injection — single Haiku call sees corpus index + prompt,
       // returns only relevant docs. Falls back to raw BM25 if Haiku fails.
       // Priority: env var > state file > default 'haiku'.
@@ -655,6 +688,9 @@ export function registerHookCommand(program: Command): void {
                 const lines: string[] = ['', `— Memory recall (${mode}, top ${hits.length}) —`];
                 for (const h of hits) {
                   lines.push(`  [${h.doc.type}] ${h.doc.relPath}`);
+                  // Knowledge/feature docs encode decisions the code won't show —
+                  // the agent must read them before acting (see context gate below).
+                  if (h.doc.type === 'knowledge' || h.doc.type === 'feature') gatedDocs.push(h.doc.relPath);
                   if (h.snippet) lines.push(`    Why: ${h.snippet}`);
                   else if (h.doc.description) lines.push(`    ${h.doc.description}`);
                   const excerpt = h.doc.body
@@ -701,12 +737,32 @@ export function registerHookCommand(program: Command): void {
                   lines.push(`  • ${h.doc.slug}${desc ? ` — ${desc}` : ''}`);
                 }
                 console.log(lines.join('\n'));
+                gatedSkills = true;
               }
             }
           }
         } catch (skillErr) {
           if (process.env.DREAMCONTEXT_DEBUG) console.error('[skills] error:', (skillErr as Error).message ?? skillErr);
         }
+      }
+
+      // ── Context gate (hard rule) ──────────────────────────────────────────
+      // If a knowledge/feature doc or a related skill surfaced above, the agent
+      // MUST consume it before reading source code or acting. Surfaced context
+      // is not optional reading — this is the behavioral bootstrap. Pure string
+      // ops over local state, so no try/catch needed.
+      if (gatedDocs.length > 0 || gatedSkills) {
+        const g: string[] = ['', '⛔ BEFORE reading source code or acting on this task — REQUIRED (not optional):'];
+        if (gatedDocs.length > 0) {
+          g.push(`  • READ the knowledge/feature doc(s) above FIRST with the Read tool: ${gatedDocs.join(', ')}`);
+          g.push('    They encode decisions and constraints the source code will NOT show. Do not open source files until you have.');
+        }
+        if (gatedSkills) {
+          g.push('  • INVOKE the related skill(s) above via the Skill tool if they fit — required, not "if you like".');
+        }
+        g.push('  • Need more? Run: dreamcontext memory recall "<keywords from this task>" for precise context.');
+        g.push('  Skipping this repeats past mistakes, misses constraints, and burns tokens re-exploring.');
+        console.log(g.join('\n'));
       }
     });
 

@@ -7,6 +7,9 @@ dashboard/dist/
 .DS_Store
 .claude/
 
+# Version check cache — ephemeral, project-local, not for VCS
+_dream_context/state/.version-check.json
+
 # Marketing skill — per-project Python tooling, caches, secrets
 _dream_context/**/.env
 _dream_context/marketing/.lock

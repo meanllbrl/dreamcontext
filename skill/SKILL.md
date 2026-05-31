@@ -523,6 +523,7 @@ All commands prefixed with `dreamcontext`. For reading/searching, use native too
 | `snapshot --tokens` | Estimate snapshot token count |
 | `doctor` | Validate `_dream_context/` structure |
 | `install-skill` | Install skill + hooks |
+| `upgrade [--check]` | Update the dreamcontext CLI itself to the latest npm release |
 
 Feature insert sections: `changelog`, `notes`, `technical_details`, `constraints`, `user_stories`, `acceptance_criteria`, `why`
 Task insert sections: `why`, `user_stories`, `acceptance_criteria`, `constraints`, `technical_details`, `notes`, `changelog`

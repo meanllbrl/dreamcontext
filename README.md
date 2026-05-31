@@ -5,8 +5,11 @@
 <h1 align="center">dreamcontext</h1>
 
 <p align="center">
-  Structured, persistent context for AI coding agents.<br/>
-  Pre-loaded via hooks. Zero tool calls to get started.
+  dreamcontext is the persistent brain for your AI agents — and for you.<br/>
+  It remembers every decision you made, knows how your project is structured,<br/>
+  and is learning to act on that knowledge so that every session starts ready instead of blind.<br/>
+  Built for founders and builders, technical or not, who are tired of watching their agent<br/>
+  re-discover context it already had.
 </p>
 
 <p align="center">
@@ -103,6 +106,14 @@ flowchart LR
 - **Everything is local markdown and JSON.** Readable, editable, git-tracked, owned by you.
 
 ## Quick Start
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/meanllbrl/dreamcontext/main/install.sh | sh
+```
+
+> (goes live once published to npm & merged to main)
+
+**Manual install (npm):**
 
 ```bash
 npm install -g dreamcontext
