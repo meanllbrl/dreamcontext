@@ -4,7 +4,7 @@ name: deflake-marketing-council
 description: deflake-marketing-council
 priority: medium
 urgency: medium
-status: todo
+status: in_review
 created_at: '2026-05-31'
 updated_at: '2026-05-31'
 tags: []
@@ -19,9 +19,9 @@ version: 0.6.0
 ```mermaid
 flowchart TD
   subgraph M1 ["M1 — De-flake marketing-council test"]
-    A1[A1 diagnose root cause of non-determinism]:::todo
-    A2[A2 fix via deterministic fixture or subprocess mock]:::todo
-    A3[A3 test passes reliably in 5 consecutive runs]:::todo
+    A1[A1 diagnose root cause of non-determinism]:::done
+    A2[A2 fix via deterministic fixture or subprocess mock]:::done
+    A3[A3 test passes reliably in 5 consecutive runs]:::done
   end
 
   classDef done fill:#86efac,stroke:#15803d,color:#052e16
@@ -37,13 +37,13 @@ tests/integration/marketing-council.test.ts > 'creates a debate with all 4 marke
 
 ## User Stories
 
-- [ ] As a developer running the test suite, I can trust that `vitest run` produces a consistent pass/fail result across consecutive runs (no randomly failing tests).
+- [x] As a developer running the test suite, I can trust that `vitest run` produces a consistent pass/fail result across consecutive runs (no randomly failing tests).
 
 ## Acceptance Criteria
 
-- [ ] **A1** Root cause of non-determinism in `tests/integration/marketing-council.test.ts > 'creates a debate with all 4 marketing personas pre-registered'` is identified (filesystem race, transient subprocess failure, or shared state).
-- [ ] **A2** Test fixed via deterministic fixture, subprocess mock, or serialization — no flaky behavior on repeated isolated runs.
-- [ ] **A3** `vitest run tests/integration/marketing-council.test.ts` passes in 5 consecutive runs with no skips.
+- [x] **A1** Root cause of non-determinism in `tests/integration/marketing-council.test.ts > 'creates a debate with all 4 marketing personas pre-registered'` is identified (filesystem race, transient subprocess failure, or shared state).
+- [x] **A2** Test fixed via deterministic fixture, subprocess mock, or serialization — no flaky behavior on repeated isolated runs.
+- [x] **A3** `vitest run tests/integration/marketing-council.test.ts` passes in 5 consecutive runs with no skips.
 
 ## Constraints & Decisions
 <!-- LIFO: newest at top. Capture the why, not just the what. -->
@@ -61,6 +61,12 @@ Hypothesis: filesystem state or subprocess timing race in the mk council subproc
 <!-- LIFO: newest at top. Auto-prepended by `dreamcontext tasks log`. -->
 
 
+
+
+### 2026-05-31 - Status → in_review
+- fixed regex + deterministic unit test; 10/10 integration runs clean
+### 2026-05-31 - Session Update
+- Root cause: extractDebateIdFromCreateOutput regex was /^council_[A-Za-z0-9]+$/ but debate IDs are council_${nanoid(8)} and nanoid's alphabet is URL-safe (A-Za-z0-9_-) — IDs with _ or - failed to parse → exit 1 (~1/6 runs). Fix: regex now includes _ and -. Added deterministic unit test tests/unit/marketing-council-parse.test.ts (6 cases incl _, -, mixed case). Verified: 10/10 integration runs clean (was ~17% failure).
 ### 2026-05-31 - Session Update
 - sleep-tasks: populated placeholder body — added User Stories, 3 ACs, Technical Details (root file + isolation pattern); fixed version v0.5.0 → 0.6.0
 ### 2026-05-31 - Created

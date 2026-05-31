@@ -59,7 +59,10 @@ export function extractDebateIdFromCreateOutput(stdout: string): string | null {
   const lines = stdout.trim().split('\n');
   for (let i = lines.length - 1; i >= 0; i -= 1) {
     const line = lines[i].trim();
-    if (/^council_[A-Za-z0-9]+$/.test(line)) return line;
+    // Debate IDs are `council_${nanoid(8)}`; nanoid's default alphabet is
+    // URL-safe (A-Za-z0-9_-), so the suffix can contain `_` and `-`. The class
+    // MUST include them or parsing fails intermittently on those random IDs.
+    if (/^council_[A-Za-z0-9_-]+$/.test(line)) return line;
   }
   return null;
 }
