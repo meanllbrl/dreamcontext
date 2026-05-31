@@ -2,10 +2,10 @@
 id: "feat_mBa5T4nU"
 status: "in_review"
 created: "2026-05-22"
-updated: "2026-05-31"
+updated: "2026-06-01"
 released_version: null
 tags: ["devops", "onboarding", "architecture"]
-related_tasks: ["v04-ws1-install-update-overhaul"]
+related_tasks: ["v04-ws1-install-update-overhaul", "v06-control-plane-backend", "v06-control-panel-frontend"]
 ---
 
 ## Why
@@ -47,6 +47,7 @@ v0.5.0 extended this with: (1) a one-command `install.sh` curl script, (2) a `dr
 - [x] `src/lib/version-check.ts`: `readVersionCache`, `isCacheFresh` (TTL 24h), `compareVersions` (semver-lite), `buildNudge` (pure, returns string or null), `refreshVersionCache` (only networked function, runs from UserPromptSubmit hook). Cache stored at `_dream_context/state/.version-check.json`.
 - [x] `generateSnapshot()` in `snapshot.ts` injects `## Update Available` block when a fresh cache indicates installed < latest. Never makes a network call — reads only the cache file.
 - [x] UserPromptSubmit hook lazy-refreshes the version cache (at most once per 24h TTL, wrapped in try/catch, failure writes `latestCli: null` silently).
+- [x] `GET /api/version-check` dashboard route exposes the nudge payload to the browser via disk cache (no network); `UpdateBadge` component surfaces it in the header.
 
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
@@ -73,6 +74,11 @@ v0.5.0 extended this with: (1) a one-command `install.sh` curl script, (2) a `dr
 - Cache file: `_dream_context/state/.version-check.json` (machine-local, gitignored).
 - `snapshot.ts` → `getVersionNudge(root)` reads cache, calls `buildNudge`, emits `## Update Available` section or nothing.
 - `hook.ts` UserPromptSubmit → lazy `refreshVersionCache` behind `isCacheFresh` check, wrapped in try/catch.
+
+**v0.6 dashboard surface** (added in `v06-control-plane-backend`/`v06-control-panel-frontend`):
+- `src/server/routes/version-check.ts` — `GET /api/version-check`; imports `readVersionCache`, `isCacheFresh`, `buildNudge` from `src/lib/version-check.ts` (NOT from any CLI command file); cache-only, no network. Returns `{cache, fresh, nudge}`.
+- `dashboard/src/hooks/useVersionCheck.ts` — TanStack Query hook polling the route.
+- `dashboard/src/components/layout/UpdateBadge.tsx` — header banner; renders when `nudge !== null`; hidden when null (no layout change).
 
 **Manifest diff logic** (`diffManifests(old, new)`):
 - `added`: in new but not old.

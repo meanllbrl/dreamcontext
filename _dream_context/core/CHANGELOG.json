@@ -1,6 +1,99 @@
 [
   {
     "date": "2026-05-31",
+    "type": "feat",
+    "scope": "control-panel",
+    "description": "Two deliverables in commit 6e9dfac. (1) dashboard --vault flag: resolveVaultContextRoot() added to src/lib/vaults.ts — accepts a registered vault name OR an explicit path; dashboard command passes the resolved contextRoot to the server, re-rooting all API routes to the chosen vault. Invalid vault produces a clean non-zero exit. 9 new integration + unit tests; full suite 962/962. (2) Tauri 2.x desktop scaffold: desktop/ directory with desktop/src-tauri/src/lib.rs hosting a Rust app that finds a free loopback port, spawns the Node CLI process (dreamcontext dashboard --port <N> --vault <path>), waits for the server to become ready, and loads it via WebviewUrl::External. Shell capability scoped to 'node' only. Tauri conf specifies desktop window at 1200×800. cargo check compiles clean (Rust 1.96 + tauri 2.x). A7 (tauri dev window launch) and A8 (sign/notarize/updater/icons) are manual handoffs.",
+    "breaking": false,
+    "summary": "v0.6 slice 3: dashboard --vault <name|path> + Tauri 2.x desktop shell scaffold (cargo check compiles)",
+    "references": [
+      "commit:6e9dfac",
+      "file:src/lib/vaults.ts",
+      "file:src/cli/commands/dashboard.ts",
+      "file:desktop/src-tauri/src/lib.rs",
+      "file:desktop/src-tauri/tauri.conf.json",
+      "task:v06-tauri-shell"
+    ]
+  },
+  {
+    "date": "2026-05-31",
+    "type": "feat",
+    "scope": "control-panel",
+    "description": "Dashboard wiring for v0.6, shipped in commit fd1a908. Four new surfaces: (1) Settings page — GET/PATCH /api/config with platform toggles and packs selection; (2) Packs page — browse catalog + installed state via GET /api/packs; (3) UpdateBadge — banner in the header driven by GET /api/version-check that surfaces the in-session update nudge inside the dashboard; (4) read-only Vaults list via new GET /api/vaults route (src/server/routes/vaults.ts). Data layer: TanStack Query hooks useConfig, usePacks, useVersionCheck, useVaults in dashboard/src/hooks/. I18nContext.tsx added; dashboard/tsconfig.json gains noImplicitReturns. CSS: UpdateBadge.css + SettingsPage.css + PacksPage.css. 121 new tests; 953 tests total, all green.",
+    "breaking": false,
+    "summary": "v0.6 slice 2: React dashboard wired to control-plane — Settings, Packs, UpdateBadge, read-only Vaults",
+    "references": [
+      "commit:fd1a908",
+      "file:dashboard/src/pages/SettingsPage.tsx",
+      "file:dashboard/src/pages/PacksPage.tsx",
+      "file:dashboard/src/components/layout/UpdateBadge.tsx",
+      "file:src/server/routes/vaults.ts",
+      "task:v06-control-panel-frontend"
+    ]
+  },
+  {
+    "date": "2026-05-31",
+    "type": "feat",
+    "scope": "control-panel",
+    "description": "Backend control-plane for v0.6, shipped in commit 2cef75b. Three areas: (1) Vault registry — src/lib/vaults.ts with global registry at ~/.dreamcontext/vaults.json; VaultError typed errors; vaults CLI subcommands (add/list/remove) registered in src/cli/index.ts. (2) Control-plane routes — GET/PATCH /api/config (strict-picks {platforms,packs} only, per-element validation, never spread body), GET /api/packs (catalog listing), GET /api/version-check (cache-only, no network in request path); all routes receive contextRoot as the _dream_context/ dir and use dirname(contextRoot) for project root. (3) Path-traversal hardening — src/server/safe-path.ts safeChildPath applied to all 7 slug-to-path joins across tasks (×4), knowledge (×2), and features (×1) routes; resolveTaskPath + getKnowledgeDir helpers centralize lookups. Also: loadCatalog + types extracted to src/lib/catalog.ts so @inquirer/prompts never enters the server bundle. 68 new tests; full suite green.",
+    "breaking": false,
+    "summary": "v0.6 slice 1: vaults registry + CLI, /api/config|packs|version-check routes, safeChildPath on all slug joins",
+    "references": [
+      "commit:2cef75b",
+      "file:src/lib/vaults.ts",
+      "file:src/lib/catalog.ts",
+      "file:src/server/routes/config.ts",
+      "file:src/server/routes/packs.ts",
+      "file:src/server/routes/version-check.ts",
+      "file:src/server/safe-path.ts",
+      "task:v06-control-plane-backend"
+    ]
+  },
+  {
+    "date": "2026-05-31",
+    "type": "test",
+    "scope": "snapshot",
+    "description": "Updated 17 failing test fixtures across tests/integration/hook.test.ts, tests/integration/sleep.test.ts, tests/integration/snapshot.test.ts, and tests/unit/sleep-state.test.ts to match current system behavior: recall_mode defaults to 'haiku' (not 'bm25'), pinned-by-reference knowledge files are indexed (not inlined), changelog tiering now uses 'type' field, and the sleep-state block is no longer emitted in the snapshot output. No source changes — fixture-only alignment.",
+    "breaking": false,
+    "summary": "Align 17 stale fixture tests with current snapshot/sleep behavior",
+    "references": [
+      "commit:c17ef9f",
+      "file:tests/integration/hook.test.ts",
+      "file:tests/integration/snapshot.test.ts",
+      "file:tests/integration/sleep.test.ts"
+    ]
+  },
+  {
+    "date": "2026-05-31",
+    "type": "feat",
+    "scope": "hook",
+    "description": "Two changes in commit 62768a1. First: the UserPromptSubmit context gate now surfaces the FULL installed skill catalog rather than pre-selecting a top-3 relevant subset. The old design arbitrarily constrained which skills the agent considered; the new gate tells the agent to review all skills already in context and invoke any that fit. Internal BM25 scoring still determines WHETHER to fire the gate but never which skills to list. Tests updated: 'fires gate / review full list / no listing' assertion green. Second: 5 Codex review agents added to .codex/agents/ (review-cloud-functions, review-edge-cases, review-frontend, review-router, review-security) mirroring the multi-review skill specialist roster for Codex CLI users. This supersedes the earlier context-gate entry (2026-05-31|hook) which described the same redesign from a different session angle.",
+    "breaking": false,
+    "summary": "Context gate surfaces full skill catalog (drop top-3 pre-pick); add 5 Codex review agents",
+    "references": [
+      "commit:62768a1",
+      "file:src/cli/commands/hook.ts",
+      "file:tests/integration/hook.test.ts",
+      "file:.codex/agents/review-security.toml"
+    ],
+    "supersedes": "2026-05-31|hook"
+  },
+  {
+    "date": "2026-05-31",
+    "type": "docs",
+    "scope": "readme",
+    "description": "Rewrote README.md and DEEP-DIVE.md to reflect the v0.5.x reality. README: new 'Skills' section explaining skill packs + goal-skill orchestration; expanded 'Staying Up to Date' with upgrade command + in-session nudge; corrected stale command examples and hook counts. DEEP-DIVE: added 'Install & Update' walkthrough (curl|sh idempotent install, upgrade check, CDN-install safety rationale) and 'Dashboard Security Model' section (loopback bind, CSRF guard, CORS lockdown, path-traversal guard). All 16 positioning-doc tests pass; banned 'autonomous' confirmed absent.",
+    "breaking": false,
+    "summary": "Refresh README + DEEP-DIVE for v0.5.x: Skills section, update flow, dashboard security model, stale facts fixed",
+    "references": [
+      "commit:2f94beb",
+      "file:README.md",
+      "file:DEEP-DIVE.md",
+      "task:readme-deepdive-v05-refresh"
+    ]
+  },
+  {
+    "date": "2026-05-31",
     "type": "change",
     "scope": "hook",
     "description": "The UserPromptSubmit context gate iterated four times in a single session before landing on this design. The old gate identified a top-3 relevant skill subset and listed them by name — an arbitrary pre-selection that constrained which skills the agent considered. The new gate removes that list entirely and instead tells the agent: 'review the skills available to you (the full list is already in your context) and INVOKE any that fit this task via the Skill tool — do NOT limit yourself to a pre-selected few; scan them all and decide.' The full skill catalog is already injected by the harness on every session start, so the agent chooses from the complete set. The BM25 skill-relevance check is retained internally to decide WHETHER to fire the gate at all (suppressed for greetings and unrelated prompts) but never used to narrow WHICH skills the agent considers. Tests/integration/hook.test.ts updated; 17 user-prompt-submit tests green including 'fires gate / review full list / no listing' assertion.",

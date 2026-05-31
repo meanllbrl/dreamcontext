@@ -1,6 +1,19 @@
 [
   {
     "date": "2026-05-31",
+    "consolidated_at": "2026-05-31T23:27:52.218Z",
+    "summary": "Sleep #8 — v0.6 control panel built end-to-end via 3 autonomous goal-skill cycles, plus v0.5.x docs/test/context-gate work. sleep-state: created v0.6.0 planning version; 6 changelog entries (3 control-panel slices, test-alignment, context-gate+codex, docs); 4 memory decisions (control-plane API contextRoot/strict-pick/cache-only, catalog.ts extraction keeps @inquirer out of server bundle, vault registry design, Tauri spawn-Node+WebviewUrl::External hosting); soul priority → v0.6.0; user.md version → 0.5.1/0.6.0-dev; tech_stack updated. sleep-tasks: epic v06-control-panel-vaults-tauri todo→in_progress with real 5-node tracker; reconciled 4 placeholder task bodies; 3 slice flowcharts sync-clean (backend 11/11, frontend 7/7, tauri A1-A6 done + A7/A8 manual); flagged 5 stale older todos. sleep-product: new feature control-panel.md (18 ACs); updated web-dashboard + manifest-based-install-update PRDs; 3 new knowledge files (control-plane-api, tauri-desktop-hosting, vault-registry-multivault) + extended three-reviewer-parallel-mandates with the v0.6 case study. All v0.6 slice tasks in_review awaiting user verification; Tauri launch/sign/notarize is manual handoff. Marketing rem-sleep clean. Pre-existing marketing-council test flake tracked.",
+    "debt_before": 6,
+    "debt_after": 0,
+    "sessions_processed": 2,
+    "bookmarks_processed": 6,
+    "session_ids": [
+      "80a49139-4a0e-444c-aac7-3c90aa645f3a",
+      "f007d91a-b861-47c2-8154-033cf8899871"
+    ]
+  },
+  {
+    "date": "2026-05-31",
     "consolidated_at": "2026-05-31T16:13:23.614Z",
     "summary": "Sleep #7 — v0.5.0/v0.5.1 ship + security hardening + context-gate redesign. sleep-state: 4 changelog entries (v0.5.0 positioning/install/update-nudge, goal-skill+related-skills-recall hook, v0.5.1 dashboard security hardening, context-gate redesign), 2 memory decisions (loopback-bind+CSRF+CORS+safeChildPath hardening pulled forward from v0.6; context gate must show full skill catalog never pre-select — enforced over 4 iterations), 'CLI version hardcoded' known-issue marked FIXED, soul priority → next v0.6.0, RELEASES v0.5.0 summary updated. sleep-tasks: created server-security-hardening task (in_review, v0.5.0, 5/5 nodes done), reconciled goal-skill-and-related-skills-recall to current truth (7/7 done, in_review), updated v06-control-panel-vaults-tauri (security marked DONE). sleep-product: new knowledge dashboard-server-security.md (threat model + 3 mitigations), new feature context-gate-and-goal-skill.md, updated web-dashboard.md (+4 security criteria) and manifest-based-install-update.md (+v0.5.0 install/upgrade/nudge), staleness flags cleared. Marketing rem-sleep clean. Open flag: 6.system_flow.md 6 lines over ceiling + missing new hook blocks (deferred). v0.5.0/v0.5.1 published to npm per session transcripts; RELEASES entry still status=planning awaiting user release call.",
     "debt_before": 12,

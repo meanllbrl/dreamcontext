@@ -2,7 +2,7 @@
 id: feat_O7LODr7O
 status: active
 created: '2026-02-25'
-updated: '2026-05-31'
+updated: '2026-06-01'
 released_version: 0.1.0
 tags:
   - frontend
@@ -10,6 +10,8 @@ tags:
   - design
 related_tasks:
   - web-dashboard
+  - v06-control-panel-frontend
+  - v06-control-plane-backend
 ---
 
 ## Why
@@ -38,6 +40,10 @@ Users need a visual interface to manage agent context without using the terminal
 - [ ] As a user, I want light and dark mode (with system preference detection) so that the UI matches my OS settings
 - [ ] As a user, I want multi-language support (English initially, i18n-ready) so that the dashboard can be localized in the future
 - [x] As a user, I want to toggle the Brain graph to a 3D rendering mode so that I can perceive relationship depth and cluster density that 2D layouts obscure when nodes overlap
+- [x] As a user, I want a Settings page to view and edit my project's platforms and packs so that I can configure dreamcontext without using the CLI.
+- [x] As a user, I want a Packs page to browse available skill packs and see which are installed.
+- [x] As a user, I want an in-app update badge that tells me when a newer dreamcontext version is available so I know to run `dreamcontext upgrade`.
+- [x] As a user, I can see registered vaults (read-only) from the Settings page so that I know which projects are tracked.
 
 ## Acceptance Criteria
 
@@ -157,7 +163,7 @@ Users need a visual interface to manage agent context without using the terminal
 - `dashboard/src/components/tasks/KanbanBoard.tsx` - Main board with filtering/sorting/grouping
 
 ### API Endpoints
-~20 endpoints covering: tasks (5), sleep (2), core (3), knowledge (3), features (2), changelog (1), releases (3 — list/show/add with planning support), health (1). Versions API (was 3 endpoints) deleted; versions now handled via releases routes. All mutating endpoints call recordDashboardChange().
+~25 endpoints covering: tasks (5), sleep (2), core (3), knowledge (3), features (2), changelog (1), releases (3 — list/show/add with planning support), health (1), config (2 — GET+PATCH), packs (1), version-check (1), vaults (1), council (3). Versions API (was 3 endpoints) deleted; versions now handled via releases routes. All mutating endpoints call recordDashboardChange() except `PATCH /api/config` (entity union not widened in v0.6).
 
 ### Build Pipeline
 1. `npm run build:dashboard` - Vite builds React app to dashboard/dist/
@@ -195,6 +201,17 @@ Users need a visual interface to manage agent context without using the terminal
 - [x] All shared Brain behaviors carry over to 3D: filtering, neighbor highlighting, hover-dim, `onNodeClick` → NodeDrawer, group color palette, force-simulation settings sliders, `view` persisted to `brain:settings:v1` localStorage blob (missing key falls back to `'2d'`).
 - [x] `npm run build` produces a distinct `BrainCanvas3D-*.js` chunk, confirming lazy separation.
 
+### Control Panel (v0.6)
+- [x] Settings page: loads `GET /api/config`, shows platforms checkboxes + packs toggles, Save issues `PATCH /api/config` with body `{platforms, packs}` only; loading/error/success/empty states; read-only Vaults subsection (current vault highlighted).
+- [x] Packs page: lists catalog packs + standalone from `GET /api/packs`; packs in `config.packs` show "Installed" indicator.
+- [x] UpdateBadge: header banner surfaces `nudge` from `GET /api/version-check` when non-null (via `MarkdownPreview`); renders nothing when `nudge === null`.
+- [x] `GET /api/vaults` returns `{vaults, current}` from the global registry; never 500.
+- [x] `PATCH /api/config` strict-pick `{platforms, packs}`; prototype-pollution-safe (body never spread); per-element validation.
+- [x] `GET /api/packs` imports from `src/lib/catalog.ts` (not `install-skill.ts`); catalog unreadable → `{packs:[], standalone:[]}` 200.
+- [x] `GET /api/version-check` cache-only (no network in request path); read failure → benign payload.
+- [x] `dashboard --vault <path|name>` re-roots the server to the chosen vault; invalid vault → non-zero exit + clean message.
+- [x] `dashboard/tsconfig.json` has `noImplicitReturns: true`; `App.tsx` switch has explicit cases for `settings` and `packs`.
+
 ### Council Page
 
 - [x] CouncilHall: searchable grid of debates with status badge, persona count, round progress indicator
@@ -215,6 +232,15 @@ Users need a visual interface to manage agent context without using the terminal
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-06-01 - v0.6 Control Panel: Settings, Packs, UpdateBadge, --vault (slices 1-2)
+- Backend control-plane: `GET/PATCH /api/config`, `GET /api/packs`, `GET /api/version-check`, `GET /api/vaults` added to server.
+- `src/lib/catalog.ts` extracted from `install-skill.ts` to keep `@inquirer/prompts` out of server bundle.
+- `src/lib/vaults.ts` global vault registry + `resolveVaultContextRoot`; `vaults add/list/remove` CLI; `dashboard --vault` flag.
+- Settings page (platforms checkboxes + packs toggles + read-only Vaults subsection), Packs page, UpdateBadge header component wired.
+- 4 TanStack Query hooks: `useConfig`, `usePacks`, `useVersionCheck`, `useVaults`.
+- `App.tsx` + `Shell.tsx` + `Sidebar.tsx` extended for `settings`/`packs` routes; `noImplicitReturns: true` added to `dashboard/tsconfig.json`.
+- All safeChildPath guards applied to 7 route handlers; full suite: 962 tests green.
 
 ### 2026-05-23 - Brain 3D view toggle (v0.4)
 - `BrainCanvas3D` component added: `react-force-graph-3d` + `three`-powered renderer, lazy-loaded as a separate Vite chunk.

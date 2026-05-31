@@ -76,6 +76,36 @@ This was the first use of the pattern and it worked exactly as designed: three r
 - Persisted artifacts: `_dream_context/knowledge/decision-mem0-vs-bm25-recall.md`, `_dream_context/core/features/memory-recall-bm25.md`.
 - Reviewer-report artifacts were session-scoped to `/tmp/` and may not persist.
 
+## Case study: v0.6 control-plane — 3 slices, goal-skill automation (2026-05-31)
+
+The v0.6 control-panel shipped three slices, each validated by goal-skill orchestration (opus planner + parallel pragmatist/critic/security reviewers). Key pre-implementation findings that prevented bugs:
+
+**Slice 1 (control-plane-backend, 2 iterations):**
+- **Critic NEEDS_WORK**: folded 5 blocking findings including (a) catalog extraction to `src/lib/catalog.ts` (top-level `@inquirer/prompts` import would have polluted the server bundle), (b) `recordDashboardChange` omit (entity union has no `'config'` member — calling it would be a TS compile error), (c) `safeChildPath` must pass the FULL `${slug}.md` filename so `slug='.'` → dotfile (404) not base dir (500 DoS), (d) per-element packs validation.
+- **Critic correction**: `buildNudge` must import from `../../lib/version-check.js` (NOT `src/cli/commands/version-check.ts` which does not exist).
+- Security reviewer's iteration-2 "NEEDS_WORK" was a phase-misread (judged the unwritten codebase against the plan) and was explicitly confirmed correct by the critic; folded only the 2 genuine corrections.
+
+**Slice 2 (frontend, 1 iteration):**
+- **Critic NEEDS_WORK**: 4 surgical findings: (a) `App.tsx` `PageRouter` switch has no `default` + `dashboard/tsconfig.json` lacks `noImplicitReturns` — missing case would silently render blank with NO TS error; (b) `Shell.tsx` `VALID_PAGES` must include `'settings'|'packs'` (type cast erases TS guard, miss silently falls back to `'brain'`); (c) `vaults-route.test.ts` must set `process.env.HOME` to tmpdir to avoid reading real `~/.dreamcontext/vaults.json`; (d) `MarkdownPreview` XSS pre-existing risk noted as scoped follow-up.
+
+**Slice 3 (Tauri, 1 iteration):** No blocking findings; architecture confirmed (spawn Node + External webview).
+
+**Workflow that works:**
+1. Goal-skill produces a v1 plan.
+2. 3 parallel reviewers (opus pragmatist + critic + security) each produce a verdict.
+3. Main agent reads all reports, extracts BLOCKING findings, folds them into the plan document (constraints section + technical details).
+4. Reviewers re-run on v2 (one more iteration if any NEEDS_WORK).
+5. On all-PASS (or PASS WITH CONCERNS confirmed non-blocking), move to implementation.
+6. Task file carries the folded plan; future sessions read the constraints section and get the decisions for free.
+
+**What the pre-implementation review caught that implementation-time review would have missed:**
+- Bundle pollution (the `@inquirer/prompts` issue is invisible until you grep the compiled artifact).
+- TypeScript blind spots (`noImplicitReturns` + no `default` case = silent render bug, zero TS error).
+- `VALID_PAGES` type-cast hole (same: a runtime-only bug, zero TS error).
+- Dot-path DoS: `slug='.'` → directory read → 500 only shows up under adversarial input, not in happy-path tests.
+
+**Pattern refinement: security reviewer phase-reads.** In slice 1 the security reviewer's iteration-2 review evaluated the unwritten codebase state rather than the v2 plan. This is a known model failure mode when the reviewer infers implementation state from review round number. Mitigation: the plan prompt should explicitly state which phase the reviewer is in and that it is reviewing the plan document, not the implemented code.
+
 ## Last verified
 
-2026-05-23.
+2026-06-01 (v0.6.0 shipped; all pre-implementation findings confirmed prevented by the review cycle).
