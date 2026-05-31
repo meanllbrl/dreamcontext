@@ -113,7 +113,7 @@ describe('snapshot (integration)', () => {
     expect(output).not.toContain('done-task');
   });
 
-  it('outputs recent changelog entries (max 3)', () => {
+  it('outputs recent changelog tiered (top 3 detailed, older as titles)', () => {
     const ctx = scaffold(tmpDir);
     const entries = Array.from({ length: 8 }, (_, i) => ({
       date: `2026-02-${String(24 - i).padStart(2, '0')}`,
@@ -126,7 +126,9 @@ describe('snapshot (integration)', () => {
     expect(output).toContain('## Recent Changelog');
     expect(output).toContain('Change 1');
     expect(output).toContain('Change 3');
-    expect(output).not.toContain('Change 4');
+    // Tiered display (2026-05-23): entries past the top 3 still appear, under an "Older" titles-only subheading
+    expect(output).toContain('### Older');
+    expect(output).toContain('Change 4');
   });
 
   it('outputs features summary with why, tasks, and changelog', () => {
@@ -253,7 +255,7 @@ describe('snapshot (integration)', () => {
     expect(output).toContain('JWT-based auth flow [auth, security]');
   });
 
-  it('outputs pinned knowledge in full when under default cap', () => {
+  it('surfaces pinned knowledge as a prioritized index reference (body not inlined)', () => {
     const ctx = scaffold(tmpDir);
     mkdirSync(join(ctx, 'knowledge'), { recursive: true });
     writeFileSync(
@@ -261,13 +263,15 @@ describe('snapshot (integration)', () => {
       '---\nid: k2\nname: API Contract\ndescription: REST API spec\ntags:\n  - api\npinned: true\ndate: "2026-02-24"\n---\n\n## Endpoints\n\nGET /users - List users\n',
     );
     const output = runSnapshot(tmpDir);
-    expect(output).toContain('## Pinned Knowledge');
-    expect(output).toContain('### API Contract');
-    expect(output).toContain('GET /users - List users');
-    expect(output).not.toContain('→ Read full:');
+    // Pinned files surface under the Knowledge Index with a 📌 priority warning and a read-on-demand path...
+    expect(output).toContain('## Knowledge Index');
+    expect(output).toContain('📌');
+    expect(output).toContain('_dream_context/knowledge/api-contract.md');
+    // ...but the body is intentionally NOT inlined (2026-05-23: agent Reads on demand to keep the snapshot bounded)
+    expect(output).not.toContain('GET /users - List users');
   });
 
-  it('truncates long pinned knowledge to default cap with read-full pointer', () => {
+  it('does not inline long pinned bodies; references the file by path', () => {
     const ctx = scaffold(tmpDir);
     mkdirSync(join(ctx, 'knowledge'), { recursive: true });
     const longBody = Array.from({ length: 200 }, (_, i) => `Line ${i + 1}`).join('\n');
@@ -276,41 +280,10 @@ describe('snapshot (integration)', () => {
       `---\nid: k4\nname: Big Playbook\ndescription: Long doc\npinned: true\n---\n\n${longBody}\n`,
     );
     const output = runSnapshot(tmpDir);
-    expect(output).toContain('### Big Playbook');
-    expect(output).toContain('Line 1');
-    expect(output).toContain('Line 60');
-    expect(output).not.toContain('Line 61');
+    expect(output).toContain('_dream_context/knowledge/big-playbook.md');
+    // No body lines are inlined regardless of length
+    expect(output).not.toContain('Line 100');
     expect(output).not.toContain('Line 200');
-    expect(output).toContain('→ Read full: _dream_context/knowledge/big-playbook.md');
-    expect(output).toContain('200 lines total');
-  });
-
-  it('honors per-entry pinned_preview_lines override', () => {
-    const ctx = scaffold(tmpDir);
-    mkdirSync(join(ctx, 'knowledge'), { recursive: true });
-    const longBody = Array.from({ length: 200 }, (_, i) => `Line ${i + 1}`).join('\n');
-    writeFileSync(
-      join(ctx, 'knowledge', 'custom-cap.md'),
-      `---\nname: Custom Cap\ndescription: D\npinned: true\npinned_preview_lines: 100\n---\n\n${longBody}\n`,
-    );
-    const output = runSnapshot(tmpDir);
-    expect(output).toContain('Line 100');
-    expect(output).not.toContain('Line 101');
-    expect(output).toContain('showing first 100');
-  });
-
-  it('inlines full pinned content when pinned_preview is "all"', () => {
-    const ctx = scaffold(tmpDir);
-    mkdirSync(join(ctx, 'knowledge'), { recursive: true });
-    const longBody = Array.from({ length: 150 }, (_, i) => `Line ${i + 1}`).join('\n');
-    writeFileSync(
-      join(ctx, 'knowledge', 'full-pinned.md'),
-      `---\nname: Full Pinned\ndescription: D\npinned: true\npinned_preview: all\n---\n\n${longBody}\n`,
-    );
-    const output = runSnapshot(tmpDir);
-    expect(output).toContain('Line 1');
-    expect(output).toContain('Line 150');
-    expect(output).not.toContain('→ Read full:');
   });
 
   it('does not output pinned section when no files are pinned', () => {

@@ -689,7 +689,7 @@ describe('hook session-start (integration)', () => {
     expect(sessions[1].score).toBe(1); // sess-1
   });
 
-  it('snapshot includes last session summary from sessions array', () => {
+  it('persists last session summary to .sleep.json; snapshot stays lean', () => {
     writeSleep(ctx, {
       debt: 2,
       sessions: [{
@@ -702,12 +702,15 @@ describe('hook session-start (integration)', () => {
       }],
     });
 
+    const state = JSON.parse(readFileSync(join(ctx, 'state', '.sleep.json'), 'utf-8'));
+    expect(state.sessions[0].last_assistant_message).toContain('Refactored the auth module');
+
+    // Session summary is no longer rendered in the snapshot (deprecated sleep-state block, v0.4.0+)
     const output = run('snapshot', tmpDir);
-    expect(output).toContain('Last session ended: 2026-02-25T10:30:00.000Z');
-    expect(output).toContain('Last session summary: Refactored the auth module');
+    expect(output).not.toContain('Last session summary');
   });
 
-  it('snapshot includes tool_count in session entries', () => {
+  it('persists tool_count for bash-heavy sessions; snapshot stays lean', () => {
     writeSleep(ctx, {
       debt: 2,
       sessions: [{
@@ -721,9 +724,12 @@ describe('hook session-start (integration)', () => {
       }],
     });
 
+    const state = JSON.parse(readFileSync(join(ctx, 'state', '.sleep.json'), 'utf-8'));
+    expect(state.sessions[0].tool_count).toBe(35);
+
+    // Session counts are no longer rendered in the snapshot (deprecated sleep-state block, v0.4.0+)
     const output = run('snapshot', tmpDir);
-    expect(output).toContain('0 changes');
-    expect(output).toContain('35 tools');
+    expect(output).not.toContain('35 tools');
   });
 });
 
@@ -804,7 +810,7 @@ describe('hook subagent-start (integration)', () => {
     expect(ctx_text).toContain('[api, architecture]');
   });
 
-  it('includes pinned knowledge full content', () => {
+  it('surfaces pinned knowledge as a prioritized index reference (body not inlined)', () => {
     mkdirSync(join(ctx, 'knowledge'), { recursive: true });
     writeFileSync(join(ctx, 'knowledge', 'critical-info.md'), [
       '---',
@@ -820,7 +826,10 @@ describe('hook subagent-start (integration)', () => {
     const output = run('hook subagent-start', tmpDir);
     const parsed = JSON.parse(output);
     const ctx_text = parsed.hookSpecificOutput.additionalContext;
-    expect(ctx_text).toContain('This content should appear in full in the briefing.');
+    // Pinned files surface by slug/path with a priority warning; the body is read on demand, not inlined
+    expect(ctx_text).toContain('critical-info');
+    expect(ctx_text).toContain('_dream_context/knowledge/critical-info.md');
+    expect(ctx_text).not.toContain('This content should appear in full in the briefing.');
   });
 
   it('does NOT include soul/user/memory full content', () => {

@@ -130,7 +130,7 @@ describe('sleep (integration)', () => {
     expect(outputNaN).toContain('Score must be 1, 2, or 3');
   });
 
-  it('snapshot includes sleep state after adds', () => {
+  it('persists accumulated debt to .sleep.json; snapshot stays lean', () => {
     writeFileSync(
       join(ctx, 'core', '0.soul.md'),
       '---\nname: test\n---\n\nTest project.\n',
@@ -138,11 +138,13 @@ describe('sleep (integration)', () => {
     run('sleep add 2 Bug fix', tmpDir);
     run('sleep add 3 Arch change', tmpDir);
 
+    const state = JSON.parse(readFileSync(join(ctx, 'state', '.sleep.json'), 'utf-8'));
+    expect(state.debt).toBe(5);
+
+    // The sleep-state block is DEPRECATED in the snapshot (v0.4.0+): debt pressure is
+    // delivered by the session-start / user-prompt-submit hooks, not the raw snapshot.
     const output = run('snapshot', tmpDir);
-    expect(output).toContain('## Sleep State');
-    expect(output).toContain('Debt: 5 (Drowsy)');
-    expect(output).toContain('Bug fix');
-    expect(output).toContain('Arch change');
+    expect(output).not.toContain('## Sleep State');
   });
 
   it('snapshot omits sleep state when unused', () => {
@@ -154,7 +156,7 @@ describe('sleep (integration)', () => {
     expect(output).not.toContain('## Sleep State');
   });
 
-  it('snapshot shows sleep state after done (last_sleep set)', () => {
+  it('records consolidation in .sleep.json after done; snapshot stays lean', () => {
     writeFileSync(
       join(ctx, 'core', '0.soul.md'),
       '---\nname: test\n---\n\nTest project.\n',
@@ -162,10 +164,12 @@ describe('sleep (integration)', () => {
     run('sleep add 2 Some work', tmpDir);
     run('sleep done Consolidated things', tmpDir);
 
+    const state = JSON.parse(readFileSync(join(ctx, 'state', '.sleep.json'), 'utf-8'));
+    expect(state.debt).toBe(0);
+    expect(state.last_sleep).toBeTruthy();
+
     const output = run('snapshot', tmpDir);
-    expect(output).toContain('## Sleep State');
-    expect(output).toContain('Debt: 0 (Alert)');
-    expect(output).toContain('Last sleep:');
+    expect(output).not.toContain('## Sleep State');
   });
 
   // --- Epoch-based consolidation tests ---
@@ -260,7 +264,7 @@ describe('sleep (integration)', () => {
     expect(state.sessions).toHaveLength(0);
   });
 
-  it('snapshot shows consolidation in progress when epoch is set', () => {
+  it('records the consolidation epoch in .sleep.json when started', () => {
     writeFileSync(
       join(ctx, 'core', '0.soul.md'),
       '---\nname: test\n---\n\nTest project.\n',
@@ -268,8 +272,12 @@ describe('sleep (integration)', () => {
     run('sleep add 1 Some work', tmpDir);
     run('sleep start', tmpDir);
 
+    const state = JSON.parse(readFileSync(join(ctx, 'state', '.sleep.json'), 'utf-8'));
+    expect(state.sleep_started_at).toBeTruthy();
+
+    // Epoch state does not surface in the raw snapshot (consolidation pressure is hook-delivered)
     const output = run('snapshot', tmpDir);
-    expect(output).toContain('Consolidation in progress');
+    expect(output).not.toContain('## Sleep State');
   });
 
   it('.sleep.json is not listed as a task in snapshot', () => {
@@ -290,7 +298,5 @@ describe('sleep (integration)', () => {
     expect(output).toContain('real-task');
     // .sleep.json should NOT appear as a task
     expect(output).not.toContain('.sleep');
-    // But sleep state should still appear in its own section
-    expect(output).toContain('## Sleep State');
   });
 });

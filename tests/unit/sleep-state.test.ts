@@ -11,13 +11,14 @@ function makeTmpDir(): string {
   return dir;
 }
 
-/** New fields added by neuroscience update, always present in defaults */
+/** New fields added by neuroscience + recall updates, always present in defaults */
 const NEW_DEFAULTS = {
   sessions_since_last_sleep: 0,
   bookmarks: [],
   triggers: [],
   knowledge_access: {},
   compaction_log: [],
+  recall_mode: 'haiku',
 };
 
 describe('readSleepState', () => {
