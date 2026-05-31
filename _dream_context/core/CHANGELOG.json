@@ -1,6 +1,55 @@
 [
   {
     "date": "2026-05-31",
+    "type": "docs",
+    "scope": "desktop",
+    "description": "Copy-pasteable handoff for the manual A7/A8 steps: prerequisites, tauri dev with env-var vault selection, updater keypair + icons + endpoint, build + sign/notarize, security/layout notes.",
+    "breaking": false,
+    "summary": "desktop/README — runbook for the Tauri shell (dev, build, sign, security)",
+    "references": [
+      "commit:1059b1e",
+      "task:v06-tauri-shell"
+    ]
+  },
+  {
+    "date": "2026-05-31",
+    "type": "fix",
+    "scope": "testing",
+    "description": "extractDebateIdFromCreateOutput used /^council_[A-Za-z0-9]+$/ but debate IDs are council_${nanoid(8)} and nanoid's alphabet is URL-safe (A-Za-z0-9_-); IDs with _ or - failed to parse -> exit 1 (~1/6 runs). Fixed the character class + added a deterministic unit test (6 cases). 10/10 integration runs clean; full suite now reliably green.",
+    "breaking": false,
+    "summary": "De-flake marketing-council: accept _ and - in debate-id parse regex",
+    "references": [
+      "commit:9cb7ccd",
+      "task:deflake-marketing-council"
+    ]
+  },
+  {
+    "date": "2026-05-31",
+    "type": "fix",
+    "scope": "security",
+    "description": "MarkdownPreview rendered marked() output straight into dangerouslySetInnerHTML with no sanitization. Now DOMPurify.sanitize(); runtime-verified (jsdom) to strip <script>/onerror=/javascript: while keeping formatting; mermaid unaffected (injects SVG post-render). Closes the pre-existing risk surfaced in slice-2 review.",
+    "breaking": false,
+    "summary": "Sanitize MarkdownPreview output with DOMPurify (XSS hardening)",
+    "references": [
+      "commit:e32c886",
+      "task:v06-markdownpreview-sanitize"
+    ]
+  },
+  {
+    "date": "2026-05-31",
+    "type": "feat",
+    "scope": "control-panel",
+    "description": "Control panel could only view vaults; now adds/removes them. POST /api/vaults (reuses addVault, VaultError->400, validates _dream_context/) + DELETE /api/vaults/:name (removeVault by name, no path-join); both covered by the loopback+CSRF guard. dashboard: client.del(), useAddVault/useRemoveVault mutations, SettingsPage add-form + per-row remove, 6 i18n keys, tokens-only CSS. +9 HOME-isolated route tests; suite 977 green. Switching the active vault stays deferred (needs relaunch/desktop).",
+    "breaking": false,
+    "summary": "v0.6 slice 4: manage vaults from the dashboard (POST/DELETE /api/vaults + Settings add/remove UI)",
+    "references": [
+      "commit:dcaf19d",
+      "task:v06-vault-management",
+      "feature:control-panel"
+    ]
+  },
+  {
+    "date": "2026-05-31",
     "type": "feat",
     "scope": "control-panel",
     "description": "Two deliverables in commit 6e9dfac. (1) dashboard --vault flag: resolveVaultContextRoot() added to src/lib/vaults.ts — accepts a registered vault name OR an explicit path; dashboard command passes the resolved contextRoot to the server, re-rooting all API routes to the chosen vault. Invalid vault produces a clean non-zero exit. 9 new integration + unit tests; full suite 962/962. (2) Tauri 2.x desktop scaffold: desktop/ directory with desktop/src-tauri/src/lib.rs hosting a Rust app that finds a free loopback port, spawns the Node CLI process (dreamcontext dashboard --port <N> --vault <path>), waits for the server to become ready, and loads it via WebviewUrl::External. Shell capability scoped to 'node' only. Tauri conf specifies desktop window at 1200×800. cargo check compiles clean (Rust 1.96 + tauri 2.x). A7 (tauri dev window launch) and A8 (sign/notarize/updater/icons) are manual handoffs.",
