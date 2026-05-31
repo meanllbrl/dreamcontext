@@ -4,7 +4,7 @@ name: v06-markdownpreview-sanitize
 description: v06-markdownpreview-sanitize
 priority: medium
 urgency: medium
-status: todo
+status: in_review
 created_at: '2026-05-31'
 updated_at: '2026-05-31'
 tags: []
@@ -19,9 +19,9 @@ version: 0.6.0
 ```mermaid
 flowchart TD
   subgraph M1 ["M1 — DOMPurify integration"]
-    A1[A1 install DOMPurify + @types/dompurify]:::todo
-    A2[A2 sanitize marked output before dangerouslySetInnerHTML]:::todo
-    A3[A3 build green, no TS errors]:::todo
+    A1[A1 install DOMPurify + @types/dompurify]:::done
+    A2[A2 sanitize marked output before dangerouslySetInnerHTML]:::done
+    A3[A3 build green, no TS errors]:::done
   end
 
   classDef done fill:#86efac,stroke:#15803d,color:#052e16
@@ -37,13 +37,13 @@ MarkdownPreview uses dangerouslySetInnerHTML over unsanitized marked output (no 
 
 ## User Stories
 
-- [ ] As a dashboard user viewing knowledge/core pages, I am protected from XSS in user-authored markdown content rendered by MarkdownPreview.
+- [x] As a dashboard user viewing knowledge/core pages, I am protected from XSS in user-authored markdown content rendered by MarkdownPreview.
 
 ## Acceptance Criteria
 
-- [ ] **A1** `dompurify` + `@types/dompurify` installed in `dashboard/` (not root); build still green.
-- [ ] **A2** `MarkdownPreview.tsx` wraps `marked(content)` output in `DOMPurify.sanitize(...)` before passing to `dangerouslySetInnerHTML`. The nudge/version-check path uses the same component and benefits automatically.
-- [ ] **A3** `npm run build` (root tsc + vite) completes with zero TS errors after the change.
+- [x] **A1** `dompurify` + `@types/dompurify` installed in `dashboard/` (not root); build still green.
+- [x] **A2** `MarkdownPreview.tsx` wraps `marked(content)` output in `DOMPurify.sanitize(...)` before passing to `dangerouslySetInnerHTML`. The nudge/version-check path uses the same component and benefits automatically.
+- [x] **A3** `npm run build` (root tsc + vite) completes with zero TS errors after the change.
 
 ## Constraints & Decisions
 <!-- LIFO: newest at top. Capture the why, not just the what. -->
@@ -61,6 +61,15 @@ The nudge/version-check surface is safe (server-built, regex-constrained input) 
 <!-- LIFO: newest at top. Auto-prepended by `dreamcontext tasks log`. -->
 
 
+
+
+
+### 2026-05-31 - Status → in_review
+- DOMPurify hardening done; build green + runtime XSS-strip verified
+### 2026-05-31 - Session Update
+- DOMPurify 3.4.7 added to dashboard; MarkdownPreview sanitizes marked output before dangerouslySetInnerHTML. Runtime-verified (jsdom): strips <script>/onerror=/javascript: while keeping <strong>/<code>/<h1>; mermaid unaffected (injects SVG post-render). Build green.
+### 2026-05-31 - Status → in_progress
+- harden MarkdownPreview with DOMPurify
 ### 2026-05-31 - Session Update
 - sleep-tasks: populated placeholder body — Why already correct; added User Stories, 3 ACs, Technical Details (MarkdownPreview.tsx + DOMPurify install); fixed version v0.5.0 → 0.6.0
 ### 2026-05-31 - Created

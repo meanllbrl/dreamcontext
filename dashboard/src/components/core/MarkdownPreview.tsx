@@ -1,5 +1,6 @@
 import { useMemo, useRef } from 'react';
 import { marked } from 'marked';
+import DOMPurify from 'dompurify';
 import { useTheme } from '../../context/ThemeContext';
 import { useMermaidRender } from '../../lib/mermaidRender';
 import './MarkdownPreview.css';
@@ -12,7 +13,15 @@ interface Props {
 }
 
 export function MarkdownPreview({ content, frontmatter }: Props) {
-  const html = useMemo(() => marked.parse(content) as string, [content]);
+  // Sanitize the rendered markdown before injecting via dangerouslySetInnerHTML.
+  // marked output for normal markdown (headings, lists, code, tables, links) is
+  // preserved; scripts, event handlers, and javascript:/data: URLs are stripped.
+  // Mermaid is unaffected — it replaces its code blocks with SVG in the live DOM
+  // afterwards (see useMermaidRender), not through this HTML string.
+  const html = useMemo(
+    () => DOMPurify.sanitize(marked.parse(content) as string),
+    [content],
+  );
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const { resolved } = useTheme();
   useMermaidRender(bodyRef, html, resolved, 'md-mmd');
