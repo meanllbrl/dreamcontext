@@ -17,10 +17,11 @@ import { loadCatalog } from './install-skill.js';
 
 const MAX_TRANSCRIPT_BYTES = 50 * 1024 * 1024; // 50MB safety cap
 
-// Related-skills recall: lower threshold than memory's 2.0 because alwaysApply
-// skills are filtered out and the skill corpus is tiny/curated.
+// Skill-relevance threshold: lower than memory's 2.0 because alwaysApply skills
+// are filtered out and the skill corpus is tiny/curated. Used only as a boolean
+// "does any skill relate?" signal to decide whether to fire the context gate —
+// the gate then tells the agent to review the FULL skill list itself.
 const SKILL_SCORE_THRESHOLD = 1.0;
-const MAX_RELATED_SKILLS = 3;
 
 // ─── Stdin Reading ──────────────────────────────────────────────────────────
 
@@ -645,11 +646,13 @@ export function registerHookCommand(program: Command): void {
         }
       }
 
-      // Context gate accumulators — drive the hard "read before code" directive
-      // emitted after the recall + skills blocks below. gatedDocs collects the
-      // surfaced knowledge/feature docs the agent MUST read first; gatedSkills
-      // flags that a related skill was surfaced and must be invoked if it fits.
-      const gatedDocs: string[] = [];
+      // Context gate accumulators — drive the behavioural directive emitted
+      // after the recall + skills blocks. We inject a BEHAVIOUR (read related
+      // memory, recall more by keyword, check for an existing task) — never a
+      // hard "read file X" list, because the recall above can be noisy and
+      // naming files reads as "read exactly these". hadRecallHits = recall
+      // surfaced something; gatedSkills = a related skill surfaced.
+      let hadRecallHits = false;
       let gatedSkills = false;
 
       // Memory recall injection — single Haiku call sees corpus index + prompt,
@@ -688,9 +691,6 @@ export function registerHookCommand(program: Command): void {
                 const lines: string[] = ['', `— Memory recall (${mode}, top ${hits.length}) —`];
                 for (const h of hits) {
                   lines.push(`  [${h.doc.type}] ${h.doc.relPath}`);
-                  // Knowledge/feature docs encode decisions the code won't show —
-                  // the agent must read them before acting (see context gate below).
-                  if (h.doc.type === 'knowledge' || h.doc.type === 'feature') gatedDocs.push(h.doc.relPath);
                   if (h.snippet) lines.push(`    Why: ${h.snippet}`);
                   else if (h.doc.description) lines.push(`    ${h.doc.description}`);
                   const excerpt = h.doc.body
@@ -703,6 +703,7 @@ export function registerHookCommand(program: Command): void {
                   if (excerpt) lines.push(`    > ${excerpt}${excerpt.length >= 200 ? '…' : ''}`);
                 }
                 console.log(lines.join('\n'));
+                hadRecallHits = true;
               }
             }
           }
@@ -711,34 +712,24 @@ export function registerHookCommand(program: Command): void {
         }
       }
 
-      // Related-skills injection — BM25-match the prompt against top-level skill
-      // packs in <projectRoot>/.claude/skills and suggest invoking the best fits
-      // via the Skill tool. alwaysApply skills are filtered out by loadSkillDocs.
-      // NOTE: the `sleep_started_at` early-return above intentionally suppresses
-      // this block during consolidation sessions (no code needed here).
+      // Skill-relevance signal — we do NOT print a limited "top-N skills" list.
+      // The full skill catalogue (every skill + description) is already injected
+      // into the agent's context by the harness, so listing a BM25-picked subset
+      // would only anchor the agent on a few and risk omitting the right one.
+      // Instead we cheaply check whether ANY installed skill plausibly relates to
+      // the prompt; if so, the gate below tells the agent to review the FULL list
+      // itself and invoke whatever fits. alwaysApply skills are excluded by
+      // loadSkillDocs (they're always loaded — no point flagging them). The
+      // `sleep_started_at` early-return above suppresses this during sleep.
       // Own try/catch so it can never throw out of the action.
       if (process.env.DREAMCONTEXT_SKILLS_HOOK !== '0') {
         try {
           const prompt = String((input as Record<string, unknown>).prompt ?? '');
           if (prompt.trim().length >= 8) {
-            const projectRoot = process.cwd();
-            const skillsRoot = join(projectRoot, '.claude', 'skills');
+            const skillsRoot = join(process.cwd(), '.claude', 'skills');
             const docs = loadSkillDocs(skillsRoot);
-            if (docs.length > 0) {
-              const hits = bm25Search(prompt, docs, MAX_RELATED_SKILLS)
-                .filter(h => h.score >= SKILL_SCORE_THRESHOLD);
-              if (hits.length > 0) {
-                const lines: string[] = ['', `— Related skills (top ${hits.length}) —`];
-                lines.push('  Invoke these via the Skill tool BEFORE acting if they fit the task:');
-                for (const h of hits) {
-                  const desc = h.doc.description.length > 120
-                    ? h.doc.description.slice(0, 120) + '…'
-                    : h.doc.description;
-                  lines.push(`  • ${h.doc.slug}${desc ? ` — ${desc}` : ''}`);
-                }
-                console.log(lines.join('\n'));
-                gatedSkills = true;
-              }
+            if (docs.length > 0 && bm25Search(prompt, docs, 5).some(h => h.score >= SKILL_SCORE_THRESHOLD)) {
+              gatedSkills = true;
             }
           }
         } catch (skillErr) {
@@ -746,22 +737,24 @@ export function registerHookCommand(program: Command): void {
         }
       }
 
-      // ── Context gate (hard rule) ──────────────────────────────────────────
-      // If a knowledge/feature doc or a related skill surfaced above, the agent
-      // MUST consume it before reading source code or acting. Surfaced context
-      // is not optional reading — this is the behavioral bootstrap. Pure string
-      // ops over local state, so no try/catch needed.
-      if (gatedDocs.length > 0 || gatedSkills) {
-        const g: string[] = ['', '⛔ BEFORE reading source code or acting on this task — REQUIRED (not optional):'];
-        if (gatedDocs.length > 0) {
-          g.push(`  • READ the knowledge/feature doc(s) above FIRST with the Read tool: ${gatedDocs.join(', ')}`);
-          g.push('    They encode decisions and constraints the source code will NOT show. Do not open source files until you have.');
+      // ── Context gate (behavioural bootstrap) ──────────────────────────────
+      // When the prompt relates to project work (recall surfaced something, or a
+      // skill matched), inject the BEHAVIOUR the agent must follow before acting:
+      // read the related knowledge/feature memory, recall more by keyword for
+      // depth, and check for an existing task. We never name specific files —
+      // the recall block above lists candidates; the agent judges relevance.
+      // Pure string ops over local state, so no try/catch needed.
+      if (hadRecallHits || gatedSkills) {
+        const g: string[] = ['', '⛔ Before you act, get the full picture from project memory — not optional:'];
+        if (hadRecallHits) {
+          g.push('  • READ the related knowledge/feature file(s) recalled above in full (Read tool) — plus anything relevant in your knowledge index. The source code will NOT show the decisions and constraints they hold.');
         }
-        if (gatedSkills) {
-          g.push('  • INVOKE the related skill(s) above via the Skill tool if they fit — required, not "if you like".');
+        if (process.env.DREAMCONTEXT_SKILLS_HOOK !== '0') {
+          g.push('  • REVIEW the skills available to you (the full list is already in your context) and INVOKE any that fit this task via the Skill tool — do NOT limit yourself to a pre-selected few; scan them all and decide.');
         }
-        g.push('  • Need more? Run: dreamcontext memory recall "<keywords from this task>" for precise context.');
-        g.push('  Skipping this repeats past mistakes, misses constraints, and burns tokens re-exploring.');
+        g.push('  • For depth, RECALL more: dreamcontext memory recall "<your keywords>" [--types knowledge,feature,task,memory] — try a few keyword sets and read the relevant hits in full.');
+        g.push('  • CHECK whether a task already exists for this work: dreamcontext memory recall "<keywords>" --types task (or look in _dream_context/state/). If one exists, follow it; if the work is untracked and non-trivial, create one.');
+        g.push('  Act only once the relevant memory is in your context — be the agent that has seen the whole picture, not one re-deriving it blind.');
         console.log(g.join('\n'));
       }
     });

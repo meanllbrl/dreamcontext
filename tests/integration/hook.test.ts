@@ -1262,7 +1262,7 @@ describe('hook user-prompt-submit (integration)', () => {
     expect(output).not.toContain('marketing recommendation');
   });
 
-  // ─── related-skills injection ──────────────────────────────────────────────
+  // ─── skill relevance → context gate (no limited "top-N" list) ──────────────
 
   function scaffoldSkills(root: string): void {
     const skillsRoot = join(root, '.claude', 'skills');
@@ -1289,53 +1289,60 @@ describe('hook user-prompt-submit (integration)', () => {
     ].join('\n'));
   }
 
-  // The DREAMCONTEXT_SKILLS_HOOK env var (and 8-char minimum) gate this block.
-  // We disable the memory hook in these tests so the only recall output is skills.
+  // Disable the memory hook so the ONLY gate trigger under test is skill relevance.
   const SKILLS_ENV = { ...process.env, DREAMCONTEXT_MEMORY_HOOK: '0' };
 
-  it('suggests a matching skill via the Skill tool', () => {
+  it('a relevant skill fires the gate, telling the agent to review the FULL list (no top-N subset)', () => {
     scaffoldSkills(tmpDir);
     const input = JSON.stringify({ session_id: 'sess-1', prompt: 'review this PR with the team' });
     const output = runWithStdin('hook user-prompt-submit', input, tmpDir, SKILLS_ENV);
-    expect(output).toContain('Related skills');
-    expect(output).toContain('multi-review');
-    expect(output).toContain('Skill tool BEFORE acting');
+    expect(output).toContain('get the full picture from project memory'); // gate fired
+    expect(output).toContain('REVIEW the skills available');              // behaviour: scan the full list
+    expect(output).toContain('do NOT limit yourself');                   // no arbitrary subset
+    expect(output).not.toContain('Related skills');                      // old limited list is gone
+    expect(output).not.toContain('• multi-review');                      // no hardcoded skill listing
   });
 
-  it('does NOT surface alwaysApply skills (engineering filtered out)', () => {
-    scaffoldSkills(tmpDir);
-    // A prompt that would otherwise match the engineering skill strongly.
-    const input = JSON.stringify({ session_id: 'sess-1', prompt: 'review this PR with the team for coding standards and security testing' });
+  it('alwaysApply skills alone do NOT fire the gate (engineering excluded)', () => {
+    const skillsRoot = join(tmpDir, '.claude', 'skills');
+    mkdirSync(join(skillsRoot, 'engineering'), { recursive: true });
+    writeFileSync(join(skillsRoot, 'engineering', 'SKILL.md'), [
+      '---',
+      'description: Universal coding standards, security, testing, naming conventions, error handling.',
+      'alwaysApply: true',
+      'tags: [engineering, standards]',
+      '---',
+      '# Engineering',
+      'Coding standards and review checklist.',
+    ].join('\n'));
+    const input = JSON.stringify({ session_id: 'sess-1', prompt: 'coding standards security testing error handling naming' });
     const output = runWithStdin('hook user-prompt-submit', input, tmpDir, SKILLS_ENV);
-    expect(output).toContain('Related skills');
-    // engineering has alwaysApply:true → must never be listed as a related skill.
-    expect(output).not.toContain('engineering');
+    expect(output).not.toContain('get the full picture from project memory');
   });
 
-  it('no Related skills line for an unrelated prompt', () => {
+  it('unrelated prompt does not fire the gate', () => {
     scaffoldSkills(tmpDir);
-    const input = JSON.stringify({ session_id: 'sess-1', prompt: 'xyzzy qqq zzz' });
+    const input = JSON.stringify({ session_id: 'sess-1', prompt: 'xyzzy qqq zzz nothing here' });
     const output = runWithStdin('hook user-prompt-submit', input, tmpDir, SKILLS_ENV);
-    expect(output).not.toContain('Related skills');
+    expect(output).not.toContain('get the full picture from project memory');
   });
 
-  it('no Related skills line when .claude/skills does not exist (and recall still works)', () => {
-    // No skills dir scaffolded. Seed drowsy debt so the existing reminder still fires.
+  it('no .claude/skills dir → skills do not fire the gate (sleep reminder intact)', () => {
     writeSleep(ctx, { debt: 5, sessions: [], bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [] });
     const input = JSON.stringify({ session_id: 'sess-1', prompt: 'review this PR with the team' });
     const output = runWithStdin('hook user-prompt-submit', input, tmpDir, SKILLS_ENV);
-    expect(output).not.toContain('Related skills');
-    expect(output).toContain('Sleep debt is 5'); // existing sleep-debt behavior intact
+    expect(output).not.toContain('get the full picture from project memory');
+    expect(output).toContain('Sleep debt is 5'); // existing sleep-debt behaviour intact
   });
 
-  it('no Related skills line for a short greeting (< 8 chars)', () => {
+  it('short greeting (< 8 chars) does not fire the gate', () => {
     scaffoldSkills(tmpDir);
     const input = JSON.stringify({ session_id: 'sess-1', prompt: 'ok' });
     const output = runWithStdin('hook user-prompt-submit', input, tmpDir, SKILLS_ENV);
-    expect(output).not.toContain('Related skills');
+    expect(output).not.toContain('get the full picture from project memory');
   });
 
-  it('no Related skills line when DREAMCONTEXT_SKILLS_HOOK=0', () => {
+  it('DREAMCONTEXT_SKILLS_HOOK=0 → skills do not fire the gate', () => {
     scaffoldSkills(tmpDir);
     const input = JSON.stringify({ session_id: 'sess-1', prompt: 'review this PR with the team' });
     const output = runWithStdin('hook user-prompt-submit', input, tmpDir, {
@@ -1343,7 +1350,44 @@ describe('hook user-prompt-submit (integration)', () => {
       DREAMCONTEXT_MEMORY_HOOK: '0',
       DREAMCONTEXT_SKILLS_HOOK: '0',
     });
-    expect(output).not.toContain('Related skills');
+    expect(output).not.toContain('get the full picture from project memory');
+  });
+
+  // ─── context gate: read-related-memory behaviour when recall surfaces docs ──
+
+  it('injects the read-related-memory behaviour when a knowledge doc surfaces', () => {
+    // Deterministic BM25 recall over a strongly-matching knowledge doc.
+    const kdir = join(ctx, 'knowledge');
+    mkdirSync(kdir, { recursive: true });
+    writeFileSync(join(kdir, 'webhook-retry-policy.md'), [
+      '---',
+      'name: webhook-retry-policy',
+      'description: How we handle webhook retry idempotency and dedup',
+      'tags: [webhook, retry, idempotency]',
+      '---',
+      '# Webhook retry policy',
+      'Webhook retry idempotency dedup. Webhook retry idempotency dedup. Webhook retry idempotency dedup.',
+    ].join('\n'));
+    // Skills hook off here so the gate fires purely from the recalled knowledge doc.
+    const env = { ...process.env, DREAMCONTEXT_RECALL_MODE: 'bm25', DREAMCONTEXT_SKILLS_HOOK: '0' };
+    const input = JSON.stringify({ session_id: 'sess-1', prompt: 'webhook retry idempotency dedup policy' });
+    const output = runWithStdin('hook user-prompt-submit', input, tmpDir, env);
+    expect(output).toContain('Memory recall');                              // recall block ran
+    expect(output).toContain('webhook-retry-policy.md');                    // candidate listed (recall block)
+    expect(output).toContain('get the full picture from project memory');   // gate header
+    expect(output).toContain('READ the related knowledge/feature');          // behaviour: read recalled docs
+    expect(output).toContain('CHECK whether a task');                        // behaviour: check for a task
+    expect(output).toContain('dreamcontext memory recall');                  // behaviour: recall more
+    expect(output).not.toContain('REVIEW the skills available');             // skills hook off → no skill bullet
+  });
+
+  it('no context gate when neither knowledge nor skills are relevant', () => {
+    writeSleep(ctx, { debt: 5, sessions: [], bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [] });
+    const env = { ...process.env, DREAMCONTEXT_RECALL_MODE: 'bm25', DREAMCONTEXT_SKILLS_HOOK: '0' };
+    const input = JSON.stringify({ session_id: 'sess-1', prompt: 'xyzzy qqq zzz nothing matches here at all' });
+    const output = runWithStdin('hook user-prompt-submit', input, tmpDir, env);
+    expect(output).toContain('Sleep debt is 5'); // existing behaviour intact
+    expect(output).not.toContain('get the full picture from project memory');
   });
 });
 

@@ -6,6 +6,7 @@ dashboard/node_modules/
 dashboard/dist/
 .DS_Store
 .claude/
+.agents/
 
 # Version check cache — ephemeral, project-local, not for VCS
 _dream_context/state/.version-check.json
