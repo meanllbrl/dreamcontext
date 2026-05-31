@@ -118,6 +118,48 @@ export function addVault(name: string, dirPath: string, home?: string): Vault {
   return vault;
 }
 
+// ─── Resolve ──────────────────────────────────────────────────────────────────
+
+/**
+ * Resolve a `--vault` argument (registered name or filesystem path) to the
+ * absolute `_dream_context/` context root for that vault.
+ *
+ * Resolution order:
+ * 1. If `arg` matches a registered vault name in `listVaults(home)`, use its path.
+ * 2. Otherwise treat `arg` as a filesystem path and `resolve()` it.
+ *
+ * In both cases the resolved project directory must:
+ * - exist on disk
+ * - contain a `_dream_context/` child directory
+ *
+ * Returns `join(resolved, '_dream_context')` on success.
+ * Throws `VaultError` on any validation failure.
+ *
+ * Injectable `home` parameter makes this fully testable without touching the
+ * real `~/.dreamcontext/vaults.json`.
+ */
+export function resolveVaultContextRoot(arg: string, home: string = homedir()): string {
+  const vaults = listVaults(home);
+
+  // Try registered-name match first
+  const named = vaults.find((v) => v.name === arg);
+  const resolved = named ? named.path : resolve(arg);
+
+  // Require the directory to exist
+  if (!existsSync(resolved)) {
+    throw new VaultError(`Vault path does not exist: ${resolved}`);
+  }
+
+  // Require _dream_context/ child
+  if (!existsSync(join(resolved, '_dream_context'))) {
+    throw new VaultError(
+      `Path is not a dreamcontext project (no _dream_context/ directory): ${resolved}`,
+    );
+  }
+
+  return join(resolved, '_dream_context');
+}
+
 // ─── Remove ───────────────────────────────────────────────────────────────────
 
 /**

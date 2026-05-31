@@ -1,0 +1,16 @@
+{
+  "name": "dreamcontext-desktop",
+  "private": true,
+  "version": "0.6.0",
+  "scripts": {
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-shell": "^2",
+    "@tauri-apps/plugin-updater": "^2"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.9"
+  }
+}
