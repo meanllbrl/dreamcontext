@@ -2,7 +2,9 @@
   "platforms": [
     "claude"
   ],
-  "packs": [],
+  "packs": [
+    "goal-skill"
+  ],
   "multiProduct": false,
   "setupVersion": "0.2.0"
 }

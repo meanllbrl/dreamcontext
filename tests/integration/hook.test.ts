@@ -25,7 +25,7 @@ function scaffold(root: string): string {
  * Run a CLI command with piped stdin via shell.
  * Uses printf to handle JSON with special chars better than echo.
  */
-function runWithStdin(cmd: string, stdin: string, cwd: string): string {
+function runWithStdin(cmd: string, stdin: string, cwd: string, env?: NodeJS.ProcessEnv): string {
   try {
     // Use printf and pipe through shell
     const escaped = stdin.replace(/'/g, "'\\''");
@@ -34,6 +34,7 @@ function runWithStdin(cmd: string, stdin: string, cwd: string): string {
       encoding: 'utf-8',
       timeout: 10000,
       shell: '/bin/bash',
+      env: env ?? process.env,
     });
   } catch (e: any) {
     return (e.stdout ?? '') + (e.stderr ?? '');
@@ -1259,6 +1260,90 @@ describe('hook user-prompt-submit (integration)', () => {
     const input = JSON.stringify({ session_id: 'sess-1', prompt: 'hello' });
     const output = runWithStdin('hook user-prompt-submit', input, tmpDir);
     expect(output).not.toContain('marketing recommendation');
+  });
+
+  // ─── related-skills injection ──────────────────────────────────────────────
+
+  function scaffoldSkills(root: string): void {
+    const skillsRoot = join(root, '.claude', 'skills');
+    mkdirSync(join(skillsRoot, 'multi-review'), { recursive: true });
+    mkdirSync(join(skillsRoot, 'engineering'), { recursive: true });
+    writeFileSync(join(skillsRoot, 'multi-review', 'SKILL.md'), [
+      '---',
+      'name: multi-review',
+      'description: Multi-agent code review with a router and niche specialists. Review a PR with a team of security, cloud-functions, frontend, and edge-case specialists.',
+      'tags: [review, sub-agents, code-review, security]',
+      'alwaysApply: false',
+      '---',
+      '# Multi-review',
+      'Routes the diff to specialist sub-agents in parallel, then synthesizes one report.',
+    ].join('\n'));
+    writeFileSync(join(skillsRoot, 'engineering', 'SKILL.md'), [
+      '---',
+      'description: Universal coding standards, security, testing, naming conventions, error handling.',
+      'alwaysApply: true',
+      'tags: [engineering, standards]',
+      '---',
+      '# Engineering',
+      'Coding standards and review checklist.',
+    ].join('\n'));
+  }
+
+  // The DREAMCONTEXT_SKILLS_HOOK env var (and 8-char minimum) gate this block.
+  // We disable the memory hook in these tests so the only recall output is skills.
+  const SKILLS_ENV = { ...process.env, DREAMCONTEXT_MEMORY_HOOK: '0' };
+
+  it('suggests a matching skill via the Skill tool', () => {
+    scaffoldSkills(tmpDir);
+    const input = JSON.stringify({ session_id: 'sess-1', prompt: 'review this PR with the team' });
+    const output = runWithStdin('hook user-prompt-submit', input, tmpDir, SKILLS_ENV);
+    expect(output).toContain('Related skills');
+    expect(output).toContain('multi-review');
+    expect(output).toContain('Skill tool BEFORE acting');
+  });
+
+  it('does NOT surface alwaysApply skills (engineering filtered out)', () => {
+    scaffoldSkills(tmpDir);
+    // A prompt that would otherwise match the engineering skill strongly.
+    const input = JSON.stringify({ session_id: 'sess-1', prompt: 'review this PR with the team for coding standards and security testing' });
+    const output = runWithStdin('hook user-prompt-submit', input, tmpDir, SKILLS_ENV);
+    expect(output).toContain('Related skills');
+    // engineering has alwaysApply:true → must never be listed as a related skill.
+    expect(output).not.toContain('engineering');
+  });
+
+  it('no Related skills line for an unrelated prompt', () => {
+    scaffoldSkills(tmpDir);
+    const input = JSON.stringify({ session_id: 'sess-1', prompt: 'xyzzy qqq zzz' });
+    const output = runWithStdin('hook user-prompt-submit', input, tmpDir, SKILLS_ENV);
+    expect(output).not.toContain('Related skills');
+  });
+
+  it('no Related skills line when .claude/skills does not exist (and recall still works)', () => {
+    // No skills dir scaffolded. Seed drowsy debt so the existing reminder still fires.
+    writeSleep(ctx, { debt: 5, sessions: [], bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [] });
+    const input = JSON.stringify({ session_id: 'sess-1', prompt: 'review this PR with the team' });
+    const output = runWithStdin('hook user-prompt-submit', input, tmpDir, SKILLS_ENV);
+    expect(output).not.toContain('Related skills');
+    expect(output).toContain('Sleep debt is 5'); // existing sleep-debt behavior intact
+  });
+
+  it('no Related skills line for a short greeting (< 8 chars)', () => {
+    scaffoldSkills(tmpDir);
+    const input = JSON.stringify({ session_id: 'sess-1', prompt: 'ok' });
+    const output = runWithStdin('hook user-prompt-submit', input, tmpDir, SKILLS_ENV);
+    expect(output).not.toContain('Related skills');
+  });
+
+  it('no Related skills line when DREAMCONTEXT_SKILLS_HOOK=0', () => {
+    scaffoldSkills(tmpDir);
+    const input = JSON.stringify({ session_id: 'sess-1', prompt: 'review this PR with the team' });
+    const output = runWithStdin('hook user-prompt-submit', input, tmpDir, {
+      ...process.env,
+      DREAMCONTEXT_MEMORY_HOOK: '0',
+      DREAMCONTEXT_SKILLS_HOOK: '0',
+    });
+    expect(output).not.toContain('Related skills');
   });
 });
 

@@ -15,6 +15,7 @@ const TYPE_LABELS: Record<CorpusType, string> = {
   task: 'task',
   memory: 'memory',
   changelog: 'changelog',
+  skill: 'skill', // never produced by buildCorpus; present only to satisfy the Record type
 };
 
 function parseTypes(value: string | undefined): CorpusType[] | undefined {
@@ -278,6 +279,7 @@ export function registerMemoryCommand(program: Command): void {
         task: [],
         memory: [],
         changelog: [],
+        skill: [], // never produced by buildCorpus; present only to satisfy the Record type
       };
       for (const doc of corpus) byType[doc.type].push(doc);
       console.log(header(`Memory Corpus (${corpus.length} docs)`));
@@ -304,6 +306,7 @@ export function registerMemoryCommand(program: Command): void {
         task: 0,
         memory: 0,
         changelog: 0,
+        skill: 0, // never produced by buildCorpus; present only to satisfy the Record type
       };
       let totalTokens = 0;
       for (const doc of corpus) {

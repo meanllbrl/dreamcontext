@@ -8,12 +8,17 @@ import { readSleepState, writeSleepState } from './sleep.js';
 import { generateSnapshot, generateSubagentBriefing } from './snapshot.js';
 import { listStaleRecs } from '../../lib/marketing/snapshot.js';
 import { isMarketingEnvPath } from '../../lib/marketing/path-guards.js';
-import { buildCorpus, bm25Search, type RecallHit } from '../../lib/recall.js';
+import { buildCorpus, bm25Search, loadSkillDocs, type RecallHit } from '../../lib/recall.js';
 import { haikuRecall } from '../../lib/recall-query-extractor.js';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
 const MAX_TRANSCRIPT_BYTES = 50 * 1024 * 1024; // 50MB safety cap
+
+// Related-skills recall: lower threshold than memory's 2.0 because alwaysApply
+// skills are filtered out and the skill corpus is tiny/curated.
+const SKILL_SCORE_THRESHOLD = 1.0;
+const MAX_RELATED_SKILLS = 3;
 
 // ─── Stdin Reading ──────────────────────────────────────────────────────────
 
@@ -667,6 +672,40 @@ export function registerHookCommand(program: Command): void {
           }
         } catch (recallErr) {
           if (process.env.DREAMCONTEXT_DEBUG) console.error('[recall] error:', (recallErr as Error).message ?? recallErr);
+        }
+      }
+
+      // Related-skills injection — BM25-match the prompt against top-level skill
+      // packs in <projectRoot>/.claude/skills and suggest invoking the best fits
+      // via the Skill tool. alwaysApply skills are filtered out by loadSkillDocs.
+      // NOTE: the `sleep_started_at` early-return above intentionally suppresses
+      // this block during consolidation sessions (no code needed here).
+      // Own try/catch so it can never throw out of the action.
+      if (process.env.DREAMCONTEXT_SKILLS_HOOK !== '0') {
+        try {
+          const prompt = String((input as Record<string, unknown>).prompt ?? '');
+          if (prompt.trim().length >= 8) {
+            const projectRoot = process.cwd();
+            const skillsRoot = join(projectRoot, '.claude', 'skills');
+            const docs = loadSkillDocs(skillsRoot);
+            if (docs.length > 0) {
+              const hits = bm25Search(prompt, docs, MAX_RELATED_SKILLS)
+                .filter(h => h.score >= SKILL_SCORE_THRESHOLD);
+              if (hits.length > 0) {
+                const lines: string[] = ['', `— Related skills (top ${hits.length}) —`];
+                lines.push('  Invoke these via the Skill tool BEFORE acting if they fit the task:');
+                for (const h of hits) {
+                  const desc = h.doc.description.length > 120
+                    ? h.doc.description.slice(0, 120) + '…'
+                    : h.doc.description;
+                  lines.push(`  • ${h.doc.slug}${desc ? ` — ${desc}` : ''}`);
+                }
+                console.log(lines.join('\n'));
+              }
+            }
+          }
+        } catch (skillErr) {
+          if (process.env.DREAMCONTEXT_DEBUG) console.error('[skills] error:', (skillErr as Error).message ?? skillErr);
         }
       }
     });

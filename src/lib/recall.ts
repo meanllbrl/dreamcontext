@@ -1,9 +1,11 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { join, basename } from 'node:path';
+import { join, basename, dirname, relative } from 'node:path';
 import fg from 'fast-glob';
 import { readFrontmatter } from './frontmatter.js';
 
-export type CorpusType = 'knowledge' | 'feature' | 'task' | 'memory' | 'changelog';
+// 'skill' docs are produced ONLY by loadSkillDocs (called directly by the hook);
+// intentionally excluded from buildCorpus defaults to avoid polluting haikuRecall.
+export type CorpusType = 'knowledge' | 'feature' | 'task' | 'memory' | 'changelog' | 'skill';
 
 export interface CorpusDoc {
   type: CorpusType;
@@ -163,6 +165,54 @@ function loadMemoryFile(contextRoot: string): CorpusDoc[] {
       tokenSet: new Set(tokens),
       termFreq,
     });
+  }
+  return out;
+}
+
+/**
+ * Load top-level skill packs as corpus docs for related-skill recall.
+ *
+ * Only scans `<pack>/SKILL.md` (the `*\/SKILL.md` glob does NOT recurse into
+ * nested sub-skill dirs). Skills with `alwaysApply: true` are excluded — they're
+ * already loaded, so surfacing them is noise. Produces `type: 'skill'` docs that
+ * are intentionally NOT part of buildCorpus (haikuRecall must stay unchanged).
+ */
+export function loadSkillDocs(skillsRoot: string): CorpusDoc[] {
+  if (!existsSync(skillsRoot)) return [];
+  const files = fg.sync('*/SKILL.md', { cwd: skillsRoot, absolute: true });
+  const out: CorpusDoc[] = [];
+  for (const file of files) {
+    try {
+      const { data, content } = readFrontmatter(file);
+      // EXCLUDE always-apply skills — already loaded, surfacing them is noise.
+      if (data.alwaysApply === true) continue;
+      const slug = (typeof data.name === 'string' && data.name)
+        ? data.name
+        : basename(dirname(file));
+      const title = slug;
+      const description = (typeof data.description === 'string') ? data.description : '';
+      const tags = Array.isArray(data.tags) ? data.tags.map(String) : [];
+      const body = content.trim();
+      const haystack = [title, description, tags.join(' '), body].join(' ');
+      const tokens = tokenize(haystack);
+      const termFreq = new Map<string, number>();
+      for (const t of tokens) termFreq.set(t, (termFreq.get(t) ?? 0) + 1);
+      out.push({
+        type: 'skill',
+        path: file,
+        relPath: relative(skillsRoot, file),
+        slug,
+        title,
+        description,
+        tags,
+        body,
+        tokens,
+        tokenSet: new Set(tokens),
+        termFreq,
+      });
+    } catch {
+      // skip malformed
+    }
   }
   return out;
 }

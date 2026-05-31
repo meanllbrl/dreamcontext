@@ -4,7 +4,17 @@
     {
       "name": "engineering",
       "description": "Coding standards, security, backend architecture, web app implementation, Firebase services",
-      "tags": ["coding", "backend", "api", "serverless", "firebase", "security", "testing", "react", "typescript"],
+      "tags": [
+        "coding",
+        "backend",
+        "api",
+        "serverless",
+        "firebase",
+        "security",
+        "testing",
+        "react",
+        "typescript"
+      ],
       "alwaysApply": true,
       "base": "Universal coding standards, security, testing, naming, error handling, architectural principles",
       "subSkills": [
@@ -31,13 +41,29 @@
           "hasReferences": true
         }
       ],
-      "relatedAgents": ["reviewer"],
-      "crossPackDeps": ["design (for UI work)"]
+      "relatedAgents": [
+        "reviewer"
+      ],
+      "crossPackDeps": [
+        "design (for UI work)"
+      ]
     },
     {
       "name": "design",
       "description": "Design system fundamentals, frontend principles, web/mobile design, onboarding UX",
-      "tags": ["design", "ui", "ux", "accessibility", "mobile", "web", "typography", "colors", "frontend", "tokens", "i18n"],
+      "tags": [
+        "design",
+        "ui",
+        "ux",
+        "accessibility",
+        "mobile",
+        "web",
+        "typography",
+        "colors",
+        "frontend",
+        "tokens",
+        "i18n"
+      ],
       "alwaysApply": true,
       "base": "Universal design system: spacing (4px grid), typography, colors (HSL/OKLCH), visual hierarchy, layout, accessibility, emotional design",
       "subSkills": [
@@ -62,12 +88,23 @@
           "description": "Onboarding flows, paywalls, signup funnels, first-run UX, rating prompts"
         }
       ],
-      "crossPackDeps": ["engineering (coding-principles prerequisite for frontend code)"]
+      "crossPackDeps": [
+        "engineering (coding-principles prerequisite for frontend code)"
+      ]
     },
     {
       "name": "growth",
       "description": "Load when working on user acquisition, retention strategy, push notifications, TikTok/social distribution, content farming, paywall optimization, LTV, monetization, or organic viral loops",
-      "tags": ["growth", "marketing", "analytics", "retention", "ads", "experiments", "metrics", "tiktok"],
+      "tags": [
+        "growth",
+        "marketing",
+        "analytics",
+        "retention",
+        "ads",
+        "experiments",
+        "metrics",
+        "tiktok"
+      ],
       "alwaysApply": false,
       "base": "App growth strategy: retention engineering, distribution, content-led growth, VSC framework, monetization, viral loops",
       "subSkills": [
@@ -87,12 +124,25 @@
           "description": "Product analytics, KPIs, event schemas, Mixpanel, cohort/funnel analysis"
         }
       ],
-      "crossPackDeps": ["design/onboarding-design (for paywall priming)", "design/design-mobile (for widget/recording design)"]
+      "crossPackDeps": [
+        "design/onboarding-design (for paywall priming)",
+        "design/design-mobile (for widget/recording design)"
+      ]
     },
     {
       "name": "brand-voice",
       "description": "Load when writing emails, proposals, presentations, LinkedIn posts, sales content, pitch decks, or any brand-aligned content. Also triggers on brand discovery, guideline generation, brand content audits, and voice enforcement.",
-      "tags": ["brand", "voice", "content", "marketing", "sales", "copywriting", "guidelines", "discovery", "tone"],
+      "tags": [
+        "brand",
+        "voice",
+        "content",
+        "marketing",
+        "sales",
+        "copywriting",
+        "guidelines",
+        "discovery",
+        "tone"
+      ],
       "alwaysApply": false,
       "base": "Brand voice enforcement: load guidelines from _dream_context/core/, apply voice constants and tone flexes, validate content, explain brand choices",
       "subSkills": [
@@ -107,13 +157,21 @@
           "description": "Generate brand voice guidelines from documents, transcripts, discovery reports, or direct input. Saves as core file."
         }
       ],
-      "relatedAgents": ["discover-brand"],
+      "relatedAgents": [
+        "discover-brand"
+      ],
       "crossPackDeps": []
     },
     {
       "name": "council",
-      "description": "Load when the user wants to debate a non-trivial decision, asks for a second opinion, says 'help me decide', 'run this by council', or invokes /council. Orchestrates 3–10 persona sub-agents across multiple rounds, then a synthesizer writes a final decision report.",
-      "tags": ["council", "debate", "decision", "sub-agents", "orchestration"],
+      "description": "Load when the user wants to debate a non-trivial decision, asks for a second opinion, says 'help me decide', 'run this by council', or invokes /council. Orchestrates 3\u201310 persona sub-agents across multiple rounds, then a synthesizer writes a final decision report.",
+      "tags": [
+        "council",
+        "debate",
+        "decision",
+        "sub-agents",
+        "orchestration"
+      ],
       "alwaysApply": false,
       "base": "Structured multi-agent debate: orchestrator dispatches persona sub-agents in parallel rounds, reads only exec summaries, then dispatches a synthesizer for the final report. File-based IPC keeps the main agent's context light.",
       "subSkills": [
@@ -123,13 +181,25 @@
           "description": "Detailed CLI protocol reference: 14 sub-commands, required report subsections, failure modes, file layout, context-budget discipline."
         }
       ],
-      "relatedAgents": ["council-persona", "council-synthesizer"],
+      "relatedAgents": [
+        "council-persona",
+        "council-synthesizer"
+      ],
       "crossPackDeps": []
     },
     {
       "name": "multi-review",
       "description": "Load when the user invokes /multi-review, says 'multi-reviewer', 'review with a team', 'review this PR with specialists', 'team review', 'thorough review', or otherwise asks for a multi-aspect code review (security + cloud-functions + frontend + edge-cases) of a diff or branch. Routes the diff to relevant specialist sub-agents in parallel, then the main agent dedupes findings into one greptile-style report.",
-      "tags": ["review", "code-review", "multi-agent", "sub-agents", "orchestration", "security", "cloud-functions", "frontend"],
+      "tags": [
+        "review",
+        "code-review",
+        "multi-agent",
+        "sub-agents",
+        "orchestration",
+        "security",
+        "cloud-functions",
+        "frontend"
+      ],
       "alwaysApply": false,
       "base": "Orchestrated specialist code review: router classifies the diff by tier (Trivial/Lite/Full) + domain tags, dispatches niche specialists in parallel, main agent dedupes findings and emits one greptile-style report with READY_TO_MERGE / NEEDS_ATTENTION / NEEDS_WORK verdict. Each specialist auto-loads declared dreamcontext skills via YAML frontmatter.",
       "subSkills": [
@@ -139,8 +209,43 @@
           "description": "Shared rubric every specialist obeys: severity ladder (Critical/Major/Minor/Nit), output format, what-NOT-to-flag rules, verdict mapping, skill-loading and context discipline."
         }
       ],
-      "relatedAgents": ["review-router", "review-security", "review-cloud-functions", "review-frontend", "review-edge-cases"],
-      "crossPackDeps": ["engineering (specialists auto-load engineering sub-skills)", "design (frontend specialist loads design tokens + a11y)"]
+      "relatedAgents": [
+        "review-router",
+        "review-security",
+        "review-cloud-functions",
+        "review-frontend",
+        "review-edge-cases"
+      ],
+      "crossPackDeps": [
+        "engineering (specialists auto-load engineering sub-skills)",
+        "design (frontend specialist loads design tokens + a11y)"
+      ]
+    },
+    {
+      "name": "goal-skill",
+      "description": "Load when the user wants to drive a non-trivial goal to completion under sub-agent orchestration, or invokes /goal-skill. Triggers: 'drive this goal to completion', 'subagent-driven development', 'SDD', 'orchestrate this build', 'run this end-to-end with reviewers'. For multi-step features/fixes too large or risky for a single straight-line pass.",
+      "tags": [
+        "goal",
+        "orchestration",
+        "sdd",
+        "sub-agents",
+        "planning",
+        "review",
+        "validation"
+      ],
+      "alwaysApply": false,
+      "base": "Subagent-driven goal completion: the main agent orchestrates plan -> plan-review -> task-doc -> implement -> code-review -> validate, iterating each gate (cap 3, then escalate) until validation passes against user-agreed criteria. Reuses the engineering reviewer for code review and the dreamcontext task system as the working doc.",
+      "subSkills": [],
+      "relatedAgents": [
+        "goal-planner",
+        "goal-plan-reviewer",
+        "goal-implementer",
+        "goal-validator",
+        "reviewer"
+      ],
+      "crossPackDeps": [
+        "engineering (planner/implementer/reviewer load engineering standards)"
+      ]
     }
   ],
   "standalone": [
@@ -148,15 +253,39 @@
       "name": "business-idea-discovery",
       "file": "business-idea-discovery/SKILL.md",
       "description": "Load when discovering business ideas, validating market demand, mining pain points from Reddit/forums, researching competitors on Flippa/Acquire/Sensor Tower, checking Google Trends, evaluating marketability, or scoping an MVP. Full pre-build discovery pipeline.",
-      "tags": ["business", "idea", "discovery", "validation", "reddit", "market-research", "mvp", "startup", "pain-points"],
+      "tags": [
+        "business",
+        "idea",
+        "discovery",
+        "validation",
+        "reddit",
+        "market-research",
+        "mvp",
+        "startup",
+        "pain-points"
+      ],
       "alwaysApply": false,
-      "crossPackDeps": ["growth (post-build growth strategy)", "design/design-web (landing page design)", "business-idea-validation (deep validation after discovery)"]
+      "crossPackDeps": [
+        "growth (post-build growth strategy)",
+        "design/design-web (landing page design)",
+        "business-idea-validation (deep validation after discovery)"
+      ]
     },
     {
       "name": "business-idea-validation",
       "file": "business-idea-validation/SKILL.md",
       "description": "Sequential stage-gate pipeline for deep business idea validation. 9 stages, 6 specialist sub-agents, kill gates between every stage. Takes an idea through problem discovery, customer analysis, market sizing, competitive intelligence, customer simulation, synthesis, GTM strategy, financial viability, to a scored Go/No-Go decision.",
-      "tags": ["business", "validation", "startup", "pipeline", "sub-agents", "stage-gate", "go-no-go", "market-research", "customer-analysis"],
+      "tags": [
+        "business",
+        "validation",
+        "startup",
+        "pipeline",
+        "sub-agents",
+        "stage-gate",
+        "go-no-go",
+        "market-research",
+        "customer-analysis"
+      ],
       "alwaysApply": false,
       "subSkills": [
         {
@@ -165,14 +294,36 @@
           "description": "All 9 stages: inputs, outputs, success criteria, kill signals, and confidence scoring rubric"
         }
       ],
-      "relatedAgents": ["biv-researcher", "biv-customer-analyst", "biv-market-analyst", "biv-strategist", "biv-financial-analyst", "biv-decision-gate"],
-      "crossPackDeps": ["business-idea-discovery (find ideas fast, then validate deeply)", "growth (post-validation growth strategy)"]
+      "relatedAgents": [
+        "biv-researcher",
+        "biv-customer-analyst",
+        "biv-market-analyst",
+        "biv-strategist",
+        "biv-financial-analyst",
+        "biv-decision-gate"
+      ],
+      "crossPackDeps": [
+        "business-idea-discovery (find ideas fast, then validate deeply)",
+        "growth (post-validation growth strategy)"
+      ]
     },
     {
       "name": "meta-marketing",
       "file": "meta-marketing/SKILL.md",
       "description": "Load when planning, launching, or optimizing Meta (Facebook/Instagram) ad campaigns. Covers campaign structure, audience, creative strategy, post-launch optimization, and common failure modes.",
-      "tags": ["meta", "facebook", "instagram", "ads", "marketing", "ROAS", "creative", "campaign", "adset", "CAPI", "pixel"],
+      "tags": [
+        "meta",
+        "facebook",
+        "instagram",
+        "ads",
+        "marketing",
+        "ROAS",
+        "creative",
+        "campaign",
+        "adset",
+        "CAPI",
+        "pixel"
+      ],
       "alwaysApply": false,
       "references": [
         "account-ops.md",
@@ -182,14 +333,24 @@
         "platform-state.md",
         "api-reference.md"
       ],
-      "relatedAgents": ["marketing-strategy", "marketing-monitor", "marketing-creative"],
-      "corpus_status": "9 videos · 4 speakers · draft · agent roster: 2 active (strategy, monitor) + 1 stubbed (creative)"
+      "relatedAgents": [
+        "marketing-strategy",
+        "marketing-monitor",
+        "marketing-creative"
+      ],
+      "corpus_status": "9 videos \u00b7 4 speakers \u00b7 draft \u00b7 agent roster: 2 active (strategy, monitor) + 1 stubbed (creative)"
     },
     {
       "name": "system-prompts",
       "file": "system-prompts/SKILL.md",
       "description": "Load when writing/reviewing system prompts, configuring AI agents, designing instruction hierarchies, optimizing for Claude/GPT/Gemini/DeepSeek, prompt injection defense, multi-stage agent flows (ReAct, AlphaCodium, LATS), or context engineering",
-      "tags": ["ai", "prompts", "agents", "cognitive-architecture", "security"],
+      "tags": [
+        "ai",
+        "prompts",
+        "agents",
+        "cognitive-architecture",
+        "security"
+      ],
       "alwaysApply": false
     }
   ],
@@ -199,7 +360,11 @@
       "file": "agents/reviewer.md",
       "pack": "engineering",
       "description": "Critical code reviewer and final quality gate. Only flags Critical and Major issues (security, data loss, memory leaks, breaking changes). Returns PASS or FAIL.",
-      "tags": ["code-review", "security", "quality"],
+      "tags": [
+        "code-review",
+        "security",
+        "quality"
+      ],
       "model": "sonnet"
     },
     {
@@ -207,7 +372,11 @@
       "file": "agents/discover-brand.md",
       "pack": "brand-voice",
       "description": "Autonomous 4-phase brand material search across enterprise MCP platforms",
-      "tags": ["brand", "discovery", "mcp"],
+      "tags": [
+        "brand",
+        "discovery",
+        "mcp"
+      ],
       "model": "sonnet"
     },
     {
@@ -215,7 +384,12 @@
       "file": "agents/council-persona.md",
       "pack": "council",
       "description": "A persona sub-agent in a council debate. Loads persona + peer cross-context via CLI, thinks from the assigned perspective, writes a structured round report. Dispatched in parallel, one per persona per round.",
-      "tags": ["council", "debate", "persona", "sub-agent"],
+      "tags": [
+        "council",
+        "debate",
+        "persona",
+        "sub-agent"
+      ],
       "model": "sonnet"
     },
     {
@@ -223,31 +397,55 @@
       "file": "agents/council-synthesizer.md",
       "pack": "council",
       "description": "Reads every report + persona + research in a council debate and writes the final decision report with traced Whys, position-shift timeline, and minority views.",
-      "tags": ["council", "debate", "synthesis", "reporting"],
+      "tags": [
+        "council",
+        "debate",
+        "synthesis",
+        "reporting"
+      ],
       "model": "opus"
     },
     {
       "name": "marketing-strategy",
       "file": "agents/marketing-strategy.md",
       "pack": "meta-marketing",
-      "description": "Strategy Optimizer for Meta ads — plans cohort hypotheses (shape-validated), drafts campaign briefs grounded in the meta-marketing skill-pack corpus, always asks for budget, never launches.",
-      "tags": ["meta", "ads", "strategy", "cohort", "hypothesis", "marketing"],
+      "description": "Strategy Optimizer for Meta ads \u2014 plans cohort hypotheses (shape-validated), drafts campaign briefs grounded in the meta-marketing skill-pack corpus, always asks for budget, never launches.",
+      "tags": [
+        "meta",
+        "ads",
+        "strategy",
+        "cohort",
+        "hypothesis",
+        "marketing"
+      ],
       "model": "opus"
     },
     {
       "name": "marketing-monitor",
       "file": "agents/marketing-monitor.md",
       "pack": "meta-marketing",
-      "description": "Performance Monitor for live Meta campaigns — reads insights, applies post-launch rules from account-ops.md §4, writes hypothesis-ledger entries to per-day learnings, recommends moves but never auto-mutates.",
-      "tags": ["meta", "ads", "monitoring", "optimization", "marketing"],
+      "description": "Performance Monitor for live Meta campaigns \u2014 reads insights, applies post-launch rules from account-ops.md \u00a74, writes hypothesis-ledger entries to per-day learnings, recommends moves but never auto-mutates.",
+      "tags": [
+        "meta",
+        "ads",
+        "monitoring",
+        "optimization",
+        "marketing"
+      ],
       "model": "opus"
     },
     {
       "name": "marketing-creative",
       "file": "agents/marketing-creative.md",
       "pack": "meta-marketing",
-      "description": "Creative Director for Meta ads — STUBBED in v0. Refuses all requests until marketing.creative_director.enabled = true. v1 will merge brainstorming + copy + asset generation.",
-      "tags": ["meta", "ads", "creative", "stub", "marketing"],
+      "description": "Creative Director for Meta ads \u2014 STUBBED in v0. Refuses all requests until marketing.creative_director.enabled = true. v1 will merge brainstorming + copy + asset generation.",
+      "tags": [
+        "meta",
+        "ads",
+        "creative",
+        "stub",
+        "marketing"
+      ],
       "model": "opus"
     },
     {
@@ -255,88 +453,205 @@
       "file": "agents/review-router.md",
       "pack": "multi-review",
       "description": "Classifies a code diff for the multi-reviewer system. Categorizes by size tier (Trivial/Lite/Full), tags affected domains, outputs JSON dispatch plan telling the main agent which specialists to invoke and which files to scope to each. Always runs first in the multi-review flow.",
-      "tags": ["review", "router", "classifier", "dispatch"],
+      "tags": [
+        "review",
+        "router",
+        "classifier",
+        "dispatch"
+      ],
       "model": "sonnet"
     },
     {
       "name": "review-security",
       "file": "agents/review-security.md",
       "pack": "multi-review",
-      "description": "Security specialist in the multi-review team. Reviews ONLY for security defects — exploitable vulnerabilities, secret leakage, auth/authz gaps, injection, SSRF/CSRF/XSS, env-var exposure, weak crypto, insecure deserialization. Outputs a bounded greptile-style report.",
-      "tags": ["review", "security", "owasp", "secrets", "auth"],
+      "description": "Security specialist in the multi-review team. Reviews ONLY for security defects \u2014 exploitable vulnerabilities, secret leakage, auth/authz gaps, injection, SSRF/CSRF/XSS, env-var exposure, weak crypto, insecure deserialization. Outputs a bounded greptile-style report.",
+      "tags": [
+        "review",
+        "security",
+        "owasp",
+        "secrets",
+        "auth"
+      ],
       "model": "sonnet"
     },
     {
       "name": "review-cloud-functions",
       "file": "agents/review-cloud-functions.md",
       "pack": "multi-review",
-      "description": "Cloud Functions specialist in the multi-review team. Reviews ONLY Firebase Cloud Functions and serverless function changes — idempotency, infinite-loop risk, scaling/concurrency, cold-start cost, retry semantics, secrets handling, unbounded fan-out, billing footguns, trigger-loop hazards.",
-      "tags": ["review", "cloud-functions", "firebase", "serverless", "idempotency"],
+      "description": "Cloud Functions specialist in the multi-review team. Reviews ONLY Firebase Cloud Functions and serverless function changes \u2014 idempotency, infinite-loop risk, scaling/concurrency, cold-start cost, retry semantics, secrets handling, unbounded fan-out, billing footguns, trigger-loop hazards.",
+      "tags": [
+        "review",
+        "cloud-functions",
+        "firebase",
+        "serverless",
+        "idempotency"
+      ],
       "model": "sonnet"
     },
     {
       "name": "review-frontend",
       "file": "agents/review-frontend.md",
       "pack": "multi-review",
-      "description": "Frontend specialist in the multi-review team. Reviews ONLY frontend changes (React/Vue/Svelte/Next/web components/CSS) — file-size scalability, hook correctness, accessibility, bundle bloat, render perf, state management, design-token discipline, i18n, and frontend-specific security (XSS sinks, token storage).",
-      "tags": ["review", "frontend", "react", "a11y", "design-tokens"],
+      "description": "Frontend specialist in the multi-review team. Reviews ONLY frontend changes (React/Vue/Svelte/Next/web components/CSS) \u2014 file-size scalability, hook correctness, accessibility, bundle bloat, render perf, state management, design-token discipline, i18n, and frontend-specific security (XSS sinks, token storage).",
+      "tags": [
+        "review",
+        "frontend",
+        "react",
+        "a11y",
+        "design-tokens"
+      ],
       "model": "sonnet"
     },
     {
       "name": "review-edge-cases",
       "file": "agents/review-edge-cases.md",
       "pack": "multi-review",
-      "description": "Edge-case and production-risk specialist in the multi-review team. The paranoid one. Enumerates failure modes the other specialists don't own — empty/null/undefined inputs, off-by-one, concurrency, partial successes, retries, network failures, clock skew, timezone bugs, locale assumptions, state machine gaps, error swallowing. Always included for tier >= Lite.",
-      "tags": ["review", "edge-cases", "failure-modes", "concurrency", "production-risk"],
+      "description": "Edge-case and production-risk specialist in the multi-review team. The paranoid one. Enumerates failure modes the other specialists don't own \u2014 empty/null/undefined inputs, off-by-one, concurrency, partial successes, retries, network failures, clock skew, timezone bugs, locale assumptions, state machine gaps, error swallowing. Always included for tier >= Lite.",
+      "tags": [
+        "review",
+        "edge-cases",
+        "failure-modes",
+        "concurrency",
+        "production-risk"
+      ],
       "model": "sonnet"
     },
     {
       "name": "biv-researcher",
       "file": "agents/biv-researcher.md",
       "pack": "business-idea-validation",
-      "description": "Research specialist for BIV pipeline. Executes Stage 1 (Problem Discovery — Reddit mining, forum analysis, Google Trends) and Stage 4 (Competitive Intelligence — competitor dossiers, gap analysis, 2x2 matrix). Heavy web research.",
-      "tags": ["biv", "research", "reddit", "competitors", "market-research"],
+      "description": "Research specialist for BIV pipeline. Executes Stage 1 (Problem Discovery \u2014 Reddit mining, forum analysis, Google Trends) and Stage 4 (Competitive Intelligence \u2014 competitor dossiers, gap analysis, 2x2 matrix). Heavy web research.",
+      "tags": [
+        "biv",
+        "research",
+        "reddit",
+        "competitors",
+        "market-research"
+      ],
       "model": "sonnet"
     },
     {
       "name": "biv-customer-analyst",
       "file": "agents/biv-customer-analyst.md",
       "pack": "business-idea-validation",
-      "description": "Customer analysis specialist for BIV pipeline. Executes Stage 2 (Customer Analysis — segmentation, personas, beachhead selection) and Stage 5 (AI-simulated Customer Validation from forum data).",
-      "tags": ["biv", "customer", "persona", "segmentation", "validation"],
+      "description": "Customer analysis specialist for BIV pipeline. Executes Stage 2 (Customer Analysis \u2014 segmentation, personas, beachhead selection) and Stage 5 (AI-simulated Customer Validation from forum data).",
+      "tags": [
+        "biv",
+        "customer",
+        "persona",
+        "segmentation",
+        "validation"
+      ],
       "model": "sonnet"
     },
     {
       "name": "biv-market-analyst",
       "file": "agents/biv-market-analyst.md",
       "pack": "business-idea-validation",
-      "description": "Market sizing specialist for BIV pipeline. Executes Stage 3 (Market Sizing — TAM/SAM/SOM via top-down and bottom-up analysis, ambition-level gating).",
-      "tags": ["biv", "market", "sizing", "tam", "sam", "som"],
+      "description": "Market sizing specialist for BIV pipeline. Executes Stage 3 (Market Sizing \u2014 TAM/SAM/SOM via top-down and bottom-up analysis, ambition-level gating).",
+      "tags": [
+        "biv",
+        "market",
+        "sizing",
+        "tam",
+        "sam",
+        "som"
+      ],
       "model": "sonnet"
     },
     {
       "name": "biv-strategist",
       "file": "agents/biv-strategist.md",
       "pack": "business-idea-validation",
-      "description": "Strategy specialist for BIV pipeline. Executes Stage 6 (Synthesis & Hypothesis — opportunity snapshot, riskiest assumptions, testable hypothesis, RICE features), Stage 7 (GTM Strategy — channels, messaging, first-100-users plan), and optional Lean Canvas capstone.",
-      "tags": ["biv", "strategy", "hypothesis", "gtm", "lean-canvas"],
+      "description": "Strategy specialist for BIV pipeline. Executes Stage 6 (Synthesis & Hypothesis \u2014 opportunity snapshot, riskiest assumptions, testable hypothesis, RICE features), Stage 7 (GTM Strategy \u2014 channels, messaging, first-100-users plan), and optional Lean Canvas capstone.",
+      "tags": [
+        "biv",
+        "strategy",
+        "hypothesis",
+        "gtm",
+        "lean-canvas"
+      ],
       "model": "opus"
     },
     {
       "name": "biv-financial-analyst",
       "file": "agents/biv-financial-analyst.md",
       "pack": "business-idea-validation",
-      "description": "Financial viability specialist for BIV pipeline. Executes Stage 8 (Year 1 P&L, unit economics — CAC/LTV/LTV:CAC, sensitivity analysis, Year 2 outlook).",
-      "tags": ["biv", "financial", "unit-economics", "ltv", "cac"],
+      "description": "Financial viability specialist for BIV pipeline. Executes Stage 8 (Year 1 P&L, unit economics \u2014 CAC/LTV/LTV:CAC, sensitivity analysis, Year 2 outlook).",
+      "tags": [
+        "biv",
+        "financial",
+        "unit-economics",
+        "ltv",
+        "cac"
+      ],
       "model": "sonnet"
     },
     {
       "name": "biv-decision-gate",
       "file": "agents/biv-decision-gate.md",
       "pack": "business-idea-validation",
-      "description": "Final decision specialist for BIV pipeline. Executes Stage 9 (Go/No-Go — scores 8 dimensions across Desirability/Feasibility/Viability, applies risk penalties, produces verdict: GO/PIVOT/NO-GO with specific next steps).",
-      "tags": ["biv", "decision", "go-no-go", "scorecard"],
+      "description": "Final decision specialist for BIV pipeline. Executes Stage 9 (Go/No-Go \u2014 scores 8 dimensions across Desirability/Feasibility/Viability, applies risk penalties, produces verdict: GO/PIVOT/NO-GO with specific next steps).",
+      "tags": [
+        "biv",
+        "decision",
+        "go-no-go",
+        "scorecard"
+      ],
       "model": "opus"
+    },
+    {
+      "name": "goal-planner",
+      "file": "agents/goal-planner.md",
+      "pack": "goal-skill",
+      "description": "Planning specialist for goal-skill. Produces a rigorous file-by-file implementation plan by reading the codebase + dreamcontext context. Does not write code or the task doc. Dispatched at Phase 1.",
+      "tags": [
+        "goal",
+        "planning",
+        "sdd",
+        "sub-agent"
+      ],
+      "model": "opus"
+    },
+    {
+      "name": "goal-plan-reviewer",
+      "file": "agents/goal-plan-reviewer.md",
+      "pack": "goal-skill",
+      "description": "Plan reviewer for goal-skill. Critiques a prose plan (pre-code) from one lens (pragmatist/critic/security) and returns SOLID or NEEDS_WORK with blocking findings. Distinct from the code reviewer. Dispatched in parallel at Phase 2.",
+      "tags": [
+        "goal",
+        "plan-review",
+        "sdd",
+        "sub-agent"
+      ],
+      "model": "sonnet"
+    },
+    {
+      "name": "goal-implementer",
+      "file": "agents/goal-implementer.md",
+      "pack": "goal-skill",
+      "description": "Implementation specialist for goal-skill. Builds strictly to a validated task's acceptance criteria, logs progress, does not expand scope, stops+reports if the plan is wrong. Dispatched at Phase 4.",
+      "tags": [
+        "goal",
+        "implementation",
+        "sdd",
+        "sub-agent"
+      ],
+      "model": "sonnet"
+    },
+    {
+      "name": "goal-validator",
+      "file": "agents/goal-validator.md",
+      "pack": "goal-skill",
+      "description": "Validation specialist for goal-skill. Runs the user-chosen validation method (unit/integration tests or manual checklist) and returns PASS or FAIL with evidence. Does not fix code. Dispatched at Phase 6.",
+      "tags": [
+        "goal",
+        "validation",
+        "testing",
+        "sub-agent"
+      ],
+      "model": "sonnet"
     }
   ]
 }

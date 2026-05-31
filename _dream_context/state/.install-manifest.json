@@ -1,7 +1,7 @@
 {
   "version": "0.2.0",
   "createdAt": "2026-05-22T07:17:39.740Z",
-  "updatedAt": "2026-05-26T08:25:48.998Z",
+  "updatedAt": "2026-05-31T13:38:28.891Z",
   "platforms": [
     "claude",
     "codex"
@@ -414,6 +414,26 @@
     ".agents/skills/system-prompts/SKILL.md": {
       "version": "0.2.0",
       "kind": "pack-skill"
+    },
+    ".claude/skills/goal-skill/SKILL.md": {
+      "version": "0.2.0",
+      "kind": "pack-skill"
+    },
+    ".claude/agents/goal-planner.md": {
+      "version": "0.2.0",
+      "kind": "pack-agent"
+    },
+    ".claude/agents/goal-plan-reviewer.md": {
+      "version": "0.2.0",
+      "kind": "pack-agent"
+    },
+    ".claude/agents/goal-implementer.md": {
+      "version": "0.2.0",
+      "kind": "pack-agent"
+    },
+    ".claude/agents/goal-validator.md": {
+      "version": "0.2.0",
+      "kind": "pack-agent"
     }
   },
   "packs": {
@@ -442,6 +462,9 @@
       "version": "0.2.0"
     },
     "system-prompts": {
+      "version": "0.2.0"
+    },
+    "goal-skill": {
       "version": "0.2.0"
     }
   }
