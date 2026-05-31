@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useI18n } from '../context/I18nContext';
 import { useConfig, useUpdateConfig, type PlatformId, type SetupConfig } from '../hooks/useConfig';
 import { usePacks } from '../hooks/usePacks';
-import { useVaults } from '../hooks/useVaults';
+import { useVaults, useAddVault, useRemoveVault } from '../hooks/useVaults';
 import './SettingsPage.css';
 
 // ─── Platform options (duplicated client-side — can't import from src/lib) ────
@@ -32,11 +32,15 @@ export function SettingsPage() {
   const { data: packsData, isLoading: packsLoading } = usePacks();
   const { data: vaultsData } = useVaults();
   const updateConfig = useUpdateConfig();
+  const addVault = useAddVault();
+  const removeVault = useRemoveVault();
 
   const [platforms, setPlatforms] = useState<PlatformId[]>(DEFAULT_CONFIG.platforms);
   const [packs, setPacks] = useState<string[]>(DEFAULT_CONFIG.packs);
   const [dirty, setDirty] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [newVaultName, setNewVaultName] = useState('');
+  const [newVaultPath, setNewVaultPath] = useState('');
 
   // Seed form state from loaded config
   useEffect(() => {
@@ -162,6 +166,52 @@ export function SettingsPage() {
       <section className="settings-section">
         <h2 className="settings-section-title">{t('settings.vaults.title')}</h2>
         <p className="settings-vaults-note">{t('settings.vaults.note')}</p>
+
+        <form
+          className="settings-vault-add"
+          onSubmit={(e) => {
+            e.preventDefault();
+            addVault.mutate(
+              { name: newVaultName.trim(), path: newVaultPath.trim() },
+              {
+                onSuccess: () => {
+                  setNewVaultName('');
+                  setNewVaultPath('');
+                },
+              },
+            );
+          }}
+        >
+          <input
+            className="settings-vault-add-input"
+            type="text"
+            placeholder={t('settings.vaults.namePlaceholder')}
+            value={newVaultName}
+            onChange={(e) => setNewVaultName(e.target.value)}
+            disabled={addVault.isPending}
+          />
+          <input
+            className="settings-vault-add-input"
+            type="text"
+            placeholder={t('settings.vaults.pathPlaceholder')}
+            value={newVaultPath}
+            onChange={(e) => setNewVaultPath(e.target.value)}
+            disabled={addVault.isPending}
+          />
+          <button
+            className="btn btn--primary settings-vault-add-btn"
+            type="submit"
+            disabled={!newVaultName.trim() || !newVaultPath.trim() || addVault.isPending}
+          >
+            {addVault.isPending ? t('settings.vaults.adding') : t('settings.vaults.addButton')}
+          </button>
+          {addVault.isError && (
+            <span className="error-state settings-vault-add-error">
+              {addVault.error instanceof Error ? addVault.error.message : t('common.error')}
+            </span>
+          )}
+        </form>
+
         {vaults.length === 0 ? (
           <div className="settings-empty">{t('settings.vaults.empty')}</div>
         ) : (
@@ -176,6 +226,14 @@ export function SettingsPage() {
                 {vault.path === currentVault && (
                   <span className="settings-vault-current-badge">{t('settings.vaults.current')}</span>
                 )}
+                <button
+                  className="btn btn--ghost settings-vault-remove-btn"
+                  type="button"
+                  onClick={() => removeVault.mutate(vault.name)}
+                  disabled={removeVault.isPending}
+                >
+                  {t('settings.vaults.remove')}
+                </button>
               </li>
             ))}
           </ul>

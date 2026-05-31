@@ -51,6 +51,10 @@ class ApiClient {
       body: JSON.stringify(body),
     });
   }
+
+  del<T>(path: string): Promise<T> {
+    return this.request<T>(path, { method: 'DELETE' });
+  }
 }
 
 export const api = new ApiClient();
