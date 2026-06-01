@@ -41,6 +41,19 @@ the Node child process (no orphaned server).
 
 ## Build a distributable
 
+**Quick local build (verified)** — an installable, Apple-unsigned `.app`, no keys needed:
+
+```bash
+cd desktop
+npm run tauri icon /path/to/square-1024.png   # icons already generated from the brand logo
+echo '{"bundle":{"createUpdaterArtifacts":false}}' > /tmp/nosign.json
+npm run tauri build -- --config /tmp/nosign.json --bundles app
+# → src-tauri/target/release/bundle/macos/dreamcontext.app  (adhoc-signed; right-click → Open to run)
+```
+
+The full **signed/updater/`.dmg`** build needs your signing key AND a GUI session (the
+`.dmg` step uses Finder/AppleScript styling, which fails headless):
+
 ```bash
 cd desktop
 

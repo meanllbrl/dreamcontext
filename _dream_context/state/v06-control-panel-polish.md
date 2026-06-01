@@ -28,7 +28,7 @@ flowchart TD
     A4[A4 open a new vault easily]:::done
   end
   subgraph M2 ["Desktop + verification"]
-    A5[A5 installable Mac app]:::active
+    A5[A5 installable Mac app]:::done
     A6[A6 Playwright verification]:::done
   end
 
@@ -48,7 +48,7 @@ User-driven polish after v0.6 slices 1–4. Six concrete fixes to make the contr
 - [x] As a user, the nav reads as sensible groups (Workspace vs Control Panel), not a flat list.
 - [x] As a user, the Packs page shows which packs are actually installed.
 - [x] As a user, I can add/open a vault by pasting just a path (name auto-derived).
-- [ ] As a user, I can install and run the dreamcontext desktop app on macOS.
+- [x] As a user, I can install the dreamcontext desktop app on macOS (a valid, adhoc-signed `.app`; Apple notarization is the release step).
 
 ## Acceptance Criteria
 
@@ -56,7 +56,7 @@ User-driven polish after v0.6 slices 1–4. Six concrete fixes to make the contr
 - [x] **A2** Nav tabs are grouped under "Workspace" (brain, tasks, knowledge, features, core, council, sleep) and "Control Panel" (packs, settings). (Playwright: two group labels, 9 items.)
 - [x] **A3** Installed packs are shown correctly: `/api/packs` computes `installed` from the FILESYSTEM (`.claude/skills/<name>/SKILL.md` for any platform), not from `config.packs`. Packs page + Settings badge use it. (Was: only `goal-skill` showed installed; now all 10 truly-installed do. Playwright: ≥7 installed pills; unit test asserts filesystem truth.)
 - [x] **A4** Adding a vault is easy: a prominent monospace path field (name optional, auto-derived from the path basename), clear "Open a vault" heading + helper hint. (Playwright: add the repo path → vault appears → remove cleans up.)
-- [ ] **A5** The desktop app builds into an installable macOS `.app`/`.dmg` via `tauri build` (Apple-unsigned for local; updater-signing is the separate release step). Valid icons generated from the brand logo via `tauri icon`.
+- [x] **A5** The desktop app builds into an installable macOS `.app` via `tauri build --bundles app` (exit 0): a valid arm64 Mach-O, adhoc-signed (runs locally via right-click-open), `icon.icns` from the brand logo, Info.plist id `com.dreamcontext.desktop` v0.6.0. (The `.dmg` step needs a GUI session for Finder styling + the updater signing key — both release-time/user-machine steps; the `.app` is the installable artifact.)
 - [x] **A6** Playwright e2e suite (`e2e/control-panel.spec.ts` + `playwright.config.ts`) verifies A1–A4; `npm run test:e2e`. Stable across repeated runs.
 
 **Validation method:** `npm run build` + full vitest (978 green) + `npx playwright test` (4/4) + `tauri build` produces a `.app`.
