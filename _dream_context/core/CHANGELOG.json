@@ -1,5 +1,17 @@
 [
   {
+    "date": "2026-06-01",
+    "type": "feat",
+    "scope": "control-panel",
+    "description": "Ships the v0.6 control-panel work under 0.5.2: backend control-plane (/api/config|packs|version-check|vaults, vault registry + CLI, safeChildPath hardening, catalog.ts extraction), dashboard wiring (Settings/Packs pages, UpdateBadge, vault add/remove), filesystem-truth installed-packs, collapsible grouped sidebar, dashboard --vault, DOMPurify sanitization, Playwright e2e. Standalone Tauri app deferred (parked/desktop-app). 978 tests green.",
+    "breaking": false,
+    "summary": "v0.5.2 — dashboard control panel (vault registry+CLI, config/packs/version routes, Settings/Packs UI, collapsible grouped sidebar)",
+    "references": [
+      "commit:3ce9c8c",
+      "feature:control-panel"
+    ]
+  },
+  {
     "date": "2026-05-31",
     "type": "docs",
     "scope": "desktop",
