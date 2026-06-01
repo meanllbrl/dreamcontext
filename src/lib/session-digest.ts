@@ -132,10 +132,13 @@ export function writeDigest(root: string, sessionId: string, md: string): string
   const dir = digestsDir(root);
   mkdirSync(dir, { recursive: true });
   const file = digestPath(root, sessionId);
+  // Sanitise before embedding in YAML frontmatter (a stray newline/`:` in a
+  // session id would otherwise inject frontmatter keys read back by gray-matter).
+  const safeId = sessionId.replace(/[^a-zA-Z0-9_-]/g, '_');
   const frontmatter = [
     '---',
     'type: session-digest',
-    `session_id: ${sessionId}`,
+    `session_id: ${safeId}`,
     `created_at: ${new Date().toISOString()}`,
     '---',
     '',

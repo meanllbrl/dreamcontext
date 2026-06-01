@@ -731,7 +731,11 @@ export function registerHookCommand(program: Command): void {
                 hits = bm25Search(prompt, corpus, 3);
               }
 
-              if (hits.length > 0 && (mode === 'Haiku' || hits[0].score >= 2.0)) {
+              // Hits are ordered by rankScore (field/recency/synonym signals), but the
+              // gate must test the RAW BM25 score, which may not sit at index 0 after
+              // re-ranking. Use .some() so a strong raw match isn't suppressed by a
+              // lower-raw-score doc winning the rankScore sort.
+              if (hits.length > 0 && (mode === 'Haiku' || hits.some((h) => h.score >= 2.0))) {
                 const lines: string[] = ['', `— Memory recall (${mode}, top ${hits.length}) —`];
                 for (const h of hits) {
                   lines.push(`  [${h.doc.type}] ${h.doc.relPath}`);
