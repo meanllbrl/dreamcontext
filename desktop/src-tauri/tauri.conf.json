@@ -21,7 +21,12 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "resources": {
+      "../../dist": "dist",
+      "../../skill-packs": "skill-packs",
+      "../../skill": "skill"
+    }
   },
   "plugins": {
     "updater": {
