@@ -442,6 +442,29 @@ parent_task: null
       expect(settings.hooks.PreCompact[0].hooks[0].command).toBe('npx dreamcontext hook pre-compact');
       expect(settings.hooks.PreCompact[0].hooks[0].timeout).toBe(5);
     });
+
+    it('installs two PreToolUse entries: Agent gate and write-tools gate', () => {
+      run('install-skill', tmpDir);
+      const settings = JSON.parse(readFileSync(join(tmpDir, '.claude', 'settings.json'), 'utf-8'));
+
+      expect(settings.hooks.PreToolUse).toBeDefined();
+      expect(settings.hooks.PreToolUse).toHaveLength(2);
+
+      const agentEntry = settings.hooks.PreToolUse.find((g: any) => g.matcher === 'Agent');
+      expect(agentEntry).toBeDefined();
+      expect(agentEntry.hooks[0].command).toBe('npx dreamcontext hook pre-tool-use');
+
+      const writeEntry = settings.hooks.PreToolUse.find((g: any) => g.matcher === 'Edit|Write|MultiEdit');
+      expect(writeEntry).toBeDefined();
+      expect(writeEntry.hooks[0].command).toBe('npx dreamcontext hook pre-tool-use');
+    });
+
+    it('does not duplicate the write-tools PreToolUse entry on repeated install', () => {
+      run('install-skill', tmpDir);
+      run('install-skill', tmpDir);
+      const settings = JSON.parse(readFileSync(join(tmpDir, '.claude', 'settings.json'), 'utf-8'));
+      expect(settings.hooks.PreToolUse).toHaveLength(2);
+    });
   });
 
   describe('snapshot', () => {

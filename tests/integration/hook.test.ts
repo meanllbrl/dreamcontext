@@ -1131,6 +1131,21 @@ describe('hook pre-tool-use (integration)', () => {
     const output = runWithStdin('hook pre-tool-use', input, tmpDir);
     expect(output.trim()).toBe('');
   });
+
+  it('blocks MultiEdit on _dream_context/marketing/.env', () => {
+    mkdirSync(join(ctx, 'marketing'), { recursive: true });
+    const input = JSON.stringify({
+      tool_name: 'MultiEdit',
+      tool_input: {
+        file_path: join(ctx, 'marketing', '.env'),
+        edits: [{ old_string: 'X', new_string: 'Y' }],
+      },
+    });
+    const output = runWithStdin('hook pre-tool-use', input, tmpDir);
+    const parsed = JSON.parse(output);
+    expect(parsed.hookSpecificOutput.permissionDecision).toBe('deny');
+    expect(parsed.hookSpecificOutput.permissionDecisionReason).toContain('Meta access tokens');
+  });
 });
 
 // ─── hook user-prompt-submit ────────────────────────────────────────────────

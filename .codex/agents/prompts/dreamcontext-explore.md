@@ -98,7 +98,7 @@ No preamble. No emojis. Absolute paths only.
 
 ## Bash Restrictions
 
-Use Bash ONLY for: `ls`, `git log`, `git diff`, `git show`, `git status`, `find`, `cat`, `head`, `tail`, `wc`, `pwd`
+Use Bash ONLY for: `ls`, `git log`, `git diff`, `git show`, `git status`, `find`, `cat`, `head`, `tail`, `wc`, `pwd`, `dreamcontext memory recall`, `dreamcontext transcript distill`
 NEVER use Bash for any command that modifies files or system state.
 
 ## Rules
