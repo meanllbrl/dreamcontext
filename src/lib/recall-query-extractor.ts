@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { buildCorpus, type CorpusDoc, type RecallHit } from './recall.js';
+import { buildCorpus, bm25Search, docKey, type CorpusDoc, type RecallHit } from './recall.js';
 
 export type ClaudeExecutor = (prompt: string, systemPrompt: string) => string;
 
@@ -67,8 +67,32 @@ export function haikuRecall(
     const corpus = buildCorpus(contextRoot);
     if (corpus.length === 0) return null;
 
+    // B6: instead of an arbitrary positional 8000-char slice of the WHOLE
+    // corpus (which silently drops every doc past the cutoff, regardless of
+    // relevance), run a cheap BM25 pre-pass and hand Haiku only the top-100
+    // most query-relevant docs. This keeps the relevant slug in-window even on
+    // large corpora. MAX_INDEX_CHARS stays as a safety clamp on the final string.
+    const PREPASS_TOP_K = 100;
     const MAX_INDEX_CHARS = 8_000;
-    const fullIndex = buildCorpusIndex(corpus);
+
+    // Rank the corpus by the raw prompt; fall back to the full corpus if the
+    // prompt has no scorable terms (so we never starve Haiku of context).
+    const ranked = bm25Search(rawPrompt, corpus, PREPASS_TOP_K);
+    let subset: CorpusDoc[];
+    if (ranked.length > 0) {
+      const seen = new Set<string>();
+      subset = [];
+      for (const h of ranked) {
+        const key = docKey(h.doc);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        subset.push(h.doc);
+      }
+    } else {
+      subset = corpus.slice(0, PREPASS_TOP_K);
+    }
+
+    const fullIndex = buildCorpusIndex(subset);
     const index = fullIndex.length > MAX_INDEX_CHARS
       ? fullIndex.slice(0, MAX_INDEX_CHARS) + '\n[...truncated]'
       : fullIndex;
@@ -106,7 +130,7 @@ export function haikuRecall(
       }
       const doc = lookup.get(key);
       if (!doc) continue;
-      hits.push({ doc, score: 0, snippet: reason });
+      hits.push({ doc, score: 0, rankScore: 0, snippet: reason });
       if (hits.length >= 3) break;
     }
 
