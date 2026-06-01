@@ -8,7 +8,7 @@ priority: high
 urgency: medium
 status: in_progress
 created_at: '2026-05-31'
-updated_at: '2026-05-31'
+updated_at: '2026-06-01'
 tags:
   - control-panel
   - tauri
@@ -111,6 +111,9 @@ Replace dreamcontext dashboard with an installable always-on control panel: mult
 
 
 
+
+### 2026-06-01 - Session Update
+- Standalone Tauri shell PARKED → branch parked/desktop-app. Dashboard slices (control-plane-backend, control-panel-frontend, vault-management, control-panel-polish) shipped to main. Standalone tasks (v06-tauri-shell, v06-tauri-launch-fix) + tauri-desktop-hosting knowledge removed from main (preserved on parked/desktop-app). Shipping via npm + dreamcontext dashboard.
 ### 2026-05-31 - Session Update
 - 3 goal-skill slices built and in_review: v06-control-plane-backend (11/11 ACs, 949 tests), v06-control-panel-frontend (7/7 ACs, 953 tests), v06-tauri-shell (A1-A6 done, 962 tests, cargo check compiles). Remaining: manual handoff A7 (tauri dev launch), A8 (sign/notarize/updater/icons). Browser control panel is functionally complete.
 ### 2026-05-31 - Status → in_progress

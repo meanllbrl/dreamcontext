@@ -1,10 +1,30 @@
 {
-  "debt": 0,
+  "debt": 3,
   "last_sleep": "2026-05-31",
   "last_sleep_summary": "Sleep #8 — v0.6 control panel built end-to-end via 3 autonomous goal-skill cycles, plus v0.5.x docs/test/context-gate work. sleep-state: created v0.6.0 planning version; 6 changelog entries (3 control-panel slices, test-alignment, context-gate+codex, docs); 4 memory decisions (control-plane API contextRoot/strict-pick/cache-only, catalog.ts extraction keeps @inquirer out of server bundle, vault registry design, Tauri spawn-Node+WebviewUrl::External hosting); soul priority → v0.6.0; user.md version → 0.5.1/0.6.0-dev; tech_stack updated. sleep-tasks: epic v06-control-panel-vaults-tauri todo→in_progress with real 5-node tracker; reconciled 4 placeholder task bodies; 3 slice flowcharts sync-clean (backend 11/11, frontend 7/7, tauri A1-A6 done + A7/A8 manual); flagged 5 stale older todos. sleep-product: new feature control-panel.md (18 ACs); updated web-dashboard + manifest-based-install-update PRDs; 3 new knowledge files (control-plane-api, tauri-desktop-hosting, vault-registry-multivault) + extended three-reviewer-parallel-mandates with the v0.6 case study. All v0.6 slice tasks in_review awaiting user verification; Tauri launch/sign/notarize is manual handoff. Marketing rem-sleep clean. Pre-existing marketing-council test flake tracked.",
   "sleep_started_at": null,
-  "sessions_since_last_sleep": 0,
-  "sessions": [],
+  "sessions_since_last_sleep": 1,
+  "sessions": [
+    {
+      "session_id": "80a49139-4a0e-444c-aac7-3c90aa645f3a",
+      "transcript_path": "/Users/mehmetnuraydin/.claude/projects/-Users-mehmetnuraydin-projects-dreamcontext/80a49139-4a0e-444c-aac7-3c90aa645f3a.jsonl",
+      "stopped_at": "2026-06-01T09:52:51.689Z",
+      "last_assistant_message": "Tamam — temiz ve bitti. ✅\n\n## Sonuç: iki net dal\n\n| Dal | İçerik |\n|-----|--------|\n| **`main`** (`24e8b6a`) | Tüm v0.6 **dashboard** işi — vault registry + CLI, `/api/config\\|packs\\|version-check\\|vaults`, `dashboard --vault`, Settings/Packs sayfaları, update-badge, açılır-kapanır gruplu sidebar, Playwright e2e. **`desktop/` (standalone) main'den çıkarıldı.** Build + testler yeşil. |\n| **`parked/desktop-app`** (`3e6d29b`) | Standalone Tauri çabasının **tamamı** arşivlendi (desktop/ projesi, crash-fix denemesi, build runbook) — ileride istersen oradan devam. |\n\n- Yanıltıcı isimli `feat/v05-...` dalı silindi → temiz 2-dal durumu (`main` + `parked/desktop-app`), ikisi de push'landı.\n- `main`'de **0 desktop dosyası**, dashboard kodu sağlam.\n\n## Güncelleme modeli (sorduğun)\nSessiz/otomatik auto-update **yok**. Olan: `version-check` → açılışta Claude'un context'ine **\"yeni sürüm var\" nudge'ı** + `dreamcontext upgrade` (CLI'yi günceller) + `dreamcontext update` (proje dosyalarını temizce günceller, eski/silinmiş dosyaları da kaldırır). Yani **bildirim otomatik, kurulum tek komut**.\n\n## Şu an\n- Dashboard zaten çalışıyor: `dreamcontext dashboard` (ya da hâlâ açık olan `localhost:4173`).\n- **npm'i v0.6 dashboard ile yayınlamak istediğinde**: `package.json`'ı `0.6.0`'a çek (RELEASES.json'da v0.6.0 planning kaydı zaten var), `npm publish --otp=<kod>`, sonra `dreamcontext upgrade && dreamcontext update`. main hazır — istersen sürüm bump'ını ben yapayım.\n\nKüçük not: `main`'deyken diskte `desktop/` altında sadece gitignore'lu kalıntı var (`node_modules`, `target`) — zararsız; istersen `rm -rf desktop` ile silebilirsin (kaynak `parked/desktop-app`'te duruyor).\n\nİstersen bu \"standalone parked → dashboard main'e\" kararını sleep ile context'e işleyeyim (epey commit birikt i); yoksa böyle bırakıp devam edebiliriz. Ne dersin?",
+      "change_count": 73,
+      "tool_count": 324,
+      "score": 3,
+      "task_slugs": [
+        "readme-deepdive-v05-refresh",
+        "v06-control-panel-frontend",
+        "v06-tauri-shell",
+        "v06-control-panel-vaults-tauri",
+        "v06-control-plane-backend",
+        "v06-vault-management",
+        "v06-control-panel-polish",
+        "v06-tauri-launch-fix"
+      ]
+    }
+  ],
   "bookmarks": [],
   "triggers": [],
   "knowledge_access": {
