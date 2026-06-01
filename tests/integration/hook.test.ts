@@ -1142,10 +1142,17 @@ describe('hook user-prompt-submit (integration)', () => {
   beforeEach(() => {
     tmpDir = makeTmpDir();
     ctx = scaffold(tmpDir);
+    // Test isolation: the user-prompt-submit hook lazily refreshes the version
+    // cache with a synchronous `npm view` (≤5s) when the cache is stale. A fresh
+    // temp project has no cache, so without this every test here would block on
+    // the live npm registry and flake against the 5s test timeout. The nudge
+    // itself is covered by version-nudge.test.ts with a pre-seeded cache.
+    process.env.DREAMCONTEXT_VERSION_CHECK = '0';
   });
 
   afterEach(() => {
     rmSync(tmpDir, { recursive: true, force: true });
+    delete process.env.DREAMCONTEXT_VERSION_CHECK;
   });
 
   it('silent when debt < 4 (no output)', () => {

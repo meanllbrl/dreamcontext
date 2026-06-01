@@ -59,4 +59,41 @@ describe('runUpgrade --check', () => {
       consoleSpy.mockRestore();
     }
   });
+
+  it('T12: liveLatest takes precedence over latestVersion (live wins)', () => {
+    const installer = vi.fn();
+    const liveLatest = () => '9.9.9';
+    const latestVersion = () => '1.0.0';
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    try {
+      runUpgrade(true, { installer, liveLatest, latestVersion });
+      expect(installer).not.toHaveBeenCalled();
+      expect(consoleSpy).toHaveBeenCalledTimes(1);
+      const output = consoleSpy.mock.calls[0][0] as string;
+      expect(output).toContain('9.9.9');
+      expect(output).not.toContain('1.0.0');
+    } finally {
+      consoleSpy.mockRestore();
+    }
+  });
+
+  it('T13: liveLatest returning null is used as-is → "unknown" (no fall-through)', () => {
+    const installer = vi.fn();
+    const liveLatest = () => null;
+    // latestVersion present but MUST NOT be consulted (source-fn, not value, selection)
+    const latestVersion = vi.fn(() => '1.0.0');
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    try {
+      runUpgrade(true, { installer, liveLatest, latestVersion });
+      expect(installer).not.toHaveBeenCalled();
+      expect(latestVersion).not.toHaveBeenCalled();
+      expect(consoleSpy).toHaveBeenCalledTimes(1);
+      const output = consoleSpy.mock.calls[0][0] as string;
+      expect(output.toLowerCase()).toContain('unknown');
+    } finally {
+      consoleSpy.mockRestore();
+    }
+  });
 });

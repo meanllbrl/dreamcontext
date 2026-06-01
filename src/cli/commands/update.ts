@@ -12,6 +12,7 @@ import {
   platformSkillRoot,
   getOrCreateManifest,
 } from './install-skill.js';
+import { knownArtifactNames } from '../../lib/catalog.js';
 import {
   readManifest,
   writeManifest,
@@ -20,6 +21,7 @@ import {
   bootstrapManifestFromScan,
   recordPlatform,
   dreamcontextVersion,
+  PRE_MANIFEST_VERSION,
   type Manifest,
 } from '../../lib/manifest.js';
 
@@ -50,13 +52,34 @@ function detectInstalledPacks(projectRoot: string, platforms: PlatformId[]): str
   return [...found].sort();
 }
 
-async function pruneStaleFiles(
+/**
+ * Decide which stale (removed-from-manifest) files to delete vs. keep.
+ *
+ * Returns `{ removed, keep }` where `keep = candidates.filter(c => !removed.includes(c))`,
+ * i.e. EVERYTHING not actually deleted. The caller re-persists every `keep`
+ * entry into the new manifest unconditionally so nothing is silently dropped
+ * from tracking. All return paths (first-run, declined, success) use this shape.
+ *
+ * Partition of `candidates` (safe-to-delete stale paths) by old-manifest version:
+ *  - heuristic (version === PRE_MANIFEST_VERSION): adopted by the legacy
+ *    bootstrap, which cannot tell a dreamcontext file from a user-authored one.
+ *    NEVER deleted — only warned. This is the data-loss safety net for users
+ *    whose manifest was already polluted before the allowlist fix.
+ *  - owned (concrete semver): genuinely dreamcontext-installed and later
+ *    removed from the catalog. Auto-deletable (first-run flags only; otherwise
+ *    confirm-or-`--yes`).
+ *
+ * Threat model note: a custom file can only acquire a concrete-version entry by
+ * a user hand-editing the manifest. Hand-edited manifests assigning a concrete
+ * version to a custom file are explicitly OUT of the threat model.
+ */
+export async function pruneStaleFiles(
   projectRoot: string,
   oldManifest: Manifest,
   newManifest: Manifest,
   isFirstRun: boolean,
   yes: boolean,
-): Promise<{ removed: string[]; flagged: string[]; cancelled: boolean }> {
+): Promise<{ removed: string[]; keep: string[] }> {
   const diff = diffManifests(oldManifest, newManifest);
   const candidates = diff.removed.filter((p) => isSafeDeletePath(p));
   const unsafe = diff.removed.filter((p) => !isSafeDeletePath(p));
@@ -67,31 +90,55 @@ async function pruneStaleFiles(
     for (const p of unsafe) console.log(`  ${chalk.dim('•')} ${chalk.dim(p)}`);
   }
 
-  if (candidates.length === 0) return { removed: [], flagged: [], cancelled: false };
+  if (candidates.length === 0) return { removed: [], keep: [] };
 
-  // First migration run: never delete; just flag for the user.
-  if (isFirstRun) {
+  // Partition by old-manifest version. Heuristic (pre-manifest) files are never
+  // deleted — they may be user-authored files adopted by the legacy bootstrap.
+  const heuristic = candidates.filter(
+    (p) => oldManifest.files[p]?.version === PRE_MANIFEST_VERSION,
+  );
+  const owned = candidates.filter(
+    (p) => oldManifest.files[p]?.version !== PRE_MANIFEST_VERSION,
+  );
+
+  if (heuristic.length > 0) {
     console.log();
-    warn(`First update after upgrade: ${candidates.length} stale file(s) detected (not removed).`);
-    console.log(chalk.dim('  Re-run `dreamcontext update` to clean them up.'));
-    for (const p of candidates) console.log(`  ${chalk.dim('•')} ${chalk.dim(p)}`);
-    return { removed: [], flagged: candidates, cancelled: true };
+    warn(`${heuristic.length} legacy file(s) detected, not removed (review manually):`);
+    for (const p of heuristic) console.log(`  ${chalk.dim('•')} ${chalk.dim(p)}`);
+  }
+
+  // First migration run: never delete anything; keep everything so the caller
+  // re-persists and the next run can re-offer the owned set.
+  if (isFirstRun) {
+    if (owned.length > 0) {
+      console.log();
+      warn(`First update after upgrade: ${owned.length} stale file(s) detected (not removed).`);
+      console.log(chalk.dim('  Re-run `dreamcontext update` to clean them up.'));
+      for (const p of owned) console.log(`  ${chalk.dim('•')} ${chalk.dim(p)}`);
+    }
+    return { removed: [], keep: candidates };
+  }
+
+  if (owned.length === 0) {
+    // Only heuristic files — nothing deletable, keep them all (tracked + protected).
+    return { removed: [], keep: candidates };
   }
 
   console.log();
-  console.log(`Stale file(s) detected (${candidates.length}):`);
-  for (const p of candidates) console.log(`  ${chalk.yellow('-')} ${p}`);
+  console.log(`Stale file(s) detected (${owned.length}):`);
+  for (const p of owned) console.log(`  ${chalk.yellow('-')} ${p}`);
 
   if (!yes && process.stdin.isTTY) {
     const ok = await confirm({ message: 'Delete these files?', default: true });
     if (!ok) {
       info('Skipped deletions.');
-      return { removed: [], flagged: candidates, cancelled: true };
+      // Declined: keep everything (owned re-offered next run + heuristic protected).
+      return { removed: [], keep: candidates };
     }
   }
 
   const removed: string[] = [];
-  for (const rel of candidates) {
+  for (const rel of owned) {
     const abs = join(projectRoot, rel);
     try {
       rmSync(abs, { force: true });
@@ -101,7 +148,8 @@ async function pruneStaleFiles(
       warn(`Could not delete ${rel}: ${msg}`);
     }
   }
-  return { removed, flagged: [], cancelled: false };
+  // keep = everything NOT actually deleted (all heuristic + any owned that failed to delete).
+  return { removed, keep: candidates.filter((c) => !removed.includes(c)) };
 }
 
 export function registerUpdateCommand(program: Command): void {
@@ -128,7 +176,7 @@ export function registerUpdateCommand(program: Command): void {
         let isFirstRun = false;
         if (!oldManifest) {
           isFirstRun = true;
-          oldManifest = bootstrapManifestFromScan(projectRoot);
+          oldManifest = bootstrapManifestFromScan(projectRoot, knownArtifactNames());
           info(chalk.dim(`No manifest found — bootstrapped baseline from ${Object.keys(oldManifest.files).length} existing files.`));
         }
 
@@ -190,10 +238,6 @@ export function registerUpdateCommand(program: Command): void {
         }
 
         // Diff vs. old to prune stale files BEFORE persisting the new manifest.
-        // If the user cancels (or this is the first migration run), we must keep
-        // the stale entries in the manifest so the next `update` can offer to
-        // delete them again. Otherwise they'd be silently dropped from tracking
-        // and survive on disk forever.
         const pruneResult = await pruneStaleFiles(
           projectRoot,
           oldManifest,
@@ -202,12 +246,16 @@ export function registerUpdateCommand(program: Command): void {
           !!opts.yes,
         );
 
-        if (pruneResult.cancelled) {
-          for (const path of pruneResult.flagged) {
-            const entry = oldManifest.files[path];
-            if (entry && !newManifest.files[path]) {
-              newManifest.files[path] = entry;
-            }
+        // Re-persist EVERY kept stale entry (heuristic/custom files + owned files
+        // that were first-run / declined / failed-to-delete) into the new manifest.
+        // This is UNCONDITIONAL (no cancel guard): without it, a run that deletes
+        // some owned files would silently drop the kept entries from tracking —
+        // re-introducing the data-loss / lost-flag regression. The next `update`
+        // can then re-offer owned files and keeps protecting heuristic ones.
+        for (const path of pruneResult.keep) {
+          const entry = oldManifest.files[path];
+          if (entry && !newManifest.files[path]) {
+            newManifest.files[path] = entry;
           }
         }
 
