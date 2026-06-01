@@ -27,6 +27,9 @@ export interface RecallHit {
   snippet: string;       // ~3 lines around the best match
 }
 
+/** Stable identity for a corpus doc: `type/slug` (e.g. `knowledge/haiku-recall-architecture`). */
+export function docKey(doc: CorpusDoc): string { return `${doc.type}/${doc.slug}`; }
+
 // ─── Tokenization ──────────────────────────────────────────────────────────
 
 const STOPWORDS = new Set([

@@ -1,0 +1,3 @@
+{"id": "smoke-1", "query": "haiku single call recall architecture for the user prompt hook", "expected": ["knowledge/haiku-recall-architecture"], "category": "knowledge", "lang": "en"}
+{"id": "smoke-2", "query": "BM25 memory recall over the curated corpus", "expected": ["feature/memory-recall-bm25"], "category": "feature", "lang": "en"}
+{"id": "smoke-3", "query": "replace multi-query keyword extraction with a haiku CLI call task", "expected": ["task/haiku-recall-extraction"], "category": "task", "lang": "en"}
