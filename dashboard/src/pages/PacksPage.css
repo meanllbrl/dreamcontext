@@ -1,5 +1,8 @@
+/* Card catalog: fill the available width — the auto-fill grid adds columns as
+   the viewport grows (3 cols ~1024px → 5 cols on a wide monitor), so there's no
+   dead space on the right. Settings/Sleep stay narrow+centered; this is a grid. */
 .packs-page {
-  max-width: 900px;
+  max-width: 1600px;
 }
 
 .packs-empty {

@@ -62,6 +62,9 @@ Dashboard UX fixes from user review: (1) remove Vaults section (can't switch vau
 
 
 
+
+### 2026-06-01 - Session Update
+- Follow-up: removed the 900px max-width cap on .packs-page (raised to 1600px) — on wide screens the auto-fill grid was locking to 3 columns at 900px and leaving dead space on the right. Now fills the available width (5 cols @1680px viewport). Verified via wide screenshot.
 ### 2026-06-01 - Status → in_review
 - all 5 UX fixes verified via screenshots + tests
 ### 2026-06-01 - Session Update
