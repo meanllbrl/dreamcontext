@@ -1,8 +1,5 @@
 import { test, expect } from '@playwright/test';
 
-// Absolute path to this repo — a real vault (contains _dream_context/).
-const REPO = process.env.REPO_PATH || process.cwd();
-
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
   await page.locator('.sidebar').waitFor();
@@ -47,24 +44,17 @@ test('installed packs are shown correctly (req 3)', async ({ page }) => {
   expect(pills).toBeGreaterThanOrEqual(7); // regression guard: was 1 (config-based) before the fix
 });
 
-test('can open a new vault easily (req 4)', async ({ page }) => {
-  await page.locator('.sidebar-item', { hasText: 'Settings' }).first().click();
-  const block = page.locator('.settings-vault-open');
-  await block.scrollIntoViewIfNeeded();
-  await expect(block).toBeVisible();
+test('pack cards open a detail modal and close (req 4)', async ({ page }) => {
+  await page.locator('.sidebar-item', { hasText: 'Packs' }).first().click();
+  await page.locator('.packs-card').first().click();
 
-  const pathInput = page.locator('.settings-vault-add-input--path');
-  await expect(pathInput).toBeVisible();
-  // Name is optional — only the path is required to add.
-  await pathInput.fill(REPO);
-  await page.locator('.settings-vault-add-btn').click();
+  const modal = page.locator('.packs-modal-overlay');
+  await expect(modal).toBeVisible();
+  // A pack detail surfaces its sub-skills — the depth the read-only card lacked.
+  await expect(page.locator('.packs-modal-subskills')).toBeVisible();
 
-  // The added vault appears in the list (name auto-derived from the path basename).
-  const derivedName = REPO.split('/').filter(Boolean).pop()!;
-  const row = page.locator('.settings-vault-item', { hasText: derivedName });
-  await expect(row).toBeVisible({ timeout: 5000 });
-
-  // Clean up so the global registry is left as we found it.
-  await row.locator('.settings-vault-remove-btn').click();
-  await expect(page.locator('.settings-vault-item', { hasText: derivedName })).toHaveCount(0);
+  // Escape closes it.
+  await page.keyboard.press('Escape');
+  await expect(modal).toBeHidden();
 });
+

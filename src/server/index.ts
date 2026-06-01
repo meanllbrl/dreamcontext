@@ -17,7 +17,6 @@ import { handleCouncilList, handleCouncilGet, handleCouncilResearchGet } from '.
 import { handleConfigGet, handleConfigUpdate } from './routes/config.js';
 import { handlePacksGet } from './routes/packs.js';
 import { handleVersionCheckGet } from './routes/version-check.js';
-import { handleVaultsGet, handleVaultsPost, handleVaultsDelete } from './routes/vaults.js';
 
 export interface ServerOptions {
   port: number;
@@ -77,11 +76,6 @@ function buildRouter(): Router {
 
   // Version check
   router.get('/api/version-check', handleVersionCheckGet);
-
-  // Vaults
-  router.get('/api/vaults', handleVaultsGet);
-  router.post('/api/vaults', handleVaultsPost);
-  router.delete('/api/vaults/:name', handleVaultsDelete);
 
   // Changelog / Releases
   router.get('/api/changelog', handleChangelogGet);

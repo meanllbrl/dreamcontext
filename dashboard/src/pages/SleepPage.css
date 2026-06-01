@@ -1,10 +1,11 @@
 .sleep-page {
-  max-width: 800px;
+  max-width: 880px;
+  margin-inline: auto;
 }
 
 .sleep-overview {
   display: flex;
-  gap: var(--space-8);
+  gap: var(--space-6);
   align-items: flex-start;
   margin-bottom: var(--space-8);
 }
@@ -14,8 +15,8 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  width: 120px;
-  height: 120px;
+  width: 160px;
+  height: 160px;
   border-radius: var(--radius-xl);
   flex-shrink: 0;
   box-shadow: var(--shadow-md);
@@ -64,6 +65,12 @@
   flex-direction: column;
   gap: var(--space-4);
   flex: 1;
+  min-width: 0;
+  padding: var(--space-4);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
 }
 
 .sleep-detail {
