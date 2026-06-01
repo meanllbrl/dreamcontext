@@ -1,6 +1,0 @@
-src-tauri/target/
-node_modules/
-src-tauri/gen/
-.tauri-signing/
-*.key
-*.key.pub
