@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { SUPPORTED_PLATFORMS, type PlatformId } from './platforms.js';
 
 // ─── __dirname shim (ESM) ─────────────────────────────────────────────────────
 
@@ -48,6 +49,36 @@ export interface Catalog {
   packs: CatalogPack[];
   standalone: CatalogStandalone[];
   agents: CatalogAgent[];
+}
+
+// ─── Platform / Installation Helpers ─────────────────────────────────────────
+
+/**
+ * Root directory where skill packs are installed for a given platform.
+ * claude  → <projectRoot>/.claude/skills
+ * codex   → <projectRoot>/.agents/skills
+ */
+export function platformSkillRoot(projectRoot: string, platform: PlatformId): string {
+  if (platform === 'claude') return join(projectRoot, '.claude', 'skills');
+  return join(projectRoot, '.agents', 'skills');
+}
+
+/**
+ * Returns true when the named pack's SKILL.md exists for the given platform.
+ */
+export function isPackInstalledForPlatform(
+  projectRoot: string,
+  platform: PlatformId,
+  name: string,
+): boolean {
+  return existsSync(join(platformSkillRoot(projectRoot, platform), name, 'SKILL.md'));
+}
+
+/**
+ * Returns true when the named pack is installed for ANY supported platform.
+ */
+export function isSkillInstalled(projectRoot: string, name: string): boolean {
+  return SUPPORTED_PLATFORMS.some((p) => isPackInstalledForPlatform(projectRoot, p, name));
 }
 
 // ─── File Resolution ──────────────────────────────────────────────────────────

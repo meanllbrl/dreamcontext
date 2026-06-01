@@ -154,7 +154,7 @@ export function SettingsPage() {
                     <span className="settings-pack-desc">{pack.description}</span>
                   )}
                 </div>
-                {packs.includes(pack.name) && (
+                {pack.installed && (
                   <span className="settings-pack-installed">{t('settings.packs.installed')}</span>
                 )}
               </label>
@@ -165,52 +165,59 @@ export function SettingsPage() {
 
       <section className="settings-section">
         <h2 className="settings-section-title">{t('settings.vaults.title')}</h2>
-        <p className="settings-vaults-note">{t('settings.vaults.note')}</p>
 
-        <form
-          className="settings-vault-add"
-          onSubmit={(e) => {
-            e.preventDefault();
-            addVault.mutate(
-              { name: newVaultName.trim(), path: newVaultPath.trim() },
-              {
-                onSuccess: () => {
-                  setNewVaultName('');
-                  setNewVaultPath('');
+        <div className="settings-vault-open">
+          <h3 className="settings-vault-open-heading">{t('settings.vaults.addHeading')}</h3>
+          <form
+            className="settings-vault-add"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const path = newVaultPath.trim();
+              if (!path) return;
+              const derived = path.split('/').filter(Boolean).pop() ?? path;
+              addVault.mutate(
+                { name: newVaultName.trim() || derived, path },
+                {
+                  onSuccess: () => {
+                    setNewVaultName('');
+                    setNewVaultPath('');
+                  },
                 },
-              },
-            );
-          }}
-        >
-          <input
-            className="settings-vault-add-input"
-            type="text"
-            placeholder={t('settings.vaults.namePlaceholder')}
-            value={newVaultName}
-            onChange={(e) => setNewVaultName(e.target.value)}
-            disabled={addVault.isPending}
-          />
-          <input
-            className="settings-vault-add-input"
-            type="text"
-            placeholder={t('settings.vaults.pathPlaceholder')}
-            value={newVaultPath}
-            onChange={(e) => setNewVaultPath(e.target.value)}
-            disabled={addVault.isPending}
-          />
-          <button
-            className="btn btn--primary settings-vault-add-btn"
-            type="submit"
-            disabled={!newVaultName.trim() || !newVaultPath.trim() || addVault.isPending}
+              );
+            }}
           >
-            {addVault.isPending ? t('settings.vaults.adding') : t('settings.vaults.addButton')}
-          </button>
+            <input
+              className="settings-vault-add-input settings-vault-add-input--path"
+              type="text"
+              placeholder={t('settings.vaults.pathPlaceholder')}
+              value={newVaultPath}
+              onChange={(e) => setNewVaultPath(e.target.value)}
+              disabled={addVault.isPending}
+              autoFocus
+            />
+            <input
+              className="settings-vault-add-input settings-vault-add-input--name"
+              type="text"
+              placeholder={t('settings.vaults.namePlaceholder')}
+              value={newVaultName}
+              onChange={(e) => setNewVaultName(e.target.value)}
+              disabled={addVault.isPending}
+            />
+            <button
+              className="btn btn--primary settings-vault-add-btn"
+              type="submit"
+              disabled={!newVaultPath.trim() || addVault.isPending}
+            >
+              {addVault.isPending ? t('settings.vaults.adding') : t('settings.vaults.addButton')}
+            </button>
+          </form>
           {addVault.isError && (
             <span className="error-state settings-vault-add-error">
               {addVault.error instanceof Error ? addVault.error.message : t('common.error')}
             </span>
           )}
-        </form>
+          <p className="settings-vaults-note">{t('settings.vaults.openHint')}</p>
+        </div>
 
         {vaults.length === 0 ? (
           <div className="settings-empty">{t('settings.vaults.empty')}</div>

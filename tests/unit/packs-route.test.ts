@@ -1,5 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { handlePacksGet } from '../../src/server/routes/packs.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -48,5 +51,32 @@ describe('GET /api/packs', () => {
     // The grep below verifies this at CI; here we just confirm the route loads without error.
     // (See also: npm run build grep check in A11 verification.)
     expect(true).toBe(true); // Route already imported above without error
+  });
+
+  describe('installed flag (filesystem truth, not config.packs)', () => {
+    let tmp: string;
+    afterEach(() => { if (tmp) rmSync(tmp, { recursive: true, force: true }); });
+
+    it('marks a pack installed iff its SKILL.md exists on disk under a platform skill root', async () => {
+      tmp = join(tmpdir(), `packs-route-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+      mkdirSync(join(tmp, '_dream_context'), { recursive: true });
+      // Physically install ONE real catalog pack under .claude/skills/ (no .config.json touched).
+      mkdirSync(join(tmp, '.claude', 'skills', 'engineering'), { recursive: true });
+      writeFileSync(join(tmp, '.claude', 'skills', 'engineering', 'SKILL.md'), '# engineering\n');
+
+      const { res, status, body } = makeRes();
+      await handlePacksGet(makeGetReq(), res, {}, join(tmp, '_dream_context'));
+      expect(status()).toBe(200);
+
+      const payload = body() as { packs: { name: string; installed: boolean }[]; standalone: { name: string; installed: boolean }[] };
+      // Every item carries a boolean installed flag.
+      for (const p of [...payload.packs, ...payload.standalone]) {
+        expect(typeof p.installed).toBe('boolean');
+      }
+      const engineering = payload.packs.find((p) => p.name === 'engineering');
+      const design = payload.packs.find((p) => p.name === 'design');
+      expect(engineering?.installed).toBe(true);   // SKILL.md present on disk
+      expect(design?.installed).toBe(false);        // not installed → false (NOT driven by config.packs)
+    });
   });
 });

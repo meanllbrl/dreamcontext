@@ -22,6 +22,7 @@
     "dev": "tsup --watch",
     "dev:dashboard": "cd dashboard && npm run dev",
     "test": "vitest",
+    "test:e2e": "playwright test",
     "prepublishOnly": "npm run build"
   },
   "keywords": [
@@ -49,6 +50,7 @@
     "nanoid": "^5.1.2"
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "@types/node": "^22.13.4",
     "sharp": "^0.34.5",
     "tsup": "^8.4.0",

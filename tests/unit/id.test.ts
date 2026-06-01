@@ -11,8 +11,12 @@ describe('id', () => {
 
     it('generates 8-char suffix after prefix', () => {
       const id = generateId('test');
-      const suffix = id.split('_')[1];
+      // The suffix is everything after the first underscore. nanoid's default
+      // alphabet is URL-safe (A-Za-z0-9_-), so the suffix itself can contain
+      // '_' or '-' — splitting on '_' is wrong (was an intermittent flake).
+      const suffix = id.slice('test_'.length);
       expect(suffix).toHaveLength(8);
+      expect(suffix).toMatch(/^[A-Za-z0-9_-]{8}$/);
     });
 
     it('generates unique IDs on successive calls', () => {

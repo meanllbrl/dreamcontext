@@ -19,6 +19,8 @@ export interface CatalogPack {
   subSkills: CatalogSubSkill[];
   relatedAgents?: string[];
   crossPackDeps?: string[];
+  /** True when this pack's SKILL.md exists on disk (server computes from the filesystem). */
+  installed: boolean;
 }
 
 export interface CatalogStandalone {
@@ -27,6 +29,8 @@ export interface CatalogStandalone {
   description: string;
   tags: string[];
   alwaysApply: boolean;
+  /** True when this skill's SKILL.md exists on disk. */
+  installed: boolean;
 }
 
 interface PacksResponse {

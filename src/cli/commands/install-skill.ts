@@ -237,15 +237,6 @@ function platformLabel(platform: PlatformId): string {
   return platform === 'claude' ? 'Claude' : 'Codex';
 }
 
-export function platformSkillRoot(projectRoot: string, platform: PlatformId): string {
-  if (platform === 'claude') return join(projectRoot, '.claude', 'skills');
-  return join(projectRoot, '.agents', 'skills');
-}
-
-function isPackInstalledForPlatform(projectRoot: string, platform: PlatformId, name: string): boolean {
-  return existsSync(join(platformSkillRoot(projectRoot, platform), name, 'SKILL.md'));
-}
-
 function platformPrefixed(platform: PlatformId, relPath: string): string {
   return `${chalk.dim(`[${platform}]`)} ${relPath}`;
 }
@@ -363,13 +354,15 @@ function ensureClaudeHooks(projectRoot: string): { added: string[]; migrated: bo
 export {
   loadCatalog,
   findPackageDir,
+  platformSkillRoot,
+  isPackInstalledForPlatform,
   type Catalog,
   type CatalogPack,
   type CatalogStandalone,
   type CatalogSubSkill,
   type CatalogAgent,
 } from '../../lib/catalog.js';
-import { loadCatalog, findPackageDir } from '../../lib/catalog.js';
+import { loadCatalog, findPackageDir, platformSkillRoot, isPackInstalledForPlatform } from '../../lib/catalog.js';
 
 // ─── File Resolution ────────────────────────────────────────────────────────
 import { fileURLToPath } from 'node:url';

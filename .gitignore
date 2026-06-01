@@ -19,3 +19,8 @@ _dream_context/marketing/.venv/
 _dream_context/marketing/.cache/
 _dream_context/marketing/**/_assets/
 _dream_context/marketing/**/_media/
+# Playwright
+test-results/
+playwright-report/
+e2e/shots/
+.playwright/

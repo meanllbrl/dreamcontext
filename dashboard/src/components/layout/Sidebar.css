@@ -4,8 +4,88 @@
   border-right: 1px solid var(--color-border);
   background: var(--color-bg-secondary);
   padding: var(--space-2);
+  overflow-x: hidden;
   overflow-y: auto;
   flex-shrink: 0;
+  transition: width var(--transition-base, 200ms) ease;
+}
+
+.sidebar--collapsed {
+  width: 56px;
+}
+
+/* ─── Collapse toggle ─────────────────────────────────────────────────────── */
+.sidebar-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 6px var(--space-3);
+  margin-bottom: var(--space-2);
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-md);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.sidebar-toggle:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
+
+.sidebar-toggle-icon {
+  width: 18px;
+  text-align: center;
+  flex-shrink: 0;
+  font-size: var(--font-size-base);
+}
+
+.sidebar--collapsed .sidebar-toggle {
+  justify-content: center;
+}
+
+/* ─── Groups ──────────────────────────────────────────────────────────────── */
+.sidebar-group + .sidebar-group {
+  margin-top: var(--space-4);
+}
+
+.sidebar-group-label {
+  display: block;
+  padding: 0 var(--space-3);
+  margin-bottom: var(--space-1);
+  font-size: var(--font-size-xs, 11px);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+/* ─── Collapsed: icon-only ────────────────────────────────────────────────── */
+.sidebar--collapsed .sidebar-label {
+  display: none;
+}
+
+.sidebar--collapsed .sidebar-group-label {
+  /* keep a divider rhythm without the text */
+  height: 0;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border-top: 1px solid var(--color-border);
+}
+
+.sidebar--collapsed .sidebar-group + .sidebar-group {
+  margin-top: var(--space-2);
+}
+
+.sidebar--collapsed .sidebar-item {
+  justify-content: center;
+  padding-left: 0;
+  padding-right: 0;
 }
 
 .sidebar-nav {

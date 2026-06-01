@@ -1,20 +1,17 @@
 import { useI18n } from '../context/I18nContext';
 import { usePacks } from '../hooks/usePacks';
-import { useConfig } from '../hooks/useConfig';
 import { tagHue } from '../lib/tagColor';
 import './PacksPage.css';
 
 export function PacksPage() {
   const { t } = useI18n();
   const { data: packsData, isLoading, isError, error } = usePacks();
-  const { data: config } = useConfig();
 
   if (isLoading) return <div className="loading">{t('common.loading')}</div>;
   if (isError) return <div className="error-state">{t('common.error')} {error?.message}</div>;
 
   const packs = packsData?.packs ?? [];
   const standalone = packsData?.standalone ?? [];
-  const installed = new Set<string>(config?.packs ?? []);
 
   return (
     <div className="packs-page">
@@ -32,7 +29,7 @@ export function PacksPage() {
               <div key={pack.name} className="packs-card">
                 <div className="packs-card-header">
                   <span className="packs-card-name">{pack.name}</span>
-                  {installed.has(pack.name) && (
+                  {pack.installed && (
                     <span className="packs-installed-pill">{t('settings.packs.installed')}</span>
                   )}
                 </div>
@@ -60,7 +57,7 @@ export function PacksPage() {
               <div key={skill.name} className="packs-card">
                 <div className="packs-card-header">
                   <span className="packs-card-name">{skill.name}</span>
-                  {installed.has(skill.name) && (
+                  {skill.installed && (
                     <span className="packs-installed-pill">{t('settings.packs.installed')}</span>
                   )}
                 </div>
