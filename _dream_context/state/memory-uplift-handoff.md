@@ -7,8 +7,13 @@ description: >-
   file FIRST when resuming, then continue the goal-skill orchestration from
   Phase 2.
 status: in_progress
-updated_at: '2026-06-02'
-tags: [handoff, resume, memory, recall, goal-skill]
+updated_at: '2026-06-01'
+tags:
+  - handoff
+  - resume
+  - memory
+  - recall
+  - goal-skill
 ---
 
 # RESUME HANDOFF — memory/recall uplift
@@ -25,14 +30,19 @@ Implement ALL high-uplift memory/recall + continuous-capture improvements (roadm
 ## Validation method (the "done" contract)
 (a) Deterministic recall eval harness reporting recall@1 / recall@3 / MRR as a percentage, baseline measured on unmodified code then re-measured after each change, must show a material jump with no category regressing >3 points; (b) full `npm test` green; (c) `npm run build` succeeds.
 
-## Orchestration state — WHERE WE ARE
-- **Phase 0 (scope + validation)**: DONE (above).
-- **Phase 1 (plan)**: DONE. The validated plan is pasted below verbatim.
-- **Phase 2 (plan review)**: **INCOMPLETE — RE-RUN.** Two `goal-plan-reviewer`s (pragmatist + critic) were dispatched but BOTH were interrupted before delivering a clean SOLID/NEEDS_WORK verdict. Re-dispatch both in parallel against the plan below.
-- **Phases 3–6**: not started (persist task → implement in batches with re-measure → reviewer → goal-validator).
+## ✅ STATUS: COMPLETE (2026-06-02, all in one session — the 02:00 resume is NOT needed for implementation)
+**All batches implemented, tested, reviewed, committed and pushed to `memory-uplift`. See `eval/RESULTS.md` for the before/after report.**
+- **Phase 0–1**: DONE.
+- **Phase 2 (plan review)**: the OPEN FINDING below was resolved (option iii — multipliers feed a derived `rankScore`; raw `hit.score` is untouched so the hook gates stay calibrated).
+- **Phase 3 (task)**: this handoff + roadmap serve as the task record.
+- **Phase 4 (implement)**: Batch 0 `f560fd8`, Batch 1 `a56f9d4` (+tests `125e029`), Batch 2 `a5edce7`, Batch 3 `1451ab5`.
+- **Phase 5 (review)**: clean-context `reviewer` ran; 2 fixes applied in `e31b2e3` (BM25-fallback gate `.some()`; sanitize digest `session_id`).
+- **Phase 6 (validate)**: `npm test` 1038/1038 green; `npm run build` clean; recall benchmark **overall recall@1 68.3→85.0%, recall@3 81.7→95.0%** (turkish 37.5→75.0, paraphrase 41.7→66.7), no category regressed.
 
-## OPEN FINDING to resolve during Phase 2 (seeded for the critic; likely BLOCKING)
-**Score-scale coupling.** B2 (field weighting, title×3), B3 (recency/status multiplier ×0.6–1.0) and B4 (synonym weight 0.5) all change the ABSOLUTE scores returned by `bm25Search`. But the hook uses HARD thresholds on those same scores: BM25 recall-injection fallback requires `hits[0].score >= 2.0` (hook.ts ~690), skill gate `SKILL_SCORE_THRESHOLD = 1.0` (hook.ts ~24/731), and the explore agent Rule-2 uses "read if score ≥ 5 / fall back if <2". If field weighting inflates or recency deflates scores, these gates silently mis-fire. RESOLUTION OPTIONS to decide in plan-review: (i) normalize the final score to a stable range before the threshold checks, (ii) recalibrate the thresholds, or (iii) keep the multipliers as a separate re-rank signal that does NOT alter the `score` field used by the gates. Pick one and write it into the plan before Phase 4.
+**If you are the 02:00 (or any) resume agent: implementation is already done.** Do NOT re-implement. Optionally: independent fresh-clone verification (`npm install && npm test && npm run build && npx vitest run tests/unit/recall-eval.test.ts`) and confirm the RESULTS.md numbers reproduce; do not change code unless a check fails.
+
+## OPEN FINDING — RESOLVED (kept for the record)
+**Score-scale coupling.** B2/B3/B4 change scoring, but the hook uses hard thresholds on `hits[].score` (BM25 fallback `>= 2.0`, skill gate `1.0`, explore `5/2`). **Resolution shipped (option iii):** all new signals (field weighting, recency, status, synonyms, link-aware) feed a derived `rankScore` used only for ordering; `hit.score` stays raw flat-BM25 so the gates are unaffected. Regression-locked by `tests/unit/recall-weighting.test.ts`. Phase-5 review additionally fixed the BM25-fallback gate to use `hits.some(h=>h.score>=2.0)` (a strong raw match could otherwise sit below a rank-reordered doc).
 
 ## Implementation order (re-measure where noted)
 Batch 0 (harness + gold set + freeze BASELINE) → B1 → B2 (re-measure) → B3 (re-measure) → B4 (re-measure, watch precision) → B6 (unit) → B5 (synthetic fixture, off by default) → Batch 2 continuous-capture (re-measure no-regression) → Batch 3 supporting. Each batch = its own commit on `memory-uplift`. WAVE-1/Batch-2 should get a short feature PRD before implementation.
@@ -74,4 +84,7 @@ R1 overfit (independent gold author; floors-not-snapshots; tune on aggregate onl
 Embeddings/vector overlay; WAVE 3 (sub-agent write-back / recall-in-briefing / sleep harvesting) and most of WAVE 4 (PreCompact content summary, corpus-index caching, substance-weighted debt, security secret-scan hook); real wikilink authoring; dashboard; auto-sleep.
 
 ## Changelog
+
+### 2026-06-01 - Session Update
+- Batch 2 (continuous capture C1-C4) implemented: session-digest.ts (buildDigest/writeDigest/digestExists/loadDigestDocs), salience.ts (detectSalience), recall.ts buildCorpus now folds digests (task) + .sleep.json bookmarks (memory), SessionStart catch-up loop mines digests+auto-bookmarks (off Stop path), bumpKnowledgeAccess extracted to sleep.ts and called by knowledge touch + hook recall block. recall-eval unchanged at 85.0/95.0/0.903; full suite 1038 green.
 - 2026-06-02: Paused at Phase 2 (plan review re-run needed) due to session limit. Handoff written; resume scheduled for 02:00.
