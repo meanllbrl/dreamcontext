@@ -1,8 +1,7 @@
 import { Command } from 'commander';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, cpSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
+import { dirname, join } from 'node:path';
 import chalk from 'chalk';
-import matter from 'gray-matter';
 import { checkbox, confirm } from '@inquirer/prompts';
 import { error, info, warn, miniBox, header } from '../../lib/format.js';
 import {
@@ -241,6 +240,32 @@ function platformPrefixed(platform: PlatformId, relPath: string): string {
   return `${chalk.dim(`[${platform}]`)} ${relPath}`;
 }
 
+/**
+ * Prefix an installed rel-path with its platform tag for the CLI summary. The
+ * lib returns plain (uncolored, unprefixed) rel paths; the platform is inferred
+ * from the destination prefix (.agents/.codex → codex, otherwise claude).
+ */
+function labelInstalledPath(relPath: string): string {
+  const platform: PlatformId =
+    relPath.startsWith('.agents/') || relPath.startsWith('.codex/') ? 'codex' : 'claude';
+  return platformPrefixed(platform, relPath);
+}
+
+/**
+ * Drop cross-pack-dep warnings whose recommended dep is ALSO being installed in
+ * the same batch. The lib emits one warning per uninstalled dep ("<pack>
+ * recommends: <dep …>"); when the user selected the dep in the same command the
+ * warning is noise. Matches the dep token after "recommends: ".
+ */
+function filterBatchDepWarnings(warnings: string[], selectedNames: Set<string>): string[] {
+  return warnings.filter((w) => {
+    const idx = w.indexOf('recommends: ');
+    if (idx === -1) return true;
+    const depToken = w.slice(idx + 'recommends: '.length).split(/[\s/(]/)[0];
+    return !selectedNames.has(depToken);
+  });
+}
+
 function arraysEqual(a: string[], b: string[]): boolean {
   if (a.length !== b.length) return false;
   return a.every((v, i) => v === b[i]);
@@ -363,6 +388,11 @@ export {
   type CatalogAgent,
 } from '../../lib/catalog.js';
 import { loadCatalog, findPackageDir, platformSkillRoot, isPackInstalledForPlatform } from '../../lib/catalog.js';
+import {
+  installPack,
+  installAgentForPlatform,
+  UnknownPackError,
+} from '../../lib/install-packs.js';
 
 // ─── File Resolution ────────────────────────────────────────────────────────
 import { fileURLToPath } from 'node:url';
@@ -381,76 +411,6 @@ function findPackageFile(subdir: string, filename: string): string | null {
   return null;
 }
 
-// ─── Agent Installation ─────────────────────────────────────────────────────
-
-interface ParsedAgent {
-  name: string;
-  description: string;
-  model: string;
-  body: string;
-}
-
-function parseAgentFile(agentPath: string): ParsedAgent {
-  const raw = readFileSync(agentPath, 'utf-8');
-  const parsed = matter(raw);
-  const data = parsed.data as Record<string, unknown>;
-
-  const name = typeof data.name === 'string' && data.name.trim().length > 0
-    ? data.name.trim()
-    : basename(agentPath, '.md');
-
-  const description = typeof data.description === 'string'
-    ? data.description.replace(/\s+/g, ' ').trim()
-    : '';
-
-  const model = typeof data.model === 'string' && data.model.trim().length > 0
-    ? data.model.trim()
-    : 'sonnet';
-
-  return {
-    name,
-    description,
-    model,
-    body: parsed.content.trim(),
-  };
-}
-
-function writeCodexAgent(projectRoot: string, agentPath: string): string {
-  const parsed = parseAgentFile(agentPath);
-  const agentsDir = join(projectRoot, '.codex', 'agents');
-  mkdirSync(agentsDir, { recursive: true });
-
-  const configPath = join(agentsDir, `${parsed.name}.toml`);
-  const lines = [
-    `name = ${JSON.stringify(parsed.name)}`,
-    `description = ${JSON.stringify(parsed.description)}`,
-    `model = ${JSON.stringify(parsed.model)}`,
-    `developer_instructions = ${JSON.stringify(parsed.body)}`,
-    '',
-  ];
-  writeFileSync(configPath, lines.join('\n'), 'utf-8');
-
-  return `.codex/agents/${parsed.name}.toml`;
-}
-
-function installAgentForPlatform(
-  platform: PlatformId,
-  projectRoot: string,
-  agentPath: string,
-  agentName?: string,
-): string {
-  if (platform === 'claude') {
-    const agentsDestDir = join(projectRoot, '.claude', 'agents');
-    mkdirSync(agentsDestDir, { recursive: true });
-    const file = agentName ? `${agentName}.md` : basename(agentPath);
-    const dest = join(agentsDestDir, file);
-    writeFileSync(dest, readFileSync(agentPath, 'utf-8'), 'utf-8');
-    return `.claude/agents/${file}`;
-  }
-
-  return writeCodexAgent(projectRoot, agentPath);
-}
-
 // ─── Manifest Helpers ───────────────────────────────────────────────────────
 
 export function getOrCreateManifest(projectRoot: string): Manifest {
@@ -466,105 +426,6 @@ function recordIfManifest(
 ): void {
   if (!manifest) return;
   recordFile(manifest, relPath, dreamcontextVersion(), kind);
-}
-
-// ─── Pack Installation Logic ────────────────────────────────────────────────
-
-function installPackFiles(
-  pack: CatalogPack,
-  packsDir: string,
-  projectRoot: string,
-  catalog: Catalog,
-  platform: PlatformId,
-  manifest?: Manifest,
-): string[] {
-  const installed: string[] = [];
-  const packSourceDir = join(packsDir, pack.name);
-  const skillRoot = platformSkillRoot(projectRoot, platform);
-  const skillDestDir = join(skillRoot, pack.name);
-  const skillRootRel = skillRoot.replace(projectRoot + '/', '');
-
-  // Install base SKILL.md
-  const baseSrc = join(packSourceDir, 'SKILL.md');
-  if (existsSync(baseSrc)) {
-    mkdirSync(skillDestDir, { recursive: true });
-    writeFileSync(join(skillDestDir, 'SKILL.md'), readFileSync(baseSrc, 'utf-8'), 'utf-8');
-    const rel = `${skillRootRel}/${pack.name}/SKILL.md`;
-    recordIfManifest(manifest, rel, 'pack-skill');
-    installed.push(platformPrefixed(platform, rel));
-  }
-
-  // Install sub-skills
-  for (const sub of pack.subSkills) {
-    const subSrc = join(packSourceDir, sub.file);
-    if (!existsSync(subSrc)) continue;
-
-    const subDest = join(skillDestDir, sub.file);
-    mkdirSync(dirname(subDest), { recursive: true });
-    writeFileSync(subDest, readFileSync(subSrc, 'utf-8'), 'utf-8');
-    const subRel = `${skillRootRel}/${pack.name}/${sub.file}`;
-    recordIfManifest(manifest, subRel, 'pack-skill');
-
-    let label = platformPrefixed(platform, subRel);
-
-    // Copy references/ directory if present
-    if (sub.hasReferences) {
-      const refSrcDir = join(dirname(subSrc), 'references');
-      if (existsSync(refSrcDir)) {
-        const refDestDir = join(dirname(subDest), 'references');
-        cpSync(refSrcDir, refDestDir, { recursive: true });
-        const refFiles = readdirSync(refSrcDir).filter((f) => f.endsWith('.md'));
-        for (const rf of refFiles) {
-          const refRel = `${skillRootRel}/${pack.name}/${dirname(sub.file) === '.' ? '' : dirname(sub.file) + '/'}references/${rf}`;
-          recordIfManifest(manifest, refRel, 'pack-skill');
-        }
-        label += chalk.dim(` (+ ${refFiles.length} references)`);
-      }
-    }
-
-    installed.push(label);
-  }
-
-  // Install related agents
-  if (pack.relatedAgents?.length) {
-    for (const agentName of pack.relatedAgents) {
-      const agentEntry = catalog.agents.find((a) => a.name === agentName);
-      if (!agentEntry) continue;
-
-      const agentSrc = join(packsDir, agentEntry.file);
-      if (!existsSync(agentSrc)) continue;
-
-      const agentRel = installAgentForPlatform(platform, projectRoot, agentSrc, agentName);
-      recordIfManifest(manifest, agentRel, 'pack-agent');
-      installed.push(platformPrefixed(platform, agentRel));
-    }
-  }
-
-  if (manifest) {
-    recordPack(manifest, pack.name, dreamcontextVersion());
-  }
-
-  return installed;
-}
-
-function installStandaloneFiles(
-  standalone: CatalogStandalone,
-  packsDir: string,
-  projectRoot: string,
-  platform: PlatformId,
-  manifest?: Manifest,
-): string[] {
-  const src = join(packsDir, standalone.file);
-  if (!existsSync(src)) return [];
-
-  const skillRoot = platformSkillRoot(projectRoot, platform);
-  const destDir = join(skillRoot, standalone.name);
-  mkdirSync(destDir, { recursive: true });
-  writeFileSync(join(destDir, 'SKILL.md'), readFileSync(src, 'utf-8'), 'utf-8');
-  const rel = `${skillRoot.replace(projectRoot + '/', '')}/${standalone.name}/SKILL.md`;
-  recordIfManifest(manifest, rel, 'pack-skill');
-  if (manifest) recordPack(manifest, standalone.name, dreamcontextVersion());
-  return [platformPrefixed(platform, rel)];
 }
 
 // ─── Interactive Pack Browser ───────────────────────────────────────────────
@@ -631,55 +492,22 @@ async function interactivePackInstall(
     return;
   }
 
+  const localManifest = manifest ?? getOrCreateManifest(projectRoot);
   const allInstalled: string[] = [];
   const warnings: string[] = [];
-  const selectedPackNames = new Set<string>();
-
-  // Collect selected pack names first for dep checking
-  for (const sel of selected) {
-    const [, name] = sel.split(':');
-    selectedPackNames.add(name);
-  }
+  const selectedNames = new Set(selected.map((sel) => sel.split(':')[1]));
 
   for (const sel of selected) {
     const [type, name] = sel.split(':');
-
-    if (type === 'pack') {
-      const pack = catalog.packs.find((p) => p.name === name);
-      if (!pack) continue;
-
-      console.log();
-      info(`Installing ${chalk.bold(name)} pack...`);
-      for (const platform of platforms) {
-        const files = installPackFiles(pack, packsDir, projectRoot, catalog, platform, manifest);
-        allInstalled.push(...files);
-      }
-
-      // Cross-pack dependency warnings
-      if (pack.crossPackDeps?.length) {
-        for (const dep of pack.crossPackDeps) {
-          const depPack = dep.split(/[\s/(]/)[0];
-          const depInstalled = platforms.every((p) => isPackInstalledForPlatform(projectRoot, p, depPack));
-          if (!selectedPackNames.has(depPack) && !depInstalled) {
-            warnings.push(`${chalk.bold(name)} recommends: ${dep}`);
-          }
-        }
-      }
-    } else if (type === 'standalone') {
-      const standalone = catalog.standalone.find((s) => s.name === name);
-      if (!standalone) continue;
-
-      console.log();
-      info(`Installing ${chalk.bold(name)}...`);
-      for (const platform of platforms) {
-        const files = installStandaloneFiles(standalone, packsDir, projectRoot, platform, manifest);
-        allInstalled.push(...files);
-      }
-    }
+    console.log();
+    info(type === 'pack' ? `Installing ${chalk.bold(name)} pack...` : `Installing ${chalk.bold(name)}...`);
+    const result = installPack(name, projectRoot, platforms, localManifest);
+    allInstalled.push(...result.installed.map(labelInstalledPath));
+    warnings.push(...result.warnings);
   }
 
-  if (manifest) writeManifest(projectRoot, manifest);
-  printInstallSummary(allInstalled, warnings);
+  writeManifest(projectRoot, localManifest);
+  printInstallSummary(allInstalled, filterBatchDepWarnings(warnings, selectedNames));
 }
 
 // ─── Direct Pack Install ────────────────────────────────────────────────────
@@ -699,57 +527,36 @@ export function directPackInstall(
   const localManifest = manifest ?? getOrCreateManifest(projectRoot);
   for (const platform of platforms) recordPlatform(localManifest, platform);
 
-  const { catalog, packsDir } = loaded;
+  const { catalog } = loaded;
   const allInstalled: string[] = [];
   const warnings: string[] = [];
-  const selectedPackNames = new Set(packNames);
+  const selectedNames = new Set(packNames);
 
   for (const name of packNames) {
-    // Check packs
-    const pack = catalog.packs.find((p) => p.name === name);
-    if (pack) {
-      info(`Installing ${chalk.bold(name)} pack...`);
-      for (const platform of platforms) {
-        const files = installPackFiles(pack, packsDir, projectRoot, catalog, platform, localManifest);
-        allInstalled.push(...files);
+    const isPackName = catalog.packs.some((p) => p.name === name);
+    try {
+      info(isPackName ? `Installing ${chalk.bold(name)} pack...` : `Installing ${chalk.bold(name)}...`);
+      const result = installPack(name, projectRoot, platforms, localManifest);
+      allInstalled.push(...result.installed.map(labelInstalledPath));
+      warnings.push(...result.warnings);
+    } catch (e: unknown) {
+      if (e instanceof UnknownPackError) {
+        const available = [
+          ...catalog.packs.map((p) => p.name),
+          ...catalog.standalone.map((s) => s.name),
+        ];
+        error(`Pack "${name}" not found.`, `Available: ${available.join(', ')}`);
+        continue;
       }
-
-      if (pack.crossPackDeps?.length) {
-        for (const dep of pack.crossPackDeps) {
-          const depPack = dep.split(/[\s/(]/)[0];
-          const depInstalled = platforms.every((p) => isPackInstalledForPlatform(projectRoot, p, depPack));
-          if (!selectedPackNames.has(depPack) && !depInstalled) {
-            warnings.push(`${chalk.bold(name)} recommends: ${dep}`);
-          }
-        }
-      }
-      continue;
+      throw e;
     }
-
-    // Check standalone
-    const standalone = catalog.standalone.find((s) => s.name === name);
-    if (standalone) {
-      info(`Installing ${chalk.bold(name)}...`);
-      for (const platform of platforms) {
-        const files = installStandaloneFiles(standalone, packsDir, projectRoot, platform, localManifest);
-        allInstalled.push(...files);
-      }
-      continue;
-    }
-
-    // Not found
-    const available = [
-      ...catalog.packs.map((p) => p.name),
-      ...catalog.standalone.map((s) => s.name),
-    ];
-    error(`Pack "${name}" not found.`, `Available: ${available.join(', ')}`);
   }
 
   // Only persist if we own the manifest (caller didn't pass one in).
   if (!manifest) writeManifest(projectRoot, localManifest);
 
   if (allInstalled.length > 0) {
-    printInstallSummary(allInstalled, warnings);
+    printInstallSummary(allInstalled, filterBatchDepWarnings(warnings, selectedNames));
   }
 }
 
@@ -835,10 +642,8 @@ function installSingleSkill(skillName: string, projectRoot: string, platforms: P
   // Check standalone
   const standalone = catalog.standalone.find((s) => s.name === skillName);
   if (standalone) {
-    const files: string[] = [];
-    for (const platform of platforms) {
-      files.push(...installStandaloneFiles(standalone, packsDir, projectRoot, platform, manifest));
-    }
+    const result = installPack(standalone.name, projectRoot, platforms, manifest);
+    const files = result.installed.map(labelInstalledPath);
     writeManifest(projectRoot, manifest);
     console.log();
     console.log(miniBox([

@@ -11,6 +11,7 @@ import { buildKnowledgeIndex } from '../../lib/knowledge-index.js';
 import { buildCoreIndex } from '../../lib/core-index.js';
 import { buildMarketingSnapshot } from '../../lib/marketing/snapshot.js';
 import { readSetupConfig } from '../../lib/setup-config.js';
+import { isSkillInstalled } from '../../lib/catalog.js';
 import { readVersionCache, isCacheFresh, buildNudge } from '../../lib/version-check.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
 
@@ -295,10 +296,12 @@ function getVersionNudge(root: string): string {
     if (!cache || !isCacheFresh(cache)) return '';
 
     const installedCli = dreamcontextVersion();
-    const config = readSetupConfig(projectRoot);
-    const installedPacks: string[] = config?.packs ?? [];
-    // availablePacks was stored by refreshVersionCache — no catalog needed here
+    // availablePacks was stored by refreshVersionCache. Filter by filesystem truth
+    // (the pack's SKILL.md on disk) — NOT config.packs, which drifts and produces
+    // false "new pack available" nudges for packs that are already installed.
+    // isSkillInstalled only stats a path; it does not load/parse the catalog.
     const catalogPackNames = cache.availablePacks;
+    const installedPacks = catalogPackNames.filter((name) => isSkillInstalled(projectRoot, name));
 
     const nudge = buildNudge(installedCli, cache, installedPacks, catalogPackNames);
     return nudge ?? '';

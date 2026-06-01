@@ -12,10 +12,16 @@ import './UpdateBadge.css';
  * Escape key closes the expanded view.
  * No focus trap — per pragmatist decision (simple banner, not a modal).
  */
-export function UpdateBadge() {
+interface UpdateBadgeProps {
+  /** Navigate to the Packs page (where install/remove buttons live). */
+  onManagePacks?: () => void;
+}
+
+export function UpdateBadge({ onManagePacks }: UpdateBadgeProps) {
   const { t } = useI18n();
   const { data } = useVersionCheck();
   const nudge = data?.nudge ?? null;
+  const newPacks = data?.newPacks ?? [];
   const [expanded, setExpanded] = useState(false);
 
   const handleKeyDown = useCallback(
@@ -61,6 +67,17 @@ export function UpdateBadge() {
           <div className="update-badge-content">
             <MarkdownPreview content={nudge} />
           </div>
+          {newPacks.length > 0 && onManagePacks && (
+            <button
+              className="update-badge-action"
+              onClick={() => {
+                onManagePacks();
+                setExpanded(false);
+              }}
+            >
+              {t('update.managePacks')}
+            </button>
+          )}
         </div>
       )}
     </div>

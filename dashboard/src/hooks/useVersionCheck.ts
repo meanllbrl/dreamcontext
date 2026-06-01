@@ -14,6 +14,8 @@ export interface VersionCheck {
   cache: VersionCache | null;
   fresh: boolean;
   nudge: string | null;
+  /** Catalog packs not installed on disk — actionable via the Packs page. */
+  newPacks?: string[];
 }
 
 // ─── Hook ─────────────────────────────────────────────────────────────────────

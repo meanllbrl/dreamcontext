@@ -16,6 +16,7 @@ import { handleGraphGet, handleGraphContentGet } from './routes/graph.js';
 import { handleCouncilList, handleCouncilGet, handleCouncilResearchGet } from './routes/council.js';
 import { handleConfigGet, handleConfigUpdate } from './routes/config.js';
 import { handlePacksGet } from './routes/packs.js';
+import { handlePackInstall, handlePackUninstall } from './routes/packs-install.js';
 import { handleVersionCheckGet } from './routes/version-check.js';
 
 export interface ServerOptions {
@@ -73,6 +74,8 @@ function buildRouter(): Router {
 
   // Packs
   router.get('/api/packs', handlePacksGet);
+  router.post('/api/packs/:name/install', handlePackInstall);
+  router.delete('/api/packs/:name', handlePackUninstall);
 
   // Version check
   router.get('/api/version-check', handleVersionCheckGet);

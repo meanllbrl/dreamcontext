@@ -3,7 +3,7 @@ import { dirname } from 'node:path';
 import { sendJson } from '../middleware.js';
 import { readVersionCache, isCacheFresh, buildNudge } from '../../lib/version-check.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
-import { readSetupConfig } from '../../lib/setup-config.js';
+import { isSkillInstalled } from '../../lib/catalog.js';
 
 /**
  * GET /api/version-check — Return cached update nudge data.
@@ -24,10 +24,14 @@ export async function handleVersionCheckGet(
     const cache = readVersionCache(projectRoot);
     const fresh = isCacheFresh(cache);
     const installedCli = dreamcontextVersion();
-    const installedPacks = readSetupConfig(projectRoot)?.packs ?? [];
     const catalogPackNames = cache?.availablePacks ?? [];
+    // Filesystem truth (the pack's SKILL.md on disk), NOT config.packs — config
+    // drifts from reality and produced false "new pack available" nudges for packs
+    // that were already installed. Mirrors the /api/packs `installed` computation.
+    const installedPacks = catalogPackNames.filter((name) => isSkillInstalled(projectRoot, name));
+    const newPacks = fresh ? catalogPackNames.filter((name) => !installedPacks.includes(name)) : [];
     const nudge = buildNudge(installedCli, fresh ? cache : null, installedPacks, catalogPackNames);
-    sendJson(res, 200, { cache, fresh, nudge });
+    sendJson(res, 200, { cache, fresh, nudge, newPacks });
   } catch {
     sendJson(res, 200, { cache: null, fresh: false, nudge: null });
   }

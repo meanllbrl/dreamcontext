@@ -157,3 +157,107 @@
   color: var(--color-text-secondary);
   line-height: var(--line-height-normal);
 }
+
+/* ─── Changelog (project ship-narrative from CHANGELOG.json) ─────────────────── */
+
+.changelog-group {
+  margin-bottom: var(--space-5);
+}
+
+.changelog-group:last-child {
+  margin-bottom: 0;
+}
+
+.changelog-group-title {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: var(--space-2);
+}
+
+/* Day headers read as dates, not labels — mono, untransformed. */
+.changelog-group-title--day {
+  font-family: var(--font-mono);
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--color-text-secondary);
+}
+
+/* The pending group is what the next sleep will consolidate — accented rail. */
+.changelog-group--pending {
+  border-left: 2px solid var(--color-accent);
+  padding-left: var(--space-3);
+}
+
+.changelog-group--pending .changelog-group-title {
+  color: var(--color-accent);
+}
+
+.changelog-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.changelog-item {
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.changelog-item:hover {
+  border-color: var(--color-accent);
+  box-shadow: var(--shadow-md);
+}
+
+.changelog-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.changelog-scope {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.changelog-breaking {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.04em;
+  color: var(--color-error);
+  background: var(--color-error-subtle);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-full);
+}
+
+.changelog-summary {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text);
+  line-height: var(--line-height-normal);
+}
+
+.changelog-desc {
+  margin-top: var(--space-1);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  line-height: var(--line-height-normal);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.changelog-more {
+  margin-top: var(--space-3);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}

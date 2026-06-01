@@ -156,7 +156,7 @@ export function buildNudge(
   const lines: string[] = ['## Update Available\n'];
 
   if (cliOutdated) {
-    lines.push(`- CLI: v${installedCli} → v${cache.latestCli} — run \`dreamcontext upgrade\` then \`dreamcontext update\``);
+    lines.push(`- **New version available: v${installedCli} → v${cache.latestCli}.** A new release can add, update, or remove hooks, prompts, sub-agents, and skills. Run \`dreamcontext upgrade\` to get it, then \`dreamcontext update\` to apply those changes to this project.`);
   }
   if (hasNewPacks) {
     lines.push(`- New skill pack${newPacks.length > 1 ? 's' : ''} available: ${newPacks.join(', ')} — run \`dreamcontext install-skill --packs\``);

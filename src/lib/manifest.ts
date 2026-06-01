@@ -189,7 +189,7 @@ export function isSafeDeletePath(relPath: string): boolean {
 
 const PRE_MANIFEST_VERSION = 'pre-manifest';
 
-function walk(dir: string, relBase: string, out: string[]): void {
+export function walk(dir: string, relBase: string, out: string[]): void {
   if (!existsSync(dir)) return;
   for (const entry of readdirSync(dir)) {
     const abs = join(dir, entry);

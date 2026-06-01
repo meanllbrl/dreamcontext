@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useTheme } from '../../context/ThemeContext';
 import { useSleep, getSleepLevel, getSleepLevelKey } from '../../hooks/useSleep';
 import { UpdateBadge } from './UpdateBadge';
+import type { Page } from './Sidebar';
 import './Header.css';
 
 const ZOOM_LEVELS = [0.85, 0.9, 1.0, 1.1, 1.2];
@@ -22,7 +23,12 @@ function applyZoom(zoom: number) {
   document.documentElement.style.setProperty('--zoom', String(zoom));
 }
 
-export function Header() {
+interface HeaderProps {
+  /** Switch the active page (used by the update badge to open Packs). */
+  onNavigate?: (page: Page) => void;
+}
+
+export function Header({ onNavigate }: HeaderProps) {
   const { theme, setTheme, resolved } = useTheme();
   const { data: sleep } = useSleep();
   const [zoom, setZoom] = useState(getStoredZoom);
@@ -82,7 +88,7 @@ export function Header() {
         </div>
       </div>
       <div className="header-right">
-        <UpdateBadge />
+        <UpdateBadge onManagePacks={onNavigate ? () => onNavigate('packs') : undefined} />
         <div className="zoom-controls">
           <button
             className="zoom-btn"

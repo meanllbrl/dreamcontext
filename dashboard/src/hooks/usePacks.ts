@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 
 // ─── Types (duplicated client-side — can't import from src/lib) ───────────────
@@ -44,5 +44,44 @@ export function usePacks() {
   return useQuery({
     queryKey: ['packs'],
     queryFn: () => api.get<PacksResponse>('/packs'),
+  });
+}
+
+interface InstallResponse {
+  name: string;
+  installed: string[];
+  warnings: string[];
+  platforms: string[];
+}
+
+interface UninstallResponse {
+  name: string;
+  removed: string[];
+  skipped: string[];
+  warnings: string[];
+  platforms: string[];
+}
+
+/** Install a pack/standalone skill, then refresh the packs list so pills flip. */
+export function useInstallPack() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) =>
+      api.post<InstallResponse>(`/packs/${encodeURIComponent(name)}/install`, {}),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['packs'] });
+    },
+  });
+}
+
+/** Uninstall a pack/standalone skill, then refresh the packs list. */
+export function useUninstallPack() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) =>
+      api.del<UninstallResponse>(`/packs/${encodeURIComponent(name)}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['packs'] });
+    },
   });
 }

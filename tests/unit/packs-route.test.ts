@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { handlePacksGet } from '../../src/server/routes/packs.js';
@@ -51,6 +51,31 @@ describe('GET /api/packs', () => {
     // The grep below verifies this at CI; here we just confirm the route loads without error.
     // (See also: npm run build grep check in A11 verification.)
     expect(true).toBe(true); // Route already imported above without error
+  });
+
+  it('bundle purity: packs-install.ts + install-packs.ts import neither @inquirer nor chalk', () => {
+    // The install/uninstall write path is shared between the CLI and the server.
+    // The server must never pull @inquirer/prompts or chalk into its bundle, so
+    // assert the source text contains no import of either. Matches an import line
+    // whose module specifier is '@inquirer/*' or 'chalk'.
+    const installRoute = readFileSync(
+      join(__dirname, '..', '..', 'src', 'server', 'routes', 'packs-install.ts'),
+      'utf-8',
+    );
+    const installLib = readFileSync(
+      join(__dirname, '..', '..', 'src', 'lib', 'install-packs.ts'),
+      'utf-8',
+    );
+
+    const FORBIDDEN_IMPORT = /^\s*import\s+[^;]*from\s+['"](?:@inquirer\/[^'"]+|chalk)['"]/m;
+    for (const src of [installRoute, installLib]) {
+      expect(FORBIDDEN_IMPORT.test(src)).toBe(false);
+      // Belt-and-suspenders: no bare specifier mentions either dependency.
+      expect(src.includes("'@inquirer")).toBe(false);
+      expect(src.includes('"@inquirer')).toBe(false);
+      expect(src.includes("'chalk'")).toBe(false);
+      expect(src.includes('"chalk"')).toBe(false);
+    }
   });
 
   describe('installed flag (filesystem truth, not config.packs)', () => {

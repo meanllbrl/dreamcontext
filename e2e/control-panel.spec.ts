@@ -58,3 +58,30 @@ test('pack cards open a detail modal and close (req 4)', async ({ page }) => {
   await expect(modal).toBeHidden();
 });
 
+// business-idea-validation is the only catalog entry absent on disk in the repo,
+// and .claude/ is gitignored, so installing/removing it never dirties the tree.
+const BIV = 'business-idea-validation';
+
+test.afterEach(async ({ page }) => {
+  // Best-effort cleanup so an interrupted run never leaves an installed husk.
+  await page.request.delete(`/api/packs/${BIV}`).catch(() => {});
+});
+
+test('install adds the Installed pill, remove takes it away (req 5)', async ({ page }) => {
+  await page.locator('.sidebar-item', { hasText: 'Packs' }).first().click();
+  await expect(page.locator('.packs-card').first()).toBeVisible();
+
+  // Locate the business-idea-validation card; it must start uninstalled.
+  const card = page.locator('.packs-card', { hasText: BIV }).first();
+  await expect(card).toBeVisible();
+  await expect(card.locator('.packs-installed-pill')).toHaveCount(0);
+
+  // Install → the pill appears (React Query invalidation refreshes the list).
+  await card.getByRole('button', { name: 'Install' }).click();
+  await expect(card.locator('.packs-installed-pill')).toBeVisible();
+
+  // Remove → the pill disappears again.
+  await card.getByRole('button', { name: 'Remove' }).click();
+  await expect(card.locator('.packs-installed-pill')).toHaveCount(0);
+});
+

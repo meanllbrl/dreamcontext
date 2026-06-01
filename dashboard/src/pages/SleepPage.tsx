@@ -1,10 +1,44 @@
 import { useSleep, getSleepLevel, getSleepLevelKey } from '../hooks/useSleep';
+import { useChangelog, type ChangelogEntry } from '../hooks/useChangelog';
 import { useI18n } from '../context/I18nContext';
+import { tagHue } from '../lib/tagColor';
 import './SleepPage.css';
+
+const CHANGELOG_LIMIT = 25;
+
+/** One changelog entry card — shared by the pending group and the day groups. */
+function ChangelogItem({ entry }: { entry: ChangelogEntry }) {
+  const { t } = useI18n();
+  return (
+    <div className="changelog-item">
+      <div className="changelog-meta">
+        <span className="task-tag" data-hue={tagHue(entry.type)}>{entry.type}</span>
+        {entry.scope && <span className="changelog-scope">{entry.scope}</span>}
+        {entry.breaking && (
+          <span className="changelog-breaking">{t('sleep.changelog.breaking')}</span>
+        )}
+      </div>
+      <p className="changelog-summary">{entry.summary}</p>
+      {entry.description && <p className="changelog-desc">{entry.description}</p>}
+    </div>
+  );
+}
+
+/** Group consecutive entries by their date, preserving the newest-first order. */
+function groupByDay(entries: ChangelogEntry[]): { date: string; items: ChangelogEntry[] }[] {
+  const groups: { date: string; items: ChangelogEntry[] }[] = [];
+  for (const entry of entries) {
+    const last = groups[groups.length - 1];
+    if (last && last.date === entry.date) last.items.push(entry);
+    else groups.push({ date: entry.date, items: [entry] });
+  }
+  return groups;
+}
 
 export function SleepPage() {
   const { t } = useI18n();
   const { data: sleep, isLoading, isError, error } = useSleep();
+  const { data: changelog } = useChangelog();
 
   if (isLoading || !sleep) {
     return <div className="loading">{t('common.loading')}</div>;
@@ -15,6 +49,17 @@ export function SleepPage() {
 
   const level = getSleepLevel(sleep.debt);
   const levelKey = getSleepLevelKey(sleep.debt);
+
+  // Split the changelog: entries dated after the last sleep will fold into the
+  // next consolidation (shown separately); the rest is history grouped by day,
+  // like the chronological layout of the core files.
+  const lastSleep = sleep.last_sleep;
+  const entries = changelog?.entries ?? [];
+  const pending = lastSleep ? entries.filter((e) => e.date > lastSleep) : [];
+  const history = lastSleep ? entries.filter((e) => e.date <= lastSleep) : entries;
+  const historyShown = history.slice(0, CHANGELOG_LIMIT);
+  const historyDays = groupByDay(historyShown);
+  const historyHidden = history.length - historyShown.length;
 
   return (
     <div className="sleep-page">
@@ -41,6 +86,42 @@ export function SleepPage() {
           )}
         </div>
       </div>
+
+      {entries.length > 0 && (
+        <div className="sleep-section">
+          <h2 className="sleep-section-title">{t('sleep.changelog')} ({entries.length})</h2>
+
+          {pending.length > 0 && (
+            <div className="changelog-group changelog-group--pending">
+              <h3 className="changelog-group-title">
+                {t('sleep.changelog.pending')} ({pending.length})
+              </h3>
+              <div className="changelog-list">
+                {pending.map((entry, i) => (
+                  <ChangelogItem key={`p-${i}`} entry={entry} />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {historyDays.map((group) => (
+            <div key={group.date} className="changelog-group">
+              <h3 className="changelog-group-title changelog-group-title--day">{group.date}</h3>
+              <div className="changelog-list">
+                {group.items.map((entry, i) => (
+                  <ChangelogItem key={`${group.date}-${i}`} entry={entry} />
+                ))}
+              </div>
+            </div>
+          ))}
+
+          {historyHidden > 0 && (
+            <p className="changelog-more">
+              {historyHidden} {t('sleep.changelog.earlier')}
+            </p>
+          )}
+        </div>
+      )}
 
       {sleep.sessions.length > 0 && (
         <div className="sleep-section">

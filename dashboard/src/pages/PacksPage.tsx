@@ -1,6 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useI18n } from '../context/I18nContext';
-import { usePacks, type CatalogPack, type CatalogStandalone } from '../hooks/usePacks';
+import {
+  usePacks,
+  useInstallPack,
+  useUninstallPack,
+  type CatalogPack,
+  type CatalogStandalone,
+} from '../hooks/usePacks';
 import { tagHue } from '../lib/tagColor';
 import './PacksPage.css';
 
@@ -8,6 +14,64 @@ type DetailItem = CatalogPack | CatalogStandalone;
 
 function isPack(item: DetailItem): item is CatalogPack {
   return 'base' in item;
+}
+
+interface PackActionButtonProps {
+  item: DetailItem;
+  /** Optional callback fired after a successful install/uninstall (e.g. close modal). */
+  onActionDone?: () => void;
+}
+
+/**
+ * One button that installs an uninstalled pack or removes an installed one.
+ * Used by both the card and the detail modal. Stops click/keyboard propagation
+ * so a card's button never bubbles up to open the card's detail modal. On
+ * success the React Query invalidation refreshes the packs list (the Installed
+ * pill flips); no alert/toast.
+ */
+function PackActionButton({ item, onActionDone }: PackActionButtonProps) {
+  const { t } = useI18n();
+  const install = useInstallPack();
+  const uninstall = useUninstallPack();
+
+  const installed = item.installed;
+  const mutation = installed ? uninstall : install;
+  const isPending = mutation.isPending;
+  const isError = mutation.isError;
+
+  const idleLabel = installed ? t('packs.action.remove') : t('packs.action.install');
+  const pendingLabel = installed ? t('packs.action.removing') : t('packs.action.installing');
+  const label = isPending ? pendingLabel : idleLabel;
+
+  const handleClick = (e: React.MouseEvent) => {
+    // Keep a card's button from bubbling up to the card's open-detail handler.
+    e.stopPropagation();
+    e.preventDefault();
+    if (isPending) return;
+    mutation.mutate(item.name, {
+      onSuccess: () => onActionDone?.(),
+    });
+  };
+
+  return (
+    <div className="packs-card-actions">
+      <button
+        type="button"
+        className={`packs-action-btn btn btn--ghost${installed ? ' packs-action-btn--danger' : ''}`}
+        onClick={handleClick}
+        disabled={isPending}
+        aria-invalid={isError || undefined}
+        aria-busy={isPending || undefined}
+      >
+        {label}
+      </button>
+      {isError && (
+        <span className="packs-action-error" role="alert">
+          {t('packs.action.error')}
+        </span>
+      )}
+    </div>
+  );
 }
 
 interface PackDetailModalProps {
@@ -49,14 +113,17 @@ function PackDetailModal({ item, onClose }: PackDetailModalProps) {
               <span className="packs-installed-pill">{t('settings.packs.installed')}</span>
             )}
           </div>
-          <button
-            className="packs-modal-close btn btn--ghost"
-            type="button"
-            onClick={onClose}
-            aria-label={t('packs.detail.close')}
-          >
-            {t('packs.detail.close')}
-          </button>
+          <div className="packs-modal-header-actions">
+            <PackActionButton item={item} onActionDone={onClose} />
+            <button
+              className="packs-modal-close btn btn--ghost"
+              type="button"
+              onClick={onClose}
+              aria-label={t('packs.detail.close')}
+            >
+              {t('packs.detail.close')}
+            </button>
+          </div>
         </div>
 
         {item.description && (
@@ -153,6 +220,7 @@ function PackCard({ item, onClick }: PackCardProps) {
           ))}
         </div>
       )}
+      <PackActionButton item={item} />
     </div>
   );
 }

@@ -103,3 +103,27 @@
   max-height: 320px;
   overflow-y: auto;
 }
+
+/* Actionable CTA — opens the Packs page, where install/remove buttons live. */
+.update-badge-action {
+  display: block;
+  width: calc(100% - var(--space-4) * 2);
+  margin: 0 var(--space-4) var(--space-4);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-accent);
+  color: var(--color-text-on-brand);
+  border: none;
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: filter var(--transition-fast), transform var(--transition-fast);
+}
+
+.update-badge-action:hover {
+  filter: brightness(1.08);
+}
+
+.update-badge-action:active {
+  transform: scale(0.98);
+}

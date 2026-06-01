@@ -59,7 +59,7 @@ export function Shell({ children }: ShellProps) {
 
   return (
     <div className="shell">
-      <Header />
+      <Header onNavigate={handleSidebarNavigate} />
       <div className="shell-body">
         <Sidebar activePage={activePage} onNavigate={handleSidebarNavigate} />
         <main className="shell-main">

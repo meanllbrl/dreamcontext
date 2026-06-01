@@ -98,6 +98,48 @@
   gap: var(--space-1);
 }
 
+/* ─── Install / Remove actions ──────────────────────────────────────────────── */
+
+.packs-card-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.packs-action-btn {
+  font-size: var(--font-size-xs);
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--color-border);
+}
+
+.packs-action-btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.packs-action-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Remove is destructive — use the error token family (mirrors the success-subtle pill). */
+.packs-action-btn--danger {
+  color: var(--color-error);
+  border-color: var(--color-border);
+}
+
+.packs-action-btn--danger:hover:not(:disabled) {
+  background: var(--color-error-subtle);
+  color: var(--color-error);
+  border-color: var(--color-error);
+}
+
+.packs-action-error {
+  font-size: var(--font-size-xs);
+  color: var(--color-error);
+}
+
 /* ─── Modal overlay ─────────────────────────────────────────────────────────── */
 
 .packs-modal-overlay {
@@ -145,6 +187,18 @@
   font-weight: var(--font-weight-semibold);
   color: var(--color-text);
   margin: 0;
+}
+
+.packs-modal-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+/* Inside the modal header the action button has no surrounding row spacing. */
+.packs-modal-header-actions .packs-card-actions {
+  margin-top: 0;
 }
 
 .packs-modal-close {
