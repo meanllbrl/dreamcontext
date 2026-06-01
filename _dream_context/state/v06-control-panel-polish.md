@@ -1,20 +1,23 @@
 ---
-id: "task_E96gFb5q"
-name: "v06-control-panel-polish"
-description: "Ship-ready polish for the v0.6 control panel: collapsible drawer, grouped tabs, correct installed-packs display, easy open-a-vault, installable Mac app, Playwright verification."
-priority: "high"
-urgency: "medium"
-status: "in_progress"
-created_at: "2026-06-01"
-updated_at: "2026-06-01"
+id: task_E96gFb5q
+name: v06-control-panel-polish
+description: >-
+  Ship-ready polish for the v0.6 control panel: collapsible drawer, grouped
+  tabs, correct installed-packs display, easy open-a-vault, installable Mac app,
+  Playwright verification.
+priority: high
+urgency: medium
+status: in_review
+created_at: '2026-06-01'
+updated_at: '2026-06-01'
 tags:
   - control-panel
   - frontend
   - desktop
   - testing
-parent_task: "v06-control-panel-vaults-tauri"
+parent_task: v06-control-panel-vaults-tauri
 related_feature: null
-version: "0.6.0"
+version: 0.6.0
 ---
 
 ## Workflow
@@ -84,5 +87,11 @@ User-driven polish after v0.6 slices 1–4. Six concrete fixes to make the contr
 
 ## Changelog
 
+
+
+### 2026-06-01 - Status → in_review
+- 6/6 criteria met; vitest 978 + playwright 4/4 + mac .app builds
+### 2026-06-01 - Session Update
+- All 6 reqs done + verified: drawer collapse (PW), grouped tabs (PW), installed-packs fix=filesystem truth (10 pills vs 1; unit+PW), easy vault add (PW add/remove), Mac .app builds (tauri build --bundles app exit 0, arm64 adhoc-signed), Playwright suite 4/4. vitest 978 green. Commits aa058a1 + 5d45ae7 pushed. Also fixed id.test.ts nanoid flake + added vitest.config.
 ### 2026-06-01 - Created
 - Task created.

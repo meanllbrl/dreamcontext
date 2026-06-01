@@ -1,16 +1,16 @@
 ---
-id: "task_ebhxn2LF"
-name: "v06-tauri-launch-fix"
-description: "v06-tauri-launch-fix"
-priority: "high"
-urgency: "medium"
-status: "todo"
-created_at: "2026-06-01"
-updated_at: "2026-06-01"
+id: task_ebhxn2LF
+name: v06-tauri-launch-fix
+description: v06-tauri-launch-fix
+priority: high
+urgency: medium
+status: in_review
+created_at: '2026-06-01'
+updated_at: '2026-06-01'
 tags: []
 parent_task: null
 related_feature: null
-version: "v0.6.0"
+version: v0.6.0
 ---
 
 ## Workflow
@@ -59,5 +59,11 @@ The bundled Mac .app crashes immediately when double-clicked: a Finder-launched 
 ## Changelog
 <!-- LIFO: newest at top. Auto-prepended by `dreamcontext tasks log`. -->
 
+
+
+### 2026-06-01 - Session Update
+- DEFERRED — standalone Mac app parked. Root cause found (Finder PATH/cwd) + lib.rs made robust, but reliable CLI bundling into the .app remained unresolved. Decision: drop the standalone app for now; ship via npm + dreamcontext dashboard. Full standalone work preserved on branch parked/desktop-app.
+### 2026-06-01 - Status → in_review
+- fixed: app launches in Finder env (node via login shell, bundled CLI, vault from registry, error-window fallback); health 200 verified
 ### 2026-06-01 - Created
 - Task created.
