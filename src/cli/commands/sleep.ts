@@ -215,6 +215,20 @@ export function writeSleepState(root: string, state: SleepState): void {
   writeJsonObject(filePath, state);
 }
 
+/**
+ * Record an access to a knowledge file in `state.knowledge_access` (mutates the
+ * passed state; caller persists). Creates the record if absent, then stamps
+ * `last_accessed = today()` and increments `count`. Shared by `knowledge touch`
+ * and the recall hook (recall hits bump access for `type === 'knowledge'` docs).
+ */
+export function bumpKnowledgeAccess(state: SleepState, slug: string): void {
+  if (!state.knowledge_access[slug]) {
+    state.knowledge_access[slug] = { last_accessed: today(), count: 0 };
+  }
+  state.knowledge_access[slug].last_accessed = today();
+  state.knowledge_access[slug].count++;
+}
+
 function getSleepinessLevel(debt: number): string {
   if (debt <= 3) return 'Alert';
   if (debt <= 6) return 'Drowsy';

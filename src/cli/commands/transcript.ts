@@ -33,7 +33,7 @@ interface TranscriptEntry {
   };
 }
 
-interface DistilledSection {
+export interface DistilledSection {
   userMessages: string[];
   agentDecisions: string[];
   codeChanges: string[];

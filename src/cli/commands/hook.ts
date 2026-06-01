@@ -3,8 +3,12 @@ import { readFileSync, existsSync, statSync } from 'node:fs';
 import { execFileSync, execSync } from 'node:child_process';
 import { dirname, resolve, join, extname, basename, relative } from 'node:path';
 import { resolveContextRoot } from '../../lib/context-path.js';
-import type { SleepState } from './sleep.js';
-import { readSleepState, writeSleepState } from './sleep.js';
+import type { SleepState, Bookmark } from './sleep.js';
+import { readSleepState, writeSleepState, bumpKnowledgeAccess } from './sleep.js';
+import { distillTranscript } from './transcript.js';
+import { buildDigest, writeDigest, digestExists } from '../../lib/session-digest.js';
+import { detectSalience } from '../../lib/salience.js';
+import { generateId } from '../../lib/id.js';
 import { generateSnapshot, generateSubagentBriefing } from './snapshot.js';
 import { listStaleRecs } from '../../lib/marketing/snapshot.js';
 import { isMarketingEnvPath } from '../../lib/marketing/path-guards.js';
@@ -470,6 +474,46 @@ export function registerHookCommand(program: Command): void {
         dirty = true;
       }
 
+      // ── Continuous capture (C1 + C2) — SessionStart catch-up only ──────────
+      // Mine each session that has a transcript and no existing digest: write a
+      // bounded digest (C1) and append structurally-detected auto-bookmarks (C2).
+      // This is DELIBERATELY off the synchronous Stop hook (latency-sensitive) —
+      // SessionStart already amortises transcript work. Each session is wrapped
+      // in its own try/catch so a single bad transcript can NEVER break the hook.
+      for (const session of state.sessions) {
+        if (!session.transcript_path) continue;
+        if (digestExists(root, session.session_id)) continue;
+        try {
+          const distilled = distillTranscript(session.transcript_path);
+
+          // C1: bounded digest.
+          const md = buildDigest(distilled);
+          writeDigest(root, session.session_id, md);
+
+          // C2: auto-salience → bookmarks. Skip any whose message already exists
+          // (explicit or prior-auto) to avoid duplicates across catch-up runs.
+          const taskSlug = session.task_slugs?.[0] ?? null;
+          for (const moment of detectSalience(distilled)) {
+            const exists = state.bookmarks.some(b => b.message === moment.message);
+            if (exists) continue;
+            const bookmark: Bookmark = {
+              id: generateId('bm'),
+              message: moment.message,
+              salience: moment.salience,
+              created_at: new Date().toISOString(),
+              session_id: session.session_id,
+              task_slug: taskSlug,
+            };
+            state.bookmarks.unshift(bookmark);
+            dirty = true;
+          }
+        } catch (digestErr) {
+          if (process.env.DREAMCONTEXT_DEBUG) {
+            console.error('[digest] error:', (digestErr as Error).message ?? digestErr);
+          }
+        }
+      }
+
       if (dirty) {
         writeSleepState(root, state);
       }
@@ -704,6 +748,19 @@ export function registerHookCommand(program: Command): void {
                 }
                 console.log(lines.join('\n'));
                 hadRecallHits = true;
+
+                // C4: a recall hit on a knowledge doc IS an access — bump
+                // knowledge_access for each `knowledge` hit, then persist once.
+                // This feeds staleness/warm-knowledge tracking from real recall
+                // usage, not just explicit `knowledge touch` calls.
+                let bumped = false;
+                for (const h of hits) {
+                  if (h.doc.type === 'knowledge') {
+                    bumpKnowledgeAccess(state, h.doc.slug);
+                    bumped = true;
+                  }
+                }
+                if (bumped) writeSleepState(root, state);
               }
             }
           }

@@ -3,6 +3,7 @@ import { join, basename, dirname, relative } from 'node:path';
 import fg from 'fast-glob';
 import { readFrontmatter } from './frontmatter.js';
 import { expandQueryTerms } from './recall-synonyms.js';
+import { loadDigestDocs } from './session-digest.js';
 
 // 'skill' docs are produced ONLY by loadSkillDocs (called directly by the hook);
 // intentionally excluded from buildCorpus defaults to avoid polluting haikuRecall.
@@ -121,7 +122,7 @@ export function tokenize(text: string): string[] {
 // `.score` field the hook's hard thresholds read.
 export const FIELD_WEIGHTS = { title: 3, tags: 2, description: 2, body: 1 } as const;
 
-interface DocFields {
+export interface DocFields {
   slug?: string;
   title: string;
   description: string;
@@ -129,7 +130,7 @@ interface DocFields {
   body: string;
 }
 
-interface BuiltFields {
+export interface BuiltFields {
   tokens: string[];                 // flat union tokens (unweighted) — base BM25 `.score` source
   termFreq: Map<string, number>;    // unweighted tf — base BM25 `.score` source (unchanged scale)
   fieldFreq: Map<string, number>;   // B2: field-weighted tf — feeds rankScore (BM25F numerator)
@@ -164,7 +165,7 @@ function parseLinks(body: string): string[] {
  *   length `dl` for BM25F normalisation (documented choice: union length keeps
  *   short high-weight fields from arbitrarily shrinking the effective dl).
  */
-function buildFields(f: DocFields): BuiltFields {
+export function buildFields(f: DocFields): BuiltFields {
   const titleToks = tokenize(f.title);
   const descToks = tokenize(f.description);
   const tagToks = tokenize(f.tags.join(' '));
@@ -359,6 +360,58 @@ function loadMemoryFile(contextRoot: string): CorpusDoc[] {
 }
 
 /**
+ * Load `.sleep.json` bookmarks as corpus docs (type `memory`, slug
+ * `bookmark#<id>`) so salient moments tagged during a session are recallable
+ * BEFORE the next sleep consolidation folds them into knowledge/tasks. Reads the
+ * raw JSON directly (no commander dependency) and reuses `buildFields` so the
+ * field/termFreq construction matches the other loaders exactly.
+ */
+export function loadBookmarkDocs(contextRoot: string): CorpusDoc[] {
+  const path = join(contextRoot, 'state', '.sleep.json');
+  if (!existsSync(path)) return [];
+  let bookmarks: Array<Record<string, unknown>> = [];
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf-8'));
+    if (parsed && typeof parsed === 'object' && Array.isArray((parsed as Record<string, unknown>).bookmarks)) {
+      bookmarks = (parsed as Record<string, unknown>).bookmarks as Array<Record<string, unknown>>;
+    }
+  } catch {
+    return [];
+  }
+  const out: CorpusDoc[] = [];
+  for (const b of bookmarks) {
+    const id = typeof b.id === 'string' ? b.id : '';
+    const message = typeof b.message === 'string' ? b.message.trim() : '';
+    if (!id || !message) continue;
+    const slug = `bookmark#${id}`;
+    const title = message.length > 80 ? message.slice(0, 80) : message;
+    const tags = typeof b.task_slug === 'string' && b.task_slug ? [b.task_slug] : [];
+    const fields = buildFields({ title, description: '', tags, body: message });
+    out.push({
+      type: 'memory',
+      path,
+      relPath: 'state/.sleep.json',
+      slug,
+      title,
+      description: '',
+      tags,
+      body: message,
+      tokens: fields.tokens,
+      tokenSet: new Set(fields.tokens),
+      termFreq: fields.termFreq,
+      fieldFreq: fields.fieldFreq,
+      fieldLen: fields.fieldLen,
+      links: fields.links,
+      // Synthetic `bookmark#…` slug is not a canonical identity — exclude from
+      // the identity boost (mirrors the changelog loader's choice).
+      identityTokens: [],
+      updatedAt: typeof b.created_at === 'string' ? b.created_at : undefined,
+    });
+  }
+  return out;
+}
+
+/**
  * Load top-level skill packs as corpus docs for related-skill recall.
  *
  * Only scans `<pack>/SKILL.md` (the `*\/SKILL.md` glob does NOT recurse into
@@ -425,9 +478,14 @@ export function buildCorpus(
   }
   if (types.has('task')) {
     docs.push(...loadMarkdownDocs(join(contextRoot, 'state'), 'task', contextRoot));
+    // Session digests fold under the task channel (continuous capture, C1/C3).
+    docs.push(...loadDigestDocs(contextRoot));
   }
   if (types.has('memory')) {
     docs.push(...loadMemoryFile(contextRoot));
+    // Auto/explicit bookmarks fold under the memory channel (C2/C3) so salient
+    // moments are recallable before the next sleep consolidation.
+    docs.push(...loadBookmarkDocs(contextRoot));
   }
   if (types.has('changelog')) {
     docs.push(...loadChangelogEntries(contextRoot));
