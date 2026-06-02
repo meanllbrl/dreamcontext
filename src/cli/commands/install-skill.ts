@@ -181,6 +181,9 @@ const HOOK_SPECS: HookSpec[] = [
   { event: 'Stop', command: STOP_HOOK, timeout: 5 },
   { event: 'SubagentStart', command: SUBAGENT_START_HOOK, timeout: 5 },
   { event: 'PreToolUse', command: PRE_TOOL_USE_HOOK, timeout: 5, matcher: 'Agent' },
+  // Second PreToolUse entry: gates direct writes to protected files (e.g. marketing/.env).
+  // The hook.ts action already branches on tool_name, so the same command serves both gates.
+  { event: 'PreToolUse', command: PRE_TOOL_USE_HOOK, timeout: 5, matcher: 'Edit|Write|MultiEdit' },
   { event: 'UserPromptSubmit', command: USER_PROMPT_SUBMIT_HOOK, timeout: 120 },
   { event: 'PostToolUse', command: POST_TOOL_USE_HOOK, timeout: 30, matcher: 'Edit|Write' },
   { event: 'PreCompact', command: PRE_COMPACT_HOOK, timeout: 5 },
@@ -351,12 +354,16 @@ function ensureClaudeHooks(projectRoot: string): { added: string[]; migrated: bo
     }
   }
 
-  // Register all hooks via data-driven loop
+  // Register all hooks via data-driven loop.
+  // Dedup key is (command, matcher) — two entries with the same command but
+  // different matchers are intentionally distinct (e.g. the two PreToolUse
+  // entries: one for 'Agent' gate and one for 'Edit|Write|MultiEdit' gate).
   for (const spec of HOOK_SPECS) {
     if (!settings.hooks[spec.event]) {
       settings.hooks[spec.event] = [];
     }
     const exists = settings.hooks[spec.event].some((group) =>
+      (group.matcher ?? '') === (spec.matcher ?? '') &&
       group.hooks?.some((h) => h.command === spec.command),
     );
     if (!exists) {

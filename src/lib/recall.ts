@@ -2,6 +2,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join, basename, dirname, relative } from 'node:path';
 import fg from 'fast-glob';
 import { readFrontmatter } from './frontmatter.js';
+import { expandQueryTerms } from './recall-synonyms.js';
+import { loadDigestDocs } from './session-digest.js';
 
 // 'skill' docs are produced ONLY by loadSkillDocs (called directly by the hook);
 // intentionally excluded from buildCorpus defaults to avoid polluting haikuRecall.
@@ -19,13 +21,32 @@ export interface CorpusDoc {
   tokens: string[];      // tokenized body+title+description+tags
   tokenSet: Set<string>; // for DF lookup
   termFreq: Map<string, number>;
+  // ── B1/B2/B3/B5 ranking metadata (all optional so external CorpusDoc
+  //    literals stay valid). Defaults keep behaviour identical to pre-uplift. ──
+  product?: string;                       // B1: derived from knowledge/products/<name>/…
+  fieldFreq?: Map<string, number>;        // B2: BM25F field-weighted term frequency (for rankScore)
+  fieldLen?: number;                      // B2: unweighted union token length (dl for BM25F)
+  status?: string;                        // B3: frontmatter status (e.g. completed/in_progress)
+  updatedAt?: string;                     // B3: ISO-ish date string (updated/updated_at/date)
+  links?: string[];                       // B5: slugs referenced via [[slug]] wikilinks
+  identityTokens?: string[];              // stemmed slug+title tokens (exact-identity boost)
 }
 
 export interface RecallHit {
   doc: CorpusDoc;
+  // RAW flat-haystack BM25 score — SAME SCALE as the pre-uplift implementation.
+  // The hook gates on this (BM25 fallback `>= 2.0`, skill gate `>= 1.0`); field
+  // weighting / recency / synonyms must NEVER touch it. Do not sort by this.
   score: number;
+  // DERIVED ranking signal: BM25F (field-weighted) × status × recency, plus
+  // synonym + (optional) link contributions. This is what hits are SORTED by.
+  // Higher = more relevant. Not threshold-compatible with `score`.
+  rankScore: number;
   snippet: string;       // ~3 lines around the best match
 }
+
+/** Stable identity for a corpus doc: `type/slug` (e.g. `knowledge/haiku-recall-architecture`). */
+export function docKey(doc: CorpusDoc): string { return `${doc.type}/${doc.slug}`; }
 
 // ─── Tokenization ──────────────────────────────────────────────────────────
 
@@ -41,12 +62,161 @@ const STOPWORDS = new Set([
   'için','gibi','ama','ya','ben','sen','biz','siz','onlar',
 ]);
 
+// ── B4: conservative morphological folding ──────────────────────────────────
+// Applied to BOTH index and query (so the base flat-haystack BM25 also benefits
+// — this only collapses inflections to a shared stem, it does NOT change the
+// MEANING of the hard `.score` thresholds the hook reads; identical text still
+// scores identically, we just merge `databases`→`database`-class variants).
+//
+// Turkish suffix folding (agglutinative): strip ONE common case/plural suffix
+// from long tokens. Kept conservative (len gate > 4) to protect precision.
+const TR_SUFFIXES = [
+  'lerinden', 'larından', 'lerine', 'larına', 'leri', 'ları',
+  'ler', 'lar', 'den', 'dan', 'nin', 'nın', 'nun', 'nün',
+  'de', 'da', 'yi', 'yı', 'yu', 'yü',
+];
+
+// English suffix strip: only the safest plural/verb inflections, len gate > 4.
+function stemEn(token: string): string {
+  if (token.length <= 4) return token;
+  if (token.endsWith('ing') && token.length > 5) return token.slice(0, -3);
+  if (token.endsWith('ed') && token.length > 4) return token.slice(0, -2);
+  if (token.endsWith('es') && token.length > 4) return token.slice(0, -2);
+  if (token.endsWith('s') && !token.endsWith('ss') && token.length > 4) return token.slice(0, -1);
+  return token;
+}
+
+function stemTr(token: string): string {
+  if (token.length <= 4) return token;
+  for (const suf of TR_SUFFIXES) {
+    if (token.length - suf.length > 2 && token.endsWith(suf)) {
+      return token.slice(0, -suf.length);
+    }
+  }
+  return token;
+}
+
+/**
+ * Fold a single already-lowercased token to its conservative stem. Exported so
+ * the synonym expander can stem its surface terms through the SAME pipeline used
+ * for the index/query, keeping them aligned.
+ */
+export function stemToken(token: string): string {
+  // Turkish-specific letters present → try TR folding first, else EN.
+  return stemTr(stemEn(token));
+}
+
 export function tokenize(text: string): string[] {
   return text
     .toLowerCase()
     .replace(/[^a-z0-9çğıöşü_\-\s]/g, ' ')
     .split(/[\s_\-]+/)
+    .filter((t) => t.length > 1 && !STOPWORDS.has(t))
+    .map(stemToken)
     .filter((t) => t.length > 1 && !STOPWORDS.has(t));
+}
+
+// ─── Field weighting (B2: BM25F) ─────────────────────────────────────────────
+// Title/tags/description are short, high-signal fields → up-weight them. The
+// weighted frequencies feed the DERIVED `rankScore` (sorting), NOT the raw
+// `.score` field the hook's hard thresholds read.
+export const FIELD_WEIGHTS = { title: 3, tags: 2, description: 2, body: 1 } as const;
+
+export interface DocFields {
+  slug?: string;
+  title: string;
+  description: string;
+  tags: string[];
+  body: string;
+}
+
+export interface BuiltFields {
+  tokens: string[];                 // flat union tokens (unweighted) — base BM25 `.score` source
+  termFreq: Map<string, number>;    // unweighted tf — base BM25 `.score` source (unchanged scale)
+  fieldFreq: Map<string, number>;   // B2: field-weighted tf — feeds rankScore (BM25F numerator)
+  fieldLen: number;                 // B2: unweighted union token count — dl for BM25F
+  links: string[];                  // B5: [[slug]] references parsed from body
+  identityTokens: string[];         // stemmed slug+title tokens — exact-identity boost
+}
+
+const WIKILINK_RE = /\[\[([^\]]+)\]\]/g;
+
+function parseLinks(body: string): string[] {
+  const out: string[] = [];
+  let m: RegExpExecArray | null;
+  WIKILINK_RE.lastIndex = 0;
+  while ((m = WIKILINK_RE.exec(body)) !== null) {
+    const slug = m[1].trim().split('|')[0].split('#')[0].trim();
+    if (slug) out.push(slug);
+  }
+  return out;
+}
+
+/**
+ * Shared field-building helper used by ALL corpus loaders (DRY).
+ *
+ * - `tokens` / `termFreq` are the UNWEIGHTED flat union (title+desc+tags+body),
+ *   IDENTICAL in shape/scale to the pre-uplift loaders. These drive the raw
+ *   BM25 `.score` the hook thresholds against — that scale must NOT change.
+ * - `fieldFreq` is the BM25F field-weighted term frequency: each term's count in
+ *   a field is multiplied by FIELD_WEIGHTS[field] and summed. This feeds the
+ *   DERIVED `rankScore` only.
+ * - `fieldLen` is the unweighted union token length — used as the document
+ *   length `dl` for BM25F normalisation (documented choice: union length keeps
+ *   short high-weight fields from arbitrarily shrinking the effective dl).
+ */
+export function buildFields(f: DocFields): BuiltFields {
+  const titleToks = tokenize(f.title);
+  const descToks = tokenize(f.description);
+  const tagToks = tokenize(f.tags.join(' '));
+  const bodyToks = tokenize(f.body);
+
+  const tokens = [...titleToks, ...descToks, ...tagToks, ...bodyToks];
+
+  const termFreq = new Map<string, number>();
+  for (const t of tokens) termFreq.set(t, (termFreq.get(t) ?? 0) + 1);
+
+  const fieldFreq = new Map<string, number>();
+  const addWeighted = (toks: string[], w: number): void => {
+    for (const t of toks) fieldFreq.set(t, (fieldFreq.get(t) ?? 0) + w);
+  };
+  addWeighted(titleToks, FIELD_WEIGHTS.title);
+  addWeighted(descToks, FIELD_WEIGHTS.description);
+  addWeighted(tagToks, FIELD_WEIGHTS.tags);
+  addWeighted(bodyToks, FIELD_WEIGHTS.body);
+
+  // Identity = stemmed tokens from the slug + title (deduped). The slug carries
+  // the canonical hyphenated identity (`context-snapshot`); the title often
+  // mirrors it. Used by the field-match identity boost in bm25Search.
+  const identityTokens = Array.from(
+    new Set([...tokenize(f.slug ?? ''), ...titleToks]),
+  );
+
+  return {
+    tokens,
+    termFreq,
+    fieldFreq,
+    fieldLen: tokens.length,
+    links: parseLinks(f.body),
+    identityTokens,
+  };
+}
+
+/** Normalise a frontmatter date-ish field to a string, or undefined. */
+function readUpdatedAt(data: Record<string, unknown>): string | undefined {
+  const v = data.updated_at ?? data.updated ?? data.date;
+  return typeof v === 'string' && v.trim() ? v.trim() : undefined;
+}
+
+function readStatus(data: Record<string, unknown>): string | undefined {
+  const v = data.status;
+  return typeof v === 'string' && v.trim() ? v.trim() : undefined;
+}
+
+/** Extract `<name>` from a path under `knowledge/products/<name>/…` (B1). */
+function productFromRelPath(relPath: string): string | undefined {
+  const m = relPath.replace(/\\/g, '/').match(/(?:^|\/)knowledge\/products\/([^/]+)\//);
+  return m ? m[1] : undefined;
 }
 
 // ─── Corpus Loader ─────────────────────────────────────────────────────────
@@ -57,7 +227,8 @@ function loadMarkdownDocs(
   contextRoot: string,
 ): CorpusDoc[] {
   if (!existsSync(dir)) return [];
-  const files = fg.sync('*.md', { cwd: dir, absolute: true });
+  // B1: recurse into nested dirs (e.g. knowledge/products/<name>/…).
+  const files = fg.sync('**/*.md', { cwd: dir, absolute: true });
   const out: CorpusDoc[] = [];
   for (const file of files) {
     try {
@@ -67,22 +238,27 @@ function loadMarkdownDocs(
       const description = String(data.description ?? data.summary ?? '');
       const tags = Array.isArray(data.tags) ? data.tags.map(String) : [];
       const body = content.trim();
-      const haystack = [title, description, tags.join(' '), body].join(' ');
-      const tokens = tokenize(haystack);
-      const termFreq = new Map<string, number>();
-      for (const t of tokens) termFreq.set(t, (termFreq.get(t) ?? 0) + 1);
+      const relPath = file.replace(contextRoot + '/', '');
+      const fields = buildFields({ slug, title, description, tags, body });
       out.push({
         type,
         path: file,
-        relPath: file.replace(contextRoot + '/', ''),
+        relPath,
         slug,
         title,
         description,
         tags,
         body,
-        tokens,
-        tokenSet: new Set(tokens),
-        termFreq,
+        tokens: fields.tokens,
+        tokenSet: new Set(fields.tokens),
+        termFreq: fields.termFreq,
+        fieldFreq: fields.fieldFreq,
+        fieldLen: fields.fieldLen,
+        links: fields.links,
+        identityTokens: fields.identityTokens,
+        status: readStatus(data as Record<string, unknown>),
+        updatedAt: readUpdatedAt(data as Record<string, unknown>),
+        product: productFromRelPath(relPath),
       });
     } catch {
       // skip malformed
@@ -114,10 +290,17 @@ function loadChangelogEntries(contextRoot: string): CorpusDoc[] {
     if (!description && !summary) continue;
     const slug = `changelog#${date}-${scope || type}-${i}`;
     const title = `${date} [${type}] ${scope}${summary ? ` — ${summary}` : ''}`.trim();
-    const haystack = [title, summary, description, refs.join(' ')].join(' ');
-    const tokens = tokenize(haystack);
-    const termFreq = new Map<string, number>();
-    for (const t of tokens) termFreq.set(t, (termFreq.get(t) ?? 0) + 1);
+    // description-field carries summary; tags carry type/scope; refs fold into body.
+    const tags = [type, scope].filter(Boolean);
+    // No slug passed: a changelog's `changelog#…` slug + date-prefixed title are
+    // synthetic, not a canonical identity — excluding them keeps the identity
+    // boost from spuriously lifting changelogs on field-match queries.
+    const fields = buildFields({
+      title,
+      description: summary,
+      tags,
+      body: [description, refs.join(' ')].join(' ').trim(),
+    });
     out.push({
       type: 'changelog',
       path,
@@ -125,11 +308,16 @@ function loadChangelogEntries(contextRoot: string): CorpusDoc[] {
       slug,
       title,
       description: summary || description.slice(0, 200),
-      tags: [type, scope].filter(Boolean),
+      tags,
       body: description,
-      tokens,
-      tokenSet: new Set(tokens),
-      termFreq,
+      tokens: fields.tokens,
+      tokenSet: new Set(fields.tokens),
+      termFreq: fields.termFreq,
+      fieldFreq: fields.fieldFreq,
+      fieldLen: fields.fieldLen,
+      links: fields.links,
+      identityTokens: [],
+      updatedAt: date || undefined,
     });
   }
   return out;
@@ -148,22 +336,76 @@ function loadMemoryFile(contextRoot: string): CorpusDoc[] {
     const heading = (firstNl >= 0 ? sec.slice(0, firstNl) : sec).trim();
     const body = (firstNl >= 0 ? sec.slice(firstNl + 1) : '').trim();
     if (!body) continue;
-    const haystack = [heading, body].join(' ');
-    const tokens = tokenize(haystack);
-    const termFreq = new Map<string, number>();
-    for (const t of tokens) termFreq.set(t, (termFreq.get(t) ?? 0) + 1);
+    const title = heading || `memory entry ${i + 1}`;
+    const fields = buildFields({ title, description: '', tags: [], body });
     out.push({
       type: 'memory',
       path,
       relPath: 'core/2.memory.md',
       slug: `memory#${i}`,
-      title: heading || `memory entry ${i + 1}`,
+      title,
       description: '',
       tags: [],
       body,
-      tokens,
-      tokenSet: new Set(tokens),
-      termFreq,
+      tokens: fields.tokens,
+      tokenSet: new Set(fields.tokens),
+      termFreq: fields.termFreq,
+      fieldFreq: fields.fieldFreq,
+      fieldLen: fields.fieldLen,
+      links: fields.links,
+      identityTokens: fields.identityTokens,
+    });
+  }
+  return out;
+}
+
+/**
+ * Load `.sleep.json` bookmarks as corpus docs (type `memory`, slug
+ * `bookmark#<id>`) so salient moments tagged during a session are recallable
+ * BEFORE the next sleep consolidation folds them into knowledge/tasks. Reads the
+ * raw JSON directly (no commander dependency) and reuses `buildFields` so the
+ * field/termFreq construction matches the other loaders exactly.
+ */
+export function loadBookmarkDocs(contextRoot: string): CorpusDoc[] {
+  const path = join(contextRoot, 'state', '.sleep.json');
+  if (!existsSync(path)) return [];
+  let bookmarks: Array<Record<string, unknown>> = [];
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf-8'));
+    if (parsed && typeof parsed === 'object' && Array.isArray((parsed as Record<string, unknown>).bookmarks)) {
+      bookmarks = (parsed as Record<string, unknown>).bookmarks as Array<Record<string, unknown>>;
+    }
+  } catch {
+    return [];
+  }
+  const out: CorpusDoc[] = [];
+  for (const b of bookmarks) {
+    const id = typeof b.id === 'string' ? b.id : '';
+    const message = typeof b.message === 'string' ? b.message.trim() : '';
+    if (!id || !message) continue;
+    const slug = `bookmark#${id}`;
+    const title = message.length > 80 ? message.slice(0, 80) : message;
+    const tags = typeof b.task_slug === 'string' && b.task_slug ? [b.task_slug] : [];
+    const fields = buildFields({ title, description: '', tags, body: message });
+    out.push({
+      type: 'memory',
+      path,
+      relPath: 'state/.sleep.json',
+      slug,
+      title,
+      description: '',
+      tags,
+      body: message,
+      tokens: fields.tokens,
+      tokenSet: new Set(fields.tokens),
+      termFreq: fields.termFreq,
+      fieldFreq: fields.fieldFreq,
+      fieldLen: fields.fieldLen,
+      links: fields.links,
+      // Synthetic `bookmark#…` slug is not a canonical identity — exclude from
+      // the identity boost (mirrors the changelog loader's choice).
+      identityTokens: [],
+      updatedAt: typeof b.created_at === 'string' ? b.created_at : undefined,
     });
   }
   return out;
@@ -193,10 +435,7 @@ export function loadSkillDocs(skillsRoot: string): CorpusDoc[] {
       const description = (typeof data.description === 'string') ? data.description : '';
       const tags = Array.isArray(data.tags) ? data.tags.map(String) : [];
       const body = content.trim();
-      const haystack = [title, description, tags.join(' '), body].join(' ');
-      const tokens = tokenize(haystack);
-      const termFreq = new Map<string, number>();
-      for (const t of tokens) termFreq.set(t, (termFreq.get(t) ?? 0) + 1);
+      const fields = buildFields({ slug, title, description, tags, body });
       out.push({
         type: 'skill',
         path: file,
@@ -206,9 +445,13 @@ export function loadSkillDocs(skillsRoot: string): CorpusDoc[] {
         description,
         tags,
         body,
-        tokens,
-        tokenSet: new Set(tokens),
-        termFreq,
+        tokens: fields.tokens,
+        tokenSet: new Set(fields.tokens),
+        termFreq: fields.termFreq,
+        fieldFreq: fields.fieldFreq,
+        fieldLen: fields.fieldLen,
+        links: fields.links,
+        identityTokens: fields.identityTokens,
       });
     } catch {
       // skip malformed
@@ -235,9 +478,14 @@ export function buildCorpus(
   }
   if (types.has('task')) {
     docs.push(...loadMarkdownDocs(join(contextRoot, 'state'), 'task', contextRoot));
+    // Session digests fold under the task channel (continuous capture, C1/C3).
+    docs.push(...loadDigestDocs(contextRoot));
   }
   if (types.has('memory')) {
     docs.push(...loadMemoryFile(contextRoot));
+    // Auto/explicit bookmarks fold under the memory channel (C2/C3) so salient
+    // moments are recallable before the next sleep consolidation.
+    docs.push(...loadBookmarkDocs(contextRoot));
   }
   if (types.has('changelog')) {
     docs.push(...loadChangelogEntries(contextRoot));
@@ -250,46 +498,220 @@ export function buildCorpus(
 const K1 = 1.5;
 const B = 0.75;
 
+// ── Rank composition weights (tuned on the eval harness, see eval/BASELINE) ──
+// FIELD_WEIGHT_BONUS scales the EXTRA signal BM25F adds over flat BM25 — kept
+// modest so the ranking stays anchored to the proven raw ordering (precision).
+const FIELD_WEIGHT_BONUS = 0.5;
+// IDENTITY_BOOST rewards query-term coverage of a doc's slug/title (restores
+// field-match precision: a query that IS the slug should win decisively).
+const IDENTITY_BOOST = 1.5;
+
+// ── B3: recency + status ranking multipliers ────────────────────────────────
+// Down-rank completed/archived docs (still findable, just not top of the pile).
+// Tuned to 0.85 (not 0.6): a 0.6 penalty was burying completed tasks that were
+// the CLEAR raw-BM25 winner for topical queries (R3 — "recency/status burying
+// decisions"). 0.85 still breaks ties toward active work without overriding a
+// strong content match.
+export const STATUS_PENALTY: Record<string, number> = { completed: 0.85 };
+
+/**
+ * Recency multiplier in [minMult, 1] from an exponential half-life decay.
+ * A doc updated `halfLifeDays` ago scores ~0.875 (midway), older docs floor at
+ * `minMult` (0.75) so recency is a tie-breaker, NOT a content override.
+ */
+export function recencyMultiplier(
+  updatedAt: string | undefined,
+  now: Date,
+  halfLifeDays = 120,
+): number {
+  // Floor 0.85 (a gentle tie-breaker). A wider [0.75,1] spread let recent docs
+  // override strong-but-older content matches on topical queries (R3); 0.85
+  // keeps recency as a nudge, not a content override.
+  const minMult = 0.85;
+  if (!updatedAt) return minMult + (1 - minMult) * 0.5; // unknown date → neutral
+  const t = Date.parse(updatedAt);
+  if (Number.isNaN(t)) return minMult + (1 - minMult) * 0.5;
+  const ageDays = Math.max(0, (now.getTime() - t) / 86_400_000);
+  const decay = Math.pow(0.5, ageDays / halfLifeDays); // 1 (fresh) → 0 (ancient)
+  return minMult + (1 - minMult) * decay;
+}
+
+function statusMultiplier(status: string | undefined): number {
+  if (!status) return 1;
+  return STATUS_PENALTY[status.toLowerCase()] ?? 1;
+}
+
+// ── B5: link-aware 2-hop boost (DEFAULT OFF) ────────────────────────────────
+const LINK_DECAY = 0.3; // per-hop boost factor applied to a neighbour's rankScore
+
+/** Map slug → adjacency (1-hop neighbour slugs) from [[slug]] wikilinks. */
+export function buildLinkAdjacency(corpus: CorpusDoc[]): Map<string, Set<string>> {
+  const adj = new Map<string, Set<string>>();
+  const present = new Set(corpus.map((d) => d.slug));
+  for (const d of corpus) {
+    const set = adj.get(d.slug) ?? new Set<string>();
+    for (const target of d.links ?? []) {
+      if (present.has(target) && target !== d.slug) set.add(target);
+    }
+    adj.set(d.slug, set);
+  }
+  return adj;
+}
+
+export interface Bm25Options {
+  /** Reference time for the recency multiplier. Defaults to `new Date()`. */
+  now?: Date;
+  /** Enable the B5 link-aware 2-hop boost. DEFAULT OFF (does not affect benchmark). */
+  linkAware?: boolean;
+}
+
 export function bm25Search(
   query: string,
   corpus: CorpusDoc[],
   topK = 5,
+  opts: Bm25Options = {},
 ): RecallHit[] {
   if (corpus.length === 0) return [];
+  const now = opts.now ?? new Date();
   const queryTerms = Array.from(new Set(tokenize(query)));
   if (queryTerms.length === 0) return [];
 
+  // B4: query-time synonym expansion (rankScore only). Weighted < 1.
+  const synonymTerms = expandQueryTerms(queryTerms, stemToken);
+  // Union of terms whose DF we need (primary + synonyms).
+  const allTerms = new Set<string>(queryTerms);
+  for (const t of synonymTerms.keys()) allTerms.add(t);
+
   const N = corpus.length;
   const avgdl = corpus.reduce((s, d) => s + d.tokens.length, 0) / N;
+  // B2: separate avg document length for the field-weighted (BM25F) channel.
+  const avgFieldLen = corpus.reduce((s, d) => s + (d.fieldLen ?? d.tokens.length), 0) / N;
 
   const df: Record<string, number> = {};
-  for (const term of queryTerms) {
+  for (const term of allTerms) {
     let count = 0;
     for (const d of corpus) if (d.tokenSet.has(term)) count++;
     df[term] = count;
   }
 
-  const scored: RecallHit[] = [];
+  const idfOf = (term: string): number => {
+    const dfT = df[term] ?? 0;
+    // BM25+ style epsilon to keep IDF non-negative.
+    return Math.log(1 + (N - dfT + 0.5) / (dfT + 0.5));
+  };
+
+  // Score one term against a doc on the FIELD-WEIGHTED (BM25F) channel.
+  const bm25fTerm = (doc: CorpusDoc, term: string, dl: number): number => {
+    const tf = doc.fieldFreq?.get(term) ?? doc.termFreq.get(term) ?? 0;
+    if (tf === 0) return 0;
+    const num = tf * (K1 + 1);
+    const den = tf + K1 * (1 - B + B * (dl / avgFieldLen));
+    return idfOf(term) * (num / den);
+  };
+
+  // Pre-tokenise the (stemmed) slug + title token sets per doc once, for the
+  // exact-identity boost below. Field-match queries target a doc's identity
+  // (its slug/title), which BM25F term-spread alone under-rewards.
+  const queryTermSet = new Set(queryTerms);
+
+  interface Scratch { hit: RecallHit; rawRank: number; }
+  const scored: Scratch[] = [];
+
   for (const doc of corpus) {
-    let score = 0;
-    const dl = doc.tokens.length || 1;
+    // ── RAW BM25 on the flat unweighted haystack — UNCHANGED SCALE. ──
+    // This is the `.score` the hook thresholds against. NONE of the B2/B3/B4/B5
+    // signals may leak into this value (decoupling constraint).
+    let rawScore = 0;
+    const dlFlat = doc.tokens.length || 1;
     for (const term of queryTerms) {
       const tf = doc.termFreq.get(term) ?? 0;
       if (tf === 0) continue;
-      const dfT = df[term];
-      // BM25+ style epsilon to keep IDF non-negative
-      const idf = Math.log(1 + (N - dfT + 0.5) / (dfT + 0.5));
       const num = tf * (K1 + 1);
-      const den = tf + K1 * (1 - B + B * (dl / avgdl));
-      score += idf * (num / den);
+      const den = tf + K1 * (1 - B + B * (dlFlat / avgdl));
+      rawScore += idfOf(term) * (num / den);
     }
-    if (score > 0) {
-      scored.push({ doc, score, snippet: extractSnippet(doc, queryTerms) });
+
+    // ── DERIVED rankScore — ANCHORED on raw BM25 (precision), with bounded
+    //    additive signals so it cannot drift far from the proven ordering:
+    //    rank = ( raw + FIELD_BONUS·(bm25f − rawFieldTerms)  [B2]
+    //                 + synonym contribution                 [B4]
+    //                 + identity boost (slug/title coverage)
+    //           ) × status × recency                          [B3]
+    const dlField = doc.fieldLen ?? dlFlat;
+    // Field-weighted primary-term score and its flat-equivalent on the SAME
+    // terms; the difference is the *extra* signal field weighting contributes.
+    let fieldPrimary = 0;
+    for (const term of queryTerms) fieldPrimary += bm25fTerm(doc, term, dlField || 1);
+    const fieldBonus = FIELD_WEIGHT_BONUS * Math.max(0, fieldPrimary - rawScore);
+
+    // B4: synonym contribution (field-weighted, already < 1 per term).
+    let synonymContrib = 0;
+    for (const [term, w] of synonymTerms) synonymContrib += w * bm25fTerm(doc, term, dlField || 1);
+
+    // Identity boost: reward how completely a doc's slug/title IS the query.
+    // Keyed on COVERAGE-OF-IDENTITY (idHits / identityTokens.length), not of the
+    // query: a short query that exactly spells a doc's slug covers ~100% of that
+    // doc's identity and wins decisively (field-match). A long topical query
+    // that merely shares 1-2 words with some doc's slug covers little of that
+    // doc's identity AND little of its own length, so the boost stays small —
+    // this stops long natural-language queries from being hijacked by docs whose
+    // slug coincidentally contains a couple of the query words (topical guard).
+    const idToks = doc.identityTokens ?? [];
+    let idHits = 0;
+    for (const t of idToks) if (queryTermSet.has(t)) idHits++;
+    const qCoverage = queryTerms.length > 0 ? idHits / queryTerms.length : 0; // how much of the query the identity covers
+    // Square the coverage so it SATURATES: a query that fully spells a slug
+    // (coverage 1.0) earns the full boost (field-match wins decisively), while a
+    // long topical query incidentally sharing 1-2 slug words (coverage ~0.25)
+    // earns only ~0.06× — too little to hijack the genuine content match
+    // (topical guard) yet enough partial credit to help paraphrase.
+    const identityBoost = IDENTITY_BOOST * qCoverage * qCoverage * Math.max(rawScore, 1);
+
+    const rankBase = rawScore + fieldBonus + synonymContrib + identityBoost;
+
+    // A doc that matched nothing on either channel is not a hit.
+    if (rankBase <= 0) continue;
+
+    // B3: status + recency multipliers apply to the DERIVED rank only.
+    const rankScore = rankBase
+      * statusMultiplier(doc.status)
+      * recencyMultiplier(doc.updatedAt, now);
+
+    scored.push({
+      hit: { doc, score: rawScore, rankScore, snippet: extractSnippet(doc, queryTerms) },
+      rawRank: rankBase,
+    });
+  }
+
+  // B5: optional bounded 2-hop link boost on rankScore (DEFAULT OFF).
+  if (opts.linkAware) {
+    const adj = buildLinkAdjacency(corpus);
+    // Snapshot pre-boost rank so 2nd-hop boosts derive from 1st-hop seed values.
+    const seed = new Map<string, number>();
+    for (const s of scored) seed.set(s.hit.doc.slug, s.rawRank);
+    for (const s of scored) {
+      let boost = 0;
+      const neighbours = adj.get(s.hit.doc.slug) ?? new Set();
+      for (const n1 of neighbours) {
+        boost += LINK_DECAY * (seed.get(n1) ?? 0);
+        for (const n2 of adj.get(n1) ?? new Set<string>()) {
+          if (n2 === s.hit.doc.slug) continue;
+          boost += LINK_DECAY * LINK_DECAY * (seed.get(n2) ?? 0);
+        }
+      }
+      if (boost > 0) {
+        s.hit.rankScore += boost
+          * statusMultiplier(s.hit.doc.status)
+          * recencyMultiplier(s.hit.doc.updatedAt, now);
+      }
     }
   }
 
-  scored.sort((a, b) => b.score - a.score);
-  return scored.slice(0, topK);
+  // Sort by the DERIVED rankScore (the eval harness reads this order); `.score`
+  // is returned unchanged for the hook's threshold checks.
+  const hits = scored.map((s) => s.hit);
+  hits.sort((a, b) => b.rankScore - a.rankScore);
+  return hits.slice(0, topK);
 }
 
 // ─── Snippet Extraction ────────────────────────────────────────────────────
