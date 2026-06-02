@@ -1,7 +1,10 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SUPPORTED_PLATFORMS, type PlatformId } from './platforms.js';
+// Type-only import — zero runtime, keeps catalog.ts → manifest.ts one-directional
+// (manifest.ts must NOT import catalog.ts to avoid a circular dependency).
+import type { KnownArtifacts } from './manifest.js';
 
 // ─── __dirname shim (ESM) ─────────────────────────────────────────────────────
 
@@ -120,4 +123,44 @@ export function loadCatalog(): { catalog: Catalog; packsDir: string } | null {
   } catch {
     return null;
   }
+}
+
+// ─── Known Artifact Names (bootstrap allowlist) ──────────────────────────────
+
+/**
+ * Build the allowlist of dreamcontext-shipped artifact names for the legacy
+ * bootstrap scan (see `bootstrapManifestFromScan` in manifest.ts).
+ *
+ * agentNames = repo-root core agent base-names (from `agents/*.md`)
+ *              ∪ catalog pack-agent names.
+ * skillDirs  = 'dreamcontext' (core skill) ∪ every pack name ∪ every standalone name.
+ *
+ * Degrades gracefully: if the catalog or agents dir is unreadable, returns
+ * whatever it could resolve (never throws). A smaller allowlist only means
+ * fewer files are adopted — it can never cause a custom file to be deleted.
+ */
+export function knownArtifactNames(): KnownArtifacts {
+  const agentNames = new Set<string>();
+  const skillDirs = new Set<string>(['dreamcontext']);
+
+  // Core agents shipped from repo-root agents/ (e.g. dreamcontext-explore.md).
+  const agentsDir = findPackageDir('agents');
+  if (agentsDir) {
+    try {
+      for (const f of readdirSync(agentsDir)) {
+        if (f.endsWith('.md')) agentNames.add(basename(f, '.md'));
+      }
+    } catch {
+      // unreadable agents dir — skip, allowlist is best-effort
+    }
+  }
+
+  const loaded = loadCatalog();
+  if (loaded) {
+    for (const a of loaded.catalog.agents) agentNames.add(a.name);
+    for (const p of loaded.catalog.packs) skillDirs.add(p.name);
+    for (const s of loaded.catalog.standalone) skillDirs.add(s.name);
+  }
+
+  return { agentNames, skillDirs };
 }

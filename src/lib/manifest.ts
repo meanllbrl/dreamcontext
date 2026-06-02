@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -24,6 +24,25 @@ export interface ManifestDiff {
   added: string[];
   removed: string[];
   changed: string[];
+}
+
+/**
+ * Allowlist of dreamcontext-shipped artifact names used to constrain the
+ * legacy bootstrap scan. Anything NOT in these sets is a user-authored file
+ * and must never be adopted as dreamcontext-owned (data-loss guard).
+ *
+ * - agentNames: base names (no extension) of agent files dreamcontext ships
+ *   (core agents from repo-root `agents/` + pack agents from catalog).
+ * - skillDirs: skill directory names dreamcontext ships ('dreamcontext' core
+ *   + every pack/standalone name).
+ *
+ * Built by `knownArtifactNames()` in catalog.ts and passed into
+ * `bootstrapManifestFromScan` — manifest.ts must NOT import catalog.ts
+ * (avoids a circular import).
+ */
+export interface KnownArtifacts {
+  agentNames: Set<string>;
+  skillDirs: Set<string>;
 }
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -187,7 +206,7 @@ export function isSafeDeletePath(relPath: string): boolean {
 
 // ─── Bootstrap (legacy projects without a manifest) ─────────────────────────
 
-const PRE_MANIFEST_VERSION = 'pre-manifest';
+export const PRE_MANIFEST_VERSION = 'pre-manifest';
 
 export function walk(dir: string, relBase: string, out: string[]): void {
   if (!existsSync(dir)) return;
@@ -213,15 +232,18 @@ export function walk(dir: string, relBase: string, out: string[]): void {
  * projects that were installed before manifests existed. All entries are
  * marked with version `pre-manifest`.
  *
- * - .claude/skills/dreamcontext/** → core
- * - .claude/skills/<pack>/**       → pack-skill
- * - .claude/agents/**.md            → agent
- * - .agents/skills/**               → same split as above
- * - .codex/agents/**.toml           → agent
- * - .codex/config.toml              → hook
- * - .claude/settings.json           → hook
+ * Only files whose name is in the `known` allowlist are adopted — user-authored
+ * agents/skills (e.g. a custom `.claude/agents/watchlist-monitor.md`) are left
+ * untracked so a later `update` never offers to delete them (data-loss guard).
+ *
+ * - .claude/skills/<dir>/**         → core ('dreamcontext') / pack-skill, if dir ∈ known.skillDirs
+ * - .claude/agents/<name>.md         → agent, if name ∈ known.agentNames
+ * - .agents/skills/<dir>/**          → same split as above, if dir ∈ known.skillDirs
+ * - .codex/agents/<name>.toml        → agent, if name ∈ known.agentNames
+ * - .codex/config.toml               → hook (always — out of allowlist scope)
+ * - .claude/settings.json            → hook (always — out of allowlist scope)
  */
-export function bootstrapManifestFromScan(projectRoot: string): Manifest {
+export function bootstrapManifestFromScan(projectRoot: string, known: KnownArtifacts): Manifest {
   const m = emptyManifest();
   m.version = PRE_MANIFEST_VERSION;
 
@@ -232,6 +254,7 @@ export function bootstrapManifestFromScan(projectRoot: string): Manifest {
     for (const entry of readdirSync(claudeSkillsRoot)) {
       const sub = join(claudeSkillsRoot, entry);
       if (!statSync(sub).isDirectory()) continue;
+      if (!known.skillDirs.has(entry)) continue; // skip user-authored skill dirs
       const files: string[] = [];
       walk(sub, '', files);
       const kind: ManagedFileKind = entry === 'dreamcontext' ? 'core' : 'pack-skill';
@@ -245,6 +268,7 @@ export function bootstrapManifestFromScan(projectRoot: string): Manifest {
   if (existsSync(claudeAgentsDir)) {
     for (const f of readdirSync(claudeAgentsDir)) {
       if (!f.endsWith('.md')) continue;
+      if (!known.agentNames.has(basename(f, '.md'))) continue; // skip user-authored agents
       recordFile(m, `.claude/agents/${f}`, PRE_MANIFEST_VERSION, 'agent');
     }
   }
@@ -261,6 +285,7 @@ export function bootstrapManifestFromScan(projectRoot: string): Manifest {
     for (const entry of readdirSync(agentsSkillsRoot)) {
       const sub = join(agentsSkillsRoot, entry);
       if (!statSync(sub).isDirectory()) continue;
+      if (!known.skillDirs.has(entry)) continue; // skip user-authored skill dirs
       const files: string[] = [];
       walk(sub, '', files);
       const kind: ManagedFileKind = entry === 'dreamcontext' ? 'core' : 'pack-skill';
@@ -275,6 +300,7 @@ export function bootstrapManifestFromScan(projectRoot: string): Manifest {
     recordPlatform(m, 'codex');
     for (const f of readdirSync(codexAgentsDir)) {
       if (!f.endsWith('.toml')) continue;
+      if (!known.agentNames.has(basename(f, '.toml'))) continue; // skip user-authored agents
       recordFile(m, `.codex/agents/${f}`, PRE_MANIFEST_VERSION, 'agent');
     }
   }
