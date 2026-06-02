@@ -2,7 +2,7 @@
 id: "feat_mem0Recall1"
 status: "in_review"
 created: "2026-05-23"
-updated: "2026-05-26"
+updated: "2026-06-02"
 released_version: null
 tags:
   - memory
@@ -25,6 +25,9 @@ dreamcontext's existing snapshot pre-loads soul + user + memory + active tasks +
 - [x] As a user typing queries in Turkish or mixed Turkish/English, I get sensible results because the tokenizer handles the diacritics.
 - [x] As a developer, I can run `dreamcontext memory remember "<text>"` to log a quick decision/note — it writes a CHANGELOG entry (`type=note`, `scope=quick` by default) instead of appending to a LIFO section.
 - [x] As a developer, my session snapshot shows recent CHANGELOG entries tiered (top 3 detailed with summary + body, next 10 titles-only) so I can scan history quickly without bloating context.
+- [x] As a Turkish-speaking developer, my recall results are dramatically improved (37.5→75.0% recall@1) because the engine folds agglutinative suffix inflections before BM25 scoring.
+- [x] As a developer, decisions captured automatically from my sessions (via salience detectors) are searchable by the next session before any sleep consolidation runs.
+- [x] As a developer, auto-captured session content never crowds out curated knowledge files in recall results, thanks to the capture rank penalty.
 
 ## Acceptance Criteria
 
@@ -52,6 +55,23 @@ dreamcontext's existing snapshot pre-loads soul + user + memory + active tasks +
 - [x] UserPromptSubmit memory-recall hook is **ON by default** on every non-trivial user prompt; opt out with `DREAMCONTEXT_MEMORY_HOOK=0`.
 - [x] As a developer, I can set `DREAMCONTEXT_RECALL_MODE=haiku` (default) to use a single Haiku LLM call for semantic-intent-aware recall instead of raw keyword BM25, with automatic fallback to BM25 when the `claude` CLI is unavailable.
 
+- [x] BM25F field weighting: title×3, tags×2, description×2, body×1 (feeds `rankScore` only; raw `score` stays flat-BM25 to preserve hook gate scale).
+- [x] Conservative EN + TR morphological stemming applied symmetrically at index AND query time (`stemEn()` + `stemTr()` in `tokenize()`).
+- [x] Query-time synonym expansion via hand-curated stemmed map (`recall-synonyms.ts`); synonyms are pre-stemmed through the same pipeline as the index.
+- [x] Recency multiplier: exponential half-life 120 days, floor 0.85 (tie-breaker, not content override). `completed`/`archived` status gets 0.85× `rankScore` penalty.
+- [x] `hit.score` = raw flat-BM25 (unchanged scale vs v1); `hit.rankScore` = derived sorting signal. All v2 signals feed `rankScore` only. Regression-locked by `recall-weighting.test.ts`.
+- [x] Haiku corpus index is relevance-ranked (BM25 score against query) before slicing to 8K chars — no longer positional (which silently omitted ~half the corpus).
+- [x] Link-aware 2-hop boost (`buildLinkAdjacency()`, `LINK_DECAY=0.3`) built and unit-tested; shipped OFF by default (`enableLinkBoost: false`) pending real wikilinks in corpus.
+- [x] Auto transcript digest on SessionStart catch-up path (`session-digest.ts`); bounded ≤8KB; per-session try/catch.
+- [x] Auto-salience detectors (`salience.ts`): user-correction (salience 2), error→fix (salience 1), decision-keyword (salience 2); EN+TR; max 5 moments per session. Auto-bookmarks written to `.sleep.json`.
+- [x] Digests and bookmarks indexed into recall corpus (`capture: true` flag); decisions captured in session N are recallable in N+1 before sleep.
+- [x] Recall hits call `bumpKnowledgeAccess(slug)` so recalled docs don't decay to stale.
+- [x] `CAPTURE_RANK_PENALTY = 0.5`: capture docs' `rankScore` halved vs curated docs; raw `score` untouched.
+- [x] K=50 digest cap: only 50 most-recent session digests indexed per corpus build.
+- [x] Capture guard proof: `recall-capture-stress.test.ts` verifies zero gold-target displacement under worst-case capture flood (200 digests + 200 bookmarks).
+- [x] Deterministic 60-query gold set (`eval/gold.jsonl`) + vitest harness (`eval/harness.ts`). Reproducible: `npx vitest run tests/unit/recall-eval.test.ts`.
+- [x] Overall recall@1 68.3→85.0%, recall@3 81.7→95.0%, MRR 0.768→0.903. No category regressed. 1063 tests passing.
+
 ## Constraints & Decisions
 
 - **Decision (2026-05-23): chose Path A over mem0 integration after 3-reviewer adversarial review.** Critic raised "premise not steel-manned" (mem0's LLM extraction solves a problem dreamcontext already solved). Pragmatist recommended cutting ~70% of the mem0 plan even in best case. Security flagged 5 critical hardening blockers (redaction order, embedding inversion, rebase data loss, finalizer crash, OpenAI exfil). Path A (BM25 over curated corpus) is deterministic, version-controllable, zero new deps. Full decision trace: see archived `/tmp/dreamcontext-mem0-{plan,decision}.md` + reviewer reports.
@@ -60,16 +80,25 @@ dreamcontext's existing snapshot pre-loads soul + user + memory + active tasks +
 - **No semantic / synonym recall in raw BM25 mode.** Trade documented: "ML practitioner" will not match "data scientist." In Haiku mode this gap is mostly closed because Haiku understands intent across vocabulary variants and languages. If the `claude` CLI is unavailable the fallback is still raw BM25.
 - **Decision (2026-05-26): Haiku single-call replaces multi-query BM25 as default recall strategy.** The original raw BM25 extracted keywords from the full prompt and ran multiple query variants. The Haiku approach sends the full prompt as-is to a single `claude --model haiku` call whose system prompt contains the full corpus index (slug + description + tags, ≤8K chars). Haiku understands intent in any language and returns exactly the relevant doc keys. The `recall-multi-query.ts` experiment (multi-query BM25 variant) was deleted in favour of this approach. Security note: `execFileSync` is used (not `exec`) and all args are positional (no shell injection). Corpus index is capped to prevent unbounded `--system-prompt` length. See `knowledge/haiku-recall-architecture.md` for full decision trace.
 - **Snippet logic prefers high-density lines** (most query-term hits per line), with ±1 line of context. Good enough for eyeballing; not designed to be definitive.
+- **Decision (2026-06-02): score/rankScore decoupling is inviolable.** All v2 ranking signals (BM25F, stemming, synonyms, recency, capture penalty) MUST feed `rankScore` only. `hit.score` must remain raw flat-BM25 at the original scale. The hook's `>= 2.0` / `>= 1.0` gates and the explore agent's `>= 5 / < 2` tiers depend on this scale remaining stable. Regression-locked by `recall-weighting.test.ts`.
+- **Decision (2026-06-02): continuous capture ON by default, guarded by rank penalty + digest cap.** Auto-digest and auto-salience fire on every SessionStart. The CAPTURE_RANK_PENALTY (0.5×) and K=50 cap prevent corpus pollution while allowing genuine session-captured decisions to surface. These constants are exported and configurable but the guard proof test must remain green.
+- **Decision (2026-06-02): stemming is applied symmetrically at index AND query time.** Both paths call `stemToken()`. This is required for correct BM25 term matching — asymmetric stemming would silently hurt precision. Do not stem only at query time or only at index time.
+- **Link-aware boost deferred activation** pending real wikilinks. The `buildLinkAdjacency()` function and the LINK_DECAY logic are present; enabling requires `enableLinkBoost: true` in `Bm25Options`. Do not enable globally until the corpus has meaningful `[[slug]]` references — on a wikilink-free corpus it adds latency with zero benefit.
 
 ## Technical Details
 
-**Files:**
+**Key files (v2 engine):**
 
-- `src/lib/recall.ts` — corpus loader (`buildCorpus`), tokenizer (light, Turkish-aware), BM25 scorer (`bm25Search`), snippet extractor.
-- `src/lib/recall-query-extractor.ts` — `haikuRecall()`: builds corpus index, caps at 8K chars, calls `claude --model haiku -p` via `execFileSync`, parses JSON response with `stripCodeBlock`, maps `type/slug` keys back to `CorpusDoc[]`. Also exports `buildCorpusIndex()` and `ClaudeExecutor` type for testing.
-- `src/cli/commands/memory.ts` — registers `dreamcontext memory recall` and `dreamcontext memory status` subcommands.
-- Wired into `src/cli/index.ts` (import + register + help menu entry).
-- `tests/unit/recall-query-extractor.test.ts` — unit tests for `haikuRecall`, `buildCorpusIndex`, fallback behaviour, empty-corpus guard, code-block stripping, 3-doc cap, unknown-key handling.
+- `src/lib/recall.ts` — corpus loader (`buildCorpus`, `buildFields`), tokenizer with EN+TR stemming (`tokenize`, `stemToken`, `stemEn`, `stemTr`), BM25F field weighting (`FIELD_WEIGHTS`, `buildFields`), BM25 scorer (`bm25Search`), recency/status re-rank (`recencyMultiplier`, `STATUS_PENALTY`), link-aware adjacency (`buildLinkAdjacency`, off by default), capture rank penalty (`CAPTURE_RANK_PENALTY = 0.5`), snippet extractor.
+- `src/lib/recall-synonyms.ts` — `expandQueryTerms()`: pre-stemmed synonym map, query-time expansion. Synonym families cover: recall/retrieval/search, embed/vector/semantic, bookmark/salience/ripple, consolidate/sleep, digest/distil/summary, capture/record/log, and more.
+- `src/lib/salience.ts` — `detectSalience()`: structural auto-salience detectors (user-correction, error→fix, decision-keyword); EN+TR; capped at 5 moments/session.
+- `src/lib/session-digest.ts` — `loadDigestDocs()`: auto transcript digest on SessionStart catch-up path; bounded ≤8KB; `capture: true` flag set on all digest+bookmark corpus docs.
+- `src/lib/recall-query-extractor.ts` — `haikuRecall()`: builds BM25-relevance-ranked corpus index (B6 fix), caps at 8K chars, calls `claude --model haiku -p` via `execFileSync`, parses JSON, maps `type/slug` keys to `CorpusDoc[]`.
+- `src/cli/commands/memory.ts` — `dreamcontext memory recall`, `status`, `remember`, `update`, `delete`, `list`.
+- `eval/gold.jsonl` — 60-query gold set (deterministic benchmark; authored blind to improvements).
+- `eval/harness.ts` — eval harness; `eval/BASELINE.md` + `eval/RESULTS.md` — before/after report.
+- `tests/unit/recall-weighting.test.ts` — regression lock on `score` vs `rankScore` decoupling invariant.
+- `tests/unit/recall-capture-stress.test.ts` — guard proof: zero gold displacement under worst-case capture flood.
 
 **Corpus types (`CorpusType`):**
 

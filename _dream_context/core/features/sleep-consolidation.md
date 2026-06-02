@@ -2,7 +2,7 @@
 id: feat_9qLM-gY_
 status: active
 created: '2026-02-25'
-updated: '2026-05-23'
+updated: '2026-06-02'
 released_version: 0.1.0
 tags:
   - architecture
@@ -27,6 +27,8 @@ Agents accumulate knowledge and make decisions across many sessions, but that kn
 - [x] As a developer, I want to reset debt after consolidation with a summary so the system knows when the last sleep happened.
 - [x] As an AI agent, I want consolidation done by dedicated specialists so the main agent stays focused. Currently implemented as main-agent fan-out to 3 domain specialists (`sleep-tasks`, `sleep-state`, `sleep-product`). `dreamcontext-rem-sleep` was removed — one authoritative path only. See [sleep-fanout-architecture](sleep-fanout-architecture.md) for the orchestration design.
 - [x] As an AI agent, I want persistent sleep debt reminders on every user message so consolidation urgency cannot be forgotten across a session.
+- [x] As an AI agent, I want high-signal moments from each session (corrections, error→fix, decisions) automatically bookmarked so the brain's "awake-ripple tagging" works without manual bookmarks.
+- [x] As an AI agent, I want auto-digested session transcripts indexed into recall so decisions from session N are searchable in N+1 before any sleep consolidation runs.
 
 ## Acceptance Criteria
 
@@ -43,9 +45,13 @@ Agents accumulate knowledge and make decisions across many sessions, but that kn
 - If the same session_id stops twice, the old score is subtracted before the new score is added (no double-counting).
 - Transcripts over 50MB are skipped (safety cap).
 - `hook user-prompt-submit` fires on every user message, outputs a one-line reminder when debt >= 4 or critical bookmarks exist. Silent when debt < 4. Read-only (no state writes).
+- `hook session-start` catch-up path runs `detectSalience()` on any undigested sessions and writes auto-bookmarks to `.sleep.json`; then runs `session-digest.ts` to index bounded (≤8KB) transcript digests into the recall corpus.
+- Auto-salience detectors fire on: user-correction (`no/actually/wrong/instead/hayır/yanlış/değil`, salience 2), error→fix (any error + any code change present, salience 1), decision keyword (`decided/chose/switched to/will use/karar/seçtik`, salience 2). Max 5 moments per session.
+- Auto-captured digests and bookmarks indexed with `capture: true`; `CAPTURE_RANK_PENALTY = 0.5` applied in `rankScore` only (never raw `score`) so captures never crowd out curated knowledge.
 
 ## Constraints & Decisions
 
+- **[2026-06-02]** Continuous capture (auto-digest + auto-salience) shipped in `memory-uplift` PR. SessionStart catch-up path now produces auto-bookmarks via `detectSalience()` (structural pattern matching, no AI) and auto-digest corpus docs via `session-digest.ts`. Captures are rank-penalized (`CAPTURE_RANK_PENALTY = 0.5` on `rankScore` only) and capped (K=50 most-recent digests) to prevent corpus pollution. Previously 30/32 consolidations had zero bookmarks — this closes the awake-ripple tagging gap without requiring manual bookmark discipline.
 - **[2026-05-23]** Anti-bloat cap on core files tightened from 300 → **150 lines**. Sleep specialists (especially `sleep-state`) enforce this during consolidation: when a core file approaches the cap, content gets promoted to knowledge, archived, or condensed rather than appended.
 - **[2026-05-23]** `2.memory.md` LIFO section removed. The file now contains **Decisions** and **Known Issues** only. Quick captures that used to land in the LIFO section now flow through `dreamcontext memory remember`, which writes a CHANGELOG entry (`type=note`, `scope=quick` by default) instead. CHANGELOG entries are indexed in the recall corpus, so the quick-capture data is more discoverable than under the old LIFO scheme.
 - **[2026-05-10]** 5→3 specialist collapse. Always-fire domain merges: `sleep-state` = old sleep-core + sleep-changelog (soul/user/memory + CHANGELOG/RELEASES). Conditional domain merge: `sleep-product` = old sleep-knowledge + sleep-features (knowledge/ + core/features/). Rationale: parallel agents reduce wall-clock only to the slowest specialist; collapsing always-fire pairs reduces launch overhead without slowing the consolidation floor. See `sleep-fanout-architecture` PRD.
@@ -192,6 +198,12 @@ Agents accumulate knowledge and make decisions across many sessions, but that kn
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-06-02 - Continuous capture: auto-digest + auto-salience shipped
+- `detectSalience()` (salience.ts): structural pattern detectors (user-correction, error→fix, decision-keyword; EN+TR) run on undigested sessions in the SessionStart catch-up path; auto-bookmarks written to `.sleep.json`.
+- `session-digest.ts`: bounded (≤8KB) transcript digests indexed into recall corpus; 30/32 consolidations previously had zero bookmarks — awake-ripple tagging now fires automatically.
+- Capture guard: `CAPTURE_RANK_PENALTY = 0.5` on `rankScore` only + K=50 digest cap; guard proof (`recall-capture-stress.test.ts`) verifies zero gold-target displacement under worst-case flood.
+- Acceptance criteria + user stories updated.
 
 ### 2026-05-23 - Anti-bloat tightened + memory.md LIFO removed
 - Core-file anti-bloat cap lowered from 300 → 150 lines. Specialists enforce during consolidation (promote / archive / condense rather than append).

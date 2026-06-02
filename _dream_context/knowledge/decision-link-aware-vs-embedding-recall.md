@@ -1,11 +1,25 @@
 ---
 id: decision-link-aware-vs-embedding-recall
-name: "Decision: link-aware BM25 boost (deferred) vs embedding overlay (deferred) — gold-set-first heuristic"
-description: "Two proposed BM25 recall improvements were evaluated and both deferred. The governing heuristic: gather a gold set of real BM25 misses before building anything; if misses are rare, the cost of the fix exceeds the benefit."
+name: "Decision: link-aware BM25 boost (implemented, OFF by default) vs embedding overlay (deferred)"
+description: "Two proposed BM25 recall improvements. Link-aware boost (Option A) was built and shipped OFF by default in 2026-06 (gold set precondition satisfied, but live corpus has ~0 wikilinks). Embedding overlay (Option B) remains deferred. See recall-engine-v2.md for the shipped implementation."
 tags: ["decisions", "architecture", "memory", "search"]
 pinned: false
 date: "2026-05-23"
+updated: "2026-06-02"
 ---
+
+## Status Update (2026-06-02)
+
+**Option A (link-aware BM25 boost) is now IMPLEMENTED** — shipped in the `memory-uplift` PR as part of the v2 recall engine. The 60-query gold set that was the stated precondition for building it now exists (`eval/gold.jsonl`, deterministic harness in `tests/unit/recall-eval.test.ts`).
+
+The implementation lives in `src/lib/recall.ts` (`buildLinkAdjacency()`, `LINK_DECAY = 0.3`) and is **OFF by default** (`enableLinkBoost: false` in `Bm25Options`). The live corpus has ~0 actual `[[wikilink]]` references, so enabling it would be a no-op. It activates via a single options flag and is fully unit-tested.
+
+**Option B (embedding overlay) remains deferred** — no material change to the reasoning below.
+
+See `knowledge/recall-engine-v2.md` for the full v2 architecture including the link-aware mechanism.
+
+---
+
 
 ## Why This Exists
 

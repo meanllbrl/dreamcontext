@@ -1,46 +1,10 @@
 {
-  "debt": 6,
-  "last_sleep": "2026-05-31",
-  "last_sleep_summary": "Sleep #8 — v0.6 control panel built end-to-end via 3 autonomous goal-skill cycles, plus v0.5.x docs/test/context-gate work. sleep-state: created v0.6.0 planning version; 6 changelog entries (3 control-panel slices, test-alignment, context-gate+codex, docs); 4 memory decisions (control-plane API contextRoot/strict-pick/cache-only, catalog.ts extraction keeps @inquirer out of server bundle, vault registry design, Tauri spawn-Node+WebviewUrl::External hosting); soul priority → v0.6.0; user.md version → 0.5.1/0.6.0-dev; tech_stack updated. sleep-tasks: epic v06-control-panel-vaults-tauri todo→in_progress with real 5-node tracker; reconciled 4 placeholder task bodies; 3 slice flowcharts sync-clean (backend 11/11, frontend 7/7, tauri A1-A6 done + A7/A8 manual); flagged 5 stale older todos. sleep-product: new feature control-panel.md (18 ACs); updated web-dashboard + manifest-based-install-update PRDs; 3 new knowledge files (control-plane-api, tauri-desktop-hosting, vault-registry-multivault) + extended three-reviewer-parallel-mandates with the v0.6 case study. All v0.6 slice tasks in_review awaiting user verification; Tauri launch/sign/notarize is manual handoff. Marketing rem-sleep clean. Pre-existing marketing-council test flake tracked.",
+  "debt": 0,
+  "last_sleep": "2026-06-02",
+  "last_sleep_summary": "Shipped a recall-engine overhaul + continuous capture to main (PRs #1, #2). Batch 1: BM25F field weighting, recency/status re-rank, TR/EN stemming + synonyms, Haiku index relevance-ranking — lifting recall@1 68.3->85.0% and recall@3 81.7->95.0% on a 60-query gold set (Turkish 37.5->75, paraphrase 41.7->66.7), no regressions, 1063 tests green. Core invariant: new ranking signals feed a derived rankScore; raw hit.score stays flat-BM25 so hook gate thresholds are unaffected. Batch 2: continuous capture (auto transcript digest on SessionStart catch-up + auto-salience bookmarks + recall indexing + knowledge_access feedback) implementing the brain's awake-ripple tagging, guarded by CAPTURE_RANK_PENALTY 0.5 + K=50 digest cap (proven 0 true displacement; fixed a latent created_at Date-parse bug). Batch 3: explore recall allowlist + revived dead .env gate. Consolidation: 3 changelog entries, 2 memory decisions, soul stale keyword-search rule -> BM25F, new knowledge/recall-engine-v2.md, updated memory-recall-bm25 + sleep-consolidation PRDs, roadmap tasks -> in_review (Wave 0-2 + guard done; Wave 3-4 remain). Also v0.5.4 update-prune fix. v0.5.4 publishable; v0.6.0 in planning.",
   "sleep_started_at": null,
-  "sessions_since_last_sleep": 2,
-  "sessions": [
-    {
-      "session_id": "21bbee0c-94d6-4a81-9a9f-09d664837ef3",
-      "transcript_path": "/Users/mehmetnuraydin/.claude/projects/-Users-mehmetnuraydin-projects-dreamcontext/21bbee0c-94d6-4a81-9a9f-09d664837ef3.jsonl",
-      "stopped_at": "2026-06-02T06:54:17.551Z",
-      "last_assistant_message": "Evet, var. Dürüst olayım: kazanım (recall %) sağlam ve ölçülü, ama **en az emin olduğum parça en riskli olan**. Önem sırasına göre:\n\n## 1) En önemli eksik — Batch 2 (continuous capture) kanıtlanmadı, hatta recall'ı KÖTÜLEŞTIREBILIR\nFlagship özellik ama:\n- **Digest'ler recall corpus'una curated knowledge ile eşit ağırlıkta giriyor** — cap yok, down-weight yok. Bir proje haftalarca çalışıp 200 otomatik digest biriktirince, bu düşük-kaliteli doküman selinin gerçek knowledge'ı recall sonuçlarından dışarı itme riski var. Yani precision zamanla düşebilir.\n- **Bunu hiç ölçmedik.** Benchmark sabit committed corpus üzerinde; digest dolu corpus'ta recall@k'nın ne olduğunu bilmiyoruz.\n- **SessionStart catch-up wiring'inin uçtan uca testi yok** — parçalar (buildDigest, detectSalience, buildCorpus indexleme) ayrı ayrı test edildi ama gerçekçi bir transcript'ten digest yazılıp bir sonraki oturumda recall'landığı tam döngü test edilmedi.\n- **Salience dedektörleri kaba regex** — yanlış-pozitif (bookmark spam) veya kaçırma oranı ölçülmedi.\n\n**Fix (M):** (a) digest-stress testi — corpus'a 100-200 sahte digest ekle, recall@k düşüyor mu ölç; düşüyorsa digest'lere recency-filtre + ranking down-weight + indexlenen digest sayısına cap koy. (b) uçtan uca senaryo testi (fixture transcript → catch-up → digest → next-session recall). **Bu en kritik çünkü sessiz bir bozulma modu.**\n\n## 2) Sub-agent'lar hâlâ recall almıyor (WAVE 3, hiç dokunulmadı)\nAudit'in \"en büyük yapısal açık\" dediği şey. Explore artık recall *çalıştırabiliyor* (allowlist düzeldi) ama SubagentStart briefing'i hâlâ sadece pointer veriyor — sub-agent'a gerçek recall snippet'i taşımıyor, ve explore öğrendiğini geri yazamıyor (feedback loop yok). İşin çoğunu sub-agent'lar yapıyor; en yüksek kaldıraç burada. **(M-L)**\n\n## 3) Manşet % BM25 yolunu ölçüyor, ama production default Haiku\nBenchmark deterministik olsun diye BM25'i ölçtü. Ama kullanıcıların gördüğü hook recall'ı **Haiku** yolu (B6 onu da düzeltti ama ölçülemedi — claude CLI gerekiyor, non-deterministik). Yani \"%68→%85\" BM25 için kesin; Haiku yolu için *çıkarım*. **(S)** Haiku yolu için küçük bir manuel/örneklem doğrulaması eklenebilir.\n\n## Daha küçükler\n- **Overfit:** ağırlıklar 60-sorgu gold set'e elle tunelendi; held-out set yok.\n- **Review yarıda kesildi** — reviewer 2 sorun buldu (düzeltildi) ama temiz PASS vermeden truncate oldu; tam bir re-review daha çıkarabilir.\n- B5 link-aware kapalı (gerçek wikilink yok).\n\n---\n\n**Önerim:** \"devam et\" dersen **#1'i** yaparım — çünkü tek sessiz-bozulma riski o ve flagship özelliğin gerçekten faydalı mı zararlı mı olduğunu kanıtlar/garantiler. ~30-45 dk, ölçülebilir çıktı (digest-dolu corpus'ta recall@k + bir cap/down-weight guard). #2 daha büyük strateji, ayrı bir oturum daha iyi.\n\nBu arada sleep debt 6 — istersen önce kısa bir `consolidate` ile bu oturumu beyne işleyeyim, sonra #1'e geçeyim?",
-      "change_count": 11,
-      "tool_count": 66,
-      "score": 3,
-      "task_slugs": [
-        "ecc-inspired-roadmap",
-        "memory-engine-360-roadmap",
-        "memory-uplift-handoff"
-      ]
-    },
-    {
-      "session_id": "80a49139-4a0e-444c-aac7-3c90aa645f3a",
-      "transcript_path": "/Users/mehmetnuraydin/.claude/projects/-Users-mehmetnuraydin-projects-dreamcontext/80a49139-4a0e-444c-aac7-3c90aa645f3a.jsonl",
-      "stopped_at": "2026-06-02T06:52:20.275Z",
-      "last_assistant_message": "Commit + push tamam: `3b4eb4c..7c494d0` (roadmap + codex goal-agent tanımları). Çalışma ağacında sadece `.sleep.json` (state churn) kaldı — feature değil, bırakıyorum.\n\n---\n\nBu oturum yoğundu — **5 commit pushlandı** (dashboard UX, pack install/uninstall, sleep changelog, truthful update nudge → v0.5.3; install/update **veri-kaybı sertleştirmesi** → v0.5.4; roadmap+codex agents), iki goal-skill koşusu, 1003 test yeşil.\n\nSleep debt **6** (Drowsy) ve önemli kararlar birikti (data-loss fix mantığı, allowlist/PRE_MANIFEST partition, pack-install mimarisi, nudge filesystem-truth, off-hours scheduling tercihi). Bunları kalıcı belleğe işlemek için **consolidation** çalıştırmamı öneririm — yoksa bir sonraki oturum bu bağlamı sıfırdan toplar.\n\nConsolidation'ı şimdi çalıştırayım mı? (Bekleyen iki task `in_review` — `complete`'leri sana ait.)",
-      "change_count": 118,
-      "tool_count": 604,
-      "score": 3,
-      "task_slugs": [
-        "readme-deepdive-v05-refresh",
-        "v06-control-panel-frontend",
-        "v06-tauri-shell",
-        "v06-control-panel-vaults-tauri",
-        "v06-control-plane-backend",
-        "v06-vault-management",
-        "v06-control-panel-polish",
-        "v06-tauri-launch-fix",
-        "v06-dashboard-ux-fixes",
-        "v06-dashboard-pack-install"
-      ]
-    }
-  ],
+  "sessions_since_last_sleep": 0,
+  "sessions": [],
   "bookmarks": [],
   "triggers": [],
   "knowledge_access": {
