@@ -21,6 +21,29 @@ const MAX_LINE_CHARS = 240; // hard per-line cap so one giant message can't blow
 
 const DIGESTS_DIRNAME = '.session-digests';
 
+// ── C3 continuous-capture cap ────────────────────────────────────────────────
+// Index only the most-recent MAX_INDEXED_DIGESTS session digests (sorted by the
+// frontmatter `created_at` date, newest first). Cheap insurance against
+// unbounded corpus growth: even with the per-doc rank penalty, an ever-growing
+// pile of stale digests would slow every recall (BM25 is O(corpus)) and dilute
+// IDF. K=50 ≈ the last ~50 sessions — recent enough that the cross-session
+// catch-up loop still finds "what did we just decide", bounded enough that the
+// corpus stays small. Older digests remain on disk for sleep consolidation to
+// fold into curated knowledge; they're simply not live in recall.
+const MAX_INDEXED_DIGESTS = 50;
+
+/**
+ * Coerce a frontmatter `created_at` to an ISO string. gray-matter auto-parses
+ * unquoted ISO dates into `Date` objects, so a naive `typeof === 'string'` check
+ * silently drops them — which would make the recency cap below treat every
+ * digest as undated. Accept both shapes (string passthrough, Date → ISO).
+ */
+function coerceCreatedAt(value: unknown): string | undefined {
+  if (typeof value === 'string' && value.trim()) return value.trim();
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString();
+  return undefined;
+}
+
 /** One sanitised, length-capped line for the digest. */
 function clampLine(text: string): string {
   const oneLine = text.replace(/\s+/g, ' ').trim();
@@ -156,7 +179,12 @@ export function loadDigestDocs(root: string): CorpusDoc[] {
   const dir = digestsDir(root);
   if (!existsSync(dir)) return [];
   const files = fg.sync('*.md', { cwd: dir, absolute: true });
-  const out: CorpusDoc[] = [];
+
+  // Parse each digest, carrying its `created_at` so we can keep only the
+  // most-recent MAX_INDEXED_DIGESTS (C3 cap). A missing/unparsable date sorts
+  // OLDEST (treated as 0) so dated digests are always preferred for the slots.
+  interface Parsed { doc: CorpusDoc; createdMs: number; }
+  const parsed: Parsed[] = [];
   for (const file of files) {
     try {
       const { data, content } = readFrontmatter(file);
@@ -166,28 +194,39 @@ export function loadDigestDocs(root: string): CorpusDoc[] {
       const body = content.trim();
       if (!body) continue;
       const relPath = join('state', DIGESTS_DIRNAME, `${sessionId}.md`);
+      const createdAt = coerceCreatedAt(data.created_at);
       const fields = buildFields({ slug, title, description: '', tags: [], body });
-      out.push({
-        type: 'task',
-        path: file,
-        relPath,
-        slug,
-        title,
-        description: '',
-        tags: [],
-        body,
-        tokens: fields.tokens,
-        tokenSet: new Set(fields.tokens),
-        termFreq: fields.termFreq,
-        fieldFreq: fields.fieldFreq,
-        fieldLen: fields.fieldLen,
-        links: fields.links,
-        identityTokens: fields.identityTokens,
-        updatedAt: typeof data.created_at === 'string' ? data.created_at : undefined,
+      const ms = createdAt ? Date.parse(createdAt) : NaN;
+      parsed.push({
+        createdMs: Number.isNaN(ms) ? 0 : ms,
+        doc: {
+          type: 'task',
+          path: file,
+          relPath,
+          slug,
+          title,
+          description: '',
+          tags: [],
+          body,
+          tokens: fields.tokens,
+          tokenSet: new Set(fields.tokens),
+          termFreq: fields.termFreq,
+          fieldFreq: fields.fieldFreq,
+          fieldLen: fields.fieldLen,
+          links: fields.links,
+          identityTokens: fields.identityTokens,
+          updatedAt: createdAt,
+          // C3: session digests are continuous captures → rank-penalised.
+          capture: true,
+        },
       });
     } catch {
       // skip malformed digest
     }
   }
-  return out;
+
+  // Newest first; tie-break on slug for a deterministic order when dates collide
+  // (e.g. all-default 0 in tests). Then cap to the most-recent K.
+  parsed.sort((a, b) => (b.createdMs - a.createdMs) || a.doc.slug.localeCompare(b.doc.slug));
+  return parsed.slice(0, MAX_INDEXED_DIGESTS).map((p) => p.doc);
 }
