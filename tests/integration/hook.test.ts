@@ -1019,6 +1019,17 @@ describe('hook pre-tool-use (integration)', () => {
     expect(parsed.hookSpecificOutput.permissionDecisionReason).toContain('Default Explorer blocked');
   });
 
+  it('blocks the Explore agent case-insensitively (lowercase "explore")', () => {
+    const input = JSON.stringify({
+      tool_name: 'Agent',
+      tool_input: { subagent_type: 'explore', prompt: 'Find auth files' },
+    });
+    const output = runWithStdin('hook pre-tool-use', input, tmpDir);
+    const parsed = JSON.parse(output);
+    expect(parsed.hookSpecificOutput.permissionDecision).toBe('deny');
+    expect(parsed.hookSpecificOutput.permissionDecisionReason).toContain('dreamcontext-explore');
+  });
+
   it('allows default Explore agent when no _dream_context/ exists', () => {
     const noCtxDir = makeTmpDir();
     try {

@@ -125,6 +125,12 @@ Haiku resolves a doc key (`type/slug`) → the hook looks up the full `CorpusDoc
 - Feature PRD: `_dream_context/core/features/memory-recall-bm25.md`.
 - Related decision: `knowledge/decision-mem0-vs-bm25-recall.md`.
 
+## Update (2026-06-02) — B6 Haiku Index Relevance-Ranking
+
+The `buildCorpusIndex()` function previously used a positional 8,000-char slice, which silently omitted ~half the corpus (all changelog entries, many tasks) from the Haiku path. The v2 engine (PR #1 `memory-uplift`) now ranks the corpus by BM25 relevance to the query before slicing — the 8K window contains the most-relevant docs, not the most-recently-added ones. The rest of the Haiku architecture (system prompt shape, `execFileSync`, `--setting-sources ""`, BM25 fallback) is unchanged.
+
+See `knowledge/recall-engine-v2.md` for the full v2 picture.
+
 ## Last Verified
 
-2026-05-26.
+2026-06-02.

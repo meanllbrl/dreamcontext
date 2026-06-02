@@ -2,12 +2,12 @@
 id: handoff_memuplift
 name: memory-uplift-handoff
 description: >-
-  RESUME HANDOFF for the memory/recall uplift goal-skill run. Paused by the user
-  due to session limits; scheduled to resume at 02:00 on 2026-06-02. Read this
-  file FIRST when resuming, then continue the goal-skill orchestration from
-  Phase 2.
-status: in_progress
-updated_at: '2026-06-01'
+  COMPLETE — memory/recall uplift goal-skill run. All batches (Wave 0+1+2 +
+  capture guard) implemented, tested, reviewed, and merged to main via PRs #1
+  and #2. Benchmark: recall@1 68.3→85.0%, recall@3 81.7→95.0%. Resume is no
+  longer needed. Retained for the record; user may mark completed.
+status: in_review
+updated_at: '2026-06-02'
 tags:
   - handoff
   - resume
@@ -85,6 +85,15 @@ Embeddings/vector overlay; WAVE 3 (sub-agent write-back / recall-in-briefing / s
 
 ## Changelog
 
+
+
+### 2026-06-02 - Status → in_review
+- Build complete; PRs #1+#2 merged to main. Handoff superseded — no resume needed. User may mark completed.
+### 2026-06-02 - Session Update
+- COMPLETE — all batches merged to main via PRs #1+#2. Recall@1 68.3→85.0%, recall@3 81.7→95.0%. 1063 tests pass. The 02:00 resume was not needed. Retained for the record only.
+### 2026-06-02 - COMPLETE — all merged to main
+- All batches implemented and merged via PRs #1 (`248a4c5`) + #2 (`5b6c750`). 1063 tests pass. Build clean. Recall@1 68.3→85.0%, recall@3 81.7→95.0%. The 02:00 resume was not needed — implementation completed in one session. Resume handoff is superseded; no action required.
+
 ### 2026-06-01 - Session Update
-- Batch 2 (continuous capture C1-C4) implemented: session-digest.ts (buildDigest/writeDigest/digestExists/loadDigestDocs), salience.ts (detectSalience), recall.ts buildCorpus now folds digests (task) + .sleep.json bookmarks (memory), SessionStart catch-up loop mines digests+auto-bookmarks (off Stop path), bumpKnowledgeAccess extracted to sleep.ts and called by knowledge touch + hook recall block. recall-eval unchanged at 85.0/95.0/0.903; full suite 1038 green.
-- 2026-06-02: Paused at Phase 2 (plan review re-run needed) due to session limit. Handoff written; resume scheduled for 02:00.
+- Batch 2 (continuous capture C1-C4) implemented: session-digest.ts, salience.ts, recall.ts buildCorpus folds digests + bookmarks, SessionStart catch-up loop, bumpKnowledgeAccess extracted. recall-eval at 85.0/95.0/0.903; full suite 1038 green.
+- Paused at Phase 2 (plan review re-run) due to session limit. Handoff written; resume scheduled for 02:00.

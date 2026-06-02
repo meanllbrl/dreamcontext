@@ -570,8 +570,10 @@ export function registerHookCommand(program: Command): void {
       const subagentType = typeof toolInput.subagent_type === 'string'
         ? toolInput.subagent_type : '';
 
-      // Only gate the default Explore agent
-      if (subagentType !== 'Explore') process.exit(0); // allow
+      // Only gate the default Explore agent. Case/whitespace-tolerant so a casing
+      // variant ("explore") still hits the gate, while never matching our own
+      // redirect target ("dreamcontext-explore", which !== "explore").
+      if (subagentType.trim().toLowerCase() !== 'explore') process.exit(0); // allow
 
       // Only gate when _dream_context/ exists (context-managed projects)
       const root = resolveContextRoot();

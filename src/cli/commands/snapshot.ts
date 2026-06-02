@@ -752,6 +752,13 @@ export function generateSubagentBriefing(): string {
   parts.push('name or tag matches your task, Read that feature file first. Searching the codebase');
   parts.push('without checking context wastes tokens and duplicates existing documentation.\n');
 
+  // 1b. Recall directive — applies to EVERY sub-agent type, not just dreamcontext-explore,
+  // and does not depend on this briefing being honoured (the agent runs recall itself).
+  parts.push('RECALL: For any "where / why / what do we know about X" question, run');
+  parts.push('`dreamcontext memory recall "<keywords>"` (BM25 over knowledge/features/tasks/');
+  parts.push('memory/changelog, <100ms, zero token overhead) BEFORE Glob/Grep — it frequently');
+  parts.push('beats blind exploration outright.\n');
+
   // 2. Project summary (first meaningful line from soul file content)
   const soulPath = join(root, 'core', '0.soul.md');
   if (existsSync(soulPath)) {

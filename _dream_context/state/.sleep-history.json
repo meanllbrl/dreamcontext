@@ -1,5 +1,18 @@
 [
   {
+    "date": "2026-06-02",
+    "consolidated_at": "2026-06-02T09:39:20.221Z",
+    "summary": "Shipped a recall-engine overhaul + continuous capture to main (PRs #1, #2). Batch 1: BM25F field weighting, recency/status re-rank, TR/EN stemming + synonyms, Haiku index relevance-ranking — lifting recall@1 68.3->85.0% and recall@3 81.7->95.0% on a 60-query gold set (Turkish 37.5->75, paraphrase 41.7->66.7), no regressions, 1063 tests green. Core invariant: new ranking signals feed a derived rankScore; raw hit.score stays flat-BM25 so hook gate thresholds are unaffected. Batch 2: continuous capture (auto transcript digest on SessionStart catch-up + auto-salience bookmarks + recall indexing + knowledge_access feedback) implementing the brain's awake-ripple tagging, guarded by CAPTURE_RANK_PENALTY 0.5 + K=50 digest cap (proven 0 true displacement; fixed a latent created_at Date-parse bug). Batch 3: explore recall allowlist + revived dead .env gate. Consolidation: 3 changelog entries, 2 memory decisions, soul stale keyword-search rule -> BM25F, new knowledge/recall-engine-v2.md, updated memory-recall-bm25 + sleep-consolidation PRDs, roadmap tasks -> in_review (Wave 0-2 + guard done; Wave 3-4 remain). Also v0.5.4 update-prune fix. v0.5.4 publishable; v0.6.0 in planning.",
+    "debt_before": 6,
+    "debt_after": 0,
+    "sessions_processed": 2,
+    "bookmarks_processed": 0,
+    "session_ids": [
+      "21bbee0c-94d6-4a81-9a9f-09d664837ef3",
+      "80a49139-4a0e-444c-aac7-3c90aa645f3a"
+    ]
+  },
+  {
     "date": "2026-05-31",
     "consolidated_at": "2026-05-31T23:27:52.218Z",
     "summary": "Sleep #8 — v0.6 control panel built end-to-end via 3 autonomous goal-skill cycles, plus v0.5.x docs/test/context-gate work. sleep-state: created v0.6.0 planning version; 6 changelog entries (3 control-panel slices, test-alignment, context-gate+codex, docs); 4 memory decisions (control-plane API contextRoot/strict-pick/cache-only, catalog.ts extraction keeps @inquirer out of server bundle, vault registry design, Tauri spawn-Node+WebviewUrl::External hosting); soul priority → v0.6.0; user.md version → 0.5.1/0.6.0-dev; tech_stack updated. sleep-tasks: epic v06-control-panel-vaults-tauri todo→in_progress with real 5-node tracker; reconciled 4 placeholder task bodies; 3 slice flowcharts sync-clean (backend 11/11, frontend 7/7, tauri A1-A6 done + A7/A8 manual); flagged 5 stale older todos. sleep-product: new feature control-panel.md (18 ACs); updated web-dashboard + manifest-based-install-update PRDs; 3 new knowledge files (control-plane-api, tauri-desktop-hosting, vault-registry-multivault) + extended three-reviewer-parallel-mandates with the v0.6 case study. All v0.6 slice tasks in_review awaiting user verification; Tauri launch/sign/notarize is manual handoff. Marketing rem-sleep clean. Pre-existing marketing-council test flake tracked.",

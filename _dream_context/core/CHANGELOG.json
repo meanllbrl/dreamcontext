@@ -1,5 +1,51 @@
 [
   {
+    "date": "2026-06-02",
+    "type": "feat",
+    "scope": "recall",
+    "description": "Two shipped together. (1) Continuous capture (Batch 2): session-digest.ts auto-digests transcripts on the SessionStart catch-up path (never Stop to avoid latency); salience.ts detects high-signal moments and creates bookmarks automatically; digests + bookmarks are indexed into the recall corpus so future sessions can surface them; recall hits bump knowledge_access for staleness tracking. Explore agent Bash allowlist now includes 'dreamcontext memory recall' + 'transcript distill' (Batch 3: resolves a self-contradiction that made context-first explore non-functional); dead marketing/.env PreToolUse write-block revived (was registered with matcher:'Agent' only). (2) Capture guard (PR #2, commit 4585612): measured that a flood of auto-captures degraded recall@3 −3.3% and recall@1 −8.3%. Fix: CAPTURE_RANK_PENALTY=0.5 applied to rankScore only (does not affect raw BM25 hit.score or gate thresholds), MAX_INDEXED_DIGESTS=50 hard cap; proven 0 true displacement at N=50/100/200. Also fixed a latent created_at Date-vs-string parse bug that silently disabled digest recency scoring.",
+    "breaking": false,
+    "summary": "Continuous capture (auto-digest + salience detection + recall indexing) with capture guard (CAPTURE_RANK_PENALTY=0.5, MAX_INDEXED_DIGESTS=50)",
+    "references": [
+      "commit:a5edce7",
+      "commit:1451ab5",
+      "commit:4585612",
+      "commit:5b6c750",
+      "file:src/lib/session-digest.ts",
+      "file:src/lib/salience.ts",
+      "file:src/cli/commands/hook.ts"
+    ]
+  },
+  {
+    "date": "2026-06-02",
+    "type": "feat",
+    "scope": "recall",
+    "description": "Full recall-engine rewrite across src/lib/recall.ts, recall-synonyms.ts, and recall-query-extractor.ts. Replaces flat keyword scoring with BM25F field weighting (title×3, tags×2, description×2, body×1). Adds TR suffix folding + EN snowball stemming (eval-driven, no external lib) and a query-time synonym map (recall-synonyms.ts). Haiku relevance-ranking replaces the 8000-char positional corpus slice — Haiku now receives the full index and returns ranked doc keys rather than raw BM25 order. Critical architectural decision: all new signals (field weighting, recency, status, synonyms, link-aware, capture penalty) populate a DERIVED rankScore; hit.score stays flat BM25 so gate thresholds (BM25 fallback ≥2.0, skill gate ≥1.0, explore agent ≥5/<2) are completely unaffected by rank reordering. Phase-5 also changed the BM25-fallback gate from hits[0].score to hits.some(h=>h.score>=2.0) to prevent a strong raw match from being suppressed by reordering. Gold-set results (deterministic, 60 queries): overall recall@1 68.3→85.0%, recall@3 81.7→95.0%; Turkish 37.5→75.0%, paraphrase 41.7→66.7%; no category regressed. Eval harness at eval/ (gold.jsonl, harness.ts, BASELINE.md, RESULTS.md) — not shipped in npm package. 1063 tests pass.",
+    "breaking": false,
+    "summary": "Recall engine overhaul: BM25F field weighting + TR/EN stemming + synonyms + Haiku rerank + score/rank decoupling (recall@1 68→85%, recall@3 82→95%)",
+    "references": [
+      "commit:a56f9d4",
+      "commit:e31b2e3",
+      "commit:248a4c5",
+      "file:src/lib/recall.ts",
+      "file:src/lib/recall-synonyms.ts",
+      "file:src/lib/recall-query-extractor.ts"
+    ]
+  },
+  {
+    "date": "2026-06-02",
+    "type": "fix",
+    "scope": "update",
+    "description": "Fix a critical bug in update.ts where the manifest-diff prune step could delete user-created files that dreamcontext never installed. The fix tightens isSafeDeletePath() to only remove files that appear in the install manifest with kind 'system'; any file absent from the manifest, or present with kind 'user', is now exempt from prune. Proven safe on a live repo run. Fixes the trust regression introduced when manifest-aware update shipped (v0.4.0).",
+    "breaking": false,
+    "summary": "v0.5.4 — update never deletes user files it didn't install",
+    "references": [
+      "commit:3b4eb4c",
+      "file:src/cli/commands/update.ts",
+      "file:src/lib/manifest.ts"
+    ]
+  },
+  {
     "date": "2026-06-01",
     "type": "feat",
     "scope": "control-panel",

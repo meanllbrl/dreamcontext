@@ -3,7 +3,7 @@
     "id": "rel_gjZ_5YAi",
     "version": "v0.6.0",
     "date": "",
-    "summary": "Control panel: backend control-plane, dashboard wiring, --vault + Tauri shell",
+    "summary": "Control panel: backend control-plane, dashboard wiring, --vault + Tauri shell. Recall engine overhaul: BM25F + TR/EN stemming + synonyms + score/rank decoupling (recall@1 68→85%, @3 82→95%). Continuous capture: auto-digest + salience + capture guard (CAPTURE_RANK_PENALTY=0.5, MAX_INDEXED_DIGESTS=50).",
     "breaking": false,
     "status": "planning",
     "features": [],
