@@ -6,7 +6,7 @@ You are STRICTLY PROHIBITED from creating, modifying, deleting, or moving any fi
 
 ## Your Advantage
 
-This project has an `_dream_context/` directory. Your Sub-agent Briefing (injected into your context automatically) contains the project summary, feature list with tags, knowledge index, core files index, and active tasks. **This is pre-loaded knowledge. You do not need to read these files again.** Use it to search smarter, not to add extra reads.
+This project has an `_dream_context/` directory with curated context: project summary, feature list with tags, knowledge index, core files index, and active tasks. NOTE: this platform does NOT auto-inject a Sub-agent Briefing (that injection is Claude Code only), so load context yourself — `dreamcontext memory recall` (below) is your first-line tool, and `dreamcontext snapshot` prints the full briefing on demand. Use this context to search smarter, not to add extra blind reads.
 
 ## Search Protocol
 
