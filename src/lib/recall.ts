@@ -30,6 +30,11 @@ export interface CorpusDoc {
   updatedAt?: string;                     // B3: ISO-ish date string (updated/updated_at/date)
   links?: string[];                       // B5: slugs referenced via [[slug]] wikilinks
   identityTokens?: string[];              // stemmed slug+title tokens (exact-identity boost)
+  // C2/C3 continuous-capture guard: auto-generated session digests + bookmarks
+  // are flagged so the CAPTURE_RANK_PENALTY can down-weight them in rankScore
+  // ONLY (never the raw `score` the hook gates on). Default/absent = false =
+  // curated knowledge, no penalty.
+  capture?: boolean;
 }
 
 export interface RecallHit {
@@ -406,6 +411,8 @@ export function loadBookmarkDocs(contextRoot: string): CorpusDoc[] {
       // the identity boost (mirrors the changelog loader's choice).
       identityTokens: [],
       updatedAt: typeof b.created_at === 'string' ? b.created_at : undefined,
+      // C2/C3: auto/explicit bookmarks are continuous captures → rank-penalised.
+      capture: true,
     });
   }
   return out;
@@ -505,6 +512,26 @@ const FIELD_WEIGHT_BONUS = 0.5;
 // IDENTITY_BOOST rewards query-term coverage of a doc's slug/title (restores
 // field-match precision: a query that IS the slug should win decisively).
 const IDENTITY_BOOST = 1.5;
+
+// ── C2/C3: continuous-capture rank penalty ──────────────────────────────────
+// Auto-generated session digests (type `task`, slug `digest#…`) and bookmarks
+// (type `memory`, slug `bookmark#…`) are indexed with EQUAL raw-BM25 standing to
+// curated knowledge. Measured (tests/unit/recall-capture-stress.test.ts): a flood
+// of 200 each degraded recall@3 by ~3.3pts and recall@1 by ~8.3pts vs a
+// capture-free corpus — mediocre auto-captures were crowding out real knowledge.
+//
+// This 0.5× multiplier applies to capture docs in the DERIVED `rankScore` ONLY
+// (NEVER the raw `score` the hook thresholds against — the decoupling is sacred).
+// Effect: on an equal content match a curated doc beats a capture doc, but a
+// capture doc whose match is clearly the strongest/only one still wins (0.5× of a
+// big number still tops 1× of a small one — the e2e loop test proves a genuine
+// captured decision still surfaces in the top-3). The GUARD PROOF
+// (recall-capture-stress.test.ts) verifies that under a worst-case capture flood,
+// ZERO gold targets that ranked in the top-3 on the capture-free corpus are
+// knocked out of it by a capture. (A weak-match gold doc that already missed the
+// top-3 without any captures is not "displaced" — that is a recall limit of the
+// query itself, not capture crowding.)
+export const CAPTURE_RANK_PENALTY = 0.5;
 
 // ── B3: recency + status ranking multipliers ────────────────────────────────
 // Down-rank completed/archived docs (still findable, just not top of the pile).
@@ -673,9 +700,12 @@ export function bm25Search(
     if (rankBase <= 0) continue;
 
     // B3: status + recency multipliers apply to the DERIVED rank only.
+    // C2/C3: down-weight auto-captures (digests/bookmarks) on rankScore ONLY so
+    // a curated doc beats a capture on an equal match (raw `score` untouched).
     const rankScore = rankBase
       * statusMultiplier(doc.status)
-      * recencyMultiplier(doc.updatedAt, now);
+      * recencyMultiplier(doc.updatedAt, now)
+      * (doc.capture ? CAPTURE_RANK_PENALTY : 1);
 
     scored.push({
       hit: { doc, score: rawScore, rankScore, snippet: extractSnippet(doc, queryTerms) },
@@ -702,7 +732,8 @@ export function bm25Search(
       if (boost > 0) {
         s.hit.rankScore += boost
           * statusMultiplier(s.hit.doc.status)
-          * recencyMultiplier(s.hit.doc.updatedAt, now);
+          * recencyMultiplier(s.hit.doc.updatedAt, now)
+          * (s.hit.doc.capture ? CAPTURE_RANK_PENALTY : 1);
       }
     }
   }

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, rmSync, existsSync, readFileSync } from 'node:fs';
+import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { DistilledSection } from '../../src/cli/commands/transcript.js';
@@ -107,5 +107,43 @@ describe('writeDigest / digestExists / loadDigestDocs', () => {
 
   it('returns empty array when no digests directory exists', () => {
     expect(loadDigestDocs(root)).toEqual([]);
+  });
+
+  it('flags every digest as a capture (C3 rank-penalty target)', () => {
+    writeDigest(root, 'sess-cap', buildDigest(fixtureDistilled()));
+    const docs = loadDigestDocs(root);
+    expect(docs.length).toBe(1);
+    expect(docs[0].capture).toBe(true);
+  });
+
+  it('caps the indexed set to the 50 MOST-RECENT digests (C3, by created_at desc)', () => {
+    // Write 60 digests with explicit, monotonically increasing created_at dates
+    // so recency order is unambiguous. session-NN with NN = day-of-month.
+    const dir = join(root, 'state', '.session-digests');
+    mkdirSync(dir, { recursive: true });
+    for (let i = 0; i < 60; i++) {
+      const day = String(i + 1).padStart(2, '0'); // 01..60 → valid through Mar
+      const date = new Date(2026, 0, i + 1).toISOString(); // Jan 1 + i days
+      const fm = [
+        '---',
+        'type: session-digest',
+        `session_id: sess-${day}`,
+        `created_at: ${date}`,
+        '---',
+        '',
+        `# Session Digest\n\n## Decisions\n- decision number ${i} about widget ${i}`,
+      ].join('\n');
+      writeFileSync(join(dir, `sess-${day}.md`), fm, 'utf-8');
+    }
+
+    const docs = loadDigestDocs(root);
+    // Exactly K=50 survive the cap.
+    expect(docs.length).toBe(50);
+    // The OLDEST 10 (sess-01..sess-10) are dropped; the NEWEST (sess-60) is kept.
+    const slugs = new Set(docs.map((d) => d.slug));
+    expect(slugs.has('digest#sess-60')).toBe(true);
+    expect(slugs.has('digest#sess-51')).toBe(true);
+    expect(slugs.has('digest#sess-10')).toBe(false);
+    expect(slugs.has('digest#sess-01')).toBe(false);
   });
 });
