@@ -1,0 +1,88 @@
+/* ──────────────────────────────────────────────────────────────────────────
+   Problem section — the without/with contrast cards. Ported from
+   AboutPage.css's `.about-contrast*` rules so the shared stylesheet can drop
+   them. Section scaffolding (`.about-section`, `.about-kicker`, `.about-h2`,
+   `.about-section-lead`) stays shared in AboutPage.css. Tokens only; dark mode
+   is automatic.
+   ────────────────────────────────────────────────────────────────────────── */
+
+.about-contrast {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-5);
+}
+.about-contrast-card {
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--color-border);
+  padding: var(--space-7);
+  background: var(--color-bg-secondary);
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+}
+.about-contrast-card:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-lg);
+}
+.about-contrast-card--bad {
+  border-color: color-mix(in srgb, var(--color-error) 30%, var(--color-border));
+  background: var(--color-error-subtle);
+}
+.about-contrast-card--good {
+  border-color: color-mix(in srgb, var(--color-accent) 36%, var(--color-border));
+  background: var(--color-accent-soft);
+}
+.about-contrast-tag {
+  display: inline-block;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-bottom: var(--space-4);
+}
+.about-contrast-card--bad .about-contrast-tag {
+  color: var(--color-error);
+}
+.about-contrast-card--good .about-contrast-tag {
+  color: var(--color-accent);
+}
+.about-contrast-card ul {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin: 0;
+  padding: 0;
+}
+.about-contrast-card li {
+  position: relative;
+  padding-left: var(--space-6);
+  font-size: var(--font-size-base);
+  line-height: 1.45;
+  color: var(--color-text);
+}
+.about-contrast-card li::before {
+  position: absolute;
+  left: 0;
+  font-weight: var(--font-weight-bold);
+}
+.about-contrast-card--bad li::before {
+  content: '✕';
+  color: var(--color-error);
+}
+.about-contrast-card--good li::before {
+  content: '✓';
+  color: var(--color-accent);
+}
+
+/* ── Responsive — stack the cards ────────────────────────────────────────── */
+@media (max-width: 860px) {
+  .about-contrast {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ── Motion safety ───────────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .about-contrast-card {
+    transition: none;
+  }
+}

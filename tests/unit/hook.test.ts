@@ -2,9 +2,11 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { createServer, type Server } from 'node:http';
 import {
   analyzeTranscript, scoreFromChangeCount, scoreFromToolCount,
   isJsTsFile, findFormatterConfig, findTsconfig, findProjectConfig,
+  resolveDashboardPort, isDashboardUp,
 } from '../../src/cli/commands/hook.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -388,5 +390,53 @@ describe('findTsconfig', () => {
     const filePath = join(tmpDir, 'src', 'lib', 'utils.ts');
     writeFileSync(filePath, '');
     expect(findTsconfig(filePath)).toBe(join(tmpDir, 'tsconfig.json'));
+  });
+});
+
+// ─── Dashboard auto-open ──────────────────────────────────────────────────────
+
+describe('resolveDashboardPort', () => {
+  const original = process.env.DREAMCONTEXT_DASHBOARD_PORT;
+  afterEach(() => {
+    if (original === undefined) delete process.env.DREAMCONTEXT_DASHBOARD_PORT;
+    else process.env.DREAMCONTEXT_DASHBOARD_PORT = original;
+  });
+
+  it('defaults to 4173 when env is unset', () => {
+    delete process.env.DREAMCONTEXT_DASHBOARD_PORT;
+    expect(resolveDashboardPort()).toBe(4173);
+  });
+
+  it('honours a valid DREAMCONTEXT_DASHBOARD_PORT override', () => {
+    process.env.DREAMCONTEXT_DASHBOARD_PORT = '5000';
+    expect(resolveDashboardPort()).toBe(5000);
+  });
+
+  it('falls back to default for an invalid override', () => {
+    process.env.DREAMCONTEXT_DASHBOARD_PORT = 'not-a-port';
+    expect(resolveDashboardPort()).toBe(4173);
+    process.env.DREAMCONTEXT_DASHBOARD_PORT = '0';
+    expect(resolveDashboardPort()).toBe(4173);
+  });
+});
+
+describe('isDashboardUp', () => {
+  it('resolves false quickly when nothing is listening', async () => {
+    // Port 1 is privileged/unused in tests — connection is refused immediately.
+    await expect(isDashboardUp(1, 300)).resolves.toBe(false);
+  });
+
+  it('resolves true when a server answers on the port', async () => {
+    const server: Server = createServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as { port: number }).port;
+    try {
+      await expect(isDashboardUp(port, 1000)).resolves.toBe(true);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 });

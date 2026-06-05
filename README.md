@@ -25,6 +25,14 @@
   <a href="DEEP-DIVE.md">Deep Dive</a>
 </p>
 
+<p align="center">
+  <img src="public/image/landing-hero.png" alt="dreamcontext — the persistent brain for your AI agents" width="860" />
+</p>
+
+<p align="center">
+  <sub>The built-in <strong>“What is this?”</strong> page, served live by <code>dreamcontext dashboard</code>.</sub>
+</p>
+
 > **Under active development.** APIs and commands may change before v1.0.
 
 ---
@@ -229,6 +237,7 @@ dreamcontext install-skill --list
 | **business-idea-validation** | Demand testing via landing page + waitlist, quick validation loops |
 | **meta-marketing** | Meta / Facebook / Instagram ad campaigns end to end |
 | **system-prompts** | Prompt engineering, cognitive architecture, agent design |
+| **video-watching** | Turn a video into a time-mapped transcript with on-screen visuals described inline (whisper.cpp + ffmpeg), then reason about it |
 
 _Always-on_ packs apply their base principles to every relevant task; the rest load only when the work matches. Packs install to platform-specific paths — Claude: `.claude/skills/{pack}/` (+ agents in `.claude/agents/`); Codex: `.agents/skills/{pack}/` (+ agents in `.codex/agents/`). Cross-pack dependencies are warned at install time.
 
@@ -259,6 +268,15 @@ dreamcontext dashboard --no-open         # Start without opening browser
 ```
 
 A local web UI for managing agent context visually. Built with React 19, served by a zero-dependency Node HTTP server. Ships in the npm package.
+
+It also ships a built-in **“What is this?”** explainer page — a full landing experience with a spotlight that reveals each faculty's live diagram, and a layered map of how the brain is organized:
+
+<p align="center">
+  <img src="public/image/landing-spotlight.png" alt="Feature spotlight — pick a faculty to see its live diagram" width="840" />
+</p>
+<p align="center">
+  <img src="public/image/landing-architecture.png" alt="Memory, organized like a mind — the layered brain-region map" width="840" />
+</p>
 
 <table>
 <tr>

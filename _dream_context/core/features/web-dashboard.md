@@ -2,7 +2,7 @@
 id: feat_O7LODr7O
 status: active
 created: '2026-02-25'
-updated: '2026-06-01'
+updated: '2026-06-05'
 released_version: 0.1.0
 tags:
   - frontend
@@ -12,6 +12,8 @@ related_tasks:
   - web-dashboard
   - v06-control-panel-frontend
   - v06-control-plane-backend
+  - landing-page-v2
+  - dashboard-alignment
 ---
 
 ## Why
@@ -44,6 +46,9 @@ Users need a visual interface to manage agent context without using the terminal
 - [x] As a user, I want a Packs page to browse available skill packs and see which are installed.
 - [x] As a user, I want an in-app update badge that tells me when a newer dreamcontext version is available so I know to run `dreamcontext upgrade`.
 - [x] As a user, I can see registered vaults (read-only) from the Settings page so that I know which projects are tracked.
+- [x] As a user, I see a "What is this?" section at the bottom of the sidebar that opens a full-page marketing/explainer landing page with a real system diagram, sleep walkthrough, recall flow, cinematic architecture view, live skill-packs marquee, and collapsible features showcase.
+- [x] As a user, the landing page hero shows the logo+wordmark and a looping brain-graph video so I immediately understand what dreamcontext is.
+- [x] As a user, the dashboard's responsive layout doesn't clip or misalign at tablet/narrow widths (768px) because the sidebar collapses and pages use flexible spacing.
 
 ## Acceptance Criteria
 
@@ -101,6 +106,20 @@ Users need a visual interface to manage agent context without using the terminal
 - [ ] Each change records: timestamp, entity, action, target file, field changed, human-readable summary
 - [ ] `dreamcontext sleep done` clears dashboard_changes along with sessions
 
+### About / Landing Page
+- [x] AboutPage rebuilt as 9 self-contained section components under `dashboard/src/components/about/`.
+- [x] FlowDiagram engine: single data-driven React component (FlowDiagram.tsx); instance-unique gradient IDs via `useId()`; inline SVG `stroke`/`fill` attributes (not CSS); pure CSS comet animation; reduced-motion guard.
+- [x] Hero: inline recolored diamond SVG + wordmark left; looping brain video (webm + mp4 + poster) right.
+- [x] How-it-works diagram: 8 context categories incl. data-structures, skills, sub-agents; RemSleep shown as multi-agent (parallel specialists); comet animation.
+- [x] "How sleep works" sub-section: debt accumulation flow + 3 parallel specialists with real file domains.
+- [x] "How the system remembers" sub-section: BM25F → Haiku (smallest cloud agent) → SessionStart snapshot.
+- [x] Architecture: cinematic 3D cortical-stack (layered cross-section), not a flat grid.
+- [x] Skill-packs marquee: live from `usePacks()` hook (not hardcoded), infinite scroll, pause on hover, reduced-motion fallback to static scroll row.
+- [x] Features showcase: 26 capability cards, collapsible (`aria-expanded`), flagship expanded, minor collapsed.
+- [x] Token-only colors in all about component CSS (no raw hex/rgb in component rules).
+- [x] Build green, tsc clean, light + dark screenshots pass.
+- [x] Responsive: 11 alignment tests green (sidebar rail at 390/768, KB/Core/Features stacked at 768, settings hint aligned, council count in column).
+
 ### Design
 - [ ] Lightweight, minimal UI inspired by Notion and Linear
 - [x] Linear Midnight design system applied: Neon Lime (#e4f222) as sole accent, Inter Variable typeface (weight 510/590 with 500/600 fallback), pitch-black/graphite/deep-slate layered surfaces, muted Storm Cloud secondary text, flat surfaces (glassmorphism removed), Berkeley Mono for code.
@@ -124,6 +143,8 @@ Users need a visual interface to manage agent context without using the terminal
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
 
+- **[2026-06-05]** Responsive fix: root cause was zero width media queries in Sidebar/Shell — fixed 220px sidebar was clipping every page at tablet/narrow. Fix: responsive CSS breakpoints for sidebar + shell, plus alignment audit across all pages (11 Playwright tests). `dist/dashboard` sync: `vite` writes to `dashboard/dist/`, but `dreamcontext dashboard` serves from `dist/dashboard/` — must run root `npm run build` (not `cd dashboard && npm run build`) to sync. See note in web-dashboard task.
+- **[2026-06-04]** About page / landing page: AboutPage.tsx is a composition-only file (no inline logic); all sections are self-contained under `dashboard/src/components/about/`. FlowDiagram.tsx is the single diagram engine — gradient IDs must use `useId()` and be referenced as inline SVG attributes (not CSS) to avoid cross-diagram collisions. HowItWorksDiagram.tsx/.css deleted once FlowDiagram landed. Logo is inline recolored SVG diamond (not a network hotlink — that image isn't dashboard-served). Brain video is pre-generated at `dashboard/public/media/brain.{webm,mp4,png}`.
 - **[2026-05-31]** Server hardening decisions: (1) default host=127.0.0.1 (not 0.0.0.0) — LAN access requires explicit `--host`; (2) CSRF guard via Origin/Host check at server level (not per-route) so all new mutating routes inherit it automatically; (3) `safeChildPath()` in `src/server/safe-path.ts` is the single path-validation function — every route that builds a path from request input MUST use it. These are security invariants; do not regress. See knowledge file `dashboard-server-security.md` for full threat model.
 - **[2026-05-23]** Brain 3D view is a toggle on the existing Brain page, not a separate route. `react-force-graph-3d` + `three` are dashboard-only deps (isolated from CLI). Labels use `THREE.Sprite` (billboard) to stay legible at all camera angles. `fog: true` on `SpriteMaterial` ties label opacity to scene fog so distant labels auto-fade with their nodes. Fly-to on click uses `fgRef.current.cameraPosition()` (ForceGraph3D's imperative API), not Three.js directly.
 - **[2026-05-22]** Linear Midnight design system (additive, non-breaking): old `--glass-*` and `--color-brand-*` CSS variables retained for backward compatibility; no selectors deleted. Google Fonts CDN loads Inter in browser; air-gapped environments fall back to system font. `font-weight: 510/590` uses Inter variable font axis; falls back to `500/600` if Inter is not a variable font instance.
@@ -232,6 +253,20 @@ Users need a visual interface to manage agent context without using the terminal
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-06-05 - Dashboard alignment + responsive fix
+- Root cause: fixed 220px sidebar, no media queries → clipping at tablet/narrow.
+- Added responsive CSS breakpoints (sidebar collapse + shell flex at 768px, 390px).
+- 11 Playwright alignment tests green; full vitest suite green (1111+).
+
+### 2026-06-04 - Landing page v2: About page rebuilt (9 sections, FlowDiagram engine)
+- AboutPage rebuilt as 9 section components under `dashboard/src/components/about/`.
+- FlowDiagram engine: instance-unique gradient IDs via useId(), inline SVG attrs, comet animation, reduced-motion guard.
+- Hero: logo+wordmark + looping brain video (webm+mp4+poster).
+- How-it-works: real 8-category diagram incl. RemSleep multi-agent node.
+- Sleep flow + recall flow sub-sections; cortical-stack architecture; live usePacks() marquee; 26 collapsible feature cards.
+- Built via goal-skill: 7 parallel opus implementers across 3 waves; reviewer + validator PASS.
+- Build clean, tsc clean, light + dark screenshots pass (e2e/shots/).
 
 ### 2026-06-01 - v0.6 Control Panel: Settings, Packs, UpdateBadge, --vault (slices 1-2)
 - Backend control-plane: `GET/PATCH /api/config`, `GET /api/packs`, `GET /api/version-check`, `GET /api/vaults` added to server.

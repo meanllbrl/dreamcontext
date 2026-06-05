@@ -1,0 +1,163 @@
+.fd {
+  width: 100%;
+  max-width: 920px;
+  margin: 0 auto;
+}
+
+.fd-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  overflow: visible;
+}
+
+/* ── Gradient stops (theme-aware via tokens) ───────────────────────────────
+   The gradients themselves are referenced through per-instance inline SVG
+   attributes (stroke/fill) — NOT from this file — so several FlowDiagrams can
+   coexist on one page without their <defs> ids colliding. Here we only color
+   the <stop>s. */
+.fd-node-grad-a { stop-color: var(--color-bg-secondary); }
+.fd-node-grad-b { stop-color: var(--color-bg-tertiary); }
+.fd-accent-a { stop-color: var(--color-vivid-purple); }
+.fd-accent-b { stop-color: var(--color-electric-blue); }
+
+/* ── Wires ──────────────────────────────────────────────────────────────── */
+.fd-wire {
+  stroke: var(--color-border);
+  stroke-width: 2;
+}
+.fd-wire--dashed {
+  stroke-dasharray: 2 8;
+  stroke-linecap: round;
+  opacity: 0.7;
+}
+
+/* The travelling "comet": a tiny visible dash on a long gap, scrolled forever.
+   Travel distance is per-edge via the --fd-travel custom property (set inline),
+   so one keyframe serves every edge length. The gradient stroke is applied as
+   an inline attribute in the component, never here. */
+.fd-flow {
+  stroke-width: 3.5;
+  stroke-linecap: round;
+  stroke-dasharray: 5 235;
+  stroke-dashoffset: 0;
+  filter: drop-shadow(0 0 4px var(--color-accent));
+  animation: fd-comet 2.6s linear infinite;
+}
+
+@keyframes fd-comet {
+  to { stroke-dashoffset: calc(-1 * var(--fd-travel, 240)); }
+}
+
+/* ── Nodes ──────────────────────────────────────────────────────────────── */
+.fd-node rect {
+  /* fill comes from the inline url() attribute (region/plain variants);
+     variant rules below override it where a flat token fill is wanted. */
+  stroke: var(--color-border);
+  stroke-width: 1.5;
+}
+.fd-node--hook rect {
+  stroke: var(--color-accent);
+  stroke-width: 2;
+  filter: drop-shadow(0 6px 18px var(--color-accent-soft));
+}
+.fd-node--agent rect {
+  fill: var(--color-onyx);
+  stroke: none;
+  filter: drop-shadow(0 8px 22px rgba(0, 0, 0, 0.22));
+}
+.fd-node--rem rect {
+  fill: var(--color-accent-soft);
+  stroke: var(--color-accent);
+  stroke-width: 1.5;
+}
+.fd-node--accent rect {
+  fill: var(--color-accent-soft);
+}
+/* region & plain variants keep the inline gradient fill — no fill set here. */
+
+.fd-node--breathe rect {
+  animation: fd-breathe 4s ease-in-out infinite;
+}
+
+@keyframes fd-breathe {
+  0%, 100% { filter: none; }
+  50% { filter: drop-shadow(0 0 10px var(--color-accent-soft)); }
+}
+
+/* ── Text ───────────────────────────────────────────────────────────────── */
+.fd-svg text {
+  font-family: var(--font-family-text);
+  text-anchor: middle;
+  dominant-baseline: middle;
+}
+.fd-node-title {
+  fill: var(--color-text);
+  font-size: 17px;
+  font-weight: var(--font-weight-bold);
+  letter-spacing: -0.4px;
+}
+/* Dark-surface nodes get light title/sub text. */
+.fd-node--agent .fd-node-title { fill: var(--color-snow); }
+.fd-node--agent .fd-node-sub { fill: rgba(255, 255, 255, 0.72); }
+
+.fd-node-sub {
+  fill: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: var(--font-weight-medium);
+}
+
+.fd-step-tag {
+  fill: var(--color-text-tertiary);
+  font-size: 12px;
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.fd-region-glyph {
+  fill: var(--color-accent);
+  font-size: 19px;
+}
+.fd-region-file {
+  fill: var(--color-text);
+  font-size: 15px;
+  font-weight: var(--font-weight-bold);
+}
+.fd-region-tag {
+  fill: var(--color-text-tertiary);
+  font-size: 11.5px;
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.fd-label {
+  fill: var(--color-text-tertiary);
+  font-size: 11px;
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* ── Mini variant: compact embeds (sidebars, cards) ───────────────────────── */
+.fd--mini {
+  max-width: 320px;
+}
+.fd--mini .fd-node-title { font-size: 15px; }
+.fd--mini .fd-node-sub { font-size: 10px; }
+.fd--mini .fd-region-glyph { font-size: 17px; }
+.fd--mini .fd-region-file { font-size: 13px; }
+.fd--mini .fd-region-tag { font-size: 9.5px; }
+.fd--mini .fd-label { font-size: 9px; }
+.fd--mini .fd-step-tag { font-size: 10px; }
+.fd--mini .fd-flow { stroke-dasharray: 4 160; stroke-width: 3; }
+
+@media (prefers-reduced-motion: reduce) {
+  .fd-flow,
+  .fd-node--breathe rect {
+    animation: none;
+  }
+  /* Keep a static comet visible so the wires still read as directional. */
+  .fd-flow { stroke-dasharray: 5 235; stroke-dashoffset: -60; }
+}

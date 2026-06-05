@@ -70,7 +70,8 @@
   font-family: var(--font-mono);
   font-size: var(--font-size-xs);
   color: var(--color-text-tertiary);
-  margin-left: auto;
+  /* margin-left: auto removed — kept in content column with search/filter, no longer floats to viewport edge */
+  white-space: nowrap;
 }
 
 .council-hall-grid {

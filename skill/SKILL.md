@@ -318,7 +318,9 @@ Sleep debt reminders are injected on every user message (via UserPromptSubmit ho
      - user hint mentions knowledge or a feature
    - When unsure, **over-fire** `sleep-product` — it no-ops cheaply.
    - Pass each specialist a small text brief in its prompt: epoch, session IDs, active task slugs, planning version, signals relevant to that specialist, optional user hint. Do **not** include transcript content — specialists call `dreamcontext transcript distill <id>` themselves.
+   - **Consolidation discipline (remind both specialists in the brief):** prefer *updating/extending* an existing entity over creating a new one. `sleep-tasks` folds a smaller slice into the task that already covers it (broaden its title + insert sub-items) rather than forking a duplicate or a needless sub-task; `sleep-product` keeps similar verticals/brands/topics in the fewest knowledge files, splitting only on a sharp topical boundary that sharpens tags. Duplicate tasks and fragmented near-duplicate knowledge are the top consolidation failure modes — but genuinely separate concerns/topics still get their own task/file.
 5. Wait for all specialist reports. Each returns a short structured report.
+5a. Run `dreamcontext reflect` — each candidate is a term seen across multiple sessions not yet in soul/user/memory/knowledge; promote into `2.memory.md` or a knowledge file ONLY if genuinely load-bearing; most are noise, discard; NEVER auto-promote.
 6. Marketing pass if `_dream_context/marketing/` exists: `dreamcontext mk rem-sleep`.
 7. Council promote check: `dreamcontext council list --unpromoted` — promote if user engaged positively.
 8. `dreamcontext sleep done "<one-paragraph summary stitched from specialist reports>"` — clears pre-epoch state, resets debt.
@@ -505,6 +507,7 @@ All commands prefixed with `dreamcontext`. For reading/searching, use native too
 | `trigger add "<when>" "<remind>" [-m max_fires] [-s source]` | Create contextual trigger |
 | `trigger list` | Show active triggers |
 | `trigger remove <id>` | Remove a trigger |
+| `reflect [--min-sessions N] [--max N] [--write]` | Detect recurring cross-session terms not yet in knowledge/memory as CANDIDATES; `--write` persists to `state/.reflection.md` |
 | `transcript distill <session_id>` | Extract high-signal content from session transcript |
 | `sleep status` | Show sleep state and history |
 | `sleep add <score> "<desc>"` | Manual debt add |
@@ -523,6 +526,8 @@ All commands prefixed with `dreamcontext`. For reading/searching, use native too
 | `snapshot --tokens` | Estimate snapshot token count |
 | `doctor` | Validate `_dream_context/` structure |
 | `install-skill` | Install skill + hooks |
+| `config show` | Print project config (platforms, packs, native-memory state) |
+| `config native-memory <enable\|disable>` | Toggle Claude's native auto-memory; disabled by default so dreamcontext owns project memory |
 | `upgrade [--check]` | Update the dreamcontext CLI itself to the latest npm release |
 
 Feature insert sections: `changelog`, `notes`, `technical_details`, `constraints`, `user_stories`, `acceptance_criteria`, `why`

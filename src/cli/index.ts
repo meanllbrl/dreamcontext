@@ -17,11 +17,13 @@ import { registerDashboardCommand } from './commands/dashboard.js';
 import { registerBookmarkCommand } from './commands/bookmark.js';
 import { registerTriggerCommand } from './commands/trigger.js';
 import { registerTranscriptCommand } from './commands/transcript.js';
+import { registerReflectCommand } from './commands/reflect.js';
 import { registerCouncilCommand } from './commands/council.js';
 import { registerMarketingCommand } from './commands/marketing.js';
 import { registerMemoryCommand } from './commands/memory.js';
 import { registerUpgradeCommand } from './commands/upgrade.js';
 import { registerVaultsCommand } from './commands/vaults.js';
+import { registerConfigCommand } from './commands/config.js';
 import { startInteractive } from './interactive.js';
 import { renderBanner } from '../lib/pixel-banner.js';
 import { dreamcontextVersion } from '../lib/manifest.js';
@@ -115,10 +117,12 @@ export function createProgram(): Command {
   registerBookmarkCommand(program);
   registerTriggerCommand(program);
   registerTranscriptCommand(program);
+  registerReflectCommand(program);
   registerCouncilCommand(program);
   registerMarketingCommand(program);
   registerMemoryCommand(program);
   registerVaultsCommand(program);
+  registerConfigCommand(program);
 
   return program;
 }

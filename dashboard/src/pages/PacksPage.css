@@ -31,6 +31,14 @@
   gap: var(--space-4);
 }
 
+/* CSS @media cannot use custom properties in this Vite setup, so 640 is a
+   documented literal representing the "narrow mobile" breakpoint. */
+@media (max-width: 640px) {
+  .packs-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .packs-card {
   padding: var(--space-4);
   background: var(--color-bg-secondary);

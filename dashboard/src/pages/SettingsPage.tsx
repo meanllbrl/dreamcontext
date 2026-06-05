@@ -17,8 +17,9 @@ const PLATFORM_OPTIONS: PlatformOption[] = [
 
 // ─── Default config when config is null ───────────────────────────────────────
 
-const DEFAULT_CONFIG: Pick<SetupConfig, 'platforms'> = {
+const DEFAULT_CONFIG: Pick<SetupConfig, 'platforms' | 'disableNativeMemory'> = {
   platforms: [],
+  disableNativeMemory: true,
 };
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -29,6 +30,9 @@ export function SettingsPage() {
   const updateConfig = useUpdateConfig();
 
   const [platforms, setPlatforms] = useState<PlatformId[]>(DEFAULT_CONFIG.platforms);
+  const [disableNativeMemory, setDisableNativeMemory] = useState<boolean>(
+    DEFAULT_CONFIG.disableNativeMemory,
+  );
   const [dirty, setDirty] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
@@ -36,6 +40,7 @@ export function SettingsPage() {
   useEffect(() => {
     const base = config ?? DEFAULT_CONFIG;
     setPlatforms(base.platforms);
+    setDisableNativeMemory(base.disableNativeMemory ?? true);
     setDirty(false);
     setSaveSuccess(false);
   }, [config]);
@@ -56,9 +61,15 @@ export function SettingsPage() {
     });
   };
 
+  const toggleNativeMemory = () => {
+    setDisableNativeMemory((prev) => !prev);
+    setDirty(true);
+    setSaveSuccess(false);
+  };
+
   const handleSave = () => {
     updateConfig.mutate(
-      { platforms },
+      { platforms, disableNativeMemory },
       {
         onSuccess: () => {
           setDirty(false);
@@ -107,6 +118,22 @@ export function SettingsPage() {
               <span>{t(labelKey)}</span>
             </label>
           ))}
+        </div>
+      </section>
+
+      <section className="settings-section">
+        <h2 className="settings-section-title">{t('settings.memory')}</h2>
+        <div className="settings-checkboxes">
+          <label className="settings-checkbox-label">
+            <input
+              type="checkbox"
+              className="settings-checkbox"
+              checked={disableNativeMemory}
+              onChange={toggleNativeMemory}
+            />
+            <span>{t('settings.native_memory.label')}</span>
+          </label>
+          <p className="settings-field-hint">{t('settings.native_memory.hint')}</p>
         </div>
       </section>
     </div>

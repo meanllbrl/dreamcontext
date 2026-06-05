@@ -9,7 +9,7 @@ priority: high
 urgency: medium
 status: completed
 created_at: '2026-05-09'
-updated_at: '2026-05-23'
+updated_at: '2026-06-05'
 tags:
   - agents
   - sleep
@@ -140,6 +140,9 @@ Hook debt messages (in `src/cli/commands/hook.ts` / sleep CLI surfaces) instruct
 
 
 
+
+### 2026-06-05 - Session Update
+- 2026-06-04: Added dedup rules to sleep-tasks + sleep-product agent prompts and SKILL.md; review PASS. Canonical vs build-output file table clarified (agents/+.codex/ tracked; dist/+.claude/ build/dogfood). Rubric: smaller slice folds into existing task (broaden description:+Why, insert sub-items) rather than forking duplicate.
 ### 2026-05-10 - Session Update
 - 2026-05-10 follow-up: 5-specialist design collapsed to 3 (sleep-state + sleep-product + sleep-tasks) in task sleep-fanout-3specialist-collapse. sleep-core+sleep-changelog merged into sleep-state; sleep-knowledge+sleep-features merged into sleep-product. Original task remains accurate for the v0.3.0 5-specialist architecture; collapse is tracked separately.
 ### 2026-05-09 - Session Update

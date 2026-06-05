@@ -2,7 +2,7 @@
 id: "feat_I4gU7kKs"
 status: "in_review"
 created: "2026-05-09"
-updated: "2026-05-23"
+updated: "2026-06-05"
 released_version: null
 tags: ["agents", "sleep", "consolidation"]
 related_tasks: ["sleep-fanout-architecture"]
@@ -46,6 +46,8 @@ Each specialist runs with its own narrow context, owns one domain, and cannot st
 
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
+
+- **[2026-06-04]** Dedup hardening shipped in both `sleep-tasks` and `sleep-product` prompts. Root cause of duplication failures: `sleep-tasks` Step 2 previously said "create one" without a mandatory recall-first dedup gate; `sleep-product` had a one-line dedup note but no sharp-vs-soft distinction rubric. Fix: (a) `sleep-tasks` Step 2 now requires `memory recall --types task` + active-list scan before any create, with an explicit decision table (smaller slice → fold into existing via `tasks insert`; genuine new concern → create); (b) `sleep-product` B2 now has a full "consolidation rubric" (extend existing on soft/family distinction, create only on sharp topical boundary that sharpens tags). The rubric is also referenced in the orchestrator brief sent to each specialist. Four agent file locations kept in sync: `agents/`, `.codex/agents/prompts/`, `.claude/agents/`, `dist/agents/`.
 
 - **[2026-05-22]** `sleep-state` B0 split into two gates: B0a (two-observation recurrence threshold) for preference/decision updates to `1.user.md` + `2.memory.md`; B0b (single-observation, code-reality) for `3.style_guide`, `4.tech_stack`, `core/data-structures/*`, `6.system_flow`. This prevents stale data-structure docs from requiring two sessions before a refresh. B1 priority row removed from the sleep-state protocol (was confusing, removed as dead weight).
 - **[2026-05-22]** `sleep-product` A4 broadened: new PRD triggers are now OR(a) ≥2 acceptance criteria, (b) user named feature explicitly, (c) dangling `feature:` frontmatter in a task file. ACs in a newly-created PRD may be empty placeholder stubs — PRDs are created speculatively and filled during subsequent sessions.
@@ -95,6 +97,12 @@ Each specialist runs with its own narrow context, owns one domain, and cannot st
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-06-04 - Dedup hardening: recall-before-create + consolidation rubric
+- `sleep-tasks` Step 2: mandatory `memory recall --types task` + active-list scan before create; decision table distinguishes fold-in (smaller slice) vs new task (genuinely separate concern).
+- `sleep-product` B2: new "Create vs. extend — the consolidation rubric" section (soft/family → extend; sharp topical boundary → create); B1 table routes "new research" through rubric first.
+- Orchestrator brief (SKILL.md): "Consolidation discipline" reminder appended to parallel specialist dispatch step.
+- Four agent locations kept in sync (agents/, .codex/agents/prompts/, .claude/agents/, dist/agents/).
 
 ### 2026-05-22 - v0.4 specialist protocol refinements
 - sleep-state B0 split: B0a two-observation gate (prefs/decisions) vs B0b single-observation (code reality: style_guide, tech_stack, data-structures, system_flow). B1 priority row removed.

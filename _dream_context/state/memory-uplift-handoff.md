@@ -7,7 +7,7 @@ description: >-
   and #2. Benchmark: recall@1 68.3→85.0%, recall@3 81.7→95.0%. Resume is no
   longer needed. Retained for the record; user may mark completed.
 status: in_review
-updated_at: '2026-06-02'
+updated_at: '2026-06-05'
 tags:
   - handoff
   - resume
@@ -87,6 +87,9 @@ Embeddings/vector overlay; WAVE 3 (sub-agent write-back / recall-in-briefing / s
 
 
 
+
+### 2026-06-05 - Session Update
+- 2026-06-04 (session 21bbee0c): npm publish blocked by expired npm token — not a permission issue. User needs to re-login (npm login) then publish. Task body already marked COMPLETE. No code changes needed.
 ### 2026-06-02 - Status → in_review
 - Build complete; PRs #1+#2 merged to main. Handoff superseded — no resume needed. User may mark completed.
 ### 2026-06-02 - Session Update

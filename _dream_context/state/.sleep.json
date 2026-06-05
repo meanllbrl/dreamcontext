@@ -1,24 +1,76 @@
 {
-  "debt": 0,
-  "last_sleep": "2026-06-02",
-  "last_sleep_summary": "Shipped a recall-engine overhaul + continuous capture to main (PRs #1, #2). Batch 1: BM25F field weighting, recency/status re-rank, TR/EN stemming + synonyms, Haiku index relevance-ranking — lifting recall@1 68.3->85.0% and recall@3 81.7->95.0% on a 60-query gold set (Turkish 37.5->75, paraphrase 41.7->66.7), no regressions, 1063 tests green. Core invariant: new ranking signals feed a derived rankScore; raw hit.score stays flat-BM25 so hook gate thresholds are unaffected. Batch 2: continuous capture (auto transcript digest on SessionStart catch-up + auto-salience bookmarks + recall indexing + knowledge_access feedback) implementing the brain's awake-ripple tagging, guarded by CAPTURE_RANK_PENALTY 0.5 + K=50 digest cap (proven 0 true displacement; fixed a latent created_at Date-parse bug). Batch 3: explore recall allowlist + revived dead .env gate. Consolidation: 3 changelog entries, 2 memory decisions, soul stale keyword-search rule -> BM25F, new knowledge/recall-engine-v2.md, updated memory-recall-bm25 + sleep-consolidation PRDs, roadmap tasks -> in_review (Wave 0-2 + guard done; Wave 3-4 remain). Also v0.5.4 update-prune fix. v0.5.4 publishable; v0.6.0 in planning.",
+  "debt": 1,
+  "last_sleep": "2026-06-05",
+  "last_sleep_summary": "Consolidated 6 sessions of uncommitted v0.6.0 work (no git commits since 2026-06-02). Tasks: reconciled landing-page-v2, dashboard-alignment, reflection-engine, disable-claude-native-memory from skeletons to full bodies — all ticked complete + Workflow nodes synced (doctor PASS), bumped/kept in_review for user verification; folded excalidraw + video-watching into optional-skill-packs; logged sleep-fanout dedup work + npm-token blocker; no duplicate tasks created. State: 7 changelog entries (skill-packs bundleDir + 2 skills, config native-memory, reflection engine, About/landing page + FlowDiagram, dashboard alignment, sleep dedup hardening), +3 memory Technical Decisions (bundleDir/CJS install convention, autoMemoryEnabled:false default-disable, canonical-vs-build-output file map) + 2 Known Issues (Haiku 8K index truncation drops ~half of corpus; knowledge_access never fed by recall path), soul priority + tech_stack updated. Product: updated optional-skill-packs, sleep-fanout-architecture, sleep-consolidation, web-dashboard (landing v2 + alignment), control-panel (folded in native-memory toggle) PRDs; created reflection-engine PRD (9 ACs); ECC audit findings confirmed already-documented in haiku-recall-architecture + recall-engine-v2. v0.6.0 feature-complete but NOT released — npm token expired (re-login then publish); 2 tasks still in_progress (snapshot-changelog-refactor, v06-control-panel-vaults-tauri). Marketing rem-sleep clean (10 runs kept).",
   "sleep_started_at": null,
-  "sessions_since_last_sleep": 0,
-  "sessions": [],
-  "bookmarks": [],
+  "sessions_since_last_sleep": 1,
+  "sessions": [
+    {
+      "session_id": "0ff7a890-4f7b-45a7-b477-e41c2581a2e4",
+      "transcript_path": "/Users/mehmetnuraydin/.claude/projects/-Users-mehmetnuraydin-projects-dreamcontext/0ff7a890-4f7b-45a7-b477-e41c2581a2e4.jsonl",
+      "stopped_at": "2026-06-05T14:44:30.370Z",
+      "last_assistant_message": "Uyudum ve uyandım — consolidation complete. **Sleep debt 18 → 0.**\n\n## Ne konsolide edildi (6 oturum, hepsi commit'lenmemiş v0.6.0 işi)\n\n**Üç specialist paralel çalıştı:**\n\n**📋 Tasks** — 4 yeni task iskeletten tam gövdeye reconcile edildi (`landing-page-v2`, `dashboard-alignment`, `reflection-engine`, `disable-claude-native-memory`): tüm acceptance criteria işaretlendi, Workflow mermaid node'ları senkronlandı (doctor PASS), hepsi `in_review`'da (senin doğrulaman için). `excalidraw` + `video-watching` skill'leri ayrı task açılmadan `optional-skill-packs`'a fold edildi. **Sıfır duplikasyon** — yeni dedup kurallarının ilk canlı testi temiz geçti.\n\n**🧠 State** — 7 changelog girdisi, **+3 Technical Decision** (bundleDir/CJS skill-install konvansiyonu · `autoMemoryEnabled:false` default-disable · canonical-vs-build-output dosya haritası), **+2 Known Issue** (Haiku 8K index truncation korpusun ~yarısını sessizce düşürüyor · `knowledge_access` recall path'ten beslenmiyor), soul + tech_stack güncellendi.\n\n**📦 Product** — `optional-skill-packs`, `sleep-fanout-architecture`, `sleep-consolidation`, `web-dashboard`, `control-panel` PRD'leri güncellendi; **yeni `reflection-engine` PRD'si** oluşturuldu (9 AC). ECC audit bulguları zaten `haiku-recall-architecture` + `recall-engine-v2`'de dökümante edilmiş — gereksiz dosya açılmadı.\n\nMarketing rem-sleep temiz (10 run korundu). Council'de sadece Nisan'dan kalma demo debate var — promote edilecek bir şey yok.\n\n## ⚠️ İki not\n1. **Hiçbir şey commit'lenmedi** — tüm v0.6.0 işi working tree'de duruyor. İstersen şimdi commit'leyebilirim.\n2. **v0.6.0 feature-complete ama yayınlanmadı** — npm token'ın süresi dolmuş (401). `npm login` sonrası `npm publish` ile geçer. Hâlâ 2 task `in_progress`: `snapshot-changelog-refactor` ve `v06-control-panel-vaults-tauri`.\n\nCommit atmamı ister misin, yoksa önce in_review task'ları gözden mi geçireceksin?",
+      "change_count": 0,
+      "tool_count": 15,
+      "score": 1,
+      "task_slugs": []
+    }
+  ],
+  "bookmarks": [
+    {
+      "id": "bm_kCzUl4Ok",
+      "message": "Decision: Base directory for this skill: /Users/mehmetnuraydin/projects/dreamcontext/.claude/skills/dreamcontext # Agent Context System ## Why This System Exists Humans write journals, manifestos, le…",
+      "salience": 2,
+      "created_at": "2026-06-05T14:49:09.044Z",
+      "session_id": "0ff7a890-4f7b-45a7-b477-e41c2581a2e4",
+      "task_slug": null
+    },
+    {
+      "id": "bm_YpHD88Mj",
+      "message": "User correction: All files in order. Let me do a final check on the session 6 (npm token issue) — this is ops-only with no product doc impact, confirmed no-op. --- ## sleep-product report ### Feature…",
+      "salience": 2,
+      "created_at": "2026-06-05T14:49:09.044Z",
+      "session_id": "0ff7a890-4f7b-45a7-b477-e41c2581a2e4",
+      "task_slug": null
+    },
+    {
+      "id": "bm_5w7hv9F5",
+      "message": "User correction: --- ## sleep-tasks report **Tasks reconciled this cycle:** **Updated (log + body reconciled):** - `sleep-fanout-architecture` (completed — no status change): Logged dedup rule work f…",
+      "salience": 2,
+      "created_at": "2026-06-05T14:49:09.044Z",
+      "session_id": "0ff7a890-4f7b-45a7-b477-e41c2581a2e4",
+      "task_slug": null
+    },
+    {
+      "id": "bm_VfjNRnrJ",
+      "message": "User correction: All files are within or near ceiling. Final summary: --- ## sleep-state report ### Changelog & releases Entries added: 7 - `feat(skill-packs)` — \"Vendor excalidraw + video-watching s…",
+      "salience": 2,
+      "created_at": "2026-06-05T14:49:09.044Z",
+      "session_id": "0ff7a890-4f7b-45a7-b477-e41c2581a2e4",
+      "task_slug": null
+    },
+    {
+      "id": "bm_8VURsHn-",
+      "message": "User correction: Base directory for this skill: /Users/mehmetnuraydin/projects/dreamcontext/.claude/skills/dreamcontext # Agent Context System ## Why This System Exists Humans write journals, manifes…",
+      "salience": 2,
+      "created_at": "2026-06-05T14:49:09.044Z",
+      "session_id": "0ff7a890-4f7b-45a7-b477-e41c2581a2e4",
+      "task_slug": null
+    }
+  ],
   "triggers": [],
   "knowledge_access": {
     "project-origin-and-prd": {
-      "last_accessed": "2026-05-31",
-      "count": 3
+      "last_accessed": "2026-06-05",
+      "count": 5
     },
     "decision-meta-marketing-skill-adoption": {
       "last_accessed": "2026-05-31",
       "count": 2
     },
     "decision-mem0-vs-bm25-recall": {
-      "last_accessed": "2026-05-26",
-      "count": 2
+      "last_accessed": "2026-06-05",
+      "count": 4
     },
     "multi-reviewer-pattern": {
       "last_accessed": "2026-05-26",
@@ -27,10 +79,45 @@
     "dashboard-server-security": {
       "last_accessed": "2026-05-31",
       "count": 1
+    },
+    "publish-checklist": {
+      "last_accessed": "2026-06-05",
+      "count": 2
+    },
+    "decision-link-aware-vs-embedding-recall": {
+      "last_accessed": "2026-06-05",
+      "count": 2
+    },
+    "positioning": {
+      "last_accessed": "2026-06-05",
+      "count": 4
+    },
+    "haiku-recall-architecture": {
+      "last_accessed": "2026-06-05",
+      "count": 4
+    },
+    "memory-archive-2026-h1": {
+      "last_accessed": "2026-06-05",
+      "count": 2
+    },
+    "technical-decisions-archive": {
+      "last_accessed": "2026-06-05",
+      "count": 2
+    },
+    "recall-engine-v2": {
+      "last_accessed": "2026-06-05",
+      "count": 1
     }
   },
   "dashboard_changes": [],
   "compaction_log": [
+    {
+      "timestamp": "2026-06-05T13:30:54.115Z",
+      "trigger": "manual",
+      "debt_at_compaction": 18,
+      "sessions_count": 6,
+      "bookmarks_count": 15
+    },
     {
       "timestamp": "2026-06-01T12:00:51.195Z",
       "trigger": "auto",

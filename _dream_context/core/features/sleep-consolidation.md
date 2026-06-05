@@ -2,7 +2,7 @@
 id: feat_9qLM-gY_
 status: active
 created: '2026-02-25'
-updated: '2026-06-02'
+updated: '2026-06-05'
 released_version: 0.1.0
 tags:
   - architecture
@@ -51,6 +51,7 @@ Agents accumulate knowledge and make decisions across many sessions, but that kn
 
 ## Constraints & Decisions
 
+- **[2026-06-04]** Dedup hardening shipped in specialist agent prompts. The top consolidation failure mode was fragmented near-duplicate tasks and knowledge files. `sleep-tasks` Step 2 now mandates recall-before-create + fold-in for smaller slices. `sleep-product` B2 adds a "sharp vs soft distinction" rubric — same family/vertical → extend existing file; genuinely separate topical concern → new file. See `sleep-fanout-architecture` PRD for specifics.
 - **[2026-06-02]** Continuous capture (auto-digest + auto-salience) shipped in `memory-uplift` PR. SessionStart catch-up path now produces auto-bookmarks via `detectSalience()` (structural pattern matching, no AI) and auto-digest corpus docs via `session-digest.ts`. Captures are rank-penalized (`CAPTURE_RANK_PENALTY = 0.5` on `rankScore` only) and capped (K=50 most-recent digests) to prevent corpus pollution. Previously 30/32 consolidations had zero bookmarks — this closes the awake-ripple tagging gap without requiring manual bookmark discipline.
 - **[2026-05-23]** Anti-bloat cap on core files tightened from 300 → **150 lines**. Sleep specialists (especially `sleep-state`) enforce this during consolidation: when a core file approaches the cap, content gets promoted to knowledge, archived, or condensed rather than appended.
 - **[2026-05-23]** `2.memory.md` LIFO section removed. The file now contains **Decisions** and **Known Issues** only. Quick captures that used to land in the LIFO section now flow through `dreamcontext memory remember`, which writes a CHANGELOG entry (`type=note`, `scope=quick` by default) instead. CHANGELOG entries are indexed in the recall corpus, so the quick-capture data is more discoverable than under the old LIFO scheme.
@@ -198,6 +199,12 @@ Agents accumulate knowledge and make decisions across many sessions, but that kn
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-06-04 - Dedup hardening: specialist prompts updated with recall-before-create + consolidation rubric
+- Root cause: create-paths in both sleep-tasks and sleep-product lacked strong dedup gates.
+- sleep-tasks Step 2: mandatory recall+scan before create; decision table for fold-in vs new task.
+- sleep-product B2: "Create vs. extend — the consolidation rubric" replaces one-line dedup note.
+- SKILL.md orchestrator brief: "Consolidation discipline" note added to parallel dispatch step.
 
 ### 2026-06-02 - Continuous capture: auto-digest + auto-salience shipped
 - `detectSalience()` (salience.ts): structural pattern detectors (user-correction, error→fix, decision-keyword; EN+TR) run on undigested sessions in the SessionStart catch-up path; auto-bookmarks written to `.sleep.json`.

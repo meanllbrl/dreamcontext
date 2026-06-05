@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, rmSync } from 'node:fs';
+import { mkdirSync, rmSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Readable } from 'node:stream';
@@ -80,6 +80,7 @@ describe('GET /api/config', () => {
       packs: ['engineering'],
       multiProduct: false,
       setupVersion: '1.0.0',
+      disableNativeMemory: true,
     };
     writeSetupConfig(tmpDir, seed);
 
@@ -113,7 +114,7 @@ describe('PATCH /api/config', () => {
   });
 
   it('200: empty packs array is valid (clears packs)', async () => {
-    writeSetupConfig(tmpDir, { platforms: ['claude'], packs: ['engineering'], multiProduct: false, setupVersion: '1.0.0' });
+    writeSetupConfig(tmpDir, { platforms: ['claude'], packs: ['engineering'], multiProduct: false, setupVersion: '1.0.0', disableNativeMemory: true });
     const { res, status, body } = makeRes();
     await handleConfigUpdate(makePatchReq({ packs: [] }), res, {}, contextRoot);
     expect(status()).toBe(200);
@@ -221,5 +222,42 @@ describe('PATCH /api/config', () => {
     await handleConfigGet(makeGetReq(), getRes.res, {}, contextRoot);
     const config = (getRes.body() as Record<string, unknown>).config as SetupConfig;
     expect(config.packs).toEqual(['engineering']);
+  });
+});
+
+// ─── PATCH /api/config — disableNativeMemory ───────────────────────────────────
+
+describe('PATCH /api/config — disableNativeMemory', () => {
+  const settingsPath = () => join(tmpDir, '.claude', 'settings.json');
+
+  it('200: accepts disableNativeMemory:false and persists it', async () => {
+    const { res, status, body } = makeRes();
+    await handleConfigUpdate(makePatchReq({ disableNativeMemory: false }), res, {}, contextRoot);
+    expect(status()).toBe(200);
+    const config = (body() as Record<string, unknown>).config as SetupConfig;
+    expect(config.disableNativeMemory).toBe(false);
+  });
+
+  it('reflects the toggle into .claude/settings.json (autoMemoryEnabled is the inverse)', async () => {
+    const r1 = makeRes();
+    await handleConfigUpdate(makePatchReq({ disableNativeMemory: true }), r1.res, {}, contextRoot);
+    expect(JSON.parse(readFileSync(settingsPath(), 'utf-8')).autoMemoryEnabled).toBe(false);
+
+    const r2 = makeRes();
+    await handleConfigUpdate(makePatchReq({ disableNativeMemory: false }), r2.res, {}, contextRoot);
+    expect(JSON.parse(readFileSync(settingsPath(), 'utf-8')).autoMemoryEnabled).toBe(true);
+  });
+
+  it('400 invalid_disable_native_memory: non-boolean value', async () => {
+    const { res, status, body } = makeRes();
+    await handleConfigUpdate(makePatchReq({ disableNativeMemory: 'yes' }), res, {}, contextRoot);
+    expect(status()).toBe(400);
+    expect((body() as Record<string, unknown>).error).toBe('invalid_disable_native_memory');
+  });
+
+  it('disableNativeMemory alone is a valid change (not no_changes)', async () => {
+    const { res, status } = makeRes();
+    await handleConfigUpdate(makePatchReq({ disableNativeMemory: true }), res, {}, contextRoot);
+    expect(status()).toBe(200);
   });
 });

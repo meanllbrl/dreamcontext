@@ -101,3 +101,15 @@
   flex: 1;
   min-width: 0;
 }
+
+/* CSS @media cannot use custom properties in this Vite setup, so 1024 is a
+   documented literal representing the "tablet" breakpoint. */
+@media (max-width: 1024px) {
+  .knowledge-layout {
+    flex-direction: column;
+  }
+
+  .knowledge-list {
+    width: 100%;
+  }
+}

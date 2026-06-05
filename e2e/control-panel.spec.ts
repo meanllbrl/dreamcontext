@@ -32,7 +32,7 @@ test('drawer collapses and expands (req 1)', async ({ page }) => {
 test('tabs are grouped into sensible sections (req 2)', async ({ page }) => {
   const groups = (await page.locator('.sidebar-group-label').allInnerTexts()).map((s) => s.toLowerCase());
   expect(groups).toEqual(['workspace', 'control panel']);
-  await expect(page.locator('.sidebar-item')).toHaveCount(9);
+  await expect(page.locator('.sidebar-nav .sidebar-item')).toHaveCount(9);
 });
 
 test('installed packs are shown correctly (req 3)', async ({ page }) => {

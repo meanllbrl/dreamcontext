@@ -1,4 +1,6 @@
 .sidebar {
+  display: flex;
+  flex-direction: column;
   width: var(--sidebar-width);
   height: calc(100vh - var(--header-height));
   border-right: 1px solid var(--color-border);
@@ -7,7 +9,63 @@
   overflow-x: hidden;
   overflow-y: auto;
   flex-shrink: 0;
-  transition: width var(--transition-base, 200ms) ease;
+  /* --transition-normal = 240ms ease (token already includes easing; no trailing 'ease') */
+  transition: width var(--transition-normal);
+}
+
+/* Pin the "What is this?" entry to the bottom of the rail. */
+.sidebar-footer {
+  margin-top: auto;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+.sidebar-item--about {
+  color: var(--color-text-secondary);
+}
+.sidebar-item--about .sidebar-icon {
+  color: var(--color-accent);
+}
+.sidebar-item--about:hover .sidebar-icon {
+  color: var(--color-accent);
+}
+
+/* ─── First-run nudge ─────────────────────────────────────────────────────── */
+/* Until the user opens "What is this?" once, the entry stands out and gently
+   bounces to invite the first click. The prominent styling (accent fill + dot)
+   is motion-independent, so it stays discoverable under prefers-reduced-motion
+   even though the global reduced-motion guard freezes the bounce. */
+.sidebar-item--nudge,
+.sidebar-item--nudge:hover {
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
+  font-weight: var(--font-weight-semibold);
+}
+
+.sidebar-item--nudge .sidebar-icon,
+.sidebar-item--nudge:hover .sidebar-icon {
+  color: var(--color-accent);
+}
+
+.sidebar-item--nudge {
+  animation: about-bounce 1.5s ease-in-out infinite;
+}
+
+/* A small pulsing "look here" dot in the top-right corner. */
+.sidebar-item--nudge::after {
+  content: '';
+  position: absolute;
+  top: 5px;
+  right: 8px;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--color-accent);
+  box-shadow: var(--shadow-glow);
+}
+
+@keyframes about-bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
 }
 
 .sidebar--collapsed {

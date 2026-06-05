@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, rmSync, writeFileSync, existsSync, realpathSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync, existsSync, realpathSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -165,6 +165,68 @@ describe('uninstallPack — idempotent', () => {
   it('A8: uninstalling a never-installed (but catalog-valid) pack returns removed:[] and does not throw', () => {
     const result = uninstallPack('engineering', tmpDir, ['claude'], manifest);
     expect(result.removed).toEqual([]);
+  });
+});
+
+// ─── A9 — bundleDir standalone (excalidraw) ships its whole code-bearing tree ──
+
+describe('installPack — excalidraw (bundleDir standalone)', () => {
+  it('A9a: copies the entire skill dir (scripts, lib, examples + binary, package.json), not just SKILL.md', () => {
+    const result = installPack('excalidraw', tmpDir, ['claude'], manifest);
+
+    const base = join(tmpDir, '.claude', 'skills', 'excalidraw');
+    // Prompt + runnable assets + vendored lib + commonjs scoping + binary asset.
+    expect(existsSync(join(base, 'SKILL.md'))).toBe(true);
+    expect(existsSync(join(base, 'scripts', 'build_excalidraw.js'))).toBe(true);
+    expect(existsSync(join(base, 'scripts', 'lib', 'style.js'))).toBe(true);
+    expect(existsSync(join(base, 'package.json'))).toBe(true);
+    expect(existsSync(join(base, 'examples', 'sample.png'))).toBe(true);
+
+    // Every copied file is recorded as pack-skill, with clean ANSI-free rel paths.
+    expect(result.installed).toContain('.claude/skills/excalidraw/SKILL.md');
+    expect(result.installed).toContain('.claude/skills/excalidraw/scripts/build_excalidraw.js');
+    for (const p of result.installed) {
+      expect(ANSI.test(p)).toBe(false);
+      expect(manifest.files[p]?.kind).toBe('pack-skill');
+    }
+    expect(manifest.packs.excalidraw).toBeDefined();
+  });
+
+  it('A9b: uninstall removes the whole bundled dir and drops its manifest entries', () => {
+    installPack('excalidraw', tmpDir, ['claude'], manifest);
+    const base = join(tmpDir, '.claude', 'skills', 'excalidraw');
+    expect(existsSync(base)).toBe(true);
+
+    const result = uninstallPack('excalidraw', tmpDir, ['claude'], manifest);
+    expect(result.removed).toContain('.claude/skills/excalidraw/scripts/build_excalidraw.js');
+    expect(existsSync(base)).toBe(false);
+    expect(manifest.packs.excalidraw).toBeUndefined();
+    expect(Object.keys(manifest.files).some((f) => f.startsWith('.claude/skills/excalidraw/'))).toBe(false);
+  });
+});
+
+// ─── A9c — bundleDir preserves the executable bit on shipped shell scripts ─────
+
+describe('installPack — video-watching (bundleDir + executable engine)', () => {
+  it('A9c: ships the scripts/ engine and keeps transcribe.sh executable', () => {
+    const result = installPack('video-watching', tmpDir, ['claude'], manifest);
+
+    const base = join(tmpDir, '.claude', 'skills', 'video-watching');
+    expect(existsSync(join(base, 'SKILL.md'))).toBe(true);
+    expect(existsSync(join(base, 'scripts', 'transcribe.sh'))).toBe(true);
+    expect(existsSync(join(base, 'scripts', 'gap_fill.py'))).toBe(true);
+    expect(existsSync(join(base, 'scripts', 'build_frame_index.py'))).toBe(true);
+
+    // SKILL.md invokes `./scripts/transcribe.sh`, so the exec bit must survive the copy.
+    const mode = statSync(join(base, 'scripts', 'transcribe.sh')).mode;
+    expect(mode & 0o111).not.toBe(0);
+
+    expect(result.installed).toContain('.claude/skills/video-watching/scripts/transcribe.sh');
+    for (const p of result.installed) {
+      expect(ANSI.test(p)).toBe(false);
+      expect(manifest.files[p]?.kind).toBe('pack-skill');
+    }
+    expect(manifest.packs['video-watching']).toBeDefined();
   });
 });
 

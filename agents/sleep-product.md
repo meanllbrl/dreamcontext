@@ -167,7 +167,7 @@ For each knowledge candidate (research finding, sleep-state flag, extracted over
 
 | Signal | Action |
 |---|---|
-| New research or decision worth long-term retention | `dreamcontext knowledge create <slug> --tags "<tag1>,<tag2>"` then Edit body |
+| New research or decision worth long-term retention | Decide create-vs-extend per **B2's consolidation rubric** first, then `dreamcontext knowledge create <slug> --tags "<tag1>,<tag2>"` and Edit body — *or* extend an existing file |
 | Existing knowledge file gained new findings | Edit the file; update frontmatter `summary:` if drifted |
 | `sleep-state` flagged stale-archival candidate | Read the file; if no longer load-bearing, append to a top-level `archive/` knowledge file or set `archived: true` in frontmatter (per project convention) |
 | `sleep-state` flagged frequent-access-not-pinned | Edit frontmatter: `pinned: true` |
@@ -175,9 +175,29 @@ For each knowledge candidate (research finding, sleep-state flag, extracted over
 | Overflow extracted from core file (one-line reference left there) | `dreamcontext knowledge create <slug>` and paste the extracted content |
 | Cross-cutting finding from your own features pass | Capture inline (no need to flag — you own both domains this cycle) |
 
-#### B2. Create new knowledge files
+#### B2. Create vs. extend — the consolidation rubric
 
-**Dedup pre-check.** Before creating, run `dreamcontext memory recall "<topic>" --types knowledge,feature` — if the top hit is a near-match, extend that file instead of forking the topic across two slugs.
+**A knowledge file is a tag-able identity, not a dumping ground.** Aim for the *fewest* files that keep each topic cleanly findable. Fragmenting one topic across many near-duplicate slugs makes tags noisy and recall worse; cramming unrelated topics into one super-file makes tags meaningless. Pick the boundary on purpose.
+
+**Dedup first — recall by the topic AND by its family** (vertical / brand / parent domain), not just the exact phrase:
+
+```bash
+dreamcontext memory recall "<topic>" --types knowledge,feature
+dreamcontext memory recall "<vertical / brand / parent domain>" --types knowledge,feature
+```
+
+Then decide — **default to extending an existing file**:
+
+| The finding is… | Action |
+|---|---|
+| The **same vertical / brand / topic family** as an existing file, or a sub-aspect / increment / follow-up of a topic already covered (a *soft* distinction) | **Extend that file** — add a section, update `summary:` if it drifted. Don't fork a near-duplicate slug. Similar brands, similar verticals, similar topics belong together in the fewest files. |
+| A **genuinely separate topic / domain / concern** a future session would expect to find standing alone, where its own tag set sharpens discovery (a *sharp* distinction) | **Create a new file** (below). A clean topical boundary earns its own slug so tagging stays valuable. |
+
+The test for sharp-vs-soft: *Would a future recall expect this bundled with the existing file, or standing on its own? Would a separate file make the tag set more discriminating — or just split one topic across two slugs?* If splitting wouldn't sharpen the tags, extend.
+
+This is **not** "always make super-files." Distinct topics MUST get distinct files — that's exactly what makes tags worth having. It's the *soft* distinctions (same family, narrower slice, incremental finding) that fold into an existing file.
+
+**When the rubric says create:**
 
 ```bash
 dreamcontext knowledge create "<descriptive-slug>" \
@@ -247,8 +267,8 @@ This is a one-time bootstrap per product; once the file exists, treat it like an
 - No-op feature signals: 1 (signal "feature_advanced=marketing-dashboard-v0" — but PRD exists and no criteria moved)
 
 ### Knowledge
-- Created: knowledge/jwt-rotation-policy.md (tags: security, decisions; from sleep-state flag)
-- Updated: knowledge/competitive-analysis-ecc.md (added 2026-05-09 follow-up section)
+- Created: knowledge/jwt-rotation-policy.md (tags: security, decisions; from sleep-state flag) — sharp boundary, new tag-able topic
+- Extended (no new file): knowledge/competitive-analysis-ecc.md — folded the new ECC pricing finding into the existing file (soft distinction, same topic family) instead of forking a near-duplicate slug; updated `summary:`
 - Pinned: knowledge/project-origin-and-prd.md (frequently accessed)
 - Archived: 0
 - No-op knowledge signals: 1 (`research_present` was a one-line decision already captured by sleep-state in 2.memory.md — not knowledge-worthy)
@@ -263,6 +283,7 @@ This is a one-time bootstrap per product; once the file exists, treat it like an
 5. **Create PRDs for buildable concepts** that don't have one — they will be lost otherwise.
 6. **Don't create knowledge that already fits in memory.** A short technical decision belongs in `2.memory.md` (sleep-state's domain), not its own knowledge file.
 7. **Knowledge file threshold**: ≥3 paragraphs of content, or material that will be re-read in future sessions.
-8. **Use standard tags only.** New tags fragment discovery.
-9. **Process all flags from sleep-state** in your report — don't silently drop them.
-10. **No-op cheaply** when signals don't actually warrant work.
+8. **Fewest files, sharp boundaries (B2 rubric).** Default to extending an existing file. Fold soft distinctions in — same vertical/brand/topic family, a narrower slice, an increment. Create a new file only for a genuinely separate topic whose own tags sharpen discovery. Not super-files, not fragmentation.
+9. **Use standard tags only.** New tags fragment discovery.
+10. **Process all flags from sleep-state** in your report — don't silently drop them.
+11. **No-op cheaply** when signals don't actually warrant work.

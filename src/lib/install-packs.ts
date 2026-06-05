@@ -251,9 +251,27 @@ function installStandaloneFiles(
 
   const skillRoot = platformSkillRoot(projectRoot, platform);
   const destDir = join(skillRoot, standalone.name);
+  const skillRootRel = skillRoot.replace(projectRoot + sep, '');
   mkdirSync(destDir, { recursive: true });
+
+  // Code-bearing skills: copy the whole source dir (scripts, examples, libs,
+  // a commonjs-scoping package.json, …) so runnable assets ship with the prompt.
+  // cpSync is a raw byte copy, so binary assets (e.g. sample images) survive.
+  if (standalone.bundleDir) {
+    const srcDir = dirname(src);
+    cpSync(srcDir, destDir, { recursive: true });
+    const files: string[] = [];
+    walk(destDir, '', files);
+    const rels = files
+      .map((f) => `${skillRootRel}/${standalone.name}/${f.split('\\').join('/')}`)
+      .sort();
+    for (const rel of rels) recordIfManifest(manifest, rel, 'pack-skill');
+    if (manifest) recordPack(manifest, standalone.name, dreamcontextVersion());
+    return rels;
+  }
+
   writeFileSync(join(destDir, 'SKILL.md'), readFileSync(src, 'utf-8'), 'utf-8');
-  const rel = `${skillRoot.replace(projectRoot + sep, '')}/${standalone.name}/SKILL.md`;
+  const rel = `${skillRootRel}/${standalone.name}/SKILL.md`;
   recordIfManifest(manifest, rel, 'pack-skill');
   if (manifest) recordPack(manifest, standalone.name, dreamcontextVersion());
   return [rel];

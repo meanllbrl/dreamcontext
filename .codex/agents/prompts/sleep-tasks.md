@@ -49,8 +49,41 @@ Also read `_dream_context/state/.sleep.json` directly for `sessions[].last_assis
 
 For each session:
 
-- **Has `task_slugs`** → those are the task(s) to update.
-- **No `task_slugs`** → check `last_assistant_message`, the user hint in the brief, and bookmark messages for a task name. If significant work has no matching task, **create one**:
+- **Has `task_slugs`** → those are the task(s) to update. Go to step 3.
+- **No `task_slugs`** → check `last_assistant_message`, the user hint in the brief, and bookmark messages for what the work was about.
+
+**Before creating anything, dedup against existing tasks.** Duplicate tasks — and tasks that are really just a smaller slice of one that already exists — are the #1 consolidation failure mode. A "much smaller piece" of an existing task is **never** its own task. Recall by topic and scan the active list first:
+
+```bash
+dreamcontext memory recall "<topic / feature / area>" --types task
+dreamcontext tasks list --status in_progress
+dreamcontext tasks list --status in_review
+```
+
+Then decide with this rubric — **default to folding in, not forking a new task**:
+
+| The session's work is… | Action |
+|---|---|
+| A **smaller piece, sub-step, or follow-up** of a task that already exists (same feature/area, narrower scope) | **Do NOT create a task.** Fold it into the existing one (see below). |
+| The **same work** as an existing task, observed again | Update that task (step 3). No new task. |
+| A **genuinely separate concern** — a different feature/area/deliverable, not a slice of an existing task | Create a new task (below). |
+
+**Folding a smaller piece into an existing task** (the case the system keeps getting wrong):
+
+1. If the existing task's scope grew to include this work, **broaden its title/scope** — Edit the frontmatter `description:` (the one-line scope) and the `## Why` so the header reflects the now-wider scope. Don't leave a stale, too-narrow title with the new work buried only in the changelog. (Renaming the slug/`name:` is usually unnecessary and breaks links — only do it if the scope fundamentally changed identity.)
+2. Add the new work as concrete **sub-items in the body**, not a new file:
+
+```bash
+dreamcontext tasks insert <slug> user_stories "<as a … I want …>"
+dreamcontext tasks insert <slug> acceptance_criteria "<testable criterion>"
+dreamcontext tasks insert <slug> notes "<follow-up / smaller piece>"
+```
+
+3. Tick/extend the Workflow Mermaid nodes if the task has them.
+
+**Sub-tasks (`parent_task`) are for genuinely large decomposition only** — an epic that legitimately splits into separable deliverables. Do not spawn a child task for a slice that fits as a user story or acceptance criterion in the parent. When in doubt, fold in.
+
+**Create a new task only when the rubric says "separate concern":**
 
 ```bash
 # Ensure an active planning version exists (orchestrator should have done this; verify)
@@ -63,7 +96,7 @@ dreamcontext tasks create "<descriptive-slug>" --status in_progress --priority m
   --description "<one-line scope>"
 ```
 
-Untracked work is invisible to future sessions. Always link.
+Untracked, genuinely-separate work is invisible to future sessions — always link it. But a smaller slice of existing work belongs *inside* that task, never in a duplicate.
 
 ### 3. Log progress AND reconcile the body — both required
 
@@ -118,7 +151,8 @@ If every task linked to the active version is `completed` (or only `in_review` r
 ```
 ## sleep-tasks report
 - Updated: <slug> (in_progress → in_review, "<reason>"), <slug> (logged)
-- Created: <slug> (status: in_progress, attached to vX.Y.Z)
+- Folded in (no new task): <existing-slug> — broadened scope + added 2 user stories / 1 criterion for <smaller-piece> instead of forking a duplicate
+- Created: <slug> (status: in_progress, attached to vX.Y.Z) — genuinely separate concern
 - Body reconciled: <slug> (dropped phase 1 from User Stories; replaced Technical Details auth section)
 - Version readiness: vX.Y.Z — 4/5 tasks ready for review
 - Cross-domain mentions: <slug> includes a memory-worthy decision about JWT — flagging for sleep-state
@@ -127,8 +161,9 @@ If every task linked to the active version is `completed` (or only `in_review` r
 
 ## Rules
 
-1. **Body = current truth, Changelog = history.** Don't let the body lag behind decisions.
-2. **Never auto-complete.** Bump to `in_review`.
-3. **Always attach to a planning version.** No orphan work.
-4. **Stay in your lane.** If you spot non-task work worth preserving, flag it — don't write it.
-5. **CLI first** for status/log/insert; **Edit** for surgical body reconciliation.
+1. **Dedup before creating.** Recall first; fold a smaller slice into the task that already covers it — broaden its title + insert sub-items — instead of forking a duplicate or a needless sub-task. A new task is only for a genuinely separate concern.
+2. **Body = current truth, Changelog = history.** Don't let the body lag behind decisions.
+3. **Never auto-complete.** Bump to `in_review`.
+4. **Always attach to a planning version.** No orphan work.
+5. **Stay in your lane.** If you spot non-task work worth preserving, flag it — don't write it.
+6. **CLI first** for status/log/insert; **Edit** for surgical body reconciliation (including broadening `description:` / `## Why` when scope grows).

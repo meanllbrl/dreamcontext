@@ -9,7 +9,7 @@ priority: critical
 urgency: medium
 status: completed
 created_at: '2026-03-24'
-updated_at: '2026-05-02'
+updated_at: '2026-06-05'
 tags:
   - skills
   - cli
@@ -47,6 +47,8 @@ Users of dreamcontext need curated, high-quality skills beyond the core context 
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
 
+
+- **[2026-06-05]** 2026-06-04: bundleDir:true in catalog.json + cpSync in installStandaloneFiles (install-skill.ts) copies full skill directory including scripts/lib/* and binary assets; preserves exec bits. Required for code-bearing skills (excalidraw, video-watching) that have CommonJS scripts. Skill root must include package.json {"type":"commonjs"} to survive ESM hosts.
 ### 2026-03-24 - Agents separated from skills, flat structure
 Agents are fundamentally different from skills (executable vs context). Moved all agents out of pack directories into `skill-packs/agents/` (flat, no subdirs, matching `.claude/agents/` layout). catalog.json has top-level `agents` array with `pack` field linking each agent to its related pack. Packs reference agents via `relatedAgents` (name list). Install CLI will copy agents to `.claude/agents/` separately from skills.
 
@@ -169,6 +171,9 @@ brand-voice-enforcement, discover-brand, guideline-generation, reviewer agent, d
 
 
 
+
+### 2026-06-05 - Session Update
+- 2026-06-04: video-watching skill added (skill-packs/video-watching/SKILL.md + scripts/). 2026-06-04: excalidraw skill added (skill-packs/excalidraw/ — bundled with scripts/lib/ + examples/ + reference/). bundleDir:true install mechanism added to catalog.ts+install-skill.ts (cpSync copies full dir, preserves exec bits). 16/16 install-packs tests pass.
 ### 2026-05-02 - Completed
 - Phase 1+2 shipped in v0.2.0: 4 packs (engineering, design, growth, brand-voice) + council pack + agents. catalog.json, --packs/--skill/--list CLI flags, interactive pack selection, cross-pack dependency warnings, 490 tests. Remaining criterion (official source evaluation) deferred to ecc-inspired-roadmap.
 ### 2026-04-25 - Session Update

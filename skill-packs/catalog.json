@@ -352,6 +352,50 @@
         "security"
       ],
       "alwaysApply": false
+    },
+    {
+      "name": "excalidraw",
+      "file": "excalidraw/SKILL.md",
+      "description": "Generate or extend Obsidian Excalidraw (.excalidraw.md) boards — lay out images/screenshots, text, shapes, arrows, frames, lanes and grids — by writing a small JSON spec and running a deterministic script that emits valid plugin markup (near-zero tokens, always renders). Embeds local images via the plugin's sha1 wikilink trick (no base64). Triggers: 'draw this in excalidraw', 'make an excalidraw board', 'excalidraw diagram', 'funnel map board', 'embed screenshots into excalidraw', 'excalidraw çiz', 'excalidraw board oluştur'.",
+      "tags": [
+        "excalidraw",
+        "obsidian",
+        "diagram",
+        "board",
+        "visualization",
+        "screenshots",
+        "funnel-map",
+        "drawing"
+      ],
+      "alwaysApply": false,
+      "bundleDir": true
+    },
+    {
+      "name": "video-watching",
+      "file": "video-watching/SKILL.md",
+      "description": "Load when the user hands over a video file/link or asks to watch/analyze a video, extract a transcript, or 'bu videoda ne var'. Turns a video into a time-mapped transcript with on-screen visuals (slides, UI, charts, text) described inline, then reasons about it. Triggers: 'watch this video', 'videoyu izle/analiz et', 'transkript çıkar', 'video transcript'.",
+      "tags": [
+        "video",
+        "transcript",
+        "whisper",
+        "ffmpeg",
+        "frames",
+        "ocr",
+        "marketing-teardown",
+        "media"
+      ],
+      "alwaysApply": false,
+      "bundleDir": true,
+      "requiresBinaries": [
+        "whisper-cpp",
+        "ffmpeg",
+        "yt-dlp (remote links only)"
+      ],
+      "crossPackDeps": [
+        "growth (marketing-video teardown handoff)",
+        "meta-marketing (ad-creative teardown handoff)",
+        "design/onboarding-design (app-demo / FTE reconstruction handoff)"
+      ]
     }
   ],
   "agents": [

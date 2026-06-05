@@ -28,7 +28,8 @@ import {
   type Manifest,
   type ManagedFileKind,
 } from '../../lib/manifest.js';
-import { updateSetupConfig } from '../../lib/setup-config.js';
+import { readSetupConfig, updateSetupConfig } from '../../lib/setup-config.js';
+import { applyClaudeAutoMemory } from '../../lib/claude-settings.js';
 
 // ─── Hook Constants (Claude) ───────────────────────────────────────────────
 
@@ -39,6 +40,7 @@ const PRE_TOOL_USE_HOOK = 'npx dreamcontext hook pre-tool-use';
 const USER_PROMPT_SUBMIT_HOOK = 'npx dreamcontext hook user-prompt-submit';
 const POST_TOOL_USE_HOOK = 'npx dreamcontext hook post-tool-use';
 const PRE_COMPACT_HOOK = 'npx dreamcontext hook pre-compact';
+const ENSURE_DASHBOARD_HOOK = 'npx dreamcontext hook ensure-dashboard';
 const OLD_HOOK = 'npx dreamcontext snapshot'; // migration target
 
 // ─── Codex Config ──────────────────────────────────────────────────────────
@@ -187,6 +189,11 @@ const HOOK_SPECS: HookSpec[] = [
   { event: 'UserPromptSubmit', command: USER_PROMPT_SUBMIT_HOOK, timeout: 120 },
   { event: 'PostToolUse', command: POST_TOOL_USE_HOOK, timeout: 30, matcher: 'Edit|Write' },
   { event: 'PreCompact', command: PRE_COMPACT_HOOK, timeout: 5 },
+  // Auto-open the dashboard when a session starts and no server is already up.
+  // Separate SessionStart group (own matcher) so it does NOT fire on compaction —
+  // mid-session compaction should not relaunch the dashboard. Opt out with
+  // DREAMCONTEXT_AUTO_DASHBOARD=0. Claude-only (omitted from CODEX_HOOK_SPECS).
+  { event: 'SessionStart', command: ENSURE_DASHBOARD_HOOK, timeout: 10, matcher: 'startup|resume' },
 ];
 
 // ─── Catalog Types ──────────────────────────────────────────────────────────
@@ -794,6 +801,17 @@ export async function installCoreForPlatform(
     }
     if (hookResult.added.length === 0 && !hookResult.migrated) {
       notes.push(platformPrefixed(platform, chalk.dim('Hooks already present — skipped')));
+    }
+
+    // dreamcontext owns project memory: disable Claude's native auto-memory unless
+    // the user opted to keep it (config.disableNativeMemory === false). Config is
+    // absent on first install → default true (disable). Idempotent.
+    const disableNativeMemory = readSetupConfig(projectRoot)?.disableNativeMemory ?? true;
+    const memoryChanged = applyClaudeAutoMemory(projectRoot, disableNativeMemory);
+    if (memoryChanged) {
+      notes.push(platformPrefixed(platform, disableNativeMemory
+        ? chalk.dim('Disabled Claude native auto-memory (autoMemoryEnabled:false) — dreamcontext owns memory')
+        : chalk.dim('Enabled Claude native auto-memory (autoMemoryEnabled:true) per config')));
     }
   } else {
     const codexResult = ensureCodexConfig(projectRoot);

@@ -1,5 +1,22 @@
 [
   {
+    "date": "2026-06-05",
+    "consolidated_at": "2026-06-05T14:44:10.869Z",
+    "summary": "Consolidated 6 sessions of uncommitted v0.6.0 work (no git commits since 2026-06-02). Tasks: reconciled landing-page-v2, dashboard-alignment, reflection-engine, disable-claude-native-memory from skeletons to full bodies — all ticked complete + Workflow nodes synced (doctor PASS), bumped/kept in_review for user verification; folded excalidraw + video-watching into optional-skill-packs; logged sleep-fanout dedup work + npm-token blocker; no duplicate tasks created. State: 7 changelog entries (skill-packs bundleDir + 2 skills, config native-memory, reflection engine, About/landing page + FlowDiagram, dashboard alignment, sleep dedup hardening), +3 memory Technical Decisions (bundleDir/CJS install convention, autoMemoryEnabled:false default-disable, canonical-vs-build-output file map) + 2 Known Issues (Haiku 8K index truncation drops ~half of corpus; knowledge_access never fed by recall path), soul priority + tech_stack updated. Product: updated optional-skill-packs, sleep-fanout-architecture, sleep-consolidation, web-dashboard (landing v2 + alignment), control-panel (folded in native-memory toggle) PRDs; created reflection-engine PRD (9 ACs); ECC audit findings confirmed already-documented in haiku-recall-architecture + recall-engine-v2. v0.6.0 feature-complete but NOT released — npm token expired (re-login then publish); 2 tasks still in_progress (snapshot-changelog-refactor, v06-control-panel-vaults-tauri). Marketing rem-sleep clean (10 runs kept).",
+    "debt_before": 18,
+    "debt_after": 0,
+    "sessions_processed": 6,
+    "bookmarks_processed": 15,
+    "session_ids": [
+      "bebf3a4d-ca29-473f-8909-e8caa351aaa1",
+      "e89db62a-668d-4856-a588-275eacf13c46",
+      "4626d1f6-693a-48aa-aa2d-0bc30c1e67b2",
+      "34b362bc-f6ab-4f7d-8a9e-d7dfaddd75a7",
+      "57b43115-490c-46df-a6d1-7ed602337b20",
+      "21bbee0c-94d6-4a81-9a9f-09d664837ef3"
+    ]
+  },
+  {
     "date": "2026-06-02",
     "consolidated_at": "2026-06-02T09:39:20.221Z",
     "summary": "Shipped a recall-engine overhaul + continuous capture to main (PRs #1, #2). Batch 1: BM25F field weighting, recency/status re-rank, TR/EN stemming + synonyms, Haiku index relevance-ranking — lifting recall@1 68.3->85.0% and recall@3 81.7->95.0% on a 60-query gold set (Turkish 37.5->75, paraphrase 41.7->66.7), no regressions, 1063 tests green. Core invariant: new ranking signals feed a derived rankScore; raw hit.score stays flat-BM25 so hook gate thresholds are unaffected. Batch 2: continuous capture (auto transcript digest on SessionStart catch-up + auto-salience bookmarks + recall indexing + knowledge_access feedback) implementing the brain's awake-ripple tagging, guarded by CAPTURE_RANK_PENALTY 0.5 + K=50 digest cap (proven 0 true displacement; fixed a latent created_at Date-parse bug). Batch 3: explore recall allowlist + revived dead .env gate. Consolidation: 3 changelog entries, 2 memory decisions, soul stale keyword-search rule -> BM25F, new knowledge/recall-engine-v2.md, updated memory-recall-bm25 + sleep-consolidation PRDs, roadmap tasks -> in_review (Wave 0-2 + guard done; Wave 3-4 remain). Also v0.5.4 update-prune fix. v0.5.4 publishable; v0.6.0 in planning.",

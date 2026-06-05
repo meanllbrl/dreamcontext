@@ -1,0 +1,5 @@
+{
+  "type": "commonjs",
+  "private": true,
+  "description": "Scopes the excalidraw skill's vendored scripts to CommonJS so `require()` works even when the host project sets \"type\": \"module\". No dependencies — scripts use only Node builtins + vendored lib/."
+}

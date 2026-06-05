@@ -1,0 +1,279 @@
+/* ──────────────────────────────────────────────────────────────────────────
+   Features showcase — a SPOTLIGHT: a tablist rail of the core faculties beside
+   a large stage that reveals the selected one's living diagram, then a compact
+   grid for the long tail. All values come from design tokens; dark mode is
+   automatic. Desktop-first; collapses to a single column on narrow screens.
+   ────────────────────────────────────────────────────────────────────────── */
+
+.feat-spotlight {
+  display: grid;
+  grid-template-columns: minmax(240px, 300px) 1fr;
+  gap: var(--space-6);
+  align-items: stretch;
+}
+
+/* ── Left rail (the tablist) ────────────────────────────────────────────── */
+.feat-rail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.feat-rail-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  text-align: left;
+  border: 1px solid transparent;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast),
+    border-color var(--transition-fast);
+}
+.feat-rail-item:hover {
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+}
+.feat-rail-item:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 1px;
+}
+.feat-rail-item--active {
+  background: var(--color-bg-secondary);
+  border-color: color-mix(in srgb, var(--color-accent) 32%, var(--color-border));
+  color: var(--color-text);
+  box-shadow: var(--shadow-sm);
+}
+/* The lit accent bar on the active item — ties the rail to the stage. */
+.feat-rail-item--active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 58%;
+  border-radius: var(--radius-full);
+  background: linear-gradient(var(--color-vivid-purple), var(--color-electric-blue));
+}
+.feat-rail-title {
+  font-family: var(--font-family-display);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: -0.01em;
+}
+.feat-rail-tag {
+  flex-shrink: 0;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+.feat-rail-item--active .feat-rail-tag {
+  color: var(--color-accent);
+}
+
+/* ── Right stage (the tabpanel) ─────────────────────────────────────────── */
+.feat-stage {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: clamp(var(--space-6), 3vw, var(--space-8));
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  background:
+    linear-gradient(160deg, var(--color-accent-soft), transparent 55%),
+    var(--color-bg-secondary);
+  min-height: 380px;
+  animation: feat-stage-in var(--transition-normal) ease both;
+}
+.feat-stage:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 2px;
+}
+@keyframes feat-stage-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.feat-stage-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+.feat-stage-chip {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-full);
+}
+.feat-stage-title {
+  font-family: var(--font-family-display);
+  font-size: clamp(var(--font-size-xl), 2.4vw, var(--font-size-2xl));
+  font-weight: var(--font-weight-bold);
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  color: var(--color-text);
+}
+.feat-stage-body {
+  font-size: var(--font-size-base);
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+  max-width: 58ch;
+}
+/* Push the diagram to the bottom of the stage and centre it at a readable size. */
+.feat-stage-flow {
+  margin-top: auto;
+  width: 100%;
+  max-width: 480px;
+  align-self: center;
+}
+
+/* ── The long tail — compact, scannable grid ────────────────────────────── */
+.feat-more {
+  margin-top: var(--space-10);
+}
+.feat-more-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
+}
+.feat-more-label {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+}
+.feat-more-count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
+}
+.feat-more-head::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--color-border);
+}
+
+.feat-more-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-3);
+}
+@media (min-width: 720px) {
+  .feat-more-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (min-width: 1080px) {
+  .feat-more-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+.feat-more-card {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-secondary);
+  transition: border-color var(--transition-fast), transform var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+.feat-more-card:hover {
+  border-color: color-mix(in srgb, var(--color-accent) 40%, var(--color-border));
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+}
+.feat-more-glyph {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-md);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  font-size: var(--font-size-base);
+}
+.feat-more-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.feat-more-title {
+  font-family: var(--font-family-display);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+}
+.feat-more-tagline {
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+  color: var(--color-text-secondary);
+}
+
+/* ── Responsive: collapse the spotlight to one column; rail goes horizontal ── */
+@media (max-width: 860px) {
+  .feat-spotlight {
+    grid-template-columns: 1fr;
+  }
+  .feat-rail {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: var(--space-2);
+    padding-bottom: var(--space-2);
+    scrollbar-width: thin;
+  }
+  .feat-rail-item {
+    flex-shrink: 0;
+    width: auto;
+  }
+  .feat-rail-item--active::before {
+    display: none;
+  }
+  .feat-stage {
+    min-height: 0;
+  }
+}
+
+/* ── Reduced motion ─────────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .feat-stage {
+    animation: none;
+  }
+  .feat-rail-item,
+  .feat-more-card {
+    transition: none;
+  }
+}

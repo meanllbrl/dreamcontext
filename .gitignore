@@ -10,6 +10,11 @@ dashboard/dist/
 
 # Version check cache — ephemeral, project-local, not for VCS
 _dream_context/state/.version-check.json
+# Session digests — ephemeral episodic capture buffer (consolidated by sleep)
+_dream_context/state/.session-digests/
+
+# Obsidian vault config — editor-local (created by the excalidraw skill)
+.obsidian/
 
 # Marketing skill — per-project Python tooling, caches, secrets
 _dream_context/**/.env
@@ -24,3 +29,4 @@ test-results/
 playwright-report/
 e2e/shots/
 .playwright/
+.codex/

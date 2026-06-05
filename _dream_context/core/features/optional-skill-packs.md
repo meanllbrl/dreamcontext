@@ -1,8 +1,8 @@
 ---
 id: "feat_bTBRuxX0"
-status: "in_progress"
+status: "in_review"
 created: "2026-03-24"
-updated: "2026-03-24"
+updated: "2026-06-05"
 released_version: null
 tags: ["skills", "cli", "distribution"]
 related_tasks: ["optional-skill-packs"]
@@ -17,6 +17,7 @@ Users need curated, installable skills beyond the core context management skill.
 - [x] As a developer, I want curated skill packs organized by domain so I can install relevant skills without sifting through individual files
 - [x] As a developer, I want to run `dreamcontext install-skill --packs` to interactively select and install skill packs
 - [x] As a developer, I want to run `dreamcontext install-skill --packs engineering` to install a specific pack directly
+- [x] As a developer, I want to add code-bearing skills (with scripts/binaries) to the catalog and have the entire directory installed correctly, not just the SKILL.md
 - [ ] As a developer, I want to discover more skills from official Claude Code sources and community
 
 ## Acceptance Criteria
@@ -31,10 +32,16 @@ Users need curated, installable skills beyond the core context management skill.
 - [x] Interactive pack selection via @inquirer/prompts
 - [x] Prerequisite resolution (warn if installing a pack without its dependencies)
 - [x] `alwaysApply` handling during install (shown as badge in UI)
+- [x] `bundleDir: true` in catalog entry causes the entire skill directory to be installed (not just SKILL.md), preserving executable bits — required for code-bearing skills with scripts
+- [x] excalidraw skill added: full directory vendored (SKILL.md + build_excalidraw.js + scripts/lib/* + examples/ + reference/), CommonJS compatibility via `package.json {"type":"commonjs"}` in skill root
+- [x] video-watching skill added: SKILL.md + transcribe.sh (executable) + gap_fill.py + build_frame_index.py; aligns with bundleDir pattern; executable bit preserved by cpSync
 - [ ] Skills from official sources evaluated and added (Phase 3, user-supplied sources)
 
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
+
+### 2026-06-04 - Code-bearing skills: bundleDir + CommonJS package.json
+Standalone skills that ship executable scripts must use `bundleDir: true` in catalog.json — `installStandaloneFiles` then uses `cpSync` to copy the whole directory, preserving executable bits (vs. single-file SKILL.md copy). For skills whose scripts use CommonJS (`require`/`module.exports`), add a `package.json {"type":"commonjs"}` at the skill root to override the dreamcontext package-root `"type":"module"`. Without it, Node treats `.js` files as ESM and `require()` calls throw at runtime. Both excalidraw and video-watching follow this pattern.
 
 ### 2026-03-24 - Agents separated from skills, flat structure
 Agents go to `skill-packs/agents/` (flat, no subdirs, matching `.claude/agents/` layout). catalog.json has top-level `agents` array with `pack` field linking each agent to its pack. Packs reference agents via `relatedAgents`.
@@ -56,7 +63,7 @@ Claude Code uses `description` to decide when to load the skill. Generic descrip
 
 ## Technical Details
 
-### Structure (Phase 1 + Level 2 complete, 42 files)
+### Structure (Phase 1 + Level 2 complete + Phase 3 standalone skills, 50+ files)
 
 ```
 skill-packs/
@@ -81,7 +88,30 @@ skill-packs/
     references/                       # 6 shared reference files
   system-prompts/                     # Standalone, alwaysApply: false
     SKILL.md
+  excalidraw/                         # Standalone, bundleDir: true, alwaysApply: false
+    SKILL.md
+    scripts/build_excalidraw.js       # Board generator (CommonJS)
+    scripts/lib/                      # fractional-indexing, imagesize, style
+    examples/                         # sample boards
+    reference/format.md
+    package.json                      # {"type":"commonjs"} — overrides root ESM
+  video-watching/                     # Standalone, bundleDir: true, alwaysApply: false
+    SKILL.md
+    scripts/transcribe.sh             # executable (+x)
+    scripts/gap_fill.py
+    scripts/build_frame_index.py
+    .gitignore
 ```
+
+### Phase 3: Code-Bearing Standalone Skills (COMPLETE)
+
+`CatalogStandalone` type extended with optional `bundleDir: boolean` field. When `true`, `installStandaloneFiles` uses `cpSync` (recursive) instead of a single-file copy, preserving the full directory tree and all file permissions (exec bits). Uninstall removes the entire directory. Manifest tracks all files for clean uninstall.
+
+Skills with CommonJS scripts must include `package.json {"type":"commonjs"}` at the skill root — this scopes CJS resolution to just that subtree without affecting the rest of the package.
+
+Test coverage: `tests/unit/install-packs.test.ts` (A9b: bundleDir copies full tree; A9c: video-watching executable bit preserved after install). Total: 16 install-pack tests.
+
+To install: `dreamcontext install-skill --packs excalidraw` or `--packs video-watching`. Runtime deps for video-watching: `brew install whisper-cpp ffmpeg` (yt-dlp for remote URLs).
 
 ### Phase 2: CLI Install Mechanism (COMPLETE)
 
@@ -108,6 +138,13 @@ Interactive mode: "Install skill packs" and "List skill packs" entries added to 
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-06-04 - Phase 3: excalidraw + video-watching + bundleDir mechanism
+- `bundleDir: true` catalog field added; `installStandaloneFiles` uses `cpSync` (full dir, exec bits preserved); uninstall removes whole directory.
+- CommonJS fix: skills with `require()`-based scripts need `package.json {"type":"commonjs"}` at skill root to survive ESM host packages.
+- excalidraw skill vendored: 11 files (SKILL.md, build_excalidraw.js, scripts/lib/*, examples/*, reference/), end-to-end verified.
+- video-watching skill added: SKILL.md + transcribe.sh (executable) + gap_fill.py + build_frame_index.py; runtime deps: whisper-cpp, ffmpeg.
+- 2 new install-packs tests (A9b, A9c); install-packs 16/16 green; build ships skill-packs/*/  to dist/.
 
 ### 2026-03-24 - Phase 2 complete: CLI install mechanism
 - `install-skill` extended with `--packs`, `--skill`, `--list` flags

@@ -11,7 +11,7 @@ description: >-
 priority: medium
 status: in_review
 created_at: '2026-03-01'
-updated_at: '2026-06-02'
+updated_at: '2026-06-05'
 version: v0.6.0
 tags:
   - roadmap
@@ -52,6 +52,9 @@ Key file: `src/lib/install-skill.ts` (hook registration), `src/lib/hook.ts` (Pre
 
 
 
+
+### 2026-06-05 - Session Update
+- 2026-06-04 (session 21bbee0c): Haiku 8K index truncation confirmed as live issue on this repo (188 docs, ~half silently dropped — SHIPPED in Wave 0). Explore agent Bash allowlist contradiction confirmed (dreamcontext memory recall was missing — SHIPPED in Wave 0). knowledge_access never updated by recall path (Wave 3+ item). npm publish blocked by expired npm token (not a permission issue); user must re-login.
 ### 2026-06-02 - Status → in_review
 - Body filled; .env gate partially addressed (1451ab5). Prompt secret-scan + strategic compact remain, tracked under memory-engine-360-roadmap Wave 4.4. User to verify cross-reference and prioritize.
 ### 2026-06-02 - Session Update

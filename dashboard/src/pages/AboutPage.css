@@ -1,0 +1,72 @@
+/* ──────────────────────────────────────────────────────────────────────────
+   "What is this?" — the landing / explainer page.
+
+   This file is now ONLY the shared scaffolding: the full-bleed page canvas,
+   per-section max-width centering, and the section-header primitives
+   (.about-kicker / .about-h2 / .about-section-lead) that every section
+   component composes on top of. All section-specific styling lives in each
+   component's own .css (Hero.css, ProblemSection.css, …).
+   ────────────────────────────────────────────────────────────────────────── */
+
+.about {
+  margin: calc(var(--space-4) * -1);
+  background:
+    radial-gradient(120% 80% at 80% -10%, var(--color-accent-soft), transparent 60%),
+    radial-gradient(90% 60% at -10% 0%, var(--gradient-brand-subtle), transparent 55%),
+    var(--color-bg);
+  color: var(--color-text);
+  overflow-x: hidden;
+}
+
+/* Constrain every section's content to the page width and centre it. Section
+   components render <section className="about-section …">; Hero renders
+   .about-hero. Both are centred here. */
+.about section,
+.about .about-hero {
+  max-width: var(--page-max-width);
+  margin-inline: auto;
+}
+
+/* ── Generic section scaffolding ────────────────────────────────────────── */
+.about-section {
+  padding: clamp(40px, 6vw, 88px) var(--space-8);
+  border-top: 1px solid var(--color-border);
+}
+.about-kicker {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-accent);
+  margin-bottom: var(--space-3);
+}
+.about-h2 {
+  font-family: var(--font-family-display);
+  font-size: clamp(26px, 3.4vw, 40px);
+  line-height: 1.12;
+  letter-spacing: -0.02em;
+  font-weight: var(--font-weight-bold);
+  margin-bottom: var(--space-4);
+  max-width: 22ch;
+}
+.about-section-lead {
+  font-size: clamp(15px, 1.4vw, 18px);
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+  max-width: 60ch;
+  margin-bottom: var(--space-10);
+}
+.about-section-lead em {
+  font-style: italic;
+  color: var(--color-text);
+}
+
+/* ── Shared animations (consumed by Hero.css) ───────────────────────────── */
+@keyframes about-pulse {
+  0%, 100% { box-shadow: 0 0 0 4px var(--color-accent-soft); }
+  50% { box-shadow: 0 0 0 7px transparent; }
+}
+@keyframes about-breathe {
+  0%, 100% { opacity: 0.28; transform: scale(1); }
+  50% { opacity: 0.44; transform: scale(1.06); }
+}

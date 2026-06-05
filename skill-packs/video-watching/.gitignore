@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+# scratch: any .media/ work dirs or curated transcripts created during local testing
+*.media/

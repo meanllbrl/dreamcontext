@@ -9,7 +9,7 @@ priority: high
 urgency: medium
 status: in_review
 created_at: '2026-06-01'
-updated_at: '2026-06-01'
+updated_at: '2026-06-05'
 tags:
   - control-panel
   - frontend
@@ -89,6 +89,9 @@ User-driven polish after v0.6 slices 1–4. Six concrete fixes to make the contr
 
 
 
+
+### 2026-06-05 - Session Update
+- 2026-06-05 (session 4626d1f6): About page spotlight rail fix — feat-rail-item layout corrected (architecture section shows correct stage+diagram); old .feat-card wall removed; arch transform fixed (no slide). Dist/dashboard sync issue resolved by full npm run build.
 ### 2026-06-01 - Status → in_review
 - 6/6 criteria met; vitest 978 + playwright 4/4 + mac .app builds
 ### 2026-06-01 - Session Update

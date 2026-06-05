@@ -361,3 +361,13 @@ select {
 .animate-stagger-8 {
   animation-delay: 240ms;
 }
+
+/* ─── Narrow title step-down ─── */
+/* CSS @media cannot use custom properties in this Vite setup, so 640 is a
+   documented literal representing the "narrow mobile" breakpoint. */
+@media (max-width: 640px) {
+  .page-title {
+    font-size: var(--font-size-xl);
+    margin-bottom: var(--space-4);
+  }
+}

@@ -1,0 +1,76 @@
+/* ──────────────────────────────────────────────────────────────────────────
+   ClosingSection — the "So — what is this?" sign-off.
+
+   Self-contained port of the old `.about-closing` block. Centered summary, a
+   dark mono command terminal (init / dashboard / sleep), and a quiet foot note.
+   Tokens only; themes light + dark; nothing to disable for reduced motion
+   (no animation here) but it stays correct regardless.
+   ────────────────────────────────────────────────────────────────────────── */
+
+.closing {
+  max-width: var(--page-max-width);
+  margin: 0 auto;
+  padding: clamp(48px, 7vw, 104px) var(--space-8);
+  text-align: center;
+  border-top: 1px solid var(--color-border);
+}
+
+.closing-title {
+  font-family: var(--font-family-display);
+  font-size: clamp(28px, 4vw, 46px);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: -0.02em;
+  margin: 0 0 var(--space-5);
+  color: var(--color-text);
+}
+
+.closing-body {
+  font-size: clamp(16px, 1.6vw, 20px);
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+  max-width: 60ch;
+  margin: 0 auto var(--space-8);
+}
+.closing-body strong {
+  color: var(--color-text);
+  font-weight: var(--font-weight-semibold);
+}
+
+/* ── The command terminal ───────────────────────────────────────────────── */
+.closing-cmds {
+  display: inline-flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  text-align: left;
+  padding: var(--space-6);
+  border-radius: var(--radius-xl);
+  background: var(--color-onyx);
+  box-shadow: var(--shadow-xl);
+  margin-bottom: var(--space-8);
+}
+.closing-cmd {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  color: var(--color-snow);
+  white-space: nowrap;
+}
+.closing-cmd-c {
+  color: var(--color-accent);
+  margin-right: var(--space-2);
+}
+.closing-cmd-text {
+  color: var(--color-snow);
+}
+.closing-cmd-hint {
+  color: color-mix(in srgb, var(--color-snow) 45%, transparent);
+  margin-left: var(--space-2);
+}
+
+/* ── Foot note ──────────────────────────────────────────────────────────── */
+.closing-foot {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+  max-width: 52ch;
+  margin: 0 auto;
+  line-height: 1.55;
+}

@@ -185,3 +185,12 @@
   background: var(--color-bg-tertiary);
   color: var(--color-text);
 }
+
+/* CSS @media cannot use custom properties in this Vite setup, so 640 is a
+   documented literal representing the "narrow mobile" breakpoint.
+   Zoom is a desktop affordance; hiding it prevents header crowding at narrow. */
+@media (max-width: 640px) {
+  .zoom-controls {
+    display: none;
+  }
+}

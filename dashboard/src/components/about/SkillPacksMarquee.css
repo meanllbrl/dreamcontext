@@ -1,0 +1,185 @@
+/* ──────────────────────────────────────────────────────────────────────────
+   Skill packs marquee — an infinite, auto-scrolling row of catalog cards.
+
+   Layout: `.marquee-viewport` is a horizontal flex container holding two
+   identical `.marquee-track` lists side by side. The viewport translates by
+   -50% on a linear infinite loop, so exactly one full list-width scrolls past
+   before the animation seamlessly resets onto the duplicate copy. Edges are
+   masked with a gradient fade. Pauses on hover/focus. Under reduced motion the
+   animation is off and the viewport becomes a normal scrollable row (the
+   duplicate copy is hidden to avoid duplicated content).
+   ────────────────────────────────────────────────────────────────────────── */
+
+.marquee-viewport {
+  --marquee-duration: 50s;
+  display: flex;
+  width: 100%;
+  overflow: hidden;
+  /* Fade the left + right edges so cards melt in/out instead of clipping. */
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 8%,
+    #000 92%,
+    transparent
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 8%,
+    #000 92%,
+    transparent
+  );
+}
+
+.marquee-track {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: stretch;
+  gap: var(--space-5);
+  padding-inline: calc(var(--space-5) / 2);
+  margin: 0;
+  list-style: none;
+  /* Both tracks slide together; -50% of the combined (2×) width = one list. */
+  animation: marquee-scroll var(--marquee-duration) linear infinite;
+  will-change: transform;
+}
+
+/* Pause when the user hovers or tabs into the marquee. */
+.marquee-viewport:hover .marquee-track,
+.marquee-viewport:focus-within .marquee-track {
+  animation-play-state: paused;
+}
+
+@keyframes marquee-scroll {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-100%);
+  }
+}
+
+/* ── Card ───────────────────────────────────────────────────────────────── */
+.marquee-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  flex: 0 0 auto;
+  width: 280px;
+  padding: var(--space-6);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  box-shadow: var(--shadow-sm);
+  transition: transform var(--transition-fast), border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+.marquee-card:hover {
+  transform: translateY(-3px);
+  border-color: var(--color-accent);
+  box-shadow: var(--shadow-lg);
+}
+
+.marquee-chip {
+  align-self: flex-start;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-full);
+}
+.marquee-chip--pack {
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
+}
+.marquee-chip--standalone {
+  color: var(--color-text-tertiary);
+  background: var(--color-bg-tertiary);
+}
+
+.marquee-card-name {
+  font-family: var(--font-family-display);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: -0.01em;
+  color: var(--color-text);
+}
+
+.marquee-card-desc {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+  /* Clamp to ~3 lines so long descriptions don't blow up the card height. */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ── Loading skeleton ───────────────────────────────────────────────────── */
+.marquee-viewport--static {
+  overflow: hidden;
+}
+.marquee-track--skeleton {
+  animation: none;
+}
+.marquee-card--skeleton {
+  width: 280px;
+  height: 150px;
+  background: linear-gradient(
+    100deg,
+    var(--color-bg-secondary),
+    var(--color-bg-tertiary),
+    var(--color-bg-secondary)
+  );
+  background-size: 200% 100%;
+  animation: marquee-shimmer 1.4s ease-in-out infinite;
+}
+@keyframes marquee-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+.marquee-status {
+  margin-top: var(--space-4);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+}
+
+/* ── Reduced motion: no scroll, fall back to a usable scrollable row ─────── */
+@media (prefers-reduced-motion: reduce) {
+  .marquee-viewport {
+    overflow-x: auto;
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+  .marquee-track {
+    animation: none;
+  }
+  .marquee-card--skeleton {
+    animation: none;
+  }
+  /* Hide the duplicate copy so the scrollable row has no doubled content. */
+  .marquee-track--dup {
+    display: none;
+  }
+}
+
+/* ── Responsive ─────────────────────────────────────────────────────────── */
+@media (max-width: 600px) {
+  .marquee-card {
+    width: 240px;
+    padding: var(--space-5);
+  }
+  .marquee-card--skeleton {
+    width: 240px;
+  }
+}

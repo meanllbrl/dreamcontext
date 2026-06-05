@@ -2,6 +2,7 @@ import { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname } from 'node:path';
 import { parseJsonBody, sendJson, sendError } from '../middleware.js';
 import { readSetupConfig, updateSetupConfig } from '../../lib/setup-config.js';
+import { applyClaudeAutoMemory } from '../../lib/claude-settings.js';
 import { parsePlatformList, PLATFORM_CATALOG } from '../../lib/platforms.js';
 
 /**
@@ -37,7 +38,11 @@ export async function handleConfigUpdate(
   }
 
   // Build a FRESH patch from the explicit allow-list — never spread body.
-  const patch: { platforms?: ReturnType<typeof parsePlatformList>['platforms']; packs?: string[] } = {};
+  const patch: {
+    platforms?: ReturnType<typeof parsePlatformList>['platforms'];
+    packs?: string[];
+    disableNativeMemory?: boolean;
+  } = {};
 
   if (body.platforms !== undefined) {
     // Validate: must be an array of strings, then pass through parsePlatformList.
@@ -64,11 +69,29 @@ export async function handleConfigUpdate(
     patch.packs = body.packs as string[];
   }
 
-  if (patch.platforms === undefined && patch.packs === undefined) {
-    sendError(res, 400, 'no_changes', 'Provide at least one of: platforms, packs.');
+  if (body.disableNativeMemory !== undefined) {
+    if (typeof body.disableNativeMemory !== 'boolean') {
+      sendError(res, 400, 'invalid_disable_native_memory', 'disableNativeMemory must be a boolean.');
+      return;
+    }
+    patch.disableNativeMemory = body.disableNativeMemory;
+  }
+
+  if (
+    patch.platforms === undefined &&
+    patch.packs === undefined &&
+    patch.disableNativeMemory === undefined
+  ) {
+    sendError(res, 400, 'no_changes', 'Provide at least one of: platforms, packs, disableNativeMemory.');
     return;
   }
 
-  const next = updateSetupConfig(dirname(contextRoot), patch);
+  const projectRoot = dirname(contextRoot);
+  const next = updateSetupConfig(projectRoot, patch);
+  // Reflect the toggle into Claude Code's .claude/settings.json immediately so the
+  // change takes effect without re-running setup.
+  if (patch.disableNativeMemory !== undefined) {
+    applyClaudeAutoMemory(projectRoot, patch.disableNativeMemory);
+  }
   sendJson(res, 200, { config: next });
 }

@@ -1,0 +1,77 @@
+/* ──────────────────────────────────────────────────────────────────────────
+   HowItWorksSection — three step cards beneath the SessionStart-loop diagram.
+   Namespaced `.hiw2-*` so it never collides with the legacy HowItWorksDiagram
+   (.about-steps / .about-step). Tokens only; dark mode is automatic.
+   ────────────────────────────────────────────────────────────────────────── */
+
+.hiw2-steps {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-6);
+  margin-top: clamp(32px, 4vw, 56px);
+}
+
+.hiw2-step {
+  position: relative;
+  padding: var(--space-6);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  overflow: hidden;
+  transition: transform var(--transition-fast), border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+.hiw2-step::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--color-vivid-purple), var(--color-electric-blue));
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+.hiw2-step:hover {
+  transform: translateY(-3px);
+  border-color: var(--color-accent);
+  box-shadow: var(--shadow-lg);
+}
+.hiw2-step:hover::before {
+  opacity: 1;
+}
+
+.hiw2-step-n {
+  display: inline-block;
+  font-family: var(--font-family-display);
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-bold);
+  background: linear-gradient(100deg, var(--color-vivid-purple), var(--color-electric-blue));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.hiw2-step-title {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+  margin: var(--space-2) 0 var(--space-2);
+}
+
+.hiw2-step-body {
+  font-size: var(--font-size-sm);
+  line-height: 1.55;
+  color: var(--color-text-secondary);
+}
+
+@media (max-width: 860px) {
+  .hiw2-steps {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hiw2-step,
+  .hiw2-step::before {
+    transition: none;
+  }
+}

@@ -364,8 +364,10 @@ parent_task: null
       const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
       expect(settings.hooks).toBeDefined();
       expect(settings.hooks.SessionStart).toBeDefined();
-      expect(settings.hooks.SessionStart).toHaveLength(1);
+      // Two SessionStart groups: the context snapshot + the dashboard auto-open.
+      expect(settings.hooks.SessionStart).toHaveLength(2);
       expect(settings.hooks.SessionStart[0].hooks[0].command).toBe('npx dreamcontext hook session-start');
+      expect(settings.hooks.SessionStart[1].hooks[0].command).toBe('npx dreamcontext hook ensure-dashboard');
       expect(settings.hooks.Stop).toBeDefined();
       expect(settings.hooks.Stop).toHaveLength(1);
       expect(settings.hooks.Stop[0].hooks[0].command).toBe('npx dreamcontext hook stop');
@@ -390,9 +392,10 @@ parent_task: null
       expect(settings.hooks.PostToolUse).toHaveLength(2);
       expect(settings.hooks.PostToolUse[0].hooks[0].command).toBe('echo done');
       expect(settings.hooks.PostToolUse[1].hooks[0].command).toBe('npx dreamcontext hook post-tool-use');
-      // Hooks added
-      expect(settings.hooks.SessionStart).toHaveLength(1);
+      // Hooks added (session-start snapshot + ensure-dashboard auto-open)
+      expect(settings.hooks.SessionStart).toHaveLength(2);
       expect(settings.hooks.SessionStart[0].hooks[0].command).toBe('npx dreamcontext hook session-start');
+      expect(settings.hooks.SessionStart[1].hooks[0].command).toBe('npx dreamcontext hook ensure-dashboard');
       expect(settings.hooks.Stop).toHaveLength(1);
     });
 
@@ -411,9 +414,10 @@ parent_task: null
       run('install-skill', tmpDir);
       const settings = JSON.parse(readFileSync(join(tmpDir, '.claude', 'settings.json'), 'utf-8'));
 
-      // Old hook replaced, not duplicated
-      expect(settings.hooks.SessionStart).toHaveLength(1);
+      // Old hook replaced, not duplicated; ensure-dashboard added as the 2nd group
+      expect(settings.hooks.SessionStart).toHaveLength(2);
       expect(settings.hooks.SessionStart[0].hooks[0].command).toBe('npx dreamcontext hook session-start');
+      expect(settings.hooks.SessionStart[1].hooks[0].command).toBe('npx dreamcontext hook ensure-dashboard');
       // Stop hook also added
       expect(settings.hooks.Stop).toHaveLength(1);
     });
@@ -422,7 +426,8 @@ parent_task: null
       run('install-skill', tmpDir);
       run('install-skill', tmpDir);
       const settings = JSON.parse(readFileSync(join(tmpDir, '.claude', 'settings.json'), 'utf-8'));
-      expect(settings.hooks.SessionStart).toHaveLength(1);
+      // Two SessionStart groups (snapshot + ensure-dashboard), each deduped to one.
+      expect(settings.hooks.SessionStart).toHaveLength(2);
       expect(settings.hooks.Stop).toHaveLength(1);
       expect(settings.hooks.PostToolUse).toHaveLength(1);
       expect(settings.hooks.PreCompact).toHaveLength(1);

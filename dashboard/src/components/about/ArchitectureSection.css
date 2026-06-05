@@ -1,0 +1,270 @@
+/* ──────────────────────────────────────────────────────────────────────────
+   ArchitectureSection — "Memory, organized like a mind."
+
+   A cinematic CORTICAL STACK: the brain-region files rendered as translucent
+   strata laid into a tilted, faux-3D cross-section. Token-gradient edges, a
+   soft brand glow behind the plate, a slow breathe, and a hover that splays the
+   stack so any single layer lifts toward you.
+
+   Tokens only (no hardcoded colors). Themes light + dark. All motion + the 3D
+   tilt collapse to a calm flat list under prefers-reduced-motion.
+   ────────────────────────────────────────────────────────────────────────── */
+
+.arch {
+  position: relative;
+}
+
+/* ── Stage: the perspective viewport the plate sits inside ──────────────── */
+.arch-stage {
+  position: relative;
+  padding: clamp(24px, 4vw, 48px) 0 clamp(16px, 3vw, 36px);
+  margin-inline: auto;
+  max-width: 920px;
+}
+
+/* Brand aura bleeding out from behind the stack — depth + warmth. */
+.arch-glow {
+  position: absolute;
+  inset: -8% 4% 4%;
+  z-index: 0;
+  border-radius: var(--radius-2xl);
+  background:
+    radial-gradient(60% 70% at 28% 18%, var(--color-vivid-purple), transparent 62%),
+    radial-gradient(56% 64% at 82% 86%, var(--color-electric-blue), transparent 60%);
+  filter: blur(56px);
+  opacity: 0.26;
+  animation: arch-breathe 9s ease-in-out infinite;
+}
+
+/* ── The stack: a tilted plate of strata ────────────────────────────────── */
+.arch-stack {
+  position: relative;
+  z-index: 1;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: clamp(10px, 1.4vw, 16px);
+  /* Flat, legible stack — no 3D skew. Depth comes from the lit gradient edge,
+     the brand glow behind, and the hover-lift, not from rotating the plane
+     (which made the faces unreadable and detached the side labels). */
+  animation: arch-settle 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* ── A single stratum ───────────────────────────────────────────────────── */
+.arch-stratum {
+  position: relative;
+  transition:
+    transform var(--transition-normal),
+    box-shadow var(--transition-normal);
+}
+
+/* The luminous leading edge — token gradient, the "lit slice" of the layer,
+   sitting as a thin band under the face so the slab reads as having thickness. */
+.arch-edge {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -3px;
+  height: 3px;
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+  background: linear-gradient(
+    100deg,
+    var(--color-vivid-purple),
+    var(--color-electric-blue)
+  );
+  opacity: 0.55;
+  transition: opacity var(--transition-normal), filter var(--transition-normal);
+}
+
+/* The readable top face of the stratum. */
+.arch-face {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: clamp(12px, 1.6vw, 20px);
+  padding: clamp(14px, 1.8vw, 20px) clamp(16px, 2vw, 24px);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  background:
+    linear-gradient(
+      120deg,
+      color-mix(in srgb, var(--color-bg-secondary) 88%, transparent),
+      color-mix(in srgb, var(--color-bg-tertiary) 70%, transparent)
+    );
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(2px);
+  transition:
+    border-color var(--transition-normal),
+    box-shadow var(--transition-normal);
+}
+
+/* Glyph chip — the region's mark, set in an accent-tinted tile. */
+.arch-glyph {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: clamp(38px, 4vw, 46px);
+  height: clamp(38px, 4vw, 46px);
+  border-radius: var(--radius-md);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  font-size: var(--font-size-lg);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 26%, transparent);
+}
+
+.arch-meta {
+  min-width: 0;
+  flex: 1;
+}
+.arch-meta-top {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-1);
+}
+.arch-file {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+}
+.arch-region {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  background: linear-gradient(
+    100deg,
+    var(--color-vivid-purple),
+    var(--color-electric-blue)
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.arch-brain {
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--color-text-tertiary);
+}
+.arch-desc {
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+  margin: 0;
+}
+
+/* Capabilities that ride on a layer (skills, sub-agents). */
+.arch-rides {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  flex-shrink: 0;
+  gap: 1px;
+  padding-left: clamp(12px, 1.6vw, 18px);
+  border-left: 1px dashed var(--color-border);
+  max-width: 17ch;
+}
+.arch-rides-plus {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-bold);
+  color: var(--color-accent);
+}
+.arch-rides-label {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+}
+.arch-rides-desc {
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+  color: var(--color-text-tertiary);
+}
+
+/* ── Hover: splay the stack, light the layer's edge ─────────────────────── */
+.arch-stratum:hover {
+  transform: translateY(-4px);
+  z-index: 2;
+}
+.arch-stratum:hover .arch-face {
+  border-color: var(--color-accent);
+  box-shadow: var(--shadow-xl);
+}
+.arch-stratum:hover .arch-edge {
+  opacity: 1;
+  filter: drop-shadow(0 0 8px var(--color-accent));
+}
+
+/* ── Footnote under the plate ───────────────────────────────────────────── */
+.arch-foot {
+  position: relative;
+  z-index: 1;
+  text-align: center;
+  margin: clamp(20px, 3vw, 36px) auto 0;
+  max-width: 52ch;
+  font-size: var(--font-size-sm);
+  line-height: 1.55;
+  color: var(--color-text-tertiary);
+}
+.arch-foot em {
+  font-style: normal;
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-secondary);
+}
+
+/* ── Keyframes ──────────────────────────────────────────────────────────── */
+@keyframes arch-breathe {
+  0%, 100% { opacity: 0.2; transform: scale(1); }
+  50% { opacity: 0.34; transform: scale(1.05); }
+}
+@keyframes arch-settle {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ── Responsive: stack the face contents on narrow screens ──────────────── */
+@media (max-width: 720px) {
+  .arch-face {
+    flex-wrap: wrap;
+  }
+  .arch-rides {
+    border-left: none;
+    border-top: 1px dashed var(--color-border);
+    padding-left: 0;
+    padding-top: var(--space-2);
+    max-width: none;
+    width: 100%;
+  }
+}
+
+/* ── Reduced motion: collapse the cinema to a calm, flat, readable stack ── */
+@media (prefers-reduced-motion: reduce) {
+  .arch-glow { animation: none; }
+  .arch-stack {
+    transform: none;
+    animation: none;
+  }
+  .arch-stratum {
+    transform: none;
+  }
+  .arch-stratum:hover {
+    transform: translateY(-2px);
+  }
+  .arch-edge {
+    position: static;
+    transform: none;
+    height: 3px;
+    margin-top: -3px;
+    border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+    opacity: 0.7;
+  }
+}

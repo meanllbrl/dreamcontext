@@ -327,6 +327,22 @@ const CATEGORIES: MenuCategory[] = [
           },
         ],
       },
+      {
+        emoji: '\u{1F9E0}',
+        name: 'Native memory',
+        description: "Toggle Claude's native auto-memory (dreamcontext owns memory by default)",
+        argv: ['config', 'native-memory'],
+        args: [
+          {
+            name: 'State',
+            type: 'select',
+            choices: [
+              { value: 'disable', name: 'disable — dreamcontext is the single source of memory (recommended)' },
+              { value: 'enable', name: "enable — keep Claude's native MEMORY.md alongside dreamcontext" },
+            ],
+          },
+        ],
+      },
     ],
   },
   {

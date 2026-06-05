@@ -9,6 +9,13 @@ export interface SetupConfig {
   packs: string[];
   multiProduct: false | string[];
   setupVersion: string;
+  /**
+   * When true (the default), dreamcontext disables Claude Code's native
+   * auto-memory (`autoMemoryEnabled: false` in `.claude/settings.json`) so that
+   * dreamcontext is the single source of project memory. Set false to keep
+   * Claude's native MEMORY.md alongside dreamcontext.
+   */
+  disableNativeMemory: boolean;
 }
 
 function configPath(projectRoot: string): string {
@@ -27,6 +34,9 @@ export function readSetupConfig(projectRoot: string): SetupConfig | null {
         ? parsed.multiProduct.filter((p): p is string => typeof p === 'string')
         : false,
       setupVersion: typeof parsed.setupVersion === 'string' ? parsed.setupVersion : '0.0.0',
+      // Default true: absent in legacy configs means "disable native memory".
+      disableNativeMemory:
+        typeof parsed.disableNativeMemory === 'boolean' ? parsed.disableNativeMemory : true,
     };
   } catch {
     return null;
@@ -52,12 +62,14 @@ export function updateSetupConfig(
     packs: [],
     multiProduct: false,
     setupVersion: '0.0.0',
+    disableNativeMemory: true,
   };
   const next: SetupConfig = {
     platforms: patch.platforms ?? existing.platforms,
     packs: patch.packs ?? existing.packs,
     multiProduct: patch.multiProduct ?? existing.multiProduct,
     setupVersion: patch.setupVersion ?? existing.setupVersion,
+    disableNativeMemory: patch.disableNativeMemory ?? existing.disableNativeMemory,
   };
   writeSetupConfig(projectRoot, next);
   return next;

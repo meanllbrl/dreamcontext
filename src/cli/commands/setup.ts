@@ -59,6 +59,7 @@ export interface SetupOptions {
   platforms?: string;
   packs?: string;
   multiProduct?: string;
+  keepNativeMemory?: boolean;
 }
 
 export async function runSetup(opts: SetupOptions): Promise<void> {
@@ -150,6 +151,12 @@ export async function runSetup(opts: SetupOptions): Promise<void> {
 
     writeProjectPlatformDefaults(projectRoot, platforms);
 
+    // Persist the native-memory choice BEFORE installing, so the per-platform
+    // installer (installCoreForPlatform) reads it when writing .claude/settings.json.
+    // Default: disable Claude's native auto-memory so dreamcontext owns memory.
+    const disableNativeMemory = !opts.keepNativeMemory;
+    updateSetupConfig(projectRoot, { disableNativeMemory });
+
     // ─── 5. Install core skill/agents/hooks for each platform ─────────────
     info('Installing platform integration...');
     const manifest = getOrCreateManifest(projectRoot);
@@ -199,6 +206,7 @@ export async function runSetup(opts: SetupOptions): Promise<void> {
       `  Platforms: ${chalk.white(platforms.join(', '))}`,
       `  Packs:     ${chalk.white(packs.length > 0 ? packs.join(', ') : '(none)')}`,
       `  Products:  ${chalk.white(multiProduct === false ? 'single (default)' : multiProduct.join(', '))}`,
+      `  Native mem: ${chalk.white(disableNativeMemory ? 'disabled (dreamcontext owns memory)' : 'kept enabled')}`,
       `  Files:     ${chalk.white(fileCount.toString())} tracked`,
       `  Manifest:  ${chalk.dim(manifestPath)}`,
     ], { color: 'green' }));
@@ -226,6 +234,7 @@ export function registerSetupCommand(program: Command): void {
     .option('--platforms <list>', `Comma-separated platforms: ${formatSupportedPlatforms()}`)
     .option('--packs <list>', 'Comma-separated pack names to install')
     .option('--multi-product <list>', 'Comma-separated product names for multi-product setup')
+    .option('--keep-native-memory', "Keep Claude Code's native auto-memory (default: disabled so dreamcontext owns memory)")
     .action(async (opts: SetupOptions) => {
       try {
         await runSetup(opts);

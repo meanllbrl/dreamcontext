@@ -10,6 +10,7 @@ export interface SetupConfig {
   packs: string[];
   multiProduct: false | string[];
   setupVersion: string;
+  disableNativeMemory: boolean;
 }
 
 interface ConfigResponse {
@@ -24,6 +25,7 @@ interface ConfigUpdateResponse {
 export interface ConfigPatch {
   platforms?: PlatformId[];
   packs?: string[];
+  disableNativeMemory?: boolean;
 }
 
 // ─── Hooks ────────────────────────────────────────────────────────────────────

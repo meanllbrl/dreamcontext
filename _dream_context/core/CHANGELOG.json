@@ -1,5 +1,102 @@
 [
   {
+    "date": "2026-06-05",
+    "type": "chore",
+    "scope": "cli",
+    "description": "Attempted npm publish for v0.6.0 and hit a 401 Unauthorized error that was surface-reported by the npm CLI as a 404 Not Found. Root cause: the cached npm auth token had expired. No code changes needed; publish will succeed after 'npm login'. All v0.6.0 work is built and tested; the package version in package.json is correct. This is a known npm CLI UX bug where auth failures present as 404.",
+    "breaking": false,
+    "summary": "npm publish blocked by expired token (401 surfaced as 404); v0.6.0 ready to publish after npm login",
+    "references": [
+      "task:optional-skill-packs"
+    ]
+  },
+  {
+    "date": "2026-06-05",
+    "type": "chore",
+    "scope": "agents",
+    "description": "Rewrite Step 2 of sleep-tasks.md to enforce a mandatory recall-before-create dedup gate: recall --types task + active-list scan before opening any new task. Decision table: smaller slice/sub-step/follow-up → fold into existing task (broaden description: + Why, insert user_stories|acceptance_criteria|notes); same work re-observed → update existing; genuinely separate work → new task. Add Rule #1 and update the report example. Rewrite B2 of sleep-product.md with a sharp-vs-soft-boundary knowledge consolidation rubric: soft distinction (same vertical/brand/topic family, incremental finding) → extend existing file; sharp distinction (distinct topic where separate tags add precision) → new file. Add Rule #8 and update the report example. Add a one-line 'Consolidation discipline' note to the sleep flow in skill/SKILL.md so the orchestrator brief carries the principle. All four canonical locations updated (agents/, .codex/agents/prompts/) and dist/ rebuilt.",
+    "breaking": false,
+    "summary": "Harden sleep-tasks + sleep-product dedup rules: recall-before-create + consolidation rubric",
+    "references": [
+      "file:agents/sleep-tasks.md",
+      "file:agents/sleep-product.md",
+      "file:skill/SKILL.md",
+      "file:.codex/agents/prompts/sleep-tasks.md",
+      "file:.codex/agents/prompts/sleep-product.md"
+    ]
+  },
+  {
+    "date": "2026-06-05",
+    "type": "fix",
+    "scope": "dashboard",
+    "description": "Fix a round of visual alignment and layout regressions across the dashboard: Header.css, Sidebar.css, Sidebar.tsx, CorePage.css, CouncilPage.css, FeaturesPage.css, KnowledgePage.css, PacksPage.css, SettingsPage.css and corresponding TSX/global.css. Add 11 new Playwright e2e tests in e2e/alignment.spec.ts covering the corrected layouts. All 1111 vitest unit+integration tests pass. Alignment fixes were the prerequisite for the v0.6 control-panel polish acceptance review.",
+    "breaking": false,
+    "summary": "Dashboard alignment fixes: 11 new e2e tests, 1111 vitest passing",
+    "references": [
+      "file:e2e/alignment.spec.ts",
+      "file:dashboard/src/styles/global.css",
+      "task:dashboard-alignment",
+      "task:v06-control-panel-polish"
+    ]
+  },
+  {
+    "date": "2026-06-05",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "Add a full landing-page-style About page to the dashboard (dashboard/src/pages/AboutPage.tsx + AboutPage.css). The page is composed of 9 sections: Hero, ProblemSection, HowItWorksSection, FeaturesShowcase, ArchitectureSection, RecallFlowSection, SleepFlowSection, SkillPacksMarquee, ClosingSection. Introduce FlowDiagram.tsx — a reusable data-driven SVG diagram engine (flow-specs.ts contains ~20 diagram specs). Fix a latent SVG gradient-collision bug where multiple FlowDiagram instances shared the same gradient def IDs, causing colors to bleed across diagrams; fix scopes IDs with a per-instance uid. All diagram data lives in features.data.ts and flow-specs.ts (not hardcoded in JSX). Registered in App.tsx routing.",
+    "breaking": false,
+    "summary": "Add About/landing page with FlowDiagram engine, ~20 data-driven diagrams, and SVG gradient-collision fix",
+    "references": [
+      "file:dashboard/src/pages/AboutPage.tsx",
+      "file:dashboard/src/components/about/",
+      "file:dashboard/src/components/about/FlowDiagram.tsx",
+      "task:landing-page-v2"
+    ]
+  },
+  {
+    "date": "2026-06-05",
+    "type": "feat",
+    "scope": "cli",
+    "description": "Add src/cli/commands/reflect.ts and src/lib/reflection.ts. The reflect command scans session digests and bookmarks for recurring terms not yet in curated knowledge/features/memory, surfaces them as candidate generalizations in state/.reflection.md (capped at 8KB). Constraints baked in: detectPatterns and formatReflection are pure (no fs calls); writeReflection writes only state/.reflection.md; no fetch/spawn/LLM/network calls in the module. IDF is computed from the recall corpus via buildCorpus; DF counter uses sessions as documents (Set<sessionKey>). Only terms meeting DEFAULT_MIN_SESSIONS=3 and not in REFLECTION_NOISE pass. Registered in src/cli/index.ts.",
+    "breaking": false,
+    "summary": "Add reflection engine: deterministic cross-session pattern detection writing state/.reflection.md",
+    "references": [
+      "file:src/cli/commands/reflect.ts",
+      "file:src/lib/reflection.ts",
+      "file:src/lib/recall.ts",
+      "task:reflection-engine"
+    ]
+  },
+  {
+    "date": "2026-06-05",
+    "type": "feat",
+    "scope": "cli",
+    "description": "Add src/cli/commands/config.ts and src/lib/claude-settings.ts implementing 'dreamcontext config native-memory enable|disable'. The command writes autoMemoryEnabled:true/false into .claude/settings.json (preserving all other keys), idempotent. Rationale: Claude Code v2.1.59+ auto-loads/writes a MEMORY.md per project; the official kill-switch is autoMemoryEnabled:false. dreamcontext disables it by default on setup so it is the single source of project memory — two competing memory systems dilute recall. User correction: the official key is autoMemoryEnabled (not memoryEnabled or native_memory). Module is server-safe (no interactive deps). Registered in src/cli/index.ts; documented in SKILL.md command reference.",
+    "breaking": false,
+    "summary": "Add 'config native-memory enable|disable' command; disable Claude auto-memory on setup by default",
+    "references": [
+      "file:src/cli/commands/config.ts",
+      "file:src/lib/claude-settings.ts",
+      "file:src/cli/index.ts",
+      "file:skill/SKILL.md",
+      "task:disable-claude-native-memory"
+    ]
+  },
+  {
+    "date": "2026-06-05",
+    "type": "feat",
+    "scope": "skill-packs",
+    "description": "Add two new standalone skill-packs: video-watching (SKILL.md + scripts) and excalidraw (SKILL.md + scripts + examples + reference + package.json). Introduce the bundleDir field on CatalogStandalone entries so that cpSync copies the full directory (binaries, scripts, exec bits preserved) rather than a single SKILL.md file. Pin CJS subtrees with package.json {\"type\":\"commonjs\"} under the ESM host to prevent module resolution failures when scripts use require(). Exec bits are preserved on install. Both skills are listed in skill-packs/catalog.json. src/lib/install-packs.ts updated to handle bundleDir via cpSync.",
+    "breaking": false,
+    "summary": "Vendor excalidraw + video-watching skills; add bundleDir install mechanism for code-bearing skill-packs",
+    "references": [
+      "file:src/lib/install-packs.ts",
+      "file:skill-packs/catalog.json",
+      "file:skill-packs/excalidraw/",
+      "file:skill-packs/video-watching/"
+    ]
+  },
+  {
     "date": "2026-06-02",
     "type": "feat",
     "scope": "recall",

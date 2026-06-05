@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { readFileSync, existsSync, statSync } from 'node:fs';
-import { execFileSync, execSync } from 'node:child_process';
+import { execFileSync, execSync, spawn } from 'node:child_process';
+import { get as httpGet } from 'node:http';
 import { dirname, resolve, join, extname, basename, relative } from 'node:path';
 import { resolveContextRoot } from '../../lib/context-path.js';
 import type { SleepState, Bookmark } from './sleep.js';
@@ -346,6 +347,65 @@ function getConsolidationDirective(state: SleepState): string | null {
     ].join('\n');
   }
   return null;
+}
+
+// ─── Dashboard Auto-Open ──────────────────────────────────────────────────────
+
+const DEFAULT_DASHBOARD_PORT = 4173;
+
+/** Resolve the dashboard port: env override (DREAMCONTEXT_DASHBOARD_PORT) or default 4173. */
+export function resolveDashboardPort(): number {
+  const raw = process.env.DREAMCONTEXT_DASHBOARD_PORT;
+  if (raw) {
+    const n = parseInt(raw, 10);
+    if (!Number.isNaN(n) && n > 0 && n < 65536) return n;
+  }
+  return DEFAULT_DASHBOARD_PORT;
+}
+
+/**
+ * Probe whether a dashboard server is already listening on the loopback port.
+ * Any HTTP response (or even a refused-but-listening socket) counts as "up".
+ * Resolves false on connection error or timeout — never throws.
+ */
+export function isDashboardUp(port: number, timeoutMs = 700): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (val: boolean) => {
+      if (settled) return;
+      settled = true;
+      resolve(val);
+    };
+    try {
+      const req = httpGet({ host: '127.0.0.1', port, path: '/api/health', timeout: timeoutMs }, (res) => {
+        res.resume(); // drain so the socket can close
+        done((res.statusCode ?? 0) > 0);
+      });
+      req.on('error', () => done(false));
+      req.on('timeout', () => {
+        req.destroy();
+        done(false);
+      });
+    } catch {
+      done(false);
+    }
+  });
+}
+
+/**
+ * Launch `dreamcontext dashboard` as a detached background process that outlives
+ * this hook (and the agent session). Re-invokes the current CLI entry with the
+ * running Node binary so it works regardless of how dreamcontext was installed.
+ */
+function spawnDashboard(port: number): void {
+  const cliEntry = process.argv[1];
+  if (!cliEntry) return;
+  const child = spawn(process.execPath, [cliEntry, 'dashboard', '--port', String(port)], {
+    detached: true,
+    stdio: 'ignore',
+    cwd: process.cwd(),
+  });
+  child.unref();
 }
 
 // ─── Command Registration ───────────────────────────────────────────────────
@@ -897,5 +957,39 @@ export function registerHookCommand(program: Command): void {
       }
 
       writeSleepState(root, state);
+    });
+
+  // --- hook ensure-dashboard ---
+  hook
+    .command('ensure-dashboard')
+    .description('Open the web dashboard if it is not already running (called by Claude Code SessionStart hook)')
+    .action(async () => {
+      // Drain any piped hook payload so stdin doesn't block; contents unused.
+      readStdin();
+
+      // Opt-out: DREAMCONTEXT_AUTO_DASHBOARD=0 disables auto-open entirely.
+      if (process.env.DREAMCONTEXT_AUTO_DASHBOARD === '0') process.exit(0);
+
+      // Only for context-managed projects — nothing to show otherwise.
+      const root = resolveContextRoot();
+      if (!root) process.exit(0);
+
+      const port = resolveDashboardPort();
+
+      // If a server already answers on the port, leave it open and do nothing.
+      const up = await isDashboardUp(port);
+      if (up) process.exit(0);
+
+      try {
+        spawnDashboard(port);
+        // SessionStart stdout becomes agent context — keep it to a single line.
+        console.log(
+          `dreamcontext: opened the dashboard at http://localhost:${port} ` +
+          `(auto-open; set DREAMCONTEXT_AUTO_DASHBOARD=0 to disable).`,
+        );
+      } catch {
+        // Auto-open is a convenience — it must never break session start.
+      }
+      process.exit(0);
     });
 }

@@ -36,6 +36,13 @@ export interface CatalogStandalone {
   description: string;
   tags: string[];
   alwaysApply: boolean;
+  /**
+   * When true, install copies the skill's ENTIRE source directory (scripts,
+   * examples, references, vendored libs, a scoping package.json, …) — not just
+   * SKILL.md. Use for code-bearing skills whose runnable assets must ship
+   * alongside the prompt (e.g. excalidraw's board generator scripts).
+   */
+  bundleDir?: boolean;
 }
 
 export interface CatalogAgent {

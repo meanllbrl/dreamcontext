@@ -65,6 +65,7 @@ function seedConfig(platforms: ('claude' | 'codex')[]): void {
     packs: [],
     multiProduct: false,
     setupVersion: '1.0.0',
+    disableNativeMemory: true,
   });
 }
 

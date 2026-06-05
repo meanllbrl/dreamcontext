@@ -14,7 +14,7 @@ description: >-
 priority: high
 status: in_review
 created_at: '2026-06-01'
-updated_at: '2026-06-02'
+updated_at: '2026-06-05'
 version: v0.6.0
 tags:
   - roadmap
@@ -106,9 +106,17 @@ Each restores a capability the system already claimed to have.
 ## Changelog
 
 
+
+### 2026-06-05 - Session Update
+- 2026-06-04 (session 4626d1f6): Audit of current capture/recall/consolidation state reviewed. disable-claude-native-memory shipped (autoMemoryEnabled:false default on install). reflect command shipped. Key findings: knowledge_access only updated by explicit knowledge touch (not by recall path) — tracked as Wave 3+ work.
 ### 2026-06-02 - Status → in_review
 - Wave 0+1+2 + capture guard shipped and benchmarked (68.3→85.0% recall@1). Wave 3+4 remain — ready for user to verify shipped waves and prioritize remaining work.
 ### 2026-06-02 - Session Update
 - Wave 0+1+2 + capture guard shipped via PRs #1+#2 to main. Benchmark: recall@1 68.3→85.0%, recall@3 81.7→95.0%. 1063 tests pass. Remaining: Wave 3 (sub-agent recall/write-back/sleep harvesting) + Wave 4 (hook hygiene/cost/security secret-scan).
 - 2026-06-02: Wave 0+1+2 fully shipped via PRs #1 + #2 to main. Benchmark: recall@1 68.3→85.0%, recall@3 81.7→95.0%. Capture guard (PR #2) proves 0 true displacement. 1063 tests pass, build clean. Wave 3 (sub-agent recall/write-back/sleep harvesting) and Wave 4 (hook hygiene/cost/security) remain. Task bumped in_progress; Waves 3+4 are the remaining work.
 - 2026-06-01: Roadmap created from four parallel subsystem audits + ECC analysis + neuroscience source. Three Wave-0 claims verified in source before commit.
+
+
+## Notes
+
+Wave 3.3 research (session 21bbee0c): SubagentStop hook event EXISTS in Claude Code (fires when sub-agent completes). Sub-agent transcripts stored at ~/.claude/projects/<project>/<sessionId>/subagents/agent-<agentId>.jsonl. session_id in SubagentStop may be the sub-agent's own ID (not parent). This enables sleep harvesting of sub-agent findings for Wave 3.3.
