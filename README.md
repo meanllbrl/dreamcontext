@@ -64,13 +64,22 @@ And every session starts from scratch. Your agent greps for a decision it alread
 
 ## How It Works
 
+Every session, a hook pre-loads your project's whole brain — identity, decisions, active work, the knowledge index — into the agent with **zero tool calls**. It works with the full picture instead of re-discovering it; a multi-agent **RemSleep** cycle then consolidates what changed and feeds it back. (This is the same diagram the built-in **“What is this?”** page animates live.)
+
+<p align="center">
+  <img src="public/image/diagram-howitworks.png" alt="A SessionStart hook fans out into eight context categories — soul, user, memory, knowledge, state, data-structures, skills, sub-agents — that converge into the agent; RemSleep parallel specialists consolidate and feed back" width="820" />
+</p>
+
+<details>
+<summary><strong>Full data-flow diagram</strong> — capture &rarr; store &rarr; inject</summary>
+
 ```mermaid
 flowchart LR
     subgraph capture ["Capture"]
         STOP["Stop Hook\n(session ends)"]
         POSTTOOL["PostToolUse Hook\n(auto-format + tsc)"]
         BOOKMARK["Bookmarks\n(awake ripples)"]
-        SLEEP["RemSleep Agent\n(consolidates)"]
+        SLEEP["RemSleep cycle\n(3 specialists)"]
         HUMAN["You\n(edit files or dashboard)"]
     end
 
@@ -109,11 +118,20 @@ flowchart LR
     SNAPSHOT --> AGENT
 ```
 
+</details>
+
 - **Seven hooks capture context automatically.** Stop hook records what happened. SessionStart injects everything before the first message. SubagentStart briefs sub-agents. PreToolUse blocks blind exploration when curated context exists. UserPromptSubmit reminds about sleep debt on every user message. PostToolUse auto-formats and type-checks edited files. PreCompact saves state before context compaction.
 - **Bookmarks tag important moments.** During active work, the agent bookmarks decisions, constraints, and discoveries with salience levels. Critical bookmarks trigger immediate consolidation advisories.
 - **Files are structured by purpose.** Identity, preferences, decisions, knowledge, and active work each live in their own file with their own format.
-- **Sleep cycles consolidate knowledge.** A RemSleep agent reads bookmarks first, distills transcripts for high-signal content, extracts recurring patterns, promotes learnings, creates contextual triggers, cleans stale entries, and resets debt.
+- **Sleep cycles consolidate knowledge.** A RemSleep cycle — the agent fanning out to three specialist sub-agents in parallel — reads bookmarks first, distills transcripts for high-signal content, extracts recurring patterns, promotes learnings, creates contextual triggers, cleans stale entries, and resets debt.
 - **Everything is local markdown and JSON.** Readable, editable, git-tracked, owned by you.
+
+<p align="center">
+  <img src="public/image/diagram-sleep.png" alt="Sleep consolidation: accumulated debt triggers sleep start, which fans out to three parallel specialists — sleep-tasks, sleep-state, sleep-product — whose reports converge into one updated summary, then sleep done resets the debt" width="660" />
+</p>
+<p align="center">
+  <sub><strong>Sleep consolidation</strong> — when debt crosses a threshold, three specialists fold what changed back into the brain in parallel, then the meter resets.</sub>
+</p>
 
 ## Quick Start
 
@@ -193,8 +211,10 @@ your-project/
 │   ├── agents/
 │   │   ├── dreamcontext-initializer.md
 │   │   ├── dreamcontext-explore.md
-│   │   └── dreamcontext-rem-sleep.md
-│   └── settings.json           # 7 hooks (see below)
+│   │   ├── sleep-tasks.md       # RemSleep specialists —
+│   │   ├── sleep-state.md       #   the agent fans out to
+│   │   └── sleep-product.md     #   these in parallel
+│   └── settings.json           # 7 hooks (see Commands → System)
 ```
 
 ### Opening the context directory in Obsidian
@@ -253,6 +273,7 @@ dreamcontext install-skill --list
 | **business-idea-validation** | Demand testing via landing page + waitlist, quick validation loops |
 | **meta-marketing** | Meta / Facebook / Instagram ad campaigns end to end |
 | **system-prompts** | Prompt engineering, cognitive architecture, agent design |
+| **excalidraw** | Lay out images, labels, shapes, arrows, frames, and lanes on an Obsidian Excalidraw board from a small JSON spec — renders deterministically at near-zero token cost |
 | **video-watching** | Turn a video into a time-mapped transcript with on-screen visuals described inline (whisper.cpp + ffmpeg), then reason about it |
 
 _Always-on_ packs apply their base principles to every relevant task; the rest load only when the work matches. Packs install to platform-specific paths — Claude: `.claude/skills/{pack}/` (+ agents in `.claude/agents/`); Codex: `.agents/skills/{pack}/` (+ agents in `.codex/agents/`). Cross-pack dependencies are warned at install time.
@@ -375,6 +396,10 @@ Ships with two sub-agents (`council-persona`, `council-synthesizer`) and a dedic
 ## Memory Recall
 
 Recall and remember across your project's curated context. BM25 ranking over knowledge files, feature PRDs, task files, `2.memory.md` sections, and `CHANGELOG.json` entries — deterministic, instant, no setup.
+
+<p align="center">
+  <img src="public/image/diagram-recall.png" alt="Memory recall pipeline: your prompt → BM25F keyword match (field-weighted, stemming, synonyms) → Haiku recall (smallest cloud agent, 0-3 docs, BM25 fallback) → SessionStart snapshot (warm + cold knowledge, features, index, pinned)" width="860" />
+</p>
 
 ```bash
 # Ask a question, get top-5 hits with snippets
@@ -514,7 +539,7 @@ dreamcontext sleep debt                  # Raw number (for scripts)
 dreamcontext transcript distill <session_id>   # Structural filter of session transcript
 ```
 
-Extracts high-signal content from raw JSONL transcripts: user messages, agent decisions, code changes, errors, bookmarks. Discards noise (Read results, Glob output, tool metadata). Pure Node.js, no AI. Used by the RemSleep agent for selective deep analysis of important sessions.
+Extracts high-signal content from raw JSONL transcripts: user messages, agent decisions, code changes, errors, bookmarks. Discards noise (Read results, Glob output, tool metadata). Pure Node.js, no AI. Used by the RemSleep specialists for selective deep analysis of important sessions.
 
 ### Council
 
@@ -579,7 +604,7 @@ dreamcontext install-claude-md           # Legacy alias: CLAUDE.md only
 
 ## Works With
 
-- **Claude Code**: full support via skill, 3 core sub-agents (initializer, explore, rem-sleep), 2 optional council sub-agents (persona, synthesizer), and 7 hooks
+- **Claude Code**: full support via skill, 5 core sub-agents (initializer, explore, and the three RemSleep specialists — sleep-tasks, sleep-state, sleep-product), 7 hooks, plus optional pack sub-agents (council persona/synthesizer, multi-review specialists, goal-skill orchestrators)
 - **Codex**: project-level skills (`.agents/skills`), managed `AGENTS.md`, native `.codex/agents/*.toml`, and managed `.codex/config.toml` hooks (best-effort parity where event semantics differ)
 - **Web Dashboard**: local UI with Kanban, Core editor, Knowledge, Features, Brain graph, Sleep tracker, and Council Hall (ships in the package)
 - **Obsidian**: `_dream_context/` can be opened as an Obsidian vault; the directory is scaffolded with curated vault settings at `dreamcontext init` time

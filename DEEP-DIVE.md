@@ -46,6 +46,10 @@ The problems that make this necessary are not accidental. **They are structural 
 
 ## The Problem in Depth
 
+<p align="center">
+  <img src="public/image/diagram-problem.png" alt="Without dreamcontext: a new session greps, reads, searches again, and pieces context together before starting — burning tokens in a spiral. With dreamcontext: a new session fires the SessionStart hook, full context is pre-loaded with zero tool calls, and the agent goes straight to work." width="820" />
+</p>
+
 ### The search spiral
 
 You ask the agent to work on a task. The task references something, maybe a caching strategy you decided on two weeks ago. One paragraph. A clear decision that already lives somewhere in your project. But the agent does not know that. So it starts digging.
@@ -98,6 +102,10 @@ When you switch tools, or the service changes its API, or you want to work offli
 **Your agent's memory should be files in your repo.** Markdown and JSON. Readable, editable, diffable. You should be able to open your agent's understanding of your project in any text editor, fix a wrong assumption, and commit the change. That is ownership.
 
 ## The Architecture
+
+<p align="center">
+  <img src="public/image/diagram-architecture.png" alt="Three lanes: Capture (Stop hook, PostToolUse, bookmarks, the RemSleep cycle, you) writes into the Store (_dream_context/ core, knowledge, state); the Store is read by Inject (SessionStart, UserPromptSubmit, PreToolUse, the compiled snapshot) which loads the agent with full context" width="900" />
+</p>
 
 Human brains don't store everything in one region. Your prefrontal cortex handles identity and decision-making. Your temporal lobe stores facts and relationships. You have procedural memory for skills you don't think about, and working memory for what you are actively doing. Different types of knowledge, different storage.
 
@@ -178,7 +186,7 @@ Consolidation directives fire based on multiple signals: debt 4-6 (offers consol
 
 Fires when any sub-agent launches (Explore, Plan, or custom agents). Injects a lightweight briefing: project summary (capped at 120 characters), directory structure, active tasks, knowledge index, and pinned knowledge.
 
-This is intentionally lighter than the full snapshot. Sub-agents are task-focused and short-lived. They need enough context to check existing knowledge and avoid duplicating work, not the full project state. The briefing fires for all sub-agents, including dreamcontext's own (the initializer and RemSleep agent). The extra context does not conflict with their dedicated prompts.
+This is intentionally lighter than the full snapshot. Sub-agents are task-focused and short-lived. They need enough context to check existing knowledge and avoid duplicating work, not the full project state. The briefing fires for all sub-agents, including dreamcontext's own (the initializer and the RemSleep specialists). The extra context does not conflict with their dedicated prompts.
 
 ### PreToolUse Hook
 
@@ -275,17 +283,21 @@ Sub-agent launches
 
 ## The Sleep Cycle
 
+<p align="center">
+  <img src="public/image/diagram-sleep.png" alt="Sessions accumulate sleep debt (Alert, Drowsy, Sleepy, Must Sleep); sleep start pins the epoch and fans out in parallel to three specialists — sleep-tasks, sleep-state, sleep-product — whose reports converge into one updated summary, then sleep done resets the debt" width="640" />
+</p>
+
 Humans consolidate memory during sleep. Your hippocampus replays the day, extracts patterns, strengthens important connections, and discards noise. Without consolidation, memory degrades. It is not optional. It is how learning works.
 
 Agents face the same challenge. Over multiple sessions, your agent accumulates knowledge: decisions, patterns, problems solved, tasks completed. Without consolidation, that knowledge either gets lost when the session ends or piles up in context files until they are too noisy to be useful. **Good context files don't happen by accident.** They need the same kind of maintenance a good engineer applies to their own notes.
 
-`dreamcontext` ships with a **RemSleep** agent that handles this consolidation:
+`dreamcontext` consolidates through a **RemSleep** cycle. There is no single sleep agent and no separate orchestrator: the main agent runs the cycle directly and fans out to three specialist sub-agents in parallel, each owning a non-overlapping slice of the context so they never overwrite each other's work.
 
 1. **Debt accumulates automatically.** The Stop hook scores each session based on both file changes and total tool calls. No manual tracking needed. The score reflects how much new knowledge was generated.
-2. **Bookmarks prioritize what matters.** During active work, the agent tags important moments (decisions, constraints, bugs) with salience levels. The RemSleep agent reads bookmarks first, ordered by salience, so critical decisions are never lost in a pile of routine session summaries.
-3. **Transcript distillation provides depth on demand.** For sessions with critical bookmarks or unclear summaries, the sleep agent calls `transcript distill` to get a structurally filtered view: user messages, agent decisions, code changes, errors. No noise from Read results or Glob output.
+2. **Bookmarks prioritize what matters.** During active work, the agent tags important moments (decisions, constraints, bugs) with salience levels. The specialists read bookmarks first, ordered by salience, so critical decisions are never lost in a pile of routine session summaries.
+3. **Transcript distillation provides depth on demand.** For sessions with critical bookmarks or unclear summaries, the cycle calls `transcript distill` to get a structurally filtered view: user messages, agent decisions, code changes, errors. No noise from Read results or Glob output.
 4. **The agent responds with graduated awareness.** Consolidation triggers fire based on multiple signals: debt level, critical bookmarks, and session rhythm (see table below).
-5. **RemSleep consolidates.** Reviews bookmarks first, then session records, promotes learnings to core files, extracts knowledge, creates contextual triggers for future sessions, **detects recurring patterns** (repeated user preferences, workflow sequences, recurring errors, bookmark themes), updates summaries, cleans stale entries using knowledge access data, and keeps core files within size limits.
+5. **The three specialists consolidate in parallel.** `sleep-tasks` (always fired) reconciles task files — bumps statuses, creates tasks for untracked work, attaches them to the active planning version. `sleep-state` (always fired) owns the core files (soul, user, memory, the extended core 3–6), the changelog, and releases — promotes learnings, writes a changelog entry for every meaningful change, and enforces the anti-bloat ceiling. `sleep-product` (fired conditionally, when research or new patterns warrant) owns knowledge docs and feature PRDs — extracts and dedupes knowledge, updates feature progress. Collectively they review bookmarks first, then session records, **detect recurring patterns** (repeated user preferences, workflow sequences, recurring errors, bookmark themes), create contextual triggers for future sessions, update summaries, and clean stale entries using knowledge access data. (The fan-out collapsed from an original five specialists to three in v0.3.0 — merging core+changelog into `sleep-state` and knowledge+features into `sleep-product` — to cut launch and synthesis overhead while preserving the no-stomp guarantee.)
 6. **History is preserved.** Each consolidation cycle writes a history entry: date, summary, debt before/after, sessions and bookmarks processed. The snapshot shows the last 3 entries so the agent knows what was recently consolidated.
 7. **Debt resets.** After consolidation, debt recalculates (only post-epoch sessions count), bookmarks and sessions from before the epoch are cleared, triggers past their fire limit expire, the rhythm counter resets, and the cycle starts fresh.
 8. **Next session**, the agent wakes up knowing its debt level, consolidation history, any remaining bookmarks, active triggers, and what the previous session accomplished.
@@ -312,6 +324,10 @@ Because sleep debt is tracked as real state (persisted in `.sleep.json`, surface
 
 ## Neuroscience-Inspired Memory
 
+<p align="center">
+  <img src="public/image/diagram-neuroscience.png" alt="Two-stage memory mapped from brain to dreamcontext: awake sharp-wave ripples that tag salient moments map to bookmarks with salience levels; sleep replay transferring hippocampus to neocortex maps to RemSleep consolidation moving state/ into core/ and knowledge/" width="820" />
+</p>
+
 The memory system draws from a 2025 Science paper (Joo & Frank) that revealed how the hippocampus actually selects which memories to consolidate. The brain does not replay everything equally during sleep. During the day, the hippocampus fires "awake sharp-wave ripples" that bookmark important moments. During sleep, bookmarked memories compete for consolidation, with only the strongest patterns winning transfer to the neocortex.
 
 The key insight: **memory selection and memory consolidation are separate processes.** Selection (tagging) happens during active work. Consolidation (storage) happens during sleep. Getting consolidation right is not enough if the system has no way to distinguish a critical architectural decision from a routine file read.
@@ -329,7 +345,7 @@ The key insight: **memory selection and memory consolidation are separate proces
 | Spreading activation | Warm knowledge tier (recently accessed files get first-paragraph preview) |
 | Prospective memory ("do X when Y") | Contextual triggers (remind about X when task Y is active) |
 | Hippocampal filtering | Transcript distillation (structural filter keeps signal, discards noise) |
-| Sleep consolidation | RemSleep agent (compressed replay into core files) |
+| Sleep consolidation | RemSleep cycle (compressed replay into core files) |
 | Inhibitory neurons | Anti-bloat pass (~150-line ceiling on core files, prune stale knowledge) |
 | Synaptic plasticity | LIFO ordering (recent info surfaces first) |
 | Immune system (error correction) | PostToolUse hook (auto-format + tsc check on every edit) |
@@ -395,7 +411,7 @@ The CLI and hooks handle the agent side. But context is a shared layer, and the 
 
 This is the piece that ties the dashboard back to the agent. Every action taken through the dashboard (creating a task, editing a core file, pinning knowledge, updating a field) is recorded in `.sleep.json` as a `dashboard_changes` entry. Each entry captures the timestamp, entity type, action, target, and a human-readable summary.
 
-When the agent starts its next session, the snapshot includes these changes. The RemSleep agent reads them during consolidation and folds the human's work into the project context. This closes the loop: the agent learns what you did between sessions without you telling it.
+When the agent starts its next session, the snapshot includes these changes. The RemSleep specialists read them during consolidation and fold the human's work into the project context. This closes the loop: the agent learns what you did between sessions without you telling it.
 
 Field-level change tracking goes further. If you change a task's priority from "medium" to "high," the change record captures both the old and new values, not just "task updated." Net-change detection folds redundant changes: if you change priority from medium to high, then high to critical, only one record survives (medium to critical). If you change something and then change it back, the record is removed entirely. This keeps the change list clean for the agent to process.
 
@@ -429,6 +445,10 @@ After recording a released entry, the command back-populates `released_version` 
 The snapshot includes both "Upcoming Versions" (planning entries) and "Latest Release" (most recent released entry) so the agent always knows what is planned and what was last shipped. Tasks can be assigned to planning versions via the `version` field, and the sleep agent checks whether all tasks for a planning version are complete during consolidation.
 
 ## Council Debates
+
+<p align="center">
+  <img src="public/image/diagram-council.png" alt="A hard decision fans out to three persona sub-agents (lens A, B, C) that debate across rounds sharing cross-context, then converge into a synthesizer that writes a decision report with citations, optionally promoted to knowledge/" width="760" />
+</p>
 
 Some decisions are too load-bearing for a single model pass. Architecture choices that will shape the system for a year. Hiring reviews where the wrong read means the wrong hire. Risk-heavy migrations where one missed edge case is a production incident. Brand critiques where one loud voice can flatten dissent.
 
@@ -485,6 +505,10 @@ Council ships as an opt-in skill pack at `skill-packs/council/` with its own `SK
 
 ## Memory Recall (BM25 over the curated corpus)
 
+<p align="center">
+  <img src="public/image/diagram-recall.png" alt="Recall pipeline: your prompt (any language) → BM25F keyword match (field-weighted, stemming) → Haiku recall (smallest cloud agent, 0-3 docs, BM25 fallback) → SessionStart snapshot (warm + cold knowledge, features, index, pinned)" width="860" />
+</p>
+
 The SessionStart snapshot pre-loads everything an agent needs to start work. But once a project's corpus crosses ~50 documents, there is a second question: *"Where did we decide X?"* or *"What do we know about Y?"* The agent cannot rely on the snapshot alone; the answer is in the corpus, just not in the always-loaded tier. Memory recall is the second-tier retrieval layer for exactly this case.
 
 ```bash
@@ -533,9 +557,14 @@ The corpus is deliberately narrower than "everything in `_dream_context/`":
 
 ### Ranking
 
-Standard BM25 with `k1=1.5`, `b=0.75`, scoring across `(title + description + tags + body)` of each doc. IDF uses the `log(1 + (N - df + 0.5) / (df + 0.5))` form so it stays non-negative on small corpora. Snippet extraction picks the line with the most query-term hits and includes ±1 line of context.
+Recall runs on **two deliberately decoupled scores**, and keeping them separate is the load-bearing design choice of the v0.6.0 engine overhaul:
 
-The tokenizer is light and Turkish-aware: standard English stopwords plus Turkish particles (`ve`, `ile`, `ki`, `için`, `gibi`) since the user codes in mixed Turkish/English. **Stemming is intentionally not applied** — slug-like terms (e.g., `manifest-bootstrap-safety-pattern`) need to exact-match in queries. There is no synonym table and no semantic recall by design: "ML practitioner" will not match "data scientist." If future evidence shows that gap is painful, a deterministic local-embedding overlay (`@xenova/transformers` with a 30MB MiniLM model, no Python dep) is the v2 path — not mem0.
+- **`score` — the raw flat-haystack BM25.** Standard BM25 (`k1=1.5`, `b=0.75`) over the *unweighted* union of `(title + description + tags + body)`, with IDF in the `log(1 + (N - df + 0.5) / (df + 0.5))` form so it stays non-negative on small corpora. This is the number the hooks gate on (memory-recall injection at `≥ 2.0`, the skill gate at `≥ 1.0`). Field weighting, recency, and synonyms **never** touch it — so those thresholds mean the same thing from one release to the next.
+- **`rankScore` — the derived sorting signal.** This is what hits are actually ordered by. It layers BM25F field weighting (`title ×3`, `tags ×2`, `description ×2`, `body ×1` — short, high-signal fields win) on top of the base, then folds in recency (a gentle tie-breaker with a floor, never a content override), task/status relevance, query-time synonym matches, an exact-identity boost for slug/title hits, and `[[wiki-link]]` connectivity. Auto-captured digests carry a `CAPTURE_RANK_PENALTY` so hand-curated docs outrank machine-captured ones — again, only here, never in the threshold-bearing `score`.
+
+The tokenizer is light and bilingual: standard English stopwords plus Turkish particles (`ve`, `ile`, `ki`, `için`, `gibi`), since the user codes in mixed Turkish/English. **Conservative EN+TR stemming** is applied to both the index and the query — it only collapses inflections to a shared stem (`databases → database`), so identical text still scores identically and the hard `score` thresholds are unaffected; slug-like terms keep their exact-identity boost on top. A small, hand-curated **synonym table** (`recall-synonyms.ts`) bridges common short forms to the corpus's canonical vocabulary, expanding query terms into `rankScore` only. There is still **no embedding model and no semantic recall** by design: a curated synonym list is deterministic and inspectable — "ML practitioner" matches "data scientist" only if you put it in the table. If that gap ever proves painful, a deterministic local-embedding overlay (`@xenova/transformers` with a 30 MB MiniLM model, no Python dep) is the v2 path — not mem0.
+
+Snippet extraction picks the line with the most query-term hits and includes ±1 line of context.
 
 There is no persistent index file. The inverted index is rebuilt in memory on every `recall` call. For corpora up to ~500 docs the rebuild is under 100ms; storing an index file would introduce gitignore complications and cache-invalidation bugs for negligible speedup.
 
@@ -613,7 +642,7 @@ The split is simple: **CLI for structure, native tools for content.**
 
 Beyond the core context management skill, `dreamcontext` ships curated skill packs for common workflows. Each pack contains a base skill (principles, sometimes always-active) and on-demand sub-skills or sub-agents that the agent loads only when the work matches.
 
-Seven packs ship today: **engineering** (coding standards, security, testing, Firebase) and **design** (design systems, web/mobile UX, onboarding) — both *always-on* base principles — plus **growth** (retention, ads, analytics), **brand-voice** (enforcement, discovery, guideline generation), and three sub-agent **orchestration packs**: **council** (multi-persona debate), **multi-review** (router + niche code-review specialists), and **goal-skill** (plan → review → implement → validate execution). Four standalone skills install individually: **system-prompts**, **business-idea-discovery**, **business-idea-validation**, and **meta-marketing**. Several packs ship their own agents (e.g. a code reviewer for engineering, the council persona/synthesizer pair, the goal-skill orchestration agents).
+Seven packs ship today: **engineering** (coding standards, security, testing, Firebase) and **design** (design systems, web/mobile UX, onboarding) — both *always-on* base principles — plus **growth** (retention, ads, analytics), **brand-voice** (enforcement, discovery, guideline generation), and three sub-agent **orchestration packs**: **council** (multi-persona debate), **multi-review** (router + niche code-review specialists), and **goal-skill** (plan → review → implement → validate execution). Six standalone skills install individually: **system-prompts**, **business-idea-discovery**, **business-idea-validation**, **meta-marketing**, **excalidraw** (deterministic Excalidraw board generation from a JSON spec), and **video-watching** (time-mapped video transcripts with on-screen visuals described inline). Several packs ship their own agents (e.g. a code reviewer for engineering, the council persona/synthesizer pair, the goal-skill orchestration agents).
 
 The three orchestration packs share a shape: instead of one model doing everything in one pass, they decompose the work across **isolated sub-agents** — each with its own clean context, scoped prompt, and (often) a different model tier — then synthesize. Council debates a decision across persona sub-agents and rounds; multi-review fans a diff out to security/cloud-functions/frontend/edge-case specialists and re-ranks their findings; goal-skill runs a goal through a planner, an independent plan reviewer, an implementer, and a validator. The pattern is the same insight as the rest of dreamcontext — structure beats volume — applied to *reasoning* rather than *memory*.
 
@@ -721,16 +750,18 @@ Every design choice was deliberate. Here is what I chose, what I chose it over, 
 
 ## What Comes Next
 
-`dreamcontext` ships first-class support for **Claude Code** and **Codex**. The hook system, the skill format, and the agent integration are richest on Claude (seven hooks, three core sub-agents, optional pack agents); Codex gets project-level skills (`.agents/skills`), a managed `AGENTS.md`, native `.codex/agents/*.toml`, and managed `.codex/config.toml` hooks (best-effort parity where event semantics differ). The core idea — structured files, pre-loaded context, consolidation cycles — is not tied to any one agent, and the architecture is designed so that others (Gemini CLI, Copilot, custom agents) can plug into the same `_dream_context/` directory with their own integration layer.
+`dreamcontext` ships first-class support for **Claude Code** and **Codex**. The hook system, the skill format, and the agent integration are richest on Claude (seven hooks, five core sub-agents, optional pack agents); Codex gets project-level skills (`.agents/skills`), a managed `AGENTS.md`, native `.codex/agents/*.toml`, and managed `.codex/config.toml` hooks (best-effort parity where event semantics differ). The core idea — structured files, pre-loaded context, consolidation cycles — is not tied to any one agent, and the architecture is designed so that others (Gemini CLI, Copilot, custom agents) can plug into the same `_dream_context/` directory with their own integration layer.
 
-**How it got here.** The neuroscience-inspired memory system (bookmarks, decay tracking, warm knowledge, triggers, transcript distillation) shipped in **v0.1.x**, along with the dashboard and the first skill packs. **v0.2.0** added Council debates, the Brain graph, Obsidian integration, lightweight root-instruction installs, and the catalog-driven skill-pack CLI. The releases since then have widened both retrieval and orchestration:
+**How it got here.** Each release widened the system along one axis:
 
-- **Memory recall (BM25)** — a deterministic second-tier retrieval layer over the curated corpus (see above), with an optional Haiku-assisted recall mode that adds short reasons and body excerpts, toggleable from the CLI and the dashboard's System menu.
-- **Sub-agent orchestration packs** — **multi-review** (a router that fans a diff out to security / cloud-functions / frontend / edge-case specialists) and **goal-skill** (plan → review → implement → validate), joining Council under one pattern: decompose reasoning across isolated sub-agents, then synthesize.
-- **v0.5.0** locked the **"persistent brain" positioning**, shipped the **one-command install** and the **in-session update nudge** (both covered in [Install & Update](#install--update)), and redesigned the context gate to surface the *full* skill catalog instead of a pre-picked subset.
-- **v0.5.1** hardened the dashboard server — loopback bind, CSRF guard, CORS lockdown, and a path-traversal guard — before the first public release (see [Security model](#security-model)).
+- **v0.1.x** — the neuroscience-inspired memory core (bookmarks, decay tracking, warm knowledge, triggers, transcript distillation), the web dashboard, and the first skill packs.
+- **v0.2.0** — Council debates, the Brain graph, Obsidian integration, lightweight root-instruction installs, and the catalog-driven skill-pack CLI.
+- **v0.3.0** — the **sleep-cycle fan-out**: the single consolidation agent became three parallel specialists (`sleep-tasks` and `sleep-state` always, `sleep-product` conditionally), with the main agent orchestrating directly and no separate orchestrator (see [The Sleep Cycle](#the-sleep-cycle)).
+- **v0.4.0** — the **manifest-aware install/update system** (the `setup` front door, `.install-manifest.json`, stale-file pruning), multi-product/monorepo support, **BM25 memory recall** (deterministic, zero new deps, hook-injected by default), the tightened 150-line anti-bloat ceiling, and a 3D Brain graph.
+- **v0.5.0 / v0.5.1** — the **"persistent brain" positioning**, the **one-command install** and **in-session update nudge** (see [Install & Update](#install--update)), the **goal-skill** and **multi-review** orchestration packs (joining Council under one decompose-then-synthesize pattern), optional Haiku-assisted recall, a context gate redesigned to surface the *full* skill catalog instead of a pre-picked subset, and the dashboard security hardening — loopback bind, CSRF guard, CORS lockdown, path-traversal guard — shipped as the v0.5.1 fast-follow before the first public release (see [Security model](#security-model)).
+- **v0.6.0 (in progress)** — the **recall engine overhaul** detailed in [Memory Recall](#memory-recall-bm25-over-the-curated-corpus) (BM25F field weighting, EN/TR stemming, a synonym table, score/rank decoupling — recall@1 68→85%, @3 82→95%), **continuous capture** (auto-digest + salience + a capture guard so machine-captured notes never outrank curated ones), and the first slice of the desktop control panel below.
 
-**What's next.** The other half of the vision is a **desktop control panel**: managing multiple project vaults, per-project settings, update and skill management, and a graphical view of context — packaged as a native app (Tauri) rather than a localhost server. Alongside it, the remaining defense-in-depth path hardening and the dashboard polish (accessibility audit, responsive layout, i18n token extraction, bundle size).
+**What's next.** The other half of the vision is a **desktop control panel** — managing multiple project vaults, per-project settings, update and skill management, and a graphical view of context, packaged as a native app (Tauri) rather than a localhost server. Its backend control-plane, dashboard wiring, and `--vault` plumbing are landing now in v0.6.0; the Tauri shell and the remaining polish (defense-in-depth path hardening, accessibility audit, responsive layout, i18n token extraction, bundle size) are the near-term road.
 
 The long-term vision: your project's context lives in your repo, structured and version-controlled, and any agent you choose to work with can pick it up. **The human stays in the loop. The context stays portable.** The agent gets better every session because the system enforces the discipline that makes that possible.
 

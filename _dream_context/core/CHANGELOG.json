@@ -1,6 +1,51 @@
 [
   {
     "date": "2026-06-06",
+    "type": "chore",
+    "scope": "licensing",
+    "description": "Replaced MIT LICENSE with Apache-2.0 full text. Added NOTICE (attribution), TRADEMARK.md (trademark stance: 'dreamcontext' and 'meansoft' reserved; forks must use distinct names), and CONTRIBUTING.md with DCO sign-off requirement. Updated package.json license field to Apache-2.0 and README License section. Rationale and trademark policy documented in knowledge/licensing-policy.md. GitHub's license badge will update to Apache-2.0 once this is pushed.",
+    "breaking": false,
+    "summary": "Relicense MIT to Apache-2.0 with NOTICE, TRADEMARK.md, CONTRIBUTING.md (DCO)",
+    "references": [
+      "commit:a020584",
+      "file:LICENSE",
+      "file:NOTICE",
+      "file:TRADEMARK.md",
+      "file:CONTRIBUTING.md",
+      "file:package.json",
+      "knowledge:licensing-policy"
+    ]
+  },
+  {
+    "date": "2026-06-06",
+    "type": "fix",
+    "scope": "recall",
+    "description": "buildCorpus() reads the live working tree, which on a dogfooding machine contains state/.session-digests/ and .sleep.json bookmark entries (gitignored, never shipped). Tests asserting a capture-free baseline were passing in CI but failing locally because those extra slug types were included in the corpus. Fix: filter digest# and bookmark# slugs from buildCorpus() so the eval is stable regardless of local machine state.",
+    "breaking": false,
+    "summary": "Make recall-capture-stress eval deterministic across CI and dev machines",
+    "references": [
+      "commit:f9624c4",
+      "file:src/lib/recall.ts",
+      "file:eval/recall-capture-stress.ts"
+    ]
+  },
+  {
+    "date": "2026-06-06",
+    "type": "fix",
+    "scope": "onboarding",
+    "description": "Refactored interactive menu to lead with setup rather than init. Extracted shared installPlatformIntegration() helper. Standalone init now detects a half-installed state (scaffolded _dream_context/ but no .claude/ skills/agents/hooks) by checking integrationPresent across ALL selected platforms (.every(), not .some()) and either offers to finish or emits a loud warning: '⚠ Not done yet → dreamcontext setup'. SETUP_INTERNAL_ENV + TTY guard prevent the warning from firing inside setup itself. README Quick Start now leads with setup. A user following the obvious path can no longer end up in a broken half-install.",
+    "breaking": false,
+    "summary": "Make setup the single onboarding front door; stop init leaving a half-install",
+    "references": [
+      "commit:ecfe365",
+      "commit:486d418",
+      "file:src/cli/commands/setup.ts",
+      "file:src/cli/commands/init.ts",
+      "task:v04-ws1-install-update-overhaul"
+    ]
+  },
+  {
+    "date": "2026-06-06",
     "type": "feat",
     "scope": "dashboard",
     "description": "Committed and pushed all accumulated v0.6.0 work as commit b924fa5 to GitHub main; tag v0.6.0 pushed. npm publish was NOT completed — token expired (401 surfaced as 404). Hero eyebrow updated to 'the persistent brain for AI natives' and the redundant subtitle removed; heading accent gradient applied to 'AI natives'. A 'Works with Claude Code' credibility pill added above the install command. Council flow-spec diagram updated to show the inter-persona debate loop (↻ ROUNDS marker, comets cycling between lens A/B/C) converging to synthesizer. README updated with landing page hero banner and spotlight+architecture screenshots committed under public/image/. Sidebar 'What is this?' entry gains a prominent bounce nudge (accent fill + glow dot + vertical bounce keyframe) that clears after the first click and persists dismissal in localStorage under dreamcontext.dashboard.aboutSeen. .gitignore updated to exclude .obsidian/ and .session-digests/. 1111/1112 vitest pass (1 pre-existing env-flake unrelated to these changes).",

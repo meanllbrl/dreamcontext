@@ -144,6 +144,12 @@ Only the 50 most-recent session digests are indexed per corpus build. Older dige
 
 `recall-capture-stress.test.ts` verifies: under a worst-case capture flood, ZERO gold targets that ranked in top-3 on the capture-free corpus are knocked out by a capture. (A weak-match gold doc that already missed top-3 without captures is a query recall limit, not capture displacement.)
 
+### Test Determinism Fix (2026-06-06, commit f9624c4)
+
+The stress test was non-deterministic across CI vs dogfooding dev machines. `buildCorpus()` reads the live working tree, which on a dev machine includes gitignored real session digests (`state/.session-digests/`) and `.sleep.json` bookmarks — both are gitignored and not in the npm `files` list, so CI sees a clean corpus but local runs accumulate real captures.
+
+Fix: derive a capture-free `baselineCorpus` once at test setup by filtering slugs matching `digest#` or `bookmark#` patterns. All four test phases (N=0 baseline, stress vocab, flood eval, displacement proof) use this pre-filtered baseline. The guard now asserts the baseline is capture-free by construction, making the measurement deterministic in every environment. The synthetic flood is the only source of captures during the test.
+
 ### Latent Bug Fixed
 
 A `Date.parse(session.created_at)` call was receiving pre-formatted strings ("3 days ago"), causing NaN comparisons. Fixed: `session_id` is sanitized in digest frontmatter; raw ISO timestamps are used.
@@ -185,4 +191,4 @@ No category regressed. 1063 tests passing (post-build).
 
 ## Last Verified
 
-2026-06-02.
+2026-06-06.

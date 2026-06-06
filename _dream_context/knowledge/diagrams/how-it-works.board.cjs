@@ -1,19 +1,19 @@
 // Generates the dreamcontext "how it works" source-of-truth board.
 // Mirrors dashboard/src/components/about/HowItWorksDiagram.tsx.
 const path = require('node:path');
-const { buildExcalidraw } = require('../../../.claude/skills/excalidraw/scripts/build_excalidraw.js');
+const { buildExcalidraw } = require('../../../scripts/diagrams/excalidraw/build_excalidraw.js');
 const {
   card, node, sectionTitle, connector,
   topOf, bottomOf, rightOf,
-} = require('../../../.claude/skills/excalidraw/scripts/lib/style.js');
+} = require('../../../scripts/diagrams/excalidraw/lib/style.js');
 
 const OUT = path.resolve(__dirname, 'how-it-works.excalidraw.md');
 
 // ── Geometry ────────────────────────────────────────────────────────────────
 const HOOK = { x: 380, y: 70, w: 360, h: 88 };
 const REGION = { y: 250, w: 188, h: 96, gap: 22 };
-const AGENT = { x: 350, y: 470, w: 420, h: 88 };
-const REM = { x: 380, y: 650, w: 360, h: 88 };
+const AGENT = { x: 320, y: 470, w: 480, h: 88 };
+const REM = { x: 360, y: 650, w: 400, h: 88 };
 
 const REGIONS = [
   { file: 'soul', tag: 'Identity' },
@@ -42,10 +42,10 @@ const regionCards = REGIONS.map((r, i) => {
 });
 
 // 3) Agent (dark/core node)
-els.push(...card({ ...AGENT, color: 'gray', fontSize: 20, text: 'Your agent works with the whole picture\nno re-exploring · no token-burning search spiral' }));
+els.push(...card({ ...AGENT, color: 'gray', fontSize: 20, text: 'Your agent works with the whole picture\nno re-exploring, no blind search' }));
 
 // 4) RemSleep
-els.push(...card({ ...REM, color: 'mint', fontSize: 19, text: 'RemSleep consolidation ↺\ndistils the session like the brain during sleep' }));
+els.push(...card({ ...REM, color: 'mint', fontSize: 19, text: 'RemSleep consolidation ↺\nmulti-agent · distils the session' }));
 
 // ── Arrows ──────────────────────────────────────────────────────────────────
 // hook → each region
@@ -68,7 +68,7 @@ const lastRegion = regionCards[regionCards.length - 1];
 els.push(...connector({
   from: rightOf(REM.x, REM.y, REM.w, REM.h),
   to: bottomOf(lastRegion.x, lastRegion.y, lastRegion.w, lastRegion.h),
-  label: 'consolidates & feeds back',
+  label: 'feeds back',
   dashed: true,
   strokeColor: '#6741d9',
 }));

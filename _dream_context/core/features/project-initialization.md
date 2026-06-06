@@ -46,6 +46,7 @@ Setting up the _dream_context/ directory structure correctly is tedious and erro
 
 ## Constraints & Decisions
 
+- **[2026-06-06]** `init.ts` gained a finish-offer flow (v0.6.0): when run interactively without an existing integration, it offers to call `installPlatformIntegration()` or prints a loud warning. Gated on `SETUP_INTERNAL_ENV` absent + TTY + `.every()` over selected platforms. Full architecture in `manifest-based-install-update.md`.
 - **[2026-05-22]** `dreamcontext setup` is the recommended first-run command. It orchestrates init + install-skill internally via the `SETUP_INTERNAL_ENV` flag to suppress deprecation hints from child commands.
 - **[2026-05-22]** `install-skill` and `install-claude-md` are deprecated but not removed until v0.5. They still work; print a hint directing to `setup` unless invoked internally by `setup`.
 - **[2026-02-25]** `init` and `install-skill` are separate commands by design. `init` sets up `_dream_context/` (data/context); `install-skill` sets up `.claude/` (Claude Code integration). A project might use `init` without Claude Code, or update the skill without reinitializing.

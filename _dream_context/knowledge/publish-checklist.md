@@ -9,10 +9,34 @@ pinned: false
 date: '2026-05-31'
 ---
 
-# Publish Checklist (v0.5.0)
+# Publish / Release Checklist
 
 Run these steps in order when you are ready to go live. The curl install URL and the
-in-session update nudge only activate after steps 4 and 5 are complete.
+in-session update nudge only activate after the publish + merge steps are complete.
+
+## 0. Docs & diagrams are current — DO THIS FIRST
+
+**README.md and DEEP-DIVE.md MUST reflect what this release ships.** Before building or
+publishing anything:
+
+```bash
+npm run diagrams   # rebuild every Excalidraw board → re-render public/image/diagram-*.png
+```
+
+Then review and update:
+
+- **README.md** — How It Works / Memory Recall figures, command surface, skill-pack
+  table, and any version-specific copy.
+- **DEEP-DIVE.md** — the section figures (problem · architecture · sleep · neuroscience ·
+  council · recall) and any new mechanics.
+
+The figures are generated from editable Excalidraw boards at
+`_dream_context/knowledge/diagrams/*.board.cjs` (house-style via the `excalidraw` skill).
+`npm run diagrams` re-runs each board spec (writing the `.excalidraw.md` you can open in
+Obsidian) and re-renders the PNGs the docs embed, via `scripts/diagrams/build-all.mjs`
+(headless `@excalidraw/excalidraw`). If a mechanism changed, edit the board spec, re-run,
+and the README/DEEP-DIVE figures update in place (same filenames). **Do not publish with
+stale docs or diagrams.**
 
 ## 1. Build and test
 
@@ -34,7 +58,8 @@ Confirm the following are present in the file listing:
 - `skill/` (SKILL.md and related files)
 - `install.sh`
 - `README.md`
-- `LICENSE`
+- `LICENSE` (Apache-2.0 as of v0.6.0; irrevocable MIT for ≤v0.5.4)
+- `NOTICE` (added at relicense; required by Apache-2.0 — must be present)
 
 If any are missing, check the `files` array in `package.json` and the tsup `onSuccess`
 copy step.
@@ -81,8 +106,9 @@ Verify that `dreamcontext --version` prints `0.5.0` after the script completes.
 
 ## Notes
 
-- The version is already `0.5.0` in `package.json` — do not bump it before publishing.
-- The in-session update nudge (WS3 version-check) reads from the npm registry via
+- Confirm the version in `package.json` matches the release before publishing (do not publish with a stale version string).
+- The in-session update nudge (version-check) reads from the npm registry via
   `npm view dreamcontext version`. It activates automatically once the package is live.
 - The seeded `.version-check.json` fixture tests are offline-only and pass before
   publish; the live nudge path is exercised in production.
+- As of v0.6.0 the package ships Apache-2.0. Ensure `package.json` `license` field reads `Apache-2.0` and `NOTICE` is in the `files` array.

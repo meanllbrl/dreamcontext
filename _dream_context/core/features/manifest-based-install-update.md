@@ -2,7 +2,7 @@
 id: "feat_mBa5T4nU"
 status: "in_review"
 created: "2026-05-22"
-updated: "2026-06-01"
+updated: "2026-06-06"
 released_version: null
 tags: ["devops", "onboarding", "architecture"]
 related_tasks: ["v04-ws1-install-update-overhaul", "v06-control-plane-backend", "v06-control-panel-frontend"]
@@ -22,6 +22,8 @@ v0.5.0 extended this with: (1) a one-command `install.sh` curl script, (2) a `dr
 - [x] As a developer, I want the first `update` after upgrading to only flag stale files (not delete) so I can review before anything is removed.
 - [x] As a developer, I want `dreamcontext setup` to run init + install-skill in one command so I don't have to run two separate commands on a new project.
 - [x] As a developer, I want setup to support `--platforms`, `--packs`, and `--multi-product` flags so it can be scripted non-interactively.
+- [x] As a developer, I want the interactive menu and README Quick Start to lead with `dreamcontext setup` so I can't accidentally end up with a half-install by running bare `init`.
+- [x] As a developer, I want `dreamcontext init` (run interactively without an existing integration) to offer to finish the install or print a clear warning, so I am never silently left without `.claude/`, skills, agents, or hooks.
 - [x] As a developer, I want manifest writes to be cancel-safe so a Ctrl+C mid-install doesn't leave a corrupted manifest.
 - [x] As a developer, I want filter persistence across update: installed packs and platform flags are preserved in `.config.json` and re-applied so an update doesn't forget my configuration.
 - [ ] As a developer, I want `dreamcontext update --dry-run` to show what would change without writing anything, so I can audit before committing.
@@ -40,6 +42,10 @@ v0.5.0 extended this with: (1) a one-command `install.sh` curl script, (2) a `dr
 - [x] `src/lib/setup-config.ts` persists platforms + packs + multiProduct + setupVersion in `.config.json`. Updates merge (patch), never overwrite unrelated fields.
 - [x] `dreamcontext setup` (`src/cli/commands/setup.ts`) runs init + install-skill in one orchestrated flow, supporting `--defaults`, `--yes`, `--platforms`, `--packs`, `--multi-product` flags.
 - [x] `setup` threads manifest through every copy so the resulting manifest is complete after a single command.
+- [x] `interactive.ts` menu leads with "Set up dreamcontext (recommended)" as the first Setup entry (runs full `setup`); bare `init` is relabelled "advanced".
+- [x] `setup.ts` extracts install logic into `installPlatformIntegration()` helper shared between `setup` and `init` so they cannot drift.
+- [x] `init.ts`: when run interactively and the integration is absent, offers to finish the install (default yes) or prints "⚠ Not done yet → run `dreamcontext setup`" warning; offer is gated on `SETUP_INTERNAL_ENV` absent + TTY present + `integrationPresent` false (uses `.every()` over selected platforms so multi-platform partial installs are not suppressed).
+- [x] README Quick Start leads with `dreamcontext setup`; two-step flow moved under an "advanced" details block.
 - [x] Partial-flag partition preservation: when platforms/packs are passed as flags, the partitions not covered by the flags remain in the manifest (existing files not clobbered).
 - [ ] `dreamcontext update --dry-run` lists changes without writing.
 - [x] `install.sh` at repo root: POSIX sh, `set -e`, checks Node ≥18, runs `npm install -g dreamcontext`, calls `dreamcontext update` if `_dream_context/` exists or prompts `setup` otherwise, prints a success banner with the positioning one-liner. No `sudo`, no `eval`, no nested remote fetch.
@@ -56,6 +62,8 @@ v0.5.0 extended this with: (1) a one-command `install.sh` curl script, (2) a `dr
 - **[2026-05-22]** `isSafeDeletePath` only returns true for paths under `.claude/`, `.agents/`, `.codex/`. Files outside these prefixes (including `_dream_context/` itself) are never candidates for auto-deletion — user-owned data is protected by design.
 - **[2026-05-22]** `setup` and `install-skill` share the same internal install logic; `setup` is a thin orchestrator that calls `init` then `install-skill`. The `SETUP_INTERNAL_ENV` env var suppresses deprecation hints from child commands when invoked via `setup`.
 - **[2026-05-31]** `refreshVersionCache` is the ONLY function allowed to make a network call (npm view). `generateSnapshot()` is on the SessionStart hot path and must never call it. The UserPromptSubmit hook calls it lazily, gated by `isCacheFresh`. Any future refactor must preserve this separation.
+- **[2026-06-06]** `integrationPresent` in `init.ts` uses `.every()` over selected platforms (not `.some()`). Using `.some()` would suppress the finish-setup offer when only one of several selected platforms is installed, leaving a partial install. See commit 486d418.
+- **[2026-06-06]** The `installPlatformIntegration()` helper in `setup.ts` is the single canonical install path. Both `setup` and `init` (when the user accepts the finish-offer) call it. This ensures future changes to install logic are applied consistently to both entry points.
 - **[2026-05-31]** `dreamcontext upgrade` does NOT auto-exec `dreamcontext update` after installing the new binary — the freshly-replaced binary cannot reliably re-exec the old process. It prints the instruction and exits. This is intentional; do not change.
 - **[2026-05-22]** Old `install-skill` and `install-claude-md` commands are deprecated but not removed until v0.5. They print a deprecation hint directing users to `setup` unless invoked via `setup` itself.
 - **[2026-05-22]** Bootstrap scan on first migration: scans `.claude/`, `.agents/`, `.codex/` for files matching known dreamcontext-owned path patterns. This heuristic is best-effort; the first post-upgrade `update` only flags, never deletes.
@@ -98,15 +106,34 @@ v0.5.0 extended this with: (1) a one-command `install.sh` curl script, (2) a `dr
 4. Diff old vs new to find stale files; prune before persisting.
 5. Write final manifest.
 
-**`setup.ts` flow**:
+**`setup.ts` flow** (v0.6.0):
 1. Resolve platforms (flag > defaults > interactive).
 2. Run `dreamcontext init` (skipped if `_dream_context/` already exists).
-3. Run `dreamcontext install-skill` for selected platforms + packs.
+3. Call `installPlatformIntegration(platforms, packs, opts)` — shared helper extracted from the old inline logic.
 4. Write `.config.json` with full setup state.
 5. Write platform defaults file.
 
+**`init.ts` discoverability / finish-offer** (v0.6.0 addition):
+- When `init` completes and `_dream_context/` is fresh: checks `SETUP_INTERNAL_ENV` (if set, invoked via setup — skip), TTY (if non-TTY — skip), and `integrationPresent` (checks `.every()` selected platform has a skill installed).
+- If all conditions met for the offer: prompts "Finish setup now?" (default yes); on yes calls `installPlatformIntegration()`.
+- If TTY present but integration already installed: silent (normal agent-invoked-init path).
+- If TTY present, no integration, user declines: prints loud warning banner "⚠ Not done yet → run `dreamcontext setup`".
+
+**`interactive.ts` menu change**:
+- "Set up dreamcontext (recommended)" → calls `setup` command (first item).
+- "Initialize project context only (advanced)" → calls `init` (demoted, labelled advanced).
+
+Also see: `project-initialization.md` for `init` scaffolding semantics.
+
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-06-06 - Onboarding front-door fix
+- Added 2 user stories (discoverability, init finish-offer).
+- Added 6 acceptance criteria (menu lead, shared helper, init offer gating, .every() check, README change).
+- Added 2 constraints (`.every()` reasoning, shared-helper canonical path).
+- Updated Technical Details: setup.ts flow, init.ts discoverability/finish-offer, interactive.ts menu change.
+- Commits: ecfe365, 486d418.
 
 ### 2026-05-22 - Created
 - Feature PRD created from v0.4 session.
