@@ -132,17 +132,33 @@ npm install -g dreamcontext
 > Requires **Node.js >= 18**. Currently supports **Claude Code** and **Codex**.
 
 ```bash
-# 1. Initialize the context structure
+# One-shot setup — scaffolds _dream_context/, installs the skill, agents,
+# hooks, and root instructions, and prompts for optional skill packs.
+dreamcontext setup
+
+# Scriptable / non-interactive (explicit platforms, skip all prompts)
+dreamcontext setup --platforms claude,codex --defaults
+```
+
+One command. Next session, the hook fires, context loads, and the agent is ready.
+
+> **`setup` is the front door** — it runs init + install-skill + install-instructions in one step and tracks every file it writes in a manifest. The individual commands below still exist for advanced/scripted use, but `setup` is what you want on a new project.
+
+<details>
+<summary>Advanced: run the steps individually</summary>
+
+```bash
+# Scaffold the context structure only (does NOT install the agent integration)
 dreamcontext init
 
-# 2. Install platform integration (multi-select prompt; defaults to Claude)
+# Install platform integration (multi-select prompt; defaults to Claude)
 dreamcontext install-skill
-
-# Explicit platform selection (comma-separated)
 dreamcontext install-skill --platforms claude,codex
 ```
 
-Two commands. Next session, the hook fires, context loads, and the agent is ready.
+`dreamcontext init` on its own leaves you without `.claude/` skills, agents, and hooks — your agent won't load the context until you also run `install-skill` (or just use `setup`). When run interactively, `init` now offers to finish the install for you.
+
+</details>
 
 ### Interactive mode
 

@@ -65,9 +65,18 @@ const CATEGORIES: MenuCategory[] = [
     colorBright: chalk.cyanBright,
     commands: [
       {
+        emoji: '\u{1F680}',
+        name: 'Set up dreamcontext (recommended)',
+        description: 'One-shot: context + skills + agents + hooks + packs + root instructions',
+        argv: ['setup'],
+        // No args — `setup` runs its own full interactive flow (platforms, packs,
+        // multi-product) and installs everything, so the user lands on a working
+        // .claude/ integration rather than a half-installed context.
+      },
+      {
         emoji: '\u{1F4E6}',
-        name: 'Initialize project',
-        description: 'Create _dream_context/ directory',
+        name: 'Initialize context only (advanced)',
+        description: 'Scaffold _dream_context/ without installing the platform integration',
         argv: ['init'],
         args: [
           {

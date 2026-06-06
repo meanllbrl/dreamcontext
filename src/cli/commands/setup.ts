@@ -53,6 +53,85 @@ function parseMultiProductOption(raw?: string): string[] | false {
   return valid.length > 0 ? valid : false;
 }
 
+export interface InstallIntegrationOptions {
+  platforms: PlatformId[];
+  packs?: string[];
+  multiProduct?: string[] | false;
+  /** Default: true (dreamcontext owns memory). Persisted before install so the per-platform installer reads it. */
+  disableNativeMemory?: boolean;
+}
+
+export interface InstallIntegrationResult {
+  installed: string[];
+  notes: string[];
+  fileCount: number;
+}
+
+/**
+ * Install the platform integration into an EXISTING `_dream_context/` project:
+ * skills, agents, hooks, optional packs, and root instruction files — all
+ * threaded through a single manifest. This is the part of `setup` that turns a
+ * bare context directory into a working agent integration (`.claude/` etc.).
+ *
+ * Shared by `runSetup` and `dreamcontext init`'s "finish setup now" path so the
+ * two never drift. Caller is responsible for ensuring `_dream_context/` exists.
+ */
+export async function installPlatformIntegration(
+  projectRoot: string,
+  opts: InstallIntegrationOptions,
+): Promise<InstallIntegrationResult> {
+  const { platforms } = opts;
+  const packs = opts.packs ?? [];
+  const disableNativeMemory = opts.disableNativeMemory ?? true;
+
+  writeProjectPlatformDefaults(projectRoot, platforms);
+
+  // Persist the native-memory choice BEFORE installing, so the per-platform
+  // installer (installCoreForPlatform) reads it when writing .claude/settings.json.
+  updateSetupConfig(projectRoot, { disableNativeMemory });
+
+  // Install core skill/agents/hooks for each platform.
+  info('Installing platform integration...');
+  const manifest = getOrCreateManifest(projectRoot);
+  for (const p of platforms) recordPlatform(manifest, p);
+
+  const installed: string[] = [];
+  const notes: string[] = [];
+  for (const platform of platforms) {
+    const result = await installCoreForPlatform(platform, projectRoot, manifest);
+    installed.push(...result.installed);
+    notes.push(...result.notes);
+  }
+
+  // Install packs.
+  if (packs.length > 0) {
+    info(`Installing ${packs.length} pack(s): ${chalk.dim(packs.join(', '))}`);
+    directPackInstall(packs, projectRoot, platforms, manifest);
+  }
+
+  // Install root instructions (CLAUDE.md / AGENTS.md).
+  info('Installing root instruction file(s)...');
+  for (const platform of platforms) {
+    try {
+      await installInstructions(projectRoot, platform, 'append');
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      info(`${platform} root instructions skipped: ${msg}`);
+    }
+  }
+
+  // Persist manifest + config.
+  writeManifest(projectRoot, manifest);
+  updateSetupConfig(projectRoot, {
+    platforms,
+    packs,
+    multiProduct: opts.multiProduct ?? false,
+    setupVersion: dreamcontextVersion(),
+  });
+
+  return { installed, notes, fileCount: Object.keys(manifest.files).length };
+}
+
 export interface SetupOptions {
   defaults?: boolean;
   yes?: boolean;
@@ -149,55 +228,17 @@ export async function runSetup(opts: SetupOptions): Promise<void> {
       info(chalk.dim('_dream_context/ already exists — skipping init.'));
     }
 
-    writeProjectPlatformDefaults(projectRoot, platforms);
-
-    // Persist the native-memory choice BEFORE installing, so the per-platform
-    // installer (installCoreForPlatform) reads it when writing .claude/settings.json.
+    // ─── 5. Install platform integration (skills, agents, hooks, packs, instructions)
     // Default: disable Claude's native auto-memory so dreamcontext owns memory.
     const disableNativeMemory = !opts.keepNativeMemory;
-    updateSetupConfig(projectRoot, { disableNativeMemory });
-
-    // ─── 5. Install core skill/agents/hooks for each platform ─────────────
-    info('Installing platform integration...');
-    const manifest = getOrCreateManifest(projectRoot);
-    for (const p of platforms) recordPlatform(manifest, p);
-
-    const installed: string[] = [];
-    const notes: string[] = [];
-    for (const platform of platforms) {
-      const result = await installCoreForPlatform(platform, projectRoot, manifest);
-      installed.push(...result.installed);
-      notes.push(...result.notes);
-    }
-
-    // ─── 6. Install packs ─────────────────────────────────────────────────
-    if (packs.length > 0) {
-      info(`Installing ${packs.length} pack(s): ${chalk.dim(packs.join(', '))}`);
-      directPackInstall(packs, projectRoot, platforms, manifest);
-    }
-
-    // ─── 7. Install instructions (CLAUDE.md / AGENTS.md) ──────────────────
-    info('Installing root instruction file(s)...');
-    for (const platform of platforms) {
-      try {
-        await installInstructions(projectRoot, platform, 'append');
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        info(`${platform} root instructions skipped: ${msg}`);
-      }
-    }
-
-    // ─── 8. Persist manifest + config ─────────────────────────────────────
-    writeManifest(projectRoot, manifest);
-    updateSetupConfig(projectRoot, {
+    const { notes, fileCount } = await installPlatformIntegration(projectRoot, {
       platforms,
       packs,
       multiProduct,
-      setupVersion: dreamcontextVersion(),
+      disableNativeMemory,
     });
 
-    // ─── 9. Summary ───────────────────────────────────────────────────────
-    const fileCount = Object.keys(manifest.files).length;
+    // ─── 6. Summary ───────────────────────────────────────────────────────
     const manifestPath = '_dream_context/state/.install-manifest.json';
     console.log();
     console.log(miniBox([

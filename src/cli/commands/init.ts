@@ -2,7 +2,6 @@ import { Command } from 'commander';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { input, confirm, checkbox } from '@inquirer/prompts';
-import { installInstructions } from './install-claude-md.js';
 import chalk from 'chalk';
 import { getInitPath } from '../../lib/context-path.js';
 import { today } from '../../lib/id.js';
@@ -20,7 +19,8 @@ import {
 import { writeProjectPlatformDefaults } from '../../lib/platform-defaults.js';
 import { updateSetupConfig } from '../../lib/setup-config.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
-import { printDeprecationHint } from './install-skill.js';
+import { printDeprecationHint, SETUP_INTERNAL_ENV } from './install-skill.js';
+import { platformSkillRoot } from '../../lib/catalog.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
@@ -383,38 +383,71 @@ export function registerInitCommand(program: Command): void {
         console.log(`  └── ${chalk.magentaBright.bold('inbox/')}`);
       }
 
-      // Optional: offer to install root instruction files for selected platforms
-      let instructionsInstalled = false;
-      if (!useDefaults) {
-        const want = await confirm({
-          message: 'Install managed root instruction file(s) now? (CLAUDE.md / AGENTS.md)',
-          default: false,
-        });
-        if (want) {
-          for (const platform of selectedPlatforms) {
-            try {
-              const result = await installInstructions(process.cwd(), platform, 'append');
-              instructionsInstalled = instructionsInstalled || result.action !== 'skipped';
-            } catch (err: any) {
-              if (err.name !== 'ExitPromptError') {
-                info(`${platform} root instructions skipped: ${err.message}`);
-              }
+      // `init` only scaffolds _dream_context/ — it does NOT install the platform
+      // integration (.claude/ skills, agents, hooks). On its own that leaves the
+      // project half-installed: the agent never loads this context. Offer to finish
+      // the install right here so the user isn't stranded. Suppressed when init is
+      // run as a child of `setup` (which installs afterwards itself) or when the
+      // integration is already present (e.g. the dreamcontext-initializer agent runs
+      // `init` from inside an existing .claude/, only the context dir was missing).
+      const viaSetup = process.env[SETUP_INTERNAL_ENV] === '1';
+      const integrationPresent = selectedPlatforms.some((p) =>
+        existsSync(join(platformSkillRoot(process.cwd(), p), 'dreamcontext', 'SKILL.md')),
+      );
+      let integrationInstalled = false;
+      if (!viaSetup && !integrationPresent && !useDefaults && process.stdin.isTTY) {
+        let finish = false;
+        try {
+          finish = await confirm({
+            message: 'Install platform integration now? (skills, agents, hooks, root instructions — required for your agent to load this context)',
+            default: true,
+          });
+        } catch (err: any) {
+          if (err?.name === 'ExitPromptError') finish = false;
+          else throw err;
+        }
+        if (finish) {
+          try {
+            const { installPlatformIntegration } = await import('./setup.js');
+            const { notes } = await installPlatformIntegration(process.cwd(), {
+              platforms: selectedPlatforms,
+              multiProduct,
+            });
+            integrationInstalled = true;
+            console.log();
+            console.log(chalk.green('  ✓ Platform integration installed — .claude/ is ready.'));
+            for (const n of notes) console.log(`  ${n}`);
+          } catch (err: any) {
+            if (err?.name !== 'ExitPromptError') {
+              error(`Platform integration install failed: ${err.message}`);
             }
           }
         }
       }
 
       console.log();
-      console.log(chalk.bold('  What\'s next:'));
-      console.log(`  ${chalk.dim('1.')} Run ${chalk.magentaBright('dreamcontext install-skill')} to set up platform integrations`);
-      console.log(`  ${chalk.dim('2.')} Run ${chalk.magentaBright('dreamcontext features create <name>')} to add features`);
-      console.log(`  ${chalk.dim('3.')} Edit ${chalk.green('_dream_context/core/0.soul.md')} to define agent identity`);
-      let nextStep = 4;
-      if (!instructionsInstalled) {
-        console.log(`  ${chalk.dim(nextStep++ + '.')} Optional: ${chalk.magentaBright('dreamcontext install-instructions')} to add managed root guidance`);
-      }
-      if (obsidianInstalled) {
-        console.log(`  ${chalk.dim(nextStep++ + '.')} In Obsidian: ${chalk.white('Open folder as vault')} → select ${chalk.green('_dream_context/')}`);
+      if (integrationInstalled || integrationPresent) {
+        console.log(chalk.bold('  What\'s next:'));
+        console.log(`  ${chalk.dim('1.')} ${chalk.green('Done')} — next session the hook fires and your agent loads this context.`);
+        console.log(`  ${chalk.dim('2.')} Run ${chalk.magentaBright('dreamcontext features create <name>')} to add features`);
+        console.log(`  ${chalk.dim('3.')} Edit ${chalk.green('_dream_context/core/0.soul.md')} to define agent identity`);
+        let nextStep = 4;
+        if (obsidianInstalled) {
+          console.log(`  ${chalk.dim(nextStep++ + '.')} In Obsidian: ${chalk.white('Open folder as vault')} → select ${chalk.green('_dream_context/')}`);
+        }
+      } else if (!viaSetup) {
+        // Half-installed: make it unmistakable that the agent integration is NOT in place yet.
+        console.log(chalk.yellow.bold('  ⚠ Not done yet — platform integration is NOT installed.'));
+        console.log(`  ${chalk.dim('Your agent won\'t load this context until you install the skill, agents, and hooks.')}`);
+        console.log();
+        console.log(chalk.bold('  Finish setup:'));
+        console.log(`  ${chalk.dim('1.')} Run ${chalk.magentaBright.bold('dreamcontext setup')} ${chalk.dim('— one-shot: skills + agents + hooks + root instructions')}`);
+        console.log(`  ${chalk.dim('   ')} ${chalk.dim('(or')} ${chalk.magentaBright('dreamcontext install-skill')}${chalk.dim(' to install just the integration)')}`);
+        console.log(`  ${chalk.dim('2.')} Run ${chalk.magentaBright('dreamcontext features create <name>')} to add features`);
+        console.log(`  ${chalk.dim('3.')} Edit ${chalk.green('_dream_context/core/0.soul.md')} to define agent identity`);
+        if (obsidianInstalled) {
+          console.log(`  ${chalk.dim('4.')} In Obsidian: ${chalk.white('Open folder as vault')} → select ${chalk.green('_dream_context/')}`);
+        }
       }
 
       printDeprecationHint('init');
