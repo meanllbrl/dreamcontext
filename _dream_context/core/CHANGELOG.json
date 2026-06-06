@@ -1,5 +1,34 @@
 [
   {
+    "date": "2026-06-06",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "Committed and pushed all accumulated v0.6.0 work as commit b924fa5 to GitHub main; tag v0.6.0 pushed. npm publish was NOT completed — token expired (401 surfaced as 404). Hero eyebrow updated to 'the persistent brain for AI natives' and the redundant subtitle removed; heading accent gradient applied to 'AI natives'. A 'Works with Claude Code' credibility pill added above the install command. Council flow-spec diagram updated to show the inter-persona debate loop (↻ ROUNDS marker, comets cycling between lens A/B/C) converging to synthesizer. README updated with landing page hero banner and spotlight+architecture screenshots committed under public/image/. Sidebar 'What is this?' entry gains a prominent bounce nudge (accent fill + glow dot + vertical bounce keyframe) that clears after the first click and persists dismissal in localStorage under dreamcontext.dashboard.aboutSeen. .gitignore updated to exclude .obsidian/ and .session-digests/. 1111/1112 vitest pass (1 pre-existing env-flake unrelated to these changes).",
+    "breaking": false,
+    "summary": "v0.6.0 released to GitHub (b924fa5, tag v0.6.0); hero copy 'AI natives' + 'Works with Claude Code' pill; Council round-debate diagram; README landing page visuals; sidebar 'What is this?' bounce nudge",
+    "references": [
+      "commit:b924fa5",
+      "task:landing-page-v2",
+      "task:v06-control-panel-polish",
+      "file:dashboard/src/components/about/Hero.tsx",
+      "file:dashboard/src/components/layout/Sidebar.tsx",
+      "file:README.md"
+    ]
+  },
+  {
+    "date": "2026-06-06",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "Major polish pass on the About/landing page. FlowDiagram caption text now auto-wraps via SVG foreignObject instead of overflowing boxes. Flow animation engine replaced: dropped stroke-dashoffset (re-rasterizes the full path stroke on main-thread every frame, causing visible stutter) in favor of CSS Motion Path (offset-path + offset-distance), which compositor-class animates a small dot element with a radial-gradient fill; worst frame measured at 9-11ms, 0 jank at ~27 dots. Goal-skill promoted to the 'One brain, many faculties' feature spotlight with a dedicated landscape loop diagram showing Plan Review → Implementation Review → Validation Review cycle. The section itself was refactored from a flat scroll to a sticky + scroll-scrub experience: a sentinel element triggers a sticky container while the user scrolls through sub-scenes, with snap-to-nearest so the user never ends up in an in-between state. Light-mode wire contrast fixed: FlowDiagram.css .fd-wire color changed from var(--color-border) (near-white in light) to color-mix(in srgb, var(--color-text) 38%, transparent), making wires visible in both themes without overpowering dark mode. Dashed-loop pattern tightened from 2 8 to 5 7 + opacity 0.85 for legibility at small sizes. All changes in dashboard/src/components/about/* and AboutPage.css; uncommitted in working tree as of this sleep.",
+    "breaking": false,
+    "summary": "Landing page v2 polish: motion-path flow animation, goal-skill spotlight, sticky scrub section, wire contrast fix",
+    "references": [
+      "task:landing-page-v2",
+      "file:dashboard/src/components/about/FlowDiagram.css",
+      "file:dashboard/src/components/about/AboutPage.css"
+    ]
+  },
+  {
     "date": "2026-06-05",
     "type": "chore",
     "scope": "cli",

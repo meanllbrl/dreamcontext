@@ -1,5 +1,20 @@
 [
   {
+    "date": "2026-06-06",
+    "consolidated_at": "2026-06-06T13:47:11.984Z",
+    "summary": "Consolidated landing-page-v2 polish cycle (3 working sessions since 2026-06-05). TASKS: reconciled landing-page-v2 (in_review) — added M3 'Polish + UX uplift' milestone (7 nodes P1-P7, all done), 7 new ticked ACs, replaced stale Technical Details (stroke-dashoffset→CSS Motion Path; collapsible cards→pinned scroll-scrubbed spotlight), doctor PASS (21/21 in sync); logged v0.6.0 commit+push (b924fa5, tag v0.6.0) + README landing visuals + parallel-uncommitted-session warning under v06-control-panel-polish; zero duplicate tasks. STATE: 2 changelog entries (landing v2 motion-path+spotlight+wire-fix; v0.6.0 GitHub push + AI-natives hero); +2 Technical Decisions (CSS Motion Path offset-path dots vs stroke-dashoffset for SVG flow anim; overflow-x:clip vs hidden so descendant position:sticky resolves to the real scroller). PRODUCT: extended web-dashboard PRD with the About/landing v2 state (pinned scroll-scrubbed 'One brain, many faculties' spotlight, motion-path flow dots, goal-skill flagship landscape loop diagram, wrapSub captions, wire color-mix) + 3 Constraints + new Technical Details subsection; folded reusable frontend technique notes into the PRD (no new knowledge file — anti-fragmentation). Marketing rem-sleep clean (10 runs kept). RELEASE: v0.6.0 feature-complete + pushed but NOT published — npm token expired (re-login) AND today's landing polish is uncommitted; 2 tasks still in_progress (snapshot-changelog-refactor, v06-control-panel-vaults-tauri). OPEN: positioning.md still says 'for your AI agents' while hero now reads 'AI natives' — intentional hero-only divergence, flagged for a decision.",
+    "debt_before": 10,
+    "debt_after": 0,
+    "sessions_processed": 4,
+    "bookmarks_processed": 5,
+    "session_ids": [
+      "211d2290-4798-4e8b-9aaf-df885de1a5f5",
+      "4626d1f6-693a-48aa-aa2d-0bc30c1e67b2",
+      "f2c18e70-db8d-4613-975e-648c32f49710",
+      "0ff7a890-4f7b-45a7-b477-e41c2581a2e4"
+    ]
+  },
+  {
     "date": "2026-06-05",
     "consolidated_at": "2026-06-05T14:44:10.869Z",
     "summary": "Consolidated 6 sessions of uncommitted v0.6.0 work (no git commits since 2026-06-02). Tasks: reconciled landing-page-v2, dashboard-alignment, reflection-engine, disable-claude-native-memory from skeletons to full bodies — all ticked complete + Workflow nodes synced (doctor PASS), bumped/kept in_review for user verification; folded excalidraw + video-watching into optional-skill-packs; logged sleep-fanout dedup work + npm-token blocker; no duplicate tasks created. State: 7 changelog entries (skill-packs bundleDir + 2 skills, config native-memory, reflection engine, About/landing page + FlowDiagram, dashboard alignment, sleep dedup hardening), +3 memory Technical Decisions (bundleDir/CJS install convention, autoMemoryEnabled:false default-disable, canonical-vs-build-output file map) + 2 Known Issues (Haiku 8K index truncation drops ~half of corpus; knowledge_access never fed by recall path), soul priority + tech_stack updated. Product: updated optional-skill-packs, sleep-fanout-architecture, sleep-consolidation, web-dashboard (landing v2 + alignment), control-panel (folded in native-memory toggle) PRDs; created reflection-engine PRD (9 ACs); ECC audit findings confirmed already-documented in haiku-recall-architecture + recall-engine-v2. v0.6.0 feature-complete but NOT released — npm token expired (re-login then publish); 2 tasks still in_progress (snapshot-changelog-refactor, v06-control-panel-vaults-tauri). Marketing rem-sleep clean (10 runs kept).",

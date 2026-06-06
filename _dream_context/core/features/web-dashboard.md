@@ -2,7 +2,7 @@
 id: feat_O7LODr7O
 status: active
 created: '2026-02-25'
-updated: '2026-06-05'
+updated: '2026-06-06'
 released_version: 0.1.0
 tags:
   - frontend
@@ -49,6 +49,11 @@ Users need a visual interface to manage agent context without using the terminal
 - [x] As a user, I see a "What is this?" section at the bottom of the sidebar that opens a full-page marketing/explainer landing page with a real system diagram, sleep walkthrough, recall flow, cinematic architecture view, live skill-packs marquee, and collapsible features showcase.
 - [x] As a user, the landing page hero shows the logo+wordmark and a looping brain-graph video so I immediately understand what dreamcontext is.
 - [x] As a user, the dashboard's responsive layout doesn't clip or misalign at tablet/narrow widths (768px) because the sidebar collapses and pages use flexible spacing.
+- [x] As a user, the "What is this?" sidebar entry bounces and glows until I open it once (then remembers via localStorage and stops) so I never miss the landing page on first run.
+- [x] As a user, the landing page hero headline reads "The persistent brain for AI natives" with a "Works with Claude Code" credibility pill so I immediately understand the audience.
+- [x] As a user, the "One brain, many faculties" features showcase is a pinned scroll-scrubbed spotlight: the header+stage stay sticky while a tall track scrolls past; scroll progress continuously crossfades faculty panels (opacity+translateY on refs, zero React renders per frame); snap-to-nearest settles any intermediate frame on scroll idle.
+- [x] As a user, the goal-skill orchestration is a flagship spotlight faculty with its own landscape loop diagram so I understand how planning-review-implementation-validation works end-to-end.
+- [x] As a user, flow animations in diagrams are compositor-smooth (CSS Motion Path dots riding offset-path/offset-distance rather than stroke-dashoffset), so 27 simultaneous dots cause 0 jank frames.
 
 ## Acceptance Criteria
 
@@ -108,14 +113,18 @@ Users need a visual interface to manage agent context without using the terminal
 
 ### About / Landing Page
 - [x] AboutPage rebuilt as 9 self-contained section components under `dashboard/src/components/about/`.
-- [x] FlowDiagram engine: single data-driven React component (FlowDiagram.tsx); instance-unique gradient IDs via `useId()`; inline SVG `stroke`/`fill` attributes (not CSS); pure CSS comet animation; reduced-motion guard.
-- [x] Hero: inline recolored diamond SVG + wordmark left; looping brain video (webm + mp4 + poster) right.
-- [x] How-it-works diagram: 8 context categories incl. data-structures, skills, sub-agents; RemSleep shown as multi-agent (parallel specialists); comet animation.
+- [x] FlowDiagram engine: single data-driven React component (FlowDiagram.tsx); instance-unique gradient IDs via `useId()`; inline SVG `stroke`/`fill` attributes (not CSS); CSS Motion Path dot animation (offset-path + offset-distance); reduced-motion guard parks dots at 55% (static, directional).
+- [x] Hero: inline recolored diamond SVG + wordmark left; looping brain video (webm + mp4 + poster) right; heading "The persistent brain for AI natives"; "Works with Claude Code" credibility pill above install command.
+- [x] How-it-works diagram: 8 context categories incl. data-structures, skills, sub-agents; RemSleep shown as multi-agent (parallel specialists); Motion Path dot animation.
 - [x] "How sleep works" sub-section: debt accumulation flow + 3 parallel specialists with real file domains.
 - [x] "How the system remembers" sub-section: BM25F → Haiku (smallest cloud agent) → SessionStart snapshot.
 - [x] Architecture: cinematic 3D cortical-stack (layered cross-section), not a flat grid.
 - [x] Skill-packs marquee: live from `usePacks()` hook (not hardcoded), infinite scroll, pause on hover, reduced-motion fallback to static scroll row.
-- [x] Features showcase: 26 capability cards, collapsible (`aria-expanded`), flagship expanded, minor collapsed.
+- [x] Features showcase: "One brain, many faculties" pinned scroll-scrubbed spotlight — 11 faculty panels (incl. goal-skill flagship), sticky header+stage, imperative scrub on refs, snap-to-nearest on scroll-idle; mobile (<860px) un-stacks to normal tablist.
+- [x] goal-skill faculty: landscape loop diagram (planner→plan-review↻→implementer→code-review↻→validator↻→shipped; ↻≤3 bounded retry loops on each stage).
+- [x] FlowDiagram `wrapSub()` auto-wraps captions to node width (greedy break on ` · ` separators, viewBox-unit font math, size-aware 12/10 for full/mini); no caption overflow possible.
+- [x] Wire contrast fix: `.fd-wire` uses `color-mix(in srgb, var(--color-text) 38%, transparent)` (not `var(--color-border)`) so connectors read in both light and dark themes.
+- [x] "What is this?" sidebar entry: accent-soft fill + glow dot + bounce keyframe until first click; `dreamcontext.dashboard.aboutSeen` localStorage flag retires nudge permanently.
 - [x] Token-only colors in all about component CSS (no raw hex/rgb in component rules).
 - [x] Build green, tsc clean, light + dark screenshots pass.
 - [x] Responsive: 11 alignment tests green (sidebar rail at 390/768, KB/Core/Features stacked at 768, settings hint aligned, council count in column).
@@ -143,6 +152,9 @@ Users need a visual interface to manage agent context without using the terminal
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
 
+- **[2026-06-06]** `overflow-x: hidden` vs `clip` on the `.about` container: `overflow-x: hidden` creates a new scroll container, so any `position: sticky` descendant resolves its scroll container to `.about` (not `.shell-main`) and pins immediately — the whole spotlight was stuck. `overflow-x: clip` clips visually without creating a scroll container, preserving sticky semantics. Fix: `.about { overflow-x: clip }` in AboutPage.css. This is a general CSS invariant: if a section has sticky children, its overflow must be `clip` (or `visible`), never `hidden` or `auto`.
+- **[2026-06-06]** CSS Motion Path for flow animation: `stroke-dashoffset` repainted the entire dashed stroke (full path length) on the main thread every frame. With 27 simultaneous comets the browser re-rasterized ~27 paths per frame → stutter. Replaced with a small `<circle>` per edge riding the path via `offset-path: path(d)` + `offset-distance: 0→100%` — a compositor-class transform; only the ~14px dot region is dirtied per frame. Glow is a per-instance radial-gradient fill (purple→blue→transparent), rasterized once. Measured: worst frame 11.2ms, 0 jank/179 frames at 27 dots. `FlowEdge.travel` is now unused (offset-distance is length-independent). Reduced-motion: park dot at `offset-distance: 55%` (static, but still on-path and directional).
+- **[2026-06-06]** Pinned scroll-scrubbed spotlight (FeaturesShowcase): imperative scrub — scroll progress written to panel refs (opacity + translateY) per-frame, zero React re-renders per frame; React state fires only when centred faculty changes (for tab ARIA + rail highlight). Snap-to-nearest on scroll-idle: 140ms debounce after last scroll event; smooth-scrolls container to nearest faculty centre; lands within 8px SNAP_EPS → no-op (no loop). Skips snap at track ends (progress ≤0.012 / ≥0.988) to let the user scroll out of the section naturally.
 - **[2026-06-05]** Responsive fix: root cause was zero width media queries in Sidebar/Shell — fixed 220px sidebar was clipping every page at tablet/narrow. Fix: responsive CSS breakpoints for sidebar + shell, plus alignment audit across all pages (11 Playwright tests). `dist/dashboard` sync: `vite` writes to `dashboard/dist/`, but `dreamcontext dashboard` serves from `dist/dashboard/` — must run root `npm run build` (not `cd dashboard && npm run build`) to sync. See note in web-dashboard task.
 - **[2026-06-04]** About page / landing page: AboutPage.tsx is a composition-only file (no inline logic); all sections are self-contained under `dashboard/src/components/about/`. FlowDiagram.tsx is the single diagram engine — gradient IDs must use `useId()` and be referenced as inline SVG attributes (not CSS) to avoid cross-diagram collisions. HowItWorksDiagram.tsx/.css deleted once FlowDiagram landed. Logo is inline recolored SVG diamond (not a network hotlink — that image isn't dashboard-served). Brain video is pre-generated at `dashboard/public/media/brain.{webm,mp4,png}`.
 - **[2026-05-31]** Server hardening decisions: (1) default host=127.0.0.1 (not 0.0.0.0) — LAN access requires explicit `--host`; (2) CSRF guard via Origin/Host check at server level (not per-route) so all new mutating routes inherit it automatically; (3) `safeChildPath()` in `src/server/safe-path.ts` is the single path-validation function — every route that builds a path from request input MUST use it. These are security invariants; do not regress. See knowledge file `dashboard-server-security.md` for full threat model.
@@ -233,6 +245,18 @@ Users need a visual interface to manage agent context without using the terminal
 - [x] `dashboard --vault <path|name>` re-roots the server to the chosen vault; invalid vault → non-zero exit + clean message.
 - [x] `dashboard/tsconfig.json` has `noImplicitReturns: true`; `App.tsx` switch has explicit cases for `settings` and `packs`.
 
+### About / Landing Page — v0.6 polish (2026-06-06)
+
+**Component layout**: `dashboard/src/components/about/` — 9 self-contained sections. `AboutPage.tsx` composition-only. `AboutPage.css` must set `overflow-x: clip` (not `hidden`) — `hidden` creates a new scroll container which breaks `position: sticky` on descendants (sticky resolves to the wrong ancestor).
+
+**FlowDiagram engine**: `FlowDiagram.tsx` + `FlowDiagram.css`. Types: `FlowNode`, `FlowEdge`, `FlowSpec`, props `{spec, className?, size:'full'|'mini'}`. Gradient IDs via `useId()` — referenced as inline SVG attrs (not CSS) to avoid cross-diagram collisions. Caption auto-wrap: `wrapSub(text, boxW, fontSize)` greedily breaks on ` · ` separators; widths are viewBox units (SVG font-size is user-space). Wire color: `color-mix(in srgb, var(--color-text) 38%, transparent)` — not `var(--color-border)` — so connectors are readable in light and dark.
+
+**CSS Motion Path dots** (replaced stroke-dashoffset): each edge renders a `<circle r="5">` with `offset-path: path(edge.d)` + CSS `@keyframes fd-dot-travel { offset-distance: 0→100% }`. Compositor-class: only the ~14px dot region is dirtied per frame. Glow: per-instance `radial-gradient` fill, rasterized once. `FlowEdge.travel` deprecated/unused. Reduced-motion: dot parked at `offset-distance: 55%` (static, on-path, directional). Measured at 27 simultaneous dots: worst frame 11.2ms, 0 jank/179 frames.
+
+**FeaturesShowcase pinned spotlight**: `FeaturesShowcase.tsx` + `.css`. Sticky `position: sticky; top: 84px`; tall scroll track below. Per-frame imperative scrub writes `opacity` + `translateY` to DOM refs (zero React re-renders per frame; React state only when centred faculty changes for ARIA + rail). Snap-to-nearest on idle: 140ms debounce → `container.scrollTo({behavior:'smooth'})` to nearest faculty centre; `SNAP_EPS = 8px` prevents loop re-entry; skips at track ends (progress ≤0.012 / ≥0.988). Mobile (<860px): track height→auto, sticky→static. Diagram animations run only on `.feat-panel--near` (≤3 from centre), rest paused. Key data: `flow-specs.ts` → `GOAL_SKILL_FLOW` (landscape 520×660 viewBox, ↻≤3 bounded-retry loops: plan-review, code-review, validator).
+
+**Hero copy & sidebar nudge**: Hero headline "The persistent brain for AI natives." with accent gradient on "AI natives"; "Works with Claude Code" pill above install command. Sidebar: `ABOUT_SEEN_STORAGE_KEY = 'dreamcontext.dashboard.aboutSeen'`; `.sidebar-item--nudge` class = accent fill + glow dot + `about-bounce` ±4px keyframe; clears on first click, persists across reloads.
+
 ### Council Page
 
 - [x] CouncilHall: searchable grid of debates with status badge, persona count, round progress indicator
@@ -253,6 +277,14 @@ Users need a visual interface to manage agent context without using the terminal
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-06-06 - Landing page v2 polish: scroll-scrubbed spotlight + Motion Path animation + hero copy
+- "One brain, many faculties" features showcase rewritten as a pinned scroll-scrubbed spotlight (11 faculty panels, sticky header+stage, imperative scrub on refs, snap-to-nearest on idle).
+- goal-skill promoted to flagship faculty with a landscape loop diagram (planner→plan-review↻→validator↻→shipped, ↻≤3 bounded retries per stage).
+- FlowDiagram animation engine: stroke-dashoffset replaced with CSS Motion Path dots (offset-path + offset-distance); compositor-class, 0 jank at 27 simultaneous dots. Caption auto-wrap (wrapSub) so no text overflows boxes. Wire contrast fix (color-mix vs color-border).
+- overflow-x: clip on .about fixes sticky behaviour (hidden was creating a scroll container and pinning sticky descendants to the wrong ancestor).
+- Hero copy: "The persistent brain for AI natives." + "Works with Claude Code" pill.
+- Sidebar "What is this?" nudge: accent fill + bounce animation until first click; localStorage flag retires it permanently.
 
 ### 2026-06-05 - Dashboard alignment + responsive fix
 - Root cause: fixed 220px sidebar, no media queries → clipping at tablet/narrow.

@@ -9,7 +9,7 @@ priority: high
 urgency: medium
 status: in_review
 created_at: '2026-06-01'
-updated_at: '2026-06-05'
+updated_at: '2026-06-06'
 tags:
   - control-panel
   - frontend
@@ -90,6 +90,9 @@ User-driven polish after v0.6 slices 1–4. Six concrete fixes to make the contr
 
 
 
+
+### 2026-06-06 - Session Update
+- Session 4626d1f6: v0.6.0 committed (b924fa5) + pushed to main + tagged v0.6.0; version bumped 0.5.4→0.6.0; .obsidian/ + .session-digests/ added to .gitignore; README updated with landing page screenshots (public/image/landing-*.png). npm publish blocked by concurrent parallel session editing working tree — flagged to user (parallel uncommitted changes detected post-commit).
 ### 2026-06-05 - Session Update
 - 2026-06-05 (session 4626d1f6): About page spotlight rail fix — feat-rail-item layout corrected (architecture section shows correct stage+diagram); old .feat-card wall removed; arch transform fixed (no slide). Dist/dashboard sync issue resolved by full npm run build.
 ### 2026-06-01 - Status → in_review
