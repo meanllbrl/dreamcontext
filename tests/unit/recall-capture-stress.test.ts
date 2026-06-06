@@ -122,15 +122,24 @@ function buildStressVocab(corpus: CorpusDoc[], gold: GoldQuery[]): string[] {
 describe('continuous-capture precision stress (STEP 1 measurement)', () => {
   const realCorpus = buildCorpus(root);
   const gold = loadGold(goldPath);
-  const vocab = buildStressVocab(realCorpus, gold);
 
-  // Sanity: the committed corpus must have NO captures (so the stress is purely
-  // the synthetic flood, and the base eval guard can't be perturbed by them).
-  it('committed corpus contains zero capture docs (baseline is capture-free)', () => {
-    const captures = realCorpus.filter(
-      (d) => d.slug.startsWith('digest#') || d.slug.startsWith('bookmark#'),
-    );
-    expect(captures).toEqual([]);
+  // The stress measures a SYNTHETIC capture flood against a capture-FREE baseline.
+  // buildCorpus() reads the live working tree, and the repo's own _dream_context/
+  // accumulates real session digests + bookmarks during dogfooding — these live in
+  // gitignored, machine-local state (`state/.session-digests/`, `.sleep.json`
+  // bookmarks), so they are NEVER committed/shipped but DO appear on a developer's
+  // machine. Left in, they would pollute the N=0 baseline and fail the guard below
+  // on a dev machine while passing in CI. Strip them so the baseline is
+  // deterministically capture-free in every environment.
+  const isCapture = (d: CorpusDoc) =>
+    d.slug.startsWith('digest#') || d.slug.startsWith('bookmark#');
+  const baselineCorpus = realCorpus.filter((d) => !isCapture(d));
+  const vocab = buildStressVocab(baselineCorpus, gold);
+
+  // Sanity: the baseline used for the stress is capture-free, so the only captures
+  // in the measurement are the synthetic flood (any real local captures excluded).
+  it('stress baseline is capture-free (real local captures excluded)', () => {
+    expect(baselineCorpus.filter(isCapture)).toEqual([]);
   });
 
   it('measures recall@1/@3 as the capture flood grows (N ∈ {0, 50, 200})', () => {
@@ -142,7 +151,7 @@ describe('continuous-capture precision stress (STEP 1 measurement)', () => {
         ...makeSyntheticCaptures(vocab, n, 'digest'),
         ...makeSyntheticCaptures(vocab, n, 'bookmark'),
       ];
-      const report = evaluate([...realCorpus, ...synthetic], gold);
+      const report = evaluate([...baselineCorpus, ...synthetic], gold);
       rows.push({
         n,
         recall1: report.overall.recall1,
@@ -208,14 +217,14 @@ describe('continuous-capture precision stress (STEP 1 measurement)', () => {
       }
       return null;
     };
-    const cleanRank = new Map(gold.map((q) => [q.id, goldRankIn(realCorpus, q)]));
+    const cleanRank = new Map(gold.map((q) => [q.id, goldRankIn(baselineCorpus, q)]));
 
     const trueDisplacementsAt = (n: number): string[] => {
       const synthetic = [
         ...makeSyntheticCaptures(vocab, n, 'digest'),
         ...makeSyntheticCaptures(vocab, n, 'bookmark'),
       ];
-      const corpus = [...realCorpus, ...synthetic];
+      const corpus = [...baselineCorpus, ...synthetic];
       const disp: string[] = [];
       for (const q of gold) {
         const wasTop3 = (cleanRank.get(q.id) ?? 99) <= 3;
