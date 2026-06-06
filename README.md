@@ -588,7 +588,13 @@ More agents coming soon.
 
 ## License
 
-MIT
+[Apache License 2.0](./LICENSE) — a permissive open-source license. You may use,
+modify, distribute, and sell the code, and build commercial products on it.
+Apache 2.0 also grants an explicit patent license and protects the project's
+trademarks (the **dreamcontext** name and brand are *not* part of the code grant
+— see [TRADEMARK.md](./TRADEMARK.md): fork freely, but ship it under your own
+name). Contributions are accepted under Apache 2.0 with a DCO sign-off — see
+[CONTRIBUTING.md](./CONTRIBUTING.md).
 
 ## Acknowledgements
 

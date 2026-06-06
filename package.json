@@ -13,6 +13,7 @@
     "agents",
     "README.md",
     "LICENSE",
+    "NOTICE",
     "install.sh"
   ],
   "scripts": {
@@ -36,7 +37,7 @@
     "gemini",
     "llm"
   ],
-  "license": "MIT",
+  "license": "Apache-2.0",
   "engines": {
     "node": ">=18"
   },
