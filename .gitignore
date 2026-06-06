@@ -8,22 +8,22 @@ dashboard/dist/
 .claude/
 .agents/
 
-# Version check cache — ephemeral, project-local, not for VCS
-_dream_context/state/.version-check.json
-# Session digests — ephemeral episodic capture buffer (consolidated by sleep)
-_dream_context/state/.session-digests/
-
 # Obsidian vault config — editor-local (created by the excalidraw skill)
 .obsidian/
 
-# Marketing skill — per-project Python tooling, caches, secrets
+# Project's own dogfooded context. core/ + knowledge/ are kept tracked as a
+# curated public showcase of what a mature dreamcontext looks like. These
+# directories are internal working data — tracked locally so the tool keeps
+# working, but kept OUT of the public repo:
+#   marketing/ — scraped third-party competitor data (copyright/ToS) + strategy
+#   state/     — raw task PRDs / unreleased-roadmap working notes (+ ephemeral
+#                .sleep.json, .version-check.json, .session-digests/)
+#   council/   — internal decision debates
+_dream_context/marketing/
+_dream_context/state/
+_dream_context/council/
+# Secrets are never tracked, regardless of the above
 _dream_context/**/.env
-_dream_context/marketing/.lock
-_dream_context/marketing/.tools/
-_dream_context/marketing/.venv/
-_dream_context/marketing/.cache/
-_dream_context/marketing/**/_assets/
-_dream_context/marketing/**/_media/
 # Playwright
 test-results/
 playwright-report/

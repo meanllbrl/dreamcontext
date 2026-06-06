@@ -22,8 +22,8 @@ date: '2026-06-06'
 - Adds two things MIT lacks: an **explicit patent grant** (Apache §3/§5, each contributor licenses their patents — keeps the project safe to use commercially) and **trademark protection** (Apache §6 excludes the marks from the grant).
 - The 'dreamcontext' name/brand is protected separately via TRADEMARK.md + NOTICE: fork freely, but ship under your own name.
 
-### What the user originally wanted vs what was chosen
-User's first stated intent: brand protected + **NOT sellable / no commercial products built on it** (personal + internal-company use OK). That intent is **incompatible with any OSI open-source license** (OSI Definition §6 forbids restricting commercial use/fields of endeavour). The matching option was **source-available** (recommended: PolyForm Internal Use 1.0.0; alt: BSL 1.1). After understanding the tradeoff, the user **explicitly chose to drop the no-sell restriction** in favour of broad adoption + Apache's patent/trademark hygiene. Decision confirmed via AskUserQuestion.
+### Why not a source-available license
+A "no-resale / no-commercial-products, but personal + internal-company use allowed" restriction **cannot be expressed by any OSI open-source license** — the Open Source Definition §6 forbids restricting commercial use or fields of endeavour. Enforcing it would require a **source-available** license (e.g. PolyForm Internal Use 1.0.0 or BSL 1.1), which is not open source and dampens adoption + contributor trust. dreamcontext deliberately stays fully open under Apache-2.0 and relies on **trademark** (not the code license) to protect the brand.
 
 ### Hard constraints surfaced (still true)
 - **MIT is irrevocable for already-published code.** v0.5.4 shipped to npm under MIT and the repo was public-MIT; anyone holding 0.5.x keeps MIT rights permanently. Relicensing only governs new versions (0.6.0+). Switching early (pre-traction) minimizes the MIT surface in the wild.
