@@ -391,7 +391,12 @@ export function registerInitCommand(program: Command): void {
       // integration is already present (e.g. the dreamcontext-initializer agent runs
       // `init` from inside an existing .claude/, only the context dir was missing).
       const viaSetup = process.env[SETUP_INTERNAL_ENV] === '1';
-      const integrationPresent = selectedPlatforms.some((p) =>
+      // `every`, not `some`: the integration counts as present only when ALL
+      // selected platforms are installed. With `some`, selecting claude+codex when
+      // only claude is installed would suppress the offer and falsely report "Done"
+      // while codex stays uninstalled. (Re-installing an already-present platform is
+      // idempotent, so firing the offer in the mixed case is safe.)
+      const integrationPresent = selectedPlatforms.every((p) =>
         existsSync(join(platformSkillRoot(process.cwd(), p), 'dreamcontext', 'SKILL.md')),
       );
       let integrationInstalled = false;
