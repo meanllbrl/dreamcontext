@@ -47,27 +47,31 @@
   color: var(--color-text);
 }
 
-/* ── Eyebrow ─────────────────────────────────────────────────────────────── */
-.about-eyebrow {
-  /* Own row beneath the lockup so the slogan reads as a tagline under the
-     wordmark; fit-content keeps it left-aligned with the rest of the copy. */
-  display: flex;
-  width: fit-content;
+/* ── Compatibility badge ─────────────────────────────────────────────────── */
+/* "Works with Claude Code" — a quiet credibility pill sitting just above the
+   install CTA, where compatibility matters most. */
+.about-compat {
+  display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-semibold);
-  letter-spacing: 0.04em;
-  color: var(--color-text-secondary);
-  text-transform: lowercase;
-}
-.about-eyebrow-dot {
-  width: 9px;
-  height: 9px;
+  width: fit-content;
+  margin-top: var(--space-7);
+  padding: 6px var(--space-3);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-full);
-  background: var(--color-accent);
-  box-shadow: 0 0 0 4px var(--color-accent-soft);
-  animation: about-pulse 2.4s ease-in-out infinite;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+  background: var(--color-bg-secondary);
+}
+.about-compat strong {
+  color: var(--color-text);
+  font-weight: var(--font-weight-semibold);
+}
+.about-compat-mark {
+  display: inline-flex;
+  color: var(--color-accent);
+  font-weight: var(--font-weight-bold);
 }
 
 /* ── Title ───────────────────────────────────────────────────────────────── */
@@ -105,7 +109,7 @@
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-3);
-  margin-top: var(--space-7);
+  margin-top: var(--space-4);
 }
 .about-command {
   font-family: var(--font-mono);
@@ -187,7 +191,6 @@
 @media (prefers-reduced-motion: reduce) {
   .about-hero-copy,
   .about-hero-media,
-  .about-eyebrow-dot,
   .about-hero-aura,
   .about-lockup-mark {
     animation: none;

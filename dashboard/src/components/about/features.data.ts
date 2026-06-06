@@ -191,6 +191,38 @@ const COUNCIL_FLOW: FlowSpec = {
   ],
 };
 
+// Goal-skill gets a dedicated LANDSCAPE diagram (so it fills the spotlight stage
+// like the other faculties instead of a tall portrait outlier): a left→right
+// build→review pipeline with dashed loop-backs UNDER the row that read as the
+// bounded retries. planner → plan-review (loops to planner on NEEDS_WORK) →
+// implementer → code-review (loops to implementer on FAIL) → validator (loops to
+// implementer on FAIL) → shipped. Each loop is capped at 3, then escalates.
+const GOAL_SKILL_FLOW: FlowSpec = {
+  viewBox: '0 0 1000 330',
+  ariaLabel:
+    'Goal-skill orchestration: a goal-planner drafts a file-by-file plan; parallel reviewers vote SOLID or NEEDS_WORK and loop back to the planner until solid; the plan is persisted as a task; a goal-implementer builds to the acceptance criteria; a code reviewer and then a goal-validator each gate the result, looping back to the implementer on FAIL; every gate is capped at three retries before escalating to the user, after which the work ships as a task in review.',
+  nodes: [
+    { id: 'plan', x: 20, y: 40, w: 140, h: 86, title: 'planner', sub: 'file-by-file plan', variant: 'agent' },
+    { id: 'plan-review', x: 184, y: 40, w: 140, h: 86, title: 'plan review', sub: 'SOLID · NEEDS_WORK', variant: 'region', breathe: true },
+    { id: 'impl', x: 348, y: 40, w: 140, h: 86, title: 'implementer', sub: 'builds to criteria', variant: 'agent' },
+    { id: 'code-review', x: 512, y: 40, w: 140, h: 86, title: 'code review', sub: 'PASS · FAIL', variant: 'region', breathe: true, breatheDelay: 0.2 },
+    { id: 'validate', x: 676, y: 40, w: 140, h: 86, title: 'validator', sub: 'tests · PASS · FAIL', variant: 'region', breathe: true, breatheDelay: 0.4 },
+    { id: 'done', x: 840, y: 40, w: 140, h: 86, title: 'shipped', sub: 'task → in_review', variant: 'rem' },
+  ],
+  edges: [
+    // Forward pipeline — the happy path, gate by gate, left → right.
+    { id: 'f1', d: 'M 160 83 L 184 83', dur: 2 },
+    { id: 'f2', d: 'M 324 83 L 348 83', dur: 2, delay: 0.2 },
+    { id: 'f3', d: 'M 488 83 L 512 83', dur: 2, delay: 0.1 },
+    { id: 'f4', d: 'M 652 83 L 676 83', dur: 2, delay: 0.2 },
+    { id: 'f5', d: 'M 816 83 L 840 83', dur: 2, delay: 0.3 },
+    // Bounded retry loops — each review bounces back to its producer (dashed).
+    { id: 'l1', d: 'M 254 126 C 254 196, 90 196, 90 126', dashed: true, dur: 3.2, delay: 0.5, label: { text: '↻ ≤3', x: 172, y: 186 } },
+    { id: 'l2', d: 'M 582 126 C 582 196, 418 196, 418 126', dashed: true, dur: 3.2, delay: 0.7, label: { text: '↻ ≤3', x: 500, y: 186 } },
+    { id: 'l3', d: 'M 746 126 C 746 262, 418 262, 418 126', dashed: true, dur: 3.6, delay: 0.9, label: { text: '↻ ≤3', x: 582, y: 252 } },
+  ],
+};
+
 const SKILLS_FLOW: FlowSpec = pairFlow(
   'Skill packs: curated domain packs install a base skill plus on-demand sub-skills into the agent.',
   { title: 'skill pack', sub: 'engineering · design · growth', variant: 'hook' },
@@ -297,6 +329,15 @@ export const FEATURES: FeatureItem[] = [
     tag: 'Agents',
     flow: COUNCIL_FLOW,
   },
+  {
+    id: 'goal-skill',
+    title: 'Goal-skill orchestration',
+    tagline: 'Plan it, review it, build it, review it, validate it — on a leash.',
+    body: 'Turn the main agent into an orchestrator. A goal-planner drafts a file-by-file plan; parallel reviewers vote SOLID or NEEDS_WORK and bounce it back until it holds; the plan is persisted as a task; a goal-implementer builds to the acceptance criteria; then a code reviewer and a goal-validator each gate the result, looping back to the implementer on a fail. Every gate is capped at three retries and escalates to you instead of spinning.',
+    defaultOpen: true,
+    tag: 'Agents',
+    flow: GOAL_SKILL_FLOW,
+  },
 
   // ─── Minor ────────────────────────────────────────────────────────────────
   {
@@ -388,15 +429,6 @@ export const FEATURES: FeatureItem[] = [
     defaultOpen: false,
     tag: 'Agents',
     glyph: '⊜',
-  },
-  {
-    id: 'goal-skill',
-    title: 'Goal-skill orchestration',
-    tagline: 'Drive a goal through a disciplined six-phase loop.',
-    body: 'Turn the main agent into an orchestrator that runs a bounded loop — validate, plan, review the plan in parallel, persist as a task, implement, review the code. Each gate has a hard iteration cap that escalates to you instead of spinning.',
-    defaultOpen: false,
-    tag: 'Agents',
-    glyph: '◎',
   },
   {
     id: 'continuous-capture',

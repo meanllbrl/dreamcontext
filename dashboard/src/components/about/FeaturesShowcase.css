@@ -5,11 +5,69 @@
    automatic. Desktop-first; collapses to a single column on narrow screens.
    ────────────────────────────────────────────────────────────────────────── */
 
+/* ── Pinned scroll-driven track ──────────────────────────────────────────────
+   The header + spotlight pin while this tall track scrolls past; the component
+   maps scroll progress through it to the active faculty. Height is set inline as
+   a CSS var (per faculty count) so the responsive override can switch it off. */
+.feat-scroller {
+  position: relative;
+  height: var(--feat-track-h, auto);
+}
+.feat-sticky {
+  position: sticky;
+  top: var(--space-4);
+}
+
 .feat-spotlight {
   display: grid;
   grid-template-columns: minmax(240px, 300px) 1fr;
   gap: var(--space-6);
   align-items: stretch;
+  margin-top: var(--space-6);
+}
+
+/* Left column wrapper: scroll counter + progress bar above the tablist rail. */
+.feat-rail-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.feat-rail-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 0 var(--space-2);
+}
+.feat-rail-step {
+  font-family: var(--font-family-display);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-bold);
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+.feat-rail-step i {
+  font-style: normal;
+  color: var(--color-text-tertiary);
+}
+.feat-rail-track {
+  flex: 1;
+  height: 3px;
+  border-radius: var(--radius-full);
+  background: var(--color-border);
+  overflow: hidden;
+}
+.feat-rail-fill {
+  display: block;
+  height: 100%;
+  width: 100%;
+  transform: scaleX(0);
+  transform-origin: left center;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--color-vivid-purple), var(--color-electric-blue));
+  /* Scaled imperatively each frame from the scroll handler; ease only the catch-up. */
+  transition: transform 80ms linear;
 }
 
 /* ── Left rail (the tablist) ────────────────────────────────────────────── */
@@ -79,33 +137,42 @@
   color: var(--color-accent);
 }
 
-/* ── Right stage (the tabpanel) ─────────────────────────────────────────── */
+/* ── Right stage: a fixed-height card holding the stacked, scroll-scrubbed
+   faculty panels. overflow:hidden clips the slide; the fixed height keeps the
+   pinned sticky height constant as panels cross-fade. ──────────────────────── */
 .feat-stage {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  padding: clamp(var(--space-6), 3vw, var(--space-8));
+  position: relative;
+  overflow: hidden;
+  height: clamp(460px, 60vh, 580px);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-xl);
   background:
     linear-gradient(160deg, var(--color-accent-soft), transparent 55%),
     var(--color-bg-secondary);
-  min-height: 380px;
-  animation: feat-stage-in var(--transition-normal) ease both;
 }
-.feat-stage:focus-visible {
+
+/* Each faculty panel is stacked on top; opacity + translateY are written
+   imperatively from scroll progress (see FeaturesShowcase.tsx) so the page-change
+   is scrubbed by scroll rather than a discrete timed swap. */
+.feat-panel {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: clamp(var(--space-6), 3vw, var(--space-8));
+  opacity: 0;
+  will-change: opacity, transform;
+  backface-visibility: hidden;
+}
+.feat-panel:focus-visible {
   outline: 2px solid var(--color-border-focus);
-  outline-offset: 2px;
+  outline-offset: -2px;
 }
-@keyframes feat-stage-in {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+/* Only the visible (near) panel's diagram animates; the rest are paused (free). */
+.feat-panel:not(.feat-panel--near) .fd-comet-dot,
+.feat-panel:not(.feat-panel--near) .fd-node--breathe rect {
+  animation-play-state: paused;
 }
 
 .feat-stage-head {
@@ -137,13 +204,27 @@
   line-height: 1.6;
   color: var(--color-text-secondary);
   max-width: 58ch;
+  /* Bounded so a long description can't push the diagram out of the fixed panel. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
+  line-clamp: 5;
+  overflow: hidden;
 }
-/* Push the diagram to the bottom of the stage and centre it at a readable size. */
+/* Push the diagram to the bottom of the stage in a FIXED-height box so every
+   faculty (tall portrait goal-skill loop ↔ wide landscape flows) occupies the
+   same vertical space — keeping the pinned sticky height stable as panels swap.
+   The SVG fills the box and preserveAspectRatio="meet" letterboxes the content. */
 .feat-stage-flow {
   margin-top: auto;
+  align-self: stretch;
   width: 100%;
-  max-width: 480px;
-  align-self: center;
+  max-width: 100%;
+  height: clamp(200px, 28vh, 300px);
+}
+.feat-stage-flow .fd-svg {
+  width: 100%;
+  height: 100%;
 }
 
 /* ── The long tail — compact, scannable grid ────────────────────────────── */
@@ -242,10 +323,35 @@
   color: var(--color-text-secondary);
 }
 
-/* ── Responsive: collapse the spotlight to one column; rail goes horizontal ── */
+/* ── Responsive: collapse the spotlight to one column; rail goes horizontal.
+   The pinned-scroll effect is disabled (track height → auto, sticky → static);
+   it reads as a normal tablist on narrow / touch screens. ─────────────────── */
 @media (max-width: 860px) {
+  .feat-scroller {
+    --feat-track-h: auto;
+  }
+  .feat-sticky {
+    position: static;
+  }
+  .feat-rail-head {
+    display: none;
+  }
+  /* No pin → no scrub: un-stack the panels and show only the active one. */
+  .feat-stage {
+    height: auto;
+    overflow: visible;
+  }
+  .feat-panel {
+    position: relative;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+  .feat-panel[aria-hidden='true'] {
+    display: none;
+  }
   .feat-spotlight {
     grid-template-columns: 1fr;
+    margin-top: var(--space-5);
   }
   .feat-rail {
     flex-direction: row;

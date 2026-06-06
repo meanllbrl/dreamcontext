@@ -59,14 +59,9 @@ export function Hero() {
           <span className="about-lockup-word">dreamcontext</span>
         </a>
 
-        <span className="about-eyebrow">
-          <span className="about-eyebrow-dot" />
-          the persistent brain for AI natives
-        </span>
-
         <h1 className="about-title">
-          The persistent brain for your
-          <span className="about-title-accent"> AI&nbsp;agents.</span>
+          The persistent brain for
+          <span className="about-title-accent"> AI&nbsp;natives.</span>
         </h1>
 
         <p className="about-lead">
@@ -74,6 +69,11 @@ export function Hero() {
           learning to act on that knowledge — so every session starts <em>ready</em> instead of
           blind. Built for founders and builders, technical or not.
         </p>
+
+        <div className="about-compat">
+          <span className="about-compat-mark" aria-hidden="true">✓</span>
+          Works with <strong>Claude&nbsp;Code</strong>
+        </div>
 
         <div className="about-cta-row">
           <code className="about-command">npm&nbsp;i&nbsp;-g&nbsp;dreamcontext</code>

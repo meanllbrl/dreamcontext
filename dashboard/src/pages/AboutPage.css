@@ -15,7 +15,11 @@
     radial-gradient(90% 60% at -10% 0%, var(--gradient-brand-subtle), transparent 55%),
     var(--color-bg);
   color: var(--color-text);
-  overflow-x: hidden;
+  /* `clip` (not `hidden`) keeps horizontal overflow contained WITHOUT turning
+     .about into a scroll container — otherwise it would become the containing
+     block for descendant `position: sticky` (the features showcase) and break
+     the pinned-scroll effect, which must resolve to the real scroller (.shell-main). */
+  overflow-x: clip;
 }
 
 /* Constrain every section's content to the page width and centre it. Section

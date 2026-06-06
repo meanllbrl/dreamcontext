@@ -196,7 +196,7 @@ const SPECIALISTS: Specialist[] = [
   {
     id: 'sleep-state',
     title: 'sleep-state',
-    sub: 'soul·user·memory·core 3-6·data-structures·changelog·releases',
+    sub: 'soul · user · memory · core 3-6 · data-structures · changelog · releases',
   },
   { id: 'sleep-product', title: 'sleep-product', sub: 'knowledge/ + features/ · conditional' },
 ];
@@ -302,7 +302,7 @@ export const SLEEP_FLOW_SPEC: FlowSpec = {
 //    prompt → BM25F keyword match → Haiku recall → SessionStart snapshot.
 // ───────────────────────────────────────────────────────────────────────────
 
-const RECALL_CY = 230; // viewBox 0 0 1100 460
+const RECALL_CY = 230; // viewBox 0 0 1150 460 (boxes span x 40..1110; symmetric 40px margins)
 const RECALL_W = 230;
 const RECALL_H = 132;
 
@@ -314,6 +314,8 @@ interface RecallStage {
   variant: FlowNode['variant'];
 }
 
+// Long captions are auto-wrapped to fit the 230-wide nodes by FlowDiagram
+// (SVG <text> never wraps on its own) — authored here as plain strings.
 const RECALL_STAGES: RecallStage[] = [
   { id: 'prompt', x: 40, title: 'Your prompt', sub: 'any language', variant: 'hook' },
   {
@@ -364,7 +366,7 @@ const recallEdges: FlowEdge[] = RECALL_STAGES.slice(0, -1).map((s, i) => {
 });
 
 export const RECALL_FLOW_SPEC: FlowSpec = {
-  viewBox: '0 0 1100 460',
+  viewBox: '0 0 1150 460',
   ariaLabel:
     'Memory recall pipeline: your prompt is matched by field-weighted BM25F keyword search with stemming and synonyms; a small Haiku cloud agent picks zero to three directly relevant docs (falling back to BM25 when unavailable); and the SessionStart snapshot assembles warm and cold knowledge, features, the index and pinned docs.',
   nodes: recallNodes,

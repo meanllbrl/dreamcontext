@@ -18,35 +18,44 @@
    the <stop>s. */
 .fd-node-grad-a { stop-color: var(--color-bg-secondary); }
 .fd-node-grad-b { stop-color: var(--color-bg-tertiary); }
-.fd-accent-a { stop-color: var(--color-vivid-purple); }
-.fd-accent-b { stop-color: var(--color-electric-blue); }
+/* Travelling-dot radial stops: vivid-purple core → electric-blue → transparent. */
+.fd-dot-core { stop-color: var(--color-vivid-purple); stop-opacity: 1; }
+.fd-dot-mid { stop-color: var(--color-electric-blue); stop-opacity: 0.85; }
+.fd-dot-edge { stop-color: var(--color-electric-blue); stop-opacity: 0; }
 
-/* ── Wires ──────────────────────────────────────────────────────────────── */
+/* ── Wires ──────────────────────────────────────────────────────────────────
+   Mixed from --color-text (not --color-border) so the connector keeps the same
+   subtle contrast in BOTH themes — --color-border is #e8e8e8 in light mode and
+   washes out on the light stage card. */
 .fd-wire {
-  stroke: var(--color-border);
+  stroke: color-mix(in srgb, var(--color-text) 38%, transparent);
   stroke-width: 2;
 }
 .fd-wire--dashed {
-  stroke-dasharray: 2 8;
+  /* Coarser dashes so the loop still reads as dashed once the diagram is scaled
+     down in the stage (the old 2 8 collapsed to near-invisible dots). */
+  stroke-dasharray: 5 7;
   stroke-linecap: round;
-  opacity: 0.7;
+  opacity: 0.85;
 }
 
-/* The travelling "comet": a tiny visible dash on a long gap, scrolled forever.
-   Travel distance is per-edge via the --fd-travel custom property (set inline),
-   so one keyframe serves every edge length. The gradient stroke is applied as
-   an inline attribute in the component, never here. */
-.fd-flow {
-  stroke-width: 3.5;
-  stroke-linecap: round;
-  stroke-dasharray: 5 235;
-  stroke-dashoffset: 0;
-  filter: drop-shadow(0 0 4px var(--color-accent));
-  animation: fd-comet 2.6s linear infinite;
+/* The travelling dot: a small glowing orb riding each edge via the CSS Motion
+   Path. We animate `offset-distance` (a compositor-friendly, transform-class
+   property) instead of `stroke-dashoffset`, which forced the browser to
+   re-rasterize the WHOLE dashed stroke on the main thread every frame and made
+   the flow stutter. `offset-path` is set per-edge inline; `offset-rotate: 0`
+   keeps the round dot from spinning to the path tangent (irrelevant for a circle
+   and one less thing to recompute). The glow is the radial fill — no filter. */
+.fd-comet-dot {
+  offset-distance: 0%;
+  offset-rotate: 0deg;
+  animation: fd-comet-move 2.6s linear infinite;
+  will-change: offset-distance;
 }
 
-@keyframes fd-comet {
-  to { stroke-dashoffset: calc(-1 * var(--fd-travel, 240)); }
+@keyframes fd-comet-move {
+  from { offset-distance: 0%; }
+  to { offset-distance: 100%; }
 }
 
 /* ── Nodes ──────────────────────────────────────────────────────────────── */
@@ -77,12 +86,17 @@
 /* region & plain variants keep the inline gradient fill — no fill set here. */
 
 .fd-node--breathe rect {
+  /* A subtle scale pulse instead of an animated drop-shadow filter: transforms
+     are compositor-accelerated, so the breathing stays smooth even with many
+     nodes pulsing at once. transform-box keeps the origin at the rect centre. */
+  transform-box: fill-box;
+  transform-origin: center;
   animation: fd-breathe 4s ease-in-out infinite;
 }
 
 @keyframes fd-breathe {
-  0%, 100% { filter: none; }
-  50% { filter: drop-shadow(0 0 10px var(--color-accent-soft)); }
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.025); }
 }
 
 /* ── Text ───────────────────────────────────────────────────────────────── */
@@ -151,13 +165,12 @@
 .fd--mini .fd-region-tag { font-size: 9.5px; }
 .fd--mini .fd-label { font-size: 9px; }
 .fd--mini .fd-step-tag { font-size: 10px; }
-.fd--mini .fd-flow { stroke-dasharray: 4 160; stroke-width: 3; }
 
 @media (prefers-reduced-motion: reduce) {
-  .fd-flow,
+  .fd-comet-dot,
   .fd-node--breathe rect {
     animation: none;
   }
-  /* Keep a static comet visible so the wires still read as directional. */
-  .fd-flow { stroke-dasharray: 5 235; stroke-dashoffset: -60; }
+  /* Park the dot mid-edge so the wires still read as directional. */
+  .fd-comet-dot { offset-distance: 55%; }
 }
