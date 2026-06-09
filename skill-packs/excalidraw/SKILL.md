@@ -32,14 +32,90 @@ Write a spec JSON, then run it. The script prints `elements/images/texts` counts
 
 ### JS API (for pipelines that generate many boards)
 ```js
-const { buildExcalidraw, lane, grid } = require('.../scripts/build_excalidraw.js');
-buildExcalidraw({ out, elements: [ ...lane({ title, images, x, y, thumbW }) ] });
+const path = require('path');
+// skill lives at <project>/.claude/skills/excalidraw/ — adjust leading ../ count to match your script's depth from project root
+const { buildExcalidraw, lane, grid } = require(path.resolve(__dirname, '../.claude/skills/excalidraw/scripts/build_excalidraw.js'));
+buildExcalidraw({ out: path.resolve(__dirname, '../boards/Board.excalidraw.md'), elements: [ ...lane({ title, images, x, y, thumbW }) ] });
 ```
+
+## File layout
+
+### Single board (default)
+Keep the spec next to the generated board but clearly separated:
+```
+boards/
+├── MyBoard.excalidraw.md      ← generated deliverable; do not hand-edit
+└── _spec/
+    └── MyBoard.json           ← source of truth; edit this, then regenerate
+```
+The `.excalidraw.md` is **disposable** — it is fully derived from the spec. If the two ever
+disagree, the spec wins. Commit both (the board for Obsidian/GitHub preview, the spec for
+reproducibility), but only edit the spec.
+
+### Multi-board pipeline
+When a single generator produces several boards, isolate it in a `pipeline/` folder so the
+deliverable boards stay at the top of the project and are easy to open in Obsidian:
+```
+boards/
+├── Overview.excalidraw.md     ← generated
+├── Funnel.excalidraw.md       ← generated
+├── Pricing.excalidraw.md      ← generated
+└── pipeline/
+    ├── generate.js            ← single regen entrypoint: `node pipeline/generate.js`
+    ├── shared-style.js        ← shared palette / helpers
+    └── spec/
+        ├── Overview.json      ← source spec for Overview board
+        ├── Funnel.json        ← source spec for Funnel board
+        └── Pricing.json       ← source spec for Pricing board
+```
+- **Generated files** (`*.excalidraw.md`) live one level above `pipeline/` — open them in Obsidian without navigating into a sub-folder.
+- **Source specs** live in `pipeline/spec/` — one JSON per board.
+- **Single entrypoint**: `node pipeline/generate.js` rebuilds every board. No per-board manual commands.
+
+### Many boards from shared data (recipe)
+Use this pattern when multiple boards pull from the same data set (e.g. one board per product, per region, or per funnel step):
+
+```js
+// pipeline/generate.js  (lives at boards/pipeline/generate.js)
+const path = require('path');
+const ROOT  = path.resolve(__dirname, '..');          // boards/ directory
+// ../../ = project root (boards/ → project/); adjust if boards/ is nested deeper
+const { buildExcalidraw, lane } = require(path.resolve(__dirname, '../../.claude/skills/excalidraw/scripts/build_excalidraw.js'));
+const style  = require(path.resolve(__dirname, 'shared-style.js'));
+const items  = require(path.resolve(__dirname, 'spec/items.json'));  // shared data
+
+for (const item of items) {
+  const elements = style.buildItemBoard(item);        // per-item spec logic
+  buildExcalidraw({
+    out: path.resolve(ROOT, `${item.slug}.excalidraw.md`),
+    elements,
+  });
+  console.log('wrote', item.slug);
+}
+```
+
+```js
+// pipeline/shared-style.js  (lives at boards/pipeline/shared-style.js)
+const path = require('path');
+// ../../ = project root (boards/ → project/); adjust if boards/ is nested deeper
+const { card, connector, sectionTitle } = require(path.resolve(__dirname, '../../.claude/skills/excalidraw/scripts/lib/style.js'));
+
+exports.buildItemBoard = (item) => [
+  sectionTitle({ x: 0, y: 0, text: item.name, fontSize: 40 }),
+  // … common layout using item fields
+];
+```
+
+Key conventions:
+- `ROOT = path.resolve(__dirname, '..')` pins paths relative to the generator file, not the working directory. The generator works correctly wherever it is invoked from.
+- Each item produces exactly one board; the mapping is `items.json → <slug>.excalidraw.md`.
+- `shared-style.js` owns the layout logic — boards stay visually consistent; change the style once, regenerate all.
+- Add a `package.json` script or `Makefile` alias so the command is always `npm run boards` (or similar) and never has to be rediscovered.
 
 ## Spec schema
 ```jsonc
 {
-  "out": "/abs/path/Board.excalidraw.md",   // required (or pass --out)
+  "out": "./boards/Board.excalidraw.md",    // prefer __dirname-relative in JS generators; relative to cwd for CLI
   "vaultRoot": "/abs/vault",                  // optional; auto-detected by walking up to `.obsidian`
   "attachDir": "Attachments",                 // external images get copied here (relative to board dir)
   "wikilinkMode": "basename",                 // "basename" (default) or "path" (vault-relative)
@@ -47,6 +123,9 @@ buildExcalidraw({ out, elements: [ ...lane({ title, images, x, y, thumbW }) ] })
   "elements": [ /* ElementSpec… */ ]
 }
 ```
+
+**Paths in generators**: always use `path.resolve(__dirname, ...)` for `out` and image `path` fields — never
+hardcode absolute paths. This keeps the generator portable: move the folder and it still runs.
 
 ### Element types
 - `text`     — `{ x, y, text, fontSize?, color?, width?, align?, fontFamily? }` (fontFamily 1=hand, 2=normal, 3=code). **Set `width` for any caption/label that must stay inside a column or card** → the text WRAPS to that width (autoResize off) and its height is computed from the wrapped line count. Omit `width` only for short single-line text you want sized to content (it renders on one line and will overlap neighbours if long).
