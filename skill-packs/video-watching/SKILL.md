@@ -39,15 +39,36 @@ if it's installed.
 #   language auto-detects — no need to pass it. Override only if auto mislabels a
 #   short/ambiguous clip: ./transcribe.sh "/abs/path/clip.mp4" tr
 ```
+
+**Pick the mode for the kind of video — this matters most for app/UI recordings:**
+- **Talking-head / lecture / ad creative** → the default is right. Scene-detect + a
+  10s gap-fill catches the visuals.
+- **App screen-recording / onboarding funnel / UI walkthrough** → add `--mode ui`.
+  App screens linger 3–5s and change by **text only** (a questionnaire step, a
+  paywall) — they don't move enough to trip scene-detect, so the 10s default
+  silently drops most of them. `--mode ui` samples every ~2.5s so each screen lands.
+  If you only need the screens (no narration), add `--frames-only` to skip whisper:
+  ```bash
+  ./scripts/transcribe.sh "/abs/path/onboarding.mp4" --mode ui --frames-only --contact-sheet
+  ```
+
 This writes everything into `<video_dir>/<slug>.media/`:
-- `transcript.srt` / `.json` / `.txt` — timestamped transcript (large-v3-turbo)
+- `transcript.srt` / `.json` / `.txt` — timestamped transcript (large-v3-turbo) — *skipped with `--frames-only`*
 - `frames/anchor_first.jpg` / `anchor_last.jpg` — first + last frame, always captured
   (short cut-heavy creatives carry the hook and CTA here; scene-detect misses both)
-- `frames/scene_*.jpg` — frames at each scene change (slides/UI transitions)
-- `frames/gap_*.jpg` — fill frames so no stretch > 10s goes unsampled (catches
-  static-but-important sections scene-detect misses: app demos, slides, CTAs)
+- `frames/frame_*.jpg` — frames selected in **one time-based pass**: a scene change
+  fired (slide/UI transition) **or** `MAX_GAP` seconds elapsed since the last frame,
+  whichever comes first. The gap rule is wall-clock based (`prev_selected_t`), so it
+  works on variable-frame-rate screen recordings where frame-number sampling breaks,
+  and it guarantees every static stretch (app demos, slides, CTAs) gets a frame.
+- `frames/contact_sheet.jpg` — tiled montage of all frames, *only with `--contact-sheet`*
 - `frames.json` — **the index you read**: `[{file, t, at, type}]`, sorted by time,
-  near-duplicate timestamps collapsed (anchors always kept)
+  near-duplicate timestamps collapsed (anchors always kept). `type` is `scene` (a
+  picture change fired), `gap` (a periodic fill at the `MAX_GAP` cadence), or `anchor`.
+
+The engine prints a **coverage check** at the end: `longest unsampled gap = Xs`. If it
+warns the gap is >2× `MAX_GAP`, frames are likely missing — re-run denser (`--max-gap`
+lower, or `--mode ui`) **before** any expensive deep-analysis pass.
 
 `audio.wav` is auto-deleted after transcription (it's a ~1.9MB/min whisper-only
 intermediate). The whole `*.media/` dir is gitignored — it stays next to the video
@@ -69,7 +90,9 @@ nothing on screen need no frame.
 > Heuristic: the two `anchor` frames (first/last) almost always matter — the hook
 > and the CTA. Every `scene` frame is a candidate (the picture changed for a
 > reason). `gap` frames cover static stretches scene-detect skipped — often the
-> most informative part (an app demo or slide that doesn't "move"), so check them.
+> most informative part (an app demo or onboarding screen that doesn't "move"), so
+> check them. In `--mode ui` runs most frames are `gap` — that's expected and you
+> generally want to look at all of them, one per screen.
 
 **Need a frame the index doesn't have? Grab it on demand.** Scene-detect fires on
 motion, not on meaning — on fast-cut video the most informative moment often sits
@@ -116,6 +139,14 @@ relevant dreamcontext skill (per the skill-triage rule) and load it:
 - **Knowledge / training** → if it should persist for the project, hand the transcript to `dreamcontext knowledge` so it becomes durable context
 Don't guess the use-case — let the user direct it.
 
+> **UI teardown (no transcript needed).** When the goal is purely the app flow —
+> e.g. tearing down a competitor's onboarding funnel — run `--frames-only --mode ui`
+> and skip the `.transcript.md` entirely. The deliverable becomes a **curated screen
+> list** (one entry per onboarding step, in order, from `frames.json`), which feeds a
+> board (`excalidraw`) or an `onboarding-design` analysis directly. Use `--contact-sheet`
+> to eyeball coverage first, and trust the coverage warning — under-sampling here is
+> exactly what makes a teardown wrongly report "screen X wasn't shown".
+
 ## What this skill is NOT
 - Not a knowledge-base writer or ingestion pipeline. This skill produces the
   transcript artifact; persisting it (chunking, embedding, ingest into a project's
@@ -140,12 +171,22 @@ brew install whisper-cpp ffmpeg          # yt-dlp too, only for remote links
 ├── SKILL.md                    ← you are here
 └── scripts/
     ├── transcribe.sh           ← video → transcript + frames + frames.json (the engine)
-    ├── gap_fill.py             ← timestamps to fill scene-detect gaps (> MAX_GAP)
-    └── build_frame_index.py    ← frames/*.jpg → frames.json (pts_time index)
+    └── build_frame_index.py    ← frames/*.jpg → frames.json (pts_time index + coverage check)
 ```
 
-## Tuning
-- Too few frames on a slide-heavy video? `SCENE_THRESHOLD=0.1 ./transcribe.sh …`
-- Long static lecture over-sampled? Raise `MAX_GAP=20 ./transcribe.sh …` (default 10s).
-- Capturing too many near-identical frames? `DEDUPE_SEC=1.0 ./transcribe.sh …`
-- Force a model: `WHISPER_MODEL=/abs/ggml-large-v3.bin ./transcribe.sh …`
+## Flags & tuning
+Flags (each also settable as an env var, e.g. `MODE=ui`):
+- `--mode ui|lecture` — sampling preset. `ui` = `MAX_GAP` 2.5s (app screens); `lecture`
+  (default) = 10s (talking-head). Explicit `--max-gap`/`--scene-threshold` always win.
+- `--frames-only` — skip whisper; extract frames only (UI/UX teardowns).
+- `--max-gap N` — guarantee a frame at least every N seconds.
+- `--scene-threshold N` — scene-change sensitivity, lower = more frames.
+- `--contact-sheet` — also emit `frames/contact_sheet.jpg` (coverage at a glance).
+- `--lang CODE` — force the transcript language (default: auto-detect).
+
+Common adjustments:
+- Onboarding/UI recording under-sampled? `--mode ui` (or push further: `--max-gap 1.5`).
+- Too few frames on a slide-heavy talk? `--scene-threshold 0.1`.
+- Long static lecture over-sampled? `--max-gap 20`.
+- Capturing too many near-identical frames? `DEDUPE_SEC=1.0 ./transcribe.sh …`.
+- Force a model: `WHISPER_MODEL=/abs/ggml-large-v3.bin ./transcribe.sh …`.
