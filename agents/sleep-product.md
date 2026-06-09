@@ -54,8 +54,9 @@ If none apply when you start, no-op cheaply: read the brief, scan for actual sig
 | You touch | You don't touch |
 |---|---|
 | `_dream_context/knowledge/*.md` (create + edit) | core 0-6 files (sleep-state owns) |
-| `_dream_context/core/features/*.md` (create + edit) | task files (sleep-tasks owns) |
-| `dreamcontext knowledge create --tags "..."` | changelog, releases (sleep-state owns) |
+| `_dream_context/knowledge/data-structures/<product>.md` (schemas, models, API contracts) | task files (sleep-tasks owns) |
+| `_dream_context/core/features/*.md` (create + edit) | changelog, releases (sleep-state owns) |
+| `dreamcontext knowledge create --tags "..."` | |
 | `dreamcontext features create <name>` | |
 | `dreamcontext features insert <name> <section>` | |
 | Frontmatter: `pinned`, `status`, `updated`, `released_version`, `related_tasks` | |
@@ -249,6 +250,22 @@ Product-scoped knowledge. Cross-cutting findings still go to top-level `knowledg
 ```
 
 This is a one-time bootstrap per product; once the file exists, treat it like any other knowledge file (edit on demand, don't recreate).
+
+#### B6. Data structures (schemas / models / API contracts)
+
+Data structures live at `knowledge/data-structures/<product>.md` (`default.md` for single-product). They moved here from `core/` because schemas ARE domain knowledge — this gives them recall indexing, staleness flags, and the knowledge UI for free. **You own these writes now** (sleep-state only flags them for you).
+
+**Single-observation gate.** Unlike most knowledge (which waits for repetition), a schema/data-model change is reflected in the *same* cycle — no pattern repetition required. If `sleep-state` flagged a schema/table/model change, or the diff shows one, write it now.
+
+**Routing.**
+- Active task has `product: X` → `knowledge/data-structures/X.md` (create if missing).
+- Otherwise (single-product) → `knowledge/data-structures/default.md`.
+- Frontmatter: `type: data-structures`, `product: <name>`, `tags: [data-structures, database, schema]` (add domain tags as relevant).
+
+**Migration of the old locations** (idempotent; the dir move runs automatically on `dreamcontext sleep start`, but confirm + handle the legacy file):
+- If `core/data-structures/*.md` still exists and the knowledge copy is absent, it was (or should be) moved to `knowledge/data-structures/` — the `sleep start` migration handles this. Verify it landed.
+- If the even-older `core/5.data_structures.sql` exists and `knowledge/data-structures/default.md` does not, copy it there (add the data-structures frontmatter) — don't delete the legacy file.
+- **Never delete** the old `core/data-structures/` dir or the legacy `.sql` yourself — leave them for the user to remove after confirming (the `doctor` command nags about both). Note any migration in your report.
 
 ## Return — single combined report
 

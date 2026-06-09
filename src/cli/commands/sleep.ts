@@ -6,6 +6,7 @@ import { ensureContextRoot } from '../../lib/context-path.js';
 import { readJsonObject, writeJsonObject, readJsonArray, writeJsonArray } from '../../lib/json-file.js';
 import { today } from '../../lib/id.js';
 import { header, success, error, warn, info } from '../../lib/format.js';
+import { migrateDataStructures } from '../../lib/data-structures-migration.js';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -345,6 +346,14 @@ export function registerSleepCommand(program: Command): void {
 
       if (state.sleep_started_at) {
         warn(`Consolidation already in progress (started ${state.sleep_started_at}). Overwriting epoch.`);
+      }
+
+      // One-time, idempotent structural migration: data-structures moved from
+      // core/ to knowledge/. Runs here so the consolidating agent sees the new
+      // layout. The old dir is left in place for the user to delete (see doctor).
+      const moved = migrateDataStructures(root);
+      if (moved.migrated.length > 0) {
+        success(`Migrated data-structures → knowledge/data-structures/: ${moved.migrated.join(', ')} (old core/data-structures/ left for you to delete)`);
       }
 
       state.sleep_started_at = new Date().toISOString();

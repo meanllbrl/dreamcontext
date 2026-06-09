@@ -458,6 +458,9 @@ parent_task: null
     });
 
     it('shows empty message when no knowledge files exist', () => {
+      // A fresh init scaffolds knowledge/data-structures/default.md; clear it to
+      // exercise the truly-empty state.
+      rmSync(join(tmpDir, '_dream_context', 'knowledge', 'data-structures'), { recursive: true, force: true });
       const output = run('knowledge index --plain', tmpDir);
       expect(output).toContain('No knowledge files found');
     });

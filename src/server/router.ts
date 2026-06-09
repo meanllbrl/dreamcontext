@@ -19,9 +19,12 @@ export class Router {
 
   add(method: string, path: string, handler: RouteHandler): void {
     const paramNames: string[] = [];
-    const pattern = path.replace(/:([a-zA-Z_]+)/g, (_match, name) => {
+    // `:name` matches a single path segment; `*name` is a rest param that
+    // matches across slashes (e.g. `knowledge/data-structures/default`).
+    // Single-pass replace keeps param order aligned with capture-group order.
+    const pattern = path.replace(/([:*])([a-zA-Z_]+)/g, (_match, kind, name) => {
       paramNames.push(name);
-      return '([^/]+)';
+      return kind === '*' ? '(.+)' : '([^/]+)';
     });
     this.routes.push({
       method: method.toUpperCase(),

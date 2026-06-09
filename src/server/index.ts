@@ -50,10 +50,11 @@ function buildRouter(): Router {
   router.get('/api/core/:filename', handleCoreGet);
   router.put('/api/core/:filename', handleCoreUpdate);
 
-  // Knowledge
+  // Knowledge — `*slug` is a rest param so subdir-qualified slugs work
+  // (e.g. data-structures/default, products/lina).
   router.get('/api/knowledge', handleKnowledgeList);
-  router.get('/api/knowledge/:slug', handleKnowledgeGet);
-  router.patch('/api/knowledge/:slug', handleKnowledgeUpdate);
+  router.get('/api/knowledge/*slug', handleKnowledgeGet);
+  router.patch('/api/knowledge/*slug', handleKnowledgeUpdate);
 
   // Features
   router.get('/api/features', handleFeaturesList);

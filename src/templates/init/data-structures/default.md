@@ -3,6 +3,10 @@ name: {{PRODUCT_NAME}}
 description: Data structures for {{PRODUCT_NAME}}
 type: data-structures
 product: {{PRODUCT_NAME}}
+tags:
+  - data-structures
+  - database
+  - schema
 updated: {{DATE}}
 ---
 

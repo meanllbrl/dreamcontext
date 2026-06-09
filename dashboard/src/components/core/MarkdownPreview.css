@@ -246,3 +246,113 @@
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* ─── Syntax highlighting (highlight.js) — brand palette, theme-aware ───
+   Token colors only; the <pre> background/border come from the rules above so
+   the code block stays consistent with the rest of the surface. Light values
+   are HSL tuned for WCAG AA on the card background; dark values mirror the
+   palette in tokens.css. SQL is the priority use case (data-structures docs),
+   but this covers every fenced language. */
+.md-preview .markdown-body code.hljs,
+.md-preview .markdown-body .hljs {
+  background: transparent;
+  color: var(--color-text);
+}
+
+.md-preview .markdown-body .hljs-comment,
+.md-preview .markdown-body .hljs-quote,
+.md-preview .markdown-body .hljs-meta {
+  color: var(--color-text-tertiary);
+  font-style: italic;
+}
+
+.md-preview .markdown-body .hljs-keyword,
+.md-preview .markdown-body .hljs-selector-tag,
+.md-preview .markdown-body .hljs-literal,
+.md-preview .markdown-body .hljs-section,
+.md-preview .markdown-body .hljs-name,
+.md-preview .markdown-body .hljs-tag {
+  color: hsl(258 58% 46%);
+  font-weight: var(--font-weight-semibold);
+}
+
+.md-preview .markdown-body .hljs-string,
+.md-preview .markdown-body .hljs-regexp,
+.md-preview .markdown-body .hljs-addition {
+  color: hsl(142 71% 28%);
+}
+
+.md-preview .markdown-body .hljs-number,
+.md-preview .markdown-body .hljs-boolean,
+.md-preview .markdown-body .hljs-literal.number {
+  color: hsl(28 82% 36%);
+}
+
+.md-preview .markdown-body .hljs-title,
+.md-preview .markdown-body .hljs-title.function_,
+.md-preview .markdown-body .hljs-title.class_,
+.md-preview .markdown-body .hljs-type,
+.md-preview .markdown-body .hljs-built_in,
+.md-preview .markdown-body .hljs-class {
+  color: hsl(222 68% 44%);
+}
+
+.md-preview .markdown-body .hljs-attr,
+.md-preview .markdown-body .hljs-attribute,
+.md-preview .markdown-body .hljs-variable,
+.md-preview .markdown-body .hljs-template-variable,
+.md-preview .markdown-body .hljs-selector-attr,
+.md-preview .markdown-body .hljs-selector-pseudo {
+  color: hsl(330 68% 42%);
+}
+
+.md-preview .markdown-body .hljs-symbol,
+.md-preview .markdown-body .hljs-bullet,
+.md-preview .markdown-body .hljs-link {
+  color: var(--color-accent);
+}
+
+.md-preview .markdown-body .hljs-deletion {
+  color: var(--color-error);
+}
+
+.md-preview .markdown-body .hljs-emphasis { font-style: italic; }
+.md-preview .markdown-body .hljs-strong { font-weight: var(--font-weight-bold); }
+
+/* Dark mode — lighter token hues for contrast on the dark card surface. */
+[data-theme='dark'] .md-preview .markdown-body .hljs-keyword,
+[data-theme='dark'] .md-preview .markdown-body .hljs-selector-tag,
+[data-theme='dark'] .md-preview .markdown-body .hljs-literal,
+[data-theme='dark'] .md-preview .markdown-body .hljs-section,
+[data-theme='dark'] .md-preview .markdown-body .hljs-name,
+[data-theme='dark'] .md-preview .markdown-body .hljs-tag {
+  color: #c4b5fd;
+}
+
+[data-theme='dark'] .md-preview .markdown-body .hljs-string,
+[data-theme='dark'] .md-preview .markdown-body .hljs-regexp,
+[data-theme='dark'] .md-preview .markdown-body .hljs-addition {
+  color: #86efac;
+}
+
+[data-theme='dark'] .md-preview .markdown-body .hljs-number,
+[data-theme='dark'] .md-preview .markdown-body .hljs-boolean {
+  color: #fcd34d;
+}
+
+[data-theme='dark'] .md-preview .markdown-body .hljs-title,
+[data-theme='dark'] .md-preview .markdown-body .hljs-title.function_,
+[data-theme='dark'] .md-preview .markdown-body .hljs-title.class_,
+[data-theme='dark'] .md-preview .markdown-body .hljs-type,
+[data-theme='dark'] .md-preview .markdown-body .hljs-built_in,
+[data-theme='dark'] .md-preview .markdown-body .hljs-class {
+  color: #93c5fd;
+}
+
+[data-theme='dark'] .md-preview .markdown-body .hljs-attr,
+[data-theme='dark'] .md-preview .markdown-body .hljs-attribute,
+[data-theme='dark'] .md-preview .markdown-body .hljs-variable,
+[data-theme='dark'] .md-preview .markdown-body .hljs-template-variable,
+[data-theme='dark'] .md-preview .markdown-body .hljs-selector-attr {
+  color: #f9a8d4;
+}

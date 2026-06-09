@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { join, basename } from 'node:path';
+import { join, relative } from 'node:path';
 import fg from 'fast-glob';
 import { readFrontmatter } from './frontmatter.js';
 
@@ -43,7 +43,10 @@ export interface KnowledgeEntry {
 // ─── Index Builder ─────────────────────────────────────────────────────────
 
 /**
- * Scan knowledge/*.md and return structured index entries.
+ * Scan knowledge/**\/*.md and return structured index entries.
+ * Recurses subdirectories (e.g. knowledge/data-structures/, knowledge/products/);
+ * the slug is the path relative to knowledge/ without `.md` (forward-slashed),
+ * so `data-structures/default` round-trips through the knowledge GET route.
  * Sorted: pinned first, then alphabetical by slug.
  * Returns [] if knowledge/ doesn't exist or is empty.
  */
@@ -51,15 +54,16 @@ export function buildKnowledgeIndex(contextRoot: string): KnowledgeEntry[] {
   const knowledgeDir = join(contextRoot, 'knowledge');
   if (!existsSync(knowledgeDir)) return [];
 
-  const files = fg.sync('*.md', { cwd: knowledgeDir, absolute: true });
+  const files = fg.sync('**/*.md', { cwd: knowledgeDir, absolute: true });
   const entries: KnowledgeEntry[] = [];
 
   for (const file of files) {
     try {
       const { data, content } = readFrontmatter(file);
+      const slug = relative(knowledgeDir, file).replace(/\\/g, '/').replace(/\.md$/, '');
       const entry: KnowledgeEntry = {
-        slug: basename(file, '.md'),
-        name: String(data.name ?? basename(file, '.md')),
+        slug,
+        name: String(data.name ?? slug),
         description: String(data.description ?? ''),
         tags: Array.isArray(data.tags) ? data.tags.map(String) : [],
         date: String(data.date ?? ''),

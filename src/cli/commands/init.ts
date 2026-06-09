@@ -257,8 +257,8 @@ export function registerInitCommand(program: Command): void {
 
       // Create directory structure
       mkdirSync(join(contextDir, 'core', 'features'), { recursive: true });
-      mkdirSync(join(contextDir, 'core', 'data-structures'), { recursive: true });
       mkdirSync(join(contextDir, 'knowledge'), { recursive: true });
+      mkdirSync(join(contextDir, 'knowledge', 'data-structures'), { recursive: true });
       mkdirSync(join(contextDir, 'knowledge', 'products'), { recursive: true });
       mkdirSync(join(contextDir, 'state'), { recursive: true });
       mkdirSync(join(contextDir, 'inbox'), { recursive: true });
@@ -291,8 +291,10 @@ export function registerInitCommand(program: Command): void {
       }
 
       // Data structures: per-product file (or default.md for single-product).
+      // Lives under knowledge/ so it gets recall indexing, staleness tracking,
+      // pinning, and the knowledge UI for free (schemas ARE domain knowledge).
       const dataStructuresTemplate = join(templateDir, 'data-structures', 'default.md');
-      const dataStructuresFallback = '---\nname: {{PRODUCT_NAME}}\ndescription: Data structures for {{PRODUCT_NAME}}\ntype: data-structures\nproduct: {{PRODUCT_NAME}}\nupdated: {{DATE}}\n---\n\n# Data Structures — {{PRODUCT_NAME}}\n\nDocument schemas, models, and API contracts here.\n';
+      const dataStructuresFallback = '---\nname: {{PRODUCT_NAME}}\ndescription: Data structures for {{PRODUCT_NAME}}\ntype: data-structures\nproduct: {{PRODUCT_NAME}}\ntags:\n  - data-structures\n  - database\n  - schema\nupdated: {{DATE}}\n---\n\n# Data Structures — {{PRODUCT_NAME}}\n\nDocument schemas, models, and API contracts here.\n';
       const dsTemplateContent = existsSync(dataStructuresTemplate)
         ? readFileSync(dataStructuresTemplate, 'utf-8')
         : dataStructuresFallback;
@@ -300,7 +302,7 @@ export function registerInitCommand(program: Command): void {
       const productList: string[] = multiProduct === false ? ['default'] : multiProduct;
       for (const product of productList) {
         const productTokens = { ...tokens, PRODUCT_NAME: product };
-        const destPath = join(contextDir, 'core', 'data-structures', `${product}.md`);
+        const destPath = join(contextDir, 'knowledge', 'data-structures', `${product}.md`);
         writeFileSync(destPath, replaceTokens(dsTemplateContent, productTokens), 'utf-8');
       }
 

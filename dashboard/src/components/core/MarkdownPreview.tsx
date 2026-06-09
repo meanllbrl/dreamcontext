@@ -3,6 +3,7 @@ import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { useTheme } from '../../context/ThemeContext';
 import { useMermaidRender } from '../../lib/mermaidRender';
+import { useCodeHighlight } from '../../lib/codeHighlight';
 import './MarkdownPreview.css';
 
 marked.setOptions({ gfm: true, breaks: true });
@@ -25,6 +26,7 @@ export function MarkdownPreview({ content, frontmatter }: Props) {
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const { resolved } = useTheme();
   useMermaidRender(bodyRef, html, resolved, 'md-mmd');
+  useCodeHighlight(bodyRef, html);
 
   const fmEntries = frontmatter
     ? Object.entries(frontmatter).filter(([, v]) => v !== undefined && v !== null && v !== '')

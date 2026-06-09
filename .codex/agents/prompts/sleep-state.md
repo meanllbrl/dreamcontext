@@ -33,9 +33,8 @@ Identity is sacred — a fresh session must immediately understand who the agent
 | You touch | You don't touch |
 |---|---|
 | `core/0-4.*`, `core/6.*` files (Edit, surgical) | task files (sleep-tasks owns) |
-| `core/data-structures/<product>.md` (one per product; `default.md` for single-product) | knowledge files (you flag staleness; sleep-product writes) |
-| `dreamcontext core changelog add` | feature PRDs (sleep-product owns) |
-| `dreamcontext core releases {add,update,active,list,show}` | |
+| `dreamcontext core changelog add` | knowledge files incl. `knowledge/data-structures/<product>.md` (sleep-product owns + writes; you only flag staleness) |
+| `dreamcontext core releases {add,update,active,list,show}` | feature PRDs (sleep-product owns) |
 | `dreamcontext trigger add` (context-dependent reminders) | |
 
 ## Inputs
@@ -142,21 +141,20 @@ Be conservative. The default is **no change**. Only update when a pattern is rec
 
 #### B0b. Single-observation gate (code-reality files)
 
-Applies to: `3.style_guide_and_branding.md`, `4.tech_stack.md`, files under `core/data-structures/`, and `6.system_flow.md`.
+Applies to: `3.style_guide_and_branding.md`, `4.tech_stack.md`, and `6.system_flow.md`. (Schema/data-model changes are the same kind of single-observation signal, but they now live in `knowledge/data-structures/` — **sleep-product** owns that write; flag it for them rather than writing it yourself.)
 
-These files describe code reality, not user preferences. A single session adding/removing a dependency, schema, route, or workflow step MUST be reflected in the same cycle — no pattern repetition required. If the diff or transcript shows the change happened, write it.
+These files describe code reality, not user preferences. A single session adding/removing a dependency, route, or workflow step MUST be reflected in the same cycle — no pattern repetition required. If the diff or transcript shows the change happened, write it.
 
 Examples that trigger an immediate write:
 - A new dependency appears in `package.json` / lockfile → `4.tech_stack.md`.
-- A schema change, new table, or new model → relevant file under `core/data-structures/`.
+- A schema change, new table, or new model → flag for **sleep-product** to write `knowledge/data-structures/<product>.md`.
 - A new route, hook, or system-flow step → `6.system_flow.md`.
 - A new color token, font, or design primitive → `3.style_guide_and_branding.md`.
 
-**Multi-product routing.** If the active task frontmatter has `product: X`, route any tech_stack or data_structures observation to the matching product's file:
+**Multi-product routing.** If the active task frontmatter has `product: X`, route any tech_stack observation to the matching product's file:
 - Tech stack scoped to product X → still goes in `4.tech_stack.md` but tagged with the product label inline (single-file convention); if a project-specific convention emerges (per-product tech stacks), revisit.
-- Data structures → `core/data-structures/<X>.md`. Create the file if missing.
 
-Otherwise (no `product:` field, single-product project), data structures changes go to `core/data-structures/default.md`.
+Data-structure observations are routed by **sleep-product** to `knowledge/data-structures/<X>.md` (or `default.md`) — flag them for sleep-product, don't write them here.
 
 #### B1. Signal → file routing
 
@@ -167,7 +165,7 @@ Otherwise (no `product:` field, single-product project), data structures changes
 | New project constraint or warning | `0.soul.md` | Rules / Warnings | two-observation |
 | Technical decision worth preserving | `2.memory.md` | Technical Decisions | two-observation |
 | Stack/dependency change | `4.tech_stack.md` | | single-observation |
-| Schema / data-model change | `core/data-structures/<product>.md` (or `default.md`) | | single-observation |
+| Schema / data-model change | flag for **sleep-product** → `knowledge/data-structures/<product>.md` (or `default.md`) | | single-observation |
 | System flow / hook count change | `6.system_flow.md` | | single-observation |
 | Style/branding token change | `3.style_guide_and_branding.md` | | single-observation |
 
@@ -180,23 +178,6 @@ dreamcontext trigger add "<when>" "<remind>"   # context-dependent reminders
 ```
 
 Cross-domain catches from your own changelog pass land here naturally — if you wrote a `feat` entry whose description revealed a preference enforced twice, write it into `1.user.md` in the same cycle (no flagging needed; you own both files).
-
-#### B2. Legacy migration — `5.data_structures.sql` → `data-structures/<product>.md`
-
-On every cycle, check for the legacy file:
-
-```bash
-LEGACY=_dream_context/core/5.data_structures.sql
-NEW_DEFAULT=_dream_context/core/data-structures/default.md
-if [ -f "$LEGACY" ] && [ ! -f "$NEW_DEFAULT" ]; then
-  mkdir -p _dream_context/core/data-structures
-  cp "$LEGACY" "$NEW_DEFAULT"
-  # do NOT delete the legacy file here — leave it for WS-1 manifest cleanup (if system-installed)
-  # or the user to remove manually. Note the migration in your report.
-fi
-```
-
-Report the migration in your output so the user knows the new location. Do not delete the legacy file yourself.
 
 ### Pass C — Anti-bloat sweep + knowledge staleness flags
 
@@ -259,7 +240,7 @@ You do **not** edit knowledge files. Produce flags for `sleep-product` to act on
 1. **Be exhaustive on the diary.** Every meaningful change gets a changelog entry. Skipping is the failure state.
 2. **Conservative on identity (preferences & decisions).** No-op is the right answer most cycles for `1.user.md` and `2.memory.md`.
 3. **Two-observation gate for `1.user.md` / `2.memory.md`.** One observation is data; two is a pattern. Don't write a preference or decision from a single mention.
-3a. **Single-observation gate for code-reality files** (`3.*`, `4.*`, `core/data-structures/*`, `6.*`). A diff that adds a dependency, schema, route, or design primitive MUST be reflected in the same cycle. These files mirror code, not opinion.
+3a. **Single-observation gate for code-reality files** (`3.*`, `4.*`, `6.*`). A diff that adds a dependency, route, or design primitive MUST be reflected in the same cycle. These files mirror code, not opinion. (Schema/data-model changes are the same kind of signal but live in `knowledge/data-structures/` — flag them for **sleep-product**.)
 4. **Cluster commits, don't enumerate.** Logical groupings beat 1-commit-per-entry.
 5. **Cover uncommitted work.** Don't wait for the user to commit.
 6. **Never auto-release.** Surface readiness; the user decides.

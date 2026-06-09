@@ -69,28 +69,39 @@ function checkDirectory(root: string, relPath: string, label: string): CheckResu
 }
 
 /**
- * Validate that core/data-structures/ exists and contains at least one .md file
- * (e.g., default.md for single-product OR <product>.md for multi-product).
+ * Validate that knowledge/data-structures/ exists and contains at least one .md
+ * file (default.md for single-product OR <product>.md for multi-product).
  *
- * Also emits a migration hint when the legacy core/5.data_structures.sql is still
- * present, pointing at the sleep-state Pass B2 migration block.
+ * Emits migration hints when the OLD core/data-structures/ (or the even-older
+ * legacy core/5.data_structures.sql) is still present — both are left in place
+ * by the migration so the user deletes them after confirming.
  */
 function checkDataStructures(root: string): CheckResult[] {
   const results: CheckResult[] = [];
-  const dirRel = 'core/data-structures';
+  const dirRel = 'knowledge/data-structures';
   const dirAbs = join(root, dirRel);
+  const oldRel = 'core/data-structures';
+  const oldAbs = join(root, oldRel);
+  const oldExists = existsSync(oldAbs);
   const legacyRel = 'core/5.data_structures.sql';
-  const legacyAbs = join(root, legacyRel);
-  const legacyExists = existsSync(legacyAbs);
+  const legacyExists = existsSync(join(root, legacyRel));
 
   if (!existsSync(dirAbs)) {
-    if (legacyExists) {
+    if (oldExists) {
       results.push({
         name: 'Data structures',
         status: 'warn',
         message:
-          `Legacy ${legacyRel} present; new layout core/data-structures/ missing. `
-          + `Run a sleep cycle — sleep-state Pass B2 migrates the legacy file to core/data-structures/default.md.`,
+          `Data structures still under ${oldRel}/; new home ${dirRel}/ missing. `
+          + `Run a sleep cycle — \`sleep start\` migrates them to ${dirRel}/ (the old dir is left for you to delete).`,
+      });
+    } else if (legacyExists) {
+      results.push({
+        name: 'Data structures',
+        status: 'warn',
+        message:
+          `Legacy ${legacyRel} present; ${dirRel}/ missing. `
+          + `Run a sleep cycle — sleep-product migrates it to ${dirRel}/default.md.`,
       });
     } else {
       results.push({
@@ -128,13 +139,22 @@ function checkDataStructures(root: string): CheckResult[] {
     });
   }
 
+  if (oldExists) {
+    results.push({
+      name: 'Data structures (old location)',
+      status: 'warn',
+      message:
+        `Old ${oldRel}/ still present alongside the new ${dirRel}/. `
+        + `Migration leaves it in place; delete it once you've confirmed ${dirRel}/ is current.`,
+    });
+  }
   if (legacyExists) {
     results.push({
       name: 'Data structures (legacy)',
       status: 'warn',
       message:
-        `Legacy ${legacyRel} still present alongside new layout. `
-        + `sleep-state Pass B2 leaves the file in place after migration; delete it once you've confirmed core/data-structures/default.md is current.`,
+        `Legacy ${legacyRel} still present. `
+        + `Delete it once you've confirmed ${dirRel}/default.md is current.`,
     });
   }
 

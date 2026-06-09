@@ -87,7 +87,7 @@ All three are auto-loaded every session via the SessionStart hook.
 Every session start injects these automatically (zero tool calls needed):
 
 - **Soul, User, Memory** -- full content
-- **Extended core files index** -- names/types of style guide, tech stack, data structures
+- **Extended core files index** -- names/types of style guide, tech stack, system flow
 - **Active tasks** -- status, priority, last updated (answer "which tasks are active?" directly from this, zero tool calls needed)
 - **Bookmarks** -- tagged important moments from previous sessions, ordered by salience
 - **Contextual reminders** -- matching triggers for active tasks (prospective memory)
@@ -115,7 +115,7 @@ Decide dynamically. Match the task to what you need. Choose the right operation 
 | `core/features/<name>.md` | READ | Feature scoping, sprint work, planning, "what's next" questions |
 | `core/3.style_guide_and_branding.md` | READ | UI/UX work, frontend, branding, copy, design tasks |
 | `core/4.tech_stack.md` | READ | Architecture decisions, integrations, dependency questions, infra |
-| `core/data-structures/<product>.md` (or `default.md`) | READ or SEARCH | Database work, API design, schema changes, data modeling |
+| `knowledge/data-structures/<product>.md` (or `default.md`) | READ or SEARCH | Database work, API design, schema changes, data modeling (recall-indexed like all knowledge) |
 | `core/CHANGELOG.json` | SEARCH | Bug investigations, "what changed recently?" |
 | `core/RELEASES.json` | SEARCH | "Which release shipped this?", rollback decisions |
 | `state/<task>.md` | READ | Continuing previous work. Changelog section = where you left off |
@@ -134,17 +134,17 @@ When debugging (e.g., "notifications are broken"):
 
 Some projects are monorepos with multiple products. Init asks "Is this a monorepo with multiple products?" and records the product list in `_dream_context/state/.config.json` under `multiProduct: string[] | false`. When products are configured:
 
-- **Per-product data structures** live at `_dream_context/core/data-structures/<product>.md` (single-product projects use `default.md`).
+- **Per-product data structures** live at `_dream_context/knowledge/data-structures/<product>.md` (single-product projects use `default.md`). They're knowledge files — recall-indexed, staleness-tracked, owned by `sleep-product`.
 - **Per-product knowledge** lives at `_dream_context/knowledge/products/<product>.md`. Cross-cutting knowledge still lives at the top-level `knowledge/`.
 - **Tasks** MAY include `product: <name>` in frontmatter. The dashboard / CLI surfaces a product filter when `.config.json` lists products.
 - **Auto-injection — handled by the SessionStart hook.** The hook (`npx dreamcontext hook session-start` → `generateSnapshot()`) resolves the active task (override file `_dream_context/state/.active-task`, or fallback: most recently modified task with status `in_progress`). If that task's frontmatter has `product: <name>` and `<name>` is listed under `multiProduct`, the hook injects the body of `_dream_context/knowledge/products/<name>.md` into the snapshot under an `## Active Product Knowledge: <name>` section (capped at 200 lines, with a "read full" pointer if truncated). You don't need to remember to load it — it's already in your context. Cross-cutting knowledge still lives at the top-level `knowledge/`.
 - **Feature PRDs** MAY include `product: <name>` in frontmatter for product scoping; they still live in the flat `core/features/` directory.
 
-If `multiProduct` is `false` or missing, treat the project as single-product and use `data-structures/default.md` exclusively. The SessionStart hook no-ops the product-knowledge injection in that case.
+If `multiProduct` is `false` or missing, treat the project as single-product and use `knowledge/data-structures/default.md` exclusively. The SessionStart hook no-ops the product-knowledge injection in that case.
 
 ### Extended Core Files (3+)
 
-Beyond the auto-loaded soul/user/memory, projects define additional core files (style guide, tech stack, data structures, and potentially more).
+Beyond the auto-loaded soul/user/memory, projects define additional core files (style guide, tech stack, and potentially more). (Data structures are no longer a core file — they live under `knowledge/data-structures/` as recall-indexed knowledge.)
 
 **Discovery protocol**:
 1. The extended core files index is auto-loaded each session (names and types visible).
@@ -463,9 +463,6 @@ dreamcontext memory status
 _dream_context/
 +-- core/
 |   +-- features/<feature>.md         <- Feature PRDs (may include product: <name>)
-|   +-- data-structures/              <- Per-product schemas
-|   |   +-- default.md                <-   single-product fallback
-|   |   +-- <product>.md              <-   one per product if monorepo
 |   +-- 0.soul.md                     <- Identity, principles, rules
 |   +-- 1.user.md                     <- Preferences, project details
 |   +-- 2.memory.md                   <- Decisions + Known Issues (ship narrative moved to CHANGELOG 2026-05-23)
@@ -474,6 +471,9 @@ _dream_context/
 |   +-- 6.system_flow.md
 |   +-- CHANGELOG.json, RELEASES.json
 +-- knowledge/<topic>.md              <- Deep research, resources (global)
+|   +-- data-structures/              <- Per-product schemas (recall-indexed knowledge)
+|   |   +-- default.md                <-   single-product fallback
+|   |   +-- <product>.md              <-   one per product if monorepo
 |   +-- products/<product>.md         <- Per-product knowledge (multi-product)
 +-- state/
 |   +-- <task>.md                     <- Active tasks (frontmatter may include product:)
@@ -488,7 +488,7 @@ All commands prefixed with `dreamcontext`. For reading/searching, use native too
 
 | Command | Description |
 |---------|-------------|
-| `init [--multi-product=a,b,c]` | Initialize `_dream_context/`. Prompts interactively whether the project is a monorepo with multiple products; `--multi-product=a,b,c` skips the prompt and provides kebab-case product names directly. Creates `core/data-structures/<product>.md` per product (or `default.md` for single-product) and seeds `knowledge/products/`. |
+| `init [--multi-product=a,b,c]` | Initialize `_dream_context/`. Prompts interactively whether the project is a monorepo with multiple products; `--multi-product=a,b,c` skips the prompt and provides kebab-case product names directly. Creates `knowledge/data-structures/<product>.md` per product (or `default.md` for single-product) and seeds `knowledge/products/`. |
 | `core changelog add` | Add changelog entry (interactive) |
 | `core releases add [--ver v --summary s --yes] [--status planning]` | Create release (default: released with auto-discovery; --status planning: empty planning version, auto-becomes active) |
 | `core releases active [<version>] [--clear]` | Get/set/clear the active planning version (default for new tasks' `version` field) |
