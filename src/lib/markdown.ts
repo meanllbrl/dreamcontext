@@ -87,8 +87,10 @@ export function readSection(filePath: string, sectionName: string): string | nul
 export function isPlaceholderLine(line: string): boolean {
   const t = line.trim();
   if (t === '' || t.startsWith('<!--')) return false;
-  // Whole-line parenthetical, optionally bulleted: "(...)" / "- (...)"
-  if (/^[-*]?\s*\([^)]*\)\s*$/.test(t)) return true;
+  // Whole-line parenthetical that BEGINS with a known template-filler stem.
+  // Keyed to the stems instead of matching any "(...)" so a real one-line note
+  // like `- (see RFC-42 for rationale)` is preserved, not silently dropped.
+  if (/^[-*]?\s*\(\s*(?:to be defined|specific, testable|how this feature|key files|working notes|edge cases, open questions)[^)]*\)\s*$/i.test(t)) return true;
   // User-story skeletons with bracketed role/action/outcome tokens
   if (/\[(?:users?|roles?|actions?|outcomes?)\]/i.test(t)) return true;
   // Task acceptance-criteria skeleton: "...(matches node A1 in Workflow)"

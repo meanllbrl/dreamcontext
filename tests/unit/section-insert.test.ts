@@ -32,6 +32,14 @@ describe('isPlaceholderLine', () => {
     expect(isPlaceholderLine('We chose fetch over axios (no new dep)')).toBe(false); // has trailing text
   });
 
+  it('does NOT flag a real one-line parenthetical note (data-loss guard)', () => {
+    // A bare bulleted parenthetical is NOT a placeholder unless it begins with a
+    // template-filler stem — otherwise a real note would be silently wiped.
+    expect(isPlaceholderLine('- (see RFC-42 for rationale)')).toBe(false);
+    expect(isPlaceholderLine('(uses native fetch, no axios)')).toBe(false);
+    expect(isPlaceholderLine('- (TODO: revisit after launch)')).toBe(false);
+  });
+
   it('ignores blanks and comments', () => {
     expect(isPlaceholderLine('')).toBe(false);
     expect(isPlaceholderLine('   ')).toBe(false);
@@ -170,5 +178,18 @@ x
     const raw = readFileSync(file, 'utf-8');
     // No run of 3+ newlines (= 2+ blank lines) introduced around the insert.
     expect(raw).not.toMatch(/a note\n\n\n+## /);
+  });
+
+  it('preserves a real parenthetical note (does not treat it as a placeholder)', () => {
+    const f = join(dir, 'note.md');
+    writeFileSync(
+      f,
+      '---\nid: x\n---\n\n## Notes\n\n- (see RFC-42 for rationale)\n\n## Changelog\n\n### 2026-01-01 - c\n- c\n',
+      'utf-8',
+    );
+    insertToSection(f, 'Notes', 'another note', 'bottom', true, true);
+    const body = readSection(f, 'Notes')!;
+    expect(body).toContain('see RFC-42 for rationale'); // real note survived the insert
+    expect(body).toContain('another note');
   });
 });

@@ -187,7 +187,7 @@ export function groupTasks(tasks: TaskRecord[], groupBy: GroupBy): TaskGroup[] {
   }
 
   return [...map.keys()]
-    .sort((a, b) => groupRank(groupBy, a) - groupRank(groupBy, b) || a.localeCompare(b))
+    .sort((a, b) => groupRank(groupBy, a) - groupRank(groupBy, b) || a.localeCompare(b, 'en', { sensitivity: 'base' }))
     .map((key) => ({ key, tasks: map.get(key)! }));
 }
 
@@ -204,5 +204,5 @@ export function collectTags(tasks: TaskRecord[]): TagCount[] {
   }
   return [...counts.entries()]
     .map(([tag, count]) => ({ tag, count }))
-    .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
+    .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag, 'en', { sensitivity: 'base' }));
 }

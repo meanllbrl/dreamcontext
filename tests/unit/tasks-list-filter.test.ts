@@ -215,6 +215,16 @@ describe('groupTasks', () => {
     expect(groupTasks(tasks, 'status').map((g) => g.key)).toEqual(['todo', 'in_review', 'completed']);
   });
 
+  it('orders mixed-case tag groups deterministically (case-insensitive)', () => {
+    const tasks = [
+      rec({ name: 'a', tags: ['Zebra'] }),
+      rec({ name: 'b', tags: ['alpha'] }),
+      rec({ name: 'c', tags: ['Mango'] }),
+    ];
+    // Locale-independent, case-insensitive order — stable across CI/dev machines.
+    expect(groupTasks(tasks, 'tag').map((g) => g.key)).toEqual(['alpha', 'Mango', 'Zebra']);
+  });
+
   it('groups by tag — a multi-tagged task appears under each tag', () => {
     const tasks = [
       rec({ name: 'a', tags: ['memoryos', 'backend'] }),
@@ -247,5 +257,10 @@ describe('collectTags', () => {
 
   it('returns [] when no tasks carry tags', () => {
     expect(collectTags([rec({ tags: [] })])).toEqual([]);
+  });
+
+  it('orders equal-count tags case-insensitively and deterministically', () => {
+    const tasks = [rec({ tags: ['Beta'] }), rec({ tags: ['alpha'] }), rec({ tags: ['Gamma'] })];
+    expect(collectTags(tasks).map((c) => c.tag)).toEqual(['alpha', 'Beta', 'Gamma']);
   });
 });
