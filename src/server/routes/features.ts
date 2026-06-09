@@ -6,6 +6,7 @@ import { readFrontmatter } from '../../lib/frontmatter.js';
 import { listSections, readSection } from '../../lib/markdown.js';
 import { sendJson, sendError } from '../middleware.js';
 import { safeChildPath } from '../safe-path.js';
+import { computeFeatureFreshness } from '../../lib/feature-freshness.js';
 
 function getFeaturesDir(contextRoot: string): string {
   return join(contextRoot, 'core', 'features');
@@ -38,6 +39,10 @@ export async function handleFeaturesList(
       updated: data.updated ?? '',
       tags: Array.isArray(data.tags) ? data.tags : [],
       related_tasks: Array.isArray(data.related_tasks) ? data.related_tasks : [],
+      freshness: computeFeatureFreshness(
+        String(data.created ?? ''),
+        String(data.updated ?? ''),
+      ),
     };
   });
 

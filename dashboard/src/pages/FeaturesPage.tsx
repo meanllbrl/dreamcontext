@@ -6,6 +6,12 @@ import { MarkdownPreview } from '../components/core/MarkdownPreview';
 import { tagHue } from '../lib/tagColor';
 import './FeaturesPage.css';
 
+interface FeatureFreshness {
+  level: 'fresh' | 'stale' | 'unknown';
+  daysSinceUpdate: number | null;
+  note: string;
+}
+
 interface Feature {
   slug: string;
   id: string;
@@ -14,6 +20,7 @@ interface Feature {
   updated: string;
   tags: string[];
   related_tasks: string[];
+  freshness?: FeatureFreshness;
 }
 
 interface FeatureDetail extends Feature {
@@ -59,9 +66,14 @@ export function FeaturesPage() {
             >
               <div className="feature-card-header">
                 <span className="feature-card-name">{feature.slug}</span>
-                <span className={`feature-status feature-status--${feature.status}`}>
-                  {feature.status}
-                </span>
+                <div className="feature-card-badges">
+                  {feature.freshness?.level === 'stale' && (
+                    <span className="feature-freshness feature-freshness--stale">stale</span>
+                  )}
+                  <span className={`feature-status feature-status--${feature.status}`}>
+                    {feature.status}
+                  </span>
+                </div>
               </div>
               <div className="knowledge-card-tags">
                 {feature.tags.map(tag => (

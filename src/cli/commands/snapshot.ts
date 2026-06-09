@@ -14,6 +14,7 @@ import { readSetupConfig, isMultiPerson } from '../../lib/setup-config.js';
 import { isSkillInstalled } from '../../lib/catalog.js';
 import { readVersionCache, isCacheFresh, buildNudge } from '../../lib/version-check.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
+import { computeFeatureFreshness, freshnessSnapshotNote } from '../../lib/feature-freshness.js';
 
 /**
  * Default line cap when inlining pinned knowledge into the auto-context snapshot.
@@ -617,7 +618,12 @@ export function generateSnapshot(): string {
         } catch { /* skip */ }
 
         // Build output
-        let featureLine = `- **${name}** (status: ${status}${tags ? `, tags: ${tags}` : ''})`;
+        const freshness = computeFeatureFreshness(
+          String(data.created ?? ''),
+          String(data.updated ?? ''),
+        );
+        const freshnessNote = freshnessSnapshotNote(freshness);
+        let featureLine = `- **${name}** (status: ${status}${tags ? `, tags: ${tags}` : ''})${freshnessNote}`;
         const details: string[] = [];
         if (why) details.push(`  Why: ${why}`);
         if (relatedTasks) details.push(`  Tasks: ${relatedTasks}`);
