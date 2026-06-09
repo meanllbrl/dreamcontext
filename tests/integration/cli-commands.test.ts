@@ -175,6 +175,16 @@ parent_task: null
       expect(content).toContain('Implemented feature X');
     });
 
+    it('completes a task without a summary in non-interactive mode (no hang)', () => {
+      run('tasks create no-summary --description "Test" --priority low', tmpDir);
+      // `run` invokes via execSync with no TTY; the bare form must not block on a prompt.
+      const output = run('tasks complete no-summary', tmpDir);
+      expect(output).toContain('completed');
+      const content = readFileSync(join(tmpDir, '_dream_context', 'state', 'no-summary.md'), 'utf-8');
+      expect(content).toMatch(/status:\s*"?completed"?/);
+      expect(content).toContain('Task completed.');
+    });
+
     it('completes a task', () => {
       run('tasks create done-task --description "Test" --priority low', tmpDir);
       run('tasks complete done-task "All done"', tmpDir);
@@ -334,6 +344,48 @@ parent_task: null
       run('features insert auth changelog "Added JWT middleware"', tmpDir);
       const content = readFileSync(join(tmpDir, '_dream_context', 'core', 'features', 'auth.md'), 'utf-8');
       expect(content).toContain('Added JWT middleware');
+    });
+
+    it('creates a feature with --tags / --status / --related-tasks', () => {
+      run('features create auth --why "Login" --tags security,backend --status in_progress --related-tasks login,signup', tmpDir);
+      const content = readFileSync(join(tmpDir, '_dream_context', 'core', 'features', 'auth.md'), 'utf-8');
+      expect(content).toMatch(/status:\s*in_progress/);
+      expect(content).toContain('security');
+      expect(content).toContain('backend');
+      expect(content).toContain('login');
+      expect(content).toContain('signup');
+    });
+
+    it('rejects an invalid feature --status', () => {
+      const output = run('features create auth --why "x" --status bogus', tmpDir);
+      expect(output).toContain('Status must be one of');
+    });
+
+    it('sets frontmatter fields via `features set`', () => {
+      run('features create auth --why "Login"', tmpDir);
+      run('features set auth status in_review', tmpDir);
+      run('features set auth tags alpha,beta', tmpDir);
+      const content = readFileSync(join(tmpDir, '_dream_context', 'core', 'features', 'auth.md'), 'utf-8');
+      expect(content).toMatch(/status:\s*in_review/);
+      expect(content).toContain('alpha');
+      expect(content).toContain('beta');
+    });
+
+    it('insert replaces the user_stories placeholder and formats as a checkbox', () => {
+      run('features create auth --why "Login"', tmpDir);
+      run('features insert auth user_stories "As a user, I can sign in"', tmpDir);
+      const content = readFileSync(join(tmpDir, '_dream_context', 'core', 'features', 'auth.md'), 'utf-8');
+      expect(content).toContain('- [ ] As a user, I can sign in');
+      // skeleton placeholder is gone
+      expect(content).not.toContain('[action]');
+      expect(content).not.toContain('[outcome]');
+    });
+
+    it('insert does not glue content to the next section header', () => {
+      run('features create auth --why "Login"', tmpDir);
+      run('features insert auth notes "An edge case"', tmpDir);
+      const content = readFileSync(join(tmpDir, '_dream_context', 'core', 'features', 'auth.md'), 'utf-8');
+      expect(content).not.toMatch(/An edge case\n## /);
     });
   });
 

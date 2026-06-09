@@ -494,8 +494,9 @@ All commands prefixed with `dreamcontext`. For reading/searching, use native too
 | `core releases active [<version>] [--clear]` | Get/set/clear the active planning version (default for new tasks' `version` field) |
 | `core releases list [-n count]` | List recent releases |
 | `core releases show <version>` | Show release details |
-| `features create <name>` | Create feature PRD |
-| `features insert <name> <section> <content>` | Insert into feature section |
+| `features create <name> [-w why] [-t tags] [-s status] [--related-tasks a,b]` | Create feature PRD; frontmatter set without hand-editing (status: planning\|in_progress\|in_review\|active\|shipped\|deprecated) |
+| `features insert <name> <section> <content>` | Insert into feature section (replaces template placeholders on first write; `user_stories`/`acceptance_criteria` auto-formatted as `- [ ]` items) |
+| `features set <name> <tags\|status\|related_tasks> <value...>` | Set a feature frontmatter field (comma-separated for tags/related_tasks) without hand-editing |
 | `knowledge create <name>` | Create knowledge file |
 | `knowledge index [--tag <tag>]` | Show knowledge index |
 | `knowledge tags` | List standard tags |

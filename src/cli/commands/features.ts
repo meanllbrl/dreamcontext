@@ -1,13 +1,20 @@
 import { Command } from 'commander';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, basename } from 'node:path';
-import { input } from '@inquirer/prompts';
 import fg from 'fast-glob';
 import { ensureContextRoot } from '../../lib/context-path.js';
 import { updateFrontmatterFields } from '../../lib/frontmatter.js';
 import { insertToSection } from '../../lib/markdown.js';
+import { prepareSectionInsert, SECTION_MAP } from '../../lib/section-insert.js';
+import { promptInput } from '../../lib/prompt.js';
 import { generateId, slugify, today } from '../../lib/id.js';
 import { success, error } from '../../lib/format.js';
+
+const VALID_FEATURE_STATUSES = ['planning', 'in_progress', 'in_review', 'active', 'shipped', 'deprecated'];
+
+function parseCsv(value: string): string[] {
+  return value.split(',').map((s) => s.trim()).filter(Boolean);
+}
 
 function getFeaturesDir(): string {
   const root = ensureContextRoot();
@@ -110,8 +117,11 @@ export function registerFeaturesCommand(program: Command): void {
     .command('create')
     .argument('<name>')
     .option('-w, --why <why>', 'Why are we building this?')
+    .option('-t, --tags <tags>', 'Comma-separated tags')
+    .option('-s, --status <status>', `Status (${VALID_FEATURE_STATUSES.join(', ')})`)
+    .option('--related-tasks <slugs>', 'Comma-separated related task slugs')
     .description('Create a new feature document')
-    .action(async (name: string, opts: { why?: string }) => {
+    .action(async (name: string, opts: { why?: string; tags?: string; status?: string; relatedTasks?: string }) => {
       const dir = getFeaturesDir();
       const slug = slugify(name);
       const filePath = join(dir, `${slug}.md`);
@@ -121,7 +131,12 @@ export function registerFeaturesCommand(program: Command): void {
         return;
       }
 
-      const why = opts.why || await input({ message: 'Why are we building this?' });
+      if (opts.status && !VALID_FEATURE_STATUSES.includes(opts.status)) {
+        error(`Status must be one of: ${VALID_FEATURE_STATUSES.join(', ')}`);
+        return;
+      }
+
+      const why = opts.why || await promptInput({ message: 'Why are we building this?' });
 
       const template = getFeatureTemplate();
       const content = template
@@ -130,7 +145,52 @@ export function registerFeaturesCommand(program: Command): void {
         .replaceAll('{{WHY}}', why || '(To be defined)');
 
       writeFileSync(filePath, content, 'utf-8');
+
+      const fields: Record<string, unknown> = {};
+      if (opts.tags) fields.tags = parseCsv(opts.tags);
+      if (opts.status) fields.status = opts.status;
+      if (opts.relatedTasks) fields.related_tasks = parseCsv(opts.relatedTasks);
+      if (Object.keys(fields).length > 0) {
+        updateFrontmatterFields(filePath, fields);
+      }
+
       success(`Feature created: ${slug}.md`);
+    });
+
+  // Set a feature's frontmatter field (tags / status / related_tasks)
+  features
+    .command('set')
+    .argument('<name>')
+    .argument('<field>', 'tags | status | related_tasks')
+    .argument('<value...>', 'Value (comma-separated for tags / related_tasks)')
+    .description('Set a feature frontmatter field without hand-editing')
+    .action((name: string, field: string, valueParts: string[]) => {
+      const file = findFeatureFile(name);
+      if (!file) {
+        error(`Feature not found: ${name}`);
+        return;
+      }
+
+      const key = field.toLowerCase();
+      const value = valueParts.join(' ').trim();
+      const updates: Record<string, unknown> = {};
+
+      if (key === 'tags' || key === 'related_tasks' || key === 'related-tasks') {
+        updates[key === 'tags' ? 'tags' : 'related_tasks'] = parseCsv(value);
+      } else if (key === 'status') {
+        if (!VALID_FEATURE_STATUSES.includes(value)) {
+          error(`Status must be one of: ${VALID_FEATURE_STATUSES.join(', ')}`);
+          return;
+        }
+        updates.status = value;
+      } else {
+        error(`Unknown field: "${field}". Settable fields: tags, status, related_tasks`);
+        return;
+      }
+
+      updates.updated = today();
+      updateFrontmatterFields(file, updates);
+      success(`Set ${key} on ${basename(file, '.md')}`);
     });
 
   // Insert into a section
@@ -150,55 +210,27 @@ export function registerFeaturesCommand(program: Command): void {
         return;
       }
 
-      // Map section shortcuts to actual header names
-      const sectionMap: Record<string, string> = {
-        changelog: 'Changelog',
-        notes: 'Notes',
-        technical_details: 'Technical Details',
-        constraints: 'Constraints & Decisions',
-        user_stories: 'User Stories',
-        acceptance_criteria: 'Acceptance Criteria',
-        why: 'Why',
-      };
-
       const sectionKey = section.toLowerCase();
-      if (!sectionMap[sectionKey]) {
-        error(`Unknown section: "${section}". Valid sections: ${Object.keys(sectionMap).join(', ')}`);
+      if (!SECTION_MAP[sectionKey]) {
+        error(`Unknown section: "${section}". Valid sections: ${Object.keys(SECTION_MAP).join(', ')}`);
         return;
       }
-      const sectionName = sectionMap[sectionKey];
 
-      let content: string;
-      if (contentParts.length > 0) {
-        content = contentParts.join(' ');
-      } else {
-        content = await input({ message: `Content for ${sectionName}:` });
-      }
+      const rawContent = contentParts.length > 0
+        ? contentParts.join(' ')
+        : await promptInput({ message: `Content for ${SECTION_MAP[sectionKey]}:` });
 
-      if (!content.trim()) {
+      if (!rawContent.trim()) {
         error('No content provided.');
         return;
       }
 
-      // For changelog, auto-prepend date header
-      if (section.toLowerCase() === 'changelog') {
-        content = `### ${today()} - Update\n- ${content}`;
-      }
-
-      // For constraints, prepend with date
-      if (section.toLowerCase() === 'constraints') {
-        content = `- **[${today()}]** ${content}`;
-      }
-
-      const position =
-        ['changelog', 'constraints'].includes(section.toLowerCase())
-          ? 'top'
-          : 'bottom';
+      const prep = prepareSectionInsert(sectionKey, rawContent, today())!;
 
       try {
-        insertToSection(file, sectionName, content, position as 'top' | 'bottom');
+        insertToSection(file, prep.sectionName, prep.content, prep.position, true, prep.replacePlaceholders);
         updateFrontmatterFields(file, { updated: today() });
-        success(`Inserted into ${sectionName} in ${basename(file)}`);
+        success(`Inserted into ${prep.sectionName} in ${basename(file)}`);
       } catch (err: any) {
         error(err.message);
       }

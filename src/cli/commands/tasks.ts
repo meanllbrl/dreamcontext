@@ -1,12 +1,13 @@
 import { Command } from 'commander';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, basename } from 'node:path';
-import { input } from '@inquirer/prompts';
 import chalk from 'chalk';
 import fg from 'fast-glob';
 import { ensureContextRoot } from '../../lib/context-path.js';
 import { readFrontmatter, updateFrontmatterFields } from '../../lib/frontmatter.js';
 import { insertToSection, readSection, extractMermaidNodes, nodeStatus, countCheckboxes } from '../../lib/markdown.js';
+import { prepareSectionInsert, SECTION_MAP } from '../../lib/section-insert.js';
+import { promptInput } from '../../lib/prompt.js';
 import { generateId, slugify, today } from '../../lib/id.js';
 import { success, error, header } from '../../lib/format.js';
 import { getActivePlanningVersion } from '../../lib/active-version.js';
@@ -457,54 +458,27 @@ export function registerTasksCommand(program: Command): void {
         return;
       }
 
-      const sectionMap: Record<string, string> = {
-        changelog: 'Changelog',
-        notes: 'Notes',
-        technical_details: 'Technical Details',
-        constraints: 'Constraints & Decisions',
-        user_stories: 'User Stories',
-        acceptance_criteria: 'Acceptance Criteria',
-        why: 'Why',
-      };
-
       const sectionKey = section.toLowerCase();
-      if (!sectionMap[sectionKey]) {
-        error(`Unknown section: "${section}". Valid sections: ${Object.keys(sectionMap).join(', ')}`);
+      if (!SECTION_MAP[sectionKey]) {
+        error(`Unknown section: "${section}". Valid sections: ${Object.keys(SECTION_MAP).join(', ')}`);
         return;
       }
-      const sectionName = sectionMap[sectionKey];
 
-      let content: string;
-      if (contentParts.length > 0) {
-        content = contentParts.join(' ');
-      } else {
-        content = await input({ message: `Content for ${sectionName}:` });
-      }
+      const rawContent = contentParts.length > 0
+        ? contentParts.join(' ')
+        : await promptInput({ message: `Content for ${SECTION_MAP[sectionKey]}:` });
 
-      if (!content.trim()) {
+      if (!rawContent.trim()) {
         error('No content provided.');
         return;
       }
 
-      // For changelog, auto-prepend date header
-      if (sectionKey === 'changelog') {
-        content = `### ${today()} - Update\n- ${content}`;
-      }
-
-      // For constraints, prepend with date
-      if (sectionKey === 'constraints') {
-        content = `- **[${today()}]** ${content}`;
-      }
-
-      const position =
-        ['changelog', 'constraints'].includes(sectionKey)
-          ? 'top'
-          : 'bottom';
+      const prep = prepareSectionInsert(sectionKey, rawContent, today())!;
 
       try {
-        insertToSection(file, sectionName, content, position as 'top' | 'bottom', true);
+        insertToSection(file, prep.sectionName, prep.content, prep.position, true, prep.replacePlaceholders);
         updateFrontmatterFields(file, { updated_at: today() });
-        success(`Inserted into ${sectionName} in ${basename(file)}`);
+        success(`Inserted into ${prep.sectionName} in ${basename(file)}`);
       } catch (err: any) {
         error(err.message);
       }
@@ -527,7 +501,7 @@ export function registerTasksCommand(program: Command): void {
       if (summaryParts.length > 0) {
         summary = summaryParts.join(' ');
       } else {
-        summary = await input({ message: 'Completion summary (optional):', default: 'Task completed.' });
+        summary = await promptInput({ message: 'Completion summary (optional):', default: 'Task completed.' });
       }
 
       // Add final changelog entry
@@ -602,7 +576,7 @@ export function registerTasksCommand(program: Command): void {
       if (contentParts.length > 0) {
         content = contentParts.join(' ');
       } else {
-        content = await input({ message: 'Log entry:' });
+        content = await promptInput({ message: 'Log entry:' });
       }
 
       if (!content.trim()) {

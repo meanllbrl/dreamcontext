@@ -79,8 +79,86 @@ export function readSection(filePath: string, sectionName: string): string | nul
 }
 
 /**
+ * Recognise a template placeholder/skeleton line — the kind seeded by the
+ * task/feature templates (e.g. `- [ ] As a [user], I want [action]...`,
+ * `- (Specific, testable conditions...)`, `(To be defined)`). These should be
+ * replaced by the first real insert, not appended after.
+ */
+export function isPlaceholderLine(line: string): boolean {
+  const t = line.trim();
+  if (t === '' || t.startsWith('<!--')) return false;
+  // Whole-line parenthetical, optionally bulleted: "(...)" / "- (...)"
+  if (/^[-*]?\s*\([^)]*\)\s*$/.test(t)) return true;
+  // User-story skeletons with bracketed role/action/outcome tokens
+  if (/\[(?:users?|roles?|actions?|outcomes?)\]/i.test(t)) return true;
+  // Task acceptance-criteria skeleton: "...(matches node A1 in Workflow)"
+  if (/\(matches node [A-Za-z0-9]+/i.test(t)) return true;
+  return false;
+}
+
+/**
+ * Wrap each non-empty line of `content` as a Markdown list item, unless it
+ * already starts with a list marker. `checkbox` produces `- [ ] ` items.
+ */
+export function formatListItems(content: string, checkbox: boolean): string {
+  return content
+    .split('\n')
+    .map((line) => {
+      const t = line.trim();
+      if (t === '') return line;
+      if (/^[-*]\s+/.test(t)) return line; // already a bullet / checkbox
+      return checkbox ? `- [ ] ${t}` : `- ${t}`;
+    })
+    .join('\n');
+}
+
+/**
+ * Remove a section's body lines IN PLACE when they consist only of template
+ * placeholders (plus blanks/comments). Comments are kept; placeholder text is
+ * dropped; blank runs collapse. Returns the net number of lines removed (0 if
+ * the body had real content and was left untouched).
+ */
+function stripPlaceholderBody(lines: string[], section: Section): number {
+  const start = section.startLine + 1;
+  const end = section.endLine;
+
+  const meaningful: number[] = [];
+  for (let i = start; i <= end; i++) {
+    const t = lines[i]?.trim() ?? '';
+    if (t === '' || t.startsWith('<!--')) continue;
+    meaningful.push(i);
+  }
+  if (meaningful.length === 0) return 0;
+  if (!meaningful.every((i) => isPlaceholderLine(lines[i]))) return 0;
+
+  // Rebuild the body: keep comments, drop placeholder text, collapse blank runs.
+  const kept: string[] = [];
+  for (let i = start; i <= end; i++) {
+    const line = lines[i] ?? '';
+    const t = line.trim();
+    if (t.startsWith('<!--')) { kept.push(line); continue; }
+    if (t === '') {
+      if (kept.length > 0 && kept[kept.length - 1].trim() === '') continue;
+      kept.push('');
+      continue;
+    }
+    // placeholder text → drop
+  }
+  while (kept.length > 0 && kept[kept.length - 1].trim() === '') kept.pop();
+
+  const originalCount = end - start + 1;
+  lines.splice(start, originalCount, ...kept);
+  return originalCount - kept.length;
+}
+
+/**
  * Insert content into a specific section.
  * position 'top' = right after the header (LIFO), 'bottom' = before the next section.
+ *
+ * `replacePlaceholders` (bottom inserts): if the section currently holds only
+ * template placeholders, they are dropped so the first real insert replaces the
+ * skeleton instead of stacking under it. Bottom inserts always keep a blank
+ * line before the following `##` header (no glued headers).
  */
 export function insertToSection(
   filePath: string,
@@ -88,44 +166,51 @@ export function insertToSection(
   newContent: string,
   position: 'top' | 'bottom' = 'top',
   createIfMissing: boolean = false,
+  replacePlaceholders: boolean = false,
 ): void {
   const raw = readFileSync(filePath, 'utf-8');
   const parsed = matter(raw);
-  const lines = parsed.content.split('\n');
-  const sections = parseSections(parsed.content);
-  let section = findSection(sections, sectionName);
+  let lines = parsed.content.split('\n');
+  let section = findSection(parseSections(lines.join('\n')), sectionName);
 
   if (!section) {
     if (createIfMissing) {
-      // Append a new ## section at the end of the file body
-      const headerLine = `## ${sectionName}`;
-      lines.push('', headerLine);
-      const startLine = lines.length - 1;
-      section = { name: sectionName, level: 2, startLine, endLine: startLine };
+      // Append a new ## section at the end of the file body, then re-locate it.
+      lines.push('', `## ${sectionName}`);
+      section = findSection(parseSections(lines.join('\n')), sectionName);
     } else {
       throw new Error(`Section "${sectionName}" not found in ${filePath}`);
     }
   }
 
-  // Find the insertion point
-  let insertAt: number;
+  // Optionally drop a placeholder-only body before inserting (re-parse on change).
+  if (replacePlaceholders && section && stripPlaceholderBody(lines, section) > 0) {
+    section = findSection(parseSections(lines.join('\n')), sectionName);
+  }
+  if (!section) throw new Error(`Section "${sectionName}" not found in ${filePath}`);
+
+  const contentLines = newContent.split('\n');
 
   if (position === 'top') {
-    // Insert right after the header line (skip HTML comments)
-    insertAt = section.startLine + 1;
+    // Insert right after the header line (skip HTML comments + blanks)
+    let insertAt = section.startLine + 1;
     while (
       insertAt <= section.endLine &&
       (lines[insertAt]?.trim().startsWith('<!--') || lines[insertAt]?.trim() === '')
     ) {
       insertAt++;
     }
+    lines.splice(insertAt, 0, '', ...contentLines);
   } else {
-    insertAt = section.endLine + 1;
+    // Insert after the last non-blank content line of the section.
+    let last = section.endLine;
+    while (last > section.startLine && (lines[last]?.trim() ?? '') === '') last--;
+    const insertAt = last + 1;
+    const block = ['', ...contentLines];
+    // Keep a blank line before whatever follows (next header / EOF).
+    if (lines[insertAt] !== undefined && lines[insertAt].trim() !== '') block.push('');
+    lines.splice(insertAt, 0, ...block);
   }
-
-  // Insert the new content
-  const contentLines = newContent.split('\n');
-  lines.splice(insertAt, 0, '', ...contentLines);
 
   // Reconstruct the file with frontmatter
   const output = matter.stringify(lines.join('\n'), parsed.data);
