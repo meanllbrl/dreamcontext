@@ -84,3 +84,47 @@ export function migrateDataStructures(contextRoot: string): MigrationResult {
 
   return result;
 }
+
+/**
+ * Read-only: product names under knowledge/data-structures/ whose body is NOT
+ * yet wrapped in a ```sql fence. Writes nothing. Shares `ensureSqlFence` as the
+ * single authority on "is it fenced?".
+ */
+export function listUnfencedDataStructures(contextRoot: string): string[] {
+  const dir = join(contextRoot, NEW_DATA_STRUCTURES_DIR);
+  if (!existsSync(dir)) return [];
+
+  const out: string[] = [];
+  for (const file of fg.sync('*.md', { cwd: dir, absolute: true })) {
+    try {
+      const { content } = readFrontmatter<Record<string, unknown>>(file);
+      if (ensureSqlFence(content) !== content) out.push(basename(file, '.md'));
+    } catch { /* skip unreadable */ }
+  }
+  return out.sort();
+}
+
+/**
+ * Backfill: fence (in place) any unfenced knowledge/data-structures/*.md so it
+ * renders as SQL in the dashboard. Idempotent — rewrites ONLY files whose body
+ * actually changes, and preserves frontmatter verbatim (does NOT bump `updated`,
+ * so a format-only normalization never resets the staleness clock). Returns the
+ * product names that were fenced this run.
+ */
+export function fenceExistingDataStructures(contextRoot: string): string[] {
+  const dir = join(contextRoot, NEW_DATA_STRUCTURES_DIR);
+  if (!existsSync(dir)) return [];
+
+  const fenced: string[] = [];
+  for (const file of fg.sync('*.md', { cwd: dir, absolute: true })) {
+    try {
+      const { data, content } = readFrontmatter<Record<string, unknown>>(file);
+      const next = ensureSqlFence(content);
+      if (next !== content) {
+        writeFrontmatter(file, data, next);
+        fenced.push(basename(file, '.md'));
+      }
+    } catch { /* skip unreadable */ }
+  }
+  return fenced.sort();
+}

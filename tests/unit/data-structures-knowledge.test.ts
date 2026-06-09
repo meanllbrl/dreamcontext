@@ -6,6 +6,8 @@ import {
   migrateDataStructures,
   enrichDataStructuresFrontmatter,
   ensureSqlFence,
+  fenceExistingDataStructures,
+  listUnfencedDataStructures,
   DATA_STRUCTURES_TAGS,
 } from '../../src/lib/data-structures-migration.js';
 import { buildKnowledgeIndex } from '../../src/lib/knowledge-index.js';
@@ -181,5 +183,94 @@ describe('buildKnowledgeIndex — recursion', () => {
     const top = buildKnowledgeIndex(root).find((e) => e.slug === 'top-level');
     expect(top).toBeTruthy();
     expect(top!.name).toBe('Top Level');
+  });
+});
+
+describe('fenceExistingDataStructures', () => {
+  let root: string;
+  function writeKnowledgeDs(product: string, body: string, updated = '2026-01-01') {
+    const dir = join(root, 'knowledge', 'data-structures');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, `${product}.md`),
+      `---\nname: ${product}\ntype: data-structures\nupdated: "${updated}"\n---\n${body}\n`,
+      'utf-8',
+    );
+  }
+  beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'dc-fence-')); });
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  it('fences an unfenced knowledge data-structures file in place', () => {
+    writeKnowledgeDs('default', '-- CREATE TABLE x (id INT);');
+    expect(fenceExistingDataStructures(root)).toEqual(['default']);
+    const content = readFileSync(join(root, 'knowledge', 'data-structures', 'default.md'), 'utf-8');
+    expect(content).toContain('```sql\n');
+    expect(content).toContain('-- CREATE TABLE x (id INT);');
+  });
+
+  it('is idempotent — a second call returns [] and leaves bytes unchanged', () => {
+    writeKnowledgeDs('default', '-- schema');
+    fenceExistingDataStructures(root);
+    const p = join(root, 'knowledge', 'data-structures', 'default.md');
+    const after1 = readFileSync(p, 'utf-8');
+    expect(fenceExistingDataStructures(root)).toEqual([]);
+    expect(readFileSync(p, 'utf-8')).toBe(after1);
+  });
+
+  it('preserves frontmatter including updated (no staleness reset)', () => {
+    writeKnowledgeDs('default', '-- schema', '2025-03-03');
+    fenceExistingDataStructures(root);
+    const content = readFileSync(join(root, 'knowledge', 'data-structures', 'default.md'), 'utf-8');
+    expect(content).toContain('2025-03-03');
+    expect(content).toContain('type: data-structures');
+  });
+
+  it('no-ops when the directory is absent', () => {
+    expect(fenceExistingDataStructures(root)).toEqual([]);
+  });
+
+  it('fences multiple products, sorted', () => {
+    writeKnowledgeDs('lina', '-- a');
+    writeKnowledgeDs('memoryos', '-- b');
+    expect(fenceExistingDataStructures(root)).toEqual(['lina', 'memoryos']);
+  });
+
+  it('does not rewrite an already-fenced file', () => {
+    writeKnowledgeDs('default', '```sql\n-- already\n```');
+    expect(fenceExistingDataStructures(root)).toEqual([]);
+  });
+});
+
+describe('listUnfencedDataStructures', () => {
+  let root: string;
+  function writeKnowledgeDs(product: string, body: string) {
+    const dir = join(root, 'knowledge', 'data-structures');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, `${product}.md`), `---\nname: ${product}\n---\n${body}\n`, 'utf-8');
+  }
+  beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'dc-list-')); });
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  it('lists only unfenced products', () => {
+    writeKnowledgeDs('default', '-- raw');
+    writeKnowledgeDs('lina', '```sql\n-- fenced\n```');
+    expect(listUnfencedDataStructures(root)).toEqual(['default']);
+  });
+
+  it('returns [] when all are fenced', () => {
+    writeKnowledgeDs('default', '```sql\n-- fenced\n```');
+    expect(listUnfencedDataStructures(root)).toEqual([]);
+  });
+
+  it('returns [] when the directory is missing', () => {
+    expect(listUnfencedDataStructures(root)).toEqual([]);
+  });
+
+  it('writes nothing (file byte-identical after call)', () => {
+    writeKnowledgeDs('default', '-- raw');
+    const p = join(root, 'knowledge', 'data-structures', 'default.md');
+    const before = readFileSync(p, 'utf-8');
+    listUnfencedDataStructures(root);
+    expect(readFileSync(p, 'utf-8')).toBe(before);
   });
 });

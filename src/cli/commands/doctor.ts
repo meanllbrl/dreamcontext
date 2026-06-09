@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import chalk from 'chalk';
 import { resolveContextRoot } from '../../lib/context-path.js';
 import { header } from '../../lib/format.js';
+import { listUnfencedDataStructures } from '../../lib/data-structures-migration.js';
 
 interface CheckResult {
   name: string;
@@ -136,6 +137,17 @@ function checkDataStructures(root: string): CheckResult[] {
       name: 'Data structures',
       status: 'ok',
       message: `${dirRel}/ (${mdCount} file${mdCount > 1 ? 's' : ''})`,
+    });
+  }
+
+  const unfenced = listUnfencedDataStructures(root);
+  if (unfenced.length > 0) {
+    results.push({
+      name: 'Data structures (formatting)',
+      status: 'warn',
+      message:
+        `${unfenced.length} file(s) not \`\`\`sql-fenced (won't render as SQL in the dashboard): ${unfenced.join(', ')}. `
+        + 'Run `sleep start` to fence them.',
     });
   }
 

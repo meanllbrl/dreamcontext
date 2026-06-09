@@ -6,7 +6,7 @@ import { ensureContextRoot } from '../../lib/context-path.js';
 import { readJsonObject, writeJsonObject, readJsonArray, writeJsonArray } from '../../lib/json-file.js';
 import { today } from '../../lib/id.js';
 import { header, success, error, warn, info } from '../../lib/format.js';
-import { migrateDataStructures } from '../../lib/data-structures-migration.js';
+import { migrateDataStructures, fenceExistingDataStructures } from '../../lib/data-structures-migration.js';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -354,6 +354,13 @@ export function registerSleepCommand(program: Command): void {
       const moved = migrateDataStructures(root);
       if (moved.migrated.length > 0) {
         success(`Migrated data-structures → knowledge/data-structures/: ${moved.migrated.join(', ')} (old core/data-structures/ left for you to delete)`);
+      }
+
+      // In-place backfill: fence any already-migrated but unfenced schema files
+      // so they render as SQL in the dashboard. Idempotent; rewrites only what changes.
+      const fenced = fenceExistingDataStructures(root);
+      if (fenced.length > 0) {
+        success(`Fenced data-structures as SQL for dashboard highlighting: ${fenced.join(', ')}`);
       }
 
       state.sleep_started_at = new Date().toISOString();
