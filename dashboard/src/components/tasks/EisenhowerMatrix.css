@@ -25,6 +25,123 @@
   border: 1px solid var(--color-border);
   box-shadow: var(--shadow-sm);
   overflow-y: auto;
+  transition: background var(--transition-fast), box-shadow var(--transition-fast),
+    outline-color var(--transition-fast);
+  outline: 2px solid transparent;
+  outline-offset: -2px;
+}
+
+/* While a drag is in progress, every quadrant reads as a drop target. */
+.eisenhower--dragging .eisenhower-quadrant {
+  outline-color: var(--color-border);
+  outline-style: dashed;
+}
+
+.eisenhower-quadrant--dragover {
+  background: var(--color-accent-soft);
+  outline-color: var(--color-accent);
+  outline-style: solid;
+}
+
+/* The quadrant the dragged task came from — dropping back is a no-op. */
+.eisenhower-quadrant--source {
+  opacity: 0.85;
+}
+
+/* Hovering the source (or any quadrant the task already satisfies): neutral, no change. */
+.eisenhower--dragging .eisenhower-quadrant--noop {
+  background: var(--color-bg-tertiary);
+  outline-color: var(--color-text-tertiary);
+}
+
+.eisenhower-quadrant-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  min-height: 48px;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+/* Live preview of the priority/urgency change a drop would apply. */
+.eisenhower-quadrant-preview {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-accent);
+  margin-bottom: var(--space-1);
+  font-variant-numeric: tabular-nums;
+}
+
+.eisenhower-quadrant--noop .eisenhower-quadrant-preview {
+  color: var(--color-text-tertiary);
+}
+
+/* Undo bar — appears after a drag-driven move, dismissible, reversible. */
+.eisenhower-undo {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-sm);
+  font-size: var(--font-size-sm);
+}
+
+.eisenhower-undo-text {
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.eisenhower-undo-text strong {
+  color: var(--color-text);
+  font-weight: var(--font-weight-semibold);
+}
+
+.eisenhower-undo-btn {
+  margin-left: auto;
+  flex-shrink: 0;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-accent);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.eisenhower-undo-btn:hover {
+  background: var(--color-accent);
+  color: var(--color-accent-text);
+}
+
+.eisenhower-undo-dismiss {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-base);
+  line-height: 1;
+  cursor: pointer;
+  border-radius: var(--radius-full);
+}
+
+.eisenhower-undo-dismiss:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
 }
 
 .eisenhower-quadrant--do {
@@ -85,18 +202,7 @@
   flex: 1;
 }
 
-/* Axis labels */
-.eisenhower-y-label {
-  display: flex;
-  flex-direction: column;
-  justify-content: space-around;
-  position: absolute;
-  left: -4px;
-  top: 0;
-  bottom: 0;
-  pointer-events: none;
-}
-
+/* Axis labels — the urgency axis runs left→right under the grid. */
 .eisenhower-x-label {
   display: flex;
   justify-content: space-around;
@@ -110,8 +216,4 @@
   letter-spacing: 0.06em;
   color: var(--color-text-tertiary);
   font-weight: var(--font-weight-medium);
-}
-
-.eisenhower-y-label {
-  display: none;
 }

@@ -435,6 +435,7 @@ export function KanbanBoard() {
         <EisenhowerMatrix
           tasks={filtered}
           onTaskClick={(task) => setSelectedSlug(task.slug)}
+          onTaskMove={(slug, updates) => updateTask.mutate({ slug, updates })}
         />
       ) : filters.viewMode === 'scatter' ? (
         <RiceScatter

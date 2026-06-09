@@ -21,6 +21,11 @@
   transform: scale(0.98);
 }
 
+.task-card--dragging {
+  opacity: 0.4;
+  cursor: grabbing;
+}
+
 .task-card-header {
   display: flex;
   align-items: center;

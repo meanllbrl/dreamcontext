@@ -6,12 +6,14 @@ interface TaskCardProps {
   task: Task;
   onClick: () => void;
   onDragStart: (e: React.DragEvent) => void;
+  /** Dimmed "ghost" state while this card is the one being dragged. */
+  dragging?: boolean;
 }
 
-export function TaskCard({ task, onClick, onDragStart }: TaskCardProps) {
+export function TaskCard({ task, onClick, onDragStart, dragging = false }: TaskCardProps) {
   return (
     <div
-      className="task-card"
+      className={`task-card${dragging ? ' task-card--dragging' : ''}`}
       draggable
       onDragStart={onDragStart}
       onClick={onClick}
