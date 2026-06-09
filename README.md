@@ -193,12 +193,13 @@ your-project/
 │   │   ├── 2.memory.md                  # Decisions & known issues
 │   │   ├── 3.style_guide_and_branding.md
 │   │   ├── 4.tech_stack.md              # Tech decisions
-│   │   ├── 5.data_structures.sql
 │   │   ├── 6.system_flow.md             # Session lifecycle, data flows
 │   │   ├── CHANGELOG.json
 │   │   ├── RELEASES.json
 │   │   └── features/                    # Feature PRDs
 │   ├── knowledge/                       # Tagged docs (index in snapshot)
+│   │   ├── data-structures/             # Schema files (SQL-fenced, highlighted)
+│   │   │   └── default.md              # single-product; one per product if monorepo
 │   │   └── *.md                         # pinned: true → auto-loaded in full
 │   └── state/                           # Active tasks + working state
 │       ├── *.md                         # Active task files

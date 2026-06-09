@@ -1,5 +1,16 @@
 [
   {
+    "id": "rel_Xrtmgwry",
+    "version": "v0.7.0",
+    "date": "",
+    "summary": "data-structures migration, SQL fence, tasks filters, features doctor, multi-people, Eisenhower D&D, video VFR fix",
+    "breaking": false,
+    "status": "planning",
+    "features": [],
+    "tasks": [],
+    "changelog": []
+  },
+  {
     "id": "rel_gjZ_5YAi",
     "version": "v0.6.0",
     "date": "",

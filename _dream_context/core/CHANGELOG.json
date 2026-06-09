@@ -1,5 +1,127 @@
 [
   {
+    "date": "2026-06-09",
+    "type": "feat",
+    "scope": "release",
+    "description": "Version bump to v0.7.0 to align npm package with post-v0.6.0-tag commits. Covers: data-structures migration to knowledge/, SQL fence backfill on sleep start, tasks list --tag/--version/--group-by filters, features doctor freshness tracking, multi-people attribution, Eisenhower matrix drag-and-drop, video-watching VFR-robust sampling.",
+    "breaking": false,
+    "summary": "v0.7.0: data-structures→knowledge migration, SQL fence backfill, tasks filter/group, features doctor, multi-people awareness, Eisenhower D&D, video VFR fix"
+  },
+  {
+    "date": "2026-06-09",
+    "type": "fix",
+    "scope": "video-watching",
+    "description": "Fix systematic under-sampling of UI/app screen recordings in the video-watching skill pack. Static screens that change by text only do not trip scene-detect, and the previous 10s gap-fill default silently dropped most of them, causing downstream teardowns to wrongly report screens as not shown. Replace the brittle two-pass scene-detect plus per-frame -ss grab pipeline with a single VFR-robust ffmpeg filter pass: `select='eq(n,0)+gt(scene,TH)+gte(t-prev_selected_t,MAX_GAP)'`. Retires gap_fill.py. New flags: --frames-only (skip whisper), --mode ui|lecture (sets MAX_GAP to 2.5s vs 10s), --max-gap, --scene-threshold, --contact-sheet, --lang. Coverage QA in build_frame_index.py prints the longest unsampled gap, warns on gaps exceeding 2x MAX_GAP, and reconstructs scene/gap type from frame spacing. Multi-review fixes folded in: fail loudly on 0-frame extraction, dedupe the t=0 seed against anchor_first, surface the tail gap when duration is unknown, and validate numeric knobs (--max-gap > 0). Adds tests/unit/video-frame-index.test.ts. Closes #15.",
+    "breaking": false,
+    "summary": "Time-based VFR-robust frame sampling + --frames-only/--mode ui|lecture flags; fail loudly on 0-frame extraction",
+    "references": [
+      "commit:ecca644",
+      "commit:43df9ee",
+      "file:skill-packs/video-watching/scripts/transcribe.sh",
+      "file:skill-packs/video-watching/scripts/build_frame_index.py",
+      "file:skill-packs/video-watching/SKILL.md",
+      "file:tests/unit/video-frame-index.test.ts",
+      "url:https://github.com/meanllbrl/dreamcontext/issues/15"
+    ]
+  },
+  {
+    "date": "2026-06-09",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "Add drag-and-drop reprioritization to the Eisenhower matrix view. Dropping a task into a quadrant applies the minimal priority/urgency change needed to land it in that quadrant's high/not-high bucket, preserving within-bucket granularity (a critical task stays critical, not demoted to high). Three interactive affordances added, all functional with no decorative overlay: a live drop-preview chip showing the exact priority/urgency change a drop will apply (or 'Already here' for a no-op drop into the source quadrant); a single-level undo bar that restores pre-move state after any move; and source/target drag affordances plus a dimmed ghost on the dragged card. The pure quadrant and bucket-mapping logic is extracted into a React-free eisenhower.ts module covered by 18 unit tests (vitest). Closes #7.",
+    "breaking": false,
+    "summary": "Eisenhower matrix drag-and-drop: live drop preview, single-level undo, pure eisenhower.ts logic module",
+    "references": [
+      "commit:d9c07bb",
+      "file:dashboard/src/components/tasks/eisenhower.ts",
+      "file:dashboard/src/components/tasks/EisenhowerMatrix.tsx",
+      "file:tests/unit/eisenhower-matrix.test.ts",
+      "url:https://github.com/meanllbrl/dreamcontext/issues/7"
+    ]
+  },
+  {
+    "date": "2026-06-09",
+    "type": "fix",
+    "scope": "cli",
+    "description": "Address two findings surfaced by multi-review of #5 and #6. In markdown.ts, `isPlaceholderLine` now only strips parentheticals that begin with a recognized template-filler stem, so a real one-line note like `- (see RFC-42)` is no longer silently wiped by stripPlaceholderBody (data-loss guard). In task-query.ts, groupTasks/collectTags sort with localeCompare(_, 'en', {sensitivity:'base'}) so mixed-case tag and version order is deterministic across CI and dev machines rather than dependent on system locale. Regression tests added for both.",
+    "breaking": false,
+    "summary": "Multi-review guard fixes: placeholder-stripping data-loss guard + locale-stable tag/version sort",
+    "references": [
+      "commit:4858a84",
+      "file:src/lib/markdown.ts",
+      "file:src/lib/task-query.ts",
+      "file:tests/unit/section-insert.test.ts",
+      "file:tests/unit/tasks-list-filter.test.ts"
+    ]
+  },
+  {
+    "date": "2026-06-09",
+    "type": "feat",
+    "scope": "knowledge",
+    "description": "Relocate data-structures from core/ to knowledge/data-structures/<product>.md so they are recall-indexed, staleness-tracked, and ownership moves to sleep-product. An idempotent migration runs on `sleep start`, leaving the old directory in place with a pointer; `doctor` validates the new path and nags on legacy locations. knowledge-index.ts now recurses subdirectories and emits subdir-qualified slugs (data-structures/lina, products/lina) so the Knowledge view and snapshot surface all entries. The server router gains `*param` rest-route support so subdir slugs resolve on GET/PATCH (previously the preview pane was blank for any subdir slug). Dashboard MarkdownPreview adds highlight.js syntax highlighting with theme-aware brand palette, running post-DOMPurify on in-DOM blocks (SQL prioritized). Agent prompt files and .codex mirrors updated to reflect sleep-product ownership. Skill docs updated. 14 unit tests (migration, index recursion, router) + integration coverage. Closes #12.",
+    "breaking": false,
+    "summary": "Move data-structures into knowledge/data-structures/, add SQL syntax highlighting in dashboard, subdir-slug router fix",
+    "references": [
+      "commit:e7bd1c5",
+      "file:src/lib/data-structures-migration.ts",
+      "file:src/lib/knowledge-index.ts",
+      "file:src/server/router.ts",
+      "file:dashboard/src/lib/codeHighlight.ts",
+      "file:dashboard/src/components/core/MarkdownPreview.tsx",
+      "task:data-structures-to-knowledge",
+      "url:https://github.com/meanllbrl/dreamcontext/issues/12"
+    ]
+  },
+  {
+    "date": "2026-06-09",
+    "type": "feat",
+    "scope": "features",
+    "description": "Overhaul features authoring ergonomics. Insert now replaces template placeholders on first write and keeps a blank line before the next ## header, so re-running insert never produces double-blank or orphaned placeholder lines. user_stories and acceptance_criteria sections auto-format entries as `- [ ]` items via a shared section-insert.ts library (tasks insert benefits too). `features create` gains --tags, --status, --related-tasks flags; a new `features set` command patches frontmatter fields without hand-editing. All interactive prompts (tasks complete, insert, log, features create/insert) now fall through to sensible defaults in non-TTY environments (agent/CI runs), eliminating hangs. 19 unit + 7 integration tests. Closes #6.",
+    "breaking": false,
+    "summary": "Features authoring DX: non-lossy section insert, frontmatter flags via CLI, non-TTY safe prompts",
+    "references": [
+      "commit:649a999",
+      "file:src/lib/section-insert.ts",
+      "file:src/lib/markdown.ts",
+      "file:src/cli/commands/features.ts",
+      "file:src/lib/prompt.ts",
+      "url:https://github.com/meanllbrl/dreamcontext/issues/6"
+    ]
+  },
+  {
+    "date": "2026-06-09",
+    "type": "feat",
+    "scope": "tasks",
+    "description": "Add rich filtering and grouping to `tasks list`. New flags: --tag (repeatable, AND), --any-tag (repeatable, OR), --version, --priority, --feature for filtering; --group-by tag|version|priority|status for sectioned output with per-group counts; --long to show version+tags inline; --json for scriptable output; and a new `tasks tags` subcommand that shows distinct tags with counts. The filtering logic lives in a pure task-query.ts library (no Commander coupling) so it is directly testable. Also fixes a root-level Commander .version() call that shadowed every subcommand's --version flag. 26 unit tests + 8 integration tests. Closes #5.",
+    "breaking": false,
+    "summary": "Add filter+group to `tasks list`: --tag/--any-tag/--version/--priority/--feature/--group-by/--long/--json + `tasks tags`",
+    "references": [
+      "commit:2e6a48a",
+      "file:src/lib/task-query.ts",
+      "file:src/cli/commands/tasks.ts",
+      "task:v06-dashboard-ux-fixes",
+      "url:https://github.com/meanllbrl/dreamcontext/issues/5"
+    ]
+  },
+  {
+    "date": "2026-06-09",
+    "type": "test",
+    "scope": "meta",
+    "description": "Add three test-first spec files under tests/unit/ as part of a multi-improvement initiative. Each improvement is captured as a GitHub issue plus a stub spec before implementation begins. multi-people-awareness.test.ts (21 todo) pins issue #8 (auto-detect multiple humans, attribute work across changelog/tasks/memory/user profile). sleep-system-360.test.ts (3 real + 23 todo) pins issue #9 (360 degree sleep/consolidation review); key finding: sleep lifecycle invariants such as epoch-safe clearing, double-count prevention, and debt-level thresholds live inline inside sleep done's .action() handler and private helpers in src/cli/commands/sleep.ts, making them untestable today without extraction to pure exported functions. task-backend.test.ts (31 todo) pins issue #11 (pluggable task backend: optional GitHub Projects source, sync model with gitignored local mirror, write-through, and offline WAL). GitHub issues #8, #9, #10 (initializer improvements), and #11 were all opened this session. A 'sleep-rules override file' concept was discussed and deferred: existing CLAUDE.md and soul-level customization plus per-run user hint already cover orchestration-level sleep customization.",
+    "breaking": false,
+    "summary": "Test-first improvement specs for issues #8/#9/#10/#11: multi-people awareness, sleep 360, initializer, task backend",
+    "references": [
+      "url:https://github.com/meanllbrl/dreamcontext/issues/8",
+      "url:https://github.com/meanllbrl/dreamcontext/issues/9",
+      "url:https://github.com/meanllbrl/dreamcontext/issues/10",
+      "url:https://github.com/meanllbrl/dreamcontext/issues/11",
+      "file:tests/unit/multi-people-awareness.test.ts",
+      "file:tests/unit/sleep-system-360.test.ts",
+      "file:tests/unit/task-backend.test.ts",
+      "file:src/cli/commands/sleep.ts"
+    ]
+  },
+  {
     "date": "2026-06-06",
     "type": "chore",
     "scope": "licensing",
