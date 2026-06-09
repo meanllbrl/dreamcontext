@@ -98,6 +98,22 @@ dreamcontext tasks create "<descriptive-slug>" --status in_progress --priority m
 
 Untracked, genuinely-separate work is invisible to future sessions — always link it. But a smaller slice of existing work belongs *inside* that task, never in a duplicate.
 
+### 2.5. Person attribution (multi-person projects only)
+
+When the project's `.config.json` `people` array has **>1 entry**, the person responsible for a task's progress this cycle must be recorded as a `person:<slug>` tag in the task's frontmatter `tags` array. Slug is kebab-case matching the roster (e.g., `person:mehmet`, `person:ada`). Determine attribution from the same signals sleep-state uses for Pass B.5 (git `%an` on the commits, self-identification in the session transcript).
+
+```bash
+# Read the current roster
+jq -r '.people // [] | join(", ")' _dream_context/state/.config.json 2>/dev/null
+```
+
+- **New task**: pass `--person <name>` to `dreamcontext tasks create` (the CLI injects a `person:<slug>` tag automatically).
+- **Existing task**: add the tag directly via Edit on the task frontmatter `tags:` array, or via `dreamcontext tasks insert`.
+
+When the person is already tagged on the task, no action is needed — the tag is additive. Do not remove a previously-set `person:` tag for a person who was quiet this cycle; they remain attributed for prior work.
+
+**Single-person projects (`.config.json` `people` has 0 or 1 entry): this step is a NO-OP.** Never inject a `person:` tag on a solo project. The output must stay byte-identical to today.
+
 ### 3. Log progress AND reconcile the body — both required
 
 **(a) Append a changelog entry** — what happened this session:
@@ -154,6 +170,7 @@ If every task linked to the active version is `completed` (or only `in_review` r
 - Folded in (no new task): <existing-slug> — broadened scope + added 2 user stories / 1 criterion for <smaller-piece> instead of forking a duplicate
 - Created: <slug> (status: in_progress, attached to vX.Y.Z) — genuinely separate concern
 - Body reconciled: <slug> (dropped phase 1 from User Stories; replaced Technical Details auth section)
+- Person attribution: <slug> tagged person:ada (multi-person project, ada drove this cycle's work) | OR: single-person project — no person tags injected
 - Version readiness: vX.Y.Z — 4/5 tasks ready for review
 - Cross-domain mentions: <slug> includes a memory-worthy decision about JWT — flagging for sleep-state
 - Skipped: <session_id> had no actionable task signal
@@ -167,3 +184,4 @@ If every task linked to the active version is `completed` (or only `in_review` r
 4. **Always attach to a planning version.** No orphan work.
 5. **Stay in your lane.** If you spot non-task work worth preserving, flag it — don't write it.
 6. **CLI first** for status/log/insert; **Edit** for surgical body reconciliation (including broadening `description:` / `## Why` when scope grows).
+7. **Person attribution is multi-person only.** Read `.config.json` `people` first. If 0 or 1 entry, step 2.5 is a complete NO-OP — never inject `person:` tags on solo projects. Derived multi-person status comes from `people.length > 1`; there is no `multiPerson` key to check.

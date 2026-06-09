@@ -292,11 +292,14 @@ function loadChangelogEntries(contextRoot: string): CorpusDoc[] {
     const description = String(e.description ?? '');
     const summary = typeof e.summary === 'string' ? e.summary : '';
     const refs = Array.isArray(e.references) ? e.references.map(String) : [];
+    const authors = Array.isArray(e.authors) ? e.authors.map(String) : [];
     if (!description && !summary) continue;
     const slug = `changelog#${date}-${scope || type}-${i}`;
     const title = `${date} [${type}] ${scope}${summary ? ` — ${summary}` : ''}`.trim();
-    // description-field carries summary; tags carry type/scope; refs fold into body.
-    const tags = [type, scope].filter(Boolean);
+    // description-field carries summary; tags carry type/scope/authors; refs fold
+    // into body. Indexing `authors` as a tag (field-weight 2) makes person
+    // attribution searchable — recall surfaces an entry by the person's name.
+    const tags = [type, scope, ...authors].filter(Boolean);
     // No slug passed: a changelog's `changelog#…` slug + date-prefixed title are
     // synthetic, not a canonical identity — excluding them keeps the identity
     // boost from spuriously lifting changelogs on field-match queries.

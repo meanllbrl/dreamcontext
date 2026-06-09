@@ -1,14 +1,16 @@
 import { Command } from 'commander';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, basename } from 'node:path';
+import chalk from 'chalk';
 import fg from 'fast-glob';
 import { ensureContextRoot } from '../../lib/context-path.js';
-import { updateFrontmatterFields } from '../../lib/frontmatter.js';
+import { readFrontmatter, updateFrontmatterFields } from '../../lib/frontmatter.js';
 import { insertToSection } from '../../lib/markdown.js';
 import { prepareSectionInsert, SECTION_MAP } from '../../lib/section-insert.js';
 import { promptInput } from '../../lib/prompt.js';
 import { generateId, slugify, today } from '../../lib/id.js';
-import { success, error } from '../../lib/format.js';
+import { success, error, header } from '../../lib/format.js';
+import { analyzeFeatures, type FeatureRef, type TaskRef } from '../../lib/feature-freshness.js';
 
 const VALID_FEATURE_STATUSES = ['planning', 'in_progress', 'in_review', 'active', 'shipped', 'deprecated'];
 
@@ -234,5 +236,92 @@ export function registerFeaturesCommand(program: Command): void {
       } catch (err: any) {
         error(err.message);
       }
+    });
+
+  // Doctor: read-only freshness + linkage health check
+  features
+    .command('doctor')
+    .description('Check feature PRDs for staleness, orphans, and dangling task references (read-only)')
+    .action(() => {
+      const root = ensureContextRoot();
+      const featuresDir = getFeaturesDir();
+      const stateDir = join(root, 'state');
+
+      // Read all feature PRDs
+      const featureFiles = existsSync(featuresDir)
+        ? fg.sync('*.md', { cwd: featuresDir, absolute: true })
+        : [];
+
+      const featureRefs: FeatureRef[] = [];
+      for (const file of featureFiles) {
+        try {
+          const { data } = readFrontmatter<Record<string, unknown>>(file);
+          featureRefs.push({
+            slug: basename(file, '.md'),
+            id: data.id ? String(data.id) : undefined,
+            created: data.created ? String(data.created) : undefined,
+            updated: data.updated ? String(data.updated) : undefined,
+            related_tasks: Array.isArray(data.related_tasks)
+              ? data.related_tasks.map(String)
+              : [],
+          });
+        } catch {
+          // skip unreadable files
+        }
+      }
+
+      // Read all task state files for related_feature back-refs
+      const taskFiles = existsSync(stateDir)
+        ? fg.sync('*.md', { cwd: stateDir, absolute: true })
+        : [];
+
+      const taskRefs: TaskRef[] = [];
+      for (const file of taskFiles) {
+        const taskSlug = basename(file, '.md');
+        if (taskSlug.startsWith('.')) continue; // skip hidden files
+        try {
+          const { data } = readFrontmatter<Record<string, unknown>>(file);
+          taskRefs.push({
+            task: taskSlug,
+            related_feature: data.related_feature ? String(data.related_feature) : null,
+          });
+        } catch {
+          // skip unreadable files
+        }
+      }
+
+      const { stale, orphaned, danglingTaskRefs } = analyzeFeatures(featureRefs, taskRefs);
+
+      console.log(header('Features doctor'));
+
+      const issueCount = stale.length + orphaned.length + danglingTaskRefs.length;
+
+      if (issueCount === 0) {
+        success(`All ${featureRefs.length} feature(s) fresh and linked.`);
+        return;
+      }
+
+      if (stale.length > 0) {
+        console.log(`\n  ${chalk.yellow('STALE')} (${stale.length})`);
+        for (const s of stale) {
+          console.log(`    ${chalk.yellow('·')} ${chalk.bold(s.slug)}  ${chalk.dim(`${s.daysSinceUpdate}d`)}  ${chalk.dim(s.note)}`);
+        }
+      }
+
+      if (orphaned.length > 0) {
+        console.log(`\n  ${chalk.red('ORPHANED')} (${orphaned.length})  — no related tasks in either direction`);
+        for (const o of orphaned) {
+          console.log(`    ${chalk.red('·')} ${chalk.bold(o.slug)}`);
+        }
+      }
+
+      if (danglingTaskRefs.length > 0) {
+        console.log(`\n  ${chalk.red('DANGLING TASK REFS')} (${danglingTaskRefs.length})  — task points to missing feature PRD`);
+        for (const d of danglingTaskRefs) {
+          console.log(`    ${chalk.red('·')} ${chalk.bold(d.task)} → ${chalk.dim(d.missingFeature)}`);
+        }
+      }
+
+      process.exitCode = 1;
     });
 }

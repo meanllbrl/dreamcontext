@@ -33,6 +33,11 @@ function printConfig(projectRoot: string): void {
   console.log(`  Platforms:      ${chalk.white(cfg.platforms.join(', ') || '(none)')}`);
   console.log(`  Packs:          ${chalk.white(cfg.packs.join(', ') || '(none)')}`);
   console.log(`  Products:       ${chalk.white(products)}`);
+  // Only surface a People line when a roster exists — single-person projects
+  // (absent/empty roster) print nothing, keeping the output unchanged.
+  if (cfg.people && cfg.people.length > 0) {
+    console.log(`  People:         ${chalk.white(cfg.people.join(', '))}`);
+  }
   console.log(
     `  Native memory:  ${cfg.disableNativeMemory
       ? chalk.green('disabled') + chalk.dim(' (dreamcontext owns project memory)')

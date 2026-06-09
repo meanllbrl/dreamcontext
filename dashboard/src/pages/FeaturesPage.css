@@ -48,6 +48,13 @@
   margin-bottom: var(--space-2);
 }
 
+.feature-card-badges {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-shrink: 0;
+}
+
 .feature-card-name {
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
@@ -152,6 +159,30 @@
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--color-text-secondary);
+}
+
+/* Freshness badge — mirrors .feature-status visual language */
+.feature-freshness {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.feature-freshness--stale {
+  background: #ffedd5;
+  color: #c2410c;
+  border-color: #fed7aa;
+}
+
+[data-theme='dark'] .feature-freshness--stale {
+  background: rgba(251, 146, 60, 0.16);
+  color: #fdba74;
+  border-color: rgba(251, 146, 60, 0.28);
 }
 
 /* CSS @media cannot use custom properties in this Vite setup, so 1024 is a
