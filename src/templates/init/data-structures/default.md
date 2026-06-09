@@ -9,31 +9,29 @@ tags:
   - schema
 updated: {{DATE}}
 ---
-
-# Data Structures — {{PRODUCT_NAME}}
-
-Document this product's database schema, key models, and API contracts here. This file is the source of truth for data shapes.
-
-## Conventions
-
-- One `data-structures/<product>.md` file per product in a monorepo. `default.md` is the single-product fallback.
-- Sleep-state applies the **single-observation gate** to this file: a single session that adds, removes, or changes a schema MUST be reflected here in the same sleep cycle. No pattern repetition required.
-- Tasks MAY include `product: <name>` in frontmatter to route data-structure observations to the matching product file.
-
-## Schema
-
-<!-- Example:
-
 ```sql
+-- Data Structures — {{PRODUCT_NAME}}
+-- Updated: {{DATE}}
+--
+-- Document all tables, models, and key JSON shapes here.
+-- One observation gate: a schema change in a session MUST be reflected here
+-- in the same sleep cycle. No pattern repetition required.
+--
+-- Convention:
+--   - Single-product projects use default.md.
+--   - Multi-product monorepos use <product>.md per product.
+--   - The body should always be a ```sql fenced block for dashboard highlighting.
+--   - Use SQL comments (-- ...) for documentation and guidance.
+
+-- ============================================================
+-- EXAMPLE — replace or extend with your actual schema
+-- ============================================================
+
 CREATE TABLE users (
-  id UUID PRIMARY KEY,
-  email VARCHAR(255) NOT NULL UNIQUE,
-  created_at TIMESTAMP DEFAULT NOW()
+  id          UUID         PRIMARY KEY,
+  email       VARCHAR(255) NOT NULL UNIQUE,
+  created_at  TIMESTAMP    NOT NULL DEFAULT NOW()
 );
+
+-- Add additional tables, indexes, and JSON model shapes below.
 ```
-
-Or document models in any format that matches the stack — TypeScript interfaces, Prisma schema, Pydantic models, GraphQL SDL. -->
-
-## API Contracts
-
-<!-- Document request/response shapes, route handlers, and external API integrations relevant to this product. -->
