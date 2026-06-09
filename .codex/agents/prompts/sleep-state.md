@@ -88,6 +88,7 @@ dreamcontext core changelog add \
   --summary "<≤200 char one-liner: what shipped, scannable in snapshot>" \
   --description "<one paragraph: what changed and why; mention key file/symbol where helpful>" \
   --references "commit:<sha>,file:<path>,knowledge:<slug>,feature:<slug>,task:<slug>,url:<href>" \
+  [--authors "<person-a,person-b>"] \
   [--supersedes "<date>|<scope>"] \
   $([ "$BREAKING" = "true" ] && echo "--breaking")
 ```
@@ -99,6 +100,8 @@ dreamcontext core changelog add \
 **References field**: optional, flat string array with prefix convention. Use freely — they help future recall queries follow the trail. Common shapes: `commit:abc1234`, `file:src/lib/recall.ts`, `knowledge:decision-mem0-vs-bm25-recall`, `feature:memory-recall-bm25`, `task:rice-prioritization`, `url:https://...`. **No `note:` prefix** — free-form goes in `description`. Auto-populate commit refs from `git log --oneline --since=<sleep-epoch>` when you can identify the commit(s) the change shipped in.
 
 **Supersedes field**: optional, only when a later entry reverses or replaces an earlier one (e.g., a "default-on" flip of a previously "opt-in" flag, or a v0.4 file path being deprecated). Use coarse keys like `"2026-05-23|memory"` (date + scope) — disambiguators only matter when multiple entries share the same date+scope, in which case fall back to the position-from-top index. Most entries do NOT supersede anything; leave the field absent.
+
+**Authors field (multi-person projects only)**: optional, attributes the change to the person(s) who drove it. Set it ONLY when the project is multi-person (`.config.json` `people` roster has >1 entry — see Pass B.5). Pass comma-separated kebab-case slugs matching the roster (`--authors "mehmet,ada"`). Determine attribution from the same signals Pass B.5 uses (git `%an` on the commits the entry clusters, self-identification in the session transcript). When a single change was driven by distinct people across clusters, attribute each `dreamcontext core changelog add` invocation to its own author(s). Single-person projects: OMIT `--authors` entirely — output stays byte-identical to today. Authors are excluded from the changelog dedup fingerprint, so adding them never re-opens an already-released entry.
 
 #### A3. Releases — surface readiness, never auto-release
 
@@ -179,6 +182,39 @@ dreamcontext trigger add "<when>" "<remind>"   # context-dependent reminders
 
 Cross-domain catches from your own changelog pass land here naturally — if you wrote a `feat` entry whose description revealed a preference enforced twice, write it into `1.user.md` in the same cycle (no flagging needed; you own both files).
 
+### Pass B.5 — People detection (multi-person awareness)
+
+dreamcontext defaults to single-person. When you have **corroborated evidence** that more than one human works in this project, record the roster so changelogs/tasks/memory can attribute work per person. This is **AI-driven detection** — there is no manual toggle and no persisted `multiPerson` flag (multi-person status is DERIVED from `people.length > 1`).
+
+**Detection gate — require ≥2 corroborated signals** before flipping a project to multi-person (this gate prevents false positives; one weak signal is never enough):
+
+- **Self-identification in user turns** — a person names themselves or another teammate ("this is Ada", "Mehmet asked me to…", "I'm covering for Lina").
+- **Distinct git authors since the epoch** — `git log --since="$CUTOFF" --format='%an <%ae>' | sort -u` returns more than one real human author (ignore bots/CI like `github-actions`, `dependabot`).
+- **Distinct voice / handoff** — the transcript shows a clear authorship handoff or a different working style/voice than the established user.
+
+```bash
+# Signal 2: distinct human git authors since the sleep epoch
+git log --since="$CUTOFF" --format='%an' | sort -u
+# Read the existing roster FIRST — you append, you never overwrite.
+jq -r '.people // [] | join(", ")' _dream_context/state/.config.json 2>/dev/null
+```
+
+When the gate is met:
+
+1. **Additive union to the roster — never overwrite.** Read the current `people` array first, then write the union (existing ∪ newly observed) back. Use kebab-case display-name slugs (`mehmet`, `ada`). A previously recorded person is NEVER dropped because they were quiet this cycle.
+
+   ```bash
+   dreamcontext config  # confirm current roster, then edit state/.config.json people[] = union
+   ```
+
+   (There is no CLI writer for `people` yet — edit `_dream_context/state/.config.json` directly with Edit, preserving every existing key. Do NOT add a `multiPerson` key; it is derived.)
+
+2. **Refresh `## People` in `1.user.md`** to enumerate the full roster. Use the `ensurePeopleSection(userMd, people)` helper semantics (idempotent insert/replace of a `## People` block; one bullet per person). This is a no-op for single-person projects.
+
+3. **Attribute this cycle's changelog entries** — re-run Pass A's `dreamcontext core changelog add` with `--authors "<slugs>"` for each entry, attributing it to the person(s) who drove that cluster (Pass A and this pass share the git-author analysis).
+
+**Single-person projects (gate NOT met): this entire pass is a NO-OP.** Do not create a roster, do not add a `## People` section, do not pass `--authors`. A solo project's `.config.json`, `1.user.md`, and changelog output must stay byte-identical to today. The cost of a false positive (spuriously attributing a solo user's work to a phantom teammate) is high — stay conservative.
+
 ### Pass C — Anti-bloat sweep + knowledge staleness flags
 
 #### C1. Anti-bloat sweep — ~150 line ceiling per core file
@@ -225,6 +261,10 @@ You do **not** edit knowledge files. Produce flags for `sleep-product` to act on
 - 1.user.md: untouched (no recurring preference observed)
 - 4.tech_stack.md: untouched
 - Triggers added: 0
+
+### People (multi-person detection)
+- Roster: single-person (no multi-person signals this cycle) — no changes
+  | OR: detected 2 humans (signals: 2 distinct git authors + self-id in transcript) → roster updated mehmet, ada (additive union; ada appended, mehmet preserved); `## People` refreshed in 1.user.md; 3 changelog entries attributed via --authors
 
 ### Anti-bloat & staleness
 - 2.memory.md at 287 lines — under ceiling, no extraction needed

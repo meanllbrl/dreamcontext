@@ -8,6 +8,13 @@ export interface SetupConfig {
   platforms: PlatformId[];
   packs: string[];
   multiProduct: false | string[];
+  /**
+   * Canonical roster of humans working in this project (kebab-case display
+   * names). Optional + additive: absent ⇒ single-person project. There is NO
+   * persisted `multiPerson` flag — multi-person status is DERIVED from this
+   * roster via `isMultiPerson()` (people.length > 1) to avoid desync.
+   */
+  people?: string[];
   setupVersion: string;
   /**
    * When true (the default), dreamcontext disables Claude Code's native
@@ -33,6 +40,11 @@ export function readSetupConfig(projectRoot: string): SetupConfig | null {
       multiProduct: Array.isArray(parsed.multiProduct)
         ? parsed.multiProduct.filter((p): p is string => typeof p === 'string')
         : false,
+      // Absent / non-array ⇒ undefined (single-person). Filter to strings so a
+      // malformed roster can never leak non-string entries downstream.
+      people: Array.isArray(parsed.people)
+        ? parsed.people.filter((p): p is string => typeof p === 'string')
+        : undefined,
       setupVersion: typeof parsed.setupVersion === 'string' ? parsed.setupVersion : '0.0.0',
       // Default true: absent in legacy configs means "disable native memory".
       disableNativeMemory:
@@ -68,9 +80,19 @@ export function updateSetupConfig(
     platforms: patch.platforms ?? existing.platforms,
     packs: patch.packs ?? existing.packs,
     multiProduct: patch.multiProduct ?? existing.multiProduct,
+    people: patch.people ?? existing.people,
     setupVersion: patch.setupVersion ?? existing.setupVersion,
     disableNativeMemory: patch.disableNativeMemory ?? existing.disableNativeMemory,
   };
   writeSetupConfig(projectRoot, next);
   return next;
+}
+
+/**
+ * Multi-person status is DERIVED, never persisted: a project is multi-person iff
+ * its roster lists more than one human. Absent/short roster ⇒ single-person.
+ * Mirrors the `multiProduct` length check so every surface gates identically.
+ */
+export function isMultiPerson(config: SetupConfig | null | undefined): boolean {
+  return (config?.people?.length ?? 0) > 1;
 }

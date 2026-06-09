@@ -121,10 +121,11 @@ export function registerMemoryCommand(program: Command): void {
     .option('--type <type>', 'Changelog type (default: note)', 'note')
     .option('--scope <scope>', 'Changelog scope (default: quick)', 'quick')
     .option('--references <refs>', 'Optional comma-separated references (commit:<sha>, file:<path>, knowledge:<slug>, feature:<slug>, task:<slug>, url:<href>)')
+    .option('--person <list>', 'Optional comma-separated people to attribute this memory to (e.g. "mehmet,ada")')
     .description('Quick-append a CHANGELOG entry. Fast path; for full control use `dreamcontext core changelog add`.')
     .action(async (
       textParts: string[],
-      opts: { summary?: string; type?: string; scope?: string; references?: string },
+      opts: { summary?: string; type?: string; scope?: string; references?: string; person?: string },
     ) => {
       const root = ensureContextRoot();
       const text = textParts.join(' ').trim();
@@ -137,6 +138,12 @@ export function registerMemoryCommand(program: Command): void {
       const references = opts.references
         ? opts.references.split(',').map((s) => s.trim()).filter(Boolean)
         : undefined;
+      // Person attribution uses the UNIFIED `authors` carrier (the same field as
+      // `core changelog add --authors`), NOT references. recall.ts indexes
+      // `authors` into the doc tags so the person name is searchable.
+      const authors = opts.person
+        ? opts.person.split(',').map((s) => s.trim()).filter(Boolean)
+        : undefined;
       const changelogPath = join(root, 'core', 'CHANGELOG.json');
       const entry: Record<string, unknown> = {
         date: today(),
@@ -147,6 +154,7 @@ export function registerMemoryCommand(program: Command): void {
         breaking: false,
       };
       if (references && references.length > 0) entry.references = references;
+      if (authors && authors.length > 0) entry.authors = authors;
       // insertToJsonArray is the canonical writer (LIFO via top-insert).
       const { insertToJsonArray } = await import('../../lib/json-file.js');
       insertToJsonArray(changelogPath, entry);

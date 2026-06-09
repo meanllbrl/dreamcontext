@@ -1,6 +1,6 @@
 import { Command } from 'commander';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { join, basename } from 'node:path';
+import { join, basename, dirname } from 'node:path';
 import chalk from 'chalk';
 import fg from 'fast-glob';
 import { ensureContextRoot } from '../../lib/context-path.js';
@@ -10,6 +10,7 @@ import { prepareSectionInsert, SECTION_MAP } from '../../lib/section-insert.js';
 import { promptInput } from '../../lib/prompt.js';
 import { generateId, slugify, today } from '../../lib/id.js';
 import { success, error, header } from '../../lib/format.js';
+import { readSetupConfig, isMultiPerson } from '../../lib/setup-config.js';
 import { getActivePlanningVersion } from '../../lib/active-version.js';
 import { mergeRice, normalizeRice, validateRiceInput, type RiceFields, type RiceInput } from '../../lib/rice.js';
 import {
@@ -301,11 +302,12 @@ export function registerTasksCommand(program: Command): void {
     .option('-t, --tags <tags>', 'Comma-separated tags')
     .option('-w, --why <why>', 'Why is this task needed?')
     .option('-v, --version <version>', 'Version/milestone')
+    .option('--person <name>', 'Responsible person (records a person:<slug> tag when multi-person)')
     .option('--reach <n>', 'RICE reach (integer 1–10)')
     .option('--impact <n>', 'RICE impact (integer 1–5)')
     .option('--confidence <n>', 'RICE confidence (25, 50, 75, or 100)')
     .option('--effort <n>', 'RICE effort in weeks (> 0, ≤ 52)')
-    .action(async (name: string, opts: { description?: string; priority?: string; urgency?: string; status?: string; tags?: string; why?: string; version?: string; reach?: string; impact?: string; confidence?: string; effort?: string }) => {
+    .action(async (name: string, opts: { description?: string; priority?: string; urgency?: string; status?: string; tags?: string; why?: string; version?: string; person?: string; reach?: string; impact?: string; confidence?: string; effort?: string }) => {
       const dir = getStateDir();
       const slug = slugify(name);
       const filePath = join(dir, `${slug}.md`);
@@ -338,6 +340,18 @@ export function registerTasksCommand(program: Command): void {
 
       const description = opts.description || name;
       const tags = opts.tags ? opts.tags.split(',').map(t => t.trim()).filter(Boolean) : [];
+      // Person attribution rides the tags array as `person:<slug>` (no new
+      // frontmatter field, so existing task-query tag handling just works). The
+      // tag is injected ONLY when the project is multi-person; single-person
+      // projects never get it (`--person` is a silent no-op there). `dir` is
+      // `_dream_context/state`, so the project root is two levels up.
+      if (opts.person && opts.person.trim()) {
+        const projectRoot = dirname(dirname(dir));
+        if (isMultiPerson(readSetupConfig(projectRoot))) {
+          const personTag = `person:${slugify(opts.person)}`;
+          if (!tags.includes(personTag)) tags.push(personTag);
+        }
+      }
       const why = opts.why || '';
       const version = opts.version || getActivePlanningVersion();
 

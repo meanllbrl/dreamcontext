@@ -24,6 +24,15 @@ export interface ChangelogEntry {
    */
   references?: string[];
   /**
+   * Optional roster of people involved in this change (kebab-case display-name
+   * slugs, e.g. `mehmet`, `ada`). The unified person-attribution carrier — the
+   * SAME field used by `memory remember --person`. Backwards compatible: entries
+   * without `authors` keep working, and `authors` is DELIBERATELY EXCLUDED from
+   * `changelogFingerprint` so adding/removing it never changes dedup identity
+   * (no spurious "unreleased" entries).
+   */
+  authors?: string[];
+  /**
    * Optional pointer to a prior entry this one supersedes (e.g.,
    * `<date>|<scope>` or a coarser "{date}-{scope}" key). Used when a later
    * decision reverses or replaces an earlier one and the LIFO chain matters.

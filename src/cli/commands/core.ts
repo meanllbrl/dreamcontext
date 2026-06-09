@@ -37,9 +37,10 @@ export function registerCoreCommand(program: Command): void {
     .option('--description <desc>', 'Description (long-form, full body)')
     .option('--summary <summary>', 'Optional ≤200-char one-liner for snapshot display')
     .option('--references <refs>', 'Optional comma-separated references (commit:<sha>, file:<path>, knowledge:<slug>, feature:<slug>, task:<slug>, url:<href>)')
+    .option('--authors <list>', 'Optional comma-separated people involved (e.g. "mehmet,ada")')
     .option('--supersedes <key>', 'Optional pointer to prior entry this supersedes (e.g., "2026-05-09|sleep")')
     .option('--breaking', 'Mark as a breaking change', false)
-    .action(async (opts: { type?: string; scope?: string; description?: string; summary?: string; references?: string; supersedes?: string; breaking?: boolean }) => {
+    .action(async (opts: { type?: string; scope?: string; description?: string; summary?: string; references?: string; authors?: string; supersedes?: string; breaking?: boolean }) => {
       const root = ensureContextRoot();
       const filePath = join(root, 'core', 'CHANGELOG.json');
 
@@ -73,6 +74,9 @@ export function registerCoreCommand(program: Command): void {
           info(`Warning: ${bad.length} reference(s) missing a known prefix (${validPrefixes.join('|')}): ${bad.join(', ')}. Stored anyway.`);
         }
       }
+      const authors = opts.authors
+        ? opts.authors.split(',').map((s) => s.trim()).filter(Boolean)
+        : undefined;
       const supersedes = opts.supersedes ?? undefined;
       const breaking = opts.breaking ?? (typeof opts.breaking === 'boolean'
         ? opts.breaking
@@ -94,6 +98,7 @@ export function registerCoreCommand(program: Command): void {
       };
       if (summary) entry.summary = summary;
       if (references && references.length > 0) entry.references = references;
+      if (authors && authors.length > 0) entry.authors = authors;
       if (supersedes) entry.supersedes = supersedes;
 
       insertToJsonArray(filePath, entry);

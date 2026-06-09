@@ -10,7 +10,7 @@ import { readSleepState, writeSleepState, readSleepHistory } from './sleep.js';
 import { buildKnowledgeIndex } from '../../lib/knowledge-index.js';
 import { buildCoreIndex } from '../../lib/core-index.js';
 import { buildMarketingSnapshot } from '../../lib/marketing/snapshot.js';
-import { readSetupConfig } from '../../lib/setup-config.js';
+import { readSetupConfig, isMultiPerson } from '../../lib/setup-config.js';
 import { isSkillInstalled } from '../../lib/catalog.js';
 import { readVersionCache, isCacheFresh, buildNudge } from '../../lib/version-check.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
@@ -464,6 +464,17 @@ export function generateSnapshot(): string {
   const CHANGELOG_TIER2 = 10;
   const TIER1_BODY_CHARS = 300;
   const TIER2_LINE_CHARS = 140;
+  // Person attribution is gated on DERIVED multi-person status. Single-person
+  // projects (no roster / roster ≤1) never render `— by …`, so their Recent
+  // Changelog output stays byte-identical to today.
+  const multiPerson = isMultiPerson(readSetupConfig(dirname(root)));
+  const authorSuffix = (e: Record<string, unknown>): string => {
+    if (!multiPerson) return '';
+    const authors = Array.isArray(e.authors)
+      ? e.authors.filter((a): a is string => typeof a === 'string')
+      : [];
+    return authors.length > 0 ? ` — by ${authors.join(', ')}` : '';
+  };
   const changelogPath = join(root, 'core', 'CHANGELOG.json');
   if (existsSync(changelogPath)) {
     try {
@@ -479,7 +490,7 @@ export function generateSnapshot(): string {
           const summary = typeof e.summary === 'string' ? e.summary : '';
           const desc = String(e.description ?? '');
           const headline = summary || (desc.length > 200 ? desc.slice(0, 197) + '...' : desc);
-          parts.push(`- ${date} [${type}] ${scope}: ${headline}`);
+          parts.push(`- ${date} [${type}] ${scope}: ${headline}${authorSuffix(e)}`);
           // Body preview only when summary is present (otherwise headline is
           // already the description). Avoids printing the same text twice.
           if (summary && desc && desc !== summary) {
@@ -502,7 +513,7 @@ export function generateSnapshot(): string {
             const line = raw.length > TIER2_LINE_CHARS
               ? raw.slice(0, TIER2_LINE_CHARS - 3) + '...'
               : raw;
-            parts.push(`- ${date} [${type}] ${scope}: ${line}`);
+            parts.push(`- ${date} [${type}] ${scope}: ${line}${authorSuffix(e)}`);
           }
         }
         parts.push('');
