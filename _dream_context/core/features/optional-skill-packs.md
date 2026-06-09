@@ -98,7 +98,6 @@ skill-packs/
   video-watching/                     # Standalone, bundleDir: true, alwaysApply: false
     SKILL.md
     scripts/transcribe.sh             # executable (+x)
-    scripts/gap_fill.py
     scripts/build_frame_index.py
     .gitignore
 ```

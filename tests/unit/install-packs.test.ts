@@ -214,7 +214,6 @@ describe('installPack — video-watching (bundleDir + executable engine)', () =>
     const base = join(tmpDir, '.claude', 'skills', 'video-watching');
     expect(existsSync(join(base, 'SKILL.md'))).toBe(true);
     expect(existsSync(join(base, 'scripts', 'transcribe.sh'))).toBe(true);
-    expect(existsSync(join(base, 'scripts', 'gap_fill.py'))).toBe(true);
     expect(existsSync(join(base, 'scripts', 'build_frame_index.py'))).toBe(true);
 
     // SKILL.md invokes `./scripts/transcribe.sh`, so the exec bit must survive the copy.
