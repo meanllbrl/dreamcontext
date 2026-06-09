@@ -366,6 +366,18 @@ Tasks are your **working documents**. All context, decisions, user stories, acce
 dreamcontext tasks list                                                 # List non-completed tasks (or --all for everything)
 Read _dream_context/state/<task>.md                                     # Load full context (Why + Changelog = where you left off)
 
+# Slice the list — filters compose (AND), and stack with --status / --all
+dreamcontext tasks list --version S5                                    # All tasks in version/milestone S5 (no more frontmatter scraping)
+dreamcontext tasks list --tag memoryos --tag backend --status todo      # --tag is repeatable, AND semantics (must have ALL)
+dreamcontext tasks list --any-tag lina --any-tag studio                 # --any-tag is repeatable, OR semantics (at least one)
+dreamcontext tasks list --priority critical                             # critical | high | medium | low
+dreamcontext tasks list --feature recall-engine                         # match related_feature
+dreamcontext tasks list --long                                          # also show version + tags inline
+dreamcontext tasks list --group-by version --all                        # sectioned output with per-group counts (tag|version|priority|status)
+dreamcontext tasks list --tag lina --json                              # scriptable: emit the filtered set as JSON (use this, not awk/grep)
+dreamcontext tasks tags                                                  # distinct tags with counts (--all to include completed)
+#   Filters are case-insensitive; version/priority/feature match exactly; multiple --tag = AND, --any-tag = OR.
+
 # Create (rich task with Why, User Stories, Acceptance Criteria, Constraints, Technical Details, Notes, Changelog)
 dreamcontext tasks create <name> --description "..." --priority medium --why "What this task accomplishes"
 
@@ -494,7 +506,8 @@ All commands prefixed with `dreamcontext`. For reading/searching, use native too
 | `memory delete <slug> [--force]` | Remove a knowledge entry |
 | `memory list [--types ...]` | List indexable memory corpus by type |
 | `memory status` | Show corpus size broken down by type |
-| `tasks list [-s status] [--all]` | List tasks (default: excludes completed) |
+| `tasks list [-s status] [--all] [--tag t]… [--any-tag t]… [--version id] [--priority p] [--feature slug] [--group-by tag\|version\|priority\|status] [--long] [--json]` | List/filter/group tasks. Default excludes completed. `--tag` repeatable (AND), `--any-tag` repeatable (OR), filters compose; `--json` emits the filtered set; case-insensitive matching |
+| `tasks tags [--all] [--json]` | List distinct task tags with counts (discover before filtering) |
 | `tasks create <name> [-d desc] [-p priority] [-s status] [-t tags] [-w why] [--reach N --impact N --confidence N --effort N]` | Create task (defaults: priority=medium, status=todo). RICE flags optional and additive. |
 | `tasks rice <name> [--reach N] [--impact N] [--confidence N] [--effort N] [--clear]` | Print or update RICE values; no flags prints current values |
 | `tasks insert <name> <section> <content>` | Insert into task section |

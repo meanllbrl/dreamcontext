@@ -31,6 +31,21 @@ describe('CLI commands (integration)', () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  describe('root', () => {
+    // `dreamcontext --version` is relied on by install.sh for install verification.
+    // It is handled manually (not Commander's global `.version()`) so subcommands
+    // can own `--version <id>`; lock both behaviors here.
+    it('prints the CLI version for --version', () => {
+      const output = run('--version', tmpDir).trim();
+      expect(output).toMatch(/^\d+\.\d+\.\d+/);
+    });
+
+    it('prints the CLI version for -V', () => {
+      const output = run('-V', tmpDir).trim();
+      expect(output).toMatch(/^\d+\.\d+\.\d+/);
+    });
+  });
+
   describe('init', () => {
     it('creates _dream_context/ with core files', () => {
       const output = run('init --yes --name "Test" --description "Test project" --stack "Node.js" --priority "Ship v1"', tmpDir);
@@ -239,6 +254,67 @@ parent_task: null
       run('tasks create only-done -d "D" -s completed', tmpDir);
       const output = run('tasks list', tmpDir);
       expect(output).toContain('No active tasks');
+    });
+
+    it('filters by --tag with AND semantics', () => {
+      run('tasks create tag-both -d "x" -t memoryos,backend', tmpDir);
+      run('tasks create tag-one -d "x" -t memoryos', tmpDir);
+      const output = run('tasks list --tag memoryos --tag backend', tmpDir);
+      expect(output).toContain('tag-both');
+      expect(output).not.toContain('tag-one');
+    });
+
+    it('filters by --any-tag with OR semantics', () => {
+      run('tasks create any-a -d "x" -t backend', tmpDir);
+      run('tasks create any-b -d "x" -t frontend', tmpDir);
+      run('tasks create any-c -d "x" -t docs', tmpDir);
+      const output = run('tasks list --any-tag backend --any-tag frontend', tmpDir);
+      expect(output).toContain('any-a');
+      expect(output).toContain('any-b');
+      expect(output).not.toContain('any-c');
+    });
+
+    it('filters by --version and --priority', () => {
+      run('tasks create v-s5 -d "x" -v S5 -p critical', tmpDir);
+      run('tasks create v-backlog -d "x" -v BACKLOG -p low', tmpDir);
+      expect(run('tasks list --version S5', tmpDir)).toContain('v-s5');
+      expect(run('tasks list --version S5', tmpDir)).not.toContain('v-backlog');
+      expect(run('tasks list --priority critical', tmpDir)).toContain('v-s5');
+      expect(run('tasks list --priority critical', tmpDir)).not.toContain('v-backlog');
+    });
+
+    it('groups output with --group-by version', () => {
+      run('tasks create g-a -d "x" -v S5', tmpDir);
+      run('tasks create g-b -d "x" -v S6', tmpDir);
+      const output = run('tasks list --group-by version', tmpDir);
+      expect(output).toMatch(/S5 \(1\)/);
+      expect(output).toMatch(/S6 \(1\)/);
+    });
+
+    it('emits JSON with --json', () => {
+      run('tasks create json-task -d "A JSON task" -t memoryos -v S5 -p high', tmpDir);
+      const output = run('tasks list --tag memoryos --json', tmpDir);
+      const parsed = JSON.parse(output);
+      expect(Array.isArray(parsed)).toBe(true);
+      const task = parsed.find((t: { name: string }) => t.name === 'json-task');
+      expect(task).toBeTruthy();
+      expect(task.tags).toContain('memoryos');
+      expect(task.version).toBe('S5');
+      expect(task.priority).toBe('high');
+    });
+
+    it('lists distinct tags with counts via `tasks tags`', () => {
+      run('tasks create tags-a -d "x" -t memoryos,backend', tmpDir);
+      run('tasks create tags-b -d "x" -t memoryos', tmpDir);
+      const output = run('tasks tags', tmpDir);
+      expect(output).toMatch(/memoryos\s+2/);
+      expect(output).toMatch(/backend\s+1/);
+    });
+
+    it('rejects an invalid --group-by field', () => {
+      run('tasks create gb-bad -d "x"', tmpDir);
+      const output = run('tasks list --group-by nonsense', tmpDir);
+      expect(output).toContain('--group-by must be one of');
     });
   });
 

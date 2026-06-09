@@ -11,10 +11,43 @@ import { generateId, slugify, today } from '../../lib/id.js';
 import { success, error, header } from '../../lib/format.js';
 import { getActivePlanningVersion } from '../../lib/active-version.js';
 import { mergeRice, normalizeRice, validateRiceInput, type RiceFields, type RiceInput } from '../../lib/rice.js';
+import {
+  toTaskRecord,
+  filterTasks,
+  groupTasks,
+  collectTags,
+  GROUP_BY_FIELDS,
+  type TaskRecord,
+  type TaskFilter,
+  type GroupBy,
+} from '../../lib/task-query.js';
 
 function getStateDir(): string {
   const root = ensureContextRoot();
   return join(root, 'state');
+}
+
+/** Commander collector for repeatable string options (e.g. `--tag a --tag b`). */
+function collectOption(value: string, previous: string[]): string[] {
+  return previous.concat(value);
+}
+
+/** Render one task as a colorized human-readable line. */
+function renderTaskLine(t: TaskRecord, opts: { long?: boolean } = {}): string {
+  const statusColor =
+    t.status === 'in_progress' ? chalk.yellow
+    : t.status === 'in_review' ? chalk.magenta
+    : t.status === 'completed' ? chalk.green
+    : chalk.white;
+  const prio = t.priority !== '-' ? chalk.dim(` [${t.priority}]`) : '';
+  let line = `  ${statusColor(t.status.padEnd(12))} ${t.name}${prio}  ${chalk.dim(t.updated_at)}`;
+  if (opts.long) {
+    const meta: string[] = [];
+    if (t.version) meta.push(`v:${t.version}`);
+    if (t.tags.length > 0) meta.push(t.tags.map((tag) => `#${tag}`).join(' '));
+    if (meta.length > 0) line += `\n${' '.repeat(15)}${chalk.dim(meta.join('  '))}`;
+  }
+  return line;
 }
 
 function findTaskFile(name: string): string | null {
@@ -134,55 +167,124 @@ export function registerTasksCommand(program: Command): void {
   // List tasks
   tasks
     .command('list')
-    .description('List tasks with optional status filter')
+    .description('List tasks, with filters, grouping, tag discovery, and JSON output')
     .option('-s, --status <status>', 'Filter by status (todo, in_progress, in_review, completed)')
     .option('-a, --all', 'Show all tasks including completed')
-    .action((opts: { status?: string; all?: boolean }) => {
+    .option('--tag <tag>', 'Filter by tag (repeatable; AND semantics)', collectOption, [])
+    .option('--any-tag <tag>', 'Filter by tag (repeatable; OR semantics)', collectOption, [])
+    .option('--version <id>', 'Filter by version/milestone (e.g. S5, BACKLOG, memoryos-v2)')
+    .option('--priority <level>', 'Filter by priority (critical, high, medium, low)')
+    .option('--feature <slug>', 'Filter by related_feature')
+    .option('-g, --group-by <field>', `Group output by ${GROUP_BY_FIELDS.join('|')}`)
+    .option('--long', 'Show tags + version inline in human output')
+    .option('--tags', 'List distinct tags with counts (respects -s/--all; ignores other filters)')
+    .option('--json', 'Emit the filtered tasks as JSON (flat array)')
+    .action((opts: {
+      status?: string; all?: boolean; tag?: string[]; anyTag?: string[];
+      version?: string; priority?: string; feature?: string;
+      groupBy?: string; long?: boolean; tags?: boolean; json?: boolean;
+    }) => {
       const dir = getStateDir();
       const files = fg.sync('*.md', { cwd: dir, absolute: true });
-
-      if (files.length === 0) {
-        console.log(chalk.dim('No tasks.'));
-        return;
-      }
 
       const validStatuses = ['todo', 'in_progress', 'in_review', 'completed'];
       if (opts.status && !validStatuses.includes(opts.status)) {
         error(`Status must be one of: ${validStatuses.join(', ')}`);
         return;
       }
+      const validPriorities = ['critical', 'high', 'medium', 'low'];
+      if (opts.priority && !validPriorities.includes(opts.priority)) {
+        error(`Priority must be one of: ${validPriorities.join(', ')}`);
+        return;
+      }
+      if (opts.groupBy && !GROUP_BY_FIELDS.includes(opts.groupBy as GroupBy)) {
+        error(`--group-by must be one of: ${GROUP_BY_FIELDS.join(', ')}`);
+        return;
+      }
 
-      const tasks: { name: string; status: string; priority: string; updated: string }[] = [];
-
+      const all: TaskRecord[] = [];
       for (const file of files) {
         try {
-          const { data } = readFrontmatter(file);
-          const status = String(data.status ?? 'unknown');
-          const name = basename(file, '.md');
-          const priority = String(data.priority ?? '-');
-          const updated = String(data.updated_at ?? data.created_at ?? '-');
-
-          // Filter logic: --status wins, otherwise --all shows everything, default hides completed
-          if (opts.status) {
-            if (status !== opts.status) continue;
-          } else if (!opts.all) {
-            if (status === 'completed') continue;
-          }
-
-          tasks.push({ name, status, priority, updated });
+          const { data } = readFrontmatter<Record<string, unknown>>(file);
+          all.push(toTaskRecord(data, basename(file, '.md'), file));
         } catch { /* skip unreadable */ }
       }
 
-      if (tasks.length === 0) {
-        console.log(chalk.dim(opts.status ? `No tasks with status "${opts.status}".` : 'No active tasks.'));
+      // Tag discovery: visibility filters only (status/all), other narrowing ignored.
+      if (opts.tags) {
+        const visible = filterTasks(all, { status: opts.status, all: opts.all });
+        const counts = collectTags(visible);
+        if (opts.json) { console.log(JSON.stringify(counts, null, 2)); return; }
+        if (counts.length === 0) { console.log(chalk.dim('No tags.')); return; }
+        console.log(header('Tags'));
+        const width = Math.max(...counts.map((c) => c.tag.length));
+        for (const c of counts) {
+          console.log(`  ${c.tag.padEnd(width)}  ${chalk.dim(String(c.count))}`);
+        }
+        return;
+      }
+
+      const filter: TaskFilter = {
+        status: opts.status,
+        all: opts.all,
+        tags: opts.tag,
+        anyTags: opts.anyTag,
+        version: opts.version,
+        priority: opts.priority,
+        feature: opts.feature,
+      };
+      const matched = filterTasks(all, filter);
+
+      if (opts.json) {
+        console.log(JSON.stringify(matched, null, 2));
+        return;
+      }
+
+      if (matched.length === 0) {
+        const narrowed = (opts.tag && opts.tag.length > 0) || (opts.anyTag && opts.anyTag.length > 0)
+          || opts.version || opts.priority || opts.feature;
+        const msg = files.length === 0 ? 'No tasks.'
+          : opts.status ? `No tasks with status "${opts.status}".`
+          : narrowed ? 'No tasks match the given filters.'
+          : 'No active tasks.';
+        console.log(chalk.dim(msg));
         return;
       }
 
       console.log(header('Tasks'));
-      for (const t of tasks) {
-        const statusColor = t.status === 'in_progress' ? chalk.yellow : t.status === 'in_review' ? chalk.magenta : t.status === 'completed' ? chalk.green : chalk.white;
-        const prio = t.priority !== '-' ? chalk.dim(` [${t.priority}]`) : '';
-        console.log(`  ${statusColor(t.status.padEnd(12))} ${t.name}${prio}  ${chalk.dim(t.updated)}`);
+      if (opts.groupBy) {
+        for (const g of groupTasks(matched, opts.groupBy as GroupBy)) {
+          console.log(`\n  ${chalk.bold(g.key)} ${chalk.dim(`(${g.tasks.length})`)}`);
+          for (const t of g.tasks) console.log(renderTaskLine(t, { long: opts.long }));
+        }
+      } else {
+        for (const t of matched) console.log(renderTaskLine(t, { long: opts.long }));
+      }
+    });
+
+  // Tag discovery (canonical form of `tasks list --tags`)
+  tasks
+    .command('tags')
+    .description('List distinct task tags with counts')
+    .option('-a, --all', 'Include completed tasks in the counts')
+    .option('--json', 'Emit tag counts as JSON')
+    .action((opts: { all?: boolean; json?: boolean }) => {
+      const dir = getStateDir();
+      const files = fg.sync('*.md', { cwd: dir, absolute: true });
+      const all: TaskRecord[] = [];
+      for (const file of files) {
+        try {
+          const { data } = readFrontmatter<Record<string, unknown>>(file);
+          all.push(toTaskRecord(data, basename(file, '.md'), file));
+        } catch { /* skip unreadable */ }
+      }
+      const counts = collectTags(filterTasks(all, { all: opts.all }));
+      if (opts.json) { console.log(JSON.stringify(counts, null, 2)); return; }
+      if (counts.length === 0) { console.log(chalk.dim('No tags.')); return; }
+      console.log(header('Tags'));
+      const width = Math.max(...counts.map((c) => c.tag.length));
+      for (const c of counts) {
+        console.log(`  ${c.tag.padEnd(width)}  ${chalk.dim(String(c.count))}`);
       }
     });
 

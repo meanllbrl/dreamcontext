@@ -91,11 +91,15 @@ export function createProgram(): Command {
   program
     .name('dreamcontext')
     .description('Persistent memory for AI agents')
-    .version(dreamcontextVersion())
     .addHelpText('after', HELP_GROUPS)
     .configureHelp({
       showGlobalOptions: false,
     });
+  // NOTE: we deliberately do NOT call `.version()`. Commander registers the
+  // version option as a *global* option that shadows every subcommand's own
+  // `--version` (e.g. `tasks list --version S5` or `tasks create --version`).
+  // Root `dreamcontext --version` / `-V` is handled manually in main() instead,
+  // which leaves `--version <id>` free for subcommands.
 
   registerSetupCommand(program);
   registerInitCommand(program);
@@ -128,6 +132,15 @@ export function createProgram(): Command {
 }
 
 async function main() {
+  // Root version request. Handled here (not via Commander's global `.version()`)
+  // so subcommands can own `--version <id>`. A leading `--version`/`-V` token
+  // unambiguously means the root, since subcommand names always come first.
+  const firstArg = process.argv[2];
+  if (firstArg === '--version' || firstArg === '-V') {
+    console.log(dreamcontextVersion());
+    return;
+  }
+
   const program = createProgram();
 
   // If no arguments, show banner + enter interactive mode
