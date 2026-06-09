@@ -38,6 +38,18 @@ export function enrichDataStructuresFrontmatter(
 }
 
 /**
+ * Wrap a data-structures body in a ```sql fence so it renders as highlighted SQL
+ * in the dashboard. Idempotent: a body already starting with a code fence is
+ * returned unchanged so the migration never double-wraps. Empty / whitespace-only
+ * bodies are also returned unchanged.
+ */
+export function ensureSqlFence(body: string): string {
+  if (body.trimStart().startsWith('```')) return body;
+  const trimmed = body.trim();
+  return trimmed ? '```sql\n' + trimmed + '\n```\n' : body;
+}
+
+/**
  * Idempotently migrate `core/data-structures/*.md` → `knowledge/data-structures/*.md`,
  * enriching frontmatter for the knowledge corpus. Files already present at the
  * destination are skipped (never overwritten). The OLD directory is left in
@@ -66,7 +78,7 @@ export function migrateDataStructures(contextRoot: string): MigrationResult {
     }
 
     const { data, content } = readFrontmatter<Record<string, unknown>>(oldFile);
-    writeFrontmatter(newFile, enrichDataStructuresFrontmatter(data, product), content);
+    writeFrontmatter(newFile, enrichDataStructuresFrontmatter(data, product), ensureSqlFence(content));
     result.migrated.push(product);
   }
 
