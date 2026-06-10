@@ -44,6 +44,9 @@ const SYNONYM_GROUPS: string[][] = [
   ['hook', 'hooks'],
   // Memory / remember (core project concept) + TR (hafıza / bellek / beyin)
   ['memory', 'remember', 'recollection', 'hafıza', 'bellek', 'beyin', 'beynini'],
+  // Context (the product's core noun) + TR (bağlam). Bridges natural-TR queries
+  // ("bağlama enjekte eden şey") to the `context-*` doc family.
+  ['context', 'bağlam', 'bağlama', 'bağlamı'],
   // Vector / embeddings / semantic (the path NOT taken — mem0 decision)
   ['vector', 'embedding', 'embeddings', 'semantic'],
   // Keyword / bm25 (the path taken)
@@ -69,6 +72,43 @@ const SYNONYM_GROUPS: string[][] = [
   // Debt / borç (sleep debt)
   ['debt', 'borç'],
 ];
+
+/**
+ * DIRECTED bridges: paraphrase/colloquial term → the canonical corpus terms it
+ * should ALSO search for. One-way on purpose: a user who says "fold" means
+ * consolidation, but a query containing the canonical "sleep" must NOT expand
+ * into the colloquial "fold" — that direction adds noise (docs using the
+ * colloquial word incidentally would gain rank on canonical queries; measured
+ * as a topical-adjacency regression on the train gold set when these lived in
+ * the bidirectional groups above). TR paraphrase words follow the same rule:
+ * they bridge INTO the English canonical vocabulary only.
+ */
+const DIRECTED_BRIDGES: Record<string, string[]> = {
+  // This corpus's own verbs for consolidation ("folds what changed back",
+  // "promotes learnings") — paraphrase queries use them, docs say "consolidate".
+  // All three consolidat* inflection stems listed so the bridge reaches every
+  // form the docs use (consolidation / consolidate / consolidating→consolidat).
+  fold: ['consolidation', 'consolidate', 'consolidating', 'sleep'],
+  promote: ['consolidation', 'consolidate', 'consolidating', 'sleep'],
+  // Brain-as-memory phrasing ("the project's brain") → the memory doc family.
+  brain: ['memory'],
+  // "project folder" / TR klasör/dizin → the vault/registry concept.
+  // `dizini` (accusative) is listed as its own surface form — the conservative
+  // stemmer deliberately does not strip bare-n-buffer accusatives.
+  folder: ['vault', 'registry', 'multivault'],
+  klasör: ['vault', 'registry', 'multivault'],
+  dizin: ['vault', 'registry', 'multivault'],
+  dizini: ['vault', 'registry', 'multivault'],
+  // TR release/publish vocabulary → the npm-shipping doc family.
+  sürüm: ['release', 'version', 'publish'],
+  yayın: ['publish', 'release'],
+  adım: ['step'],
+  // TR sleep-debt phrasing: seviye(level) / eşik(threshold).
+  seviye: ['level'],
+  eşik: ['threshold'],
+  // TR "oturum başında" (at session start) — `baş` (start/head) → start.
+  baş: ['start'],
+};
 
 /**
  * Built lookup: raw surface term -> set of raw expansion terms (excluding the
@@ -125,8 +165,21 @@ export function expandQueryTerms(
       }
     }
   }
+  // Directed bridges: fire only when the QUERY contains the paraphrase term;
+  // canonical terms never expand back into the paraphrase vocabulary.
+  for (const [surfaceKey, targets] of Object.entries(DIRECTED_BRIDGES)) {
+    const stemmedKey = stem(surfaceKey);
+    if (!primary.has(stemmedKey)) continue;
+    for (const target of targets) {
+      const stemmedTarget = stem(target);
+      if (primary.has(stemmedTarget)) continue;
+      if (!expansions.has(stemmedTarget)) {
+        expansions.set(stemmedTarget, SYNONYM_WEIGHT);
+      }
+    }
+  }
   return expansions;
 }
 
 // Exposed for tests.
-export { SYNONYMS };
+export { SYNONYMS, DIRECTED_BRIDGES };

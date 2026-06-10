@@ -37,6 +37,59 @@
   overflow-y: auto;
 }
 
+.knowledge-folder {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.knowledge-folder-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+  cursor: pointer;
+  transition: border-color var(--transition-fast);
+}
+
+.knowledge-folder-header:hover {
+  border-color: var(--color-border-hover);
+}
+
+.knowledge-folder-chevron {
+  width: 12px;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.knowledge-folder-name {
+  flex: 1;
+  text-align: left;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+}
+
+.knowledge-folder-count {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  background: var(--color-bg-tertiary);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-2);
+}
+
+.knowledge-folder-items {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-left: var(--space-2);
+  padding-left: var(--space-3);
+  border-left: 1px solid var(--color-border);
+}
+
 .knowledge-card {
   padding: var(--space-3);
   border: 1px solid var(--color-border);

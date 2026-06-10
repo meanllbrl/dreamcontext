@@ -59,3 +59,20 @@ No category regressed. The two weakest categories improved the most.
 
 ## Not auto-merged
 Left on `memory-uplift` for review. The recall engine touches a hot path; suggest a skim of `src/lib/recall.ts` (rankScore vs score) and `src/cli/commands/hook.ts` (capture wiring) before merging to main.
+
+---
+
+## v3 (2026-06-10) — TR morphology + directed bridges + canonical-first
+
+Tuned on `gold.jsonl` (60q), validated on `gold-heldout.jsonl` (30q, authored blind — see knowledge/recall-engine-v2.md v3 update). Frozen 242-doc corpus via `scripts/recall-ab.ts`.
+
+| Metric | Train old | Train v3 | Held-out old | Held-out v3 |
+|---|---|---|---|---|
+| overall recall@1 | 86.7 | **91.7** | 83.3 | **93.3** |
+| overall recall@3 | 93.3 | **96.7** | 90.0 | **96.7** |
+| overall MRR | 0.906 | **0.943** | 0.875 | **0.957** |
+| turkish recall@1 | 75.0 | 75.0 | 70.0 | **90.0** |
+| turkish recall@3 | 87.5 | **100.0** | 80.0 | **100.0** |
+| paraphrase recall@1 | 66.7 | **91.7** | 87.5 | 87.5 |
+
+No category regressed on either set. linkAware was benchmarked and rejected (train r@1 68.3 with it ON). Regression locks: `tests/unit/recall-engine-v3.test.ts`.

@@ -147,11 +147,39 @@ export function digestExists(root: string, sessionId: string): boolean {
 }
 
 /**
+ * True if the digest on disk is a PARTIAL (mid-session) capture — written by
+ * the PreCompact hook before context compaction. Partial digests are
+ * placeholders: the SessionStart catch-up re-digests the FULL transcript over
+ * them once the session has ended. Missing/unreadable digests count as
+ * non-partial (false) so callers fall back to the plain existence check.
+ */
+export function digestIsPartial(root: string, sessionId: string): boolean {
+  const file = digestPath(root, sessionId);
+  if (!existsSync(file)) return false;
+  try {
+    const { data } = readFrontmatter(file);
+    return data.partial === true;
+  } catch {
+    return false;
+  }
+}
+
+export interface WriteDigestOptions {
+  /** Mark as a mid-session (PreCompact) capture, superseded by the full digest later. */
+  partial?: boolean;
+}
+
+/**
  * Write a digest markdown file under `state/.session-digests/<sessionId>.md`,
  * stamping `type: session-digest` frontmatter so corpus loaders can recognise it.
  * Returns the absolute path written.
  */
-export function writeDigest(root: string, sessionId: string, md: string): string {
+export function writeDigest(
+  root: string,
+  sessionId: string,
+  md: string,
+  opts: WriteDigestOptions = {},
+): string {
   const dir = digestsDir(root);
   mkdirSync(dir, { recursive: true });
   const file = digestPath(root, sessionId);
@@ -163,6 +191,7 @@ export function writeDigest(root: string, sessionId: string, md: string): string
     'type: session-digest',
     `session_id: ${safeId}`,
     `created_at: ${new Date().toISOString()}`,
+    ...(opts.partial ? ['partial: true'] : []),
     '---',
     '',
   ].join('\n');

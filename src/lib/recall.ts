@@ -65,6 +65,14 @@ const STOPWORDS = new Set([
   // Turkish (light)
   've','veya','ile','bir','bu','şu','o','ne','ki','de','da','mı','mi','mu','mü',
   'için','gibi','ama','ya','ben','sen','biz','siz','onlar',
+  // Turkish question/filler words — carry no content signal but inflect freely,
+  // so they survive suffix folding as noise terms in natural TR queries
+  // ("güvenlik açıkları NELERDİ", "NASIL hesaplanıyor"). Filtering them keeps
+  // TR query vectors as clean as their EN equivalents (where "what/how" are
+  // already stopwords).
+  'nasıl','neden','niye','nedir','neler','nelerdi','nelerdir','hangi','hangisi',
+  'nerede','nereye','nereden','şey','şeyi','eden','olan','olarak','bunu','bunun',
+  'şunu','onun','yapan','midir','mıdır',
 ]);
 
 // ── B4: conservative morphological folding ──────────────────────────────────
@@ -73,25 +81,58 @@ const STOPWORDS = new Set([
 // MEANING of the hard `.score` thresholds the hook reads; identical text still
 // scores identically, we just merge `databases`→`database`-class variants).
 //
-// Turkish suffix folding (agglutinative): strip ONE common case/plural suffix
-// from long tokens. Kept conservative (len gate > 4) to protect precision.
+// Turkish suffix folding (agglutinative): strip up to TWO common case/plural/
+// possessive suffixes from long tokens (e.g. `sunucusunda` → `sunucusu` →
+// `sunucu`). Kept conservative (len gate > 4, stripped base must stay > 2
+// chars, second hop only fires when the first stripped) to protect precision.
+// The list is sorted longest-first at module load so `lerinden` wins over `den`.
 const TR_SUFFIXES = [
-  'lerinden', 'larından', 'lerine', 'larına', 'leri', 'ları',
-  'ler', 'lar', 'den', 'dan', 'nin', 'nın', 'nun', 'nün',
-  'de', 'da', 'yi', 'yı', 'yu', 'yü',
-];
+  'lerinden', 'larından', 'lerinde', 'larında', 'lerine', 'larına',
+  'leri', 'ları', 'ler', 'lar',
+  // locative (+possessive buffer): oturumda / başında / içinde / sunucusunda
+  'ında', 'inde', 'unda', 'ünde', 'nda', 'nde', 'de', 'da',
+  // ablative: sunucudan / sistemden (+ voiceless variants)
+  'den', 'dan', 'ten', 'tan',
+  // genitive: projenin / sunucunun
+  'nin', 'nın', 'nun', 'nün',
+  // 3sg possessive after vowel: sunucusu / kutusu / seviyesi
+  'sı', 'si', 'su', 'sü',
+  // possessive+locative / +genitive / +accusative compounds: sunucusunda /
+  // kutusunun / seviyesini. Listed as compounds because the bare locative
+  // ('unda') would otherwise eat into the possessive and strand an orphan 's'.
+  'sında', 'sinde', 'sunda', 'sünde',
+  'sının', 'sinin', 'sunun', 'sünün',
+  'sını', 'sini', 'sunu', 'sünü',
+  // accusative after vowel (y buffer): makaleyi / kapıyı. (Bare-n buffer
+  // variants 'nı/ni/nu/nü' were tried and removed: they mis-segment
+  // consonant-final loanwords — `konsolidasyonu` → `konsolidasyo` — and their
+  // only wins are already covered by synonym surface forms.)
+  'yi', 'yı', 'yu', 'yü',
+  // relative -ki on locative: oturumdaki / eldeki
+  'daki', 'deki', 'taki', 'teki',
+  // instrumental: hook'la → hookla / sunucuyla
+  'yla', 'yle',
+].sort((a, b) => b.length - a.length);
 
 // English suffix strip: only the safest plural/verb inflections, len gate > 4.
+// v3 fix: the old `-es` rule made e-final words unfindable from their plural
+// (`databases`→`databas` vs `database`→`database` NEVER matched; same for
+// releases/release, features/feature). Now: strip `-s` first, then fold a
+// trailing `-e` on long tokens, so the whole family merges on one stem
+// (`databases`→`database`→`databas` ←`database`). Tech vocabulary is dominated
+// by e-final nouns, which is why `-e` folding wins over sibilant `-es` plurals
+// (only ≤4-char bases like box/boxes lose, and they never matched before either).
 function stemEn(token: string): string {
   if (token.length <= 4) return token;
   if (token.endsWith('ing') && token.length > 5) return token.slice(0, -3);
   if (token.endsWith('ed') && token.length > 4) return token.slice(0, -2);
-  if (token.endsWith('es') && token.length > 4) return token.slice(0, -2);
-  if (token.endsWith('s') && !token.endsWith('ss') && token.length > 4) return token.slice(0, -1);
-  return token;
+  let t = token;
+  if (t.endsWith('s') && !t.endsWith('ss') && t.length > 4) t = t.slice(0, -1);
+  if (t.endsWith('e') && t.length > 5) t = t.slice(0, -1);
+  return t;
 }
 
-function stemTr(token: string): string {
+function stemTrOnce(token: string): string {
   if (token.length <= 4) return token;
   for (const suf of TR_SUFFIXES) {
     if (token.length - suf.length > 2 && token.endsWith(suf)) {
@@ -101,14 +142,28 @@ function stemTr(token: string): string {
   return token;
 }
 
+function stemTr(token: string): string {
+  // Up to two hops: agglutination stacks plural/possessive/case suffixes
+  // (`seviye-ler-i`, `sunucu-su-nda`). The second hop only fires when the first
+  // actually stripped, so plain English tokens take at most the one (pre-existing)
+  // strip and never get double-mangled.
+  const once = stemTrOnce(token);
+  if (once === token) return token;
+  return stemTrOnce(once);
+}
+
 /**
  * Fold a single already-lowercased token to its conservative stem. Exported so
  * the synonym expander can stem its surface terms through the SAME pipeline used
  * for the index/query, keeping them aligned.
  */
 export function stemToken(token: string): string {
-  // Turkish-specific letters present → try TR folding first, else EN.
-  return stemTr(stemEn(token));
+  const t = stemTr(stemEn(token));
+  // If the TR strip exposed a trailing `e`, apply the same final-e fold stemEn
+  // applies to uninflected forms — otherwise `seviyeleri` → `seviye` while the
+  // doc's `seviye` → `seviy`, splitting the family across index and query.
+  if (t !== token && t.endsWith('e') && t.length > 5) return t.slice(0, -1);
+  return t;
 }
 
 export function tokenize(text: string): string[] {
@@ -544,6 +599,17 @@ export const CAPTURE_RANK_PENALTY = 0.5;
 // strong content match.
 export const STATUS_PENALTY: Record<string, number> = { completed: 0.85 };
 
+// ── Canonical-first type factor ──────────────────────────────────────────────
+// Changelog entries are one-line POINTERS to work; knowledge/feature/task docs
+// are the canonical context. Because entries are short, BM25F length
+// normalisation systematically over-ranks them: measured on BOTH gold sets
+// (train q027/q039, held-out h001/h006/h010/h026), changelog summaries were
+// outranking the canonical doc that actually answers the query. This modest
+// rankScore-only factor (raw `score` untouched — decoupling invariant) breaks
+// near-ties toward the canonical doc while a changelog whose match is clearly
+// strongest still surfaces.
+export const CHANGELOG_RANK_FACTOR = 0.85;
+
 /**
  * Recency multiplier in [minMult, 1] from an exponential half-life decay.
  * A doc updated `halfLifeDays` ago scores ~0.875 (midway), older docs floor at
@@ -708,7 +774,8 @@ export function bm25Search(
     const rankScore = rankBase
       * statusMultiplier(doc.status)
       * recencyMultiplier(doc.updatedAt, now)
-      * (doc.capture ? CAPTURE_RANK_PENALTY : 1);
+      * (doc.capture ? CAPTURE_RANK_PENALTY : 1)
+      * (doc.type === 'changelog' ? CHANGELOG_RANK_FACTOR : 1);
 
     scored.push({
       hit: { doc, score: rawScore, rankScore, snippet: extractSnippet(doc, queryTerms) },
@@ -736,7 +803,8 @@ export function bm25Search(
         s.hit.rankScore += boost
           * statusMultiplier(s.hit.doc.status)
           * recencyMultiplier(s.hit.doc.updatedAt, now)
-          * (s.hit.doc.capture ? CAPTURE_RANK_PENALTY : 1);
+          * (s.hit.doc.capture ? CAPTURE_RANK_PENALTY : 1)
+          * (s.hit.doc.type === 'changelog' ? CHANGELOG_RANK_FACTOR : 1);
       }
     }
   }

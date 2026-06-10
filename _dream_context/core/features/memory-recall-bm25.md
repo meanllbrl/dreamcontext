@@ -1,15 +1,16 @@
 ---
-id: "feat_mem0Recall1"
-status: "in_review"
-created: "2026-05-23"
-updated: "2026-06-02"
+id: feat_mem0Recall1
+status: in_review
+created: '2026-05-23'
+updated: '2026-06-10'
 released_version: null
 tags:
   - memory
   - cli
   - search
   - decisions
-related_tasks: []
+related_tasks:
+  - recall-context-uplift-v07
 ---
 
 ## Why
@@ -28,6 +29,8 @@ dreamcontext's existing snapshot pre-loads soul + user + memory + active tasks +
 - [x] As a Turkish-speaking developer, my recall results are dramatically improved (37.5→75.0% recall@1) because the engine folds agglutinative suffix inflections before BM25 scoring.
 - [x] As a developer, decisions captured automatically from my sessions (via salience detectors) are searchable by the next session before any sleep consolidation runs.
 - [x] As a developer, auto-captured session content never crowds out curated knowledge files in recall results, thanks to the capture rank penalty.
+
+- [x] As a Turkish-speaking developer using v3 of the engine, my recall is dramatically more accurate (recall@1 TR 75.0→90%, paraphrase 66.7→91.7%) because two-hop TR morphology, directed synonym bridges, and EN -e fold fix address structural gaps from v2.
 
 ## Acceptance Criteria
 
@@ -72,8 +75,17 @@ dreamcontext's existing snapshot pre-loads soul + user + memory + active tasks +
 - [x] Deterministic 60-query gold set (`eval/gold.jsonl`) + vitest harness (`eval/harness.ts`). Reproducible: `npx vitest run tests/unit/recall-eval.test.ts`.
 - [x] Overall recall@1 68.3→85.0%, recall@3 81.7→95.0%, MRR 0.768→0.903. No category regressed. 1063 tests passing.
 
+- [x] v3 held-out validation: 30-query blind gold set (`eval/gold-heldout.jsonl`, authored by a sub-agent that never saw the engine changes) achieves r@1 93.3%, r@3 96.7%, MRR 0.957, TR r@1 90%, TR r@3 100%. No category regressed on either train or held-out sets — no overfitting signature.
+- [x] v3 engine changes: (1) two-hop TR morphology + possessive+case compound suffixes + TR question-word stopwords; (2) `DIRECTED_BRIDGES` — paraphrase→canonical is one-way only (bidirectional colloquials measurably regressed topical-adjacency); (3) EN `-e` fold fix so `database/databases` and `release/releases` merge correctly; (4) `CHANGELOG_RANK_FACTOR = 0.85` prevents short changelog entries from outranking the canonical docs they reference.
+- [x] Link-aware boost tested and REJECTED with data: ~13 real wikilinks in corpus caused hub-doc hijacking (train r@1 cratered to 68.3%). `enableLinkBoost` permanently resolves to "stay off" on this corpus profile.
+- [x] Snapshot token budget ladder (`src/lib/snapshot-budget.ts`): sections demote through progressively cheaper renders (full→summaries→one-line references) rather than raw-truncating. Measured: 20,253 → 10,386 tokens. `DREAMCONTEXT_SNAPSHOT_BUDGET` env var configures budget (default 10,000 tokens; "0"/"off" disables).
+- [x] PreCompact partial digest: on PreCompact hook, a bounded summary of in-progress work is written before context resets, ensuring continuity across compactions.
+- [x] Recall A/B harness (`scripts/recall-ab.ts`) runs engine comparisons on a frozen corpus (filters live captures + in-flight tasks) for deterministic measurement — required after discovering live corpus mutation caused false results.
+
 ## Constraints & Decisions
 
+
+- **[2026-06-10]** **Decision (2026-06-10): directed synonym bridges only.** Bidirectional synonym bridges measurably regressed topical-adjacency recall — adding 'fold'↔'consolidation' as bidirectional caused unrelated queries to hit sleep/consolidation docs. DIRECTED_BRIDGES enforces one-way paraphrase→canonical mapping only.
 - **Decision (2026-05-23): chose Path A over mem0 integration after 3-reviewer adversarial review.** Critic raised "premise not steel-manned" (mem0's LLM extraction solves a problem dreamcontext already solved). Pragmatist recommended cutting ~70% of the mem0 plan even in best case. Security flagged 5 critical hardening blockers (redaction order, embedding inversion, rebase data loss, finalizer crash, OpenAI exfil). Path A (BM25 over curated corpus) is deterministic, version-controllable, zero new deps. Full decision trace: see archived `/tmp/dreamcontext-mem0-{plan,decision}.md` + reviewer reports.
 - **No persistent index file.** BM25 inverted index is rebuilt in-memory on every `recall` call. With ≤500 docs the rebuild is <100ms; storing an index file would add gitignore complications and cache-invalidation bugs for negligible speedup.
 - **Stopword list is light, language-aware.** Includes Turkish particles (ve, ile, ki, için, gibi) since the user codes in Turkish; English stopwords are standard. Stemming is intentionally NOT applied — preserves slug-like terms (e.g., "manifest-bootstrap-safety-pattern") that exact-match in queries.

@@ -64,7 +64,11 @@ function hitDoc(hit: RecallHit | CorpusDoc): CorpusDoc {
  * hit whose docKey is in the query's accepted targets (`expected` ∪ `alt`).
  * recall@1 / recall@3 are reported as percentages (0–100); MRR is 0–1.
  */
-export function evaluate(corpus: CorpusDoc[], gold: GoldQuery[]): EvalReport {
+export function evaluate(
+  corpus: CorpusDoc[],
+  gold: GoldQuery[],
+  searchOpts: Parameters<typeof bm25Search>[3] = {},
+): EvalReport {
   const perQuery: EvalReport['perQuery'] = [];
 
   // Accumulators keyed by category, plus a synthetic "overall" bucket.
@@ -79,7 +83,7 @@ export function evaluate(corpus: CorpusDoc[], gold: GoldQuery[]): EvalReport {
   };
 
   for (const q of gold) {
-    const hits = bm25Search(q.query, corpus, 10);
+    const hits = bm25Search(q.query, corpus, 10, searchOpts);
     const targets = new Set([...q.expected, ...(q.alt ?? [])]);
 
     let rank: number | null = null;

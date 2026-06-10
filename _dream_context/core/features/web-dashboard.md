@@ -2,7 +2,7 @@
 id: feat_O7LODr7O
 status: active
 created: '2026-02-25'
-updated: '2026-06-06'
+updated: '2026-06-10'
 released_version: 0.1.0
 tags:
   - frontend
@@ -14,6 +14,7 @@ related_tasks:
   - v06-control-plane-backend
   - landing-page-v2
   - dashboard-alignment
+  - data-structures-to-knowledge
 ---
 
 ## Why
@@ -55,6 +56,9 @@ Users need a visual interface to manage agent context without using the terminal
 - [x] As a user, the goal-skill orchestration is a flagship spotlight faculty with its own landscape loop diagram so I understand how planning-review-implementation-validation works end-to-end.
 - [x] As a user, flow animations in diagrams are compositor-smooth (CSS Motion Path dots riding offset-path/offset-distance rather than stroke-dashoffset), so 27 simultaneous dots cause 0 jank frames.
 
+- [x] As a user, I can view Excalidraw diagrams stored in knowledge/diagrams/ rendered as real hand-drawn boards (pan/zoom, theme-aware) in the dashboard's Knowledge Preview tab, rather than seeing raw compressed JSON.
+- [x] As a user, I see the data-structures knowledge file rendered as the relational/ER view (entities with PK/FK fields and relationship lines) in the Knowledge Preview tab, identical to the view the Core page previously provided for .sql files.
+
 ## Acceptance Criteria
 
 ### Kanban Board
@@ -72,7 +76,7 @@ Users need a visual interface to manage agent context without using the terminal
 - [x] Sub-grouping within columns (collapsible SubGroupSection with count)
 - [x] Create task modal: name (required), description, priority, urgency, version, tags
 - [x] Detail panel slides in from right on task click: shows all fields, status/priority/urgency/version dropdowns, changelog with add entry form
-- [x] Eisenhower Matrix view: 2×2 priority×urgency grid, excludes completed tasks
+- [x] Eisenhower Matrix view: 2×2 priority×urgency grid, excludes completed tasks; tasks draggable between quadrants (updates priority+urgency on drop)
 - [x] MultiSelectFilter: checkbox-based, type-ahead search shown when >5 options, All/None toggle
 - [x] Version Manager: planning/released sections, stats header, Release button to promote
 - [x] Flowchart-to-acceptance-criteria sync: `<!-- node:<id> -->` markers in task body link mermaid node IDs to checkboxes; toggling a checkbox updates the corresponding mermaid node's `:::class` (done/active/todo/blocked) and vice versa.
@@ -100,6 +104,8 @@ Users need a visual interface to manage agent context without using the terminal
 - [ ] Pin/unpin toggle on each knowledge card
 - [ ] Clicking shows full content in detail panel
 - [ ] Pin/unpin records change in .sleep.json dashboard_changes
+- [x] `MarkdownPreview` renders SQL and other code blocks with syntax highlighting (highlight.js, theme-aware, DOMPurify allowlist extended for `hljs-*` span classes)
+- [x] Data-structures files appear under the Knowledge view (not Core), because `knowledge/data-structures/` is now canonical
 
 ### Features
 - [x] Feature list shows all features with slug, status badge, tags
@@ -149,9 +155,16 @@ Users need a visual interface to manage agent context without using the terminal
 - [ ] Build: `npm run build` builds dashboard then CLI, dashboard output copied to dist/dashboard/
 - [ ] All existing 258+ tests continue to pass
 
+- [x] Excalidraw preview: knowledge files with slug matching diagrams/*.excalidraw render via ExcalidrawPreview component; handles both plain ```json and Obsidian-recompressed ```compressed-json (LZString-base64) fence types; zoom-to-fit with panzoom on mount; theme-aware; heavy bundle lazy-loaded via React.lazy.
+- [x] Data-structures ER view in Knowledge: files with slug starting with data-structures/ detect the ```sql fence, extract the body, and render SqlPreview (same relational/ER component as the Core page). Non-schema knowledge files are unaffected and continue using MarkdownPreview.
+- [x] Page-title headers removed from Tasks, Features, and Knowledge pages (content starts without a redundant h1 title) to reclaim vertical space.
+- [x] Sleep page layout width matches other pages (full-width alignment consistent across all pages).
+- [x] Features page search box added.
+
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
 
+- **[2026-06-09]** Eisenhower Matrix drag & drop: the existing matrix had `onDragStart={() => {}}` no-op handlers — only structure, no interactivity. Implemented using native HTML5 DnD API (consistent with Kanban). A quadrant receives `onDragOver` + `onDrop`; on drop, both `priority` and `urgency` are patched atomically via the existing PATCH /api/tasks endpoint. No new DnD library added — native API is sufficient for the 2×2 grid (4 drop targets, no complex reordering). `eisenhower.ts` maps quadrant ID to `{priority, urgency}` pairs.
 - **[2026-06-06]** `overflow-x: hidden` vs `clip` on the `.about` container: `overflow-x: hidden` creates a new scroll container, so any `position: sticky` descendant resolves its scroll container to `.about` (not `.shell-main`) and pins immediately — the whole spotlight was stuck. `overflow-x: clip` clips visually without creating a scroll container, preserving sticky semantics. Fix: `.about { overflow-x: clip }` in AboutPage.css. This is a general CSS invariant: if a section has sticky children, its overflow must be `clip` (or `visible`), never `hidden` or `auto`.
 - **[2026-06-06]** CSS Motion Path for flow animation: `stroke-dashoffset` repainted the entire dashed stroke (full path length) on the main thread every frame. With 27 simultaneous comets the browser re-rasterized ~27 paths per frame → stutter. Replaced with a small `<circle>` per edge riding the path via `offset-path: path(d)` + `offset-distance: 0→100%` — a compositor-class transform; only the ~14px dot region is dirtied per frame. Glow is a per-instance radial-gradient fill (purple→blue→transparent), rasterized once. Measured: worst frame 11.2ms, 0 jank/179 frames at 27 dots. `FlowEdge.travel` is now unused (offset-distance is length-independent). Reduced-motion: park dot at `offset-distance: 55%` (static, but still on-path and directional).
 - **[2026-06-06]** Pinned scroll-scrubbed spotlight (FeaturesShowcase): imperative scrub — scroll progress written to panel refs (opacity + translateY) per-frame, zero React re-renders per frame; React state fires only when centred faculty changes (for tab ARIA + rail highlight). Snap-to-nearest on scroll-idle: 140ms debounce after last scroll event; smooth-scrolls container to nearest faculty centre; lands within 8px SNAP_EPS → no-op (no loop). Skips snap at track ends (progress ≤0.012 / ≥0.988) to let the user scroll out of the section naturally.
@@ -277,6 +290,12 @@ Users need a visual interface to manage agent context without using the terminal
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-06-09 - Eisenhower matrix drag & drop (#7) + SQL syntax highlighting in Knowledge view (#12)
+- Eisenhower Matrix: tasks are now draggable between quadrants; drop updates both `priority` and `urgency` frontmatter fields via PATCH API. Implemented with native HTML5 drag-and-drop on `EisenhowerMatrix.tsx`; new `eisenhower.ts` util handles quadrant-to-field mapping.
+- `MarkdownPreview`: SQL and code fences rendered with highlight.js (synchronous, small footprint, SQL grammar). Light/dark themes wired to `ThemeContext`. DOMPurify allowlist extended for `<span class="hljs-*">` output.
+- Data-structures no longer shown under Core — moved to Knowledge view (follows `knowledge/data-structures/` canonical location from #12 migration).
+- Full suite 1219 tests green.
 
 ### 2026-06-06 - Landing page v2 polish: scroll-scrubbed spotlight + Motion Path animation + hero copy
 - "One brain, many faculties" features showcase rewritten as a pinned scroll-scrubbed spotlight (11 faculty panels, sticky header+stage, imperative scrub on refs, snap-to-nearest on idle).

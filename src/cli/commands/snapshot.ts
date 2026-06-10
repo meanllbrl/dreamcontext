@@ -15,6 +15,10 @@ import { isSkillInstalled } from '../../lib/catalog.js';
 import { readVersionCache, isCacheFresh, buildNudge } from '../../lib/version-check.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
 import { computeFeatureFreshness, freshnessSnapshotNote } from '../../lib/feature-freshness.js';
+import {
+  applyBudget, resolveBudget, demoteMemoryBlock, demoteTaskList,
+  type BudgetSection,
+} from '../../lib/snapshot-budget.js';
 
 /**
  * Default line cap when inlining pinned knowledge into the auto-context snapshot.
@@ -99,12 +103,34 @@ export function extractFirstParagraph(content: string): string {
  * Build formatted lines for active (non-completed) tasks in state/*.md.
  * Shared by generateSnapshot() and generateSubagentBriefing().
  */
-function getActiveTaskLines(root: string): string[] {
+interface ActiveTaskEntry {
+  text: string;
+  status: string;
+  priority: string;
+  updated: string;
+}
+
+/**
+ * Sort for DEMOTED task rendering only (the full render keeps file order so
+ * under-budget snapshots stay byte-identical): in_progress first, then
+ * priority, then most recently updated.
+ */
+export function sortTaskEntriesByActivity(entries: ActiveTaskEntry[]): ActiveTaskEntry[] {
+  const statusRank = (s: string): number => (s === 'in_progress' ? 0 : s === 'blocked' ? 1 : 2);
+  const prioRank = (p: string): number =>
+    p === 'critical' ? 0 : p === 'high' ? 1 : p === 'medium' ? 2 : 3;
+  return [...entries].sort((a, b) =>
+    statusRank(a.status) - statusRank(b.status)
+    || prioRank(a.priority) - prioRank(b.priority)
+    || b.updated.localeCompare(a.updated));
+}
+
+function getActiveTaskEntries(root: string): ActiveTaskEntry[] {
   const stateDir = join(root, 'state');
   if (!existsSync(stateDir)) return [];
 
   const taskFiles = fg.sync('*.md', { cwd: stateDir, absolute: true });
-  const lines: string[] = [];
+  const entries: ActiveTaskEntry[] = [];
 
   for (const file of taskFiles) {
     try {
@@ -132,13 +158,13 @@ function getActiveTaskLines(root: string): string[] {
         }
       } catch { /* skip */ }
 
-      lines.push(line);
+      entries.push({ text: line, status, priority, updated });
     } catch {
       // skip unreadable files
     }
   }
 
-  return lines;
+  return entries;
 }
 
 /**
@@ -320,7 +346,19 @@ export function generateSnapshot(): string {
   const root = resolveContextRoot();
   if (!root) return '';
 
-  const parts: string[] = ['# Agent Context — Auto-loaded\n'];
+  // Snapshot is assembled as budget SECTIONS (see src/lib/snapshot-budget.ts):
+  // blocks accumulate into `parts`, then flush() seals them into a named
+  // section. Demotable sections carry pre-rendered ladder rungs; identity and
+  // warning sections are neverEvict. Under budget, the output is byte-identical
+  // to the pre-budget format (sections join exactly like the old parts array).
+  const sections: BudgetSection[] = [];
+  let parts: string[] = ['# Agent Context — Auto-loaded\n'];
+  const flush = (id: string, opts: { neverEvict?: boolean; demotions?: string[] } = {}): void => {
+    if (parts.length > 0) {
+      sections.push({ id, text: parts.join('\n'), ...opts });
+      parts = [];
+    }
+  };
 
   // 1. Soul file (full content) — WHO the agent is
   const soulPath = join(root, 'core', '0.soul.md');
@@ -339,8 +377,11 @@ export function generateSnapshot(): string {
     parts.push(content);
     parts.push('');
   }
+  flush('identity', { neverEvict: true });
 
-  // 3. Memory file (full content) — WHAT the agent knows
+  // 3. Memory file (full content) — WHAT the agent knows.
+  // Demotion: Technical Decisions keeps the newest N bullets, older collapse
+  // to titles (still recallable); Active Memory + Known Issues never shrink.
   const memoryPath = join(root, 'core', '2.memory.md');
   if (existsSync(memoryPath)) {
     const content = readFileSync(memoryPath, 'utf-8').trim();
@@ -348,6 +389,8 @@ export function generateSnapshot(): string {
       parts.push('## Memory (Technical Decisions, Known Issues, Session Log)\n');
       parts.push(content);
       parts.push('');
+      const full = parts.join('\n');
+      flush('memory', { demotions: [demoteMemoryBlock(full, 8), demoteMemoryBlock(full, 4)] });
     }
   }
 
@@ -364,13 +407,20 @@ export function generateSnapshot(): string {
     }
     parts.push('');
   }
+  flush('extended-core', { neverEvict: true });
 
-  // 5. Active tasks
-  const activeTasks = getActiveTaskLines(root);
+  // 5. Active tasks. Full render keeps file order (byte-identical under
+  // budget); demoted renders sort by activity and cap the list, the remainder
+  // collapsing to a count line — every task is still one `tasks list` away.
+  const activeTasks = getActiveTaskEntries(root);
   if (activeTasks.length > 0) {
     parts.push('## Active Tasks\n');
-    parts.push(activeTasks.join('\n'));
+    parts.push(activeTasks.map((t) => t.text).join('\n'));
     parts.push('');
+    const sortedTexts = sortTaskEntriesByActivity(activeTasks).map((t) => t.text);
+    const renderTasks = (keep: number): string =>
+      ['## Active Tasks\n', demoteTaskList(sortedTexts, keep).join('\n'), ''].join('\n');
+    flush('tasks', { demotions: [renderTasks(12), renderTasks(8)] });
   }
 
   // 5.1 Active Product Knowledge (multi-product binding)
@@ -389,6 +439,7 @@ export function generateSnapshot(): string {
     parts.push(versionNudge);
     parts.push('');
   }
+  flush('product-and-nudge', { neverEvict: true });
 
   // 5.5 Read sleep state (used by multiple sections below)
   const sleepState = readSleepState(root);
@@ -447,6 +498,7 @@ export function generateSnapshot(): string {
       writeSleepState(root, sleepState);
     }
   }
+  flush('awareness', { neverEvict: true });
 
   // 6. Sleep State — DEPRECATED in snapshot (v0.4.0+).
   // Sleep debt + critical bookmark reminders are delivered by the
@@ -482,42 +534,59 @@ export function generateSnapshot(): string {
       const entries = readJsonArray<Record<string, unknown>>(changelogPath);
       const tier1 = entries.slice(0, CHANGELOG_TIER1);
       const tier2 = entries.slice(CHANGELOG_TIER1, CHANGELOG_TIER1 + CHANGELOG_TIER2);
-      if (tier1.length > 0) {
-        parts.push('## Recent Changelog\n');
+      const headlineOf = (e: Record<string, unknown>): string => {
+        const date = String(e.date ?? '');
+        const type = String(e.type ?? '');
+        const scope = String(e.scope ?? '');
+        const summary = typeof e.summary === 'string' ? e.summary : '';
+        const desc = String(e.description ?? '');
+        const headline = summary || (desc.length > 200 ? desc.slice(0, 197) + '...' : desc);
+        return `- ${date} [${type}] ${scope}: ${headline}${authorSuffix(e)}`;
+      };
+      const tier2LineOf = (e: Record<string, unknown>): string => {
+        const date = String(e.date ?? '');
+        const type = String(e.type ?? '');
+        const scope = String(e.scope ?? '');
+        const summary = typeof e.summary === 'string' ? e.summary : '';
+        const desc = String(e.description ?? '');
+        const raw = summary || desc;
+        const line = raw.length > TIER2_LINE_CHARS
+          ? raw.slice(0, TIER2_LINE_CHARS - 3) + '...'
+          : raw;
+        return `- ${date} [${type}] ${scope}: ${line}${authorSuffix(e)}`;
+      };
+      const renderChangelog = (withBodies: boolean, tier2Count: number): string[] => {
+        const out: string[] = ['## Recent Changelog\n'];
         for (const e of tier1) {
-          const date = String(e.date ?? '');
-          const type = String(e.type ?? '');
-          const scope = String(e.scope ?? '');
+          out.push(headlineOf(e));
           const summary = typeof e.summary === 'string' ? e.summary : '';
           const desc = String(e.description ?? '');
-          const headline = summary || (desc.length > 200 ? desc.slice(0, 197) + '...' : desc);
-          parts.push(`- ${date} [${type}] ${scope}: ${headline}${authorSuffix(e)}`);
           // Body preview only when summary is present (otherwise headline is
           // already the description). Avoids printing the same text twice.
-          if (summary && desc && desc !== summary) {
+          if (withBodies && summary && desc && desc !== summary) {
             const body = desc.length > TIER1_BODY_CHARS
               ? desc.slice(0, TIER1_BODY_CHARS - 3) + '...'
               : desc;
-            parts.push(`    ${body}`);
+            out.push(`    ${body}`);
           }
         }
-        if (tier2.length > 0) {
-          parts.push('');
-          parts.push('### Older (titles only — use `dreamcontext memory recall --types changelog` for detail):');
-          for (const e of tier2) {
-            const date = String(e.date ?? '');
-            const type = String(e.type ?? '');
-            const scope = String(e.scope ?? '');
-            const summary = typeof e.summary === 'string' ? e.summary : '';
-            const desc = String(e.description ?? '');
-            const raw = summary || desc;
-            const line = raw.length > TIER2_LINE_CHARS
-              ? raw.slice(0, TIER2_LINE_CHARS - 3) + '...'
-              : raw;
-            parts.push(`- ${date} [${type}] ${scope}: ${line}${authorSuffix(e)}`);
-          }
+        const t2 = tier2.slice(0, tier2Count);
+        if (t2.length > 0) {
+          out.push('');
+          out.push('### Older (titles only — use `dreamcontext memory recall --types changelog` for detail):');
+          for (const e of t2) out.push(tier2LineOf(e));
         }
-        parts.push('');
+        out.push('');
+        return out;
+      };
+      if (tier1.length > 0) {
+        parts.push(...renderChangelog(true, CHANGELOG_TIER2));
+        flush('changelog', {
+          demotions: [
+            renderChangelog(false, 5).join('\n'),
+            renderChangelog(false, 0).join('\n'),
+          ],
+        });
       }
     } catch {
       // skip if malformed
@@ -564,12 +633,16 @@ export function generateSnapshot(): string {
       // skip if malformed
     }
   }
+  flush('releases', { neverEvict: true });
 
-  // 8. Features summary (with Why, related tasks, and latest changelog)
+  // 8. Features summary (with Why, related tasks, and latest changelog).
+  // Demotion: active + recently-updated features keep their detail block; the
+  // rest collapse to a name+status+path line (PRD is one Read away).
   const featuresDir = join(root, 'core', 'features');
   if (existsSync(featuresDir)) {
     const featureFiles = fg.sync('*.md', { cwd: featuresDir, absolute: true });
     const features: string[] = [];
+    const featureMeta: Array<{ detail: string; nameLine: string; status: string; updated: string }> = [];
 
     for (const file of featureFiles) {
       try {
@@ -633,6 +706,12 @@ export function generateSnapshot(): string {
           featureLine += '\n' + details.join('\n');
         }
         features.push(featureLine);
+        featureMeta.push({
+          detail: featureLine,
+          nameLine: `- **${name}** (status: ${status}) -> _dream_context/core/features/${name}.md`,
+          status,
+          updated: String(data.updated ?? data.created ?? ''),
+        });
       } catch {
         // skip unreadable files
       }
@@ -642,6 +721,16 @@ export function generateSnapshot(): string {
       parts.push('## Features\n');
       parts.push(features.join('\n'));
       parts.push('');
+      const activeFirst = [...featureMeta].sort((a, b) => {
+        const rank = (s: string): number =>
+          s === 'in_progress' || s === 'active' ? 0 : s === 'planned' || s === 'todo' ? 1 : 2;
+        return rank(a.status) - rank(b.status) || b.updated.localeCompare(a.updated);
+      });
+      const renderFeatures = (detailCount: number): string => {
+        const lines = activeFirst.map((f, i) => (i < detailCount ? f.detail : f.nameLine));
+        return ['## Features\n', lines.join('\n'), ''].join('\n');
+      };
+      flush('features', { demotions: [renderFeatures(8), renderFeatures(0)] });
     }
   }
 
@@ -649,6 +738,7 @@ export function generateSnapshot(): string {
   const knowledgeEntries = buildKnowledgeIndex(root);
   if (knowledgeEntries.length > 0) {
     const indexLines: string[] = [];
+    const compactLines: string[] = [];
     const pinnedEntries: typeof knowledgeEntries = [];
     const warmEntries: typeof knowledgeEntries = [];
 
@@ -686,6 +776,7 @@ export function generateSnapshot(): string {
       }
 
       indexLines.push(`- **${entry.slug}** (_dream_context/knowledge/${entry.slug}.md): ${entry.description}${tagsStr}${stalenessNote}`);
+      compactLines.push(`- **${entry.slug}**${tagsStr}${stalenessNote ? ' (stale)' : ''}`);
       if (entry.pinned) {
         pinnedEntries.push(entry);
       } else if (!stalenessNote) {
@@ -720,19 +811,53 @@ export function generateSnapshot(): string {
       parts.push(nonPinnedLines.join('\n'));
     }
     parts.push('');
+    {
+      // Demoted index: pinned entries keep their full warning block; non-pinned
+      // entries drop descriptions but keep slug + tags (the discovery surface
+      // survives — descriptions come back via `dreamcontext knowledge index`).
+      const compactNonPinned = compactLines.filter((_, i) => !pinnedSlugs.has(knowledgeEntries[i]?.slug));
+      const compact: string[] = ['## Knowledge Index\n'];
+      if (pinnedEntries.length > 0) {
+        compact.push('> !!! ÇOK ÖNEMLİ !!! Kullanıcı bu bilgiyi pinlemiş — yapacağın bir işle ilişkisi varsa MUTLAKA OKU!\n');
+        for (const entry of pinnedEntries) {
+          const tagsStr = entry.tags.length > 0 ? ` [${entry.tags.join(', ')}]` : '';
+          compact.push(`- 📌 **${entry.slug}** (_dream_context/knowledge/${entry.slug}.md): ${entry.description}${tagsStr}`);
+        }
+        compact.push('');
+        compact.push('### Other knowledge:\n');
+      }
+      compact.push('(slugs only — files at _dream_context/knowledge/<slug>.md; descriptions via `dreamcontext knowledge index` or memory recall)');
+      compact.push(compactNonPinned.join('\n'));
+      compact.push('');
+      flush('knowledge-index', { demotions: [compact.join('\n')] });
+    }
 
     // 9.5 Warm Knowledge (recently relevant, first paragraph only)
     if (warmEntries.length > 0) {
-      parts.push('## Warm Knowledge (Recently Relevant)\n');
-      for (const entry of warmEntries) {
-        parts.push(`### ${entry.name}`);
-        const firstParagraph = extractFirstParagraph(entry.content);
-        if (firstParagraph) {
-          parts.push(firstParagraph);
+      const renderWarm = (cap: number): string[] => {
+        const out: string[] = ['## Warm Knowledge (Recently Relevant)\n'];
+        for (const entry of warmEntries.slice(0, cap)) {
+          out.push(`### ${entry.name}`);
+          const firstParagraph = extractFirstParagraph(entry.content);
+          if (firstParagraph) {
+            out.push(firstParagraph);
+          }
+          out.push(`-> Read full: _dream_context/knowledge/${entry.slug}.md`);
+          out.push('');
         }
-        parts.push(`-> Read full: _dream_context/knowledge/${entry.slug}.md`);
-        parts.push('');
-      }
+        if (warmEntries.length > cap) {
+          out.push(`(+${warmEntries.length - cap} more warm file(s) — listed in the Knowledge Index above)`);
+          out.push('');
+        }
+        return out;
+      };
+      parts.push(...renderWarm(warmEntries.length));
+      flush('warm-knowledge', {
+        demotions: [
+          renderWarm(4).join('\n'),
+          '(Warm knowledge omitted for budget — the Knowledge Index above lists every file; recall surfaces them on demand.)\n',
+        ],
+      });
     }
   }
 
@@ -746,8 +871,13 @@ export function generateSnapshot(): string {
   } catch {
     // Marketing snapshot must never break the SessionStart hook.
   }
+  flush('marketing', { neverEvict: true });
 
-  return parts.join('\n').trim();
+  // Final assembly through the token budget (see snapshot-budget.ts). The
+  // demotion ladder only engages when the full render exceeds the budget;
+  // under budget the output is byte-identical to the legacy format.
+  const budget = resolveBudget(process.env.DREAMCONTEXT_SNAPSHOT_BUDGET);
+  return applyBudget(sections, budget).text.trim();
 }
 
 /**
@@ -913,11 +1043,12 @@ export function generateSubagentBriefing(): string {
     }
   }
 
-  // 6. Active tasks
-  const activeTasks = getActiveTaskLines(root);
+  // 6. Active tasks (sub-agent briefings stay lean: activity-sorted, capped at
+  // 12 — sub-agents are task-scoped and never need the full backlog)
+  const activeTasks = sortTaskEntriesByActivity(getActiveTaskEntries(root)).map((t) => t.text);
   if (activeTasks.length > 0) {
     parts.push('## Active Tasks\n');
-    parts.push(activeTasks.join('\n'));
+    parts.push(demoteTaskList(activeTasks, 12).join('\n'));
     parts.push('');
   }
 

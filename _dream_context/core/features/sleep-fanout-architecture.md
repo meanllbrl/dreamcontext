@@ -2,7 +2,7 @@
 id: "feat_I4gU7kKs"
 status: "in_review"
 created: "2026-05-09"
-updated: "2026-06-05"
+updated: "2026-06-09"
 released_version: null
 tags: ["agents", "sleep", "consolidation"]
 related_tasks: ["sleep-fanout-architecture"]
@@ -49,7 +49,8 @@ Each specialist runs with its own narrow context, owns one domain, and cannot st
 
 - **[2026-06-04]** Dedup hardening shipped in both `sleep-tasks` and `sleep-product` prompts. Root cause of duplication failures: `sleep-tasks` Step 2 previously said "create one" without a mandatory recall-first dedup gate; `sleep-product` had a one-line dedup note but no sharp-vs-soft distinction rubric. Fix: (a) `sleep-tasks` Step 2 now requires `memory recall --types task` + active-list scan before any create, with an explicit decision table (smaller slice → fold into existing via `tasks insert`; genuine new concern → create); (b) `sleep-product` B2 now has a full "consolidation rubric" (extend existing on soft/family distinction, create only on sharp topical boundary that sharpens tags). The rubric is also referenced in the orchestrator brief sent to each specialist. Four agent file locations kept in sync: `agents/`, `.codex/agents/prompts/`, `.claude/agents/`, `dist/agents/`.
 
-- **[2026-05-22]** `sleep-state` B0 split into two gates: B0a (two-observation recurrence threshold) for preference/decision updates to `1.user.md` + `2.memory.md`; B0b (single-observation, code-reality) for `3.style_guide`, `4.tech_stack`, `core/data-structures/*`, `6.system_flow`. This prevents stale data-structure docs from requiring two sessions before a refresh. B1 priority row removed from the sleep-state protocol (was confusing, removed as dead weight).
+- **[2026-06-09]** Data-structures ownership moved from `sleep-state` to `sleep-product` (issue #12). `sleep-state` B0b no longer routes to `core/data-structures/*` (that path is retired). `sleep-product` B6 now owns schema writes to `knowledge/data-structures/<product>.md` with a single-observation gate (schema changes reflected same cycle, no two-observation wait).
+- **[2026-05-22]** `sleep-state` B0 split into two gates: B0a (two-observation recurrence threshold) for preference/decision updates to `1.user.md` + `2.memory.md`; B0b (single-observation, code-reality) for `3.style_guide`, `4.tech_stack`, `6.system_flow`. B1 priority row removed from the sleep-state protocol (was confusing, removed as dead weight).
 - **[2026-05-22]** `sleep-product` A4 broadened: new PRD triggers are now OR(a) ≥2 acceptance criteria, (b) user named feature explicitly, (c) dangling `feature:` frontmatter in a task file. ACs in a newly-created PRD may be empty placeholder stubs — PRDs are created speculatively and filled during subsequent sessions.
 - **[2026-05-22]** `sleep-product` A5 multi-product pass added: when multiple products are detected, each product may receive its own product-specific PRD/knowledge updates. B5 per-product knowledge stubs: if `multiProduct` lists products, ensure `knowledge/products/<name>.md` exists for each; create stub if missing.
 - **[2026-05-10]** 5→3 specialist collapse. Domain merges: sleep-state = old sleep-core + sleep-changelog (both always-fire, non-overlapping file sets — CHANGELOG/RELEASES vs soul/user/memory). sleep-product = old sleep-knowledge + sleep-features (both conditional, both retrospective documentation). Collapse rationale: parallel agents reduce wall-clock only to the slowest (sleep-tasks); collapsing always-fire pairs reduces sub-agent launch overhead without slowing the consolidation floor. Files removed: `agents/sleep-changelog.md`, `agents/sleep-core.md`, `agents/sleep-knowledge.md`, `agents/sleep-features.md` (and all `.codex/` mirrors). Files created: `agents/sleep-state.md`, `agents/sleep-product.md`.
@@ -97,6 +98,11 @@ Each specialist runs with its own narrow context, owns one domain, and cannot st
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-06-09 - Data-structures ownership transferred to sleep-product (issue #12)
+- `sleep-state` B0b no longer routes schema writes to `core/data-structures/*` (retired path).
+- `sleep-product` B6 owns schema writes to `knowledge/data-structures/<product>.md` with single-observation gate.
+- Constraints updated to reflect ownership shift.
 
 ### 2026-06-04 - Dedup hardening: recall-before-create + consolidation rubric
 - `sleep-tasks` Step 2: mandatory `memory recall --types task` + active-list scan before create; decision table distinguishes fold-in (smaller slice) vs new task (genuinely separate concern).

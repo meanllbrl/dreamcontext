@@ -7,7 +7,7 @@ import { resolveContextRoot } from '../../lib/context-path.js';
 import type { SleepState, Bookmark } from './sleep.js';
 import { readSleepState, writeSleepState, bumpKnowledgeAccess } from './sleep.js';
 import { distillTranscript } from './transcript.js';
-import { buildDigest, writeDigest, digestExists } from '../../lib/session-digest.js';
+import { buildDigest, writeDigest, digestExists, digestIsPartial } from '../../lib/session-digest.js';
 import { detectSalience } from '../../lib/salience.js';
 import { generateId } from '../../lib/id.js';
 import { generateSnapshot, generateSubagentBriefing } from './snapshot.js';
@@ -542,7 +542,9 @@ export function registerHookCommand(program: Command): void {
       // in its own try/catch so a single bad transcript can NEVER break the hook.
       for (const session of state.sessions) {
         if (!session.transcript_path) continue;
-        if (digestExists(root, session.session_id)) continue;
+        // A PARTIAL digest (written by the PreCompact hook mid-session) does
+        // not block the catch-up: the full-transcript digest supersedes it.
+        if (digestExists(root, session.session_id) && !digestIsPartial(root, session.session_id)) continue;
         try {
           const distilled = distillTranscript(session.transcript_path);
 
@@ -957,6 +959,26 @@ export function registerHookCommand(program: Command): void {
       }
 
       writeSleepState(root, state);
+
+      // ── Pre-compaction capture: digest the live transcript NOW. ───────────
+      // Compaction is where mid-session decisions die: the agent's context is
+      // summarised away, the session hasn't ended, and the Stop-hook capture
+      // path is hours away. Digesting here puts the pre-compaction decisions
+      // into the recall corpus IMMEDIATELY — the very next UserPromptSubmit
+      // recall can re-surface what compaction just dropped, in the SAME
+      // session. The digest is marked `partial: true`; the SessionStart
+      // catch-up re-digests the full transcript over it after the session
+      // ends. Best-effort: a bad transcript must never break compaction.
+      try {
+        const sessionId = (input && typeof input.session_id === 'string') ? input.session_id : '';
+        const transcriptPath = (input && typeof input.transcript_path === 'string') ? input.transcript_path : '';
+        if (sessionId && transcriptPath && existsSync(transcriptPath)) {
+          const distilled = distillTranscript(transcriptPath);
+          writeDigest(root, sessionId, buildDigest(distilled), { partial: true });
+        }
+      } catch {
+        // never block compaction
+      }
     });
 
   // --- hook ensure-dashboard ---

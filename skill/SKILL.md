@@ -482,6 +482,27 @@ _dream_context/
 
 ---
 
+## Improving dreamcontext (Agent Feedback)
+
+You are not just a *user* of dreamcontext — you are its field reporter. When dreamcontext gets in your way, the system can only improve if that friction reaches its maintainers. Take responsibility: file it.
+
+**Trigger — the moment you notice any of these, consider filing feedback:**
+- You expected a fact to be in memory but `memory recall` didn't surface it (a recall gap, not a missing fact).
+- You wished a CLI command existed and there was no path (e.g. "I want to reopen a completed task" and no `tasks reopen`).
+- A command, hook, or doc behaved wrong, was confusing, or crashed.
+- The structure forced an awkward workaround to do something the system should support directly.
+
+Do **not** silently work around it. A workaround fixes today; feedback fixes the system.
+
+**The loop (this is the only sanctioned way to file — never run `gh issue create` by hand):**
+1. **Draft.** Run `dreamcontext feedback --dry-run` with the category and a complete scenario. Fill `-s` (what you were doing), `-e` (what you expected), `-g` (what was missing/broken), `-r` (exact commands), `-p` (your proposed improvement). A maintainer who has never seen your session must understand it from the issue alone — include the whole scenario.
+2. **Confirm with the user.** Show them the rendered draft and ask permission. This writes to a public repo on their behalf — never file without an explicit yes.
+3. **File.** Re-run the same command without `--dry-run` and with `--yes`. It checks for near-duplicate open issues, applies the `agent-feedback` label, and files to the dreamcontext project (`meanllbrl/dreamcontext`) — **not** the user's own repo.
+
+**No GitHub access?** If the command reports `gh` is missing or unauthenticated, relay its guidance to the user: install `gh` + run `gh auth login`, and if they have no GitHub account, ask them to create a free one at github.com/signup. They need an account to file. Once they're signed in, re-run the loop.
+
+**Quality bar:** one issue per distinct gap, concrete title, full scenario, a concrete proposal. Vague feedback ("recall is bad") is noise; a reproducible scenario with a proposed command is signal.
+
 ## Command Reference
 
 All commands prefixed with `dreamcontext`. For reading/searching, use native tools directly.
@@ -543,6 +564,7 @@ All commands prefixed with `dreamcontext`. For reading/searching, use native too
 | `config show` | Print project config (platforms, packs, native-memory state) |
 | `config native-memory <enable\|disable>` | Toggle Claude's native auto-memory; disabled by default so dreamcontext owns project memory |
 | `upgrade [--check]` | Update the dreamcontext CLI itself to the latest npm release |
+| `feedback -c <category> -t <title> -s <scenario> [-e expected] [-g gap] [-r repro] [-p proposal] [--dry-run] [--yes]` | File a structured gap/bug as a GitHub issue to the **dreamcontext project** (upstream, not the user's repo). Use `--dry-run` to render a draft for the user; file with `--yes` only after they approve. Categories: `bug \| missing-cli \| unseen-memory \| feature \| docs \| other`. See "Improving dreamcontext" below. |
 
 Feature insert sections: `changelog`, `notes`, `technical_details`, `constraints`, `user_stories`, `acceptance_criteria`, `why`
 Task insert sections: `why`, `user_stories`, `acceptance_criteria`, `constraints`, `technical_details`, `notes`, `changelog`

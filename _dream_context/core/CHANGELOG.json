@@ -1,5 +1,130 @@
 [
   {
+    "date": "2026-06-10",
+    "type": "test",
+    "scope": "cli",
+    "description": "Capture issue #19 as a test-first stub spec before implementation. dreamcontext should coexist with Graphify (code-structure graph tool) without building or indexing the graph itself. When `graphify-out/graph.json` (or root-level `graph.json`) is detected, the snapshot gains a one-line code-graph nudge; `doctor` prints an info line; the explore agent prompt is updated to route structure questions to the graph. Decision: do NOT build/refresh the graph ourselves (mem0 lesson), do NOT mix into BM25 corpus (hub docs hijack proven by linkAware rejection in recall v3). 12 `it.todo` tests in tests/unit/graphify-coexistence.test.ts cover the full contract. Implementation: create `src/lib/code-graph.ts` `hasCodeGraph()` and wire snapshot + doctor.",
+    "breaking": false,
+    "summary": "Test-first spec for graphify coexistence (#19): read-only detection, snapshot nudge, doctor info",
+    "references": [
+      "file:tests/unit/graphify-coexistence.test.ts",
+      "url:https://github.com/meanllbrl/dreamcontext/issues/19"
+    ]
+  },
+  {
+    "date": "2026-06-10",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "Several dashboard UX improvements shipped this cycle. Page-level `<h1 className=\"page-title\">` headings removed from Tasks, Features, and Knowledge pages (they ate viewport and duplicated sidebar nav). SleepPage gets a max-width alignment fix matching the rest of the app. FeaturesPage gains a client-side search input that filters features by name/description and auto-expands all folders while a query is active. KnowledgePage search similarly auto-expands entries. A new `ExcalidrawPreview` component (+ `dashboard/src/lib/excalidraw.ts`) renders Obsidian Excalidraw `.excalidraw.md` boards as static SVGs with pan/zoom-to-fit using panzoom, lazy-loading `@excalidraw/excalidraw` only when an Excalidraw knowledge file is opened. I18n strings added for features.search.",
+    "breaking": false,
+    "summary": "Dashboard UX: page-title removal, Sleep page width fix, Features search, ExcalidrawPreview",
+    "references": [
+      "file:dashboard/src/pages/FeaturesPage.tsx",
+      "file:dashboard/src/pages/KnowledgePage.tsx",
+      "file:dashboard/src/pages/SleepPage.css",
+      "file:dashboard/src/components/core/ExcalidrawPreview.tsx",
+      "file:dashboard/src/lib/excalidraw.ts"
+    ]
+  },
+  {
+    "date": "2026-06-10",
+    "type": "feat",
+    "scope": "cli",
+    "description": "Add agent-driven feedback loop so a dreamcontext-powered agent can take responsibility for reporting gaps it hits (unseen memory, missing CLI command, bug, friction) by filing a structured issue against the upstream `meanllbrl/dreamcontext` repo (#4). Core: `src/lib/feedback.ts` handles `gh` detection (installed/authenticated/account), issue body templating (Scenario / Expected / Gap / Repro / Suggested improvement / Environment), Jaccard-similarity dedup, and `gh issue create` wrapping. CLI: `dreamcontext feedback --title --category --scenario --dry-run --yes` with interactive draft preview and explicit confirmation before filing; if `gh` is absent/unauthenticated, guides the user through setup including `github.com/signup` for account-less users. Behavioral: SKILL.md gains an \"Improving dreamcontext\" section establishing the agent as field reporter with a draft-confirm-file loop and an explicit prohibition on silent workarounds. 17 unit tests. Closes #4.",
+    "breaking": false,
+    "summary": "Agent feedback loop: `dreamcontext feedback` files structured GitHub issues upstream",
+    "references": [
+      "file:src/lib/feedback.ts",
+      "file:src/cli/commands/feedback.ts",
+      "file:skill/SKILL.md",
+      "file:tests/unit/feedback.test.ts",
+      "task:agent-feedback-loop",
+      "url:https://github.com/meanllbrl/dreamcontext/issues/4"
+    ]
+  },
+  {
+    "date": "2026-06-10",
+    "type": "docs",
+    "scope": "excalidraw",
+    "description": "Document file layout conventions for the excalidraw skill in SKILL.md (#16 follow-up). Covers three patterns: single board (spec next to generated .excalidraw.md in a `_spec/` subfolder), multi-board pipeline (`boards/pipeline/spec/` with a single `generate.js` entrypoint that rebuilds all boards), and many-boards-from-shared-data (one board per item from a shared JSON data set). Establishes the convention that generated `.excalidraw.md` files are disposable derivations of their specs, and that the `ROOT = path.resolve(__dirname, '..')` pattern keeps generators portable regardless of invocation directory. Two Excalidraw diagrams committed to `_dream_context/knowledge/diagrams/` as living examples.",
+    "breaking": false,
+    "summary": "Excalidraw skill: spec/output file layout conventions for single-board and pipeline patterns",
+    "references": [
+      "commit:5d9b9df",
+      "file:skill/SKILL.md",
+      "file:_dream_context/knowledge/diagrams/memory-upgrade-plan.excalidraw.md"
+    ]
+  },
+  {
+    "date": "2026-06-10",
+    "type": "feat",
+    "scope": "context",
+    "description": "Implement AI-driven multi-person detection and attribution (#8). The sleep cycle detects multiple distinct human git authors using a two-signal corroboration gate (distinct `git log --format='%an'` authors + self-identification in session transcripts). On detection, the people roster is appended to `state/.config.json` (additive union, never overwrite), a `## People` section is added/refreshed in `1.user.md`, and changelog entries for that cycle are attributed via `--authors` slugs. Single-person projects produce byte-identical output. Detection logic lives in sleep-state Pass B.5; all schema additions are backwards-compatible. 21 stub tests in tests/unit/multi-people-awareness.test.ts cover the full contract. Closes #8.",
+    "breaking": false,
+    "summary": "Multi-people awareness: auto-detect collaborators, attribute changelog/tasks per person",
+    "references": [
+      "commit:ebbf62e",
+      "file:tests/unit/multi-people-awareness.test.ts",
+      "url:https://github.com/meanllbrl/dreamcontext/issues/8"
+    ]
+  },
+  {
+    "date": "2026-06-10",
+    "type": "feat",
+    "scope": "features",
+    "description": "Add freshness tracking and validation to the features system. Each feature PRD gains an `updated` frontmatter field; `features set` can stamp it without hand-editing. `dreamcontext features doctor` runs a validation pass: warns on PRDs not updated in 30+ days, flags missing `why` sections, checks that frontmatter fields are valid, and reports PRDs linked from tasks that don't exist. The sleep-product specialist now runs `features doctor` as part of its pass and surfaces staleness counts in its report. Closes #13.",
+    "breaking": false,
+    "summary": "PRD freshness tracking + `features doctor` warns on stale/missing PRDs",
+    "references": [
+      "commit:d9a7cf4",
+      "file:src/cli/commands/features.ts",
+      "url:https://github.com/meanllbrl/dreamcontext/issues/13"
+    ]
+  },
+  {
+    "date": "2026-06-10",
+    "type": "feat",
+    "scope": "knowledge",
+    "description": "Add SQL fence rendering for knowledge/data-structures/ files. The dashboard MarkdownPreview detects a single ```sql fenced block and renders it with highlight.js SQL syntax highlighting using the brand palette (issue #12 follow-up). An idempotent backfill migration wraps already-migrated data-structure files that lacked the fence: runs on `sleep start` so no manual migration step is needed. `dreamcontext init` now scaffolds new data-structure files with the fenced template. Closes the round trip opened by #12 — all data-structure files now have consistent, highlighted bodies regardless of when they were migrated.",
+    "breaking": false,
+    "summary": "Render data-structures as fenced SQL; backfill existing files on sleep start",
+    "references": [
+      "commit:49e689f",
+      "commit:d782095",
+      "file:src/lib/data-structures-migration.ts",
+      "file:dashboard/src/lib/codeHighlight.ts",
+      "url:https://github.com/meanllbrl/dreamcontext/issues/12"
+    ]
+  },
+  {
+    "date": "2026-06-10",
+    "type": "feat",
+    "scope": "snapshot",
+    "summary": "Snapshot budget ladder: 20K→10.4K tokens, brain loads inline again",
+    "description": "Snapshot token budget + demotion ladder shipped: sections demote through curated renders (memory decisions→titles, tasks top-N sorted by activity, features detail→name-lines, knowledge index→compact slugs, warm capped) — never raw truncation, never-evict identity tier, recovery footer. Default 10K tokens via DREAMCONTEXT_SNAPSHOT_BUDGET (0/off disables). Live: 20,253→10,386 tokens, hook output 79.2KB→42KB (was being persisted with 2KB blind preview — brain not loading). PreCompact now digests the live transcript (partial:true, superseded by full digest at catch-up) so compacted-away decisions are recallable on the next prompt. sleep-tasks gained a 21-day staleness sweep.",
+    "breaking": false,
+    "references": [
+      "file:src/lib/snapshot-budget.ts",
+      "file:src/cli/commands/snapshot.ts",
+      "file:src/cli/commands/hook.ts",
+      "task:recall-context-uplift-v07"
+    ]
+  },
+  {
+    "date": "2026-06-10",
+    "type": "feat",
+    "scope": "memory",
+    "summary": "Recall v3: TR+EN uplift, held-out validated, no regressions",
+    "description": "Recall engine v3: TR morphology (two-hop suffix folding, possessive compounds, question-word stopwords), directed synonym bridges (paraphrase→canonical one-way), EN -e fold fix (databases↔database families now merge), CHANGELOG_RANK_FACTOR=0.85 canonical-first. Train r@1 86.7→91.7, blind held-out r@1 83.3→93.3, TR held-out r@1 70→90 r@3 80→100. Zero category regressions on either set. linkAware tested and REJECTED with data (overall r@1 craters to 68.3 — hub docs hijack). Held-out set: eval/gold-heldout.jsonl (30q, authored blind).",
+    "breaking": false,
+    "references": [
+      "file:src/lib/recall.ts",
+      "file:src/lib/recall-synonyms.ts",
+      "file:eval/gold-heldout.jsonl",
+      "task:recall-context-uplift-v07"
+    ]
+  },
+  {
     "date": "2026-06-09",
     "type": "feat",
     "scope": "release",

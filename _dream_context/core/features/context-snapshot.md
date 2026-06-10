@@ -2,13 +2,14 @@
 id: feat_4NB3SlrK
 status: active
 created: '2026-02-25'
-updated: '2026-05-23'
+updated: '2026-06-10'
 released_version: 0.1.0
 tags:
   - architecture
   - backend
   - onboarding
-related_tasks: []
+related_tasks:
+  - recall-context-uplift-v07
 ---
 
 ## Why
@@ -27,6 +28,8 @@ Every AI session starts blind — no memory of previous work, no knowledge of pr
 - [x] As an AI agent, I want the extended core files index shown so I know what additional files exist and can read them on demand.
 - [x] As a sub-agent, I want a lightweight context briefing injected at launch so I know the project structure and can check existing knowledge without any tool calls.
 
+- [x] As an AI agent working on a large project, my session snapshot stays within a token budget (default 10,000 tokens) because sections demote through progressively cheaper renders rather than being raw-truncated — so I never silently lose the knowledge index or warnings.
+
 ## Acceptance Criteria
 
 - Running `dreamcontext snapshot` outputs a plain-text, no-color document to stdout.
@@ -42,8 +45,12 @@ Every AI session starts blind — no memory of previous work, no knowledge of pr
 - Output is designed for `SessionStart` hook consumption — no chalk, no interactivity.
 - `hook subagent-start` outputs valid JSON `{"hookSpecificOutput":{"hookEventName":"SubagentStart","additionalContext":"..."}}` per Claude Code's SubagentStart hook spec. The briefing inside is ~25 lines: project summary, directory structure, active tasks, knowledge index, pinned knowledge, usage instructions.
 
+- [x] Snapshot token budget ladder: `src/lib/snapshot-budget.ts` enforces demotion waves (full→summaries→one-line references); never-evict tier (soul, user, warnings, reminders) is untouchable; stops demoting the moment the snapshot fits. Measured on this repo: 20,253→10,386 tokens. `DREAMCONTEXT_SNAPSHOT_BUDGET` env var configures budget; "0"/"off" disables (legacy unbounded).
+
 ## Constraints & Decisions
 
+
+- **[2026-06-10]** Snapshot token budget: sections demote in waves (cheapest-loss first) using `BudgetSection.demotions[]`. Never-evict sections (soul, user, warnings, reminders) are untouchable regardless of budget pressure. The budget gate is enforced in `src/lib/snapshot-budget.ts` by `applyBudget()`. Design principle: nothing is ever raw-truncated — demoted content stays reachable via file path + recall corpus.
 - **[2026-02-25]** Plain text only — no ANSI colors or interactive elements. The snapshot is piped into the Claude Code context window, not displayed to a human in a terminal.
 - **[2026-02-25]** Completed tasks are excluded from the snapshot to avoid cluttering context with resolved work.
 - **[2026-05-23]** Feature `Why:` and active-task `why:` excerpt cap raised from 100 → 250 chars. HTML template comments stripped from excerpts so scaffold boilerplate doesn't leak into the snapshot.

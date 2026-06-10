@@ -189,6 +189,23 @@ No category regressed. 1063 tests passing (post-build).
 - Key files: `src/lib/recall.ts`, `src/lib/recall-synonyms.ts`, `src/lib/salience.ts`, `src/lib/session-digest.ts`, `eval/RESULTS.md`, `eval/gold.jsonl`.
 - Related knowledge: `haiku-recall-architecture.md`, `decision-mem0-vs-bm25-recall.md`, `decision-link-aware-vs-embedding-recall.md`.
 
+## Update (2026-06-10) — v3: TR Morphology, Directed Bridges, Held-Out Validation
+
+v3 shipped four engine changes, tuned on the 60q train set and validated on a NEW 30-query held-out set (`eval/gold-heldout.jsonl`, authored blind by a sub-agent that never saw the engine changes):
+
+1. **TR morphology**: two-hop suffix folding (`sunucusunda`→`sunucu`), possessive+case compound suffixes (`sında/sunun/sini`), TR question-word stopwords (`nelerdi, nasıl, hangi…`). Bare-n accusatives (`nı/ni/nu/nü`) tried and REMOVED — they mis-segment consonant-final loanwords (`konsolidasyonu`→`konsolidasyo`).
+2. **Directed synonym bridges** (`DIRECTED_BRIDGES`): paraphrase→canonical is ONE-WAY (`fold`→consolidation but `sleep`↛`fold`). Bidirectional colloquial terms measurably regressed topical-adjacency.
+3. **EN `-e` fold fix**: the v2 `-es` rule permanently split e-final families (`databases`→`databas` vs `database`→`database` NEVER matched). Now `-s` strips first, then trailing `-e` folds on len>5 — database/databases/release/releases/create/created all merge. A symmetric post-TR-strip fold keeps `seviyeleri`↔`seviye` aligned.
+4. **CHANGELOG_RANK_FACTOR = 0.85** (rankScore only): short changelog entries were systematically outranking the canonical docs they point to (BM25F length normalisation), measured on BOTH gold sets. Canonical-first on near-ties; a clearly-stronger changelog still wins.
+
+**Results (frozen 242-doc corpus, old→new)** — train: r@1 86.7→91.7, r@3 93.3→96.7, MRR 0.906→0.943, paraphrase r@1 66.7→91.7, TR r@3 87.5→100. Held-out (blind): r@1 83.3→93.3, r@3 90.0→96.7, MRR 0.875→0.957, TR r@1 70→90, TR r@3 80→100. **No category regressed on either set.** Held-out improved more than train — no overfitting signature.
+
+**Link-aware boost: tested and REJECTED.** With ~13 real wikilinks in the corpus, enabling `linkAware` cratered train r@1 to 68.3 (hub docs like memory-engine-360-roadmap hijack everything they link). Stays OFF; the `enableLinkBoost` deferral in [[decision-link-aware-vs-embedding-recall]] is now resolved negatively with data.
+
+**Measurement discipline learned**: the live corpus mutates while you work (your own tracking task, session digests). Engine A/Bs must run on a frozen corpus — `scripts/recall-ab.ts` filters captures + in-flight tasks. The capture-e2e test's 2.0-floor assertion turned out to depend on the v2 cookie/cookies stemmer bug inflating IDF on a 4-doc fixture; fixed by adding unrelated filler docs (realistic IDF), not by weakening the guard.
+
+Regression locks: `tests/unit/recall-engine-v3.test.ts`.
+
 ## Last Verified
 
-2026-06-06.
+2026-06-10.

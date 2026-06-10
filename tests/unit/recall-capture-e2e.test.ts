@@ -111,6 +111,26 @@ describe('continuous-capture end-to-end loop (STEP 3)', () => {
     writeDigest(root, 'sess-auth-1', buildDigest(authDecisionSession()));
     writeBookmarksFromSalience(root, 'sess-auth-1');
 
+    // Unrelated filler docs so IDF is meaningful. Without them every doc in the
+    // tmp corpus carries the same auth decision, and the raw-score floor
+    // assertion below measures an IDF artifact of a 4-near-duplicate corpus
+    // rather than hook behavior. (The original version passed only because the
+    // v2 stemmer failed to match `cookie`↔`cookies`, keeping IDF inflated.)
+    mkdirSync(join(root, 'knowledge'), { recursive: true });
+    const filler = [
+      ['deploy-pipeline', 'CI deploy pipeline retries and rollback strategy for the build.'],
+      ['design-tokens', 'Color palette and spacing scale for the dashboard UI components.'],
+      ['db-indexing', 'Postgres composite index planning for the reporting queries.'],
+      ['release-notes', 'Changelog conventions and release notes formatting guide.'],
+    ] as const;
+    for (const [slug, body] of filler) {
+      writeFileSync(
+        join(root, 'knowledge', `${slug}.md`),
+        `---\nname: ${slug}\ndescription: ${body}\n---\n\n${body}\n`,
+        'utf-8',
+      );
+    }
+
     const corpus = buildCorpus(root);
     const hits = bm25Search('switch auth token store httpOnly cookies', corpus, 10);
     const slugs = hits.map((h) => h.doc.slug);

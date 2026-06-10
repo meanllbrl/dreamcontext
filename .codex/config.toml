@@ -24,7 +24,7 @@ timeout = 5
 [[hooks.UserPromptSubmit.hooks]]
 type = "command"
 command = "npx dreamcontext hook user-prompt-submit"
-timeout = 5
+timeout = 120
 
 [[hooks.PostToolUse]]
 matcher = "Edit|Write"

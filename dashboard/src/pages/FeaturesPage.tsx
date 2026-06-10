@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
 import { useI18n } from '../context/I18nContext';
@@ -33,11 +33,23 @@ export function FeaturesPage() {
   const { t } = useI18n();
   const [selected, setSelected] = useState<string | null>(null);
   const [viewTab, setViewTab] = useState<'file' | 'preview'>('preview');
+  const [search, setSearch] = useState('');
 
   const { data: featuresData, isLoading, isError, error } = useQuery({
     queryKey: ['features'],
     queryFn: () => api.get<{ features: Feature[] }>('/features'),
   });
+
+  const allFeatures = featuresData?.features ?? [];
+  const filtered = useMemo(() => {
+    if (!search.trim()) return allFeatures;
+    const q = search.toLowerCase();
+    return allFeatures.filter(f =>
+      f.slug.toLowerCase().includes(q) ||
+      f.status.toLowerCase().includes(q) ||
+      f.tags.some(tag => tag.toLowerCase().includes(q))
+    );
+  }, [allFeatures, search]);
 
   const { data: featureDetail } = useQuery({
     queryKey: ['features', selected],
@@ -49,16 +61,19 @@ export function FeaturesPage() {
   if (isLoading) return <div className="loading">{t('common.loading')}</div>;
   if (isError) return <div className="error-state">Failed to load features. {error?.message}</div>;
 
-  const features = featuresData?.features ?? [];
-
   return (
     <div className="features-page">
-      <h1 className="page-title">{t('features.title')}</h1>
+      <input
+        className="features-search"
+        placeholder={t('features.search')}
+        value={search}
+        onChange={e => setSearch(e.target.value)}
+      />
 
       <div className="features-layout">
         <div className="features-list">
-          {features.length === 0 && <div className="core-empty">{t('common.empty')}</div>}
-          {features.map((feature, index) => (
+          {filtered.length === 0 && <div className="core-empty">{t('common.empty')}</div>}
+          {filtered.map((feature, index) => (
             <button
               key={feature.slug}
               className={`feature-card ${selected === feature.slug ? 'feature-card--active' : ''} animate-stagger animate-stagger-${Math.min(index + 1, 8)}`}

@@ -30,3 +30,6 @@ playwright-report/
 e2e/shots/
 .playwright/
 .codex/
+
+# Scratch downloads (videos, transcripts, media pulled for analysis)
+_download/

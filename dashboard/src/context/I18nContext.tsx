@@ -83,6 +83,7 @@ const translations: Record<string, Record<string, string>> = {
     'knowledge.unpin': 'Unpin',
     'knowledge.search': 'Search knowledge...',
     'features.title': 'Features',
+    'features.search': 'Search features...',
     'settings.title': 'Settings',
     'settings.platforms': 'Platforms',
     'settings.save': 'Save',

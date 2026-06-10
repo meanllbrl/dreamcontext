@@ -2,11 +2,12 @@
 id: feat_LDQn2Bi8
 status: active
 created: '2026-02-25'
-updated: '2026-03-01'
+updated: '2026-06-09'
 released_version: 0.1.0
 tags:
   - backend
   - architecture
+  - cli
 related_tasks: []
 ---
 
@@ -22,6 +23,11 @@ Work spans multiple sessions, and agents need a structured way to track what is 
 - [x] As an AI agent, I want active tasks surfaced automatically in the context snapshot so I can orient immediately without reading individual files.
 - [x] As a developer, I want fuzzy task lookup by name so I don't have to type the exact slug every time.
 - [x] As a developer, I want tasks stored as Markdown files with YAML frontmatter so they are human-readable and editable outside the CLI.
+- [x] As a developer, I want to filter `tasks list` by tag, version, priority, status, and feature so I can surface the right subset without reading all task files.
+- [x] As a developer, I want to group `tasks list` output by version, priority, status, or tags so I can see planned work organized by milestone.
+- [x] As a developer, I want `tasks list --json` to emit machine-readable output so I can pipe tasks into scripts and other tools.
+- [x] As an AI agent, I want to RICE-score tasks (reach, impact, confidence, effort) so that work can be prioritized quantitatively.
+- [x] As an AI agent, I want tasks to carry urgency and version fields so that Eisenhower Matrix and milestone grouping work correctly in the dashboard.
 
 ## Acceptance Criteria
 
@@ -34,9 +40,18 @@ Work spans multiple sessions, and agents need a structured way to track what is 
 - Completed tasks are excluded from the context snapshot Active Tasks section.
 - Active tasks in the snapshot show: slug name, status, priority, and last updated date.
 - Task IDs are generated with `generateId('task')` (nanoid-based, prefixed).
+- [x] `tasks list --tag <t>` (repeatable, AND semantics) and `--any-tag <t>` (OR semantics) filter by tags; `--version`, `--priority`, `--feature` filter by those frontmatter fields; all filters compose (case-insensitive).
+- [x] `tasks list --group-by version|priority|status|tag` emits sectioned output with per-group counts.
+- [x] `tasks list --json` emits the filtered result set as a JSON array suitable for piping.
+- [x] `tasks list --long` shows version and tags inline alongside slug/status/priority.
+- [x] `tasks tags [--all]` lists distinct tags with counts.
+- [x] `tasks create` and `tasks rice` accept `--reach`, `--impact`, `--confidence`, `--effort` flags; score is computed server-side as `(reach × impact × confidence/100) / effort`.
+- [x] Tasks carry `urgency` (critical/high/medium/low, default medium) and `version` frontmatter fields; CLI and dashboard both surface them.
 
 ## Constraints & Decisions
 
+- **[2026-06-09]** `tasks list` filter flags (`--tag`, `--any-tag`, `--version`, `--priority`, `--feature`) all compose as AND; `--any-tag` is OR within its own set. Multiple `--tag` flags require ALL tags present. Case-insensitive matching throughout. `--json` uses the same filter pipeline, emitting raw JSON for scripting.
+- **[2026-06-09]** RICE score = `(reach × impact × confidence/100) / effort`; computed server-side on create/update; stored in frontmatter as `rice: {reach, impact, confidence, effort, score}`. `tasks rice <name>` prints current values; `--clear` removes them. Score powers the Scatter view and RICE sort in the dashboard.
 - **[2026-02-25]** Tasks live in `_dream_context/state/` as individual `.md` files (one file per task). This makes each task independently readable and allows the snapshot to glob them efficiently.
 - **[2026-02-25]** Task slugs are generated via `slugify()` — lowercase, hyphen-separated. The filename is the primary identifier; the `name` field in frontmatter preserves the original display name.
 - **[2026-02-25]** No delete command is intentional. Tasks are completed, not deleted, to preserve history. Users can archive manually if needed.
@@ -46,41 +61,45 @@ Work spans multiple sessions, and agents need a structured way to track what is 
 
 **Task file location**: `_dream_context/state/<slug>.md`
 
-**Task file schema**:
+**Task file schema** (current as of v0.6.0):
 ```yaml
 ---
 id: "task_abc123"
 name: "Implement auth middleware"
 description: "Add JWT validation to all protected routes"
 priority: "high"          # critical | high | medium | low
-status: "todo"            # todo | in_progress | completed
+urgency: "medium"         # critical | high | medium | low (Eisenhower axis)
+status: "todo"            # todo | in_progress | in_review | completed
 created_at: "2026-02-25"
 updated_at: "2026-02-25"
 tags: []
+version: "v0.6.0"         # optional planning-version association
 parent_task: null
+related_feature: null     # feature slug for cross-link
+rice:
+  reach: 5
+  impact: 3
+  confidence: 75
+  effort: 2
+  score: 5.625
 ---
-
-## Changelog
-<!-- LIFO: newest entry at top -->
-
-### 2026-02-25 - Created
-- Task created.
 ```
 
 **Commands** (`src/cli/commands/tasks.ts`):
-- `tasks create <name>` — interactive prompts for description and priority if not provided via flags (`-d`, `-p`). Uses `@inquirer/prompts`.
-- `tasks list [--all] [-s status]` — lists tasks from `state/*.md`. Default excludes `status: completed`. `--all` shows all. `-s` (or `--status`) filters by a specific status value. Output sorted by updated_at descending. Colored output. `validStatuses` includes `new` to handle non-standard status values from other projects.
-- `tasks log <name> [content]` — appends to `## Changelog` section at top (LIFO). If content not provided as argument, prompts interactively.
-- `tasks complete <name> [summary]` — updates `status` and `updated_at` in frontmatter, prepends completion changelog entry.
+- `tasks create <name>` — interactive or flag-driven (`-d`, `-p`, `-t`, `-w`). RICE flags: `--reach`, `--impact`, `--confidence`, `--effort` (additive).
+- `tasks list` — multi-filter: `--tag` (AND), `--any-tag` (OR), `--version`, `--priority`, `--feature`, `--status`, `--all`; compose freely. `--group-by version|priority|status|tag` for sectioned output. `--long` adds version+tags inline. `--json` emits raw JSON array.
+- `tasks tags [--all]` — distinct tag counts (includes completed when `--all`).
+- `tasks rice <name>` — print or update RICE fields; `--clear` removes all.
+- `tasks log <name> [content]` — LIFO insert into `## Changelog`.
+- `tasks status <name> <status> [reason]` — bump status with automatic changelog entry.
+- `tasks complete <name> [summary]` — sets `status: completed`.
+- `tasks insert <name> <section> <content>` — inserts into any named section.
 
-**Lookup logic** (`findTaskFile`): exact slug → prefix match → substring match, using fast-glob to enumerate `state/*.md`.
+**Lookup logic** (`findTaskFile`): exact slug → prefix match → substring match.
 
-**Library dependencies**:
-- `src/lib/frontmatter.ts` — `updateFrontmatterFields()`
-- `src/lib/markdown.ts` — `insertToSection()`
-- `src/lib/id.ts` — `generateId()`, `slugify()`, `today()`
+**Library dependencies**: `src/lib/frontmatter.ts`, `src/lib/markdown.ts`, `src/lib/id.ts`
 
-**Snapshot integration**: `src/cli/commands/snapshot.ts` globs `state/*.md`, reads each file's frontmatter, skips `status: completed`, and formats the active task list.
+**Snapshot integration**: globs `state/*.md`, skips `status: completed`, shows slug/status/priority/updated date per task.
 
 ## Notes
 
@@ -91,6 +110,13 @@ parent_task: null
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-06-09 - tasks list filters/grouping/JSON (#5) + RICE scoring
+- `tasks list`: `--tag` (AND), `--any-tag` (OR), `--version`, `--priority`, `--feature`, `--group-by`, `--long`, `--json` — all filters compose case-insensitively. `tasks tags` added.
+- RICE scoring: `--reach/--impact/--confidence/--effort` on create + `tasks rice` command; score stored in frontmatter.
+- `urgency` and `version` frontmatter fields added; `related_feature` cross-link field added.
+- `tasks status` command added (explicit status bump with reason).
+- All shipped in issue #5; full suite green.
 
 ### 2026-03-01 - tasks list command + SKILL.md zero-tool-call fix
 - Added `tasks list` command (default: excludes completed; `--all`; `-s status` filter; colored output). Consistent with `bookmark list` / `trigger list` patterns.

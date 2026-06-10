@@ -162,6 +162,25 @@ dreamcontext tasks list --status completed
 
 If every task linked to the active version is `completed` (or only `in_review` remains), surface this in your report. Do **not** release — that's the user's call.
 
+### 6. Staleness sweep — the active list must stay honest
+
+An "active" backlog that nobody has touched in weeks isn't active — it bloats every SessionStart snapshot (each non-completed task costs snapshot tokens on every session) and buries the work that actually matters. Each cycle, sweep the whole active list, not just this cycle's tasks:
+
+```bash
+dreamcontext tasks list          # every non-completed task, with updated dates
+```
+
+For each task whose `updated` is **21+ days old** and that no session in this cycle touched, pick one:
+
+| Situation | Action |
+|---|---|
+| Work was actually done but never logged | Reconcile it now (steps 3-4) — that's a capture failure, fix it. |
+| Superseded / absorbed by another task | Log a final entry naming the successor, then `dreamcontext tasks status <slug> in_review "superseded by <other-slug> — confirm close"`. |
+| Still genuinely planned, just not started | Leave it, but verify its priority isn't inflated — a `high` task untouched for a month is not high priority; downgrade via Edit. |
+| Abandoned / no longer relevant | `dreamcontext tasks status <slug> in_review "stale 21+ days, appears abandoned — confirm close"`. |
+
+Never silently delete a task and never auto-complete — `in_review` with an explicit reason hands the close decision to the user. List every staleness action in your report.
+
 ## Return — short report
 
 ```
@@ -172,6 +191,7 @@ If every task linked to the active version is `completed` (or only `in_review` r
 - Body reconciled: <slug> (dropped phase 1 from User Stories; replaced Technical Details auth section)
 - Person attribution: <slug> tagged person:ada (multi-person project, ada drove this cycle's work) | OR: single-person project — no person tags injected
 - Version readiness: vX.Y.Z — 4/5 tasks ready for review
+- Staleness sweep: <slug> in_review ("stale 21+ days, appears abandoned"), <slug> priority high→medium (untouched 30d), 2 tasks left as-is (genuinely planned)
 - Cross-domain mentions: <slug> includes a memory-worthy decision about JWT — flagging for sleep-state
 - Skipped: <session_id> had no actionable task signal
 ```

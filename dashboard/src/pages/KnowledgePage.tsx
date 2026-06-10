@@ -2,8 +2,40 @@ import { useState, useMemo } from 'react';
 import { useKnowledgeList, useKnowledge, useToggleKnowledgePin } from '../hooks/useKnowledge';
 import { useI18n } from '../context/I18nContext';
 import { MarkdownPreview } from '../components/core/MarkdownPreview';
+import { SqlPreview } from '../components/core/SqlPreview';
+import { ExcalidrawPreview } from '../components/core/ExcalidrawPreview';
+import { isExcalidrawSlug } from '../lib/excalidraw';
 import { tagHue } from '../lib/tagColor';
 import './KnowledgePage.css';
+
+// Data-structures knowledge files store their schema as a fenced ```sql block.
+// Extract the raw SQL so it can be rendered as a relational/ER view (like the
+// Core page does for standalone .sql files) instead of plain syntax highlighting.
+const SQL_FENCE = /```sql\s*\n([\s\S]*?)```/i;
+
+function extractSchemaSql(slug: string, content: string): string | null {
+  if (!slug.startsWith('data-structures/')) return null;
+  const match = content.match(SQL_FENCE);
+  return match ? match[1] : null;
+}
+
+type KnowledgeListEntry = { slug: string; name: string; description: string; tags: string[]; pinned: boolean };
+
+// "data-structures" -> "Data Structures", "diagrams" -> "Diagrams".
+function prettyFolder(folder: string): string {
+  return folder
+    .split(/[-_]/)
+    .map(w => (w ? w[0].toUpperCase() + w.slice(1) : w))
+    .join(' ');
+}
+
+// Inside a folder, drop the "<folder>/" prefix so cards read "recall.excalidraw"
+// rather than "diagrams/recall.excalidraw". Only strips when the name is still
+// the raw slug path (no custom frontmatter name).
+function leafName(entry: KnowledgeListEntry, folder: string | null): string {
+  if (folder && entry.name.startsWith(`${folder}/`)) return entry.name.slice(folder.length + 1);
+  return entry.name;
+}
 
 export function KnowledgePage() {
   const { t } = useI18n();
@@ -12,6 +44,7 @@ export function KnowledgePage() {
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
   const [viewTab, setViewTab] = useState<'file' | 'preview'>('preview');
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const { data: detail } = useKnowledge(selected ?? '');
 
@@ -26,13 +59,72 @@ export function KnowledgePage() {
     );
   }, [entries, search]);
 
+  // Group entries whose slug carries a folder path (e.g. `diagrams/recall`) into
+  // collapsible folders. Root-level files render flat below the folders.
+  const { rootEntries, folders } = useMemo(() => {
+    const roots: KnowledgeListEntry[] = [];
+    const map = new Map<string, KnowledgeListEntry[]>();
+    for (const e of filtered) {
+      const idx = e.slug.indexOf('/');
+      if (idx === -1) { roots.push(e); continue; }
+      const folder = e.slug.slice(0, idx);
+      const bucket = map.get(folder);
+      if (bucket) bucket.push(e);
+      else map.set(folder, [e]);
+    }
+    const grouped = [...map.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([folder, items]) => ({ folder, label: prettyFolder(folder), entries: items }));
+    return { rootEntries: roots, folders: grouped };
+  }, [filtered]);
+
+  // While searching, auto-expand every folder so matches are visible.
+  const searching = search.trim().length > 0;
+  const isOpen = (folder: string) => searching || expanded.has(folder);
+  const toggleFolder = (folder: string) => {
+    setExpanded(prev => {
+      const next = new Set(prev);
+      if (next.has(folder)) next.delete(folder);
+      else next.add(folder);
+      return next;
+    });
+  };
+
+  const renderCard = (entry: KnowledgeListEntry, folder: string | null = null) => (
+    <button
+      key={entry.slug}
+      className={`knowledge-card ${selected === entry.slug ? 'knowledge-card--active' : ''}`}
+      onClick={() => { setSelected(entry.slug); setViewTab('preview'); }}
+    >
+      <div className="knowledge-card-header">
+        <span className="knowledge-card-name">{leafName(entry, folder)}</span>
+        <button
+          className={`pin-btn ${entry.pinned ? 'pin-btn--active' : ''}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            togglePin.mutate({ slug: entry.slug, pinned: !entry.pinned });
+          }}
+          title={entry.pinned ? t('knowledge.unpin') : t('knowledge.pin')}
+        >
+          {entry.pinned ? '◆' : '◇'}
+        </button>
+      </div>
+      {entry.description && (
+        <p className="knowledge-card-desc">{entry.description}</p>
+      )}
+      <div className="knowledge-card-tags">
+        {entry.tags.map(tag => (
+          <span key={tag} className="task-tag" data-hue={tagHue(tag)}>{tag}</span>
+        ))}
+      </div>
+    </button>
+  );
+
   if (isLoading) return <div className="loading">{t('common.loading')}</div>;
   if (isError) return <div className="error-state">Failed to load knowledge. {error?.message}</div>;
 
   return (
     <div className="knowledge-page">
-      <h1 className="page-title">{t('knowledge.title')}</h1>
-
       <input
         className="knowledge-search"
         placeholder={t('knowledge.search')}
@@ -45,35 +137,27 @@ export function KnowledgePage() {
           {filtered.length === 0 && (
             <div className="core-empty">{t('common.empty')}</div>
           )}
-          {filtered.map(entry => (
-            <button
-              key={entry.slug}
-              className={`knowledge-card ${selected === entry.slug ? 'knowledge-card--active' : ''}`}
-              onClick={() => { setSelected(entry.slug); setViewTab('preview'); }}
-            >
-              <div className="knowledge-card-header">
-                <span className="knowledge-card-name">{entry.name}</span>
-                <button
-                  className={`pin-btn ${entry.pinned ? 'pin-btn--active' : ''}`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    togglePin.mutate({ slug: entry.slug, pinned: !entry.pinned });
-                  }}
-                  title={entry.pinned ? t('knowledge.unpin') : t('knowledge.pin')}
-                >
-                  {entry.pinned ? '◆' : '◇'}
-                </button>
-              </div>
-              {entry.description && (
-                <p className="knowledge-card-desc">{entry.description}</p>
+
+          {folders.map(group => (
+            <div key={group.folder} className="knowledge-folder">
+              <button
+                className="knowledge-folder-header"
+                onClick={() => toggleFolder(group.folder)}
+                aria-expanded={isOpen(group.folder)}
+              >
+                <span className="knowledge-folder-chevron">{isOpen(group.folder) ? '▾' : '▸'}</span>
+                <span className="knowledge-folder-name">{group.label}</span>
+                <span className="knowledge-folder-count">{group.entries.length}</span>
+              </button>
+              {isOpen(group.folder) && (
+                <div className="knowledge-folder-items">
+                  {group.entries.map(entry => renderCard(entry, group.folder))}
+                </div>
               )}
-              <div className="knowledge-card-tags">
-                {entry.tags.map(tag => (
-                  <span key={tag} className="task-tag" data-hue={tagHue(tag)}>{tag}</span>
-                ))}
-              </div>
-            </button>
+            </div>
           ))}
+
+          {rootEntries.map(entry => renderCard(entry))}
         </div>
 
         <div className="knowledge-detail">
@@ -100,7 +184,15 @@ export function KnowledgePage() {
                 </div>
               </div>
               {viewTab === 'preview' && detail.content ? (
-                <MarkdownPreview content={detail.content} />
+                (() => {
+                  if (isExcalidrawSlug(detail.slug)) {
+                    return <ExcalidrawPreview content={detail.content} />;
+                  }
+                  const schemaSql = extractSchemaSql(detail.slug, detail.content);
+                  return schemaSql
+                    ? <SqlPreview content={schemaSql} />
+                    : <MarkdownPreview content={detail.content} />;
+                })()
               ) : (
                 <pre className="core-viewer-content">{detail.content}</pre>
               )}

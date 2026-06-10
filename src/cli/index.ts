@@ -24,6 +24,7 @@ import { registerMemoryCommand } from './commands/memory.js';
 import { registerUpgradeCommand } from './commands/upgrade.js';
 import { registerVaultsCommand } from './commands/vaults.js';
 import { registerConfigCommand } from './commands/config.js';
+import { registerFeedbackCommand } from './commands/feedback.js';
 import { startInteractive } from './interactive.js';
 import { renderBanner } from '../lib/pixel-banner.js';
 import { dreamcontextVersion } from '../lib/manifest.js';
@@ -73,6 +74,7 @@ ${chalk.bold('System')}
   ${chalk.magentaBright('hook')}              Hook handlers used by platform integrations
   ${chalk.magentaBright('transcript')}        Process session transcripts
   ${chalk.magentaBright('doctor')}            Validate _dream_context/ structure and report issues
+  ${chalk.magentaBright('feedback')}          File a gap/bug as a GitHub issue to the dreamcontext project
 
 ${chalk.bold('Dashboard')}
   ${chalk.magentaBright('dashboard')}         Open the web dashboard in your browser
@@ -127,6 +129,7 @@ export function createProgram(): Command {
   registerMemoryCommand(program);
   registerVaultsCommand(program);
   registerConfigCommand(program);
+  registerFeedbackCommand(program);
 
   return program;
 }
