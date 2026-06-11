@@ -363,6 +363,7 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
   const addChangelog = useAddTaskChangelog();
   const { data: versions } = usePlanningVersions();
   const [changelogEntry, setChangelogEntry] = useState('');
+  const [newTag, setNewTag] = useState('');
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [riceExpanded, setRiceExpanded] = useState(initialRiceExpanded ?? !!task.rice);
   const [fullScreen, setFullScreen] = useState(false);
@@ -405,6 +406,22 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
       { slug: task.slug, updates: { rice: patch } },
       { onError: onMutationError },
     );
+  };
+
+  const handleTagsChange = (tags: string[]) => {
+    updateTask.mutate(
+      { slug: task.slug, updates: { tags } },
+      { onError: onMutationError },
+    );
+  };
+
+  const handleAddTag = () => {
+    const tag = newTag.trim();
+    if (!tag) return;
+    if (!task.tags.some(x => x.toLowerCase() === tag.toLowerCase())) {
+      handleTagsChange([...task.tags, tag]);
+    }
+    setNewTag('');
   };
 
   const handleAddChangelog = (e: React.FormEvent) => {
@@ -799,15 +816,37 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
               />
             </PropertyRow>
 
-            {task.tags.length > 0 && (
-              <PropertyRow label="Tags">
-                <div className="prop-tags">
-                  {task.tags.map(tag => (
-                    <span key={tag} className="task-tag" data-hue={tagHue(tag)}>{tag}</span>
-                  ))}
-                </div>
-              </PropertyRow>
-            )}
+            <PropertyRow label="Tags">
+              <div className="prop-tags prop-tags--editable">
+                {task.tags.map(tag => (
+                  <span key={tag} className="task-tag" data-hue={tagHue(tag)}>
+                    {tag}
+                    <button
+                      type="button"
+                      className="task-tag-remove"
+                      aria-label={`Remove tag ${tag}`}
+                      onClick={() => handleTagsChange(task.tags.filter(x => x !== tag))}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+                <input
+                  className="task-tag-input"
+                  value={newTag}
+                  placeholder="+ tag"
+                  aria-label="Add tag"
+                  onChange={e => setNewTag(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleAddTag();
+                    }
+                  }}
+                  onBlur={handleAddTag}
+                />
+              </div>
+            </PropertyRow>
 
             {task.related_feature && (
               <PropertyRow label="Feature">

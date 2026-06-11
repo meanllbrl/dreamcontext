@@ -663,3 +663,42 @@
   background: var(--color-bg-tertiary);
   color: var(--color-text);
 }
+
+/* Editable tags (detail panel) */
+.prop-tags--editable .task-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.task-tag-remove {
+  background: none;
+  border: none;
+  color: inherit;
+  opacity: 0.55;
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+  padding: 0 0 0 2px;
+}
+
+.task-tag-remove:hover {
+  opacity: 1;
+}
+
+.task-tag-input {
+  background: transparent;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-sm, 4px);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs, 11px);
+  padding: 1px var(--space-2);
+  width: 64px;
+}
+
+.task-tag-input:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  color: var(--color-text);
+  width: 110px;
+}
