@@ -102,6 +102,67 @@ describe('clickup deletion propagation', () => {
     expect(fake.tasks.size).toBe(0);
   });
 
+  it('a task deleted IN CLICKUP is removed locally on sync (mirror + map + sleep journal)', async () => {
+    await backend.create({ name: 'Killed Remotely', variant: 'cli' });
+    await backend.sync('push');
+    const rid = [...fake.tasks.keys()][0];
+
+    fake.tasks.delete(rid); // someone deletes it on ClickUp
+    const report = await backend.sync('pull');
+    expect(report.errors).toEqual([]);
+    expect(report.mirrorDeleted).toBe(1);
+    expect(existsSync(join(contextRoot, 'state', 'killed-remotely.md'))).toBe(false);
+    expect(JSON.parse(readFileSync(join(contextRoot, 'state', '.tasks-map.json'), 'utf-8'))).toEqual([]);
+
+    const sleep = JSON.parse(readFileSync(join(contextRoot, 'state', '.sleep.json'), 'utf-8'));
+    const entry = (sleep.dashboard_changes ?? []).find(
+      (c: { action: string; target: string }) => c.action === 'delete' && c.target === 'state/killed-remotely.md',
+    );
+    expect(entry).toBeTruthy();
+    expect(entry.summary).toContain('Remote sync deleted');
+  });
+
+  it('unsaved local edits are preserved to .conflicts/ when the remote task was deleted', async () => {
+    await backend.create({ name: 'Edited Then Killed', why: 'kiymetli metin', variant: 'cli' });
+    await backend.sync('push');
+    const rid = [...fake.tasks.keys()][0];
+
+    await backend.addChangelog('edited-then-killed', '### 2026-06-11 - Update\n- push edilmemis not');
+    fake.tasks.delete(rid);
+
+    const report = await backend.sync('pull');
+    expect(report.mirrorDeleted).toBe(1);
+    expect(report.conflicts).toHaveLength(1);
+    expect(report.conflicts[0].reason).toBe('remote_deleted');
+    const saved = readFileSync(report.conflicts[0].savedTo, 'utf-8');
+    expect(saved).toContain('push edilmemis not');
+    expect(saved).toContain('kiymetli metin');
+    expect(existsSync(join(contextRoot, 'state', 'edited-then-killed.md'))).toBe(false);
+  });
+
+  it('the deletion sweep is throttled — and runs again once the window passes', async () => {
+    await backend.create({ name: 'Throttle Probe', variant: 'cli' });
+    await backend.sync('push');
+    await backend.sync('pull'); // sweep #1 stamps lastReconcileAt
+    const rid = [...fake.tasks.keys()][0];
+
+    fake.tasks.delete(rid);
+    const throttled = await backend.sync('pull'); // within the window → no sweep
+    expect(throttled.mirrorDeleted).toBe(0);
+    expect(existsSync(join(contextRoot, 'state', 'throttle-probe.md'))).toBe(true);
+
+    // Age the throttle stamp past the window (persisted in sync state).
+    const syncPath = join(contextRoot, 'state', '.tasks-sync.json');
+    const state = JSON.parse(readFileSync(syncPath, 'utf-8'));
+    state.lastReconcileAt = state.lastReconcileAt - 10 * 60 * 1000;
+    const { writeFileSync } = await import('node:fs');
+    writeFileSync(syncPath, JSON.stringify(state, null, 2));
+
+    const swept = await backend.sync('pull');
+    expect(swept.mirrorDeleted).toBe(1);
+    expect(existsSync(join(contextRoot, 'state', 'throttle-probe.md'))).toBe(false);
+  });
+
   it('offline delete stays queued and replays; an already-gone remote task is a clean no-op', async () => {
     await backend.create({ name: 'Offline Del', variant: 'cli' });
     await backend.sync('push');

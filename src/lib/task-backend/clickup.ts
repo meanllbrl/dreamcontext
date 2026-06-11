@@ -226,10 +226,27 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
 
   private membersRefreshed = false;
 
-  /** Best-effort member refresh — once per sync(), failure never breaks sync. */
-  protected async refreshMembers(adapter: ApiAdapter, listId: string): Promise<void> {
+  /** Container meta rarely changes — refresh at most once per hour. */
+  private static readonly META_REFRESH_MS = 60 * 60 * 1000;
+  /** Deletions are rare — full id sweeps at most once per 2 minutes. */
+  private static readonly RECONCILE_MS = 2 * 60 * 1000;
+
+  /**
+   * Best-effort meta refresh (members + statuses + field defs = 3 GETs).
+   * Throttled to once per hour across processes; `force` (listMembers,
+   * provision) bypasses. Failure never breaks sync.
+   */
+  protected async refreshMembers(adapter: ApiAdapter, listId: string, force = false): Promise<void> {
     if (this.membersRefreshed) return;
+    if (!force) {
+      const last = this.ledger.readThrottle('lastMetaRefreshAt');
+      if (last !== null && this.nowMs() - last < ClickUpTaskBackend.META_REFRESH_MS) {
+        this.membersRefreshed = true;
+        return; // cached meta is fresh enough — saves 3 requests per sync
+      }
+    }
     this.membersRefreshed = true;
+    this.ledger.writeThrottle('lastMetaRefreshAt', this.nowMs());
     try {
       const res = await adapter.request<{ members?: Array<{ id: number | string; username?: string; email?: string }> }>(
         'GET',
@@ -272,7 +289,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     const adapter = this.getAdapter();
     const listId = this.requireListId();
     this.membersRefreshed = false;
-    await this.refreshMembers(adapter, listId);
+    await this.refreshMembers(adapter, listId, true);
     return Object.entries(this.ledger.readMembers())
       .map(([slug, m]) => ({ slug, id: m.id, name: m.name, email: m.email }))
       .sort((a, b) => a.slug.localeCompare(b.slug));
@@ -307,7 +324,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
 
     // Fresh defs → which recommended keys are already bound?
     this.membersRefreshed = false;
-    await this.refreshMembers(adapter, listId);
+    await this.refreshMembers(adapter, listId, true);
     const bound = new Set(this.fieldBindings().map((b) => b.key));
 
     const created: string[] = [];
@@ -337,7 +354,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
 
     if (created.length > 0) {
       this.membersRefreshed = false;
-      await this.refreshMembers(adapter, listId); // re-cache with the new defs
+      await this.refreshMembers(adapter, listId, true); // re-cache with the new defs
     }
 
     // BACKFILL: already-synced tasks have no hash drift, so the delta push
@@ -403,6 +420,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       pulled: 0,
       created: 0,
       deleted: 0,
+      mirrorDeleted: 0,
       commentsAdded: 0,
       conflicts: [],
       pendingQueue: 0,
@@ -660,6 +678,9 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     const watermark = this.ledger.readSyncState().watermark;
 
     const remoteTasks: ClickUpTask[] = [];
+    // When the watermark is null the delta fetch returns EVERYTHING — reuse
+    // those ids for deletion reconciliation instead of fetching again.
+    const fullSetIds: Set<string> | null = watermark === null ? new Set<string>() : null;
     for (let page = 0; ; page++) {
       const res = await adapter.request<{ tasks?: ClickUpTask[]; last_page?: boolean }>(
         'GET',
@@ -673,6 +694,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
         },
       );
       const batch = res.tasks ?? [];
+      if (fullSetIds) for (const t of batch) fullSetIds.add(t.id);
       // Client-side watermark guard: the real API treats `date_updated_gt`
       // as >= (observed live), which would echo the newest task on every
       // pull forever. Filter strictly-greater here so convergence never
@@ -693,6 +715,94 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
         await this.applyRemoteTask(remote, adapter, report);
       } catch (err) {
         report.errors.push(`pull ${remote.id}: ${(err as Error).message ?? err}`);
+      }
+    }
+
+    // ── Remote-deletion reconciliation ──────────────────────────────────────
+    // A deleted remote task produces NO delta event — it just vanishes from
+    // the list. Diff the id-map against the FULL remote id set; any mapped
+    // task missing remotely was deleted on the remote side.
+    await this.reconcileRemoteDeletions(adapter, listId, pendingDeletes, report, fullSetIds);
+  }
+
+  protected async reconcileRemoteDeletions(
+    adapter: ApiAdapter,
+    listId: string,
+    pendingDeletes: Set<string>,
+    report: SyncReport,
+    knownFullSet: Set<string> | null,
+  ): Promise<void> {
+    const map = this.ledger.readMap();
+    if (map.length === 0) return;
+
+    // Request budget: the sweep is FREE when the delta already fetched the
+    // full set (null watermark); otherwise it runs at most once per 2 minutes
+    // (deletions are rare; commit-hook bursts collapse to one sweep).
+    let remoteIds: Set<string>;
+    if (knownFullSet) {
+      remoteIds = knownFullSet;
+    } else {
+      const last = this.ledger.readThrottle('lastReconcileAt');
+      if (last !== null && this.nowMs() - last < ClickUpTaskBackend.RECONCILE_MS) return;
+      // Full id sweep — if ANY page fails, skip reconciliation entirely: a
+      // partial set must never be read as "everything else was deleted".
+      remoteIds = new Set<string>();
+      try {
+        for (let page = 0; ; page++) {
+          const res = await adapter.request<{ tasks?: ClickUpTask[]; last_page?: boolean }>(
+            'GET',
+            `/list/${listId}/task`,
+            { query: { page, include_closed: true } },
+          );
+          const batch = res.tasks ?? [];
+          for (const t of batch) remoteIds.add(t.id);
+          if (res.last_page !== false || batch.length === 0) break;
+        }
+      } catch {
+        return; // offline / flaky — try again next sync
+      }
+    }
+    this.ledger.writeThrottle('lastReconcileAt', this.nowMs());
+
+    for (const entry of map) {
+      if (remoteIds.has(entry.remoteId)) continue;
+      if (pendingDeletes.has(entry.remoteId)) continue; // our own deletion in flight
+      const path = this.taskPath(entry.slug);
+
+      try {
+        if (existsSync(path)) {
+          // Never silently lose local edits: if the mirror moved since the
+          // last sync, preserve a copy before honoring the remote deletion.
+          const raw = readFileSync(path, 'utf-8');
+          const syncEntry = this.ledger.taskSync(entry.slug);
+          const localChanged = !syncEntry?.localHash || hashContent(raw) !== syncEntry.localHash;
+          if (localChanged) {
+            const savedTo = this.saveConflictCopy(entry.slug, raw, null);
+            report.conflicts.push({ slug: entry.slug, savedTo, reason: 'remote_deleted' });
+          }
+          this.applyingRemote = true;
+          try {
+            await super.delete(entry.slug);
+          } finally {
+            this.applyingRemote = false;
+          }
+        }
+        this.ledger.removeMapping(entry.slug);
+        this.ledger.removeTaskSync(entry.slug);
+        this.ledger.dequeueFor(entry.slug, Number.MAX_SAFE_INTEGER);
+        report.mirrorDeleted++;
+
+        // Consolidation must see outside deletions too.
+        try {
+          recordDashboardChange(this.contextRoot, {
+            entity: 'task',
+            action: 'delete',
+            target: `state/${entry.slug}.md`,
+            summary: `Remote sync deleted task '${entry.slug}' (removed on ${this.name})`,
+          });
+        } catch { /* the journal must never break a sync */ }
+      } catch (err) {
+        report.errors.push(`reconcile ${entry.slug}: ${(err as Error).message ?? err}`);
       }
     }
   }

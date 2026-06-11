@@ -112,7 +112,7 @@ ascii-folded, e.g. "Mehmet Nuraydın" → `mehmet-nuraydin`).
 | Scalars (status/assignee/priority/…) | 3-way vs base; both-changed → last-write-wins |
 | Prose | section-level 3-way vs `base_snapshot` |
 | Conflict / missing base | ClickUp wins, the local copy is preserved under `state/.conflicts/` and surfaced — nothing is silently lost |
-| Rate limit | ~100 req/min queue, one field-level PUT per task, retry/backoff |
+| Rate limit | ~100 req/min queue, one field-level PUT per task, retry/backoff; container meta (members/statuses/fields) cached for 1h; deletion sweeps throttled to 2 min | 
 
 ## 7. Known limits (v1)
 
@@ -121,7 +121,10 @@ ascii-folded, e.g. "Mehmet Nuraydın" → `mehmet-nuraydin`).
 - Switching the target list does not migrate task mappings yet (reset the
   gitignored `state/.tasks-{map,sync,queue}.json` to re-create everything in
   the new list).
-- Task deletion propagates **local → remote** (`tasks delete`, dashboard
-  delete button, or the API route — the remote task is deleted on the next
-  sync, and a pending deletion can never be resurrected by a pull). Deleting
-  a task **in ClickUp** does not remove the local mirror (yet).
+- Task deletion propagates **both ways**: locally (`tasks delete`, dashboard
+  delete button, API route) the remote task is deleted on the next sync;
+  remotely, the pull reconciles the id-map against the full remote set and
+  removes the local mirror (unsaved local edits are preserved under
+  `state/.conflicts/` first — never silent loss). The deletion sweep is
+  request-budget-aware: free on a first sync, throttled to one sweep per
+  2 minutes otherwise.

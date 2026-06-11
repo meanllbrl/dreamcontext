@@ -49,6 +49,9 @@ export interface SyncStateFile {
   listStatuses?: string[];
   /** The remote container's custom field definitions (the field bridge). */
   customFields?: Array<Record<string, unknown>>;
+  /** Local-clock throttles (request-budget only — never used for merge logic). */
+  lastMetaRefreshAt?: number;
+  lastReconcileAt?: number;
 }
 
 export interface CachedMember {
@@ -183,6 +186,16 @@ export class SyncLedger {
   writeMembers(members: Record<string, CachedMember>): void {
     const state = this.readSyncState();
     state.members = members;
+    this.writeSyncState(state);
+  }
+
+  readThrottle(key: 'lastMetaRefreshAt' | 'lastReconcileAt'): number | null {
+    return this.readSyncState()[key] ?? null;
+  }
+
+  writeThrottle(key: 'lastMetaRefreshAt' | 'lastReconcileAt', at: number): void {
+    const state = this.readSyncState();
+    state[key] = at;
     this.writeSyncState(state);
   }
 

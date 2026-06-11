@@ -139,7 +139,7 @@ export interface SyncConflict {
   slug: string;
   /** Where the losing local copy was preserved (state/.conflicts/...). */
   savedTo: string;
-  reason: 'missing_base' | 'both_changed';
+  reason: 'missing_base' | 'both_changed' | 'remote_deleted';
 }
 
 export interface SyncReport {
@@ -150,6 +150,8 @@ export interface SyncReport {
   created: number;
   /** Remote tasks deleted (propagated local deletions). */
   deleted: number;
+  /** Local mirrors removed because the task was deleted on the remote. */
+  mirrorDeleted: number;
   commentsAdded: number;
   conflicts: SyncConflict[];
   pendingQueue: number;
