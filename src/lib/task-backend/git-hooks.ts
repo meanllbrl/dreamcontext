@@ -31,8 +31,11 @@ exit 0
 /** The default invocation: re-run the exact CLI entry that installed the hook. */
 export function defaultCliInvocation(): string {
   const entry = process.argv[1];
-  if (entry) return `"${process.execPath}" "${entry}"`;
-  return 'dreamcontext';
+  if (!entry) return 'dreamcontext';
+  // Escape shell metacharacters inside the double quotes — a node/CLI path
+  // containing `"`, `$`, or a backtick must not break (or inject into) the hook.
+  const quote = (p: string) => `"${p.replace(/(["\\$`])/g, '\\$1')}"`;
+  return `${quote(process.execPath)} ${quote(entry)}`;
 }
 
 export interface HookInstallResult {
