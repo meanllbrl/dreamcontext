@@ -350,6 +350,54 @@ export function registerTasksCommand(program: Command): void {
       success(`RICE updated on ${slug} — score: ${scoreStr}`);
     });
 
+  // Tag management on existing tasks (person:<slug> tags drive remote assignees)
+  tasks
+    .command('tag')
+    .argument('<name>', 'Task slug or name')
+    .argument('<tags...>', 'Tags to add (or remove with --remove); person:<slug> assigns a person')
+    .description('Add or remove tags on a task')
+    .option('--remove', 'Remove the given tags instead of adding them')
+    .action(async (name: string, tagArgs: string[], opts: { remove?: boolean }) => {
+      const backend = getTaskBackend();
+      const slug = await resolveTaskSlug(backend, name);
+      if (!slug) return;
+
+      const task = await backend.get(slug);
+      if (!task) {
+        error(`Task not found: ${name}`);
+        return;
+      }
+
+      const given = tagArgs
+        .flatMap((t) => t.split(','))
+        .map((t) => t.trim())
+        .filter(Boolean);
+      if (given.length === 0) {
+        error('No tags provided.');
+        return;
+      }
+
+      let next: string[];
+      if (opts.remove) {
+        const drop = new Set(given.map((t) => t.toLowerCase()));
+        next = task.tags.filter((t) => !drop.has(t.toLowerCase()));
+      } else {
+        next = [...task.tags];
+        for (const t of given) {
+          if (!next.some((x) => x.toLowerCase() === t.toLowerCase())) next.push(t);
+        }
+        // A person tag is an assignment — only one person tag at a time.
+        const persons = next.filter((t) => t.startsWith('person:'));
+        if (persons.length > 1) {
+          const keep = given.filter((t) => t.startsWith('person:')).pop() ?? persons[persons.length - 1];
+          next = next.filter((t) => !t.startsWith('person:') || t === keep);
+        }
+      }
+
+      await backend.updateFields(slug, { tags: next, updated_at: today() });
+      success(`Tags on ${slug}: ${next.length > 0 ? next.join(', ') : '(none)'}`);
+    });
+
   // Insert into a section
   tasks
     .command('insert')

@@ -189,6 +189,22 @@ export function makeFakeClickUp(opts: { serverStart?: number } = {}): FakeClickU
         }
       }
 
+      // /task/:id/tag/:name (ClickUp's PUT carries no tags — per-tag endpoints)
+      m = path.match(/^\/task\/([^/]+)\/tag\/([^/]+)$/);
+      if (m) {
+        const task = tasks.get(m[1]);
+        if (!task) return jsonResponse(404, { err: 'Task not found' });
+        const tagName = decodeURIComponent(m[2]);
+        serverTime += 1000;
+        if (method === 'POST') {
+          if (!task.tags.some((t) => t.name === tagName)) task.tags.push({ name: tagName });
+        } else if (method === 'DELETE') {
+          task.tags = task.tags.filter((t) => t.name !== tagName);
+        }
+        task.date_updated = String(serverTime);
+        return jsonResponse(200, {});
+      }
+
       // GET /user (connection test)
       if (path === '/user' && method === 'GET') {
         return jsonResponse(200, { user: { id: 1, username: 'api-user' } });

@@ -486,6 +486,10 @@ dreamcontext tasks sync-hooks install               # best-effort post-commit/pr
   `person:<slug>` (or set the `assignee` field) and the push assigns the
   ClickUp member; a remote assignment pulls back as both the field and the
   tag. `config clickup-member` stays available as an explicit override.
+- **Tags edit anywhere**: `dreamcontext tasks tag <name> <tags…> [--remove]`
+  edits tags on existing tasks; changed tags push through ClickUp's per-tag
+  endpoints (its PUT carries none), and assignee handovers/removals push as
+  add/rem deltas.
 
 ### Features
 

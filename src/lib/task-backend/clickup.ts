@@ -379,15 +379,55 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       serverTime = serverTimeMs(created.date_updated);
       report.created++;
     } else {
+      // Diff against the base snapshot: assignees and tags are the only
+      // fields ClickUp's PUT cannot fully express, so they need deltas.
+      const baseFm = entry?.base_snapshot
+        ? (matter(entry.base_snapshot.body).data as Record<string, unknown>)
+        : null;
+      const baseAssigneeSlug = baseFm
+        ? (((baseFm.assignee as string | null | undefined) ?? null)
+            || personTagSlug(((baseFm.tags as string[]) ?? [])))
+        : null;
+      const baseAssigneeId = baseAssigneeSlug ? this.memberIdFor(baseAssigneeSlug) : null;
+      const assigneePatch = assigneeId !== baseAssigneeId
+        ? {
+            assignees: {
+              add: assigneeId ? [Number(assigneeId)] : [],
+              rem: baseAssigneeId ? [Number(baseAssigneeId)] : [],
+            },
+          }
+        : {};
+
       // UPDATE: ONE field-level PUT per task (rate-limit friendly by design).
       const updated = await adapter.request<ClickUpTask>('PUT', `/task/${remoteId}`, {
-        body: {
-          ...fields,
-          ...(assigneeId ? { assignees: { add: [Number(assigneeId)], rem: [] } } : {}),
-        },
+        body: { ...fields, ...assigneePatch },
       });
       serverTime = serverTimeMs(updated.date_updated);
       report.pushed++;
+
+      // Tag deltas: ClickUp's PUT carries no tags — changed tags go through
+      // the per-tag endpoints. person: tags stay local (assignees above).
+      if (baseFm) {
+        const baseTags = tagsToClickUp(
+          stripPersonTags(((baseFm.tags as string[]) ?? [])),
+          ((baseFm.version as string | null | undefined) ?? null),
+        );
+        const desiredTags = tagsToClickUp(stripPersonTags(task.tags), task.version);
+        const toAdd = desiredTags.filter((t) => !baseTags.includes(t));
+        const toRemove = baseTags.filter((t) => !desiredTags.includes(t));
+        for (const tag of toAdd) {
+          await adapter.request('POST', `/task/${remoteId}/tag/${encodeURIComponent(tag)}`);
+        }
+        for (const tag of toRemove) {
+          await adapter.request('DELETE', `/task/${remoteId}/tag/${encodeURIComponent(tag)}`);
+        }
+        if (toAdd.length > 0 || toRemove.length > 0) {
+          // Tag endpoints bump date_updated server-side without returning it —
+          // refetch once so the watermark covers our own write (no echo pull).
+          const fresh = await adapter.request<ClickUpTask>('GET', `/task/${remoteId}`);
+          serverTime = serverTimeMs(fresh.date_updated) ?? serverTime;
+        }
+      }
     }
 
     // Changelog → comments (union-merged remotely; only entries the remote
