@@ -251,8 +251,22 @@ per-title folder when you want to keep the board + generator + spec together cle
 - A 2 MB board with rich Text Elements and a tiny board with the same labels have the same
   recall surface. Scene size does not affect recall or snapshot token cost.
 
+### Where does a board go?
+
+| Board nature | Location | Indexed? |
+|---|---|---|
+| Canonical / source-of-truth (architecture, system flows, roadmaps, durable plans the agent should recall in future sessions) | `_dream_context/knowledge/diagrams/<title>/` | Yes — indexed, recalled |
+| Temporary / scratch / exploratory / in-progress | `inbox/` or `workspace/` (dark by location) | No — not indexed, will not pollute recall |
+
+**Decision rule**: "Will a future session need to know this? → `knowledge/diagrams/`. Throwaway/working? → `inbox/` or `workspace/`."
+
+Promote a board from inbox/workspace to `knowledge/diagrams/` only once it becomes canonical.
+
 ### Migration
 
-Flat boards in `knowledge/diagrams/` do NOT auto-migrate. Running `dreamcontext migrations run`
-detects them and records the count but moves nothing. To opt-in to the per-title folder layout,
-follow the agent task instruction exposed by migration 0.7.2.
+Flat boards in `knowledge/diagrams/` do NOT auto-migrate.
+
+- `dreamcontext migrations pending` — see pending migration task instructions (including 0.7.2 diagrams-folder-convention).
+- `dreamcontext migrations apply-diagrams` — opt-in: moves flat `knowledge/diagrams/*.excalidraw.md` boards into per-title folders AND rewrites all inbound [[wikilinks]] atomically. Safe to re-run. Do NOT hand-edit wikilinks manually.
+
+Only organize boards you confirm are canonical knowledge. Temp/scratch boards stay in inbox/workspace.

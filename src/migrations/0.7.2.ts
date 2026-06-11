@@ -27,7 +27,7 @@ export const migration072: Migration = {
       const summary =
         flatBoards.length > 0
           ? `Detected ${flatBoards.length} flat diagram board(s) in knowledge/diagrams/: ${flatBoards.join(', ')}. ` +
-            'No files moved. Use the agentTask to opt-in to per-title folder organization.'
+            'No files moved. To opt-in: run `dreamcontext migrations apply-diagrams` after confirming which boards are canonical knowledge.'
           : 'No flat diagram boards found in knowledge/diagrams/ — nothing to do.';
       return {
         step: 'detect-flat-diagram-boards',
@@ -41,11 +41,19 @@ export const migration072: Migration = {
     id: 'diagrams-folder-convention',
     instruction:
       'Opt-in: organize Excalidraw boards into knowledge/diagrams/<title>/ per-title folders. ' +
-      'For each flat knowledge/diagrams/<title>.excalidraw.md board: ' +
-      '(1) create knowledge/diagrams/<title>/, ' +
-      '(2) move the board + any unambiguous same-basename generator/spec files (.board.cjs/.board.js/.board.py/.json) into it, ' +
-      '(3) call rewriteWikilinks atomically after each move (old slug diagrams/<title>.excalidraw → new slug diagrams/<title>/<title>.excalidraw) so all inbound [[wikilinks]] in .md files under contextRoot stay valid. ' +
+      'STEP 1 — Behavioral judgment (do this BEFORE running any command): ' +
+      'Only boards that are canonical, durable knowledge (architecture diagrams, system flows, roadmaps, ' +
+      'plans the agent should recall in future sessions) belong in knowledge/diagrams/. ' +
+      'Temporary / scratch / exploratory / in-progress sketches belong in inbox/ or workspace/ ' +
+      '(dark by location — NOT indexed, will not pollute recall). ' +
+      'Decision rule: "Will a future session need to know this? → keep in knowledge. Throwaway/working? → inbox/workspace." ' +
+      'Do NOT pull temp/scratch boards into knowledge/diagrams/. ' +
+      'STEP 2 — For boards confirmed canonical, run: dreamcontext migrations apply-diagrams ' +
+      '(this command moves board+generator+spec into knowledge/diagrams/<title>/ AND rewrites all ' +
+      'inbound [[wikilinks]] atomically — do NOT hand-edit wikilinks manually). ' +
       'Never run generator scripts. Never edit scene JSON. ' +
-      'Flat boards already index and recall correctly via suffix detection — only adopt this convention when the user explicitly requests it.',
+      'Flat boards already index and recall correctly via suffix detection — only adopt this convention when the user explicitly requests it. ' +
+      'STEP 3 — Verify the ledger entry was recorded (the apply-diagrams command records it automatically). ' +
+      'Use dreamcontext migrations pending to see this task; run dreamcontext migrations apply-diagrams to opt-in to organizing flat boards.',
   },
 };

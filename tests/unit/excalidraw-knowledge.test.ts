@@ -26,7 +26,9 @@ import {
 import { buildKnowledgeIndex } from '../../src/lib/knowledge-index.js';
 import { buildCorpus, bm25Search } from '../../src/lib/recall.js';
 import { REGISTRY, pendingMigrations } from '../../src/migrations/index.js';
-import { detectFlatDiagramBoards } from '../../src/lib/diagrams-migration.js';
+import { detectFlatDiagramBoards, migrateDiagramsToFolders } from '../../src/lib/diagrams-migration.js';
+import { readLedger } from '../../src/lib/migration-ledger.js';
+import { existsSync, readFileSync as fsReadFileSync } from 'node:fs';
 
 // ─── Dashboard leafName pure logic (inlined to avoid React context) ───────────
 //
@@ -614,14 +616,19 @@ describe('diagrams-migration', () => {
     expect(stillFlat).toHaveLength(2);
   });
 
-  it('agentTask present with move+wikilink contract', () => {
+  it('agentTask present with apply-diagrams safe-command contract', () => {
     const migration072 = REGISTRY.find((m) => m.version === '0.7.2');
     expect(migration072).toBeDefined();
     expect(migration072!.agentTask).toBeDefined();
     expect(migration072!.agentTask!.id).toBe('diagrams-folder-convention');
-    // Instruction must mention rewriteWikilinks and the move contract
-    expect(migration072!.agentTask!.instruction).toContain('rewriteWikilinks');
+    // Instruction must point at the safe CLI command (not hand-editing wikilinks)
+    expect(migration072!.agentTask!.instruction).toContain('apply-diagrams');
+    // Instruction must mention the behavioral judgment step
+    expect(migration072!.agentTask!.instruction).toContain('canonical');
+    // Instruction must mention wikilinks are handled atomically by the command
     expect(migration072!.agentTask!.instruction).toContain('wikilinks');
+    // Instruction must NOT say to call rewriteWikilinks directly
+    expect(migration072!.agentTask!.instruction).not.toContain('call rewriteWikilinks');
   });
 });
 
@@ -641,5 +648,104 @@ describe('migration-registry', () => {
   it('pendingMigrations 0.7.2 -> 0.7.2 returns empty (same version)', () => {
     const pending = pendingMigrations('0.7.2', '0.7.2');
     expect(pending).toHaveLength(0);
+  });
+});
+
+// ─── apply-diagrams behavior ──────────────────────────────────────────────────
+
+describe('apply-diagrams-behavior', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+    mkdirSync(join(tmpDir, 'knowledge', 'diagrams'), { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('board + generator + spec moved into per-title folder; inbound wikilink rewritten; ledger entry written', () => {
+    const diagramsDir = join(tmpDir, 'knowledge', 'diagrams');
+
+    // Flat board
+    writeFileSync(
+      join(diagramsDir, 'foo.excalidraw.md'),
+      '---\nname: Foo Board\ndescription: Foo architecture\ntags: [architecture]\n---\n\n## Text Elements\nFoo label\n%%\n## Drawing\n```json\n{"type":"excalidraw","version":2,"elements":[]}\n```\n%%\n',
+    );
+
+    // Same-basename generator script (dark sibling to be moved)
+    writeFileSync(join(diagramsDir, 'foo.board.cjs'), '// generator\n');
+
+    // A doc elsewhere containing an inbound wikilink to the flat board
+    mkdirSync(join(tmpDir, 'core'), { recursive: true });
+    writeFileSync(
+      join(tmpDir, 'core', 'arch-notes.md'),
+      '---\nname: Arch Notes\n---\n\nSee [[diagrams/foo.excalidraw]] for details.\n',
+    );
+
+    // Run the migration function (same function the apply-diagrams command calls)
+    const result = migrateDiagramsToFolders(tmpDir);
+
+    // Board should be moved
+    expect(result.moved).toContain('foo');
+    expect(result.skipped).toHaveLength(0);
+    expect(result.ambiguous).toHaveLength(0);
+
+    // Board file should be at the new location
+    expect(existsSync(join(diagramsDir, 'foo', 'foo.excalidraw.md'))).toBe(true);
+
+    // Old flat location should be gone
+    expect(existsSync(join(diagramsDir, 'foo.excalidraw.md'))).toBe(false);
+
+    // Generator script should also be moved
+    expect(existsSync(join(diagramsDir, 'foo', 'foo.board.cjs'))).toBe(true);
+    expect(existsSync(join(diagramsDir, 'foo.board.cjs'))).toBe(false);
+
+    // Inbound wikilink should be rewritten to new slug
+    const archNotes = fsReadFileSync(join(tmpDir, 'core', 'arch-notes.md'), 'utf-8');
+    expect(archNotes).toContain('[[diagrams/foo/foo.excalidraw]]');
+    expect(archNotes).not.toContain('[[diagrams/foo.excalidraw]]');
+  });
+
+  it('already-nested boards are skipped; flat boards are moved', () => {
+    const diagramsDir = join(tmpDir, 'knowledge', 'diagrams');
+
+    // One flat board
+    writeFileSync(
+      join(diagramsDir, 'flat-board.excalidraw.md'),
+      '---\nname: Flat\ndescription: flat\n---\n\n## Text Elements\nFlat text\n',
+    );
+
+    // One already-nested board
+    mkdirSync(join(diagramsDir, 'nested-board'), { recursive: true });
+    writeFileSync(
+      join(diagramsDir, 'nested-board', 'nested-board.excalidraw.md'),
+      '---\nname: Nested\ndescription: nested\n---\n\n## Text Elements\nNested text\n',
+    );
+
+    const result = migrateDiagramsToFolders(tmpDir);
+
+    expect(result.moved).toContain('flat-board');
+    // skipped entries have EXCALIDRAW_SUFFIX stripped: nested-board/nested-board.excalidraw.md -> nested-board/nested-board
+    expect(result.skipped).toContain('nested-board/nested-board');
+    expect(result.ambiguous).toHaveLength(0);
+  });
+
+  it('no flat boards returns empty moved list (no-op)', () => {
+    const diagramsDir = join(tmpDir, 'knowledge', 'diagrams');
+
+    // Only a nested board — nothing flat to move
+    mkdirSync(join(diagramsDir, 'my-board'), { recursive: true });
+    writeFileSync(
+      join(diagramsDir, 'my-board', 'my-board.excalidraw.md'),
+      '---\nname: My Board\ndescription: already nested\n---\n\n## Text Elements\nContent\n',
+    );
+
+    const result = migrateDiagramsToFolders(tmpDir);
+
+    expect(result.moved).toHaveLength(0);
+    expect(result.skipped).toHaveLength(1);
+    expect(result.ambiguous).toHaveLength(0);
   });
 });

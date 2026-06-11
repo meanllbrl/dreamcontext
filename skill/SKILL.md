@@ -445,7 +445,18 @@ Rules:
 - **Spec is the source of truth.** If the spec and the board ever disagree, the spec wins. Commit both.
 - **Dark siblings**: all files inside a `knowledge/diagrams/<title>/` folder that are NOT the board itself (generator scripts `.board.cjs`, spec `.json`, helper `.md`) are excluded from the index, recall corpus, snapshot, and dashboard. They are tooling artifacts — they do NOT surface in memory.
 - **Memory indexes only frontmatter + ## Text Elements**: scene JSON, base64, and element ids are stripped before indexing. A 2 MB board with rich Text Elements is as searchable as a tiny board. The dashboard renderer still receives the raw body (with full scene JSON) via the detail API route.
-- **Migration is opt-in**: flat boards stay flat unless you explicitly ask for reorganization. Running `dreamcontext migrations run` records detected boards but moves nothing.
+- **Migration is opt-in**: flat boards stay flat unless you explicitly ask for reorganization. Use `dreamcontext migrations pending` to see pending migration tasks; use `dreamcontext migrations apply-diagrams` to opt-in to organizing flat boards into per-title folders.
+
+#### Where does a board go?
+
+| Board nature | Location | Indexed? |
+|---|---|---|
+| Canonical / source-of-truth (architecture, system flows, roadmaps, durable plans the agent should recall in future sessions) | `knowledge/diagrams/<title>/` | Yes — indexed, recalled |
+| Temporary / scratch / exploratory / in-progress | `inbox/` or `workspace/` (dark by location) | No — not indexed, will not pollute recall |
+
+**Decision rule**: "Will a future session need to know this? → `knowledge/diagrams/`. Throwaway/working? → `inbox/` or `workspace/`."
+
+Promote a board from `inbox/workspace` to `knowledge/diagrams/` only once it becomes canonical. Use `dreamcontext migrations apply-diagrams` to move flat boards + rewrite inbound [[wikilinks]] atomically — do NOT hand-edit wikilinks.
 
 ---
 
