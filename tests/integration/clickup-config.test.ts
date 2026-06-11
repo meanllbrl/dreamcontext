@@ -103,5 +103,47 @@ describe('clickup config onboarding (integration)', () => {
     const show = run('config show', tmpDir);
     expect(show).not.toContain('Task backend');
     expect(show).not.toContain('ClickUp');
+    expect(show).not.toContain('Advanced');
+  });
+
+  it('config show groups the backend under Advanced once clickup is enabled', () => {
+    run('config task-backend clickup', tmpDir);
+    const show = run('config show', tmpDir);
+    expect(show).toContain('Advanced');
+    expect(show).toContain('Task backend');
+  });
+
+  it('non-interactive task-backend switch prints next-step hints instead of prompting', () => {
+    // execSync has no TTY → the guided prompts must NOT fire (would hang).
+    const out = run('config task-backend clickup', tmpDir);
+    expect(out).toContain('Task backend set to clickup');
+    expect(out).toContain('clickup-token');
+    expect(out).toContain('clickup-list');
+  });
+
+  it('config clickup-member maps a person to a ClickUp member id (+ optional token env)', () => {
+    const out = run('config clickup-member "Alice Smith" 501 --token-env ALICE_TOKEN', tmpDir);
+    expect(out).toContain('alice-smith');
+    expect(out).toContain('501');
+
+    const cfg = JSON.parse(readFileSync(join(tmpDir, '_dream_context', 'state', '.config.json'), 'utf-8'));
+    expect(cfg.peopleIdentity['alice-smith']).toEqual({ clickupMemberId: '501', tokenEnv: 'ALICE_TOKEN' });
+
+    // Re-mapping merges instead of clobbering.
+    run('config clickup-member "Alice Smith" 777', tmpDir);
+    const cfg2 = JSON.parse(readFileSync(join(tmpDir, '_dream_context', 'state', '.config.json'), 'utf-8'));
+    expect(cfg2.peopleIdentity['alice-smith']).toEqual({ clickupMemberId: '777', tokenEnv: 'ALICE_TOKEN' });
+  });
+
+  it('setup --yes never asks about cloud tasks and leaves the backend unset (advanced setting)', () => {
+    const fresh = makeTmpDir();
+    try {
+      const out = run('setup --yes', fresh);
+      expect(out).not.toContain('Cloud Task Management');
+      const cfgRaw = readFileSync(join(fresh, '_dream_context', 'state', '.config.json'), 'utf-8');
+      expect(JSON.parse(cfgRaw).taskBackend).toBeUndefined();
+    } finally {
+      rmSync(fresh, { recursive: true, force: true });
+    }
   });
 });

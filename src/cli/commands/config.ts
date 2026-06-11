@@ -53,9 +53,11 @@ function printConfig(projectRoot: string): void {
       ? chalk.green('disabled') + chalk.dim(' (dreamcontext owns project memory)')
       : chalk.yellow('enabled') + chalk.dim(" (Claude's native MEMORY.md is active)")}`,
   );
-  // Task backend lines only appear once the feature is in use — projects that
-  // never touched taskBackend keep the exact pre-#11 output.
+  // Task backend is an ADVANCED setting — its lines only appear once the
+  // feature is in use; projects that never touched taskBackend keep the
+  // exact pre-#11 output.
   if (cfg.taskBackend) {
+    console.log(chalk.dim('\n  Advanced'));
     console.log(`  Task backend:   ${chalk.white(cfg.taskBackend)}`);
     if (cfg.taskBackend === 'clickup') {
       const resolved = resolveClickUpToken(projectRoot);
@@ -119,8 +121,8 @@ export function registerConfigCommand(program: Command): void {
 
   config
     .command('task-backend <backend>')
-    .description('Switch the task backend: local | clickup (issue #11)')
-    .action((backend: string) => {
+    .description('[Advanced] Switch the task backend: local | clickup (issue #11)')
+    .action(async (backend: string) => {
       const projectRoot = requireProjectRoot();
       if (!projectRoot) return;
 
@@ -160,14 +162,85 @@ export function registerConfigCommand(program: Command): void {
             info(chalk.dim(`git sync hooks installed: ${hooks.installed.join(', ')} (best-effort, never block git).`));
           }
         } catch { /* hooks are a convenience — never fail the switch */ }
+
         const token = resolveClickUpToken(projectRoot);
-        if (!token) {
-          info(chalk.dim('No ClickUp token found. Add one with `dreamcontext config clickup-token`.'));
-        }
         const cfg = readSetupConfig(projectRoot);
-        if (!cfg?.clickup?.listId) {
-          info(chalk.dim('Set the ClickUp list with `dreamcontext config clickup-list <teamId> <spaceId> <listId>`.'));
+
+        if (process.stdin.isTTY) {
+          // Guided onboarding: collect everything the sync needs in one go.
+          if (!token) {
+            const key = (await promptInput({
+              message: 'ClickUp API key (pk_…; goes to the gitignored secrets file — leave empty to add later):',
+            })).trim();
+            if (key) {
+              try {
+                writeClickUpToken(projectRoot, key);
+                success(`ClickUp token stored (${maskToken(key)}).`);
+              } catch (err) {
+                error((err as Error).message);
+              }
+            } else {
+              info(chalk.dim('No token saved. Add one later with `dreamcontext config clickup-token`.'));
+            }
+          }
+
+          if (!cfg?.clickup?.listId) {
+            info(chalk.dim('ClickUp IDs: teamId is in the URL (app.clickup.com/{teamId}/…); listId is the `li/{listId}` part of the list URL.'));
+            const teamId = (await promptInput({ message: 'Team ID (leave empty to set later):' })).trim();
+            const spaceId = teamId ? (await promptInput({ message: 'Space ID:' })).trim() : '';
+            const listId = teamId ? (await promptInput({ message: 'List ID:' })).trim() : '';
+            if (teamId && listId) {
+              updateSetupConfig(projectRoot, {
+                clickup: {
+                  ...(cfg?.clickup ?? {}),
+                  teamId,
+                  ...(spaceId ? { spaceId } : {}),
+                  listId,
+                  changelogTarget: cfg?.clickup?.changelogTarget ?? 'comments',
+                },
+              });
+              success(`ClickUp target set: team ${teamId}${spaceId ? `, space ${spaceId}` : ''}, list ${listId}.`);
+            } else {
+              info(chalk.dim('Target not set. Use `dreamcontext config clickup-list <teamId> <spaceId> <listId>` when ready.'));
+            }
+          }
+
+          if ((cfg?.people?.length ?? 0) > 0) {
+            info(chalk.dim('Assignees: map people to ClickUp members with `dreamcontext config clickup-member <person> <memberId>`.'));
+          }
+        } else {
+          // Non-interactive (scripts/CI): print the next steps instead.
+          if (!token) {
+            info(chalk.dim('No ClickUp token found. Add one with `dreamcontext config clickup-token`.'));
+          }
+          if (!cfg?.clickup?.listId) {
+            info(chalk.dim('Set the ClickUp list with `dreamcontext config clickup-list <teamId> <spaceId> <listId>`.'));
+          }
         }
+      }
+    });
+
+  config
+    .command('clickup-member <person> <memberId>')
+    .description('[Advanced] Map a person from the roster to a ClickUp member id (assignee round-trip)')
+    .option('--token-env <env>', "Env var holding this person's ClickUp API token")
+    .action((person: string, memberId: string, opts: { tokenEnv?: string }) => {
+      const projectRoot = requireProjectRoot();
+      if (!projectRoot) return;
+
+      const slug = slugify(person);
+      const cfg = readSetupConfig(projectRoot);
+      const identity = { ...(cfg?.peopleIdentity ?? {}) };
+      identity[slug] = {
+        ...(identity[slug] ?? {}),
+        clickupMemberId: memberId,
+        ...(opts.tokenEnv ? { tokenEnv: opts.tokenEnv } : {}),
+      };
+      updateSetupConfig(projectRoot, { peopleIdentity: identity });
+      success(`Mapped ${slug} → ClickUp member ${memberId}${opts.tokenEnv ? ` (token env: ${opts.tokenEnv})` : ''}.`);
+      const roster = (cfg?.people ?? []).map((p) => slugify(p));
+      if (roster.length > 0 && !roster.includes(slug)) {
+        info(chalk.dim(`Note: '${slug}' is not in the people roster of .config.json — add them there for full multi-person support.`));
       }
     });
 
