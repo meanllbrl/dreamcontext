@@ -357,6 +357,34 @@ export function registerTasksCommand(program: Command): void {
       success(`RICE updated on ${slug} — score: ${scoreStr}`);
     });
 
+  // Delete a task (remote backends propagate the deletion on sync)
+  tasks
+    .command('delete')
+    .argument('<name>', 'Task slug or name')
+    .description('Delete a task (propagates to the remote backend on sync)')
+    .option('--yes', 'Skip the confirmation prompt')
+    .action(async (name: string, opts: { yes?: boolean }) => {
+      const backend = getTaskBackend();
+      const slug = await resolveTaskSlug(backend, name);
+      if (!slug) return;
+
+      if (!opts.yes) {
+        if (!process.stdin.isTTY) {
+          error('Refusing to delete without --yes in a non-interactive session.');
+          process.exitCode = 1;
+          return;
+        }
+        const answer = (await promptInput({ message: `Delete task "${slug}"? Type the slug to confirm:` })).trim();
+        if (answer !== slug) {
+          error('Confirmation did not match — nothing deleted.');
+          return;
+        }
+      }
+
+      await backend.delete(slug);
+      success(`Task deleted: ${slug}${backend.name !== 'local' ? ' (remote deletion on next sync)' : ''}`);
+    });
+
   // Due date on existing tasks (synced natively to the remote backend)
   tasks
     .command('due')
@@ -591,7 +619,8 @@ export function registerTasksCommand(program: Command): void {
           console.log(chalk.dim(`Task backend is "${report.backend}" — nothing to sync.`));
           return;
         }
-        success(`Sync (${report.direction}): pushed ${report.pushed}, pulled ${report.pulled}, created ${report.created}, comments ${report.commentsAdded}`);
+        const deletedPart = report.deleted > 0 ? `, deleted ${report.deleted}` : '';
+        success(`Sync (${report.direction}): pushed ${report.pushed}, pulled ${report.pulled}, created ${report.created}${deletedPart}, comments ${report.commentsAdded}`);
         if (report.pendingQueue > 0) {
           console.log(chalk.yellow(`  ${report.pendingQueue} queued op(s) pending (offline?) — will replay on next sync.`));
         }

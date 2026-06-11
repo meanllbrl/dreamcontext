@@ -702,3 +702,40 @@
   color: var(--color-text);
   width: 110px;
 }
+
+/* Editable property inputs + delete row */
+.prop-text-input {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 4px);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  padding: var(--space-1) var(--space-2);
+  width: 100%;
+  max-width: 260px;
+}
+
+.prop-text-input:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.prop-danger-row {
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+
+.btn--danger-ghost {
+  background: none;
+  border: 1px solid var(--color-danger, #ef4444);
+  color: var(--color-danger, #ef4444);
+  border-radius: var(--radius-sm, 4px);
+  font-size: var(--font-size-sm);
+  padding: var(--space-1) var(--space-3);
+  cursor: pointer;
+}
+
+.btn--danger-ghost:hover {
+  background: color-mix(in srgb, var(--color-danger, #ef4444) 12%, transparent);
+}

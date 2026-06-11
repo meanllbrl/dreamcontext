@@ -56,6 +56,7 @@ export interface TaskData {
   version: string | null;
   rice: RiceFields | null;
   due_date: string | null;
+  assignee: string | null;
   why: string;
   user_stories: string;
   acceptance_criteria: string;
@@ -147,6 +148,8 @@ export interface SyncReport {
   pushed: number;
   pulled: number;
   created: number;
+  /** Remote tasks deleted (propagated local deletions). */
+  deleted: number;
   commentsAdded: number;
   conflicts: SyncConflict[];
   pendingQueue: number;
@@ -178,6 +181,8 @@ export interface TaskBackend {
   /** `entry` is the fully formatted changelog block (callers own the label format). */
   addChangelog(slug: string, entry: string, opts?: AddChangelogOptions): Promise<void>;
   complete(slug: string, summary?: string): Promise<TaskData>;
+  /** Delete a task (remote backends propagate the deletion on sync). */
+  delete(slug: string): Promise<void>;
   /** Resolve a human-entered name to a slug (exact → prefix → substring). */
   resolveSlug(name: string): Promise<SlugResolution>;
   /** Two-way sync with the remote. No-op for the local backend. */

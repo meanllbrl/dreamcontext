@@ -205,6 +205,12 @@ export function makeFakeClickUp(opts: { serverStart?: number } = {}): FakeClickU
         const task = tasks.get(m[1]);
         if (!task) return jsonResponse(404, { err: 'Task not found' });
         if (method === 'GET') return jsonResponse(200, task);
+        if (method === 'DELETE') {
+          tasks.delete(m[1]);
+          comments.delete(m[1]);
+          serverTime += 1000;
+          return jsonResponse(200, {});
+        }
         if (method === 'PUT') {
           serverTime += 1000;
           if (body.name !== undefined) task.name = body.name;

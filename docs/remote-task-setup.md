@@ -121,4 +121,7 @@ ascii-folded, e.g. "Mehmet Nuraydın" → `mehmet-nuraydin`).
 - Switching the target list does not migrate task mappings yet (reset the
   gitignored `state/.tasks-{map,sync,queue}.json` to re-create everything in
   the new list).
-- Task deletion does not propagate in either direction.
+- Task deletion propagates **local → remote** (`tasks delete`, dashboard
+  delete button, or the API route — the remote task is deleted on the next
+  sync, and a pending deletion can never be resurrected by a pull). Deleting
+  a task **in ClickUp** does not remove the local mirror (yet).

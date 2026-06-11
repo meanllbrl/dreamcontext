@@ -57,7 +57,7 @@ export interface CachedMember {
   email?: string;
 }
 
-export type QueueOpKind = 'create' | 'push';
+export type QueueOpKind = 'create' | 'push' | 'delete';
 
 export interface QueueOp {
   /** Stable op id — replay is idempotent per id. */
@@ -66,6 +66,8 @@ export interface QueueOp {
   slug: string;
   /** Local wall-clock ms when enqueued (ordering only). */
   ts: number;
+  /** Delete ops carry the remote id (the map entry is dropped at delete time). */
+  remoteId?: string;
 }
 
 function readJson<T>(path: string, fallback: T): T {
@@ -113,6 +115,25 @@ export class SyncLedger {
     map.push(entry);
     map.sort((a, b) => a.slug.localeCompare(b.slug));
     writeJson(this.mapPath, map);
+  }
+
+  removeMapping(slug: string): void {
+    writeJson(this.mapPath, this.readMap().filter((e) => e.slug !== slug));
+  }
+
+  removeTaskSync(slug: string): void {
+    const state = this.readSyncState();
+    delete state.tasks[slug];
+    this.writeSyncState(state);
+  }
+
+  /** Remote ids with a delete op awaiting replay (pull must not resurrect them). */
+  pendingDeleteRemoteIds(): Set<string> {
+    return new Set(
+      this.readQueue()
+        .filter((q) => q.kind === 'delete' && q.remoteId)
+        .map((q) => q.remoteId!),
+    );
   }
 
   // ── sync state (gitignored) ──

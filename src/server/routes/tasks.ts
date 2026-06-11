@@ -174,6 +174,59 @@ export async function handleTasksSyncTest(
 }
 
 /**
+ * GET /api/tasks/members — assignee candidates (remote backends only).
+ */
+export async function handleTasksMembers(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const backend = backendFor(contextRoot);
+  if (!backend.listMembers) {
+    sendJson(res, 200, { members: [] });
+    return;
+  }
+  try {
+    sendJson(res, 200, { members: await backend.listMembers() });
+  } catch {
+    sendJson(res, 200, { members: [] }); // offline/unconfigured → empty, not an error
+  }
+}
+
+/**
+ * DELETE /api/tasks/:slug — delete a task (remote deletion propagates on sync).
+ */
+export async function handleTasksDelete(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const { slug } = params;
+  if (!isSafeTaskSlug(slug)) { sendError(res, 400, 'invalid_path', `Invalid task slug: ${slug}`); return; }
+
+  const backend = backendFor(contextRoot);
+  if ((await backend.get(slug)) === null) {
+    sendError(res, 404, 'not_found', `Task not found: ${slug}`);
+    return;
+  }
+
+  await backend.delete(slug);
+
+  // Consolidation must see deletions too — recorded into the sleep state's
+  // dashboard-changes ledger like every other dashboard mutation.
+  recordDashboardChange(contextRoot, {
+    entity: 'task',
+    action: 'delete',
+    target: `state/${slug}.md`,
+    summary: `Deleted task '${slug}'`,
+  });
+
+  sendJson(res, 200, { success: true });
+}
+
+/**
  * GET /api/tasks/:slug - Get a single task
  */
 export async function handleTasksGet(
@@ -264,7 +317,7 @@ export async function handleTasksUpdate(
     }
   }
 
-  const allowedFields = ['status', 'priority', 'urgency', 'description', 'tags', 'name', 'related_feature', 'version', 'due_date'];
+  const allowedFields = ['status', 'priority', 'urgency', 'description', 'tags', 'name', 'related_feature', 'version', 'due_date', 'assignee'];
   for (const field of allowedFields) {
     if (body[field] !== undefined) {
       const oldVal = (oldData[field] ?? null) as FieldChange['from'];
@@ -307,6 +360,12 @@ export async function handleTasksUpdate(
 
   if (fieldChanges.length === 0) {
     sendError(res, 400, 'no_changes', 'No valid fields to update.');
+    return;
+  }
+
+  // Validate assignee (person slug string or null to clear)
+  if (updates.assignee !== undefined && updates.assignee !== null && typeof updates.assignee !== 'string') {
+    sendError(res, 400, 'invalid_assignee', 'assignee must be a string or null.');
     return;
   }
 

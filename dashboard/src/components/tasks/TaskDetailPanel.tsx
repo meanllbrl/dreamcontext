@@ -3,7 +3,7 @@ import { marked } from 'marked';
 import mermaid from 'mermaid';
 import panzoom from 'panzoom';
 import type { Task, RiceFields, RiceInput } from '../../hooks/useTasks';
-import { useUpdateTask, useAddTaskChangelog } from '../../hooks/useTasks';
+import { useUpdateTask, useAddTaskChangelog, useDeleteTask, useTaskMembers } from '../../hooks/useTasks';
 import { usePlanningVersions } from '../../hooks/useVersions';
 import { useI18n } from '../../context/I18nContext';
 import { useTheme } from '../../context/ThemeContext';
@@ -361,6 +361,8 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
   const { resolved: theme } = useTheme();
   const updateTask = useUpdateTask();
   const addChangelog = useAddTaskChangelog();
+  const deleteTask = useDeleteTask();
+  const { data: members } = useTaskMembers();
   const { data: versions } = usePlanningVersions();
   const [changelogEntry, setChangelogEntry] = useState('');
   const [newTag, setNewTag] = useState('');
@@ -406,6 +408,30 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
       { slug: task.slug, updates: { rice: patch } },
       { onError: onMutationError },
     );
+  };
+
+  const handleTextField = (field: 'name' | 'description' | 'related_feature', value: string) => {
+    const next = field === 'related_feature' ? (value.trim() || null) : value.trim();
+    if (field !== 'related_feature' && !next) return; // name/summary must stay non-empty
+    updateTask.mutate(
+      { slug: task.slug, updates: { [field]: next } },
+      { onError: onMutationError },
+    );
+  };
+
+  const handleAssigneeChange = (value: string) => {
+    updateTask.mutate(
+      { slug: task.slug, updates: { assignee: value || null } },
+      { onError: onMutationError },
+    );
+  };
+
+  const handleDelete = () => {
+    if (!window.confirm(`Delete task "${task.name}"? This propagates to the remote backend on sync.`)) return;
+    deleteTask.mutate(task.slug, {
+      onError: onMutationError,
+      onSuccess: () => onClose?.(),
+    });
   };
 
   const handleDueChange = (value: string) => {
@@ -823,6 +849,63 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
               />
             </PropertyRow>
 
+            <PropertyRow label="Name">
+              <input
+                className="settings-like-input prop-text-input"
+                defaultValue={task.name}
+                key={`name-${task.slug}-${task.name}`}
+                onBlur={e => { if (e.target.value.trim() && e.target.value.trim() !== task.name) handleTextField('name', e.target.value); }}
+                onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+              />
+            </PropertyRow>
+
+            <PropertyRow label="Summary">
+              <input
+                className="prop-text-input"
+                defaultValue={task.description}
+                key={`desc-${task.slug}-${task.description}`}
+                placeholder="One-line summary"
+                onBlur={e => { if (e.target.value.trim() && e.target.value.trim() !== task.description) handleTextField('description', e.target.value); }}
+                onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+              />
+            </PropertyRow>
+
+            <PropertyRow label="Assignee">
+              {members && members.length > 0 ? (
+                <select
+                  className="field-select prop-select"
+                  value={task.assignee ?? ''}
+                  onChange={e => handleAssigneeChange(e.target.value)}
+                >
+                  <option value="">Unassigned</option>
+                  {members.map(m => (
+                    <option key={m.slug} value={m.slug}>{m.name}</option>
+                  ))}
+                  {task.assignee && !members.some(m => m.slug === task.assignee) && (
+                    <option value={task.assignee}>{task.assignee}</option>
+                  )}
+                </select>
+              ) : (
+                <input
+                  className="prop-text-input"
+                  defaultValue={task.assignee ?? ''}
+                  key={`asg-${task.slug}-${task.assignee ?? ''}`}
+                  placeholder="person slug"
+                  onBlur={e => { if ((e.target.value.trim() || null) !== (task.assignee ?? null)) handleAssigneeChange(e.target.value.trim()); }}
+                />
+              )}
+            </PropertyRow>
+
+            <PropertyRow label="Feature">
+              <input
+                className="prop-text-input"
+                defaultValue={task.related_feature ?? ''}
+                key={`feat-${task.slug}-${task.related_feature ?? ''}`}
+                placeholder="related feature slug"
+                onBlur={e => { if ((e.target.value.trim() || null) !== (task.related_feature ?? null)) handleTextField('related_feature', e.target.value); }}
+              />
+            </PropertyRow>
+
             <PropertyRow label="Due">
               <input
                 type="date"
@@ -864,12 +947,6 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
               </div>
             </PropertyRow>
 
-            {task.related_feature && (
-              <PropertyRow label="Feature">
-                <span className="prop-feature">{task.related_feature}</span>
-              </PropertyRow>
-            )}
-
             <PropertyRow label="Version">
               <select
                 className="field-select prop-select"
@@ -885,6 +962,17 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
                 )}
               </select>
             </PropertyRow>
+
+            <div className="prop-danger-row">
+              <button
+                type="button"
+                className="btn btn--danger-ghost"
+                onClick={handleDelete}
+                disabled={deleteTask.isPending}
+              >
+                {deleteTask.isPending ? 'Deleting…' : 'Delete task'}
+              </button>
+            </div>
 
             {task.description && (
               <PropertyRow label="Description">

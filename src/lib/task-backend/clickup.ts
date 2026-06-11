@@ -34,6 +34,7 @@ import {
   type ClickUpFieldValue,
   type FieldBinding,
 } from './clickup-fields.js';
+import { recordDashboardChange, type FieldChange } from '../change-tracker.js';
 import { clickupMemberMap, resolveActor, resolveActorToken } from './identity.js';
 import { LocalTaskBackend } from './local.js';
 import { merge3Bodies, mergeScalar, unionChangelog } from './merge.js';
@@ -207,6 +208,18 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
   async addChangelog(slug: string, entry: string, opts?: AddChangelogOptions): Promise<void> {
     await super.addChangelog(slug, entry, opts);
     this.recordLocalMutation(slug, 'push');
+  }
+
+  async delete(slug: string): Promise<void> {
+    const remoteId = this.ledger.remoteIdFor(slug);
+    await super.delete(slug);
+    // Drop every local trace NOW; the remote deletion replays on next sync.
+    this.ledger.removeMapping(slug);
+    this.ledger.removeTaskSync(slug);
+    this.ledger.dequeueFor(slug, Number.MAX_SAFE_INTEGER);
+    if (remoteId && !this.applyingRemote) {
+      this.ledger.enqueue({ id: generateId('op'), kind: 'delete', slug, ts: this.nowMs(), remoteId });
+    }
   }
 
   // ── Members (assignee candidates) ────────────────────────────────────────
@@ -389,6 +402,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       pushed: 0,
       pulled: 0,
       created: 0,
+      deleted: 0,
       commentsAdded: 0,
       conflicts: [],
       pendingQueue: 0,
@@ -432,8 +446,25 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     const adapter = this.getAdapter();
     const listId = this.requireListId();
 
+    // Replay queued deletions first (a 404 means it is already gone — done).
+    for (const op of this.ledger.readQueue().filter((q) => q.kind === 'delete')) {
+      try {
+        await adapter.request('DELETE', `/task/${op.remoteId}`);
+        report.deleted++;
+        this.ledger.dequeueFor(op.slug, op.ts);
+      } catch (err) {
+        if ((err as { kind?: string }).kind === 'not_found') {
+          this.ledger.dequeueFor(op.slug, op.ts);
+        } else {
+          report.errors.push(`delete ${op.slug}: ${(err as Error).message ?? err}`);
+        }
+      }
+    }
+
     const state = this.ledger.readSyncState();
-    const candidates = new Set(this.ledger.queuedSlugs());
+    const candidates = new Set(
+      this.ledger.readQueue().filter((q) => q.kind !== 'delete').map((q) => q.slug),
+    );
     for (const file of this.taskFiles()) {
       const slug = basename(file, '.md');
       const entry = state.tasks[slug];
@@ -655,7 +686,9 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       if (res.last_page !== false || batch.length === 0) break;
     }
 
+    const pendingDeletes = this.ledger.pendingDeleteRemoteIds();
     for (const remote of remoteTasks) {
+      if (pendingDeletes.has(remote.id)) continue; // deleted locally — do not resurrect
       try {
         await this.applyRemoteTask(remote, adapter, report);
       } catch (err) {
@@ -723,6 +756,16 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       });
       this.ledger.advanceWatermark(remoteTime);
       report.pulled++;
+      // Remote-originated changes must reach consolidation too: tasks are
+      // editable from outside, so the sleep ledger journals every pull.
+      try {
+        recordDashboardChange(this.contextRoot, {
+          entity: 'task',
+          action: 'create',
+          target: `state/${slug}.md`,
+          summary: `Remote sync created task '${slug}' (from ${this.name})`,
+        });
+      } catch { /* the journal must never break a sync */ }
       return;
     }
 
@@ -913,6 +956,70 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
 
     this.ledger.advanceWatermark(remoteTime);
     report.pulled++;
+
+    // Journal what the REMOTE changed (winners only) into the sleep ledger —
+    // consolidation has to see outside edits exactly like dashboard edits.
+    try {
+      const remoteFieldChanges: FieldChange[] = [];
+      const namedScalars: Array<[string, { winner: string; value: unknown }, unknown]> = [
+        ['status', statusM, local.status],
+        ['priority', priorityM, local.priority],
+        ['name', nameM, local.name],
+        ['tags', tagsM, stripPersonTags(local.tags)],
+        ['version', versionM, local.version],
+        ['assignee', assigneeM, (local.raw.assignee as string | null | undefined) ?? null],
+        ['due_date', dueM, (local.raw.due_date as string | null | undefined) ?? null],
+      ];
+      for (const [field, merged, from] of namedScalars) {
+        if (merged.winner === 'remote') {
+          remoteFieldChanges.push({
+            field,
+            from: from as FieldChange['from'],
+            to: merged.value as FieldChange['to'],
+          });
+        }
+      }
+      for (const fw of fieldWinners) {
+        if (fw.winner === 'remote') {
+          remoteFieldChanges.push({
+            field: fw.key,
+            from: localFieldValue(local.raw, fw.key as never) as FieldChange['from'],
+            to: fw.value as FieldChange['to'],
+          });
+        }
+      }
+      if (remoteAddedEntries) {
+        remoteFieldChanges.push({ field: 'changelog', from: null, to: null });
+      }
+      if (mergedDesc !== localDesc) {
+        remoteFieldChanges.push({ field: 'body', from: null, to: null });
+      }
+
+      if (remoteFieldChanges.length > 0) {
+        const fieldNames = remoteFieldChanges.map((f) => f.field).join(', ');
+        // With `fields` set, the ledger coalesces + rebuilds the summary from
+        // the net field diffs — exactly what consolidation needs to read.
+        recordDashboardChange(this.contextRoot, {
+          entity: 'task',
+          action: 'update',
+          target: `state/${slug}.md`,
+          field: fieldNames,
+          fields: remoteFieldChanges,
+          summary: `Remote sync updated task '${slug}' (${fieldNames})`,
+        });
+      }
+      if (conflicts.length > 0) {
+        // Conflicts get their own entry (no `fields`) so the pointer to the
+        // preserved copy survives verbatim into the sleep ledger.
+        recordDashboardChange(this.contextRoot, {
+          entity: 'task',
+          action: 'update',
+          target: `state/${slug}.md`,
+          field: 'conflict',
+          summary: `Remote sync conflict on '${slug}' (${conflicts.join(', ')}) — ClickUp version kept, local copy preserved under state/.conflicts/`,
+        });
+      }
+    } catch { /* the journal must never break a sync */ }
   }
 
   /** Read the mirror without any remote bookkeeping (super.get under a clear name). */

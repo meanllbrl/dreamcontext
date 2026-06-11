@@ -26,6 +26,7 @@ export interface Task {
   related_feature: string | null;
   version: string | null;
   due_date?: string | null;
+  assignee?: string | null;
   rice: RiceFields | null;
   why: string;
   user_stories: string;
@@ -58,7 +59,7 @@ interface CreateTaskInput {
 
 interface UpdateTaskInput {
   slug: string;
-  updates: Partial<Pick<Task, 'status' | 'priority' | 'urgency' | 'description' | 'tags' | 'name' | 'related_feature' | 'version' | 'due_date' | 'body'>> & {
+  updates: Partial<Pick<Task, 'status' | 'priority' | 'urgency' | 'description' | 'tags' | 'name' | 'related_feature' | 'version' | 'due_date' | 'assignee' | 'body'>> & {
     rice?: RiceInput | null;
   };
 }
@@ -105,6 +106,32 @@ export function useUpdateTask() {
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
       queryClient.invalidateQueries({ queryKey: ['tasks', variables.slug] });
     },
+  });
+}
+
+export function useDeleteTask() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (slug: string) => api.del<{ success: boolean }>(`/tasks/${slug}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['tasks'] });
+    },
+  });
+}
+
+export interface RemoteMember {
+  slug: string;
+  id: string;
+  name: string;
+  email?: string;
+}
+
+export function useTaskMembers() {
+  return useQuery({
+    queryKey: ['task-members'],
+    queryFn: () => api.get<{ members: RemoteMember[] }>('/tasks/members'),
+    select: (d) => d.members,
+    staleTime: 5 * 60 * 1000,
   });
 }
 

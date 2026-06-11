@@ -153,6 +153,15 @@ export function describeTaskBackendConformance(
       expect(await backend.resolveSlug('zzz-not-here')).toEqual({ kind: 'none' });
     });
 
+    it('delete removes the task; deleting a missing task throws not_found', async () => {
+      await backend.create({ name: 'Doomed', variant: 'cli' });
+      expect(await backend.get('doomed')).not.toBeNull();
+      await backend.delete('doomed');
+      expect(await backend.get('doomed')).toBeNull();
+      expect((await backend.list({ all: true })).map((t) => t.name)).not.toContain('doomed');
+      await expect(backend.delete('doomed')).rejects.toMatchObject({ code: 'not_found' });
+    });
+
     it('sync returns a structured SyncReport', async () => {
       const report = await backend.sync('both');
       expect(report.backend).toBe(backend.name);

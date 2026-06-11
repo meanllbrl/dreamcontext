@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join, resolve, sep } from 'node:path';
 import fg from 'fast-glob';
 import { readFrontmatter, updateFrontmatterFields, writeFrontmatter } from '../frontmatter.js';
@@ -152,6 +152,7 @@ export function readTaskFile(filePath: string): TaskData {
     version: (data.version as string) ?? null,
     rice: normalizeRice(data.rice),
     due_date: (data.due_date as string) ?? null,
+    assignee: (data.assignee as string) ?? null,
     why: readSectionSafe(filePath, 'Why'),
     user_stories: readSectionSafe(filePath, 'User Stories'),
     acceptance_criteria: readSectionSafe(filePath, 'Acceptance Criteria'),
@@ -362,6 +363,11 @@ ${input.why || '(To be defined)'}
     return this.updateFields(slug, { status: 'completed', updated_at: today() });
   }
 
+  async delete(slug: string): Promise<void> {
+    const path = this.requirePath(slug);
+    rmSync(path);
+  }
+
   async resolveSlug(name: string): Promise<SlugResolution> {
     const slug = slugify(name);
 
@@ -392,6 +398,7 @@ ${input.why || '(To be defined)'}
       pushed: 0,
       pulled: 0,
       created: 0,
+      deleted: 0,
       commentsAdded: 0,
       conflicts: [],
       pendingQueue: 0,
