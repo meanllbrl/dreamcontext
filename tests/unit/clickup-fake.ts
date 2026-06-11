@@ -45,6 +45,8 @@ export interface FakeClickUp {
   /** While set, every request fails this way ('network' throws, or an HTTP status). */
   failMode: { kind: 'network' } | { kind: 'http'; status: number } | null;
   setFailMode: (mode: FakeClickUp['failMode']) => void;
+  /** People with access to the list (GET /list/:id/member). */
+  members: Array<{ id: number; username: string; email?: string }>;
 }
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -70,6 +72,10 @@ export function makeFakeClickUp(opts: { serverStart?: number } = {}): FakeClickU
     serverNow: () => serverTime,
     advanceServer: (ms) => { serverTime += ms; },
     failMode: null,
+    members: [
+      { id: 501, username: 'Alice Smith', email: 'alice@example.test' },
+      { id: 502, username: 'Mehmet Nuraydın', email: 'mehmet@example.test' },
+    ],
     setFailMode: (mode) => { fake.failMode = mode; },
     editTask: (id, patch) => {
       const t = tasks.get(id);
@@ -186,6 +192,12 @@ export function makeFakeClickUp(opts: { serverStart?: number } = {}): FakeClickU
       // GET /user (connection test)
       if (path === '/user' && method === 'GET') {
         return jsonResponse(200, { user: { id: 1, username: 'api-user' } });
+      }
+
+      // GET /list/:id/member (assignee candidates)
+      m = path.match(/^\/list\/([^/]+)\/member$/);
+      if (m && method === 'GET') {
+        return jsonResponse(200, { members: fake.members });
       }
 
       return jsonResponse(404, { err: `fake: unhandled ${method} ${path}` });

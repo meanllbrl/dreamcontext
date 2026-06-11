@@ -533,6 +533,33 @@ export function registerTasksCommand(program: Command): void {
       }
     });
 
+  // Remote members (assignee candidates) — generic: any remote backend may expose them
+  tasks
+    .command('members')
+    .description('List people with access to the remote task container (assignee candidates)')
+    .option('--json', 'Emit members as JSON')
+    .action(async (opts: { json?: boolean }) => {
+      const backend = getTaskBackend();
+      if (!backend.listMembers) {
+        console.log(chalk.dim(`Task backend is "${backend.name}" — no remote members.`));
+        return;
+      }
+      try {
+        const members = await backend.listMembers();
+        if (opts.json) { console.log(JSON.stringify(members, null, 2)); return; }
+        if (members.length === 0) { console.log(chalk.dim('No members found.')); return; }
+        console.log(header('Members'));
+        const width = Math.max(...members.map((m) => m.slug.length));
+        for (const m of members) {
+          console.log(`  ${m.slug.padEnd(width)}  ${chalk.white(m.name)}${m.email ? chalk.dim(`  ${m.email}`) : ''}  ${chalk.dim(`id:${m.id}`)}`);
+        }
+        console.log(chalk.dim('\n  Assign with a person tag (`--tags person:<slug>`) or the assignee field — sync maps it to the remote member.'));
+      } catch (err) {
+        error(`Could not fetch members: ${(err as Error).message ?? err}`);
+        process.exitCode = 1;
+      }
+    });
+
   // Git sync triggers (issue #11 M5): best-effort hooks that can never fail git
   tasks
     .command('sync-hooks')

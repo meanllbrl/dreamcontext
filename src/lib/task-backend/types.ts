@@ -180,6 +180,18 @@ export interface TaskBackend {
   sync(direction?: SyncDirection): Promise<SyncReport>;
   /** Remote connectivity probe (Settings "Test connection"). Absent on local. */
   testConnection?(): Promise<ConnectionTestResult>;
+  /** People with access to the remote container (assignee candidates). Absent on local. */
+  listMembers?(): Promise<RemoteMember[]>;
+}
+
+/** A person with access to the remote task container. */
+export interface RemoteMember {
+  /** Stable kebab-case slug derived from the remote display name (ascii-folded). */
+  slug: string;
+  /** Remote member id (assignee mapping). */
+  id: string;
+  name: string;
+  email?: string;
 }
 
 export type ConnectionTestResult =

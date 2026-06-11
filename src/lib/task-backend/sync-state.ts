@@ -39,6 +39,18 @@ export interface SyncStateFile {
   /** Global PULL watermark: max remote date_updated seen (server time, epoch ms). */
   watermark: number | null;
   tasks: Record<string, TaskSyncEntry>;
+  /**
+   * Remote container members, keyed by ascii-folded slug — refreshed
+   * best-effort on each sync. Derived data (gitignored with the rest),
+   * so assignee mapping needs no manual config.
+   */
+  members?: Record<string, CachedMember>;
+}
+
+export interface CachedMember {
+  id: string;
+  name: string;
+  email?: string;
 }
 
 export type QueueOpKind = 'create' | 'push';
@@ -116,6 +128,16 @@ export class SyncLedger {
     const state = this.readSyncState();
     const existing: TaskSyncEntry = state.tasks[slug] ?? { last_synced_at: 0 };
     state.tasks[slug] = { ...existing, ...patch };
+    this.writeSyncState(state);
+  }
+
+  readMembers(): Record<string, CachedMember> {
+    return this.readSyncState().members ?? {};
+  }
+
+  writeMembers(members: Record<string, CachedMember>): void {
+    const state = this.readSyncState();
+    state.members = members;
     this.writeSyncState(state);
   }
 

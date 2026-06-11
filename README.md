@@ -481,6 +481,11 @@ dreamcontext tasks sync-hooks install               # best-effort post-commit/pr
 - Offline edits queue in `state/.tasks-queue.json` and replay idempotently.
 - Tokens resolve env (`CLICKUP_TOKEN`, or a per-person `tokenEnv`) → secrets
   file; `config show` only ever prints a masked token.
+- **Assignees need no manual mapping**: each sync caches the list's members;
+  `dreamcontext tasks members` shows them with their slugs. Tag a task
+  `person:<slug>` (or set the `assignee` field) and the push assigns the
+  ClickUp member; a remote assignment pulls back as both the field and the
+  tag. `config clickup-member` stays available as an explicit override.
 
 ### Features
 

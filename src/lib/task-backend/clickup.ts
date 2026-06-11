@@ -26,11 +26,50 @@ import type {
   AddChangelogOptions,
   CreateTaskInput,
   InsertSectionOptions,
+  RemoteMember,
   SyncDirection,
   SyncReport,
   TaskData,
   UpdateFieldsOptions,
 } from './types.js';
+
+// ─── person:<slug> tag ↔ assignee bridge ────────────────────────────────────
+// dreamcontext's existing person-tag convention drives the remote assignee:
+// tag a task `person:<slug>` and the push assigns it to that member; a remote
+// assignee pulls back as both the `assignee` field and the person tag.
+// person: tags never leave the mirror — ClickUp has real assignees instead.
+
+const PERSON_TAG_PREFIX = 'person:';
+
+function stripPersonTags(tags: string[]): string[] {
+  return tags.filter((t) => !t.startsWith(PERSON_TAG_PREFIX));
+}
+
+function personTagSlug(tags: string[]): string | null {
+  const tag = tags.find((t) => t.startsWith(PERSON_TAG_PREFIX));
+  return tag ? tag.slice(PERSON_TAG_PREFIX.length) : null;
+}
+
+function withPersonTag(tags: string[], assignee: string | null): string[] {
+  const out = stripPersonTags(tags);
+  if (assignee) out.push(`${PERSON_TAG_PREFIX}${assignee}`);
+  return out;
+}
+
+/**
+ * Slug for a remote display name. Ascii-folds before slugify so
+ * "Mehmet Nuraydın" → "mehmet-nuraydin" (plain slugify would mangle the
+ * dotless ı into a dash).
+ */
+export function memberSlug(name: string): string {
+  const folded = name
+    .replace(/ı/g, 'i').replace(/İ/g, 'I')
+    .replace(/ş/g, 's').replace(/Ş/g, 'S')
+    .replace(/ğ/g, 'g').replace(/Ğ/g, 'G')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+  return slugify(folded);
+}
 
 /**
  * ClickUp task backend — issue #11.
@@ -160,6 +199,57 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     this.recordLocalMutation(slug, 'push');
   }
 
+  // ── Members (assignee candidates) ────────────────────────────────────────
+
+  private membersRefreshed = false;
+
+  /** Best-effort member refresh — once per sync(), failure never breaks sync. */
+  protected async refreshMembers(adapter: ApiAdapter, listId: string): Promise<void> {
+    if (this.membersRefreshed) return;
+    this.membersRefreshed = true;
+    try {
+      const res = await adapter.request<{ members?: Array<{ id: number | string; username?: string; email?: string }> }>(
+        'GET',
+        `/list/${listId}/member`,
+      );
+      const map: Record<string, { id: string; name: string; email?: string }> = {};
+      for (const m of res.members ?? []) {
+        const name = m.username ?? String(m.id);
+        map[memberSlug(name)] = { id: String(m.id), name, ...(m.email ? { email: m.email } : {}) };
+      }
+      if (Object.keys(map).length > 0) this.ledger.writeMembers(map);
+    } catch { /* members are a convenience — never fail the sync */ }
+  }
+
+  /** Live member list for the configured container (also refreshes the cache). */
+  async listMembers(): Promise<RemoteMember[]> {
+    const adapter = this.getAdapter();
+    const listId = this.requireListId();
+    this.membersRefreshed = false;
+    await this.refreshMembers(adapter, listId);
+    return Object.entries(this.ledger.readMembers())
+      .map(([slug, m]) => ({ slug, id: m.id, name: m.name, email: m.email }))
+      .sort((a, b) => a.slug.localeCompare(b.slug));
+  }
+
+  /** Person slug → remote member id: explicit config mapping first, then the cache. */
+  protected memberIdFor(slug: string): string | null {
+    const configured = clickupMemberMap(this.contextRoot, this.config)[slug];
+    if (configured) return configured;
+    return this.ledger.readMembers()[slug]?.id ?? null;
+  }
+
+  /** Remote member id → person slug: config mapping first, then the cache. */
+  protected slugForMemberId(id: string): string | null {
+    for (const [slug, memberId] of Object.entries(clickupMemberMap(this.contextRoot, this.config))) {
+      if (memberId === id) return slug;
+    }
+    for (const [slug, m] of Object.entries(this.ledger.readMembers())) {
+      if (m.id === id) return slug;
+    }
+    return null;
+  }
+
   /** Settings "Test connection": authenticate and fetch the token's user. */
   async testConnection(): Promise<{ ok: true; user: string } | { ok: false; error: string }> {
     try {
@@ -189,6 +279,10 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     };
 
     try {
+      // Member cache refresh (assignee candidates) — best-effort, 1 request.
+      try {
+        await this.refreshMembers(this.getAdapter(), this.requireListId());
+      } catch { /* config errors surface below via pull/push */ }
       if (direction === 'pull' || direction === 'both') {
         await this.pullRemote(report);
       }
@@ -256,9 +350,9 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     const baseNorm = new Set(baseEntries.map(normalizeEntry));
     const newEntries = currentEntries.filter((e) => !baseNorm.has(normalizeEntry(e)));
 
-    const memberMap = clickupMemberMap(this.contextRoot, this.config);
-    const assigneeSlug = (task.raw.assignee as string | null | undefined) ?? null;
-    const assigneeId = assigneeSlug ? memberMap[assigneeSlug] : undefined;
+    // assignee: explicit frontmatter field, else the person:<slug> tag.
+    const assigneeSlug = ((task.raw.assignee as string | null | undefined) ?? null) || personTagSlug(task.tags);
+    const assigneeId = assigneeSlug ? this.memberIdFor(assigneeSlug) : null;
 
     const fields = {
       name: task.name,
@@ -275,7 +369,8 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       const created = await adapter.request<ClickUpTask>('POST', `/list/${listId}/task`, {
         body: {
           ...fields,
-          tags: tagsToClickUp(task.tags, task.version),
+          // person: tags stay local — the remote has real assignees.
+          tags: tagsToClickUp(stripPersonTags(task.tags), task.version),
           assignees: assigneeId ? [Number(assigneeId)] : [],
         },
       });
@@ -288,7 +383,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       const updated = await adapter.request<ClickUpTask>('PUT', `/task/${remoteId}`, {
         body: {
           ...fields,
-          ...(assigneeId !== undefined ? { assignees: { add: [Number(assigneeId)], rem: [] } } : {}),
+          ...(assigneeId ? { assignees: { add: [Number(assigneeId)], rem: [] } } : {}),
         },
       });
       serverTime = serverTimeMs(updated.date_updated);
@@ -370,15 +465,6 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     }
   }
 
-  /** Inverse member map: ClickUp member id → person slug. */
-  protected memberSlugById(): Record<string, string> {
-    const inverse: Record<string, string> = {};
-    for (const [slug, id] of Object.entries(clickupMemberMap(this.contextRoot, this.config))) {
-      inverse[String(id)] = slug;
-    }
-    return inverse;
-  }
-
   protected async applyRemoteTask(
     remote: ClickUpTask,
     adapter: ApiAdapter,
@@ -397,10 +483,10 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     const remoteStatus = statusFromClickUp(remote.status?.status);
     const remotePriority = priorityFromClickUp(remote.priority);
     const remoteDesc = (remote.description ?? '').replace(/\r\n/g, '\n').trim();
-    const inverseMembers = this.memberSlugById();
     const firstAssignee = remote.assignees?.[0];
     const remoteAssignee: string | null = firstAssignee
-      ? inverseMembers[String(firstAssignee.id)] ?? String(firstAssignee.username ?? firstAssignee.id)
+      ? this.slugForMemberId(String(firstAssignee.id))
+        ?? memberSlug(String(firstAssignee.username ?? firstAssignee.id))
       : null;
 
     let slug = this.ledger.slugForRemoteId(remote.id);
@@ -417,7 +503,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
         status: remoteStatus,
         created_at: dateOf(serverTimeMs(remote.date_created) ?? remoteTime),
         updated_at: dateOf(remoteTime),
-        tags: remoteTags,
+        tags: withPersonTag(remoteTags, remoteAssignee),
         parent_task: null,
         related_feature: null,
         version: remoteVersion,
@@ -452,7 +538,12 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     const baseFm = (baseParsed?.data ?? null) as Record<string, unknown> | null;
     const baseDesc = baseParsed ? bodyToDescription(baseParsed.content.trim()).trim() : null;
     const baseTagInfo = baseFm
-      ? { tags: (baseFm.tags as string[]) ?? [], version: (baseFm.version as string | null) ?? null }
+      ? {
+          tags: stripPersonTags(((baseFm.tags as string[]) ?? [])),
+          version: (baseFm.version as string | null) ?? null,
+          assignee: ((baseFm.assignee as string | null | undefined) ?? null)
+            || personTagSlug(((baseFm.tags as string[]) ?? [])),
+        }
       : null;
 
     // ── changelog: union (conflict-free by construction) ──
@@ -488,13 +579,13 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     const statusM = scalar(baseFm?.status as string | undefined, local.status, remoteStatus);
     const priorityM = scalar(baseFm?.priority as string | undefined, local.priority, remotePriority);
     const nameM = scalar(baseFm?.name as string | undefined, local.name, remote.name);
-    const tagsM = scalar(baseTagInfo?.tags, local.tags, remoteTags);
+    const tagsM = scalar(baseTagInfo?.tags, stripPersonTags(local.tags), remoteTags);
     const versionM = scalar(baseTagInfo?.version, local.version, remoteVersion);
     // assignee is ClickUp-authoritative; the local mirror still wins when the
     // remote side did not move (a pending local assignment awaiting push).
     const assigneeM = scalar(
-      (baseFm?.assignee as string | null | undefined) ?? null,
-      ((local.raw.assignee as string | null | undefined) ?? null),
+      baseTagInfo?.assignee,
+      (((local.raw.assignee as string | null | undefined) ?? null) || personTagSlug(local.tags)),
       remoteAssignee,
     );
 
@@ -516,7 +607,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       name: nameM.value,
       status: statusM.value,
       priority: priorityM.value,
-      tags: tagsM.value,
+      tags: withPersonTag(tagsM.value, assigneeM.value),
       version: versionM.value,
       assignee: assigneeM.value,
       updated_at: remoteContributed && remoteTime !== null ? dateOf(remoteTime) : local.updated_at,
@@ -532,7 +623,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     const keptLocal = anyLocalWin || proseLocalKept || localOnlyEntries.length > 0;
     if (keptLocal) {
       const remoteRender = this.renderMirror(
-        { ...fm, name: remote.name, status: remoteStatus, priority: remotePriority, tags: remoteTags, version: remoteVersion, assignee: remoteAssignee },
+        { ...fm, name: remote.name, status: remoteStatus, priority: remotePriority, tags: withPersonTag(remoteTags, remoteAssignee), version: remoteVersion, assignee: remoteAssignee },
         remoteDesc,
         remoteEntries,
       );
