@@ -912,6 +912,12 @@ export function generateSnapshot(): string {
 
     // 9.5 Warm Knowledge (recently relevant, first paragraph only)
     if (warmEntries.length > 0) {
+      // Option A (maintainer decision): no pinned-preview inline feature built.
+      // entry.content is already extracted text (not scene JSON) for Excalidraw
+      // boards — see knowledge-index.ts. So extractFirstParagraph(entry.content)
+      // here and the token estimate are always JSON-free and size-independent.
+      // A 2MB-scene board and a tiny-scene board with identical Text Elements
+      // yield equal token estimates. No functional change needed.
       const renderWarm = (cap: number): string[] => {
         const out: string[] = ['## Warm Knowledge (Recently Relevant)\n'];
         for (const entry of warmEntries.slice(0, cap)) {

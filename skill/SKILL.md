@@ -431,6 +431,22 @@ Task insert sections: `why`, `user_stories`, `acceptance_criteria`, `constraints
 
 Standard tags: `architecture`, `api`, `frontend`, `backend`, `database`, `devops`, `security`, `testing`, `design`, `decisions`, `onboarding`, `domain`. Custom tags allowed.
 
+### Excalidraw boards in knowledge/diagrams/
+
+Excalidraw boards (`.excalidraw.md`) are first-class knowledge files. Two layouts are both supported:
+
+**Flat** (legacy, still works): `knowledge/diagrams/<title>.excalidraw.md`
+
+**Per-title folder** (preferred convention): `knowledge/diagrams/<title>/<title>.excalidraw.md`
+
+Rules:
+- **REQUIRED frontmatter**: every board MUST have `name:` and `description:` fields. Boards with no `## Text Elements` section fall back to description-only recall — make it descriptive.
+- **Do NOT hand-edit scene JSON.** The `.excalidraw.md` file is generated output. Build a spec and run the generator (`.board.cjs`). Edit the spec, not the board.
+- **Spec is the source of truth.** If the spec and the board ever disagree, the spec wins. Commit both.
+- **Dark siblings**: all files inside a `knowledge/diagrams/<title>/` folder that are NOT the board itself (generator scripts `.board.cjs`, spec `.json`, helper `.md`) are excluded from the index, recall corpus, snapshot, and dashboard. They are tooling artifacts — they do NOT surface in memory.
+- **Memory indexes only frontmatter + ## Text Elements**: scene JSON, base64, and element ids are stripped before indexing. A 2 MB board with rich Text Elements is as searchable as a tiny board. The dashboard renderer still receives the raw body (with full scene JSON) via the detail API route.
+- **Migration is opt-in**: flat boards stay flat unless you explicitly ask for reorganization. Running `dreamcontext migrations run` records detected boards but moves nothing.
+
 ---
 
 ## Memory Recall (BM25)
@@ -475,6 +491,13 @@ _dream_context/
 |   +-- data-structures/              <- Per-product schemas (recall-indexed knowledge)
 |   |   +-- default.md                <-   single-product fallback
 |   |   +-- <product>.md              <-   one per product if monorepo
+|   +-- diagrams/                     <- Excalidraw boards (flat or per-title folder)
+|   |   +-- <title>.excalidraw.md     <-   flat layout (still works; legacy OK)
+|   |   +-- <title>/                  <-   preferred: per-title folder
+|   |   |   +-- <title>.excalidraw.md <-     generated board (do NOT hand-edit scene JSON)
+|   |   |   +-- <title>.board.cjs     <-     generator script (dark sibling — excluded from index/recall)
+|   |   |   +-- <title>.json          <-     spec/source of truth (dark sibling — excluded)
+|   |   |   +-- notes.md              <-     any helper .md (dark sibling — excluded)
 |   +-- products/<product>.md         <- Per-product knowledge (multi-product)
 +-- state/
 |   +-- <task>.md                     <- Active tasks (frontmatter may include product:)

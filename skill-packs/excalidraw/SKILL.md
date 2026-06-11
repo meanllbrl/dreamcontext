@@ -200,3 +200,59 @@ node examples/style_board.js                                # JS API: card/conne
 Then open the resulting board in Obsidian (Excalidraw view) to confirm it renders.
 
 See `reference/format.md` for the exact `.excalidraw.md` anatomy reverse-engineered from this vault.
+
+---
+
+## Boards as first-class knowledge in dreamcontext
+
+When the project uses dreamcontext, Excalidraw boards belong in `_dream_context/knowledge/diagrams/`.
+They are indexed and recalled just like any knowledge file — but memory extracts ONLY the
+`## Text Elements` section (never the scene JSON).
+
+### Required frontmatter
+
+Every board MUST have `name:` and `description:`. Boards with no `## Text Elements` content rely
+entirely on description for recall — make it descriptive.
+
+```yaml
+---
+name: My Board Title
+description: One-sentence summary of what this board visualises.
+tags: [architecture, excalidraw]
+excalidraw-plugin: parsed
+---
+```
+
+### Folder convention (preferred)
+
+```
+_dream_context/knowledge/diagrams/
+├── my-board/
+│   ├── my-board.excalidraw.md   ← generated board (do NOT hand-edit scene JSON)
+│   ├── my-board.board.cjs       ← generator (dark sibling — excluded from index/recall)
+│   └── my-board.json            ← spec / source of truth (dark sibling — excluded)
+└── legacy-flat.excalidraw.md    ← flat layout still works; no forced migration
+```
+
+**Dark siblings**: any file inside a `diagrams/<title>/` folder that is NOT the board itself
+is automatically excluded from the index, recall corpus, snapshot, and dashboard list.
+This includes generator scripts (`.board.cjs`), spec JSON, and any helper `.md` notes.
+They are tooling — they do not pollute memory.
+
+**Flat layout** (`diagrams/<title>.excalidraw.md`) works without any migration. Use the
+per-title folder when you want to keep the board + generator + spec together cleanly.
+
+### Memory contract
+
+- Memory indexes: frontmatter (`name`, `description`, `tags`) + `## Text Elements` labels.
+- Memory never indexes: scene JSON, base64 blobs, element ids, `## Embedded Files` map.
+- The dashboard renderer receives the raw body (full scene JSON) via the detail API route —
+  rendering is unaffected by extraction.
+- A 2 MB board with rich Text Elements and a tiny board with the same labels have the same
+  recall surface. Scene size does not affect recall or snapshot token cost.
+
+### Migration
+
+Flat boards in `knowledge/diagrams/` do NOT auto-migrate. Running `dreamcontext migrations run`
+detects them and records the count but moves nothing. To opt-in to the per-title folder layout,
+follow the agent task instruction exposed by migration 0.7.2.

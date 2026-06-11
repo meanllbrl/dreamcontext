@@ -43,6 +43,10 @@ export async function handleKnowledgeGet(
     return;
   }
 
+  // Invariant: detail route returns RAW body (frontmatter stripped, scene JSON
+  // intact). The ExcalidrawPreview renderer (dashboard) needs the full Drawing
+  // block to parse the scene. Memory extraction (extracted text, not JSON)
+  // happens only in knowledge-index.ts (entry.content) and recall.ts (body).
   const { data, content } = readFrontmatter<Record<string, unknown>>(filePath);
   sendJson(res, 200, {
     entry: {
