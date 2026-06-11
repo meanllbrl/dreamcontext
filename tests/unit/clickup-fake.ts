@@ -251,10 +251,30 @@ export function makeFakeClickUp(opts: { serverStart?: number } = {}): FakeClickU
         }
       }
 
-      // GET /list/:id/field (custom field definitions)
+      // /list/:id/field — GET defs, POST creates one (verified live on v2)
       m = path.match(/^\/list\/([^/]+)\/field$/);
       if (m && method === 'GET') {
         return jsonResponse(200, { fields: fake.customFields });
+      }
+      if (m && method === 'POST') {
+        const def: FakeFieldDef = {
+          id: `fld_new_${++idCounter}`,
+          name: body.name ?? '',
+          type: body.type ?? 'short_text',
+          ...(body.type_config
+            ? {
+                type_config: {
+                  options: (body.type_config.options ?? []).map((o: { name: string }, i: number) => ({
+                    id: `opt_${body.name}_${o.name}`,
+                    name: o.name,
+                    orderindex: i,
+                  })),
+                },
+              }
+            : {}),
+        };
+        fake.customFields.push(def);
+        return jsonResponse(200, { field: def });
       }
 
       // POST /task/:id/field/:fieldId (set custom field value)

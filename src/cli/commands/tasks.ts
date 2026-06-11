@@ -639,6 +639,33 @@ export function registerTasksCommand(program: Command): void {
       }
     });
 
+  // Provision the recommended remote structure (custom fields)
+  tasks
+    .command('provision')
+    .description('Create the recommended fields on the remote task container (urgency, summary, RICE, …)')
+    .action(async () => {
+      const backend = getTaskBackend();
+      if (!backend.provisionRemote) {
+        console.log(chalk.dim(`Task backend is "${backend.name}" — nothing to provision.`));
+        return;
+      }
+      try {
+        const result = await backend.provisionRemote();
+        if (result.created.length > 0) success(`Created remote fields: ${result.created.join(', ')}`);
+        if (result.existing.length > 0) console.log(chalk.dim(`  Already present: ${result.existing.join(', ')}`));
+        for (const e of result.errors) error(e);
+        if (result.created.length === 0 && result.errors.length === 0) {
+          console.log(chalk.dim('All recommended fields already exist.'));
+        }
+        if (result.backfilled > 0) {
+          console.log(chalk.dim(`  Backfilled ${result.backfilled} value(s) onto already-synced tasks.`));
+        }
+      } catch (err) {
+        error(`Provision failed: ${(err as Error).message ?? err}`);
+        process.exitCode = 1;
+      }
+    });
+
   // Git sync triggers (issue #11 M5): best-effort hooks that can never fail git
   tasks
     .command('sync-hooks')

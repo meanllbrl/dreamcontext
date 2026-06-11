@@ -47,8 +47,14 @@ a Turkish keyboard matches fine) and falls back down a candidate chain:
 
 ## 3. Custom fields (the field bridge)
 
-Create these fields **on the list** and sync starts writing/reading them.
-Matching is by folded field name; create only the ones you care about.
+**Easiest path:** `dreamcontext tasks provision` creates the whole recommended
+set below on the list via the API (verified live), skips ones that already
+exist, and backfills values onto already-synced tasks — idempotent, run it
+any time.
+
+Prefer manual? Create these fields **on the list** and sync starts
+writing/reading them. Matching is by folded field name; create only the ones
+you care about.
 
 | Create this field | Type | dreamcontext source | Direction |
 |---|---|---|---|

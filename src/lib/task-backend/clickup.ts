@@ -28,6 +28,7 @@ import {
   isPullable,
   localFieldValue,
   matchCustomFields,
+  RECOMMENDED_FIELD_DEFS,
   RICE_KEYS,
   type ClickUpFieldDef,
   type ClickUpFieldValue,
@@ -280,6 +281,92 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       if (m.id === id) return slug;
     }
     return null;
+  }
+
+  /**
+   * Create the recommended custom fields on the list (verified live:
+   * POST /list/:id/field works on ClickUp v2). Skips fields the bridge
+   * already binds; refreshes the cache so the next sync uses them at once.
+   */
+  async provisionRemote(): Promise<{ created: string[]; existing: string[]; backfilled: number; errors: string[] }> {
+    const adapter = this.getAdapter();
+    const listId = this.requireListId();
+
+    // Fresh defs → which recommended keys are already bound?
+    this.membersRefreshed = false;
+    await this.refreshMembers(adapter, listId);
+    const bound = new Set(this.fieldBindings().map((b) => b.key));
+
+    const created: string[] = [];
+    const existing: string[] = [];
+    const errors: string[] = [];
+
+    for (const def of RECOMMENDED_FIELD_DEFS) {
+      if (bound.has(def.key)) {
+        existing.push(def.name);
+        continue;
+      }
+      try {
+        await adapter.request('POST', `/list/${listId}/field`, {
+          body: {
+            name: def.name,
+            type: def.type,
+            ...(def.options
+              ? { type_config: { options: def.options.map((name) => ({ name })) } }
+              : {}),
+          },
+        });
+        created.push(def.name);
+      } catch (err) {
+        errors.push(`${def.name}: ${(err as Error).message ?? err}`);
+      }
+    }
+
+    if (created.length > 0) {
+      this.membersRefreshed = false;
+      await this.refreshMembers(adapter, listId); // re-cache with the new defs
+    }
+
+    // BACKFILL: already-synced tasks have no hash drift, so the delta push
+    // would never fill fresh fields. Write the local value wherever the
+    // remote field is still EMPTY — idempotent by construction.
+    let backfilled = 0;
+    const bindings = this.fieldBindings();
+    if (bindings.length > 0) {
+      for (const mapEntry of this.ledger.readMap()) {
+        const task = await this.getLocal(mapEntry.slug);
+        if (!task) continue;
+        let remoteTask: ClickUpTask;
+        try {
+          remoteTask = await adapter.request<ClickUpTask>('GET', `/task/${mapEntry.remoteId}`);
+        } catch {
+          continue; // unreachable remote task — sync will surface it later
+        }
+        const remoteFields = (remoteTask.custom_fields ?? []) as unknown as ClickUpFieldValue[];
+        for (const binding of bindings) {
+          const value = localFieldValue(task.raw, binding.key);
+          if (value === null) continue;
+          const rf = remoteFields.find((f) => f.id === binding.field.id);
+          if (rf && rf.value !== undefined && rf.value !== null && rf.value !== '') continue;
+          const encoded = encodeFieldValue(binding, value);
+          if (encoded === null) continue;
+          try {
+            await adapter.request('POST', `/task/${mapEntry.remoteId}/field/${binding.field.id}`, {
+              body: { value: encoded },
+            });
+            backfilled++;
+          } catch (err) {
+            errors.push(`${mapEntry.slug}.${binding.key}: ${(err as Error).message ?? err}`);
+          }
+        }
+      }
+      if (backfilled > 0) {
+        // Our writes bumped remote date_updated — settle the watermark with a
+        // pull (no-op merges: the values came from the local files).
+        await this.sync('pull');
+      }
+    }
+    return { created, existing, backfilled, errors };
   }
 
   /** Settings "Test connection": authenticate and fetch the token's user. */

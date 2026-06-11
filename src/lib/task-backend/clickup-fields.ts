@@ -155,6 +155,28 @@ export function isPullable(binding: FieldBinding): boolean {
   return binding.spec.pull;
 }
 
+/**
+ * The recommended field set `tasks provision` creates on the list
+ * (POST /list/:id/field — verified live). Names match the KEY_SPECS above so
+ * the bridge binds them immediately.
+ */
+export const RECOMMENDED_FIELD_DEFS: Array<{
+  key: CustomFieldKey;
+  name: string;
+  type: string;
+  options?: string[];
+}> = [
+  { key: 'urgency', name: 'Urgency', type: 'drop_down', options: ['low', 'medium', 'high', 'critical'] },
+  { key: 'description', name: 'Summary', type: 'short_text' },
+  { key: 'reach', name: 'Reach', type: 'number' },
+  { key: 'impact', name: 'Impact', type: 'number' },
+  { key: 'confidence', name: 'Confidence', type: 'number' },
+  { key: 'effort', name: 'Effort', type: 'number' },
+  { key: 'score', name: 'RICE Score', type: 'number' },
+  { key: 'related_feature', name: 'Feature', type: 'short_text' },
+  { key: 'version', name: 'Version', type: 'short_text' },
+];
+
 /** RICE sub-keys (pulled values rebuild the rice block; score recomputes locally). */
 export const RICE_KEYS: CustomFieldKey[] = ['reach', 'impact', 'confidence', 'effort'];
 

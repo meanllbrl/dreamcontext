@@ -65,6 +65,44 @@ function mirror(slug: string): string {
 }
 
 describe('custom-field bridge (urgency / summary / RICE / …)', () => {
+  it('provisionRemote creates missing fields, skips existing, and BACKFILLS already-synced tasks', async () => {
+    // A task is synced while the list only has a Summary field — urgency
+    // has nowhere to go yet.
+    fake.customFields = [{ id: 'fld_summary', name: 'Summary', type: 'short_text' }];
+    await backend.create({ name: 'Pre Provision', urgency: 'high', variant: 'cli' });
+    await backend.sync('push');
+
+    const result = await backend.provisionRemote!();
+    expect(result.errors).toEqual([]);
+    expect(result.existing).toEqual(['Summary']);
+    expect(result.created).toEqual([
+      'Urgency', 'Reach', 'Impact', 'Confidence', 'Effort', 'RICE Score', 'Feature', 'Version',
+    ]);
+    // The new dropdown carries its options.
+    const urgency = fake.customFields.find((f) => f.name === 'Urgency');
+    expect(urgency?.type).toBe('drop_down');
+    expect(urgency?.type_config?.options?.map((o) => o.name)).toEqual(['low', 'medium', 'high', 'critical']);
+
+    // The already-synced task got its urgency backfilled into the new field.
+    expect(result.backfilled).toBeGreaterThan(0);
+    const remote = [...fake.tasks.values()][0];
+    const urgencyValue = remote.custom_fields.find((f) => f.name === 'Urgency')?.value;
+    expect(urgencyValue).toBe('opt_Urgency_high');
+
+    // Idempotent: a second run creates nothing and backfills nothing.
+    const again = await backend.provisionRemote!();
+    expect(again.created).toEqual([]);
+    expect(again.existing).toHaveLength(9);
+    expect(again.backfilled).toBe(0);
+
+    // And follow-up syncs converge.
+    fake.requests.length = 0;
+    const sync = await backend.sync('both');
+    expect(sync.pushed).toBe(0);
+    expect(sync.pulled).toBe(0);
+    expect(fake.requests.filter((r) => r.method !== 'GET')).toHaveLength(0);
+  });
+
   it('push writes urgency (dropdown option), summary, and RICE numbers into matching list fields', async () => {
     await backend.create({
       name: 'Fielded',

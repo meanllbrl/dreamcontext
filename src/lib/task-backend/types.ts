@@ -186,6 +186,18 @@ export interface TaskBackend {
   testConnection?(): Promise<ConnectionTestResult>;
   /** People with access to the remote container (assignee candidates). Absent on local. */
   listMembers?(): Promise<RemoteMember[]>;
+  /** Create the recommended remote structure (custom fields). Absent on local. */
+  provisionRemote?(): Promise<RemoteProvisionResult>;
+}
+
+export interface RemoteProvisionResult {
+  /** Field names created on the remote container. */
+  created: string[];
+  /** Recommended fields that already existed (matched by name). */
+  existing: string[];
+  /** Field values backfilled onto already-synced tasks. */
+  backfilled: number;
+  errors: string[];
 }
 
 /** A person with access to the remote task container. */
