@@ -6,7 +6,10 @@ import { ensureContextRoot } from '../../lib/context-path.js';
 import { readJsonObject, writeJsonObject, readJsonArray, writeJsonArray } from '../../lib/json-file.js';
 import { today } from '../../lib/id.js';
 import { header, success, error, warn, info } from '../../lib/format.js';
-import { migrateDataStructures, fenceExistingDataStructures } from '../../lib/data-structures-migration.js';
+import { runMigrations } from '../../lib/migration-runner.js';
+import { readSetupConfig } from '../../lib/setup-config.js';
+import { dreamcontextVersion } from '../../lib/manifest.js';
+import { dirname } from 'node:path';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -101,6 +104,13 @@ export interface SleepState {
   dashboard_changes: DashboardChange[];
   compaction_log: CompactionRecord[];
   recall_mode: 'haiku' | 'raw' | 'off';
+  /**
+   * Summaries of 'code' migrations applied since the last session start.
+   * Written by sleep start (and update) after runMigrations; cleared at
+   * sleep start so the snapshot note is surfaced exactly once per cycle.
+   * generateSnapshot reads this READ-ONLY — it never writes it.
+   */
+  pendingMigrationNotices: string[];
 }
 
 const DEFAULT_SLEEP_STATE: SleepState = {
@@ -116,6 +126,7 @@ const DEFAULT_SLEEP_STATE: SleepState = {
   dashboard_changes: [],
   compaction_log: [],
   recall_mode: 'haiku',
+  pendingMigrationNotices: [],
 };
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
@@ -143,6 +154,7 @@ function freshDefaults(): SleepState {
     dashboard_changes: [],
     compaction_log: [],
     recall_mode: 'haiku',
+    pendingMigrationNotices: [],
   };
 }
 
@@ -185,6 +197,9 @@ export function readSleepState(root: string): SleepState {
         : {},
       dashboard_changes: Array.isArray(parsed.dashboard_changes) ? parsed.dashboard_changes as DashboardChange[] : [],
       compaction_log: Array.isArray(parsed.compaction_log) ? parsed.compaction_log as CompactionRecord[] : [],
+      pendingMigrationNotices: Array.isArray(parsed.pendingMigrationNotices)
+        ? (parsed.pendingMigrationNotices as unknown[]).filter((n): n is string => typeof n === 'string')
+        : [],
     };
   } catch {
     return freshDefaults();
@@ -348,19 +363,35 @@ export function registerSleepCommand(program: Command): void {
         warn(`Consolidation already in progress (started ${state.sleep_started_at}). Overwriting epoch.`);
       }
 
-      // One-time, idempotent structural migration: data-structures moved from
-      // core/ to knowledge/. Runs here so the consolidating agent sees the new
-      // layout. The old dir is left in place for the user to delete (see doctor).
-      const moved = migrateDataStructures(root);
-      if (moved.migrated.length > 0) {
-        success(`Migrated data-structures → knowledge/data-structures/: ${moved.migrated.join(', ')} (old core/data-structures/ left for you to delete)`);
+      // Clear any pending migration notices from the previous cycle so the
+      // snapshot note is surfaced exactly once per sleep cycle.
+      state.pendingMigrationNotices = [];
+
+      // Run all pending structural migrations via the versioned registry.
+      const projectRoot = dirname(root);
+      const config = readSetupConfig(projectRoot);
+      const fromVersion = config?.setupVersion ?? '0.0.0';
+      const migResult = runMigrations(root, fromVersion, dreamcontextVersion());
+
+      // Surface 'code' applied summaries to the user and store in state for
+      // the snapshot note (read by generateSnapshot READ-ONLY).
+      const codeNotices: string[] = [];
+      for (const entry of migResult.applied) {
+        if (entry.executor === 'code') {
+          success(`Migration ${entry.version}/${entry.step}: ${entry.summary}`);
+          codeNotices.push(`${entry.version} ${entry.step}: ${entry.summary}`);
+        }
+      }
+      if (codeNotices.length > 0) {
+        state.pendingMigrationNotices = codeNotices;
       }
 
-      // In-place backfill: fence any already-migrated but unfenced schema files
-      // so they render as SQL in the dashboard. Idempotent; rewrites only what changes.
-      const fenced = fenceExistingDataStructures(root);
-      if (fenced.length > 0) {
-        success(`Fenced data-structures as SQL for dashboard highlighting: ${fenced.join(', ')}`);
+      // Surface pending agent task instructions
+      for (const pat of migResult.pendingAgentTasks) {
+        info(
+          `Migration ${pat.version} has a pending agent task (${pat.agentTask.id}). ` +
+          `Run \`dreamcontext migrations pending\` for instructions.`,
+        );
       }
 
       state.sleep_started_at = new Date().toISOString();

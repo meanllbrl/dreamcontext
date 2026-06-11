@@ -25,6 +25,7 @@ import { registerUpgradeCommand } from './commands/upgrade.js';
 import { registerVaultsCommand } from './commands/vaults.js';
 import { registerConfigCommand } from './commands/config.js';
 import { registerFeedbackCommand } from './commands/feedback.js';
+import { registerMigrationsCommand } from './commands/migrations.js';
 import { startInteractive } from './interactive.js';
 import { renderBanner } from '../lib/pixel-banner.js';
 import { dreamcontextVersion } from '../lib/manifest.js';
@@ -130,6 +131,7 @@ export function createProgram(): Command {
   registerVaultsCommand(program);
   registerConfigCommand(program);
   registerFeedbackCommand(program);
+  registerMigrationsCommand(program);
 
   return program;
 }

@@ -339,6 +339,36 @@ function getVersionNudge(root: string): string {
 }
 
 /**
+ * Read-only migration note for the snapshot.
+ * Reads .sleep.json pendingMigrationNotices and returns a note if non-empty.
+ * NEVER writes the ledger or .sleep.json — snapshot is strictly read-only.
+ * Returns '' when there are no pending notices or on any error.
+ * Never throws.
+ */
+function getMigrationNote(root: string): string {
+  try {
+    const sleepPath = join(root, 'state', '.sleep.json');
+    if (!existsSync(sleepPath)) return '';
+    const raw = readFileSync(sleepPath, 'utf-8');
+    const parsed = JSON.parse(raw) as { pendingMigrationNotices?: unknown };
+    if (
+      !parsed ||
+      !Array.isArray(parsed.pendingMigrationNotices) ||
+      parsed.pendingMigrationNotices.length === 0
+    ) {
+      return '';
+    }
+    const notices = (parsed.pendingMigrationNotices as unknown[]).filter(
+      (n): n is string => typeof n === 'string',
+    );
+    if (notices.length === 0) return '';
+    return `## Migrations Applied\nMigrations applied since last session: ${notices.join('; ')}`;
+  } catch {
+    return '';
+  }
+}
+
+/**
  * Read-only drift directive for the snapshot.
  * Mirrors getVersionNudge — pure read, no I/O side effects, no subprocess.
  * Returns '' when drift check is disabled, config is absent, or no directive applies.
@@ -470,6 +500,14 @@ export function generateSnapshot(): string {
   const driftDirective = getDriftDirective(root);
   if (driftDirective) {
     parts.push(driftDirective);
+    parts.push('');
+  }
+
+  // 5.4 Migration note (read-only — reads .sleep.json pendingMigrationNotices,
+  //     never writes; cleared by sleep start after surfacing once per cycle).
+  const migrationNote = getMigrationNote(root);
+  if (migrationNote) {
+    parts.push(migrationNote);
     parts.push('');
   }
   flush('product-and-nudge', { neverEvict: true });
