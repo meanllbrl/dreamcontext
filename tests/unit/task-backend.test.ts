@@ -1,95 +1,167 @@
-import { describe, it } from 'vitest';
+import { describe, it, expect } from 'vitest';
+import { mkdirSync, rmSync, existsSync, readFileSync, realpathSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+
+import { getTaskBackend, LocalTaskBackend } from '../../src/lib/task-backend/index.js';
+import type { SetupConfig } from '../../src/lib/setup-config.js';
+import { describeTaskBackendConformance } from './task-backend-conformance.js';
 
 /**
- * SPEC — Pluggable task backend (local | github)
+ * SPEC — Pluggable task backend (local | clickup)
  * GitHub: https://github.com/meanllbrl/dreamcontext/issues/11
+ * (Revised 2026-06-11: first remote backend is ClickUp via a generic REST
+ * ApiAdapter; the original GitHub Projects design stays as a future backend.)
  *
  * Goal: a `TaskBackend` interface both the CLI command actions and the server
  * route handlers call, so tasks can live either on disk (`local`, default,
- * current behavior) or in a GitHub Project (`github`). The dashboard, CLI,
- * recall, SessionStart snapshot, and sleep must all keep working unchanged.
+ * current behavior) or in ClickUp (`clickup`). The dashboard, CLI, recall,
+ * SessionStart snapshot, and sleep must all keep working unchanged.
  *
- * These are executable placeholders (`it.todo`). Convert each to a real `it`
- * as the matching milestone (M1–M5) ships. CI stays green until then.
- *
- * Target interface (the contract this file pins):
- *
- *   interface TaskBackend {
- *     list(filter?): Promise<TaskSummary[]>
- *     get(slug): Promise<TaskData | null>
- *     create(input): Promise<TaskData>
- *     updateFields(slug, fields): Promise<TaskData>     // status, priority, rice, tags...
- *     insertSection(slug, section, content): Promise<void>   // LIFO-aware
- *     addChangelog(slug, content): Promise<void>
- *     complete(slug, summary?): Promise<TaskData>
- *   }
- *   getTaskBackend(config): TaskBackend                  // resolves by config.taskBackend
- *
- * Config (.config.json), mirroring the native-memory toggle:
- *   taskBackend: "local" | "github"
- *   github?: { owner, repo, projectNumber, changelogTarget: "body" | "comments" }
- *
- * GitHub Projects v2 field mapping (pure mapping fns, unit-testable without network):
- *   status      -> Project Status single-select (Todo/In Progress/In Review/Done)
- *   priority    -> single-select custom field
- *   tags        -> issue labels
- *   assignee/   -> issue assignees (person tags from #8 map here)
- *   version     -> iteration/milestone
- *   rice.*      -> Number custom fields (score computed)
- *   product     -> single-select custom field
- *   body        -> issue body markdown (AC checkboxes -> native task list)
- *   changelog   -> issue body `## Changelog` section (or comments)
- *   id-map      -> state/.github-tasks.json { slug, dcId, issueNumber, itemNodeId }
+ * Remaining `it.todo`s convert milestone-by-milestone (M2–M5). CI stays green.
  */
+
+const SRC_ROOT = join(__dirname, '..', '..', 'src');
+
+function makeTmpProject(): { projectRoot: string; contextRoot: string; stateDir: string } {
+  const raw = join(tmpdir(), `dc-tb-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  mkdirSync(raw, { recursive: true });
+  const projectRoot = realpathSync(raw);
+  const contextRoot = join(projectRoot, '_dream_context');
+  const stateDir = join(contextRoot, 'state');
+  mkdirSync(stateDir, { recursive: true });
+  return { projectRoot, contextRoot, stateDir };
+}
+
+const BASE_CONFIG: SetupConfig = {
+  platforms: [],
+  packs: [],
+  multiProduct: false,
+  setupVersion: '0.0.0',
+  disableNativeMemory: true,
+};
+
 describe('task backend', () => {
   describe('M1 — interface + local backend conformance', () => {
-    it.todo('getTaskBackend(config) returns the local backend when taskBackend is "local" or unset');
-    it.todo('local backend implements every TaskBackend method');
-    it.todo('GOLDEN: list/create/updateFields/insert/changelog/complete produce byte-identical state/*.md vs the pre-refactor CLI');
-    it.todo('CLI verbs (list/create/rice/insert/status/complete/log) route through the backend, not direct fs');
-    it.todo('server route handlers (GET/POST /api/tasks, GET/PATCH /api/tasks/:slug, /:slug/changelog, /:slug/insert) route through the backend');
+    it('getTaskBackend(config) returns the local backend when taskBackend is "local" or unset', () => {
+      const { contextRoot, projectRoot } = makeTmpProject();
+      try {
+        expect(getTaskBackend(contextRoot, null).name).toBe('local');
+        expect(getTaskBackend(contextRoot, { ...BASE_CONFIG }).name).toBe('local');
+        expect(getTaskBackend(contextRoot, { ...BASE_CONFIG, taskBackend: 'local' }).name).toBe('local');
+        // No .config.json on disk at all → local
+        expect(getTaskBackend(contextRoot).name).toBe('local');
+      } finally {
+        rmSync(projectRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('local backend implements every TaskBackend method', () => {
+      const { stateDir, projectRoot } = makeTmpProject();
+      try {
+        const backend = new LocalTaskBackend(stateDir);
+        for (const method of [
+          'list', 'get', 'create', 'updateFields', 'insertSection',
+          'addChangelog', 'complete', 'resolveSlug', 'sync',
+        ] as const) {
+          expect(typeof backend[method], `missing method ${method}`).toBe('function');
+        }
+      } finally {
+        rmSync(projectRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('GOLDEN: list/create/updateFields/insert/changelog/complete produce byte-identical state/*.md vs the pre-refactor CLI', () => {
+      // The byte-level proof lives in tests/unit/task-backend-golden.test.ts,
+      // which replays every CLI verb + dashboard endpoint against fixtures
+      // recorded on the PRE-refactor implementation. This test pins that the
+      // recorded fixtures exist and cover all golden scenarios.
+      const fixtureDir = join(__dirname, '..', 'fixtures', 'task-backend-golden');
+      expect(existsSync(join(fixtureDir, 'MANIFEST.json'))).toBe(true);
+      const manifest = JSON.parse(readFileSync(join(fixtureDir, 'MANIFEST.json'), 'utf-8')) as string[];
+      expect(manifest).toEqual(['dash-gamma.md', 'golden-alpha.md', 'golden-beta.md']);
+      for (const f of manifest) expect(existsSync(join(fixtureDir, f))).toBe(true);
+    });
+
+    it('CLI verbs (list/create/rice/insert/status/complete/log) route through the backend, not direct fs', () => {
+      const src = readFileSync(join(SRC_ROOT, 'cli', 'commands', 'tasks.ts'), 'utf-8');
+      expect(src).toContain("from '../../lib/task-backend/index.js'");
+      expect(src).toContain('getTaskBackend(');
+      // No direct file I/O or frontmatter manipulation left in the command layer.
+      expect(src).not.toMatch(/from 'node:fs'/);
+      expect(src).not.toContain('writeFileSync');
+      expect(src).not.toContain('readFrontmatter');
+      expect(src).not.toContain('updateFrontmatterFields');
+      expect(src).not.toContain('insertToSection(');
+    });
+
+    it('server route handlers (GET/POST /api/tasks, GET/PATCH /api/tasks/:slug, /:slug/changelog, /:slug/insert) route through the backend', () => {
+      const src = readFileSync(join(SRC_ROOT, 'server', 'routes', 'tasks.ts'), 'utf-8');
+      expect(src).toContain("from '../../lib/task-backend/index.js'");
+      expect(src).toContain('getTaskBackend(');
+      expect(src).not.toMatch(/from 'node:fs'/);
+      expect(src).not.toContain('writeFileSync');
+      expect(src).not.toContain('readFrontmatter');
+      expect(src).not.toContain('updateFrontmatterFields');
+      expect(src).not.toContain('insertToSection(');
+      expect(src).not.toContain('fast-glob');
+    });
   });
 
-  describe('M2 — github read', () => {
-    it.todo('github backend list() maps Project items -> TaskSummary (status/priority/tags/version/rice)');
-    it.todo('github backend get(slug) resolves via the id-map and parses the issue body into task sections');
-    it.todo('id-map state/.github-tasks.json round-trips slug <-> issueNumber <-> itemNodeId stably across renames');
-    it.todo('auth resolves env (GITHUB_TOKEN/GH_TOKEN) -> `gh auth token` -> config PAT; headless-safe');
+  // The conformance suite is THE backend contract: the exact same describe
+  // block runs against the ClickUp backend (mocked HTTP) from M3 on.
+  describeTaskBackendConformance('local', async () => {
+    const { stateDir, projectRoot } = makeTmpProject();
+    return {
+      backend: new LocalTaskBackend(stateDir),
+      cleanup: () => rmSync(projectRoot, { recursive: true, force: true }),
+    };
   });
 
-  describe('field mapping (pure, no network)', () => {
-    it.todo('status todo|in_progress|in_review|completed <-> Project Status options');
-    it.todo('rice {reach,impact,confidence,effort} -> Number fields; score recomputed not trusted from remote');
-    it.todo('tags <-> labels; person tags (#8) <-> assignees');
-    it.todo('Acceptance Criteria checkboxes <-> native GitHub task-list items');
-    it.todo('Changelog LIFO <-> issue body `## Changelog` section (changelogTarget=body)');
+  describe('M2 — identity + config + ApiAdapter + token storage', () => {
+    it.todo('people roster maps person slugs to ClickUp member IDs (config peopleIdentity)');
+    it.todo('per-user token resolution order: per-person env → CLICKUP_TOKEN env → secrets file');
+    it.todo('config clickup-token writes the gitignored secrets file — .gitignore entry is written BEFORE the secrets file exists');
+    it.todo('clickup-token aborts (no secrets file) when .gitignore cannot be updated');
+    it.todo('config show masks the token (present/absent, never echoed)');
+    it.todo('the token never lands in .config.json or any committable file');
+    it.todo('ApiAdapter is backend-generic: auth header + base URL config, no ClickUp types');
+    it.todo('ApiAdapter rate-limit queue keeps under ~100 req/min and retries 429/5xx with backoff');
+    it.todo('ApiAdapter normalizes HTTP failures into typed errors (auth/rate_limited/not_found/server/network)');
+    it.todo('config task-backend <local|clickup> CLI writes config; config show reports the backend');
   });
 
-  describe('M3 — github write + dashboard parity', () => {
-    it.todo('create() opens an issue, adds it to the Project, sets fields, records the id-map');
-    it.todo('updateFields() patches Project fields + issue (status bump, rice edit) idempotently');
-    it.todo('insertSection()/addChangelog() edit the issue body LIFO-correctly');
-    it.todo('complete() flips Status to Done without deleting the item');
-    it.todo('every existing dashboard action works against github (no UI change beyond a backend badge)');
+  describe('M3 — ClickUp PUSH (watermark-based, one-way)', () => {
+    it.todo('clickup backend passes the SAME conformance suite with mocked HTTP transport');
+    it.todo('PUSH creates unmapped local tasks remotely and records the id-map (state/.tasks-map.json)');
+    it.todo('PUSH only sends tasks changed since last_synced_at (watermark, server time)');
+    it.todo('PUSH uses ONE field-level PUT per task, queued under the rate limit');
+    it.todo('changelog entries push as ClickUp comments');
+    it.todo('PUSH re-run is idempotent: no duplicate tasks, no duplicate comments');
+    it.todo('watermarks use ClickUp server time (date_updated), never the local clock');
+    it.todo('no ClickUp types leak past the backend boundary (callers/sync engine import none)');
+    it.todo('live smoke test against real ClickUp (skipped unless CLICKUP_API_KEY is set)');
   });
 
-  describe('M4 — sync: mirror + pull/push + conflicts + sleep', () => {
-    // Source of truth = GitHub; local state/*.md = derived gitignored cache.
-    // Model = pull-refresh + write-through + offline queue (NOT a 2-way merge engine).
-    it.todo('github backend keeps a gitignored local mirror state/*.md so buildCorpus + snapshot are UNCHANGED');
-    it.todo('PULL is a delta sync: only items with updatedAt > per-item lastSyncedAt are re-mirrored (no full refetch)');
-    it.todo('PULL is throttled on hot read paths; runs on snapshot + dashboard refresh + sleep start');
-    it.todo('writes are GitHub-first (field/section-level mutation, no blind body overwrite) then mirror-updated');
-    it.todo('writes use optimistic concurrency: re-read item updatedAt, apply delta, retry on mismatch');
-    it.todo('offline writes enqueue to state/.github-queue.json (idempotent, op-id keyed) and replay on reconnect');
-    it.todo('conflict (both sides changed) resolves GitHub-wins; local version preserved under state/.conflicts/ and surfaced');
-    it.todo('ledger split: committed state/.github-tasks.json (stable map) + gitignored state/.github-sync.json (cursors)');
-    it.todo('sleep-tasks (tasks log/status/insert) updates GitHub idempotently — no duplicate items/comments on re-run');
+  describe('M4 — PULL + two-way merge + offline queue', () => {
+    it.todo('PULL is a delta sync: only tasks with date_updated > watermark are re-mirrored');
+    it.todo('PULL updates existing mirror files and creates new ones');
+    it.todo('comment/changelog union merge is conflict-free (no duplicates, all entries kept)');
+    it.todo('status/assignee resolve last-write-wins by server time; updated_by records the winner');
+    it.todo('prose body sections 3-way merge using base_snapshot');
+    it.todo('missing base_snapshot → ClickUp wins; local copy saved to state/.conflicts/ and surfaced (never silent loss)');
+    it.todo('offline writes enqueue to state/.tasks-queue.json (op-id keyed) and replay idempotently');
+    it.todo('pending-push tasks are visible (flagged in the mirror/sync state)');
+    it.todo('local mirror keeps recall + snapshot working with taskBackend=clickup (no edits to recall.ts/snapshot.ts)');
+    it.todo('ledger split: committed state/.tasks-map.json + gitignored state/.tasks-sync.json');
   });
 
-  describe('M5 — config toggle', () => {
-    it.todo('.config.json taskBackend + github block validated (strict-pick) on PATCH /api/config');
-    it.todo('config task-backend <local|github> CLI writes config; config show reports the backend');
+  describe('M5 — triggers + surfaces', () => {
+    it.todo('git commit/push hook triggers are non-blocking and can never fail the git operation (adapter forced to error/timeout)');
+    it.todo('post-sleep sync routes tasks log/status/insert through the backend idempotently');
+    it.todo('.config.json taskBackend + clickup block validated (strict-pick) on PATCH /api/config');
+    it.todo('SettingsPage exposes the backend selector + connection test (Cloud Task Management)');
+    it.todo('.gitignore updated for mirror/sync/queue/conflict files when clickup is enabled');
     it.todo('default is local; existing projects with no taskBackend field behave exactly as today');
   });
 });

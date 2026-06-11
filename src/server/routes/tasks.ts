@@ -1,107 +1,25 @@
 import { IncomingMessage, ServerResponse } from 'node:http';
-import { existsSync, writeFileSync } from 'node:fs';
-import { join, basename } from 'node:path';
-import fg from 'fast-glob';
-import { readFrontmatter, updateFrontmatterFields, writeFrontmatter } from '../../lib/frontmatter.js';
-import { readSection, listSections, insertToSection } from '../../lib/markdown.js';
-import { generateId, slugify, today } from '../../lib/id.js';
+import { today } from '../../lib/id.js';
 import { parseJsonBody, sendJson, sendError } from '../middleware.js';
-import { safeChildPath } from '../safe-path.js';
 import { recordDashboardChange, buildFieldSummary } from '../change-tracker.js';
 import type { FieldChange } from '../change-tracker.js';
-import { normalizeRice, mergeRice, validateRiceInput, type RiceFields, type RiceInput } from '../../lib/rice.js';
+import { mergeRice, validateRiceInput, type RiceFields, type RiceInput } from '../../lib/rice.js';
+import {
+  getTaskBackend,
+  isSafeTaskSlug,
+  TaskBackendError,
+  type TaskBackend,
+  type TaskData,
+} from '../../lib/task-backend/index.js';
 
-interface TaskData {
-  slug: string;
-  id: string;
-  name: string;
-  description: string;
-  priority: string;
-  urgency: string;
-  status: string;
-  created_at: string;
-  updated_at: string;
-  tags: string[];
-  parent_task: string | null;
-  related_feature: string | null;
-  version: string | null;
-  rice: RiceFields | null;
-  why: string;
-  user_stories: string;
-  acceptance_criteria: string;
-  constraints: string;
-  technical_details: string;
-  notes: string;
-  changelog: string;
-  sections: string[];
-  body: string;
+/** API view of a task: TaskData minus the backend-internal raw fields. */
+function toApiTask(task: TaskData): Omit<TaskData, 'raw' | 'rawBody'> {
+  const { raw: _raw, rawBody: _rawBody, ...api } = task;
+  return api;
 }
 
-function readSectionSafe(filePath: string, sectionName: string): string {
-  try {
-    return readSection(filePath, sectionName) ?? '';
-  } catch {
-    return '';
-  }
-}
-
-function readTask(filePath: string): TaskData {
-  const slug = basename(filePath, '.md');
-  const { data, content } = readFrontmatter<Record<string, unknown>>(filePath);
-
-  let sections: string[] = [];
-  try {
-    sections = listSections(filePath);
-  } catch { /* no sections */ }
-
-  // Normalize status: accept both hyphens and underscores (e.g. "in-progress" → "in_progress")
-  const rawStatus = ((data.status as string) ?? 'todo').replace(/-/g, '_');
-  const validStatuses = ['todo', 'in_progress', 'in_review', 'completed'];
-  const status = validStatuses.includes(rawStatus) ? rawStatus : 'todo';
-
-  return {
-    slug,
-    id: (data.id as string) ?? '',
-    name: (data.name as string) ?? slug,
-    description: (data.description as string) ?? '',
-    priority: (data.priority as string) ?? 'medium',
-    urgency: (data.urgency as string) ?? 'medium',
-    status,
-    created_at: (data.created_at as string) ?? '',
-    updated_at: (data.updated_at as string) ?? '',
-    tags: Array.isArray(data.tags) ? data.tags as string[] : [],
-    parent_task: (data.parent_task as string) ?? null,
-    related_feature: (data.related_feature as string) ?? null,
-    version: (data.version as string) ?? null,
-    rice: normalizeRice(data.rice),
-    why: readSectionSafe(filePath, 'Why'),
-    user_stories: readSectionSafe(filePath, 'User Stories'),
-    acceptance_criteria: readSectionSafe(filePath, 'Acceptance Criteria'),
-    constraints: readSectionSafe(filePath, 'Constraints & Decisions'),
-    technical_details: readSectionSafe(filePath, 'Technical Details'),
-    notes: readSectionSafe(filePath, 'Notes'),
-    changelog: readSectionSafe(filePath, 'Changelog'),
-    sections,
-    body: content.trim(),
-  };
-}
-
-function getStateDir(contextRoot: string): string {
-  return join(contextRoot, 'state');
-}
-
-/**
- * Resolve a task slug to an absolute path inside the state dir.
- * Returns null if the slug attempts path traversal.
- */
-function resolveTaskPath(contextRoot: string, slug: string): string | null {
-  return safeChildPath(getStateDir(contextRoot), `${slug}.md`);
-}
-
-function getTaskFiles(contextRoot: string): string[] {
-  const stateDir = getStateDir(contextRoot);
-  if (!existsSync(stateDir)) return [];
-  return fg.sync('*.md', { cwd: stateDir, absolute: true });
+function backendFor(contextRoot: string): TaskBackend {
+  return getTaskBackend(contextRoot);
 }
 
 /**
@@ -113,8 +31,13 @@ export async function handleTasksList(
   _params: Record<string, string>,
   contextRoot: string,
 ): Promise<void> {
-  const files = getTaskFiles(contextRoot);
-  const tasks = files.map(readTask);
+  const backend = backendFor(contextRoot);
+  const summaries = await backend.list();
+  const tasks: ReturnType<typeof toApiTask>[] = [];
+  for (const s of summaries) {
+    const task = await backend.get(s.name);
+    if (task) tasks.push(toApiTask(task));
+  }
   sendJson(res, 200, { tasks });
 }
 
@@ -168,77 +91,36 @@ export async function handleTasksCreate(
     riceBlock = mergeRice(null, riceInput);
   }
 
-  const slug = slugify(name.trim());
-  const stateDir = getStateDir(contextRoot);
-  const filePath = join(stateDir, `${slug}.md`);
-
-  if (existsSync(filePath)) {
-    sendError(res, 409, 'already_exists', `Task already exists: ${slug}`);
-    return;
+  const backend = backendFor(contextRoot);
+  let task: TaskData;
+  try {
+    task = await backend.create({
+      name: name.trim(),
+      description,
+      priority,
+      urgency,
+      tags,
+      why,
+      version,
+      rice: riceBlock,
+      variant: 'dashboard',
+    });
+  } catch (err) {
+    if (err instanceof TaskBackendError && err.code === 'already_exists') {
+      sendError(res, 409, 'already_exists', err.message);
+      return;
+    }
+    throw err;
   }
-
-  const dateStr = today();
-  const tagsYaml = tags.length > 0 ? `[${tags.map(t => `"${t}"`).join(', ')}]` : '[]';
-  const versionYaml = version ? `"${version}"` : 'null';
-  const riceYaml = riceBlock
-    ? `\nrice:\n  reach: ${riceBlock.reach ?? 'null'}\n  impact: ${riceBlock.impact ?? 'null'}\n  confidence: ${riceBlock.confidence ?? 'null'}\n  effort: ${riceBlock.effort ?? 'null'}\n  score: ${riceBlock.score ?? 'null'}`
-    : '';
-  const content = `---
-id: "${generateId('task')}"
-name: "${name.trim()}"
-description: "${description}"
-priority: "${priority}"
-urgency: "${urgency}"
-status: "todo"
-created_at: "${dateStr}"
-updated_at: "${dateStr}"
-tags: ${tagsYaml}
-parent_task: null
-related_feature: null
-version: ${versionYaml}${riceYaml}
----
-
-## Why
-
-${why || '(To be defined)'}
-
-## User Stories
-
-- [ ] As a [user], I want [action] so that [outcome]
-
-## Acceptance Criteria
-
-- (Specific, testable conditions for this task to be complete)
-
-## Constraints & Decisions
-<!-- LIFO: newest decision at top -->
-
-## Technical Details
-
-(Key files, services, dependencies, implementation approach.)
-
-## Notes
-
-(Working notes, edge cases, open questions.)
-
-## Changelog
-<!-- LIFO: newest entry at top -->
-
-### ${dateStr} - Created
-- Task created.
-`;
-
-  writeFileSync(filePath, content, 'utf-8');
 
   recordDashboardChange(contextRoot, {
     entity: 'task',
     action: 'create',
-    target: `state/${slug}.md`,
+    target: `state/${task.slug}.md`,
     summary: `Created task '${name.trim()}' with priority ${priority}`,
   });
 
-  const task = readTask(filePath);
-  sendJson(res, 201, { task });
+  sendJson(res, 201, { task: toApiTask(task) });
 }
 
 /**
@@ -251,16 +133,15 @@ export async function handleTasksGet(
   contextRoot: string,
 ): Promise<void> {
   const { slug } = params;
-  const filePath = resolveTaskPath(contextRoot, slug);
-  if (!filePath) { sendError(res, 400, 'invalid_path', `Invalid task slug: ${slug}`); return; }
+  if (!isSafeTaskSlug(slug)) { sendError(res, 400, 'invalid_path', `Invalid task slug: ${slug}`); return; }
 
-  if (!existsSync(filePath)) {
+  const task = await backendFor(contextRoot).get(slug);
+  if (!task) {
     sendError(res, 404, 'not_found', `Task not found: ${slug}`);
     return;
   }
 
-  const task = readTask(filePath);
-  sendJson(res, 200, { task });
+  sendJson(res, 200, { task: toApiTask(task) });
 }
 
 /**
@@ -273,10 +154,12 @@ export async function handleTasksUpdate(
   contextRoot: string,
 ): Promise<void> {
   const { slug } = params;
-  const filePath = resolveTaskPath(contextRoot, slug);
-  if (!filePath) { sendError(res, 400, 'invalid_path', `Invalid task slug: ${slug}`); return; }
+  if (!isSafeTaskSlug(slug)) { sendError(res, 400, 'invalid_path', `Invalid task slug: ${slug}`); return; }
 
-  if (!existsSync(filePath)) {
+  const backend = backendFor(contextRoot);
+  // Read old values BEFORE mutation for change tracking
+  const existing = await backend.get(slug);
+  if (!existing) {
     sendError(res, 404, 'not_found', `Task not found: ${slug}`);
     return;
   }
@@ -287,8 +170,8 @@ export async function handleTasksUpdate(
     return;
   }
 
-  // Read old values BEFORE mutation for change tracking
-  const { data: oldData, content: oldContent } = readFrontmatter<Record<string, unknown>>(filePath);
+  const oldData = existing.raw;
+  const oldContent = existing.rawBody;
 
   const updates: Record<string, unknown> = {};
   const fieldChanges: FieldChange[] = [];
@@ -346,7 +229,7 @@ export async function handleTasksUpdate(
 
   // RICE update: either a partial object (merge) or null (clear).
   if (body.rice !== undefined) {
-    const existing = normalizeRice(oldData.rice);
+    const existingRice = existing.rice;
     let next: RiceFields | null;
     if (body.rice === null) {
       next = null;
@@ -357,16 +240,16 @@ export async function handleTasksUpdate(
         sendError(res, 400, 'invalid_rice', errs.map(e => `${e.field}: ${e.message}`).join('; '));
         return;
       }
-      next = mergeRice(existing, riceInput);
+      next = mergeRice(existingRice, riceInput);
     } else {
       sendError(res, 400, 'invalid_rice', 'rice must be an object or null');
       return;
     }
-    if (JSON.stringify(existing) !== JSON.stringify(next)) {
+    if (JSON.stringify(existingRice) !== JSON.stringify(next)) {
       updates.rice = next;
       fieldChanges.push({
         field: 'rice',
-        from: existing as FieldChange['from'],
+        from: existingRice as FieldChange['from'],
         to: next as FieldChange['to'],
       });
     }
@@ -405,13 +288,11 @@ export async function handleTasksUpdate(
   }
 
   updates.updated_at = today();
-  if (bodyChanged && newBody !== null) {
-    // Merge frontmatter updates + body in a single write so we don't read-after-write twice.
-    const merged = { ...oldData, ...updates };
-    writeFrontmatter(filePath, merged, newBody);
-  } else {
-    updateFrontmatterFields(filePath, updates);
-  }
+  const task = await backend.updateFields(
+    slug,
+    updates,
+    bodyChanged && newBody !== null ? { body: newBody } : undefined,
+  );
 
   const changedFieldNames = fieldChanges.map(f => f.field);
   recordDashboardChange(contextRoot, {
@@ -423,8 +304,7 @@ export async function handleTasksUpdate(
     summary: buildFieldSummary('task', `state/${slug}.md`, fieldChanges),
   });
 
-  const task = readTask(filePath);
-  sendJson(res, 200, { task });
+  sendJson(res, 200, { task: toApiTask(task) });
 }
 
 /**
@@ -437,10 +317,10 @@ export async function handleTasksChangelog(
   contextRoot: string,
 ): Promise<void> {
   const { slug } = params;
-  const filePath = resolveTaskPath(contextRoot, slug);
-  if (!filePath) { sendError(res, 400, 'invalid_path', `Invalid task slug: ${slug}`); return; }
+  if (!isSafeTaskSlug(slug)) { sendError(res, 400, 'invalid_path', `Invalid task slug: ${slug}`); return; }
 
-  if (!existsSync(filePath)) {
+  const backend = backendFor(contextRoot);
+  if ((await backend.get(slug)) === null) {
     sendError(res, 404, 'not_found', `Task not found: ${slug}`);
     return;
   }
@@ -454,13 +334,13 @@ export async function handleTasksChangelog(
   const logContent = `### ${today()} - Dashboard Update\n- ${(body.content as string).trim()}`;
 
   try {
-    insertToSection(filePath, 'Changelog', logContent, 'top');
+    await backend.addChangelog(slug, logContent);
   } catch {
     sendError(res, 500, 'write_error', 'Failed to write changelog entry.');
     return;
   }
 
-  updateFrontmatterFields(filePath, { updated_at: today() });
+  await backend.updateFields(slug, { updated_at: today() });
 
   recordDashboardChange(contextRoot, {
     entity: 'task',
@@ -483,10 +363,10 @@ export async function handleTasksInsert(
   contextRoot: string,
 ): Promise<void> {
   const { slug } = params;
-  const filePath = resolveTaskPath(contextRoot, slug);
-  if (!filePath) { sendError(res, 400, 'invalid_path', `Invalid task slug: ${slug}`); return; }
+  if (!isSafeTaskSlug(slug)) { sendError(res, 400, 'invalid_path', `Invalid task slug: ${slug}`); return; }
 
-  if (!existsSync(filePath)) {
+  const backend = backendFor(contextRoot);
+  if ((await backend.get(slug)) === null) {
     sendError(res, 404, 'not_found', `Task not found: ${slug}`);
     return;
   }
@@ -538,13 +418,13 @@ export async function handleTasksInsert(
   const position = ['changelog', 'constraints'].includes(sectionKey) ? 'top' : 'bottom';
 
   try {
-    insertToSection(filePath, sectionName, content, position as 'top' | 'bottom', true);
+    await backend.insertSection(slug, sectionName, content, { position: position as 'top' | 'bottom' });
   } catch {
     sendError(res, 500, 'write_error', `Failed to insert into ${sectionName}.`);
     return;
   }
 
-  updateFrontmatterFields(filePath, { updated_at: today() });
+  await backend.updateFields(slug, { updated_at: today() });
 
   recordDashboardChange(contextRoot, {
     entity: 'task',

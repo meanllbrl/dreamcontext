@@ -23,6 +23,12 @@ export interface SetupConfig {
    * Claude's native MEMORY.md alongside dreamcontext.
    */
   disableNativeMemory: boolean;
+  /**
+   * Where tasks live (issue #11). Absent ⇒ "local" — existing projects with no
+   * field behave exactly as before. "clickup" routes task verbs through the
+   * ClickUp remote backend with a gitignored local mirror.
+   */
+  taskBackend?: 'local' | 'clickup';
 }
 
 function configPath(projectRoot: string): string {
@@ -49,6 +55,11 @@ export function readSetupConfig(projectRoot: string): SetupConfig | null {
       // Default true: absent in legacy configs means "disable native memory".
       disableNativeMemory:
         typeof parsed.disableNativeMemory === 'boolean' ? parsed.disableNativeMemory : true,
+      // Absent / unknown value ⇒ undefined (treated as "local" everywhere).
+      taskBackend:
+        parsed.taskBackend === 'local' || parsed.taskBackend === 'clickup'
+          ? parsed.taskBackend
+          : undefined,
     };
   } catch {
     return null;
@@ -83,6 +94,7 @@ export function updateSetupConfig(
     people: patch.people ?? existing.people,
     setupVersion: patch.setupVersion ?? existing.setupVersion,
     disableNativeMemory: patch.disableNativeMemory ?? existing.disableNativeMemory,
+    taskBackend: patch.taskBackend ?? existing.taskBackend,
   };
   writeSetupConfig(projectRoot, next);
   return next;
