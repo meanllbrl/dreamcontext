@@ -6,6 +6,7 @@ import type { SetupConfig } from '../setup-config.js';
 import { ApiAdapter } from './api-adapter.js';
 import {
   bodyToDescription,
+  foldAscii,
   normalizeEntry,
   priorityFromClickUp,
   priorityToClickUp,
@@ -62,13 +63,7 @@ function withPersonTag(tags: string[], assignee: string | null): string[] {
  * dotless ı into a dash).
  */
 export function memberSlug(name: string): string {
-  const folded = name
-    .replace(/ı/g, 'i').replace(/İ/g, 'I')
-    .replace(/ş/g, 's').replace(/Ş/g, 'S')
-    .replace(/ğ/g, 'g').replace(/Ğ/g, 'G')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '');
-  return slugify(folded);
+  return slugify(foldAscii(name));
 }
 
 /**
@@ -629,11 +624,9 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     // push for the local status (e.g. local `in_review` mapped onto a list
     // without a review status as "in progress"), the remote did not really
     // move — don't let the folded value overwrite the richer local one.
-    const remoteRawStatus = remote.status?.status?.toLowerCase() ?? null;
-    if (
-      remoteRawStatus !== null &&
-      statusToClickUp(local.status, this.ledger.readListStatuses())?.toLowerCase() === remoteRawStatus
-    ) {
+    const remoteRawStatus = remote.status?.status ? foldAscii(remote.status.status) : null;
+    const wouldPush = statusToClickUp(local.status, this.ledger.readListStatuses());
+    if (remoteRawStatus !== null && wouldPush !== null && foldAscii(wouldPush) === remoteRawStatus) {
       remoteStatus = local.status;
     }
 

@@ -28,6 +28,21 @@ export interface ClickUpComment {
   user?: { id?: number | string; username?: string } | null;
 }
 
+/**
+ * Ascii-fold for case/diacritic-insensitive comparisons. Real workspaces have
+ * statuses like "in revıew" (Turkish dotless ı, typed on a Turkish keyboard)
+ * that must still match the "in review" candidate.
+ */
+export function foldAscii(s: string): string {
+  return s
+    .replace(/ı/g, 'i').replace(/İ/g, 'I')
+    .replace(/ş/g, 's').replace(/Ş/g, 'S')
+    .replace(/ğ/g, 'g').replace(/Ğ/g, 'G')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+}
+
 // ─── Status ────────────────────────────────────────────────────────────────
 
 // Preference chains per dreamcontext status. Lists have CUSTOM status sets
@@ -61,17 +76,17 @@ const STATUS_FROM_CLICKUP: Record<string, string> = {
 export function statusToClickUp(status: string, available?: string[] | null): string | null {
   const candidates = STATUS_CANDIDATES[status] ?? STATUS_CANDIDATES.todo;
   if (!available || available.length === 0) return candidates[0];
-  const lower = available.map((s) => s.toLowerCase());
+  const folded = available.map(foldAscii);
   for (const c of candidates) {
-    const i = lower.indexOf(c);
-    if (i !== -1) return available[i];
+    const i = folded.indexOf(foldAscii(c));
+    if (i !== -1) return available[i]; // push the list's EXACT spelling
   }
   return null;
 }
 
 export function statusFromClickUp(remote: string | undefined | null): string {
   if (!remote) return 'todo';
-  const s = remote.toLowerCase();
+  const s = foldAscii(remote);
   if (STATUS_FROM_CLICKUP[s]) return STATUS_FROM_CLICKUP[s];
   // Custom list statuses fold by intent.
   if (/review|qa|test/.test(s)) return 'in_review';

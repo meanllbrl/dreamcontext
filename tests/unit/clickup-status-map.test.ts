@@ -75,6 +75,12 @@ describe('status mapping against the list status set', () => {
     expect(statusToClickUp('in_review')).toBe('review');
   });
 
+  it('matches statuses typed with Turkish dotless ı ("in revıew") in both directions', () => {
+    // Observed live: a status set authored on a Turkish keyboard.
+    expect(statusToClickUp('in_review', ['to do', 'in progress', 'in revıew', 'complete'])).toBe('in revıew');
+    expect(statusFromClickUp('in revıew')).toBe('in_review');
+  });
+
   it('pure folding: custom remote statuses map by intent on pull', () => {
     expect(statusFromClickUp('code review')).toBe('in_review');
     expect(statusFromClickUp('in development')).toBe('in_progress');
