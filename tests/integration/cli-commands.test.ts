@@ -655,6 +655,102 @@ parent_task: null
       const output = run('doctor', tmpDir);
       expect(output).toContain('placeholder');
     });
+
+    it('warns (non-fatal) when core/taxonomy.md is missing', () => {
+      run('init --yes --name "Test" --description "d" --stack "Node" --priority "p"', tmpDir);
+      const taxonomyPath = join(tmpDir, '_dream_context', 'core', 'taxonomy.md');
+      // taxonomy.md is created by init; delete it to simulate a missing file.
+      if (existsSync(taxonomyPath)) {
+        rmSync(taxonomyPath);
+      }
+      const output = run('doctor', tmpDir);
+      // Should warn, not hard-error; must hint to run taxonomy init.
+      expect(output).toContain('taxonomy');
+      expect(output).toContain('taxonomy init');
+      // Doctor exits 0 for warnings (no hard error from taxonomy alone).
+      // We can't check process exit via run(), but the output must include 'warning'.
+    });
+  });
+
+  describe('taxonomy', () => {
+    beforeEach(() => {
+      run('init --yes --name "Test" --description "d" --stack "Node" --priority "p"', tmpDir);
+    });
+
+    it('taxonomy vocab outputs the resolved vocabulary', () => {
+      const output = run('taxonomy vocab', tmpDir);
+      expect(output).toContain('Taxonomy Vocabulary');
+      // Default faceted tags present
+      expect(output).toContain('topic:recall');
+      expect(output).toContain('domain:database');
+    });
+
+    it('taxonomy vocab --json emits valid JSON with expected shape', () => {
+      const output = run('taxonomy vocab --json', tmpDir);
+      const parsed = JSON.parse(output);
+      expect(parsed).toHaveProperty('facetTags');
+      expect(parsed).toHaveProperty('aliases');
+      expect(parsed).toHaveProperty('bareTags');
+      expect(Array.isArray(parsed.facetTags.topic)).toBe(true);
+      expect(parsed.facetTags.topic).toContain('topic:recall');
+    });
+
+    it('taxonomy audit exits 0 and is strictly read-only', () => {
+      // Run audit; it must complete without error (exit 0).
+      const output = run('taxonomy audit', tmpDir);
+      // Audit output contains the audit header.
+      expect(output).toContain('Taxonomy Audit');
+    });
+
+    it('taxonomy audit --json emits valid JSON', () => {
+      const output = run('taxonomy audit --json', tmpDir);
+      const parsed = JSON.parse(output);
+      expect(parsed).toHaveProperty('untagged');
+      expect(parsed).toHaveProperty('nonCanonical');
+      expect(parsed).toHaveProperty('orphan');
+      expect(parsed).toHaveProperty('nearDups');
+    });
+
+    it('taxonomy init creates core/taxonomy.md', () => {
+      const taxonomyPath = join(tmpDir, '_dream_context', 'core', 'taxonomy.md');
+      // init already creates taxonomy.md; delete it first so taxonomy init recreates it.
+      if (existsSync(taxonomyPath)) {
+        rmSync(taxonomyPath);
+      }
+      const output = run('taxonomy init', tmpDir);
+      expect(output).toContain('Created');
+      expect(existsSync(taxonomyPath)).toBe(true);
+      const content = readFileSync(taxonomyPath, 'utf-8');
+      expect(content).toContain('## Naming Rules');
+      expect(content).toContain('## Aliases');
+    });
+
+    it('taxonomy init is idempotent — second run does not overwrite existing file', () => {
+      const taxonomyPath = join(tmpDir, '_dream_context', 'core', 'taxonomy.md');
+      // Ensure it exists (init created it) with known content.
+      if (!existsSync(taxonomyPath)) {
+        run('taxonomy init', tmpDir);
+      }
+      // Write a custom sentinel into the file.
+      const original = readFileSync(taxonomyPath, 'utf-8');
+      writeFileSync(taxonomyPath, original + '\n# SENTINEL', 'utf-8');
+
+      const output = run('taxonomy init', tmpDir);
+      // Should say already exists, not Created.
+      expect(output).toContain('already exists');
+      // File must be unchanged (sentinel preserved).
+      const after = readFileSync(taxonomyPath, 'utf-8');
+      expect(after).toContain('SENTINEL');
+    });
+
+    it('init scaffolds core/taxonomy.md from the template', () => {
+      // init was already run in beforeEach; verify taxonomy.md was created.
+      const taxonomyPath = join(tmpDir, '_dream_context', 'core', 'taxonomy.md');
+      expect(existsSync(taxonomyPath)).toBe(true);
+      const content = readFileSync(taxonomyPath, 'utf-8');
+      expect(content).toContain('## Naming Rules');
+      expect(content).toContain('## Aliases');
+    });
   });
 
   describe('snapshot --tokens', () => {

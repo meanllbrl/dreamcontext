@@ -275,6 +275,7 @@ export function registerInitCommand(program: Command): void {
         '2.memory.md',
         '3.style_guide_and_branding.md',
         '4.tech_stack.md',
+        'taxonomy.md',
       ];
 
       for (const file of templateFiles) {

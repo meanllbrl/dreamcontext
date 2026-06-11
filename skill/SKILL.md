@@ -209,6 +209,7 @@ These files vary across projects. Do not assume a fixed list. Always discover dy
 12a. **Keep the Workflow flowchart in sync.** Every task file has a `## Workflow` mermaid block at the top — one node per acceptance criterion, grouped under milestone subgraphs, with status classes `done` / `active` / `todo` / `blocked`. Whenever you check off a criterion, start work on one, add/remove a criterion, or hit a blocker: update the corresponding node's `:::class`. Run `dreamcontext tasks doctor <name>` to verify sync. The flowchart is the load-bearing summary of the task — drift makes future sessions misread progress.
 13. **Reuse before create.** Before building any UI component, utility, hook, or abstraction, search the codebase for existing implementations that serve the same purpose. Use `dreamcontext-explore` to find reusable candidates. If a match exists, use it or extend it. Never duplicate functionality that already exists. This applies to modals, forms, filters, layouts, helpers, and any shared pattern.
 14. **Recall before grep.** Before grepping `_dream_context/` for prior decisions, design rationale, or "did we already address X?", run `dreamcontext memory recall "<query>"`. BM25 ranks across knowledge, features, tasks, and memory entries in one shot — cheaper and more on-target than blind Grep.
+15. **Tag before you create.** Before tagging any task, feature, or knowledge file, consult the project taxonomy vocabulary (`dreamcontext taxonomy vocab`). Reuse canonical faceted tags (`topic:recall`, `domain:security`, etc.) or bare standard tags before inventing new ones — fragmenting tags degrades recall quality.
 
 ---
 
@@ -428,7 +429,9 @@ Task insert sections: `why`, `user_stories`, `acceptance_criteria`, `constraints
 
 **Knowledge**: Index auto-loaded each session. Pin frequently-needed files (`pinned: true` in frontmatter). Read non-pinned on demand. Create with `dreamcontext knowledge create <name>`.
 
-Standard tags: `architecture`, `api`, `frontend`, `backend`, `database`, `devops`, `security`, `testing`, `design`, `decisions`, `onboarding`, `domain`. Custom tags allowed.
+Standard tags: `architecture`, `api`, `frontend`, `backend`, `database`, `devops`, `security`, `testing`, `design`, `decisions`, `onboarding`, `domain`. Custom tags allowed. For the full resolved project vocabulary (including faceted tags and aliases), run `dreamcontext taxonomy vocab`. The project vocabulary is maintained in `core/taxonomy.md`; scaffold it with `dreamcontext taxonomy init`. sleep-product runs taxonomy maintenance during Pass C.
+
+**Taxonomy**: Tags drive BM25 recall precision. Prefer canonical faceted tags (`topic:recall`, `domain:database`) over bare duplicates. Run `dreamcontext taxonomy audit` to surface non-canonical or orphan tags.
 
 ---
 

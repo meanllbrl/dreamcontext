@@ -137,6 +137,7 @@ Memory section here.
 Based on codebase scan:
 - **4.tech_stack.md**: Write real tech stack info from detected dependencies
 - **Data structures**: Write to `core/data-structures/default.md` for single-product projects. If `_dream_context/state/.config.json` was created with `multiProduct: ["a", "b", ...]`, write one file per product at `core/data-structures/<product>.md`. Use the same template/token-replacement convention as the rest of the scaffold (`{{PRODUCT_NAME}}`, `{{DATE}}`, etc.). If database schemas were detected during the scan, paste/summarize them in the appropriate file. The legacy single-file path `5.data_structures.sql` is deprecated — never create it on fresh installs.
+- **Domain Vocabulary**: After running `dreamcontext init`, edit `core/taxonomy.md` (scaffolded by init) and populate the `## Domain Vocabulary` section with recurring project nouns observed in the codebase scan (module names, feature areas, product concepts, key domain terms). This seeds the taxonomy for future tag quality.
 
 ### Step 6: Report Back
 

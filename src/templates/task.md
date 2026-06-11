@@ -8,6 +8,7 @@ status: "{{STATUS}}"
 created_at: "{{DATE}}"
 updated_at: "{{DATE}}"
 tags: {{TAGS}}
+# tags: use canonical faceted vocabulary (facet:value, kebab-case singular) — run: dreamcontext taxonomy vocab
 parent_task: null
 related_feature: null
 version: {{VERSION}}

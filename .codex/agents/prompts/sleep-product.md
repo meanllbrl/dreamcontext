@@ -214,13 +214,13 @@ Then Edit the body. Standard sections:
 - **Sources** (links, file refs, transcript IDs)
 - **Last verified** date if content can go stale
 
-#### B3. Tags — use the standard set
+#### B3. Tags — use the taxonomy vocabulary
 
 ```bash
-dreamcontext knowledge tags
+dreamcontext taxonomy vocab
 ```
 
-Pull tags from this list. Don't invent tags freely; new tags fragment search.
+Pull tags from this list (faceted canonicals preferred: `topic:recall`, `domain:database`, etc.). Bare standard tags remain valid fallbacks. Don't invent tags freely; new tags fragment search. The project vocabulary is maintained in `core/taxonomy.md`; scaffold with `dreamcontext taxonomy init` if missing.
 
 #### B4. Index sanity check
 
@@ -267,6 +267,39 @@ Data structures live at `knowledge/data-structures/<product>.md` (`default.md` f
 - If the even-older `core/5.data_structures.sql` exists and `knowledge/data-structures/default.md` does not, copy it there (add the data-structures frontmatter) — don't delete the legacy file.
 - **Never delete** the old `core/data-structures/` dir or the legacy `.sql` yourself — leave them for the user to remove after confirming (the `doctor` command nags about both). Note any migration in your report.
 
+### Pass C — Taxonomy maintenance
+
+Run this pass every cycle to keep tags healthy. It is fast and always warranted.
+
+#### C1. Ensure taxonomy.md exists
+
+```bash
+dreamcontext taxonomy init
+```
+
+This is idempotent — if `core/taxonomy.md` already exists, no change is made.
+
+#### C2. Audit the corpus
+
+```bash
+dreamcontext taxonomy audit
+```
+
+Review the output. Buckets to act on:
+
+| Bucket | Action |
+|--------|--------|
+| `nonCanonical` / `alias` tags | Edit the offending file's frontmatter `tags:` array surgically — replace the alias with the canonical (e.g. `db` → `domain:database`). One file at a time; verify each change is correct before moving on. |
+| `orphan` tags | If the tag is a real project concept, add it to `## Domain Vocabulary` in `core/taxonomy.md`. If it was a typo or leftover, remove it from the file's frontmatter. |
+| `nearDups` in vocab | If two vocab entries are near-duplicates by accident, remove the weaker one from `core/taxonomy.md` and update any files using it. |
+| `untagged` docs | Tag them if content is clear; leave them if the doc is a stub. |
+
+**Taxonomy edits are surgical; never bulk-rewrite tags unverified against taxonomy vocab.** Confirm each change against the audit output before writing it.
+
+#### C3. Grow the Domain Vocabulary
+
+If the session produced new recurring domain nouns (product names, feature areas, technical concepts) that aren't yet in the vocabulary, add them to `## Domain Vocabulary` in `core/taxonomy.md`.
+
 ## Return — single combined report
 
 ```
@@ -289,6 +322,11 @@ Data structures live at `knowledge/data-structures/<product>.md` (`default.md` f
 - Pinned: knowledge/project-origin-and-prd.md (frequently accessed)
 - Archived: 0
 - No-op knowledge signals: 1 (`research_present` was a one-line decision already captured by sleep-state in 2.memory.md — not knowledge-worthy)
+
+### Taxonomy
+- taxonomy init: no-op (core/taxonomy.md already exists)
+- audit: 2 nonCanonical tags fixed (knowledge/auth-design.md: auth → domain:security; state/task-slug.md: db → domain:database)
+- Domain Vocabulary: added 'ripple', 'bookmarking'
 ```
 
 ## Rules
@@ -301,6 +339,7 @@ Data structures live at `knowledge/data-structures/<product>.md` (`default.md` f
 6. **Don't create knowledge that already fits in memory.** A short technical decision belongs in `2.memory.md` (sleep-state's domain), not its own knowledge file.
 7. **Knowledge file threshold**: ≥3 paragraphs of content, or material that will be re-read in future sessions.
 8. **Fewest files, sharp boundaries (B2 rubric).** Default to extending an existing file. Fold soft distinctions in — same vertical/brand/topic family, a narrower slice, an increment. Create a new file only for a genuinely separate topic whose own tags sharpen discovery. Not super-files, not fragmentation.
-9. **Use standard tags only.** New tags fragment discovery.
+9. **Use standard tags only (prefer taxonomy vocab).** New tags fragment discovery; always check `dreamcontext taxonomy vocab` before tagging.
 10. **Process all flags from sleep-state** in your report — don't silently drop them.
 11. **No-op cheaply** when signals don't actually warrant work.
+12. **Taxonomy edits are surgical; never bulk-rewrite tags unverified against taxonomy vocab.** Confirm each change against the audit output before writing it.

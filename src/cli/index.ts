@@ -22,6 +22,7 @@ import { registerCouncilCommand } from './commands/council.js';
 import { registerMarketingCommand } from './commands/marketing.js';
 import { registerMemoryCommand } from './commands/memory.js';
 import { registerUpgradeCommand } from './commands/upgrade.js';
+import { registerTaxonomyCommand } from './commands/taxonomy.js';
 import { registerVaultsCommand } from './commands/vaults.js';
 import { registerConfigCommand } from './commands/config.js';
 import { registerFeedbackCommand } from './commands/feedback.js';
@@ -62,6 +63,7 @@ ${chalk.bold('Content')}
   ${chalk.magentaBright('core')}              Add changelog and release entries
   ${chalk.magentaBright('features')}          Create features and insert into sections
   ${chalk.magentaBright('knowledge')}         Create and index knowledge files
+  ${chalk.magentaBright('taxonomy')}          Inspect and maintain the project tag vocabulary
   ${chalk.magentaBright('memory')}            Recall facts via BM25 search over the project corpus
   ${chalk.magentaBright('tasks')}             Create tasks, log progress, and mark complete
   ${chalk.magentaBright('bookmark')}          Tag important moments for consolidation
@@ -127,6 +129,7 @@ export function createProgram(): Command {
   registerCouncilCommand(program);
   registerMarketingCommand(program);
   registerMemoryCommand(program);
+  registerTaxonomyCommand(program);
   registerVaultsCommand(program);
   registerConfigCommand(program);
   registerFeedbackCommand(program);

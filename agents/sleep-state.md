@@ -286,6 +286,7 @@ You do **not** edit knowledge files. Produce flags for `sleep-product` to act on
 6. **Never auto-release.** Surface readiness; the user decides.
 7. **Anti-bloat is non-negotiable.** Hitting 150 lines means extract, not append. Archived content stays discoverable via `dreamcontext memory recall`.
 8. **Flag staleness, don't write knowledge.** That's `sleep-product`'s job.
+8a. **Flag taxonomy drift, don't fix it.** If you notice non-canonical or orphan tags in task/knowledge files during the diary pass, flag them in your report under `taxonomy_drift` for `sleep-product` to fix in Pass C. Do not edit tags yourself.
 9. **Decisions > deliberation.** Save the conclusion and rationale; drop the back-and-forth.
 10. **Surgical edits only on core.** Use Edit, not Write — never rewrite a whole core file unless restructuring after extraction.
 11. **Match existing changelog voice** — read recent entries first.

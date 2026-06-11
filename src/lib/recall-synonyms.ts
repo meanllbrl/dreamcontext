@@ -140,6 +140,11 @@ export const SYNONYM_WEIGHT = 0.5;
  * - `stem`: the caller's stemming function. We stem each synonym-group surface
  *   term so the map can be authored in plain English while lookups still work
  *   against stemmed query terms (e.g. authored `database` -> stemmed `databas`).
+ * - `extraGroups` (optional): additional alias groups to expand through, in the
+ *   form [[alias, canonical], ...]. Iterated DIRECTLY inside the function (NOT
+ *   merged into the module-load SYNONYMS map) to keep latency + benchmark
+ *   stability for the hook path. Passing [] or omitting the arg is byte-identical
+ *   to the two-arg form. Same stem-at-lookup-time pattern as SYNONYMS handling.
  *
  * Returns a map: stemmedExpansionTerm -> SYNONYM_WEIGHT, excluding any term that
  * is already a primary query term (those are scored at full weight by the
@@ -148,6 +153,7 @@ export const SYNONYM_WEIGHT = 0.5;
 export function expandQueryTerms(
   queryTerms: string[],
   stem: (term: string) => string,
+  extraGroups: string[][] = [],
 ): Map<string, number> {
   const primary = new Set(queryTerms);
   const expansions = new Map<string, number>();
@@ -175,6 +181,24 @@ export function expandQueryTerms(
       if (primary.has(stemmedTarget)) continue;
       if (!expansions.has(stemmedTarget)) {
         expansions.set(stemmedTarget, SYNONYM_WEIGHT);
+      }
+    }
+  }
+  // Extra alias groups from project taxonomy vocab (taxonomy CLI path only).
+  // Each group is [alias, canonicalIndexValue]; members are stemmed at call time.
+  for (const group of extraGroups) {
+    if (group.length < 2) continue;
+    for (let i = 0; i < group.length; i++) {
+      const stemmedKey = stem(group[i]);
+      if (!primary.has(stemmedKey)) continue;
+      // Expand to all other members of this group.
+      for (let j = 0; j < group.length; j++) {
+        if (j === i) continue;
+        const stemmedMember = stem(group[j]);
+        if (primary.has(stemmedMember)) continue;
+        if (!expansions.has(stemmedMember)) {
+          expansions.set(stemmedMember, SYNONYM_WEIGHT);
+        }
       }
     }
   }
