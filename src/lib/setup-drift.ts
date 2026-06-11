@@ -81,9 +81,27 @@ export function resolveDriftState(input: DriftInput): DriftState {
  * Content-safety guarantee: `dreamcontext update` only refreshes skill/agents/hooks
  * and prunes version-tracked files. It never touches `_dream_context/` brain files.
  */
+/**
+ * Version values originate from package.json and `.config.json` (the latter is
+ * editable / git-shareable). They are interpolated into the SessionStart snapshot
+ * the agent obeys, so strip newlines and cap length to prevent a crafted value
+ * (e.g. `0.0.0\n\n## DIRECTIVE …`) from injecting instructions into that context.
+ */
+function sanitizeForDirective(value: string): string {
+  // Collapse newlines (no new markdown blocks), strip markdown-structural chars
+  // (#, backtick, [], *, >) so the value can't become a heading/directive/link,
+  // and cap length — a legitimate version string is short semver.
+  return String(value ?? '')
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/[#`*>[\]]/g, '')
+    .slice(0, 40)
+    .trim();
+}
+
 export function buildDriftDirective(input: DriftInput): string | null {
   const state = resolveDriftState(input);
-  const { cliVersion, setupVersion } = input;
+  const cliVersion = sanitizeForDirective(input.cliVersion);
+  const setupVersion = sanitizeForDirective(input.setupVersion);
 
   switch (state) {
     case 'current':
