@@ -8,9 +8,9 @@ import type { TaskFilter, TaskRecord } from '../task-query.js';
  * src/server/routes/tasks.ts, post-sleep flows) never touch the filesystem or
  * HTTP for task data directly; they resolve a backend via `getTaskBackend()`
  * and speak this interface. `local` is the current file implementation;
- * `clickup` is the first remote backend (REST via the generic ApiAdapter).
- * Nothing ClickUp-specific may appear in this file — that is the boundary
- * test for adding GitHub/Linear later.
+ * Remote backends speak REST via the generic ApiAdapter. Nothing
+ * provider-specific may appear in this file — that is the boundary test for
+ * adding more backends later.
  */
 
 /** Task frontmatter fields (raw YAML values as stored in state/*.md). */
@@ -154,7 +154,7 @@ export interface SyncReport {
 }
 
 export interface TaskBackend {
-  /** Backend id ('local' | 'clickup' | ...). */
+  /** Backend id ('local' | a remote backend id). */
   readonly name: string;
 
   list(filter?: TaskFilter): Promise<TaskSummary[]>;

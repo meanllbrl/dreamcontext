@@ -3,7 +3,9 @@ import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync, realpathSyn
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { getTaskBackend, LocalTaskBackend } from '../../src/lib/task-backend/index.js';
+import { getTaskBackend, LocalTaskBackend, ClickUpTaskBackend } from '../../src/lib/task-backend/index.js';
+import { ApiAdapter } from '../../src/lib/task-backend/api-adapter.js';
+import { makeFakeClickUp } from './clickup-fake.js';
 import { readSetupConfig, updateSetupConfig, type SetupConfig } from '../../src/lib/setup-config.js';
 import { writeClickUpToken, resolveClickUpToken, maskToken } from '../../src/lib/task-backend/secrets.js';
 import { clickupMemberMap, resolvePeople } from '../../src/lib/task-backend/identity.js';
@@ -291,15 +293,75 @@ describe('task backend', () => {
   });
 
   describe('M3 — ClickUp PUSH (watermark-based, one-way)', () => {
-    it.todo('clickup backend passes the SAME conformance suite with mocked HTTP transport');
-    it.todo('PUSH creates unmapped local tasks remotely and records the id-map (state/.tasks-map.json)');
-    it.todo('PUSH only sends tasks changed since last_synced_at (watermark, server time)');
-    it.todo('PUSH uses ONE field-level PUT per task, queued under the rate limit');
-    it.todo('changelog entries push as ClickUp comments');
-    it.todo('PUSH re-run is idempotent: no duplicate tasks, no duplicate comments');
-    it.todo('watermarks use ClickUp server time (date_updated), never the local clock');
-    it.todo('no ClickUp types leak past the backend boundary (callers/sync engine import none)');
-    it.todo('live smoke test against real ClickUp (skipped unless CLICKUP_API_KEY is set)');
+    // PUSH behavior (create+id-map, delta-by-watermark, 1 PUT/task,
+    // changelog→comments, idempotent re-run, server-time watermarks, offline
+    // WAL replay) is pinned in tests/unit/clickup-push.test.ts against the
+    // mocked transport. The live smoke test (gated on CLICKUP_API_KEY) lives
+    // in tests/integration/clickup-live.test.ts.
+
+    it('no ClickUp types leak past the backend boundary (callers/sync engine import none)', () => {
+      // Callers and the generic layers must be provider-free; only
+      // clickup.ts + clickup-map.ts may know ClickUp shapes.
+      for (const rel of [
+        ['cli', 'commands', 'tasks.ts'],
+        ['server', 'routes', 'tasks.ts'],
+        ['lib', 'task-backend', 'types.ts'],
+        ['lib', 'task-backend', 'local.ts'],
+        ['lib', 'task-backend', 'api-adapter.ts'],
+        ['lib', 'task-backend', 'sync-state.ts'],
+      ]) {
+        const src = readFileSync(join(SRC_ROOT, ...rel), 'utf-8');
+        expect(src.toLowerCase(), `${rel.join('/')} must not mention clickup`).not.toContain('clickup');
+      }
+    });
+
+    it('no MCP dependency: the ClickUp backend imports no MCP client (headless by construction)', () => {
+      for (const rel of [
+        ['lib', 'task-backend', 'clickup.ts'],
+        ['lib', 'task-backend', 'clickup-map.ts'],
+        ['lib', 'task-backend', 'api-adapter.ts'],
+        ['lib', 'task-backend', 'identity.ts'],
+        ['lib', 'task-backend', 'secrets.ts'],
+        ['lib', 'task-backend', 'index.ts'],
+        ['lib', 'task-backend', 'local.ts'],
+      ]) {
+        const src = readFileSync(join(SRC_ROOT, ...rel), 'utf-8');
+        const imports = src.split('\n').filter((l) => /^\s*(import|export)\b.*\bfrom\b/.test(l));
+        for (const line of imports) {
+          expect(line.toLowerCase(), `${rel.join('/')} imports MCP: ${line}`).not.toContain('mcp');
+        }
+        // And no runtime require/dynamic import of an MCP client either.
+        expect(src.toLowerCase()).not.toMatch(/require\(['"][^'"]*mcp/);
+        expect(src.toLowerCase()).not.toMatch(/import\(['"][^'"]*mcp/);
+      }
+    });
+  });
+
+  // THE SAME conformance suite, against the ClickUp backend with mocked HTTP —
+  // the acceptance test that the remote backend is indistinguishable to callers.
+  describeTaskBackendConformance('clickup (mocked HTTP transport)', async () => {
+    const { contextRoot, projectRoot } = makeTmpProject();
+    const fake = makeFakeClickUp();
+    let clock = 1000;
+    const now = () => (clock += 7);
+    const sleep = async () => { clock += 1; };
+    const adapter = new ApiAdapter({
+      baseUrl: 'https://api.clickup.com/api/v2',
+      authHeaders: () => ({ Authorization: 'pk_test' }),
+      fetchImpl: fake.fetchImpl,
+      now,
+      sleep,
+    });
+    const config: SetupConfig = {
+      ...BASE_CONFIG,
+      taskBackend: 'clickup',
+      cloudTaskManagement: true,
+      clickup: { teamId: 't1', spaceId: 's1', listId: 'l1', changelogTarget: 'comments' },
+    };
+    return {
+      backend: new ClickUpTaskBackend(contextRoot, config, { adapter, now, sleep }),
+      cleanup: () => rmSync(projectRoot, { recursive: true, force: true }),
+    };
   });
 
   describe('M4 — PULL + two-way merge + offline queue', () => {

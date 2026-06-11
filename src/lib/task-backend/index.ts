@@ -1,12 +1,13 @@
-import { join } from 'node:path';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { ensureContextRoot } from '../context-path.js';
 import { readSetupConfig, type SetupConfig } from '../setup-config.js';
 import { LocalTaskBackend } from './local.js';
+import { createClickUpBackend, type ClickUpBackendDeps } from './clickup.js';
 import type { TaskBackend } from './types.js';
 
 export * from './types.js';
 export { LocalTaskBackend, isSafeTaskSlug, readTaskFile } from './local.js';
+export { ClickUpTaskBackend, createClickUpBackend } from './clickup.js';
 
 /**
  * Resolve the active task backend for a project.
@@ -22,28 +23,15 @@ export { LocalTaskBackend, isSafeTaskSlug, readTaskFile } from './local.js';
 export function getTaskBackend(
   contextRoot?: string,
   config?: SetupConfig | null,
+  deps?: ClickUpBackendDeps,
 ): TaskBackend {
   const root = contextRoot ?? ensureContextRoot();
   const cfg = config !== undefined ? config : readSetupConfig(dirname(root));
-  const stateDir = join(root, 'state');
 
-  const kind = cfg?.taskBackend ?? 'local';
-  if (kind === 'clickup') {
-    // Lazy import keeps the local path free of any remote-backend code.
-    // (Wired in M3 — until then an unconfigured remote falls back to local.)
-    const { createClickUpBackend } = requireClickUp();
-    const backend = createClickUpBackend?.(root, cfg ?? null);
-    if (backend) return backend;
+  if (cfg?.taskBackend === 'clickup') {
+    // Mirror reads/writes work offline; only sync() needs token/list (and
+    // reports rather than throws when they're missing).
+    return createClickUpBackend(root, cfg ?? null, deps);
   }
-  return new LocalTaskBackend(stateDir);
-}
-
-/**
- * Indirection point for the ClickUp backend so M1 ships with zero remote code
- * on the local path. Replaced by a real factory import in M3.
- */
-function requireClickUp(): {
-  createClickUpBackend?: (contextRoot: string, config: SetupConfig | null) => TaskBackend | null;
-} {
-  return {};
+  return new LocalTaskBackend(join(root, 'state'));
 }
