@@ -104,4 +104,21 @@ describe('wikilink-rewrite', () => {
     const result = rewriteFileContent(content, map);
     expect(result).toBe('[[x]] and [[y]] and [[c]].');
   });
+
+  it('a language-tagged line inside a fenced block does NOT close it (wikilinks stay fenced)', () => {
+    const content = [
+      '```',
+      '[[old]] inside fence',
+      '```ts',                 // info-string line INSIDE the block — NOT a closer
+      '[[old]] still inside',
+      '```',                   // the real (bare) closing fence
+      '',
+      '[[old]] outside',       // only THIS one should be rewritten
+    ].join('\n');
+    const result = rewriteFileContent(content, new Map([['old', 'new']]));
+    expect(result).toContain('[[old]] inside fence');   // fenced — untouched
+    expect(result).toContain('[[old]] still inside');   // fenced — untouched (the bug rewrote this)
+    expect(result).toContain('[[new]] outside');        // non-fenced — rewritten
+    expect(result).not.toContain('[[new]] still inside');
+  });
 });

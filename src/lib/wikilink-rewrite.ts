@@ -152,22 +152,24 @@ function splitOnCodeFences(content: string): Segment[] {
 
   for (const line of lines) {
     const trimmed = line.trimStart();
-    if (trimmed.startsWith('```')) {
-      if (!inFence) {
-        // Opening fence: flush non-fenced text, start fenced block
-        if (current.length > 0) {
-          segments.push({ text: current.join('\n'), isFenced: false });
-          current = [];
-        }
-        inFence = true;
-        current.push(line);
-      } else {
-        // Closing fence: flush fenced block, start non-fenced text
-        current.push(line);
-        segments.push({ text: current.join('\n'), isFenced: true });
+    if (!inFence && trimmed.startsWith('```')) {
+      // Opening fence (may carry an info string e.g. ```ts): flush non-fenced
+      // text, start fenced block.
+      if (current.length > 0) {
+        segments.push({ text: current.join('\n'), isFenced: false });
         current = [];
-        inFence = false;
       }
+      inFence = true;
+      current.push(line);
+    } else if (inFence && /^`{3,}\s*$/.test(trimmed)) {
+      // Closing fence: ONLY a backticks-only line closes (per CommonMark a
+      // closing fence carries no info string). A line like ```ts while already
+      // inside a fence is content, not a close — so a wikilink after a nested
+      // language-tagged line is NOT wrongly un-fenced and rewritten.
+      current.push(line);
+      segments.push({ text: current.join('\n'), isFenced: true });
+      current = [];
+      inFence = false;
     } else {
       current.push(line);
     }

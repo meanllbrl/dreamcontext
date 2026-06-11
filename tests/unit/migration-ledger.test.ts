@@ -96,6 +96,22 @@ describe('migration-ledger', () => {
     expect(result).toHaveLength(2);
   });
 
+  it('appendLedger deduplicates by (version, step) — re-record / concurrent write is a no-op', () => {
+    const e: LedgerEntry = {
+      version: '0.7.0',
+      step: 'move-data-structures',
+      executor: 'code',
+      timestamp: new Date().toISOString(),
+      filesTouched: [],
+      summary: 'first',
+    };
+    appendLedger(root, e);
+    appendLedger(root, { ...e, summary: 'duplicate', executor: 'detected' });
+    const result = readLedger(root);
+    expect(result).toHaveLength(1);
+    expect(result[0].summary).toBe('first'); // first write wins; duplicate ignored
+  });
+
   it('writeLedger writes atomically (tmp file removed after write)', () => {
     writeLedger(root, []);
     const tmp = join(root, 'state', '.migrations.json.tmp');

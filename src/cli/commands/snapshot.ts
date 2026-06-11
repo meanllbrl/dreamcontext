@@ -358,9 +358,16 @@ function getMigrationNote(root: string): string {
     ) {
       return '';
     }
-    const notices = (parsed.pendingMigrationNotices as unknown[]).filter(
-      (n): n is string => typeof n === 'string',
-    );
+    // Notices derive from migration summaries built from filenames — strip
+    // newlines + markdown-structural chars and cap length so a crafted filename
+    // can't inject a heading/directive into the agent snapshot; dedupe repeats.
+    const seen = new Set<string>();
+    const notices = (parsed.pendingMigrationNotices as unknown[])
+      .filter((n): n is string => typeof n === 'string')
+      .map((n) =>
+        n.replace(/[\r\n]+/g, ' ').replace(/[#`*>[\]]/g, '').slice(0, 200).trim(),
+      )
+      .filter((n) => n.length > 0 && !seen.has(n) && (seen.add(n), true));
     if (notices.length === 0) return '';
     return `## Migrations Applied\nMigrations applied since last session: ${notices.join('; ')}`;
   } catch {

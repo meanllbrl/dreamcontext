@@ -72,6 +72,10 @@ export function writeLedger(contextRoot: string, entries: LedgerEntry[]): void {
  */
 export function appendLedger(contextRoot: string, entry: LedgerEntry): void {
   const entries = readLedger(contextRoot);
+  // Deduplicate by (version, step): guards against concurrent runners (e.g. a
+  // SessionStart hook firing while `update` runs) both reading a stale ledger
+  // and appending the same entry, and against accidental re-records.
+  if (isApplied(entries, entry.version, entry.step)) return;
   entries.push(entry);
   writeLedger(contextRoot, entries);
 }
