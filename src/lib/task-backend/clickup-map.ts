@@ -18,6 +18,7 @@ export interface ClickUpTask {
   date_created?: string | null;
   /** Epoch-ms as a string — ClickUp SERVER time. The watermark source. */
   date_updated?: string | null;
+  due_date?: string | number | null;
   custom_fields?: Array<Record<string, unknown>> | null;
 }
 
@@ -142,6 +143,21 @@ export function tagsFromClickUp(remote: ClickUpTask['tags']): { tags: string[]; 
     tags: names.filter((n) => !n.startsWith('version:')),
     version: versionTag ? versionTag.slice('version:'.length) : null,
   };
+}
+
+// ─── Due date ──────────────────────────────────────────────────────────────
+
+/** YYYY-MM-DD → ClickUp epoch-ms. UTC noon keeps the calendar day stable in any timezone. */
+export function dueDateToClickUp(date: string | null | undefined): number | null {
+  if (!date) return null;
+  const ms = Date.parse(`${date}T12:00:00Z`);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/** ClickUp due_date (epoch-ms string) → YYYY-MM-DD (UTC date part). */
+export function dueDateFromClickUp(value: string | number | null | undefined): string | null {
+  const ms = serverTimeMs(value ?? null);
+  return ms === null ? null : new Date(ms).toISOString().split('T')[0];
 }
 
 // ─── Server time ───────────────────────────────────────────────────────────

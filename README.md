@@ -490,6 +490,12 @@ dreamcontext tasks sync-hooks install               # best-effort post-commit/pr
   edits tags on existing tasks; changed tags push through ClickUp's per-tag
   endpoints (its PUT carries none), and assignee handovers/removals push as
   add/rem deltas.
+- **Due dates**: `tasks create --due 2026-07-01` / `tasks due <name> <date|clear>`
+  — synced natively in both directions.
+- **Custom-field bridge**: create list fields named Urgency / Summary / Reach /
+  Impact / Confidence / Effort / Score / Feature / Version and sync writes and
+  reads them automatically. Full remote-structure reference:
+  [docs/remote-task-setup.md](docs/remote-task-setup.md).
 
 ### Features
 

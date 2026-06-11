@@ -264,7 +264,7 @@ export async function handleTasksUpdate(
     }
   }
 
-  const allowedFields = ['status', 'priority', 'urgency', 'description', 'tags', 'name', 'related_feature', 'version'];
+  const allowedFields = ['status', 'priority', 'urgency', 'description', 'tags', 'name', 'related_feature', 'version', 'due_date'];
   for (const field of allowedFields) {
     if (body[field] !== undefined) {
       const oldVal = (oldData[field] ?? null) as FieldChange['from'];
@@ -308,6 +308,14 @@ export async function handleTasksUpdate(
   if (fieldChanges.length === 0) {
     sendError(res, 400, 'no_changes', 'No valid fields to update.');
     return;
+  }
+
+  // Validate due_date (YYYY-MM-DD or null to clear)
+  if (updates.due_date !== undefined && updates.due_date !== null) {
+    if (typeof updates.due_date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(updates.due_date)) {
+      sendError(res, 400, 'invalid_due_date', 'due_date must be YYYY-MM-DD or null.');
+      return;
+    }
   }
 
   // Validate status

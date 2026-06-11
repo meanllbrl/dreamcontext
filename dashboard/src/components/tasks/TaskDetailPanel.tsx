@@ -408,6 +408,13 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
     );
   };
 
+  const handleDueChange = (value: string) => {
+    updateTask.mutate(
+      { slug: task.slug, updates: { due_date: value || null } },
+      { onError: onMutationError },
+    );
+  };
+
   const handleTagsChange = (tags: string[]) => {
     updateTask.mutate(
       { slug: task.slug, updates: { tags } },
@@ -813,6 +820,15 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
                 expanded={riceExpanded}
                 onToggle={() => setRiceExpanded(v => !v)}
                 onUpdate={handleRiceUpdate}
+              />
+            </PropertyRow>
+
+            <PropertyRow label="Due">
+              <input
+                type="date"
+                className="field-select prop-select"
+                value={task.due_date ?? ''}
+                onChange={e => handleDueChange(e.target.value)}
               />
             </PropertyRow>
 

@@ -23,6 +23,7 @@ export interface FakeTask {
   assignees: Array<{ id: number }>;
   date_created: string;
   date_updated: string;
+  due_date?: string | null;
   /** def + value merged, like the real API's task payload. */
   custom_fields: Array<FakeFieldDef & { value?: unknown }>;
 }
@@ -166,6 +167,7 @@ export function makeFakeClickUp(opts: { serverStart?: number } = {}): FakeClickU
           assignees: (body.assignees ?? []).map((id2: number) => ({ id: id2 })),
           date_created: String(serverTime),
           date_updated: String(serverTime),
+          due_date: body.due_date !== undefined && body.due_date !== null ? String(body.due_date) : null,
           custom_fields: fake.customFields.map((f) => ({ ...f })),
         };
         tasks.set(id, task);
@@ -209,6 +211,7 @@ export function makeFakeClickUp(opts: { serverStart?: number } = {}): FakeClickU
           if (body.description !== undefined) task.description = body.description;
           if (body.status !== undefined) task.status = { status: body.status };
           if (body.priority !== undefined) task.priority = { id: String(body.priority) };
+          if (body.due_date !== undefined) task.due_date = body.due_date === null ? null : String(body.due_date);
           if (body.assignees?.add) {
             for (const a of body.assignees.add) {
               if (!task.assignees.some((x) => x.id === a)) task.assignees.push({ id: a });

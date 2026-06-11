@@ -200,7 +200,8 @@ export function registerTasksCommand(program: Command): void {
     .option('--impact <n>', 'RICE impact (integer 1–5)')
     .option('--confidence <n>', 'RICE confidence (25, 50, 75, or 100)')
     .option('--effort <n>', 'RICE effort in weeks (> 0, ≤ 52)')
-    .action(async (name: string, opts: { description?: string; priority?: string; urgency?: string; status?: string; tags?: string; why?: string; version?: string; person?: string; reach?: string; impact?: string; confidence?: string; effort?: string }) => {
+    .option('--due <date>', 'Due date (YYYY-MM-DD)')
+    .action(async (name: string, opts: { description?: string; priority?: string; urgency?: string; status?: string; tags?: string; why?: string; version?: string; person?: string; reach?: string; impact?: string; confidence?: string; effort?: string; due?: string }) => {
       const backend = getTaskBackend();
       const slug = slugify(name);
 
@@ -261,6 +262,11 @@ export function registerTasksCommand(program: Command): void {
         riceBlock = mergeRice(null, riceInput);
       }
 
+      if (opts.due !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(opts.due)) {
+        error('Due date must be YYYY-MM-DD.');
+        return;
+      }
+
       try {
         await backend.create({
           name,
@@ -272,6 +278,7 @@ export function registerTasksCommand(program: Command): void {
           why,
           version,
           rice: riceBlock,
+          due_date: opts.due ?? null,
           variant: 'cli',
         });
       } catch (err) {
@@ -348,6 +355,30 @@ export function registerTasksCommand(program: Command): void {
       await backend.updateFields(slug, { rice: next, updated_at: today() });
       const scoreStr = next?.score === null || next?.score === undefined ? '— (incomplete)' : String(next.score);
       success(`RICE updated on ${slug} — score: ${scoreStr}`);
+    });
+
+  // Due date on existing tasks (synced natively to the remote backend)
+  tasks
+    .command('due')
+    .argument('<name>', 'Task slug or name')
+    .argument('<date>', 'YYYY-MM-DD, or "clear" to remove')
+    .description('Set or clear a task due date')
+    .action(async (name: string, date: string) => {
+      const backend = getTaskBackend();
+      const slug = await resolveTaskSlug(backend, name);
+      if (!slug) return;
+
+      if (date.toLowerCase() === 'clear') {
+        await backend.updateFields(slug, { due_date: null, updated_at: today() });
+        success(`Due date cleared on ${slug}`);
+        return;
+      }
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00Z`))) {
+        error('Due date must be a valid YYYY-MM-DD (or "clear").');
+        return;
+      }
+      await backend.updateFields(slug, { due_date: date, updated_at: today() });
+      success(`Due date on ${slug}: ${date}`);
     });
 
   // Tag management on existing tasks (person:<slug> tags drive remote assignees)

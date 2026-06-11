@@ -25,6 +25,7 @@ export interface Task {
   parent_task: string | null;
   related_feature: string | null;
   version: string | null;
+  due_date?: string | null;
   rice: RiceFields | null;
   why: string;
   user_stories: string;
@@ -57,7 +58,7 @@ interface CreateTaskInput {
 
 interface UpdateTaskInput {
   slug: string;
-  updates: Partial<Pick<Task, 'status' | 'priority' | 'urgency' | 'description' | 'tags' | 'name' | 'related_feature' | 'version' | 'body'>> & {
+  updates: Partial<Pick<Task, 'status' | 'priority' | 'urgency' | 'description' | 'tags' | 'name' | 'related_feature' | 'version' | 'due_date' | 'body'>> & {
     rice?: RiceInput | null;
   };
 }

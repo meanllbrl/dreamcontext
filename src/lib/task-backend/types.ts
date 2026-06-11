@@ -28,6 +28,8 @@ export interface TaskFrontmatter {
   related_feature: string | null;
   version: string | null;
   rice: RiceFields | null;
+  /** Optional due date (YYYY-MM-DD). Absent on tasks that never set one. */
+  due_date?: string | null;
   /** Remote identity — present only for synced tasks on a remote backend. */
   assignee?: string | null;
   created_by?: string | null;
@@ -53,6 +55,7 @@ export interface TaskData {
   related_feature: string | null;
   version: string | null;
   rice: RiceFields | null;
+  due_date: string | null;
   why: string;
   user_stories: string;
   acceptance_criteria: string;
@@ -93,6 +96,7 @@ export interface CreateTaskInput {
   why?: string;
   version?: string | null;
   rice?: RiceFields | null;
+  due_date?: string | null;
   /**
    * Which historical template produced the file. The CLI and the dashboard
    * have always written different task skeletons (full template with Workflow

@@ -151,6 +151,7 @@ export function readTaskFile(filePath: string): TaskData {
     related_feature: (data.related_feature as string) ?? null,
     version: (data.version as string) ?? null,
     rice: normalizeRice(data.rice),
+    due_date: (data.due_date as string) ?? null,
     why: readSectionSafe(filePath, 'Why'),
     user_stories: readSectionSafe(filePath, 'User Stories'),
     acceptance_criteria: readSectionSafe(filePath, 'Acceptance Criteria'),
@@ -245,6 +246,11 @@ export class LocalTaskBackend implements TaskBackend {
       if (input.rice) {
         updateFrontmatterFields(filePath, { rice: input.rice });
       }
+      // due_date is additive: only written when provided, so tasks created
+      // without one keep the exact pre-#11 bytes (golden-pinned).
+      if (input.due_date) {
+        updateFrontmatterFields(filePath, { due_date: input.due_date });
+      }
     } else {
       // Byte-exact replica of the pre-refactor POST /api/tasks template
       // (compact skeleton; status is always "todo" regardless of input).
@@ -301,6 +307,9 @@ ${input.why || '(To be defined)'}
 - Task created.
 `;
       writeFileSync(filePath, content, 'utf-8');
+      if (input.due_date) {
+        updateFrontmatterFields(filePath, { due_date: input.due_date });
+      }
     }
 
     return readTaskFile(filePath);
