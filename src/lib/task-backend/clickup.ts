@@ -348,7 +348,16 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
         },
       );
       const batch = res.tasks ?? [];
-      remoteTasks.push(...batch);
+      // Client-side watermark guard: the real API treats `date_updated_gt`
+      // as >= (observed live), which would echo the newest task on every
+      // pull forever. Filter strictly-greater here so convergence never
+      // depends on the server's comparison semantics.
+      remoteTasks.push(
+        ...batch.filter((t) => {
+          const ts = serverTimeMs(t.date_updated);
+          return watermark === null || ts === null || ts > watermark;
+        }),
+      );
       if (res.last_page !== false || batch.length === 0) break;
     }
 

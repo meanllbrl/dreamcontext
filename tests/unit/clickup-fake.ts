@@ -122,8 +122,11 @@ export function makeFakeClickUp(opts: { serverStart?: number } = {}): FakeClickU
       if (m && method === 'GET') {
         const gt = u.searchParams.get('date_updated_gt');
         const page = Number(u.searchParams.get('page') ?? '0');
+        // Real ClickUp treats date_updated_gt as >= (observed live) — the
+        // fake mirrors that so the backend's client-side strictly-greater
+        // watermark guard stays under test.
         const all = [...tasks.values()].filter(
-          (t) => gt === null || Number(t.date_updated) > Number(gt),
+          (t) => gt === null || Number(t.date_updated) >= Number(gt),
         );
         // single-page fake (last_page signals no more)
         return jsonResponse(200, { tasks: page === 0 ? all : [], last_page: true });
