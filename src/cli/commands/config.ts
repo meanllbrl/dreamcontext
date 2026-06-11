@@ -14,6 +14,7 @@ import {
   writeClickUpToken,
 } from '../../lib/task-backend/secrets.js';
 import { ensureRemoteBackendGitignore } from '../../lib/task-backend/paths.js';
+import { installTaskSyncHooks } from '../../lib/task-backend/git-hooks.js';
 
 /** Resolve the project root that holds `_dream_context/`, or null. */
 function resolveProjectRoot(): string | null {
@@ -151,6 +152,14 @@ export function registerConfigCommand(program: Command): void {
       });
       success(`Task backend set to ${b}.`);
       if (b === 'clickup') {
+        // Best-effort git triggers (post-commit/pre-push); they can never
+        // fail or block git, and a non-dreamcontext hook is never clobbered.
+        try {
+          const hooks = installTaskSyncHooks(projectRoot);
+          if (hooks.installed.length > 0) {
+            info(chalk.dim(`git sync hooks installed: ${hooks.installed.join(', ')} (best-effort, never block git).`));
+          }
+        } catch { /* hooks are a convenience — never fail the switch */ }
         const token = resolveClickUpToken(projectRoot);
         if (!token) {
           info(chalk.dim('No ClickUp token found. Add one with `dreamcontext config clickup-token`.'));

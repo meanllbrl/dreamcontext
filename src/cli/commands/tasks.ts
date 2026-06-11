@@ -11,7 +11,13 @@ import { success, error, header } from '../../lib/format.js';
 import { readSetupConfig, isMultiPerson } from '../../lib/setup-config.js';
 import { getActivePlanningVersion } from '../../lib/active-version.js';
 import { mergeRice, validateRiceInput, type RiceFields, type RiceInput } from '../../lib/rice.js';
-import { getTaskBackend, TaskBackendError, type TaskBackend } from '../../lib/task-backend/index.js';
+import {
+  getTaskBackend,
+  installTaskSyncHooks,
+  uninstallTaskSyncHooks,
+  TaskBackendError,
+  type TaskBackend,
+} from '../../lib/task-backend/index.js';
 import {
   GROUP_BY_FIELDS,
   collectTags,
@@ -524,6 +530,34 @@ export function registerTasksCommand(program: Command): void {
         }
         error(`Sync failed: ${(err as Error).message ?? err}`);
         process.exitCode = 1;
+      }
+    });
+
+  // Git sync triggers (issue #11 M5): best-effort hooks that can never fail git
+  tasks
+    .command('sync-hooks')
+    .argument('<action>', 'install | uninstall')
+    .description('Install/uninstall best-effort git sync triggers (post-commit, pre-push)')
+    .action((action: string) => {
+      const projectRoot = dirname(ensureContextRoot());
+      if (action === 'install') {
+        const res = installTaskSyncHooks(projectRoot);
+        if (res.noGit) {
+          error('Not a git repository — nothing to install into.');
+          return;
+        }
+        if (res.installed.length > 0) {
+          success(`Installed git sync hooks: ${res.installed.join(', ')} (best-effort; they can never fail or block git).`);
+        }
+        for (const skipped of res.skipped) {
+          error(`Skipped ${skipped}: a non-dreamcontext hook already exists there.`);
+        }
+      } else if (action === 'uninstall') {
+        const removed = uninstallTaskSyncHooks(projectRoot);
+        if (removed.length > 0) success(`Removed git sync hooks: ${removed.join(', ')}`);
+        else console.log(chalk.dim('No managed git sync hooks found.'));
+      } else {
+        error('Action must be one of: install, uninstall');
       }
     });
 

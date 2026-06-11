@@ -160,6 +160,17 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     this.recordLocalMutation(slug, 'push');
   }
 
+  /** Settings "Test connection": authenticate and fetch the token's user. */
+  async testConnection(): Promise<{ ok: true; user: string } | { ok: false; error: string }> {
+    try {
+      const adapter = this.getAdapter();
+      const res = await adapter.request<{ user?: { username?: string; id?: number | string } }>('GET', '/user');
+      return { ok: true, user: String(res.user?.username ?? res.user?.id ?? 'unknown') };
+    } catch (err) {
+      return { ok: false, error: (err as Error).message ?? String(err) };
+    }
+  }
+
   // ── Sync engine ───────────────────────────────────────────────────────────
 
   async sync(direction: SyncDirection = 'both'): Promise<SyncReport> {

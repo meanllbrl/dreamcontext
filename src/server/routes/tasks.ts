@@ -6,6 +6,7 @@ import type { FieldChange } from '../change-tracker.js';
 import { mergeRice, validateRiceInput, type RiceFields, type RiceInput } from '../../lib/rice.js';
 import {
   getTaskBackend,
+  getTaskSyncStatus,
   isSafeTaskSlug,
   TaskBackendError,
   type TaskBackend,
@@ -121,6 +122,55 @@ export async function handleTasksCreate(
   });
 
   sendJson(res, 201, { task: toApiTask(task) });
+}
+
+/**
+ * GET /api/tasks/sync-status — sync badge data (backend, pending, conflicts).
+ */
+export async function handleTasksSyncStatus(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  sendJson(res, 200, { status: getTaskSyncStatus(contextRoot) });
+}
+
+/**
+ * POST /api/tasks/sync — trigger a sync (manual dashboard action).
+ */
+export async function handleTasksSync(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const body = (await parseJsonBody(req)) ?? {};
+  const direction = (body.direction as string) ?? 'both';
+  if (!['push', 'pull', 'both'].includes(direction)) {
+    sendError(res, 400, 'invalid_direction', 'direction must be push, pull, or both.');
+    return;
+  }
+  const report = await getTaskBackend(contextRoot).sync(direction as 'push' | 'pull' | 'both');
+  sendJson(res, 200, { report });
+}
+
+/**
+ * POST /api/tasks/sync-test — remote connection test (Settings page).
+ */
+export async function handleTasksSyncTest(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const backend = getTaskBackend(contextRoot);
+  if (!backend.testConnection) {
+    sendJson(res, 200, { ok: true, backend: backend.name, note: 'Local backend — no remote to test.' });
+    return;
+  }
+  const result = await backend.testConnection();
+  sendJson(res, 200, { ...result, backend: backend.name });
 }
 
 /**

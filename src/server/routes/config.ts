@@ -1,9 +1,10 @@
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname } from 'node:path';
 import { parseJsonBody, sendJson, sendError } from '../middleware.js';
-import { readSetupConfig, updateSetupConfig } from '../../lib/setup-config.js';
+import { readSetupConfig, updateSetupConfig, type ClickUpConfig } from '../../lib/setup-config.js';
 import { applyClaudeAutoMemory } from '../../lib/claude-settings.js';
 import { parsePlatformList, PLATFORM_CATALOG } from '../../lib/platforms.js';
+import { ensureRemoteBackendGitignore } from '../../lib/task-backend/paths.js';
 
 /**
  * GET /api/config — Return the current project's setup config.
@@ -42,6 +43,9 @@ export async function handleConfigUpdate(
     platforms?: ReturnType<typeof parsePlatformList>['platforms'];
     packs?: string[];
     disableNativeMemory?: boolean;
+    taskBackend?: 'local' | 'clickup';
+    cloudTaskManagement?: boolean;
+    clickup?: ClickUpConfig;
   } = {};
 
   if (body.platforms !== undefined) {
@@ -77,16 +81,80 @@ export async function handleConfigUpdate(
     patch.disableNativeMemory = body.disableNativeMemory;
   }
 
+  // Task backend (issue #11) — strict-pick, like everything else here.
+  if (body.taskBackend !== undefined) {
+    if (body.taskBackend !== 'local' && body.taskBackend !== 'clickup') {
+      sendError(res, 400, 'invalid_task_backend', 'taskBackend must be "local" or "clickup".');
+      return;
+    }
+    patch.taskBackend = body.taskBackend;
+    patch.cloudTaskManagement = body.taskBackend === 'clickup';
+  }
+
+  if (body.cloudTaskManagement !== undefined) {
+    if (typeof body.cloudTaskManagement !== 'boolean') {
+      sendError(res, 400, 'invalid_cloud_task_management', 'cloudTaskManagement must be a boolean.');
+      return;
+    }
+    patch.cloudTaskManagement = body.cloudTaskManagement;
+    if (patch.taskBackend === undefined) {
+      patch.taskBackend = body.cloudTaskManagement ? 'clickup' : 'local';
+    }
+  }
+
+  if (body.clickup !== undefined) {
+    if (body.clickup === null || typeof body.clickup !== 'object' || Array.isArray(body.clickup)) {
+      sendError(res, 400, 'invalid_clickup', 'clickup must be an object.');
+      return;
+    }
+    const raw = body.clickup as Record<string, unknown>;
+    const picked: ClickUpConfig = {};
+    for (const key of ['teamId', 'spaceId', 'listId'] as const) {
+      if (raw[key] !== undefined) {
+        if (typeof raw[key] !== 'string' || !(raw[key] as string).trim()) {
+          sendError(res, 400, 'invalid_clickup', `clickup.${key} must be a non-empty string.`);
+          return;
+        }
+        picked[key] = (raw[key] as string).trim();
+      }
+    }
+    if (raw.changelogTarget !== undefined) {
+      if (raw.changelogTarget !== 'comments') {
+        sendError(res, 400, 'invalid_clickup', 'clickup.changelogTarget must be "comments".');
+        return;
+      }
+      picked.changelogTarget = 'comments';
+    }
+    // Merge over the existing block so partial PATCHes don't drop ids.
+    const existing = readSetupConfig(dirname(contextRoot))?.clickup ?? {};
+    patch.clickup = { ...existing, ...picked };
+  }
+
   if (
     patch.platforms === undefined &&
     patch.packs === undefined &&
-    patch.disableNativeMemory === undefined
+    patch.disableNativeMemory === undefined &&
+    patch.taskBackend === undefined &&
+    patch.cloudTaskManagement === undefined &&
+    patch.clickup === undefined
   ) {
-    sendError(res, 400, 'no_changes', 'Provide at least one of: platforms, packs, disableNativeMemory.');
+    sendError(res, 400, 'no_changes', 'Provide at least one of: platforms, packs, disableNativeMemory, taskBackend, cloudTaskManagement, clickup.');
     return;
   }
 
   const projectRoot = dirname(contextRoot);
+
+  // Flipping to a remote backend gitignores the derived files FIRST — the
+  // mirror/sync state must never be committable.
+  if (patch.taskBackend === 'clickup') {
+    try {
+      ensureRemoteBackendGitignore(projectRoot);
+    } catch (err) {
+      sendError(res, 500, 'gitignore_failed', `Could not update .gitignore: ${(err as Error).message}`);
+      return;
+    }
+  }
+
   const next = updateSetupConfig(projectRoot, patch);
   // Reflect the toggle into Claude Code's .claude/settings.json immediately so the
   // change takes effect without re-running setup.

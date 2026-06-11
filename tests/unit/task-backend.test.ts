@@ -373,11 +373,69 @@ describe('task backend', () => {
   // tests/unit/clickup-push.test.ts (offline WAL enqueue + idempotent replay).
 
   describe('M5 — triggers + surfaces', () => {
-    it.todo('git commit/push hook triggers are non-blocking and can never fail the git operation (adapter forced to error/timeout)');
-    it.todo('post-sleep sync routes tasks log/status/insert through the backend idempotently');
-    it.todo('.config.json taskBackend + clickup block validated (strict-pick) on PATCH /api/config');
-    it.todo('SettingsPage exposes the backend selector + connection test (Cloud Task Management)');
-    it.todo('.gitignore updated for mirror/sync/queue/conflict files when clickup is enabled');
-    it.todo('default is local; existing projects with no taskBackend field behave exactly as today');
+    // git hook never-fails-git (CLI forced to error + to hang) and the
+    // post-sleep best-effort sync are exercised at the git/CLI level in
+    // tests/integration/clickup-hooks.test.ts. PATCH /api/config strict-pick
+    // validation lives in tests/unit/config-route-taskbackend.test.ts.
+
+    it('post-sleep sync routes tasks log/status/insert through the backend idempotently', async () => {
+      // The sleep-tasks agent mutates tasks via the CLI verbs, which route
+      // through getTaskBackend (M1 source-grep test) — so a re-run produces
+      // no duplicate remote ops. Direct proof on the backend:
+      const { contextRoot, projectRoot } = makeTmpProject();
+      const fake = makeFakeClickUp();
+      let clock = 1000;
+      const adapter = new ApiAdapter({
+        baseUrl: 'https://api.clickup.com/api/v2',
+        authHeaders: () => ({ Authorization: 'pk_test' }),
+        fetchImpl: fake.fetchImpl,
+        now: () => (clock += 7),
+        sleep: async () => { clock += 1; },
+      });
+      const backend = new ClickUpTaskBackend(contextRoot, {
+        ...BASE_CONFIG,
+        taskBackend: 'clickup',
+        clickup: { teamId: 't', spaceId: 's', listId: 'l' },
+      }, { adapter, now: () => (clock += 7) });
+      try {
+        await backend.create({ name: 'Sleep Routed', variant: 'cli' });
+        await backend.addChangelog('sleep-routed', '### 2026-06-11 - Session Update\n- consolidated');
+        await backend.updateFields('sleep-routed', { status: 'in_progress', updated_at: '2026-06-11' });
+        await backend.sync('both');
+        const commentCount = [...fake.comments.values()].flat().length;
+        // Idempotent re-run of the SAME post-sleep flow: no duplicates.
+        await backend.sync('both');
+        expect(fake.tasks.size).toBe(1);
+        expect([...fake.comments.values()].flat()).toHaveLength(commentCount);
+      } finally {
+        rmSync(projectRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('SettingsPage exposes the backend selector + connection test (Cloud Task Management)', () => {
+      const src = readFileSync(
+        join(SRC_ROOT, '..', 'dashboard', 'src', 'pages', 'SettingsPage.tsx'),
+        'utf-8',
+      );
+      expect(src).toContain("t('settings.cloud_tasks.label')");
+      expect(src).toContain('/tasks/sync-test');
+      expect(src).toContain('taskBackend');
+      // Token is CLI-managed — the page must NOT collect or display it.
+      expect(src.toLowerCase()).not.toContain('token_input');
+      expect(src).toContain("t('settings.cloud_tasks.token_hint')");
+    });
+
+    it('default is local; existing projects with no taskBackend field behave exactly as today', () => {
+      const { contextRoot, projectRoot } = makeTmpProject();
+      try {
+        // Legacy config without the field → local backend, no remote code.
+        updateSetupConfig(projectRoot, {});
+        const backend = getTaskBackend(contextRoot);
+        expect(backend.name).toBe('local');
+        expect(readSetupConfig(projectRoot)?.taskBackend).toBeUndefined();
+      } finally {
+        rmSync(projectRoot, { recursive: true, force: true });
+      }
+    });
   });
 });

@@ -7,6 +7,7 @@ import { readJsonObject, writeJsonObject, readJsonArray, writeJsonArray } from '
 import { today } from '../../lib/id.js';
 import { header, success, error, warn, info } from '../../lib/format.js';
 import { migrateDataStructures, fenceExistingDataStructures } from '../../lib/data-structures-migration.js';
+import { getTaskBackend } from '../../lib/task-backend/index.js';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -373,7 +374,7 @@ export function registerSleepCommand(program: Command): void {
     .command('done')
     .argument('<summary...>', 'Summary of what was consolidated')
     .description('Mark consolidation complete, reset debt')
-    .action((summaryParts: string[]) => {
+    .action(async (summaryParts: string[]) => {
       const summary = summaryParts.join(' ');
       if (!summary.trim()) {
         error('Summary is required.');
@@ -443,6 +444,28 @@ export function registerSleepCommand(program: Command): void {
         success(`Consolidation complete. Debt reduced from ${previousDebt} to ${state.debt}. ${state.sessions.length} post-epoch session(s) preserved.`);
       } else {
         success(`Consolidation complete. Debt reset from ${previousDebt} to ${state.debt}.`);
+      }
+
+      // Post-sleep task sync (issue #11): push the consolidation's task
+      // updates, then re-mirror. Strictly best-effort — a sync failure must
+      // never fail `sleep done`.
+      try {
+        const backend = getTaskBackend(root);
+        if (backend.name !== 'local') {
+          const report = await backend.sync('both');
+          if (report.conflicts.length > 0) {
+            warn(`Task sync: ${report.conflicts.length} conflict(s) preserved under state/.conflicts/ — review them.`);
+          }
+          const pushedTotal = report.pushed + report.created;
+          if (pushedTotal > 0 || report.pulled > 0) {
+            info(chalk.dim(`Task sync: pushed ${pushedTotal}, pulled ${report.pulled}.`));
+          }
+          if (report.errors.length > 0) {
+            info(chalk.dim(`Task sync: skipped (${report.errors[0]}).`));
+          }
+        }
+      } catch {
+        // best-effort by contract
       }
     });
 

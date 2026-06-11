@@ -26,6 +26,9 @@ import {
   dreamcontextVersion,
 } from '../../lib/manifest.js';
 import { updateSetupConfig } from '../../lib/setup-config.js';
+import { ensureRemoteBackendGitignore } from '../../lib/task-backend/paths.js';
+import { writeClickUpToken } from '../../lib/task-backend/secrets.js';
+import { installTaskSyncHooks } from '../../lib/task-backend/git-hooks.js';
 import { writeProjectPlatformDefaults } from '../../lib/platform-defaults.js';
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]*$/;
@@ -237,6 +240,36 @@ export async function runSetup(opts: SetupOptions): Promise<void> {
       multiProduct,
       disableNativeMemory,
     });
+
+    // ─── 5.5 Cloud Task Management (issue #11) ────────────────────────────
+    // Opt-in: tasks sync to a ClickUp list instead of living only on disk.
+    // The API key goes through the SAME CLI-owned path as `config
+    // clickup-token`: .gitignore entry first, then the 0600 secrets file.
+    if (!useDefaults && process.stdin.isTTY) {
+      const wantsCloud = await confirm({
+        message: 'Enable Cloud Task Management (sync tasks to ClickUp)?',
+        default: false,
+      });
+      if (wantsCloud) {
+        try {
+          ensureRemoteBackendGitignore(projectRoot);
+          updateSetupConfig(projectRoot, { taskBackend: 'clickup', cloudTaskManagement: true });
+          const key = await input({
+            message: 'ClickUp API key (pk_…; stored in the gitignored secrets file — leave empty to add later):',
+          });
+          if (key.trim()) {
+            writeClickUpToken(projectRoot, key.trim());
+            info(chalk.dim('Token saved to _dream_context/state/.secrets.json (gitignored, mode 0600).'));
+          } else {
+            info(chalk.dim('No token saved. Add one later with `dreamcontext config clickup-token`.'));
+          }
+          try { installTaskSyncHooks(projectRoot); } catch { /* best-effort */ }
+          info(chalk.dim('Set the target list with `dreamcontext config clickup-list <teamId> <spaceId> <listId>`.'));
+        } catch (err) {
+          error(`Cloud Task Management not enabled: ${(err as Error).message}`);
+        }
+      }
+    }
 
     // ─── 6. Summary ───────────────────────────────────────────────────────
     const manifestPath = '_dream_context/state/.install-manifest.json';

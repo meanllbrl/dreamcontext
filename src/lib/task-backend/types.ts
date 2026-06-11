@@ -178,6 +178,25 @@ export interface TaskBackend {
   resolveSlug(name: string): Promise<SlugResolution>;
   /** Two-way sync with the remote. No-op for the local backend. */
   sync(direction?: SyncDirection): Promise<SyncReport>;
+  /** Remote connectivity probe (Settings "Test connection"). Absent on local. */
+  testConnection?(): Promise<ConnectionTestResult>;
+}
+
+export type ConnectionTestResult =
+  | { ok: true; user: string }
+  | { ok: false; error: string };
+
+/** Lightweight sync status for dashboard badges / doctor output. */
+export interface TaskSyncStatus {
+  backend: string;
+  /** Tasks flagged pending-push (local changes not yet on the remote). */
+  pendingPush: number;
+  /** Queued write-ahead ops awaiting replay. */
+  queuedOps: number;
+  /** Preserved conflict copies under state/.conflicts/. */
+  conflicts: number;
+  /** Remote server-time watermark (epoch ms) of the last sync. */
+  watermark: number | null;
 }
 
 /** Error a backend throws for structured failures callers map to exit codes / HTTP. */
