@@ -47,6 +47,8 @@ export interface SyncStateFile {
   members?: Record<string, CachedMember>;
   /** The remote container's status set — status pushes map against it. */
   listStatuses?: string[];
+  /** The remote container's custom field definitions (the field bridge). */
+  customFields?: Array<Record<string, unknown>>;
 }
 
 export interface CachedMember {
@@ -139,6 +141,16 @@ export class SyncLedger {
 
   readListStatuses(): string[] {
     return this.readSyncState().listStatuses ?? [];
+  }
+
+  readCustomFields<T = Record<string, unknown>>(): T[] {
+    return (this.readSyncState().customFields ?? []) as T[];
+  }
+
+  writeCustomFields(fields: Array<Record<string, unknown>>): void {
+    const state = this.readSyncState();
+    state.customFields = fields;
+    this.writeSyncState(state);
   }
 
   writeListStatuses(statuses: string[]): void {

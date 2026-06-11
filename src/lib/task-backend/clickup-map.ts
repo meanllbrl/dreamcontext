@@ -18,6 +18,7 @@ export interface ClickUpTask {
   date_created?: string | null;
   /** Epoch-ms as a string — ClickUp SERVER time. The watermark source. */
   date_updated?: string | null;
+  custom_fields?: Array<Record<string, unknown>> | null;
 }
 
 export interface ClickUpComment {

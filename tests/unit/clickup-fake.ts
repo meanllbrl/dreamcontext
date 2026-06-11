@@ -6,6 +6,13 @@
  * backend uses) so watermark tests can prove server-time-only behavior.
  */
 
+export interface FakeFieldDef {
+  id: string;
+  name: string;
+  type: string;
+  type_config?: { options?: Array<{ id: string; name: string; orderindex: number }> };
+}
+
 export interface FakeTask {
   id: string;
   name: string;
@@ -16,6 +23,8 @@ export interface FakeTask {
   assignees: Array<{ id: number }>;
   date_created: string;
   date_updated: string;
+  /** def + value merged, like the real API's task payload. */
+  custom_fields: Array<FakeFieldDef & { value?: unknown }>;
 }
 
 export interface FakeComment {
@@ -49,6 +58,10 @@ export interface FakeClickUp {
   members: Array<{ id: number; username: string; email?: string }>;
   /** The list's custom status set (GET /list/:id). Real lists vary wildly. */
   listStatuses: string[];
+  /** The list's custom field definitions (GET /list/:id/field). */
+  customFields: FakeFieldDef[];
+  /** Simulate a REMOTE custom-field edit (bumps server time). */
+  setFieldValue: (taskId: string, fieldId: string, value: unknown) => void;
 }
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -79,6 +92,37 @@ export function makeFakeClickUp(opts: { serverStart?: number } = {}): FakeClickU
       { id: 502, username: 'Mehmet Nuraydın', email: 'mehmet@example.test' },
     ],
     listStatuses: ['to do', 'in progress', 'review', 'complete'],
+    customFields: [
+      {
+        id: 'fld_urgency',
+        name: 'Urgency',
+        type: 'drop_down',
+        type_config: {
+          options: [
+            { id: 'opt_low', name: 'low', orderindex: 0 },
+            { id: 'opt_medium', name: 'medium', orderindex: 1 },
+            { id: 'opt_high', name: 'high', orderindex: 2 },
+            { id: 'opt_critical', name: 'critical', orderindex: 3 },
+          ],
+        },
+      },
+      { id: 'fld_summary', name: 'Summary', type: 'short_text' },
+      { id: 'fld_reach', name: 'Reach', type: 'number' },
+      { id: 'fld_impact', name: 'Impact', type: 'number' },
+      { id: 'fld_confidence', name: 'Confidence', type: 'number' },
+      { id: 'fld_effort', name: 'Effort', type: 'number' },
+      { id: 'fld_score', name: 'RICE Score', type: 'number' },
+    ],
+    setFieldValue: (taskId, fieldId, value) => {
+      const t = tasks.get(taskId);
+      if (!t) throw new Error(`fake: no task ${taskId}`);
+      serverTime += 1000;
+      const def = fake.customFields.find((f) => f.id === fieldId);
+      const existing = t.custom_fields.find((f) => f.id === fieldId);
+      if (existing) existing.value = value;
+      else t.custom_fields.push({ ...(def ?? { id: fieldId, name: fieldId, type: 'short_text' }), value });
+      t.date_updated = String(serverTime);
+    },
     setFailMode: (mode) => { fake.failMode = mode; },
     editTask: (id, patch) => {
       const t = tasks.get(id);
@@ -122,6 +166,7 @@ export function makeFakeClickUp(opts: { serverStart?: number } = {}): FakeClickU
           assignees: (body.assignees ?? []).map((id2: number) => ({ id: id2 })),
           date_created: String(serverTime),
           date_updated: String(serverTime),
+          custom_fields: fake.customFields.map((f) => ({ ...f })),
         };
         tasks.set(id, task);
         return jsonResponse(200, task);
@@ -201,6 +246,21 @@ export function makeFakeClickUp(opts: { serverStart?: number } = {}): FakeClickU
         if (method === 'GET') {
           return jsonResponse(200, { comments: comments.get(taskId) ?? [] });
         }
+      }
+
+      // GET /list/:id/field (custom field definitions)
+      m = path.match(/^\/list\/([^/]+)\/field$/);
+      if (m && method === 'GET') {
+        return jsonResponse(200, { fields: fake.customFields });
+      }
+
+      // POST /task/:id/field/:fieldId (set custom field value)
+      m = path.match(/^\/task\/([^/]+)\/field\/([^/]+)$/);
+      if (m && method === 'POST') {
+        const task = tasks.get(m[1]);
+        if (!task) return jsonResponse(404, { err: 'Task not found' });
+        fake.setFieldValue(m[1], m[2], body?.value);
+        return jsonResponse(200, {});
       }
 
       // /task/:id/tag/:name (ClickUp's PUT carries no tags — per-tag endpoints)

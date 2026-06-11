@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import matter from 'gray-matter';
 import { generateId, slugify } from '../id.js';
+import { mergeRice, normalizeRice, type RiceInput } from '../rice.js';
 import type { SetupConfig } from '../setup-config.js';
 import { ApiAdapter } from './api-adapter.js';
 import {
@@ -19,6 +20,17 @@ import {
   type ClickUpComment,
   type ClickUpTask,
 } from './clickup-map.js';
+import {
+  decodeFieldValue,
+  encodeFieldValue,
+  isPullable,
+  localFieldValue,
+  matchCustomFields,
+  RICE_KEYS,
+  type ClickUpFieldDef,
+  type ClickUpFieldValue,
+  type FieldBinding,
+} from './clickup-fields.js';
 import { clickupMemberMap, resolveActor, resolveActorToken } from './identity.js';
 import { LocalTaskBackend } from './local.js';
 import { merge3Bodies, mergeScalar, unionChangelog } from './merge.js';
@@ -224,6 +236,19 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       const statuses = (list.statuses ?? []).map((x) => x.status ?? '').filter(Boolean);
       if (statuses.length > 0) this.ledger.writeListStatuses(statuses);
     } catch { /* status cache is a convenience too */ }
+    try {
+      // Custom field defs — the bridge for urgency/summary/RICE/feature/….
+      // Creating a matching field on the list is all it takes to opt in.
+      const res = await adapter.request<{ fields?: ClickUpFieldDef[] }>(
+        'GET',
+        `/list/${listId}/field`,
+      );
+      this.ledger.writeCustomFields((res.fields ?? []) as unknown as Array<Record<string, unknown>>);
+    } catch { /* field bridge is opt-in — absence is fine */ }
+  }
+
+  protected fieldBindings(): FieldBinding[] {
+    return matchCustomFields(this.ledger.readCustomFields<ClickUpFieldDef>());
   }
 
   /** Live member list for the configured container (also refreshes the cache). */
@@ -371,6 +396,9 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
 
     let remoteId = this.ledger.remoteIdFor(slug);
     let serverTime: number | null = null;
+    // Tag/field endpoints bump date_updated without returning it — refetch
+    // once at the end so the watermark covers our own writes (no echo pull).
+    let needsTimestampRefetch = false;
 
     if (!remoteId) {
       // CREATE: one POST carries everything (fields + tags + assignees).
@@ -429,13 +457,38 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
         for (const tag of toRemove) {
           await adapter.request('DELETE', `/task/${remoteId}/tag/${encodeURIComponent(tag)}`);
         }
-        if (toAdd.length > 0 || toRemove.length > 0) {
-          // Tag endpoints bump date_updated server-side without returning it —
-          // refetch once so the watermark covers our own write (no echo pull).
-          const fresh = await adapter.request<ClickUpTask>('GET', `/task/${remoteId}`);
-          serverTime = serverTimeMs(fresh.date_updated) ?? serverTime;
+        if (toAdd.length > 0 || toRemove.length > 0) needsTimestampRefetch = true;
+      }
+    }
+
+    // Custom-field deltas (urgency, summary, RICE, feature, …): write only
+    // the keys whose value moved vs the base snapshot — and only for fields
+    // that actually EXIST on the list.
+    const bindings = this.fieldBindings();
+    if (bindings.length > 0) {
+      const baseFmFields = entry?.base_snapshot
+        ? (matter(entry.base_snapshot.body).data as Record<string, unknown>)
+        : null;
+      for (const binding of bindings) {
+        const localVal = localFieldValue(task.raw, binding.key);
+        const baseVal = baseFmFields ? localFieldValue(baseFmFields, binding.key) : null;
+        if (localVal === baseVal) continue;
+        const encoded = encodeFieldValue(binding, localVal);
+        if (encoded === null && localVal !== null) continue; // unmappable dropdown option
+        try {
+          await adapter.request('POST', `/task/${remoteId}/field/${binding.field.id}`, {
+            body: { value: encoded },
+          });
+          needsTimestampRefetch = true;
+        } catch (err) {
+          report.errors.push(`field ${binding.key} on ${slug}: ${(err as Error).message ?? err}`);
         }
       }
+    }
+
+    if (needsTimestampRefetch) {
+      const fresh = await adapter.request<ClickUpTask>('GET', `/task/${remoteId}`);
+      serverTime = serverTimeMs(fresh.date_updated) ?? serverTime;
     }
 
     // Changelog → comments (union-merged remotely; only entries the remote
@@ -647,9 +700,28 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       remoteAssignee,
     );
 
+    // ── custom fields: decode remote values, per-field LWW like other scalars ──
+    const bindings = this.fieldBindings();
+    const remoteFields = (remote.custom_fields ?? []) as unknown as ClickUpFieldValue[];
+    const fieldWinners: Array<{ key: string; value: string | number | null; winner: 'local' | 'remote' | 'none' }> = [];
+    const remoteFieldState: Record<string, string | number | null> = {};
+    for (const binding of bindings) {
+      if (!isPullable(binding)) continue;
+      const rf = remoteFields.find((f) => f.id === binding.field.id);
+      if (!rf) continue; // task payload didn't carry the field
+      const remoteVal = decodeFieldValue(rf, binding);
+      remoteFieldState[binding.key] = remoteVal;
+      const localVal = localFieldValue(local.raw, binding.key);
+      const baseVal = baseFm ? localFieldValue(baseFm, binding.key) : undefined;
+      const merged = scalar(baseVal, localVal, remoteVal);
+      fieldWinners.push({ key: binding.key, value: merged.value, winner: merged.winner });
+    }
+
     const scalarResults = [statusM, priorityM, nameM, tagsM, versionM, assigneeM];
-    const anyLocalWin = scalarResults.some((r) => r.winner === 'local');
-    const anyRemoteWin = scalarResults.some((r) => r.winner === 'remote');
+    const anyLocalWin = scalarResults.some((r) => r.winner === 'local')
+      || fieldWinners.some((r) => r.winner === 'local');
+    const anyRemoteWin = scalarResults.some((r) => r.winner === 'remote')
+      || fieldWinners.some((r) => r.winner === 'remote');
     const remoteAddedEntries = mergedEntries.length > localEntries.length;
     const remoteContributed = anyRemoteWin || remoteAddedEntries || mergedDesc !== localDesc;
 
@@ -674,14 +746,45 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
         ? 'clickup'
         : (local.raw.updated_by ?? null),
     };
+    // Apply custom-field winners (rice subfields rebuild the block — score
+    // is always recomputed locally, never trusted from the remote).
+    const ricePatch: RiceInput = {};
+    let riceTouched = false;
+    for (const fw of fieldWinners) {
+      if ((RICE_KEYS as string[]).includes(fw.key)) {
+        if (fw.value !== localFieldValue(local.raw, fw.key as never)) riceTouched = true;
+        (ricePatch as Record<string, unknown>)[fw.key] = fw.value ?? undefined;
+        continue;
+      }
+      if (fw.key === 'version') {
+        fm.version = fw.value; // a bound version FIELD outranks the version tag
+        continue;
+      }
+      fm[fw.key] = fw.value;
+    }
+    if (riceTouched) {
+      fm.rice = mergeRice(normalizeRice(local.raw.rice), ricePatch);
+    }
+
     const written = this.writeMirror(slug, fm, mergedDesc, mergedEntries);
 
     // ── bookkeeping: base reflects the REMOTE state so surviving local
     //    changes still diff (and push) against it. ──
     const keptLocal = anyLocalWin || proseLocalKept || localOnlyEntries.length > 0;
     if (keptLocal) {
+      const remoteFmOverrides: Record<string, unknown> = {};
+      let remoteRice = normalizeRice(fm.rice);
+      for (const [key, value] of Object.entries(remoteFieldState)) {
+        if ((RICE_KEYS as string[]).includes(key)) {
+          remoteRice = mergeRice(remoteRice, { [key]: value ?? undefined } as RiceInput);
+        } else if (key === 'version') {
+          remoteFmOverrides.version = value;
+        } else {
+          remoteFmOverrides[key] = value;
+        }
+      }
       const remoteRender = this.renderMirror(
-        { ...fm, name: remote.name, status: remoteStatus, priority: remotePriority, tags: withPersonTag(remoteTags, remoteAssignee), version: remoteVersion, assignee: remoteAssignee },
+        { ...fm, name: remote.name, status: remoteStatus, priority: remotePriority, tags: withPersonTag(remoteTags, remoteAssignee), version: remoteVersion, assignee: remoteAssignee, ...remoteFmOverrides, rice: remoteRice },
         remoteDesc,
         remoteEntries,
       );
