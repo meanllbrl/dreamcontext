@@ -5,7 +5,7 @@ import {
   readdirSync,
   statSync,
 } from 'node:fs';
-import { join, basename, extname } from 'node:path';
+import { join, basename, extname, resolve, sep } from 'node:path';
 import fg from 'fast-glob';
 import { rewriteWikilinks, WikilinkRemap } from './wikilink-rewrite.js';
 import { EXCALIDRAW_SUFFIX } from './excalidraw-text.js';
@@ -78,11 +78,29 @@ export function migrateDiagramsToFolders(
     result.skipped.push(nested.replace(EXCALIDRAW_SUFFIX, ''));
   }
 
+  const diagramsDirResolved = resolve(diagramsDir);
+
   for (const filename of flatFiles) {
     const boardBase = filename.slice(0, -EXCALIDRAW_SUFFIX.length);
     const srcBoard = join(diagramsDir, filename);
     const destDir = join(diagramsDir, boardBase);
     const destBoard = join(destDir, filename);
+
+    // Containment guard: boardBase derives from a filename, so it should be a
+    // single safe path segment. Reject anything that could escape diagramsDir
+    // (path separators, `..`, or a destDir that resolves outside the tree).
+    if (
+      boardBase === '' ||
+      boardBase === '.' ||
+      boardBase === '..' ||
+      boardBase.includes('/') ||
+      boardBase.includes('\\') ||
+      resolve(destDir) !== join(diagramsDirResolved, boardBase) ||
+      !resolve(destDir).startsWith(diagramsDirResolved + sep)
+    ) {
+      result.ambiguous.push(boardBase);
+      continue;
+    }
 
     // Old slug: `diagrams/<boardBase>.excalidraw` (relative to knowledge/)
     // New slug: `diagrams/<boardBase>/<boardBase>.excalidraw`
@@ -112,6 +130,16 @@ export function migrateDiagramsToFolders(
       continue;
     }
 
+    // Rewrite inbound [[wikilinks]] BEFORE moving the board. Rewriting is
+    // non-destructive (the board is still at its old path), so if the process
+    // dies between the rewrite and the move, the board is STILL flat — a re-run
+    // detects it, the rewrite is a no-op (links already point to the new slug),
+    // and the move completes. Doing the move first would, on a crash, leave the
+    // board relocated with every [[old-slug]] permanently dangling (the re-run
+    // skips it because it is no longer flat).
+    const remaps: WikilinkRemap[] = [{ from: oldSlug, to: newSlug }];
+    rewriteWikilinks(contextRoot, remaps);
+
     // Move the board file.
     try {
       renameSync(srcBoard, destBoard);
@@ -129,10 +157,6 @@ export function migrateDiagramsToFolders(
         result.ambiguous.push(`${boardBase} (sibling: ${sib})`);
       }
     }
-
-    // Rewrite inbound [[wikilinks]] atomically after each move.
-    const remaps: WikilinkRemap[] = [{ from: oldSlug, to: newSlug }];
-    rewriteWikilinks(contextRoot, remaps);
 
     result.moved.push(boardBase);
   }

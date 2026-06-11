@@ -748,4 +748,25 @@ describe('apply-diagrams-behavior', () => {
     expect(result.skipped).toHaveLength(1);
     expect(result.ambiguous).toHaveLength(0);
   });
+
+  it('a crafted board filename cannot escape diagrams/ (no write outside the tree)', () => {
+    const diagramsDir = join(tmpDir, 'knowledge', 'diagrams');
+    // A file literally named `...excalidraw.md` would strip to boardBase `..`,
+    // whose dest dir resolves to knowledge/ (one level up). Two layers prevent a
+    // traversal: fast-glob skips dotfiles, and the containment guard rejects any
+    // boardBase that resolves outside diagrams/. Net effect: nothing escapes.
+    writeFileSync(
+      join(diagramsDir, '...excalidraw.md'),
+      '---\nname: Evil\ndescription: traversal attempt\n---\n\n## Text Elements\nx\n',
+    );
+    const before = fsReadFileSync(join(diagramsDir, '...excalidraw.md'), 'utf-8');
+
+    const result = migrateDiagramsToFolders(tmpDir);
+
+    // It is never moved, and nothing is written into knowledge/ (the parent dir).
+    expect(result.moved).toHaveLength(0);
+    expect(existsSync(join(diagramsDir, '...excalidraw.md'))).toBe(true);
+    expect(fsReadFileSync(join(diagramsDir, '...excalidraw.md'), 'utf-8')).toBe(before);
+    expect(existsSync(join(tmpDir, 'knowledge', '...excalidraw.md'))).toBe(false);
+  });
 });
