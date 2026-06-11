@@ -219,6 +219,16 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       }
       if (Object.keys(map).length > 0) this.ledger.writeMembers(map);
     } catch { /* members are a convenience — never fail the sync */ }
+    try {
+      // The list's status SET (custom per list) — status pushes map against
+      // it so we never PUT a status the list rejects with a 400.
+      const list = await adapter.request<{ statuses?: Array<{ status?: string }> }>(
+        'GET',
+        `/list/${listId}`,
+      );
+      const statuses = (list.statuses ?? []).map((x) => x.status ?? '').filter(Boolean);
+      if (statuses.length > 0) this.ledger.writeListStatuses(statuses);
+    } catch { /* status cache is a convenience too */ }
   }
 
   /** Live member list for the configured container (also refreshes the cache). */
@@ -354,10 +364,13 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     const assigneeSlug = ((task.raw.assignee as string | null | undefined) ?? null) || personTagSlug(task.tags);
     const assigneeId = assigneeSlug ? this.memberIdFor(assigneeSlug) : null;
 
+    // Map the status against the list's actual status set; an unmappable
+    // status is OMITTED (the remote keeps its value) instead of 400-ing.
+    const mappedStatus = statusToClickUp(task.status, this.ledger.readListStatuses());
     const fields = {
       name: task.name,
       description: bodyToDescription(task.body),
-      status: statusToClickUp(task.status),
+      ...(mappedStatus !== null ? { status: mappedStatus } : {}),
       priority: priorityToClickUp(task.priority),
     };
 
@@ -520,7 +533,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       .filter(Boolean);
 
     const { tags: remoteTags, version: remoteVersion } = tagsFromClickUp(remote.tags);
-    const remoteStatus = statusFromClickUp(remote.status?.status);
+    let remoteStatus = statusFromClickUp(remote.status?.status);
     const remotePriority = priorityFromClickUp(remote.priority);
     const remoteDesc = (remote.description ?? '').replace(/\r\n/g, '\n').trim();
     const firstAssignee = remote.assignees?.[0];
@@ -610,6 +623,18 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       mergedDesc = res.merged.trim();
       proseLocalKept = res.localChangesKept;
       if (res.conflictSections.length > 0) conflicts.push('both_changed');
+    }
+
+    // Status equivalence: when the remote raw status is exactly what WE would
+    // push for the local status (e.g. local `in_review` mapped onto a list
+    // without a review status as "in progress"), the remote did not really
+    // move — don't let the folded value overwrite the richer local one.
+    const remoteRawStatus = remote.status?.status?.toLowerCase() ?? null;
+    if (
+      remoteRawStatus !== null &&
+      statusToClickUp(local.status, this.ledger.readListStatuses())?.toLowerCase() === remoteRawStatus
+    ) {
+      remoteStatus = local.status;
     }
 
     // ── scalars: last-write-wins (server time vs recorded local mutation) ──

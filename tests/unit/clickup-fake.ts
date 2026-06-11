@@ -47,6 +47,8 @@ export interface FakeClickUp {
   setFailMode: (mode: FakeClickUp['failMode']) => void;
   /** People with access to the list (GET /list/:id/member). */
   members: Array<{ id: number; username: string; email?: string }>;
+  /** The list's custom status set (GET /list/:id). Real lists vary wildly. */
+  listStatuses: string[];
 }
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -76,6 +78,7 @@ export function makeFakeClickUp(opts: { serverStart?: number } = {}): FakeClickU
       { id: 501, username: 'Alice Smith', email: 'alice@example.test' },
       { id: 502, username: 'Mehmet Nuraydın', email: 'mehmet@example.test' },
     ],
+    listStatuses: ['to do', 'in progress', 'review', 'complete'],
     setFailMode: (mode) => { fake.failMode = mode; },
     editTask: (id, patch) => {
       const t = tasks.get(id);
@@ -124,6 +127,17 @@ export function makeFakeClickUp(opts: { serverStart?: number } = {}): FakeClickU
         return jsonResponse(200, task);
       }
 
+      // GET /list/:listId (list meta incl. its custom status set)
+      m = path.match(/^\/list\/([^/]+)$/);
+      if (m && method === 'GET') {
+        return jsonResponse(200, {
+          id: m[1],
+          name: 'List',
+          statuses: fake.listStatuses.map((status) => ({ status })),
+        });
+      }
+
+      m = path.match(/^\/list\/([^/]+)\/task$/);
       // GET /list/:listId/task?date_updated_gt=...
       if (m && method === 'GET') {
         const gt = u.searchParams.get('date_updated_gt');

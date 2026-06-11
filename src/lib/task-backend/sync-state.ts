@@ -45,6 +45,8 @@ export interface SyncStateFile {
    * so assignee mapping needs no manual config.
    */
   members?: Record<string, CachedMember>;
+  /** The remote container's status set — status pushes map against it. */
+  listStatuses?: string[];
 }
 
 export interface CachedMember {
@@ -133,6 +135,16 @@ export class SyncLedger {
 
   readMembers(): Record<string, CachedMember> {
     return this.readSyncState().members ?? {};
+  }
+
+  readListStatuses(): string[] {
+    return this.readSyncState().listStatuses ?? [];
+  }
+
+  writeListStatuses(statuses: string[]): void {
+    const state = this.readSyncState();
+    state.listStatuses = statuses;
+    this.writeSyncState(state);
   }
 
   writeMembers(members: Record<string, CachedMember>): void {

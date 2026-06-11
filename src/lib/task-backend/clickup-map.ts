@@ -30,11 +30,15 @@ export interface ClickUpComment {
 
 // ─── Status ────────────────────────────────────────────────────────────────
 
-const STATUS_TO_CLICKUP: Record<string, string> = {
-  todo: 'to do',
-  in_progress: 'in progress',
-  in_review: 'review',
-  completed: 'complete',
+// Preference chains per dreamcontext status. Lists have CUSTOM status sets
+// (observed live: "planning", "at risk", "on hold", …) — pushing a status the
+// list doesn't have is a 400, so the mapper picks the first candidate that
+// actually EXISTS on the list when the available set is known.
+const STATUS_CANDIDATES: Record<string, string[]> = {
+  todo: ['to do', 'open', 'todo', 'backlog', 'planning'],
+  in_progress: ['in progress', 'in development', 'doing', 'active', 'started'],
+  in_review: ['review', 'in review', 'code review', 'qa', 'testing', 'in progress', 'doing'],
+  completed: ['complete', 'done', 'closed'],
 };
 
 const STATUS_FROM_CLICKUP: Record<string, string> = {
@@ -48,13 +52,32 @@ const STATUS_FROM_CLICKUP: Record<string, string> = {
   'done': 'completed',
 };
 
-export function statusToClickUp(status: string): string {
-  return STATUS_TO_CLICKUP[status] ?? 'to do';
+/**
+ * Map a dreamcontext status to a status the list ACCEPTS.
+ * `available` = the list's status set (cached at sync time); when known and
+ * no candidate exists on the list, returns null — the caller omits the field
+ * rather than triggering a remote 400.
+ */
+export function statusToClickUp(status: string, available?: string[] | null): string | null {
+  const candidates = STATUS_CANDIDATES[status] ?? STATUS_CANDIDATES.todo;
+  if (!available || available.length === 0) return candidates[0];
+  const lower = available.map((s) => s.toLowerCase());
+  for (const c of candidates) {
+    const i = lower.indexOf(c);
+    if (i !== -1) return available[i];
+  }
+  return null;
 }
 
 export function statusFromClickUp(remote: string | undefined | null): string {
   if (!remote) return 'todo';
-  return STATUS_FROM_CLICKUP[remote.toLowerCase()] ?? 'todo';
+  const s = remote.toLowerCase();
+  if (STATUS_FROM_CLICKUP[s]) return STATUS_FROM_CLICKUP[s];
+  // Custom list statuses fold by intent.
+  if (/review|qa|test/.test(s)) return 'in_review';
+  if (/progress|doing|active|develop|started/.test(s)) return 'in_progress';
+  if (/complete|done|closed|cancel/.test(s)) return 'completed';
+  return 'todo';
 }
 
 // ─── Priority ──────────────────────────────────────────────────────────────
