@@ -1,10 +1,14 @@
 import { describe, it, expect } from 'vitest';
-import { mkdirSync, rmSync, existsSync, readFileSync, realpathSync } from 'node:fs';
+import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync, realpathSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import { getTaskBackend, LocalTaskBackend } from '../../src/lib/task-backend/index.js';
-import type { SetupConfig } from '../../src/lib/setup-config.js';
+import { readSetupConfig, updateSetupConfig, type SetupConfig } from '../../src/lib/setup-config.js';
+import { writeClickUpToken, resolveClickUpToken, maskToken } from '../../src/lib/task-backend/secrets.js';
+import { clickupMemberMap, resolvePeople } from '../../src/lib/task-backend/identity.js';
+import { ensureRemoteBackendGitignore } from '../../src/lib/task-backend/paths.js';
+import { gitignoreCovers } from '../../src/lib/gitignore.js';
 import { describeTaskBackendConformance } from './task-backend-conformance.js';
 
 /**
@@ -119,16 +123,171 @@ describe('task backend', () => {
   });
 
   describe('M2 — identity + config + ApiAdapter + token storage', () => {
-    it.todo('people roster maps person slugs to ClickUp member IDs (config peopleIdentity)');
-    it.todo('per-user token resolution order: per-person env → CLICKUP_TOKEN env → secrets file');
-    it.todo('config clickup-token writes the gitignored secrets file — .gitignore entry is written BEFORE the secrets file exists');
-    it.todo('clickup-token aborts (no secrets file) when .gitignore cannot be updated');
-    it.todo('config show masks the token (present/absent, never echoed)');
-    it.todo('the token never lands in .config.json or any committable file');
-    it.todo('ApiAdapter is backend-generic: auth header + base URL config, no ClickUp types');
-    it.todo('ApiAdapter rate-limit queue keeps under ~100 req/min and retries 429/5xx with backoff');
-    it.todo('ApiAdapter normalizes HTTP failures into typed errors (auth/rate_limited/not_found/server/network)');
-    it.todo('config task-backend <local|clickup> CLI writes config; config show reports the backend');
+    it('people roster maps person slugs to ClickUp member IDs (config peopleIdentity)', () => {
+      const { contextRoot, projectRoot } = makeTmpProject();
+      try {
+        const config: SetupConfig = {
+          ...BASE_CONFIG,
+          people: ['Alice Smith', 'bob'],
+          peopleIdentity: {
+            'alice-smith': { clickupMemberId: '101', tokenEnv: 'ALICE_CLICKUP_TOKEN' },
+            bob: { clickupMemberId: '202' },
+          },
+        };
+        expect(clickupMemberMap(contextRoot, config)).toEqual({ 'alice-smith': '101', bob: '202' });
+        const people = resolvePeople(contextRoot, config);
+        expect(people.find((p) => p.slug === 'alice-smith')?.tokenEnv).toBe('ALICE_CLICKUP_TOKEN');
+      } finally {
+        rmSync(projectRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('identity roles are seedable from knowledge/team_owners.md when present', () => {
+      const { contextRoot, projectRoot } = makeTmpProject();
+      try {
+        mkdirSync(join(contextRoot, 'knowledge'), { recursive: true });
+        writeFileSync(
+          join(contextRoot, 'knowledge', 'team_owners.md'),
+          '# Team owners\n\n- Engineering: Alice Smith\n- Design: bob\n',
+          'utf-8',
+        );
+        const config: SetupConfig = { ...BASE_CONFIG, people: ['Alice Smith', 'bob'] };
+        const people = resolvePeople(contextRoot, config);
+        expect(people.find((p) => p.slug === 'alice-smith')?.role).toBe('Engineering');
+        expect(people.find((p) => p.slug === 'bob')?.role).toBe('Design');
+      } finally {
+        rmSync(projectRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('per-user token resolution order: per-person env → CLICKUP_TOKEN env → secrets file', () => {
+      const { projectRoot } = makeTmpProject();
+      const saved = { ...process.env };
+      try {
+        delete process.env.CLICKUP_TOKEN;
+        delete process.env.CLICKUP_API_KEY;
+        delete process.env.ALICE_TOKEN;
+
+        // Secrets only → secrets file wins by default
+        writeClickUpToken(projectRoot, 'pk_secrets_default');
+        writeClickUpToken(projectRoot, 'pk_secrets_alice', 'alice');
+        expect(resolveClickUpToken(projectRoot)).toMatchObject({ token: 'pk_secrets_default', source: 'secrets' });
+        expect(resolveClickUpToken(projectRoot, { user: 'alice' })).toMatchObject({
+          token: 'pk_secrets_alice',
+          source: 'secrets',
+          via: 'users.alice',
+        });
+
+        // Shared env beats secrets
+        process.env.CLICKUP_TOKEN = 'pk_env_shared';
+        expect(resolveClickUpToken(projectRoot, { user: 'alice' })).toMatchObject({
+          token: 'pk_env_shared',
+          source: 'env',
+          via: 'CLICKUP_TOKEN',
+        });
+
+        // Per-person env beats everything
+        process.env.ALICE_TOKEN = 'pk_env_alice';
+        expect(resolveClickUpToken(projectRoot, { envVar: 'ALICE_TOKEN', user: 'alice' })).toMatchObject({
+          token: 'pk_env_alice',
+          source: 'env',
+          via: 'ALICE_TOKEN',
+        });
+      } finally {
+        process.env.CLICKUP_TOKEN = saved.CLICKUP_TOKEN;
+        process.env.CLICKUP_API_KEY = saved.CLICKUP_API_KEY;
+        delete process.env.ALICE_TOKEN;
+        if (saved.CLICKUP_TOKEN === undefined) delete process.env.CLICKUP_TOKEN;
+        if (saved.CLICKUP_API_KEY === undefined) delete process.env.CLICKUP_API_KEY;
+        rmSync(projectRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('config clickup-token writes the gitignored secrets file — .gitignore entry is written BEFORE the secrets file exists', () => {
+      const { projectRoot } = makeTmpProject();
+      try {
+        expect(existsSync(join(projectRoot, '.gitignore'))).toBe(false);
+
+        writeClickUpToken(projectRoot, 'pk_order_check');
+
+        const gi = readFileSync(join(projectRoot, '.gitignore'), 'utf-8');
+        expect(gi).toContain('_dream_context/state/.secrets.json');
+        const secrets = join(projectRoot, '_dream_context', 'state', '.secrets.json');
+        expect(existsSync(secrets)).toBe(true);
+        expect(readFileSync(secrets, 'utf-8')).toContain('pk_order_check');
+        // 0600 on POSIX
+        if (process.platform !== 'win32') {
+          const mode = statSync(secrets).mode & 0o777;
+          expect(mode).toBe(0o600);
+        }
+      } finally {
+        rmSync(projectRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('clickup-token aborts (no secrets file) when .gitignore cannot be updated', () => {
+      const { projectRoot } = makeTmpProject();
+      try {
+        // Make .gitignore unwritable-as-a-file: a DIRECTORY occupies the path.
+        mkdirSync(join(projectRoot, '.gitignore'));
+        expect(() => writeClickUpToken(projectRoot, 'pk_must_not_land')).toThrow(/\.gitignore/);
+        // The ordering guarantee: nothing was written.
+        expect(existsSync(join(projectRoot, '_dream_context', 'state', '.secrets.json'))).toBe(false);
+      } finally {
+        rmSync(projectRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('config show masks the token (present/absent, never echoed)', () => {
+      expect(maskToken('pk_1234567890abcd')).toBe('••••••••abcd');
+      expect(maskToken('short')).toBe('••••••••');
+      expect(maskToken('pk_1234567890abcd')).not.toContain('pk_');
+      // The `config show` line itself is exercised end-to-end in
+      // tests/integration/clickup-config.test.ts (full CLI run via dist).
+    });
+
+    it('the token never lands in .config.json or any committable file', () => {
+      const { projectRoot } = makeTmpProject();
+      try {
+        writeClickUpToken(projectRoot, 'pk_super_secret_value');
+        updateSetupConfig(projectRoot, { taskBackend: 'clickup' });
+        const cfg = readFileSync(join(projectRoot, '_dream_context', 'state', '.config.json'), 'utf-8');
+        expect(cfg).not.toContain('pk_super_secret_value');
+        // The only file holding the token is the secrets file, and it is covered.
+        expect(gitignoreCovers(projectRoot, ['_dream_context/state/.secrets.json'])).toBe(true);
+        // Full `git add -A` proof lives in tests/integration/clickup-config.test.ts.
+      } finally {
+        rmSync(projectRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('config task-backend <local|clickup> writes config and gitignores the derived files', () => {
+      const { projectRoot } = makeTmpProject();
+      try {
+        ensureRemoteBackendGitignore(projectRoot);
+        updateSetupConfig(projectRoot, { taskBackend: 'clickup', cloudTaskManagement: true });
+        const cfg = readSetupConfig(projectRoot);
+        expect(cfg?.taskBackend).toBe('clickup');
+        expect(cfg?.cloudTaskManagement).toBe(true);
+        expect(gitignoreCovers(projectRoot, [
+          '_dream_context/state/*.md',
+          '_dream_context/state/.tasks-sync.json',
+          '_dream_context/state/.tasks-queue.json',
+          '_dream_context/state/.conflicts/',
+          '_dream_context/state/.secrets.json',
+        ])).toBe(true);
+        // Re-running is idempotent (no duplicate lines).
+        ensureRemoteBackendGitignore(projectRoot);
+        const gi = readFileSync(join(projectRoot, '.gitignore'), 'utf-8');
+        expect(gi.split('\n').filter((l) => l.trim() === '_dream_context/state/*.md')).toHaveLength(1);
+        // The CLI command itself is exercised in tests/integration/clickup-config.test.ts.
+      } finally {
+        rmSync(projectRoot, { recursive: true, force: true });
+      }
+    });
+
+    // ApiAdapter contract (generic config, rate-limit queue, retry/backoff,
+    // normalized errors) is pinned in tests/unit/api-adapter.test.ts.
   });
 
   describe('M3 — ClickUp PUSH (watermark-based, one-way)', () => {
