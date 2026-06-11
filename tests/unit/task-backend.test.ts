@@ -364,18 +364,13 @@ describe('task backend', () => {
     };
   });
 
-  describe('M4 — PULL + two-way merge + offline queue', () => {
-    it.todo('PULL is a delta sync: only tasks with date_updated > watermark are re-mirrored');
-    it.todo('PULL updates existing mirror files and creates new ones');
-    it.todo('comment/changelog union merge is conflict-free (no duplicates, all entries kept)');
-    it.todo('status/assignee resolve last-write-wins by server time; updated_by records the winner');
-    it.todo('prose body sections 3-way merge using base_snapshot');
-    it.todo('missing base_snapshot → ClickUp wins; local copy saved to state/.conflicts/ and surfaced (never silent loss)');
-    it.todo('offline writes enqueue to state/.tasks-queue.json (op-id keyed) and replay idempotently');
-    it.todo('pending-push tasks are visible (flagged in the mirror/sync state)');
-    it.todo('local mirror keeps recall + snapshot working with taskBackend=clickup (no edits to recall.ts/snapshot.ts)');
-    it.todo('ledger split: committed state/.tasks-map.json + gitignored state/.tasks-sync.json');
-  });
+  // M4 — PULL + two-way merge + offline queue: converted in
+  // tests/unit/clickup-pull.test.ts (delta pull by date_updated > watermark,
+  // mirror create/update, comment-union merge, status/assignee LWW by server
+  // time with updated_by winner, prose 3-way with base_snapshot, missing base
+  // → ClickUp wins + state/.conflicts/ copy surfaced, pending-push
+  // visibility, recall-over-mirror, ledger split) and
+  // tests/unit/clickup-push.test.ts (offline WAL enqueue + idempotent replay).
 
   describe('M5 — triggers + surfaces', () => {
     it.todo('git commit/push hook triggers are non-blocking and can never fail the git operation (adapter forced to error/timeout)');

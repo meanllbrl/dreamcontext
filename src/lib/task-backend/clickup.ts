@@ -1,20 +1,26 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
-import { generateId } from '../id.js';
+import matter from 'gray-matter';
+import { generateId, slugify } from '../id.js';
 import type { SetupConfig } from '../setup-config.js';
 import { ApiAdapter } from './api-adapter.js';
 import {
   bodyToDescription,
   normalizeEntry,
+  priorityFromClickUp,
   priorityToClickUp,
   splitChangelogEntries,
+  statusFromClickUp,
   statusToClickUp,
+  tagsFromClickUp,
   tagsToClickUp,
   serverTimeMs,
+  type ClickUpComment,
   type ClickUpTask,
 } from './clickup-map.js';
 import { clickupMemberMap, resolveActor, resolveActorToken } from './identity.js';
 import { LocalTaskBackend } from './local.js';
+import { merge3Bodies, mergeScalar, unionChangelog } from './merge.js';
 import { SyncLedger, hashContent } from './sync-state.js';
 import type {
   AddChangelogOptions,
@@ -303,11 +309,297 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     this.ledger.dequeueFor(slug, enqueueCutoff);
   }
 
-  // ── PULL (ClickUp → local) — implemented in M4 ───────────────────────────
+  // ── PULL (ClickUp → local) ────────────────────────────────────────────────
 
-  protected async pullRemote(_report: SyncReport): Promise<void> {
-    // M4 fills this in (delta pull by date_updated > watermark + merge rules).
+  /**
+   * Delta pull: only tasks with `date_updated > watermark` (SERVER time) are
+   * fetched. Each is merged into the mirror per the field-class rules:
+   * changelog = comment union (conflict-free); scalars = LWW; prose = 3-way
+   * with base_snapshot; missing base → ClickUp wins + local copy preserved
+   * under state/.conflicts/ and surfaced. Nothing is ever silently lost.
+   */
+  protected async pullRemote(report: SyncReport): Promise<void> {
+    const adapter = this.getAdapter();
+    const listId = this.requireListId();
+    const watermark = this.ledger.readSyncState().watermark;
+
+    const remoteTasks: ClickUpTask[] = [];
+    for (let page = 0; ; page++) {
+      const res = await adapter.request<{ tasks?: ClickUpTask[]; last_page?: boolean }>(
+        'GET',
+        `/list/${listId}/task`,
+        {
+          query: {
+            page,
+            include_closed: true,
+            ...(watermark !== null ? { date_updated_gt: watermark } : {}),
+          },
+        },
+      );
+      const batch = res.tasks ?? [];
+      remoteTasks.push(...batch);
+      if (res.last_page !== false || batch.length === 0) break;
+    }
+
+    for (const remote of remoteTasks) {
+      try {
+        await this.applyRemoteTask(remote, adapter, report);
+      } catch (err) {
+        report.errors.push(`pull ${remote.id}: ${(err as Error).message ?? err}`);
+      }
+    }
   }
+
+  /** Inverse member map: ClickUp member id → person slug. */
+  protected memberSlugById(): Record<string, string> {
+    const inverse: Record<string, string> = {};
+    for (const [slug, id] of Object.entries(clickupMemberMap(this.contextRoot, this.config))) {
+      inverse[String(id)] = slug;
+    }
+    return inverse;
+  }
+
+  protected async applyRemoteTask(
+    remote: ClickUpTask,
+    adapter: ApiAdapter,
+    report: SyncReport,
+  ): Promise<void> {
+    const remoteTime = serverTimeMs(remote.date_updated);
+    const commentsRes = await adapter.request<{ comments?: ClickUpComment[] }>(
+      'GET',
+      `/task/${remote.id}/comment`,
+    );
+    const remoteEntries = (commentsRes.comments ?? [])
+      .map((c) => (c.comment_text ?? '').trim())
+      .filter(Boolean);
+
+    const { tags: remoteTags, version: remoteVersion } = tagsFromClickUp(remote.tags);
+    const remoteStatus = statusFromClickUp(remote.status?.status);
+    const remotePriority = priorityFromClickUp(remote.priority);
+    const remoteDesc = (remote.description ?? '').replace(/\r\n/g, '\n').trim();
+    const inverseMembers = this.memberSlugById();
+    const firstAssignee = remote.assignees?.[0];
+    const remoteAssignee: string | null = firstAssignee
+      ? inverseMembers[String(firstAssignee.id)] ?? String(firstAssignee.username ?? firstAssignee.id)
+      : null;
+
+    let slug = this.ledger.slugForRemoteId(remote.id);
+
+    if (!slug || !existsSync(this.taskPath(slug))) {
+      // NEW remote task (or vanished mirror) → create the mirror file.
+      slug = slug ?? this.uniqueSlugFor(remote.name);
+      const fm: Record<string, unknown> = {
+        id: generateId('task'),
+        name: remote.name,
+        description: remote.name,
+        priority: remotePriority,
+        urgency: 'medium',
+        status: remoteStatus,
+        created_at: dateOf(serverTimeMs(remote.date_created) ?? remoteTime),
+        updated_at: dateOf(remoteTime),
+        tags: remoteTags,
+        parent_task: null,
+        related_feature: null,
+        version: remoteVersion,
+        rice: null,
+        assignee: remoteAssignee,
+        created_by: 'clickup',
+        updated_by: 'clickup',
+      };
+      const written = this.writeMirror(slug, fm, remoteDesc, remoteEntries);
+      this.ledger.recordMapping({ slug, dcId: fm.id as string, backend: this.name, remoteId: remote.id });
+      this.ledger.updateTaskSync(slug, {
+        last_synced_at: remoteTime ?? 0,
+        base_snapshot: { hash: hashContent(written), body: written },
+        localHash: hashContent(written),
+        pendingPush: false,
+      });
+      this.ledger.advanceWatermark(remoteTime);
+      report.pulled++;
+      return;
+    }
+
+    // EXISTING mirror → merge.
+    const path = this.taskPath(slug);
+    const entry = this.ledger.taskSync(slug);
+    const localRaw = readFileSync(path, 'utf-8');
+    const local = (await this.getLocal(slug))!;
+    const localChanged = entry?.localHash ? hashContent(localRaw) !== entry.localHash : true;
+    const localChangedAt = entry?.lastLocalChangeAt ?? null;
+
+    const base = entry?.base_snapshot?.body ?? null;
+    const baseParsed = base !== null ? matter(base) : null;
+    const baseFm = (baseParsed?.data ?? null) as Record<string, unknown> | null;
+    const baseDesc = baseParsed ? bodyToDescription(baseParsed.content.trim()).trim() : null;
+    const baseTagInfo = baseFm
+      ? { tags: (baseFm.tags as string[]) ?? [], version: (baseFm.version as string | null) ?? null }
+      : null;
+
+    // ── changelog: union (conflict-free by construction) ──
+    const localEntries = splitChangelogEntries(local.changelog);
+    const mergedEntries = unionChangelog(localEntries, remoteEntries);
+    const remoteNorm = new Set(remoteEntries.map(normalizeEntry));
+    const localOnlyEntries = localEntries.filter((e) => !remoteNorm.has(normalizeEntry(e)));
+
+    // ── prose: 3-way with base; missing base → ClickUp wins + conflict copy ──
+    const localDesc = bodyToDescription(local.body).trim();
+    let mergedDesc = remoteDesc;
+    let proseLocalKept = false;
+    const conflicts: Array<'missing_base' | 'both_changed'> = [];
+
+    if (!localChanged) {
+      mergedDesc = remoteDesc;
+    } else if (baseDesc === null) {
+      if (localDesc !== remoteDesc) {
+        conflicts.push('missing_base');
+      }
+      mergedDesc = remoteDesc;
+    } else {
+      const res = merge3Bodies(baseDesc, localDesc, remoteDesc);
+      mergedDesc = res.merged.trim();
+      proseLocalKept = res.localChangesKept;
+      if (res.conflictSections.length > 0) conflicts.push('both_changed');
+    }
+
+    // ── scalars: last-write-wins (server time vs recorded local mutation) ──
+    const scalar = <T,>(baseV: T | undefined, localV: T, remoteV: T) =>
+      mergeScalar(baseV, localV, remoteV, localChanged ? localChangedAt : null, remoteTime);
+
+    const statusM = scalar(baseFm?.status as string | undefined, local.status, remoteStatus);
+    const priorityM = scalar(baseFm?.priority as string | undefined, local.priority, remotePriority);
+    const nameM = scalar(baseFm?.name as string | undefined, local.name, remote.name);
+    const tagsM = scalar(baseTagInfo?.tags, local.tags, remoteTags);
+    const versionM = scalar(baseTagInfo?.version, local.version, remoteVersion);
+    // assignee is ClickUp-authoritative; the local mirror still wins when the
+    // remote side did not move (a pending local assignment awaiting push).
+    const assigneeM = scalar(
+      (baseFm?.assignee as string | null | undefined) ?? null,
+      ((local.raw.assignee as string | null | undefined) ?? null),
+      remoteAssignee,
+    );
+
+    const scalarResults = [statusM, priorityM, nameM, tagsM, versionM, assigneeM];
+    const anyLocalWin = scalarResults.some((r) => r.winner === 'local');
+    const anyRemoteWin = scalarResults.some((r) => r.winner === 'remote');
+    const remoteAddedEntries = mergedEntries.length > localEntries.length;
+    const remoteContributed = anyRemoteWin || remoteAddedEntries || mergedDesc !== localDesc;
+
+    // ── conflicts: preserve the losing local copy, surface it ──
+    for (const reason of conflicts) {
+      const savedTo = this.saveConflictCopy(slug, localRaw, remoteTime);
+      report.conflicts.push({ slug, savedTo, reason });
+    }
+
+    // ── write the merged mirror ──
+    const fm: Record<string, unknown> = {
+      ...local.raw,
+      name: nameM.value,
+      status: statusM.value,
+      priority: priorityM.value,
+      tags: tagsM.value,
+      version: versionM.value,
+      assignee: assigneeM.value,
+      updated_at: remoteContributed && remoteTime !== null ? dateOf(remoteTime) : local.updated_at,
+      // updated_by records the WINNER of the merge.
+      updated_by: anyRemoteWin || conflicts.length > 0
+        ? 'clickup'
+        : (local.raw.updated_by ?? null),
+    };
+    const written = this.writeMirror(slug, fm, mergedDesc, mergedEntries);
+
+    // ── bookkeeping: base reflects the REMOTE state so surviving local
+    //    changes still diff (and push) against it. ──
+    const keptLocal = anyLocalWin || proseLocalKept || localOnlyEntries.length > 0;
+    if (keptLocal) {
+      const remoteRender = this.renderMirror(
+        { ...fm, name: remote.name, status: remoteStatus, priority: remotePriority, tags: remoteTags, version: remoteVersion, assignee: remoteAssignee },
+        remoteDesc,
+        remoteEntries,
+      );
+      this.ledger.updateTaskSync(slug, {
+        last_synced_at: remoteTime ?? entry?.last_synced_at ?? 0,
+        base_snapshot: { hash: hashContent(remoteRender), body: remoteRender },
+        localHash: hashContent(remoteRender),
+        pendingPush: true,
+      });
+    } else {
+      this.ledger.updateTaskSync(slug, {
+        last_synced_at: remoteTime ?? entry?.last_synced_at ?? 0,
+        base_snapshot: { hash: hashContent(written), body: written },
+        localHash: hashContent(written),
+        pendingPush: false,
+      });
+      this.ledger.dequeueFor(slug, this.nowMs());
+    }
+
+    this.ledger.advanceWatermark(remoteTime);
+    report.pulled++;
+  }
+
+  /** Read the mirror without any remote bookkeeping (super.get under a clear name). */
+  protected getLocal(slug: string): Promise<TaskData | null> {
+    return super.get(slug);
+  }
+
+  protected uniqueSlugFor(name: string): string {
+    const baseSlug = slugify(name) || 'task';
+    let candidate = baseSlug;
+    let n = 1;
+    while (existsSync(this.taskPath(candidate))) {
+      n++;
+      candidate = `${baseSlug}-${n}`;
+    }
+    return candidate;
+  }
+
+  /** Compose a mirror file (frontmatter + prose body + Changelog section). */
+  protected renderMirror(
+    fm: Record<string, unknown>,
+    desc: string,
+    changelogEntries: string[],
+  ): string {
+    const changelog = changelogEntries.length > 0
+      ? `## Changelog\n<!-- LIFO: newest at top -->\n\n${changelogEntries.join('\n\n')}\n`
+      : '';
+    const body = `${desc.trim()}\n${changelog ? `\n${changelog}` : ''}`;
+    return matter.stringify(body, fm);
+  }
+
+  protected writeMirror(
+    slug: string,
+    fm: Record<string, unknown>,
+    desc: string,
+    changelogEntries: string[],
+  ): string {
+    const content = this.renderMirror(fm, desc, changelogEntries);
+    this.applyingRemote = true;
+    try {
+      writeFileSync(this.taskPath(slug), content, 'utf-8');
+    } finally {
+      this.applyingRemote = false;
+    }
+    return content;
+  }
+
+  /** Preserve a losing local copy under state/.conflicts/ — never silent loss. */
+  protected saveConflictCopy(slug: string, localRaw: string, remoteTime: number | null): string {
+    const dir = this.ledger.conflictsDir();
+    mkdirSync(dir, { recursive: true });
+    const stamp = remoteTime ?? this.nowMs();
+    let path = join(dir, `${slug}-${stamp}.md`);
+    let n = 1;
+    while (existsSync(path)) {
+      n++;
+      path = join(dir, `${slug}-${stamp}-${n}.md`);
+    }
+    writeFileSync(path, localRaw, 'utf-8');
+    return path;
+  }
+}
+
+/** Epoch-ms (server time) → YYYY-MM-DD frontmatter date. */
+function dateOf(ms: number | null): string {
+  return new Date(ms ?? 0).toISOString().split('T')[0];
 }
 
 /** Extract the changelog entries from a stored base-snapshot body. */
