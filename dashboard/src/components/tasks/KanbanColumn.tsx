@@ -18,12 +18,13 @@ interface KanbanColumnProps {
   count: number;
   colorVar: string;
   onTaskClick: (task: Task) => void;
+  onTaskContextMenu?: (task: Task, e: React.MouseEvent) => void;
   onDrop: (slug: string, newStatus: string) => void;
   staggerIndex?: number;
   subGroups?: SubGroup[];
 }
 
-export function KanbanColumn({ title, status, tasks, count, colorVar, onTaskClick, onDrop, subGroups }: KanbanColumnProps) {
+export function KanbanColumn({ title, status, tasks, count, colorVar, onTaskClick, onTaskContextMenu, onDrop, subGroups }: KanbanColumnProps) {
   const [isDragOver, setIsDragOver] = useState(false);
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -71,6 +72,7 @@ export function KanbanColumn({ title, status, tasks, count, colorVar, onTaskClic
               color={sg.color}
               tasks={sg.tasks}
               onTaskClick={onTaskClick}
+              onTaskContextMenu={onTaskContextMenu}
               onDragStart={onDragStart}
             />
           ))
@@ -80,6 +82,7 @@ export function KanbanColumn({ title, status, tasks, count, colorVar, onTaskClic
               key={task.slug}
               task={task}
               onClick={() => onTaskClick(task)}
+              onContextMenu={onTaskContextMenu ? (e) => onTaskContextMenu(task, e) : undefined}
               onDragStart={(e) => onDragStart(e, task)}
             />
           ))

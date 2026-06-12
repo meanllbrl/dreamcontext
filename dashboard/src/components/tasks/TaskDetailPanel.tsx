@@ -3,7 +3,8 @@ import { marked } from 'marked';
 import mermaid from 'mermaid';
 import panzoom from 'panzoom';
 import type { Task, RiceFields, RiceInput } from '../../hooks/useTasks';
-import { useUpdateTask, useAddTaskChangelog, useDeleteTask, useTaskMembers } from '../../hooks/useTasks';
+import { useUpdateTask, useAddTaskChangelog, useDeleteTask, useTaskMembers, useFeatureOptions } from '../../hooks/useTasks';
+import { SearchableSelect } from './SearchableSelect';
 import { usePlanningVersions } from '../../hooks/useVersions';
 import { useI18n } from '../../context/I18nContext';
 import { useTheme } from '../../context/ThemeContext';
@@ -363,6 +364,7 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
   const addChangelog = useAddTaskChangelog();
   const deleteTask = useDeleteTask();
   const { data: members } = useTaskMembers();
+  const { data: featureOptions } = useFeatureOptions();
   const { data: versions } = usePlanningVersions();
   const [changelogEntry, setChangelogEntry] = useState('');
   const [newTag, setNewTag] = useState('');
@@ -871,38 +873,26 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
             </PropertyRow>
 
             <PropertyRow label="Assignee">
-              {members && members.length > 0 ? (
-                <select
-                  className="field-select prop-select"
-                  value={task.assignee ?? ''}
-                  onChange={e => handleAssigneeChange(e.target.value)}
-                >
-                  <option value="">Unassigned</option>
-                  {members.map(m => (
-                    <option key={m.slug} value={m.slug}>{m.name}</option>
-                  ))}
-                  {task.assignee && !members.some(m => m.slug === task.assignee) && (
-                    <option value={task.assignee}>{task.assignee}</option>
-                  )}
-                </select>
-              ) : (
-                <input
-                  className="prop-text-input"
-                  defaultValue={task.assignee ?? ''}
-                  key={`asg-${task.slug}-${task.assignee ?? ''}`}
-                  placeholder="person slug"
-                  onBlur={e => { if ((e.target.value.trim() || null) !== (task.assignee ?? null)) handleAssigneeChange(e.target.value.trim()); }}
-                />
-              )}
+              <SearchableSelect
+                value={task.assignee ?? null}
+                options={(members ?? []).map(m => ({ value: m.slug, label: m.name, hint: m.slug }))}
+                placeholder="Unassigned"
+                searchPlaceholder="Search people…"
+                clearLabel="Unassigned"
+                allowCustom
+                onChange={v => handleAssigneeChange(v ?? '')}
+              />
             </PropertyRow>
 
             <PropertyRow label="Feature">
-              <input
-                className="prop-text-input"
-                defaultValue={task.related_feature ?? ''}
-                key={`feat-${task.slug}-${task.related_feature ?? ''}`}
-                placeholder="related feature slug"
-                onBlur={e => { if ((e.target.value.trim() || null) !== (task.related_feature ?? null)) handleTextField('related_feature', e.target.value); }}
+              <SearchableSelect
+                value={task.related_feature ?? null}
+                options={(featureOptions ?? []).map(f => ({ value: f.slug, label: f.name ?? f.slug, hint: f.name ? f.slug : undefined }))}
+                placeholder="No feature"
+                searchPlaceholder="Search features…"
+                clearLabel="No feature"
+                allowCustom
+                onChange={v => handleTextField('related_feature', v ?? '')}
               />
             </PropertyRow>
 
@@ -962,17 +952,6 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
                 )}
               </select>
             </PropertyRow>
-
-            <div className="prop-danger-row">
-              <button
-                type="button"
-                className="btn btn--danger-ghost"
-                onClick={handleDelete}
-                disabled={deleteTask.isPending}
-              >
-                {deleteTask.isPending ? 'Deleting…' : 'Delete task'}
-              </button>
-            </div>
 
             {task.description && (
               <PropertyRow label="Description">
@@ -1034,6 +1013,20 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
                 {addChangelog.isPending ? '...' : t('tasks.add_entry')}
               </button>
             </form>
+          </div>
+
+          {/* Danger zone — intentionally last */}
+          <hr className="detail-divider" />
+          <div className="detail-danger-zone">
+            <button
+              type="button"
+              className="btn btn--danger-ghost"
+              onClick={handleDelete}
+              disabled={deleteTask.isPending}
+            >
+              {deleteTask.isPending ? 'Deleting…' : 'Delete task'}
+            </button>
+            <span className="detail-danger-hint">Removes the task locally and on the remote backend (next sync).</span>
           </div>
         </div>
       </div>

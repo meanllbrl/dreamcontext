@@ -8,10 +8,12 @@ interface SubGroupSectionProps {
   color?: string;
   tasks: Task[];
   onTaskClick: (task: Task) => void;
+  onTaskContextMenu?: (task: Task, e: React.MouseEvent) => void;
   onDragStart: (e: React.DragEvent, task: Task) => void;
 }
 
-export function SubGroupSection({ label, color, tasks, onTaskClick, onDragStart }: SubGroupSectionProps) {
+export function SubGroupSection({ label, color, tasks, onTaskClick,
+  onTaskContextMenu, onDragStart }: SubGroupSectionProps) {
   const [collapsed, setCollapsed] = useState(false);
 
   return (
@@ -34,6 +36,7 @@ export function SubGroupSection({ label, color, tasks, onTaskClick, onDragStart 
               key={task.slug}
               task={task}
               onClick={() => onTaskClick(task)}
+              onContextMenu={onTaskContextMenu ? (e) => onTaskContextMenu(task, e) : undefined}
               onDragStart={(e) => onDragStart(e, task)}
             />
           ))}

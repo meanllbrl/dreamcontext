@@ -174,6 +174,15 @@ export function useSyncTasks() {
   });
 }
 
+export function useFeatureOptions() {
+  return useQuery({
+    queryKey: ['features'],
+    queryFn: () => api.get<{ features: Array<{ slug: string; name?: string }> }>('/features'),
+    select: (d) => d.features ?? [],
+    staleTime: 60_000,
+  });
+}
+
 export function useAddTaskChangelog() {
   const queryClient = useQueryClient();
   return useMutation({

@@ -739,3 +739,15 @@
 .btn--danger-ghost:hover {
   background: color-mix(in srgb, var(--color-danger, #ef4444) 12%, transparent);
 }
+
+.detail-danger-zone {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) 0 var(--space-4);
+}
+
+.detail-danger-hint {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs, 11px);
+}

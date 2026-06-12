@@ -6,17 +6,20 @@ interface TaskCardProps {
   task: Task;
   onClick: () => void;
   onDragStart: (e: React.DragEvent) => void;
+  /** Right-click handler (context menu). */
+  onContextMenu?: (e: React.MouseEvent) => void;
   /** Dimmed "ghost" state while this card is the one being dragged. */
   dragging?: boolean;
 }
 
-export function TaskCard({ task, onClick, onDragStart, dragging = false }: TaskCardProps) {
+export function TaskCard({ task, onClick, onDragStart, onContextMenu, dragging = false }: TaskCardProps) {
   return (
     <div
       className={`task-card${dragging ? ' task-card--dragging' : ''}`}
       draggable
       onDragStart={onDragStart}
       onClick={onClick}
+      onContextMenu={onContextMenu}
       role="button"
       tabIndex={0}
       onKeyDown={(e) => { if (e.key === 'Enter') onClick(); }}

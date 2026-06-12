@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback } from 'react';
 import type { Task } from '../../hooks/useTasks';
-import { useTasks, useUpdateTask, useSyncStatus, useSyncTasks } from '../../hooks/useTasks';
+import { useTasks, useUpdateTask, useSyncStatus, useSyncTasks, useDeleteTask } from '../../hooks/useTasks';
 import { useVersions } from '../../hooks/useVersions';
 import { useProject } from '../../context/ProjectContext';
 import { useI18n } from '../../context/I18nContext';
@@ -226,6 +226,23 @@ export function KanbanBoard() {
   const updateTask = useUpdateTask();
   const { data: syncStatus } = useSyncStatus();
   const syncTasks = useSyncTasks();
+  const deleteTask = useDeleteTask();
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; task: Task } | null>(null);
+
+  const handleTaskContextMenu = (task: Task, e: React.MouseEvent) => {
+    e.preventDefault();
+    setCtxMenu({ x: e.clientX, y: e.clientY, task });
+  };
+
+  const handleCtxDelete = () => {
+    if (!ctxMenu) return;
+    const target = ctxMenu.task;
+    setCtxMenu(null);
+    if (!window.confirm(`Delete task "${target.name}"? This propagates to the remote backend on sync.`)) return;
+    deleteTask.mutate(target.slug, {
+      onSuccess: () => { if (selectedSlug === target.slug) setSelectedSlug(null); },
+    });
+  };
   const [syncNote, setSyncNote] = useState<string | null>(null);
 
   const handleSync = () => {
@@ -395,6 +412,7 @@ export function KanbanBoard() {
         count={colTasks.length}
         colorVar={colorVar}
         onTaskClick={(task) => setSelectedSlug(task.slug)}
+        onTaskContextMenu={handleTaskContextMenu}
         onDrop={(slug, newVal) => handleDrop(slug, newVal, groupBy)}
         staggerIndex={index + 1}
         subGroups={subGroupBy !== 'none' ? getSubGroups(colTasks, subGroupBy) : undefined}
@@ -457,6 +475,7 @@ export function KanbanBoard() {
             count={filtered.length}
             colorVar="--color-brand-vivid"
             onTaskClick={(task) => setSelectedSlug(task.slug)}
+            onTaskContextMenu={handleTaskContextMenu}
             onDrop={() => {}}
             subGroups={subGroupBy !== 'none' ? getSubGroups(filtered, subGroupBy) : undefined}
           />,
@@ -499,6 +518,7 @@ export function KanbanBoard() {
               key={task.slug}
               task={task}
               onClick={() => setSelectedSlug(task.slug)}
+              onContextMenu={(e) => handleTaskContextMenu(task, e)}
               onDragStart={() => { /* no drag in list view */ }}
             />
           ))}
@@ -512,6 +532,35 @@ export function KanbanBoard() {
       {showCreate && <TaskCreateModal onClose={() => setShowCreate(false)} />}
       {showVersionManager && <VersionManager onClose={() => setShowVersionManager(false)} tasks={tasks ?? []} />}
       {selectedTask && <TaskDetailPanel task={selectedTask} onClose={() => setSelectedSlug(null)} />}
+
+      {ctxMenu && (
+        <div
+          className="task-ctx-overlay"
+          onClick={() => setCtxMenu(null)}
+          onContextMenu={(e) => { e.preventDefault(); setCtxMenu(null); }}
+        >
+          <div
+            className="task-ctx-menu"
+            style={{
+              top: Math.min(ctxMenu.y, window.innerHeight - 100),
+              left: Math.min(ctxMenu.x, window.innerWidth - 190),
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="task-ctx-name">{ctxMenu.task.name}</div>
+            <button
+              type="button"
+              className="task-ctx-item"
+              onClick={() => { setSelectedSlug(ctxMenu.task.slug); setCtxMenu(null); }}
+            >
+              Open
+            </button>
+            <button type="button" className="task-ctx-item task-ctx-item--danger" onClick={handleCtxDelete}>
+              Delete task
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
