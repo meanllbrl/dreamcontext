@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "facets": {
+    "domain": [
+      "domain:database",
+      "domain:security",
+      "domain:knowledge",
+      "domain:recall"
+    ],
+    "layer": [
+      "layer:frontend",
+      "layer:backend",
+      "layer:devops"
+    ],
+    "kind": [
+      "kind:architecture",
+      "kind:api",
+      "kind:testing",
+      "kind:design",
+      "kind:decisions",
+      "kind:onboarding"
+    ],
+    "topic": [
+      "topic:recall",
+      "topic:sleep",
+      "topic:taxonomy",
+      "topic:domain"
+    ]
+  },
+  "bareTags": [
+    "architecture",
+    "api",
+    "frontend",
+    "backend",
+    "database",
+    "devops",
+    "security",
+    "testing",
+    "design",
+    "decisions",
+    "onboarding",
+    "domain"
+  ],
+  "aliases": {
+    "search": "topic:recall",
+    "retrieval": "topic:recall",
+    "db": "domain:database",
+    "auth": "domain:security",
+    "consolidation": "topic:sleep"
+  }
+}

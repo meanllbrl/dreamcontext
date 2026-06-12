@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useKnowledgeList, useKnowledge, useToggleKnowledgePin } from '../hooks/useKnowledge';
 import { useI18n } from '../context/I18nContext';
+import { FullscreenOverlay } from '../components/layout/FullscreenOverlay';
 import { MarkdownPreview } from '../components/core/MarkdownPreview';
 import { SqlPreview } from '../components/core/SqlPreview';
 import { ExcalidrawPreview } from '../components/core/ExcalidrawPreview';
@@ -66,6 +67,7 @@ export function KnowledgePage() {
   const [selected, setSelected] = useState<string | null>(null);
   const [viewTab, setViewTab] = useState<'file' | 'preview'>('preview');
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [fullscreen, setFullscreen] = useState(false);
 
   const { data: detail } = useKnowledge(selected ?? '');
 
@@ -141,6 +143,38 @@ export function KnowledgePage() {
     </button>
   );
 
+  // Shared between the inline pane and the full-screen overlay so the active
+  // tab and rendered content stay identical in both surfaces.
+  const renderTabs = () => (
+    <div className="core-tabs">
+      <button
+        className={`core-tab ${viewTab === 'file' ? 'core-tab--active' : ''}`}
+        onClick={() => setViewTab('file')}
+      >
+        File
+      </button>
+      <button
+        className={`core-tab ${viewTab === 'preview' ? 'core-tab--active' : ''}`}
+        onClick={() => setViewTab('preview')}
+      >
+        Preview
+      </button>
+    </div>
+  );
+
+  const renderContent = (detailDoc: NonNullable<typeof detail>) => {
+    if (viewTab === 'preview' && detailDoc.content) {
+      if (isExcalidrawSlug(detailDoc.slug)) {
+        return <ExcalidrawPreview content={detailDoc.content} />;
+      }
+      const schemaSql = extractSchemaSql(detailDoc.slug, detailDoc.content);
+      return schemaSql
+        ? <SqlPreview content={schemaSql} />
+        : <MarkdownPreview content={detailDoc.content} />;
+    }
+    return <pre className="core-viewer-content">{detailDoc.content}</pre>;
+  };
+
   if (isLoading) return <div className="loading">{t('common.loading')}</div>;
   if (isError) return <div className="error-state">Failed to load knowledge. {error?.message}</div>;
 
@@ -188,34 +222,31 @@ export function KnowledgePage() {
               <div className="core-viewer-header">
                 <h2 className="core-viewer-title">{detail.name}</h2>
                 <div className="core-viewer-actions">
-                  <div className="core-tabs">
-                    <button
-                      className={`core-tab ${viewTab === 'file' ? 'core-tab--active' : ''}`}
-                      onClick={() => setViewTab('file')}
-                    >
-                      File
-                    </button>
-                    <button
-                      className={`core-tab ${viewTab === 'preview' ? 'core-tab--active' : ''}`}
-                      onClick={() => setViewTab('preview')}
-                    >
-                      Preview
-                    </button>
-                  </div>
+                  {renderTabs()}
+                  <button
+                    className="core-expand-btn"
+                    onClick={() => setFullscreen(true)}
+                    title={t('knowledge.fullscreen')}
+                    aria-label={t('knowledge.fullscreen')}
+                  >
+                    ⛶
+                  </button>
                 </div>
               </div>
-              {viewTab === 'preview' && detail.content ? (
-                (() => {
-                  if (isExcalidrawSlug(detail.slug)) {
-                    return <ExcalidrawPreview content={detail.content} />;
-                  }
-                  const schemaSql = extractSchemaSql(detail.slug, detail.content);
-                  return schemaSql
-                    ? <SqlPreview content={schemaSql} />
-                    : <MarkdownPreview content={detail.content} />;
-                })()
+              {/* One render site for the content: the fixed-position overlay
+                  replaces the pane copy, so the doc is never mounted twice —
+                  that would double the heavy excalidraw export and duplicate
+                  mermaid element ids. */}
+              {fullscreen ? (
+                <FullscreenOverlay
+                  label={detail.name}
+                  actions={renderTabs()}
+                  onClose={() => setFullscreen(false)}
+                >
+                  {renderContent(detail)}
+                </FullscreenOverlay>
               ) : (
-                <pre className="core-viewer-content">{detail.content}</pre>
+                renderContent(detail)
               )}
             </div>
           )}

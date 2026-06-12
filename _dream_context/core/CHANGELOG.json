@@ -1,5 +1,118 @@
 [
   {
+    "date": "2026-06-12",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "Add a full-screen mode to the knowledge document viewer (#21, PR #30). New generic FullscreenOverlay component (dashboard/src/components/layout/FullscreenOverlay.tsx) is a fixed in-app dialog — not the browser Fullscreen API — with role=dialog + aria-modal, focus moved in and trapped (selector excludes disabled elements via :not(:disabled)), focus returned to the trigger on close, Esc handled via a document-capture keydown listener, and body scroll locked with scrollbar-width compensation so there is no layout shift. KnowledgePage gains a ⛶ expand button next to the File/Preview tabs for markdown, SQL-ER, excalidraw, and raw views; tab state is shared with the pane so it survives entering/leaving full-screen, and pane content unmounts while the overlay is open so excalidraw/mermaid never render the same doc twice (ExcalidrawPreview's mount-time fit + ResizeObserver re-fit the board to the larger canvas). Playwright spec e2e/knowledge-fullscreen.spec.ts covers open/close paths, tabs inside the overlay, scroll lock, list/search preservation, and that the excalidraw svg actually grows. Post-review hardening (0b0c2ac) fixed four findings: focus/Esc escape via the document capture listener, the :not(:disabled) focus-trap selector, an :only-child CSS specificity fix, and a robust e2e excalidraw fit assertion. Closes #21.",
+    "breaking": false,
+    "summary": "Full-screen mode for the knowledge document viewer via a generic FullscreenOverlay; covers markdown/SQL-ER/excalidraw/raw views (#21)",
+    "references": [
+      "commit:d056de0",
+      "commit:0b0c2ac",
+      "file:dashboard/src/components/layout/FullscreenOverlay.tsx",
+      "file:e2e/knowledge-fullscreen.spec.ts",
+      "task:issue-21-knowledge-fullscreen",
+      "url:https://github.com/meanllbrl/dreamcontext/issues/21"
+    ]
+  },
+  {
+    "date": "2026-06-12",
+    "type": "change",
+    "scope": "tasks",
+    "description": "Enforce the owner product rule that unplanned tasks are tagged 'backlog' and MUST NOT carry a due date. Enforcement lives at the backend level (normalizeBacklogFields in src/lib/task-backend/local.ts) so it holds across every surface: tagging a task 'backlog' clears its due_date; explicitly dating a task removes the backlog tag. The rule applies uniformly to CLI, dashboard, and ClickUp sync, and is pinned in the TaskBackend conformance suite so future backends inherit it.",
+    "breaking": false,
+    "summary": "Product rule: backlog-tagged tasks are undated on every surface — backlog tag clears due_date, dating a task drops the backlog tag (#11, owner decision)",
+    "references": [
+      "commit:1a4859f",
+      "file:src/lib/task-backend/local.ts",
+      "url:https://github.com/meanllbrl/dreamcontext/issues/11"
+    ]
+  },
+  {
+    "date": "2026-06-12",
+    "type": "feat",
+    "scope": "tasks",
+    "description": "Ship the pluggable TaskBackend architecture end-to-end (#11, merged via PR #27). M1 extracted local file ops behind a provider-agnostic TaskBackend interface with golden byte-identity fixtures and a conformance suite; M2 added the identity layer, ClickUp config + token storage (secrets.ts), and a generic ApiAdapter; M3 the ClickUp backend with watermark-based PUSH via mocked-transport conformance; M4 delta PULL + two-way merge engine + conflicts + WAL replay (client-side watermark guard since ClickUp date_updated_gt is >=); M5 git/post-sleep sync triggers, config surfaces, dashboard Settings + sync status, docs/clickup.md. Follow-ups hardened it to GA: custom-field bridge (urgency/summary/RICE/feature via list custom fields), member discovery + person-tag/assignee bridge (one concept across CLI and dashboard UI), due_date end-to-end, 'tasks provision' (create + backfill recommended remote fields), deletion everywhere + remote-to-local deletion reconciliation with request-budget discipline, remote-changes journal into sleep, ascii-folded status matching against the list's actual status set (real lists have statuses like 'in revıew'), a per-project sync lock (one sync engine), stale-server detection (capabilities in /api/health + restart banner), polished guided onboarding (list picker from API, connection test, provision + first-sync offers, list migration, hook cleanup), and a dashboard Sync button for remote backends. Cloud task management stays an Advanced opt-in setting. Closes #11.",
+    "breaking": false,
+    "summary": "Pluggable TaskBackend GA: ClickUp remote backend behind a generic adapter — two-way sync, conflicts, custom-field bridge, guided onboarding (#11)",
+    "references": [
+      "commit:2ae2b01",
+      "commit:ad58d54",
+      "commit:3eba87d",
+      "commit:b0c8010",
+      "commit:2e9cc0c",
+      "file:src/lib/task-backend/clickup.ts",
+      "file:src/lib/task-backend/merge.ts",
+      "file:src/lib/task-backend/local.ts",
+      "file:docs/clickup.md",
+      "url:https://github.com/meanllbrl/dreamcontext/issues/11"
+    ]
+  },
+  {
+    "date": "2026-06-12",
+    "type": "feat",
+    "scope": "taxonomy",
+    "description": "Add a faceted controlled tag vocabulary (domain/layer/kind/topic) as enforced behavior — taxonomy quality drives recall quality since tags are weighted 2x in BM25 and are first-class graph nodes. src/lib/taxonomy.ts provides alias resolution, normalization, near-duplicate detection (Levenshtein <=1 same-facet), array-union merge of project vocab over defaults, and a report-only corpus audit. Storage is core/taxonomy.json (matches CHANGELOG.json/RELEASES.json pattern) with fail-soft parse and inherited-object-key hardening. Mutations go through validated CLI only: 'taxonomy add' (facet whitelist, reuse-before-invent), 'taxonomy alias' (no chains/cycles), 'taxonomy resolve', 'vocab --facet'; sleep agents and the initializer are instructed to mutate only via these commands. Recall indexes faceted tags by value only (facet prefixes never become high-df noise tokens) and expands queries through project alias groups opt-in. Dashboard gains a Taxonomy page (facet chip clusters with usage counts, alias arrows, drift/audit panel) backed by read-only GET /api/taxonomy. SessionStart hook seeds core/taxonomy.json crash-safely on pre-feature installs. SKILL.md gains the 'Tag before you create.' rule; sleep-product owns taxonomy maintenance, sleep-tasks normalizes task tags, sleep-state flags drift.",
+    "breaking": false,
+    "summary": "Faceted tag taxonomy as enforced behavior: core/taxonomy.json storage, validated CLI mutations, dashboard Taxonomy page, SessionStart auto-seed",
+    "references": [
+      "commit:029bf9e",
+      "commit:9766b34",
+      "commit:6ca4612",
+      "file:src/lib/taxonomy.ts",
+      "file:dashboard/src/pages/TaxonomyPage.tsx"
+    ]
+  },
+  {
+    "date": "2026-06-12",
+    "type": "feat",
+    "scope": "knowledge",
+    "description": "Make .excalidraw.md boards first-class knowledge. Previously a board's entire embedded scene JSON (a real board is 2.2MB) was tokenized into the BM25 recall corpus, stored as knowledge-index content, and inlined into snapshots — poisoning recall and bloating the index. New src/lib/excalidraw-text.ts extractExcalidrawText keeps frontmatter + '## Text Elements' labels and strips the Drawing block (json and compressed-json), Embedded Files map, Obsidian banner, and ^blockref suffixes, with a 200-line cap; malformed/empty boards fall back to frontmatter-only, never raw body. Extraction is applied in both knowledge-index.ts (entry content, snapshot warm/pinned) and recall.ts (BM25 corpus, reflection); the dashboard keeps rendering the full scene. The diagrams migration is genuinely runnable, crash-safe, and path-contained, with clarified board placement under knowledge/diagrams/. Closes #20.",
+    "breaking": false,
+    "summary": "Excalidraw boards as first-class knowledge: index extracted text only, never scene JSON; runnable diagrams migration (#20)",
+    "references": [
+      "commit:8b52232",
+      "commit:40f8fbb",
+      "commit:5d09fea",
+      "commit:aee56ab",
+      "file:src/lib/excalidraw-text.ts",
+      "file:src/lib/diagrams-migration.ts",
+      "url:https://github.com/meanllbrl/dreamcontext/issues/20"
+    ]
+  },
+  {
+    "date": "2026-06-12",
+    "type": "feat",
+    "scope": "sleep",
+    "description": "Replace hand-baked unconditional migration calls in 'sleep start' with a versioned, recorded, forward-only migration system so structural brain changes migrate on update/sleep, are tracked per-clone, and surface to the user. Registry at src/migrations/ holds one module per version transition (0.7.0.ts wraps the data-structures move + SQL-fence backfill); pendingMigrations((from,to]) returns semver-ordered transitions. Ledger at state/.migrations.json records {version,step,executor,timestamp,filesTouched,summary} with atomic tmp+rename writes; team clones with already-migrated content get a 'detected' backfill touching zero files, and code steps stay filesystem-idempotent (the ledger gate is an optimization, not the safety net). migration-runner.ts runs on 'dreamcontext update' and as a 'sleep start' safety net; downgrades run nothing. Applied-step notices queue into .sleep.json and surface as a one-line snapshot note. New agents/sleep-migration.md handles STRUCTURE-only migrations with a 'dreamcontext migrations pending|record' CLI. Post-review fixes: ledger dedup, fence-safe wikilink rewrite (wikilink-rewrite.ts skips code fences, preserves alias/anchor), sanitized migration note. Closes #23.",
+    "breaking": false,
+    "summary": "Versioned migration system: registry + per-clone ledger + sleep-migration agent; runs on update and sleep start (#23)",
+    "references": [
+      "commit:55a74e8",
+      "commit:cb96b44",
+      "commit:fc3055d",
+      "file:src/lib/migration-runner.ts",
+      "file:src/lib/migration-ledger.ts",
+      "file:agents/sleep-migration.md",
+      "url:https://github.com/meanllbrl/dreamcontext/issues/23"
+    ]
+  },
+  {
+    "date": "2026-06-12",
+    "type": "fix",
+    "scope": "update",
+    "description": "Fix CLI upgrades silently leaving consumer projects on stale skills/agents/hooks: setupVersion was write-only and never compared against the running CLI. 'dreamcontext update' now bumps setupVersion on success (when core assets refresh) and prints a relay-able refreshed/pruned summary. New pure src/lib/setup-drift.ts computes drift state (current/stale/bootstrap/downgrade/disabled) and renders a SessionStart self-heal directive injected into the snapshot's never-evict tier: stale prompts 'dreamcontext update' (content-safe), downgrade warns only, 0.0.0 gets a softer bootstrap variant. Hardened post-review: setupVersion/cliVersion values are sanitized (newlines + markdown-structural chars stripped, length-capped) before interpolation so a crafted value cannot inject a heading or instruction into agent context. Opt-out via DREAMCONTEXT_DRIFT_CHECK=0. Closes #22.",
+    "breaking": false,
+    "summary": "Detect setupVersion drift and self-heal stale project assets via a SessionStart directive (#22)",
+    "references": [
+      "commit:37fd54d",
+      "commit:c16c18c",
+      "commit:71efd2d",
+      "file:src/lib/setup-drift.ts",
+      "url:https://github.com/meanllbrl/dreamcontext/issues/22"
+    ]
+  },
+  {
     "date": "2026-06-10",
     "type": "test",
     "scope": "cli",
