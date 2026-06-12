@@ -67,7 +67,7 @@ function recallFederated(
     if (!existing || (t.current && !existing.current)) byName.set(t.name, t);
   };
   add(currentTarget);
-  if (opts.connected) for (const t of resolveConnectedVaults(currentTarget)) add(t);
+  if (opts.connected) for (const t of resolveConnectedVaults(currentTarget, contextRoot)) add(t);
   if (opts.allVaults) for (const t of resolveAllShareableVaults(currentTarget)) add(t);
   for (const name of opts.vault ?? []) add({ name });
 
@@ -158,7 +158,7 @@ export function registerMemoryCommand(program: Command): void {
     .option('--json', 'Emit JSON for piping into other tools')
     .option('--plain', 'Plain text output without colors')
     .option('--vault <name>', 'Also search this vault (repeatable; registered name or path)', collectVault, [])
-    .option('--connected', 'Span the current vault + its out/both connections (degenerate=local until P2)')
+    .option('--connected', 'Span the current vault + its out/both connections (shareable peers only)')
     .option('--all-vaults', 'Span the current vault + every shareable registered vault')
     .action(
       (

@@ -21,6 +21,8 @@ export interface SetupConfig {
   taskBackend?: 'local' | 'clickup';
   cloudTaskManagement?: boolean;
   clickup?: ClickUpConfig;
+  /** Cross-project federation read gate (issue #25). Default FALSE (private). */
+  shareable?: boolean;
 }
 
 interface ConfigResponse {
@@ -39,6 +41,7 @@ export interface ConfigPatch {
   taskBackend?: 'local' | 'clickup';
   cloudTaskManagement?: boolean;
   clickup?: ClickUpConfig;
+  shareable?: boolean;
 }
 
 // ─── Hooks ────────────────────────────────────────────────────────────────────

@@ -15,6 +15,8 @@ import { handleChangelogGet, handleReleasesGet, handleUnreleasedGet, handleRelea
 import { handleGraphGet, handleGraphContentGet } from './routes/graph.js';
 import { handleCouncilList, handleCouncilGet, handleCouncilResearchGet } from './routes/council.js';
 import { handleConfigGet, handleConfigUpdate } from './routes/config.js';
+import { handleVaultsGet } from './routes/vaults.js';
+import { handleConnectionsList, handleConnectionsCreate, handleConnectionsDelete } from './routes/connections.js';
 import { handlePacksGet } from './routes/packs.js';
 import { handlePackInstall, handlePackUninstall } from './routes/packs-install.js';
 import { handleVersionCheckGet } from './routes/version-check.js';
@@ -81,6 +83,12 @@ function buildRouter(): Router {
   // Config
   router.get('/api/config', handleConfigGet);
   router.patch('/api/config', handleConfigUpdate);
+
+  // Vaults + federation connections (issue #25 P2)
+  router.get('/api/vaults', handleVaultsGet);
+  router.get('/api/connections', handleConnectionsList);
+  router.post('/api/connections', handleConnectionsCreate);
+  router.delete('/api/connections/:vault', handleConnectionsDelete);
 
   // Packs
   router.get('/api/packs', handlePacksGet);

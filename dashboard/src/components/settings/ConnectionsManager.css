@@ -1,0 +1,150 @@
+.fed-subtitle {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-secondary);
+  margin: var(--space-5) 0 var(--space-2);
+}
+
+/* ─── Vault list ──────────────────────────────────────────────────────────── */
+
+.fed-vault-list,
+.fed-conn-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.fed-vault-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+}
+
+.fed-vault-item--current {
+  border-color: var(--color-accent);
+  background: var(--color-accent-subtle, var(--color-bg-secondary));
+}
+
+.fed-vault-name {
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text);
+}
+
+.fed-vault-path {
+  margin-left: auto;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs, 12px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 50%;
+}
+
+.fed-badge {
+  font-size: var(--font-size-xs, 11px);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-sm, 4px);
+  background: var(--color-accent);
+  color: var(--color-bg);
+  font-weight: var(--font-weight-semibold);
+}
+
+.fed-badge--stale {
+  background: var(--color-warning, #f59e0b);
+}
+
+/* ─── Connections ─────────────────────────────────────────────────────────── */
+
+.fed-conn-item {
+  padding: var(--space-3);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.fed-conn-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.fed-conn-name {
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+}
+
+.fed-conn-remove {
+  margin-left: auto;
+  font-size: var(--font-size-xs, 12px);
+}
+
+.fed-conn-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+/* ─── 3-way direction toggle ──────────────────────────────────────────────── */
+
+.fed-direction {
+  display: inline-flex;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 4px);
+  overflow: hidden;
+}
+
+.fed-dir-btn {
+  appearance: none;
+  border: none;
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  padding: var(--space-1) var(--space-3);
+  cursor: pointer;
+  border-right: 1px solid var(--color-border);
+}
+
+.fed-dir-btn:last-child {
+  border-right: none;
+}
+
+.fed-dir-btn--active {
+  background: var(--color-accent);
+  color: var(--color-bg);
+  font-weight: var(--font-weight-medium);
+}
+
+.fed-dir-btn:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.fed-topics-input {
+  flex: 1;
+  min-width: 160px;
+  width: auto;
+}
+
+/* ─── Add row ─────────────────────────────────────────────────────────────── */
+
+.fed-add-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}

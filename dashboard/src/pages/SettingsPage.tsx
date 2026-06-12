@@ -4,6 +4,7 @@ import { useI18n } from '../context/I18nContext';
 import { api } from '../api/client';
 import { useConfig, useUpdateConfig, type PlatformId, type SetupConfig } from '../hooks/useConfig';
 import { SearchableSelect } from '../components/tasks/SearchableSelect';
+import { ConnectionsManager } from '../components/settings/ConnectionsManager';
 import './SettingsPage.css';
 
 interface RemoteContainer {
@@ -180,6 +181,14 @@ export function SettingsPage() {
     setSaveSuccess(false);
   };
 
+  // Federation `shareable` is its own control plane — persisted immediately via
+  // PATCH /api/config (not buffered behind the page's Save button) so toggling
+  // the read gate takes effect at once.
+  const shareable = (config as SetupConfig | null)?.shareable === true;
+  const handleToggleShareable = (next: boolean) => {
+    updateConfig.mutate({ shareable: next });
+  };
+
   const handleTestConnection = async () => {
     setTesting(true);
     setTestResult(null);
@@ -330,6 +339,12 @@ export function SettingsPage() {
           <p className="settings-field-hint">{t('settings.native_memory.hint')}</p>
         </div>
       </section>
+
+      <ConnectionsManager
+        shareable={shareable}
+        onToggleShareable={handleToggleShareable}
+        shareablePending={updateConfig.isPending}
+      />
     </div>
   );
 }

@@ -8,9 +8,11 @@ import {
   crossVaultRecall,
   currentVaultTarget,
   resolveAllShareableVaults,
+  resolveConnectedVaults,
   namespacedKey,
   type CrossVaultTarget,
 } from '../../src/lib/federation-recall.js';
+import { addConnection, markStale } from '../../src/lib/connections.js';
 
 function makeHome(): string {
   const dir = join(tmpdir(), `dc-fedrecall-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -184,5 +186,72 @@ describe('crossVaultRecall (federation P1.2/P1.3)', () => {
     expect(name).toBe('cur');
     expect(target.current).toBe(true);
     expect(target.name).toBe('cur');
+  });
+});
+
+describe('resolveConnectedVaults (federation P2)', () => {
+  let home: string;
+  let base: string;
+
+  beforeEach(() => {
+    home = makeHome();
+    base = makeHome();
+    vi.restoreAllMocks();
+  });
+
+  afterEach(() => {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  const ctx = (projectRoot: string): string => join(projectRoot, '_dream_context');
+  const current: CrossVaultTarget = { name: 'cur', current: true };
+
+  it('spans out/both connections intersected with shareable, current first', () => {
+    const cur = makeVault(base, 'cur', { home, shareable: false });
+    makeVault(base, 'outPeer', { home, shareable: true });
+    makeVault(base, 'bothPeer', { home, shareable: true });
+    addConnection(ctx(cur), 'cur', 'outPeer', 'out', null, home);
+    addConnection(ctx(cur), 'cur', 'bothPeer', 'both', null, home);
+
+    const targets = resolveConnectedVaults(current, ctx(cur), home);
+    expect(targets[0].current).toBe(true); // current leads
+    const names = targets.map((t) => t.name);
+    expect(names).toContain('outPeer');
+    expect(names).toContain('bothPeer');
+  });
+
+  it('excludes an in-only connection (this vault does not reach across it)', () => {
+    const cur = makeVault(base, 'cur', { home, shareable: false });
+    makeVault(base, 'inPeer', { home, shareable: true });
+    addConnection(ctx(cur), 'cur', 'inPeer', 'in', null, home);
+
+    const names = resolveConnectedVaults(current, ctx(cur), home).map((t) => t.name);
+    expect(names).not.toContain('inPeer');
+    expect(names).toEqual(['cur']);
+  });
+
+  it('excludes an out connection to a NON-shareable peer (∩ shareable)', () => {
+    const cur = makeVault(base, 'cur', { home, shareable: false });
+    makeVault(base, 'closed', { home, shareable: false });
+    addConnection(ctx(cur), 'cur', 'closed', 'both', null, home);
+
+    const names = resolveConnectedVaults(current, ctx(cur), home).map((t) => t.name);
+    expect(names).not.toContain('closed');
+  });
+
+  it('excludes a stale connection even when out/both and shareable', () => {
+    const cur = makeVault(base, 'cur', { home, shareable: false });
+    makeVault(base, 'dead', { home, shareable: true });
+    addConnection(ctx(cur), 'cur', 'dead', 'both', null, home);
+    markStale(ctx(cur), 'dead');
+
+    const names = resolveConnectedVaults(current, ctx(cur), home).map((t) => t.name);
+    expect(names).not.toContain('dead');
+  });
+
+  it('degenerates to current-only with no connections', () => {
+    const cur = makeVault(base, 'cur', { home, shareable: false });
+    expect(resolveConnectedVaults(current, ctx(cur), home).map((t) => t.name)).toEqual(['cur']);
   });
 });

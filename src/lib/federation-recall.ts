@@ -7,6 +7,7 @@ import {
   type RecallHit,
 } from './recall.js';
 import { isShareable } from './federation-config.js';
+import { listConnections } from './connections.js';
 import { listVaults, resolveVaultContextRoot, VaultError, type Vault } from './vaults.js';
 
 /**
@@ -156,19 +157,41 @@ export function crossVaultRecall(
 
 /**
  * Resolve the `--connected` target set: the current vault plus every peer
- * reachable over an `out`/`both` connection (P1.2).
+ * reachable over an `out`/`both` connection (P1.2/P2.1).
  *
- * PHASE 1 STUB — returns the CURRENT vault ONLY. Connections (`.connections.json`)
- * do not exist until Phase 2, so `--connected` degenerates to a local recall
- * here (documented degenerate-until-P2 behaviour). Phase 2 replaces this body
- * with the real connection walk (direction out|both AND status !== 'stale',
- * intersected with `shareable`).
+ * Reads the current vault's `.connections.json` and keeps a peer iff its
+ * direction is `out` or `both` (this vault reaches across) AND its status is not
+ * `stale`. The resulting peer names are then intersected with `shareable`: a
+ * peer that has not opted into being read is silently dropped here so the recall
+ * never even attempts it (the same fail-closed gate `crossVaultRecall` applies).
+ * The current vault always leads the list.
+ *
+ * Never throws — connection reads are never-throw, and a peer whose registry
+ * entry vanished is skipped (it can't be intersected with `shareable`).
  */
 export function resolveConnectedVaults(
   current: CrossVaultTarget,
-  _home?: string,
+  contextRoot: string,
+  home?: string,
 ): CrossVaultTarget[] {
-  return [current];
+  const currentLabel = current.label ?? current.name;
+  const targets: CrossVaultTarget[] = [current];
+
+  const connections = listConnections(contextRoot).filter(
+    (c) => (c.direction === 'out' || c.direction === 'both') && c.status !== 'stale',
+  );
+  if (connections.length === 0) return targets;
+
+  const vaults = listVaults(home);
+  for (const conn of connections) {
+    // Never re-add the current vault (a malformed self-link can't sneak in).
+    if (conn.vault === current.name || conn.vault === currentLabel) continue;
+    const peer = vaults.find((v) => v.name === conn.vault);
+    if (!peer) continue; // registry entry gone — nothing to intersect with shareable
+    if (!isShareable(peer.path)) continue; // not opted into being read — silently excluded
+    targets.push({ name: peer.name });
+  }
+  return targets;
 }
 
 /**
