@@ -1,8 +1,10 @@
 import { Command } from 'commander';
 import { dirname } from 'node:path';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import chalk from 'chalk';
 import { resolveContextRoot } from '../../lib/context-path.js';
 import { readSetupConfig, updateSetupConfig } from '../../lib/setup-config.js';
+import { ensurePeopleSection } from '../../lib/people.js';
 import { applyClaudeAutoMemory } from '../../lib/claude-settings.js';
 import { header, success, error, info } from '../../lib/format.js';
 import { promptInput } from '../../lib/prompt.js';
@@ -285,6 +287,78 @@ export function registerConfigCommand(program: Command): void {
             info(chalk.dim('Set the ClickUp list with `dreamcontext config clickup-list <teamId> <spaceId> <listId>`.'));
           }
         }
+      }
+    });
+
+  config
+    .command('people [names...]')
+    .description('Set the people roster (display names) and sync the ## People block in 1.user.md')
+    .option('--clear', 'Empty the roster (single-person project)')
+    .action((names: string[], opts: { clear?: boolean }) => {
+      const projectRoot = requireProjectRoot();
+      if (!projectRoot) return;
+
+      // Resolve the roster: --clear wins; otherwise dedupe the supplied display
+      // names (case-insensitive on slug) preserving first-seen order.
+      let roster: string[] = [];
+      if (!opts.clear) {
+        const seen = new Set<string>();
+        for (const raw of names) {
+          const name = raw.trim();
+          if (!name) continue;
+          const slug = slugify(name);
+          if (!slug || seen.has(slug)) continue;
+          seen.add(slug);
+          roster.push(name);
+        }
+        if (roster.length === 0) {
+          error('No valid names provided.', 'Usage: dreamcontext config people "Alice" "Bob"  (or --clear)');
+          process.exitCode = 1;
+          return;
+        }
+      }
+
+      // updateSetupConfig merges with `patch.people ?? existing.people`, so
+      // `undefined` would be a no-op (can't clear). An empty array IS a clear and
+      // reads as single-person via isMultiPerson([]) === false.
+      updateSetupConfig(projectRoot, { people: roster });
+
+      // Sync the ## People block in 1.user.md. ensurePeopleSection is a no-op for
+      // ≤1 person, so a cleared/single roster never adds a block (and an existing
+      // block is left in place — note that below so the user can prune it).
+      const contextRoot = resolveContextRoot();
+      let userMdSynced = false;
+      if (contextRoot) {
+        const userMdPath = join(contextRoot, 'core', '1.user.md');
+        if (existsSync(userMdPath)) {
+          try {
+            const before = readFileSync(userMdPath, 'utf-8');
+            const after = ensurePeopleSection(before, roster);
+            if (after !== before) {
+              writeFileSync(userMdPath, after, 'utf-8');
+              userMdSynced = true;
+            }
+          } catch (err: any) {
+            // Roster is already persisted to config; surface the sync failure
+            // cleanly rather than throwing a raw stack trace.
+            error(`Could not sync the ## People block in 1.user.md: ${err.message}`);
+            process.exitCode = 1;
+            return;
+          }
+        }
+      }
+
+      if (roster.length === 0) {
+        success('People roster cleared (single-person project).');
+        info(chalk.dim('Any existing "## People" block in 1.user.md was left as-is — remove it manually if no longer needed.'));
+        return;
+      }
+      const multi = roster.length > 1;
+      success(`People roster set: ${roster.join(', ')}.`);
+      info(chalk.dim(`Slugs: ${roster.map((p) => `person:${slugify(p)}`).join(', ')}`));
+      if (userMdSynced) info(chalk.dim('Synced the "## People" section in 1.user.md.'));
+      if (!multi) {
+        info(chalk.dim('Only one person — multi-person attribution stays off until a second person is added.'));
       }
     });
 
