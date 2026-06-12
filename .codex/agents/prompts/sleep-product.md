@@ -220,7 +220,7 @@ Then Edit the body. Standard sections:
 dreamcontext taxonomy vocab
 ```
 
-Pull tags from this list (faceted canonicals preferred: `topic:recall`, `domain:database`, etc.). Bare standard tags remain valid fallbacks. Don't invent tags freely; new tags fragment search. The project vocabulary is maintained in `core/taxonomy.md`; scaffold with `dreamcontext taxonomy init` if missing.
+Pull tags from this list (faceted canonicals preferred: `topic:recall`, `domain:database`, etc.). Bare standard tags remain valid fallbacks. Don't invent tags freely; new tags fragment search. The project vocabulary is maintained in `core/taxonomy.json`; scaffold with `dreamcontext taxonomy init` if missing. Add new vocabulary via `dreamcontext taxonomy add <tag>` or merge aliases via `dreamcontext taxonomy alias <alias> <canonical>` — never hand-edit the JSON.
 
 #### B4. Index sanity check
 
@@ -271,13 +271,13 @@ Data structures live at `knowledge/data-structures/<product>.md` (`default.md` f
 
 Run this pass every cycle to keep tags healthy. It is fast and always warranted.
 
-#### C1. Ensure taxonomy.md exists
+#### C1. Ensure taxonomy.json exists
 
 ```bash
 dreamcontext taxonomy init
 ```
 
-This is idempotent — if `core/taxonomy.md` already exists, no change is made.
+This is idempotent — if `core/taxonomy.json` already exists, no change is made.
 
 #### C2. Audit the corpus
 
@@ -290,15 +290,29 @@ Review the output. Buckets to act on:
 | Bucket | Action |
 |--------|--------|
 | `nonCanonical` / `alias` tags | Edit the offending file's frontmatter `tags:` array surgically — replace the alias with the canonical (e.g. `db` → `domain:database`). One file at a time; verify each change is correct before moving on. |
-| `orphan` tags | If the tag is a real project concept, add it to `## Domain Vocabulary` in `core/taxonomy.md`. If it was a typo or leftover, remove it from the file's frontmatter. |
-| `nearDups` in vocab | If two vocab entries are near-duplicates by accident, remove the weaker one from `core/taxonomy.md` and update any files using it. |
+| `orphan` tags | If the tag is a real project concept, add it to the vocabulary via `dreamcontext taxonomy add <tag>`. If it was a typo or leftover, remove it from the file's frontmatter. |
+| `nearDups` in vocab | If two vocab entries are near-duplicates by accident, remove the weaker one by hand-editing `core/taxonomy.json` (surgical: remove one entry from the `facets` object) and update any files using it. |
 | `untagged` docs | Tag them if content is clear; leave them if the doc is a stub. |
 
 **Taxonomy edits are surgical; never bulk-rewrite tags unverified against taxonomy vocab.** Confirm each change against the audit output before writing it.
 
 #### C3. Grow the Domain Vocabulary
 
-If the session produced new recurring domain nouns (product names, feature areas, technical concepts) that aren't yet in the vocabulary, add them to `## Domain Vocabulary` in `core/taxonomy.md`.
+If the session produced new recurring domain nouns (product names, feature areas, technical concepts) that aren't yet in the vocabulary, add them via CLI — never hand-edit `core/taxonomy.json` directly:
+
+```bash
+# Add a new domain tag (faceted)
+dreamcontext taxonomy add domain:<concept>
+
+# Add a new topic tag
+dreamcontext taxonomy add topic:<area>
+
+# Merge a shorthand alias into an existing canonical
+dreamcontext taxonomy alias <shorthand> <canonical>
+
+# Verify a tag's classification and resolution
+dreamcontext taxonomy resolve <tag>
+```
 
 ## Return — single combined report
 
@@ -324,9 +338,9 @@ If the session produced new recurring domain nouns (product names, feature areas
 - No-op knowledge signals: 1 (`research_present` was a one-line decision already captured by sleep-state in 2.memory.md — not knowledge-worthy)
 
 ### Taxonomy
-- taxonomy init: no-op (core/taxonomy.md already exists)
+- taxonomy init: no-op (core/taxonomy.json already exists)
 - audit: 2 nonCanonical tags fixed (knowledge/auth-design.md: auth → domain:security; state/task-slug.md: db → domain:database)
-- Domain Vocabulary: added 'ripple', 'bookmarking'
+- Domain Vocabulary: added 'ripple' via `taxonomy add topic:ripple`, added alias 'bookmarking' → 'topic:sleep' via `taxonomy alias bookmarking topic:sleep`
 ```
 
 ## Rules
@@ -339,7 +353,7 @@ If the session produced new recurring domain nouns (product names, feature areas
 6. **Don't create knowledge that already fits in memory.** A short technical decision belongs in `2.memory.md` (sleep-state's domain), not its own knowledge file.
 7. **Knowledge file threshold**: ≥3 paragraphs of content, or material that will be re-read in future sessions.
 8. **Fewest files, sharp boundaries (B2 rubric).** Default to extending an existing file. Fold soft distinctions in — same vertical/brand/topic family, a narrower slice, an increment. Create a new file only for a genuinely separate topic whose own tags sharpen discovery. Not super-files, not fragmentation.
-9. **Use standard tags only (prefer taxonomy vocab).** New tags fragment discovery; always check `dreamcontext taxonomy vocab` before tagging.
+9. **Use standard tags only (prefer taxonomy vocab).** New tags fragment discovery; always check `dreamcontext taxonomy vocab` before tagging. Add new vocabulary via `taxonomy add` or `taxonomy alias` — never hand-edit `core/taxonomy.json` directly.
 10. **Process all flags from sleep-state** in your report — don't silently drop them.
 11. **No-op cheaply** when signals don't actually warrant work.
 12. **Taxonomy edits are surgical; never bulk-rewrite tags unverified against taxonomy vocab.** Confirm each change against the audit output before writing it.

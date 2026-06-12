@@ -29,28 +29,10 @@ describe('agents/sleep-product.md markers', () => {
     // B3 should reference taxonomy vocab
     expect(content).toContain('taxonomy vocab');
   });
-});
 
-// ── src/templates/init/taxonomy.md markers ───────────────────────────────────
-
-describe('src/templates/init/taxonomy.md markers', () => {
-  const content = readFileSync(
-    join(ROOT, 'src', 'templates', 'init', 'taxonomy.md'),
-    'utf-8',
-  );
-
-  it("has '## Naming Rules' section", () => {
-    expect(content).toContain('## Naming Rules');
-  });
-
-  it("has '## Aliases' section", () => {
-    expect(content).toContain('## Aliases');
-  });
-
-  it('contains no stray {{...}} template tokens', () => {
-    // The init replaceTokens loop processes {{TOKEN}} patterns;
-    // taxonomy.md must not have any (it has no project-specific tokens).
-    expect(content).not.toMatch(/\{\{[^}]+\}\}/);
+  it('Pass C contains the taxonomy alias CLI command', () => {
+    // Agents must use CLI to mutate vocabulary, not edit markdown directly.
+    expect(content).toContain('taxonomy alias');
   });
 });
 
@@ -63,8 +45,8 @@ describe('skill/SKILL.md markers', () => {
     expect(content).toContain('Tag before you create.');
   });
 
-  it('has a pointer to core/taxonomy.md in the knowledge section', () => {
-    expect(content).toContain('core/taxonomy.md');
+  it('has a pointer to core/taxonomy.json in the knowledge section', () => {
+    expect(content).toContain('core/taxonomy.json');
   });
 
   it('has a pointer to dreamcontext taxonomy vocab command', () => {

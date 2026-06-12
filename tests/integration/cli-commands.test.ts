@@ -656,10 +656,10 @@ parent_task: null
       expect(output).toContain('placeholder');
     });
 
-    it('warns (non-fatal) when core/taxonomy.md is missing', () => {
+    it('warns (non-fatal) when core/taxonomy.json is missing', () => {
       run('init --yes --name "Test" --description "d" --stack "Node" --priority "p"', tmpDir);
-      const taxonomyPath = join(tmpDir, '_dream_context', 'core', 'taxonomy.md');
-      // taxonomy.md is created by init; delete it to simulate a missing file.
+      const taxonomyPath = join(tmpDir, '_dream_context', 'core', 'taxonomy.json');
+      // taxonomy.json is created by init; delete it to simulate a missing file.
       if (existsSync(taxonomyPath)) {
         rmSync(taxonomyPath);
       }
@@ -668,7 +668,6 @@ parent_task: null
       expect(output).toContain('taxonomy');
       expect(output).toContain('taxonomy init');
       // Doctor exits 0 for warnings (no hard error from taxonomy alone).
-      // We can't check process exit via run(), but the output must include 'warning'.
     });
   });
 
@@ -695,6 +694,30 @@ parent_task: null
       expect(parsed.facetTags.topic).toContain('topic:recall');
     });
 
+    it('taxonomy vocab --facet domain filters output to domain facet', () => {
+      const output = run('taxonomy vocab --facet domain', tmpDir);
+      expect(output).toContain('domain');
+      expect(output).toContain('domain:database');
+      // Other facets should not appear (layer, kind, topic)
+      expect(output).not.toContain('topic:recall');
+      expect(output).not.toContain('layer:frontend');
+    });
+
+    it('taxonomy vocab --facet --json emits only the requested facet', () => {
+      const output = run('taxonomy vocab --facet topic --json', tmpDir);
+      const parsed = JSON.parse(output);
+      expect(parsed).toHaveProperty('topic');
+      expect(Array.isArray(parsed.topic)).toBe(true);
+      expect(parsed.topic).toContain('topic:recall');
+      // Other facets must not be present
+      expect(parsed).not.toHaveProperty('domain');
+    });
+
+    it('taxonomy vocab --facet rejects unknown facet name', () => {
+      const output = run('taxonomy vocab --facet bogus', tmpDir);
+      expect(output).toContain('bogus');
+    });
+
     it('taxonomy audit exits 0 and is strictly read-only', () => {
       // Run audit; it must complete without error (exit 0).
       const output = run('taxonomy audit', tmpDir);
@@ -711,45 +734,142 @@ parent_task: null
       expect(parsed).toHaveProperty('nearDups');
     });
 
-    it('taxonomy init creates core/taxonomy.md', () => {
-      const taxonomyPath = join(tmpDir, '_dream_context', 'core', 'taxonomy.md');
-      // init already creates taxonomy.md; delete it first so taxonomy init recreates it.
+    it('taxonomy init creates core/taxonomy.json (idempotent, no overwrite)', () => {
+      const taxonomyPath = join(tmpDir, '_dream_context', 'core', 'taxonomy.json');
+      // init already creates taxonomy.json; delete it first so taxonomy init recreates it.
       if (existsSync(taxonomyPath)) {
         rmSync(taxonomyPath);
       }
       const output = run('taxonomy init', tmpDir);
       expect(output).toContain('Created');
       expect(existsSync(taxonomyPath)).toBe(true);
-      const content = readFileSync(taxonomyPath, 'utf-8');
-      expect(content).toContain('## Naming Rules');
-      expect(content).toContain('## Aliases');
+      // File is valid JSON with version field.
+      const content = JSON.parse(readFileSync(taxonomyPath, 'utf-8'));
+      expect(content.version).toBe(1);
+      expect(content.facets).toBeDefined();
+      expect(content.aliases).toBeDefined();
     });
 
     it('taxonomy init is idempotent — second run does not overwrite existing file', () => {
-      const taxonomyPath = join(tmpDir, '_dream_context', 'core', 'taxonomy.md');
-      // Ensure it exists (init created it) with known content.
+      const taxonomyPath = join(tmpDir, '_dream_context', 'core', 'taxonomy.json');
+      // Ensure it exists (init created it).
       if (!existsSync(taxonomyPath)) {
         run('taxonomy init', tmpDir);
       }
-      // Write a custom sentinel into the file.
-      const original = readFileSync(taxonomyPath, 'utf-8');
-      writeFileSync(taxonomyPath, original + '\n# SENTINEL', 'utf-8');
+      // Write a custom sentinel key into the JSON.
+      const existing = JSON.parse(readFileSync(taxonomyPath, 'utf-8'));
+      existing.sentinel = 'DO_NOT_OVERWRITE';
+      writeFileSync(taxonomyPath, JSON.stringify(existing, null, 2), 'utf-8');
 
       const output = run('taxonomy init', tmpDir);
       // Should say already exists, not Created.
       expect(output).toContain('already exists');
       // File must be unchanged (sentinel preserved).
-      const after = readFileSync(taxonomyPath, 'utf-8');
-      expect(after).toContain('SENTINEL');
+      const after = JSON.parse(readFileSync(taxonomyPath, 'utf-8'));
+      expect(after.sentinel).toBe('DO_NOT_OVERWRITE');
     });
 
-    it('init scaffolds core/taxonomy.md from the template', () => {
-      // init was already run in beforeEach; verify taxonomy.md was created.
-      const taxonomyPath = join(tmpDir, '_dream_context', 'core', 'taxonomy.md');
-      expect(existsSync(taxonomyPath)).toBe(true);
-      const content = readFileSync(taxonomyPath, 'utf-8');
-      expect(content).toContain('## Naming Rules');
-      expect(content).toContain('## Aliases');
+    it('init scaffolds core/taxonomy.json (not taxonomy.md)', () => {
+      // init was already run in beforeEach; verify taxonomy.json was created.
+      const taxonomyJsonPath = join(tmpDir, '_dream_context', 'core', 'taxonomy.json');
+      const taxonomyMdPath = join(tmpDir, '_dream_context', 'core', 'taxonomy.md');
+      expect(existsSync(taxonomyJsonPath)).toBe(true);
+      expect(existsSync(taxonomyMdPath)).toBe(false);
+      // JSON file must be parseable.
+      const content = JSON.parse(readFileSync(taxonomyJsonPath, 'utf-8'));
+      expect(content.version).toBe(1);
+    });
+
+    it('taxonomy add: adds a valid faceted tag', () => {
+      const output = run('taxonomy add domain:payments', tmpDir);
+      expect(output).toContain('Added');
+      expect(output).toContain('domain:payments');
+      // Verify it appears in vocab
+      const vocabOutput = run('taxonomy vocab --json', tmpDir);
+      const vocab = JSON.parse(vocabOutput);
+      expect(vocab.facetTags.domain).toContain('domain:payments');
+    });
+
+    it('taxonomy add: exits 0 for already-existing tag', () => {
+      // topic:recall is in DEFAULT_VOCABULARY — adding it is benign
+      const output = run('taxonomy add topic:recall', tmpDir);
+      expect(output).toContain('already exists');
+      // Must not contain error language
+      expect(output).not.toContain('Error:');
+    });
+
+    it('taxonomy add: exits 1 for unknown facet', () => {
+      // run() catches non-zero exits but still returns output
+      const output = run('taxonomy add custom:value', tmpDir);
+      expect(output).toContain('unknown facet');
+    });
+
+    it('taxonomy add: rejects tag that is an alias of an existing canonical', () => {
+      // 'search' is an alias of 'topic:recall' in DEFAULT_VOCABULARY
+      const output = run('taxonomy add search', tmpDir);
+      expect(output).toContain('alias');
+    });
+
+    it('taxonomy alias: adds a valid alias mapping', () => {
+      const output = run('taxonomy alias pay domain:database', tmpDir);
+      expect(output).toContain('Added alias');
+      // Verify it appears in vocab
+      const vocabOutput = run('taxonomy vocab --json', tmpDir);
+      const vocab = JSON.parse(vocabOutput);
+      expect(vocab.aliases['pay']).toBe('domain:database');
+    });
+
+    it('taxonomy alias: exits 0 for already-existing identical mapping', () => {
+      // 'search' → 'topic:recall' is in DEFAULT_VOCABULARY
+      const output = run('taxonomy alias search topic:recall', tmpDir);
+      expect(output).toContain('already exists');
+      expect(output).not.toContain('Error:');
+    });
+
+    it('taxonomy alias: exits 1 when canonical does not exist', () => {
+      const output = run('taxonomy alias myalias domain:nonexistent', tmpDir);
+      expect(output).toContain('does not exist');
+    });
+
+    it('taxonomy alias: exits 1 to prevent chains', () => {
+      // 'search' is already an alias — it cannot be used as a canonical
+      const output = run('taxonomy alias newkey search', tmpDir);
+      expect(output).toContain('chain');
+    });
+
+    it('taxonomy resolve: shows classification for a faceted tag', () => {
+      const output = run('taxonomy resolve topic:recall', tmpDir);
+      expect(output).toContain('topic:recall');
+      expect(output).toContain('faceted');
+    });
+
+    it('taxonomy resolve: shows alias resolution', () => {
+      const output = run('taxonomy resolve search', tmpDir);
+      expect(output).toContain('alias');
+      expect(output).toContain('topic:recall');
+    });
+
+    it('taxonomy resolve --json emits valid JSON with classification', () => {
+      const output = run('taxonomy resolve topic:recall --json', tmpDir);
+      const parsed = JSON.parse(output);
+      expect(parsed.tag).toBe('topic:recall');
+      expect(parsed.classification).toBe('faceted');
+      expect(parsed.indexValue).toBe('recall');
+    });
+
+    it('taxonomy resolve --json: alias shows canonical', () => {
+      const output = run('taxonomy resolve search --json', tmpDir);
+      const parsed = JSON.parse(output);
+      expect(parsed.classification).toBe('alias');
+      expect(parsed.canonical).toBe('topic:recall');
+    });
+
+    it('doctor warns about missing taxonomy.json after delete', () => {
+      const taxonomyPath = join(tmpDir, '_dream_context', 'core', 'taxonomy.json');
+      if (existsSync(taxonomyPath)) rmSync(taxonomyPath);
+      const output = run('doctor', tmpDir);
+      expect(output).toContain('taxonomy');
+      expect(output).toContain('taxonomy init');
     });
   });
 

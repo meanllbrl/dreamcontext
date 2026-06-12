@@ -21,6 +21,7 @@ import { updateSetupConfig } from '../../lib/setup-config.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
 import { printDeprecationHint, SETUP_INTERNAL_ENV } from './install-skill.js';
 import { platformSkillRoot } from '../../lib/catalog.js';
+import { ensureTaxonomyFile } from '../../lib/taxonomy.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
@@ -275,7 +276,6 @@ export function registerInitCommand(program: Command): void {
         '2.memory.md',
         '3.style_guide_and_branding.md',
         '4.tech_stack.md',
-        'taxonomy.md',
       ];
 
       for (const file of templateFiles) {
@@ -320,6 +320,10 @@ export function registerInitCommand(program: Command): void {
       for (const file of jsonFiles) {
         writeFileSync(join(contextDir, 'core', file), '[]\n', 'utf-8');
       }
+
+      // Scaffold taxonomy vocabulary (JSON format). contextDir is _dream_context/
+      // which is the contextRoot expected by ensureTaxonomyFile.
+      ensureTaxonomyFile(contextDir);
 
       // Write/merge state/.config.json via WS-1's helper (preserves any
       // platforms/packs/setupVersion WS-1 already wrote during a setup flow).

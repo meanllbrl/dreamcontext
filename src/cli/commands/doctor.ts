@@ -208,13 +208,13 @@ export function registerDoctorCommand(program: Command): void {
         ...checkDataStructures(root),
 
         // Taxonomy vocabulary (non-fatal: absent means DEFAULT_VOCABULARY used)
-        ...(!existsSync(join(root, 'core', 'taxonomy.md'))
+        ...(!existsSync(join(root, 'core', 'taxonomy.json'))
           ? [{
               name: 'Taxonomy vocabulary',
               status: 'warn' as const,
-              message: 'core/taxonomy.md not found — run `dreamcontext taxonomy init` to scaffold it',
+              message: 'core/taxonomy.json not found — run `dreamcontext taxonomy init` to scaffold it',
             }]
-          : []),
+          : [checkJson(root, 'core/taxonomy.json', 'Taxonomy vocabulary')]),
 
         // Sleep state (optional — created on first Stop hook)
         ...(existsSync(join(root, 'state', '.sleep.json'))

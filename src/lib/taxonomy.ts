@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { STANDARD_TAGS } from './knowledge-index.js';
 
@@ -17,6 +17,15 @@ export interface Vocabulary {
   aliases: Record<string, string>;
   /** Non-faceted (bare) tags. */
   bareTags: string[];
+}
+
+/** Shape of core/taxonomy.json on disk. */
+interface TaxonomyJson {
+  version: number;
+  facets: Record<string, string[]>;
+  bareTags: string[];
+  aliases: Record<string, string>;
+  [key: string]: unknown;
 }
 
 // ─── Default Vocabulary ──────────────────────────────────────────────────────
@@ -146,11 +155,19 @@ export function tagIndexValue(tag: string): string {
  * canonical. Guards against self-aliases and cycles (returns input unchanged
  * if a cycle is detected on the second hop).
  */
+/**
+ * Own-property alias lookup. Plain objects inherit keys like `constructor`
+ * from Object.prototype — a tag with such a name must NOT read as an alias.
+ */
+function aliasOf(aliases: Record<string, string>, tag: string): string | undefined {
+  return Object.hasOwn(aliases, tag) ? aliases[tag] : undefined;
+}
+
 export function resolveAlias(tag: string, vocab: Vocabulary): string {
-  const canonical = vocab.aliases[tag];
+  const canonical = aliasOf(vocab.aliases, tag);
   if (!canonical || canonical === tag) return tag;
   // Guard cycle: if the canonical also has an alias that leads back, stop.
-  const second = vocab.aliases[canonical];
+  const second = aliasOf(vocab.aliases, canonical);
   if (second && second !== canonical && second === tag) return tag; // cycle guard
   return canonical;
 }
@@ -161,7 +178,7 @@ export function resolveAlias(tag: string, vocab: Vocabulary): string {
  */
 export function isCanonical(tag: string, vocab: Vocabulary): boolean {
   // Must not be an alias that points somewhere else.
-  const alias = vocab.aliases[tag];
+  const alias = aliasOf(vocab.aliases, tag);
   if (alias && alias !== tag) return false;
   const allFacetTags = (Object.values(vocab.facetTags) as string[][]).flat();
   return allFacetTags.includes(tag) || vocab.bareTags.includes(tag);
@@ -171,7 +188,8 @@ export function isCanonical(tag: string, vocab: Vocabulary): boolean {
  * Classify a tag as 'faceted', 'bare', or 'unknown' relative to the vocabulary.
  */
 export function classifyTag(tag: string, vocab: Vocabulary): 'faceted' | 'bare' | 'alias' | 'unknown' {
-  if (vocab.aliases[tag] && vocab.aliases[tag] !== tag) return 'alias';
+  const aliasTarget = aliasOf(vocab.aliases, tag);
+  if (aliasTarget && aliasTarget !== tag) return 'alias';
   const colonIdx = tag.indexOf(':');
   if (colonIdx !== -1) {
     const prefix = tag.slice(0, colonIdx);
@@ -252,91 +270,86 @@ export function aliasGroups(vocab: Vocabulary): string[][] {
   return groups;
 }
 
-// ─── Vocabulary Markdown I/O ─────────────────────────────────────────────────
+// ─── Vocabulary JSON I/O ──────────────────────────────────────────────────────
 
 /**
- * Parse a taxonomy.md file into a partial Vocabulary. Fail-soft: skip malformed
- * rows, never throw. The result is merged OVER the default in loadProjectVocabulary.
- *
- * Recognised sections:
- *   ## Facets      — code blocks with `facet:value` lines (one per line)
- *   ## Aliases     — markdown table  | alias | canonical |
- *   ## Domain Vocabulary — bare tag lines (one per line)
+ * Serialize a vocabulary to canonical pretty-printed JSON string.
+ * The output has a `version` field and matches the core/taxonomy.json schema.
  */
-export function parseVocabularyMarkdown(markdown: string): Partial<Vocabulary> {
+export function serializeVocabulary(vocab: Vocabulary): string {
+  const facets: Record<string, string[]> = {};
+  for (const facet of FACETS) {
+    facets[facet] = vocab.facetTags[facet];
+  }
+  const obj: TaxonomyJson = {
+    version: 1,
+    facets,
+    bareTags: vocab.bareTags,
+    aliases: vocab.aliases,
+  };
+  return JSON.stringify(obj, null, 2) + '\n';
+}
+
+/**
+ * Parse a taxonomy.json string into a partial Vocabulary. Fail-soft: malformed
+ * JSON, wrong-type fields, or unknown keys are silently tolerated — never throws.
+ * Values are normalized via normalizeTag on load.
+ */
+export function parseVocabularyJson(raw: string): Partial<Vocabulary> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return {};
+  }
+
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return {};
+  }
+
+  const obj = parsed as Record<string, unknown>;
   const result: Partial<Vocabulary> = {};
 
-  // Split into H2 sections.
-  const sections = markdown.split(/^## /m);
-
-  for (const section of sections) {
-    const titleEnd = section.indexOf('\n');
-    if (titleEnd === -1) continue;
-    const title = section.slice(0, titleEnd).trim().toLowerCase();
-    const body = section.slice(titleEnd + 1);
-
-    if (title === 'facets') {
-      // Parse code-block lines of the form `facet:value`.
-      const facetTags: Record<Facet, string[]> = { domain: [], layer: [], kind: [], topic: [] };
-      const codeBlockMatches = body.matchAll(/```[^\n]*\n([\s\S]*?)```/g);
-      for (const m of codeBlockMatches) {
-        for (const line of m[1].split('\n')) {
-          const trimmed = line.trim();
-          if (!trimmed || trimmed.startsWith('#')) continue;
-          const colonIdx = trimmed.indexOf(':');
-          if (colonIdx === -1) continue;
-          const facet = trimmed.slice(0, colonIdx) as Facet;
-          if (!FACET_SET.has(facet)) continue;
-          facetTags[facet].push(trimmed);
-        }
+  // Parse facets
+  if (obj.facets !== null && typeof obj.facets === 'object' && !Array.isArray(obj.facets)) {
+    const facets = obj.facets as Record<string, unknown>;
+    const facetTags: Record<Facet, string[]> = { domain: [], layer: [], kind: [], topic: [] };
+    let hadAnyFacet = false;
+    for (const facet of FACETS) {
+      const vals = facets[facet];
+      if (Array.isArray(vals)) {
+        facetTags[facet] = vals
+          .filter((v): v is string => typeof v === 'string')
+          .map((v) => normalizeTag(v));
+        hadAnyFacet = true;
       }
-      // Also accept bare `facet:value` lines outside code blocks.
-      for (const line of body.split('\n')) {
-        const trimmed = line.trim();
-        if (!trimmed || trimmed.startsWith('`') || trimmed.startsWith('#')) continue;
-        const colonIdx = trimmed.indexOf(':');
-        if (colonIdx === -1) continue;
-        const facet = trimmed.slice(0, colonIdx) as Facet;
-        if (!FACET_SET.has(facet)) continue;
-        if (!facetTags[facet].includes(trimmed)) facetTags[facet].push(trimmed);
-      }
-      result.facetTags = facetTags;
-    } else if (title === 'aliases') {
-      // Parse markdown table rows: | alias | canonical |
-      const aliases: Record<string, string> = {};
-      for (const line of body.split('\n')) {
-        if (!line.includes('|')) continue;
-        const cells = line.split('|').map((c) => c.trim()).filter(Boolean);
-        if (cells.length < 2) continue;
-        if (cells[0].toLowerCase() === 'alias' || cells[0].startsWith('-')) continue;
-        const alias = cells[0];
-        const canonical = cells[1];
-        if (!alias || !canonical || alias === canonical) continue;
-        // Basic sanity: no spaces allowed in tag tokens.
-        if (alias.includes(' ') || canonical.includes(' ')) continue;
-        aliases[alias] = canonical;
-      }
-      result.aliases = aliases;
-    } else if (title === 'domain vocabulary' || title === 'naming rules') {
-      // Parse bare-tag lines (dash-list or plain lines).
-      const bareTags: string[] = [];
-      for (const line of body.split('\n')) {
-        const trimmed = line.replace(/^[-*]\s*/, '').trim();
-        if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('|')) continue;
-        // Skip lines that look like headings or code.
-        if (trimmed.startsWith('`') || trimmed.startsWith('>')) continue;
-        // Simple kebab-case check.
-        if (/^[a-z][a-z0-9-]*$/.test(trimmed)) bareTags.push(trimmed);
-      }
-      if (bareTags.length > 0) result.bareTags = bareTags;
     }
+    if (hadAnyFacet) result.facetTags = facetTags;
+  }
+
+  // Parse bareTags
+  if (Array.isArray(obj.bareTags)) {
+    result.bareTags = (obj.bareTags as unknown[])
+      .filter((v): v is string => typeof v === 'string')
+      .map((v) => normalizeTag(v));
+  }
+
+  // Parse aliases
+  if (obj.aliases !== null && typeof obj.aliases === 'object' && !Array.isArray(obj.aliases)) {
+    const aliases: Record<string, string> = {};
+    for (const [k, v] of Object.entries(obj.aliases as Record<string, unknown>)) {
+      if (typeof k === 'string' && typeof v === 'string' && k !== v) {
+        aliases[normalizeTag(k)] = normalizeTag(v);
+      }
+    }
+    result.aliases = aliases;
   }
 
   return result;
 }
 
 /**
- * Load the project's taxonomy.md (core/taxonomy.md) if present, merge it over
+ * Load the project's taxonomy.json (core/taxonomy.json) if present, merge it over
  * DEFAULT_VOCABULARY using ARRAY-UNION per key, and return the merged vocab.
  *
  * Merge rules:
@@ -348,7 +361,7 @@ export function parseVocabularyMarkdown(markdown: string): Partial<Vocabulary> {
  * result always contains at least the defaults.
  */
 export function loadProjectVocabulary(contextRoot: string): Vocabulary {
-  const taxonomyPath = join(contextRoot, 'core', 'taxonomy.md');
+  const taxonomyPath = join(contextRoot, 'core', 'taxonomy.json');
   if (!existsSync(taxonomyPath)) return DEFAULT_VOCABULARY;
 
   let raw = '';
@@ -358,7 +371,7 @@ export function loadProjectVocabulary(contextRoot: string): Vocabulary {
     return DEFAULT_VOCABULARY;
   }
 
-  const project = parseVocabularyMarkdown(raw);
+  const project = parseVocabularyJson(raw);
 
   // Merge: default + project, ARRAY-UNION per collection, project-wins per alias key.
   const merged: Vocabulary = {
@@ -379,6 +392,186 @@ export function loadProjectVocabulary(contextRoot: string): Vocabulary {
 
 function dedupe<T>(arr: T[]): T[] {
   return Array.from(new Set(arr));
+}
+
+/**
+ * Ensure `core/taxonomy.json` exists, scaffolding it from DEFAULT_VOCABULARY when
+ * missing. Idempotent: an existing file is NEVER touched. Returns true only
+ * when the file was created by this call.
+ *
+ * Called from `dreamcontext taxonomy init` and from the SessionStart hook so
+ * existing installs are seeded automatically on their first session after
+ * upgrading — without waiting for a sleep cycle or any user action.
+ */
+export function ensureTaxonomyFile(contextRoot: string): boolean {
+  const taxonomyPath = join(contextRoot, 'core', 'taxonomy.json');
+  if (existsSync(taxonomyPath)) return false;
+  mkdirSync(join(contextRoot, 'core'), { recursive: true });
+  writeFileSync(taxonomyPath, serializeVocabulary(DEFAULT_VOCABULARY), 'utf-8');
+  return true;
+}
+
+// ─── Mutation Helpers ─────────────────────────────────────────────────────────
+
+/**
+ * Read the project's taxonomy.json as a raw TaxonomyJson (or a fresh default).
+ * Does NOT merge with DEFAULT_VOCABULARY — returns only what's on disk.
+ * Uses ensureTaxonomyFile first to guarantee the file exists.
+ */
+function readProjectTaxonomyJson(contextRoot: string): TaxonomyJson {
+  ensureTaxonomyFile(contextRoot);
+  const taxonomyPath = join(contextRoot, 'core', 'taxonomy.json');
+  try {
+    const raw = readFileSync(taxonomyPath, 'utf-8');
+    const parsed = JSON.parse(raw) as TaxonomyJson;
+    // Ensure required shapes
+    if (!parsed.facets || typeof parsed.facets !== 'object') parsed.facets = {};
+    if (!Array.isArray(parsed.bareTags)) parsed.bareTags = [];
+    if (!parsed.aliases || typeof parsed.aliases !== 'object') parsed.aliases = {};
+    return parsed;
+  } catch {
+    return {
+      version: 1,
+      facets: {},
+      bareTags: [],
+      aliases: {},
+    };
+  }
+}
+
+/**
+ * Write the project's taxonomy.json back to disk.
+ */
+function writeProjectTaxonomyJson(contextRoot: string, obj: TaxonomyJson): void {
+  const taxonomyPath = join(contextRoot, 'core', 'taxonomy.json');
+  writeFileSync(taxonomyPath, JSON.stringify(obj, null, 2) + '\n', 'utf-8');
+}
+
+/**
+ * Check whether a tag already exists in the MERGED vocabulary (default + project).
+ * Returns the classification + canonical form.
+ */
+function tagExistsInMerged(tag: string, mergedVocab: Vocabulary): boolean {
+  const cls = classifyTag(tag, mergedVocab);
+  return cls !== 'unknown';
+}
+
+/**
+ * Add a tag to the project vocabulary file.
+ *
+ * Rules:
+ *   - Normalizes the tag first.
+ *   - Faceted tag: the facet prefix must be a known FACET (else rejected).
+ *   - Already present in merged vocabulary as a canonical tag → added:false 'already exists'.
+ *   - Resolves as an alias of an existing canonical → rejected with 'is an alias of <canonical>'.
+ *   - Bare or valid faceted → added to project file, returns added:true.
+ */
+export function addVocabularyTag(
+  contextRoot: string,
+  rawTag: string,
+): { added: boolean; tag: string; reason?: string } {
+  const tag = normalizeTag(rawTag);
+
+  // Faceted tag: validate facet
+  const colonIdx = tag.indexOf(':');
+  if (colonIdx !== -1) {
+    const facetCandidate = tag.slice(0, colonIdx);
+    if (!FACET_SET.has(facetCandidate)) {
+      return { added: false, tag, reason: `unknown facet '${facetCandidate}'; valid facets: ${FACETS.join(', ')}` };
+    }
+  }
+
+  const mergedVocab = loadProjectVocabulary(contextRoot);
+
+  // Check if it's an alias of something that exists
+  const aliasedCanonical = aliasOf(mergedVocab.aliases, tag);
+  if (aliasedCanonical && aliasedCanonical !== tag) {
+    return { added: false, tag, reason: `is an alias of ${aliasedCanonical}` };
+  }
+
+  // Check if it's already canonical
+  if (isCanonical(tag, mergedVocab)) {
+    return { added: false, tag, reason: 'already exists' };
+  }
+
+  // Add to project file
+  const projectJson = readProjectTaxonomyJson(contextRoot);
+
+  if (colonIdx !== -1) {
+    const facet = tag.slice(0, colonIdx) as Facet;
+    if (!Array.isArray(projectJson.facets[facet])) {
+      projectJson.facets[facet] = [];
+    }
+    if (!projectJson.facets[facet].includes(tag)) {
+      projectJson.facets[facet].push(tag);
+    }
+  } else {
+    if (!Array.isArray(projectJson.bareTags)) projectJson.bareTags = [];
+    if (!projectJson.bareTags.includes(tag)) {
+      projectJson.bareTags.push(tag);
+    }
+  }
+
+  writeProjectTaxonomyJson(contextRoot, projectJson);
+  return { added: true, tag };
+}
+
+/**
+ * Add an alias mapping to the project vocabulary file.
+ *
+ * Rules:
+ *   - Normalizes both alias and canonical.
+ *   - Canonical must exist in the merged vocabulary as a real canonical tag.
+ *   - Alias must not equal canonical.
+ *   - Alias must not itself be a canonical tag in the merged vocabulary.
+ *   - Alias must not create a chain (canonical must not be an alias key in merged vocabulary).
+ *   - Already-identical mapping → added:false (no error).
+ */
+export function addVocabularyAlias(
+  contextRoot: string,
+  rawAlias: string,
+  rawCanonical: string,
+): { added: boolean; reason?: string } {
+  const alias = normalizeTag(rawAlias);
+  const canonical = normalizeTag(rawCanonical);
+
+  if (alias === canonical) {
+    return { added: false, reason: 'alias and canonical must differ' };
+  }
+
+  const mergedVocab = loadProjectVocabulary(contextRoot);
+
+  // No chains: canonical must not itself be an alias key (check before isCanonical
+  // so the error message is clear — "search" is an alias, not just "nonexistent")
+  const canonicalAsAlias = aliasOf(mergedVocab.aliases, canonical);
+  if (canonicalAsAlias && canonicalAsAlias !== canonical) {
+    return { added: false, reason: `'${canonical}' is an alias of '${canonicalAsAlias}'; chains are not allowed` };
+  }
+
+  // Canonical must exist as a real canonical tag
+  if (!isCanonical(canonical, mergedVocab)) {
+    return { added: false, reason: `canonical '${canonical}' does not exist in the vocabulary` };
+  }
+
+  // Alias must not itself be a canonical tag
+  if (isCanonical(alias, mergedVocab)) {
+    return { added: false, reason: `'${alias}' is already a canonical tag; cannot alias a canonical` };
+  }
+
+  // Check for already-identical mapping
+  if (aliasOf(mergedVocab.aliases, alias) === canonical) {
+    return { added: false, reason: 'already exists' };
+  }
+
+  // Add to project file
+  const projectJson = readProjectTaxonomyJson(contextRoot);
+  if (!projectJson.aliases || typeof projectJson.aliases !== 'object') {
+    projectJson.aliases = {};
+  }
+  projectJson.aliases[alias] = canonical;
+
+  writeProjectTaxonomyJson(contextRoot, projectJson);
+  return { added: true };
 }
 
 // ─── Audit ───────────────────────────────────────────────────────────────────
@@ -441,58 +634,4 @@ export function auditCorpus(
   buckets.orphan = [...new Set(buckets.orphan)];
 
   return buckets;
-}
-
-// ─── Render default taxonomy markdown ────────────────────────────────────────
-
-/**
- * Render the default vocabulary as a taxonomy.md file body.
- * Used both by `taxonomy init` and to seed the init template.
- */
-export function renderDefaultTaxonomyMarkdown(vocab: Vocabulary): string {
-  const lines: string[] = [
-    '<!--',
-    '  core/taxonomy.md — project vocabulary for faceted tags.',
-    '  DO NOT rename this file or move it out of core/: a leading-digit prefix',
-    '  would pull it into the core-index glob; keeping it here but without a',
-    '  numeric prefix keeps it out of the snapshot while remaining parseable.',
-    '  Managed by: dreamcontext taxonomy init / dreamcontext taxonomy vocab',
-    '-->',
-    '',
-    '# Taxonomy',
-    '',
-    '## Naming Rules',
-    '',
-    '- Tags are lowercase kebab-case.',
-    '- Faceted tags use the form `facet:value` (e.g. `topic:recall`, `domain:database`).',
-    '- Bare tags are plain lowercase words (e.g. `architecture`, `testing`).',
-    '- Prefer the canonical form; add aliases below for common shorthands.',
-    '- Run `dreamcontext taxonomy vocab` to see the full resolved vocabulary.',
-    '',
-    '## Facets',
-    '',
-    '```',
-  ];
-
-  for (const facet of FACETS) {
-    for (const tag of vocab.facetTags[facet]) {
-      lines.push(tag);
-    }
-  }
-
-  lines.push('```', '', '## Aliases', '', '| alias | canonical |', '|-------|-----------|');
-
-  for (const [alias, canonical] of Object.entries(vocab.aliases)) {
-    lines.push(`| ${alias} | ${canonical} |`);
-  }
-
-  lines.push('', '## Domain Vocabulary', '');
-
-  for (const tag of vocab.bareTags) {
-    lines.push(`- ${tag}`);
-  }
-
-  lines.push('');
-
-  return lines.join('\n');
 }

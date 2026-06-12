@@ -27,7 +27,11 @@ function hasPreview(filename: string): boolean {
   return filename.endsWith('.sql') || filename.endsWith('.json') || filename.endsWith('.md');
 }
 
-export function CorePage() {
+interface CorePageProps {
+  onNavigateTaxonomy?: () => void;
+}
+
+export function CorePage({ onNavigateTaxonomy }: CorePageProps = {}) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
   const [selected, setSelected] = useState<string | null>(null);
@@ -75,6 +79,20 @@ export function CorePage() {
 
   const renderContent = () => {
     if (!selected || !fileDetail) return null;
+
+    // taxonomy.json has a dedicated page — short-circuit with a navigation prompt.
+    if (selected === 'taxonomy.json' && onNavigateTaxonomy) {
+      return (
+        <div className="core-taxonomy-link">
+          <p className="core-taxonomy-link-hint">
+            This file is managed by the Taxonomy system.
+          </p>
+          <button className="btn btn--primary" onClick={onNavigateTaxonomy}>
+            Open Taxonomy page
+          </button>
+        </div>
+      );
+    }
 
     if (viewTab === 'preview') {
       if (selected.endsWith('.sql') && fileDetail.content) {

@@ -1,17 +1,20 @@
 import { Command } from 'commander';
-import { existsSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
 import chalk from 'chalk';
 import { ensureContextRoot } from '../../lib/context-path.js';
-import { header, info, success, error } from '../../lib/format.js';
+import { header, info, success } from '../../lib/format.js';
 import { buildCorpus } from '../../lib/recall.js';
 import {
   loadProjectVocabulary,
   auditCorpus,
-  renderDefaultTaxonomyMarkdown,
-  DEFAULT_VOCABULARY,
+  ensureTaxonomyFile,
+  addVocabularyTag,
+  addVocabularyAlias,
+  classifyTag,
+  resolveAlias,
+  normalizeTag,
   FACETS,
   tagIndexValue,
+  type Facet,
 } from '../../lib/taxonomy.js';
 
 export function registerTaxonomyCommand(program: Command): void {
@@ -22,14 +25,29 @@ export function registerTaxonomyCommand(program: Command): void {
   // vocab — show the resolved vocabulary
   taxonomy
     .command('vocab')
-    .description('Show the resolved project vocabulary (DEFAULT + core/taxonomy.md)')
+    .description('Show the resolved project vocabulary (DEFAULT + core/taxonomy.json)')
     .option('--json', 'Emit JSON')
-    .action((opts: { json?: boolean }) => {
+    .option('--facet <facet>', 'Filter output to one facet')
+    .action((opts: { json?: boolean; facet?: string }) => {
       const root = ensureContextRoot();
+
+      // Validate --facet if provided
+      if (opts.facet && !(FACETS as readonly string[]).includes(opts.facet)) {
+        process.stderr.write(
+          `Error: unknown facet '${opts.facet}'. Valid facets: ${FACETS.join(', ')}\n`,
+        );
+        process.exit(1);
+      }
+
       const vocab = loadProjectVocabulary(root);
 
       if (opts.json) {
-        console.log(JSON.stringify(vocab, null, 2));
+        if (opts.facet) {
+          const facet = opts.facet as Facet;
+          console.log(JSON.stringify({ [facet]: vocab.facetTags[facet] }, null, 2));
+        } else {
+          console.log(JSON.stringify(vocab, null, 2));
+        }
         return;
       }
 
@@ -37,6 +55,7 @@ export function registerTaxonomyCommand(program: Command): void {
 
       console.log(`\n  ${chalk.bold('Faceted tags')}`);
       for (const facet of FACETS) {
+        if (opts.facet && opts.facet !== facet) continue;
         const tags = vocab.facetTags[facet];
         if (tags.length === 0) continue;
         console.log(`    ${chalk.cyan(facet)}:`);
@@ -45,19 +64,21 @@ export function registerTaxonomyCommand(program: Command): void {
         }
       }
 
-      console.log(`\n  ${chalk.bold('Aliases')}  ${chalk.dim('(alias → canonical)')}`);
-      for (const [alias, canonical] of Object.entries(vocab.aliases)) {
-        console.log(`    ${chalk.yellow(alias)} → ${chalk.magentaBright(canonical)}`);
-      }
+      if (!opts.facet) {
+        console.log(`\n  ${chalk.bold('Aliases')}  ${chalk.dim('(alias → canonical)')}`);
+        for (const [alias, canonical] of Object.entries(vocab.aliases)) {
+          console.log(`    ${chalk.yellow(alias)} → ${chalk.magentaBright(canonical)}`);
+        }
 
-      console.log(`\n  ${chalk.bold('Bare tags')}`);
-      for (const tag of vocab.bareTags) {
-        console.log(`    ${chalk.magentaBright(tag)}`);
+        console.log(`\n  ${chalk.bold('Bare tags')}`);
+        for (const tag of vocab.bareTags) {
+          console.log(`    ${chalk.magentaBright(tag)}`);
+        }
       }
 
       console.log('');
-      console.log(chalk.dim('  Source: DEFAULT_VOCABULARY merged with core/taxonomy.md (if present)'));
-      console.log(chalk.dim('  Run: dreamcontext taxonomy init  to scaffold core/taxonomy.md'));
+      console.log(chalk.dim('  Source: DEFAULT_VOCABULARY merged with core/taxonomy.json (if present)'));
+      console.log(chalk.dim('  Run: dreamcontext taxonomy init  to scaffold core/taxonomy.json'));
     });
 
   // audit — read-only corpus audit
@@ -120,23 +141,95 @@ export function registerTaxonomyCommand(program: Command): void {
       // exit 0 always (audit is strictly read-only and informational)
     });
 
-  // init — scaffold core/taxonomy.md
+  // init — scaffold core/taxonomy.json
   taxonomy
     .command('init')
-    .description('Scaffold core/taxonomy.md from the default vocabulary (idempotent)')
+    .description('Scaffold core/taxonomy.json from the default vocabulary (idempotent)')
     .action(() => {
       const root = ensureContextRoot();
-      const taxonomyPath = join(root, 'core', 'taxonomy.md');
 
-      if (existsSync(taxonomyPath)) {
-        info('core/taxonomy.md already exists — no changes made.');
+      if (!ensureTaxonomyFile(root)) {
+        info('core/taxonomy.json already exists — no changes made.');
         return;
       }
 
-      const content = renderDefaultTaxonomyMarkdown(DEFAULT_VOCABULARY);
-      writeFileSync(taxonomyPath, content, 'utf-8');
-      success('Created: core/taxonomy.md');
-      console.log(chalk.dim('  Edit it to add project-specific facets, aliases, and domain vocabulary.'));
+      success('Created: core/taxonomy.json');
+      console.log(chalk.dim('  Edit it or use `dreamcontext taxonomy add` / `alias` to add project-specific vocabulary.'));
       console.log(chalk.dim('  Run: dreamcontext taxonomy vocab  to see the resolved vocabulary.'));
+    });
+
+  // add — add a tag to the project vocabulary
+  taxonomy
+    .command('add <tag>')
+    .description('Add a tag to the project vocabulary (creates core/taxonomy.json if missing)')
+    .action((rawTag: string) => {
+      const root = ensureContextRoot();
+      const result = addVocabularyTag(root, rawTag);
+
+      if (result.added) {
+        success(`Added: ${result.tag}`);
+        return;
+      }
+
+      // Benign already-exists: exit 0 with info
+      if (result.reason === 'already exists') {
+        info(`${result.tag} already exists in vocabulary — no changes made.`);
+        return;
+      }
+
+      // Validation rejection: exit 1 with reason
+      process.stderr.write(`Error: ${result.reason}\n`);
+      process.exit(1);
+    });
+
+  // alias — add an alias mapping to the project vocabulary
+  taxonomy
+    .command('alias <alias> <canonical>')
+    .description('Add an alias → canonical mapping to the project vocabulary')
+    .action((rawAlias: string, rawCanonical: string) => {
+      const root = ensureContextRoot();
+      const result = addVocabularyAlias(root, rawAlias, rawCanonical);
+
+      if (result.added) {
+        success(`Added alias: ${normalizeTag(rawAlias)} → ${normalizeTag(rawCanonical)}`);
+        return;
+      }
+
+      // Benign already-exists: exit 0 with info
+      if (result.reason === 'already exists') {
+        info(`Alias already exists — no changes made.`);
+        return;
+      }
+
+      // Validation rejection: exit 1 with reason
+      process.stderr.write(`Error: ${result.reason}\n`);
+      process.exit(1);
+    });
+
+  // resolve — resolve + classify a tag
+  taxonomy
+    .command('resolve <tag>')
+    .description('Show normalized form, classification, and canonical resolution of a tag')
+    .option('--json', 'Emit JSON')
+    .action((rawTag: string, opts: { json?: boolean }) => {
+      const root = ensureContextRoot();
+      const vocab = loadProjectVocabulary(root);
+      const tag = normalizeTag(rawTag);
+      const classification = classifyTag(tag, vocab);
+      const canonical = resolveAlias(tag, vocab);
+      const indexValue = tagIndexValue(tag);
+
+      if (opts.json) {
+        console.log(JSON.stringify({ tag, classification, canonical, indexValue }, null, 2));
+        return;
+      }
+
+      console.log(`  ${chalk.bold('Tag')}:            ${chalk.magentaBright(tag)}`);
+      console.log(`  ${chalk.bold('Classification')}: ${chalk.cyan(classification)}`);
+      if (classification === 'alias') {
+        console.log(`  ${chalk.bold('Canonical')}:      ${chalk.green(canonical)}`);
+      }
+      console.log(`  ${chalk.bold('Index value')}:    ${chalk.dim(indexValue)}`);
+      console.log('');
     });
 }
