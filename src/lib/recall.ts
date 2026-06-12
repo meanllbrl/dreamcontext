@@ -4,6 +4,12 @@ import fg from 'fast-glob';
 import { readFrontmatter } from './frontmatter.js';
 import { expandQueryTerms } from './recall-synonyms.js';
 import { loadDigestDocs } from './session-digest.js';
+import {
+  isExcalidrawPath,
+  extractExcalidrawText,
+  diagramFolderDirs,
+  isDarkDiagramSibling,
+} from './excalidraw-text.js';
 
 // 'skill' docs are produced ONLY by loadSkillDocs (called directly by the hook);
 // intentionally excluded from buildCorpus defaults to avoid polluting haikuRecall.
@@ -289,15 +295,30 @@ function loadMarkdownDocs(
   if (!existsSync(dir)) return [];
   // B1: recurse into nested dirs (e.g. knowledge/products/<name>/…).
   const files = fg.sync('**/*.md', { cwd: dir, absolute: true });
+  // Compute dark-sibling set once for the whole directory scan.
+  // Dark siblings: non-board .md files inside a diagram folder that should
+  // not enter the BM25 corpus (generator scripts, spec notes, etc.).
+  const boardDirs = diagramFolderDirs(files);
   const out: CorpusDoc[] = [];
   for (const file of files) {
+    // Exclude dark siblings — tooling artifacts beside a board.
+    if (isDarkDiagramSibling(file, boardDirs)) continue;
+
     try {
       const { data, content } = readFrontmatter(file);
       const slug = basename(file, '.md');
       const title = String(data.name ?? data.title ?? slug);
       const description = String(data.description ?? data.summary ?? '');
       const tags = Array.isArray(data.tags) ? data.tags.map(String) : [];
-      const body = content.trim();
+      // For Excalidraw boards: extract only Text Elements text for the BM25
+      // corpus (body). This covers the BM25 scoring path (buildFields tokenizes
+      // body) AND transitively the reflection corpus. The raw scene JSON is
+      // never tokenized, so JSON-only terms never score.
+      // BOTH this path (BM25 corpus) AND knowledge-index.ts (entry.content)
+      // apply extraction — neither alone closes all memory surfaces.
+      const body = isExcalidrawPath(file)
+        ? extractExcalidrawText(content)
+        : content.trim();
       const relPath = file.replace(contextRoot + '/', '');
       const fields = buildFields({ slug, title, description, tags, body });
       out.push({

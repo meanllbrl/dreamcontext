@@ -3,9 +3,10 @@ import { ensureContextRoot } from '../../lib/context-path.js';
 import { pendingMigrations } from '../../migrations/index.js';
 import { readSetupConfig } from '../../lib/setup-config.js';
 import { appendLedger } from '../../lib/migration-ledger.js';
+import { migrateDiagramsToFolders } from '../../lib/diagrams-migration.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
 import { dirname } from 'node:path';
-import { success, error, info } from '../../lib/format.js';
+import { success, error, info, warn } from '../../lib/format.js';
 import type { LedgerEntry } from '../../lib/migration-ledger.js';
 
 /**
@@ -44,6 +45,76 @@ export function registerMigrationsCommand(program: Command): void {
         console.log(
           `Record completion with: dreamcontext migrations record --version ${m.version} --step ${m.agentTask!.id} --executor agent --summary "<what you did>"`,
         );
+      }
+    });
+
+  // --- apply-diagrams ---
+  migrations
+    .command('apply-diagrams')
+    .description(
+      'Organize flat knowledge/diagrams/*.excalidraw.md boards into per-title folders. ' +
+      'Moves board + same-basename generator/spec files, rewrites inbound [[wikilinks]] atomically. ' +
+      'Opt-in: only organize boards you confirm are canonical knowledge.',
+    )
+    .action(() => {
+      const root = ensureContextRoot();
+
+      const result = migrateDiagramsToFolders(root);
+
+      const totalMoved = result.moved.length;
+      const totalSkipped = result.skipped.length;
+      const totalAmbiguous = result.ambiguous.length;
+
+      if (totalMoved === 0 && totalSkipped === 0 && totalAmbiguous === 0) {
+        info('nothing to organize — no flat boards found in knowledge/diagrams/');
+        return;
+      }
+
+      if (result.moved.length > 0) {
+        console.log('\nMoved into per-title folders:');
+        for (const slug of result.moved) {
+          console.log(`  diagrams/${slug}.excalidraw.md  →  diagrams/${slug}/${slug}.excalidraw.md`);
+        }
+      }
+
+      if (result.skipped.length > 0) {
+        console.log('\nAlready in per-title folder (skipped):');
+        for (const slug of result.skipped) {
+          console.log(`  diagrams/${slug}/${slug}.excalidraw.md`);
+        }
+      }
+
+      if (result.ambiguous.length > 0) {
+        console.log('\nLeft in place (ambiguous — check manually):');
+        for (const item of result.ambiguous) {
+          console.log(`  ${item}`);
+        }
+      }
+
+      if (totalMoved === 0) {
+        info(`nothing moved (${totalSkipped} already foldered, ${totalAmbiguous} ambiguous)`);
+        return;
+      }
+
+      // Record a ledger entry for the work done.
+      const movedPaths = result.moved.map(
+        (slug) => `knowledge/diagrams/${slug}/${slug}.excalidraw.md`,
+      );
+      const entry: LedgerEntry = {
+        version: '0.7.2',
+        step: 'diagrams-folder-convention',
+        executor: 'agent',
+        timestamp: new Date().toISOString(),
+        filesTouched: movedPaths,
+        summary: `Organized ${totalMoved} flat board(s) into per-title folders: ${result.moved.join(', ')}`,
+      };
+      appendLedger(root, entry);
+
+      success(
+        `Moved ${totalMoved} board(s) into per-title folders. Inbound [[wikilinks]] rewritten atomically. Ledger entry recorded (0.7.2/diagrams-folder-convention).`,
+      );
+      if (totalAmbiguous > 0) {
+        warn(`${totalAmbiguous} board(s) left in place due to ambiguous siblings — review manually.`);
       }
     });
 

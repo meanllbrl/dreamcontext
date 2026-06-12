@@ -32,10 +32,30 @@ skills:
 
 2. If work is needed: perform moves/renames/fence-wraps surgically.
 
-3. **Wikilinks**: after moving a file, search for inbound `[[old-slug]]`
+3. **Wikilinks**: after moving a file, update inbound `[[old-slug]]` references.
+   For the diagrams migration (version 0.7.2 / step diagrams-folder-convention):
+   run `dreamcontext migrations apply-diagrams` — it moves the board AND rewrites
+   all inbound [[wikilinks]] atomically. Do NOT hand-edit wikilinks for this migration.
+   For other migrations (generic moves): search for inbound `[[old-slug]]`
    references across all `.md` files and rewrite the *target token* only
    (preserve `|alias` and `#anchor`). If you cannot determine all affected
    files, list broken links in your report.
+
+### Placement judgment (behavioral) — diagrams migration
+
+Before running `dreamcontext migrations apply-diagrams`, decide per board:
+
+- **Canonical knowledge** (architecture, system flows, roadmaps, durable plans
+  the agent should recall in future sessions) → `knowledge/diagrams/<title>/`
+  (indexed, recalled). Use `apply-diagrams` for these.
+- **Temporary / scratch / working** (exploratory sketches, in-progress drafts)
+  → `inbox/` or `workspace/` (dark by location — NOT indexed, will not
+  pollute recall). Do NOT pull these into knowledge/diagrams/.
+
+Decision rule: "Will a future session need to know this? → knowledge. Throwaway/working? → inbox/workspace."
+
+Only organize canonical boards. Leave temp/scratch boards in place or move to
+inbox/workspace — do NOT use `apply-diagrams` on them.
 
 4. **Write the ledger ONLY on completion** via:
    ```bash
