@@ -450,3 +450,57 @@
 .filter-min-rice-clear:hover {
   text-decoration: underline;
 }
+
+/* Remote sync button (visible only with a remote task backend) */
+.filter-sync-wrap {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.filter-sync-note {
+  font-size: var(--font-size-xs, 11px);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.filter-sync-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 6px);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  padding: var(--space-1) var(--space-3);
+  cursor: pointer;
+}
+
+.filter-sync-btn:hover:not(:disabled) {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.filter-sync-btn:disabled {
+  opacity: 0.7;
+  cursor: default;
+}
+
+.filter-sync-badge {
+  background: var(--color-accent);
+  color: #fff;
+  border-radius: 999px;
+  font-size: 10px;
+  line-height: 1;
+  padding: 2px 6px;
+}
+
+.filter-sync-spin {
+  animation: filter-sync-rotate 0.9s linear infinite;
+}
+
+@keyframes filter-sync-rotate {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}

@@ -135,6 +135,45 @@ export function useTaskMembers() {
   });
 }
 
+export interface SyncStatus {
+  backend: string;
+  pendingPush: number;
+  queuedOps: number;
+  conflicts: number;
+  watermark: number | null;
+}
+
+export function useSyncStatus() {
+  return useQuery({
+    queryKey: ['tasks-sync-status'],
+    queryFn: () => api.get<{ status: SyncStatus }>('/tasks/sync-status'),
+    select: (d) => d.status,
+    refetchInterval: 30_000,
+  });
+}
+
+export interface SyncReport {
+  pushed: number;
+  pulled: number;
+  created: number;
+  deleted: number;
+  mirrorDeleted: number;
+  commentsAdded: number;
+  conflicts: Array<{ slug: string; reason: string }>;
+  errors: string[];
+}
+
+export function useSyncTasks() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post<{ report: SyncReport }>('/tasks/sync', { direction: 'both' }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      queryClient.invalidateQueries({ queryKey: ['tasks-sync-status'] });
+    },
+  });
+}
+
 export function useAddTaskChangelog() {
   const queryClient = useQueryClient();
   return useMutation({

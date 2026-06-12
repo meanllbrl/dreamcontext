@@ -53,6 +53,8 @@ interface TaskFiltersProps {
   onFilterChange: <K extends keyof FilterState>(key: K, value: FilterState[K]) => void;
   onClearFilters: () => void;
   onCreateClick: () => void;
+  /** Optional slot rendered before the create button (e.g. remote sync). */
+  syncSlot?: React.ReactNode;
   presets: FilterPreset[];
   onSavePreset: (name: string) => void;
   onLoadPreset: (preset: FilterPreset) => void;
@@ -244,6 +246,7 @@ export function TaskFilters({
   onFilterChange,
   onClearFilters,
   onCreateClick,
+  syncSlot,
   presets,
   onSavePreset,
   onLoadPreset,
@@ -631,6 +634,7 @@ export function TaskFilters({
       />
 
       {/* Create */}
+      {syncSlot}
       <button className="filter-create-btn" onClick={onCreateClick}>
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
           <path d="M7 2V12M2 7H12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
