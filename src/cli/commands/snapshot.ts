@@ -14,6 +14,7 @@ import { readSetupConfig, isMultiPerson } from '../../lib/setup-config.js';
 import { isSkillInstalled } from '../../lib/catalog.js';
 import { readVersionCache, isCacheFresh, buildNudge } from '../../lib/version-check.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
+import { buildDriftDirective } from '../../lib/setup-drift.js';
 import { computeFeatureFreshness, freshnessSnapshotNote } from '../../lib/feature-freshness.js';
 import {
   applyBudget, resolveBudget, demoteMemoryBlock, demoteTaskList,
@@ -338,6 +339,31 @@ function getVersionNudge(root: string): string {
 }
 
 /**
+ * Read-only drift directive for the snapshot.
+ * Mirrors getVersionNudge — pure read, no I/O side effects, no subprocess.
+ * Returns '' when drift check is disabled, config is absent, or no directive applies.
+ * Never throws.
+ *
+ * NOTE: `root` here is the `_dream_context/` directory path (as returned by
+ * resolveContextRoot). readSetupConfig expects a project root (parent of
+ * _dream_context/), so we derive it via dirname(root).
+ */
+function getDriftDirective(root: string): string {
+  try {
+    const projectRoot = dirname(root);
+    const config = readSetupConfig(projectRoot);
+    if (!config) return '';
+    return buildDriftDirective({
+      cliVersion: dreamcontextVersion(),
+      setupVersion: config.setupVersion,
+      driftCheckEnv: process.env.DREAMCONTEXT_DRIFT_CHECK,
+    }) ?? '';
+  } catch {
+    return '';
+  }
+}
+
+/**
  * Output a plain-text context snapshot to stdout.
  * Designed for SessionStart hook consumption — no chalk, no interactivity.
  * If _dream_context/ doesn't exist, exits silently.
@@ -437,6 +463,13 @@ export function generateSnapshot(): string {
   const versionNudge = getVersionNudge(root);
   if (versionNudge) {
     parts.push(versionNudge);
+    parts.push('');
+  }
+
+  // 5.3 Setup version drift directive (read-only — compares setupVersion vs CLI)
+  const driftDirective = getDriftDirective(root);
+  if (driftDirective) {
+    parts.push(driftDirective);
     parts.push('');
   }
   flush('product-and-nudge', { neverEvict: true });

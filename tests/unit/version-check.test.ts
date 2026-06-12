@@ -127,6 +127,29 @@ describe('isCacheFresh', () => {
   });
 });
 
+// ─── AC8: buildNudge behavior unchanged by drift feature ─────────────────────
+
+describe("version-check unit", () => {
+  const cache06: VersionCache = {
+    checkedAt: Date.now(),
+    latestCli: '0.6.0',
+    availablePacks: [],
+    ttlHours: 24,
+  };
+
+  it("buildNudge behavior unchanged by drift feature", () => {
+    // outdated CLI -> Update Available
+    const outdated = buildNudge('0.5.0', cache06, [], []);
+    expect(outdated).not.toBeNull();
+    expect(outdated).toContain('## Update Available');
+
+    // current -> null
+    const current06: VersionCache = { ...cache06, latestCli: '0.5.0' };
+    const current = buildNudge('0.5.0', current06, [], []);
+    expect(current).toBeNull();
+  });
+});
+
 // ─── buildNudge ───────────────────────────────────────────────────────────────
 
 describe('buildNudge', () => {

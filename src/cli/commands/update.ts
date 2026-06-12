@@ -24,6 +24,42 @@ import {
   PRE_MANIFEST_VERSION,
   type Manifest,
 } from '../../lib/manifest.js';
+import { updateSetupConfig } from '../../lib/setup-config.js';
+
+// ─── Update Summary ──────────────────────────────────────────────────────────
+
+export interface UpdateSummaryInput {
+  platforms: PlatformId[];
+  installedCount: number;
+  packs: string[];
+  removed: string[];
+  setupVersion: string | null;
+}
+
+/**
+ * Build a relay-able plain-text summary of what the update command did.
+ * Exported for use by tests and relay agents.
+ */
+export function buildUpdateSummary(input: UpdateSummaryInput): string {
+  const { platforms, installedCount, packs, removed, setupVersion } = input;
+  const lines: string[] = ['## Update Summary\n'];
+  lines.push(`Platforms: ${platforms.length > 0 ? platforms.join(', ') : 'none'}`);
+  lines.push(`Core files refreshed: ${installedCount}`);
+  if (packs.length > 0) {
+    lines.push(`Packs refreshed: ${packs.join(', ')}`);
+  } else {
+    lines.push('Packs refreshed: none');
+  }
+  if (removed.length > 0) {
+    lines.push(`Pruned files: ${removed.join(', ')}`);
+  } else {
+    lines.push('Pruned files: none');
+  }
+  if (setupVersion !== null) {
+    lines.push(`Setup version: ${setupVersion}`);
+  }
+  return lines.join('\n');
+}
 
 function detectInstalledPlatforms(projectRoot: string): PlatformId[] {
   return SUPPORTED_PLATFORMS.filter((p) =>
@@ -260,6 +296,27 @@ export function registerUpdateCommand(program: Command): void {
         }
 
         writeManifest(projectRoot, newManifest);
+
+        // Bump setupVersion only when core was refreshed (not packs-only).
+        // packs-only does NOT refresh skill/agents/hooks, so drift must remain.
+        let newSetupVersion: string | null = null;
+        if (!opts.packsOnly) {
+          const ver = dreamcontextVersion();
+          updateSetupConfig(projectRoot, { setupVersion: ver });
+          newSetupVersion = ver;
+        }
+
+        // Print relay-able summary always (covers packs-only too).
+        const summary = buildUpdateSummary({
+          platforms,
+          installedCount: installed.length,
+          packs,
+          removed: pruneResult.removed,
+          setupVersion: newSetupVersion,
+        });
+        console.log();
+        console.log(miniBox(summary.split('\n'), { color: 'green' }));
+        console.log();
       } catch (err: any) {
         if (err.name === 'ExitPromptError') {
           console.log();
