@@ -1,6 +1,9 @@
 import { Command } from 'commander';
+import { basename, resolve } from 'node:path';
 import chalk from 'chalk';
 import { addVault, listVaults, removeVault, VaultError } from '../../lib/vaults.js';
+import { discoverVaults } from '../../lib/vault-discovery.js';
+import { slugify } from '../../lib/id.js';
 import { success, error, info, header } from '../../lib/format.js';
 
 export function registerVaultsCommand(program: Command): void {
@@ -43,6 +46,63 @@ export function registerVaultsCommand(program: Command): void {
       for (const v of all) {
         console.log(`  ${chalk.magentaBright(v.name)}  ${chalk.dim(v.path)}`);
       }
+    });
+
+  // ─── discover ────────────────────────────────────────────────────────────────
+  vaults
+    .command('discover [root]')
+    .description('Find every _dream_context/ project under a directory tree (node_modules ignored)')
+    .option('--register', 'Register newly-found projects as vaults (idempotent; already-registered skipped)')
+    .action((root: string | undefined, opts: { register?: boolean }) => {
+      const searchRoot = resolve(root ?? process.cwd());
+      const found = discoverVaults(searchRoot);
+
+      if (found.length === 0) {
+        info(`No dreamcontext projects found under ${searchRoot}.`);
+        return;
+      }
+
+      if (!opts.register) {
+        console.log(header(`Discovered ${found.length} project${found.length === 1 ? '' : 's'}`));
+        for (const projectPath of found) {
+          console.log(`  ${chalk.magentaBright(basename(projectPath))}  ${chalk.dim(projectPath)}`);
+        }
+        info(chalk.dim('Re-run with --register to add the new ones to the vault registry.'));
+        return;
+      }
+
+      // --register: idempotent. Already-registered paths are skipped (never an
+      // error); a name collision is resolved by suffixing -2, -3, … so two
+      // sibling "app" dirs both register cleanly.
+      const registered = new Set(listVaults().map((v) => resolve(v.path)));
+      const takenNames = new Set(listVaults().map((v) => v.name));
+      let added = 0;
+      let skipped = 0;
+
+      for (const projectPath of found) {
+        if (registered.has(resolve(projectPath))) {
+          skipped++;
+          continue;
+        }
+        const base = slugify(basename(projectPath)) || 'vault';
+        let name = base;
+        let suffix = 2;
+        while (takenNames.has(name)) name = `${base}-${suffix++}`;
+        try {
+          const vault = addVault(name, projectPath);
+          takenNames.add(vault.name);
+          registered.add(resolve(vault.path));
+          added++;
+          success(`Registered "${vault.name}" → ${vault.path}`);
+        } catch (err) {
+          // Never-throw the whole batch on one bad entry (e.g. a path that
+          // vanished between discovery and register).
+          info(chalk.dim(`Skipped ${projectPath}: ${err instanceof VaultError ? err.message : String(err)}`));
+          skipped++;
+        }
+      }
+
+      info(`Done: ${added} registered, ${skipped} skipped (already-registered or unresolvable).`);
     });
 
   // ─── remove ────────────────────────────────────────────────────────────────

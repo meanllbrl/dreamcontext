@@ -1,11 +1,18 @@
 import { Command } from 'commander';
 import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import chalk from 'chalk';
 import { confirm, input } from '@inquirer/prompts';
 import { ensureContextRoot } from '../../lib/context-path.js';
 import { header, info, success, error } from '../../lib/format.js';
 import { buildCorpus, bm25Search, type CorpusType, type RecallHit } from '../../lib/recall.js';
+import {
+  crossVaultRecall,
+  currentVaultTarget,
+  resolveConnectedVaults,
+  resolveAllShareableVaults,
+  type CrossVaultTarget,
+} from '../../lib/federation-recall.js';
 import { loadProjectVocabulary, aliasGroups } from '../../lib/taxonomy.js';
 import { readFrontmatter, writeFrontmatter, updateFrontmatterFields } from '../../lib/frontmatter.js';
 import { today } from '../../lib/id.js';
@@ -19,6 +26,11 @@ const TYPE_LABELS: Record<CorpusType, string> = {
   skill: 'skill', // never produced by buildCorpus; present only to satisfy the Record type
 };
 
+/** Commander accumulator for a repeatable `--vault <name>` option. */
+function collectVault(value: string, previous: string[]): string[] {
+  return [...previous, value];
+}
+
 function parseTypes(value: string | undefined): CorpusType[] | undefined {
   if (!value) return undefined;
   const valid: CorpusType[] = ['knowledge', 'feature', 'task', 'memory', 'changelog'];
@@ -28,6 +40,107 @@ function parseTypes(value: string | undefined): CorpusType[] | undefined {
     .filter(Boolean) as CorpusType[];
   const filtered = parts.filter((p) => valid.includes(p));
   return filtered.length > 0 ? filtered : undefined;
+}
+
+/**
+ * Cross-vault recall output (P1.2/P1.3). Builds the target vault set from the
+ * flags — current vault always included — then renders vault-tagged hits in
+ * plain / JSON / pretty form, with a trailing dim note for any stale-skipped
+ * peers. Kept out of the action closure for readability; the no-flag path never
+ * reaches here.
+ */
+function recallFederated(
+  contextRoot: string,
+  query: string,
+  topK: number,
+  types: CorpusType[] | undefined,
+  opts: { json?: boolean; plain?: boolean; vault?: string[]; connected?: boolean; allVaults?: boolean },
+): void {
+  const projectRoot = dirname(contextRoot);
+  const { target: currentTarget } = currentVaultTarget(projectRoot);
+
+  // Compose the target set: current vault + (connected ∪ all-vaults ∪ explicit).
+  const byName = new Map<string, CrossVaultTarget>();
+  const add = (t: CrossVaultTarget): void => {
+    // current always wins; otherwise first-seen wins (de-dupe by resolution key).
+    const existing = byName.get(t.name);
+    if (!existing || (t.current && !existing.current)) byName.set(t.name, t);
+  };
+  add(currentTarget);
+  if (opts.connected) for (const t of resolveConnectedVaults(currentTarget)) add(t);
+  if (opts.allVaults) for (const t of resolveAllShareableVaults(currentTarget)) add(t);
+  for (const name of opts.vault ?? []) add({ name });
+
+  const { hits, skipped } = crossVaultRecall(query, {
+    vaults: Array.from(byName.values()),
+    topK,
+    types,
+  });
+
+  if (opts.json) {
+    const payload = hits.map((h) => ({
+      vault: h.vault,
+      key: h.key,
+      type: h.doc.type,
+      slug: h.doc.slug,
+      path: h.doc.relPath,
+      title: h.doc.title,
+      description: h.doc.description,
+      tags: h.doc.tags,
+      score: Number(h.score.toFixed(4)),
+      snippet: h.snippet,
+    }));
+    console.log(JSON.stringify({
+      query,
+      hits: payload,
+      skipped: skipped.map((s) => ({ vault: s.vault, reason: s.reason })),
+    }, null, 2));
+    return;
+  }
+
+  const staleNote = skipped.length > 0
+    ? `(skipped ${skipped.length} stale vault${skipped.length === 1 ? '' : 's'}: ${skipped.map((s) => s.vault).join(', ')})`
+    : '';
+
+  if (opts.plain) {
+    if (hits.length === 0) {
+      console.log(`No hits for "${query}".`);
+    }
+    for (const h of hits) {
+      console.log(`[${h.vault}::${TYPE_LABELS[h.doc.type]}] ${h.doc.slug}  (score ${h.score.toFixed(3)})`);
+      console.log(`  ${h.doc.relPath}`);
+      if (h.doc.description) console.log(`  ${h.doc.description}`);
+      if (h.snippet) {
+        for (const line of h.snippet.split('\n')) console.log(`    ${line}`);
+      }
+      console.log('');
+    }
+    if (staleNote) console.log(staleNote);
+    return;
+  }
+
+  console.log(header(`Federated recall: "${query}"`));
+  if (hits.length === 0) {
+    info(`No hits for "${query}".`);
+  }
+  for (const h of hits) {
+    const vaultBadge = chalk.yellow(`${h.vault}::`);
+    const typeBadge = chalk.cyan(`[${TYPE_LABELS[h.doc.type]}]`);
+    const slug = chalk.magentaBright(h.doc.slug);
+    const score = chalk.dim(`score ${h.score.toFixed(3)}`);
+    console.log(`  ${vaultBadge}${typeBadge} ${slug}  ${score}`);
+    console.log(`    ${chalk.dim(h.doc.relPath)}`);
+    if (h.doc.description) console.log(`    ${h.doc.description}`);
+    if (h.doc.tags.length > 0) {
+      console.log(`    ${chalk.dim('tags: ' + h.doc.tags.join(', '))}`);
+    }
+    if (h.snippet) {
+      const snipLines = h.snippet.split('\n').map((l) => `      ${chalk.gray('│')} ${l}`);
+      console.log(snipLines.join('\n'));
+    }
+    console.log('');
+  }
+  if (staleNote) console.log(chalk.dim(staleNote));
 }
 
 export function registerMemoryCommand(program: Command): void {
@@ -44,15 +157,37 @@ export function registerMemoryCommand(program: Command): void {
     .option('--types <types>', 'Comma-separated subset: knowledge,feature,task,memory')
     .option('--json', 'Emit JSON for piping into other tools')
     .option('--plain', 'Plain text output without colors')
+    .option('--vault <name>', 'Also search this vault (repeatable; registered name or path)', collectVault, [])
+    .option('--connected', 'Span the current vault + its out/both connections (degenerate=local until P2)')
+    .option('--all-vaults', 'Span the current vault + every shareable registered vault')
     .action(
       (
         queryParts: string[],
-        opts: { top?: string; types?: string; json?: boolean; plain?: boolean },
+        opts: {
+          top?: string;
+          types?: string;
+          json?: boolean;
+          plain?: boolean;
+          vault?: string[];
+          connected?: boolean;
+          allVaults?: boolean;
+        },
       ) => {
         const root = ensureContextRoot();
         const query = queryParts.join(' ');
         const topK = Math.max(1, Math.min(50, Number.parseInt(opts.top ?? '5', 10) || 5));
         const types = parseTypes(opts.types);
+
+        // ── Federation branch (P1.2/P1.3) ──────────────────────────────────────
+        // ANY of --vault / --connected / --all-vaults routes through cross-vault
+        // recall. With NO federation flag the path below is byte-identical to the
+        // pre-federation single-vault recall (regression-guarded).
+        const explicitVaults = opts.vault ?? [];
+        if (explicitVaults.length > 0 || opts.connected || opts.allVaults) {
+          recallFederated(root, query, topK, types, opts);
+          return;
+        }
+
         const corpus = buildCorpus(root, types ? { types } : {});
         const vocab = loadProjectVocabulary(root);
         const hits = bm25Search(query, corpus, topK, { aliasGroups: aliasGroups(vocab) });

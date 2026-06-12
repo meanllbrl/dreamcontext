@@ -488,6 +488,27 @@ dreamcontext memory status
 
 ---
 
+## Cross-Project Federation (issue #25)
+
+Every `_dream_context/` is normally an island. Federation lets you reach across projects — recall what you worked out in *another* vault — using nothing but the local filesystem (no network, ever). Phase 1 is **read-only**: discovery + cross-vault recall + peer snapshots.
+
+```bash
+dreamcontext vaults discover [root] [--register]   # find every _dream_context/ under a tree (node_modules ignored, depth-bounded)
+dreamcontext memory recall <query...> --vault <name>   # also search a peer vault (repeatable)
+dreamcontext memory recall <query...> --all-vaults     # search current + every SHAREABLE registered vault
+dreamcontext memory recall <query...> --connected      # search current + out/both connections (degenerate=local until Phase 2)
+dreamcontext snapshot --vault <name>               # print a peer vault's context snapshot
+dreamcontext config shareable on|off               # opt this project IN/OUT of peer recall (default: off)
+```
+
+**Trust model — shareable gates READS, private by default.** A vault is invisible to peer recall until its owner runs `config shareable on`. New and migrated projects default to `shareable: false`. `shareable` is asymmetric: it controls whether OTHERS may pull *your* corpus — it never blocks *you* from reading a shareable peer, and the current vault is always searched regardless of its own flag. Non-shareable peers are silently excluded from `--all-vaults` (never an error). Cross-vault hits are namespaced `<vault>::<type>/<slug>` so the same slug in two vaults never collides.
+
+**When to reach across.** Use `--vault`/`--all-vaults` for "how did I solve this in project X?" / "did we already build Y somewhere?" before re-deriving knowledge that already exists in a sibling project.
+
+> Phase 2 (per-link connections + dashboard) and Phase 3 (sleep-driven digest **inbox** — federation knowledge flowing in via a `sleep-federation` step) land next. The `--connected` flag is wired now but degenerates to a local recall until connections exist; the sleep-federation fan-out arrives with the digest inbox.
+
+---
+
 ## Structure
 
 ```

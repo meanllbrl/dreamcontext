@@ -41,6 +41,13 @@ export interface SetupConfig {
    * Additive: people without an entry simply have no remote identity yet.
    */
   peopleIdentity?: Record<string, PersonIdentity>;
+  /**
+   * Cross-project federation read gate (issue #25). When true, peer vaults may
+   * pull this vault's corpus into a cross-vault recall. Default FALSE (private
+   * by default): absent / legacy / migrated configs are NOT shareable until the
+   * owner opts in. Gates READS only — never required to read a shareable peer.
+   */
+  shareable?: boolean;
 }
 
 export interface ClickUpConfig {
@@ -119,6 +126,9 @@ export function readSetupConfig(projectRoot: string): SetupConfig | null {
         typeof parsed.cloudTaskManagement === 'boolean' ? parsed.cloudTaskManagement : undefined,
       clickup: sanitizeClickUp(parsed.clickup),
       peopleIdentity: sanitizePeopleIdentity(parsed.peopleIdentity),
+      // Federation read gate (issue #25). Absent / non-boolean ⇒ undefined,
+      // which `isShareable` treats as private (the default-false invariant).
+      shareable: typeof parsed.shareable === 'boolean' ? parsed.shareable : undefined,
     };
   } catch {
     return null;
@@ -157,6 +167,7 @@ export function updateSetupConfig(
     cloudTaskManagement: patch.cloudTaskManagement ?? existing.cloudTaskManagement,
     clickup: patch.clickup ?? existing.clickup,
     peopleIdentity: patch.peopleIdentity ?? existing.peopleIdentity,
+    shareable: patch.shareable ?? existing.shareable,
   };
   writeSetupConfig(projectRoot, next);
   return next;

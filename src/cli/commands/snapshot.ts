@@ -3,6 +3,8 @@ import { readFileSync, existsSync, statSync } from 'node:fs';
 import { join, basename, dirname } from 'node:path';
 import fg from 'fast-glob';
 import { resolveContextRoot } from '../../lib/context-path.js';
+import { resolveVaultContextRoot, VaultError } from '../../lib/vaults.js';
+import { error } from '../../lib/format.js';
 import { readFrontmatter } from '../../lib/frontmatter.js';
 import { readJsonArray } from '../../lib/json-file.js';
 import { readSection } from '../../lib/markdown.js';
@@ -404,9 +406,15 @@ function getDriftDirective(root: string): string {
  * Output a plain-text context snapshot to stdout.
  * Designed for SessionStart hook consumption — no chalk, no interactivity.
  * If _dream_context/ doesn't exist, exits silently.
+ *
+ * `rootOverride` (federation P1.4) prints a PEER vault's snapshot from an
+ * already-resolved context root; the no-arg path resolves the local context root
+ * exactly as before and is BYTE-IDENTICAL to the pre-federation behaviour (the
+ * SessionStart hook calls it with no argument — regression-guarded). No peer
+ * resolution, no cross-vault work happens on the no-arg path.
  */
-export function generateSnapshot(): string {
-  const root = resolveContextRoot();
+export function generateSnapshot(rootOverride?: string): string {
+  const root = rootOverride ?? resolveContextRoot();
   if (!root) return '';
 
   // Snapshot is assembled as budget SECTIONS (see src/lib/snapshot-budget.ts):
@@ -1162,8 +1170,22 @@ export function registerSnapshotCommand(program: Command): void {
     .command('snapshot')
     .description('Output a context snapshot for SessionStart hook (plain text, no colors)')
     .option('--tokens', 'Show estimated token count instead of snapshot content')
-    .action((opts: { tokens?: boolean }) => {
-      const output = generateSnapshot();
+    .option('--vault <name>', 'Print a peer vault\'s snapshot (registered name or path)')
+    .action((opts: { tokens?: boolean; vault?: string }) => {
+      // Federation P1.4: `--vault` prints a PEER snapshot via the vault registry.
+      // A bad name/path yields a clean VaultError message + non-zero exit (no
+      // stack). The default (no --vault) path is untouched.
+      let rootOverride: string | undefined;
+      if (opts.vault !== undefined) {
+        try {
+          rootOverride = resolveVaultContextRoot(opts.vault);
+        } catch (err) {
+          error(err instanceof VaultError ? err.message : `Could not resolve vault: ${String(err)}`);
+          process.exit(1);
+        }
+      }
+
+      const output = generateSnapshot(rootOverride);
       if (!output) return;
 
       if (opts.tokens) {
