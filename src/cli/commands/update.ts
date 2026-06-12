@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import chalk from 'chalk';
 import { confirm } from '@inquirer/prompts';
 import { error, info, warn, miniBox } from '../../lib/format.js';
+import { readSleepState, writeSleepState } from './sleep.js';
 import { SUPPORTED_PLATFORMS, type PlatformId } from '../../lib/platforms.js';
 import {
   installCoreForPlatform,
@@ -24,7 +25,8 @@ import {
   PRE_MANIFEST_VERSION,
   type Manifest,
 } from '../../lib/manifest.js';
-import { updateSetupConfig } from '../../lib/setup-config.js';
+import { updateSetupConfig, readSetupConfig } from '../../lib/setup-config.js';
+import { runMigrations } from '../../lib/migration-runner.js';
 
 // ─── Update Summary ──────────────────────────────────────────────────────────
 
@@ -297,6 +299,11 @@ export function registerUpdateCommand(program: Command): void {
 
         writeManifest(projectRoot, newManifest);
 
+        // Capture fromVersion BEFORE bumping setupVersion so migrations run
+        // over the correct (from, to] range.
+        const fromVersion =
+          readSetupConfig(projectRoot)?.setupVersion ?? '0.0.0';
+
         // Bump setupVersion only when core was refreshed (not packs-only).
         // packs-only does NOT refresh skill/agents/hooks, so drift must remain.
         let newSetupVersion: string | null = null;
@@ -304,6 +311,31 @@ export function registerUpdateCommand(program: Command): void {
           const ver = dreamcontextVersion();
           updateSetupConfig(projectRoot, { setupVersion: ver });
           newSetupVersion = ver;
+
+          // Run pending structural migrations for the (fromVersion, ver] range.
+          const ctxRoot = join(projectRoot, '_dream_context');
+          const migResult = runMigrations(ctxRoot, fromVersion, ver);
+          if (migResult.applied.length > 0) {
+            const codeApplied = migResult.applied.filter(
+              (e) => e.executor === 'code',
+            );
+            if (codeApplied.length > 0) {
+              info(
+                `Applied ${codeApplied.length} migration step(s): ${codeApplied.map((e) => `${e.version}/${e.step}`).join(', ')}`,
+              );
+              // Queue notices into .sleep.json so the next SessionStart snapshot
+              // surfaces "Migrations applied since last session" (AC-7).
+              const codeNotices = codeApplied.map(
+                (e) => `${e.version} ${e.step}: ${e.summary}`,
+              );
+              const sleepState = readSleepState(ctxRoot);
+              sleepState.pendingMigrationNotices = [
+                ...sleepState.pendingMigrationNotices,
+                ...codeNotices,
+              ];
+              writeSleepState(ctxRoot, sleepState);
+            }
+          }
         }
 
         // Print relay-able summary always (covers packs-only too).

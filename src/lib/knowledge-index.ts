@@ -2,6 +2,12 @@ import { existsSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import fg from 'fast-glob';
 import { readFrontmatter } from './frontmatter.js';
+import {
+  isExcalidrawPath,
+  extractExcalidrawText,
+  diagramFolderDirs,
+  isDarkDiagramSibling,
+} from './excalidraw-text.js';
 
 // ─── Standard Tags ─────────────────────────────────────────────────────────
 
@@ -55,12 +61,26 @@ export function buildKnowledgeIndex(contextRoot: string): KnowledgeEntry[] {
   if (!existsSync(knowledgeDir)) return [];
 
   const files = fg.sync('**/*.md', { cwd: knowledgeDir, absolute: true });
+  // Compute dark-sibling set once (O(n)) — non-board .md files inside a
+  // diagram folder (knowledge/diagrams/<title>/) are excluded from the index.
+  const boardDirs = diagramFolderDirs(files);
   const entries: KnowledgeEntry[] = [];
 
   for (const file of files) {
+    // Dark siblings: helper/notes .md files that live beside a board.
+    // They are tooling artifacts, not recall surfaces.
+    if (isDarkDiagramSibling(file, boardDirs)) continue;
+
     try {
       const { data, content } = readFrontmatter(file);
       const slug = relative(knowledgeDir, file).replace(/\\/g, '/').replace(/\.md$/, '');
+      // For Excalidraw boards: store only extracted text (frontmatter + Text
+      // Elements labels) — never scene JSON/base64. This keeps entry.content
+      // clean for list route, snapshot warm path, and pinned preview.
+      // detail=raw (knowledge.ts serves raw body for the renderer).
+      const indexedContent = isExcalidrawPath(file)
+        ? extractExcalidrawText(content)
+        : content.trim();
       const entry: KnowledgeEntry = {
         slug,
         name: String(data.name ?? slug),
@@ -68,7 +88,7 @@ export function buildKnowledgeIndex(contextRoot: string): KnowledgeEntry[] {
         tags: Array.isArray(data.tags) ? data.tags.map(String) : [],
         date: String(data.date ?? ''),
         pinned: data.pinned === true,
-        content: content.trim(),
+        content: indexedContent,
       };
       if (typeof data.pinned_preview_lines === 'number' && data.pinned_preview_lines > 0) {
         entry.pinnedPreviewLines = data.pinned_preview_lines;

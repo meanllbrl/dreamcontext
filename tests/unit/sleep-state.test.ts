@@ -19,6 +19,7 @@ const NEW_DEFAULTS = {
   knowledge_access: {},
   compaction_log: [],
   recall_mode: 'haiku',
+  pendingMigrationNotices: [],
 };
 
 describe('readSleepState', () => {

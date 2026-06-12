@@ -318,6 +318,7 @@ Sleep debt reminders are injected on every user message (via UserPromptSubmit ho
      - a session advanced ≥1 acceptance criterion, OR introduced a feature concept with ≥2 acceptance criteria, OR the user named something "a feature" / "we should add X", OR a task has `feature:` frontmatter pointing to a non-existent PRD
      - user hint mentions knowledge or a feature
    - When unsure, **over-fire** `sleep-product` — it no-ops cheaply.
+   - **Conditional fire**: `sleep-migration` when `dreamcontext migrations pending` produces output (pending agent migration tasks exist). Contract: no-content changes only (structure/paths/frontmatter/fences); writes ledger via `dreamcontext migrations record` on completion.
    - Pass each specialist a small text brief in its prompt: epoch, session IDs, active task slugs, planning version, signals relevant to that specialist, optional user hint. Do **not** include transcript content — specialists call `dreamcontext transcript distill <id>` themselves.
    - **Consolidation discipline (remind both specialists in the brief):** prefer *updating/extending* an existing entity over creating a new one. `sleep-tasks` folds a smaller slice into the task that already covers it (broaden its title + insert sub-items) rather than forking a duplicate or a needless sub-task; `sleep-product` keeps similar verticals/brands/topics in the fewest knowledge files, splitting only on a sharp topical boundary that sharpens tags. Duplicate tasks and fragmented near-duplicate knowledge are the top consolidation failure modes — but genuinely separate concerns/topics still get their own task/file.
 5. Wait for all specialist reports. Each returns a short structured report.
@@ -433,6 +434,33 @@ Standard tags: `architecture`, `api`, `frontend`, `backend`, `database`, `devops
 
 **Taxonomy**: Tags drive BM25 recall precision. Prefer canonical faceted tags (`topic:recall`, `domain:database`) over bare duplicates. Run `dreamcontext taxonomy audit` to surface non-canonical or orphan tags.
 
+### Excalidraw boards in knowledge/diagrams/
+
+Excalidraw boards (`.excalidraw.md`) are first-class knowledge files. Two layouts are both supported:
+
+**Flat** (legacy, still works): `knowledge/diagrams/<title>.excalidraw.md`
+
+**Per-title folder** (preferred convention): `knowledge/diagrams/<title>/<title>.excalidraw.md`
+
+Rules:
+- **REQUIRED frontmatter**: every board MUST have `name:` and `description:` fields. Boards with no `## Text Elements` section fall back to description-only recall — make it descriptive.
+- **Do NOT hand-edit scene JSON.** The `.excalidraw.md` file is generated output. Build a spec and run the generator (`.board.cjs`). Edit the spec, not the board.
+- **Spec is the source of truth.** If the spec and the board ever disagree, the spec wins. Commit both.
+- **Dark siblings**: all files inside a `knowledge/diagrams/<title>/` folder that are NOT the board itself (generator scripts `.board.cjs`, spec `.json`, helper `.md`) are excluded from the index, recall corpus, snapshot, and dashboard. They are tooling artifacts — they do NOT surface in memory.
+- **Memory indexes only frontmatter + ## Text Elements**: scene JSON, base64, and element ids are stripped before indexing. A 2 MB board with rich Text Elements is as searchable as a tiny board. The dashboard renderer still receives the raw body (with full scene JSON) via the detail API route.
+- **Migration is opt-in**: flat boards stay flat unless you explicitly ask for reorganization. Use `dreamcontext migrations pending` to see pending migration tasks; use `dreamcontext migrations apply-diagrams` to opt-in to organizing flat boards into per-title folders.
+
+#### Where does a board go?
+
+| Board nature | Location | Indexed? |
+|---|---|---|
+| Canonical / source-of-truth (architecture, system flows, roadmaps, durable plans the agent should recall in future sessions) | `knowledge/diagrams/<title>/` | Yes — indexed, recalled |
+| Temporary / scratch / exploratory / in-progress | `inbox/` or `workspace/` (dark by location) | No — not indexed, will not pollute recall |
+
+**Decision rule**: "Will a future session need to know this? → `knowledge/diagrams/`. Throwaway/working? → `inbox/` or `workspace/`."
+
+Promote a board from `inbox/workspace` to `knowledge/diagrams/` only once it becomes canonical. Use `dreamcontext migrations apply-diagrams` to move flat boards + rewrite inbound [[wikilinks]] atomically — do NOT hand-edit wikilinks.
+
 ---
 
 ## Memory Recall (BM25)
@@ -477,6 +505,13 @@ _dream_context/
 |   +-- data-structures/              <- Per-product schemas (recall-indexed knowledge)
 |   |   +-- default.md                <-   single-product fallback
 |   |   +-- <product>.md              <-   one per product if monorepo
+|   +-- diagrams/                     <- Excalidraw boards (flat or per-title folder)
+|   |   +-- <title>.excalidraw.md     <-   flat layout (still works; legacy OK)
+|   |   +-- <title>/                  <-   preferred: per-title folder
+|   |   |   +-- <title>.excalidraw.md <-     generated board (do NOT hand-edit scene JSON)
+|   |   |   +-- <title>.board.cjs     <-     generator script (dark sibling — excluded from index/recall)
+|   |   |   +-- <title>.json          <-     spec/source of truth (dark sibling — excluded)
+|   |   |   +-- notes.md              <-     any helper .md (dark sibling — excluded)
 |   +-- products/<product>.md         <- Per-product knowledge (multi-product)
 +-- state/
 |   +-- <task>.md                     <- Active tasks (frontmatter may include product:)

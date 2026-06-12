@@ -339,6 +339,43 @@ function getVersionNudge(root: string): string {
 }
 
 /**
+ * Read-only migration note for the snapshot.
+ * Reads .sleep.json pendingMigrationNotices and returns a note if non-empty.
+ * NEVER writes the ledger or .sleep.json — snapshot is strictly read-only.
+ * Returns '' when there are no pending notices or on any error.
+ * Never throws.
+ */
+function getMigrationNote(root: string): string {
+  try {
+    const sleepPath = join(root, 'state', '.sleep.json');
+    if (!existsSync(sleepPath)) return '';
+    const raw = readFileSync(sleepPath, 'utf-8');
+    const parsed = JSON.parse(raw) as { pendingMigrationNotices?: unknown };
+    if (
+      !parsed ||
+      !Array.isArray(parsed.pendingMigrationNotices) ||
+      parsed.pendingMigrationNotices.length === 0
+    ) {
+      return '';
+    }
+    // Notices derive from migration summaries built from filenames — strip
+    // newlines + markdown-structural chars and cap length so a crafted filename
+    // can't inject a heading/directive into the agent snapshot; dedupe repeats.
+    const seen = new Set<string>();
+    const notices = (parsed.pendingMigrationNotices as unknown[])
+      .filter((n): n is string => typeof n === 'string')
+      .map((n) =>
+        n.replace(/[\r\n]+/g, ' ').replace(/[#`*>[\]]/g, '').slice(0, 200).trim(),
+      )
+      .filter((n) => n.length > 0 && !seen.has(n) && (seen.add(n), true));
+    if (notices.length === 0) return '';
+    return `## Migrations Applied\nMigrations applied since last session: ${notices.join('; ')}`;
+  } catch {
+    return '';
+  }
+}
+
+/**
  * Read-only drift directive for the snapshot.
  * Mirrors getVersionNudge — pure read, no I/O side effects, no subprocess.
  * Returns '' when drift check is disabled, config is absent, or no directive applies.
@@ -470,6 +507,14 @@ export function generateSnapshot(): string {
   const driftDirective = getDriftDirective(root);
   if (driftDirective) {
     parts.push(driftDirective);
+    parts.push('');
+  }
+
+  // 5.4 Migration note (read-only — reads .sleep.json pendingMigrationNotices,
+  //     never writes; cleared by sleep start after surfacing once per cycle).
+  const migrationNote = getMigrationNote(root);
+  if (migrationNote) {
+    parts.push(migrationNote);
     parts.push('');
   }
   flush('product-and-nudge', { neverEvict: true });
@@ -867,6 +912,12 @@ export function generateSnapshot(): string {
 
     // 9.5 Warm Knowledge (recently relevant, first paragraph only)
     if (warmEntries.length > 0) {
+      // Option A (maintainer decision): no pinned-preview inline feature built.
+      // entry.content is already extracted text (not scene JSON) for Excalidraw
+      // boards — see knowledge-index.ts. So extractFirstParagraph(entry.content)
+      // here and the token estimate are always JSON-free and size-independent.
+      // A 2MB-scene board and a tiny-scene board with identical Text Elements
+      // yield equal token estimates. No functional change needed.
       const renderWarm = (cap: number): string[] => {
         const out: string[] = ['## Warm Knowledge (Recently Relevant)\n'];
         for (const entry of warmEntries.slice(0, cap)) {

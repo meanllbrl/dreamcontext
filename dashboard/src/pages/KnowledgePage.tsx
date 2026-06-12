@@ -29,11 +29,32 @@ function prettyFolder(folder: string): string {
     .join(' ');
 }
 
-// Inside a folder, drop the "<folder>/" prefix so cards read "recall.excalidraw"
-// rather than "diagrams/recall.excalidraw". Only strips when the name is still
-// the raw slug path (no custom frontmatter name).
-function leafName(entry: KnowledgeListEntry, folder: string | null): string {
-  if (folder && entry.name.startsWith(`${folder}/`)) return entry.name.slice(folder.length + 1);
+/**
+ * Compute the display leaf name for a card inside a folder group.
+ *
+ * For Excalidraw boards in a depth-2 nested folder (e.g. slug =
+ * `diagrams/my-board/my-board.excalidraw`), using the last path segment
+ * collapses the redundant `<title>/<title>.excalidraw` pattern to just
+ * `my-board.excalidraw`. This is basename logic, NOT the old prefix-strip
+ * which left `my-board/my-board.excalidraw` intact at depth-2.
+ *
+ * Flat boards (`diagrams/recall.excalidraw`) have no sub-segment — the slug
+ * has exactly one `/`, so the last segment IS the plain leaf.
+ *
+ * For non-Excalidraw entries, we still strip the `<folder>/` prefix when the
+ * name is still the raw slug path (no custom frontmatter name), so the card
+ * reads "default" instead of "data-structures/default".
+ */
+export function leafName(entry: KnowledgeListEntry, folder: string | null): string {
+  if (!folder) return entry.name;
+  if (isExcalidrawSlug(entry.slug)) {
+    // Use the last path segment: `diagrams/my-board/my-board.excalidraw`
+    // → `my-board.excalidraw`. Works for both flat and nested layouts.
+    const lastSlash = entry.slug.lastIndexOf('/');
+    return lastSlash >= 0 ? entry.slug.slice(lastSlash + 1) : entry.slug;
+  }
+  // Non-Excalidraw: strip the `<folder>/` prefix when the name matches the slug path.
+  if (entry.name.startsWith(`${folder}/`)) return entry.name.slice(folder.length + 1);
   return entry.name;
 }
 
