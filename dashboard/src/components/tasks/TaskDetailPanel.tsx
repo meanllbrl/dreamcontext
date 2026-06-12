@@ -3,7 +3,8 @@ import { marked } from 'marked';
 import mermaid from 'mermaid';
 import panzoom from 'panzoom';
 import type { Task, RiceFields, RiceInput } from '../../hooks/useTasks';
-import { useUpdateTask, useAddTaskChangelog } from '../../hooks/useTasks';
+import { useUpdateTask, useAddTaskChangelog, useDeleteTask, useTaskMembers, useFeatureOptions } from '../../hooks/useTasks';
+import { SearchableSelect } from './SearchableSelect';
 import { usePlanningVersions } from '../../hooks/useVersions';
 import { useI18n } from '../../context/I18nContext';
 import { useTheme } from '../../context/ThemeContext';
@@ -361,8 +362,12 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
   const { resolved: theme } = useTheme();
   const updateTask = useUpdateTask();
   const addChangelog = useAddTaskChangelog();
+  const deleteTask = useDeleteTask();
+  const { data: members } = useTaskMembers();
+  const { data: featureOptions } = useFeatureOptions();
   const { data: versions } = usePlanningVersions();
   const [changelogEntry, setChangelogEntry] = useState('');
+  const [newTag, setNewTag] = useState('');
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [riceExpanded, setRiceExpanded] = useState(initialRiceExpanded ?? !!task.rice);
   const [fullScreen, setFullScreen] = useState(false);
@@ -405,6 +410,73 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
       { slug: task.slug, updates: { rice: patch } },
       { onError: onMutationError },
     );
+  };
+
+  const handleTextField = (field: 'name' | 'description' | 'related_feature', value: string) => {
+    const next = field === 'related_feature' ? (value.trim() || null) : value.trim();
+    if (field !== 'related_feature' && !next) return; // name/summary must stay non-empty
+    updateTask.mutate(
+      { slug: task.slug, updates: { [field]: next } },
+      { onError: onMutationError },
+    );
+  };
+
+  // The engine treats the assignee FIELD and the person:<slug> TAG as one
+  // concept (field wins, tag is the dreamcontext convention) — the UI must
+  // present them as one too, or they look like two competing features.
+  const personTagOf = (tags: string[]): string | null => {
+    const tag = tags.find(t => t.startsWith('person:'));
+    return tag ? tag.slice('person:'.length) : null;
+  };
+  const withPersonTag = (tags: string[], person: string | null): string[] => {
+    const rest = tags.filter(t => !t.startsWith('person:'));
+    return person ? [...rest, `person:${person}`] : rest;
+  };
+  const effectiveAssignee = task.assignee ?? personTagOf(task.tags);
+
+  const handleAssigneeChange = (value: string) => {
+    const person = value || null;
+    // Keep the field AND the person tag coherent in one PATCH.
+    updateTask.mutate(
+      { slug: task.slug, updates: { assignee: person, tags: withPersonTag(task.tags, person) } },
+      { onError: onMutationError },
+    );
+  };
+
+  const handleDelete = () => {
+    if (!window.confirm(`Delete task "${task.name}"? This propagates to the remote backend on sync.`)) return;
+    deleteTask.mutate(task.slug, {
+      onError: onMutationError,
+      onSuccess: () => onClose?.(),
+    });
+  };
+
+  const handleDueChange = (value: string) => {
+    updateTask.mutate(
+      { slug: task.slug, updates: { due_date: value || null } },
+      { onError: onMutationError },
+    );
+  };
+
+  const handleTagsChange = (tags: string[]) => {
+    // Editing a person tag IS an assignment change — keep the field in sync.
+    const person = personTagOf(tags);
+    updateTask.mutate(
+      {
+        slug: task.slug,
+        updates: { tags, ...(person !== effectiveAssignee ? { assignee: person } : {}) },
+      },
+      { onError: onMutationError },
+    );
+  };
+
+  const handleAddTag = () => {
+    const tag = newTag.trim();
+    if (!tag) return;
+    if (!task.tags.some(x => x.toLowerCase() === tag.toLowerCase())) {
+      handleTagsChange([...task.tags, tag]);
+    }
+    setNewTag('');
   };
 
   const handleAddChangelog = (e: React.FormEvent) => {
@@ -799,21 +871,102 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
               />
             </PropertyRow>
 
-            {task.tags.length > 0 && (
-              <PropertyRow label="Tags">
-                <div className="prop-tags">
-                  {task.tags.map(tag => (
-                    <span key={tag} className="task-tag" data-hue={tagHue(tag)}>{tag}</span>
-                  ))}
-                </div>
-              </PropertyRow>
-            )}
+            <PropertyRow label="Name">
+              <input
+                className="settings-like-input prop-text-input"
+                defaultValue={task.name}
+                key={`name-${task.slug}-${task.name}`}
+                onBlur={e => { if (e.target.value.trim() && e.target.value.trim() !== task.name) handleTextField('name', e.target.value); }}
+                onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+              />
+            </PropertyRow>
 
-            {task.related_feature && (
-              <PropertyRow label="Feature">
-                <span className="prop-feature">{task.related_feature}</span>
-              </PropertyRow>
-            )}
+            <PropertyRow label="Summary">
+              <input
+                className="prop-text-input"
+                defaultValue={task.description}
+                key={`desc-${task.slug}-${task.description}`}
+                placeholder="One-line summary"
+                onBlur={e => { if (e.target.value.trim() && e.target.value.trim() !== task.description) handleTextField('description', e.target.value); }}
+                onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+              />
+            </PropertyRow>
+
+            <PropertyRow label="Assignee">
+              <SearchableSelect
+                value={effectiveAssignee}
+                options={[
+                  ...(members ?? []).map(m => ({ value: m.slug, label: m.name, hint: m.slug })),
+                  ...(effectiveAssignee && !(members ?? []).some(m => m.slug === effectiveAssignee)
+                    ? [{ value: effectiveAssignee, label: effectiveAssignee }]
+                    : []),
+                ]}
+                placeholder="Unassigned"
+                searchPlaceholder="Search people…"
+                clearLabel="Unassigned"
+                allowCustom
+                onChange={v => handleAssigneeChange(v ?? '')}
+              />
+            </PropertyRow>
+
+            <PropertyRow label="Feature">
+              <SearchableSelect
+                value={task.related_feature ?? null}
+                options={(featureOptions ?? []).map(f => ({ value: f.slug, label: f.name ?? f.slug, hint: f.name ? f.slug : undefined }))}
+                placeholder="No feature"
+                searchPlaceholder="Search features…"
+                clearLabel="No feature"
+                allowCustom
+                onChange={v => handleTextField('related_feature', v ?? '')}
+              />
+            </PropertyRow>
+
+            <PropertyRow label="Due">
+              {task.tags.some(t => t.toLowerCase() === 'backlog') ? (
+                <span className="prop-text" title="Backlog tasks are undated by rule — remove the backlog tag to schedule.">
+                  — backlog tasks are undated
+                </span>
+              ) : (
+                <input
+                  type="date"
+                  className="field-select prop-select"
+                  value={task.due_date ?? ''}
+                  onChange={e => handleDueChange(e.target.value)}
+                />
+              )}
+            </PropertyRow>
+
+            <PropertyRow label="Tags">
+              <div className="prop-tags prop-tags--editable">
+                {task.tags.map(tag => (
+                  <span key={tag} className="task-tag" data-hue={tagHue(tag)}>
+                    {tag}
+                    <button
+                      type="button"
+                      className="task-tag-remove"
+                      aria-label={`Remove tag ${tag}`}
+                      onClick={() => handleTagsChange(task.tags.filter(x => x !== tag))}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+                <input
+                  className="task-tag-input"
+                  value={newTag}
+                  placeholder="+ tag"
+                  aria-label="Add tag"
+                  onChange={e => setNewTag(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleAddTag();
+                    }
+                  }}
+                  onBlur={handleAddTag}
+                />
+              </div>
+            </PropertyRow>
 
             <PropertyRow label="Version">
               <select
@@ -891,6 +1044,20 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
                 {addChangelog.isPending ? '...' : t('tasks.add_entry')}
               </button>
             </form>
+          </div>
+
+          {/* Danger zone — intentionally last */}
+          <hr className="detail-divider" />
+          <div className="detail-danger-zone">
+            <button
+              type="button"
+              className="btn btn--danger-ghost"
+              onClick={handleDelete}
+              disabled={deleteTask.isPending}
+            >
+              {deleteTask.isPending ? 'Deleting…' : 'Delete task'}
+            </button>
+            <span className="detail-danger-hint">Removes the task locally and on the remote backend (next sync).</span>
           </div>
         </div>
       </div>

@@ -371,3 +371,21 @@ select {
     margin-bottom: var(--space-4);
   }
 }
+
+/* Stale dashboard-server warning (bundle newer than the running API) */
+.stale-server-banner {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: #7c2d12;
+  color: #ffedd5;
+  font-size: 13px;
+  text-align: center;
+  padding: 6px 12px;
+}
+
+.stale-server-banner code {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  padding: 1px 6px;
+}

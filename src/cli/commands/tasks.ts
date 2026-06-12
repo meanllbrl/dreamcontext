@@ -1,24 +1,27 @@
 import { Command } from 'commander';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, basename, dirname } from 'node:path';
 import chalk from 'chalk';
 import fg from 'fast-glob';
 import { ensureContextRoot } from '../../lib/context-path.js';
-import { readFrontmatter, updateFrontmatterFields } from '../../lib/frontmatter.js';
-import { insertToSection, readSection, extractMermaidNodes, nodeStatus, countCheckboxes } from '../../lib/markdown.js';
+import { readSection, extractMermaidNodes, nodeStatus, countCheckboxes } from '../../lib/markdown.js';
 import { prepareSectionInsert, SECTION_MAP } from '../../lib/section-insert.js';
 import { promptInput } from '../../lib/prompt.js';
-import { generateId, slugify, today } from '../../lib/id.js';
+import { slugify, today } from '../../lib/id.js';
 import { success, error, header } from '../../lib/format.js';
 import { readSetupConfig, isMultiPerson } from '../../lib/setup-config.js';
 import { getActivePlanningVersion } from '../../lib/active-version.js';
-import { mergeRice, normalizeRice, validateRiceInput, type RiceFields, type RiceInput } from '../../lib/rice.js';
+import { mergeRice, validateRiceInput, type RiceFields, type RiceInput } from '../../lib/rice.js';
 import {
-  toTaskRecord,
-  filterTasks,
-  groupTasks,
-  collectTags,
+  getTaskBackend,
+  installTaskSyncHooks,
+  uninstallTaskSyncHooks,
+  TaskBackendError,
+  type TaskBackend,
+} from '../../lib/task-backend/index.js';
+import {
   GROUP_BY_FIELDS,
+  collectTags,
+  groupTasks,
   type TaskRecord,
   type TaskFilter,
   type GroupBy,
@@ -52,113 +55,19 @@ function renderTaskLine(t: TaskRecord, opts: { long?: boolean } = {}): string {
   return line;
 }
 
-function findTaskFile(name: string): string | null {
-  const dir = getStateDir();
-  const slug = slugify(name);
-
-  const exact = join(dir, `${slug}.md`);
-  if (existsSync(exact)) return exact;
-
-  // Prefer exact match, then prefix, then substring
-  const files = fg.sync('*.md', { cwd: dir, absolute: true });
-
-  const exactGlob = files.find((f) => basename(f, '.md') === slug);
-  if (exactGlob) return exactGlob;
-
-  const prefixMatches = files.filter((f) => basename(f, '.md').startsWith(slug));
-  if (prefixMatches.length === 1) return prefixMatches[0];
-  if (prefixMatches.length > 1) {
-    error(`Ambiguous task name "${name}". Did you mean: ${prefixMatches.map(f => basename(f, '.md')).join(', ')}?`);
-    return null;
+/**
+ * Resolve a fuzzy task name through the backend, printing the exact
+ * pre-refactor error messages (ambiguity / not found). Returns the slug or null.
+ */
+async function resolveTaskSlug(backend: TaskBackend, name: string): Promise<string | null> {
+  const res = await backend.resolveSlug(name);
+  if (res.kind === 'match') return res.slug;
+  if (res.kind === 'ambiguous') {
+    error(`Ambiguous task name "${name}". Did you mean: ${res.candidates.join(', ')}?`);
   }
-
-  const substringMatches = files.filter((f) => basename(f, '.md').includes(slug));
-  if (substringMatches.length === 1) return substringMatches[0];
-  if (substringMatches.length > 1) {
-    error(`Ambiguous task name "${name}". Did you mean: ${substringMatches.map(f => basename(f, '.md')).join(', ')}?`);
-    return null;
-  }
-
+  // Pre-refactor parity: ambiguity printed its hint AND the not-found line.
+  error(`Task not found: ${name}`);
   return null;
-}
-
-function getTaskTemplate(): string {
-  const candidates = [
-    join(new URL('.', import.meta.url).pathname, '..', '..', 'templates', 'task.md'),
-    join(new URL('.', import.meta.url).pathname, '..', 'templates', 'task.md'),
-  ];
-
-  for (const path of candidates) {
-    if (existsSync(path)) {
-      return readFileSync(path, 'utf-8');
-    }
-  }
-
-  // Inline fallback
-  return `---
-id: "{{ID}}"
-name: "{{NAME}}"
-description: "{{DESCRIPTION}}"
-priority: "{{PRIORITY}}"
-urgency: "{{URGENCY}}"
-status: "{{STATUS}}"
-created_at: "{{DATE}}"
-updated_at: "{{DATE}}"
-tags: {{TAGS}}
-parent_task: null
-related_feature: null
-version: {{VERSION}}
----
-
-## Workflow
-<!-- The shape of this task at a glance. One node per acceptance criterion, grouped under milestone subgraphs. Update node classes as work progresses: \`:::done\` (green), \`:::active\` (amber), \`:::todo\` (gray), \`:::blocked\` (red). Run \`dreamcontext tasks doctor\` to verify sync. -->
-
-\`\`\`mermaid
-flowchart TD
-  subgraph M1 ["Milestone 1 — rename me"]
-    A1[First criterion]:::todo
-  end
-
-  classDef done fill:#86efac,stroke:#15803d,color:#052e16
-  classDef active fill:#fde68a,stroke:#b45309,color:#451a03
-  classDef todo fill:#e5e7eb,stroke:#6b7280,color:#111827
-  classDef blocked fill:#fecaca,stroke:#b91c1c,color:#450a0a
-\`\`\`
-
-## Why
-<!-- What problem does this solve? What breaks if we don't do it? Be concrete — name the user, the friction, the cost. -->
-
-{{WHY}}
-
-## User Stories
-<!-- As a <role>, I can <action>, so that <outcome>. Tick when demonstrably true in the running system. -->
-
-- [ ] As a [role], I can [action], so that [outcome]
-
-## Acceptance Criteria
-<!-- The contract. Each line is testable and gets a node in the Workflow flowchart above. -->
-
-- [ ] First criterion (matches node A1 in Workflow)
-
-## Constraints & Decisions
-<!-- LIFO: newest at top. Capture the why, not just the what. -->
-
-## Technical Details
-<!-- Where the work lives. Files, services, key functions to reuse. Body is current truth — update in place; don't append. -->
-
-(Key files, services, dependencies, implementation approach.)
-
-## Notes
-<!-- Loose ends, edge cases, open questions. -->
-
-(Working notes, edge cases, open questions.)
-
-## Changelog
-<!-- LIFO: newest at top. Auto-prepended by \`dreamcontext tasks log\`. -->
-
-### {{DATE}} - Created
-- Task created.
-`;
 }
 
 export function registerTasksCommand(program: Command): void {
@@ -181,13 +90,12 @@ export function registerTasksCommand(program: Command): void {
     .option('--long', 'Show tags + version inline in human output')
     .option('--tags', 'List distinct tags with counts (respects -s/--all; ignores other filters)')
     .option('--json', 'Emit the filtered tasks as JSON (flat array)')
-    .action((opts: {
+    .action(async (opts: {
       status?: string; all?: boolean; tag?: string[]; anyTag?: string[];
       version?: string; priority?: string; feature?: string;
       groupBy?: string; long?: boolean; tags?: boolean; json?: boolean;
     }) => {
-      const dir = getStateDir();
-      const files = fg.sync('*.md', { cwd: dir, absolute: true });
+      const backend = getTaskBackend();
 
       const validStatuses = ['todo', 'in_progress', 'in_review', 'completed'];
       if (opts.status && !validStatuses.includes(opts.status)) {
@@ -204,17 +112,9 @@ export function registerTasksCommand(program: Command): void {
         return;
       }
 
-      const all: TaskRecord[] = [];
-      for (const file of files) {
-        try {
-          const { data } = readFrontmatter<Record<string, unknown>>(file);
-          all.push(toTaskRecord(data, basename(file, '.md'), file));
-        } catch { /* skip unreadable */ }
-      }
-
       // Tag discovery: visibility filters only (status/all), other narrowing ignored.
       if (opts.tags) {
-        const visible = filterTasks(all, { status: opts.status, all: opts.all });
+        const visible = await backend.list({ status: opts.status, all: opts.all });
         const counts = collectTags(visible);
         if (opts.json) { console.log(JSON.stringify(counts, null, 2)); return; }
         if (counts.length === 0) { console.log(chalk.dim('No tags.')); return; }
@@ -235,7 +135,7 @@ export function registerTasksCommand(program: Command): void {
         priority: opts.priority,
         feature: opts.feature,
       };
-      const matched = filterTasks(all, filter);
+      const matched = await backend.list(filter);
 
       if (opts.json) {
         console.log(JSON.stringify(matched, null, 2));
@@ -243,9 +143,10 @@ export function registerTasksCommand(program: Command): void {
       }
 
       if (matched.length === 0) {
+        const total = (await backend.list({ all: true })).length;
         const narrowed = (opts.tag && opts.tag.length > 0) || (opts.anyTag && opts.anyTag.length > 0)
           || opts.version || opts.priority || opts.feature;
-        const msg = files.length === 0 ? 'No tasks.'
+        const msg = total === 0 ? 'No tasks.'
           : opts.status ? `No tasks with status "${opts.status}".`
           : narrowed ? 'No tasks match the given filters.'
           : 'No active tasks.';
@@ -270,17 +171,9 @@ export function registerTasksCommand(program: Command): void {
     .description('List distinct task tags with counts')
     .option('-a, --all', 'Include completed tasks in the counts')
     .option('--json', 'Emit tag counts as JSON')
-    .action((opts: { all?: boolean; json?: boolean }) => {
-      const dir = getStateDir();
-      const files = fg.sync('*.md', { cwd: dir, absolute: true });
-      const all: TaskRecord[] = [];
-      for (const file of files) {
-        try {
-          const { data } = readFrontmatter<Record<string, unknown>>(file);
-          all.push(toTaskRecord(data, basename(file, '.md'), file));
-        } catch { /* skip unreadable */ }
-      }
-      const counts = collectTags(filterTasks(all, { all: opts.all }));
+    .action(async (opts: { all?: boolean; json?: boolean }) => {
+      const backend = getTaskBackend();
+      const counts = collectTags(await backend.list({ all: opts.all }));
       if (opts.json) { console.log(JSON.stringify(counts, null, 2)); return; }
       if (counts.length === 0) { console.log(chalk.dim('No tags.')); return; }
       console.log(header('Tags'));
@@ -307,12 +200,12 @@ export function registerTasksCommand(program: Command): void {
     .option('--impact <n>', 'RICE impact (integer 1–5)')
     .option('--confidence <n>', 'RICE confidence (25, 50, 75, or 100)')
     .option('--effort <n>', 'RICE effort in weeks (> 0, ≤ 52)')
-    .action(async (name: string, opts: { description?: string; priority?: string; urgency?: string; status?: string; tags?: string; why?: string; version?: string; person?: string; reach?: string; impact?: string; confidence?: string; effort?: string }) => {
-      const dir = getStateDir();
+    .option('--due <date>', 'Due date (YYYY-MM-DD)')
+    .action(async (name: string, opts: { description?: string; priority?: string; urgency?: string; status?: string; tags?: string; why?: string; version?: string; person?: string; reach?: string; impact?: string; confidence?: string; effort?: string; due?: string }) => {
+      const backend = getTaskBackend();
       const slug = slugify(name);
-      const filePath = join(dir, `${slug}.md`);
 
-      if (existsSync(filePath)) {
+      if ((await backend.get(slug)) !== null) {
         error(`Task already exists: ${slug}.md`);
         return;
       }
@@ -343,10 +236,9 @@ export function registerTasksCommand(program: Command): void {
       // Person attribution rides the tags array as `person:<slug>` (no new
       // frontmatter field, so existing task-query tag handling just works). The
       // tag is injected ONLY when the project is multi-person; single-person
-      // projects never get it (`--person` is a silent no-op there). `dir` is
-      // `_dream_context/state`, so the project root is two levels up.
+      // projects never get it (`--person` is a silent no-op there).
       if (opts.person && opts.person.trim()) {
-        const projectRoot = dirname(dirname(dir));
+        const projectRoot = dirname(ensureContextRoot());
         if (isMultiPerson(readSetupConfig(projectRoot))) {
           const personTag = `person:${slugify(opts.person)}`;
           if (!tags.includes(personTag)) tags.push(personTag);
@@ -370,22 +262,31 @@ export function registerTasksCommand(program: Command): void {
         riceBlock = mergeRice(null, riceInput);
       }
 
-      const template = getTaskTemplate();
-      const content = template
-        .replaceAll('{{ID}}', generateId('task'))
-        .replaceAll('{{NAME}}', name)
-        .replaceAll('{{DESCRIPTION}}', description)
-        .replaceAll('{{PRIORITY}}', priority)
-        .replaceAll('{{URGENCY}}', urgency)
-        .replaceAll('{{STATUS}}', status)
-        .replaceAll('{{TAGS}}', JSON.stringify(tags))
-        .replaceAll('{{DATE}}', today())
-        .replaceAll('{{WHY}}', why || '(To be defined)')
-        .replaceAll('{{VERSION}}', version ? `"${version}"` : 'null');
+      if (opts.due !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(opts.due)) {
+        error('Due date must be YYYY-MM-DD.');
+        return;
+      }
 
-      writeFileSync(filePath, content, 'utf-8');
-      if (riceBlock) {
-        updateFrontmatterFields(filePath, { rice: riceBlock });
+      try {
+        await backend.create({
+          name,
+          description,
+          priority,
+          urgency,
+          status,
+          tags,
+          why,
+          version,
+          rice: riceBlock,
+          due_date: opts.due ?? null,
+          variant: 'cli',
+        });
+      } catch (err) {
+        if (err instanceof TaskBackendError && err.code === 'already_exists') {
+          error(`Task already exists: ${slug}.md`);
+          return;
+        }
+        throw err;
       }
       success(`Task created: ${slug}.md`);
     });
@@ -400,15 +301,16 @@ export function registerTasksCommand(program: Command): void {
     .option('--confidence <n>', 'RICE confidence (25, 50, 75, or 100)')
     .option('--effort <n>', 'RICE effort in weeks (> 0, ≤ 52)')
     .option('--clear', 'Clear all RICE values on this task')
-    .action((name: string, opts: { reach?: string; impact?: string; confidence?: string; effort?: string; clear?: boolean }) => {
-      const file = findTaskFile(name);
-      if (!file) {
+    .action(async (name: string, opts: { reach?: string; impact?: string; confidence?: string; effort?: string; clear?: boolean }) => {
+      const backend = getTaskBackend();
+      const slug = await resolveTaskSlug(backend, name);
+      if (!slug) return;
+      const task = await backend.get(slug);
+      if (!task) {
         error(`Task not found: ${name}`);
         return;
       }
-      const slug = basename(file, '.md');
-      const { data } = readFrontmatter<Record<string, unknown>>(file);
-      const existing = normalizeRice(data.rice);
+      const existing = task.rice;
 
       const hasFlag = opts.reach !== undefined || opts.impact !== undefined || opts.confidence !== undefined || opts.effort !== undefined;
 
@@ -417,7 +319,7 @@ export function registerTasksCommand(program: Command): void {
           error('--clear cannot be combined with rating flags.');
           return;
         }
-        updateFrontmatterFields(file, { rice: null, updated_at: today() });
+        await backend.updateFields(slug, { rice: null, updated_at: today() });
         success(`Cleared RICE on ${slug}`);
         return;
       }
@@ -450,9 +352,117 @@ export function registerTasksCommand(program: Command): void {
       }
 
       const next = mergeRice(existing, patch);
-      updateFrontmatterFields(file, { rice: next, updated_at: today() });
+      await backend.updateFields(slug, { rice: next, updated_at: today() });
       const scoreStr = next?.score === null || next?.score === undefined ? '— (incomplete)' : String(next.score);
       success(`RICE updated on ${slug} — score: ${scoreStr}`);
+    });
+
+  // Delete a task (remote backends propagate the deletion on sync)
+  tasks
+    .command('delete')
+    .argument('<name>', 'Task slug or name')
+    .description('Delete a task (propagates to the remote backend on sync)')
+    .option('--yes', 'Skip the confirmation prompt')
+    .action(async (name: string, opts: { yes?: boolean }) => {
+      const backend = getTaskBackend();
+      const slug = await resolveTaskSlug(backend, name);
+      if (!slug) return;
+
+      if (!opts.yes) {
+        if (!process.stdin.isTTY) {
+          error('Refusing to delete without --yes in a non-interactive session.');
+          process.exitCode = 1;
+          return;
+        }
+        const answer = (await promptInput({ message: `Delete task "${slug}"? Type the slug to confirm:` })).trim();
+        if (answer !== slug) {
+          error('Confirmation did not match — nothing deleted.');
+          return;
+        }
+      }
+
+      await backend.delete(slug);
+      success(`Task deleted: ${slug}${backend.name !== 'local' ? ' (remote deletion on next sync)' : ''}`);
+    });
+
+  // Due date on existing tasks (synced natively to the remote backend)
+  tasks
+    .command('due')
+    .argument('<name>', 'Task slug or name')
+    .argument('<date>', 'YYYY-MM-DD, or "clear" to remove')
+    .description('Set or clear a task due date')
+    .action(async (name: string, date: string) => {
+      const backend = getTaskBackend();
+      const slug = await resolveTaskSlug(backend, name);
+      if (!slug) return;
+
+      if (date.toLowerCase() === 'clear') {
+        await backend.updateFields(slug, { due_date: null, updated_at: today() });
+        success(`Due date cleared on ${slug}`);
+        return;
+      }
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00Z`))) {
+        error('Due date must be a valid YYYY-MM-DD (or "clear").');
+        return;
+      }
+      const before = await backend.get(slug);
+      const updated = await backend.updateFields(slug, { due_date: date, updated_at: today() });
+      success(`Due date on ${slug}: ${date}`);
+      if (before?.tags.some((t) => t.toLowerCase() === 'backlog') && !updated.tags.some((t) => t.toLowerCase() === 'backlog')) {
+        console.log(chalk.dim('  backlog tag removed — a dated task is planned, not backlog.'));
+      }
+    });
+
+  // Tag management on existing tasks (person:<slug> tags drive remote assignees)
+  tasks
+    .command('tag')
+    .argument('<name>', 'Task slug or name')
+    .argument('<tags...>', 'Tags to add (or remove with --remove); person:<slug> assigns a person')
+    .description('Add or remove tags on a task')
+    .option('--remove', 'Remove the given tags instead of adding them')
+    .action(async (name: string, tagArgs: string[], opts: { remove?: boolean }) => {
+      const backend = getTaskBackend();
+      const slug = await resolveTaskSlug(backend, name);
+      if (!slug) return;
+
+      const task = await backend.get(slug);
+      if (!task) {
+        error(`Task not found: ${name}`);
+        return;
+      }
+
+      const given = tagArgs
+        .flatMap((t) => t.split(','))
+        .map((t) => t.trim())
+        .filter(Boolean);
+      if (given.length === 0) {
+        error('No tags provided.');
+        return;
+      }
+
+      let next: string[];
+      if (opts.remove) {
+        const drop = new Set(given.map((t) => t.toLowerCase()));
+        next = task.tags.filter((t) => !drop.has(t.toLowerCase()));
+      } else {
+        next = [...task.tags];
+        for (const t of given) {
+          if (!next.some((x) => x.toLowerCase() === t.toLowerCase())) next.push(t);
+        }
+        // A person tag is an assignment — only one person tag at a time.
+        const persons = next.filter((t) => t.startsWith('person:'));
+        if (persons.length > 1) {
+          const keep = given.filter((t) => t.startsWith('person:')).pop() ?? persons[persons.length - 1];
+          next = next.filter((t) => !t.startsWith('person:') || t === keep);
+        }
+      }
+
+      const hadDue = (await backend.get(slug))?.due_date ?? null;
+      const updated = await backend.updateFields(slug, { tags: next, updated_at: today() });
+      success(`Tags on ${slug}: ${updated.tags.length > 0 ? updated.tags.join(', ') : '(none)'}`);
+      if (hadDue && updated.due_date === null && next.some((t) => t.toLowerCase() === 'backlog')) {
+        console.log(chalk.dim('  due date cleared — backlog tasks are undated by rule.'));
+      }
     });
 
   // Insert into a section
@@ -466,11 +476,9 @@ export function registerTasksCommand(program: Command): void {
     .argument('[content...]', 'Content to insert')
     .description('Insert content into a task section')
     .action(async (name: string, section: string, contentParts: string[]) => {
-      const file = findTaskFile(name);
-      if (!file) {
-        error(`Task not found: ${name}`);
-        return;
-      }
+      const backend = getTaskBackend();
+      const slug = await resolveTaskSlug(backend, name);
+      if (!slug) return;
 
       const sectionKey = section.toLowerCase();
       if (!SECTION_MAP[sectionKey]) {
@@ -490,9 +498,12 @@ export function registerTasksCommand(program: Command): void {
       const prep = prepareSectionInsert(sectionKey, rawContent, today())!;
 
       try {
-        insertToSection(file, prep.sectionName, prep.content, prep.position, true, prep.replacePlaceholders);
-        updateFrontmatterFields(file, { updated_at: today() });
-        success(`Inserted into ${prep.sectionName} in ${basename(file)}`);
+        await backend.insertSection(slug, prep.sectionName, prep.content, {
+          position: prep.position,
+          replacePlaceholders: prep.replacePlaceholders,
+        });
+        await backend.updateFields(slug, { updated_at: today() });
+        success(`Inserted into ${prep.sectionName} in ${slug}.md`);
       } catch (err: any) {
         error(err.message);
       }
@@ -505,11 +516,9 @@ export function registerTasksCommand(program: Command): void {
     .argument('[summary...]', 'Completion summary')
     .description('Mark a task as completed')
     .action(async (name: string, summaryParts: string[]) => {
-      const file = findTaskFile(name);
-      if (!file) {
-        error(`Task not found: ${name}`);
-        return;
-      }
+      const backend = getTaskBackend();
+      const slug = await resolveTaskSlug(backend, name);
+      if (!slug) return;
 
       let summary: string;
       if (summaryParts.length > 0) {
@@ -518,22 +527,8 @@ export function registerTasksCommand(program: Command): void {
         summary = await promptInput({ message: 'Completion summary (optional):', default: 'Task completed.' });
       }
 
-      // Add final changelog entry
-      const logContent = `### ${today()} - Completed\n- ${summary}`;
-      try {
-        insertToSection(file, 'Changelog', logContent, 'top');
-      } catch {
-        // If no changelog section, just append
-        const existing = readFileSync(file, 'utf-8');
-        writeFileSync(file, existing.trimEnd() + '\n\n' + logContent + '\n', 'utf-8');
-      }
-
-      updateFrontmatterFields(file, {
-        status: 'completed',
-        updated_at: today(),
-      });
-
-      success(`Task completed: ${basename(file, '.md')}`);
+      await backend.complete(slug, summary);
+      success(`Task completed: ${slug}`);
     });
 
   // Change status (todo, in_progress, in_review, completed)
@@ -550,11 +545,9 @@ export function registerTasksCommand(program: Command): void {
         return;
       }
 
-      const file = findTaskFile(name);
-      if (!file) {
-        error(`Task not found: ${name}`);
-        return;
-      }
+      const backend = getTaskBackend();
+      const slug = await resolveTaskSlug(backend, name);
+      if (!slug) return;
 
       const reason = reasonParts.join(' ').trim();
       const headerLabel = newStatus === 'completed' ? 'Completed' : `Status → ${newStatus}`;
@@ -562,15 +555,9 @@ export function registerTasksCommand(program: Command): void {
         ? `### ${today()} - ${headerLabel}\n- ${reason}`
         : `### ${today()} - ${headerLabel}`;
 
-      try {
-        insertToSection(file, 'Changelog', logContent, 'top');
-      } catch {
-        const existing = readFileSync(file, 'utf-8');
-        writeFileSync(file, existing.trimEnd() + '\n\n' + logContent + '\n', 'utf-8');
-      }
-
-      updateFrontmatterFields(file, { status: newStatus, updated_at: today() });
-      success(`Task ${basename(file, '.md')} → ${newStatus}`);
+      await backend.addChangelog(slug, logContent, { fallbackAppend: true });
+      await backend.updateFields(slug, { status: newStatus, updated_at: today() });
+      success(`Task ${slug} → ${newStatus}`);
     });
 
   // Log entry (cross-session continuity)
@@ -580,11 +567,9 @@ export function registerTasksCommand(program: Command): void {
     .argument('[content...]', 'Log entry content')
     .description('Add a changelog entry to a task (cross-session continuity)')
     .action(async (name: string, contentParts: string[]) => {
-      const file = findTaskFile(name);
-      if (!file) {
-        error(`Task not found: ${name}`);
-        return;
-      }
+      const backend = getTaskBackend();
+      const slug = await resolveTaskSlug(backend, name);
+      if (!slug) return;
 
       let content: string;
       if (contentParts.length > 0) {
@@ -600,34 +585,173 @@ export function registerTasksCommand(program: Command): void {
 
       const logContent = `### ${today()} - Session Update\n- ${content}`;
 
-      try {
-        insertToSection(file, 'Changelog', logContent, 'top');
-      } catch {
-        const existing = readFileSync(file, 'utf-8');
-        writeFileSync(file, existing.trimEnd() + '\n\n' + logContent + '\n', 'utf-8');
-      }
+      await backend.addChangelog(slug, logContent, { fallbackAppend: true });
+      await backend.updateFields(slug, { updated_at: today() });
+      success(`Log entry added to ${slug}`);
+    });
 
-      updateFrontmatterFields(file, { updated_at: today() });
-      success(`Log entry added to ${basename(file, '.md')}`);
+  // Sync with the remote backend (no-op for local)
+  tasks
+    .command('sync')
+    .argument('[direction]', 'push, pull, or both (default: both)')
+    .description('Sync tasks with the configured remote backend (no-op for local)')
+    .option('--hook', 'Best-effort mode for git hooks: never fails, bounded time, exit 0')
+    .option('--json', 'Emit the sync report as JSON')
+    .action(async (direction: string | undefined, opts: { hook?: boolean; json?: boolean }) => {
+      const dir = (direction ?? 'both') as 'push' | 'pull' | 'both';
+      if (!['push', 'pull', 'both'].includes(dir)) {
+        error('Direction must be one of: push, pull, both');
+        return;
+      }
+      try {
+        const backend = getTaskBackend();
+        const report = opts.hook
+          ? await Promise.race([
+              backend.sync(dir),
+              new Promise<null>((resolveTimeout) => {
+                const t = setTimeout(() => resolveTimeout(null), 15000);
+                (t as unknown as { unref?: () => void }).unref?.();
+              }),
+            ])
+          : await backend.sync(dir);
+        if (report === null) {
+          // Hook-mode timeout: report and exit clean — git must never block.
+          console.log(chalk.dim('tasks sync: timed out (hook mode) — skipped.'));
+          return;
+        }
+        if (opts.json) {
+          console.log(JSON.stringify(report, null, 2));
+          return;
+        }
+        if (report.skipped === 'locked') {
+          console.log(chalk.dim('Another sync is already running for this project — skipped. Try again in a moment.'));
+          return;
+        }
+        if (report.noop) {
+          console.log(chalk.dim(`Task backend is "${report.backend}" — nothing to sync.`));
+          return;
+        }
+        const deletedPart = report.deleted > 0 ? `, deleted ${report.deleted}` : '';
+        success(`Sync (${report.direction}): pushed ${report.pushed}, pulled ${report.pulled}, created ${report.created}${deletedPart}, comments ${report.commentsAdded}`);
+        if (report.pendingQueue > 0) {
+          console.log(chalk.yellow(`  ${report.pendingQueue} queued op(s) pending (offline?) — will replay on next sync.`));
+        }
+        for (const c of report.conflicts) {
+          console.log(chalk.yellow(`  conflict: ${c.slug} (${c.reason}) — local copy saved to ${c.savedTo}`));
+        }
+        for (const e of report.errors) {
+          console.log(chalk.red(`  error: ${e}`));
+        }
+      } catch (err) {
+        if (opts.hook) {
+          // Best-effort: a sync failure must NEVER fail the git operation.
+          console.log(chalk.dim(`tasks sync: skipped (${(err as Error).message ?? err})`));
+          return;
+        }
+        error(`Sync failed: ${(err as Error).message ?? err}`);
+        process.exitCode = 1;
+      }
+    });
+
+  // Remote members (assignee candidates) — generic: any remote backend may expose them
+  tasks
+    .command('members')
+    .description('List people with access to the remote task container (assignee candidates)')
+    .option('--json', 'Emit members as JSON')
+    .action(async (opts: { json?: boolean }) => {
+      const backend = getTaskBackend();
+      if (!backend.listMembers) {
+        console.log(chalk.dim(`Task backend is "${backend.name}" — no remote members.`));
+        return;
+      }
+      try {
+        const members = await backend.listMembers();
+        if (opts.json) { console.log(JSON.stringify(members, null, 2)); return; }
+        if (members.length === 0) { console.log(chalk.dim('No members found.')); return; }
+        console.log(header('Members'));
+        const width = Math.max(...members.map((m) => m.slug.length));
+        for (const m of members) {
+          console.log(`  ${m.slug.padEnd(width)}  ${chalk.white(m.name)}${m.email ? chalk.dim(`  ${m.email}`) : ''}  ${chalk.dim(`id:${m.id}`)}`);
+        }
+        console.log(chalk.dim('\n  Assign with a person tag (`--tags person:<slug>`) or the assignee field — sync maps it to the remote member.'));
+      } catch (err) {
+        error(`Could not fetch members: ${(err as Error).message ?? err}`);
+        process.exitCode = 1;
+      }
+    });
+
+  // Provision the recommended remote structure (custom fields)
+  tasks
+    .command('provision')
+    .description('Create the recommended fields on the remote task container (urgency, summary, RICE, …)')
+    .action(async () => {
+      const backend = getTaskBackend();
+      if (!backend.provisionRemote) {
+        console.log(chalk.dim(`Task backend is "${backend.name}" — nothing to provision.`));
+        return;
+      }
+      try {
+        const result = await backend.provisionRemote();
+        if (result.created.length > 0) success(`Created remote fields: ${result.created.join(', ')}`);
+        if (result.existing.length > 0) console.log(chalk.dim(`  Already present: ${result.existing.join(', ')}`));
+        for (const e of result.errors) error(e);
+        if (result.created.length === 0 && result.errors.length === 0) {
+          console.log(chalk.dim('All recommended fields already exist.'));
+        }
+        if (result.backfilled > 0) {
+          console.log(chalk.dim(`  Backfilled ${result.backfilled} value(s) onto already-synced tasks.`));
+        }
+      } catch (err) {
+        error(`Provision failed: ${(err as Error).message ?? err}`);
+        process.exitCode = 1;
+      }
+    });
+
+  // Git sync triggers (issue #11 M5): best-effort hooks that can never fail git
+  tasks
+    .command('sync-hooks')
+    .argument('<action>', 'install | uninstall')
+    .description('Install/uninstall best-effort git sync triggers (post-commit, pre-push)')
+    .action((action: string) => {
+      const projectRoot = dirname(ensureContextRoot());
+      if (action === 'install') {
+        const res = installTaskSyncHooks(projectRoot);
+        if (res.noGit) {
+          error('Not a git repository — nothing to install into.');
+          return;
+        }
+        if (res.installed.length > 0) {
+          success(`Installed git sync hooks: ${res.installed.join(', ')} (best-effort; they can never fail or block git).`);
+        }
+        for (const skipped of res.skipped) {
+          error(`Skipped ${skipped}: a non-dreamcontext hook already exists there.`);
+        }
+      } else if (action === 'uninstall') {
+        const removed = uninstallTaskSyncHooks(projectRoot);
+        if (removed.length > 0) success(`Removed git sync hooks: ${removed.join(', ')}`);
+        else console.log(chalk.dim('No managed git sync hooks found.'));
+      } else {
+        error('Action must be one of: install, uninstall');
+      }
     });
 
   // Doctor: validate Workflow flowchart matches Acceptance Criteria
+  // (doctor stays local-only by design — issue #11)
   tasks
     .command('doctor')
     .argument('[name]', 'Task name (omit to check every task)')
     .description('Validate Workflow flowchart is in sync with Acceptance Criteria')
-    .action((name?: string) => {
+    .action(async (name?: string) => {
       const dir = getStateDir();
-      const files: string[] = name
-        ? (() => {
-            const f = findTaskFile(name);
-            if (!f) {
-              error(`Task not found: ${name}`);
-              return [];
-            }
-            return [f];
-          })()
-        : fg.sync('*.md', { cwd: dir, absolute: true });
+      let files: string[];
+      if (name) {
+        const backend = getTaskBackend();
+        const slug = await resolveTaskSlug(backend, name);
+        if (!slug) return;
+        files = [join(dir, `${slug}.md`)];
+      } else {
+        files = fg.sync('*.md', { cwd: dir, absolute: true });
+      }
 
       if (files.length === 0) return;
 

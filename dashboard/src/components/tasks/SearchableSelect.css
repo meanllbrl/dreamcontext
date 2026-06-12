@@ -1,0 +1,111 @@
+.ss-root {
+  position: relative;
+  width: 100%;
+  max-width: 260px;
+}
+
+.ss-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  width: 100%;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 4px);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  padding: var(--space-1) var(--space-2);
+  cursor: pointer;
+  text-align: left;
+}
+
+.ss-trigger:hover {
+  border-color: var(--color-accent);
+}
+
+.ss-placeholder {
+  color: var(--color-text-tertiary);
+}
+
+.ss-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ss-chevron {
+  flex-shrink: 0;
+  color: var(--color-text-tertiary);
+}
+
+.ss-pop {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 60;
+  background: var(--color-surface, var(--color-bg));
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 8px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+}
+
+.ss-search {
+  width: 100%;
+  border: none;
+  border-bottom: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  padding: var(--space-2) var(--space-3);
+  outline: none;
+}
+
+.ss-list {
+  max-height: 220px;
+  overflow-y: auto;
+  padding: var(--space-1);
+}
+
+.ss-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  width: 100%;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm, 4px);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  padding: var(--space-1) var(--space-2);
+  cursor: pointer;
+  text-align: left;
+}
+
+.ss-item:hover {
+  background: var(--color-bg-hover, rgba(127, 127, 127, 0.12));
+}
+
+.ss-item--active {
+  color: var(--color-accent);
+  font-weight: var(--font-weight-medium);
+}
+
+.ss-item--clear {
+  color: var(--color-text-tertiary);
+  font-style: italic;
+}
+
+.ss-hint {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs, 11px);
+}
+
+.ss-empty {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
+  padding: var(--space-2) var(--space-3);
+}

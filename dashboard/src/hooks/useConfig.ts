@@ -5,12 +5,22 @@ import { api } from '../api/client';
 
 export type PlatformId = 'claude' | 'codex';
 
+export interface ClickUpConfig {
+  teamId?: string;
+  spaceId?: string;
+  listId?: string;
+  changelogTarget?: 'comments';
+}
+
 export interface SetupConfig {
   platforms: PlatformId[];
   packs: string[];
   multiProduct: false | string[];
   setupVersion: string;
   disableNativeMemory: boolean;
+  taskBackend?: 'local' | 'clickup';
+  cloudTaskManagement?: boolean;
+  clickup?: ClickUpConfig;
 }
 
 interface ConfigResponse {
@@ -26,6 +36,9 @@ export interface ConfigPatch {
   platforms?: PlatformId[];
   packs?: string[];
   disableNativeMemory?: boolean;
+  taskBackend?: 'local' | 'clickup';
+  cloudTaskManagement?: boolean;
+  clickup?: ClickUpConfig;
 }
 
 // ─── Hooks ────────────────────────────────────────────────────────────────────

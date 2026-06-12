@@ -95,3 +95,37 @@
   padding: var(--space-4);
   text-align: center;
 }
+
+.settings-field-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+}
+
+.settings-field-row label {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  min-width: 80px;
+}
+
+.settings-text-input {
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 4px);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  padding: var(--space-1) var(--space-2);
+  width: 220px;
+}
+
+.settings-test-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.settings-test-ok { color: var(--color-success, #22c55e); font-size: var(--font-size-sm); }
+.settings-test-err { color: var(--color-danger, #ef4444); font-size: var(--font-size-sm); }
+.settings-sync-badge { font-size: var(--font-size-sm); color: var(--color-text-secondary); margin-top: var(--space-2); }

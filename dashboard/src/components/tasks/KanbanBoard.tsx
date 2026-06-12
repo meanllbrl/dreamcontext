@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback } from 'react';
 import type { Task } from '../../hooks/useTasks';
-import { useTasks, useUpdateTask } from '../../hooks/useTasks';
+import { useTasks, useUpdateTask, useSyncStatus, useSyncTasks, useDeleteTask } from '../../hooks/useTasks';
 import { useVersions } from '../../hooks/useVersions';
 import { useProject } from '../../context/ProjectContext';
 import { useI18n } from '../../context/I18nContext';
@@ -224,6 +224,74 @@ export function KanbanBoard() {
   const { data: tasks, isLoading, isError, error } = useTasks();
   const { data: versions } = useVersions();
   const updateTask = useUpdateTask();
+  const { data: syncStatus } = useSyncStatus();
+  const syncTasks = useSyncTasks();
+  const deleteTask = useDeleteTask();
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; task: Task } | null>(null);
+
+  const handleTaskContextMenu = (task: Task, e: React.MouseEvent) => {
+    e.preventDefault();
+    setCtxMenu({ x: e.clientX, y: e.clientY, task });
+  };
+
+  const handleCtxDelete = () => {
+    if (!ctxMenu) return;
+    const target = ctxMenu.task;
+    setCtxMenu(null);
+    if (!window.confirm(`Delete task "${target.name}"? This propagates to the remote backend on sync.`)) return;
+    deleteTask.mutate(target.slug, {
+      onSuccess: () => { if (selectedSlug === target.slug) setSelectedSlug(null); },
+    });
+  };
+  const [syncNote, setSyncNote] = useState<string | null>(null);
+
+  const handleSync = () => {
+    setSyncNote(null);
+    syncTasks.mutate(undefined, {
+      onSuccess: ({ report }) => {
+        const moved = report.pushed + report.created + report.pulled + report.deleted + report.mirrorDeleted;
+        setSyncNote(
+          (report as { skipped?: string }).skipped === 'locked'
+            ? '⏳ another sync is already running'
+            : report.errors.length > 0
+            ? `⚠ ${report.errors[0]}`
+            : report.conflicts.length > 0
+              ? `↕ ${moved} synced · ${report.conflicts.length} conflict(s) preserved`
+              : moved > 0
+                ? `↕ ${report.pushed + report.created} up · ${report.pulled} down`
+                : '✓ up to date',
+        );
+        setTimeout(() => setSyncNote(null), 6000);
+      },
+      onError: (err: Error) => {
+        setSyncNote(`⚠ ${err.message}`);
+        setTimeout(() => setSyncNote(null), 6000);
+      },
+    });
+  };
+
+  const pendingBadge = (syncStatus?.pendingPush ?? 0) + (syncStatus?.queuedOps ?? 0);
+  const syncSlot = syncStatus && syncStatus.backend !== 'local' ? (
+    <div className="filter-sync-wrap">
+      {syncNote && <span className="filter-sync-note">{syncNote}</span>}
+      <button
+        className="filter-sync-btn"
+        onClick={handleSync}
+        disabled={syncTasks.isPending}
+        title={`Sync with ${syncStatus.backend}`}
+      >
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className={syncTasks.isPending ? 'filter-sync-spin' : undefined}>
+          <path d="M12 7a5 5 0 0 1-9.17 2.75M2 7a5 5 0 0 1 9.17-2.75" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+          <path d="M11.5 1.5v3h-3M2.5 12.5v-3h3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+        {syncTasks.isPending ? 'Syncing…' : 'Sync'}
+        {pendingBadge > 0 && !syncTasks.isPending && (
+          <span className="filter-sync-badge">{pendingBadge}</span>
+        )}
+      </button>
+    </div>
+  ) : undefined;
+
   const [showCreate, setShowCreate] = useState(false);
   const [showVersionManager, setShowVersionManager] = useState(false);
   const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
@@ -346,6 +414,7 @@ export function KanbanBoard() {
         count={colTasks.length}
         colorVar={colorVar}
         onTaskClick={(task) => setSelectedSlug(task.slug)}
+        onTaskContextMenu={handleTaskContextMenu}
         onDrop={(slug, newVal) => handleDrop(slug, newVal, groupBy)}
         staggerIndex={index + 1}
         subGroups={subGroupBy !== 'none' ? getSubGroups(colTasks, subGroupBy) : undefined}
@@ -408,6 +477,7 @@ export function KanbanBoard() {
             count={filtered.length}
             colorVar="--color-brand-vivid"
             onTaskClick={(task) => setSelectedSlug(task.slug)}
+            onTaskContextMenu={handleTaskContextMenu}
             onDrop={() => {}}
             subGroups={subGroupBy !== 'none' ? getSubGroups(filtered, subGroupBy) : undefined}
           />,
@@ -429,6 +499,7 @@ export function KanbanBoard() {
         allTags={allTags}
         allVersions={allVersions}
         onVersionManagerClick={() => setShowVersionManager(true)}
+        syncSlot={syncSlot}
       />
 
       {filters.viewMode === 'eisenhower' ? (
@@ -449,6 +520,7 @@ export function KanbanBoard() {
               key={task.slug}
               task={task}
               onClick={() => setSelectedSlug(task.slug)}
+              onContextMenu={(e) => handleTaskContextMenu(task, e)}
               onDragStart={() => { /* no drag in list view */ }}
             />
           ))}
@@ -462,6 +534,35 @@ export function KanbanBoard() {
       {showCreate && <TaskCreateModal onClose={() => setShowCreate(false)} />}
       {showVersionManager && <VersionManager onClose={() => setShowVersionManager(false)} tasks={tasks ?? []} />}
       {selectedTask && <TaskDetailPanel task={selectedTask} onClose={() => setSelectedSlug(null)} />}
+
+      {ctxMenu && (
+        <div
+          className="task-ctx-overlay"
+          onClick={() => setCtxMenu(null)}
+          onContextMenu={(e) => { e.preventDefault(); setCtxMenu(null); }}
+        >
+          <div
+            className="task-ctx-menu"
+            style={{
+              top: Math.min(ctxMenu.y, window.innerHeight - 100),
+              left: Math.min(ctxMenu.x, window.innerWidth - 190),
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="task-ctx-name">{ctxMenu.task.name}</div>
+            <button
+              type="button"
+              className="task-ctx-item"
+              onClick={() => { setSelectedSlug(ctxMenu.task.slug); setCtxMenu(null); }}
+            >
+              Open
+            </button>
+            <button type="button" className="task-ctx-item task-ctx-item--danger" onClick={handleCtxDelete}>
+              Delete task
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,0 +1,135 @@
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { ensureGitignoreEntries } from '../gitignore.js';
+
+/**
+ * CLI-managed secrets store for remote task backends — issue #11.
+ *
+ * The ClickUp API key lives in `_dream_context/state/.secrets.json`
+ * (mode 0600), NEVER in `.config.json` (which may be committed).
+ *
+ * Ordering guarantee: the `.gitignore` entry covering the secrets file is
+ * written BEFORE the secrets file is created. If `.gitignore` cannot be
+ * updated, the write aborts — the key must never be committable, even
+ * transiently. This ordering is itself under test.
+ */
+
+export const SECRETS_REL_PATH = '_dream_context/state/.secrets.json';
+/** The exact .gitignore line that covers the secrets file. */
+export const SECRETS_GITIGNORE_ENTRY = '_dream_context/state/.secrets.json';
+
+interface SecretsFile {
+  clickup?: {
+    /** Default token (single-user projects). */
+    token?: string;
+    /** Per-person tokens keyed by person slug (identity layer). */
+    users?: Record<string, string>;
+  };
+}
+
+function secretsPath(projectRoot: string): string {
+  return join(projectRoot, SECRETS_REL_PATH);
+}
+
+function readSecretsFile(projectRoot: string): SecretsFile {
+  const path = secretsPath(projectRoot);
+  if (!existsSync(path)) return {};
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf-8'));
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    return parsed as SecretsFile;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Store a ClickUp token. `user` scopes the token to a person slug (per-user
+ * keys for the identity layer); omitted ⇒ the project default token.
+ *
+ * Throws (writing NOTHING) when the .gitignore entry cannot be ensured.
+ */
+export function writeClickUpToken(projectRoot: string, token: string, user?: string): void {
+  if (!token || !token.trim()) {
+    throw new Error('Token must be a non-empty string.');
+  }
+
+  // ORDERING GUARANTEE: gitignore first; abort on failure.
+  try {
+    ensureGitignoreEntries(projectRoot, [SECRETS_GITIGNORE_ENTRY], {
+      comment: 'dreamcontext secrets (never commit)',
+    });
+  } catch (err) {
+    throw new Error(
+      `Refusing to write the secrets file: .gitignore could not be updated (${(err as Error).message}). ` +
+      'The API key must never be committable, even transiently.',
+    );
+  }
+
+  const path = secretsPath(projectRoot);
+  mkdirSync(dirname(path), { recursive: true });
+
+  const secrets = readSecretsFile(projectRoot);
+  secrets.clickup = secrets.clickup ?? {};
+  if (user && user.trim()) {
+    secrets.clickup.users = { ...(secrets.clickup.users ?? {}), [user.trim()]: token.trim() };
+  } else {
+    secrets.clickup.token = token.trim();
+  }
+
+  writeFileSync(path, JSON.stringify(secrets, null, 2) + '\n', { encoding: 'utf-8', mode: 0o600 });
+  // mode in writeFileSync only applies on create — enforce on rewrite too.
+  try { chmodSync(path, 0o600); } catch { /* best-effort on exotic filesystems */ }
+}
+
+export interface ResolvedToken {
+  token: string;
+  source: 'env' | 'secrets';
+  /** Which env var or secrets slot produced the token (for `config show`). */
+  via: string;
+}
+
+/**
+ * Resolve a ClickUp token. Order (issue #11): env → secrets file.
+ *  1. `opts.envVar` (per-person `tokenEnv` from the identity layer)
+ *  2. `CLICKUP_TOKEN` / `CLICKUP_API_KEY`
+ *  3. secrets file per-user slot (`opts.user`)
+ *  4. secrets file default slot
+ */
+export function resolveClickUpToken(
+  projectRoot: string,
+  opts?: { envVar?: string; user?: string },
+): ResolvedToken | null {
+  if (opts?.envVar) {
+    const v = process.env[opts.envVar];
+    if (v && v.trim()) return { token: v.trim(), source: 'env', via: opts.envVar };
+  }
+  for (const envVar of ['CLICKUP_TOKEN', 'CLICKUP_API_KEY']) {
+    const v = process.env[envVar];
+    if (v && v.trim()) return { token: v.trim(), source: 'env', via: envVar };
+  }
+
+  const secrets = readSecretsFile(projectRoot);
+  if (opts?.user) {
+    const v = secrets.clickup?.users?.[opts.user];
+    if (v && v.trim()) return { token: v.trim(), source: 'secrets', via: `users.${opts.user}` };
+  }
+  const v = secrets.clickup?.token;
+  if (v && v.trim()) return { token: v.trim(), source: 'secrets', via: 'token' };
+  return null;
+}
+
+/** True when a secrets file exists for this project. */
+export function hasSecretsFile(projectRoot: string): boolean {
+  return existsSync(secretsPath(projectRoot));
+}
+
+/**
+ * Mask a token for display: never echo the secret. Shows only the last 4
+ * characters (or full mask for short tokens).
+ */
+export function maskToken(token: string): string {
+  const t = token.trim();
+  if (t.length <= 8) return '••••••••';
+  return `••••••••${t.slice(-4)}`;
+}

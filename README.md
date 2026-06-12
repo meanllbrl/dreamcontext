@@ -456,6 +456,48 @@ dreamcontext tasks complete <name>        # Mark completed
 
 All flags (`--description`, `--priority`, `--status`, `--tags`, `--why`, `--urgency`, `--version`) are optional. Defaults to medium priority/urgency and todo status, so the command works non-interactively for agent use.
 
+#### Cloud Task Management (ClickUp backend)
+
+Tasks default to local markdown files. Optionally they can live in a ClickUp
+list instead — same CLI verbs, same dashboard, same recall/snapshot behavior,
+backed by a gitignored local mirror:
+
+```bash
+dreamcontext config task-backend clickup            # switch backend (gitignores mirror/sync files, installs git triggers)
+dreamcontext config clickup-list <teamId> <spaceId> <listId>
+dreamcontext config clickup-token [--user <name>]   # stored in a gitignored secrets file (0600), never in .config.json
+dreamcontext tasks sync [push|pull|both]            # manual two-way sync
+dreamcontext tasks sync-hooks install               # best-effort post-commit/pre-push triggers (can never fail git)
+```
+
+- Talks to the ClickUp REST API directly (no MCP) — works headless in git
+  hooks, post-sleep consolidation, and cron.
+- Sync is watermark-based on ClickUp **server time**: one field-level `PUT`
+  per task under the ~100 req/min rate limit, changelog entries become
+  comments (union-merged), prose merges 3-way against the last synced base.
+- Conflicts are never silently lost: when ClickUp wins, the local copy is
+  preserved under `state/.conflicts/` and surfaced in the sync report and
+  dashboard.
+- Offline edits queue in `state/.tasks-queue.json` and replay idempotently.
+- Tokens resolve env (`CLICKUP_TOKEN`, or a per-person `tokenEnv`) → secrets
+  file; `config show` only ever prints a masked token.
+- **Assignees need no manual mapping**: each sync caches the list's members;
+  `dreamcontext tasks members` shows them with their slugs. Tag a task
+  `person:<slug>` (or set the `assignee` field) and the push assigns the
+  ClickUp member; a remote assignment pulls back as both the field and the
+  tag. `config clickup-member` stays available as an explicit override.
+- **Tags edit anywhere**: `dreamcontext tasks tag <name> <tags…> [--remove]`
+  edits tags on existing tasks; changed tags push through ClickUp's per-tag
+  endpoints (its PUT carries none), and assignee handovers/removals push as
+  add/rem deltas.
+- **Due dates**: `tasks create --due 2026-07-01` / `tasks due <name> <date|clear>`
+  — synced natively in both directions.
+- **Custom-field bridge**: create list fields named Urgency / Summary / Reach /
+  Impact / Confidence / Effort / Score / Feature / Version and sync writes and
+  reads them automatically.
+- **Docs**: illustrated user guide → [docs/clickup.md](docs/clickup.md);
+  technical reference → [docs/remote-task-setup.md](docs/remote-task-setup.md).
+
 ### Features
 
 ```bash
