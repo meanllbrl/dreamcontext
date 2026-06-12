@@ -6,6 +6,7 @@ import { confirm, input } from '@inquirer/prompts';
 import { ensureContextRoot } from '../../lib/context-path.js';
 import { header, info, success, error } from '../../lib/format.js';
 import { buildCorpus, bm25Search, type CorpusType, type RecallHit } from '../../lib/recall.js';
+import { loadProjectVocabulary, aliasGroups } from '../../lib/taxonomy.js';
 import { readFrontmatter, writeFrontmatter, updateFrontmatterFields } from '../../lib/frontmatter.js';
 import { today } from '../../lib/id.js';
 
@@ -53,7 +54,8 @@ export function registerMemoryCommand(program: Command): void {
         const topK = Math.max(1, Math.min(50, Number.parseInt(opts.top ?? '5', 10) || 5));
         const types = parseTypes(opts.types);
         const corpus = buildCorpus(root, types ? { types } : {});
-        const hits = bm25Search(query, corpus, topK);
+        const vocab = loadProjectVocabulary(root);
+        const hits = bm25Search(query, corpus, topK, { aliasGroups: aliasGroups(vocab) });
 
         if (opts.json) {
           const payload = hits.map((h) => ({

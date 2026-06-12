@@ -5,6 +5,7 @@ created: "{{DATE}}"
 updated: "{{DATE}}"
 released_version: null
 tags: []
+# tags: use canonical faceted vocabulary (facet:value, kebab-case singular) — run: dreamcontext taxonomy vocab
 related_tasks: []
 ---
 

@@ -1,0 +1,272 @@
+.taxonomy-page {
+  height: 100%;
+  overflow-y: auto;
+}
+
+/* ── Sections ── */
+.taxonomy-section {
+  margin-bottom: var(--space-8);
+}
+
+.taxonomy-section-heading {
+  font-family: var(--font-family-display);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: var(--letter-spacing-body);
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  margin-bottom: var(--space-3);
+}
+
+/* ── Facet groups ── */
+.taxonomy-facets {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.taxonomy-facet-group {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.taxonomy-facet-label {
+  flex-shrink: 0;
+  width: 64px;
+  padding-top: 4px;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: var(--letter-spacing-caption);
+}
+
+/* ── Chip clusters ── */
+.taxonomy-chip-cluster {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* ── Chips — reuse .task-tag color system from TaskCard.css ── */
+.taxonomy-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px var(--space-2);
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+  transition: opacity var(--transition-fast);
+}
+
+.taxonomy-chip--dim {
+  opacity: 0.4;
+}
+
+.taxonomy-chip--alias {
+  font-style: italic;
+}
+
+.taxonomy-chip-label {
+  /* inherits color from hue rule */
+}
+
+.taxonomy-chip-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: var(--radius-full);
+  background: rgba(0, 0, 0, 0.12);
+  font-size: 10px;
+  font-weight: var(--font-weight-semibold);
+  line-height: 1;
+}
+
+[data-theme='dark'] .taxonomy-chip-count {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+/* Hue-keyed chip colours — mirrors TaskCard.css .task-tag hues */
+.taxonomy-chip[data-hue="0"] { background: #ede9fe; color: #5b21b6; border-color: #ddd6fe; }
+.taxonomy-chip[data-hue="1"] { background: #dbeafe; color: #1d4ed8; border-color: #bfdbfe; }
+.taxonomy-chip[data-hue="2"] { background: #fee2e2; color: #b91c1c; border-color: #fecaca; }
+.taxonomy-chip[data-hue="3"] { background: #dcfce7; color: #15803d; border-color: #bbf7d0; }
+.taxonomy-chip[data-hue="4"] { background: #ffedd5; color: #c2410c; border-color: #fed7aa; }
+.taxonomy-chip[data-hue="5"] { background: #fae8ff; color: #86198f; border-color: #f5d0fe; }
+.taxonomy-chip[data-hue="6"] { background: #ccfbf1; color: #0f766e; border-color: #99f6e4; }
+.taxonomy-chip[data-hue="7"] { background: #fce7f3; color: #be185d; border-color: #fbcfe8; }
+.taxonomy-chip[data-hue="8"] { background: #e0e7ff; color: #4338ca; border-color: #c7d2fe; }
+.taxonomy-chip[data-hue="9"] { background: #fef3c7; color: #a16207; border-color: #fde68a; }
+
+[data-theme='dark'] .taxonomy-chip[data-hue="0"] { background: rgba(157, 140, 255, 0.16); color: #c4b5fd; border-color: rgba(157, 140, 255, 0.28); }
+[data-theme='dark'] .taxonomy-chip[data-hue="1"] { background: rgba(96, 165, 250, 0.16); color: #93c5fd; border-color: rgba(96, 165, 250, 0.28); }
+[data-theme='dark'] .taxonomy-chip[data-hue="2"] { background: rgba(248, 113, 113, 0.16); color: #fca5a5; border-color: rgba(248, 113, 113, 0.28); }
+[data-theme='dark'] .taxonomy-chip[data-hue="3"] { background: rgba(74, 222, 128, 0.14); color: #86efac; border-color: rgba(74, 222, 128, 0.26); }
+[data-theme='dark'] .taxonomy-chip[data-hue="4"] { background: rgba(251, 146, 60, 0.16); color: #fdba74; border-color: rgba(251, 146, 60, 0.28); }
+[data-theme='dark'] .taxonomy-chip[data-hue="5"] { background: rgba(217, 70, 239, 0.16); color: #f0abfc; border-color: rgba(217, 70, 239, 0.28); }
+[data-theme='dark'] .taxonomy-chip[data-hue="6"] { background: rgba(45, 212, 191, 0.16); color: #5eead4; border-color: rgba(45, 212, 191, 0.28); }
+[data-theme='dark'] .taxonomy-chip[data-hue="7"] { background: rgba(244, 114, 182, 0.16); color: #f9a8d4; border-color: rgba(244, 114, 182, 0.28); }
+[data-theme='dark'] .taxonomy-chip[data-hue="8"] { background: rgba(129, 140, 248, 0.16); color: #a5b4fc; border-color: rgba(129, 140, 248, 0.28); }
+[data-theme='dark'] .taxonomy-chip[data-hue="9"] { background: rgba(253, 224, 71, 0.14); color: #fde047; border-color: rgba(253, 224, 71, 0.26); }
+
+/* ── Aliases ── */
+.taxonomy-alias-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.taxonomy-alias-pair {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.taxonomy-alias-arrow {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+  padding: 0 2px;
+}
+
+/* ── Healthy state ── */
+.taxonomy-healthy {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--color-success-subtle);
+  color: var(--color-success);
+  border: 1px solid var(--color-success);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+}
+
+.taxonomy-healthy-icon {
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-bold);
+}
+
+/* ── Audit panel ── */
+.taxonomy-audit-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.taxonomy-expandable {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.taxonomy-expandable-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-bg-secondary);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.taxonomy-expandable-header:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.taxonomy-expandable-chevron {
+  width: 12px;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.taxonomy-expandable-label {
+  flex: 1;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text);
+}
+
+.taxonomy-expandable-badge {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  background: var(--color-bg-tertiary);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-2);
+}
+
+.taxonomy-expandable-body {
+  padding: var(--space-3);
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg);
+}
+
+/* ── Audit list items ── */
+.taxonomy-audit-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.taxonomy-audit-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.taxonomy-audit-item code,
+.taxonomy-audit-doc {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.taxonomy-audit-tag {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+}
+
+.taxonomy-audit-suggestion {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  background: var(--color-success-subtle);
+  color: var(--color-success);
+  border: 1px solid var(--color-success);
+}
+
+/* CSS @media cannot use custom properties in this Vite setup, so 1024 is a
+   documented literal representing the "tablet" breakpoint. */
+@media (max-width: 1024px) {
+  .taxonomy-facet-group {
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .taxonomy-facet-label {
+    width: auto;
+    padding-top: 0;
+  }
+}

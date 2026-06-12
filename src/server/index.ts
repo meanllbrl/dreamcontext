@@ -18,6 +18,7 @@ import { handleConfigGet, handleConfigUpdate } from './routes/config.js';
 import { handlePacksGet } from './routes/packs.js';
 import { handlePackInstall, handlePackUninstall } from './routes/packs-install.js';
 import { handleVersionCheckGet } from './routes/version-check.js';
+import { handleTaxonomyGet } from './routes/taxonomy.js';
 
 export interface ServerOptions {
   port: number;
@@ -88,6 +89,9 @@ function buildRouter(): Router {
 
   // Version check
   router.get('/api/version-check', handleVersionCheckGet);
+
+  // Taxonomy
+  router.get('/api/taxonomy', handleTaxonomyGet);
 
   // Changelog / Releases
   router.get('/api/changelog', handleChangelogGet);

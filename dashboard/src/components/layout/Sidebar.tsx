@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useI18n } from '../../context/I18nContext';
 import './Sidebar.css';
 
-export type Page = 'tasks' | 'core' | 'knowledge' | 'features' | 'sleep' | 'brain' | 'council' | 'settings' | 'packs' | 'about';
+export type Page = 'tasks' | 'core' | 'knowledge' | 'features' | 'sleep' | 'brain' | 'council' | 'settings' | 'packs' | 'about' | 'taxonomy';
 
 interface SidebarProps {
   activePage: Page;
@@ -24,6 +24,7 @@ const NAV_GROUPS: NavGroup[] = [
       { page: 'features', icon: '⚑', labelKey: 'nav.features' },
       { page: 'core', icon: '◈', labelKey: 'nav.core' },
       { page: 'council', icon: '⚔', labelKey: 'nav.council' },
+      { page: 'taxonomy', icon: '◆', labelKey: 'nav.taxonomy' },
       { page: 'sleep', icon: '◑', labelKey: 'nav.sleep' },
     ],
   },

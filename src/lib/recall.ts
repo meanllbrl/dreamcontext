@@ -4,6 +4,7 @@ import fg from 'fast-glob';
 import { readFrontmatter } from './frontmatter.js';
 import { expandQueryTerms } from './recall-synonyms.js';
 import { loadDigestDocs } from './session-digest.js';
+import { tagIndexValue } from './taxonomy.js';
 
 // 'skill' docs are produced ONLY by loadSkillDocs (called directly by the hook);
 // intentionally excluded from buildCorpus defaults to avoid polluting haikuRecall.
@@ -228,7 +229,9 @@ function parseLinks(body: string): string[] {
 export function buildFields(f: DocFields): BuiltFields {
   const titleToks = tokenize(f.title);
   const descToks = tokenize(f.description);
-  const tagToks = tokenize(f.tags.join(' '));
+  // Index tags by value only: strip known-facet prefixes (topic:recall→recall)
+  // so high-df prefix tokens ('topic', 'domain') don't pollute BM25 DF counts.
+  const tagToks = tokenize(f.tags.map(tagIndexValue).join(' '));
   const bodyToks = tokenize(f.body);
 
   const tokens = [...titleToks, ...descToks, ...tagToks, ...bodyToks];
@@ -659,6 +662,8 @@ export interface Bm25Options {
   now?: Date;
   /** Enable the B5 link-aware 2-hop boost. DEFAULT OFF (does not affect benchmark). */
   linkAware?: boolean;
+  /** Alias groups from project taxonomy for query expansion (memory recall path only). */
+  aliasGroups?: string[][];
 }
 
 export function bm25Search(
@@ -673,7 +678,7 @@ export function bm25Search(
   if (queryTerms.length === 0) return [];
 
   // B4: query-time synonym expansion (rankScore only). Weighted < 1.
-  const synonymTerms = expandQueryTerms(queryTerms, stemToken);
+  const synonymTerms = expandQueryTerms(queryTerms, stemToken, opts.aliasGroups ?? []);
   // Union of terms whose DF we need (primary + synonyms).
   const allTerms = new Set<string>(queryTerms);
   for (const t of synonymTerms.keys()) allTerms.add(t);

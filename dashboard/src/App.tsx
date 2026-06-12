@@ -15,6 +15,7 @@ import { CouncilPage } from './pages/CouncilPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { PacksPage } from './pages/PacksPage';
 import { AboutPage } from './pages/AboutPage';
+import { TaxonomyPage } from './pages/TaxonomyPage';
 import type { Page } from './components/layout/Sidebar';
 import './styles/global.css';
 
@@ -72,7 +73,7 @@ function PageRouter({ nav }: { nav: ShellNavigation }) {
     case 'sleep':
       return <SleepPage />;
     case 'core':
-      return <CorePage />;
+      return <CorePage onNavigateTaxonomy={() => nav.navigate('taxonomy', null)} />;
     case 'knowledge':
       return <KnowledgePage />;
     case 'features':
@@ -83,6 +84,8 @@ function PageRouter({ nav }: { nav: ShellNavigation }) {
       return <SettingsPage />;
     case 'packs':
       return <PacksPage />;
+    case 'taxonomy':
+      return <TaxonomyPage />;
     case 'about':
       return <AboutPage />;
   }

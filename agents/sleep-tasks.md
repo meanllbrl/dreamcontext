@@ -205,3 +205,4 @@ Never silently delete a task and never auto-complete — `in_review` with an exp
 5. **Stay in your lane.** If you spot non-task work worth preserving, flag it — don't write it.
 6. **CLI first** for status/log/insert; **Edit** for surgical body reconciliation (including broadening `description:` / `## Why` when scope grows).
 7. **Person attribution is multi-person only.** Read `.config.json` `people` first. If 0 or 1 entry, step 2.5 is a complete NO-OP — never inject `person:` tags on solo projects. Derived multi-person status comes from `people.length > 1`; there is no `multiPerson` key to check.
+8. **Normalize tags via taxonomy vocab.** When writing or updating task frontmatter tags, check `dreamcontext taxonomy vocab` and use canonical forms (faceted or bare standard tags); non-canonical tags degrade recall.

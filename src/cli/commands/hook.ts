@@ -15,6 +15,7 @@ import { listStaleRecs } from '../../lib/marketing/snapshot.js';
 import { isMarketingEnvPath } from '../../lib/marketing/path-guards.js';
 import { buildCorpus, bm25Search, loadSkillDocs, type RecallHit } from '../../lib/recall.js';
 import { haikuRecall } from '../../lib/recall-query-extractor.js';
+import { ensureTaxonomyFile } from '../../lib/taxonomy.js';
 import { readVersionCache, isCacheFresh, refreshVersionCache } from '../../lib/version-check.js';
 import { loadCatalog } from './install-skill.js';
 
@@ -510,6 +511,16 @@ export function registerHookCommand(program: Command): void {
 
       const root = resolveContextRoot();
       if (!root) process.exit(0);
+
+      // Seed core/taxonomy.json on installs that predate the taxonomy system, so
+      // tagging behaviors work from the very first session after an upgrade —
+      // no user action, no waiting for a sleep cycle. Never overwrites; wrapped
+      // so a filesystem error can NEVER break the SessionStart hook.
+      try {
+        ensureTaxonomyFile(root);
+      } catch {
+        // non-fatal: doctor surfaces a missing taxonomy.json, sleep-product Pass C retries
+      }
 
       const state = readSleepState(root);
       let dirty = false;
