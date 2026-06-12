@@ -405,8 +405,12 @@ export function registerTasksCommand(program: Command): void {
         error('Due date must be a valid YYYY-MM-DD (or "clear").');
         return;
       }
-      await backend.updateFields(slug, { due_date: date, updated_at: today() });
+      const before = await backend.get(slug);
+      const updated = await backend.updateFields(slug, { due_date: date, updated_at: today() });
       success(`Due date on ${slug}: ${date}`);
+      if (before?.tags.some((t) => t.toLowerCase() === 'backlog') && !updated.tags.some((t) => t.toLowerCase() === 'backlog')) {
+        console.log(chalk.dim('  backlog tag removed — a dated task is planned, not backlog.'));
+      }
     });
 
   // Tag management on existing tasks (person:<slug> tags drive remote assignees)
@@ -453,8 +457,12 @@ export function registerTasksCommand(program: Command): void {
         }
       }
 
-      await backend.updateFields(slug, { tags: next, updated_at: today() });
-      success(`Tags on ${slug}: ${next.length > 0 ? next.join(', ') : '(none)'}`);
+      const hadDue = (await backend.get(slug))?.due_date ?? null;
+      const updated = await backend.updateFields(slug, { tags: next, updated_at: today() });
+      success(`Tags on ${slug}: ${updated.tags.length > 0 ? updated.tags.join(', ') : '(none)'}`);
+      if (hadDue && updated.due_date === null && next.some((t) => t.toLowerCase() === 'backlog')) {
+        console.log(chalk.dim('  due date cleared — backlog tasks are undated by rule.'));
+      }
     });
 
   // Insert into a section

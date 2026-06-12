@@ -101,7 +101,7 @@ the last sync are sent.
 | `status` | status (see §2) |
 | `priority` | priority (critical→urgent, high, medium→normal, low) |
 | `tags` | tags (`version:<v>` tag carries the version; `person:` tags stay local) |
-| `due_date` (YYYY-MM-DD) | due date (UTC noon — calendar day stable in any timezone) |
+| `due_date` (YYYY-MM-DD) | due date (UTC noon — calendar day stable in any timezone). **Backlog rule:** a `backlog`-tagged task is undated — tagging clears the due date; dating removes the tag (enforced on every surface incl. pull) |
 | `assignee` / `person:<slug>` tag | assignees (see §5) |
 
 ## 5. People / assignees

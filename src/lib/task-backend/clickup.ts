@@ -36,7 +36,7 @@ import {
 } from './clickup-fields.js';
 import { recordDashboardChange, type FieldChange } from '../change-tracker.js';
 import { clickupMemberMap, resolveActor, resolveActorToken } from './identity.js';
-import { LocalTaskBackend } from './local.js';
+import { BACKLOG_TAG, LocalTaskBackend } from './local.js';
 import { merge3Bodies, mergeScalar, unionChangelog } from './merge.js';
 import { SyncLedger, hashContent } from './sync-state.js';
 import type {
@@ -545,7 +545,8 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     const mappedStatus = statusToClickUp(task.status, this.ledger.readListStatuses());
     // due_date rides the same single PUT/POST (a NATIVE ClickUp field).
     // Sent when set, or as null to clear one the remote already had.
-    const dueLocal = (task.raw.due_date as string | null | undefined) ?? null;
+    const isBacklog = task.tags.some((t) => t.toLowerCase() === BACKLOG_TAG);
+    const dueLocal = isBacklog ? null : ((task.raw.due_date as string | null | undefined) ?? null);
     const baseFmDue = entry?.base_snapshot
       ? (((matter(entry.base_snapshot.body).data as Record<string, unknown>).due_date as string | null | undefined) ?? null)
       : null;
@@ -1016,7 +1017,8 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       priority: priorityM.value,
       tags: withPersonTag(tagsM.value, assigneeM.value),
       version: versionM.value,
-      due_date: dueM.value,
+      // Product rule: backlog ⇒ undated (applies to remote-originated state too).
+      due_date: tagsM.value.some((t) => t.toLowerCase() === BACKLOG_TAG) ? null : dueM.value,
       assignee: assigneeM.value,
       updated_at: remoteContributed && remoteTime !== null ? dateOf(remoteTime) : local.updated_at,
       // updated_by records the WINNER of the merge.
@@ -1062,7 +1064,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
         }
       }
       const remoteRender = this.renderMirror(
-        { ...fm, name: remote.name, status: remoteStatus, priority: remotePriority, tags: withPersonTag(remoteTags, remoteAssignee), version: remoteVersion, due_date: remoteDue, assignee: remoteAssignee, ...remoteFmOverrides, rice: remoteRice },
+        { ...fm, name: remote.name, status: remoteStatus, priority: remotePriority, tags: withPersonTag(remoteTags, remoteAssignee), version: remoteVersion, due_date: remoteTags.some((t) => t.toLowerCase() === BACKLOG_TAG) ? null : remoteDue, assignee: remoteAssignee, ...remoteFmOverrides, rice: remoteRice },
         remoteDesc,
         remoteEntries,
       );

@@ -33,6 +33,42 @@ export function isSafeTaskSlug(slug: string): boolean {
   return target === join(base, `${slug}.md`) && target.startsWith(base + sep);
 }
 
+/**
+ * Product rule: a `backlog` tag means "not planned" — backlog tasks carry NO
+ * due date. The invariant is enforced at the backend so every surface (CLI,
+ * dashboard, sync) behaves identically:
+ *  - adding the backlog tag clears the due date
+ *  - explicitly setting a due date pulls the task OUT of backlog
+ *  - if both arrive in one patch, backlog wins (the stronger statement)
+ */
+export const BACKLOG_TAG = 'backlog';
+
+function hasBacklogTag(tags: unknown): boolean {
+  return Array.isArray(tags) && tags.some((t) => String(t).toLowerCase() === BACKLOG_TAG);
+}
+
+export function normalizeBacklogFields(
+  prev: Record<string, unknown>,
+  patch: Record<string, unknown>,
+): Record<string, unknown> {
+  const nextTags = patch.tags !== undefined ? patch.tags : prev.tags;
+  const nextDue = patch.due_date !== undefined ? patch.due_date : (prev.due_date ?? null);
+  if (!hasBacklogTag(nextTags) || nextDue === null || nextDue === undefined) return patch;
+
+  const dueExplicit = patch.due_date !== undefined && patch.due_date !== null;
+  const backlogAdded = patch.tags !== undefined && hasBacklogTag(patch.tags) && !hasBacklogTag(prev.tags);
+
+  if (dueExplicit && !backlogAdded) {
+    // Scheduling an existing backlog task → it is planned now, drop the tag.
+    const tags = (Array.isArray(nextTags) ? nextTags : []).filter(
+      (t) => String(t).toLowerCase() !== BACKLOG_TAG,
+    );
+    return { ...patch, tags };
+  }
+  // Backlog (newly added, or both in one patch) → undated.
+  return { ...patch, due_date: null };
+}
+
 /** Resolve the task template exactly as the pre-refactor CLI did. */
 function getTaskTemplate(): string {
   const candidates = [
@@ -216,6 +252,9 @@ export class LocalTaskBackend implements TaskBackend {
   }
 
   async create(input: CreateTaskInput): Promise<TaskData> {
+    if (input.due_date && (input.tags ?? []).some((t) => t.toLowerCase() === BACKLOG_TAG)) {
+      input = { ...input, due_date: null }; // backlog tasks are undated by rule
+    }
     const slug = slugify(input.name.trim());
     if (!isSafeTaskSlug(slug)) {
       throw new TaskBackendError('invalid_input', `Invalid task name: ${input.name}`);
@@ -322,6 +361,10 @@ ${input.why || '(To be defined)'}
     opts?: UpdateFieldsOptions,
   ): Promise<TaskData> {
     const path = this.requirePath(slug);
+    if (fields.tags !== undefined || fields.due_date !== undefined) {
+      const { data: prev } = readFrontmatter<Record<string, unknown>>(path);
+      fields = normalizeBacklogFields(prev, fields);
+    }
     if (opts?.body !== undefined) {
       // Merge frontmatter updates + body in a single write (dashboard body edit).
       const { data } = readFrontmatter<Record<string, unknown>>(path);

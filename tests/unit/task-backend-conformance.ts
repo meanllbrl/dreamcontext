@@ -162,6 +162,31 @@ export function describeTaskBackendConformance(
       await expect(backend.delete('doomed')).rejects.toMatchObject({ code: 'not_found' });
     });
 
+    it('BACKLOG RULE: backlog-tagged tasks are undated; dating one un-backlogs it', async () => {
+      // create with both → backlog wins, due dropped
+      const created = await backend.create({
+        name: 'Backlog Born', tags: ['backlog', 'x'], due_date: '2026-09-09', variant: 'cli',
+      });
+      expect(created.due_date).toBeNull();
+      expect(created.tags).toContain('backlog');
+
+      // tagging an existing dated task as backlog clears the due date
+      await backend.create({ name: 'Dated Then Parked', due_date: '2026-10-10', variant: 'cli' });
+      const parked = await backend.updateFields('dated-then-parked', {
+        tags: ['backlog'], updated_at: '2026-06-12',
+      });
+      expect(parked.due_date).toBeNull();
+      expect(parked.tags).toContain('backlog');
+
+      // explicitly scheduling a backlog task pulls it OUT of backlog
+      const scheduled = await backend.updateFields('backlog-born', {
+        due_date: '2026-11-11', updated_at: '2026-06-12',
+      });
+      expect(scheduled.due_date).toBe('2026-11-11');
+      expect(scheduled.tags).not.toContain('backlog');
+      expect(scheduled.tags).toContain('x'); // other tags survive
+    });
+
     it('sync returns a structured SyncReport', async () => {
       const report = await backend.sync('both');
       expect(report.backend).toBe(backend.name);

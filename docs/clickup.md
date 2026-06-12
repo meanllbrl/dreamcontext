@@ -113,6 +113,17 @@ ClickUp member on the next sync. `person:` tags never appear as ClickUp tags
 | Task body (Why / AC / Notes …) | ClickUp description; section-level 3-way merge |
 | Custom fields (Urgency, RICE, …) | written/read automatically once they exist on the list (`tasks provision`) |
 
+### Backlog rule
+
+Tasks that are **not planned** carry the `backlog` tag — and backlog tasks
+are **undated by rule**, on every surface:
+
+- tagging a task `backlog` clears its due date
+- explicitly setting a due date pulls the task **out** of backlog (a dated
+  task is planned by definition)
+- the dashboard hides the due-date input on backlog tasks; the rule also
+  holds for changes arriving from ClickUp
+
 ### Deleting tasks
 
 Right-click any card, or use the **Delete task** button at the very bottom
