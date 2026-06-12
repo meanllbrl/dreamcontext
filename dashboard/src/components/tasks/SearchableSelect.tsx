@@ -125,7 +125,11 @@ export function SearchableSelect({
               </button>
             )}
             {filtered.length === 0 && !customCandidate && (
-              <div className="ss-empty">No matches</div>
+              <div className="ss-empty">
+                {options.length === 0 && allowCustom && !query.trim()
+                  ? 'Type a name…'
+                  : 'No matches'}
+              </div>
             )}
           </div>
         </div>

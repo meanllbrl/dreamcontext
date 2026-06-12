@@ -284,12 +284,18 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     return matchCustomFields(this.ledger.readCustomFields<ClickUpFieldDef>());
   }
 
-  /** Live member list for the configured container (also refreshes the cache). */
+  /**
+   * Member list for the configured container. Tries a live refresh; when
+   * offline/unconfigured it falls back to the cached set rather than
+   * returning empty (the assignee picker must keep working offline).
+   */
   async listMembers(): Promise<RemoteMember[]> {
-    const adapter = this.getAdapter();
-    const listId = this.requireListId();
-    this.membersRefreshed = false;
-    await this.refreshMembers(adapter, listId, true);
+    try {
+      const adapter = this.getAdapter();
+      const listId = this.requireListId();
+      this.membersRefreshed = false;
+      await this.refreshMembers(adapter, listId, true);
+    } catch { /* fall back to the cache below */ }
     return Object.entries(this.ledger.readMembers())
       .map(([slug, m]) => ({ slug, id: m.id, name: m.name, email: m.email }))
       .sort((a, b) => a.slug.localeCompare(b.slug));

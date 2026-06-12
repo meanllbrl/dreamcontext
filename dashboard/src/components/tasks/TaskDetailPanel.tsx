@@ -421,9 +421,24 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
     );
   };
 
+  // The engine treats the assignee FIELD and the person:<slug> TAG as one
+  // concept (field wins, tag is the dreamcontext convention) — the UI must
+  // present them as one too, or they look like two competing features.
+  const personTagOf = (tags: string[]): string | null => {
+    const tag = tags.find(t => t.startsWith('person:'));
+    return tag ? tag.slice('person:'.length) : null;
+  };
+  const withPersonTag = (tags: string[], person: string | null): string[] => {
+    const rest = tags.filter(t => !t.startsWith('person:'));
+    return person ? [...rest, `person:${person}`] : rest;
+  };
+  const effectiveAssignee = task.assignee ?? personTagOf(task.tags);
+
   const handleAssigneeChange = (value: string) => {
+    const person = value || null;
+    // Keep the field AND the person tag coherent in one PATCH.
     updateTask.mutate(
-      { slug: task.slug, updates: { assignee: value || null } },
+      { slug: task.slug, updates: { assignee: person, tags: withPersonTag(task.tags, person) } },
       { onError: onMutationError },
     );
   };
@@ -444,8 +459,13 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
   };
 
   const handleTagsChange = (tags: string[]) => {
+    // Editing a person tag IS an assignment change — keep the field in sync.
+    const person = personTagOf(tags);
     updateTask.mutate(
-      { slug: task.slug, updates: { tags } },
+      {
+        slug: task.slug,
+        updates: { tags, ...(person !== effectiveAssignee ? { assignee: person } : {}) },
+      },
       { onError: onMutationError },
     );
   };
@@ -874,8 +894,13 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
 
             <PropertyRow label="Assignee">
               <SearchableSelect
-                value={task.assignee ?? null}
-                options={(members ?? []).map(m => ({ value: m.slug, label: m.name, hint: m.slug }))}
+                value={effectiveAssignee}
+                options={[
+                  ...(members ?? []).map(m => ({ value: m.slug, label: m.name, hint: m.slug })),
+                  ...(effectiveAssignee && !(members ?? []).some(m => m.slug === effectiveAssignee)
+                    ? [{ value: effectiveAssignee, label: effectiveAssignee }]
+                    : []),
+                ]}
                 placeholder="Unassigned"
                 searchPlaceholder="Search people…"
                 clearLabel="Unassigned"
