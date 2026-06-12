@@ -1220,6 +1220,64 @@ function changelogEntriesOfBody(body: string): string[] {
   return splitChangelogEntries(section.join('\n'));
 }
 
+/** One pickable list, with its full workspace path (onboarding picker). */
+export interface DiscoveredList {
+  teamId: string;
+  teamName: string;
+  spaceId: string;
+  spaceName: string;
+  listId: string;
+  listName: string;
+  folderName?: string;
+}
+
+/**
+ * Enumerate every list the token can see (workspaces → spaces → lists,
+ * folderless + foldered). Used by the guided onboarding so nobody has to
+ * hunt ids out of URLs. Explicit-command path — the request count
+ * (1 + 2×spaces) is fine there.
+ */
+export async function discoverClickUpLists(
+  token: string,
+  deps: { fetchImpl?: typeof fetch } = {},
+): Promise<DiscoveredList[]> {
+  const adapter = new ApiAdapter({
+    baseUrl: CLICKUP_BASE_URL,
+    authHeaders: () => ({ Authorization: token }),
+    fetchImpl: deps.fetchImpl,
+  });
+  const out: DiscoveredList[] = [];
+  const teams = await adapter.request<{ teams?: Array<{ id: string; name?: string }> }>('GET', '/team');
+  for (const team of teams.teams ?? []) {
+    const spaces = await adapter.request<{ spaces?: Array<{ id: string; name?: string }> }>(
+      'GET', `/team/${team.id}/space`,
+    );
+    for (const space of spaces.spaces ?? []) {
+      const base = {
+        teamId: String(team.id),
+        teamName: team.name ?? String(team.id),
+        spaceId: String(space.id),
+        spaceName: space.name ?? String(space.id),
+      };
+      const folderless = await adapter.request<{ lists?: Array<{ id: string; name?: string }> }>(
+        'GET', `/space/${space.id}/list`,
+      );
+      for (const l of folderless.lists ?? []) {
+        out.push({ ...base, listId: String(l.id), listName: l.name ?? String(l.id) });
+      }
+      const folders = await adapter.request<{ folders?: Array<{ id: string; name?: string; lists?: Array<{ id: string; name?: string }> }> }>(
+        'GET', `/space/${space.id}/folder`,
+      );
+      for (const f of folders.folders ?? []) {
+        for (const l of f.lists ?? []) {
+          out.push({ ...base, listId: String(l.id), listName: l.name ?? String(l.id), folderName: f.name });
+        }
+      }
+    }
+  }
+  return out;
+}
+
 /**
  * Factory used by getTaskBackend(). Always returns the backend when
  * taskBackend=clickup — mirror reads/writes work offline; only sync() needs

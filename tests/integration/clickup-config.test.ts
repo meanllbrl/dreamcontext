@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, rmSync, readFileSync, existsSync, realpathSync } from 'node:fs';
+import { mkdirSync, rmSync, readFileSync, writeFileSync, existsSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execSync } from 'node:child_process';
@@ -133,6 +133,42 @@ describe('clickup config onboarding (integration)', () => {
     run('config clickup-member "Alice Smith" 777', tmpDir);
     const cfg2 = JSON.parse(readFileSync(join(tmpDir, '_dream_context', 'state', '.config.json'), 'utf-8'));
     expect(cfg2.peopleIdentity['alice-smith']).toEqual({ clickupMemberId: '777', tokenEnv: 'ALICE_TOKEN' });
+  });
+
+  it('changing the sync list non-interactively REQUIRES --migrate or --keep when tasks are mapped', () => {
+    run('config task-backend clickup', tmpDir);
+    run('config clickup-list team1 space1 lista', tmpDir);
+    // map a task to the "old" list
+    writeFileSync(
+      join(tmpDir, '_dream_context', 'state', '.tasks-map.json'),
+      JSON.stringify([{ slug: 'x', dcId: 'task_1', backend: 'clickup', remoteId: 'cu_1' }]),
+    );
+
+    const refused = run('config clickup-list team1 space1 listb', tmpDir);
+    expect(refused).toContain('--migrate');
+    const cfg = JSON.parse(readFileSync(join(tmpDir, '_dream_context', 'state', '.config.json'), 'utf-8'));
+    expect(cfg.clickup.listId).toBe('lista'); // unchanged — no half-state
+
+    const kept = run('config clickup-list team1 space1 listb --keep', tmpDir);
+    expect(kept).toContain('mappings kept');
+    expect(JSON.parse(readFileSync(join(tmpDir, '_dream_context', 'state', '.tasks-map.json'), 'utf-8'))).toHaveLength(1);
+
+    const migrated = run('config clickup-list team1 space1 listc --migrate', tmpDir);
+    expect(migrated).toContain('ledger reset');
+    expect(existsSync(join(tmpDir, '_dream_context', 'state', '.tasks-map.json'))).toBe(false);
+    // backup of the old map exists
+    const backups = require('node:fs').readdirSync(join(tmpDir, '_dream_context', 'state'))
+      .filter((f: string) => f.startsWith('.tasks-map.backup-'));
+    expect(backups.length).toBe(1);
+  });
+
+  it('switching back to local (non-TTY) keeps hooks but says how to remove them', () => {
+    execSync('git init -q', { cwd: tmpDir });
+    run('config task-backend clickup', tmpDir);
+    expect(existsSync(join(tmpDir, '.git', 'hooks', 'post-commit'))).toBe(true);
+    const out = run('config task-backend local', tmpDir);
+    expect(out).toContain('sync-hooks uninstall');
+    expect(existsSync(join(tmpDir, '.git', 'hooks', 'post-commit'))).toBe(true); // not silently removed
   });
 
   it('setup --yes never asks about cloud tasks and leaves the backend unset (advanced setting)', () => {

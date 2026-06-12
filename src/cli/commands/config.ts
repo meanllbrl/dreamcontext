@@ -14,7 +14,11 @@ import {
   writeClickUpToken,
 } from '../../lib/task-backend/secrets.js';
 import { ensureRemoteBackendGitignore } from '../../lib/task-backend/paths.js';
-import { installTaskSyncHooks } from '../../lib/task-backend/git-hooks.js';
+import { installTaskSyncHooks, uninstallTaskSyncHooks, hasManagedTaskSyncHooks } from '../../lib/task-backend/git-hooks.js';
+import { createClickUpBackend, discoverClickUpLists } from '../../lib/task-backend/clickup.js';
+import { SyncLedger } from '../../lib/task-backend/sync-state.js';
+import { join } from 'node:path';
+import { confirm, select } from '@inquirer/prompts';
 
 /** Resolve the project root that holds `_dream_context/`, or null. */
 function resolveProjectRoot(): string | null {
@@ -153,6 +157,17 @@ export function registerConfigCommand(program: Command): void {
         cloudTaskManagement: b === 'clickup',
       });
       success(`Task backend set to ${b}.`);
+      if (b === 'local' && hasManagedTaskSyncHooks(projectRoot)) {
+        // The hooks no-op safely on local, but leaving them is untidy.
+        if (process.stdin.isTTY) {
+          if (await confirm({ message: 'Remove the git sync hooks (post-commit/pre-push)?', default: true })) {
+            const removed = uninstallTaskSyncHooks(projectRoot);
+            if (removed.length > 0) info(chalk.dim(`git sync hooks removed: ${removed.join(', ')}.`));
+          }
+        } else {
+          info(chalk.dim('git sync hooks are still installed (harmless no-ops on local). Remove with `dreamcontext tasks sync-hooks uninstall`.'));
+        }
+      }
       if (b === 'clickup') {
         // Best-effort git triggers (post-commit/pre-push); they can never
         // fail or block git, and a non-dreamcontext hook is never clobbered.
@@ -167,7 +182,8 @@ export function registerConfigCommand(program: Command): void {
         const cfg = readSetupConfig(projectRoot);
 
         if (process.stdin.isTTY) {
-          // Guided onboarding: collect everything the sync needs in one go.
+          // Guided onboarding: token → connection test → pick the list from
+          // the API (no id hunting) → provision fields → first sync.
           if (!token) {
             const key = (await promptInput({
               message: 'ClickUp API key (pk_…; goes to the gitignored secrets file — leave empty to add later):',
@@ -184,29 +200,81 @@ export function registerConfigCommand(program: Command): void {
             }
           }
 
-          if (!cfg?.clickup?.listId) {
-            info(chalk.dim('ClickUp IDs: teamId is in the URL (app.clickup.com/{teamId}/…); listId is the `li/{listId}` part of the list URL.'));
-            const teamId = (await promptInput({ message: 'Team ID (leave empty to set later):' })).trim();
-            const spaceId = teamId ? (await promptInput({ message: 'Space ID:' })).trim() : '';
-            const listId = teamId ? (await promptInput({ message: 'List ID:' })).trim() : '';
-            if (teamId && listId) {
-              updateSetupConfig(projectRoot, {
-                clickup: {
-                  ...(cfg?.clickup ?? {}),
-                  teamId,
-                  ...(spaceId ? { spaceId } : {}),
-                  listId,
-                  changelogTarget: cfg?.clickup?.changelogTarget ?? 'comments',
-                },
-              });
-              success(`ClickUp target set: team ${teamId}${spaceId ? `, space ${spaceId}` : ''}, list ${listId}.`);
+          const liveToken = resolveClickUpToken(projectRoot);
+          let connected = false;
+          if (liveToken) {
+            const contextRoot = join(projectRoot, '_dream_context');
+            const probe = createClickUpBackend(contextRoot, readSetupConfig(projectRoot));
+            const test = await probe.testConnection();
+            if (test.ok) {
+              success(`Connected to ClickUp as ${test.user}.`);
+              connected = true;
             } else {
-              info(chalk.dim('Target not set. Use `dreamcontext config clickup-list <teamId> <spaceId> <listId>` when ready.'));
+              error(`Connection test failed: ${test.error}`);
             }
           }
 
-          if ((cfg?.people?.length ?? 0) > 0) {
-            info(chalk.dim('Assignees: map people to ClickUp members with `dreamcontext config clickup-member <person> <memberId>`.'));
+          // List picker — fetched from the API, no URL spelunking.
+          let cfgNow = readSetupConfig(projectRoot);
+          if (connected && !cfgNow?.clickup?.listId) {
+            try {
+              info(chalk.dim('Fetching your ClickUp workspaces…'));
+              const lists = await discoverClickUpLists(liveToken!.token);
+              if (lists.length > 0) {
+                const picked = await select({
+                  message: 'Which list should tasks sync to?',
+                  choices: lists.map((l) => ({
+                    value: l,
+                    name: `${l.teamName} / ${l.spaceName}${l.folderName ? ` / ${l.folderName}` : ''} / ${chalk.bold(l.listName)}`,
+                  })),
+                  pageSize: Math.min(12, lists.length),
+                });
+                updateSetupConfig(projectRoot, {
+                  clickup: {
+                    teamId: picked.teamId,
+                    spaceId: picked.spaceId,
+                    listId: picked.listId,
+                    changelogTarget: 'comments',
+                  },
+                });
+                success(`Sync target: ${picked.teamName} / ${picked.spaceName} / ${picked.listName}.`);
+              } else {
+                info(chalk.dim('No lists visible to this token. Set one later with `dreamcontext config clickup-list`.'));
+              }
+            } catch (err) {
+              error(`Could not list workspaces: ${(err as Error).message}`);
+              info(chalk.dim('Set the target manually: `dreamcontext config clickup-list <teamId> <spaceId> <listId>`.'));
+            }
+            cfgNow = readSetupConfig(projectRoot);
+          }
+
+          // Provision + first sync — finish in a working state, not a TODO list.
+          if (connected && cfgNow?.clickup?.listId) {
+            const contextRoot = join(projectRoot, '_dream_context');
+            const backend = createClickUpBackend(contextRoot, cfgNow);
+
+            if (await confirm({ message: 'Create the recommended custom fields on the list (urgency, summary, RICE, …)?', default: true })) {
+              const result = await backend.provisionRemote();
+              if (result.created.length > 0) success(`Created remote fields: ${result.created.join(', ')}`);
+              else console.log(chalk.dim('  All recommended fields already exist.'));
+              if (result.backfilled > 0) console.log(chalk.dim(`  Backfilled ${result.backfilled} value(s).`));
+              for (const e of result.errors) error(e);
+            }
+
+            const localCount = (await backend.list({ all: true })).length;
+            const syncMsg = localCount > 0
+              ? `Run the first sync now? ${localCount} local task(s) will be created in the list.`
+              : 'Run the first sync now? (pulls any tasks already in the list)';
+            if (await confirm({ message: syncMsg, default: true })) {
+              const report = await backend.sync('both');
+              if (report.errors.length > 0) {
+                for (const e of report.errors) error(e);
+              } else {
+                success(`Synced: ${report.pushed + report.created} up, ${report.pulled} down${report.conflicts.length > 0 ? `, ${report.conflicts.length} conflict(s) preserved` : ''}.`);
+              }
+            }
+
+            info(chalk.dim('Assignees: tag tasks `person:<slug>` (see `dreamcontext tasks members`) or pick one in the dashboard.'));
           }
         } else {
           // Non-interactive (scripts/CI): print the next steps instead.
@@ -247,10 +315,43 @@ export function registerConfigCommand(program: Command): void {
   config
     .command('clickup-list <teamId> <spaceId> <listId>')
     .description('Set the ClickUp team/space/list the tasks sync against')
-    .action((teamId: string, spaceId: string, listId: string) => {
+    .option('--migrate', 'When changing lists: reset the sync ledger so the next sync recreates every local task in the NEW list')
+    .option('--keep', 'When changing lists: keep existing task mappings (tasks were moved in ClickUp itself)')
+    .action(async (teamId: string, spaceId: string, listId: string, opts: { migrate?: boolean; keep?: boolean }) => {
       const projectRoot = requireProjectRoot();
       if (!projectRoot) return;
+      const contextRoot = join(projectRoot, '_dream_context');
       const existing = readSetupConfig(projectRoot)?.clickup ?? {};
+      const ledger = new SyncLedger(contextRoot);
+      const changingList = !!existing.listId && existing.listId !== listId && ledger.readMap().length > 0;
+
+      let migrate = opts.migrate === true;
+      if (changingList && !opts.migrate && !opts.keep) {
+        if (process.stdin.isTTY) {
+          migrate = await select({
+            message: `The sync target is changing (${existing.listId} → ${listId}) and ${ledger.readMap().length} task(s) are mapped to the old list. What should happen?`,
+            choices: [
+              { value: true, name: 'Migrate — next sync recreates every local task in the NEW list (old list untouched)' },
+              { value: false, name: 'Keep mappings — the tasks were moved within ClickUp itself' },
+            ],
+          });
+        } else {
+          error(
+            `Changing the sync target would leave ${ledger.readMap().length} task mapping(s) pointing at the old list.`,
+            'Re-run with --migrate (recreate tasks in the new list) or --keep (tasks were moved in ClickUp).',
+          );
+          process.exitCode = 1;
+          return;
+        }
+      }
+
+      if (changingList && migrate) {
+        const { backupPath } = ledger.reset();
+        info(chalk.dim(`Sync ledger reset${backupPath ? ` (old id-map backed up: ${backupPath})` : ''} — the next sync creates all local tasks in the new list.`));
+      } else if (changingList) {
+        info(chalk.dim('Task mappings kept — sync keeps updating the existing remote tasks by id.'));
+      }
+
       updateSetupConfig(projectRoot, {
         clickup: { ...existing, teamId, spaceId, listId, changelogTarget: existing.changelogTarget ?? 'comments' },
       });

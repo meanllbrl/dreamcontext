@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { CONFLICTS_DIR_REL, TASKS_MAP_REL, TASKS_QUEUE_REL, TASKS_SYNC_REL } from './paths.js';
 
@@ -228,6 +228,23 @@ export class SyncLedger {
   dequeueFor(slug: string, upToTs: number): void {
     const queue = this.readQueue().filter((q) => !(q.slug === slug && q.ts <= upToTs));
     writeJson(this.queuePath, queue);
+  }
+
+  /**
+   * Reset the ledger for a LIST MIGRATION: back up the committed id-map,
+   * then drop map + sync state + queue so the next sync recreates every
+   * local task in the new container. Mirror files are untouched.
+   */
+  reset(): { backupPath: string | null } {
+    let backupPath: string | null = null;
+    if (existsSync(this.mapPath)) {
+      backupPath = this.mapPath.replace(/\.json$/, `.backup-${Date.now()}.json`);
+      writeFileSync(backupPath, readFileSync(this.mapPath));
+      rmSync(this.mapPath);
+    }
+    if (existsSync(this.syncPath)) rmSync(this.syncPath);
+    if (existsSync(this.queuePath)) rmSync(this.queuePath);
+    return { backupPath };
   }
 
   queuedSlugs(): string[] {

@@ -308,6 +308,25 @@ export function makeFakeClickUp(opts: { serverStart?: number } = {}): FakeClickU
         return jsonResponse(200, {});
       }
 
+      // Workspace discovery (onboarding picker)
+      if (path === '/team' && method === 'GET') {
+        return jsonResponse(200, { teams: [{ id: 'team1', name: 'Fake Team' }] });
+      }
+      m = path.match(/^\/team\/([^/]+)\/space$/);
+      if (m && method === 'GET') {
+        return jsonResponse(200, { spaces: [{ id: 'space1', name: 'Fake Space' }] });
+      }
+      m = path.match(/^\/space\/([^/]+)\/list$/);
+      if (m && method === 'GET') {
+        return jsonResponse(200, { lists: [{ id: 'list1', name: 'List' }] });
+      }
+      m = path.match(/^\/space\/([^/]+)\/folder$/);
+      if (m && method === 'GET') {
+        return jsonResponse(200, {
+          folders: [{ id: 'folder1', name: 'Sprint Klasoru', lists: [{ id: 'list2', name: 'Sprint 1' }] }],
+        });
+      }
+
       // GET /user (connection test)
       if (path === '/user' && method === 'GET') {
         return jsonResponse(200, { user: { id: 1, username: 'api-user' } });

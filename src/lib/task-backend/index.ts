@@ -9,10 +9,12 @@ import type { TaskBackend, TaskSyncStatus } from './types.js';
 
 export * from './types.js';
 export { LocalTaskBackend, isSafeTaskSlug, readTaskFile } from './local.js';
-export { ClickUpTaskBackend, createClickUpBackend } from './clickup.js';
+export { ClickUpTaskBackend, createClickUpBackend, discoverClickUpLists, type DiscoveredList } from './clickup.js';
+export { SyncLedger } from './sync-state.js';
 export {
   installTaskSyncHooks,
   uninstallTaskSyncHooks,
+  hasManagedTaskSyncHooks,
   taskSyncHookScript,
   TASK_SYNC_HOOKS,
 } from './git-hooks.js';

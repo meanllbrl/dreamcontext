@@ -89,6 +89,11 @@ export function uninstallTaskSyncHooks(projectRoot: string): string[] {
   return removed;
 }
 
+/** True when ANY dreamcontext-managed sync hook is installed. */
+export function hasManagedTaskSyncHooks(projectRoot: string): boolean {
+  return TASK_SYNC_HOOKS.some((hook) => isManagedTaskSyncHook(projectRoot, hook));
+}
+
 /** True when `hook` is dreamcontext-managed. */
 export function isManagedTaskSyncHook(projectRoot: string, hook: string): boolean {
   const path = join(projectRoot, '.git', 'hooks', hook);

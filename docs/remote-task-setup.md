@@ -14,14 +14,29 @@ update it whenever the field bridge learns new names.
 ## 1. Connection
 
 ```bash
-dreamcontext config task-backend clickup        # guided onboarding (token + IDs)
-dreamcontext config clickup-list <teamId> <spaceId> <listId>
-dreamcontext config clickup-token [--user <name>]
+dreamcontext config task-backend clickup
 ```
 
-- `teamId`: first number in any ClickUp URL — `app.clickup.com/{teamId}/…`
-- `spaceId`: `…/v/s/{spaceId}` when a Space is open
-- `listId`: `…/v/li/{listId}` when the List is open
+That single command is a full guided onboarding in a terminal: API key →
+connection test ("Connected as …") → **pick the target list from your
+workspaces** (fetched live — no id hunting) → offer to provision the
+recommended custom fields → offer the first sync (telling you how many local
+tasks it will create). Switching back to `local` offers to remove the git
+hooks.
+
+Manual equivalents (scripts/CI):
+
+```bash
+dreamcontext config clickup-token [--user <name>]
+dreamcontext config clickup-list <teamId> <spaceId> <listId> [--migrate|--keep]
+```
+
+- `teamId`: first number in any ClickUp URL — `app.clickup.com/{teamId}/…`;
+  `spaceId`: `…/v/s/{spaceId}`; `listId`: `…/v/li/{listId}`
+- Changing the list while tasks are mapped requires a decision:
+  `--migrate` resets the sync ledger (old id-map backed up) so the next sync
+  recreates everything in the new list; `--keep` keeps the mappings (the
+  tasks were moved within ClickUp itself). Interactive runs ask.
 - The API key lives in the gitignored `_dream_context/state/.secrets.json`
   (mode 0600) — never in `.config.json`. Resolution: env (`CLICKUP_TOKEN`,
   per-person `tokenEnv`) → secrets file.
@@ -118,9 +133,8 @@ ascii-folded, e.g. "Mehmet Nuraydın" → `mehmet-nuraydin`).
 
 - One active backend per project; ClickUp is the source of truth.
 - Webhooks/realtime are out of scope — sync is trigger-based.
-- Switching the target list does not migrate task mappings yet (reset the
-  gitignored `state/.tasks-{map,sync,queue}.json` to re-create everything in
-  the new list).
+- Switching the target list is a first-class flow now
+  (`config clickup-list … --migrate|--keep`, interactive runs ask).
 - Task deletion propagates **both ways**: locally (`tasks delete`, dashboard
   delete button, API route) the remote task is deleted on the next sync;
   remotely, the pull reconciles the id-map against the full remote set and
