@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { execFile } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
+import { promisify } from 'node:util';
 import {
   DIGEST_SCHEMA_VERSION,
   consumeEntry,
@@ -13,6 +15,14 @@ import {
   writeInboxEntry,
   type DigestEntry,
 } from '../../src/lib/federation-inbox.js';
+
+const execFileAsync = promisify(execFile);
+
+/** Absolute path to the vite-node binary bundled with this project. */
+const VITE_NODE = resolve('node_modules/.bin/vite-node');
+
+/** Absolute path to the child-writer helper script. */
+const CHILD_WRITER = resolve('tests/helpers/federation-inbox-child-writer.ts');
 
 function makeContextRoot(): string {
   const root = join(
@@ -65,25 +75,56 @@ describe('federation-inbox', () => {
     expect(onDisk.summary).toBe('Summary for k1');
   });
 
-  it('concurrent Promise.all of N distinct entries → all N present, uncorrupted', async () => {
-    const N = 40;
-    const entries = Array.from({ length: N }, (_, i) => makeEntry('alpha', `k${i}`));
+  it(
+    'two OS processes writing distinct entries into the same inbox concurrently → all entries present and uncorrupted',
+    async () => {
+      // Spawn PROCESS_COUNT child Node processes via vite-node so each runs the
+      // REAL TypeScript writeInboxEntry in a separate OS process, all targeting the
+      // same inbox directory at the same time.  This validates the "two vaults
+      // sleeping concurrently, both writing a third's inbox" invariant from #25.
+      const PROCESS_COUNT = 4;
+      const ENTRIES_PER_PROCESS = 10;
+      const TOTAL = PROCESS_COUNT * ENTRIES_PER_PROCESS;
 
-    const results = await Promise.all(
-      entries.map((e) => Promise.resolve().then(() => writeInboxEntry(contextRoot, e))),
-    );
+      // Each child gets its own vault name and a non-overlapping entry index range
+      // so all TOTAL filenames are distinct (concurrency stress, no dedup).
+      const childArgs = Array.from({ length: PROCESS_COUNT }, (_, p) => ({
+        vault: `vault${p}`,
+        startIndex: p * ENTRIES_PER_PROCESS,
+        count: ENTRIES_PER_PROCESS,
+      }));
 
-    expect(results.every((r) => r.written)).toBe(true);
+      // Launch all child processes simultaneously.
+      await Promise.all(
+        childArgs.map(({ vault, startIndex, count }) =>
+          execFileAsync(VITE_NODE, [
+            CHILD_WRITER,
+            contextRoot,
+            vault,
+            String(startIndex),
+            String(count),
+          ]),
+        ),
+      );
 
-    // Every entry is on disk and parses back to its exact id (no torn/corrupt files).
-    for (const e of entries) {
-      const path = join(inboxDir(contextRoot), inboxFilename(e.origin.vault, e.origin.entryId));
-      expect(existsSync(path)).toBe(true);
-      const parsed = JSON.parse(readFileSync(path, 'utf-8')) as DigestEntry;
-      expect(parsed.id).toBe(e.id);
-    }
-    expect(pendingInboxCount(contextRoot)).toBe(N);
-  });
+      // Assert: every expected file is present and contains valid JSON with the correct id.
+      for (const { vault, startIndex, count } of childArgs) {
+        for (let i = startIndex; i < startIndex + count; i++) {
+          const entryId = `k${i}`;
+          const filePath = join(inboxDir(contextRoot), inboxFilename(vault, entryId));
+          expect(existsSync(filePath), `missing file for ${vault}:${entryId}`).toBe(true);
+          const parsed = JSON.parse(readFileSync(filePath, 'utf-8')) as DigestEntry;
+          expect(parsed.id).toBe(`${vault}:${entryId}`);
+          expect(parsed.origin.vault).toBe(vault);
+          expect(parsed.origin.entryId).toBe(entryId);
+        }
+      }
+
+      // Total file count must equal total entries — no lost, no duplicated files.
+      expect(pendingInboxCount(contextRoot)).toBe(TOTAL);
+    },
+    30_000, // generous timeout: vite-node startup per process
+  );
 
   it('drainInbox quarantines an entry whose major version exceeds the reader, leaving the file in place', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
