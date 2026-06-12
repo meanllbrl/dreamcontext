@@ -1,0 +1,70 @@
+.fullscreen-overlay {
+  position: fixed;
+  inset: 0;
+  /* Above every page-level layer (PacksPage modal uses 1000). */
+  z-index: 1100;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg);
+  padding: var(--space-4) var(--space-5);
+}
+
+.fullscreen-overlay:focus {
+  outline: none;
+}
+
+.fullscreen-overlay-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.fullscreen-overlay-title {
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fullscreen-overlay-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-shrink: 0;
+}
+
+.fullscreen-overlay-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  transition: all var(--transition-fast);
+}
+
+.fullscreen-overlay-close:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
+
+.fullscreen-overlay-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Previews size themselves against their flex parent (md-preview uses flex:1,
+   excalidraw-preview uses height:100%) — give them a column context that fills
+   the overlay so the larger canvas is actually used. */
+.fullscreen-overlay-body > * {
+  flex: 1;
+  min-height: 0;
+}

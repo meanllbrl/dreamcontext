@@ -140,6 +140,25 @@
   gap: var(--space-2);
 }
 
+/* Expand-to-fullscreen toggle next to the File/Preview tabs. */
+.core-expand-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  transition: all var(--transition-fast);
+}
+
+.core-expand-btn:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
+
 .core-viewer-content {
   font-size: var(--font-size-sm);
   font-family: var(--font-mono);
