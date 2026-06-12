@@ -1,5 +1,6 @@
 import { Component, type ReactNode } from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
+import { api } from './api/client';
 import { ThemeProvider } from './context/ThemeContext';
 import { I18nProvider } from './context/I18nContext';
 import { ProjectProvider } from './context/ProjectContext';
@@ -16,6 +17,28 @@ import { PacksPage } from './pages/PacksPage';
 import { AboutPage } from './pages/AboutPage';
 import type { Page } from './components/layout/Sidebar';
 import './styles/global.css';
+
+/** Required server capabilities for THIS bundle (see server/routes/health.ts). */
+const REQUIRED_CAPABILITIES = ['tasks.members', 'tasks.delete', 'tasks.sync'];
+
+function StaleServerBanner() {
+  const { data } = useQuery({
+    queryKey: ['health'],
+    queryFn: () => api.get<{ ok: boolean; capabilities?: string[] }>('/health'),
+    staleTime: 60_000,
+    retry: 1,
+  });
+  if (!data) return null;
+  const caps = data.capabilities ?? [];
+  const missing = REQUIRED_CAPABILITIES.filter(c => !caps.includes(c));
+  if (missing.length === 0) return null;
+  return (
+    <div className="stale-server-banner">
+      ⚠ The dashboard server is running an older build — some actions will fail.
+      Restart it: <code>dreamcontext dashboard</code>
+    </div>
+  );
+}
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -97,6 +120,7 @@ export function App() {
         <ProjectProvider>
           <ThemeProvider>
             <I18nProvider>
+              <StaleServerBanner />
               <Shell>
                 {(nav) => <PageRouter nav={nav} />}
               </Shell>
