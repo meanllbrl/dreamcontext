@@ -8,6 +8,12 @@ import {
   type Connection,
   type ConnectionDirection,
 } from '../../hooks/useConnections';
+import {
+  useFederationInbox,
+  useSyncPreview,
+  type DigestEntry,
+  type PeerDelta,
+} from '../../hooks/useFederation';
 import './ConnectionsManager.css';
 
 const DIRECTIONS: ConnectionDirection[] = ['out', 'in', 'both'];
@@ -41,6 +47,8 @@ export function ConnectionsManager({
   const { data: connections } = useConnections();
   const addConnection = useAddConnection();
   const removeConnection = useRemoveConnection();
+  const { data: inbox } = useFederationInbox();
+  const syncPreview = useSyncPreview();
 
   const [newVault, setNewVault] = useState('');
   const [newDirection, setNewDirection] = useState<ConnectionDirection>('both');
@@ -223,11 +231,152 @@ export function ConnectionsManager({
         {formError && <p className="settings-test-err">{formError}</p>}
       </div>
 
-      {/*
-        PHASE 3 PLACEHOLDER — the federation inbox view (GET /api/federation/inbox)
-        and the "Preview sync" button (POST /api/federation/sync, dry-run) mount
-        here, below the connections list. Do not wire them in Phase 2.
-      */}
+      {/* Digest inbox — pending + consumed entries with origin provenance (P3.8) */}
+      <div className="fed-inbox">
+        <h3 className="fed-subtitle">{t('federation.inbox')}</h3>
+        {(() => {
+          const pending = inbox?.pending ?? [];
+          const consumed = inbox?.consumed ?? [];
+          const quarantined = inbox?.quarantined ?? [];
+          if (
+            pending.length === 0 &&
+            consumed.length === 0 &&
+            quarantined.length === 0
+          ) {
+            return <p className="settings-field-hint">{t('federation.inbox.empty')}</p>;
+          }
+          return (
+            <>
+              {pending.length > 0 && (
+                <div className="fed-inbox-group">
+                  <h4 className="fed-inbox-group-title">
+                    {t('federation.inbox.pending')} ({pending.length})
+                  </h4>
+                  <ul className="fed-entry-list">
+                    {pending.map((e) => (
+                      <InboxEntry key={`p-${e.id}`} entry={e} fromLabel={t('federation.inbox.from')} />
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {consumed.length > 0 && (
+                <div className="fed-inbox-group">
+                  <h4 className="fed-inbox-group-title">
+                    {t('federation.inbox.consumed')} ({consumed.length})
+                  </h4>
+                  <ul className="fed-entry-list fed-entry-list--consumed">
+                    {consumed.map((e) => (
+                      <InboxEntry key={`c-${e.id}`} entry={e} fromLabel={t('federation.inbox.from')} />
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {quarantined.length > 0 && (
+                <div className="fed-inbox-group">
+                  <h4 className="fed-inbox-group-title fed-inbox-group-title--warn">
+                    {t('federation.inbox.quarantined')} ({quarantined.length})
+                  </h4>
+                  <ul className="fed-entry-list">
+                    {quarantined.map((q) => (
+                      <li key={`q-${q.file}`} className="fed-entry fed-entry--quarantined">
+                        <code className="fed-entry-file">{q.file}</code>
+                        <span className="fed-entry-meta">v{q.version}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </>
+          );
+        })()}
+      </div>
+
+      {/* Preview sync — dry-run preview of the outbound deltas (P3.8) */}
+      <div className="fed-preview">
+        <div className="fed-preview-head">
+          <button
+            className="btn"
+            onClick={() => syncPreview.mutate()}
+            disabled={syncPreview.isPending}
+          >
+            {syncPreview.isPending ? t('federation.preview.running') : t('federation.preview')}
+          </button>
+          <p className="settings-field-hint">{t('federation.preview.hint')}</p>
+        </div>
+        {syncPreview.isError && (
+          <p className="settings-test-err">
+            {syncPreview.error instanceof Error
+              ? syncPreview.error.message
+              : String(syncPreview.error)}
+          </p>
+        )}
+        {syncPreview.data && (
+          <SyncPreview
+            deltas={syncPreview.data.deltas}
+            t={t}
+          />
+        )}
+      </div>
     </section>
+  );
+}
+
+/** One inbox entry row, showing its title, kind and origin provenance. */
+function InboxEntry({ entry, fromLabel }: { entry: DigestEntry; fromLabel: string }) {
+  return (
+    <li className="fed-entry">
+      <div className="fed-entry-head">
+        <span className="fed-entry-title">{entry.title}</span>
+        <span className={`fed-entry-kind fed-entry-kind--${entry.kind}`}>{entry.kind}</span>
+      </div>
+      <span className="fed-entry-meta">
+        {fromLabel} <strong>{entry.origin.vault}</strong>
+        {entry.origin.sourceTimestamp ? ` · ${entry.origin.sourceTimestamp}` : ''}
+      </span>
+    </li>
+  );
+}
+
+/** Render the dry-run sync preview deltas per peer. */
+function SyncPreview({
+  deltas,
+  t,
+}: {
+  deltas: PeerDelta[];
+  t: (key: string) => string;
+}) {
+  if (deltas.length === 0) {
+    return <p className="settings-field-hint">{t('federation.preview.none')}</p>;
+  }
+  return (
+    <ul className="fed-delta-list">
+      {deltas.map((d) => {
+        let status: string;
+        if (d.stale) status = t('federation.preview.stale');
+        else if (!d.consented) status = t('federation.preview.noconsent');
+        else if (d.entries.length === 0) status = t('federation.preview.nodelta');
+        else status = `${d.entries.length} ${t('federation.preview.entries')}`;
+        return (
+          <li key={d.vault} className="fed-delta">
+            <div className="fed-delta-head">
+              <span className="fed-delta-vault">{d.vault}</span>
+              <span className="fed-delta-status">{status}</span>
+            </div>
+            {d.entries.length > 0 && (
+              <ul className="fed-entry-list">
+                {d.entries.map((e, i) => (
+                  <li key={`${d.vault}-${i}`} className="fed-entry">
+                    <div className="fed-entry-head">
+                      <span className="fed-entry-title">{e.title}</span>
+                      <span className={`fed-entry-kind fed-entry-kind--${e.kind}`}>{e.kind}</span>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </li>
+        );
+      })}
+    </ul>
   );
 }

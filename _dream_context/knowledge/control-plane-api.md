@@ -63,6 +63,16 @@ Cache failure → benign payload (`{cache: null, fresh: false, nudge: null}`), n
 
 Imports from `../../lib/version-check.js` (NOT `src/cli/commands/version-check.ts` — that path does not exist).
 
+## POST /api/federation/sync — dry-run by construction, no write import
+
+The federation sync route (`src/server/routes/federation.ts`) PREVIEWS the outbound digest deltas a sleep cycle would push to each consenting peer. It is **dry-run by construction**: it computes deltas with read-only functions (`buildInterestProfile`, `computeDigest`, `detectConflicts`) and returns `{ dryRun: true, deltas }`. The `dryRun: true` field is a constant.
+
+**Invariant (binding):** NO file under `src/server/routes/*.ts` may import `writeInboxEntry`, `ingestEntry`, `consumeEntry`, `advanceWatermark`, or any other federation WRITE function. The only mutation path is the CLI `federation sync` / `federation drain` (run by the `sleep-federation` specialist). This mirrors the version-check no-network rule: the request path is structurally incapable of the side effect, not merely careful to avoid it. The route file carries a prohibition banner stating this; do not add a write import.
+
+Rationale: a browser-reachable write into a PEER vault's inbox would be a cross-project write surface on the loopback API. Keeping all writes in the CLI keeps the consent rule + watermark advance in one auditable place and preserves the loopback-only invariant.
+
+`GET /api/federation/inbox` is also read-only: `drainInbox` there is a pure read (it never consumes), and `listConsumedEntries` reads the consumed/ archive. Provenance (`origin{vault,entryId,sourceTimestamp}`) rides on every entry for the dashboard inbox view.
+
 ## safeChildPath — pass the full filename
 
 All seven slug→path joins in route handlers go through `safeChildPath(<dir>, \`${slug}.md\`)`.

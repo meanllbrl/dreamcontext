@@ -18,6 +18,7 @@ import { readVersionCache, isCacheFresh, buildNudge } from '../../lib/version-ch
 import { dreamcontextVersion } from '../../lib/manifest.js';
 import { buildDriftDirective } from '../../lib/setup-drift.js';
 import { computeFeatureFreshness, freshnessSnapshotNote } from '../../lib/feature-freshness.js';
+import { pendingInboxCount } from '../../lib/federation-inbox.js';
 import {
   applyBudget, resolveBudget, demoteMemoryBlock, demoteTaskList,
   type BudgetSection,
@@ -964,6 +965,20 @@ export function generateSnapshot(rootOverride?: string): string {
     // Marketing snapshot must never break the SessionStart hook.
   }
   flush('marketing', { neverEvict: true });
+
+  // 12. Federation inbox note — HOT-PATH SAFE. A single LOCAL readdir
+  // (`pendingInboxCount`) counts pending peer digest entries; it NEVER resolves
+  // a peer vault or builds a peer corpus (issue #25 LOCKED hot-path invariant).
+  // Surfaces a one-line nudge so the next sleep cycle drains the inbox.
+  const pendingFederation = pendingInboxCount(root);
+  if (pendingFederation > 0) {
+    parts.push(
+      `## Federation\n\n${pendingFederation} pending peer digest ` +
+        `entr${pendingFederation === 1 ? 'y' : 'ies'} in the inbox — run \`dreamcontext federation drain\` ` +
+        `(or let the next sleep cycle drain them).\n`,
+    );
+    flush('federation', { neverEvict: true });
+  }
 
   // Final assembly through the token budget (see snapshot-budget.ts). The
   // demotion ladder only engages when the full render exceeds the budget;

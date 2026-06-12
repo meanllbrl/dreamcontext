@@ -184,6 +184,38 @@ export function removeConnection(contextRoot: string, peer: string): boolean {
 }
 
 /**
+ * Advance the `last_synced_at` watermark for a peer connection (Phase 3 sync).
+ * NEVER throws. Returns true if the connection existed and was updated, false if
+ * absent. A `--dry-run` sync NEVER calls this (the watermark must not move).
+ */
+export function advanceWatermark(contextRoot: string, peer: string, syncedAt: string): boolean {
+  const file = readConnections(contextRoot);
+  const target = file.connections.find((c) => c.vault === peer);
+  if (!target) return false;
+  const connections = file.connections.map((c) =>
+    c.vault === peer ? { ...c, last_synced_at: syncedAt } : c,
+  );
+  writeConnections(contextRoot, { version: 1, connections });
+  return true;
+}
+
+/**
+ * True iff the RECEIVER's connections file declares an inbound link back to the
+ * sender (`in`/`both` AND not stale). The consent rule (issue #25 LOCKED): a
+ * sender may only write into a peer's inbox when that peer has opted to RECEIVE
+ * from this sender. Read the RECEIVER's `.connections.json` and check for a
+ * connection to `senderVaultName` whose direction accepts inbound.
+ */
+export function receiverConsents(receiverContextRoot: string, senderVaultName: string): boolean {
+  return readConnections(receiverContextRoot).connections.some(
+    (c) =>
+      c.vault === senderVaultName &&
+      (c.direction === 'in' || c.direction === 'both') &&
+      c.status !== 'stale',
+  );
+}
+
+/**
  * Mark a connection `stale` (its peer path went away). NEVER throws. Returns
  * true if the connection existed and is now stale, false if absent.
  */

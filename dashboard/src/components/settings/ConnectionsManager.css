@@ -148,3 +148,128 @@
   gap: var(--space-3);
   flex-wrap: wrap;
 }
+
+/* ─── Digest inbox + sync preview (P3.8) ───────────────────────────────────── */
+
+.fed-inbox,
+.fed-preview {
+  margin-top: var(--space-5);
+}
+
+.fed-inbox-group {
+  margin-top: var(--space-3);
+}
+
+.fed-inbox-group-title {
+  margin: 0 0 var(--space-2);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-muted);
+}
+
+.fed-inbox-group-title--warn {
+  color: var(--color-danger, #b91c1c);
+}
+
+.fed-entry-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.fed-entry-list--consumed {
+  opacity: 0.7;
+}
+
+.fed-entry {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-subtle, transparent);
+}
+
+.fed-entry--quarantined {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  border-color: var(--color-danger, #b91c1c);
+}
+
+.fed-entry-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  justify-content: space-between;
+}
+
+.fed-entry-title {
+  font-weight: var(--font-weight-medium);
+}
+
+.fed-entry-kind {
+  font-size: var(--font-size-xs);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.fed-entry-kind--conflict-note {
+  border-color: var(--color-danger, #b91c1c);
+  color: var(--color-danger, #b91c1c);
+}
+
+.fed-entry-meta {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.fed-entry-file {
+  font-family: var(--font-mono, monospace);
+  font-size: var(--font-size-xs);
+}
+
+.fed-preview-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.fed-delta-list {
+  list-style: none;
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.fed-delta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.fed-delta-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  justify-content: space-between;
+}
+
+.fed-delta-vault {
+  font-weight: var(--font-weight-medium);
+}
+
+.fed-delta-status {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}

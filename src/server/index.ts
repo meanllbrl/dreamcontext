@@ -17,6 +17,7 @@ import { handleCouncilList, handleCouncilGet, handleCouncilResearchGet } from '.
 import { handleConfigGet, handleConfigUpdate } from './routes/config.js';
 import { handleVaultsGet } from './routes/vaults.js';
 import { handleConnectionsList, handleConnectionsCreate, handleConnectionsDelete } from './routes/connections.js';
+import { handleFederationInboxGet, handleFederationSyncPost } from './routes/federation.js';
 import { handlePacksGet } from './routes/packs.js';
 import { handlePackInstall, handlePackUninstall } from './routes/packs-install.js';
 import { handleVersionCheckGet } from './routes/version-check.js';
@@ -89,6 +90,10 @@ function buildRouter(): Router {
   router.get('/api/connections', handleConnectionsList);
   router.post('/api/connections', handleConnectionsCreate);
   router.delete('/api/connections/:vault', handleConnectionsDelete);
+
+  // Federation inbox (read-only) + sync PREVIEW (dry-run by construction, P3.8).
+  router.get('/api/federation/inbox', handleFederationInboxGet);
+  router.post('/api/federation/sync', handleFederationSyncPost);
 
   // Packs
   router.get('/api/packs', handlePacksGet);

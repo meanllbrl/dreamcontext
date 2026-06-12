@@ -25,6 +25,7 @@ import { registerUpgradeCommand } from './commands/upgrade.js';
 import { registerTaxonomyCommand } from './commands/taxonomy.js';
 import { registerVaultsCommand } from './commands/vaults.js';
 import { registerConnectionsCommand } from './commands/connections.js';
+import { registerFederationCommand } from './commands/federation.js';
 import { registerConfigCommand } from './commands/config.js';
 import { registerFeedbackCommand } from './commands/feedback.js';
 import { registerMigrationsCommand } from './commands/migrations.js';
@@ -137,6 +138,7 @@ export function createProgram(): Command {
   registerTaxonomyCommand(program);
   registerVaultsCommand(program);
   registerConnectionsCommand(program);
+  registerFederationCommand(program);
   registerConfigCommand(program);
   registerFeedbackCommand(program);
   registerMigrationsCommand(program);
