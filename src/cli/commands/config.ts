@@ -404,6 +404,10 @@ export function registerConfigCommand(program: Command): void {
           ? `ClickUp token stored for ${user} (${maskToken(value)}).`
           : `ClickUp token stored (${maskToken(value)}).`,
       );
+      if (token) {
+        // Passed as a CLI argument → it's now in shell history.
+        info(chalk.dim('Tip: pipe it next time (`echo "$KEY" | dreamcontext config clickup-token`) to keep it out of shell history.'));
+      }
       info(chalk.dim('Saved to _dream_context/state/.secrets.json (gitignored, mode 0600).'));
       if (!hasSecretsFile(projectRoot)) {
         // Defensive: should be unreachable — writeClickUpToken just wrote it.
