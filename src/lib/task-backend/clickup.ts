@@ -230,6 +230,8 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
   private static readonly META_REFRESH_MS = 60 * 60 * 1000;
   /** Deletions are rare — full id sweeps at most once per 2 minutes. */
   private static readonly RECONCILE_MS = 2 * 60 * 1000;
+  /** A sync lock older than this belongs to a dead process — break it. */
+  private static readonly LOCK_STALE_MS = 3 * 60 * 1000;
 
   /**
    * Best-effort meta refresh (members + statuses + field defs = 3 GETs).
@@ -447,6 +449,15 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       noop: false,
     };
 
+    // ONE sync engine per project: manual CLI, git hooks, post-sleep, and
+    // the dashboard button can all fire concurrently — the loser yields.
+    if (!this.ledger.acquireSyncLock(this.nowMs(), ClickUpTaskBackend.LOCK_STALE_MS)) {
+      report.skipped = 'locked';
+      report.pendingQueue = this.ledger.readQueue().length;
+      report.watermark = this.ledger.readSyncState().watermark;
+      return report;
+    }
+
     try {
       // Member cache refresh (assignee candidates) — best-effort, 1 request.
       try {
@@ -462,6 +473,8 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       // Total failures (missing token/list, auth) — never throw out of sync():
       // hooks and post-sleep depend on sync being unable to break the caller.
       report.errors.push((err as Error).message ?? String(err));
+    } finally {
+      this.ledger.releaseSyncLock();
     }
 
     report.pendingQueue = this.ledger.readQueue().length;

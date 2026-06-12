@@ -15,11 +15,13 @@ import { SECRETS_GITIGNORE_ENTRY } from './secrets.js';
 export const TASKS_MAP_REL = 'state/.tasks-map.json';
 export const TASKS_SYNC_REL = 'state/.tasks-sync.json';
 export const TASKS_QUEUE_REL = 'state/.tasks-queue.json';
+export const TASKS_LOCK_REL = 'state/.tasks-sync.lock';
 export const CONFLICTS_DIR_REL = 'state/.conflicts';
 
 /** .gitignore entries required when a remote backend owns the tasks. */
 export const REMOTE_BACKEND_GITIGNORE_ENTRIES = [
   '_dream_context/state/*.md',
+  '_dream_context/state/.tasks-sync.lock',
   '_dream_context/state/.tasks-sync.json',
   '_dream_context/state/.tasks-queue.json',
   '_dream_context/state/.conflicts/',

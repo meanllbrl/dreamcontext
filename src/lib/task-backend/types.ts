@@ -160,6 +160,8 @@ export interface SyncReport {
   watermark: number | null;
   /** True when nothing had to be done (also the local backend's constant result). */
   noop: boolean;
+  /** Set when the sync did not run at all (another sync holds the lock). */
+  skipped?: 'locked';
 }
 
 export interface TaskBackend {

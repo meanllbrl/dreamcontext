@@ -623,6 +623,10 @@ export function registerTasksCommand(program: Command): void {
           console.log(JSON.stringify(report, null, 2));
           return;
         }
+        if (report.skipped === 'locked') {
+          console.log(chalk.dim('Another sync is already running for this project — skipped. Try again in a moment.'));
+          return;
+        }
         if (report.noop) {
           console.log(chalk.dim(`Task backend is "${report.backend}" — nothing to sync.`));
           return;

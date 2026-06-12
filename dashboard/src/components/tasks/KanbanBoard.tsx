@@ -251,7 +251,9 @@ export function KanbanBoard() {
       onSuccess: ({ report }) => {
         const moved = report.pushed + report.created + report.pulled + report.deleted + report.mirrorDeleted;
         setSyncNote(
-          report.errors.length > 0
+          (report as { skipped?: string }).skipped === 'locked'
+            ? '⏳ another sync is already running'
+            : report.errors.length > 0
             ? `⚠ ${report.errors[0]}`
             : report.conflicts.length > 0
               ? `↕ ${moved} synced · ${report.conflicts.length} conflict(s) preserved`

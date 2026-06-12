@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { CONFLICTS_DIR_REL, TASKS_MAP_REL, TASKS_QUEUE_REL, TASKS_SYNC_REL } from './paths.js';
+import { CONFLICTS_DIR_REL, TASKS_LOCK_REL, TASKS_MAP_REL, TASKS_QUEUE_REL, TASKS_SYNC_REL } from './paths.js';
 
 /**
  * Ledger split — issue #11 (backend-neutral names):
@@ -245,6 +245,53 @@ export class SyncLedger {
     if (existsSync(this.syncPath)) rmSync(this.syncPath);
     if (existsSync(this.queuePath)) rmSync(this.queuePath);
     return { backupPath };
+  }
+
+  private get lockPath(): string { return join(this.contextRoot, TASKS_LOCK_REL); }
+
+  /**
+   * SYNC LOCK — at most one sync engine per project at a time. Sync fires
+   * from several places (manual CLI, git hooks, post-sleep, the dashboard
+   * button); the ledger files are read-modify-write JSON, so two concurrent
+   * engines could lose updates, double-replay queue ops, or duplicate
+   * remote creates. The lock file is created atomically (`wx`); a crashed
+   * process can't wedge things — locks older than `staleMs` are broken
+   * (JSON timestamp first, file mtime as the fallback for garbage content).
+   */
+  acquireSyncLock(nowMs: number, staleMs: number): boolean {
+    mkdirSync(dirname(this.lockPath), { recursive: true });
+    const tryCreate = (): boolean => {
+      try {
+        writeFileSync(this.lockPath, JSON.stringify({ pid: process.pid, at: nowMs }) + '\n', { flag: 'wx' });
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    if (tryCreate()) return true;
+
+    // Lock exists — held, or left behind by a dead process?
+    let heldSince: number | null = null;
+    try {
+      const info = JSON.parse(readFileSync(this.lockPath, 'utf-8'));
+      if (typeof info.at === 'number') heldSince = info.at;
+    } catch { /* unreadable → fall back to mtime below */ }
+    if (heldSince === null) {
+      try {
+        heldSince = statSync(this.lockPath).mtimeMs;
+      } catch {
+        return tryCreate(); // vanished between checks — race resolved by wx
+      }
+    }
+    if (nowMs - heldSince <= staleMs) return false; // genuinely held
+
+    // Stale: break it, then re-race atomically.
+    try { rmSync(this.lockPath, { force: true }); } catch { /* best-effort */ }
+    return tryCreate();
+  }
+
+  releaseSyncLock(): void {
+    try { rmSync(this.lockPath, { force: true }); } catch { /* already gone */ }
   }
 
   queuedSlugs(): string[] {
