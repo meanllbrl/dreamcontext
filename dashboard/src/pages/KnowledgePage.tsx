@@ -233,24 +233,25 @@ export function KnowledgePage() {
                   </button>
                 </div>
               </div>
-              {/* While the overlay is open the pane content is NOT rendered —
-                  mounting the same doc twice would double the heavy excalidraw
-                  export and duplicate mermaid element ids. */}
-              {!fullscreen && renderContent(detail)}
+              {/* One render site for the content: the fixed-position overlay
+                  replaces the pane copy, so the doc is never mounted twice —
+                  that would double the heavy excalidraw export and duplicate
+                  mermaid element ids. */}
+              {fullscreen ? (
+                <FullscreenOverlay
+                  label={detail.name}
+                  actions={renderTabs()}
+                  onClose={() => setFullscreen(false)}
+                >
+                  {renderContent(detail)}
+                </FullscreenOverlay>
+              ) : (
+                renderContent(detail)
+              )}
             </div>
           )}
         </div>
       </div>
-
-      {fullscreen && selected && detail && (
-        <FullscreenOverlay
-          label={detail.name}
-          actions={renderTabs()}
-          onClose={() => setFullscreen(false)}
-        >
-          {renderContent(detail)}
-        </FullscreenOverlay>
-      )}
     </div>
   );
 }

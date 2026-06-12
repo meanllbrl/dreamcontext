@@ -63,8 +63,12 @@
 
 /* Previews size themselves against their flex parent (md-preview uses flex:1,
    excalidraw-preview uses height:100%) — give them a column context that fills
-   the overlay so the larger canvas is actually used. */
-.fullscreen-overlay-body > * {
+   the overlay so the larger canvas is actually used. :only-child (not `> *`)
+   bumps specificity to (0,2,0) so this beats same-specificity preview rules
+   like `.excalidraw-preview { min-height: 420px }` regardless of which
+   stylesheet the bundler emits first (a bare `> *` ties at (0,1,0) and loses
+   to emission order, clipping the board on short viewports). */
+.fullscreen-overlay-body > :only-child {
   flex: 1;
   min-height: 0;
 }

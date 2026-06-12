@@ -3,17 +3,19 @@ import { useI18n } from '../../context/I18nContext';
 import './FullscreenOverlay.css';
 
 interface Props {
-  /** Accessible name for the dialog (typically the document name). */
+  /** Dialog title; doubles as the accessible name (typically the document name). */
   label: string;
-  /** Header title node; falls back to `label` when omitted. */
-  title?: ReactNode;
   /** Extra header controls (e.g. File/Preview tabs) rendered next to the close button. */
   actions?: ReactNode;
   onClose: () => void;
   children: ReactNode;
 }
 
-const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
+// :not(:disabled) matters: markdown task lists render disabled checkboxes, and a
+// disabled element can never be document.activeElement — if one were first/last,
+// the Tab wrap check below would never match and focus would escape the dialog.
+const FOCUSABLE =
+  'button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])';
 
 /**
  * Generic in-app full-screen overlay (NOT the browser Fullscreen API): a
@@ -26,11 +28,13 @@ const FOCUSABLE = 'button, [href], input, select, textarea, [tabindex]:not([tabi
  * - Body scroll is locked while open; the scrollbar width is compensated so
  *   the page behind doesn't shift on enter/exit.
  */
-export function FullscreenOverlay({ label, title, actions, onClose, children }: Props) {
+export function FullscreenOverlay({ label, actions, onClose, children }: Props) {
   const { t } = useI18n();
   const overlayRef = useRef<HTMLDivElement | null>(null);
   const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  });
 
   useEffect(() => {
     const overlay = overlayRef.current;
@@ -46,6 +50,11 @@ export function FullscreenOverlay({ label, title, actions, onClose, children }: 
 
     overlay.focus();
 
+    // Listen on document (capture phase), not the overlay element: clicking
+    // non-focusable content (markdown text, the excalidraw svg) moves focus to
+    // <body> in Firefox/Safari, where an element-scoped listener would go dead —
+    // Esc would stop closing and Tab would walk into the page behind the dialog.
+    // Capture also lets stopPropagation shield other document-level Esc handlers.
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.stopPropagation();
@@ -61,7 +70,11 @@ export function FullscreenOverlay({ label, title, actions, onClose, children }: 
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
       const active = document.activeElement;
-      if (e.shiftKey && (active === first || active === overlay)) {
+      if (!active || !overlay.contains(active)) {
+        // Focus escaped the dialog (e.g. landed on <body>) — pull it back in.
+        e.preventDefault();
+        (e.shiftKey ? last : first).focus();
+      } else if (e.shiftKey && (active === first || active === overlay)) {
         e.preventDefault();
         last.focus();
       } else if (!e.shiftKey && active === last) {
@@ -69,10 +82,10 @@ export function FullscreenOverlay({ label, title, actions, onClose, children }: 
         first.focus();
       }
     };
-    overlay.addEventListener('keydown', onKeyDown);
+    document.addEventListener('keydown', onKeyDown, true);
 
     return () => {
-      overlay.removeEventListener('keydown', onKeyDown);
+      document.removeEventListener('keydown', onKeyDown, true);
       body.style.overflow = prevOverflow;
       body.style.paddingRight = prevPaddingRight;
       previouslyFocused?.focus?.();
@@ -89,7 +102,7 @@ export function FullscreenOverlay({ label, title, actions, onClose, children }: 
       tabIndex={-1}
     >
       <div className="fullscreen-overlay-header">
-        <h2 className="fullscreen-overlay-title">{title ?? label}</h2>
+        <h2 className="fullscreen-overlay-title">{label}</h2>
         <div className="fullscreen-overlay-actions">
           {actions}
           <button

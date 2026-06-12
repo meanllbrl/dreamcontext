@@ -53,15 +53,33 @@ test('excalidraw board re-fits to the full-screen canvas', async ({ page }) => {
   await folder.first().click();
   await page.locator('.knowledge-card', { hasText: '.excalidraw' }).first().click();
 
-  // Pane render first (lazy excalidraw bundle), then expand.
-  await page.locator('.excalidraw-stage svg').waitFor({ timeout: 15_000 });
-  const paneBox = (await page.locator('.excalidraw-stage svg').boundingBox())!;
-  await page.locator('.core-expand-btn').click();
+  // Pane render first (lazy excalidraw bundle). The svg attaches at its natural
+  // export size and is scaled to fit two rAFs later — wait until it fits its
+  // stage before measuring, or a large board's pre-fit natural width would
+  // poison the comparison below.
+  const paneSvg = page.locator('.excalidraw-stage svg');
+  await paneSvg.waitFor({ timeout: 15_000 });
+  const naturalWidth = await paneSvg.evaluate(el => parseFloat((el as SVGElement).style.width));
+  const paneStage = (await page.locator('.excalidraw-stage').boundingBox())!;
+  await expect
+    .poll(async () => (await paneSvg.boundingBox())!.width, { timeout: 5000 })
+    .toBeLessThanOrEqual(paneStage.width + 1);
+  const paneWidth = (await paneSvg.boundingBox())!.width;
 
+  await page.locator('.core-expand-btn').click();
   const fsSvg = page.locator('.fullscreen-overlay .excalidraw-stage svg');
   await fsSvg.waitFor({ timeout: 15_000 });
-  // The svg re-fits to the larger canvas instead of staying pane-sized.
-  await expect
-    .poll(async () => (await fsSvg.boundingBox())!.width, { timeout: 5000 })
-    .toBeGreaterThan(paneBox.width);
+
+  if (naturalWidth > paneWidth + 1) {
+    // Board was downscaled to fit the pane — the larger canvas must give it room.
+    await expect
+      .poll(async () => (await fsSvg.boundingBox())!.width, { timeout: 5000 })
+      .toBeGreaterThan(paneWidth);
+  } else {
+    // Board already rendered at natural size (fit scale caps at 1) — it must
+    // stay there, not shrink, in full-screen.
+    await expect
+      .poll(async () => (await fsSvg.boundingBox())!.width, { timeout: 5000 })
+      .toBeGreaterThanOrEqual(paneWidth - 1);
+  }
 });
