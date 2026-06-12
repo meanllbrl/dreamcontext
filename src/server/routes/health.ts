@@ -16,6 +16,8 @@ const CAPABILITIES = [
   'tasks.sync-status',
   'tasks.sync-test',
   'config.task-backend',
+  'tasks.containers',
+  'tasks.provision',
 ];
 
 export async function handleHealthGet(

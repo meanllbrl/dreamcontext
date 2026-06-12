@@ -195,6 +195,44 @@ export async function handleTasksMembers(
 }
 
 /**
+ * GET /api/tasks/containers — pickable remote lists (Settings onboarding).
+ */
+export async function handleTasksContainers(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const backend = backendFor(contextRoot);
+  if (!backend.discoverContainers) {
+    sendJson(res, 200, { containers: [] });
+    return;
+  }
+  try {
+    sendJson(res, 200, { containers: await backend.discoverContainers() });
+  } catch (err) {
+    sendJson(res, 200, { containers: [], error: (err as Error).message });
+  }
+}
+
+/**
+ * POST /api/tasks/provision — create the recommended remote fields.
+ */
+export async function handleTasksProvision(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const backend = backendFor(contextRoot);
+  if (!backend.provisionRemote) {
+    sendError(res, 400, 'not_supported', `Task backend "${backend.name}" has no remote to provision.`);
+    return;
+  }
+  sendJson(res, 200, { result: await backend.provisionRemote() });
+}
+
+/**
  * DELETE /api/tasks/:slug — delete a task (remote deletion propagates on sync).
  */
 export async function handleTasksDelete(

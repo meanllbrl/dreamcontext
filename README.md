@@ -494,8 +494,9 @@ dreamcontext tasks sync-hooks install               # best-effort post-commit/pr
   — synced natively in both directions.
 - **Custom-field bridge**: create list fields named Urgency / Summary / Reach /
   Impact / Confidence / Effort / Score / Feature / Version and sync writes and
-  reads them automatically. Full remote-structure reference:
-  [docs/remote-task-setup.md](docs/remote-task-setup.md).
+  reads them automatically.
+- **Docs**: illustrated user guide → [docs/clickup.md](docs/clickup.md);
+  technical reference → [docs/remote-task-setup.md](docs/remote-task-setup.md).
 
 ### Features
 

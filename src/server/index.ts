@@ -6,7 +6,7 @@ import { Router } from './router.js';
 import { handleCors, isCrossSiteWrite, sendError } from './middleware.js';
 import { serveStatic } from './static.js';
 import { handleHealthGet } from './routes/health.js';
-import { handleTasksList, handleTasksCreate, handleTasksGet, handleTasksUpdate, handleTasksChangelog, handleTasksInsert, handleTasksSyncStatus, handleTasksSync, handleTasksSyncTest, handleTasksDelete, handleTasksMembers } from './routes/tasks.js';
+import { handleTasksList, handleTasksCreate, handleTasksGet, handleTasksUpdate, handleTasksChangelog, handleTasksInsert, handleTasksSyncStatus, handleTasksSync, handleTasksSyncTest, handleTasksDelete, handleTasksMembers, handleTasksContainers, handleTasksProvision } from './routes/tasks.js';
 import { handleSleepGet, handleSleepUpdate } from './routes/sleep.js';
 import { handleCoreList, handleCoreGet, handleCoreUpdate } from './routes/core.js';
 import { handleKnowledgeList, handleKnowledgeGet, handleKnowledgeUpdate } from './routes/knowledge.js';
@@ -41,6 +41,8 @@ function buildRouter(): Router {
   router.post('/api/tasks/sync', handleTasksSync);
   router.post('/api/tasks/sync-test', handleTasksSyncTest);
   router.get('/api/tasks/members', handleTasksMembers);
+  router.get('/api/tasks/containers', handleTasksContainers);
+  router.post('/api/tasks/provision', handleTasksProvision);
   router.get('/api/tasks/:slug', handleTasksGet);
   router.delete('/api/tasks/:slug', handleTasksDelete);
   router.patch('/api/tasks/:slug', handleTasksUpdate);

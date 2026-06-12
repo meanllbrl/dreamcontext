@@ -3,7 +3,21 @@ import { useQuery } from '@tanstack/react-query';
 import { useI18n } from '../context/I18nContext';
 import { api } from '../api/client';
 import { useConfig, useUpdateConfig, type PlatformId, type SetupConfig } from '../hooks/useConfig';
+import { SearchableSelect } from '../components/tasks/SearchableSelect';
 import './SettingsPage.css';
+
+interface RemoteContainer {
+  ids: Record<string, string>;
+  path: string;
+  name: string;
+}
+
+interface ProvisionResult {
+  created: string[];
+  existing: string[];
+  backfilled: number;
+  errors: string[];
+}
 
 interface SyncStatus {
   backend: string;
@@ -57,6 +71,8 @@ export function SettingsPage() {
   const [clickupList, setClickupList] = useState('');
   const [testResult, setTestResult] = useState<ConnectionTestResponse | null>(null);
   const [testing, setTesting] = useState(false);
+  const [provisionNote, setProvisionNote] = useState<string | null>(null);
+  const [provisioning, setProvisioning] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
@@ -65,6 +81,44 @@ export function SettingsPage() {
     queryFn: () => api.get<{ status: SyncStatus }>('/tasks/sync-status'),
     select: (d) => d.status,
   });
+
+  // Pickable lists straight from the remote API — same picker the CLI
+  // onboarding uses, so nobody hunts ids out of URLs in the dashboard either.
+  const { data: containers } = useQuery({
+    queryKey: ['tasks-containers'],
+    queryFn: () => api.get<{ containers: RemoteContainer[] }>('/tasks/containers'),
+    select: (d) => d.containers,
+    enabled: cloudTasks,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const handlePickContainer = (listId: string | null) => {
+    const picked = (containers ?? []).find(c => c.ids.listId === listId);
+    if (!picked) return;
+    setClickupTeam(picked.ids.teamId);
+    setClickupSpace(picked.ids.spaceId);
+    setClickupList(picked.ids.listId);
+    markDirty();
+  };
+
+  const handleProvision = async () => {
+    setProvisioning(true);
+    setProvisionNote(null);
+    try {
+      const { result } = await api.post<{ result: ProvisionResult }>('/tasks/provision', {});
+      setProvisionNote(
+        result.errors.length > 0
+          ? `⚠ ${result.errors[0]}`
+          : result.created.length > 0
+            ? `✓ Created: ${result.created.join(', ')}${result.backfilled > 0 ? ` · backfilled ${result.backfilled} value(s)` : ''}`
+            : '✓ All recommended fields already exist.',
+      );
+    } catch (err) {
+      setProvisionNote(`⚠ ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setProvisioning(false);
+    }
+  };
 
   // Seed form state from loaded config
   useEffect(() => {
@@ -195,6 +249,19 @@ export function SettingsPage() {
           <p className="settings-field-hint">{t('settings.cloud_tasks.hint')}</p>
           {cloudTasks && (
             <>
+              {(containers ?? []).length > 0 && (
+                <div className="settings-field-row">
+                  <label>List</label>
+                  <SearchableSelect
+                    value={clickupList || null}
+                    options={(containers ?? []).map(c => ({ value: c.ids.listId, label: c.path }))}
+                    placeholder="Pick the list to sync to…"
+                    searchPlaceholder="Search lists…"
+                    clearLabel="(keep current)"
+                    onChange={handlePickContainer}
+                  />
+                </div>
+              )}
               <div className="settings-field-row">
                 <label>{t('settings.cloud_tasks.team')}</label>
                 <input
@@ -224,6 +291,10 @@ export function SettingsPage() {
                 <button className="btn" onClick={handleTestConnection} disabled={testing}>
                   {testing ? t('settings.cloud_tasks.testing') : t('settings.cloud_tasks.test')}
                 </button>
+                <button className="btn" onClick={handleProvision} disabled={provisioning}>
+                  {provisioning ? 'Provisioning…' : 'Provision fields'}
+                </button>
+                {provisionNote && <span className="settings-field-hint">{provisionNote}</span>}
                 {testResult && testResult.ok && (
                   <span className="settings-test-ok">
                     ✓ {testResult.note ?? `${t('settings.cloud_tasks.test_ok')} ${testResult.user}`}

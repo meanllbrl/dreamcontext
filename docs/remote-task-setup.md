@@ -1,5 +1,8 @@
 # Remote Task Backend — Recommended Setup (ClickUp)
 
+> Looking for the illustrated walkthrough? See **[clickup.md](clickup.md)** —
+> this document is the technical reference.
+
 dreamcontext tasks can live in a ClickUp list (`taskBackend: "clickup"`). The
 sync engine adapts to whatever the list looks like, but the closer the remote
 structure is to this reference, the more of each task round-trips losslessly.

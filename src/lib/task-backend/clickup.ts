@@ -405,6 +405,18 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     return { created, existing, backfilled, errors };
   }
 
+  /** Pickable lists for the Settings onboarding (token resolved internally). */
+  async discoverContainers(): Promise<Array<{ ids: Record<string, string>; path: string; name: string }>> {
+    const token = resolveActorToken(this.projectRoot, this.contextRoot, this.config);
+    if (!token) return [];
+    const lists = await discoverClickUpListsInternal(token.token, this.deps);
+    return lists.map((l) => ({
+      ids: { teamId: l.teamId, spaceId: l.spaceId, listId: l.listId },
+      path: `${l.teamName} / ${l.spaceName}${l.folderName ? ` / ${l.folderName}` : ''} / ${l.listName}`,
+      name: l.listName,
+    }));
+  }
+
   /** Settings "Test connection": authenticate and fetch the token's user. */
   async testConnection(): Promise<{ ok: true; user: string } | { ok: false; error: string }> {
     try {
@@ -1238,6 +1250,13 @@ export interface DiscoveredList {
  * (1 + 2×spaces) is fine there.
  */
 export async function discoverClickUpLists(
+  token: string,
+  deps: { fetchImpl?: typeof fetch } = {},
+): Promise<DiscoveredList[]> {
+  return discoverClickUpListsInternal(token, deps);
+}
+
+async function discoverClickUpListsInternal(
   token: string,
   deps: { fetchImpl?: typeof fetch } = {},
 ): Promise<DiscoveredList[]> {

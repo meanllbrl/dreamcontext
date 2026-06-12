@@ -195,6 +195,17 @@ export interface TaskBackend {
   listMembers?(): Promise<RemoteMember[]>;
   /** Create the recommended remote structure (custom fields). Absent on local. */
   provisionRemote?(): Promise<RemoteProvisionResult>;
+  /** Enumerate pickable remote containers (lists/boards). Absent on local. */
+  discoverContainers?(): Promise<RemoteContainer[]>;
+}
+
+/** A pickable remote container with its human-readable path. */
+export interface RemoteContainer {
+  /** Opaque ids the config needs (provider-specific meanings). */
+  ids: Record<string, string>;
+  /** e.g. "Ouromedia / OURO ALL / INBOX-OURO". */
+  path: string;
+  name: string;
 }
 
 export interface RemoteProvisionResult {
