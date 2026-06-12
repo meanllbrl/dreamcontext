@@ -2,7 +2,7 @@
 id: feat_O7LODr7O
 status: active
 created: '2026-02-25'
-updated: '2026-06-10'
+updated: '2026-06-12'
 released_version: 0.1.0
 tags:
   - frontend
@@ -58,6 +58,9 @@ Users need a visual interface to manage agent context without using the terminal
 
 - [x] As a user, I can view Excalidraw diagrams stored in knowledge/diagrams/ rendered as real hand-drawn boards (pan/zoom, theme-aware) in the dashboard's Knowledge Preview tab, rather than seeing raw compressed JSON.
 - [x] As a user, I see the data-structures knowledge file rendered as the relational/ER view (entities with PK/FK fields and relationship lines) in the Knowledge Preview tab, identical to the view the Core page previously provided for .sql files.
+- [x] As a user, I can expand any knowledge document (markdown, SQL/ER, excalidraw, raw file view) into a full-screen in-app overlay via a ⛶ button next to the File/Preview tabs, and exit with Esc or the close button, so large boards and long documents are readable.
+- [x] As a user, nested `diagrams/{title}/` excalidraw boards display under the Diagrams group with a clean leaf name (basename), not a redundant `title/title.excalidraw` label.
+- [x] As a user, I can browse the project tag taxonomy on a dedicated Taxonomy page (facet chip clusters with usage counts, alias arrows, drift/audit panel) so I can see vocabulary health without the CLI.
 
 ## Acceptance Criteria
 
@@ -106,6 +109,20 @@ Users need a visual interface to manage agent context without using the terminal
 - [ ] Pin/unpin records change in .sleep.json dashboard_changes
 - [x] `MarkdownPreview` renders SQL and other code blocks with syntax highlighting (highlight.js, theme-aware, DOMPurify allowlist extended for `hljs-*` span classes)
 - [x] Data-structures files appear under the Knowledge view (not Core), because `knowledge/data-structures/` is now canonical
+
+#### Knowledge Fullscreen (#21 / PR #30)
+- [x] Generic `FullscreenOverlay` component (`dashboard/src/components/layout/FullscreenOverlay.tsx/.css`): in-app fixed-position dialog (NOT the browser Fullscreen API), `role="dialog"` + `aria-modal` + `aria-label` (doc name); header carries doc name, File/Preview tabs, and a close button.
+- [x] Esc closes via a document-level capture-phase keydown listener (element-scoped listeners go dead in Firefox/Safari when clicking non-focusable content moves focus to `<body>`); Tab is trapped and pulled back into the overlay if it escapes; focus returns to the trigger on close.
+- [x] FOCUSABLE selector excludes disabled elements (`:not(:disabled)`) — markdown task lists render disabled checkboxes that can never be `document.activeElement`; one at first/last position would break the Tab wrap check.
+- [x] Body scroll locked while open with scrollbar-width compensation (no layout shift on enter/exit).
+- [x] ⛶ expand button on KnowledgePage covers all views: markdown preview, SQL/ER, excalidraw, and raw file; File/Preview tab state is shared in/out of fullscreen (survives enter/leave).
+- [x] Single render site: pane content is unmounted while the overlay is open so a doc never mounts twice (excalidraw export + mermaid element ids collide on double-mount); ExcalidrawPreview's mount-time fit + ResizeObserver re-fit the board to the larger canvas.
+- [x] `.fullscreen-overlay-body` child rule uses `:only-child` (0,2,0 specificity) so it beats `.excalidraw-preview { min-height: 420px }` regardless of CSS emission order.
+- [x] e2e spec `e2e/knowledge-fullscreen.spec.ts`: open/close paths, tab use inside the overlay, scroll lock, list/search preservation, and the excalidraw svg actually growing in full-screen.
+
+#### Taxonomy Page
+- [x] Taxonomy page (`dashboard/src/pages/TaxonomyPage.tsx/.css`, `useTaxonomy.ts` hook): facet chip clusters with alias-resolved usage tallies, alias arrows, drift/audit panel; linked from nav + CorePage.
+- [x] Backed by read-only `GET /api/taxonomy` (vocabulary + usage tallies + audit buckets); all mutations stay CLI-only.
 
 ### Features
 - [x] Feature list shows all features with slug, status badge, tags
@@ -157,6 +174,7 @@ Users need a visual interface to manage agent context without using the terminal
 
 - [x] Excalidraw preview: knowledge files with slug matching diagrams/*.excalidraw render via ExcalidrawPreview component; handles both plain ```json and Obsidian-recompressed ```compressed-json (LZString-base64) fence types; zoom-to-fit with panzoom on mount; theme-aware; heavy bundle lazy-loaded via React.lazy.
 - [x] Data-structures ER view in Knowledge: files with slug starting with data-structures/ detect the ```sql fence, extract the body, and render SqlPreview (same relational/ER component as the Core page). Non-schema knowledge files are unaffected and continue using MarkdownPreview.
+- [x] Nested excalidraw grouping (#20): depth-2 `diagrams/{title}/` slugs show leaf `{title}` under Diagrams; `leafName` uses basename (collapsing redundant `{title}/{title}.excalidraw`), not prefix-strip; `isExcalidrawSlug` matches nested slugs; knowledge detail route stays raw (renderer needs the raw scene — memory gets extracted text, see knowledge-base PRD).
 - [x] Page-title headers removed from Tasks, Features, and Knowledge pages (content starts without a redundant h1 title) to reclaim vertical space.
 - [x] Sleep page layout width matches other pages (full-width alignment consistent across all pages).
 - [x] Features page search box added.
@@ -164,6 +182,7 @@ Users need a visual interface to manage agent context without using the terminal
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
 
+- **[2026-06-12]** Knowledge fullscreen is an in-app fixed dialog, NOT the browser Fullscreen API: predictable theming/layout, no UA chrome or permission quirks, and it keeps the overlay inside the app's stacking/theme context. Single-render-site invariant: never mount the same document twice (excalidraw export and mermaid ids collide) — the pane unmounts while the overlay is open. Deferred follow-ups (explicit owner decision, anti-over-engineering): (1) Core-page fullscreen adoption via the same `FullscreenOverlay`, (2) single-instance render to avoid remount cost on toggle, (3) shared icon-button CSS class.
 - **[2026-06-09]** Eisenhower Matrix drag & drop: the existing matrix had `onDragStart={() => {}}` no-op handlers — only structure, no interactivity. Implemented using native HTML5 DnD API (consistent with Kanban). A quadrant receives `onDragOver` + `onDrop`; on drop, both `priority` and `urgency` are patched atomically via the existing PATCH /api/tasks endpoint. No new DnD library added — native API is sufficient for the 2×2 grid (4 drop targets, no complex reordering). `eisenhower.ts` maps quadrant ID to `{priority, urgency}` pairs.
 - **[2026-06-06]** `overflow-x: hidden` vs `clip` on the `.about` container: `overflow-x: hidden` creates a new scroll container, so any `position: sticky` descendant resolves its scroll container to `.about` (not `.shell-main`) and pins immediately — the whole spotlight was stuck. `overflow-x: clip` clips visually without creating a scroll container, preserving sticky semantics. Fix: `.about { overflow-x: clip }` in AboutPage.css. This is a general CSS invariant: if a section has sticky children, its overflow must be `clip` (or `visible`), never `hidden` or `auto`.
 - **[2026-06-06]** CSS Motion Path for flow animation: `stroke-dashoffset` repainted the entire dashed stroke (full path length) on the main thread every frame. With 27 simultaneous comets the browser re-rasterized ~27 paths per frame → stutter. Replaced with a small `<circle>` per edge riding the path via `offset-path: path(d)` + `offset-distance: 0→100%` — a compositor-class transform; only the ~14px dot region is dirtied per frame. Glow is a per-instance radial-gradient fill (purple→blue→transparent), rasterized once. Measured: worst frame 11.2ms, 0 jank/179 frames at 27 dots. `FlowEdge.travel` is now unused (offset-distance is length-independent). Reduced-motion: park dot at `offset-distance: 55%` (static, but still on-path and directional).
@@ -209,7 +228,7 @@ Users need a visual interface to manage agent context without using the terminal
 - `dashboard/src/components/tasks/KanbanBoard.tsx` - Main board with filtering/sorting/grouping
 
 ### API Endpoints
-~25 endpoints covering: tasks (5), sleep (2), core (3), knowledge (3), features (2), changelog (1), releases (3 — list/show/add with planning support), health (1), config (2 — GET+PATCH), packs (1), version-check (1), vaults (1), council (3). Versions API (was 3 endpoints) deleted; versions now handled via releases routes. All mutating endpoints call recordDashboardChange() except `PATCH /api/config` (entity union not widened in v0.6).
+~26 endpoints covering: tasks (5), sleep (2), core (3), knowledge (3), features (2), changelog (1), releases (3 — list/show/add with planning support), health (1), config (2 — GET+PATCH), packs (1), version-check (1), vaults (1), council (3), taxonomy (1 — read-only GET). Versions API (was 3 endpoints) deleted; versions now handled via releases routes. All mutating endpoints call recordDashboardChange() except `PATCH /api/config` (entity union not widened in v0.6).
 
 ### Build Pipeline
 1. `npm run build:dashboard` - Vite builds React app to dashboard/dist/
@@ -270,6 +289,18 @@ Users need a visual interface to manage agent context without using the terminal
 
 **Hero copy & sidebar nudge**: Hero headline "The persistent brain for AI natives." with accent gradient on "AI natives"; "Works with Claude Code" pill above install command. Sidebar: `ABOUT_SEEN_STORAGE_KEY = 'dreamcontext.dashboard.aboutSeen'`; `.sidebar-item--nudge` class = accent fill + glow dot + `about-bounce` ±4px keyframe; clears on first click, persists across reloads.
 
+### Knowledge Fullscreen (v0.7, #21 / PR #30)
+
+- `dashboard/src/components/layout/FullscreenOverlay.tsx` — generic, reusable overlay: fixed in-app dialog, document-capture keydown (Esc close + Tab trap with focus pull-back), `FOCUSABLE` selector excluding `:disabled`, focus restore to trigger, body scroll lock with scrollbar-width compensation. `FullscreenOverlay.css` — `:only-child` body rule to win over `.excalidraw-preview` min-height.
+- `dashboard/src/pages/KnowledgePage.tsx` — ⛶ expand button next to File/Preview tabs; tab state lifted so it is shared in/out of fullscreen; pane content unmounted while overlay open (single render site).
+- `e2e/knowledge-fullscreen.spec.ts` — Playwright coverage (open/close, tabs in overlay, scroll lock, list/search preservation, svg growth).
+- Follow-ups deferred by owner: Core-page adoption, single-instance render, shared icon-button class.
+
+### Taxonomy Page (v0.7)
+
+- `dashboard/src/pages/TaxonomyPage.tsx/.css` + `dashboard/src/hooks/useTaxonomy.ts` — facet chip clusters (usage counts), alias arrows, drift/audit panel.
+- `GET /api/taxonomy` (read-only): vocabulary + alias-resolved usage tallies + audit buckets. Mutations are CLI-only (`taxonomy add/alias`) — see the tag-taxonomy PRD.
+
 ### Council Page
 
 - [x] CouncilHall: searchable grid of debates with status badge, persona count, round progress indicator
@@ -290,6 +321,12 @@ Users need a visual interface to manage agent context without using the terminal
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-06-12 - Knowledge fullscreen (#21/PR #30) + Taxonomy page + nested excalidraw grouping (#20)
+- Generic `FullscreenOverlay` (in-app fixed dialog, not browser Fullscreen API): Esc + close button, document-capture keydown, focus trap excluding disabled elements, focus restore, body scroll lock with scrollbar-width compensation; hardened from review (capture listener, `:not(:disabled)`, `:only-child` CSS specificity).
+- ⛶ expand on KnowledgePage covering markdown, SQL/ER, excalidraw, raw views; shared File/Preview tab state; single render site (doc never mounted twice). e2e: `knowledge-fullscreen.spec.ts`.
+- Taxonomy page (facet chips, usage counts, alias arrows, audit panel) backed by read-only `GET /api/taxonomy`.
+- Nested `diagrams/{title}/` boards group under Diagrams with basename leaf labels (#20 dashboard slice).
 
 ### 2026-06-09 - Eisenhower matrix drag & drop (#7) + SQL syntax highlighting in Knowledge view (#12)
 - Eisenhower Matrix: tasks are now draggable between quadrants; drop updates both `priority` and `urgency` frontmatter fields via PATCH API. Implemented with native HTML5 drag-and-drop on `EisenhowerMatrix.tsx`; new `eisenhower.ts` util handles quadrant-to-field mapping.

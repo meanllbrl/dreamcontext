@@ -2,10 +2,10 @@
 id: "feat_mBa5T4nU"
 status: "in_review"
 created: "2026-05-22"
-updated: "2026-06-06"
+updated: "2026-06-12"
 released_version: null
 tags: ["devops", "onboarding", "architecture"]
-related_tasks: ["v04-ws1-install-update-overhaul", "v06-control-plane-backend", "v06-control-panel-frontend"]
+related_tasks: ["v04-ws1-install-update-overhaul", "v06-control-plane-backend", "v06-control-panel-frontend", "issue-22-setup-version-drift"]
 ---
 
 ## Why
@@ -30,6 +30,7 @@ v0.5.0 extended this with: (1) a one-command `install.sh` curl script, (2) a `dr
 - [x] As a developer, I want a single `curl | sh` install script so I can install dreamcontext without running npm manually.
 - [x] As a developer, I want `dreamcontext upgrade` to update the globally-installed CLI binary and then refresh project files in one command.
 - [x] As an agent, I want the SessionStart snapshot to tell me when a newer dreamcontext is available so I can inform the user to run `dreamcontext upgrade`.
+- [x] As a dreamcontext user, I can see at SessionStart when my project's installed skill/agents/hooks lag the CLI (setupVersion drift) and have the agent self-heal via `dreamcontext update`, so that upgrades never silently leave projects on stale assets.
 
 ## Acceptance Criteria
 
@@ -55,9 +56,18 @@ v0.5.0 extended this with: (1) a one-command `install.sh` curl script, (2) a `dr
 - [x] UserPromptSubmit hook lazy-refreshes the version cache (at most once per 24h TTL, wrapped in try/catch, failure writes `latestCli: null` silently).
 - [x] `GET /api/version-check` dashboard route exposes the nudge payload to the browser via disk cache (no network); `UpdateBadge` component surfaces it in the header.
 
+### Setup version drift (#22, shipped 2026-06-12)
+- [x] `dreamcontext update` writes `setupVersion = dreamcontextVersion()` to `.config.json` on success (right after `writeManifest`); `update --packs-only` does NOT bump it (core skill/agents/hooks were not refreshed, so drift must remain).
+- [x] SessionStart snapshot contains a self-heal drift directive (`## ⚠ Stale Project Assets`) when `setupVersion < CLI`; absent when equal. The directive states update is content-safe (never touches the `_dream_context/` brain), instructs the agent to run `dreamcontext update` now and report, and includes a user fallback.
+- [x] The drift directive lives in the never-evict snapshot tier and survives an over-budget snapshot (`DREAMCONTEXT_SNAPSHOT_BUDGET`).
+- [x] Edge states (`src/lib/setup-drift.ts` state machine, ordered guards before `compareVersions`): `setupVersion === '0.0.0'` → bootstrap variant (never prints "0.0.0"); CLI older than setupVersion → warn-only line with NO update instruction (downgrade); `cliVersion === '0.0.0'` → fail-safe `current` (never nag on unresolvable CLI version); `DREAMCONTEXT_DRIFT_CHECK` in `{0, off, false}` → disabled.
+- [x] `buildUpdateSummary()` prints a relay-able update summary (platforms, refreshed count, packs, pruned names, new setupVersion) at the end of every successful update.
+- [x] The existing npm-latest nudge behavior is unchanged — drift directive and `## Update Available` are complementary signals (project assets vs CLI binary).
+
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
 
+- **[2026-06-12]** Drift detection (#22) is read-only at SessionStart: `resolveDriftState` is pure; the snapshot never auto-runs `update` (the agent does, on directive). `--packs-only` must never clear drift. Scope guards honored: no changes to `version-check.ts` logic, hooks (no auto-update), or `snapshot-budget.ts` (the never-evict skip is the existing mechanism). The drift directive text must keep saying update is content-safe.
 - **[2026-05-22]** Manifest is written atomically via temp-file + rename pattern to prevent corruption on cancellation. If the write is interrupted, the old manifest remains intact.
 - **[2026-05-22]** `isSafeDeletePath` only returns true for paths under `.claude/`, `.agents/`, `.codex/`. Files outside these prefixes (including `_dream_context/` itself) are never candidates for auto-deletion — user-owned data is protected by design.
 - **[2026-05-22]** `setup` and `install-skill` share the same internal install logic; `setup` is a thin orchestrator that calls `init` then `install-skill`. The `SETUP_INTERNAL_ENV` env var suppresses deprecation hints from child commands when invoked via `setup`.
@@ -87,6 +97,12 @@ v0.5.0 extended this with: (1) a one-command `install.sh` curl script, (2) a `dr
 - `src/server/routes/version-check.ts` — `GET /api/version-check`; imports `readVersionCache`, `isCacheFresh`, `buildNudge` from `src/lib/version-check.ts` (NOT from any CLI command file); cache-only, no network. Returns `{cache, fresh, nudge}`.
 - `dashboard/src/hooks/useVersionCheck.ts` — TanStack Query hook polling the route.
 - `dashboard/src/components/layout/UpdateBadge.tsx` — header banner; renders when `nudge !== null`; hidden when null (no layout change).
+
+**Setup drift detection** (#22, v0.7):
+- `src/lib/setup-drift.ts` (pure, no I/O): `DriftState = 'current'|'stale'|'bootstrap'|'downgrade'|'disabled'`; `resolveDriftState({cliVersion, setupVersion, driftCheckEnv})` with ordered guards (disabled → cli 0.0.0 fail-safe → setup 0.0.0 bootstrap → `compareVersions`); `buildDriftDirective(input) → string | null`.
+- `update.ts`: `updateSetupConfig(projectRoot, {setupVersion})` after `writeManifest`, gated on `!opts.packsOnly`; exported pure `buildUpdateSummary()` printed via miniBox on every success path.
+- `snapshot.ts`: `getDriftDirective(root)` mirrors `getVersionNudge` (try/catch → `''`; hook must never break); injected after the version-nudge block, inside the `flush('product-and-nudge', {neverEvict: true})` section.
+- Tests: `tests/unit/setup-drift.test.ts`, `tests/unit/setup-drift-update.test.ts`, `tests/integration/drift-directive.test.ts` (subprocess snapshot pattern), `version-check.test.ts` guard.
 
 **Manifest diff logic** (`diffManifests(old, new)`):
 - `added`: in new but not old.
@@ -127,6 +143,12 @@ Also see: `project-initialization.md` for `init` scaffolding semantics.
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-06-12 - Setup version drift detection + self-heal (#22, PR #24)
+- `src/lib/setup-drift.ts` pure state machine (current/stale/bootstrap/downgrade/disabled, 0.0.0 sentinels fail-safe).
+- `update` writes setupVersion on success (`--packs-only` exempt); relay-able `buildUpdateSummary`.
+- SessionStart drift directive in the never-evict snapshot tier; `DREAMCONTEXT_DRIFT_CHECK` off-switch; npm nudge unchanged.
+- Also note: `update` and `sleep start` now run the versioned migration runner (see migration-system PRD).
 
 ### 2026-06-06 - Onboarding front-door fix
 - Added 2 user stories (discoverability, init finish-offer).
