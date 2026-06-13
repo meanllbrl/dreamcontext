@@ -5,16 +5,18 @@ description: >-
   How dreamcontext-beta (the Tauri 2 macOS app) wraps the existing React+Node
   dashboard for multi-vault / multi-window use: multi-window architecture, the
   four non-obvious gotchas (CLI bundling, Tauri ACL, relative URLs, build/sign),
-  and the in-app quiz-style project onboarding (scaffold endpoints, child-spawn
-  pattern, auto-CLI-install).
+  in-app quiz-style project onboarding (scaffold endpoints, child-spawn pattern,
+  auto-CLI-install), and the continuous-update model (thin-shell pivot + app
+  install/update command, no Apple notarization required).
 type: knowledge
 tags:
   - architecture
   - domain
   - onboarding
+  - devops
 pinned: false
 created: '2026-06-13'
-updated: '2026-06-13'
+updated: '2026-06-14'
 ---
 
 ## What this is

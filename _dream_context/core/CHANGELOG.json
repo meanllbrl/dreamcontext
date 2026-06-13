@@ -1,6 +1,35 @@
 [
   {
     "date": "2026-06-13",
+    "type": "feat",
+    "scope": "desktop",
+    "description": "Ship continuous desktop app updates that bypass Apple's Gatekeeper notarization check. Thin-shell pivot: lib.rs resolve_cli now prefers the globally installed auto-upgrading CLI over any bundled copy — the .app is a thin shell; ~95% of changes (all CLI/dashboard logic) deploy via the CLI auto-upgrade path and need no .app replacement. A new 'dreamcontext app install|update|status' command delivers the .app via ditto (macOS copy tool that preserves xattrs but does NOT set com.apple.quarantine) rather than a browser download; without the quarantine xattr Gatekeeper's notarization check never fires and an ad-hoc-signed .app launches without a  Apple Developer ID. Atomic swap: the app is installed to a temp path then moved to /Applications to avoid a torn state. App manifest at ~/.dreamcontext/app.json tracks installed version and install date. Downloaded artifacts require a mandatory per-asset .sha256 integrity check (ad-hoc signing proves transit integrity, not origin). maybeTriggerAppUpdate() auto-fires on the hook's 24 h tick, checking for a new .app version and updating silently; opt out with DREAMCONTEXT_APP_AUTO_UPDATE=0. 26 new app-command tests; full suite 1843 green. Reviewer PASS (2 rounds).",
+    "breaking": false,
+    "summary": "Continuous .app delivery without Apple notarization: thin-shell pivot (app runs global CLI), ditto install with no quarantine, atomic swap, ~/.dreamcontext/app.json manifest, mandatory .sha256, auto-sync on 24h hook tick",
+    "references": [
+      "commit:c7a6c8c",
+      "file:desktop/src-tauri/src/lib.rs",
+      "file:src/cli/commands/app.ts",
+      "file:src/lib/app-manifest.ts"
+    ]
+  },
+  {
+    "date": "2026-06-13",
+    "type": "feat",
+    "scope": "cli",
+    "description": "Flip CLI background auto-upgrade to DEFAULT ON (opt out with DREAMCONTEXT_AUTO_UPGRADE=0; master kill-switch DREAMCONTEXT_VERSION_CHECK=0 still disables both). On UserPromptSubmit, when a newer version is available the upgrade fires as a detached npm install -g process (non-blocking), throttled to at most once per target version per 24 h via a marker file at ~/.dreamcontext/upgrade-<target>. The marker is written BEFORE spawning (claim-before-spawn) so near-simultaneous hook fires don't double-spawn. Nudge suppression via an in-flight window: the manual 'run dreamcontext upgrade' line in the update nudge is hidden only while the background upgrade for the current target is freshly in flight (<1 h); if the upgrade fails (e.g. sudo-gated global npm) the nudge resurfaces so the user can act. App-context guard: lib.rs now spawns the dashboard server with DREAMCONTEXT_DESKTOP=1 in its env; /api/version-check and the snapshot suppress the CLI nudge in app context (the desktop app owns its own updates and the manual CLI upgrade line is irrelevant there). Reviewer PASS (2 rounds). Full suite 1817 green.",
+    "breaking": false,
+    "summary": "Default-on background auto-upgrade: detached npm install -g, 24h/target marker, race guard, nudge suppression while in-flight, app-context nudge guard via DREAMCONTEXT_DESKTOP=1",
+    "references": [
+      "commit:79b9546",
+      "file:src/cli/commands/hook.ts",
+      "file:src/lib/auto-upgrade.ts",
+      "file:src/server/routes/version-check.ts",
+      "file:desktop/src-tauri/src/lib.rs"
+    ]
+  },
+  {
+    "date": "2026-06-13",
     "type": "chore",
     "scope": "desktop",
     "description": "Clean up desktop/src-tauri/src/lib.rs by removing the now-dead open_vault Tauri command and its supporting code: the Port struct + State import (no longer needed since vault opening is handled by the built-in WebviewWindow JS API), sanitize_label and urlencode helper functions, and the invoke_handler macro call. This code was deferred from the original Tauri beta task when the architecture decision was made to use built-in WebviewWindow rather than custom Rust commands (Tauri v2 ACL blocks custom commands on remote-origin pages). cargo check passes clean.",
