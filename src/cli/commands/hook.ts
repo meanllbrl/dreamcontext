@@ -18,6 +18,7 @@ import { haikuRecall } from '../../lib/recall-query-extractor.js';
 import { ensureTaxonomyFile } from '../../lib/taxonomy.js';
 import { readVersionCache, isCacheFresh, refreshVersionCache, maybeAutoUpgrade } from '../../lib/version-check.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
+import { maybeTriggerAppUpdate } from './app.js';
 import { loadCatalog } from './install-skill.js';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -761,6 +762,11 @@ export function registerHookCommand(program: Command): void {
               : [];
             refreshVersionCache(projectRoot, { catalogPackNames: packNames });
             vcache = readVersionCache(projectRoot);
+            // Piggyback on the ≤once/24h refresh tick: if the desktop app is
+            // installed, trigger a best-effort background app update (rare —
+            // only a new Tauri shell release replaces the bundle; the app runs
+            // the global CLI for everything else). No-ops until releases exist.
+            maybeTriggerAppUpdate();
           }
           // Auto-upgrade (DEFAULT ON; opt out with DREAMCONTEXT_AUTO_UPGRADE=0):
           // detached, non-blocking, at most once per target version per 24h.

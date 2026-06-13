@@ -196,6 +196,53 @@ Scaffold is a server endpoint. The native folder picker (`dialog` plugin) and
 `WebviewWindow` API were already wired for the multi-vault feature. No additional
 Rust commands or Tauri ACL entries required.
 
+## Continuous app update WITHOUT Apple notarization (the "CLI-carries-app" model)
+
+The desktop app updates continuously **without** an Apple Developer ID / Tauri
+updater, because the whole delivery path is CLI/curl-driven (which never sets the
+macOS `com.apple.quarantine` bit, so Gatekeeper's notarization check never fires;
+ad-hoc signing already satisfies Apple Silicon's must-be-signed rule). Two parts:
+
+1. **Thin-shell pivot** (`lib.rs` `find_global_cli` + `resolve_cli`). The app
+   PREFERS the globally-installed, auto-upgrading CLI over its bundled `dist/`.
+   Resolution order: `DREAMCONTEXT_CLI` env → global (`$SHELL -lc 'command -v
+   dreamcontext'`, same login-shell trick as `find_node`) → bundled resource →
+   dev cwd. **Verified**: a launched `.app` spawns
+   `node <nvm>/bin/dreamcontext dashboard …` (the GLOBAL CLI), so server /
+   dashboard / route / all `dist/` logic stays fresh via the existing CLI
+   auto-upgrade with NO app rebuild. ~95% of changes ride this; the bundled copy
+   is only a first-run fallback.
+
+2. **`dreamcontext app install|update|status`** (`src/cli/commands/app.ts`).
+   Installs the `.app` to `~/Applications` (no admin) via `ditto` (preserves
+   signature; sets no quarantine), atomic same-volume swap (staging→target with
+   target→backup rollback), strips quarantine defensively, tracks the installed
+   version in `~/.dreamcontext/app.json`. `--from <.app|.tar.gz|.zip>` for local;
+   otherwise pulls the arch-matching `dreamcontext-beta_<ver>_<arch>.app.tar.gz`
+   from GitHub Releases. `isAppRunning` matches `<bundle>/Contents/MacOS/` (NOT
+   the bundle name — else the install command self-matches). Replacing a running
+   bundle is safe (running process keeps its inode; relaunch picks up the new one).
+   Auto-sync: `maybeTriggerAppUpdate` fires a detached background `app update`
+   from the CLI's ≤once/24h hook tick when the app is installed (opt-out
+   `DREAMCONTEXT_APP_AUTO_UPDATE=0`); only an already-installed app is updated,
+   never auto-installed.
+
+**Security posture (enforced):** a downloaded artifact is installed (often by the
+silent background path), so `downloadLatestArtifact` REQUIRES a per-asset
+`<asset>.sha256` and refuses to install if it's missing or mismatches. Ad-hoc
+code-signing proves integrity-in-transit at best, never origin — it is NOT a
+substitute. All external commands use arg arrays (no shell string); bsdtar
+refuses `..`/absolute paths (no zip-slip).
+
+**Faz 1 prerequisites (not yet built — no `.github/workflows`, no releases):** CI
+must build the `.app`, **ad-hoc DEEP-sign it with `entitlements.plist`** (the
+`tauri build` output is only *linker-signed* → `app install` warns; the
+published artifact must pass `codesign --verify --deep`), package it as
+`dreamcontext-beta_<ver>_<arch>.app.tar.gz`, publish it + a `.sha256` to a GitHub
+Release. Once that exists, `dreamcontext app install/update` and the auto-sync
+trigger work end-to-end with zero further code. **Windows/Linux: mechanism is
+macOS-only today (the no-quarantine property is macOS-specific); nice-to-have.**
+
 ## Status / deferred
 
 Working local beta. NOT Apple-signed/notarized (local install only; Gatekeeper

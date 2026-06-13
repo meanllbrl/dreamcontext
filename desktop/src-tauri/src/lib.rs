@@ -91,13 +91,46 @@ fn find_node() -> Option<String> {
     .find(|p| Path::new(p).exists())
 }
 
-/// Resolve the dreamcontext CLI entry (`dist/index.js`): an explicit override,
-/// the bundled copy in the app's resources, or the repo's dist/ in dev.
+/// Resolve the GLOBALLY-installed dreamcontext CLI entry via the user's login
+/// shell (`command -v dreamcontext`), same mechanism as `find_node` — a
+/// Finder-launched app has no interactive PATH, so we must ask the login shell
+/// which loads nvm/brew/volta. Returns the resolved JS entry path (the bin is a
+/// shebang script that `node` can run directly, symlink or not).
+fn find_global_cli() -> Option<String> {
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+    let out = Command::new(&shell)
+        .args(["-lc", "command -v dreamcontext"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if path.is_empty() || !Path::new(&path).exists() {
+        return None;
+    }
+    Some(path)
+}
+
+/// Resolve the dreamcontext CLI entry to run.
+///
+/// THIN-SHELL MODEL: prefer the GLOBALLY-installed CLI over the bundled copy.
+/// The global CLI auto-upgrades (npm), so the dashboard server / routes / all
+/// `dist/` logic stay fresh with NO app rebuild — most updates ride the CLI and
+/// never touch the .app. The bundled copy is only a first-run fallback for when
+/// no global CLI is present yet. Order:
+///   1. DREAMCONTEXT_CLI env (explicit dev/test override).
+///   2. Global CLI (login-shell `command -v dreamcontext`) — the canonical, auto-updating source.
+///   3. Bundled `dist/index.js` resource (fallback until the global CLI is installed).
+///   4. Dev `<cwd>/dist/index.js` (running `npm run tauri dev` from the repo).
 fn resolve_cli(app: &AppHandle) -> Result<String, String> {
     if let Ok(p) = std::env::var("DREAMCONTEXT_CLI") {
         if Path::new(&p).exists() {
             return Ok(p);
         }
+    }
+    if let Some(global) = find_global_cli() {
+        return Ok(global);
     }
     if let Ok(res) = app.path().resource_dir() {
         let cli = res.join("dist").join("index.js");

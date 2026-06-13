@@ -22,6 +22,7 @@ import { registerCouncilCommand } from './commands/council.js';
 import { registerMarketingCommand } from './commands/marketing.js';
 import { registerMemoryCommand } from './commands/memory.js';
 import { registerUpgradeCommand } from './commands/upgrade.js';
+import { registerAppCommand } from './commands/app.js';
 import { registerTaxonomyCommand } from './commands/taxonomy.js';
 import { registerVaultsCommand } from './commands/vaults.js';
 import { registerConnectionsCommand } from './commands/connections.js';
@@ -122,6 +123,7 @@ export function createProgram(): Command {
   registerInstallClaudeMdCommand(program);
   registerUpdateCommand(program);
   registerUpgradeCommand(program);
+  registerAppCommand(program);
   registerSnapshotCommand(program);
   registerSleepCommand(program);
   registerRecallCommand(program);
