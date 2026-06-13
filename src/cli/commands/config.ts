@@ -59,6 +59,11 @@ function printConfig(projectRoot: string): void {
       ? chalk.green('disabled') + chalk.dim(' (dreamcontext owns project memory)')
       : chalk.yellow('enabled') + chalk.dim(" (Claude's native MEMORY.md is active)")}`,
   );
+  console.log(
+    `  Shareable:      ${cfg.shareable === true
+      ? chalk.yellow('on') + chalk.dim(' (peer vaults may recall this corpus)')
+      : chalk.green('off') + chalk.dim(' (private — default)')}`,
+  );
   // Task backend is an ADVANCED setting — its lines only appear once the
   // feature is in use; projects that never touched taskBackend keep the
   // exact pre-#11 output.
@@ -123,6 +128,31 @@ export function registerConfigCommand(program: Command): void {
           ? chalk.dim(`.claude/settings.json updated (autoMemoryEnabled: ${!disableNativeMemory}).`)
           : chalk.dim('.claude/settings.json already up to date.'),
       );
+    });
+
+  config
+    .command('shareable <state>')
+    .description('Toggle cross-project federation read access: on | off (default: off — private by default)')
+    .action((state: string) => {
+      const projectRoot = requireProjectRoot();
+      if (!projectRoot) return;
+
+      const s = state.toLowerCase();
+      const ON = ['on', 'enable', 'true'];
+      const OFF = ['off', 'disable', 'false'];
+      if (!ON.includes(s) && !OFF.includes(s)) {
+        error(`Unknown state '${state}'.`, 'Use: dreamcontext config shareable <on|off>');
+        process.exitCode = 1;
+        return;
+      }
+
+      const shareable = ON.includes(s);
+      updateSetupConfig(projectRoot, { shareable });
+      if (shareable) {
+        success('Federation sharing ON — peer vaults may recall this project\'s corpus.');
+      } else {
+        success('Federation sharing OFF — this project is private (the default).');
+      }
     });
 
   config

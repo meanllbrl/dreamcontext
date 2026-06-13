@@ -42,6 +42,23 @@ export interface CorpusDoc {
   // ONLY (never the raw `score` the hook gates on). Default/absent = false =
   // curated knowledge, no penalty.
   capture?: boolean;
+  // Federation (issue #25): set from frontmatter `federated: true` on docs that
+  // were INGESTED from a peer vault's inbox. Such docs are first-class LOCALLY
+  // (still surfaced by single-vault recall, OQ3) but are EXCLUDED from BOTH
+  // cross-vault recall serving AND digest computation — so a third vault never
+  // sees content that merely passed through this one (transitive-leak guard).
+  // Default/absent = false = native local doc.
+  federated?: boolean;
+}
+
+/**
+ * Shared predicate for the federation serving + digest exclusion. A doc counts
+ * as federated iff its frontmatter set `federated: true`. Used by BOTH the
+ * cross-vault recall serving path and the digest computation path so the two
+ * can never drift (one source of truth for the transitive-leak invariant).
+ */
+export function isFederated(doc: CorpusDoc): boolean {
+  return doc.federated === true;
 }
 
 export interface RecallHit {
@@ -343,6 +360,8 @@ function loadMarkdownDocs(
         status: readStatus(data as Record<string, unknown>),
         updatedAt: readUpdatedAt(data as Record<string, unknown>),
         product: productFromRelPath(relPath),
+        // Federation: a doc ingested from a peer carries `federated: true`.
+        federated: data.federated === true,
       });
     } catch {
       // skip malformed

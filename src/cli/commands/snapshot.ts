@@ -3,6 +3,8 @@ import { readFileSync, existsSync, statSync } from 'node:fs';
 import { join, basename, dirname } from 'node:path';
 import fg from 'fast-glob';
 import { resolveContextRoot } from '../../lib/context-path.js';
+import { resolveVaultContextRoot, VaultError } from '../../lib/vaults.js';
+import { error } from '../../lib/format.js';
 import { readFrontmatter } from '../../lib/frontmatter.js';
 import { readJsonArray } from '../../lib/json-file.js';
 import { readSection } from '../../lib/markdown.js';
@@ -16,6 +18,7 @@ import { readVersionCache, isCacheFresh, buildNudge } from '../../lib/version-ch
 import { dreamcontextVersion } from '../../lib/manifest.js';
 import { buildDriftDirective } from '../../lib/setup-drift.js';
 import { computeFeatureFreshness, freshnessSnapshotNote } from '../../lib/feature-freshness.js';
+import { pendingInboxCount } from '../../lib/federation-inbox.js';
 import {
   applyBudget, resolveBudget, demoteMemoryBlock, demoteTaskList,
   type BudgetSection,
@@ -404,9 +407,15 @@ function getDriftDirective(root: string): string {
  * Output a plain-text context snapshot to stdout.
  * Designed for SessionStart hook consumption — no chalk, no interactivity.
  * If _dream_context/ doesn't exist, exits silently.
+ *
+ * `rootOverride` (federation P1.4) prints a PEER vault's snapshot from an
+ * already-resolved context root; the no-arg path resolves the local context root
+ * exactly as before and is BYTE-IDENTICAL to the pre-federation behaviour (the
+ * SessionStart hook calls it with no argument — regression-guarded). No peer
+ * resolution, no cross-vault work happens on the no-arg path.
  */
-export function generateSnapshot(): string {
-  const root = resolveContextRoot();
+export function generateSnapshot(rootOverride?: string): string {
+  const root = rootOverride ?? resolveContextRoot();
   if (!root) return '';
 
   // Snapshot is assembled as budget SECTIONS (see src/lib/snapshot-budget.ts):
@@ -957,6 +966,20 @@ export function generateSnapshot(): string {
   }
   flush('marketing', { neverEvict: true });
 
+  // 12. Federation inbox note — HOT-PATH SAFE. A single LOCAL readdir
+  // (`pendingInboxCount`) counts pending peer digest entries; it NEVER resolves
+  // a peer vault or builds a peer corpus (issue #25 LOCKED hot-path invariant).
+  // Surfaces a one-line nudge so the next sleep cycle drains the inbox.
+  const pendingFederation = pendingInboxCount(root);
+  if (pendingFederation > 0) {
+    parts.push(
+      `## Federation\n\n${pendingFederation} pending peer digest ` +
+        `entr${pendingFederation === 1 ? 'y' : 'ies'} in the inbox — run \`dreamcontext federation drain\` ` +
+        `(or let the next sleep cycle drain them).\n`,
+    );
+    flush('federation', { neverEvict: true });
+  }
+
   // Final assembly through the token budget (see snapshot-budget.ts). The
   // demotion ladder only engages when the full render exceeds the budget;
   // under budget the output is byte-identical to the legacy format.
@@ -1162,8 +1185,22 @@ export function registerSnapshotCommand(program: Command): void {
     .command('snapshot')
     .description('Output a context snapshot for SessionStart hook (plain text, no colors)')
     .option('--tokens', 'Show estimated token count instead of snapshot content')
-    .action((opts: { tokens?: boolean }) => {
-      const output = generateSnapshot();
+    .option('--vault <name>', 'Print a peer vault\'s snapshot (registered name or path)')
+    .action((opts: { tokens?: boolean; vault?: string }) => {
+      // Federation P1.4: `--vault` prints a PEER snapshot via the vault registry.
+      // A bad name/path yields a clean VaultError message + non-zero exit (no
+      // stack). The default (no --vault) path is untouched.
+      let rootOverride: string | undefined;
+      if (opts.vault !== undefined) {
+        try {
+          rootOverride = resolveVaultContextRoot(opts.vault);
+        } catch (err) {
+          error(err instanceof VaultError ? err.message : `Could not resolve vault: ${String(err)}`);
+          process.exit(1);
+        }
+      }
+
+      const output = generateSnapshot(rootOverride);
       if (!output) return;
 
       if (opts.tokens) {

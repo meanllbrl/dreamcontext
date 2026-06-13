@@ -24,6 +24,8 @@ import { registerMemoryCommand } from './commands/memory.js';
 import { registerUpgradeCommand } from './commands/upgrade.js';
 import { registerTaxonomyCommand } from './commands/taxonomy.js';
 import { registerVaultsCommand } from './commands/vaults.js';
+import { registerConnectionsCommand } from './commands/connections.js';
+import { registerFederationCommand } from './commands/federation.js';
 import { registerConfigCommand } from './commands/config.js';
 import { registerFeedbackCommand } from './commands/feedback.js';
 import { registerMigrationsCommand } from './commands/migrations.js';
@@ -84,6 +86,9 @@ ${chalk.bold('Dashboard')}
 
 ${chalk.bold('Vaults')}
   ${chalk.magentaBright('vaults')}            Manage the global vault registry (multi-project)
+  ${chalk.magentaBright('connect')}           Connect this vault to a peer for cross-project federation
+  ${chalk.magentaBright('disconnect')}        Remove a federation connection to a peer
+  ${chalk.magentaBright('connections')}       Inspect cross-project federation connections
 
 ${chalk.dim('Run')} dreamcontext ${chalk.dim('<command> --help')} ${chalk.dim('for details on a specific command.')}
 `;
@@ -132,6 +137,8 @@ export function createProgram(): Command {
   registerMemoryCommand(program);
   registerTaxonomyCommand(program);
   registerVaultsCommand(program);
+  registerConnectionsCommand(program);
+  registerFederationCommand(program);
   registerConfigCommand(program);
   registerFeedbackCommand(program);
   registerMigrationsCommand(program);
