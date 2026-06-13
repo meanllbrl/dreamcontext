@@ -40,6 +40,23 @@ verify() {
   say "dreamcontext ${installed_version} installed successfully."
 }
 
+maybe_install_app() {
+  # macOS ONLY: also place the desktop app in ~/Applications. The app is NOT in
+  # the npm package — the CLI fetches it from GitHub Releases (curl/ditto, so no
+  # quarantine bit, no Apple notarization prompt). Best-effort: if no desktop
+  # release is published yet, or the download fails, this is a no-op and never
+  # aborts the CLI install. Non-macOS platforms skip it entirely.
+  if [ "$(uname -s)" != "Darwin" ]; then
+    return
+  fi
+  if [ -n "${DREAMCONTEXT_INSTALL_NO_APP:-}" ]; then
+    say "DREAMCONTEXT_INSTALL_NO_APP is set. Skipping desktop app install."
+    return
+  fi
+  say "Installing the dreamcontext desktop app (macOS)..."
+  dreamcontext app install || say "Desktop app not installed yet — run 'dreamcontext app install' later."
+}
+
 maybe_setup() {
   if [ -d "_dream_context" ]; then
     say "Existing _dream_context/ detected. Running 'dreamcontext update'..."
@@ -67,6 +84,7 @@ main() {
   check_node
   install_cli
   verify
+  maybe_install_app
   maybe_setup
 }
 
