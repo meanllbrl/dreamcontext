@@ -1,5 +1,5 @@
-import { createServer } from 'node:http';
-import { resolve } from 'node:path';
+import { createServer, type IncomingMessage } from 'node:http';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { exec } from 'node:child_process';
 import { Router } from './router.js';
@@ -16,16 +16,25 @@ import { handleGraphGet, handleGraphContentGet } from './routes/graph.js';
 import { handleCouncilList, handleCouncilGet, handleCouncilResearchGet } from './routes/council.js';
 import { handleConfigGet, handleConfigUpdate } from './routes/config.js';
 import { handleVaultsGet } from './routes/vaults.js';
+import {
+  handleLauncherDiscover,
+  handleLauncherRegister,
+  handleLauncherDetect,
+  handleLauncherScaffold,
+  handleLauncherDefaults,
+} from './routes/launcher.js';
 import { handleConnectionsList, handleConnectionsCreate, handleConnectionsDelete } from './routes/connections.js';
 import { handleFederationInboxGet, handleFederationSyncPost } from './routes/federation.js';
 import { handlePacksGet } from './routes/packs.js';
 import { handlePackInstall, handlePackUninstall } from './routes/packs-install.js';
 import { handleVersionCheckGet } from './routes/version-check.js';
 import { handleTaxonomyGet } from './routes/taxonomy.js';
+import { listVaults } from '../lib/vaults.js';
 
 export interface ServerOptions {
   port: number;
-  contextRoot: string;
+  /** The pinned vault context root, or null in launcher mode (vault resolved per-request). */
+  contextRoot: string | null;
   open: boolean;
   /** Network interface to bind. Defaults to loopback (127.0.0.1). */
   host?: string;
@@ -85,6 +94,14 @@ function buildRouter(): Router {
   router.get('/api/config', handleConfigGet);
   router.patch('/api/config', handleConfigUpdate);
 
+  // Launcher (vault-agnostic): discover candidate vaults, register one, detect
+  // tech stack for the quiz, and scaffold a new/existing project (onboarding).
+  router.get('/api/launcher/discover', handleLauncherDiscover);
+  router.get('/api/launcher/detect', handleLauncherDetect);
+  router.get('/api/launcher/defaults', handleLauncherDefaults);
+  router.post('/api/launcher/register', handleLauncherRegister);
+  router.post('/api/launcher/scaffold', handleLauncherScaffold);
+
   // Vaults + federation connections (issue #25 P2)
   router.get('/api/vaults', handleVaultsGet);
   router.get('/api/connections', handleConnectionsList);
@@ -115,6 +132,39 @@ function buildRouter(): Router {
   router.patch('/api/releases/:version', handleReleasesUpdate);
 
   return router;
+}
+
+/** API path prefixes that do NOT need a vault — they work in launcher mode. */
+const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/vaults', '/api/launcher'];
+
+function isVaultAgnostic(pathname: string): boolean {
+  return VAULT_AGNOSTIC_PREFIXES.some(
+    (p) => pathname === p || pathname.startsWith(p + '/'),
+  );
+}
+
+/**
+ * STRICT per-request vault resolver. Reads the `X-Dreamcontext-Vault` header and
+ * resolves it to a context root WITHOUT any filesystem-path fallback.
+ *
+ * Deliberately does NOT call `resolveVaultContextRoot`, which `resolve()`s an
+ * unknown arg as a path — a traversal vector when the value comes off a header.
+ * Here only an EXACT registered vault NAME is accepted; anything path-shaped or
+ * unknown returns 'INVALID' so the caller can answer 400.
+ *
+ * - no/empty header  → null  (fall back to the server's pinned contextRoot)
+ * - path-shaped name → 'INVALID'
+ * - unknown name     → 'INVALID'
+ * - registered name  → join(vault.path, '_dream_context')
+ */
+function resolveRequestVault(req: IncomingMessage): string | null | 'INVALID' {
+  const h = req.headers['x-dreamcontext-vault'];
+  if (!h || typeof h !== 'string') return null;
+  // Reject anything path-shaped or containing null bytes / dots.
+  if (/[/\\:.\x00]/.test(h)) return 'INVALID';
+  const v = listVaults().find((x) => x.name === h);
+  if (!v) return 'INVALID';
+  return join(v.path, '_dream_context');
 }
 
 function getDashboardDir(): string {
@@ -154,7 +204,20 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
         if (url.pathname.startsWith('/api/')) {
           const match = router.match(method, url.pathname);
           if (match) {
-            await match.handler(req, res, match.params, contextRoot);
+            // Resolve the per-request vault from the strict header resolver.
+            const hv = resolveRequestVault(req);
+            if (hv === 'INVALID') {
+              sendError(res, 400, 'invalid_vault', 'Unknown or invalid vault.');
+              return;
+            }
+            const effRoot = hv ?? contextRoot;
+            if (!isVaultAgnostic(url.pathname) && effRoot == null) {
+              sendError(res, 400, 'no_vault', 'No vault selected.');
+              return;
+            }
+            // Vault-agnostic routes ignore the context root; cast keeps the
+            // handler signature satisfied while the null is harmless there.
+            await match.handler(req, res, match.params, effRoot as string);
           } else {
             sendError(res, 404, 'not_found', `No route: ${method} ${url.pathname}`);
           }

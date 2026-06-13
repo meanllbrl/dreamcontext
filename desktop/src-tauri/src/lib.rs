@@ -167,6 +167,11 @@ fn host_dashboard(app: AppHandle) -> Result<(), String> {
             "--no-open",
             "--launcher",
         ])
+        // App-context guard: lets server-side code know it runs INSIDE the
+        // desktop app (not a terminal). The dashboard uses this to suppress the
+        // "run dreamcontext upgrade" nudge — in-app, updates are the app's job
+        // (self-update), not a CLI instruction.
+        .env("DREAMCONTEXT_DESKTOP", "1")
         .spawn()
         .map_err(|e| format!("Failed to start the dashboard server with node:\n  {node}\n\n{e}"))?;
 

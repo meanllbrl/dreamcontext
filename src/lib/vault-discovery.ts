@@ -25,3 +25,24 @@ export function discoverVaults(root: string): string[] {
   for (const ctx of matches) projects.add(dirname(ctx));
   return Array.from(projects).sort();
 }
+
+/**
+ * Async variant of {@link discoverVaults}. Uses fast-glob's async API so a large
+ * tree scan does NOT block the Node event loop — critical for the dashboard
+ * server, where a synchronous crawl would wedge every other request (and freeze
+ * the desktop window) while the "Discover" feature scans a big folder.
+ */
+export async function discoverVaultsAsync(root: string): Promise<string[]> {
+  const matches = await fg('**/_dream_context', {
+    cwd: root,
+    absolute: true,
+    onlyDirectories: true,
+    deep: 6,
+    ignore: ['**/node_modules/**', '**/.git/**'],
+    suppressErrors: true,
+  });
+
+  const projects = new Set<string>();
+  for (const ctx of matches) projects.add(dirname(ctx));
+  return Array.from(projects).sort();
+}

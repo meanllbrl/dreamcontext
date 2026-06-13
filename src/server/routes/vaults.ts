@@ -19,10 +19,12 @@ export async function handleVaultsGet(
   _req: IncomingMessage,
   res: ServerResponse,
   _params: Record<string, string>,
-  contextRoot: string,
+  contextRoot: string | null,
 ): Promise<void> {
   const vaults = listVaults();
-  const projectRoot = resolve(dirname(contextRoot));
-  const current = vaults.find((v) => resolve(v.path) === projectRoot)?.name ?? null;
+  // In launcher mode there is no pinned project, so `current` is null.
+  const current = contextRoot
+    ? (vaults.find((v) => resolve(v.path) === resolve(dirname(contextRoot)))?.name ?? null)
+    : null;
   sendJson(res, 200, { vaults, current });
 }

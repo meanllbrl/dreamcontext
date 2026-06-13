@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    TCC usage strings. macOS shows these when the Node child first reads a
+    protected location (Desktop/Documents/Downloads/removable volumes) while
+    discovering or opening a vault. Without them the prompt is silent or denied.
+  -->
+  <key>NSDesktopFolderUsageDescription</key>
+  <string>dreamcontext reads project folders on your Desktop to discover and open dreamcontext vaults.</string>
+  <key>NSDocumentsFolderUsageDescription</key>
+  <string>dreamcontext reads project folders in your Documents to discover and open dreamcontext vaults.</string>
+  <key>NSDownloadsFolderUsageDescription</key>
+  <string>dreamcontext reads project folders in your Downloads to discover and open dreamcontext vaults.</string>
+  <key>NSRemovableVolumesUsageDescription</key>
+  <string>dreamcontext reads project folders on removable volumes to discover and open dreamcontext vaults.</string>
+</dict>
+</plist>

@@ -1,5 +1,140 @@
 [
   {
+    "date": "2026-06-13",
+    "type": "chore",
+    "scope": "desktop",
+    "description": "Clean up desktop/src-tauri/src/lib.rs by removing the now-dead open_vault Tauri command and its supporting code: the Port struct + State import (no longer needed since vault opening is handled by the built-in WebviewWindow JS API), sanitize_label and urlencode helper functions, and the invoke_handler macro call. This code was deferred from the original Tauri beta task when the architecture decision was made to use built-in WebviewWindow rather than custom Rust commands (Tauri v2 ACL blocks custom commands on remote-origin pages). cargo check passes clean.",
+    "breaking": false,
+    "summary": "Remove dead Rust code from lib.rs: open_vault command, Port state, sanitize_label, urlencode, invoke_handler, State import",
+    "references": [
+      "file:desktop/src-tauri/src/lib.rs",
+      "task:unified-dashboard-beta-multivault"
+    ]
+  },
+  {
+    "date": "2026-06-13",
+    "type": "feat",
+    "scope": "desktop",
+    "description": "Add src/lib/ensure-cli.ts with ensureCliInstalled(): best-effort, never-throws helper that probes command -v dreamcontext via the user's LOGIN shell ($SHELL -lc) so a Finder-launched Tauri app sees nvm/brew PATH entries that are absent from the default non-login env. When the CLI is missing it runs npm install -g dreamcontext@latest. The scaffold handler calls it post-scaffold and surfaces {cli:{status}} (present|installed|failed) in the response; the wizard success screen shows a relevant status message. Rationale: scaffolded projects install .claude/ hooks that call npx dreamcontext hook ... — if no global CLI exists npx would hang or fail silently in a non-interactive hook context. Four unit tests cover present/installed/npm-absent/install-failed paths. Full suite: 1784 green.",
+    "breaking": false,
+    "summary": "Auto-provision global dreamcontext CLI on scaffold: login-shell probe + npm install -g, best-effort never-throws",
+    "references": [
+      "file:src/lib/ensure-cli.ts",
+      "file:src/server/routes/launcher.ts",
+      "file:dashboard/src/components/OnboardingWizard.tsx",
+      "task:launcher-quiz-onboarding"
+    ]
+  },
+  {
+    "date": "2026-06-13",
+    "type": "refactor",
+    "scope": "cli",
+    "description": "Move detectTechStack from src/cli/commands/init.ts into a new standalone module src/lib/tech-stack.ts that accepts a directory parameter (defaults to cwd). Both the init command and the new launcher scaffold route consume the shared function. Previously the function lived inside the init command and was duplicated for the launcher; the extraction eliminates the duplication and makes tech-stack detection independently testable.",
+    "breaking": false,
+    "summary": "Extract detectTechStack into src/lib/tech-stack.ts, shared by init and launcher scaffold",
+    "references": [
+      "file:src/lib/tech-stack.ts",
+      "file:src/cli/commands/init.ts",
+      "file:src/server/routes/launcher.ts",
+      "task:launcher-quiz-onboarding"
+    ]
+  },
+  {
+    "date": "2026-06-13",
+    "type": "feat",
+    "scope": "launcher",
+    "description": "Add a full in-app onboarding flow to the dreamcontext-beta Launcher. Backend: two new vault-agnostic routes behind the existing CSRF guard — POST /api/launcher/scaffold (create-or-init-existing folder, then register vault; strict-pick body; path-traversal guarded via safeChildPath; idempotent when _dream_context/ already exists) and GET /api/launcher/detect (tech-stack + hasContext + basename for quiz prefill) — plus the existing GET /api/launcher/defaults (home + ~/projects). Scaffold runs the bundled CLI in a child process (execFile, no shell, explicit arg array, 120 s timeout) with cwd=target so the long-lived server's own cwd is never mutated: init --yes --name … --platforms claude then setup --defaults --platforms claude (init skipped on re-run). Frontend: new OnboardingWizard.tsx + CSS — a multi-step quiz (new vs existing; name+parentDir+Browse; description; target user; stack; priority; review; success screen) with a copyable 'hand off to Claude' enrichment prompt card and CLI-install status indicator. LauncherPage '+ Add Project' now opens the wizard. New hooks in useLauncher.ts: useScaffoldProject, probeFolder, useLauncherDefaults. The enrichment prompt is deterministic and LLM-free — quiz answers map directly to dreamcontext token-fill; the Claude hand-off card handles the rich initializer step post-scaffold.",
+    "breaking": false,
+    "summary": "Quiz-style in-app project onboarding wizard: scaffold new/existing projects from the desktop Launcher without leaving the app",
+    "references": [
+      "file:src/server/routes/launcher.ts",
+      "file:src/server/index.ts",
+      "file:dashboard/src/components/OnboardingWizard.tsx",
+      "file:dashboard/src/pages/LauncherPage.tsx",
+      "file:dashboard/src/hooks/useLauncher.ts",
+      "task:launcher-quiz-onboarding"
+    ]
+  },
+  {
+    "date": "2026-06-13",
+    "type": "feat",
+    "scope": "initializer",
+    "description": "Enrich the dreamcontext-initializer agent so a fresh _dream_context/ starts with real content rather than empty placeholders. Feature detection derives a ranked candidate list from product surfaces (routes, modules, CLI, API) and scaffolds PRDs via 'features create --status planning'. Multi-people roster is seeded from git authors via a new 'config people <names...>' CLI command that writes the roster to .config.json AND syncs the ## People block in 1.user.md (implements the previously-unhooked ensurePeopleSection). Knowledge seeding distills README/docs/ADRs into 'knowledge create'. Tech stack and data-structures are populated from real inspection (actual schemas), fixing the stale core/data-structures path to knowledge/data-structures. A mandatory self-verification pass ensures no template tokens or placeholders ship. Optional planning warm-up via 'core releases add/active'. Agent file mirrored to .codex (toml regenerated + prompts copy). Integration test: tests/integration/config-people.test.ts covers roster write, dedup, idempotent user.md sync, --clear, empty-rejection.",
+    "breaking": false,
+    "summary": "Richer bootstrap: feature detection, multi-people roster seeding, knowledge distillation, real tech_stack + data-structures, self-verification pass (#10, PR #10)",
+    "references": [
+      "commit:44ccc84",
+      "file:agents/dreamcontext-initializer.md",
+      "file:src/cli/commands/config.ts",
+      "file:tests/integration/config-people.test.ts",
+      "url:https://github.com/meanllbrl/dreamcontext/issues/10"
+    ]
+  },
+  {
+    "date": "2026-06-13",
+    "type": "feat",
+    "scope": "federation",
+    "description": "Add discoverVaultsAsync (src/lib/vault-discovery.ts) as an async companion to the existing synchronous discoverVaults. Uses fast-glob's async API so a large directory tree scan does not block the Node event loop. The launcher server route (src/server/routes/launcher.ts) uses the async variant so a slow home-directory scan does not freeze the dashboard while it awaits the vault list.",
+    "breaking": false,
+    "summary": "discoverVaultsAsync: non-blocking async variant of vault discovery to avoid wedging the single-thread server",
+    "references": [
+      "file:src/lib/vault-discovery.ts",
+      "file:src/server/routes/launcher.ts"
+    ]
+  },
+  {
+    "date": "2026-06-13",
+    "type": "chore",
+    "scope": "cli",
+    "description": "Switch tsup.config.ts from externalizing runtime dependencies to bundling them directly into dist/index.js via noExternal. The Tauri .app ships the dist/ directory but not node_modules, so previously externalized deps (commander, chalk, gray-matter, @inquirer/prompts, fast-glob, nanoid, boxen) would fail with ERR_MODULE_NOT_FOUND at runtime inside the app bundle. A banner shim at the top of the output file provides a createRequire implementation so bundled CJS dependencies that call require() for Node builtins continue to work under ESM output. The resulting dist/index.js is ~2.1MB and fully self-contained. This change affects the npm package itself: the published dist/index.js now embeds its dependencies rather than declaring them as peer runtime requirements; package.json dependencies remain listed for compatibility but are no longer needed at runtime on the consumer's machine.",
+    "breaking": false,
+    "summary": "Self-contained CLI bundle: noExternal deps in tsup + createRequire shim so dist/index.js ships without node_modules (needed for Tauri .app)",
+    "references": [
+      "file:tsup.config.ts"
+    ]
+  },
+  {
+    "date": "2026-06-13",
+    "type": "feat",
+    "scope": "desktop",
+    "description": "Add a Tauri 2 macOS native desktop wrapper for the existing React+Node dashboard, installed to /Applications/dreamcontext-beta.app and shipped as a signed ad-hoc .dmg (desktop/src-tauri/target/release/bundle/dmg/dreamcontext-beta_0.8.0_aarch64.dmg, ~20MB). The app runs in 'launcher mode' (contextRoot=null on startup): a LauncherPage lists all registered vaults from the global ~/.dreamcontext/vaults.json registry; clicking 'Open' spawns a new native window via the built-in Tauri WebviewWindow API (not a custom command — see ACL decision below) pointed at /?vault=<name>, which resolves to an X-Dreamcontext-Vault request header via server middleware, then a strict name-only contextRoot resolver on each request. This architecture means one shared Node server handles all vaults, with no inter-window data leakage because every request carries its own vault binding. The app is non-sandboxed with custom entitlements and Info.plist TCC usage strings to allow local filesystem access. Architecture knowledge doc already written at _dream_context/knowledge/desktop-beta-tauri-multivault.md. Stale /Applications/dreamcontext.app (v0.6) removed during install. Note: local beta only — not code-signed by Apple, not notarized, not on auto-updater.",
+    "breaking": false,
+    "summary": "dreamcontext-beta Tauri 2 macOS app: multi-vault launcher with one shared Node server and per-window vault headers (local, unsigned)",
+    "references": [
+      "file:desktop/src-tauri/src/lib.rs",
+      "file:desktop/src-tauri/tauri.conf.json",
+      "file:desktop/src-tauri/capabilities/default.json",
+      "file:src/server/middleware.ts",
+      "file:src/server/routes/launcher.ts",
+      "file:dashboard/src/pages/LauncherPage.tsx",
+      "knowledge:desktop-beta-tauri-multivault",
+      "task:unified-dashboard-beta-multivault"
+    ]
+  },
+  {
+    "date": "2026-06-13",
+    "type": "feat",
+    "scope": "federation",
+    "description": "Add local cross-project context federation across three phases, merged via PR #31 (merge commit a34c1f8). Phase 1 (read-only): 'vaults discover [root] [--register]' scans a directory tree for _dream_context/ projects and writes a global vault registry; 'memory recall --vault/--connected/--all-vaults' queries across registered vaults with <vault>::<type>/<slug> namespacing; 'snapshot --vault' generates a context snapshot for any registered vault; 'config shareable on|off' is a private-by-default cross-vault read gate; federated docs (CorpusDoc.federated) are excluded from cross-vault serving to prevent transitive leaks. Phase 2 (connections + dashboard): state/.connections.json with direction (out/in/both) + topics + consent semantics; 'connect/disconnect/connections list' CLI; GET /api/vaults, GET/POST/DELETE /api/connections server routes with strict-pick and direction enum validation; dashboard Connections manager UI with direction toggle and shareable switch. Phase 3 (sleep-driven digest inbox): relevance-filtered digest push into state/.federation-inbox/ during sleep; filename-based dedup with safeChildPath-guarded writes; slug-collision namespacing; conflict bookmarks; 'federation drain/sync/status' CLI; a dedicated sleep-federation specialist (agents/sleep-federation.md); GET /api/federation/inbox + POST /api/federation/sync (dry-run by construction) server routes; dashboard inbox preview. Includes 0.8.0 versioned migration scaffolding (connections/, inbox/, shareable init). Four independent security reviewers confirmed: hot path (no-arg generateSnapshot) untouched, transitive-leak guard holds, SSRF/path-traversal blocked at two independent layers, prototype-pollution-safe request bodies, migration idempotency confirmed. 1770 tests pass (1 pre-existing skip). Closes #25.",
+    "breaking": false,
+    "summary": "Local cross-project context mesh: vaults discover, cross-vault recall, connections, sleep-driven digest inbox, 0.8.0 migration (#25, PR #31)",
+    "references": [
+      "commit:a34c1f8",
+      "commit:971ef7f",
+      "commit:ba20011",
+      "commit:f1e3b16",
+      "commit:f46ff98",
+      "file:src/lib/federation-recall.ts",
+      "file:src/lib/federation-inbox.ts",
+      "file:src/lib/federation-ingest.ts",
+      "file:src/lib/federation-digest.ts",
+      "file:src/lib/connections.ts",
+      "file:src/migrations/0.8.0.ts",
+      "file:agents/sleep-federation.md",
+      "url:https://github.com/meanllbrl/dreamcontext/issues/25"
+    ]
+  },
+  {
     "date": "2026-06-12",
     "type": "feat",
     "scope": "dashboard",

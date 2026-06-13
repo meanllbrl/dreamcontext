@@ -8,10 +8,19 @@ export default defineConfig({
   clean: true,
   splitting: false,
   banner: {
-    js: '#!/usr/bin/env node',
+    // Shebang + a createRequire shim: bundled CJS deps (commander, gray-matter…)
+    // call require() for node builtins; ESM output has no require, so provide one.
+    js: [
+      '#!/usr/bin/env node',
+      "import { createRequire as __dcCreateRequire } from 'module';",
+      "const require = __dcCreateRequire(import.meta.url);",
+    ].join('\n'),
   },
-  // Don't bundle dependencies - they'll be installed via node_modules
-  external: [
+  // Bundle all runtime deps INTO dist/index.js so the CLI is self-contained.
+  // The Tauri .app ships dist/ but NOT node_modules, so anything left external
+  // (e.g. nanoid) would fail with ERR_MODULE_NOT_FOUND at runtime. All 7 deps
+  // are pure JS and bundle cleanly.
+  noExternal: [
     'commander',
     'chalk',
     'gray-matter',

@@ -12,10 +12,15 @@ export function registerDashboardCommand(program: Command): void {
     .option('--host <host>', 'Interface to bind (default loopback). Use 0.0.0.0 to expose on your network.', '127.0.0.1')
     .option('--no-open', 'Do not open browser automatically')
     .option('--vault <path>', 'Open a specific vault by registered name or path')
-    .action(async (opts: { port: string; host: string; open: boolean; vault?: string }) => {
-      let contextRoot: string;
+    .option('--launcher', 'Boot vault-agnostic (launcher mode); vault is resolved per-request')
+    .action(async (opts: { port: string; host: string; open: boolean; vault?: string; launcher?: boolean }) => {
+      let contextRoot: string | null;
 
-      if (opts.vault !== undefined) {
+      if (opts.launcher) {
+        // Launcher mode: no default vault — each window pins its own via the
+        // X-Dreamcontext-Vault header. `--vault` is ignored when --launcher is set.
+        contextRoot = null;
+      } else if (opts.vault !== undefined) {
         try {
           contextRoot = resolveVaultContextRoot(opts.vault);
         } catch (err) {

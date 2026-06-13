@@ -87,7 +87,15 @@ Resolution order:
 
 Name is tried first so desktop-launch-by-name and CLI-launch-by-path both use the same code path.
 
-## Multi-vault strategy — Option A
+## Multi-vault strategy — Option A (v0.6) → SUPERSEDED in v0.8 beta
+
+> **Update (2026-06-13, dreamcontext-beta):** the "one server per vault" model below was
+> superseded for the desktop app by a **single shared Node server in launcher mode**
+> (`dashboard --launcher`, `contextRoot=null`). Each window pins its vault via a
+> `?vault=<name>` URL → `X-Dreamcontext-Vault` header → a per-request strict name-only
+> contextRoot resolver. Multi-vault == multi-window, one process. See
+> `knowledge/desktop-beta-tauri-multivault.md`. The v0.6 model below remains accurate for
+> the plain `dreamcontext dashboard` CLI.
 
 For v0.6 the multi-vault model is **one server per vault**. There is no vault-switcher in the running dashboard. To switch vaults you start a new dashboard process (or Tauri window) pointed at the desired vault via `--vault`.
 
