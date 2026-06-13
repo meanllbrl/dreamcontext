@@ -1,0 +1,135 @@
+name: desktop-release
+
+# Faz 1 of the continuous app-update epic. Builds the dreamcontext-beta Tauri
+# .app, ad-hoc DEEP-signs it (with entitlements — NOT Apple Developer ID /
+# notarization), packages it as <name>.app.tar.gz + a mandatory .sha256, and
+# publishes both to a GitHub Release. The already-shipped `dreamcontext app
+# install|update` + `maybeTriggerAppUpdate` client code then works end-to-end:
+# it pulls the arch-matching .app.tar.gz from /releases/latest, verifies the
+# .sha256, and installs via ditto (no com.apple.quarantine → no Gatekeeper
+# notarization prompt; ad-hoc signature satisfies Apple Silicon).
+#
+# Why no notarization: the whole delivery path is curl/ditto (never a browser
+# download), so the quarantine bit is never set and Gatekeeper's notarization
+# check never fires. This is macOS-only and holds only while the install path
+# stays CLI-driven.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to build/publish (e.g. v0.8.0)'
+        required: true
+
+permissions:
+  contents: write # required to create/upload GitHub Releases
+
+jobs:
+  build-macos:
+    # macos-14 is Apple Silicon → produces an aarch64 .app. Add an x86_64 matrix
+    # leg later for Intel; the client picks the arch-matching asset by name.
+    runs-on: macos-14
+    env:
+      ARCH: aarch64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version + tag
+        id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Resolved tag=$TAG version=$VERSION"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            desktop/src-tauri/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('desktop/src-tauri/Cargo.lock') }}
+
+      - name: Install deps + build CLI/dashboard (bundled into the .app resources)
+        # No npm workspaces: root, dashboard, and desktop each need their own install.
+        run: |
+          npm ci
+          npm ci --prefix dashboard
+          npm run build
+
+      - name: Install desktop deps
+        working-directory: desktop
+        run: npm ci
+
+      - name: Build the Tauri .app
+        working-directory: desktop
+        run: npm run tauri build -- --bundles app
+
+      - name: Deep ad-hoc sign (with entitlements)
+        # tauri build leaves the Mach-O only *linker-signed*; deep-sign the whole
+        # bundle so `codesign --verify --deep` passes and entitlements (non-sandbox
+        # + no hardened runtime, so the Node child has FS rights + JIT) are applied.
+        run: |
+          APP="desktop/src-tauri/target/release/bundle/macos/dreamcontext-beta.app"
+          codesign --deep --force --sign - \
+            --entitlements desktop/src-tauri/entitlements.plist \
+            "$APP"
+          codesign --verify --deep --strict "$APP"
+          echo "✓ signature valid"
+
+      - name: Package .app.tar.gz + .sha256
+        id: pkg
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
+          BUNDLE_DIR="desktop/src-tauri/target/release/bundle/macos"
+          ASSET="dreamcontext-beta_${VERSION}_${ARCH}.app.tar.gz"
+          OUT="$PWD/dist-release"
+          mkdir -p "$OUT"
+          # Top-level .app inside the tarball so the client's materializeAppBundle
+          # (tar -xzf → find *.app) resolves it.
+          tar -czf "$OUT/$ASSET" -C "$BUNDLE_DIR" dreamcontext-beta.app
+          ( cd "$OUT" && shasum -a 256 "$ASSET" > "$ASSET.sha256" )
+          echo "asset=$ASSET" >> "$GITHUB_OUTPUT"
+          echo "out=$OUT" >> "$GITHUB_OUTPUT"
+          ls -la "$OUT"
+
+      - name: Verify the packaged artifact (extract + checksum + launchable bundle)
+        run: |
+          OUT="${{ steps.pkg.outputs.out }}"
+          ASSET="${{ steps.pkg.outputs.asset }}"
+          ( cd "$OUT" && shasum -a 256 -c "$ASSET.sha256" )
+          TMP="$(mktemp -d)"
+          tar -xzf "$OUT/$ASSET" -C "$TMP"
+          test -x "$TMP/dreamcontext-beta.app/Contents/MacOS/dreamcontext-desktop"
+          codesign --verify --deep --strict "$TMP/dreamcontext-beta.app"
+          echo "✓ artifact extracts, checksum matches, bundle is signed"
+
+      - name: Publish to GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: dreamcontext-beta ${{ steps.ver.outputs.version }}
+          # Must be a non-draft, non-prerelease so the client's /releases/latest
+          # lookup (downloadLatestArtifact) finds it.
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: true
+          files: |
+            ${{ steps.pkg.outputs.out }}/${{ steps.pkg.outputs.asset }}
+            ${{ steps.pkg.outputs.out }}/${{ steps.pkg.outputs.asset }}.sha256
