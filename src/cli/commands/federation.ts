@@ -6,6 +6,7 @@ import { currentVaultTarget } from '../../lib/federation-recall.js';
 import {
   listConnections,
   advanceWatermark,
+  markStale,
   receiverConsents,
   type Connection,
 } from '../../lib/connections.js';
@@ -123,6 +124,7 @@ export function registerFederationCommand(program: Command): void {
         } catch (err) {
           if (err instanceof VaultError) {
             warn(`Peer "${conn.vault}" is unreachable — skipping (stale).`);
+            if (!dryRun) markStale(contextRoot, conn.vault);
             continue;
           }
           throw err;
