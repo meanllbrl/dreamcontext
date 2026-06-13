@@ -10,6 +10,8 @@
   "dependencies": {
     "@excalidraw/excalidraw": "^0.18.0",
     "@tanstack/react-query": "^5.64.0",
+    "@tauri-apps/api": "^2.11.0",
+    "@tauri-apps/plugin-dialog": "^2.7.1",
     "@types/dompurify": "^3.0.5",
     "@types/three": "^0.184.1",
     "dompurify": "^3.4.7",

@@ -136,4 +136,30 @@ describe('GET /api/version-check', () => {
     expect(payload.fresh).toBe(false);
     expect(payload.nudge).toBeNull();
   });
+
+  it('suppresses the CLI nudge when DREAMCONTEXT_DESKTOP=1 (app context)', async () => {
+    const prev = process.env.DREAMCONTEXT_DESKTOP;
+    process.env.DREAMCONTEXT_DESKTOP = '1';
+    try {
+      const cache: VersionCache = {
+        checkedAt: Date.now() - 60 * 60 * 1000,
+        latestCli: '99.99.99', // far ahead → would normally nudge
+        availablePacks: [],
+        ttlHours: 24,
+      };
+      writeCacheFile(tmpDir, cache);
+
+      const { res, status, body } = makeRes();
+      await handleVersionCheckGet(makeGetReq(), res, {}, contextRoot);
+      expect(status()).toBe(200);
+
+      const payload = body() as { fresh: boolean; nudge: string | null };
+      expect(payload.fresh).toBe(true);
+      // In-app: the manual "run dreamcontext upgrade" line is suppressed → null
+      expect(payload.nudge).toBeNull();
+    } finally {
+      if (prev === undefined) delete process.env.DREAMCONTEXT_DESKTOP;
+      else process.env.DREAMCONTEXT_DESKTOP = prev;
+    }
+  });
 });

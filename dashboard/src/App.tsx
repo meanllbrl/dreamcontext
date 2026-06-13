@@ -1,6 +1,7 @@
 import { Component, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
-import { api } from './api/client';
+import { api, setActiveVault } from './api/client';
+import { LauncherPage } from './pages/LauncherPage';
 import { ThemeProvider } from './context/ThemeContext';
 import { I18nProvider } from './context/I18nContext';
 import { ProjectProvider } from './context/ProjectContext';
@@ -116,7 +117,30 @@ class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryStat
   }
 }
 
+/**
+ * Read the `?vault=` URL param ONCE at module load and pin it as the active
+ * vault before any query fires. Absent → launcher mode (render LauncherPage);
+ * present → the normal vault Shell with every request carrying the vault header.
+ */
+const initialVault = new URLSearchParams(window.location.search).get('vault');
+if (initialVault) {
+  setActiveVault(initialVault);
+}
+
 export function App() {
+  // No vault pinned → this is the Launcher window (list of all projects).
+  if (!initialVault) {
+    return (
+      <ErrorBoundary>
+        <QueryClientProvider client={queryClient}>
+          <ThemeProvider>
+            <LauncherPage />
+          </ThemeProvider>
+        </QueryClientProvider>
+      </ErrorBoundary>
+    );
+  }
+
   return (
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>

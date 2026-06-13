@@ -1,5 +1,16 @@
 [
   {
+    "id": "rel_sCrMbXLw",
+    "version": "v0.8.0",
+    "date": "",
+    "summary": "Federation (cross-project context mesh), desktop beta (Tauri 2 macOS app), self-contained CLI bundle",
+    "breaking": false,
+    "status": "planning",
+    "features": [],
+    "tasks": [],
+    "changelog": []
+  },
+  {
     "id": "rel_Xrtmgwry",
     "version": "v0.7.0",
     "date": "",

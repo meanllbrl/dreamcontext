@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    Non-sandboxed: the spawned Node child needs the user's normal filesystem
+    rights (read Desktop/Documents/Downloads, read/write ~/.dreamcontext and
+    each vault's _dream_context/). A sandbox would block that.
+  -->
+  <key>com.apple.security.app-sandbox</key>
+  <false/>
+  <!-- Node's JIT needs executable+writable memory. -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+</dict>
+</plist>

@@ -5,14 +5,30 @@ interface ApiError {
   message: string;
 }
 
+/**
+ * The vault this window is pinned to. Set once at boot from the `?vault=` URL
+ * param (see setActiveVault). When present it is forwarded on every request as
+ * the X-Dreamcontext-Vault header, which the server resolves per-request to the
+ * matching context root. Null in launcher mode (no vault pinned).
+ */
+let activeVault: string | null = null;
+
+export function setActiveVault(v: string | null): void {
+  activeVault = v;
+}
+
 class ApiClient {
   private async request<T>(path: string, options?: RequestInit): Promise<T> {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...(options?.headers as Record<string, string> | undefined),
+    };
+    if (activeVault) {
+      headers['X-Dreamcontext-Vault'] = activeVault;
+    }
     const res = await fetch(`${BASE_URL}${path}`, {
       ...options,
-      headers: {
-        'Content-Type': 'application/json',
-        ...options?.headers,
-      },
+      headers,
     });
 
     if (!res.ok) {

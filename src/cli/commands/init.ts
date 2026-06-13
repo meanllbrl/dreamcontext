@@ -22,6 +22,7 @@ import { dreamcontextVersion } from '../../lib/manifest.js';
 import { printDeprecationHint, SETUP_INTERNAL_ENV } from './install-skill.js';
 import { platformSkillRoot } from '../../lib/catalog.js';
 import { ensureTaxonomyFile } from '../../lib/taxonomy.js';
+import { detectTechStack } from '../../lib/tech-stack.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
@@ -55,51 +56,6 @@ function copyObsidianConfig(destDir: string): boolean {
     }
   }
   return true;
-}
-
-function detectTechStack(): string | null {
-  const cwd = process.cwd();
-
-  // package.json -> Node/JS ecosystem
-  const pkgPath = join(cwd, 'package.json');
-  if (existsSync(pkgPath)) {
-    try {
-      const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
-      const deps = { ...pkg.dependencies, ...pkg.devDependencies };
-      const stack: string[] = ['Node.js'];
-
-      if (deps['react'] || deps['react-dom']) stack.push('React');
-      if (deps['next']) stack.push('Next.js');
-      if (deps['vue']) stack.push('Vue');
-      if (deps['nuxt']) stack.push('Nuxt');
-      if (deps['svelte']) stack.push('Svelte');
-      if (deps['express']) stack.push('Express');
-      if (deps['fastify']) stack.push('Fastify');
-      if (deps['typescript']) stack.push('TypeScript');
-      if (deps['tailwindcss']) stack.push('Tailwind CSS');
-      if (deps['prisma'] || deps['@prisma/client']) stack.push('Prisma');
-
-      return stack.join(', ');
-    } catch {
-      return 'Node.js';
-    }
-  }
-
-  // pubspec.yaml -> Flutter/Dart
-  if (existsSync(join(cwd, 'pubspec.yaml'))) return 'Flutter, Dart';
-
-  // Cargo.toml -> Rust
-  if (existsSync(join(cwd, 'Cargo.toml'))) return 'Rust';
-
-  // go.mod -> Go
-  if (existsSync(join(cwd, 'go.mod'))) return 'Go';
-
-  // requirements.txt or pyproject.toml -> Python
-  if (existsSync(join(cwd, 'requirements.txt')) || existsSync(join(cwd, 'pyproject.toml'))) {
-    return 'Python';
-  }
-
-  return null;
 }
 
 function replaceTokens(content: string, tokens: Record<string, string>): string {

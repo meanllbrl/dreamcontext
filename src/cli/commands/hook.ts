@@ -16,7 +16,9 @@ import { isMarketingEnvPath } from '../../lib/marketing/path-guards.js';
 import { buildCorpus, bm25Search, loadSkillDocs, type RecallHit } from '../../lib/recall.js';
 import { haikuRecall } from '../../lib/recall-query-extractor.js';
 import { ensureTaxonomyFile } from '../../lib/taxonomy.js';
-import { readVersionCache, isCacheFresh, refreshVersionCache } from '../../lib/version-check.js';
+import { readVersionCache, isCacheFresh, refreshVersionCache, maybeAutoUpgrade } from '../../lib/version-check.js';
+import { dreamcontextVersion } from '../../lib/manifest.js';
+import { maybeTriggerAppUpdate } from './app.js';
 import { loadCatalog } from './install-skill.js';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -749,7 +751,7 @@ export function registerHookCommand(program: Command): void {
       if (process.env.DREAMCONTEXT_VERSION_CHECK !== '0') {
         try {
           const projectRoot = dirname(root);
-          const vcache = readVersionCache(projectRoot);
+          let vcache = readVersionCache(projectRoot);
           if (!isCacheFresh(vcache)) {
             const loaded = loadCatalog();
             const packNames: string[] = loaded
@@ -759,7 +761,18 @@ export function registerHookCommand(program: Command): void {
                 ]
               : [];
             refreshVersionCache(projectRoot, { catalogPackNames: packNames });
+            vcache = readVersionCache(projectRoot);
+            // Piggyback on the ≤once/24h refresh tick: if the desktop app is
+            // installed, trigger a best-effort background app update (rare —
+            // only a new Tauri shell release replaces the bundle; the app runs
+            // the global CLI for everything else). No-ops until releases exist.
+            maybeTriggerAppUpdate();
           }
+          // Auto-upgrade (DEFAULT ON; opt out with DREAMCONTEXT_AUTO_UPGRADE=0):
+          // detached, non-blocking, at most once per target version per 24h.
+          // Emits a one-line notice only when it actually fires.
+          const notice = maybeAutoUpgrade(projectRoot, dreamcontextVersion(), vcache);
+          if (notice) console.log(notice);
         } catch {
           // Version check must never break the hook.
         }

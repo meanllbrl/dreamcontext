@@ -1,0 +1,35 @@
+{
+  "productName": "dreamcontext-beta",
+  "version": "0.8.0",
+  "identifier": "com.dreamcontext.beta",
+  "build": {
+    "frontendDist": "./frontend-placeholder"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["dmg", "app"],
+    "createUpdaterArtifacts": false,
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "../../dist": "dist",
+      "../../skill-packs": "skill-packs",
+      "../../skill": "skill"
+    },
+    "macOS": {
+      "entitlements": "entitlements.plist",
+      "minimumSystemVersion": "12.0"
+    }
+  }
+}
