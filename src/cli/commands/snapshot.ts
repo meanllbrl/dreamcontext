@@ -14,7 +14,7 @@ import { buildCoreIndex } from '../../lib/core-index.js';
 import { buildMarketingSnapshot } from '../../lib/marketing/snapshot.js';
 import { readSetupConfig, isMultiPerson } from '../../lib/setup-config.js';
 import { isSkillInstalled } from '../../lib/catalog.js';
-import { readVersionCache, isCacheFresh, buildNudge } from '../../lib/version-check.js';
+import { readVersionCache, isCacheFresh, buildNudge, readAutoUpgradeMarker, shouldSuppressCliNudge } from '../../lib/version-check.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
 import { buildDriftDirective } from '../../lib/setup-drift.js';
 import { computeFeatureFreshness, freshnessSnapshotNote } from '../../lib/feature-freshness.js';
@@ -334,7 +334,13 @@ function getVersionNudge(root: string): string {
     const catalogPackNames = cache.availablePacks;
     const installedPacks = catalogPackNames.filter((name) => isSkillInstalled(projectRoot, name));
 
-    const nudge = buildNudge(installedCli, cache, installedPacks, catalogPackNames);
+    // Auto-upgrade is on by default. Suppress the redundant "run dreamcontext
+    // upgrade" line only while a background upgrade for this exact version is
+    // freshly in flight; if it failed (still behind after the window) the nudge
+    // returns so the user can act. New-packs line is unaffected.
+    const marker = readAutoUpgradeMarker(projectRoot);
+    const suppressCliNudge = shouldSuppressCliNudge(cache.latestCli, marker, process.env);
+    const nudge = buildNudge(installedCli, cache, installedPacks, catalogPackNames, { suppressCliNudge });
     return nudge ?? '';
   } catch {
     return '';
