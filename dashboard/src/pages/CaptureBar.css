@@ -39,6 +39,16 @@
   display: block;
   pointer-events: none;
 }
+/* Suppress WKWebView's native media UI (the centered play-button overlay it
+   shows when autoplay is pending/blocked) — the clip is decorative and driven
+   by JS autoplay; we never want chrome over it. */
+.cap-char::-webkit-media-controls,
+.cap-char::-webkit-media-controls-overlay-play-button,
+.cap-char::-webkit-media-controls-start-playback-button,
+.cap-char::-webkit-media-controls-panel {
+  display: none !important;
+  -webkit-appearance: none;
+}
 
 /* Capture input bar — dark frosted card, a bit wider than the notch panel, sitting
    just below it with a small gap. */

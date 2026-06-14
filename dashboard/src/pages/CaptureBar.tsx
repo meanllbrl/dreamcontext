@@ -43,6 +43,7 @@ export function CaptureBar() {
   const [enrich, setEnrich] = useState<Enrich | null>(null);
   const [mode, setMode] = useState<Mode>('idle');
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
   // Active enrichment poll timer, so a new capture cancels the previous poll.
   const pollRef = useRef<number | null>(null);
   // True while the user is interacting with the native project dropdown — its
@@ -103,6 +104,29 @@ export function CaptureBar() {
       cancelled = true;
     };
   }, [vault]);
+
+  // Force the mascot to autoplay. React sets `muted` as an ATTRIBUTE, but
+  // WKWebView's autoplay policy checks the muted PROPERTY — when it's unset the
+  // clip is treated as having audio and autoplay is blocked (you get the native
+  // play-button overlay). Set the property directly and kick play() once the
+  // clip is ready. Re-runs whenever `mode` swaps the source.
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    v.muted = true;
+    v.defaultMuted = true;
+    const tryPlay = () => {
+      const p = v.play();
+      if (p) p.catch(() => {});
+    };
+    tryPlay();
+    v.addEventListener('loadeddata', tryPlay);
+    v.addEventListener('canplay', tryPlay);
+    return () => {
+      v.removeEventListener('loadeddata', tryPlay);
+      v.removeEventListener('canplay', tryPlay);
+    };
+  }, [mode]);
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -210,12 +234,15 @@ export function CaptureBar() {
       <div className="cap-notch" data-tauri-drag-region>
         <video
           key={mode}
+          ref={videoRef}
           className="cap-char"
           src={`/api/sleepy/video?mode=${mode}`}
           autoPlay
           loop
           muted
           playsInline
+          controls={false}
+          preload="auto"
         />
       </div>
 

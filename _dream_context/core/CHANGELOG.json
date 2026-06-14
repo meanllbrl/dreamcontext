@@ -1,6 +1,14 @@
 [
   {
     "date": "2026-06-14",
+    "type": "note",
+    "scope": "quick",
+    "summary": "merhaba",
+    "description": "merhaba",
+    "breaking": false
+  },
+  {
+    "date": "2026-06-14",
     "type": "chore",
     "scope": "sleepy",
     "description": "The three mascot video source files in _dream_context/inbox/ were renamed from 'Dreamy IDLE.mp4', 'Dreamy SLEEPS.mp4', 'Dreamy SLEEPY.mp4' to 'Sleepy IDLE.mp4', 'Sleepy SLEEPS.mp4', 'Sleepy SLEEPY.mp4', reflecting the correct character name for the notch companion. The bundled Tauri resources (served by GET /api/sleepy/video?mode=) are unaffected — they come from desktop/src-tauri/resources and were already named correctly.",
