@@ -286,7 +286,7 @@ export function CaptureBar() {
           </span>
           {/* Learn (save + enrich) · Ask (one-shot Q&A) · Sleep (consolidate). */}
           <div className="cap-mode-toggle" role="radiogroup" aria-label="Mode">
-            {(['learn', 'ask', 'sleep'] as CapMode[]).map((m) => (
+            {(['ask', 'learn', 'sleep'] as CapMode[]).map((m) => (
               <button
                 key={m}
                 type="button"

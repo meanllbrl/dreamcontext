@@ -1,6 +1,79 @@
 [
   {
     "date": "2026-06-14",
+    "type": "feat",
+    "scope": "sleepy",
+    "description": "The notch capture bar gains a third mode: Sleep. A 'Sleep' button appears in the notch bar alongside Learn/Ask. Clicking it triggers dreamcontext sleep consolidation from within the desktop app: POST /api/launcher/capture with mode=sleep sends a background sleep request to the server, the mascot switches to the sleeping animation (sleeps.webp), and the textarea is replaced with a 'Sleeping…' overlay — input is locked so the user cannot send captures during consolidation. On completion (or error) the panel returns to the normal Learn state. The sleep debt threshold for showing the drowsy mascot mood was also corrected to ≥ 8 (per user spec: 'sleepy mode should require at least debt 8').",
+    "breaking": false,
+    "summary": "Sleep mode: consolidate button in notch, mascot switches to sleeping animation, textarea locked during consolidation",
+    "references": [
+      "commit:afc1088",
+      "commit:5d7fe52",
+      "file:dashboard/src/pages/CaptureBar.tsx",
+      "file:dashboard/src/pages/CaptureBar.css",
+      "file:src/server/routes/launcher.ts",
+      "task:sleepy-notch-capture"
+    ]
+  },
+  {
+    "date": "2026-06-14",
+    "type": "fix",
+    "scope": "sleepy",
+    "description": "The Ask response panel rendered Markdown via marked, but bullet list items had inherited spacing that created large visual gaps between entries. CaptureBar.css was updated to set compact margin and padding on ul/ol and li within .response-markdown, making lists in short Ask answers visually tight and scannable rather than stretched.",
+    "breaking": false,
+    "summary": "Fix Markdown list rendering in Ask response panel: li items no longer have excessive padding/margin gaps",
+    "references": [
+      "commit:79ff49e",
+      "file:dashboard/src/pages/CaptureBar.css",
+      "task:sleepy-notch-capture"
+    ]
+  },
+  {
+    "date": "2026-06-14",
+    "type": "feat",
+    "scope": "sleepy",
+    "description": "The notch capture bar now has a Learn/Ask segmented toggle above the textarea. In Learn mode (default) submitting a note saves it to the CHANGELOG and fires fire-and-forget claude enrichment — the same behavior as before. In Ask mode the note text is treated as a question: POST /api/launcher/capture with mode=ask sends the text to claude with a context-aware system prompt (vault name + project description injected), streams the reply, and shows it in the response panel with 'Thinking…' while in-flight. The server-side buildAskPrompt() constructs the question prompt separately from the learn prompt. Mode is persisted in CaptureBar state and resets on close.",
+    "breaking": false,
+    "summary": "Learn / Ask mode toggle in notch capture bar: Learn saves + enriches memory, Ask queries project context and returns a short answer",
+    "references": [
+      "commit:45a314d",
+      "file:dashboard/src/pages/CaptureBar.tsx",
+      "file:dashboard/src/pages/CaptureBar.css",
+      "file:src/server/routes/launcher.ts",
+      "task:sleepy-notch-capture"
+    ]
+  },
+  {
+    "date": "2026-06-14",
+    "type": "feat",
+    "scope": "sleepy",
+    "description": "WKWebView blocks <video> autoplay regardless of the muted property/attribute distinction (an intermediate fix via muted+play() on mount was insufficient). The mascot was switched to an animated WebP served by a new GET /api/sleepy/anim?mode= endpoint (content-type image/webp); <img> autoplays unconditionally in WKWebView. Three WebP clips (~15fps, q72) were generated from the original MP4s and bundled as Tauri resources (~2.6–2.9 MB each). Both Learn and Ask enrichment modes now invoke claude --model sonnet with medium-thinking prompts ('Think hard' keyword) for higher-quality responses. Ask prompts request concise GitHub-flavored Markdown output (a few sentences or tight bullets, no preamble); the response panel renders via marked+DOMPurify with compact styling.",
+    "breaking": false,
+    "summary": "Switch mascot from animated <video> to animated WebP (<img>) for reliable WKWebView autoplay; Learn/Ask modes use claude-sonnet with medium thinking",
+    "references": [
+      "commit:0b57126",
+      "commit:b30d311",
+      "file:dashboard/src/pages/CaptureBar.tsx",
+      "file:dashboard/src/pages/CaptureBar.css",
+      "file:src/server/routes/launcher.ts",
+      "task:sleepy-notch-capture"
+    ]
+  },
+  {
+    "date": "2026-06-14",
+    "type": "fix",
+    "scope": "sleepy",
+    "description": "Enrichment ran in a non-interactive login shell ($SHELL -lc), which skips ~/.zshrc — tools like claude that are added to PATH via rc-files (e.g. ~/.local/bin) are invisible. Switching to an interactive login shell (-ilc) ensures the full terminal PATH is available in the Finder-launched app context. stdout and stderr are now captured separately so rc-file chatter never pollutes the displayed Claude response; on failure, the real error (e.g. 'Not logged in') is surfaced in the panel instead of a bare 'Enrichment failed'.",
+    "breaking": false,
+    "summary": "Resolve 'command not found: claude' in Finder-launched app by using interactive login shell (-ilc) for enrichment spawn",
+    "references": [
+      "commit:1a69f7a",
+      "file:src/server/routes/launcher.ts",
+      "task:sleepy-notch-capture"
+    ]
+  },
+  {
+    "date": "2026-06-14",
     "type": "note",
     "scope": "quick",
     "summary": "bu proje nedir kısava",
