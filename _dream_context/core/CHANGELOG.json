@@ -1,6 +1,21 @@
 [
   {
     "date": "2026-06-14",
+    "type": "chore",
+    "scope": "sleepy",
+    "description": "Two load-bearing architectural decisions recorded for 2.memory.md (could not write directly due to session permissions). (1) Animated WebP over video: WKWebView blocks video autoplay unconditionally — the muted HTML attribute is ignored because WKWebView checks the muted DOM PROPERTY; even setting it via ref+play() on mount is insufficient. Fix: serve mascot clips as animated WebP via GET /api/sleepy/anim?mode= and render with img — img autoplays animated WebP unconditionally in WKWebView, no JS needed. Do NOT revert to video for mascot clips. (2) Desktop user-tool spawn requires -ilc: A non-interactive login shell (-lc) skips ~/.zshrc — tools added to PATH there (e.g. ~/.local/bin, where claude lives) are invisible. Use /bin/zsh -ilc so the full terminal PATH is available in a Finder-launched app. Capture stdout/stderr separately so rc-file init noise never pollutes tool output. Sources: commit:b30d311, commit:1a69f7a, file:src/server/routes/launcher.ts, task:sleepy-notch-capture",
+    "breaking": false,
+    "summary": "DECISION: animated WebP over video for WKWebView mascot; -ilc for user-tool spawn in desktop app",
+    "references": [
+      "commit:b30d311",
+      "commit:1a69f7a",
+      "file:src/server/routes/launcher.ts",
+      "file:dashboard/src/pages/CaptureBar.tsx",
+      "task:sleepy-notch-capture"
+    ]
+  },
+  {
+    "date": "2026-06-14",
     "type": "feat",
     "scope": "sleepy",
     "description": "The notch capture bar gains a third mode: Sleep. A 'Sleep' button appears in the notch bar alongside Learn/Ask. Clicking it triggers dreamcontext sleep consolidation from within the desktop app: POST /api/launcher/capture with mode=sleep sends a background sleep request to the server, the mascot switches to the sleeping animation (sleeps.webp), and the textarea is replaced with a 'Sleeping…' overlay — input is locked so the user cannot send captures during consolidation. On completion (or error) the panel returns to the normal Learn state. The sleep debt threshold for showing the drowsy mascot mood was also corrected to ≥ 8 (per user spec: 'sleepy mode should require at least debt 8').",

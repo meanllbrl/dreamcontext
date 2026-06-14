@@ -28,6 +28,12 @@ Developers lose quick thoughts, commands, and notes between coding sessions. The
 - [x] As a user, I want to configure the hotkey and toggle the feature on/off from Settings so that I have control without editing config files.
 - [ ] As a user, I want the visual design of the notch bar to feel polished and native so that it is a pleasant, non-jarring part of my workflow. (Visual design currently iterating — not yet user-accepted.)
 
+- [x] As a user, I want to ask a one-shot question about a project from the notch (Ask mode) and get Claude's answer without anything being saved to memory.
+
+- [x] As a user, I want to trigger a full dreamcontext consolidation from the notch (Sleep mode) and see the result inline so that I do not need a terminal.
+
+- [x] As a user, I want Claude's answers rendered as formatted Markdown so that code, lists, and headings are readable in the small panel.
+
 ## Acceptance Criteria
 
 - [x] Global hotkey registered via `tauri-plugin-global-shortcut`; configured in Settings (default `Alt+Cmd+S`, toggleable off).
@@ -50,8 +56,28 @@ Developers lose quick thoughts, commands, and notes between coding sessions. The
 - [x] Settings "Sleepy" section moved to the bottom (after Connections) with a BETA badge.
 - [ ] Visual design accepted by user. (Mascot layout and notch panel improved this cycle — still not formally accepted.)
 
+- [x] Mascot is an animated WebP served via GET /api/sleepy/anim?mode=idle|sleepy|sleeps; mood from GET /api/sleep debt (debt<8 -> idle, 8-9 -> sleepy, >=10 -> sleeps). WKWebView blocks video autoplay and Tauri 2.x exposes no override -- img with animated WebP autoplays unconditionally.
+
+- [x] POST /api/launcher/capture accepts mode field (learn|ask|sleep); Learn: (1) in-process CHANGELOG append via insertToJsonArray; (2) tracked claude --model sonnet run with Think hard prompt. Ask and Sleep skip the CHANGELOG write.
+
+- [x] Enrichment spawned via interactive login shell (-ilc) so ~/.zshrc PATH additions (e.g. ~/.local/bin where claude lives) are available to Finder-launched app. Stdout (Claude's reply) and stderr (shell noise) captured separately.
+
+- [x] Capture bar shows mode-appropriate spinner (Sleepy is learning / Sleepy is thinking / Sleepy is sleeping -- consolidating memory) then response rendered as Markdown via marked + DOMPurify. Errors remain plain text.
+
+- [x] Sleep mode: mascot shows sleeps animation, toggle and input locked while running, window does NOT auto-dismiss on blur (sleepingRef guards close-on-blur); poll ceiling ~15 min.
+
 ## Constraints & Decisions
 
+
+
+
+
+
+- **[2026-06-14]** Ask mode has no side effects -- no CHANGELOG write, no file changes. One-shot Q&A only. Sleep mode triggers real consolidation -- full dreamcontext sleep flow, takes minutes, uses tokens, modifies _dream_context files.
+- **[2026-06-14]** Claude runs on Sonnet + medium thinking -- enrichment, Ask, and Sleep spawns use claude --model sonnet; prompts lead with 'Think hard' (Claude Code's medium-thinking keyword).
+- **[2026-06-14]** Enrichment uses interactive login shell (-ilc) -- claude is commonly added to PATH in ~/.zshrc (e.g. ~/.local/bin) which a non-interactive login shell (-lc) does NOT source. Stdout and stderr captured separately so rc-file chatter never pollutes Claude's reply.
+- **[2026-06-14]** Mascot sleepy mood threshold is debt >= 8 (was >= 4). Idle covers debt 0-7; sleepy 8-9; sleeps >= 10.
+- **[2026-06-14]** Mascot uses animated WebP, not video -- WKWebView hard-blocks video autoplay and Tauri 2.11/wry exposes no webview autoplay setting. img with animated WebP autoplays unconditionally. Assets: idle.webp, sleepy.webp, sleeps.webp at 15fps alongside source .mp4 clips in desktop/src-tauri/sleepy/.
 - **Bare Fn key hotkeys NOT supported** — requires a native event tap not available through Tauri's shortcut plugin. Combo keys only (modifier + key).
 - **No alpha channel on mascot videos** — H.264, sRGB, black background. The black panel merges with the notch; `object-fit: cover` fills the panel edge-to-edge (full-bleed), cropping 16:9 letterbox top/bottom.
 - **Config persisted server-side** — the app's per-launch loopback port resets localStorage on every launch (new origin). So `~/.dreamcontext/sleepy.json` is the source of truth; localStorage is a per-launch cache seeded from it.
@@ -95,6 +121,9 @@ Developers lose quick thoughts, commands, and notes between coding sessions. The
 ## Changelog
 <!-- LIFO: newest entry at top -->
 
+
+### 2026-06-14 - Update
+- 2026-06-14 - Animated WebP mascot; Learn/Ask/Sleep toggle; Sonnet+thinking; Markdown rendering; list fix; claude PATH fix; debt threshold raised to 8. Mascot switched from video to animated WebP img via new GET /api/sleepy/anim?mode= route. Three-mode toggle: Learn (save+enrich), Ask (one-shot Q&A, no memory write), Sleep (full consolidation, input locked). Enrichment uses claude --model sonnet with Think hard prompt. Ask answers rendered via marked+DOMPurify. List rendering fix: .cap-md sets explicit bullets over global reset. Spawn changed from -lc to -ilc for Finder-app PATH. Stdout/stderr captured separately. Poll ceiling widened to ~15 min for Sleep mode. sleepingRef guards close-on-blur during consolidation.
 ### 2026-06-14 - Capture pipeline hardened; enrichment status UI; layout + UX polish
 - Capture guaranteed write changed from child `memory remember` CLI to in-process `insertToJsonArray` — eliminates whole class of packaged-app CLI resolution failures.
 - `claude` enrichment spawn hardened with `'error'` listener to prevent unhandled rejection crashing the server.

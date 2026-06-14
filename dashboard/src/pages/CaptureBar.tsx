@@ -55,7 +55,7 @@ export function CaptureBar() {
   const [text, setText] = useState('');
   const [status, setStatus] = useState<Status>('idle');
   const [errMsg, setErrMsg] = useState('');
-  const [capMode, setCapMode] = useState<CapMode>('learn');
+  const [capMode, setCapMode] = useState<CapMode>('ask');
   const [enrich, setEnrich] = useState<Enrich | null>(null);
   const [mode, setMode] = useState<Mode>('idle');
   const inputRef = useRef<HTMLTextAreaElement>(null);
