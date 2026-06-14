@@ -216,9 +216,15 @@
 .cap-md > :first-child { margin-top: 0; }
 .cap-md > :last-child { margin-bottom: 0; }
 .cap-md p { margin: 0 0 6px; }
-.cap-md ul,
-.cap-md ol { margin: 0 0 6px; padding-left: 18px; }
-.cap-md li { margin: 1px 0; }
+/* The global reset zeroes list-style/padding; restore them here so bullets show
+   and items aren't flush-left. */
+.cap-md ul { margin: 4px 0 6px; padding-left: 18px; list-style: disc; }
+.cap-md ol { margin: 4px 0 6px; padding-left: 18px; list-style: decimal; }
+.cap-md li { margin: 2px 0; }
+.cap-md li::marker { color: rgba(255, 255, 255, 0.45); }
+/* Loose lists (blank lines between items) wrap each item's text in <p>; collapse
+   that inner margin so items don't get big vertical gaps. */
+.cap-md li > p { margin: 0; }
 .cap-md h1,
 .cap-md h2,
 .cap-md h3,
