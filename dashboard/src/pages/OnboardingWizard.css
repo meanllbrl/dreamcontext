@@ -13,12 +13,23 @@
   position: relative;
   width: 100%;
   max-width: 480px;
+  max-height: calc(100vh - var(--space-8));
+  display: flex;
+  flex-direction: column;
   background: var(--color-bg-secondary);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   padding: var(--space-6);
   box-shadow: 0 20px 25px rgba(0, 0, 0, 0.35);
   box-sizing: border-box;
+}
+
+/* The step content scrolls; the close button, error, and nav stay put. */
+.wiz-body {
+  overflow-y: auto;
+  min-height: 0;
+  flex: 1 1 auto;
+  padding-right: var(--space-2);
 }
 
 .wiz-close {
@@ -287,4 +298,13 @@
 .wiz-check {
   color: var(--color-accent);
   font-size: 1.05em;
+}
+
+/* Keep selectable cards compact: clamp long pack descriptions to 2 lines so the
+   list stays scannable and the step fits without a giant scroll. */
+.wiz-select .wiz-hint {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }

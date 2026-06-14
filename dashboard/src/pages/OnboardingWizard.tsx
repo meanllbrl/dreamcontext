@@ -419,7 +419,7 @@ export function OnboardingWizard({ onClose, onReady }: Props) {
       <div className="wiz-modal" onClick={(e) => e.stopPropagation()}>
         <button type="button" className="wiz-close" onClick={onClose} aria-label="Close">×</button>
 
-        {body()}
+        <div className="wiz-body">{body()}</div>
 
         {error && <div className="wiz-error">{error}</div>}
 
