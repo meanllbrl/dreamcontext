@@ -32,7 +32,10 @@ const execFileAsync = promisify(execFile);
  */
 interface CaptureRun {
   state: 'running' | 'done' | 'error';
+  /** User-facing: Claude's stdout response (live), or an error detail on failure. */
   output: string;
+  /** Captured separately; surfaced only if the run fails (keeps the response clean). */
+  stderr: string;
   startedAt: number;
   endedAt?: number;
 }
@@ -609,37 +612,50 @@ export async function handleLauncherCapture(
   }
 
   // (2) Best-effort enrichment via a headless claude run, TRACKED so the capture
-  // bar can show a live spinner + Claude's response. Login shell resolves
-  // `claude` from the user's PATH; the prompt is passed as the positional `$0`
-  // (double-quoted in the script) so the note is never shell-interpreted.
+  // bar can show a live spinner + Claude's response. The prompt is passed as the
+  // positional `$0` (double-quoted in the script) so the note is never
+  // shell-interpreted.
+  //
+  // We use an INTERACTIVE login shell (`-ilc`), not just login (`-lc`): tools
+  // like claude are often added to PATH in `~/.zshrc` (e.g. `~/.local/bin`),
+  // which a non-interactive login shell does NOT source — so `-lc` yields
+  // "command not found: claude" for a Finder-launched app. `-ilc` mirrors a real
+  // terminal's PATH. stdout (Claude's reply) and stderr (shell/init noise) are
+  // captured separately so rc-file chatter never pollutes the shown response.
   pruneCaptureRuns();
   const captureId = randomUUID();
-  const run: CaptureRun = { state: 'running', output: '', startedAt: Date.now() };
+  const run: CaptureRun = { state: 'running', output: '', stderr: '', startedAt: Date.now() };
   captureRuns.set(captureId, run);
   try {
     const shell = process.env.SHELL || '/bin/zsh';
-    const child = spawn(shell, ['-lc', 'exec claude -p "$0"', buildCapturePrompt(text)], {
+    const child = spawn(shell, ['-ilc', 'exec claude -p "$0"', buildCapturePrompt(text)], {
       cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
-    const cap = (chunk: Buffer) => {
-      // Keep only the tail so a chatty run can't grow memory unbounded.
+    // Keep only the tail so a chatty run can't grow memory unbounded.
+    child.stdout?.on('data', (chunk: Buffer) => {
       run.output = (run.output + chunk.toString('utf-8')).slice(-8000);
-    };
-    child.stdout?.on('data', cap);
-    child.stderr?.on('data', cap);
+    });
+    child.stderr?.on('data', (chunk: Buffer) => {
+      run.stderr = (run.stderr + chunk.toString('utf-8')).slice(-4000);
+    });
     child.on('error', (err) => {
       // claude not on PATH / spawn failure — note is already saved; report it.
       run.state = 'error';
-      run.output = run.output || `Couldn't start claude: ${err.message}`;
+      run.output = `Couldn't start claude: ${err.message}`;
       run.endedAt = Date.now();
     });
     child.on('close', (code) => {
-      if (run.state === 'running') {
-        run.state = code === 0 ? 'done' : 'error';
-        if (code !== 0 && !run.output) run.output = `claude exited with code ${code}`;
-        run.endedAt = Date.now();
+      if (run.state !== 'running') return;
+      if (code === 0) {
+        run.state = 'done';
+      } else {
+        // Failed: show stdout if any, else the stderr tail (e.g. "command not
+        // found: claude"), else the exit code.
+        run.state = 'error';
+        if (!run.output.trim()) run.output = run.stderr.trim() || `claude exited with code ${code}`;
       }
+      run.endedAt = Date.now();
     });
   } catch (err) {
     run.state = 'error';
