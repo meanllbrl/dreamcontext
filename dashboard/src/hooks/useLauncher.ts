@@ -152,3 +152,122 @@ export interface FolderProbe {
 export async function probeFolder(path: string): Promise<FolderProbe> {
   return api.get<FolderProbe>(`/launcher/detect?path=${encodeURIComponent(path)}`);
 }
+
+// ─── Project status (green / yellow / red) ────────────────────────────────────
+
+/** Per-vault freshness for the launcher cards. */
+export interface VaultStatus {
+  name: string;
+  path: string;
+  /** Folder still on disk? RED + removable when false. */
+  exists: boolean;
+  /** The project's recorded setup version. */
+  setupVersion: string;
+  /** The running CLI version `update` would bring the project up to. */
+  latestVersion: string;
+  /** Folder exists AND setupVersion is behind latestVersion → YELLOW + Update. */
+  needsUpdate: boolean;
+  /** Federation read gate — peers may recall this vault when true. */
+  shareable: boolean;
+}
+
+interface StatusResponse {
+  vaults: VaultStatus[];
+  latestVersion: string;
+}
+
+/** Per-project launcher status (exists / needs-update / shareable). */
+export function useLauncherStatus() {
+  return useQuery({
+    queryKey: ['launcher-status'],
+    queryFn: () => api.get<StatusResponse>('/launcher/status'),
+  });
+}
+
+/** Run `dreamcontext update` inside a project, then refresh status + graph. */
+export function useUpdateProject() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) =>
+      api.post<{ ok: true; status: VaultStatus }>('/launcher/update', { name }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['launcher-status'] });
+      queryClient.invalidateQueries({ queryKey: ['launcher-federation-graph'] });
+    },
+  });
+}
+
+/** Remove a (typically deleted) project from the global registry. */
+export function useUnregisterVault() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) =>
+      api.post<{ removed: boolean; vaults: Vault[] }>('/launcher/unregister', { name }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['vaults'] });
+      queryClient.invalidateQueries({ queryKey: ['launcher-status'] });
+      queryClient.invalidateQueries({ queryKey: ['launcher-federation-graph'] });
+    },
+  });
+}
+
+// ─── Federation graph (cross-vault "reads" network) ───────────────────────────
+
+/** A directed "reads" edge: `source` reads `target`. */
+export interface FederationEdge {
+  source: string;
+  target: string;
+  /** Target has opted into being read (`shareable`); inert edge when false. */
+  active: boolean;
+}
+
+export interface FederationGraph {
+  nodes: VaultStatus[];
+  edges: FederationEdge[];
+  latestVersion: string;
+}
+
+/** The cross-vault relationship network for the launcher graph. */
+export function useFederationGraph() {
+  return useQuery({
+    queryKey: ['launcher-federation-graph'],
+    queryFn: () => api.get<FederationGraph>('/launcher/federation-graph'),
+  });
+}
+
+/** Create a "reads" edge: `from` reads `to` (stored as an `out` connection on `from`). */
+export function useCreateConnection() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: { from: string; to: string }) =>
+      api.post<{ ok: true }>('/launcher/connection', payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['launcher-federation-graph'] });
+    },
+  });
+}
+
+/** Remove the "reads" edge from `from` to `to`. */
+export function useRemoveLauncherConnection() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: { from: string; to: string }) =>
+      api.post<{ ok: true; removed: boolean }>('/launcher/connection/remove', payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['launcher-federation-graph'] });
+    },
+  });
+}
+
+/** Flip a vault's `shareable` read gate from the launcher graph. */
+export function useToggleShareable() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: { name: string; shareable: boolean }) =>
+      api.post<{ ok: true }>('/launcher/shareable', payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['launcher-federation-graph'] });
+      queryClient.invalidateQueries({ queryKey: ['launcher-status'] });
+    },
+  });
+}

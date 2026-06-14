@@ -1,0 +1,166 @@
+{
+  "debt": 8,
+  "last_sleep": "2026-06-08",
+  "last_sleep_summary": "Previous consolidation cycle",
+  "sleep_started_at": "2026-06-10T12:00:00.000Z",
+  "sessions_since_last_sleep": 6,
+  "sessions": [
+    {
+      "session_id": "s-post-2",
+      "transcript_path": null,
+      "stopped_at": "2026-06-10T14:00:00.000Z",
+      "last_assistant_message": "Wired the new route handler.",
+      "change_count": 2,
+      "tool_count": 6,
+      "score": 1,
+      "task_slugs": ["routing"]
+    },
+    {
+      "session_id": "s-post-1",
+      "transcript_path": null,
+      "stopped_at": "2026-06-10T13:00:00.000Z",
+      "last_assistant_message": "Refactored the auth middleware across 9 files.",
+      "change_count": 9,
+      "tool_count": 22,
+      "score": 3,
+      "task_slugs": ["auth-refactor"]
+    },
+    {
+      "session_id": "s-dense",
+      "transcript_path": null,
+      "stopped_at": "2026-06-10T11:00:00.000Z",
+      "last_assistant_message": "Decided to move from REST to GraphQL for the public API after a long design discussion. No code edits yet.",
+      "change_count": 0,
+      "tool_count": 5,
+      "score": 1,
+      "task_slugs": ["api-design"]
+    },
+    {
+      "session_id": "s-pre-2",
+      "transcript_path": null,
+      "stopped_at": "2026-06-10T10:00:00.000Z",
+      "last_assistant_message": "Small copy tweak.",
+      "change_count": 1,
+      "tool_count": 3,
+      "score": 1,
+      "task_slugs": ["copy"]
+    },
+    {
+      "session_id": "s-pre-1",
+      "transcript_path": null,
+      "stopped_at": "2026-06-10T09:00:00.000Z",
+      "last_assistant_message": "Added pagination to the tasks endpoint.",
+      "change_count": 5,
+      "tool_count": 18,
+      "score": 2,
+      "task_slugs": ["pagination"]
+    }
+  ],
+  "bookmarks": [
+    {
+      "id": "bm-1",
+      "message": "Switched from REST to GraphQL for the public API",
+      "salience": 3,
+      "created_at": "2026-06-10T11:05:00.000Z",
+      "session_id": "s-dense",
+      "task_slug": "api-design"
+    },
+    {
+      "id": "bm-2",
+      "message": "User requires rate limiting on all auth endpoints",
+      "salience": 2,
+      "created_at": "2026-06-10T10:30:00.000Z",
+      "session_id": "s-pre-1",
+      "task_slug": "auth-refactor"
+    },
+    {
+      "id": "bm-3",
+      "message": "User requires rate limiting on all auth endpoints",
+      "salience": 2,
+      "created_at": "2026-06-10T10:31:00.000Z",
+      "session_id": "s-pre-1",
+      "task_slug": "auth-refactor"
+    },
+    {
+      "id": "bm-4",
+      "message": "Chose CSS modules over styled-components",
+      "salience": 1,
+      "created_at": "2026-06-10T09:15:00.000Z",
+      "session_id": "s-pre-1",
+      "task_slug": "copy"
+    },
+    {
+      "id": "bm-5",
+      "message": "Chose CSS modules over styled-components",
+      "salience": 1,
+      "created_at": "2026-06-10T09:16:00.000Z",
+      "session_id": "s-pre-1",
+      "task_slug": "copy"
+    },
+    {
+      "id": "bm-6",
+      "message": "Pagination defaults to 20 items per page",
+      "salience": 1,
+      "created_at": "2026-06-10T09:20:00.000Z",
+      "session_id": "s-pre-1",
+      "task_slug": "pagination"
+    },
+    {
+      "id": "bm-7",
+      "message": "Post-epoch: started the routing rework",
+      "salience": 1,
+      "created_at": "2026-06-10T13:30:00.000Z",
+      "session_id": "s-post-1",
+      "task_slug": "routing"
+    },
+    {
+      "id": "bm-8",
+      "message": "Post-epoch: routing handler shipped",
+      "salience": 1,
+      "created_at": "2026-06-10T14:05:00.000Z",
+      "session_id": "s-post-2",
+      "task_slug": "routing"
+    }
+  ],
+  "triggers": [
+    {
+      "id": "trg-expired",
+      "when": "next time you touch auth",
+      "remind": "add rate limiting",
+      "source": "bm-2",
+      "created_at": "2026-06-01T00:00:00.000Z",
+      "fired_count": 2,
+      "max_fires": 2
+    },
+    {
+      "id": "trg-live",
+      "when": "next time you touch the API schema",
+      "remind": "consider the GraphQL migration",
+      "source": "bm-1",
+      "created_at": "2026-06-10T11:06:00.000Z",
+      "fired_count": 0,
+      "max_fires": 3
+    }
+  ],
+  "knowledge_access": {},
+  "dashboard_changes": [
+    {
+      "timestamp": "2026-06-10T09:05:00.000Z",
+      "entity": "task",
+      "action": "update",
+      "target": "pagination",
+      "summary": "pre-epoch dashboard edit"
+    },
+    {
+      "timestamp": "2026-06-10T13:45:00.000Z",
+      "entity": "task",
+      "action": "update",
+      "target": "routing",
+      "summary": "post-epoch dashboard edit"
+    }
+  ],
+  "compaction_log": [],
+  "recall_mode": "haiku",
+  "consolidation_depth": null,
+  "pendingMigrationNotices": []
+}

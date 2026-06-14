@@ -1,0 +1,15 @@
+{
+  "platforms": ["claude"],
+  "packs": [],
+  "multiProduct": false,
+  "setupVersion": 1,
+  "people": ["Mehmet Nuraydin", "Ada Lovelace"],
+  "commits": [
+    { "hash": "a1", "author": "Mehmet Nuraydin", "subject": "feat(auth): refactor middleware" },
+    { "hash": "a2", "author": "Ada Lovelace", "subject": "feat(api): scaffold GraphQL gateway" },
+    { "hash": "a3", "author": "Mehmet Nuraydin", "subject": "feat(tasks): paginate endpoint" },
+    { "hash": "a4", "author": "Ada Lovelace", "subject": "fix(routing): handler 404" },
+    { "hash": "bot1", "author": "github-actions[bot]", "subject": "chore: release v0.1.0" },
+    { "hash": "bot2", "author": "dependabot[bot]", "subject": "build(deps): bump vitest" }
+  ]
+}

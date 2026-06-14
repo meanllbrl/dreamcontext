@@ -13,8 +13,11 @@ export interface SalientMoment {
 //   3. explicit decisions → salience 2 (an architectural choice was made)
 // EN + TR vocabulary, word-boundary anchored to avoid substring false positives.
 
-const CORRECTION_RE = /\b(no|actually|wrong|instead|hayır|yanlış|değil)\b/i;
-const DECISION_RE = /\b(decided|chose|switched to|will use|karar|seçtik)\b/i;
+// Exported (WS-DEBT) so the Stop/SessionStart substance scorer can reuse the
+// SAME decision/correction vocabulary that auto-salience uses — one source of
+// truth for "this line carries a decision/correction signal".
+export const CORRECTION_RE = /\b(no|actually|wrong|instead|hayır|yanlış|değil)\b/i;
+export const DECISION_RE = /\b(decided|chose|switched to|will use|karar|seçtik)\b/i;
 
 const MAX_MOMENTS = 5;
 const MAX_MESSAGE_CHARS = 200;

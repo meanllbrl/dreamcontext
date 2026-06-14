@@ -4,6 +4,8 @@
   color: var(--color-text);
   padding: var(--space-4);
   box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
 }
 
 .launcher-bar {
@@ -123,6 +125,77 @@
   border-radius: 50%;
   background: #4ade80;
   flex: 0 0 auto;
+}
+
+.launcher-card-dot--ok {
+  background: #34d399;
+}
+
+.launcher-card-dot--stale {
+  background: #fbbf24;
+  box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.18);
+}
+
+.launcher-card-dot--gone {
+  background: #f87171;
+}
+
+.launcher-card--gone {
+  opacity: 0.7;
+}
+
+.launcher-card-warn {
+  font-size: var(--font-size-xs);
+  color: #f87171;
+}
+
+.launcher-card-warn--stale {
+  color: #d99a1c;
+}
+
+.launcher-card-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin-top: auto;
+}
+
+.launcher-link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.launcher-btn-active {
+  border-color: var(--color-accent);
+  color: var(--color-text);
+}
+
+.launcher-viewtoggle {
+  display: inline-flex;
+  gap: var(--space-1, 4px);
+}
+
+.launcher-btn-update {
+  border-color: #d99a1c;
+  color: #d99a1c;
+}
+
+.launcher-btn-update:hover:not(:disabled) {
+  background: rgba(251, 191, 36, 0.12);
+}
+
+.launcher-btn-remove {
+  font-size: var(--font-size-xs);
+  padding: var(--space-1, 4px) var(--space-2);
+  color: var(--color-text-secondary);
+}
+
+.launcher-btn-remove:hover:not(:disabled) {
+  color: #f87171;
+  border-color: #f87171;
 }
 
 .launcher-card-name {

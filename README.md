@@ -19,8 +19,10 @@
   <a href="#skills">Skills</a> &nbsp;&middot;&nbsp;
   <a href="#staying-up-to-date">Updating</a> &nbsp;&middot;&nbsp;
   <a href="#dashboard">Dashboard</a> &nbsp;&middot;&nbsp;
+  <a href="#desktop-app">Desktop App</a> &nbsp;&middot;&nbsp;
   <a href="#council">Council</a> &nbsp;&middot;&nbsp;
   <a href="#memory-recall">Memory Recall</a> &nbsp;&middot;&nbsp;
+  <a href="#federation">Federation</a> &nbsp;&middot;&nbsp;
   <a href="#commands">Commands</a> &nbsp;&middot;&nbsp;
   <a href="DEEP-DIVE.md">Deep Dive</a>
 </p>
@@ -139,7 +141,7 @@ flowchart LR
 curl -fsSL https://cdn.jsdelivr.net/npm/dreamcontext/install.sh | sh
 ```
 
-> Served from the published npm package via CDN — works with a private repo, no GitHub access needed.
+> Served from the published npm package via CDN — works with a private repo, no GitHub access needed. On macOS this also installs the optional [desktop app](#desktop-app) into `~/Applications` (skip with `DREAMCONTEXT_INSTALL_NO_APP=1`).
 
 **Manual install (npm):**
 
@@ -214,7 +216,9 @@ your-project/
 │   │   ├── dreamcontext-explore.md
 │   │   ├── sleep-tasks.md       # RemSleep specialists —
 │   │   ├── sleep-state.md       #   the agent fans out to
-│   │   └── sleep-product.md     #   these in parallel
+│   │   ├── sleep-product.md     #   these three in parallel
+│   │   ├── sleep-federation.md  # conditional: when peer connections exist
+│   │   └── sleep-migration.md   # conditional: when a migration is pending
 │   └── settings.json           # 7 hooks (see Commands → System)
 ```
 
@@ -357,6 +361,26 @@ It also ships a built-in **“What is this?”** explainer page — a full landi
 
 Light and dark mode with system preference detection. Brand palette: purple-to-magenta gradient. Visby CF font with system font fallback.
 
+## Desktop App
+
+> **macOS beta.** A native **Tauri 2** app that wraps the same dashboard server, so you manage every project from one window instead of a localhost tab per repo. Ships via the desktop release (and the macOS one-line installer), not the npm package.
+
+```bash
+dreamcontext app install      # Install to ~/Applications (no admin, no quarantine prompt)
+dreamcontext app update       # Update the installed app to the latest release
+dreamcontext app status       # Show installed app version and state
+```
+
+- **Multi-vault launcher.** The app lists every registered [vault](#federation) and opens each project in its **own window** — multi-vault is multi-window over one shared Node server, with each window pinned to its vault via a request header.
+- **In-app onboarding, no terminal.** A quiz-style wizard creates a brand-new project (native folder picker) or initializes an existing folder, scaffolds `_dream_context/`, runs `setup`, and best-effort installs the global CLI. It's deterministic and LLM-free; the success screen hands you a prompt to paste into Claude Code for the rich enrichment pass.
+- **Sleepy — notch quick-capture _(beta)_.** A global-hotkey companion that drops a transparent notch panel over whatever you're doing, with an animated mascot whose mood follows your sleep debt. Pick a vault, type a thought, and choose a mode:
+  - **Learn** — saves the note to project memory, then enriches it.
+  - **Ask** — one-shot Q&A about the project; nothing is saved.
+  - **Sleep** — triggers a full consolidation cycle for that vault from the notch.
+- **Continuous updates without Apple notarization.** The whole delivery path is CLI/curl-driven, so Gatekeeper's notarization check never fires (ad-hoc signing satisfies Apple Silicon). The app prefers your globally-installed, auto-upgrading CLI over its bundled copy, so ~95% of changes ride the normal CLI upgrade with no app rebuild. Downloaded artifacts require a matching `.sha256` or the install refuses.
+
+> The desktop app is a working local beta — not yet Apple-signed/notarized, so first launch may need a right-click → Open. Windows/Linux are nice-to-have for later.
+
 ## Council
 
 **Multi-persona debates for hard decisions.** When a question is too load-bearing for a single model pass — architecture calls, hiring reviews, risk-heavy migrations, brand critiques — a council lets you convene N personas, run them through N rounds of structured deliberation, and synthesize a verdict that cites the contributing voices.
@@ -425,6 +449,42 @@ dreamcontext memory status
 Hook injection is **ON by default**: top hits are auto-surfaced to the agent on every non-trivial user prompt via the UserPromptSubmit hook. Opt out with `DREAMCONTEXT_MEMORY_HOOK=0` if you want raw prompts without context augmentation.
 
 **Recent CHANGELOG in the snapshot is tiered**: top 3 entries detailed (summary + ~300 char body), next 10 titles-only under an "Older" subheading. Everything older still lives in `CHANGELOG.json` and is reachable through `memory recall --types changelog`.
+
+## Federation
+
+Most people end up with more than one dreamcontext project. **Federation** lets those projects discover each other, recall across each other, and quietly share consolidated knowledge — all opt-in, all local, no server in the middle.
+
+It starts with a **global vault registry** — every project you register is a *vault* the CLI (and the [desktop app](#desktop-app)) can address by name.
+
+```bash
+dreamcontext vaults add <name> <path>     # Register a project directory as a vault
+dreamcontext vaults discover [root]        # Find every _dream_context/ project under a tree
+dreamcontext vaults discover ~/projects --register  # …and register the new ones (idempotent)
+dreamcontext vaults list                   # List all registered vaults
+dreamcontext vaults remove <name>          # Unregister a vault
+```
+
+**Cross-vault recall.** Point a recall at other vaults and it spans them, returning hits tagged with their source vault. Only vaults you've marked shareable are reachable.
+
+```bash
+dreamcontext config shareable on                      # Allow this vault to be recalled by peers
+dreamcontext memory recall "<query>" --vault other-project   # Also search a named vault (repeatable)
+dreamcontext memory recall "<query>" --connected             # Span this vault + its out/both connections
+dreamcontext memory recall "<query>" --all-vaults            # Span this vault + every shareable vault
+```
+
+**Connections + the sleep-driven digest inbox.** Connect two vaults and, during sleep consolidation, a conditional `sleep-federation` specialist pushes a recall-filtered **digest** of what changed into each consenting peer's inbox. The receiving project ingests those entries as first-class knowledge on its next drain — so a decision made in one repo can surface in a sibling repo without copy-paste.
+
+```bash
+dreamcontext connect <vault> --direction both --topics api,auth   # Connect to a peer (out | in | both)
+dreamcontext connections                  # Inspect this vault's federation connections
+dreamcontext disconnect <vault>           # Remove a connection
+dreamcontext federation status            # Inbox counts + per-connection sync watermarks
+dreamcontext federation sync --dry-run    # Preview the digests a sleep cycle would push
+dreamcontext federation drain             # Ingest pending inbox entries as knowledge, then consume them
+```
+
+Federation is **read-only and consent-gated by construction**: the browser-reachable dashboard route can only *preview* digests, never write into a peer; all writes live in the CLI (run by the sleep specialist), where the consent rule and watermark advance stay in one auditable place. Every ingested entry carries its provenance (origin vault, entry id, source timestamp). Dead or unreachable peers are marked stale and skipped, warned once.
 
 ## Commands
 
@@ -503,7 +563,10 @@ dreamcontext tasks sync-hooks install               # best-effort post-commit/pr
 ```bash
 dreamcontext features create <name>       # Create a feature PRD
 dreamcontext features insert <name> <section> <content>
+dreamcontext features doctor              # Audit PRD freshness (stale / orphaned / dangling refs)
 ```
+
+Feature PRDs track freshness the same way knowledge does. `features doctor` reports which PRDs have gone stale, which have no linked task or release, and which reference things that no longer exist — so the sleep cycle (and you) can keep them in step with the code.
 
 ### Knowledge
 
@@ -523,6 +586,9 @@ Set `pinned: true` in frontmatter to auto-load a knowledge file in every snapsho
 dreamcontext memory recall <query...>                # BM25 search over knowledge + features + tasks + memory + changelog
 dreamcontext memory recall <query...> --top 10       # Number of hits (1-50, default 5)
 dreamcontext memory recall <query...> --types knowledge,task,changelog
+dreamcontext memory recall <query...> --vault other    # Also search a named vault (repeatable)
+dreamcontext memory recall <query...> --connected      # Span this vault + its connected peers
+dreamcontext memory recall <query...> --all-vaults     # Span every shareable registered vault
 dreamcontext memory recall <query...> --json         # Machine-readable
 dreamcontext memory recall <query...> --plain        # No ANSI colors
 dreamcontext memory remember "<text>"                # Writes a CHANGELOG entry (type=note, scope=quick by default)
@@ -605,6 +671,33 @@ dreamcontext council promote --to <knowledge-slug>    # Promote verdict to knowl
 
 See the [Council](#council) section above for the full workflow.
 
+### Vaults & Federation
+
+```bash
+dreamcontext vaults add <name> <path>    # Register a project as a vault
+dreamcontext vaults discover [root]      # Find every _dream_context/ project under a tree
+dreamcontext vaults discover [root] --register  # …and register the new ones
+dreamcontext vaults list                 # List registered vaults
+dreamcontext vaults remove <name>        # Unregister a vault
+dreamcontext config shareable <on|off>   # Allow/deny this vault being recalled by peers
+dreamcontext connect <vault> [--direction out|in|both] [--topics a,b]  # Connect to a peer
+dreamcontext connections                 # Inspect federation connections
+dreamcontext disconnect <vault>          # Remove a connection
+dreamcontext federation status           # Inbox counts + per-connection sync watermarks
+dreamcontext federation sync [--dry-run] # Push (or preview) digests into consenting peers
+dreamcontext federation drain            # Ingest pending inbox entries as knowledge
+```
+
+See the [Federation](#federation) section above for the full workflow.
+
+### Desktop App (macOS)
+
+```bash
+dreamcontext app install                 # Install the desktop app to ~/Applications
+dreamcontext app update                  # Update the installed app
+dreamcontext app status                  # Show installed app version and state
+```
+
 ### Dashboard
 
 ```bash
@@ -647,8 +740,9 @@ dreamcontext install-claude-md           # Legacy alias: CLAUDE.md only
 
 ## Works With
 
-- **Claude Code**: full support via skill, 5 core sub-agents (initializer, explore, and the three RemSleep specialists — sleep-tasks, sleep-state, sleep-product), 7 hooks, plus optional pack sub-agents (council persona/synthesizer, multi-review specialists, goal-skill orchestrators)
+- **Claude Code**: full support via skill, core sub-agents (initializer, explore, the three primary RemSleep specialists — sleep-tasks, sleep-state, sleep-product — plus conditional sleep-federation and sleep-migration specialists), 7 hooks, plus optional pack sub-agents (council persona/synthesizer, multi-review specialists, goal-skill orchestrators)
 - **Codex**: project-level skills (`.agents/skills`), managed `AGENTS.md`, native `.codex/agents/*.toml`, and managed `.codex/config.toml` hooks (best-effort parity where event semantics differ)
+- **Desktop app (macOS beta)**: native Tauri 2 multi-vault launcher with in-app onboarding and the Sleepy notch quick-capture companion — wraps the same dashboard server (`dreamcontext app install`)
 - **Web Dashboard**: local UI with Kanban, Core editor, Knowledge, Features, Brain graph, Sleep tracker, and Council Hall (ships in the package)
 - **Obsidian**: `_dream_context/` can be opened as an Obsidian vault; the directory is scaffolded with curated vault settings at `dreamcontext init` time
 

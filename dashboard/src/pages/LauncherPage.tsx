@@ -1,16 +1,35 @@
-import { useMemo, useState } from 'react';
-import { useVaults, type Vault } from '../hooks/useConnections';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  useLauncherStatus,
+  useUpdateProject,
+  useUnregisterVault,
+  type VaultStatus,
+} from '../hooks/useLauncher';
 import { openVaultWindow } from '../lib/desktop';
 import { OnboardingWizard } from './OnboardingWizard';
+import { LauncherGraph } from './LauncherGraph';
 import './LauncherPage.css';
 
+type View = 'cards' | 'graph';
+
 export function LauncherPage() {
-  const { data, isLoading, isError, error } = useVaults();
+  const { data, isLoading, isError, error } = useLauncherStatus();
+  const updateProject = useUpdateProject();
+  const unregister = useUnregisterVault();
   const [search, setSearch] = useState('');
   const [actionError, setActionError] = useState<string | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
+  const [view, setView] = useState<View>('cards');
 
   const vaults = data?.vaults ?? [];
+
+  // Default to the network graph once there are relationships to see, but never
+  // override an explicit user choice (tracked once vaults first load).
+  const [userPickedView, setUserPickedView] = useState(false);
+  useEffect(() => {
+    if (!userPickedView && vaults.length >= 2) setView('graph');
+  }, [vaults.length, userPickedView]);
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return vaults;
@@ -28,19 +47,62 @@ export function LauncherPage() {
     }
   }
 
+  function handleUpdate(name: string) {
+    setActionError(null);
+    updateProject.mutate(name, {
+      onError: (err) => setActionError(err instanceof Error ? err.message : String(err)),
+    });
+  }
+
+  function handleRemove(v: VaultStatus) {
+    const msg = v.exists
+      ? `Remove “${v.name}” from the launcher? (the folder stays on disk)`
+      : `“${v.name}” folder is gone. Remove it from the launcher?`;
+    if (!window.confirm(msg)) return;
+    setActionError(null);
+    unregister.mutate(v.name, {
+      onError: (err) => setActionError(err instanceof Error ? err.message : String(err)),
+    });
+  }
+
+  function pickView(v: View) {
+    setUserPickedView(true);
+    setView(v);
+  }
+
   return (
     <div className="launcher">
       <header className="launcher-bar">
         <h1 className="launcher-title">Launcher · all projects</h1>
         <div className="launcher-actions">
-          <input
-            type="search"
-            className="launcher-search"
-            placeholder="Search projects…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            aria-label="Search projects"
-          />
+          {vaults.length >= 2 && (
+            <div className="launcher-viewtoggle" role="group" aria-label="View">
+              <button
+                type="button"
+                className={`launcher-btn${view === 'cards' ? ' launcher-btn-active' : ''}`}
+                onClick={() => pickView('cards')}
+              >
+                Cards
+              </button>
+              <button
+                type="button"
+                className={`launcher-btn${view === 'graph' ? ' launcher-btn-active' : ''}`}
+                onClick={() => pickView('graph')}
+              >
+                Network
+              </button>
+            </div>
+          )}
+          {view === 'cards' && (
+            <input
+              type="search"
+              className="launcher-search"
+              placeholder="Search projects…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              aria-label="Search projects"
+            />
+          )}
           <button
             type="button"
             className="launcher-btn launcher-btn-primary"
@@ -60,31 +122,92 @@ export function LauncherPage() {
         </div>
       )}
 
-      {!isLoading && !isError && filtered.length === 0 && (
-        <div className="launcher-empty">
-          {vaults.length === 0
-            ? 'No projects yet. Use “+ Add Project” to create one or set up an existing folder.'
-            : 'No projects match your search.'}
-        </div>
-      )}
+      {!isLoading && !isError && view === 'graph' && <LauncherGraph />}
 
-      <div className="launcher-grid">
-        {filtered.map((vault: Vault) => (
-          <button
-            key={vault.name}
-            type="button"
-            className="launcher-card"
-            onClick={() => openVault(vault.name)}
-          >
-            <div className="launcher-card-head">
-              <span className="launcher-card-dot" aria-hidden />
-              <span className="launcher-card-name">{vault.name}</span>
+      {!isLoading && !isError && view === 'cards' && (
+        <>
+          {filtered.length === 0 && (
+            <div className="launcher-empty">
+              {vaults.length === 0
+                ? 'No projects yet. Use “+ Add Project” to create one or set up an existing folder.'
+                : 'No projects match your search.'}
             </div>
-            <div className="launcher-card-path">{vault.path}</div>
-            <div className="launcher-card-open">Open →</div>
-          </button>
-        ))}
-      </div>
+          )}
+
+          <div className="launcher-grid">
+            {filtered.map((vault) => {
+              const dotClass = !vault.exists
+                ? 'launcher-card-dot--gone'
+                : vault.needsUpdate
+                  ? 'launcher-card-dot--stale'
+                  : 'launcher-card-dot--ok';
+              return (
+                <div
+                  key={vault.name}
+                  className={`launcher-card${vault.exists ? '' : ' launcher-card--gone'}`}
+                >
+                  <div className="launcher-card-head">
+                    <span
+                      className={`launcher-card-dot ${dotClass}`}
+                      title={
+                        !vault.exists
+                          ? 'Folder is gone'
+                          : vault.needsUpdate
+                            ? `Update available: v${vault.setupVersion} → v${vault.latestVersion}`
+                            : 'Up to date'
+                      }
+                      aria-hidden
+                    />
+                    <span className="launcher-card-name">{vault.name}</span>
+                  </div>
+                  <div className="launcher-card-path">{vault.path}</div>
+
+                  {!vault.exists && (
+                    <div className="launcher-card-warn">Folder no longer exists on disk.</div>
+                  )}
+                  {vault.exists && vault.needsUpdate && (
+                    <div className="launcher-card-warn launcher-card-warn--stale">
+                      Skills out of date — v{vault.setupVersion} → v{vault.latestVersion}.
+                    </div>
+                  )}
+
+                  <div className="launcher-card-actions">
+                    {vault.exists && (
+                      <button
+                        type="button"
+                        className="launcher-card-open launcher-link-btn"
+                        onClick={() => openVault(vault.name)}
+                      >
+                        Open →
+                      </button>
+                    )}
+                    {vault.exists && vault.needsUpdate && (
+                      <button
+                        type="button"
+                        className="launcher-btn launcher-btn-update"
+                        disabled={updateProject.isPending}
+                        onClick={() => handleUpdate(vault.name)}
+                      >
+                        {updateProject.isPending && updateProject.variables === vault.name
+                          ? 'Updating…'
+                          : 'Update'}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="launcher-btn launcher-btn-remove"
+                      disabled={unregister.isPending}
+                      onClick={() => handleRemove(vault)}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
 
       {wizardOpen && (
         <OnboardingWizard

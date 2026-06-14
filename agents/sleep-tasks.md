@@ -100,7 +100,7 @@ Untracked, genuinely-separate work is invisible to future sessions — always li
 
 ### 2.5. Person attribution (multi-person projects only)
 
-When the project's `.config.json` `people` array has **>1 entry**, the person responsible for a task's progress this cycle must be recorded as a `person:<slug>` tag in the task's frontmatter `tags` array. Slug is kebab-case matching the roster (e.g., `person:mehmet`, `person:ada`). Determine attribution from the same signals sleep-state uses for Pass B.5 (git `%an` on the commits, self-identification in the session transcript).
+When the project's `.config.json` `people` array has **>1 entry**, the person responsible for a task's progress this cycle must be recorded as a `person:<slug>` tag in the task's frontmatter `tags` array. Slug is kebab-case matching the roster (e.g., `person:mehmet`, `person:ada`). Determine attribution from the same signals sleep-state uses for Pass B.5 (git `%an` on the commits, self-identification in the session transcript), applying the **shared bot-filter** — drop any author whose kebab-case slug contains `github-actions` or `dependabot` (the `BOT_SLUG_FRAGMENTS` list in `src/lib/attribution.ts`, consumed by `attributeByPerson`). Never tag a task `person:github-actions`.
 
 ```bash
 # Read the current roster
@@ -194,6 +194,8 @@ Never silently delete a task and never auto-complete — `in_review` with an exp
 - Staleness sweep: <slug> in_review ("stale 21+ days, appears abandoned"), <slug> priority high→medium (untouched 30d), 2 tasks left as-is (genuinely planned)
 - Cross-domain mentions: <slug> includes a memory-worthy decision about JWT — flagging for sleep-state
 - Skipped: <session_id> had no actionable task signal
+
+Dropped-but-load-bearing self-check: <none | list any digest/auto-bookmark/task signal you saw but did NOT fold into a task changelog/body, with the reason>
 ```
 
 ## Rules

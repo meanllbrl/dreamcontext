@@ -101,8 +101,20 @@ export function ConnectionsManager({
     <section className="settings-section">
       <h2 className="settings-section-title">{t('settings.federation')}</h2>
 
-      {/* Shareable read gate */}
-      <div className="settings-checkboxes">
+      {/* Plain-language explainer — what this whole panel does. */}
+      <div className="fed-intro">
+        <h3 className="fed-intro-title">{t('federation.intro.title')}</h3>
+        <p className="fed-intro-body">{t('federation.intro.body')}</p>
+        <ol className="fed-intro-steps">
+          <li>{t('federation.intro.step1')}</li>
+          <li>{t('federation.intro.step2')}</li>
+          <li>{t('federation.intro.step3')}</li>
+        </ol>
+      </div>
+
+      {/* Sharing read gate */}
+      <div className="fed-card">
+        <h3 className="fed-subtitle">{t('federation.sharing')}</h3>
         <label className="settings-checkbox-label">
           <input
             type="checkbox"
@@ -185,6 +197,9 @@ export function ConnectionsManager({
                     }}
                   />
                 </div>
+                <p className="settings-field-hint fed-dir-hint">
+                  {t(`federation.direction.${conn.direction}.hint`)}
+                </p>
               </li>
             ))}
           </ul>
@@ -227,6 +242,11 @@ export function ConnectionsManager({
               {t('federation.connect')}
             </button>
           </div>
+        )}
+        {addableVaults.length > 0 && (
+          <p className="settings-field-hint fed-dir-hint">
+            {t(`federation.direction.${newDirection}.hint`)}
+          </p>
         )}
         {formError && <p className="settings-test-err">{formError}</p>}
       </div>

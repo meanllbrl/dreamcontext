@@ -1,0 +1,13 @@
+{
+  "platforms": ["claude"],
+  "packs": [],
+  "multiProduct": false,
+  "setupVersion": 1,
+  "people": ["Mehmet Nuraydin"],
+  "commits": [
+    { "hash": "c1", "author": "Mehmet Nuraydin", "subject": "feat: solo work" },
+    { "hash": "c2", "author": "Mehmet Nuraydin", "subject": "fix: solo bug" },
+    { "hash": "bot1", "author": "github-actions[bot]", "subject": "chore: release" },
+    { "hash": "bot2", "author": "dependabot[bot]", "subject": "build(deps): bump pkg" }
+  ]
+}

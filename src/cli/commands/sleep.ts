@@ -11,108 +11,36 @@ import { getTaskBackend } from '../../lib/task-backend/index.js';
 import { runMigrations } from '../../lib/migration-runner.js';
 import { readSetupConfig } from '../../lib/setup-config.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
+import {
+  sleepinessLevel,
+  sleepinessRange,
+  applyConsolidation,
+  buildHistoryEntry,
+  finalizeSleepState,
+  validateSleepAdd,
+  consolidationDepth,
+} from '../../lib/sleep-consolidation.js';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
+// Data types live in sleep-consolidation.ts (a side-effect-free leaf module so
+// they can be unit-tested in isolation). Re-exported here so all existing
+// importers of these types from './sleep.js' keep compiling.
 
-export interface SessionRecord {
-  session_id: string;
-  transcript_path: string | null;
-  stopped_at: string | null;
-  last_assistant_message: string | null;
-  change_count: number | null;
-  tool_count: number | null;
-  score: number | null;
-  task_slugs: string[];
-}
+export type {
+  SessionRecord,
+  Bookmark,
+  Trigger,
+  KnowledgeAccessRecord,
+  SleepHistoryEntry,
+  CompactionRecord,
+  FieldValue,
+  FieldChange,
+  DashboardChange,
+  SleepState,
+  ConsolidationDepth,
+} from '../../lib/sleep-consolidation.js';
 
-export interface Bookmark {
-  id: string;
-  message: string;
-  salience: 1 | 2 | 3;
-  created_at: string;
-  session_id: string | null;
-  task_slug: string | null;
-}
-
-export interface Trigger {
-  id: string;
-  when: string;
-  remind: string;
-  source: string | null;
-  created_at: string;
-  fired_count: number;
-  max_fires: number;
-}
-
-export interface KnowledgeAccessRecord {
-  last_accessed: string;
-  count: number;
-}
-
-export interface SleepHistoryEntry {
-  date: string;
-  consolidated_at: string;
-  summary: string;
-  debt_before: number;
-  debt_after: number;
-  sessions_processed: number;
-  bookmarks_processed: number;
-  session_ids: string[];
-}
-
-export interface CompactionRecord {
-  timestamp: string;
-  trigger: string;
-  debt_at_compaction: number;
-  sessions_count: number;
-  bookmarks_count: number;
-}
-
-export type FieldValue =
-  | string
-  | number
-  | boolean
-  | string[]
-  | Record<string, unknown>
-  | null;
-
-export interface FieldChange {
-  field: string;
-  from: FieldValue;
-  to: FieldValue;
-}
-
-export interface DashboardChange {
-  timestamp: string;
-  entity: 'task' | 'core' | 'knowledge' | 'feature' | 'sleep';
-  action: 'create' | 'update' | 'delete';
-  target: string;
-  field?: string;
-  fields?: FieldChange[];
-  summary: string;
-}
-
-export interface SleepState {
-  debt: number;
-  last_sleep: string | null;
-  last_sleep_summary: string | null;
-  sleep_started_at: string | null;
-  sessions_since_last_sleep: number;
-  sessions: SessionRecord[];
-  bookmarks: Bookmark[];
-  triggers: Trigger[];
-  knowledge_access: Record<string, KnowledgeAccessRecord>;
-  dashboard_changes: DashboardChange[];
-  compaction_log: CompactionRecord[];
-  recall_mode: 'haiku' | 'raw' | 'off';
-  /**
-   * Summaries of 'code' migrations applied since the last session start.
-   * Written by sleep start (and update) after runMigrations; cleared at
-   * sleep start so the snapshot note is surfaced exactly once per cycle.
-   * generateSnapshot reads this READ-ONLY — it never writes it.
-   */
-  pendingMigrationNotices: string[];
-}
+import type { SleepState, SleepHistoryEntry, CompactionRecord, KnowledgeAccessRecord, DashboardChange } from '../../lib/sleep-consolidation.js';
 
 const DEFAULT_SLEEP_STATE: SleepState = {
   debt: 0,
@@ -127,6 +55,7 @@ const DEFAULT_SLEEP_STATE: SleepState = {
   dashboard_changes: [],
   compaction_log: [],
   recall_mode: 'haiku',
+  consolidation_depth: null,
   pendingMigrationNotices: [],
 };
 
@@ -155,6 +84,7 @@ function freshDefaults(): SleepState {
     dashboard_changes: [],
     compaction_log: [],
     recall_mode: 'haiku',
+    consolidation_depth: null,
     pendingMigrationNotices: [],
   };
 }
@@ -246,20 +176,6 @@ export function bumpKnowledgeAccess(state: SleepState, slug: string): void {
   state.knowledge_access[slug].count++;
 }
 
-function getSleepinessLevel(debt: number): string {
-  if (debt <= 3) return 'Alert';
-  if (debt <= 6) return 'Drowsy';
-  if (debt <= 9) return 'Sleepy';
-  return 'Must Sleep';
-}
-
-function getSleepinessRange(debt: number): string {
-  if (debt <= 3) return '0-3';
-  if (debt <= 6) return '4-6';
-  if (debt <= 9) return '7-9';
-  return '10+';
-}
-
 // ─── Command Registration ──────────────────────────────────────────────────
 
 export function registerSleepCommand(program: Command): void {
@@ -274,8 +190,8 @@ export function registerSleepCommand(program: Command): void {
     .action(() => {
       const root = ensureContextRoot();
       const state = readSleepState(root);
-      const level = getSleepinessLevel(state.debt);
-      const range = getSleepinessRange(state.debt);
+      const level = sleepinessLevel(state.debt);
+      const range = sleepinessRange(state.debt);
 
       console.log(header('Sleep State'));
       console.log(`  Debt:       ${chalk.bold(String(state.debt))} ${chalk.dim(`(${range})`)} ${chalk.magentaBright(level)}`);
@@ -313,17 +229,13 @@ export function registerSleepCommand(program: Command): void {
     .argument('<description...>', 'Description of what happened')
     .description('Record a debt-accumulating action')
     .action((scoreStr: string, descParts: string[]) => {
-      const score = parseInt(scoreStr, 10);
-      if (isNaN(score) || score < 1 || score > 3) {
-        error('Score must be 1, 2, or 3.');
-        return;
-      }
-
       const description = descParts.join(' ');
-      if (!description.trim()) {
-        error('Description is required.');
+      const valid = validateSleepAdd(scoreStr, description);
+      if (!valid.ok) {
+        error(valid.error);
         return;
       }
+      const score = parseInt(scoreStr, 10);
 
       const root = ensureContextRoot();
       const state = readSleepState(root);
@@ -342,7 +254,7 @@ export function registerSleepCommand(program: Command): void {
 
       writeSleepState(root, state);
 
-      const level = getSleepinessLevel(state.debt);
+      const level = sleepinessLevel(state.debt);
       success(`Sleep debt: ${state.debt} (${level})`);
 
       if (state.debt >= 10) {
@@ -356,13 +268,20 @@ export function registerSleepCommand(program: Command): void {
   sleep
     .command('start')
     .description('Mark beginning of consolidation (sets epoch for safe clearing)')
-    .action(() => {
+    .option('--deep', 'Force a deep consolidation (authorizes destructive knowledge ops)')
+    .action((opts: { deep?: boolean }) => {
       const root = ensureContextRoot();
       const state = readSleepState(root);
 
       if (state.sleep_started_at) {
         warn(`Consolidation already in progress (started ${state.sleep_started_at}). Overwriting epoch.`);
       }
+
+      // ALWAYS compute + persist the consolidation depth so it never holds a
+      // stale prior value. With no --deep flag this stores the debt-base depth;
+      // --deep forces it to 'deep' (user-requested). Reset to null by sleep done.
+      const decision = consolidationDepth(state.debt, { userRequestedDeep: !!opts.deep });
+      state.consolidation_depth = decision.depth;
 
       // Clear any pending migration notices from the previous cycle so the
       // snapshot note is surfaced exactly once per sleep cycle.
@@ -398,6 +317,10 @@ export function registerSleepCommand(program: Command): void {
       state.sleep_started_at = new Date().toISOString();
       writeSleepState(root, state);
       success(`Consolidation epoch set: ${state.sleep_started_at}`);
+      info(`Consolidation depth: ${decision.depth} (source: ${decision.source}) — ${decision.reason}`);
+      if (decision.depth !== 'deep') {
+        info('Light/standard consolidation: do NOT merge/summarize-replace/delete knowledge — flag candidates in the report instead.');
+      }
     });
 
   // --- done ---
@@ -414,67 +337,29 @@ export function registerSleepCommand(program: Command): void {
 
       const root = ensureContextRoot();
       const state = readSleepState(root);
+      // Capture previousDebt BEFORE consolidating; feed it to buildHistoryEntry.
+      // applyConsolidation is pure (works on a clone), so the read-modify-write
+      // happens exactly ONCE below — no two-write pattern that could clobber a
+      // concurrent `hook stop`.
       const previousDebt = state.debt;
       const epoch = state.sleep_started_at;
 
-      // Collect sessions and bookmarks processed for history
-      let sessionsProcessed = 0;
-      let bookmarksProcessed = 0;
-      let processedSessionIds: string[] = [];
+      const result = applyConsolidation(state, epoch);
+      const today_ = today();
 
-      if (epoch) {
-        // Epoch-based: only clear sessions/changes/bookmarks from before sleep started
-        const processedSessions = state.sessions.filter(s => !s.stopped_at || s.stopped_at <= epoch);
-        sessionsProcessed = processedSessions.length;
-        processedSessionIds = processedSessions.map(s => s.session_id);
-        bookmarksProcessed = state.bookmarks.filter(b => b.created_at <= epoch).length;
-
-        state.sessions = state.sessions.filter(s => {
-          if (!s.stopped_at) return false;
-          return s.stopped_at > epoch;
-        });
-        state.bookmarks = state.bookmarks.filter(b => b.created_at > epoch);
-        state.dashboard_changes = state.dashboard_changes.filter(c => c.timestamp > epoch);
-        state.debt = state.sessions.reduce((sum, s) => sum + (s.score ?? 0), 0);
-      } else {
-        // Backward compat: no epoch, clear everything
-        sessionsProcessed = state.sessions.length;
-        processedSessionIds = state.sessions.map(s => s.session_id);
-        bookmarksProcessed = state.bookmarks.length;
-        state.sessions = [];
-        state.bookmarks = [];
-        state.dashboard_changes = [];
-        state.debt = 0;
-      }
-
-      // Expire triggers past max_fires
-      state.triggers = state.triggers.filter(t => t.fired_count < t.max_fires);
-
-      // Write sleep history entry to separate file (LIFO)
+      // Write sleep history entry to its own file (LIFO).
       const history = readSleepHistory(root);
-      history.unshift({
-        date: today(),
-        consolidated_at: new Date().toISOString(),
-        summary: summary.trim(),
-        debt_before: previousDebt,
-        debt_after: state.debt,
-        sessions_processed: sessionsProcessed,
-        bookmarks_processed: bookmarksProcessed,
-        session_ids: processedSessionIds,
-      });
+      history.unshift(buildHistoryEntry(previousDebt, result, summary, today_));
       writeSleepHistory(root, history);
 
-      state.last_sleep = today();
-      state.last_sleep_summary = summary.trim();
-      state.sleep_started_at = null;
-      state.sessions_since_last_sleep = 0;
+      // Finalize and persist the new state exactly once.
+      const finalState = finalizeSleepState(result.state, summary, today_);
+      writeSleepState(root, finalState);
 
-      writeSleepState(root, state);
-
-      if (epoch && state.sessions.length > 0) {
-        success(`Consolidation complete. Debt reduced from ${previousDebt} to ${state.debt}. ${state.sessions.length} post-epoch session(s) preserved.`);
+      if (epoch && finalState.sessions.length > 0) {
+        success(`Consolidation complete. Debt reduced from ${previousDebt} to ${finalState.debt}. ${finalState.sessions.length} post-epoch session(s) preserved.`);
       } else {
-        success(`Consolidation complete. Debt reset from ${previousDebt} to ${state.debt}.`);
+        success(`Consolidation complete. Debt reset from ${previousDebt} to ${finalState.debt}.`);
       }
 
       // Post-sleep task sync (issue #11): push the consolidation's task

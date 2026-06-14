@@ -1,0 +1,171 @@
+.lgraph {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  height: 100%;
+  min-height: 0;
+}
+
+.lgraph-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.lgraph-mode {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.lgraph-mode--on {
+  border-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+  color: var(--color-text);
+}
+
+.lgraph-hint {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  flex: 1 1 240px;
+}
+
+.lgraph-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+}
+
+.lgdot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  margin: 0 2px 0 8px;
+  flex: 0 0 auto;
+}
+
+.lgraph-legend .lgdot:first-child {
+  margin-left: 0;
+}
+
+.lgraph-note {
+  background: color-mix(in srgb, var(--color-accent) 12%, var(--color-bg-secondary));
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-size-xs);
+}
+
+.lgraph-canvas {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 360px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: #0e0e12;
+  touch-action: none; /* let pointer drag own the gesture in connect mode */
+}
+
+.lgraph-status {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  text-align: center;
+  padding: var(--space-4);
+}
+
+.lgraph-status--err {
+  color: #f87171;
+}
+
+.lgraph-detail {
+  position: absolute;
+  right: var(--space-4);
+  top: 96px;
+  width: 280px;
+  max-width: calc(100vw - 2 * var(--space-4));
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  z-index: 5;
+}
+
+.lgraph-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-size-sm);
+}
+
+.lgraph-detail-head strong {
+  flex: 1 1 auto;
+}
+
+.lgraph-x {
+  background: none;
+  border: none;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+}
+
+.lgraph-detail-path {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  word-break: break-all;
+}
+
+.lgraph-detail-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.lgraph-share {
+  cursor: pointer;
+}
+
+.lgraph-share input {
+  margin-right: 6px;
+}
+
+.lgraph-btn {
+  border: 1px solid var(--color-accent);
+  background: var(--color-accent);
+  color: #fff;
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+}
+
+.lgraph-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}

@@ -6,6 +6,12 @@ import { dirname, resolve, join, extname, basename, relative } from 'node:path';
 import { resolveContextRoot } from '../../lib/context-path.js';
 import type { SleepState, Bookmark } from './sleep.js';
 import { readSleepState, writeSleepState, bumpKnowledgeAccess } from './sleep.js';
+import {
+  upsertSessionOnStop,
+  appendCompactionRecord,
+  type StopUpsertInput,
+} from '../../lib/sleep-consolidation.js';
+import { DECISION_RE, CORRECTION_RE } from '../../lib/salience.js';
 import { distillTranscript } from './transcript.js';
 import { buildDigest, writeDigest, digestExists, digestIsPartial } from '../../lib/session-digest.js';
 import { detectSalience } from '../../lib/salience.js';
@@ -59,9 +65,20 @@ export interface TranscriptAnalysis {
   changeCount: number;  // Write + Edit tool calls only
   toolCount: number;    // ALL tool calls (any tool name)
   taskSlugs: string[];  // task slugs extracted from tool calls and file paths
+  // WS-DEBT substance signals — populated by a per-line JSON.parse pass so an
+  // edit-free-but-information-dense session can still accrue debt:
+  userTurns: number;        // count of user-role transcript records
+  assistantChars: number;   // total chars across assistant text blocks (each capped)
+  decisionMarkers: number;  // lines matching DECISION_RE / CORRECTION_RE
 }
 
-const ZERO_ANALYSIS: TranscriptAnalysis = { changeCount: 0, toolCount: 0, taskSlugs: [] };
+const ZERO_ANALYSIS: TranscriptAnalysis = {
+  changeCount: 0, toolCount: 0, taskSlugs: [],
+  userTurns: 0, assistantChars: 0, decisionMarkers: 0,
+};
+
+// Cap each assistant text block so one giant block cannot dominate assistantChars.
+const MAX_TEXT_BLOCK_CHARS = 20000;
 
 /**
  * Analyze a JSONL transcript file for tool usage.
@@ -88,14 +105,101 @@ export function analyzeTranscript(transcriptPath: string): TranscriptAnalysis {
       slugs.add(m[1]);
     }
 
+    // WS-DEBT substance signals — a per-line guarded JSON.parse pass over the
+    // already-in-memory transcript (one pass, no extra file I/O; malformed lines
+    // skipped). Raw regex over the flat string can't sum JSON-escaped multiline
+    // text-block lengths, so we parse each JSONL record instead.
+    let userTurns = 0;
+    let assistantChars = 0;
+    let decisionMarkers = 0;
+    for (const line of content.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      if (DECISION_RE.test(trimmed) || CORRECTION_RE.test(trimmed)) {
+        decisionMarkers++;
+      }
+      let rec: unknown;
+      try {
+        rec = JSON.parse(trimmed);
+      } catch {
+        continue; // not a JSON record (or partial) — skip
+      }
+      if (!rec || typeof rec !== 'object') continue;
+      const role = recordRole(rec);
+      if (role === 'user') {
+        userTurns++;
+      } else if (role === 'assistant') {
+        assistantChars += sumAssistantTextChars(rec);
+      }
+    }
+
     return {
       changeCount: changeMatches ? changeMatches.length : 0,
       toolCount: toolMatches ? toolMatches.length : 0,
       taskSlugs: [...slugs],
+      userTurns,
+      assistantChars,
+      decisionMarkers,
     };
   } catch {
     return ZERO_ANALYSIS;
   }
+}
+
+/** Extract the role of a transcript record, tolerating both flat and nested message shapes. */
+function recordRole(rec: object): string | null {
+  const r = rec as { role?: unknown; message?: { role?: unknown } };
+  if (typeof r.role === 'string') return r.role;
+  if (r.message && typeof r.message === 'object' && typeof r.message.role === 'string') {
+    return r.message.role;
+  }
+  return null;
+}
+
+/** Sum the chars of every assistant `type:'text'` block, capping each block. */
+function sumAssistantTextChars(rec: object): number {
+  const r = rec as { message?: { content?: unknown }; content?: unknown };
+  const content = (r.message && typeof r.message === 'object' ? r.message.content : undefined) ?? r.content;
+  let total = 0;
+  if (typeof content === 'string') {
+    return Math.min(MAX_TEXT_BLOCK_CHARS, content.length);
+  }
+  if (Array.isArray(content)) {
+    for (const block of content) {
+      if (block && typeof block === 'object') {
+        const b = block as { type?: unknown; text?: unknown };
+        if (b.type === 'text' && typeof b.text === 'string') {
+          total += Math.min(MAX_TEXT_BLOCK_CHARS, b.text.length);
+        }
+      }
+    }
+  }
+  return total;
+}
+
+/**
+ * Map substance signals to a bounded 0..3 debt score (WS-DEBT). +1 each for:
+ * a chatty user (≥6 turns), dense assistant output (≥6000 chars), ≥1 decision/
+ * correction marker, and ≥2 distinct task slugs touched. Capped at 3.
+ *
+ * rationale: per-session ceiling stays 3 (levels unchanged at ≤3/≤6/≤9/10+);
+ * this only raises the FLOOR for edit-free-but-dense sessions that the
+ * change/tool scorers under-count. Thresholds are first-guess and safe to
+ * mis-calibrate because the call site composes them via max() (never lowers an
+ * edit-heavy score).
+ */
+export function scoreFromSubstance(signals: {
+  userTurns: number;
+  assistantChars: number;
+  decisionMarkers: number;
+  taskSlugs: string[];
+}): number {
+  let pts = 0;
+  if (signals.userTurns >= 6) pts++;
+  if (signals.assistantChars >= 6000) pts++;
+  if (signals.decisionMarkers >= 1) pts++;
+  if (signals.taskSlugs.length >= 2) pts++;
+  return Math.min(3, pts);
 }
 
 /**
@@ -285,7 +389,7 @@ function runTscCheckWithConfig(filePath: string, tsconfigPath: string): string |
 
 // ─── Consolidation Directives ───────────────────────────────────────────────
 
-function getConsolidationDirective(state: SleepState): string | null {
+export function getConsolidationDirective(state: SleepState): string | null {
   const { debt, bookmarks, sessions_since_last_sleep, sleep_started_at } = state;
 
   // If consolidation is already in progress, suppress all directives to prevent duplicate sleeps
@@ -348,6 +452,45 @@ function getConsolidationDirective(state: SleepState): string | null {
       `> ${sessions_since_last_sleep} sessions since last consolidation. After completing the current task, offer to consolidate.`,
       '',
     ].join('\n');
+  }
+  return null;
+}
+
+/**
+ * Pure one-line debt reminder for the UserPromptSubmit hook. Returns the line to
+ * emit, or null to stay silent. Extracted from the full handler (which also does
+ * recall injection, marketing nudge, version check, etc.) so the debt-threshold
+ * behavior is unit-testable in isolation.
+ *
+ * - consolidation in progress: suppress unless debt >= 4 (then a "do not
+ *   dispatch another sleep" note).
+ * - debt >= 10: CONSOLIDATION REQUIRED.
+ * - critical (★★★) bookmark present: advisory regardless of debt.
+ * - debt >= 7: recommended. debt >= 4: offer after current task.
+ * - else: null (silent).
+ */
+export function userPromptReminder(state: SleepState): string | null {
+  const { debt, bookmarks, sleep_started_at } = state;
+
+  if (sleep_started_at) {
+    if (debt >= 4) {
+      return `Consolidation already in progress (started: ${sleep_started_at}). Do NOT dispatch another sleep agent.`;
+    }
+    return null;
+  }
+
+  const criticalBookmarks = bookmarks.filter(b => b.salience === 3);
+  if (debt >= 10) {
+    return `Sleep debt is ${debt}. CONSOLIDATION REQUIRED. Run sleep flow per SKILL.md (parallel specialist fan-out) NOW.`;
+  }
+  if (criticalBookmarks.length > 0) {
+    return `${criticalBookmarks.length} critical bookmark(s) need consolidation. Run sleep flow per SKILL.md.`;
+  }
+  if (debt >= 7) {
+    return `Sleep debt is ${debt}. Consolidation recommended before starting new work.`;
+  }
+  if (debt >= 4) {
+    return `Sleep debt is ${debt}. After completing the current task, offer to consolidate.`;
   }
   return null;
 }
@@ -448,7 +591,14 @@ export function registerHookCommand(program: Command): void {
       // Analyze transcript immediately so change_count, tool_count, and score are populated at write time
       const analysis = transcriptPath ? analyzeTranscript(transcriptPath) : ZERO_ANALYSIS;
       const { changeCount, toolCount } = analysis;
-      const score = Math.max(scoreFromChangeCount(changeCount), scoreFromToolCount(toolCount));
+      // Substance-weighted debt (WS-DEBT): max() with the substance ladder keeps
+      // the score bounded at 3 and only raises the FLOOR for edit-free-but-dense
+      // sessions; it never lowers an edit-heavy score.
+      const score = Math.max(
+        scoreFromChangeCount(changeCount),
+        scoreFromToolCount(toolCount),
+        scoreFromSubstance(analysis),
+      );
 
       // Link unlinked bookmarks to this session
       for (const bookmark of state.bookmarks) {
@@ -464,44 +614,19 @@ export function registerHookCommand(program: Command): void {
       const transcriptTaskSlugs = analysis.taskSlugs;
       const taskSlugs = [...new Set([...transcriptTaskSlugs, ...bookmarkTaskSlugs])];
 
-      // Check if session already exists (e.g., stop fired twice for same session)
-      const existing = state.sessions.findIndex(s => s.session_id === sessionId);
-      if (existing >= 0) {
-        // Subtract old score before updating (avoid double-counting on re-stop)
-        const oldScore = state.sessions[existing].score ?? 0;
-        state.debt = Math.max(0, state.debt - oldScore);
+      const upsertInput: StopUpsertInput = {
+        session_id: sessionId,
+        transcript_path: transcriptPath,
+        stopped_at: stoppedAt,
+        last_assistant_message: lastAssistantMessage,
+        change_count: changeCount,
+        tool_count: toolCount,
+        score,
+        task_slugs: taskSlugs,
+      };
+      const nextState = upsertSessionOnStop(state, upsertInput);
 
-        state.sessions[existing].transcript_path = transcriptPath;
-        state.sessions[existing].stopped_at = stoppedAt;
-        state.sessions[existing].last_assistant_message = lastAssistantMessage;
-        state.sessions[existing].change_count = changeCount;
-        state.sessions[existing].tool_count = toolCount;
-        state.sessions[existing].score = score;
-        // Merge task_slugs on re-stop
-        const existingSlugs = state.sessions[existing].task_slugs ?? [];
-        state.sessions[existing].task_slugs = [...new Set([...existingSlugs, ...taskSlugs])];
-      } else {
-        state.sessions.unshift({
-          session_id: sessionId,
-          transcript_path: transcriptPath,
-          stopped_at: stoppedAt,
-          last_assistant_message: lastAssistantMessage,
-          change_count: changeCount,
-          tool_count: toolCount,
-          score,
-          task_slugs: taskSlugs,
-        });
-      }
-
-      // Add current score to debt
-      state.debt += score;
-
-      // Increment rhythm counter (only for new sessions, not re-stops)
-      if (existing < 0) {
-        state.sessions_since_last_sleep = (state.sessions_since_last_sleep || 0) + 1;
-      }
-
-      writeSleepState(root, state);
+      writeSleepState(root, nextState);
     });
 
   // --- hook session-start ---
@@ -539,7 +664,11 @@ export function registerHookCommand(program: Command): void {
         }
 
         const analysis = analyzeTranscript(session.transcript_path);
-        const score = Math.max(scoreFromChangeCount(analysis.changeCount), scoreFromToolCount(analysis.toolCount));
+        const score = Math.max(
+          scoreFromChangeCount(analysis.changeCount),
+          scoreFromToolCount(analysis.toolCount),
+          scoreFromSubstance(analysis),
+        );
         session.change_count = analysis.changeCount;
         session.tool_count = analysis.toolCount;
         session.score = score;
@@ -701,29 +830,17 @@ export function registerHookCommand(program: Command): void {
       if (!root) process.exit(0);
 
       const state = readSleepState(root);
-      const { debt, bookmarks, sleep_started_at } = state;
 
-      // If consolidation is already in progress, suppress debt reminders to prevent duplicate sleeps
-      if (sleep_started_at) {
-        if (debt >= 4) {
-          console.log(`Consolidation already in progress (started: ${sleep_started_at}). Do NOT dispatch another sleep agent.`);
-        }
+      // Debt/bookmark reminder — pure logic extracted to userPromptReminder so it
+      // is unit-testable. Returns null below the threshold (stay silent). The
+      // "consolidation in progress" early-return must still short-circuit the
+      // rest of this handler, so re-check that condition here.
+      const reminder = userPromptReminder(state);
+      if (state.sleep_started_at) {
+        if (reminder) console.log(reminder);
         return;
       }
-
-      const criticalBookmarks = bookmarks.filter(b => b.salience === 3);
-
-      // Only output when debt is actionable or critical bookmarks exist
-      if (debt >= 10) {
-        console.log(`Sleep debt is ${debt}. CONSOLIDATION REQUIRED. Run sleep flow per SKILL.md (parallel specialist fan-out) NOW.`);
-      } else if (criticalBookmarks.length > 0) {
-        console.log(`${criticalBookmarks.length} critical bookmark(s) need consolidation. Run sleep flow per SKILL.md.`);
-      } else if (debt >= 7) {
-        console.log(`Sleep debt is ${debt}. Consolidation recommended before starting new work.`);
-      } else if (debt >= 4) {
-        console.log(`Sleep debt is ${debt}. After completing the current task, offer to consolidate.`);
-      }
-      // debt < 4 and no critical bookmarks: silent (no output)
+      if (reminder) console.log(reminder);
 
       // Marketing nudge: only fires when there are unconfirmed Performance
       // Monitor recommendations from >24h ago. Must NOT fire on every prompt
@@ -969,7 +1086,8 @@ export function registerHookCommand(program: Command): void {
       const state = readSleepState(root);
       const trigger = (input && typeof input.trigger === 'string') ? input.trigger : 'unknown';
 
-      state.compaction_log.unshift({
+      // Prepend the compaction record (LIFO, capped at 20) via the pure helper.
+      const nextState = appendCompactionRecord(state, {
         timestamp: new Date().toISOString(),
         trigger,
         debt_at_compaction: state.debt,
@@ -977,12 +1095,7 @@ export function registerHookCommand(program: Command): void {
         bookmarks_count: state.bookmarks.length,
       });
 
-      // Cap at 20 entries (anti-bloat)
-      if (state.compaction_log.length > 20) {
-        state.compaction_log = state.compaction_log.slice(0, 20);
-      }
-
-      writeSleepState(root, state);
+      writeSleepState(root, nextState);
 
       // ── Pre-compaction capture: digest the live transcript NOW. ───────────
       // Compaction is where mid-session decisions die: the agent's context is

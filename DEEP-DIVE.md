@@ -602,6 +602,54 @@ Memory recall mirrors the pattern the rest of dreamcontext uses: **deterministic
 
 The sleep-product specialist (`agents/sleep-product.md`) needs no changes — it already maintains knowledge files, feature PRDs, and the tag set. Recall reads what sleep-product already maintains. Same pattern as the snapshot: the deterministic tier curates, the on-demand tier queries.
 
+## Federation
+
+One project rarely lives alone. You have a backend, a marketing site, an internal tool — each its own `_dream_context/`, each accumulating decisions, and each blind to the others. A decision made in the API repo ("we standardized on cursor pagination") is exactly the kind of thing the dashboard repo's agent should know, but copy-pasting context between projects is the manual re-discovery problem all over again, one directory up.
+
+Federation is the answer, and it is built on the same principle as everything else: **opt-in, local, and human-auditable. No server, no account, no background daemon reaching across your machine.**
+
+### The vault registry
+
+Federation starts with a global registry of *vaults* — a vault is just a registered `_dream_context/` project, addressable by name. The registry (`src/lib/vaults.ts`) lives in your home directory, not in any one repo, so it is the one shared index every project and the desktop app read from.
+
+```bash
+dreamcontext vaults discover ~/projects --register
+```
+
+`vaults discover` walks a directory tree (ignoring `node_modules`), finds every `_dream_context/`, and — with `--register` — adds the new ones idempotently. The desktop app's launcher is a GUI over this same registry: every window it opens is a vault by name.
+
+### Cross-vault recall
+
+Once vaults are registered, recall can span them. The same BM25 ranker that searches one corpus searches several, and every hit is tagged with the vault it came from:
+
+- `--vault <name>` — also search a specific named vault (repeatable).
+- `--connected` — span this vault plus the peers it has an outbound connection to.
+- `--all-vaults` — span this vault plus every vault marked shareable.
+
+The gate is consent: a vault is only reachable from another if its owner ran `config shareable on`. Recall silently skips vaults that are not shareable or no longer exist on disk, rather than erroring — the same "a missing source is a non-event, not a failure" posture as the version nudge.
+
+### Connections and the sleep-driven digest inbox
+
+Recall is *pull*. Federation also has a *push* half, and this is where it ties back into the sleep cycle. You connect two vaults with a direction (`out`, `in`, or `both`) and an optional topic filter:
+
+```bash
+dreamcontext connect api-backend --direction both --topics auth,pagination
+```
+
+Then, during consolidation, a **conditional `sleep-federation` specialist** (it only joins the fan-out when connections exist) computes a recall-filtered *digest* of what changed in this vault and writes it into each consenting peer's **inbox**. The receiving project, on its next `federation drain`, ingests those entries as first-class knowledge and then consumes them. So a decision consolidated in one repo's sleep cycle surfaces in a sibling repo's knowledge on its next cycle — automatically, filtered to the topics that peer asked for.
+
+```bash
+dreamcontext federation status        # Inbox counts + per-connection sync watermarks
+dreamcontext federation sync          # Push digests into consenting peers (run by the sleep specialist)
+dreamcontext federation drain         # Ingest pending inbox entries, then consume them
+```
+
+### Read-only by construction
+
+The security model mirrors the dashboard's loopback-and-CSRF posture, taken one level stricter. The browser-reachable route (`POST /api/federation/sync`) is **dry-run by construction** — it computes the digest deltas a sleep cycle *would* push and returns them with a constant `dryRun: true`, and no file under `src/server/routes/` is permitted to import any federation write function at all. A crafted request to the loopback API therefore *cannot* write into a peer vault, because the code path to do so does not exist on the server side.
+
+Every mutation lives in the CLI, run by the sleep specialist, where the consent check and the per-connection watermark advance sit together in one auditable place. Every ingested entry carries its provenance — origin vault, entry id, source timestamp — so you can always trace a federated fact back to where it was decided. Dead or unreachable peers are marked stale during sync and skipped thereafter (warned once), so a deleted sibling project never stalls a consolidation.
+
 ## Obsidian Integration
 
 `_dream_context/` is a directory of markdown and JSON, shaped like a knowledge graph (memory links to decisions link to features link to knowledge). The most natural way to browse that graph is Obsidian, which is built for exactly this shape.
@@ -695,6 +743,37 @@ The design separates the two concerns:
 
 One related fix shipped alongside this: the CLI version string used to be hardcoded (`.version('0.1.0')`), which drifted from `package.json`. It now reads from the manifest via `dreamcontextVersion()`, so `--version`, the nudge comparison, and the published package can never disagree.
 
+## The Desktop App
+
+The localhost dashboard is great for one project. The moment you have five, "open a tab, find the port, remember which is which" becomes the friction the tool was supposed to remove. The desktop app (`dreamcontext-beta`, macOS, **Tauri 2**) is the answer — and the design decision that shaped everything is that it is *not a rewrite*. It wraps the exact same React dashboard and Node server the `dashboard` command already serves.
+
+### Multi-vault is multi-window over one server
+
+The Rust shell launches the bundled (or, preferentially, the globally-installed) CLI in `--launcher` mode — the dashboard server booted with no default vault. The launcher page lists every registered [vault](#federation); clicking one opens a **new native window** pointed at the same server with a `?vault=<name>` parameter. The SPA reads that, and injects an `X-Dreamcontext-Vault` header on every API call. The server resolves a per-request context root from that header through a strict, name-only resolver that rejects anything path-shaped or unknown with a 400 — a deliberate confused-deputy guard, so a window can never be tricked into reading a directory outside the registry. The upshot: multi-vault is just multi-window over one shared Node process. No in-window switcher, no cache thrash.
+
+### In-app onboarding, terminal-free
+
+A quiz-style wizard lets you create a brand-new project (native macOS folder picker) or initialize an existing folder without ever touching a shell. Three vault-agnostic server routes (`/api/launcher/scaffold`, `/detect`, `/defaults`) back it. The load-bearing decision: the server **spawns the bundled CLI in a child process** (`execFile`, no shell, arg array) with `cwd` set to the target directory — the long-lived launcher never mutates its own working directory. The wizard is deterministic and ships no LLM; quiz answers map 1:1 to `init`'s flags. The rich, code-scanning enrichment is still Claude Code's job — the success screen hands you a prompt to paste.
+
+### Sleepy — the notch companion
+
+Sleepy is a global-hotkey quick-capture companion: a transparent, always-on-top notch panel (true transparency via `macOSPrivateApi`) with an animated mascot whose mood tracks your sleep debt. It captures into any registered vault and offers three modes — **Learn** (save to memory, then enrich), **Ask** (one-shot project Q&A, nothing saved), and **Sleep** (run a full consolidation from the notch). A few hard-won details are worth recording because they are the kind of thing you only learn by shipping:
+
+- **The mascot is an animated WebP, not a `<video>`.** WKWebView hard-blocks `<video>` autoplay and Tauri exposes no override; an `<img>` with an animated WebP autoplays unconditionally.
+- **The capture write is in-process, not a child CLI call.** Because a Finder-launched `.app` doesn't inherit your interactive-shell PATH, a spawned `dreamcontext memory remember` could resolve a stale global or none at all. Since the server *is* dreamcontext, it writes the CHANGELOG entry directly — failure-proof.
+- **Enrichment spawns `claude` through an interactive login shell (`-ilc`).** Tools added to PATH in `~/.zshrc` are invisible to a non-interactive shell, so a Finder-launched app got "command not found: claude" until the interactive-login flag was used.
+
+### Continuous updates without Apple notarization
+
+The app updates continuously *without* an Apple Developer ID or the Tauri updater, because the entire delivery path is CLI/curl-driven — which never sets the `com.apple.quarantine` bit, so Gatekeeper's notarization check never fires (ad-hoc signing already satisfies Apple Silicon's must-be-signed rule). Two mechanisms make it work:
+
+1. **The thin-shell pivot.** The app *prefers* your globally-installed, auto-upgrading CLI over its bundled copy. Since that global CLI carries the whole server/dashboard/route stack, ~95% of changes ride the normal `dreamcontext upgrade` with **no app rebuild**; the bundled copy is only a first-run fallback.
+2. **`dreamcontext app install | update | status`.** Installs to `~/Applications` (no admin) via an atomic same-volume swap, tracks the installed version in `~/.dreamcontext/app.json`, and can fire a detached background update from the same ≤1×/24h hook tick the version nudge uses (opt out with `DREAMCONTEXT_APP_AUTO_UPDATE=0`). The security catch: a downloaded artifact **requires a matching per-asset `.sha256`** or the install refuses — ad-hoc signing proves integrity in transit at best, never origin, so it is not treated as a substitute.
+
+A GitHub Actions workflow (`desktop-release.yml`) builds, ad-hoc-signs, packages the `.app.tar.gz` + checksum, and publishes to a GitHub Release on every `v*` tag — E2E-verified end to end at `v0.8.1`.
+
+> The desktop app is a working **beta**: not Apple-signed/notarized (local install only, first launch may need a right-click → Open), macOS only for now, and the Sleepy companion's visual design is shipped but not yet formally user-accepted.
+
 ## Design Tradeoffs
 
 Every design choice was deliberate. Here is what I chose, what I chose it over, and why.
@@ -750,7 +829,7 @@ Every design choice was deliberate. Here is what I chose, what I chose it over, 
 
 ## What Comes Next
 
-`dreamcontext` ships first-class support for **Claude Code** and **Codex**. The hook system, the skill format, and the agent integration are richest on Claude (seven hooks, five core sub-agents, optional pack agents); Codex gets project-level skills (`.agents/skills`), a managed `AGENTS.md`, native `.codex/agents/*.toml`, and managed `.codex/config.toml` hooks (best-effort parity where event semantics differ). The core idea — structured files, pre-loaded context, consolidation cycles — is not tied to any one agent, and the architecture is designed so that others (Gemini CLI, Copilot, custom agents) can plug into the same `_dream_context/` directory with their own integration layer.
+`dreamcontext` ships first-class support for **Claude Code** and **Codex**. The hook system, the skill format, and the agent integration are richest on Claude (seven hooks; core sub-agents — initializer, explore, the three primary RemSleep specialists, plus conditional `sleep-federation` and `sleep-migration` specialists; optional pack agents); Codex gets project-level skills (`.agents/skills`), a managed `AGENTS.md`, native `.codex/agents/*.toml`, and managed `.codex/config.toml` hooks (best-effort parity where event semantics differ). The core idea — structured files, pre-loaded context, consolidation cycles — is not tied to any one agent, and the architecture is designed so that others (Gemini CLI, Copilot, custom agents) can plug into the same `_dream_context/` directory with their own integration layer.
 
 **How it got here.** Each release widened the system along one axis:
 
@@ -759,9 +838,11 @@ Every design choice was deliberate. Here is what I chose, what I chose it over, 
 - **v0.3.0** — the **sleep-cycle fan-out**: the single consolidation agent became three parallel specialists (`sleep-tasks` and `sleep-state` always, `sleep-product` conditionally), with the main agent orchestrating directly and no separate orchestrator (see [The Sleep Cycle](#the-sleep-cycle)).
 - **v0.4.0** — the **manifest-aware install/update system** (the `setup` front door, `.install-manifest.json`, stale-file pruning), multi-product/monorepo support, **BM25 memory recall** (deterministic, zero new deps, hook-injected by default), the tightened 150-line anti-bloat ceiling, and a 3D Brain graph.
 - **v0.5.0 / v0.5.1** — the **"persistent brain" positioning**, the **one-command install** and **in-session update nudge** (see [Install & Update](#install--update)), the **goal-skill** and **multi-review** orchestration packs (joining Council under one decompose-then-synthesize pattern), optional Haiku-assisted recall, a context gate redesigned to surface the *full* skill catalog instead of a pre-picked subset, and the dashboard security hardening — loopback bind, CSRF guard, CORS lockdown, path-traversal guard — shipped as the v0.5.1 fast-follow before the first public release (see [Security model](#security-model)).
-- **v0.6.0 (in progress)** — the **recall engine overhaul** detailed in [Memory Recall](#memory-recall-bm25-over-the-curated-corpus) (BM25F field weighting, EN/TR stemming, a synonym table, score/rank decoupling — recall@1 68→85%, @3 82→95%), **continuous capture** (auto-digest + salience + a capture guard so machine-captured notes never outrank curated ones), and the first slice of the desktop control panel below.
+- **v0.6.0** — the **recall engine overhaul** detailed in [Memory Recall](#memory-recall-bm25-over-the-curated-corpus) (BM25F field weighting, EN/TR stemming, a synonym table, score/rank decoupling — recall@1 68→85%, @3 82→95%), **continuous capture** (auto-digest + salience + a capture guard so machine-captured notes never outrank curated ones), and the backend **control-plane** (config/packs/version-check/vaults routes) that the desktop app is built on.
+- **v0.7.0** — **recall v3** (link-aware ranking, a snapshot token budget, an agent-feedback loop, and the graphify spec), **multi-people awareness** (attribute work per person), **PRD freshness tracking** with `features doctor`, the **Eisenhower matrix** view, and **Excalidraw boards as first-class knowledge** (their extracted text indexed, never the scene JSON).
+- **v0.8.x** — the part of the vision that used to live in this section: the **desktop app** ([Tauri 2 multi-vault launcher](#the-desktop-app), in-app onboarding, the Sleepy notch companion, and continuous no-notarization updates), **federation** ([cross-vault recall + the sleep-driven digest inbox](#federation)), a **pluggable task backend** (local markdown or a ClickUp list behind one adapter), a **faceted tag taxonomy** with sleep-time maintenance, and a **versioned migration system** (registry + ledger + a `sleep-migration` specialist) that keeps installed projects' assets in step across releases.
 
-**What's next.** The other half of the vision is a **desktop control panel** — managing multiple project vaults, per-project settings, update and skill management, and a graphical view of context, packaged as a native app (Tauri) rather than a localhost server. Its backend control-plane, dashboard wiring, and `--vault` plumbing are landing now in v0.6.0; the Tauri shell and the remaining polish (defense-in-depth path hardening, accessibility audit, responsive layout, i18n token extraction, bundle size) are the near-term road.
+**What's next.** With the desktop app and federation shipped, the near-term road is depth on both: per-page reskin and an Overview surface in the app, the accessibility/responsive/i18n polish still deferred from the beta, Windows/Linux desktop builds, and widening federation from knowledge digests toward richer cross-project awareness. The agent-integration surface keeps broadening too — the architecture is deliberately not tied to Claude Code, so Gemini CLI, Copilot, and custom agents can plug into the same `_dream_context/` directory with their own integration layer.
 
 The long-term vision: your project's context lives in your repo, structured and version-controlled, and any agent you choose to work with can pick it up. **The human stays in the loop. The context stays portable.** The agent gets better every session because the system enforces the discipline that makes that possible.
 

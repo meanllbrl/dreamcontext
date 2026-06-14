@@ -6,7 +6,22 @@ import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { parseJsonBody, sendJson, sendError } from '../middleware.js';
 import { discoverVaultsAsync } from '../../lib/vault-discovery.js';
-import { addVault, listVaults, VaultError, type Vault } from '../../lib/vaults.js';
+import {
+  addVault,
+  listVaults,
+  removeVault,
+  resolveVaultContextRoot,
+  VaultError,
+  type Vault,
+} from '../../lib/vaults.js';
+import {
+  listConnections,
+  addConnection,
+  removeConnection,
+} from '../../lib/connections.js';
+import { readSetupConfig, updateSetupConfig } from '../../lib/setup-config.js';
+import { dreamcontextVersion } from '../../lib/manifest.js';
+import { compareVersions } from '../../lib/version-check.js';
 import { detectTechStack } from '../../lib/tech-stack.js';
 import { ensureCliInstalled } from '../../lib/ensure-cli.js';
 import {
@@ -20,6 +35,12 @@ import { loadCatalog } from '../../lib/catalog.js';
 import { insertToJsonArray } from '../../lib/json-file.js';
 import { today } from '../../lib/id.js';
 import { randomUUID } from 'node:crypto';
+import { readSleepState } from '../../cli/commands/sleep.js';
+import {
+  consolidationDepth,
+  isDestructiveAllowed,
+  type ConsolidationDepth,
+} from '../../lib/sleep-consolidation.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -600,8 +621,22 @@ export function buildAskPrompt(question: string): string {
  * Build the headless-claude prompt for "Sleep" mode: run a full dreamcontext
  * memory consolidation for THIS project, autonomously, then report a short
  * summary. No user text involved, so nothing to injection-escape.
+ *
+ * The desktop Sleep button bypasses `dreamcontext sleep start`, so the caller
+ * resolves the consolidation depth and passes it in. The prompt injects a
+ * destructive-authorization line ONLY at `deep` (per `isDestructiveAllowed`);
+ * at light/standard it injects an explicit non-destructive guard so the agent
+ * never silently merges/summarize-replaces/deletes knowledge from this path.
  */
-export function buildSleepPrompt(): string {
+export function buildSleepPrompt(depth: ConsolidationDepth): string {
+  const depthLine = isDestructiveAllowed(depth)
+    ? `This is a DEEP consolidation: you ARE authorized to perform destructive/expensive ` +
+      `knowledge ops (merge-with-delete, summarize-and-replace still-valid detail, archive/` +
+      `delete stale files) — but first copy any file you will merge/replace/delete to ` +
+      `\`_dream_context/knowledge/.archive/<slug>-<YYYYMMDD>.md\` (create the dir if absent).`
+    : `This is a ${depth.toUpperCase()} consolidation: do NOT merge, summarize-and-replace, ` +
+      `or delete any knowledge. Only create/extend/retag/tick. If you spot merge or deletion ` +
+      `candidates, FLAG them in your report instead of acting on them.`;
   return (
     `Think hard. Run a dreamcontext memory consolidation ("sleep") for THIS project ` +
     `now, fully autonomously — do NOT ask any questions. Follow the project's ` +
@@ -609,8 +644,8 @@ export function buildSleepPrompt(): string {
     `start\`, reconcile the task/changelog/knowledge/feature files to current truth ` +
     `as warranted (prefer updating existing entities over creating new ones), then ` +
     `close the cycle with \`dreamcontext sleep done "<one-paragraph summary>"\` to ` +
-    `reset the debt. When finished, reply with a SHORT GitHub-flavored Markdown ` +
-    `summary (a few bullets) of what was consolidated. Keep it concise.`
+    `reset the debt. ${depthLine} When finished, reply with a SHORT GitHub-flavored ` +
+    `Markdown summary (a few bullets) of what was consolidated. Keep it concise.`
   );
 }
 
@@ -707,9 +742,23 @@ export async function handleLauncherCapture(
   captureRuns.set(captureId, run);
   try {
     const shell = process.env.SHELL || '/bin/zsh';
+    let sleepDepth: ConsolidationDepth = 'deep';
+    if (mode === 'sleep') {
+      // Desktop Sleep = user-requested deep. Read the vault's debt to record the
+      // honest source/reason, but the user override forces 'deep' regardless.
+      try {
+        sleepDepth = consolidationDepth(readSleepState(cwd).debt, {
+          userRequestedDeep: true,
+        }).depth;
+      } catch (err) {
+        // No/unreadable sleep state — fall back to deep (user explicitly asked).
+        console.error('[launcher] could not read sleep state for depth:', err);
+        sleepDepth = 'deep';
+      }
+    }
     const prompt =
       mode === 'sleep'
-        ? buildSleepPrompt()
+        ? buildSleepPrompt(sleepDepth)
         : mode === 'ask'
           ? buildAskPrompt(text)
           : buildCapturePrompt(text);
@@ -788,4 +837,311 @@ export async function handleLauncherDefaults(
 ): Promise<void> {
   const home = homedir();
   sendJson(res, 200, { home, defaultParent: join(home, 'projects') });
+}
+
+// ─── Per-project status (exists / update-needed) ────────────────────────────────
+//
+// The launcher dot is GREEN when a project's installed dreamcontext files are
+// current, YELLOW when the project is behind the running CLI (its `setupVersion`
+// is older than `dreamcontextVersion()` → a `dreamcontext update` would refresh
+// its skills/agents/hooks), and RED when the folder is gone. This mirrors the
+// upgrade-vs-update distinction: upgrading the CLI does NOT touch a project's
+// installed files; each project must be updated individually.
+
+export interface VaultStatus {
+  name: string;
+  path: string;
+  /** Folder still on disk? RED dot + removable when false. */
+  exists: boolean;
+  /** The project's recorded setup version ('0.0.0' when unknown / uninitialised). */
+  setupVersion: string;
+  /** The running CLI version the project would be brought up to by `update`. */
+  latestVersion: string;
+  /** True iff the folder exists AND setupVersion is behind latestVersion. */
+  needsUpdate: boolean;
+  /** Federation read gate — whether peers may recall this vault's corpus. */
+  shareable: boolean;
+}
+
+/** Compute one vault's launcher status (pure-ish: reads disk, never throws). */
+function computeVaultStatus(v: Vault, latest: string): VaultStatus {
+  const exists = existsSync(resolve(v.path));
+  let setupVersion = '0.0.0';
+  let shareable = false;
+  if (exists) {
+    try {
+      const cfg = readSetupConfig(resolve(v.path));
+      if (cfg) {
+        setupVersion = cfg.setupVersion || '0.0.0';
+        shareable = cfg.shareable === true;
+      }
+    } catch {
+      /* leave defaults — a project we can't read is treated as up-to-date */
+    }
+  }
+  const needsUpdate = exists && compareVersions(setupVersion, latest) < 0;
+  return { name: v.name, path: v.path, exists, setupVersion, latestVersion: latest, needsUpdate, shareable };
+}
+
+/**
+ * GET /api/launcher/status — per-vault freshness for the launcher cards. Read-only
+ * and vault-agnostic (launcher mode). Each entry says whether the folder still
+ * exists, the project's `setupVersion`, the running CLI version, and whether an
+ * in-project `dreamcontext update` is warranted.
+ */
+export async function handleLauncherStatus(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  _contextRoot: string | null,
+): Promise<void> {
+  const latest = dreamcontextVersion();
+  const vaults = listVaults().map((v) => computeVaultStatus(v, latest));
+  sendJson(res, 200, { vaults, latestVersion: latest });
+}
+
+/**
+ * POST /api/launcher/unregister — drop a vault from the global registry (e.g. a
+ * deleted project the launcher still shows). Mutation; behind the CSRF guard.
+ * STRICT-PICK: only `name` is read. `removeVault` is idempotent and never throws,
+ * so a stale/duplicate request still returns the (refreshed) list. Does NOT touch
+ * the project folder — only the registry entry.
+ */
+export async function handleLauncherUnregister(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  _contextRoot: string | null,
+): Promise<void> {
+  const body = await parseJsonBody(req);
+  if (!body) {
+    sendError(res, 400, 'invalid_body', 'Request body must be valid JSON.');
+    return;
+  }
+  const name = typeof body.name === 'string' ? body.name.trim() : '';
+  if (!name) {
+    sendError(res, 400, 'invalid_name', 'name must be a non-empty string.');
+    return;
+  }
+  const removed = removeVault(name);
+  sendJson(res, 200, { removed, vaults: listVaults() });
+}
+
+/**
+ * POST /api/launcher/update — run `dreamcontext update` inside a registered
+ * project to refresh its installed skills/agents/hooks to the running CLI's
+ * shipped version (the per-project counterpart to a CLI upgrade). Mutation;
+ * behind the CSRF guard. STRICT-PICK: only `name` is read. Spawns the bundled
+ * CLI in a child process with an explicit `cwd` (the same no-shell pattern as
+ * scaffold) — the long-lived server never mutates its own `process.cwd()`.
+ */
+export async function handleLauncherUpdate(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  _contextRoot: string | null,
+): Promise<void> {
+  const body = await parseJsonBody(req);
+  if (!body) {
+    sendError(res, 400, 'invalid_body', 'Request body must be valid JSON.');
+    return;
+  }
+  const name = typeof body.name === 'string' ? body.name.trim() : '';
+  if (!name) {
+    sendError(res, 400, 'invalid_name', 'name must be a non-empty string.');
+    return;
+  }
+  const vault = listVaults().find((v) => v.name === name);
+  if (!vault) {
+    sendError(res, 400, 'unknown_vault', `No registered vault named "${name}".`);
+    return;
+  }
+  const target = resolve(vault.path);
+  if (!existsSync(target)) {
+    sendError(res, 400, 'missing_vault', `Vault path no longer exists: ${target}`);
+    return;
+  }
+  try {
+    await defaultCliRunner(['update'], target);
+    const latest = dreamcontextVersion();
+    sendJson(res, 200, { ok: true, status: computeVaultStatus(vault, latest) });
+  } catch (err) {
+    console.error('[launcher] update failed:', err);
+    const detail = err instanceof Error ? err.message : 'unknown error';
+    sendError(res, 500, 'update_failed', `Update failed: ${detail}`);
+  }
+}
+
+// ─── Federation graph (cross-vault relationship network) ────────────────────────
+//
+// The launcher renders an interactive network of all registered vaults and the
+// "reads" edges between them. A directed edge A→B means "A reads B" — A's
+// `--connected` recall reaches into B's corpus. Per the federation model
+// (federation-recall.ts), that holds iff A's connection to B has direction
+// `out` or `both` AND B is `shareable`. We surface BOTH the edge and the
+// shareable state so the UI can flag a reads-edge whose target hasn't opted in.
+
+export interface FederationEdge {
+  /** Reader vault name (the source of the "reads" arrow). */
+  source: string;
+  /** Source vault that is read. */
+  target: string;
+  /** True when the target vault has opted into being read (`shareable`). */
+  active: boolean;
+}
+
+/**
+ * GET /api/launcher/federation-graph — nodes (every registered vault, with its
+ * launcher status) + directed "reads" edges derived from each vault's
+ * `out`/`both` connections. Read-only and vault-agnostic. Reciprocal edges
+ * (A→B and B→A) are both emitted; the frontend renders the pair as a two-way link.
+ */
+export async function handleLauncherFederationGraph(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  _contextRoot: string | null,
+): Promise<void> {
+  const latest = dreamcontextVersion();
+  const vaults = listVaults();
+  const nodes = vaults.map((v) => computeVaultStatus(v, latest));
+  const shareableByName = new Map(nodes.map((n) => [n.name, n.shareable]));
+  const known = new Set(vaults.map((v) => v.name));
+
+  const edges: FederationEdge[] = [];
+  const seen = new Set<string>();
+  for (const v of vaults) {
+    if (!existsSync(resolve(v.path))) continue; // a dead vault can't host live edges
+    const conns = listConnections(join(resolve(v.path), '_dream_context'));
+    for (const c of conns) {
+      // A "reads" edge: this vault reaches across `out`/`both` peers.
+      if (c.direction !== 'out' && c.direction !== 'both') continue;
+      if (!known.has(c.vault)) continue; // peer no longer registered
+      if (c.status === 'stale') continue;
+      const key = `${v.name} ${c.vault}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      edges.push({ source: v.name, target: c.vault, active: shareableByName.get(c.vault) === true });
+    }
+  }
+
+  sendJson(res, 200, { nodes, edges, latestVersion: latest });
+}
+
+/**
+ * POST /api/launcher/connection — create a "reads" edge from one vault to another
+ * ("from reads to"), stored as an `out` connection on the FROM vault. Mutation;
+ * behind the CSRF guard. STRICT-PICK: only `from` and `to` are read. Validation
+ * (unknown peer, self-connect) maps to 400 via `addConnection`'s `VaultError`.
+ */
+export async function handleLauncherConnectionCreate(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  _contextRoot: string | null,
+): Promise<void> {
+  const body = await parseJsonBody(req);
+  if (!body) {
+    sendError(res, 400, 'invalid_body', 'Request body must be valid JSON.');
+    return;
+  }
+  const from = typeof body.from === 'string' ? body.from.trim() : '';
+  const to = typeof body.to === 'string' ? body.to.trim() : '';
+  if (!from || !to) {
+    sendError(res, 400, 'invalid_body', 'from and to must be non-empty strings.');
+    return;
+  }
+  const fromVault = listVaults().find((v) => v.name === from);
+  if (!fromVault) {
+    sendError(res, 400, 'unknown_vault', `No registered vault named "${from}".`);
+    return;
+  }
+  const fromRoot = join(resolve(fromVault.path), '_dream_context');
+  try {
+    addConnection(fromRoot, from, to, 'out', null);
+    sendJson(res, 200, { ok: true });
+  } catch (err) {
+    if (err instanceof VaultError) {
+      sendError(res, 400, 'invalid_connection', err.message);
+      return;
+    }
+    console.error('[launcher] connection create failed:', err);
+    sendError(res, 500, 'connection_failed', 'Failed to create connection.');
+  }
+}
+
+/**
+ * POST /api/launcher/connection/remove — drop the "reads" edge from `from` to
+ * `to`. Mutation; behind the CSRF guard. STRICT-PICK. `removeConnection` is
+ * idempotent and never throws, so removing a non-existent edge still 200s.
+ */
+export async function handleLauncherConnectionRemove(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  _contextRoot: string | null,
+): Promise<void> {
+  const body = await parseJsonBody(req);
+  if (!body) {
+    sendError(res, 400, 'invalid_body', 'Request body must be valid JSON.');
+    return;
+  }
+  const from = typeof body.from === 'string' ? body.from.trim() : '';
+  const to = typeof body.to === 'string' ? body.to.trim() : '';
+  if (!from || !to) {
+    sendError(res, 400, 'invalid_body', 'from and to must be non-empty strings.');
+    return;
+  }
+  const fromVault = listVaults().find((v) => v.name === from);
+  if (!fromVault) {
+    sendError(res, 400, 'unknown_vault', `No registered vault named "${from}".`);
+    return;
+  }
+  // resolveVaultContextRoot would re-validate the folder; we only need the path.
+  const fromRoot = join(resolve(fromVault.path), '_dream_context');
+  const removed = removeConnection(fromRoot, to);
+  sendJson(res, 200, { ok: true, removed });
+}
+
+/**
+ * POST /api/launcher/shareable — flip a vault's federation read gate so peers may
+ * (or may not) recall its corpus. Mutation; behind the CSRF guard. STRICT-PICK:
+ * `name` + boolean `shareable`. Lets the user enable sharing on a reads-edge's
+ * target directly from the launcher graph (otherwise the edge is inert). Private
+ * by default stays intact — this only changes the named vault on explicit action.
+ */
+export async function handleLauncherShareable(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  _contextRoot: string | null,
+): Promise<void> {
+  const body = await parseJsonBody(req);
+  if (!body) {
+    sendError(res, 400, 'invalid_body', 'Request body must be valid JSON.');
+    return;
+  }
+  const name = typeof body.name === 'string' ? body.name.trim() : '';
+  const shareable = body.shareable === true;
+  if (!name) {
+    sendError(res, 400, 'invalid_name', 'name must be a non-empty string.');
+    return;
+  }
+  const vault = listVaults().find((v) => v.name === name);
+  if (!vault) {
+    sendError(res, 400, 'unknown_vault', `No registered vault named "${name}".`);
+    return;
+  }
+  const root = resolve(vault.path);
+  if (!existsSync(root)) {
+    sendError(res, 400, 'missing_vault', `Vault path no longer exists: ${root}`);
+    return;
+  }
+  try {
+    updateSetupConfig(root, { shareable });
+    sendJson(res, 200, { ok: true, name, shareable });
+  } catch (err) {
+    console.error('[launcher] shareable toggle failed:', err);
+    sendError(res, 500, 'shareable_failed', 'Failed to update sharing.');
+  }
 }

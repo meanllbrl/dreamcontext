@@ -176,6 +176,26 @@ For each knowledge candidate (research finding, sleep-state flag, extracted over
 | Overflow extracted from core file (one-line reference left there) | `dreamcontext knowledge create <slug>` and paste the extracted content |
 | Cross-cutting finding from your own features pass | Capture inline (no need to flag — you own both domains this cycle) |
 
+#### B1.5. Depth gating — what you may actually DO this cycle
+
+Your orchestrator brief states a `depth: <light|standard|deep>`. **Destructive/expensive knowledge ops run ONLY at `deep`.** Tag every action you are about to take:
+
+| Tier | Allowed at light/standard? | Actions |
+|---|---|---|
+| **Non-destructive** | ✅ yes (any depth) | create a new file, extend an existing file, retag, flip `pinned`, tick checkboxes, append a section |
+| **Deep-only** | ❌ no — `deep` required | merge-with-delete (fold two files into one and delete the loser), summarize-and-replace still-valid detail, archive/delete a stale file |
+
+**At light/standard:** if you spot a merge or deletion candidate, do NOT act on it — **flag it in your report** ("merge candidates: `<a>` + `<b>`") so the next deep cycle (or the user via `sleep start --deep` / desktop Sleep) handles it. The agent MAY bump one tier with a stated reason if signals clearly warrant it (e.g. two exact-duplicate files at standard), but state the bump and reason explicitly in your report.
+
+**Archive-before-delete safety net (deep only, MANDATORY):** before ANY deep-tier merge-with-delete or summarize-and-replace, FIRST copy the file you are about to lose to a dated archive:
+
+```bash
+mkdir -p _dream_context/knowledge/.archive
+cp _dream_context/knowledge/<slug>.md "_dream_context/knowledge/.archive/<slug>-$(date +%Y%m%d).md"
+```
+
+The dated archive copy is the recovery net; the "Dropped-but-load-bearing self-check" report line is the audit signal. Both are required for every destructive op.
+
 #### B2. Create vs. extend — the consolidation rubric
 
 **A knowledge file is a tag-able identity, not a dumping ground.** Aim for the *fewest* files that keep each topic cleanly findable. Fragmenting one topic across many near-duplicate slugs makes tags noisy and recall worse; cramming unrelated topics into one super-file makes tags meaningless. Pick the boundary on purpose.
@@ -341,6 +361,8 @@ dreamcontext taxonomy resolve <tag>
 - taxonomy init: no-op (core/taxonomy.json already exists)
 - audit: 2 nonCanonical tags fixed (knowledge/auth-design.md: auth → domain:security; state/task-slug.md: db → domain:database)
 - Domain Vocabulary: added 'ripple' via `taxonomy add topic:ripple`, added alias 'bookmarking' → 'topic:sleep' via `taxonomy alias bookmarking topic:sleep`
+
+Dropped-but-load-bearing self-check: <none | list any digest/auto-bookmark/research finding you saw but did NOT promote into a feature/knowledge file, with the reason>
 ```
 
 ## Rules

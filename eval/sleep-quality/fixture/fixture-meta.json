@@ -1,0 +1,40 @@
+{
+  "_comment": "Eval-only scenario metadata that does not belong in a real .sleep.json. Drives the deterministic scorer sub-scores that replay pure functions.",
+  "epoch": "2026-06-10T12:00:00.000Z",
+  "restop": {
+    "_comment": "no-double-count scenario: the SAME session_id is stopped twice (score 3 then 1). Replaying upsertSessionOnStop twice must leave debt 1, sessions.length 1 (NOT 4).",
+    "session_id": "s-restop",
+    "firstStop": {
+      "session_id": "s-restop",
+      "transcript_path": null,
+      "stopped_at": "2026-06-10T11:30:00.000Z",
+      "last_assistant_message": "first stop",
+      "change_count": 9,
+      "tool_count": 22,
+      "score": 3,
+      "task_slugs": ["auth-refactor"]
+    },
+    "secondStop": {
+      "session_id": "s-restop",
+      "transcript_path": null,
+      "stopped_at": "2026-06-10T11:45:00.000Z",
+      "last_assistant_message": "re-stop, smaller diff",
+      "change_count": 1,
+      "tool_count": 3,
+      "score": 1,
+      "task_slugs": ["auth-refactor"]
+    }
+  },
+  "denseSession": {
+    "_comment": "edit-free-but-dense session (s-dense). change_count 0, tool_count 5 (→ max(change,tool)=1). Substance signals are high so AFTER scoring lifts it to >=2.",
+    "session_id": "s-dense",
+    "changeCount": 0,
+    "toolCount": 5,
+    "substanceSignals": {
+      "userTurns": 8,
+      "assistantChars": 9000,
+      "decisionMarkers": 3,
+      "taskSlugs": ["api-design", "auth-refactor"]
+    }
+  }
+}

@@ -273,3 +273,49 @@
   font-size: var(--font-size-xs);
   color: var(--color-text-muted);
 }
+
+/* ─── Plain-language explainer + card grouping (federation UX) ───────────────── */
+.fed-intro {
+  background: var(--color-bg-tertiary, rgba(255, 255, 255, 0.03));
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.fed-intro-title {
+  margin: 0 0 var(--space-1, 4px);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+}
+
+.fed-intro-body {
+  margin: 0 0 var(--space-2);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+
+.fed-intro-steps {
+  margin: 0;
+  padding-left: 1.1rem;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.6;
+}
+
+.fed-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.fed-card .fed-subtitle {
+  margin-top: 0;
+}
+
+.fed-dir-hint {
+  margin-top: var(--space-1, 4px);
+  font-style: italic;
+}

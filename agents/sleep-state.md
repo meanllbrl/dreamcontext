@@ -189,7 +189,7 @@ dreamcontext defaults to single-person. When you have **corroborated evidence** 
 **Detection gate — require ≥2 corroborated signals** before flipping a project to multi-person (this gate prevents false positives; one weak signal is never enough):
 
 - **Self-identification in user turns** — a person names themselves or another teammate ("this is Ada", "Mehmet asked me to…", "I'm covering for Lina").
-- **Distinct git authors since the epoch** — `git log --since="$CUTOFF" --format='%an <%ae>' | sort -u` returns more than one real human author (ignore bots/CI like `github-actions`, `dependabot`).
+- **Distinct git authors since the epoch** — `git log --since="$CUTOFF" --format='%an <%ae>' | sort -u` returns more than one real human author. Apply the **shared bot-filter** (drop any author whose kebab-case slug contains `github-actions` or `dependabot`) — this is the same `BOT_SLUG_FRAGMENTS` list `attributeByPerson` in `src/lib/attribution.ts` uses, so per-person attribution stays consistent with detection.
 - **Distinct voice / handoff** — the transcript shows a clear authorship handoff or a different working style/voice than the established user.
 
 ```bash
@@ -273,6 +273,8 @@ You do **not** edit knowledge files. Produce flags for `sleep-product` to act on
 
 ### Cross-domain mentions (for other specialists)
 - (none) | OR: research finding worth long-term retention — flagging for sleep-product
+
+Dropped-but-load-bearing self-check: <none | list any digest/auto-bookmark/decision you saw but did NOT promote into changelog/core/2.memory.md, with the reason>
 ```
 
 ## Rules

@@ -25,11 +25,19 @@ import {
   handleLauncherCatalog,
   handleLauncherCapture,
   handleLauncherCaptureStatus,
+  handleLauncherStatus,
+  handleLauncherUnregister,
+  handleLauncherUpdate,
+  handleLauncherFederationGraph,
+  handleLauncherConnectionCreate,
+  handleLauncherConnectionRemove,
+  handleLauncherShareable,
   handleSleepyVideo,
   handleSleepyAnim,
   handleSleepyConfigGet,
   handleSleepyConfigSet,
 } from './routes/launcher.js';
+import { handleBrainSettingsGet, handleBrainSettingsPut } from './routes/ui-settings.js';
 import { handleConnectionsList, handleConnectionsCreate, handleConnectionsDelete } from './routes/connections.js';
 import { handleFederationInboxGet, handleFederationSyncPost } from './routes/federation.js';
 import { handlePacksGet } from './routes/packs.js';
@@ -113,6 +121,15 @@ function buildRouter(): Router {
   router.get('/api/launcher/capture/status', handleLauncherCaptureStatus);
   router.get('/api/launcher/sleepy-config', handleSleepyConfigGet);
   router.post('/api/launcher/sleepy-config', handleSleepyConfigSet);
+  // Launcher project status (green/yellow/red) + per-project update + the
+  // cross-vault federation "reads" graph (nodes, edges, connect/disconnect).
+  router.get('/api/launcher/status', handleLauncherStatus);
+  router.post('/api/launcher/unregister', handleLauncherUnregister);
+  router.post('/api/launcher/update', handleLauncherUpdate);
+  router.get('/api/launcher/federation-graph', handleLauncherFederationGraph);
+  router.post('/api/launcher/connection', handleLauncherConnectionCreate);
+  router.post('/api/launcher/connection/remove', handleLauncherConnectionRemove);
+  router.post('/api/launcher/shareable', handleLauncherShareable);
   router.get('/api/sleepy/video', handleSleepyVideo);
   router.get('/api/sleepy/anim', handleSleepyAnim);
 
@@ -130,6 +147,11 @@ function buildRouter(): Router {
   router.get('/api/packs', handlePacksGet);
   router.post('/api/packs/:name/install', handlePackInstall);
   router.delete('/api/packs/:name', handlePackUninstall);
+
+  // Brain (graph) UI settings — persisted per-project so they survive the
+  // desktop app's per-launch loopback port change (which wipes localStorage).
+  router.get('/api/brain-settings', handleBrainSettingsGet);
+  router.put('/api/brain-settings', handleBrainSettingsPut);
 
   // Version check
   router.get('/api/version-check', handleVersionCheckGet);

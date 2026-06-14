@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer, type Server } from 'node:http';
 import {
-  analyzeTranscript, scoreFromChangeCount, scoreFromToolCount,
+  analyzeTranscript, scoreFromChangeCount, scoreFromToolCount, scoreFromSubstance,
   isJsTsFile, findFormatterConfig, findTsconfig, findProjectConfig,
   resolveDashboardPort, isDashboardUp,
 } from '../../src/cli/commands/hook.js';
@@ -91,6 +91,73 @@ describe('scoreFromToolCount', () => {
 
   it('returns 3 for 100 tool calls', () => {
     expect(scoreFromToolCount(100)).toBe(3);
+  });
+});
+
+describe('scoreFromSubstance', () => {
+  const zero = { userTurns: 0, assistantChars: 0, decisionMarkers: 0, taskSlugs: [] as string[] };
+
+  it('returns 0 when no signal crosses its threshold', () => {
+    expect(scoreFromSubstance(zero)).toBe(0);
+    // Just-below thresholds still score 0.
+    expect(
+      scoreFromSubstance({ userTurns: 5, assistantChars: 5999, decisionMarkers: 0, taskSlugs: ['a'] }),
+    ).toBe(0);
+  });
+
+  it('returns 1 for each single signal at its threshold', () => {
+    expect(scoreFromSubstance({ ...zero, userTurns: 6 })).toBe(1);
+    expect(scoreFromSubstance({ ...zero, assistantChars: 6000 })).toBe(1);
+    expect(scoreFromSubstance({ ...zero, decisionMarkers: 1 })).toBe(1);
+    expect(scoreFromSubstance({ ...zero, taskSlugs: ['a', 'b'] })).toBe(1);
+  });
+
+  it('returns 2 for two signals', () => {
+    expect(
+      scoreFromSubstance({ userTurns: 6, assistantChars: 6000, decisionMarkers: 0, taskSlugs: [] }),
+    ).toBe(2);
+  });
+
+  it('returns 3 for all four signals', () => {
+    expect(
+      scoreFromSubstance({ userTurns: 6, assistantChars: 6000, decisionMarkers: 1, taskSlugs: ['a', 'b'] }),
+    ).toBe(3);
+  });
+
+  it('clamps a hugely-substantive session to 3', () => {
+    expect(
+      scoreFromSubstance({
+        userTurns: 100,
+        assistantChars: 1_000_000,
+        decisionMarkers: 50,
+        taskSlugs: ['a', 'b', 'c', 'd', 'e'],
+      }),
+    ).toBe(3);
+  });
+
+  it('composition: edit-free-but-dense session now scores >= 2 where old max(change,tool) was <= 1', () => {
+    // Old behavior: a session with changeCount 0, toolCount 5 scored max(0,1)=1.
+    const oldScore = Math.max(scoreFromChangeCount(0), scoreFromToolCount(5));
+    expect(oldScore).toBeLessThanOrEqual(1);
+
+    // New composition adds substance: dense session (userTurns 8, 8000 chars, 2 decisions, 2 slugs).
+    const substance = scoreFromSubstance({
+      userTurns: 8,
+      assistantChars: 8000,
+      decisionMarkers: 2,
+      taskSlugs: ['t1', 't2'],
+    });
+    const newScore = Math.max(scoreFromChangeCount(0), scoreFromToolCount(5), substance);
+    expect(newScore).toBeGreaterThanOrEqual(2);
+  });
+
+  it('inverse regression: an edit-heavy session score is unchanged by substance composition', () => {
+    // Edit-heavy session with no substance signals.
+    const changeScore = scoreFromChangeCount(50); // 3
+    const noSubstance = scoreFromSubstance(zero); // 0
+    const composed = Math.max(changeScore, scoreFromToolCount(0), noSubstance);
+    expect(composed).toBe(changeScore);
+    expect(composed).toBe(3);
   });
 });
 

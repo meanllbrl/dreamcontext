@@ -1,0 +1,58 @@
+{
+  "_comment": "Implementation-blind expected labels for the sleep-quality eval. Hand-derived from the fixture by reasoning about the documented invariants, NOT by running the code. epoch = 2026-06-10T12:00:00.000Z.",
+
+  "epochSafety": {
+    "_comment": "applyConsolidation(state, epoch): survivors = sessions stopped strictly AFTER epoch (newest-first order preserved). Pre-epoch + null-stopped are processed/dropped.",
+    "expectedSurvivorSessionIds": ["s-post-2", "s-post-1"],
+    "expectedSurvivorBookmarkIds": ["bm-7", "bm-8"],
+    "expectedSurvivorDashboardSummaries": ["post-epoch dashboard edit"],
+    "expectedProcessedSessionCount": 3
+  },
+
+  "debtCorrectness": {
+    "_comment": "debt recomputed from survivors: s-post-1 (3) + s-post-2 (1) = 4. NOT a hardcoded 0.",
+    "expectedRecomputedDebt": 4
+  },
+
+  "noDoubleCount": {
+    "_comment": "Re-stop the same session_id (score 3 then 1). Old score subtracted before new added.",
+    "expectedDebt": 1,
+    "expectedSessionCount": 1
+  },
+
+  "attribution": {
+    "_comment": "attributeByPerson over the 2-author commit list + roster. Bots (github-actions/dependabot) filtered. Bucketed newest-listed order = insertion order.",
+    "expectedBuckets": {
+      "mehmet-nuraydin": ["a1", "a3"],
+      "ada-lovelace": ["a2", "a4"]
+    }
+  },
+
+  "attributionControl": {
+    "_comment": "Single-person roster. No phantom buckets; bots dropped.",
+    "expectedBucketKeys": ["mehmet-nuraydin"],
+    "expectedBuckets": {
+      "mehmet-nuraydin": ["c1", "c2"]
+    }
+  },
+
+  "triggerExpiry": {
+    "_comment": "Triggers with fired_count >= max_fires expire on consolidation.",
+    "expectedSurvivingTriggerIds": ["trg-live"]
+  },
+
+  "substanceScoring": {
+    "_comment": "s-dense: change_count 0, tool_count 5. BEFORE = max(change,tool) = 1. AFTER = max(change,tool,substance) where substance signals are all met → 3.",
+    "expectedScoreBefore": 1,
+    "expectedScoreAfter": 3
+  },
+
+  "depthGating": {
+    "_comment": "isDestructiveAllowed by depth. BEFORE = destructive always allowed (no gating existed). AFTER = true only at deep.",
+    "expectedAllowedByDepth": {
+      "light": false,
+      "standard": false,
+      "deep": true
+    }
+  }
+}
