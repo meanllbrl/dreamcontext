@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-quer
 import { api, setActiveVault } from './api/client';
 import { LauncherPage } from './pages/LauncherPage';
 import { CaptureBar } from './pages/CaptureBar';
-import { applySleepyHotkey, readSleepyConfig } from './lib/sleepy';
+import { applySleepyHotkey, readSleepyConfig, SLEEPY_CONFIG_KEY } from './lib/sleepy';
 import { ThemeProvider } from './context/ThemeContext';
 import { I18nProvider } from './context/I18nContext';
 import { ProjectProvider } from './context/ProjectContext';
@@ -131,10 +131,22 @@ if (initialVault) {
   setActiveVault(initialVault);
 }
 
-/** Registers the Sleepy global hotkey for the launcher window (no UI). */
+/**
+ * Owns the Sleepy global hotkey from the persistent launcher window. Registers on
+ * mount and re-registers whenever the config changes in ANOTHER window (Settings
+ * lives in a vault window) via the cross-window `storage` event — so the hotkey
+ * survives opening/closing vault windows.
+ */
 function SleepyHotkeyRegistrar() {
   useEffect(() => {
     void applySleepyHotkey(readSleepyConfig());
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === null || e.key === SLEEPY_CONFIG_KEY) {
+        void applySleepyHotkey(readSleepyConfig());
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
   }, []);
   return null;
 }

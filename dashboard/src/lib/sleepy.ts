@@ -6,7 +6,9 @@
  */
 import { isDesktop } from './desktop';
 
-const CONFIG_KEY = 'sleepy:config:v1';
+/** localStorage key for the Sleepy config (exported so other windows can watch it). */
+export const SLEEPY_CONFIG_KEY = 'sleepy:config:v1';
+const CONFIG_KEY = SLEEPY_CONFIG_KEY;
 const SLEEPY_LABEL = 'sleepy';
 /** Width/height (logical px) of the notch bar window. */
 const WIN_W = 620;
