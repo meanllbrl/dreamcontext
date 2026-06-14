@@ -125,7 +125,7 @@ describe('scaffoldProject — existing folder', () => {
     expect(calls[0][0]).toBe('init');
   });
 
-  it('is idempotent when the folder is already a dreamcontext project (no scaffold)', async () => {
+  it('skips init for an already-a-dreamcontext folder but still runs setup for the chosen platforms', async () => {
     const proj = mkTmp('dc-proj');
     const home = mkTmp('dc-home');
     dirs.push(proj, home);
@@ -133,12 +133,17 @@ describe('scaffoldProject — existing folder', () => {
     const { runner, calls } = recordingRunner();
 
     const res = await scaffoldProject(
-      { mode: 'existing', name: 'already', projectPath: proj },
+      { mode: 'existing', name: 'already', projectPath: proj, platforms: ['claude', 'codex'] },
       runner,
       home,
     );
 
-    expect(calls.length).toBe(0); // init/setup never run
+    // init is skipped (already a project); setup still runs to install the
+    // platforms the user chose when connecting.
+    expect(calls.some((c) => c[0] === 'init')).toBe(false);
+    const setup = calls.find((c) => c[0] === 'setup');
+    expect(setup).toBeTruthy();
+    expect(setup![setup!.indexOf('--platforms') + 1]).toBe('claude,codex');
     expect(res.vault.name).toBe('already');
   });
 

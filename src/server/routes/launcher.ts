@@ -233,19 +233,24 @@ export async function scaffoldProject(
     throw new ScaffoldError("mode must be 'new' or 'existing'.");
   }
 
-  // Scaffold only when this folder is not already a dreamcontext project.
-  if (!existsSync(join(target, '_dream_context'))) {
+  // init scaffolds _dream_context/ — only needed when this folder is not already
+  // a dreamcontext project.
+  const alreadyProject = existsSync(join(target, '_dream_context'));
+  if (!alreadyProject) {
     const initArgs = ['init', '--yes', '--platforms', platformArg, '--name', name];
     if (a.description?.trim()) initArgs.push('--description', a.description.trim());
     if (a.targetUser?.trim()) initArgs.push('--user', a.targetUser.trim());
     if (a.stack?.trim()) initArgs.push('--stack', a.stack.trim());
     if (a.priority?.trim()) initArgs.push('--priority', a.priority.trim());
     await runner(initArgs, target);
-    // init scaffolds _dream_context/ but does NOT install the platform integration
-    // (its interactive offer is suppressed in a spawned, non-TTY child). Run setup
-    // to finish the install; it detects the existing _dream_context/ and skips init.
-    await runner(['setup', '--defaults', '--platforms', platformArg], target);
   }
+
+  // setup installs/refreshes the platform integration (.claude/.agents skills,
+  // agents, hooks) for the SELECTED platforms. Run it for both fresh and
+  // existing projects: a fresh project needs it (init suppresses the interactive
+  // offer in a non-TTY child); connecting an existing folder uses it to install
+  // the platforms the user chose (e.g. add Codex) — idempotent and non-destructive.
+  await runner(['setup', '--defaults', '--platforms', platformArg], target);
 
   // Install any chosen optional skill packs onto the selected platforms. Runs
   // after setup (which lays down the base skill the packs extend). Best-effort

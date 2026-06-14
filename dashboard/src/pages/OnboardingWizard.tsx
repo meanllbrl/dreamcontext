@@ -22,6 +22,10 @@ interface Props {
 /** The ordered question keys per mode. `path` only appears for existing folders. */
 const STEPS_NEW = ['name', 'description', 'targetUser', 'stack', 'priority', 'platforms', 'packs', 'review'] as const;
 const STEPS_EXISTING = ['path', 'description', 'targetUser', 'stack', 'priority', 'platforms', 'packs', 'review'] as const;
+// An existing folder that is ALREADY a dreamcontext project skips the detail
+// questions (name/desc/stack/… are already set) but still chooses platforms +
+// skill packs, so connecting it can install/refresh integrations and packs.
+const STEPS_EXISTING_HASCTX = ['path', 'platforms', 'packs', 'review'] as const;
 
 type StepKey = (typeof STEPS_NEW)[number] | (typeof STEPS_EXISTING)[number];
 
@@ -69,6 +73,7 @@ export function OnboardingWizard({ onClose, onReady }: Props) {
   const [priority, setPriority] = useState('');
   const [platforms, setPlatforms] = useState<string[]>(['claude']);
   const [packs, setPacks] = useState<string[]>([]);
+  const [hasContext, setHasContext] = useState(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -83,7 +88,8 @@ export function OnboardingWizard({ onClose, onReady }: Props) {
     }
   }, [mode, parentDir, defaults.data]);
 
-  const steps = mode === 'existing' ? STEPS_EXISTING : STEPS_NEW;
+  const steps: readonly StepKey[] =
+    mode === 'existing' ? (hasContext ? STEPS_EXISTING_HASCTX : STEPS_EXISTING) : STEPS_NEW;
   const step: StepKey = steps[stepIndex];
 
   // Focus the field when a text-input step appears.
@@ -105,19 +111,18 @@ export function OnboardingWizard({ onClose, onReady }: Props) {
       setParentDir(picked);
       return;
     }
-    // Existing-folder pick: probe it. If it's already a vault, skip the quiz.
+    // Existing-folder pick: probe it, then route into the wizard. We no longer
+    // auto-open a folder that already has _dream_context — the user should still
+    // get to pick platforms + skill packs (which can install/refresh on connect).
     setProjectPath(picked);
     try {
       const probe = await probeFolder(picked);
-      if (!name) setName(probe.name);
+      setName(probe.name);
       if (!stack && probe.stack) setStack(probe.stack);
-      if (probe.hasContext) {
-        // Already a dreamcontext project — scaffold is a no-op that just registers.
-        const res = await scaffold.mutateAsync({ mode: 'existing', name: probe.name, projectPath: picked });
-        onReady(res.vault.name);
-        return;
-      }
-      setStepIndex(1); // advance to the first quiz question
+      setHasContext(probe.hasContext);
+      // hasContext → STEPS_EXISTING_HASCTX (path, platforms, packs, review): step 1
+      // is 'platforms'. No context → full quiz: step 1 is 'description'.
+      setStepIndex(1);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
