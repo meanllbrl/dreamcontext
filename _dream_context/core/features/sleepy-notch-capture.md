@@ -42,36 +42,21 @@ Developers lose quick thoughts, commands, and notes between coding sessions. The
 - [x] Window loads `?capture=1` route (absolute same-origin URL, not a relative Tauri URL).
 - [x] `macOSPrivateApi` enabled in `tauri.conf.json`; capability grants `global-shortcut:allow-register`, `global-shortcut:allow-unregister-all`, `core:window:allow-create`, `core:webview:allow-create-webview-window`.
 - [x] CaptureBar mounts in `?capture=1` mode with transparent page background; Esc closes the window via `closeSelf()`.
-- [x] Mascot video (`<video>` in black notch panel) driven by `/api/sleepy/video?mode=idle|sleepy|sleeps`; mode derived from `GET /api/sleep` `debt` field (≤3→idle, 4–9→sleepy, ≥10→sleeps).
+- [x] Mascot is an animated WebP (`<img>`) driven by `GET /api/sleepy/anim?mode=idle|sleepy|sleeps`; mood from `GET /api/sleep` debt (debt<8 → idle, 8-9 → sleepy, ≥10 → sleeps). Legacy video route kept but unused.
 - [x] Mascot panel is 360×150 px (same width as capture bar below), clip fills edge-to-edge with `object-fit:cover` — no black gutters.
 - [x] Textarea auto-grows up to ~5 lines; Enter submits, Shift+Enter inserts newline.
-- [x] `POST /api/launcher/capture`: (1) instant in-process CHANGELOG append via `insertToJsonArray` (guaranteed, no child CLI); (2) starts a tracked headless `claude -p` run, returns `{ok, captureId}`.
-- [x] `GET /api/launcher/capture/status?id=` returns `{state: running|done|error|unknown, output}`; capture bar polls (1.2 s, 3-min/unknown-streak ceiling) and shows spinner "Sleepy is learning…" then Claude's response in a scrollable panel.
+- [x] `POST /api/launcher/capture` (Learn mode): (1) instant in-process CHANGELOG append via `insertToJsonArray`; (2) starts tracked `claude --model sonnet` run with Think hard prompt, returns `{ok, captureId}`. Ask/Sleep modes skip the CHANGELOG write.
+- [x] `GET /api/launcher/capture/status?id=` returns `{state: running|done|error|unknown, output}`; capture bar polls at 1.2s (3-min ceiling for Learn/Ask, ~15-min for Sleep; unknown-streak guard) and shows mode-appropriate spinner then response in a scrollable panel.
 - [x] Window grabs key focus on open (`win.setFocus()`); dismisses on blur (Spotlight-style, armed after first focus, paused while native vault picker is open); Esc still closes.
 - [x] `GET /api/vaults` returns `exists` flag per vault; capture picker filters out vaults whose folder is gone.
 - [x] Capture bar surfaces the server's real error message when a capture fails (not a bare "failed").
 - [x] Config persists server-side at `~/.dreamcontext/sleepy.json` (survives per-launch port/localStorage reset); launcher seeds localStorage from server on mount.
-- [x] Mascot video clips (~160 KB each, 3 clips) bundled as Tauri resources (`desktop/src-tauri/sleepy → Resources/sleepy`); served by `GET /api/sleepy/video?mode=` with Range support; `DREAMCONTEXT_SLEEPY_DIR` env var injected by Rust shell.
+- [x] Mascot animated WebP clips (15fps, ~2.5 MB each, 3 clips) + `.mp4` sources bundled as Tauri resources (`desktop/src-tauri/sleepy → Resources/sleepy`); served by `GET /api/sleepy/anim?mode=`; `DREAMCONTEXT_SLEEPY_DIR` env var injected by Rust shell.
 - [x] Assets do NOT ship in the npm CLI package.
 - [x] Settings "Sleepy" section moved to the bottom (after Connections) with a BETA badge.
 - [ ] Visual design accepted by user. (Mascot layout and notch panel improved this cycle — still not formally accepted.)
 
-- [x] Mascot is an animated WebP served via GET /api/sleepy/anim?mode=idle|sleepy|sleeps; mood from GET /api/sleep debt (debt<8 -> idle, 8-9 -> sleepy, >=10 -> sleeps). WKWebView blocks video autoplay and Tauri 2.x exposes no override -- img with animated WebP autoplays unconditionally.
-
-- [x] POST /api/launcher/capture accepts mode field (learn|ask|sleep); Learn: (1) in-process CHANGELOG append via insertToJsonArray; (2) tracked claude --model sonnet run with Think hard prompt. Ask and Sleep skip the CHANGELOG write.
-
-- [x] Enrichment spawned via interactive login shell (-ilc) so ~/.zshrc PATH additions (e.g. ~/.local/bin where claude lives) are available to Finder-launched app. Stdout (Claude's reply) and stderr (shell noise) captured separately.
-
-- [x] Capture bar shows mode-appropriate spinner (Sleepy is learning / Sleepy is thinking / Sleepy is sleeping -- consolidating memory) then response rendered as Markdown via marked + DOMPurify. Errors remain plain text.
-
-- [x] Sleep mode: mascot shows sleeps animation, toggle and input locked while running, window does NOT auto-dismiss on blur (sleepingRef guards close-on-blur); poll ceiling ~15 min.
-
 ## Constraints & Decisions
-
-
-
-
-
 
 - **[2026-06-14]** Ask mode has no side effects -- no CHANGELOG write, no file changes. One-shot Q&A only. Sleep mode triggers real consolidation -- full dreamcontext sleep flow, takes minutes, uses tokens, modifies _dream_context files.
 - **[2026-06-14]** Claude runs on Sonnet + medium thinking -- enrichment, Ask, and Sleep spawns use claude --model sonnet; prompts lead with 'Think hard' (Claude Code's medium-thinking keyword).
@@ -90,25 +75,28 @@ Developers lose quick thoughts, commands, and notes between coding sessions. The
 
 ## Technical Details
 
-**Rust shell (`desktop/src-tauri/src/lib.rs`):** adds `tauri-plugin-global-shortcut` plugin; sets `DREAMCONTEXT_SLEEPY_DIR` env to `<resource_dir>/sleepy` (where the 3 bundled `.mp4` clips live).
+**Rust shell (`desktop/src-tauri/src/lib.rs`):** adds `tauri-plugin-global-shortcut` plugin; sets `DREAMCONTEXT_SLEEPY_DIR` env to `<resource_dir>/sleepy` (where bundled `.webp` and `.mp4` clips live).
 
 **Capability (`desktop/src-tauri/capabilities/default.json`):** `global-shortcut:allow-register`, `global-shortcut:allow-unregister-all`, core window/webview permissions — scoped to the `http://127.0.0.1:*` loopback origin.
 
 **`sleepy.ts` (`dashboard/src/lib/sleepy.ts`):** config (read/write localStorage + server), `applySleepyHotkey(cfg)` (unregister all → register new), `toggleSleepyWindow()` (open/close `WebviewWindow` label `sleepy`), `closeSelf()` (closes the current webview window from inside), `onSleepyFocusChange(cb)` (subscribes to `onFocusChanged` on the current webview; returns unsubscribe fn). Window size: 420×520 px (was 340, grown to fit response panel), y=0, decorations=false, transparent=true, alwaysOnTop=true. `win.setFocus()` called after `tauri://created` so the panel is the key window immediately on open.
 
-**`CaptureBar.tsx/.css`:** mounts when `?capture=1`; sets `html`/`body` background to transparent. Notch panel: **360×150 px** (was 200×92), flat top, rounded bottom, solid `#000`. Mascot `<video className="cap-char">` `width:100%; height:100%; object-fit:cover` — full-bleed edge-to-edge banner, no gutters. Capture bar: 360px wide, 8px below notch, frosted-glass style. Enrichment panel: scrollable, shows spinner "Sleepy is learning…" while polling, then Claude's response. Close-on-blur wired via `onSleepyFocusChange`, armed after first focus, paused while vault picker is open (`pickerActiveRef`). Error state surfaces server's reason string.
+**`CaptureBar.tsx/.css`:** mounts when `?capture=1`; sets `html`/`body` background to transparent. Notch panel: **360×150 px** (was 200×92), flat top, rounded bottom, solid `#000`. Mascot: `<img className="cap-char" src="/api/sleepy/anim?mode=<displayMode>">` — animated WebP fills panel edge-to-edge. Mode toggle: Learn | Ask | Sleep segmented switch; toggle and input locked during sleep. `sleeping` = `capMode === 'sleep' && enrich?.state === 'running'`; `sleepingRef` guards close-on-blur. Enrich panel renders via `marked` (GFM) + `DOMPurify`; errors plain text. `.cap-md` CSS: explicit bullets (overrides global `reset.css` `list-style:none`), collapsed loose-list `<p>` margins, dim headings, violet links, monospace code.
 
 **`App.tsx`:** launcher window effect reads config from server (`initSleepyFromServer`), registers hotkey, re-registers on `storage` event keyed to `SLEEPY_CONFIG_KEY`. `?capture=1` → renders only `<CaptureBar />`.
 
 **Backend routes (`src/server/routes/launcher.ts`):**
 - `GET /api/launcher/sleepy-config` / `POST /api/launcher/sleepy-config` — reads/writes `~/.dreamcontext/sleepy.json`.
-- `GET /api/sleepy/video?mode=` — streams bundled clip from `DREAMCONTEXT_SLEEPY_DIR` with Range support (required for WKWebView video).
-- `POST /api/launcher/capture` — (1) writes CHANGELOG entry in-process via `insertToJsonArray` (no child CLI); (2) starts a tracked `claude` spawn with piped stdio, records to `captureRuns` Map, returns `{ok, captureId}`.
+- `GET /api/sleepy/video?mode=` — streams bundled `.mp4` clip with Range support (legacy; kept but unused by capture bar).
+- `GET /api/sleepy/anim?mode=` — serves animated WebP as `image/webp`, whole-file, 24h cache. 404 when `DREAMCONTEXT_SLEEPY_DIR` absent.
+- `POST /api/launcher/capture` — body: `{vault, text, mode}`. Learn: in-process CHANGELOG write then `$SHELL -ilc 'exec claude --model sonnet -p "$0"' <prompt>`. Ask/Sleep: skip write. Returns `{ok, captureId}`.
 - `GET /api/launcher/capture/status?id=` — returns `{state: running|done|error|unknown, output}` from `captureRuns` Map; `unknown` means the id expired or never existed.
 
 **`src/server/routes/vaults.ts`:** `GET /api/vaults` now maps each vault through `existsSync(resolve(v.path))` and adds an `exists: boolean` field; the capture bar filters to `exists=true` vaults only.
 
-**Assets:** `desktop/src-tauri/sleepy/idle.mp4`, `sleepy.mp4`, `sleeps.mp4` (~160 KB total after downscale from original 1920×1080 ~2 MB each). Bundled via `tauri.conf.json` resources. New clips (`Sleepy IDLE/SLEEPS/SLEEPY.mp4`) replaced the previous `Dreamy` clips this cycle.
+**Assets:** `desktop/src-tauri/sleepy/{idle,sleepy,sleeps}.webp` (animated WebP, 15fps, ~2.5 MB each) + `.mp4` source clips. Generated with `img2webp` (libwebp) from ffmpeg-extracted frames (fps=15, scale=420px, q=72, loop=0). Bundled via `tauri.conf.json` `"sleepy": "sleepy"` resources entry. Nothing ships to npm.
+
+**Mood thresholds:** `modeForDebt(debt)` — `idle` (debt < 8), `sleepy` (8–9), `sleeps` (>= 10).
 
 ## Notes
 
@@ -120,7 +108,6 @@ Developers lose quick thoughts, commands, and notes between coding sessions. The
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
-
 
 ### 2026-06-14 - Update
 - 2026-06-14 - Animated WebP mascot; Learn/Ask/Sleep toggle; Sonnet+thinking; Markdown rendering; list fix; claude PATH fix; debt threshold raised to 8. Mascot switched from video to animated WebP img via new GET /api/sleepy/anim?mode= route. Three-mode toggle: Learn (save+enrich), Ask (one-shot Q&A, no memory write), Sleep (full consolidation, input locked). Enrichment uses claude --model sonnet with Think hard prompt. Ask answers rendered via marked+DOMPurify. List rendering fix: .cap-md sets explicit bullets over global reset. Spawn changed from -lc to -ilc for Finder-app PATH. Stdout/stderr captured separately. Poll ceiling widened to ~15 min for Sleep mode. sleepingRef guards close-on-blur during consolidation.

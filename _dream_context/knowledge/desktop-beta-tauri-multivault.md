@@ -9,8 +9,9 @@ description: >-
   pattern, auto-CLI-install), the Faz 1 GitHub Actions release pipeline
   (E2E verified v0.8.1), the homebrew-vs-nvm CLI resolution gotcha, and the
   Sleepy notch quick-capture companion (global hotkey, transparent notch window,
-  mascot mood, in-process capture pipeline, tracked enrichment status UI, dead-vault
-  filtering, focus/blur UX, asset bundling).
+  animated WebP mascot with mood thresholds, Learn/Ask/Sleep mode toggle, Sonnet
+  enrichment with Markdown rendering, interactive-login-shell claude PATH fix,
+  tracked enrichment status UI, dead-vault filtering, focus/blur UX, asset bundling).
 type: knowledge
 tags:
   - architecture
@@ -278,13 +279,17 @@ Global hotkey (tauri-plugin-global-shortcut, registered in launcher window JS)
       + win.setFocus() (grabs key focus immediately on open)
       → CaptureBar.tsx (mounts when ?capture=1)
           → onSleepyFocusChange(): close-on-blur dismiss (Spotlight-style)
-          → user types → POST /api/launcher/capture
-              → (1) insertToJsonArray (in-process CHANGELOG write, guaranteed)
-              → (2) spawn: $SHELL -lc 'exec claude -p "$0"' <note>  (tracked)
-                   captureRuns Map { captureId → {state, output, startedAt} }
+          → mode toggle: Learn | Ask | Sleep
+          → user types/clicks → POST /api/launcher/capture {vault, text, mode}
+              Learn: (1) insertToJsonArray (in-process CHANGELOG write, guaranteed)
+              Ask/Sleep: no CHANGELOG write
+              → spawn: $SHELL -ilc 'exec claude --model sonnet -p "$0"' <prompt>
+                   captureRuns Map { captureId → {state, stdout, stderr, startedAt} }
                    returns {ok, captureId}
           → poll GET /api/launcher/capture/status?id=<captureId> every 1.2s
-              → shows "Sleepy is learning…" spinner, then Claude's response
+              (Learn/Ask: 3-min ceiling; Sleep: ~15-min; unknown-streak guard)
+              → renders Markdown response (marked + DOMPurify) in scrollable panel
+              Sleep: mascot sleeps anim, toggle+input locked, no auto-dismiss
 ```
 
 ### Hotkey registration details
@@ -322,15 +327,17 @@ Global hotkey (tauri-plugin-global-shortcut, registered in launcher window JS)
 
 - Black notch panel: **360×150 px** (matches the capture bar width below so both read
   as one cohesive column). Flat top, `border-radius: 0 0 22px 22px` bottom.
-- Mascot `<video>` fills the panel **edge-to-edge**: `width:100%; height:100%;
-  object-fit:cover` — the 16:9 H.264 clip is cropped top/bottom; the centered face
-  fills the full banner width with no black side gutters.
-- No alpha channel needed — black clips merge with the black panel.
+- Mascot is an **animated WebP** rendered as `<img>`, not `<video>`. WKWebView
+  hard-blocks `<video>` autoplay and Tauri 2.11/wry exposes no webview autoplay
+  setting — even the React `muted`-attribute-vs-property fix could not override it.
+  `<img>` with animated WebP autoplays unconditionally.
+- `<img>` fills the panel edge-to-edge: `width:100%; height:100%; object-fit:cover`.
 
 ### Mascot mood
 
-`GET /api/sleep` returns `{debt}`. Three modes: `idle` (debt ≤3), `sleepy` (4–9),
-`sleeps` (≥10). Mode drives the video source: `/api/sleepy/video?mode=<mode>`.
+`GET /api/sleep` returns `{debt}`. Three modes: `idle` (debt < 8), `sleepy` (8–9),
+`sleeps` (≥ 10). Threshold raised from 4 to 8 so the drowsy look only appears when
+debt is genuinely high. Mode drives the image source: `/api/sleepy/anim?mode=<mode>`.
 
 ### Capture pipeline
 
@@ -341,21 +348,26 @@ Global hotkey (tauri-plugin-global-shortcut, registered in launcher window JS)
    interactive-shell PATH). A child `memory remember` call therefore surfaced as a bare
    "failed". Since the server IS dreamcontext, the write is direct and failure-proof.
 
-2. **Tracked enrichment**: a headless `claude` spawn with piped stdio. The note is
-   passed as login-shell positional `$0` (no shell string interpolation, no injection).
-   `buildCapturePrompt` prepends: "do not ask follow-ups, take notes and learn".
-   The spawn gets an `'error'` listener so async spawn failures (claude not on PATH)
-   don't crash the server. The child is NOT detached — stdout/stderr are captured.
-   `captureRuns` Map tracks state (`running|done|error`) + output (tail-capped at 8 KB).
-   Returns `{ok: true, captureId: <uuid>}`.
+2. **Tracked enrichment**: a headless `claude --model sonnet` spawn with piped stdio.
+   The prompt is passed as login-shell positional `$0` (no injection). Prompts start
+   with "Think hard" (medium extended thinking keyword). **Interactive login shell
+   (`-ilc`)**: tools like `claude` are often added to PATH in `~/.zshrc` (e.g.
+   `~/.local/bin`); a non-interactive login shell (`-lc`) does NOT source `.zshrc`,
+   so a Finder-launched app got "command not found: claude". `-ilc` mirrors a real
+   terminal's PATH and is verified to find claude in a clean Finder-like `env -i`
+   simulation. Stdout (Claude's reply) and stderr (shell/init noise) are captured
+   separately so rc-file chatter never pollutes the shown response. `captureRuns` Map
+   tracks state (`running|done|error`) + output (tail-capped at 8 KB). Returns
+   `{ok: true, captureId: <uuid>}`.
 
 3. **Status route**: `GET /api/launcher/capture/status?id=<captureId>` →
    `{state: running|done|error|unknown, output}`. `unknown` = expired or never existed.
    The Map is pruned (TTL 10 min after completion, size cap 50) on each capture POST.
 
-4. **Capture bar polling**: 1.2 s interval, ceiling 3 minutes or a streak of 5
-   consecutive `unknown` responses. Shows "Sleepy is learning…" spinner while running,
-   then Claude's response in a scrollable panel below the textarea.
+4. **Capture bar polling**: 1.2 s interval. Ceiling: 3 min for Learn/Ask, ~15 min
+   for Sleep, or a streak of 5 consecutive `unknown` responses. Shows mode-appropriate
+   spinner ("Sleepy is learning…" / "Sleepy is thinking…" / "Sleepy is sleeping…")
+   while running, then Claude's response rendered as Markdown in a scrollable panel.
 
 ### Dead vault handling
 
@@ -367,13 +379,15 @@ surfaced in the UI.
 
 ### Asset bundling
 
-- 3 clips downscaled to ~160 KB each from original 1920×1080 ~2 MB.
-- Stored at `desktop/src-tauri/sleepy/{idle,sleepy,sleeps}.mp4` (renamed from `Dreamy`
-  to `Sleepy` clips this cycle).
+- Source `.mp4` clips at `desktop/src-tauri/sleepy/{idle,sleepy,sleeps}.mp4`.
+- **Animated WebP** clips at `desktop/src-tauri/sleepy/{idle,sleepy,sleeps}.webp`
+  (15fps, ~2.5 MB each), generated with `img2webp` (libwebp) from ffmpeg-extracted
+  frames (fps=15, scale=420px, q=72, loop=0). Both `.mp4` and `.webp` ship in the
+  bundle; the capture bar uses `.webp`.
 - Bundled as Tauri resources → `Resources/sleepy/` inside the `.app`.
 - Rust shell sets `DREAMCONTEXT_SLEEPY_DIR=<resource_dir>/sleepy`; backend reads it.
-- Served by `GET /api/sleepy/video?mode=` with Range support (WKWebView requires Range
-  for `<video>`).
+- Served by `GET /api/sleepy/anim?mode=` (animated WebP, whole-file, 24h cache).
+  Legacy `GET /api/sleepy/video?mode=` (Range-supporting mp4 stream) is kept.
 - **Nothing ships to the npm package.**
 
 ### Persistence gotcha
@@ -389,11 +403,31 @@ Sleepy section moved to the **bottom** of Settings (after Connections) and carri
 `BETA` badge (`<span class="settings-beta-badge">`) styled in the project's accent
 colour (`--color-accent`, violet).
 
+### Modes: Learn / Ask / Sleep
+
+A segmented toggle in the capture bar header selects the interaction mode:
+
+- **Learn** (default): saves the note to project memory (in-process CHANGELOG write,
+  guaranteed), then Sleepy enriches/learns it via `claude --model sonnet`. Shows
+  "Sleepy is learning..." spinner, then the enrichment response in Markdown.
+- **Ask**: one-shot Q&A about the project. **Nothing is saved.** Sleepy answers
+  directly (no file changes, no follow-ups). Shows "Sleepy is thinking..." spinner.
+  Answer rendered as GitHub-flavored Markdown (short, tight, no preamble).
+- **Sleep**: triggers a full `dreamcontext sleep` consolidation for the selected vault.
+  Mascot switches to the sleeping animation, the toggle and input lock, and the window
+  does NOT auto-dismiss on blur so the user can step away and return for the summary.
+  Poll ceiling ~15 min.
+
+All three modes use `claude --model sonnet` with "Think hard" prompts for medium
+extended thinking. Markdown responses rendered via `marked` (GFM) + `DOMPurify`.
+A global `reset.css` reset had zeroed `list-style`; the `.cap-md` class re-enables
+bullets and collapses loose-list `<p>` margins.
+
 ### Status
 
-Functional and live-verified. Capture pipeline hardened (in-process write, tracked
-enrichment, live status UI). Visual design improved but **not yet formally
-user-accepted**. Feature PRD: `_dream_context/core/features/sleepy-notch-capture.md`.
+Functional and live-verified. Animated WebP mascot autoplays in WKWebView. Learn/Ask/Sleep
+modes all functional. Visual design improved but **not yet formally user-accepted**.
+Feature PRD: `_dream_context/core/features/sleepy-notch-capture.md`.
 
 ## Status / deferred
 
