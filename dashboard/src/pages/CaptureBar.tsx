@@ -12,6 +12,8 @@ type Status = 'idle' | 'saving' | 'saved' | 'error';
 type Mode = 'idle' | 'sleepy' | 'sleeps';
 
 const LAST_VAULT_KEY = 'sleepy:lastVault';
+/** Max textarea height (px) — roughly 5 lines before it scrolls. */
+const MAX_INPUT_H = 120;
 
 /** Map a project's sleep debt to a mascot mood. */
 function modeForDebt(debt: number): Mode {
@@ -31,7 +33,14 @@ export function CaptureBar() {
   const [text, setText] = useState('');
   const [status, setStatus] = useState<Status>('idle');
   const [mode, setMode] = useState<Mode>('idle');
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Auto-grow the textarea from 1 line up to ~5 lines, then let it scroll.
+  function autoGrow(el: HTMLTextAreaElement | null) {
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, MAX_INPUT_H)}px`;
+  }
 
   // Transparent window: drop the page background so only our panels show.
   useEffect(() => {
@@ -98,6 +107,7 @@ export function CaptureBar() {
       setText('');
       setStatus('saved');
       window.setTimeout(() => setStatus('idle'), 1400);
+      if (inputRef.current) inputRef.current.style.height = 'auto';
       inputRef.current?.focus();
     } catch {
       setStatus('error');
@@ -152,15 +162,22 @@ export function CaptureBar() {
                   : ''}
           </span>
         </div>
-        <input
+        <textarea
           ref={inputRef}
           className="cap-input"
-          type="text"
           placeholder="Capture a thought or command…"
+          rows={1}
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => {
+            setText(e.target.value);
+            autoGrow(e.target);
+          }}
           onKeyDown={(e) => {
-            if (e.key === 'Enter') void submit();
+            // Enter submits; Shift+Enter inserts a newline (chat-style).
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              void submit();
+            }
           }}
         />
       </div>

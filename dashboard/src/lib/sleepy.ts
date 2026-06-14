@@ -11,9 +11,11 @@ import { api } from '../api/client';
 export const SLEEPY_CONFIG_KEY = 'sleepy:config:v1';
 const CONFIG_KEY = SLEEPY_CONFIG_KEY;
 const SLEEPY_LABEL = 'sleepy';
-/** Width/height (logical px) of the notch bar window. */
-const WIN_W = 380;
-const WIN_H = 264;
+/** Width/height (logical px) of the notch bar window. Sized to fit the 200px notch
+ *  panel + gap + the 360px capture bar at its tallest (multi-line textarea), with
+ *  room for drop shadows. y stays 0 so the notch panel hangs flush from the top. */
+const WIN_W = 420;
+const WIN_H = 340;
 
 export interface SleepyConfig {
   enabled: boolean;
