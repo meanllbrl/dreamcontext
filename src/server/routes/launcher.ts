@@ -542,6 +542,22 @@ export function buildCapturePrompt(note: string): string {
 }
 
 /**
+ * Build the headless-claude prompt for "Ask" mode: a single-shot question about
+ * THIS project, answered directly with no follow-ups and no side effects. The
+ * question is passed to claude as an ARGUMENT (never a shell string), so this is
+ * injection-safe. Exported for testing.
+ */
+export function buildAskPrompt(question: string): string {
+  return (
+    `Answer the following question about THIS project, using its dreamcontext ` +
+    `context and code as needed. Give ONE direct, self-contained answer. Do NOT ask ` +
+    `any follow-up questions, do NOT make any file changes, and keep it concise. ` +
+    `Then stop.\n\n` +
+    `Question: "${question}"`
+  );
+}
+
+/**
  * POST /api/launcher/capture — the Sleepy notch bar's submit. Captures a note
  * into the chosen vault: (1) INSTANT, guaranteed `dreamcontext memory remember`
  * (deterministic, no tokens), then (2) fire-and-forget headless `claude -p` to
@@ -571,6 +587,9 @@ export async function handleLauncherCapture(
     sendError(res, 400, 'invalid_text', 'text must be a non-empty string.');
     return;
   }
+  // Mode: 'learn' (default) saves the note + enriches; 'ask' is a one-shot Q&A
+  // about the project with NO side effects (no memory write).
+  const mode = body.mode === 'ask' ? 'ask' : 'learn';
 
   const vault = listVaults().find((v) => v.name === vaultName);
   if (!vault) {
@@ -583,32 +602,35 @@ export async function handleLauncherCapture(
     return;
   }
 
-  // (1) Instant, guaranteed capture — never lose the note even if claude fails.
-  // Done IN-PROCESS (this server IS dreamcontext): a deterministic CHANGELOG
-  // append, mirroring `memory remember`. We do NOT spawn a child CLI here — in a
-  // packaged desktop app the resolvable CLI can be a stale/older global whose
-  // `memory remember` differs or is absent, which surfaced as a "failed" capture.
-  // A direct file write removes that whole class of failure.
-  try {
-    const changelogPath = join(cwd, '_dream_context', 'core', 'CHANGELOG.json');
-    if (!existsSync(changelogPath)) {
-      sendError(res, 400, 'not_initialized', `"${vaultName}" has no _dream_context — run init first.`);
+  // (1) Learn mode only: instant, guaranteed capture — never lose the note even
+  // if claude fails. Done IN-PROCESS (this server IS dreamcontext): a
+  // deterministic CHANGELOG append, mirroring `memory remember`. We do NOT spawn
+  // a child CLI here — in a packaged desktop app the resolvable CLI can be a
+  // stale/older global whose `memory remember` differs or is absent, which
+  // surfaced as a "failed" capture. A direct file write removes that failure
+  // class. (Ask mode writes nothing — it's a question, not a note.)
+  if (mode === 'learn') {
+    try {
+      const changelogPath = join(cwd, '_dream_context', 'core', 'CHANGELOG.json');
+      if (!existsSync(changelogPath)) {
+        sendError(res, 400, 'not_initialized', `"${vaultName}" has no _dream_context — run init first.`);
+        return;
+      }
+      const summary = text.length > 200 ? text.slice(0, 197) + '...' : text;
+      insertToJsonArray(changelogPath, {
+        date: today(),
+        type: 'note',
+        scope: 'quick',
+        summary,
+        description: text,
+        breaking: false,
+      });
+    } catch (err) {
+      console.error('[launcher] capture changelog write failed:', err);
+      const detail = err instanceof Error ? err.message : 'unknown error';
+      sendError(res, 500, 'capture_failed', `Failed to save the note: ${detail}`);
       return;
     }
-    const summary = text.length > 200 ? text.slice(0, 197) + '...' : text;
-    insertToJsonArray(changelogPath, {
-      date: today(),
-      type: 'note',
-      scope: 'quick',
-      summary,
-      description: text,
-      breaking: false,
-    });
-  } catch (err) {
-    console.error('[launcher] capture changelog write failed:', err);
-    const detail = err instanceof Error ? err.message : 'unknown error';
-    sendError(res, 500, 'capture_failed', `Failed to save the note: ${detail}`);
-    return;
   }
 
   // (2) Best-effort enrichment via a headless claude run, TRACKED so the capture
@@ -628,7 +650,8 @@ export async function handleLauncherCapture(
   captureRuns.set(captureId, run);
   try {
     const shell = process.env.SHELL || '/bin/zsh';
-    const child = spawn(shell, ['-ilc', 'exec claude -p "$0"', buildCapturePrompt(text)], {
+    const prompt = mode === 'ask' ? buildAskPrompt(text) : buildCapturePrompt(text);
+    const child = spawn(shell, ['-ilc', 'exec claude -p "$0"', prompt], {
       cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
     });

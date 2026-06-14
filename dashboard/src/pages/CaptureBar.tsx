@@ -11,11 +11,15 @@ interface Vault {
 
 type Status = 'idle' | 'saving' | 'saved' | 'error';
 type Mode = 'idle' | 'sleepy' | 'sleeps';
-/** Background Claude enrichment run, surfaced as a spinner + its response. */
+/** Capture mode: 'learn' saves + enriches the note; 'ask' is a one-shot Q&A. */
+type CapMode = 'learn' | 'ask';
+/** Background Claude run, surfaced as a spinner + its response. */
 type EnrichState = 'running' | 'done' | 'error' | 'unknown';
 interface Enrich {
   state: EnrichState;
   output: string;
+  /** Which mode produced this run — drives the spinner/heading copy. */
+  mode: CapMode;
 }
 
 const LAST_VAULT_KEY = 'sleepy:lastVault';
@@ -40,6 +44,7 @@ export function CaptureBar() {
   const [text, setText] = useState('');
   const [status, setStatus] = useState<Status>('idle');
   const [errMsg, setErrMsg] = useState('');
+  const [capMode, setCapMode] = useState<CapMode>('learn');
   const [enrich, setEnrich] = useState<Enrich | null>(null);
   const [mode, setMode] = useState<Mode>('idle');
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -170,9 +175,11 @@ export function CaptureBar() {
     if (pollRef.current) window.clearTimeout(pollRef.current);
   }, []);
 
-  // Poll the background Claude enrichment run until it finishes, mirroring its
-  // state + response into `enrich`. A new capture cancels any prior poll.
-  function pollEnrichment(captureId: string) {
+  // Poll the background Claude run until it finishes, mirroring its state +
+  // response into `enrich`. A new submit cancels any prior poll. `runMode` is the
+  // mode that started the run, so the panel copy stays correct if the user flips
+  // the toggle while a run is in flight.
+  function pollEnrichment(captureId: string, runMode: CapMode) {
     if (pollRef.current) window.clearTimeout(pollRef.current);
     let attempts = 0;
     const MAX_ATTEMPTS = 150; // ~3 min ceiling so a hung run can't poll forever
@@ -184,14 +191,14 @@ export function CaptureBar() {
         // A run we just started should be 'running'; a persistent 'unknown' means
         // it expired or the server restarted — stop after a few tries.
         unknownStreak = s.state === 'unknown' ? unknownStreak + 1 : 0;
-        setEnrich({ state: s.state, output: s.output });
+        setEnrich({ state: s.state, output: s.output, mode: runMode });
         const keepGoing =
           (s.state === 'running' || s.state === 'unknown') &&
           attempts < MAX_ATTEMPTS &&
           unknownStreak < 3;
         if (keepGoing) pollRef.current = window.setTimeout(() => void tick(), 1200);
       } catch {
-        setEnrich({ state: 'error', output: 'Lost contact with the enrichment run.' });
+        setEnrich({ state: 'error', output: 'Lost contact with the run.', mode: runMode });
       }
     };
     pollRef.current = window.setTimeout(() => void tick(), 600);
@@ -200,6 +207,7 @@ export function CaptureBar() {
   async function submit() {
     const t = text.trim();
     if (!t || !vault || status === 'saving') return;
+    const runMode = capMode;
     setStatus('saving');
     setErrMsg('');
     setEnrich(null);
@@ -207,16 +215,19 @@ export function CaptureBar() {
       const r = await api.post<{ ok: boolean; captureId?: string }>('/launcher/capture', {
         vault,
         text: t,
+        mode: runMode,
       });
       localStorage.setItem(LAST_VAULT_KEY, vault);
       setText('');
-      setStatus('saved');
+      // 'Learn' saves the note (captured ✓); 'Ask' has no side effect, so go
+      // straight to the thinking spinner without a "saved" flash.
+      setStatus(runMode === 'learn' ? 'saved' : 'idle');
       if (inputRef.current) inputRef.current.style.height = 'auto';
       inputRef.current?.focus();
-      // Saved instantly; now follow the background Claude run (spinner + reply).
+      // Now follow the background Claude run (spinner + reply/answer).
       if (r.captureId) {
-        setEnrich({ state: 'running', output: '' });
-        pollEnrichment(r.captureId);
+        setEnrich({ state: 'running', output: '', mode: runMode });
+        pollEnrichment(r.captureId, runMode);
       }
       window.setTimeout(() => setStatus('idle'), 1400);
     } catch (e) {
@@ -249,7 +260,6 @@ export function CaptureBar() {
       {/* Capture input bar. */}
       <div className={`cap-bar cap-${status}`}>
         <div className="cap-bar-head">
-          <span className="cap-bar-label">Project</span>
           <div className="cap-vault-wrap">
             <select
               className="cap-vault"
@@ -279,11 +289,32 @@ export function CaptureBar() {
                   ? 'failed'
                   : ''}
           </span>
+          {/* Learn (save + enrich) vs Ask (one-shot Q&A, no side effects). */}
+          <div className="cap-mode-toggle" role="radiogroup" aria-label="Mode">
+            <button
+              type="button"
+              className={`cap-mode-opt ${capMode === 'learn' ? 'is-active' : ''}`}
+              role="radio"
+              aria-checked={capMode === 'learn'}
+              onClick={() => setCapMode('learn')}
+            >
+              Learn
+            </button>
+            <button
+              type="button"
+              className={`cap-mode-opt ${capMode === 'ask' ? 'is-active' : ''}`}
+              role="radio"
+              aria-checked={capMode === 'ask'}
+              onClick={() => setCapMode('ask')}
+            >
+              Ask
+            </button>
+          </div>
         </div>
         <textarea
           ref={inputRef}
           className="cap-input"
-          placeholder="Capture a thought or command…"
+          placeholder={capMode === 'ask' ? 'Ask one question about this project…' : 'Capture a thought or command…'}
           rows={1}
           value={text}
           onChange={(e) => {
@@ -300,19 +331,19 @@ export function CaptureBar() {
         />
         {status === 'error' && errMsg && <div className="cap-error-msg">{errMsg}</div>}
 
-        {/* Background Claude enrichment: live spinner, then its response. */}
+        {/* Background Claude run: live spinner, then its response/answer. */}
         {enrich && (
           <div className={`cap-enrich cap-enrich-${enrich.state}`}>
             <div className="cap-enrich-head">
               {enrich.state === 'running' || enrich.state === 'unknown' ? (
                 <>
                   <span className="cap-spinner" aria-hidden />
-                  <span>Sleepy is learning…</span>
+                  <span>{enrich.mode === 'ask' ? 'Sleepy is thinking…' : 'Sleepy is learning…'}</span>
                 </>
               ) : enrich.state === 'done' ? (
-                <span className="cap-enrich-done">✓ Learned</span>
+                <span className="cap-enrich-done">{enrich.mode === 'ask' ? '✓ Answer' : '✓ Learned'}</span>
               ) : (
-                <span className="cap-enrich-err">Enrichment failed</span>
+                <span className="cap-enrich-err">{enrich.mode === 'ask' ? "Couldn't answer" : 'Enrichment failed'}</span>
               )}
             </div>
             {enrich.output && <div className="cap-enrich-body">{enrich.output}</div>}
