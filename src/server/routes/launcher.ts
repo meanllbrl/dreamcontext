@@ -9,6 +9,14 @@ import { discoverVaultsAsync } from '../../lib/vault-discovery.js';
 import { addVault, listVaults, VaultError, type Vault } from '../../lib/vaults.js';
 import { detectTechStack } from '../../lib/tech-stack.js';
 import { ensureCliInstalled } from '../../lib/ensure-cli.js';
+import {
+  PLATFORM_CATALOG,
+  DEFAULT_PLATFORMS,
+  normalizePlatforms,
+  ensurePlatformSelection,
+  type PlatformId,
+} from '../../lib/platforms.js';
+import { loadCatalog } from '../../lib/catalog.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -117,6 +125,10 @@ export interface ScaffoldAnswers {
   parentDir?: string;
   /** Absolute path to an EXISTING folder to initialize in place. */
   projectPath?: string;
+  /** Target agent platforms (e.g. ['claude','codex']). Defaults to ['claude']. */
+  platforms?: string[];
+  /** Optional skill-pack names to install after setup (e.g. ['engineering']). */
+  packs?: string[];
 }
 
 /**
@@ -172,6 +184,15 @@ export async function scaffoldProject(
   const name = (a.name ?? '').trim();
   if (!name) throw new ScaffoldError('name must be a non-empty string.');
 
+  // Resolve the target platforms: filter to known ids, default to ['claude'].
+  const platforms: PlatformId[] = ensurePlatformSelection(normalizePlatforms(a.platforms ?? []));
+  const platformArg = platforms.join(',');
+
+  // Validate requested packs against the catalog (drop anything unknown so we
+  // never pass garbage to install-skill).
+  const knownPackNames = new Set((loadCatalog()?.catalog.packs ?? []).map((p) => p.name));
+  const packs = (a.packs ?? []).map((p) => String(p).trim()).filter((p) => knownPackNames.has(p));
+
   // Resolve the target directory per mode.
   let target: string;
   if (a.mode === 'new') {
@@ -214,16 +235,25 @@ export async function scaffoldProject(
 
   // Scaffold only when this folder is not already a dreamcontext project.
   if (!existsSync(join(target, '_dream_context'))) {
-    const initArgs = ['init', '--yes', '--platforms', 'claude', '--name', name];
+    const initArgs = ['init', '--yes', '--platforms', platformArg, '--name', name];
     if (a.description?.trim()) initArgs.push('--description', a.description.trim());
     if (a.targetUser?.trim()) initArgs.push('--user', a.targetUser.trim());
     if (a.stack?.trim()) initArgs.push('--stack', a.stack.trim());
     if (a.priority?.trim()) initArgs.push('--priority', a.priority.trim());
     await runner(initArgs, target);
-    // init scaffolds _dream_context/ but does NOT install the .claude/ integration
+    // init scaffolds _dream_context/ but does NOT install the platform integration
     // (its interactive offer is suppressed in a spawned, non-TTY child). Run setup
     // to finish the install; it detects the existing _dream_context/ and skips init.
-    await runner(['setup', '--defaults', '--platforms', 'claude'], target);
+    await runner(['setup', '--defaults', '--platforms', platformArg], target);
+  }
+
+  // Install any chosen optional skill packs onto the selected platforms. Runs
+  // after setup (which lays down the base skill the packs extend). Best-effort
+  // for the project as a whole — a pack-install failure shouldn't orphan an
+  // otherwise-created vault, so it surfaces as a thrown ScaffoldError only when
+  // it genuinely fails the child process.
+  if (packs.length > 0) {
+    await runner(['install-skill', '--packs', ...packs, '--platforms', platformArg], target);
   }
 
   // addVault validates the path + _dream_context child and rejects dupes.
@@ -258,6 +288,12 @@ export async function handleLauncherScaffold(
     priority: typeof body.priority === 'string' ? body.priority : undefined,
     parentDir: typeof body.parentDir === 'string' ? body.parentDir : undefined,
     projectPath: typeof body.projectPath === 'string' ? body.projectPath : undefined,
+    platforms: Array.isArray(body.platforms)
+      ? body.platforms.filter((p: unknown): p is string => typeof p === 'string')
+      : undefined,
+    packs: Array.isArray(body.packs)
+      ? body.packs.filter((p: unknown): p is string => typeof p === 'string')
+      : undefined,
   };
 
   try {
@@ -305,6 +341,34 @@ export async function handleLauncherDetect(
     hasContext: existsSync(join(resolved, '_dream_context')),
     name: basename(resolved),
   });
+}
+
+/**
+ * GET /api/launcher/catalog — the choices the onboarding wizard offers: target
+ * platforms (Claude / Codex, with the default ones flagged `recommended`) and
+ * the available optional skill packs (name + description + tags). Read-only and
+ * vault-agnostic (works in launcher mode). Never 500s: an unreadable pack
+ * catalog yields an empty `packs` list, not an error.
+ */
+export async function handleLauncherCatalog(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  _contextRoot: string | null,
+): Promise<void> {
+  const recommended = new Set<string>(DEFAULT_PLATFORMS);
+  const platforms = PLATFORM_CATALOG.map((p) => ({
+    id: p.id,
+    label: p.label,
+    description: p.description,
+    recommended: recommended.has(p.id),
+  }));
+  const packs = (loadCatalog()?.catalog.packs ?? []).map((p) => ({
+    name: p.name,
+    description: p.description,
+    tags: p.tags,
+  }));
+  sendJson(res, 200, { platforms, packs });
 }
 
 /**

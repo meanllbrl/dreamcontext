@@ -64,6 +64,10 @@ export interface ScaffoldPayload {
   priority?: string;
   parentDir?: string;
   projectPath?: string;
+  /** Target agent platforms (e.g. ['claude','codex']). Defaults to ['claude']. */
+  platforms?: string[];
+  /** Optional skill-pack names to install after setup. */
+  packs?: string[];
 }
 
 /** Outcome of the best-effort global `dreamcontext` CLI install during scaffold. */
@@ -105,6 +109,35 @@ export function useScaffoldProject() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['vaults'] });
     },
+  });
+}
+
+// ─── Catalog (platforms + skill packs offered by the wizard) ──────────────────
+
+export interface PlatformChoice {
+  id: string;
+  label: string;
+  description: string;
+  recommended: boolean;
+}
+
+export interface PackChoice {
+  name: string;
+  description: string;
+  tags: string[];
+}
+
+export interface LauncherCatalog {
+  platforms: PlatformChoice[];
+  packs: PackChoice[];
+}
+
+/** Platforms + optional skill packs the onboarding wizard offers. */
+export function useLauncherCatalog() {
+  return useQuery({
+    queryKey: ['launcher-catalog'],
+    queryFn: () => api.get<LauncherCatalog>('/launcher/catalog'),
+    staleTime: Infinity,
   });
 }
 

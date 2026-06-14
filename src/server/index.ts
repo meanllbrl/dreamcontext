@@ -22,6 +22,7 @@ import {
   handleLauncherDetect,
   handleLauncherScaffold,
   handleLauncherDefaults,
+  handleLauncherCatalog,
 } from './routes/launcher.js';
 import { handleConnectionsList, handleConnectionsCreate, handleConnectionsDelete } from './routes/connections.js';
 import { handleFederationInboxGet, handleFederationSyncPost } from './routes/federation.js';
@@ -99,6 +100,7 @@ function buildRouter(): Router {
   router.get('/api/launcher/discover', handleLauncherDiscover);
   router.get('/api/launcher/detect', handleLauncherDetect);
   router.get('/api/launcher/defaults', handleLauncherDefaults);
+  router.get('/api/launcher/catalog', handleLauncherCatalog);
   router.post('/api/launcher/register', handleLauncherRegister);
   router.post('/api/launcher/scaffold', handleLauncherScaffold);
 

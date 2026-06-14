@@ -151,3 +151,93 @@ describe('scaffoldProject — existing folder', () => {
     ).rejects.toBeInstanceOf(ScaffoldError);
   });
 });
+
+// ─── platforms + skill packs (wizard enrichment) ──────────────────────────────
+
+describe('scaffoldProject — platforms', () => {
+  it('defaults to --platforms claude when none are given', async () => {
+    const parent = mkTmp(); const home = mkTmp('dc-home'); dirs.push(parent, home);
+    const { runner, calls } = recordingRunner();
+    await scaffoldProject({ mode: 'new', name: 'p', parentDir: parent }, runner, home);
+    const init = calls.find((c) => c[0] === 'init')!;
+    const setup = calls.find((c) => c[0] === 'setup')!;
+    expect(init[init.indexOf('--platforms') + 1]).toBe('claude');
+    expect(setup[setup.indexOf('--platforms') + 1]).toBe('claude');
+  });
+
+  it('passes the selected platforms as a comma list', async () => {
+    const parent = mkTmp(); const home = mkTmp('dc-home'); dirs.push(parent, home);
+    const { runner, calls } = recordingRunner();
+    await scaffoldProject({ mode: 'new', name: 'p', parentDir: parent, platforms: ['claude', 'codex'] }, runner, home);
+    const init = calls.find((c) => c[0] === 'init')!;
+    expect(init[init.indexOf('--platforms') + 1]).toBe('claude,codex');
+  });
+
+  it('filters out unknown platform ids', async () => {
+    const parent = mkTmp(); const home = mkTmp('dc-home'); dirs.push(parent, home);
+    const { runner, calls } = recordingRunner();
+    await scaffoldProject({ mode: 'new', name: 'p', parentDir: parent, platforms: ['claude', 'bogus'] }, runner, home);
+    const init = calls.find((c) => c[0] === 'init')!;
+    expect(init[init.indexOf('--platforms') + 1]).toBe('claude');
+  });
+});
+
+describe('scaffoldProject — skill packs', () => {
+  it('runs install-skill with chosen packs AFTER setup', async () => {
+    const parent = mkTmp(); const home = mkTmp('dc-home'); dirs.push(parent, home);
+    const { runner, calls } = recordingRunner();
+    await scaffoldProject(
+      { mode: 'new', name: 'p', parentDir: parent, platforms: ['claude'], packs: ['engineering'] },
+      runner,
+      home,
+    );
+    const order = calls.map((c) => c[0]);
+    expect(order).toEqual(['init', 'setup', 'install-skill']);
+    const install = calls.find((c) => c[0] === 'install-skill')!;
+    expect(install).toContain('engineering');
+    expect(install[install.indexOf('--platforms') + 1]).toBe('claude');
+  });
+
+  it('drops unknown packs and skips install-skill when none remain', async () => {
+    const parent = mkTmp(); const home = mkTmp('dc-home'); dirs.push(parent, home);
+    const { runner, calls } = recordingRunner();
+    await scaffoldProject(
+      { mode: 'new', name: 'p', parentDir: parent, packs: ['definitely-not-a-pack'] },
+      runner,
+      home,
+    );
+    expect(calls.some((c) => c[0] === 'install-skill')).toBe(false);
+  });
+
+  it('does not run install-skill when no packs are chosen', async () => {
+    const parent = mkTmp(); const home = mkTmp('dc-home'); dirs.push(parent, home);
+    const { runner, calls } = recordingRunner();
+    await scaffoldProject({ mode: 'new', name: 'p', parentDir: parent }, runner, home);
+    expect(calls.some((c) => c[0] === 'install-skill')).toBe(false);
+  });
+});
+
+// ─── GET /api/launcher/catalog ────────────────────────────────────────────────
+
+describe('handleLauncherCatalog', () => {
+  it('returns platforms (claude recommended) + available packs', async () => {
+    const { handleLauncherCatalog } = await import('../../src/server/routes/launcher.js');
+    let status = 0;
+    let body: any = null;
+    const res: any = {
+      writeHead(code: number) { status = code; },
+      setHeader() {},
+      end(data: string) { try { body = JSON.parse(data); } catch { body = data; } },
+    };
+    await handleLauncherCatalog({} as any, res, {}, null);
+    expect(status).toBe(200);
+    const ids = body.platforms.map((p: any) => p.id);
+    expect(ids).toContain('claude');
+    expect(ids).toContain('codex');
+    const claude = body.platforms.find((p: any) => p.id === 'claude');
+    expect(claude.recommended).toBe(true);
+    expect(Array.isArray(body.packs)).toBe(true);
+    // engineering pack ships in the repo catalog
+    expect(body.packs.map((p: any) => p.name)).toContain('engineering');
+  });
+});

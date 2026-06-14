@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   probeFolder,
   useLauncherDefaults,
+  useLauncherCatalog,
   useScaffoldProject,
   type CliInstallResult,
   type ScaffoldPayload,
@@ -19,10 +20,13 @@ interface Props {
 }
 
 /** The ordered question keys per mode. `path` only appears for existing folders. */
-const STEPS_NEW = ['name', 'description', 'targetUser', 'stack', 'priority', 'review'] as const;
-const STEPS_EXISTING = ['path', 'description', 'targetUser', 'stack', 'priority', 'review'] as const;
+const STEPS_NEW = ['name', 'description', 'targetUser', 'stack', 'priority', 'platforms', 'packs', 'review'] as const;
+const STEPS_EXISTING = ['path', 'description', 'targetUser', 'stack', 'priority', 'platforms', 'packs', 'review'] as const;
 
 type StepKey = (typeof STEPS_NEW)[number] | (typeof STEPS_EXISTING)[number];
+
+/** Steps that are not free-text questions (handled by their own render branch). */
+type NonTextStep = 'review' | 'path' | 'platforms' | 'packs';
 
 interface QuestionMeta {
   label: string;
@@ -30,7 +34,7 @@ interface QuestionMeta {
   optional?: boolean;
 }
 
-const QUESTIONS: Record<Exclude<StepKey, 'review' | 'path'>, QuestionMeta> = {
+const QUESTIONS: Record<Exclude<StepKey, NonTextStep>, QuestionMeta> = {
   name: { label: 'What is this project called?', hint: 'Used as the folder name and the vault name.' },
   description: { label: 'One line — what is it?', hint: 'A short description. Optional.', optional: true },
   targetUser: { label: 'Who is it for?', hint: 'The target user. Optional.', optional: true },
@@ -45,6 +49,7 @@ const QUESTIONS: Record<Exclude<StepKey, 'review' | 'path'>, QuestionMeta> = {
  */
 export function OnboardingWizard({ onClose, onReady }: Props) {
   const defaults = useLauncherDefaults();
+  const catalog = useLauncherCatalog();
   const scaffold = useScaffoldProject();
 
   const [mode, setMode] = useState<Mode | null>(null);
@@ -62,8 +67,14 @@ export function OnboardingWizard({ onClose, onReady }: Props) {
   const [targetUser, setTargetUser] = useState('');
   const [stack, setStack] = useState('');
   const [priority, setPriority] = useState('');
+  const [platforms, setPlatforms] = useState<string[]>(['claude']);
+  const [packs, setPacks] = useState<string[]>([]);
 
   const inputRef = useRef<HTMLInputElement>(null);
+
+  function toggleIn(list: string[], setList: (v: string[]) => void, value: string) {
+    setList(list.includes(value) ? list.filter((v) => v !== value) : [...list, value]);
+  }
 
   // Prefill the parent dir with the server-provided ~/projects once known.
   useEffect(() => {
@@ -138,6 +149,8 @@ export function OnboardingWizard({ onClose, onReady }: Props) {
     payload.targetUser = targetUser.trim() || undefined;
     payload.stack = stack.trim() || undefined;
     payload.priority = priority.trim() || undefined;
+    payload.platforms = platforms.length > 0 ? platforms : undefined;
+    payload.packs = packs.length > 0 ? packs : undefined;
     try {
       const res = await scaffold.mutateAsync(payload);
       setReadyVault(res.vault);
@@ -294,13 +307,89 @@ export function OnboardingWizard({ onClose, onReady }: Props) {
             {targetUser.trim() && (<><dt>For</dt><dd>{targetUser.trim()}</dd></>)}
             {stack.trim() && (<><dt>Stack</dt><dd>{stack.trim()}</dd></>)}
             {priority.trim() && (<><dt>Focus</dt><dd>{priority.trim()}</dd></>)}
+            <dt>Platforms</dt>
+            <dd>
+              {(platforms.length > 0 ? platforms : ['claude'])
+                .map((id) => catalog.data?.platforms.find((p) => p.id === id)?.label ?? id)
+                .join(', ')}
+            </dd>
+            {packs.length > 0 && (<><dt>Skill packs</dt><dd>{packs.join(', ')}</dd></>)}
           </dl>
         </div>
       );
     }
 
+    // Platform selection (multi-select; Claude recommended + pre-checked).
+    if (step === 'platforms') {
+      const options = catalog.data?.platforms ?? [];
+      return (
+        <div>
+          <h2 className="wiz-q">Which agent platforms?</h2>
+          <p className="wiz-hint">Where dreamcontext installs its skills, agents, and hooks. Pick one or more.</p>
+          <div className="wiz-choices">
+            {options.map((p) => {
+              const on = platforms.includes(p.id);
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  className={`wiz-choice wiz-select${on ? ' wiz-select-on' : ''}`}
+                  onClick={() => toggleIn(platforms, setPlatforms, p.id)}
+                  aria-pressed={on}
+                >
+                  <span className="wiz-choice-title">
+                    {p.label}
+                    {p.recommended && <span className="wiz-badge">Recommended</span>}
+                  </span>
+                  <span className="wiz-hint">{p.description}</span>
+                </button>
+              );
+            })}
+          </div>
+          {platforms.length === 0 && (
+            <p className="wiz-hint wiz-preview">Nothing selected — defaults to Claude.</p>
+          )}
+        </div>
+      );
+    }
+
+    // Optional skill-pack selection (opt-in; none selected by default).
+    if (step === 'packs') {
+      const options = catalog.data?.packs ?? [];
+      return (
+        <div>
+          <h2 className="wiz-q">Add skill packs?</h2>
+          <p className="wiz-hint">Optional curated skills for your agent. You can add more later. Skip if unsure.</p>
+          {options.length === 0 ? (
+            <p className="wiz-hint">No optional packs available.</p>
+          ) : (
+            <div className="wiz-choices">
+              {options.map((p) => {
+                const on = packs.includes(p.name);
+                return (
+                  <button
+                    key={p.name}
+                    type="button"
+                    className={`wiz-choice wiz-select${on ? ' wiz-select-on' : ''}`}
+                    onClick={() => toggleIn(packs, setPacks, p.name)}
+                    aria-pressed={on}
+                  >
+                    <span className="wiz-choice-title">
+                      <span className="wiz-check" aria-hidden>{on ? '☑' : '☐'}</span> {p.name}
+                    </span>
+                    <span className="wiz-hint">{p.description}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      );
+    }
+
     // Generic optional question steps.
-    const meta = QUESTIONS[step];
+    const textStep = step as Exclude<StepKey, NonTextStep>;
+    const meta = QUESTIONS[textStep];
     const setters: Record<string, [string, (v: string) => void, string]> = {
       description: [description, setDescription, 'A persistent brain for AI agents…'],
       targetUser: [targetUser, setTargetUser, 'Developers'],
