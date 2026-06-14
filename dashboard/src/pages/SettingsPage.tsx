@@ -5,7 +5,30 @@ import { api } from '../api/client';
 import { useConfig, useUpdateConfig, type PlatformId, type SetupConfig } from '../hooks/useConfig';
 import { SearchableSelect } from '../components/tasks/SearchableSelect';
 import { ConnectionsManager } from '../components/settings/ConnectionsManager';
+import { isDesktop } from '../lib/desktop';
+import {
+  readSleepyConfig,
+  writeSleepyConfig,
+  applySleepyHotkey,
+  type SleepyConfig,
+} from '../lib/sleepy';
 import './SettingsPage.css';
+
+/** Build a Tauri accelerator (e.g. "Alt+Cmd+S") from a keydown; null if incomplete. */
+function accelFromKeyEvent(e: React.KeyboardEvent): string | null {
+  const mods: string[] = [];
+  if (e.metaKey) mods.push('Cmd');
+  if (e.ctrlKey) mods.push('Ctrl');
+  if (e.altKey) mods.push('Alt');
+  if (e.shiftKey) mods.push('Shift');
+  let key = e.key;
+  if (['Meta', 'Control', 'Alt', 'Shift'].includes(key)) return null; // modifier-only
+  if (key === ' ') key = 'Space';
+  else if (key.length === 1) key = key.toUpperCase();
+  else key = key.charAt(0).toUpperCase() + key.slice(1);
+  if (mods.length === 0) return null; // a global hotkey needs at least one modifier
+  return [...mods, key].join('+');
+}
 
 interface RemoteContainer {
   ids: Record<string, string>;
@@ -76,6 +99,15 @@ export function SettingsPage() {
   const [provisioning, setProvisioning] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  // Sleepy notch quick-capture (desktop-only, persisted in localStorage; applies live).
+  const [sleepy, setSleepy] = useState<SleepyConfig>(() => readSleepyConfig());
+  const [capturingHotkey, setCapturingHotkey] = useState(false);
+
+  const updateSleepy = (next: SleepyConfig) => {
+    setSleepy(next);
+    writeSleepyConfig(next);
+    void applySleepyHotkey(next);
+  };
 
   const { data: syncStatus } = useQuery({
     queryKey: ['tasks-sync-status'],
@@ -242,6 +274,48 @@ export function SettingsPage() {
           ))}
         </div>
       </section>
+
+      {isDesktop() && (
+        <section className="settings-section">
+          <h2 className="settings-section-title">Sleepy — notch quick-capture</h2>
+          <div className="settings-checkboxes">
+            <label className="settings-checkbox-label">
+              <input
+                type="checkbox"
+                className="settings-checkbox"
+                checked={sleepy.enabled}
+                onChange={() => updateSleepy({ ...sleepy, enabled: !sleepy.enabled })}
+              />
+              <span>Enable Sleepy</span>
+            </label>
+            <p className="settings-field-hint">
+              Press the hotkey anywhere to drop a capture bar under the notch: pick a project, type a
+              thought, hit return — it's saved to that project's memory and learned.
+            </p>
+            {sleepy.enabled && (
+              <div className="settings-field-row">
+                <label>Hotkey</label>
+                <input
+                  className="settings-text-input"
+                  readOnly
+                  value={capturingHotkey ? 'Press a key combo…' : sleepy.hotkey}
+                  onFocus={() => setCapturingHotkey(true)}
+                  onBlur={() => setCapturingHotkey(false)}
+                  onKeyDown={(e) => {
+                    e.preventDefault();
+                    const accel = accelFromKeyEvent(e);
+                    if (accel) {
+                      updateSleepy({ ...sleepy, hotkey: accel });
+                      setCapturingHotkey(false);
+                      e.currentTarget.blur();
+                    }
+                  }}
+                />
+              </div>
+            )}
+          </div>
+        </section>
+      )}
 
       <section className="settings-section">
         <h2 className="settings-section-title">{t('settings.tasks')}</h2>

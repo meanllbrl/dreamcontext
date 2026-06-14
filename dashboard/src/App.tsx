@@ -1,7 +1,9 @@
-import { Component, type ReactNode } from 'react';
+import { Component, useEffect, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { api, setActiveVault } from './api/client';
 import { LauncherPage } from './pages/LauncherPage';
+import { CaptureBar } from './pages/CaptureBar';
+import { applySleepyHotkey, readSleepyConfig } from './lib/sleepy';
 import { ThemeProvider } from './context/ThemeContext';
 import { I18nProvider } from './context/I18nContext';
 import { ProjectProvider } from './context/ProjectContext';
@@ -122,18 +124,38 @@ class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryStat
  * vault before any query fires. Absent → launcher mode (render LauncherPage);
  * present → the normal vault Shell with every request carrying the vault header.
  */
-const initialVault = new URLSearchParams(window.location.search).get('vault');
+const params = new URLSearchParams(window.location.search);
+const initialVault = params.get('vault');
+const captureMode = params.get('capture') === '1';
 if (initialVault) {
   setActiveVault(initialVault);
 }
 
+/** Registers the Sleepy global hotkey for the launcher window (no UI). */
+function SleepyHotkeyRegistrar() {
+  useEffect(() => {
+    void applySleepyHotkey(readSleepyConfig());
+  }, []);
+  return null;
+}
+
 export function App() {
+  // Notch quick-capture window (`?capture=1`) — its own transparent bar.
+  if (captureMode) {
+    return (
+      <ErrorBoundary>
+        <CaptureBar />
+      </ErrorBoundary>
+    );
+  }
+
   // No vault pinned → this is the Launcher window (list of all projects).
   if (!initialVault) {
     return (
       <ErrorBoundary>
         <QueryClientProvider client={queryClient}>
           <ThemeProvider>
+            <SleepyHotkeyRegistrar />
             <LauncherPage />
           </ThemeProvider>
         </QueryClientProvider>

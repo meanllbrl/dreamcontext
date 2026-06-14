@@ -36,6 +36,11 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        // Global shortcut for the Sleepy notch quick-capture bar. The hotkey is
+        // registered/unregistered from the dashboard JS via the plugin's permitted
+        // API (the capability grants global-shortcut on the loopback origin), so
+        // no custom Rust command is needed (those are ACL-blocked on remote pages).
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
             // Never abort on a startup problem — surface it in a window.
             if let Err(msg) = host_dashboard(app.handle().clone()) {

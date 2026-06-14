@@ -2,7 +2,7 @@ import { IncomingMessage, ServerResponse } from 'node:http';
 import { basename, isAbsolute, join, resolve, sep } from 'node:path';
 import { existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { parseJsonBody, sendJson, sendError } from '../middleware.js';
 import { discoverVaultsAsync } from '../../lib/vault-discovery.js';
@@ -374,6 +374,94 @@ export async function handleLauncherCatalog(
     tags: p.tags,
   }));
   sendJson(res, 200, { platforms, packs });
+}
+
+// ─── Sleepy quick-capture ──────────────────────────────────────────────────────
+
+/**
+ * Build the headless-claude enrichment prompt for a captured note. The injection
+ * keeps the run non-interactive (no follow-ups) — it just learns the note.
+ * Exported for testing. The note is passed to claude as an ARGUMENT (never
+ * interpolated into a shell string), so this string is injection-safe.
+ */
+export function buildCapturePrompt(note: string): string {
+  return (
+    `A quick-capture note was just saved to this project's dreamcontext memory:\n\n` +
+    `"${note}"\n\n` +
+    `Do NOT ask any follow-up questions. Review it and, if warranted, organize or ` +
+    `enrich it into the appropriate dreamcontext knowledge/memory via the dreamcontext ` +
+    `CLI WITHOUT duplicating the raw note. Then stop.`
+  );
+}
+
+/**
+ * POST /api/launcher/capture — the Sleepy notch bar's submit. Captures a note
+ * into the chosen vault: (1) INSTANT, guaranteed `dreamcontext memory remember`
+ * (deterministic, no tokens), then (2) fire-and-forget headless `claude -p` to
+ * enrich/learn it (best-effort; silently skipped if claude is absent). Mutation;
+ * behind the cross-site CSRF guard. STRICT-PICK: only `vault` + `text` are read.
+ * No user text ever reaches a shell string — memory remember gets it as argv,
+ * claude gets it as the login-shell positional `$0`.
+ */
+export async function handleLauncherCapture(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  _contextRoot: string | null,
+  runner: CliRunner = defaultCliRunner,
+): Promise<void> {
+  const body = await parseJsonBody(req);
+  if (!body) {
+    sendError(res, 400, 'invalid_body', 'Request body must be valid JSON.');
+    return;
+  }
+  const vaultName = typeof body.vault === 'string' ? body.vault.trim() : '';
+  const text = typeof body.text === 'string' ? body.text.trim() : '';
+  if (!vaultName) {
+    sendError(res, 400, 'invalid_vault', 'vault must be a non-empty string.');
+    return;
+  }
+  if (!text) {
+    sendError(res, 400, 'invalid_text', 'text must be a non-empty string.');
+    return;
+  }
+
+  const vault = listVaults().find((v) => v.name === vaultName);
+  if (!vault) {
+    sendError(res, 400, 'unknown_vault', `No registered vault named "${vaultName}".`);
+    return;
+  }
+  const cwd = resolve(vault.path);
+  if (!existsSync(cwd)) {
+    sendError(res, 400, 'missing_vault', `Vault path no longer exists: ${cwd}`);
+    return;
+  }
+
+  // (1) Instant, guaranteed capture — never lose the note even if claude fails.
+  try {
+    await runner(['memory', 'remember', text], cwd);
+  } catch (err) {
+    console.error('[launcher] capture memory-remember failed:', err);
+    sendError(res, 500, 'capture_failed', 'Failed to save the note.');
+    return;
+  }
+
+  // (2) Best-effort enrichment via a headless claude run. Login shell resolves
+  // `claude` from the user's PATH; the prompt is passed as the positional `$0`
+  // (double-quoted in the script) so the note is never shell-interpreted.
+  try {
+    const shell = process.env.SHELL || '/bin/zsh';
+    const child = spawn(shell, ['-lc', 'exec claude -p "$0"', buildCapturePrompt(text)], {
+      cwd,
+      detached: true,
+      stdio: 'ignore',
+    });
+    child.unref();
+  } catch {
+    // claude absent / spawn failed — the note is already captured; ignore.
+  }
+
+  sendJson(res, 200, { ok: true });
 }
 
 /**

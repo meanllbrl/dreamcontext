@@ -23,6 +23,7 @@ import {
   handleLauncherScaffold,
   handleLauncherDefaults,
   handleLauncherCatalog,
+  handleLauncherCapture,
 } from './routes/launcher.js';
 import { handleConnectionsList, handleConnectionsCreate, handleConnectionsDelete } from './routes/connections.js';
 import { handleFederationInboxGet, handleFederationSyncPost } from './routes/federation.js';
@@ -103,6 +104,7 @@ function buildRouter(): Router {
   router.get('/api/launcher/catalog', handleLauncherCatalog);
   router.post('/api/launcher/register', handleLauncherRegister);
   router.post('/api/launcher/scaffold', handleLauncherScaffold);
+  router.post('/api/launcher/capture', handleLauncherCapture);
 
   // Vaults + federation connections (issue #25 P2)
   router.get('/api/vaults', handleVaultsGet);

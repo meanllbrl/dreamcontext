@@ -246,3 +246,15 @@ describe('handleLauncherCatalog', () => {
     expect(body.packs.map((p: any) => p.name)).toContain('engineering');
   });
 });
+
+// ─── capture prompt (injection-safe, has the no-follow-ups injection) ──────────
+
+describe('buildCapturePrompt', () => {
+  it('embeds the note and the no-follow-ups injection', async () => {
+    const { buildCapturePrompt } = await import('../../src/server/routes/launcher.js');
+    const p = buildCapturePrompt('ship the notch capture bar');
+    expect(p).toContain('ship the notch capture bar');
+    expect(p).toMatch(/do NOT ask/i);
+    expect(p).toMatch(/learn|enrich|organize/i);
+  });
+});
