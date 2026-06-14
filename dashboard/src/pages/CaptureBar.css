@@ -15,12 +15,12 @@
   overflow: hidden;
 }
 
-/* The black panel hangs flush from the top, sized like the physical MacBook notch:
-   notch-width, flat top, rounded BOTTOM corners — it reads as the notch extending
-   downward. Its solid black is seamless with the mascot clips' black background. */
+/* The black panel hangs flush from the top, the SAME width as the capture bar
+   below so the two read as one cohesive column dropping from the notch. Flat top,
+   rounded BOTTOM corners. Its solid black is seamless with the clips' black bg. */
 .cap-notch {
-  width: 200px;
-  height: 92px;
+  width: 360px;
+  height: 150px;
   background: #000;
   border-radius: 0 0 22px 22px;
   overflow: hidden;
@@ -29,11 +29,12 @@
   justify-content: center;
 }
 
-/* Square-ish window over the 16:9 clip: object-fit cover crops the wide letterbox
-   so the centered face fills the box and reads as square, not letterboxed. */
+/* The clip fills the panel edge-to-edge: full width, object-fit cover crops the
+   16:9 letterbox top/bottom so the centered mascot fills the banner horizontally
+   with no black gutters on the sides. */
 .cap-char {
-  width: 92px;
-  height: 92px;
+  width: 100%;
+  height: 100%;
   object-fit: cover;
   display: block;
   pointer-events: none;
@@ -115,6 +116,74 @@
 }
 .cap-status-error {
   color: #ff8a8a;
+}
+
+/* Full reason for a failed capture (e.g. a deleted vault path), shown under the
+   input so the user sees WHY, not just "failed". */
+.cap-error-msg {
+  font-size: 11px;
+  line-height: 1.35;
+  color: #ff9b9b;
+  word-break: break-word;
+}
+
+/* Background Claude enrichment: a live spinner while it runs, then its response. */
+.cap-enrich {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 11px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 0.5px solid rgba(255, 255, 255, 0.08);
+}
+.cap-enrich-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.62);
+}
+.cap-enrich-done {
+  color: #6ee7a0;
+}
+.cap-enrich-err {
+  color: #ff8a8a;
+}
+.cap-enrich-body {
+  font-size: 12px;
+  line-height: 1.45;
+  color: rgba(255, 255, 255, 0.82);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 150px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+.cap-enrich-body::-webkit-scrollbar {
+  width: 6px;
+}
+.cap-enrich-body::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 3px;
+}
+
+/* Small inline spinner for the running enrichment state. */
+.cap-spinner {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.22);
+  border-top-color: rgba(255, 255, 255, 0.85);
+  animation: cap-spin 0.7s linear infinite;
+  flex: none;
+}
+@keyframes cap-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* Multi-line, Apple-style text field: rounded, subtle inset fill, no harsh border.

@@ -7,7 +7,10 @@ description: >-
   four non-obvious gotchas (CLI bundling, Tauri ACL, relative URLs, build/sign),
   the in-app quiz-style project onboarding (scaffold endpoints, child-spawn
   pattern, auto-CLI-install), the Faz 1 GitHub Actions release pipeline
-  (E2E verified v0.8.1), and the homebrew-vs-nvm CLI resolution gotcha.
+  (E2E verified v0.8.1), the homebrew-vs-nvm CLI resolution gotcha, and the
+  Sleepy notch quick-capture companion (global hotkey, transparent notch window,
+  mascot mood, in-process capture pipeline, tracked enrichment status UI, dead-vault
+  filtering, focus/blur UX, asset bundling).
 type: knowledge
 tags:
   - architecture
@@ -260,6 +263,137 @@ fires on `v*` tags. Pipeline steps:
 ### App icon
 
 Brand diamond logo (white squircle) fitted to the Tauri icon set via `tauri icon` from `desktop/public/image/dreamcontext.png`. Source kept at `desktop/src-tauri/icon-source.png`. Re-run `tauri icon <source>` to regenerate all platform sizes if the logo changes.
+
+## Sleepy — notch quick-capture companion
+
+A global-hotkey-summoned, transparent notch companion that captures thoughts/commands
+into any registered vault. Desktop-only; ships via desktop release, not npm.
+
+### Architecture
+
+```
+Global hotkey (tauri-plugin-global-shortcut, registered in launcher window JS)
+  → toggleSleepyWindow() → WebviewWindow(label='sleepy', ?capture=1, transparent,
+      alwaysOnTop, decorations=false, x=topCenter(420), y=0, 420×520 px)
+      + win.setFocus() (grabs key focus immediately on open)
+      → CaptureBar.tsx (mounts when ?capture=1)
+          → onSleepyFocusChange(): close-on-blur dismiss (Spotlight-style)
+          → user types → POST /api/launcher/capture
+              → (1) insertToJsonArray (in-process CHANGELOG write, guaranteed)
+              → (2) spawn: $SHELL -lc 'exec claude -p "$0"' <note>  (tracked)
+                   captureRuns Map { captureId → {state, output, startedAt} }
+                   returns {ok, captureId}
+          → poll GET /api/launcher/capture/status?id=<captureId> every 1.2s
+              → shows "Sleepy is learning…" spinner, then Claude's response
+```
+
+### Hotkey registration details
+
+- Plugin: `tauri-plugin-global-shortcut`. Registered from the **dashboard JS** layer
+  (not Rust), via a dynamic `import('@tauri-apps/plugin-global-shortcut')`.
+- Capability scoped to the loopback origin (`http://127.0.0.1:*`) in
+  `desktop/src-tauri/capabilities/default.json`.
+- **Owned by the persistent launcher window** (not per-vault windows). When a user
+  changes the hotkey in a vault's Settings page, that page writes to localStorage
+  keyed `sleepy:config:v1`; the launcher window listens on the cross-window `storage`
+  event and re-applies via `applySleepyHotkey()` — so the hotkey survives vault window
+  closure.
+- **Bare Fn keys not supported** — requires a native CGEventTap not available via the
+  plugin. Combo keys only (e.g. `Alt+Cmd+S`).
+
+### Transparent notch window
+
+- `macOSPrivateApi: true` in `tauri.conf.json` enables true window transparency.
+- Window: `decorations:false`, `transparent:true`, `alwaysOnTop:true`, `y:0`, size
+  **420×520 px** (was 340, grown to fit the enrichment response panel).
+- `win.setFocus()` is called after `tauri://created` so the panel immediately becomes
+  the key window — the user can type or press Esc without a preliminary click.
+- Enter submits; Shift+Enter newlines (chat-style `<textarea>`). Esc → `closeSelf()`.
+- **Close-on-blur (Spotlight-style)**: `onSleepyFocusChange(cb)` in `sleepy.ts`
+  subscribes to `getCurrentWebviewWindow().onFocusChanged(…)`. Armed after the first
+  `focused=true` event; paused while the vault picker is open (`pickerActiveRef`). When
+  the user clicks back to their editor the panel dismisses itself — focus returns to
+  wherever they clicked, NOT to the dreamcontext main window.
+- **Known gap**: dismissing with Esc (not click-away) may still surface the main window
+  because the capture panel activates the app. Fully suppressing requires a native
+  non-activating `NSPanel` — deferred.
+
+### Mascot panel (notch layout)
+
+- Black notch panel: **360×150 px** (matches the capture bar width below so both read
+  as one cohesive column). Flat top, `border-radius: 0 0 22px 22px` bottom.
+- Mascot `<video>` fills the panel **edge-to-edge**: `width:100%; height:100%;
+  object-fit:cover` — the 16:9 H.264 clip is cropped top/bottom; the centered face
+  fills the full banner width with no black side gutters.
+- No alpha channel needed — black clips merge with the black panel.
+
+### Mascot mood
+
+`GET /api/sleep` returns `{debt}`. Three modes: `idle` (debt ≤3), `sleepy` (4–9),
+`sleeps` (≥10). Mode drives the video source: `/api/sleepy/video?mode=<mode>`.
+
+### Capture pipeline
+
+1. **Instant / guaranteed**: the server writes the CHANGELOG entry **in-process** via
+   `insertToJsonArray` (same logic as `memory remember`). No child CLI is spawned here.
+   **Why**: in a packaged `.app`, the globally-resolvable `dreamcontext` can be a stale
+   Homebrew copy or absent entirely (Finder/Spotlight don't inherit the user's
+   interactive-shell PATH). A child `memory remember` call therefore surfaced as a bare
+   "failed". Since the server IS dreamcontext, the write is direct and failure-proof.
+
+2. **Tracked enrichment**: a headless `claude` spawn with piped stdio. The note is
+   passed as login-shell positional `$0` (no shell string interpolation, no injection).
+   `buildCapturePrompt` prepends: "do not ask follow-ups, take notes and learn".
+   The spawn gets an `'error'` listener so async spawn failures (claude not on PATH)
+   don't crash the server. The child is NOT detached — stdout/stderr are captured.
+   `captureRuns` Map tracks state (`running|done|error`) + output (tail-capped at 8 KB).
+   Returns `{ok: true, captureId: <uuid>}`.
+
+3. **Status route**: `GET /api/launcher/capture/status?id=<captureId>` →
+   `{state: running|done|error|unknown, output}`. `unknown` = expired or never existed.
+   The Map is pruned (TTL 10 min after completion, size cap 50) on each capture POST.
+
+4. **Capture bar polling**: 1.2 s interval, ceiling 3 minutes or a streak of 5
+   consecutive `unknown` responses. Shows "Sleepy is learning…" spinner while running,
+   then Claude's response in a scrollable panel below the textarea.
+
+### Dead vault handling
+
+`GET /api/vaults` now returns `exists: boolean` per vault (`existsSync(resolve(v.path))`).
+The capture bar filters the picker to `exists=true` vaults only. Previously a deleted
+vault (e.g. `/Users/.../Test`) would accept the selection and fail on POST with a
+`missing_vault` error that showed only as bare "failed". Real error strings are now
+surfaced in the UI.
+
+### Asset bundling
+
+- 3 clips downscaled to ~160 KB each from original 1920×1080 ~2 MB.
+- Stored at `desktop/src-tauri/sleepy/{idle,sleepy,sleeps}.mp4` (renamed from `Dreamy`
+  to `Sleepy` clips this cycle).
+- Bundled as Tauri resources → `Resources/sleepy/` inside the `.app`.
+- Rust shell sets `DREAMCONTEXT_SLEEPY_DIR=<resource_dir>/sleepy`; backend reads it.
+- Served by `GET /api/sleepy/video?mode=` with Range support (WKWebView requires Range
+  for `<video>`).
+- **Nothing ships to the npm package.**
+
+### Persistence gotcha
+
+The app's per-launch loopback port creates a new origin each time → localStorage is
+empty on every launch. Config (`{enabled, hotkey}`) persists server-side at
+`~/.dreamcontext/sleepy.json`. The launcher seeds localStorage from this file on mount
+(`initSleepyFromServer`); writes go to both localStorage AND the server.
+
+### Settings
+
+Sleepy section moved to the **bottom** of Settings (after Connections) and carries a
+`BETA` badge (`<span class="settings-beta-badge">`) styled in the project's accent
+colour (`--color-accent`, violet).
+
+### Status
+
+Functional and live-verified. Capture pipeline hardened (in-process write, tracked
+enrichment, live status UI). Visual design improved but **not yet formally
+user-accepted**. Feature PRD: `_dream_context/core/features/sleepy-notch-capture.md`.
 
 ## Status / deferred
 

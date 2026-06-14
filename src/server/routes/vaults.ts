@@ -1,5 +1,6 @@
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname, resolve } from 'node:path';
+import { existsSync } from 'node:fs';
 import { sendJson } from '../middleware.js';
 import { listVaults } from '../../lib/vaults.js';
 
@@ -21,7 +22,9 @@ export async function handleVaultsGet(
   _params: Record<string, string>,
   contextRoot: string | null,
 ): Promise<void> {
-  const vaults = listVaults();
+  // `exists` flags vaults whose folder is gone (deleted/moved) so the UI can
+  // skip or disable them — capturing into a missing path just fails otherwise.
+  const vaults = listVaults().map((v) => ({ ...v, exists: existsSync(resolve(v.path)) }));
   // In launcher mode there is no pinned project, so `current` is null.
   const current = contextRoot
     ? (vaults.find((v) => resolve(v.path) === resolve(dirname(contextRoot)))?.name ?? null)

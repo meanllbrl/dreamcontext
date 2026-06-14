@@ -17,8 +17,41 @@ import {
   type PlatformId,
 } from '../../lib/platforms.js';
 import { loadCatalog } from '../../lib/catalog.js';
+import { insertToJsonArray } from '../../lib/json-file.js';
+import { today } from '../../lib/id.js';
+import { randomUUID } from 'node:crypto';
 
 const execFileAsync = promisify(execFile);
+
+/**
+ * In-memory state of a background Claude enrichment run, keyed by capture id.
+ * The capture POST starts the run and returns the id; the capture bar polls
+ * `GET /api/launcher/capture/status?id=` to show a live spinner and, when done,
+ * Claude's response. Purely ephemeral — lost on server restart (fine: the note
+ * itself was already saved synchronously).
+ */
+interface CaptureRun {
+  state: 'running' | 'done' | 'error';
+  output: string;
+  startedAt: number;
+  endedAt?: number;
+}
+const captureRuns = new Map<string, CaptureRun>();
+const CAPTURE_RUN_TTL_MS = 10 * 60 * 1000; // forget a run 10 min after it ends
+const CAPTURE_RUNS_MAX = 50;
+
+/** Drop finished runs older than the TTL and cap the map size (oldest-first). */
+function pruneCaptureRuns(): void {
+  const now = Date.now();
+  for (const [id, run] of captureRuns) {
+    if (run.endedAt && now - run.endedAt > CAPTURE_RUN_TTL_MS) captureRuns.delete(id);
+  }
+  while (captureRuns.size > CAPTURE_RUNS_MAX) {
+    const oldest = captureRuns.keys().next().value;
+    if (oldest === undefined) break;
+    captureRuns.delete(oldest);
+  }
+}
 
 /**
  * GET /api/launcher/discover?root=<absPath> — find every dreamcontext project
@@ -519,7 +552,6 @@ export async function handleLauncherCapture(
   res: ServerResponse,
   _params: Record<string, string>,
   _contextRoot: string | null,
-  runner: CliRunner = defaultCliRunner,
 ): Promise<void> {
   const body = await parseJsonBody(req);
   if (!body) {
@@ -549,30 +581,96 @@ export async function handleLauncherCapture(
   }
 
   // (1) Instant, guaranteed capture — never lose the note even if claude fails.
+  // Done IN-PROCESS (this server IS dreamcontext): a deterministic CHANGELOG
+  // append, mirroring `memory remember`. We do NOT spawn a child CLI here — in a
+  // packaged desktop app the resolvable CLI can be a stale/older global whose
+  // `memory remember` differs or is absent, which surfaced as a "failed" capture.
+  // A direct file write removes that whole class of failure.
   try {
-    await runner(['memory', 'remember', text], cwd);
+    const changelogPath = join(cwd, '_dream_context', 'core', 'CHANGELOG.json');
+    if (!existsSync(changelogPath)) {
+      sendError(res, 400, 'not_initialized', `"${vaultName}" has no _dream_context — run init first.`);
+      return;
+    }
+    const summary = text.length > 200 ? text.slice(0, 197) + '...' : text;
+    insertToJsonArray(changelogPath, {
+      date: today(),
+      type: 'note',
+      scope: 'quick',
+      summary,
+      description: text,
+      breaking: false,
+    });
   } catch (err) {
-    console.error('[launcher] capture memory-remember failed:', err);
-    sendError(res, 500, 'capture_failed', 'Failed to save the note.');
+    console.error('[launcher] capture changelog write failed:', err);
+    const detail = err instanceof Error ? err.message : 'unknown error';
+    sendError(res, 500, 'capture_failed', `Failed to save the note: ${detail}`);
     return;
   }
 
-  // (2) Best-effort enrichment via a headless claude run. Login shell resolves
+  // (2) Best-effort enrichment via a headless claude run, TRACKED so the capture
+  // bar can show a live spinner + Claude's response. Login shell resolves
   // `claude` from the user's PATH; the prompt is passed as the positional `$0`
   // (double-quoted in the script) so the note is never shell-interpreted.
+  pruneCaptureRuns();
+  const captureId = randomUUID();
+  const run: CaptureRun = { state: 'running', output: '', startedAt: Date.now() };
+  captureRuns.set(captureId, run);
   try {
     const shell = process.env.SHELL || '/bin/zsh';
     const child = spawn(shell, ['-lc', 'exec claude -p "$0"', buildCapturePrompt(text)], {
       cwd,
-      detached: true,
-      stdio: 'ignore',
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
-    child.unref();
-  } catch {
-    // claude absent / spawn failed — the note is already captured; ignore.
+    const cap = (chunk: Buffer) => {
+      // Keep only the tail so a chatty run can't grow memory unbounded.
+      run.output = (run.output + chunk.toString('utf-8')).slice(-8000);
+    };
+    child.stdout?.on('data', cap);
+    child.stderr?.on('data', cap);
+    child.on('error', (err) => {
+      // claude not on PATH / spawn failure — note is already saved; report it.
+      run.state = 'error';
+      run.output = run.output || `Couldn't start claude: ${err.message}`;
+      run.endedAt = Date.now();
+    });
+    child.on('close', (code) => {
+      if (run.state === 'running') {
+        run.state = code === 0 ? 'done' : 'error';
+        if (code !== 0 && !run.output) run.output = `claude exited with code ${code}`;
+        run.endedAt = Date.now();
+      }
+    });
+  } catch (err) {
+    run.state = 'error';
+    run.output = `Couldn't start claude: ${err instanceof Error ? err.message : 'spawn failed'}`;
+    run.endedAt = Date.now();
   }
 
-  sendJson(res, 200, { ok: true });
+  sendJson(res, 200, { ok: true, captureId });
+}
+
+/**
+ * GET /api/launcher/capture/status?id=<captureId> — poll the background Claude
+ * enrichment run started by a capture. Returns its state (`running` | `done` |
+ * `error`) and accumulated output (Claude's response tail). Read-only; an
+ * unknown id returns `{ state: 'unknown' }` (the run may have expired). Vault-
+ * agnostic (under the `/api/launcher` prefix).
+ */
+export async function handleLauncherCaptureStatus(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  _contextRoot: string | null,
+): Promise<void> {
+  const url = new URL(req.url || '/', `http://${req.headers.host}`);
+  const id = url.searchParams.get('id') ?? '';
+  const run = id ? captureRuns.get(id) : undefined;
+  if (!run) {
+    sendJson(res, 200, { state: 'unknown', output: '' });
+    return;
+  }
+  sendJson(res, 200, { state: run.state, output: run.output.trim() });
 }
 
 /**

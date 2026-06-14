@@ -15,7 +15,10 @@ const SLEEPY_LABEL = 'sleepy';
  *  panel + gap + the 360px capture bar at its tallest (multi-line textarea), with
  *  room for drop shadows. y stays 0 so the notch panel hangs flush from the top. */
 const WIN_W = 420;
-const WIN_H = 340;
+// Tall enough for the notch panel + capture bar + the (optional) Claude
+// enrichment response panel below. The window is transparent, so unused height
+// is invisible — only the panels paint.
+const WIN_H = 520;
 
 export interface SleepyConfig {
   enabled: boolean;
@@ -122,6 +125,15 @@ export async function toggleSleepyWindow(): Promise<void> {
     win.once('tauri://created', () => res());
     win.once('tauri://error', () => res());
   });
+  // Make it the key window immediately so the user can type / press Esc without
+  // first clicking it. Without this the user must click the panel to focus it —
+  // and that click activates the dreamcontext app, so closing it then surfaces
+  // the main window ("it opened the app"). Grabbing focus on open avoids that.
+  try {
+    await win.setFocus();
+  } catch {
+    /* best-effort */
+  }
 }
 
 export async function closeSleepyWindow(): Promise<void> {
@@ -140,6 +152,25 @@ export async function closeSelf(): Promise<void> {
     await getCurrentWebviewWindow().close();
   } catch {
     await closeSleepyWindow();
+  }
+}
+
+/**
+ * Subscribe to the capture window's focus changes. `cb(focused)` fires on each
+ * change: `true` when it becomes the key window, `false` when it loses focus
+ * (the user clicked another app/window). The capture bar uses this to dismiss
+ * itself the moment focus leaves — so closing yields to whatever the user
+ * clicked, never surfacing the dreamcontext main window. Returns an unsubscribe
+ * fn; a no-op outside the desktop app.
+ */
+export async function onSleepyFocusChange(cb: (focused: boolean) => void): Promise<() => void> {
+  if (!isDesktop()) return () => {};
+  try {
+    const { getCurrentWebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+    const w = getCurrentWebviewWindow();
+    return await w.onFocusChanged(({ payload: focused }) => cb(focused));
+  } catch {
+    return () => {};
   }
 }
 

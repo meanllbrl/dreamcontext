@@ -1,6 +1,89 @@
 [
   {
     "date": "2026-06-14",
+    "type": "chore",
+    "scope": "sleepy",
+    "description": "The three mascot video source files in _dream_context/inbox/ were renamed from 'Dreamy IDLE.mp4', 'Dreamy SLEEPS.mp4', 'Dreamy SLEEPY.mp4' to 'Sleepy IDLE.mp4', 'Sleepy SLEEPS.mp4', 'Sleepy SLEEPY.mp4', reflecting the correct character name for the notch companion. The bundled Tauri resources (served by GET /api/sleepy/video?mode=) are unaffected — they come from desktop/src-tauri/resources and were already named correctly.",
+    "breaking": false,
+    "summary": "Rename mascot source clips Dreamy -> Sleepy in _dream_context/inbox/",
+    "references": [
+      "task:sleepy-notch-capture"
+    ]
+  },
+  {
+    "date": "2026-06-14",
+    "type": "fix",
+    "scope": "sleepy",
+    "description": "CaptureBar.css: the mascot panel is now 360px wide (matching the capture bar below) and the clip fills it edge-to-edge via object-fit: cover — the earlier 92x92 square with side gutters is gone. Window height bumped to accommodate the taller layout. sleepy.ts: the window now calls setFocus() on open so Esc works immediately without a manual click; a blur subscription closes the panel when focus leaves (Spotlight-style dismiss), armed after first focus and paused while the vault picker dropdown is open. SettingsPage.tsx: the Sleepy section is now the last section in Settings (after Connections), with a violet BETA badge styled via .settings-beta-badge in SettingsPage.css using the --color-accent token.",
+    "breaking": false,
+    "summary": "Notch panel fills edge-to-edge (360x150); focus-on-open + close-on-blur; Settings section moved to bottom with BETA badge",
+    "references": [
+      "file:dashboard/src/pages/CaptureBar.css",
+      "file:dashboard/src/pages/CaptureBar.tsx",
+      "file:dashboard/src/lib/sleepy.ts",
+      "file:dashboard/src/pages/SettingsPage.tsx",
+      "file:dashboard/src/pages/SettingsPage.css",
+      "task:sleepy-notch-capture"
+    ]
+  },
+  {
+    "date": "2026-06-14",
+    "type": "feat",
+    "scope": "sleepy",
+    "description": "Capture now returns a captureId and starts a tracked Claude enrichment run stored in an in-memory captureRuns Map (TTL+size pruned to prevent leaks). A new GET /api/launcher/capture/status?id= endpoint lets the capture bar poll for run progress. CaptureBar polls on 2-second intervals (3-minute ceiling, hardened against stuck 'running' state) and shows a 'Sleepy is learning...' spinner while enrichment is in-flight, then renders Claude's response in a scrollable panel when complete. The window height was bumped to 520 to accommodate the response panel. If the claude binary is not on the login-shell PATH, the panel shows an honest error message rather than hanging.",
+    "breaking": false,
+    "summary": "Tracked Claude enrichment: captureId + GET /api/launcher/capture/status?id= + live spinner and response panel in CaptureBar",
+    "references": [
+      "file:src/server/routes/launcher.ts",
+      "file:src/server/index.ts",
+      "file:dashboard/src/pages/CaptureBar.tsx",
+      "file:dashboard/src/pages/CaptureBar.css",
+      "task:sleepy-notch-capture"
+    ]
+  },
+  {
+    "date": "2026-06-14",
+    "type": "fix",
+    "scope": "sleepy",
+    "description": "Replace the fire-and-forget child 'dreamcontext memory remember' spawn in POST /api/launcher/capture with a direct in-process insertToJsonArray call — the server IS dreamcontext, so it can write the CHANGELOG entry itself without resolving a CLI from PATH. In a packaged desktop app the login-shell CLI can be a stale/older global or absent entirely, causing a guaranteed-capture failure. This removes that entire failure class. Separately, /api/vaults now returns an 'exists' boolean per entry; the CaptureBar vault picker filters out dead vaults so they cannot be selected; the bar surfaces the server's real error message instead of a bare 'failed'. Three stale vaults (Test, Test2, delete-later) were removed from the vault registry. The claude enrichment spawn was also hardened with an 'error' event listener so an unresolvable binary cannot crash the server.",
+    "breaking": false,
+    "summary": "Capture reliability: write CHANGELOG entry in-process instead of spawning child CLI; surface real error; filter dead vaults via /api/vaults exists flag",
+    "references": [
+      "file:src/server/routes/launcher.ts",
+      "file:src/server/routes/vaults.ts",
+      "file:dashboard/src/pages/CaptureBar.tsx",
+      "task:sleepy-notch-capture"
+    ]
+  },
+  {
+    "date": "2026-06-14",
+    "type": "note",
+    "scope": "quick",
+    "summary": "merhaba",
+    "description": "merhaba",
+    "breaking": false
+  },
+  {
+    "date": "2026-06-14",
+    "type": "feat",
+    "scope": "sleepy",
+    "description": "Add Sleepy, a desktop-only macOS notch quick-capture companion. A global hotkey (tauri-plugin-global-shortcut, registered on the permanent launcher window so it survives vault-window close) toggles a transparent top-center notch window: a 200×92 black panel (macOSPrivateApi transparent window) showing the Dreamy mascot whose mood follows the selected project's sleep debt (idle ≤3 / sleepy 4–9 / sleeps ≥10), with an auto-growing Apple-style multi-line textarea below (Enter submits, Shift+Enter inserts a newline). Submit POST /api/launcher/capture triggers instant dreamcontext memory remember (guaranteed) then fire-and-forget headless claude -p (injection: don't ask follow-ups, take notes and learn; note passed as explicit arg, no shell injection). Three mascot video clips downscaled to ~160 KB each are bundled as Tauri resources and served via GET /api/sleepy/video?mode= with Range support for WKWebView. Config (enabled flag + hotkey) is persisted to ~/.dreamcontext/sleepy.json so it survives per-launch port changes that would otherwise reset localStorage origin. Settings page gains an 'Enable Sleepy' toggle (default off) plus hotkey capture UI, visible desktop-only. Desktop-only — nothing shipped to npm. Visual design still iterating (not yet user-accepted).",
+    "breaking": false,
+    "summary": "macOS notch quick-capture companion: global hotkey toggles a mascot-driven notch panel + multi-line capture bar; submit → instant memory remember + fire-and-forget claude enrichment",
+    "references": [
+      "commit:64a0899",
+      "commit:bc98378",
+      "commit:87db4cd",
+      "commit:3dcd0c2",
+      "commit:2814e45",
+      "file:desktop/src/sleepy.ts",
+      "file:dashboard/src/components/CaptureBar.tsx",
+      "file:src/server/routes/launcher.ts",
+      "task:sleepy-notch-capture"
+    ]
+  },
+  {
+    "date": "2026-06-14",
     "type": "release",
     "scope": "desktop",
     "description": "First tagged desktop release v0.8.1 was cut via the new CI workflow and verified end-to-end: dreamcontext app install successfully pulled the asset from /releases/latest, verified the .sha256 checksum, passed codesign --verify --deep, and installed to ~/Applications with no Gatekeeper quarantine (ditto transfer preserves the ad-hoc signature). The continuous-app-update loop is now proven end-to-end. Desktop version 0.8.1 was chosen (not 0.8.0) to ensure the bundle version > last installed manifest version so the update loop does not trigger an infinite re-download cycle. CLI npm 0.8.x and desktop v0.8.x version numbers are coincidental, not coupled.",

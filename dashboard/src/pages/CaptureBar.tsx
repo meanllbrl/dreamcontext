@@ -1,15 +1,22 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, setActiveVault } from '../api/client';
-import { closeSelf } from '../lib/sleepy';
+import { closeSelf, onSleepyFocusChange } from '../lib/sleepy';
 import './CaptureBar.css';
 
 interface Vault {
   name: string;
   path: string;
+  exists?: boolean;
 }
 
 type Status = 'idle' | 'saving' | 'saved' | 'error';
 type Mode = 'idle' | 'sleepy' | 'sleeps';
+/** Background Claude enrichment run, surfaced as a spinner + its response. */
+type EnrichState = 'running' | 'done' | 'error' | 'unknown';
+interface Enrich {
+  state: EnrichState;
+  output: string;
+}
 
 const LAST_VAULT_KEY = 'sleepy:lastVault';
 /** Max textarea height (px) — roughly 5 lines before it scrolls. */
@@ -32,8 +39,15 @@ export function CaptureBar() {
   const [vault, setVault] = useState('');
   const [text, setText] = useState('');
   const [status, setStatus] = useState<Status>('idle');
+  const [errMsg, setErrMsg] = useState('');
+  const [enrich, setEnrich] = useState<Enrich | null>(null);
   const [mode, setMode] = useState<Mode>('idle');
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  // Active enrichment poll timer, so a new capture cancels the previous poll.
+  const pollRef = useRef<number | null>(null);
+  // True while the user is interacting with the native project dropdown — its
+  // popup must not trip the close-on-blur dismiss below.
+  const pickerActiveRef = useRef(false);
 
   // Auto-grow the textarea from 1 line up to ~5 lines, then let it scroll.
   function autoGrow(el: HTMLTextAreaElement | null) {
@@ -59,9 +73,14 @@ export function CaptureBar() {
     api
       .get<{ vaults: Vault[] }>('/vaults')
       .then((d) => {
-        setVaults(d.vaults);
+        // Drop vaults whose folder is gone (deleted/moved) — capturing into a
+        // missing path only fails. If they're ALL dead, keep the list so the
+        // user still sees something rather than an empty picker.
+        const live = d.vaults.filter((v) => v.exists !== false);
+        const list = live.length > 0 ? live : d.vaults;
+        setVaults(list);
         const last = localStorage.getItem(LAST_VAULT_KEY);
-        const pick = last && d.vaults.some((v) => v.name === last) ? last : d.vaults[0]?.name ?? '';
+        const pick = last && list.some((v) => v.name === last) ? last : list[0]?.name ?? '';
         setVault(pick);
       })
       .catch(() => setStatus('error'));
@@ -97,21 +116,91 @@ export function CaptureBar() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  // Dismiss the moment the window loses focus (the user clicked back to their
+  // work) — so it behaves like Spotlight: hotkey opens it, clicking away closes
+  // it, and focus returns to whatever they clicked rather than the dreamcontext
+  // main window. Armed only after the window has first gained focus, and paused
+  // while the native project picker is open (its popup briefly steals focus).
+  useEffect(() => {
+    let armed = false;
+    let cancelled = false;
+    let unsub = () => {};
+    void onSleepyFocusChange((focused) => {
+      if (focused) {
+        armed = true;
+        return;
+      }
+      if (armed && !pickerActiveRef.current) void closeSelf();
+    }).then((u) => {
+      if (cancelled) u();
+      else unsub = u;
+    });
+    return () => {
+      cancelled = true;
+      unsub();
+    };
+  }, []);
+
+  // Stop any in-flight enrichment poll when the window goes away.
+  useEffect(() => () => {
+    if (pollRef.current) window.clearTimeout(pollRef.current);
+  }, []);
+
+  // Poll the background Claude enrichment run until it finishes, mirroring its
+  // state + response into `enrich`. A new capture cancels any prior poll.
+  function pollEnrichment(captureId: string) {
+    if (pollRef.current) window.clearTimeout(pollRef.current);
+    let attempts = 0;
+    const MAX_ATTEMPTS = 150; // ~3 min ceiling so a hung run can't poll forever
+    let unknownStreak = 0;
+    const tick = async () => {
+      attempts += 1;
+      try {
+        const s = await api.get<Enrich>(`/launcher/capture/status?id=${encodeURIComponent(captureId)}`);
+        // A run we just started should be 'running'; a persistent 'unknown' means
+        // it expired or the server restarted — stop after a few tries.
+        unknownStreak = s.state === 'unknown' ? unknownStreak + 1 : 0;
+        setEnrich({ state: s.state, output: s.output });
+        const keepGoing =
+          (s.state === 'running' || s.state === 'unknown') &&
+          attempts < MAX_ATTEMPTS &&
+          unknownStreak < 3;
+        if (keepGoing) pollRef.current = window.setTimeout(() => void tick(), 1200);
+      } catch {
+        setEnrich({ state: 'error', output: 'Lost contact with the enrichment run.' });
+      }
+    };
+    pollRef.current = window.setTimeout(() => void tick(), 600);
+  }
+
   async function submit() {
     const t = text.trim();
     if (!t || !vault || status === 'saving') return;
     setStatus('saving');
+    setErrMsg('');
+    setEnrich(null);
     try {
-      await api.post('/launcher/capture', { vault, text: t });
+      const r = await api.post<{ ok: boolean; captureId?: string }>('/launcher/capture', {
+        vault,
+        text: t,
+      });
       localStorage.setItem(LAST_VAULT_KEY, vault);
       setText('');
       setStatus('saved');
-      window.setTimeout(() => setStatus('idle'), 1400);
       if (inputRef.current) inputRef.current.style.height = 'auto';
       inputRef.current?.focus();
-    } catch {
+      // Saved instantly; now follow the background Claude run (spinner + reply).
+      if (r.captureId) {
+        setEnrich({ state: 'running', output: '' });
+        pollEnrichment(r.captureId);
+      }
+      window.setTimeout(() => setStatus('idle'), 1400);
+    } catch (e) {
+      // Surface the server's real reason (e.g. "Vault path no longer exists")
+      // instead of a bare "failed" — otherwise a dead/missing vault is opaque.
+      setErrMsg(e instanceof Error ? e.message : 'Capture failed');
       setStatus('error');
-      window.setTimeout(() => setStatus('idle'), 2200);
+      window.setTimeout(() => setStatus('idle'), 5000);
     }
   }
 
@@ -138,6 +227,8 @@ export function CaptureBar() {
             <select
               className="cap-vault"
               value={vault}
+              onFocus={() => { pickerActiveRef.current = true; }}
+              onBlur={() => { pickerActiveRef.current = false; }}
               onChange={(e) => setVault(e.target.value)}
               aria-label="Project"
             >
@@ -180,6 +271,26 @@ export function CaptureBar() {
             }
           }}
         />
+        {status === 'error' && errMsg && <div className="cap-error-msg">{errMsg}</div>}
+
+        {/* Background Claude enrichment: live spinner, then its response. */}
+        {enrich && (
+          <div className={`cap-enrich cap-enrich-${enrich.state}`}>
+            <div className="cap-enrich-head">
+              {enrich.state === 'running' || enrich.state === 'unknown' ? (
+                <>
+                  <span className="cap-spinner" aria-hidden />
+                  <span>Sleepy is learning…</span>
+                </>
+              ) : enrich.state === 'done' ? (
+                <span className="cap-enrich-done">✓ Learned</span>
+              ) : (
+                <span className="cap-enrich-err">Enrichment failed</span>
+              )}
+            </div>
+            {enrich.output && <div className="cap-enrich-body">{enrich.output}</div>}
+          </div>
+        )}
       </div>
     </div>
   );

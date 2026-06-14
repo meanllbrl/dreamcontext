@@ -275,48 +275,6 @@ export function SettingsPage() {
         </div>
       </section>
 
-      {isDesktop() && (
-        <section className="settings-section">
-          <h2 className="settings-section-title">Sleepy — notch quick-capture</h2>
-          <div className="settings-checkboxes">
-            <label className="settings-checkbox-label">
-              <input
-                type="checkbox"
-                className="settings-checkbox"
-                checked={sleepy.enabled}
-                onChange={() => updateSleepy({ ...sleepy, enabled: !sleepy.enabled })}
-              />
-              <span>Enable Sleepy</span>
-            </label>
-            <p className="settings-field-hint">
-              Press the hotkey anywhere to drop a capture bar under the notch: pick a project, type a
-              thought, hit return — it's saved to that project's memory and learned.
-            </p>
-            {sleepy.enabled && (
-              <div className="settings-field-row">
-                <label>Hotkey</label>
-                <input
-                  className="settings-text-input"
-                  readOnly
-                  value={capturingHotkey ? 'Press a key combo…' : sleepy.hotkey}
-                  onFocus={() => setCapturingHotkey(true)}
-                  onBlur={() => setCapturingHotkey(false)}
-                  onKeyDown={(e) => {
-                    e.preventDefault();
-                    const accel = accelFromKeyEvent(e);
-                    if (accel) {
-                      updateSleepy({ ...sleepy, hotkey: accel });
-                      setCapturingHotkey(false);
-                      e.currentTarget.blur();
-                    }
-                  }}
-                />
-              </div>
-            )}
-          </div>
-        </section>
-      )}
-
       <section className="settings-section">
         <h2 className="settings-section-title">{t('settings.tasks')}</h2>
         <div className="settings-checkboxes">
@@ -419,6 +377,51 @@ export function SettingsPage() {
         onToggleShareable={handleToggleShareable}
         shareablePending={updateConfig.isPending}
       />
+
+      {isDesktop() && (
+        <section className="settings-section">
+          <h2 className="settings-section-title">
+            Sleepy — notch quick-capture
+            <span className="settings-beta-badge">BETA</span>
+          </h2>
+          <div className="settings-checkboxes">
+            <label className="settings-checkbox-label">
+              <input
+                type="checkbox"
+                className="settings-checkbox"
+                checked={sleepy.enabled}
+                onChange={() => updateSleepy({ ...sleepy, enabled: !sleepy.enabled })}
+              />
+              <span>Enable Sleepy</span>
+            </label>
+            <p className="settings-field-hint">
+              Press the hotkey anywhere to drop a capture bar under the notch: pick a project, type a
+              thought, hit return — it's saved to that project's memory and learned.
+            </p>
+            {sleepy.enabled && (
+              <div className="settings-field-row">
+                <label>Hotkey</label>
+                <input
+                  className="settings-text-input"
+                  readOnly
+                  value={capturingHotkey ? 'Press a key combo…' : sleepy.hotkey}
+                  onFocus={() => setCapturingHotkey(true)}
+                  onBlur={() => setCapturingHotkey(false)}
+                  onKeyDown={(e) => {
+                    e.preventDefault();
+                    const accel = accelFromKeyEvent(e);
+                    if (accel) {
+                      updateSleepy({ ...sleepy, hotkey: accel });
+                      setCapturingHotkey(false);
+                      e.currentTarget.blur();
+                    }
+                  }}
+                />
+              </div>
+            )}
+          </div>
+        </section>
+      )}
     </div>
   );
 }
