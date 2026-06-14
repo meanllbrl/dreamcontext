@@ -36,10 +36,11 @@ const LAST_VAULT_KEY = 'sleepy:lastVault';
 /** Max textarea height (px) — roughly 5 lines before it scrolls. */
 const MAX_INPUT_H = 120;
 
-/** Map a project's sleep debt to a mascot mood. */
+/** Map a project's sleep debt to a mascot mood. The mascot stays awake/idle
+ *  until debt is high — drowsy ("sleepy") needs ≥8, fully asleep ("sleeps") ≥10. */
 function modeForDebt(debt: number): Mode {
   if (debt >= 10) return 'sleeps';
-  if (debt >= 4) return 'sleepy';
+  if (debt >= 8) return 'sleepy';
   return 'idle';
 }
 
