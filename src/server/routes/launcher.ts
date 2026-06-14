@@ -523,6 +523,41 @@ export async function handleSleepyVideo(
   }
 }
 
+/**
+ * GET /api/sleepy/anim?mode=idle|sleepy|sleeps — serve the bundled mascot as an
+ * animated WebP. Unlike <video>, an <img> autoplays unconditionally in WKWebView
+ * (which blocks muted <video> autoplay and offers no Tauri toggle to change it),
+ * so the notch mascot animates without a play-button overlay. Desktop-only: 404
+ * when the env/dir/file is absent. Whole-file (no Range needed for <img>).
+ */
+export async function handleSleepyAnim(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  _contextRoot: string | null,
+): Promise<void> {
+  const url = new URL(req.url || '/', `http://${req.headers.host}`);
+  const mode = url.searchParams.get('mode') || 'idle';
+  if (!SLEEPY_MODES.has(mode)) {
+    sendError(res, 400, 'bad_mode', 'mode must be idle, sleepy, or sleeps.');
+    return;
+  }
+  const dir = process.env.DREAMCONTEXT_SLEEPY_DIR;
+  const file = dir ? join(dir, `${mode}.webp`) : '';
+  if (!file || !existsSync(file)) {
+    res.writeHead(404);
+    res.end();
+    return;
+  }
+  const size = statSync(file).size;
+  res.writeHead(200, {
+    'Content-Type': 'image/webp',
+    'Content-Length': size,
+    'Cache-Control': 'public, max-age=86400',
+  });
+  createReadStream(file).pipe(res);
+}
+
 // ─── Sleepy quick-capture ──────────────────────────────────────────────────────
 
 /**
@@ -532,8 +567,9 @@ export async function handleSleepyVideo(
  * interpolated into a shell string), so this string is injection-safe.
  */
 export function buildCapturePrompt(note: string): string {
+  // Leading "Think hard" requests medium extended thinking (Claude Code keyword).
   return (
-    `A quick-capture note was just saved to this project's dreamcontext memory:\n\n` +
+    `Think hard. A quick-capture note was just saved to this project's dreamcontext memory:\n\n` +
     `"${note}"\n\n` +
     `Do NOT ask any follow-up questions. Review it and, if warranted, organize or ` +
     `enrich it into the appropriate dreamcontext knowledge/memory via the dreamcontext ` +
@@ -548,11 +584,14 @@ export function buildCapturePrompt(note: string): string {
  * injection-safe. Exported for testing.
  */
 export function buildAskPrompt(question: string): string {
+  // Leading "Think hard" requests medium extended thinking; the answer itself must
+  // stay short, clear, and Markdown-formatted (it's rendered in the notch bar).
   return (
-    `Answer the following question about THIS project, using its dreamcontext ` +
-    `context and code as needed. Give ONE direct, self-contained answer. Do NOT ask ` +
-    `any follow-up questions, do NOT make any file changes, and keep it concise. ` +
-    `Then stop.\n\n` +
+    `Think hard, then answer the following question about THIS project. Format the ` +
+    `answer as GitHub-flavored Markdown. Be SHORT and CLEAR — at most a few sentences ` +
+    `or a tight bullet list, no preamble, do not restate the question. Use the ` +
+    `project's dreamcontext context and code as needed. Do NOT ask any follow-up ` +
+    `questions and do NOT make any file changes. Give ONE direct answer, then stop.\n\n` +
     `Question: "${question}"`
   );
 }
@@ -651,7 +690,9 @@ export async function handleLauncherCapture(
   try {
     const shell = process.env.SHELL || '/bin/zsh';
     const prompt = mode === 'ask' ? buildAskPrompt(text) : buildCapturePrompt(text);
-    const child = spawn(shell, ['-ilc', 'exec claude -p "$0"', prompt], {
+    // Sleepy runs on Sonnet (medium thinking is requested via the prompt). `$0` is
+    // the prompt positional — never interpolated into the shell string.
+    const child = spawn(shell, ['-ilc', 'exec claude --model sonnet -p "$0"', prompt], {
       cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
     });

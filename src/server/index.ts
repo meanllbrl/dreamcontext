@@ -26,6 +26,7 @@ import {
   handleLauncherCapture,
   handleLauncherCaptureStatus,
   handleSleepyVideo,
+  handleSleepyAnim,
   handleSleepyConfigGet,
   handleSleepyConfigSet,
 } from './routes/launcher.js';
@@ -113,6 +114,7 @@ function buildRouter(): Router {
   router.get('/api/launcher/sleepy-config', handleSleepyConfigGet);
   router.post('/api/launcher/sleepy-config', handleSleepyConfigSet);
   router.get('/api/sleepy/video', handleSleepyVideo);
+  router.get('/api/sleepy/anim', handleSleepyAnim);
 
   // Vaults + federation connections (issue #25 P2)
   router.get('/api/vaults', handleVaultsGet);

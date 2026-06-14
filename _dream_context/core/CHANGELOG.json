@@ -3,6 +3,14 @@
     "date": "2026-06-14",
     "type": "note",
     "scope": "quick",
+    "summary": "bu proje nedir kısava",
+    "description": "bu proje nedir kısava",
+    "breaking": false
+  },
+  {
+    "date": "2026-06-14",
+    "type": "note",
+    "scope": "quick",
     "summary": "merhaba",
     "description": "merhaba",
     "breaking": false

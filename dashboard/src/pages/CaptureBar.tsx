@@ -1,7 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
+import { marked } from 'marked';
+import DOMPurify from 'dompurify';
 import { api, setActiveVault } from '../api/client';
 import { closeSelf, onSleepyFocusChange } from '../lib/sleepy';
 import './CaptureBar.css';
+
+marked.setOptions({ gfm: true, breaks: true });
+
+/** Render Claude's reply/answer markdown to sanitized HTML for the panel. */
+function renderMarkdown(src: string): string {
+  return DOMPurify.sanitize(marked.parse(src) as string);
+}
 
 interface Vault {
   name: string;
@@ -48,7 +57,6 @@ export function CaptureBar() {
   const [enrich, setEnrich] = useState<Enrich | null>(null);
   const [mode, setMode] = useState<Mode>('idle');
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
   // Active enrichment poll timer, so a new capture cancels the previous poll.
   const pollRef = useRef<number | null>(null);
   // True while the user is interacting with the native project dropdown — its
@@ -109,29 +117,6 @@ export function CaptureBar() {
       cancelled = true;
     };
   }, [vault]);
-
-  // Force the mascot to autoplay. React sets `muted` as an ATTRIBUTE, but
-  // WKWebView's autoplay policy checks the muted PROPERTY — when it's unset the
-  // clip is treated as having audio and autoplay is blocked (you get the native
-  // play-button overlay). Set the property directly and kick play() once the
-  // clip is ready. Re-runs whenever `mode` swaps the source.
-  useEffect(() => {
-    const v = videoRef.current;
-    if (!v) return;
-    v.muted = true;
-    v.defaultMuted = true;
-    const tryPlay = () => {
-      const p = v.play();
-      if (p) p.catch(() => {});
-    };
-    tryPlay();
-    v.addEventListener('loadeddata', tryPlay);
-    v.addEventListener('canplay', tryPlay);
-    return () => {
-      v.removeEventListener('loadeddata', tryPlay);
-      v.removeEventListener('canplay', tryPlay);
-    };
-  }, [mode]);
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -241,19 +226,16 @@ export function CaptureBar() {
 
   return (
     <div className="cap-root">
-      {/* Black panel hanging from the notch — the mascot's home. */}
+      {/* Black panel hanging from the notch — the mascot's home. An animated WebP
+          via <img> autoplays unconditionally in WKWebView (which blocks <video>
+          autoplay and offers no Tauri override), so the mascot always feels alive. */}
       <div className="cap-notch" data-tauri-drag-region>
-        <video
+        <img
           key={mode}
-          ref={videoRef}
           className="cap-char"
-          src={`/api/sleepy/video?mode=${mode}`}
-          autoPlay
-          loop
-          muted
-          playsInline
-          controls={false}
-          preload="auto"
+          src={`/api/sleepy/anim?mode=${mode}`}
+          alt=""
+          draggable={false}
         />
       </div>
 
@@ -346,7 +328,16 @@ export function CaptureBar() {
                 <span className="cap-enrich-err">{enrich.mode === 'ask' ? "Couldn't answer" : 'Enrichment failed'}</span>
               )}
             </div>
-            {enrich.output && <div className="cap-enrich-body">{enrich.output}</div>}
+            {enrich.output &&
+              (enrich.state === 'error' ? (
+                // Raw error text (e.g. shell stderr) — not markdown.
+                <div className="cap-enrich-body">{enrich.output}</div>
+              ) : (
+                <div
+                  className="cap-enrich-body cap-md"
+                  dangerouslySetInnerHTML={{ __html: renderMarkdown(enrich.output) }}
+                />
+              ))}
           </div>
         )}
       </div>
