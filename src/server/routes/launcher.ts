@@ -1,6 +1,6 @@
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { basename, isAbsolute, join, resolve, sep } from 'node:path';
-import { existsSync, mkdirSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, statSync, createReadStream } from 'node:fs';
 import { homedir } from 'node:os';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -374,6 +374,59 @@ export async function handleLauncherCatalog(
     tags: p.tags,
   }));
   sendJson(res, 200, { platforms, packs });
+}
+
+// ─── Sleepy mascot video (desktop-only; bundled in the .app Resources) ─────────
+
+const SLEEPY_MODES = new Set(['idle', 'sleepy', 'sleeps']);
+
+/**
+ * GET /api/sleepy/video?mode=idle|sleepy|sleeps — stream a bundled mascot clip
+ * for the notch bar. Reads from DREAMCONTEXT_SLEEPY_DIR (set by the Tauri shell
+ * to Resources/sleepy). Desktop-only: 404 when the env/dir/file is absent, so it
+ * ships nothing to the npm CLI. Supports Range so WKWebView's <video> plays it.
+ */
+export async function handleSleepyVideo(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  _contextRoot: string | null,
+): Promise<void> {
+  const url = new URL(req.url || '/', `http://${req.headers.host}`);
+  const mode = url.searchParams.get('mode') || 'idle';
+  if (!SLEEPY_MODES.has(mode)) {
+    sendError(res, 400, 'bad_mode', 'mode must be idle, sleepy, or sleeps.');
+    return;
+  }
+  const dir = process.env.DREAMCONTEXT_SLEEPY_DIR;
+  if (!dir) {
+    res.writeHead(404);
+    res.end();
+    return;
+  }
+  const file = join(dir, `${mode}.mp4`);
+  if (!existsSync(file)) {
+    res.writeHead(404);
+    res.end();
+    return;
+  }
+  const size = statSync(file).size;
+  const range = req.headers.range;
+  if (range) {
+    const m = /bytes=(\d+)-(\d*)/.exec(range);
+    const start = m ? parseInt(m[1], 10) : 0;
+    const end = m && m[2] ? Math.min(parseInt(m[2], 10), size - 1) : size - 1;
+    res.writeHead(206, {
+      'Content-Type': 'video/mp4',
+      'Accept-Ranges': 'bytes',
+      'Content-Range': `bytes ${start}-${end}/${size}`,
+      'Content-Length': end - start + 1,
+    });
+    createReadStream(file, { start, end }).pipe(res);
+  } else {
+    res.writeHead(200, { 'Content-Type': 'video/mp4', 'Accept-Ranges': 'bytes', 'Content-Length': size });
+    createReadStream(file).pipe(res);
+  }
 }
 
 // ─── Sleepy quick-capture ──────────────────────────────────────────────────────

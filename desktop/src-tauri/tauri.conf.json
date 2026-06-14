@@ -26,7 +26,8 @@
     "resources": {
       "../../dist": "dist",
       "../../skill-packs": "skill-packs",
-      "../../skill": "skill"
+      "../../skill": "skill",
+      "sleepy": "sleepy"
     },
     "macOS": {
       "entitlements": "entitlements.plist",

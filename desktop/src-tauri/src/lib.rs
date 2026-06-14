@@ -210,6 +210,15 @@ fn host_dashboard(app: AppHandle) -> Result<(), String> {
         // "run dreamcontext upgrade" nudge — in-app, updates are the app's job
         // (self-update), not a CLI instruction.
         .env("DREAMCONTEXT_DESKTOP", "1")
+        // Where the bundled Sleepy mascot clips live (Resources/sleepy/*.mp4),
+        // so the dashboard can serve them for the notch capture bar. Desktop-only
+        // (never shipped to npm). Absent → the capture bar simply shows no mascot.
+        .envs(
+            app.path()
+                .resource_dir()
+                .ok()
+                .map(|d| ("DREAMCONTEXT_SLEEPY_DIR".to_string(), d.join("sleepy").to_string_lossy().into_owned())),
+        )
         .spawn()
         .map_err(|e| format!("Failed to start the dashboard server with node:\n  {node}\n\n{e}"))?;
 

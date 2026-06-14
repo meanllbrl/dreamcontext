@@ -11,8 +11,8 @@ export const SLEEPY_CONFIG_KEY = 'sleepy:config:v1';
 const CONFIG_KEY = SLEEPY_CONFIG_KEY;
 const SLEEPY_LABEL = 'sleepy';
 /** Width/height (logical px) of the notch bar window. */
-const WIN_W = 620;
-const WIN_H = 132;
+const WIN_W = 380;
+const WIN_H = 264;
 
 export interface SleepyConfig {
   enabled: boolean;
@@ -53,9 +53,10 @@ async function topCenter(width: number): Promise<{ x: number; y: number }> {
     const mon = await currentMonitor();
     const scale = mon?.scaleFactor ?? 1;
     const logicalW = (mon?.size.width ?? 1440) / scale;
-    return { x: Math.max(0, Math.round((logicalW - width) / 2)), y: 12 };
+    // y:0 so the black panel hangs flush from the top, merging with the notch.
+    return { x: Math.max(0, Math.round((logicalW - width) / 2)), y: 0 };
   } catch {
-    return { x: 420, y: 12 };
+    return { x: 420, y: 0 };
   }
 }
 
@@ -96,6 +97,18 @@ export async function closeSleepyWindow(): Promise<void> {
   const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
   const w = await WebviewWindow.getByLabel(SLEEPY_LABEL);
   if (w) await w.close();
+}
+
+/** Close the window we're running in (used by the capture bar's Esc). Robust: it
+ *  closes the current webview window directly rather than looking it up by label. */
+export async function closeSelf(): Promise<void> {
+  if (!isDesktop()) return;
+  try {
+    const { getCurrentWebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+    await getCurrentWebviewWindow().close();
+  } catch {
+    await closeSleepyWindow();
+  }
 }
 
 /**

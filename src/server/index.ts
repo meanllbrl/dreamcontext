@@ -24,6 +24,7 @@ import {
   handleLauncherDefaults,
   handleLauncherCatalog,
   handleLauncherCapture,
+  handleSleepyVideo,
 } from './routes/launcher.js';
 import { handleConnectionsList, handleConnectionsCreate, handleConnectionsDelete } from './routes/connections.js';
 import { handleFederationInboxGet, handleFederationSyncPost } from './routes/federation.js';
@@ -105,6 +106,7 @@ function buildRouter(): Router {
   router.post('/api/launcher/register', handleLauncherRegister);
   router.post('/api/launcher/scaffold', handleLauncherScaffold);
   router.post('/api/launcher/capture', handleLauncherCapture);
+  router.get('/api/sleepy/video', handleSleepyVideo);
 
   // Vaults + federation connections (issue #25 P2)
   router.get('/api/vaults', handleVaultsGet);
@@ -139,7 +141,7 @@ function buildRouter(): Router {
 }
 
 /** API path prefixes that do NOT need a vault — they work in launcher mode. */
-const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/vaults', '/api/launcher'];
+const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/vaults', '/api/launcher', '/api/sleepy'];
 
 function isVaultAgnostic(pathname: string): boolean {
   return VAULT_AGNOSTIC_PREFIXES.some(
