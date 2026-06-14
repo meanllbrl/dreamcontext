@@ -1,5 +1,16 @@
 [
   {
+    "id": "rel_tBa_6pby",
+    "version": "v0.8.3",
+    "date": "",
+    "summary": "Launcher overhaul: per-project update status dots, interactive federation graph, brain-settings server-side persistence",
+    "breaking": false,
+    "status": "planning",
+    "features": [],
+    "tasks": [],
+    "changelog": []
+  },
+  {
     "id": "rel_ZKg_Nzn8",
     "version": "v0.8.1",
     "date": "",

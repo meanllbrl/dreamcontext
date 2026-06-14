@@ -2,6 +2,46 @@
   {
     "date": "2026-06-14",
     "type": "chore",
+    "scope": "sleep",
+    "description": "The v0.8.3 commit also carries in-flight sleep-quality improvement work (GitHub issue #9). Adds src/lib/sleep-consolidation.ts (consolidationDepth() / isDestructiveAllowed() API — debt-based depth inference: light/standard/deep with deep unlocking merge-and-delete), salience.ts refactor (multi-signal scoring), src/lib/attribution.ts (multi-person author attribution helper), eval/sleep-quality/ harness (scorer.ts, gold.json, BASELINE.md, RESULTS.md — scored 57→100), tests/unit/sleep-consolidation.test.ts + sleep-quality-eval.test.ts + updates to sleep-system-360.test.ts (429 lines). Agent prompts updated (agents/sleep-product.md, sleep-state.md, sleep-tasks.md) and new knowledge/sleep-specialist-roster-decision.md. Excalidraw boards in boards/Issue9-Sleep-Quality.excalidraw.md + boards/Issue9-Improvement-Graphic.excalidraw.md for the quality improvement story. Docs: docs/issue-9-sleep-plan.md (spec), docs/issue-9-validation.md (validation), docs/PRE-PUBLISH-TEST-PLAN.md (14-section manual test checklist for the full v0.8.x surface). This workstream is owned by task:sleep-360-quality; none of these changes are user-facing in v0.8.3 — they are infrastructure for the next consolidation cycle.",
+    "breaking": false,
+    "summary": "Bundle sleep-quality overhaul: consolidation depth API, salience refactor, specialist roster doc, eval harness, issue-9 boards (v0.8.3)",
+    "references": [
+      "commit:a41dc7b",
+      "file:src/lib/sleep-consolidation.ts",
+      "file:src/lib/attribution.ts",
+      "file:src/lib/salience.ts",
+      "file:eval/sleep-quality/scorer.ts",
+      "file:tests/unit/sleep-system-360.test.ts",
+      "file:agents/sleep-state.md",
+      "file:agents/sleep-product.md",
+      "knowledge:sleep-specialist-roster-decision",
+      "task:sleep-360-quality"
+    ]
+  },
+  {
+    "date": "2026-06-14",
+    "type": "feat",
+    "scope": "launcher",
+    "description": "Overhaul the desktop app's Launcher (main window) across three dimensions. (1) Per-project status dots: GREEN = up to date, YELLOW = project's setupVersion is behind the running CLI (needsUpdate = compareVersions(setupVersion, dreamcontextVersion()) < 0) with an inline Update button that runs 'dreamcontext update' in that project directory, RED = folder gone and removable. New backend endpoints: GET /api/launcher/status, POST /api/launcher/update, POST /api/launcher/unregister (src/server/routes/launcher.ts). (2) Interactive cross-project federation graph (react-force-graph-2d on a dedicated LauncherGraph.tsx page): Excalidraw-style drag-to-connect 'reads' arrows (A→B = A reads B, stored as an 'out' connection on A's side per the federation out/both model), flowing particle 'electric current' on active links, two-way links, click-to-remove, and per-node shareable toggle. New endpoints: GET /api/launcher/federation-graph, POST /api/launcher/connection, POST /api/launcher/connection/remove, POST /api/launcher/shareable. (3) Brain graph settings persisted server-side per project at _dream_context/state/.brain-settings.json via new src/server/routes/ui-settings.ts route — useGraphSettings.ts hydrates from server + writes through — so settings survive the desktop app's per-launch loopback-port change (which resets localStorage). Also rewrites ConnectionsManager.tsx with a plain-language explainer, Sharing card, and self-describing direction controls (Read from / Share to / Two-way) with per-option hints and new i18n keys. +12 unit tests in tests/unit/launcher-federation.test.ts; full suite green (1934 passed).",
+    "breaking": false,
+    "summary": "Add per-project update-status dots, interactive federation graph, and server-side brain-settings persistence to Launcher (v0.8.3)",
+    "references": [
+      "commit:a41dc7b",
+      "file:src/server/routes/launcher.ts",
+      "file:src/server/routes/ui-settings.ts",
+      "file:dashboard/src/pages/LauncherGraph.tsx",
+      "file:dashboard/src/pages/LauncherPage.tsx",
+      "file:dashboard/src/hooks/useGraphSettings.ts",
+      "file:dashboard/src/hooks/useLauncher.ts",
+      "file:dashboard/src/components/settings/ConnectionsManager.tsx",
+      "file:tests/unit/launcher-federation.test.ts",
+      "feature:control-panel"
+    ]
+  },
+  {
+    "date": "2026-06-14",
+    "type": "chore",
     "scope": "sleepy",
     "description": "Two load-bearing architectural decisions recorded for 2.memory.md (could not write directly due to session permissions). (1) Animated WebP over video: WKWebView blocks video autoplay unconditionally — the muted HTML attribute is ignored because WKWebView checks the muted DOM PROPERTY; even setting it via ref+play() on mount is insufficient. Fix: serve mascot clips as animated WebP via GET /api/sleepy/anim?mode= and render with img — img autoplays animated WebP unconditionally in WKWebView, no JS needed. Do NOT revert to video for mascot clips. (2) Desktop user-tool spawn requires -ilc: A non-interactive login shell (-lc) skips ~/.zshrc — tools added to PATH there (e.g. ~/.local/bin, where claude lives) are invisible. Use /bin/zsh -ilc so the full terminal PATH is available in a Finder-launched app. Capture stdout/stderr separately so rc-file init noise never pollutes tool output. Sources: commit:b30d311, commit:1a69f7a, file:src/server/routes/launcher.ts, task:sleepy-notch-capture",
     "breaking": false,
