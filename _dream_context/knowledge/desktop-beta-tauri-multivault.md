@@ -5,8 +5,9 @@ description: >-
   How dreamcontext-beta (the Tauri 2 macOS app) wraps the existing React+Node
   dashboard for multi-vault / multi-window use: multi-window architecture, the
   four non-obvious gotchas (CLI bundling, Tauri ACL, relative URLs, build/sign),
-  and the in-app quiz-style project onboarding (scaffold endpoints, child-spawn
-  pattern, auto-CLI-install).
+  the in-app quiz-style project onboarding (scaffold endpoints, child-spawn
+  pattern, auto-CLI-install), the Faz 1 GitHub Actions release pipeline
+  (E2E verified v0.8.1), and the homebrew-vs-nvm CLI resolution gotcha.
 type: knowledge
 tags:
   - architecture
@@ -14,7 +15,7 @@ tags:
   - onboarding
 pinned: false
 created: '2026-06-13'
-updated: '2026-06-13'
+updated: '2026-06-14'
 ---
 
 ## What this is
@@ -234,14 +235,31 @@ code-signing proves integrity-in-transit at best, never origin — it is NOT a
 substitute. All external commands use arg arrays (no shell string); bsdtar
 refuses `..`/absolute paths (no zip-slip).
 
-**Faz 1 prerequisites (not yet built — no `.github/workflows`, no releases):** CI
-must build the `.app`, **ad-hoc DEEP-sign it with `entitlements.plist`** (the
-`tauri build` output is only *linker-signed* → `app install` warns; the
-published artifact must pass `codesign --verify --deep`), package it as
-`dreamcontext-beta_<ver>_<arch>.app.tar.gz`, publish it + a `.sha256` to a GitHub
-Release. Once that exists, `dreamcontext app install/update` and the auto-sync
-trigger work end-to-end with zero further code. **Windows/Linux: mechanism is
-macOS-only today (the no-quarantine property is macOS-specific); nice-to-have.**
+**Faz 1 release CI — SHIPPED and E2E verified (v0.8.1).** `.github/workflows/desktop-release.yml`
+fires on `v*` tags. Pipeline steps:
+1. `npm ci` in repo root + `npm ci --prefix dashboard` (no workspace; separate installs).
+2. `npm run build` (CLI + dashboard).
+3. `npm run tauri build` under `desktop/`.
+4. Ad-hoc deep-sign with `entitlements.plist`: `codesign --deep --force --sign - --entitlements entitlements.plist <app>`.
+5. Package: `dreamcontext-beta_<ver>_<arch>.app.tar.gz` + `.sha256` checksum file.
+6. Smoke-check: untar → verify codesign → verify checksum.
+7. Upload both artifacts to a public GitHub Release (non-draft, tag-named).
+
+`dreamcontext app install` then downloads the arch-matching tarball, verifies the `.sha256`, and installs to `~/Applications`. First E2E run: tag `v0.8.1` → CI green → `dreamcontext app install` confirmed download + checksum-verify + install. The `app install/update` and auto-sync paths are now fully operational end-to-end with no further code changes.
+
+**Windows/Linux:** mechanism is macOS-only (no-quarantine property is macOS-specific); nice-to-have for later.
+
+## Operational gotchas
+
+### Homebrew-vs-nvm CLI resolution in the app
+
+`ensureCliInstalled` probes `$SHELL -lc 'command -v dreamcontext'`. On a machine with BOTH Homebrew and nvm, Homebrew appears earlier in the login-shell PATH than nvm — so the probe resolves the Homebrew global, and `npm install -g` also targets Homebrew. If a developer updated a different (nvm-managed) global CLI, the app-spawned server runs the OLDER Homebrew copy. This explained a "stale dashboard" bug during development: the app was serving an older Node server build than expected.
+
+**Fix / mitigation:** publishing the CLI to npm and having the user's global install sourced from one consistent toolchain (not a mix of brew + nvm) is the real fix. The thin-shell pivot (app prefers global CLI) amplifies this: it's a feature when the global stays fresh, a footgun when two globals diverge.
+
+### App icon
+
+Brand diamond logo (white squircle) fitted to the Tauri icon set via `tauri icon` from `desktop/public/image/dreamcontext.png`. Source kept at `desktop/src-tauri/icon-source.png`. Re-run `tauri icon <source>` to regenerate all platform sizes if the logo changes.
 
 ## Status / deferred
 

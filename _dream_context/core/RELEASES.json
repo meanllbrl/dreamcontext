@@ -1,13 +1,31 @@
 [
   {
-    "id": "rel_sCrMbXLw",
-    "version": "v0.8.0",
+    "id": "rel_ZKg_Nzn8",
+    "version": "v0.8.1",
     "date": "",
-    "summary": "Federation (cross-project context mesh), desktop beta (Tauri 2 macOS app), self-contained CLI bundle",
+    "summary": "npm 0.8.1 publish — launcher platform+pack wizard, install.sh desktop step, onboarding UX polish",
     "breaking": false,
     "status": "planning",
     "features": [],
     "tasks": [],
+    "changelog": []
+  },
+  {
+    "id": "rel_sCrMbXLw",
+    "version": "v0.8.0",
+    "date": "2026-06-14",
+    "summary": "Federation (cross-project context mesh), desktop beta (Tauri 2 macOS app), self-contained CLI bundle, auto-upgrade (default-on CLI + continuous desktop update), CI release pipeline, launcher onboarding wizard with platform+pack selection",
+    "breaking": false,
+    "status": "released",
+    "features": [
+      "continuous-app-update",
+      "federation"
+    ],
+    "tasks": [
+      "cli-auto-upgrade",
+      "continuous-app-update",
+      "desktop-release-ci"
+    ],
     "changelog": []
   },
   {

@@ -1,5 +1,95 @@
 [
   {
+    "date": "2026-06-14",
+    "type": "release",
+    "scope": "desktop",
+    "description": "First tagged desktop release v0.8.1 was cut via the new CI workflow and verified end-to-end: dreamcontext app install successfully pulled the asset from /releases/latest, verified the .sha256 checksum, passed codesign --verify --deep, and installed to ~/Applications with no Gatekeeper quarantine (ditto transfer preserves the ad-hoc signature). The continuous-app-update loop is now proven end-to-end. Desktop version 0.8.1 was chosen (not 0.8.0) to ensure the bundle version > last installed manifest version so the update loop does not trigger an infinite re-download cycle. CLI npm 0.8.x and desktop v0.8.x version numbers are coincidental, not coupled.",
+    "breaking": false,
+    "summary": "First real desktop release v0.8.1 cut + E2E verified: app install pulled from /releases/latest, .sha256 verified, codesign --verify --deep passed, installed to ~/Applications with no quarantine",
+    "references": [
+      "commit:2c65746",
+      "task:continuous-app-update",
+      "task:desktop-release-ci"
+    ]
+  },
+  {
+    "date": "2026-06-14",
+    "type": "release",
+    "scope": "cli",
+    "description": "npm publish 0.8.0 went live on the latest tag. The release bundles: default-on CLI auto-upgrade (maybeTriggerUpgrade on session start), dreamcontext app install|update command, the continuous desktop update loop (maybeTriggerAppUpdate), self-contained CLI bundle (noExternal), and the desktop thin-shell. CLI and desktop version lines are INDEPENDENT — 0.8.x npm and v0.8.x desktop tags happen to coincide but are not coupled.",
+    "breaking": false,
+    "summary": "npm 0.8.0 published to latest — auto-upgrade epic (default-on CLI upgrade + app command + continuous desktop update) live for users",
+    "references": [
+      "task:cli-auto-upgrade",
+      "task:continuous-app-update"
+    ]
+  },
+  {
+    "date": "2026-06-14",
+    "type": "chore",
+    "scope": "desktop",
+    "description": "The desktop app icon was updated to match the dreamcontext brand diamond — a white diamond on a squircle background. Tauri icon regeneration was run to produce all required platform sizes (32×32, 64×64, 128×128, 128×128@2x, Windows square tiles, Android mipmap sets, StoreLogo). No code changes; purely asset update.",
+    "breaking": false,
+    "summary": "App icon fitted to brand diamond logo (white squircle); Tauri icons regenerated",
+    "references": [
+      "task:desktop-release-ci"
+    ]
+  },
+  {
+    "date": "2026-06-14",
+    "type": "feat",
+    "scope": "onboarding",
+    "description": "The in-app onboarding wizard now exposes platform and skill-pack selection in both the new-project and existing-folder paths. Backend: ScaffoldAnswers gains platforms[] + packs[]; scaffoldProject normalizes platforms (defaults to ['claude']) and passes the list to init/setup; validates packs against the catalog and runs install-skill --packs --platforms after setup. New GET /api/launcher/catalog (vault-agnostic) serves the platform + pack choices. Strict-pick on the scaffold body: arrays filtered to strings; packs validated against known catalog names so no arbitrary args reach the CLI shell. Existing-folder flow routes through platform + skill-pack steps (STEPS_EXISTING_HASCTX path) so users can add platforms (e.g. Codex) and install skill packs on connect. The modal caps at viewport height (max-height: calc(100vh - space-8)); step content scrolls inside a .wiz-body region while close, error, and nav stay pinned. Pack/platform card descriptions clamped to 2 lines. 15 launcher unit tests + 1 integration green (6 new).",
+    "breaking": false,
+    "summary": "Launcher wizard selects platforms (Claude recommended + Codex) and optional skill packs for both new and existing-folder flows; GET /api/launcher/catalog; wizard scrolls within viewport",
+    "references": [
+      "commit:e3dda6d",
+      "commit:c8b6ca5",
+      "commit:fb59832",
+      "file:src/server/routes/launcher.ts",
+      "file:dashboard/src/pages/OnboardingWizard.tsx",
+      "file:dashboard/src/hooks/useLauncher.ts",
+      "task:continuous-app-update"
+    ]
+  },
+  {
+    "date": "2026-06-14",
+    "type": "feat",
+    "scope": "install",
+    "description": "After installing the CLI, on macOS (uname Darwin) install.sh now runs 'dreamcontext app install' so a fresh curl|sh setup also places the desktop app in ~/Applications. Best-effort: skipped silently if no desktop release is published yet or the download fails — never aborts the CLI install. Non-macOS platforms skip entirely. Opt out with DREAMCONTEXT_INSTALL_NO_APP env var. The npm install -g path stays CLI-only by design; this app step is specific to the curl|sh installer.",
+    "breaking": false,
+    "summary": "install.sh installs the desktop app on macOS (best-effort, opt-out via DREAMCONTEXT_INSTALL_NO_APP)",
+    "references": [
+      "commit:3077a02",
+      "file:install.sh",
+      "task:continuous-app-update"
+    ]
+  },
+  {
+    "date": "2026-06-14",
+    "type": "ci",
+    "scope": "desktop",
+    "description": "Add .github/workflows/desktop-release.yml. On a v* tag push (or manual dispatch) it builds the dreamcontext-beta Tauri .app on macos-14 (aarch64), ad-hoc DEEP-signs it with entitlements (no Apple Developer ID / notarization), packages it as dreamcontext-beta_<ver>_aarch64.app.tar.gz plus a mandatory .sha256, verifies (extract + checksum -c + codesign --verify --deep), and publishes both to a non-draft GitHub Release. This is the factory + shelf the already-shipped client code (app install|update + maybeTriggerAppUpdate) needs: with a live release it can pull the arch-matching asset from /releases/latest, verify the checksum, and install via ditto (no quarantine bit, no Gatekeeper notarization) with zero further client changes.",
+    "breaking": false,
+    "summary": "Release workflow for Tauri .app: v* tag → macos-14 build → ad-hoc deep-sign + entitlements → .tar.gz + .sha256 → GitHub Release",
+    "references": [
+      "commit:d7fce95",
+      "file:.github/workflows/desktop-release.yml",
+      "task:desktop-release-ci"
+    ]
+  },
+  {
+    "date": "2026-06-14",
+    "type": "change",
+    "scope": "migration",
+    "description": "Migration 0.8.0 applied: scaffold-federation",
+    "breaking": false,
+    "summary": "Scaffolded federation: state/.connections.json, state/.federation-inbox/, state/.federation-inbox/consumed/, state/.config.json (shareable:false)",
+    "references": [
+      "file:state/.migrations.json"
+    ]
+  },
+  {
     "date": "2026-06-13",
     "type": "chore",
     "scope": "desktop",
