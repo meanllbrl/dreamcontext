@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-quer
 import { api, setActiveVault } from './api/client';
 import { LauncherPage } from './pages/LauncherPage';
 import { CaptureBar } from './pages/CaptureBar';
-import { applySleepyHotkey, readSleepyConfig, SLEEPY_CONFIG_KEY } from './lib/sleepy';
+import { applySleepyHotkey, readSleepyConfig, initSleepyFromServer, SLEEPY_CONFIG_KEY } from './lib/sleepy';
 import { ThemeProvider } from './context/ThemeContext';
 import { I18nProvider } from './context/I18nContext';
 import { ProjectProvider } from './context/ProjectContext';
@@ -139,7 +139,9 @@ if (initialVault) {
  */
 function SleepyHotkeyRegistrar() {
   useEffect(() => {
-    void applySleepyHotkey(readSleepyConfig());
+    // Seed from the server-persisted config (localStorage is empty on each
+    // launch's fresh port/origin), then register the hotkey.
+    void initSleepyFromServer().then((cfg) => applySleepyHotkey(cfg));
     const onStorage = (e: StorageEvent) => {
       if (e.key === null || e.key === SLEEPY_CONFIG_KEY) {
         void applySleepyHotkey(readSleepyConfig());

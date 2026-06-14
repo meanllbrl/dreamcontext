@@ -1,6 +1,6 @@
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { basename, isAbsolute, join, resolve, sep } from 'node:path';
-import { existsSync, mkdirSync, readdirSync, statSync, createReadStream } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, statSync, createReadStream, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -374,6 +374,64 @@ export async function handleLauncherCatalog(
     tags: p.tags,
   }));
   sendJson(res, 200, { platforms, packs });
+}
+
+// ─── Sleepy config persistence (~/.dreamcontext/sleepy.json) ───────────────────
+//
+// The app picks a fresh loopback port each launch, so localStorage (origin-keyed)
+// resets between launches. Persist the Sleepy config server-side so "Enable
+// Sleepy" + the hotkey survive restarts; the launcher seeds localStorage from
+// here on mount, and within a launch the windows sync via localStorage events.
+
+function sleepyConfigPath(): string {
+  return join(homedir(), '.dreamcontext', 'sleepy.json');
+}
+
+/** GET /api/launcher/sleepy-config — persisted { enabled, hotkey } (defaults if absent). */
+export async function handleSleepyConfigGet(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  _contextRoot: string | null,
+): Promise<void> {
+  let enabled = false;
+  let hotkey = 'Alt+Cmd+S';
+  try {
+    const p = sleepyConfigPath();
+    if (existsSync(p)) {
+      const raw = JSON.parse(readFileSync(p, 'utf-8')) as { enabled?: unknown; hotkey?: unknown };
+      enabled = raw.enabled === true;
+      if (typeof raw.hotkey === 'string' && raw.hotkey.trim()) hotkey = raw.hotkey;
+    }
+  } catch {
+    /* fall back to defaults */
+  }
+  sendJson(res, 200, { enabled, hotkey });
+}
+
+/** POST /api/launcher/sleepy-config — persist { enabled, hotkey }. STRICT-PICK. */
+export async function handleSleepyConfigSet(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  _contextRoot: string | null,
+): Promise<void> {
+  const body = await parseJsonBody(req);
+  if (!body) {
+    sendError(res, 400, 'invalid_body', 'Request body must be valid JSON.');
+    return;
+  }
+  const enabled = body.enabled === true;
+  const hotkey = typeof body.hotkey === 'string' && body.hotkey.trim() ? body.hotkey.trim() : 'Alt+Cmd+S';
+  try {
+    const p = sleepyConfigPath();
+    mkdirSync(join(homedir(), '.dreamcontext'), { recursive: true });
+    writeFileSync(p, JSON.stringify({ enabled, hotkey }, null, 2) + '\n', 'utf-8');
+    sendJson(res, 200, { enabled, hotkey });
+  } catch (err) {
+    console.error('[launcher] sleepy-config write failed:', err);
+    sendError(res, 500, 'write_failed', 'Failed to persist Sleepy config.');
+  }
 }
 
 // ─── Sleepy mascot video (desktop-only; bundled in the .app Resources) ─────────

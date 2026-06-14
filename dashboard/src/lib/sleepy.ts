@@ -5,6 +5,7 @@
  * desktop runtime (mirrors lib/desktop.ts).
  */
 import { isDesktop } from './desktop';
+import { api } from '../api/client';
 
 /** localStorage key for the Sleepy config (exported so other windows can watch it). */
 export const SLEEPY_CONFIG_KEY = 'sleepy:config:v1';
@@ -38,11 +39,40 @@ export function readSleepyConfig(): SleepyConfig {
   return { ...DEFAULT_SLEEPY };
 }
 
-export function writeSleepyConfig(cfg: SleepyConfig): void {
+/** Write to localStorage only (in-launch state + cross-window 'storage' sync). */
+function writeLocal(cfg: SleepyConfig): void {
   try {
     localStorage.setItem(CONFIG_KEY, JSON.stringify(cfg));
   } catch {
     /* best-effort */
+  }
+}
+
+/**
+ * Persist the config: localStorage (live, this launch) + server-side
+ * (~/.dreamcontext/sleepy.json, survives the per-launch port/origin change).
+ */
+export function writeSleepyConfig(cfg: SleepyConfig): void {
+  writeLocal(cfg);
+  void api.post('/launcher/sleepy-config', cfg).catch(() => {});
+}
+
+/**
+ * Load the persisted config from the server and seed localStorage with it (each
+ * launch starts on a fresh origin with empty localStorage). Falls back to the
+ * local/default config if the server is unreachable. Call once on launcher mount.
+ */
+export async function initSleepyFromServer(): Promise<SleepyConfig> {
+  try {
+    const raw = await api.get<Partial<SleepyConfig>>('/launcher/sleepy-config');
+    const cfg: SleepyConfig = {
+      enabled: !!raw.enabled,
+      hotkey: typeof raw.hotkey === 'string' && raw.hotkey.trim() ? raw.hotkey : DEFAULT_SLEEPY.hotkey,
+    };
+    writeLocal(cfg);
+    return cfg;
+  } catch {
+    return readSleepyConfig();
   }
 }
 

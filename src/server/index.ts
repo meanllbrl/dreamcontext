@@ -25,6 +25,8 @@ import {
   handleLauncherCatalog,
   handleLauncherCapture,
   handleSleepyVideo,
+  handleSleepyConfigGet,
+  handleSleepyConfigSet,
 } from './routes/launcher.js';
 import { handleConnectionsList, handleConnectionsCreate, handleConnectionsDelete } from './routes/connections.js';
 import { handleFederationInboxGet, handleFederationSyncPost } from './routes/federation.js';
@@ -106,6 +108,8 @@ function buildRouter(): Router {
   router.post('/api/launcher/register', handleLauncherRegister);
   router.post('/api/launcher/scaffold', handleLauncherScaffold);
   router.post('/api/launcher/capture', handleLauncherCapture);
+  router.get('/api/launcher/sleepy-config', handleSleepyConfigGet);
+  router.post('/api/launcher/sleepy-config', handleSleepyConfigSet);
   router.get('/api/sleepy/video', handleSleepyVideo);
 
   // Vaults + federation connections (issue #25 P2)
