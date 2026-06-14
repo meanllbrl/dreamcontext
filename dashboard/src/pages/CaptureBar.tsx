@@ -20,8 +20,9 @@ interface Vault {
 
 type Status = 'idle' | 'saving' | 'saved' | 'error';
 type Mode = 'idle' | 'sleepy' | 'sleeps';
-/** Capture mode: 'learn' saves + enriches the note; 'ask' is a one-shot Q&A. */
-type CapMode = 'learn' | 'ask';
+/** Capture mode: 'learn' saves + enriches; 'ask' is one-shot Q&A; 'sleep' runs
+ *  a full memory consolidation. */
+type CapMode = 'learn' | 'ask' | 'sleep';
 /** Background Claude run, surfaced as a spinner + its response. */
 type EnrichState = 'running' | 'done' | 'error' | 'unknown';
 interface Enrich {
@@ -62,6 +63,9 @@ export function CaptureBar() {
   // True while the user is interacting with the native project dropdown — its
   // popup must not trip the close-on-blur dismiss below.
   const pickerActiveRef = useRef(false);
+  // True while a consolidation is running — keep the window open (don't dismiss
+  // on blur) so the user can step away and come back to the result.
+  const sleepingRef = useRef(false);
 
   // Auto-grow the textarea from 1 line up to ~5 lines, then let it scroll.
   function autoGrow(el: HTMLTextAreaElement | null) {
@@ -144,7 +148,7 @@ export function CaptureBar() {
         armed = true;
         return;
       }
-      if (armed && !pickerActiveRef.current) void closeSelf();
+      if (armed && !pickerActiveRef.current && !sleepingRef.current) void closeSelf();
     }).then((u) => {
       if (cancelled) u();
       else unsub = u;
@@ -167,7 +171,9 @@ export function CaptureBar() {
   function pollEnrichment(captureId: string, runMode: CapMode) {
     if (pollRef.current) window.clearTimeout(pollRef.current);
     let attempts = 0;
-    const MAX_ATTEMPTS = 150; // ~3 min ceiling so a hung run can't poll forever
+    // Consolidation runs much longer than a learn/ask reply — give sleep a wide
+    // ceiling (~15 min) so it isn't cut off mid-flight.
+    const MAX_ATTEMPTS = runMode === 'sleep' ? 750 : 150;
     let unknownStreak = 0;
     const tick = async () => {
       attempts += 1;
@@ -191,8 +197,9 @@ export function CaptureBar() {
 
   async function submit() {
     const t = text.trim();
-    if (!t || !vault || status === 'saving') return;
     const runMode = capMode;
+    // Sleep needs no text; learn/ask require some.
+    if ((runMode !== 'sleep' && !t) || !vault || status === 'saving') return;
     setStatus('saving');
     setErrMsg('');
     setEnrich(null);
@@ -224,6 +231,11 @@ export function CaptureBar() {
     }
   }
 
+  // A consolidation is in flight: lock input and show the mascot asleep.
+  const sleeping = enrich?.mode === 'sleep' && (enrich.state === 'running' || enrich.state === 'unknown');
+  sleepingRef.current = sleeping;
+  const displayMode: Mode = sleeping ? 'sleeps' : mode;
+
   return (
     <div className="cap-root">
       {/* Black panel hanging from the notch — the mascot's home. An animated WebP
@@ -231,9 +243,9 @@ export function CaptureBar() {
           autoplay and offers no Tauri override), so the mascot always feels alive. */}
       <div className="cap-notch" data-tauri-drag-region>
         <img
-          key={mode}
+          key={displayMode}
           className="cap-char"
-          src={`/api/sleepy/anim?mode=${mode}`}
+          src={`/api/sleepy/anim?mode=${displayMode}`}
           alt=""
           draggable={false}
         />
@@ -271,46 +283,54 @@ export function CaptureBar() {
                   ? 'failed'
                   : ''}
           </span>
-          {/* Learn (save + enrich) vs Ask (one-shot Q&A, no side effects). */}
+          {/* Learn (save + enrich) · Ask (one-shot Q&A) · Sleep (consolidate). */}
           <div className="cap-mode-toggle" role="radiogroup" aria-label="Mode">
-            <button
-              type="button"
-              className={`cap-mode-opt ${capMode === 'learn' ? 'is-active' : ''}`}
-              role="radio"
-              aria-checked={capMode === 'learn'}
-              onClick={() => setCapMode('learn')}
-            >
-              Learn
-            </button>
-            <button
-              type="button"
-              className={`cap-mode-opt ${capMode === 'ask' ? 'is-active' : ''}`}
-              role="radio"
-              aria-checked={capMode === 'ask'}
-              onClick={() => setCapMode('ask')}
-            >
-              Ask
-            </button>
+            {(['learn', 'ask', 'sleep'] as CapMode[]).map((m) => (
+              <button
+                key={m}
+                type="button"
+                className={`cap-mode-opt ${capMode === m ? 'is-active' : ''}`}
+                role="radio"
+                aria-checked={capMode === m}
+                disabled={sleeping}
+                onClick={() => setCapMode(m)}
+              >
+                {m === 'learn' ? 'Learn' : m === 'ask' ? 'Ask' : 'Sleep'}
+              </button>
+            ))}
           </div>
         </div>
-        <textarea
-          ref={inputRef}
-          className="cap-input"
-          placeholder={capMode === 'ask' ? 'Ask one question about this project…' : 'Capture a thought or command…'}
-          rows={1}
-          value={text}
-          onChange={(e) => {
-            setText(e.target.value);
-            autoGrow(e.target);
-          }}
-          onKeyDown={(e) => {
-            // Enter submits; Shift+Enter inserts a newline (chat-style).
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              void submit();
-            }
-          }}
-        />
+        {capMode === 'sleep' ? (
+          // Sleep needs no input — one button kicks off the consolidation. While
+          // it runs, the button is locked (no typing during sleep).
+          <button
+            type="button"
+            className="cap-sleep-btn"
+            disabled={sleeping || !vault}
+            onClick={() => void submit()}
+          >
+            {sleeping ? 'Sleeping…' : `💤 Sleep — consolidate ${vault || 'project'}`}
+          </button>
+        ) : (
+          <textarea
+            ref={inputRef}
+            className="cap-input"
+            placeholder={capMode === 'ask' ? 'Ask one question about this project…' : 'Capture a thought or command…'}
+            rows={1}
+            value={text}
+            onChange={(e) => {
+              setText(e.target.value);
+              autoGrow(e.target);
+            }}
+            onKeyDown={(e) => {
+              // Enter submits; Shift+Enter inserts a newline (chat-style).
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                void submit();
+              }
+            }}
+          />
+        )}
         {status === 'error' && errMsg && <div className="cap-error-msg">{errMsg}</div>}
 
         {/* Background Claude run: live spinner, then its response/answer. */}
@@ -320,12 +340,22 @@ export function CaptureBar() {
               {enrich.state === 'running' || enrich.state === 'unknown' ? (
                 <>
                   <span className="cap-spinner" aria-hidden />
-                  <span>{enrich.mode === 'ask' ? 'Sleepy is thinking…' : 'Sleepy is learning…'}</span>
+                  <span>
+                    {enrich.mode === 'ask'
+                      ? 'Sleepy is thinking…'
+                      : enrich.mode === 'sleep'
+                        ? 'Sleepy is sleeping — consolidating memory…'
+                        : 'Sleepy is learning…'}
+                  </span>
                 </>
               ) : enrich.state === 'done' ? (
-                <span className="cap-enrich-done">{enrich.mode === 'ask' ? '✓ Answer' : '✓ Learned'}</span>
+                <span className="cap-enrich-done">
+                  {enrich.mode === 'ask' ? '✓ Answer' : enrich.mode === 'sleep' ? '✓ Slept' : '✓ Learned'}
+                </span>
               ) : (
-                <span className="cap-enrich-err">{enrich.mode === 'ask' ? "Couldn't answer" : 'Enrichment failed'}</span>
+                <span className="cap-enrich-err">
+                  {enrich.mode === 'ask' ? "Couldn't answer" : enrich.mode === 'sleep' ? 'Sleep failed' : 'Enrichment failed'}
+                </span>
               )}
             </div>
             {enrich.output &&

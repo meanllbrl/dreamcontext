@@ -597,6 +597,24 @@ export function buildAskPrompt(question: string): string {
 }
 
 /**
+ * Build the headless-claude prompt for "Sleep" mode: run a full dreamcontext
+ * memory consolidation for THIS project, autonomously, then report a short
+ * summary. No user text involved, so nothing to injection-escape.
+ */
+export function buildSleepPrompt(): string {
+  return (
+    `Think hard. Run a dreamcontext memory consolidation ("sleep") for THIS project ` +
+    `now, fully autonomously — do NOT ask any questions. Follow the project's ` +
+    `dreamcontext sleep/consolidation flow: pin the epoch with \`dreamcontext sleep ` +
+    `start\`, reconcile the task/changelog/knowledge/feature files to current truth ` +
+    `as warranted (prefer updating existing entities over creating new ones), then ` +
+    `close the cycle with \`dreamcontext sleep done "<one-paragraph summary>"\` to ` +
+    `reset the debt. When finished, reply with a SHORT GitHub-flavored Markdown ` +
+    `summary (a few bullets) of what was consolidated. Keep it concise.`
+  );
+}
+
+/**
  * POST /api/launcher/capture — the Sleepy notch bar's submit. Captures a note
  * into the chosen vault: (1) INSTANT, guaranteed `dreamcontext memory remember`
  * (deterministic, no tokens), then (2) fire-and-forget headless `claude -p` to
@@ -622,13 +640,13 @@ export async function handleLauncherCapture(
     sendError(res, 400, 'invalid_vault', 'vault must be a non-empty string.');
     return;
   }
-  if (!text) {
+  // Mode: 'learn' (default) saves the note + enriches; 'ask' is a one-shot Q&A
+  // (no side effects); 'sleep' runs a full memory consolidation (no text needed).
+  const mode = body.mode === 'ask' ? 'ask' : body.mode === 'sleep' ? 'sleep' : 'learn';
+  if (mode !== 'sleep' && !text) {
     sendError(res, 400, 'invalid_text', 'text must be a non-empty string.');
     return;
   }
-  // Mode: 'learn' (default) saves the note + enriches; 'ask' is a one-shot Q&A
-  // about the project with NO side effects (no memory write).
-  const mode = body.mode === 'ask' ? 'ask' : 'learn';
 
   const vault = listVaults().find((v) => v.name === vaultName);
   if (!vault) {
@@ -689,7 +707,12 @@ export async function handleLauncherCapture(
   captureRuns.set(captureId, run);
   try {
     const shell = process.env.SHELL || '/bin/zsh';
-    const prompt = mode === 'ask' ? buildAskPrompt(text) : buildCapturePrompt(text);
+    const prompt =
+      mode === 'sleep'
+        ? buildSleepPrompt()
+        : mode === 'ask'
+          ? buildAskPrompt(text)
+          : buildCapturePrompt(text);
     // Sleepy runs on Sonnet (medium thinking is requested via the prompt). `$0` is
     // the prompt positional — never interpolated into the shell string.
     const child = spawn(shell, ['-ilc', 'exec claude --model sonnet -p "$0"', prompt], {
