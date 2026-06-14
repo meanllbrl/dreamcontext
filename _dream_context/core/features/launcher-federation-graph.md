@@ -8,7 +8,7 @@ tags:
   - desktop
   - frontend
   - backend
-  - federation
+  - topic:federation
 related_tasks:
   - launcher-quiz-onboarding
 ---

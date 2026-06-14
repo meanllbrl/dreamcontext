@@ -24,7 +24,8 @@
       "topic:recall",
       "topic:sleep",
       "topic:taxonomy",
-      "topic:domain"
+      "topic:domain",
+      "topic:federation"
     ]
   },
   "bareTags": [

@@ -1,354 +1,700 @@
-# Yayın Öncesi Uçtan Uca Test Planı
+# Pre-Publish Test Plan
 
-**Sürüm:** v0.8.1 · **Tarih:** 2026-06-14 · **Kapsam:** son 7 günde (2026-06-08 → 06-14) eklenen ~90 commit
+**Version:** v0.8.3  
+**Date:** 2026-06-14  
+**Window reviewed:** 2026-06-05 -> 2026-06-14  
+**Commit range:** `b924fa5..HEAD`  
+**Diff size:** 601 files, 69,105 insertions, 79,111 deletions
 
-Bu döküman, `npm publish` öncesi sistemi **kendi ellerinle** uçtan uca test etmen için hazırlandı.
-Her test bağımsız izlenebilir: **ne test edilir → adımlar/komut → beklenen sonuç → [ ] sonuç**.
+Bu planin amaci hizli gelistirdigimiz son 7-10 gunluk isleri yayindan once elle, net ve tekrar edilebilir sekilde test etmek. Ham diff cok buyuk oldugu icin plan commitleri risk alanlarina indirger: once otomatik kapilar, sonra en cok kirilma riski olan kullanici akislari.
 
-> Yöntem: Üstten alta git. Bir alanda kırmızı görürsen not düş, ama bağımsız alanlara devam edebilirsin.
-> Komutlarda `dreamcontext` = `node dist/index.js` (build sonrası) ya da global kurulu binary.
+**Son karar:** `npm publish` icin tum **Blocker Gates** gecmeli. Manual testlerde blocker disi hatalar not dusulup publish kararinda risk olarak tartilabilir.
 
-İşaretleme: `[ ]` = bekliyor · `[x]` = geçti · `[!]` = hata (not düş).
+Isaretleme:
 
----
-
-## 0. Önkoşullar ve ortam
-
-- [ ] **0.1 Temiz çalışma ağacı** — `git status` temiz (ya da bilerek değiştirdiklerin).
-- [ ] **0.2 Node sürümü** — `node -v` ≥ 18.
-- [ ] **0.3 Rust/Tauri** (desktop testi yapacaksan) — `cargo --version` ≥ 1.86, `rustc` kurulu.
-- [ ] **0.4 `claude` CLI PATH'te** (desktop Ask/Learn/Sleep ve enrichment için) — `which claude` çıktı veriyor.
-- [ ] **0.5 İzole bir test vault'u** hazırla — gerçek projende kirletmemek için:
-  ```bash
-  mkdir -p /tmp/dctest && cd /tmp/dctest
-  ```
-  Aşağıdaki CLI testlerini çoğunlukla burada koşacağız.
+- `[ ]` bekliyor
+- `[x]` gecti
+- `[!]` hata var
+- `[n/a]` bu ortamda test edilmeyecek
 
 ---
 
-## 1. Build + otomatik test (KAPI — burası geçmeden devam etme)
+## 0. Test Hazirligi
 
-- [ ] **1.1 Build** — repo kökünde:
-  ```bash
-  npm run build
-  ```
-  **Beklenen:** Dashboard build + CLI build (`tsup`) ikisi de exit 0. `dist/index.js` ve `dist/dashboard/` oluştu.
-- [ ] **1.2 Birim/entegrasyon testleri**:
-  ```bash
-  npm test -- --run
-  ```
-  **Beklenen:** Tüm testler yeşil, çıkış 0. Özellikle son hafta eklenen alanlar: tasks (M1–M5 conformance, golden fixtures), federation (cross-process concurrency), migration ledger.
-- [ ] **1.3 Diyagramlar güncel** (publish-checklist gereği):
-  ```bash
-  npm run diagrams
-  ```
-  **Beklenen:** Hata yok; `git status` ile bak — diyagram PNG'leri beklenmedik şekilde değiştiyse README/DEEP-DIVE figürleri bayat demektir.
+### 0.1 Repo ve ortam
+
+- [ ] **Clean tree**  
+  Komut: `git status --short`  
+  Beklenen: Sadece bu test plani / test diagrami gibi bilinen dokuman degisiklikleri gorunur.
+
+- [ ] **Node**  
+  Komut: `node -v`  
+  Beklenen: Node >= 18.
+
+- [ ] **Package version**  
+  Komut: `node -p "require('./package.json').version"`  
+  Beklenen: `0.8.3`.
+
+- [ ] **License**  
+  Komut: `node -p "require('./package.json').license"`  
+  Beklenen: `Apache-2.0`.
+
+- [ ] **Desktop prereqs**  
+  Komut: `cargo --version && rustc --version`  
+  Beklenen: Rust/Tauri build icin komutlar calisir.
+
+- [ ] **Claude CLI**  
+  Komut: `which claude`  
+  Beklenen: Sleepy Ask/Learn enrichment icin path doner.
+
+### 0.2 Izole test vaultlari
+
+Gercek projeyi kirletmeden test icin:
+
+```bash
+rm -rf /tmp/dctest /tmp/dctest2
+mkdir -p /tmp/dctest /tmp/dctest2
+```
+
+Not: Komutlarda `dreamcontext` yerine publish oncesi lokal build icin su alias kullanilabilir:
+
+```bash
+alias dreamcontext="node /Users/mehmetnuraydin/projects/dreamcontext/dist/index.js"
+```
 
 ---
 
-## 2. CLI çekirdeği — kurulum, snapshot, doctor
+## 1. Blocker Gates
 
-- [ ] **2.1 init** — `/tmp/dctest`'te:
-  ```bash
-  node /Users/mehmetnuraydin/projects/dreamcontext/dist/index.js init -y --name "DC Test" --description "test vault"
-  ```
-  **Beklenen:** `_dream_context/core/`, `state/`, `knowledge/` oluştu; soul/user/memory dosyaları var; `.sleep.json` başladı; tech stack auto-detect denendi.
-- [ ] **2.2 doctor** — `dreamcontext doctor`
-  **Beklenen:** Yapı geçerli; eksik dosya/frontmatter uyarısı yoksa exit 0.
-- [ ] **2.3 snapshot** — `dreamcontext snapshot --tokens`
-  **Beklenen:** Soul+User+Memory, görevler, knowledge index, sleep state, (varsa) federation inbox durumu ve auto-upgrade nudge'ı içeren brifing; sonda token tahmini.
-- [ ] **2.4 config show** — `dreamcontext config show`
-  **Beklenen:** platforms, packs, multiProduct, setupVersion görünüyor.
+Bu bolum kirmiziysa manual teste gecme. Once fix.
+
+- [ ] **1.1 Build**  
+  Komut: `npm run build`  
+  Beklenen: Dashboard build + CLI build exit 0; `dist/index.js` ve `dist/dashboard/` olustu.
+
+- [ ] **1.2 Full automated suite**  
+  Komut: `npm test -- --run`  
+  Beklenen: Tum testler yesil. Ozellikle: ClickUp task backend, federation, migrations, launcher, Sleepy, sleep-quality eval.
+
+- [ ] **1.3 Diagrams**  
+  Komut: `npm run diagrams`  
+  Beklenen: Hata yok. `git status --short` beklenmeyen diagram churn gostermiyor.
+
+- [ ] **1.4 Package dry-run**  
+  Komut: `npm pack --dry-run`  
+  Beklenen: `dist/`, `skill/`, `skill-packs/`, `install.sh`, `README.md`, `DEEP-DIVE.md`, `LICENSE`, `NOTICE` pakete giriyor. `desktop/src-tauri/target/` gibi build artifact'lari girmiyor.
+
+- [ ] **1.5 CLI smoke**  
+  Komut: `node dist/index.js --version && node dist/index.js --help`  
+  Beklenen: `0.8.3`; komut listesinde `app`, `vaults`, `connections`, `federation`, `migrations`, `taxonomy`, `config`, `tasks` var.
 
 ---
 
-## 3. Görevler (Tasks) + ClickUp uzak backend — `#11` (en büyük alan)
+## 2. CLI Core: Setup, Init, Snapshot, Doctor
 
-### 3a. Yerel görev yaşam döngüsü
-- [ ] **3.1 create + RICE** —
+### 2.1 New vault setup
+
+- [ ] **setup front door**  
+  Komut:
   ```bash
-  dreamcontext tasks create "Login akışını yaz" -p high -t backend,auth --reach 8 --impact 4 --confidence 75 --effort 3
+  cd /tmp/dctest
+  dreamcontext setup --name "DC Test" --description "pre-publish test vault" --yes
   ```
-  **Beklenen:** `state/login-akisini-yaz.md` frontmatter ile yazıldı; RICE skoru hesaplandı; aktif planlama sürümüne iliştirildi.
-- [ ] **3.2 list filtreleri** —
+  Beklenen: `_dream_context/` olustu; platform/packs config yazildi; setup yarim kurulum birakmadi.
+
+- [ ] **init does not hide missing selected platforms**  
+  Komut: `dreamcontext init -y --name "DC Test Reinit"`  
+  Beklenen: Mevcut vault icin guvenli davranir; secili platformlardan biri eksikse setup onerisi bastirilmaz.
+
+- [ ] **doctor**  
+  Komut: `dreamcontext doctor`  
+  Beklenen: Yapida kritik eksik yok.
+
+- [ ] **snapshot token budget**  
+  Komut: `dreamcontext snapshot --tokens`  
+  Beklenen: Core, active tasks, knowledge index, sleep state, release/update nudge ve federation ozetleri butce icinde.
+
+- [ ] **config show**  
+  Komut: `dreamcontext config show`  
+  Beklenen: `platforms`, `packs`, `multiProduct`, `setupVersion`, `nativeMemory` alanlari okunur.
+
+### 2.2 Native memory config
+
+- [ ] **disable/enable toggle**  
+  Komut:
   ```bash
-  dreamcontext tasks create "UI parlat" -p medium -t frontend
+  dreamcontext config native-memory disable
+  dreamcontext config show
+  dreamcontext config native-memory enable
+  ```
+  Beklenen: Deger kalici; Claude native memory sahipligi net.
+
+---
+
+## 3. Tasks: Local Backend + ClickUp Remote Backend
+
+Son hafta en buyuk risk alani bu: local task dosyalari, generic backend, ClickUp adapter, sync, deletion, due date, person/assignee, RICE, dashboard controls.
+
+### 3.1 Local lifecycle
+
+- [ ] **create with RICE**  
+  Komut:
+  ```bash
+  cd /tmp/dctest
+  dreamcontext tasks create "Login akis testi" -p high -t backend,auth --reach 8 --impact 4 --confidence 75 --effort 3
+  ```
+  Beklenen: `state/login-akis-testi.md`; RICE score hesaplandi; workflow bolumu var.
+
+- [ ] **filter/group/list semantics**  
+  Komut:
+  ```bash
+  dreamcontext tasks create "UI testleri" -p medium -t frontend
   dreamcontext tasks list --tag backend --priority high --group-by version --long
   dreamcontext tasks list --any-tag backend --any-tag frontend
   dreamcontext tasks tags
   ```
-  **Beklenen:** `--tag` AND, `--any-tag` OR semantiği doğru; `--group-by` bölümler halinde; `tags` farklı etiketleri sayılarıyla listeler.
-- [ ] **3.3 status geçişleri** — `dreamcontext tasks status login-akisini-yaz in_progress "başladım"`
-  **Beklenen:** Durum değişti, changelog'a sebepli kayıt düştü.
-- [ ] **3.4 due_date + backlog kuralı** —
-  ```bash
-  dreamcontext tasks tag ui-parlat backlog
-  dreamcontext tasks due ui-parlat 2026-07-01
-  ```
-  **Beklenen:** Tarih atanınca **backlog etiketi otomatik kalkar** (tarihli görev = planlı). `due ui-parlat clear` ile geri al, sonra tekrar dene.
-- [ ] **3.5 person tag tekilliği** (çok kişili projede) — `dreamcontext tasks tag ui-parlat person:ada` sonra `person:mehmet` ata.
-  **Beklenen:** Aynı anda **tek** `person:*` etiketi; yeni atama eskisini düşürür.
-- [ ] **3.6 doctor (workflow ↔ acceptance criteria)** — `dreamcontext tasks doctor`
-  **Beklenen:** Mermaid `## Workflow` düğüm sayısı/durumu ile `## Acceptance Criteria` checkbox'ları uyumsuzsa drift bildirir (exit 1), temizse exit 0.
-- [ ] **3.7 delete + onay** — `dreamcontext tasks delete ui-parlat` (onay sor); `--yes` ile sessiz sil.
-  **Beklenen:** Yerel dosya silindi; uzak backend varsa silme bir sonraki sync'te yayılır.
+  Beklenen: `--tag` AND, `--any-tag` OR; grouping ve tag sayilari dogru.
 
-### 3b. ClickUp uzak backend (token gerektirir — opsiyonel ama önemli)
-> Önkoşul: ClickUp API token + bir test listesi. Token CLI argümanı yerine **pipe** edilmeli (review notu).
-- [ ] **3.8 onboarding** — Advanced ayar olarak rehberli CLI akışını izle (list picker, connection test).
-  **Beklenen:** Liste API'den çekiliyor, bağlantı testi geçiyor.
-- [ ] **3.9 provision** — `dreamcontext tasks provision`
-  **Beklenen:** urgency/summary/RICE/due_date özel alanları uzakta yoksa oluşturulur, mevcut görevlere backfill yapılır; idempotent (ikinci çalıştırma "already exist").
-- [ ] **3.10 members** — `dreamcontext tasks members --json`
-  **Beklenen:** Uzak konteynerdeki kişiler (assignee adayları) listelenir.
-- [ ] **3.11 sync (both)** — `dreamcontext tasks sync both`
-  **Beklenen:** `pushed N, pulled M, created K, deleted L, comments C` raporu. Çakışma olursa `state/.conflicts/` altına yazılır (otomatik çözülmez).
-- [ ] **3.12 person ↔ assignee köprüsü** — `person:<slug>` etiketi uzakta assignee'ye dönüşüyor; uzaktan değişen assignee yerelde person etiketine dönüyor.
-- [ ] **3.13 silme uzlaşması** — yerelde sil → sync → uzakta da silinmiş; uzakta sil → pull → yerelde uzlaştırıldı.
-- [ ] **3.14 git hook sync** — `dreamcontext tasks sync-hooks install`, sonra bir commit at.
-  **Beklenen:** post-commit best-effort sync (`--hook`, 15s timeout, git'i asla kırmaz). Mevcut yabancı hook varsa atlanır.
-- [ ] **3.15 sync lock** — aynı projede iki sync'i üst üste tetikle.
-  **Beklenen:** İkincisi "another sync running" ile geri çekilir (tek sync engine).
+- [ ] **status and changelog**  
+  Komut: `dreamcontext tasks status login-akis-testi in_progress "manual test started"`  
+  Beklenen: Status degisti; task changelog en uste kayit atti.
+
+- [ ] **due date/backlog rule**  
+  Komut:
+  ```bash
+  dreamcontext tasks tag ui-testleri backlog
+  dreamcontext tasks due ui-testleri 2026-07-01
+  ```
+  Beklenen: Tarih atanınca `backlog` etiketi otomatik kalkar.
+
+- [ ] **person tag uniqueness**  
+  Komut:
+  ```bash
+  dreamcontext tasks tag ui-testleri person:ada
+  dreamcontext tasks tag ui-testleri person:mehmet
+  ```
+  Beklenen: Ayni anda tek `person:*` etiketi kalir.
+
+- [ ] **workflow doctor**  
+  Komut: `dreamcontext tasks doctor`  
+  Beklenen: Acceptance criteria ile workflow mermaid drift yakalanir; temizse exit 0.
+
+- [ ] **delete path**  
+  Komut: `dreamcontext tasks delete ui-testleri --yes`  
+  Beklenen: Local task silinir; varsa remote deletion sync'e isaretlenir.
+
+### 3.2 ClickUp remote backend
+
+Opsiyonel ama publish icin yuksek degerli. Token komut argumani olarak yazilmaz; pipe veya env kullan.
+
+- [ ] **guided onboarding**  
+  Komut: Settings > Cloud Tasks veya CLI onboarding akisi  
+  Beklenen: API token test, workspace/list picker, config yazimi ve restart ihtiyaci net.
+
+- [ ] **provision idempotence**  
+  Komut: `dreamcontext tasks provision`  
+  Beklenen: urgency, summary, RICE, feature, due_date alanlari olusturulur veya "already exists"; ikinci kosum temiz.
+
+- [ ] **member discovery**  
+  Komut: `dreamcontext tasks members --json`  
+  Beklenen: ClickUp assignee adaylari listelenir.
+
+- [ ] **sync both**  
+  Komut: `dreamcontext tasks sync both`  
+  Beklenen: `pushed N, pulled M, created K, deleted L, comments C`; conflict varsa `state/.conflicts/`.
+
+- [ ] **person <-> assignee bridge**  
+  Adim: Local task'a `person:<slug>` ata, sync et; ClickUp assignee'yi degistir, pull et.  
+  Beklenen: Iki yon de tek kavram gibi davranir.
+
+- [ ] **deletion reconciliation**  
+  Adim: Local sil -> sync -> remote silinir. Remote sil -> pull -> local reconcile.  
+  Beklenen: Ghost task kalmaz; changelog/sleep journal notu mantikli.
+
+- [ ] **sync lock**  
+  Adim: Ayni vault'ta iki sync'i ayni anda tetikle.  
+  Beklenen: Ikincisi "another sync running" ile guvenli cikar.
+
+- [ ] **git hook sync**  
+  Komut: `dreamcontext tasks sync-hooks install`, sonra test commit.  
+  Beklenen: post-commit best-effort sync; git'i kirmaz; yabanci hook varsa saygili davranir.
 
 ---
 
-## 4. Taxonomy — faceted etiket sözlüğü
+## 4. Taxonomy
 
-- [ ] **4.1 init + vocab** —
+- [ ] **init + vocab**  
+  Komut:
   ```bash
   dreamcontext taxonomy init
   dreamcontext taxonomy vocab --facet domain
   ```
-  **Beklenen:** `core/taxonomy.json` oluştu (idempotent); vocab DEFAULT + proje birleşimi, facet filtreleniyor.
-- [ ] **4.2 add + alias + resolve** —
+  Beklenen: `core/taxonomy.json` olustu; default + project vocab birlesir.
+
+- [ ] **add, alias, resolve**  
+  Komut:
   ```bash
   dreamcontext taxonomy add payments
   dreamcontext taxonomy alias auth authentication
   dreamcontext taxonomy resolve auth --json
   ```
-  **Beklenen:** `resolve` normalize formu + sınıflandırma (faceted|alias|bare) + canonical karşılığı döner.
-- [ ] **4.3 audit** — `dreamcontext taxonomy audit --json`
-  **Beklenen:** Etiketsiz dokümanlar, canonical olmayan etiketler, orphan etiketler, yakın-tekrar çiftleri kovalar halinde; read-only, exit 0.
+  Beklenen: canonical, alias, facet/bare siniflandirmasi okunur.
+
+- [ ] **audit**  
+  Komut: `dreamcontext taxonomy audit --json`  
+  Beklenen: Etiketsiz, canonical olmayan, orphan ve yakin-tekrar raporu read-only gelir.
+
+- [ ] **dashboard taxonomy page**  
+  Adim: Dashboard > Taxonomy.  
+  Beklenen: Facet chipleri, kullanim sayilari ve alias okuma gorunumu var.
 
 ---
 
-## 5. Features — PRD tazelik + doctor (`#13`)
+## 5. Features and PRD Freshness
 
-- [ ] **5.1 create** — `dreamcontext features create auth -w "kimlik doğrulama" -t backend,security`
-  **Beklenen:** `core/features/auth.md` şablon bölümleriyle.
-- [ ] **5.2 set + insert** —
+- [ ] **create + non-lossy insert**  
+  Komut:
   ```bash
+  dreamcontext features create auth -w "kimlik dogrulama" -t backend,security
   dreamcontext features set auth status in_progress
-  dreamcontext features insert auth acceptance_criteria "Token yenileme çalışır"
+  dreamcontext features insert auth acceptance_criteria "Token refresh calisir"
   ```
-  **Beklenen:** Frontmatter güncellendi; acceptance_criteria `- [ ]` checkbox formatında, kayıpsız insert.
-- [ ] **5.3 doctor** — `dreamcontext features doctor`
-  **Beklenen:** STALE (30+ gün), ORPHANED (ilişkili görev yok), DANGLING (eksik PRD'ye işaret eden görev) raporu; sorun varsa exit 1.
+  Beklenen: Frontmatter kayipsiz; acceptance criteria checkbox formatinda.
+
+- [ ] **features doctor**  
+  Komut: `dreamcontext features doctor`  
+  Beklenen: STALE, ORPHANED, DANGLING durumlari raporlanir; exit code sorun varsa 1.
+
+- [ ] **feature upkeep evidence**  
+  Komut: `node scripts/feature-upkeep-evidence.ts`  
+  Beklenen: Feature freshness icin kanit raporu calisir veya guvenli hata verir.
 
 ---
 
-## 6. Knowledge — excalidraw, data-structures SQL, fullscreen (`#20/#12/#21`)
+## 6. Knowledge: Data Structures, Excalidraw, Fullscreen
 
-- [ ] **6.1 create + index** —
+- [ ] **knowledge create/index**  
+  Komut:
   ```bash
   dreamcontext knowledge create mimari -d "sistem mimarisi" -t architecture
   dreamcontext knowledge index --tag architecture
   ```
-  **Beklenen:** `knowledge/mimari.md`; index açıklama/etiket/tazelik gösterir.
-- [ ] **6.2 data-structures SQL render** — bir data-structure dokümanına ` ```sql ` gövdesi ekle.
-  **Beklenen:** Dashboard'da ER diyagramı olarak (entity kutuları + PK/FK + kardinalite) render olur (bkz. 10.6).
-- [ ] **6.3 excalidraw board** — `knowledge/diagrams/` altına bir board koy.
-  **Beklenen:** Board first-class knowledge; recall **çıkarılan metni** indeksler, asla scene JSON'u değil.
-- [ ] **6.4 diagrams migration** — `dreamcontext migrations apply-diagrams`
-  **Beklenen:** Düz `diagrams/<slug>.excalidraw.md` → `diagrams/<slug>/<slug>.excalidraw.md` klasörlenir; wikilink'ler atomik düzeltilir; zaten klasörlüler atlanır; ledger'a kayıt.
+  Beklenen: Knowledge file olustu, index aciklama/etiket/tazelik gosterir.
+
+- [ ] **data-structures live under knowledge**  
+  Komut: `ls _dream_context/knowledge/data-structures`  
+  Beklenen: SQL fenced docs knowledge altinda; core'da eski `5.data_structures.sql` yok.
+
+- [ ] **SQL render in dashboard**  
+  Adim: SQL fenced data-structure dokumanini Knowledge view'da ac.  
+  Beklenen: ER diagram render olur; PK/FK ve kardinalite okunur.
+
+- [ ] **Excalidraw as first-class knowledge**  
+  Adim: `knowledge/diagrams/` altina test board koy, sonra `dreamcontext memory recall "<board text>"`.  
+  Beklenen: Extracted text indekslenir; scene JSON recall sonucuna tasmaz.
+
+- [ ] **diagram migration**  
+  Komut: `dreamcontext migrations apply-diagrams`  
+  Beklenen: Flat board pathleri klasorlenir; wikilink rewrite atomic; ledger dedup calisir.
+
+- [ ] **Knowledge fullscreen overlay**  
+  Adim: Dashboard > Knowledge > File/Preview > fullscreen.  
+  Beklenen: In-app overlay; Esc kapatir; body scroll kilitli; focus geri doner.
 
 ---
 
-## 7. Federation — çoklu vault (`#25`)
+## 7. Federation: Multi-Vault Recall, Connections, Digest Inbox
 
-> İki vault gerekir. İkinci bir test vault'u hazırla:
-> ```bash
-> mkdir -p /tmp/dctest2 && cd /tmp/dctest2 && dreamcontext init -y --name "DC Test 2"
-> ```
+### 7.1 Two-vault setup
 
-- [ ] **7.1 vaults add/list/discover** —
+```bash
+cd /tmp/dctest2
+dreamcontext setup --name "DC Test 2" --description "federation peer" --yes
+```
+
+- [ ] **vault registry**  
+  Komut:
   ```bash
   dreamcontext vaults add dctest /tmp/dctest
   dreamcontext vaults add dctest2 /tmp/dctest2
   dreamcontext vaults list
   dreamcontext vaults discover /tmp --register
   ```
-  **Beklenen:** Global `~/.dreamcontext-vaults.json` güncellendi; discover idempotent, isim çakışması `-2/-3` ile çözülür.
-- [ ] **7.2 cross-vault recall (Phase 1, read-only)** — `/tmp/dctest`'te:
+  Beklenen: Global registry idempotent; isim carpismalari `-2/-3` ile cozulur.
+
+- [ ] **read-only cross-vault recall**  
+  Komut:
   ```bash
+  cd /tmp/dctest
   dreamcontext memory recall "mimari" --vault dctest2
   dreamcontext memory recall "mimari" --all-vaults
   ```
-  **Beklenen:** Tek-vault modu federation'dan önceki davranışla **byte-identical**; çoklu-vault modu shareable peer'ları kapsar, stale olanları atlar (sayı/sebep raporu).
-- [ ] **7.3 connect (Phase 2)** —
+  Beklenen: Tek-vault davranisi eskiyle uyumlu; all-vaults sadece izinli/shareable peer'lari kapsar.
+
+- [ ] **connections**  
+  Komut:
   ```bash
   dreamcontext connect dctest2 -d both --topics architecture
   dreamcontext connections list
   ```
-  **Beklenen:** `state/.connections.json` kaydı; tablo yön/topic/durum gösterir.
-- [ ] **7.4 digest sync (Phase 3)** —
+  Beklenen: `state/.connections.json`; direction/topic/status dogru.
+
+- [ ] **digest sync dry-run and real run**  
+  Komut:
   ```bash
-  dreamcontext federation sync --dry-run    # önce kuru çalış
+  dreamcontext federation sync --dry-run
   dreamcontext federation sync
   dreamcontext federation status
   ```
-  **Beklenen:** Dry-run hiçbir şey yazmaz, watermark ilerlemez; gerçek sync rıza veren peer'ın inbox'ına yazar, watermark ilerler.
-- [ ] **7.5 drain** — alıcı vault'ta `dreamcontext federation drain`
-  **Beklenen:** Pending inbox first-class knowledge olarak ingest edilir; çakışmalar bookmark olarak yüzeye çıkar (otomatik çözülmez); consumed'a taşınır.
-- [ ] **7.6 dead peer** — peer vault'unu sil/taşı, sonra sync.
-  **Beklenen:** Ölü peer **stale** işaretlenir; bir kez uyarır, sonra atlar (sync patlamaz).
+  Beklenen: Dry-run yazmaz; real run peer inbox'a yazar; watermark ilerler.
+
+- [ ] **drain inbox**  
+  Komut: `/tmp/dctest2` icinde `dreamcontext federation drain`  
+  Beklenen: Pending digest first-class knowledge olur; consumed'a tasinir; conflict bookmark olarak yuzeye cikar.
+
+- [ ] **dead peer stale guard**  
+  Adim: Peer path'i gecici tasi/sil, sonra sync.  
+  Beklenen: Peer stale isaretlenir; bir kez uyarir, sonra skip; sync patlamaz.
+
+- [ ] **real concurrency guard**  
+  Komut: `npm test -- --run tests/unit/federation-inbox.test.ts`  
+  Beklenen: Cross-process inbox writes corruption yaratmaz.
 
 ---
 
-## 8. Migration sistemi + setupVersion drift (`#23/#22`)
+## 8. Migration System and Setup Drift
 
-- [ ] **8.1 pending** — `dreamcontext migrations pending`
-  **Beklenen:** setupVersion → güncel sürüm arası bekleyen agent task talimatları (varsa) yazılır.
-- [ ] **8.2 sleep ile migration** — `dreamcontext sleep start`
-  **Beklenen:** Epoch pinlendi; bekleyen 'code' migration'ları çalıştı; agent task talimatları depolandı.
-- [ ] **8.3 setupVersion drift self-heal** — `state/.config.json` içindeki `setupVersion`'ı elle eski bir değere düşür, sonra `dreamcontext snapshot`.
-  **Beklenen:** Snapshot setup drift'i tespit eder ve bayat proje varlıklarını self-heal eder / uyarır (değerler sanitize edilir).
-- [ ] **8.4 ledger** — `dreamcontext migrations record --version 0.7.2 --step test-step --executor agent --summary "manuel"`
-  **Beklenen:** `state/.migrations-ledger.json`'a zaman damgalı kayıt; dedup korunur.
+- [ ] **pending migrations**  
+  Komut: `dreamcontext migrations pending`  
+  Beklenen: setupVersion'a gore pending code/agent migrations listelenir.
 
----
-
-## 9. Recall v3 + snapshot budget + multi-people (`v0.7.0`, `#8`)
-
-- [ ] **9.1 recall v3** — `dreamcontext memory recall "login" --top 10 --types knowledge,feature,task`
-  **Beklenen:** BM25 skorlu hit'ler; path/açıklama/etiket/snippet; tür filtresi uygulanır.
-- [ ] **9.2 snapshot budget** — `dreamcontext snapshot --tokens` (büyük vault'ta)
-  **Beklenen:** Pinned knowledge satır limiti (≤60, frontmatter `pinned_preview_lines` saygı) uygulanır; snapshot bütçe dahilinde.
-- [ ] **9.3 multi-people attribution** —
+- [ ] **ledger record dedup**  
+  Komut:
   ```bash
-  dreamcontext memory remember "ada API'yi yazdı" --person ada
+  dreamcontext migrations record --version 0.8.0 --step manual-test --executor agent --summary "manual prepublish"
+  dreamcontext migrations record --version 0.8.0 --step manual-test --executor agent --summary "manual prepublish"
+  ```
+  Beklenen: Ledger duplicate olusturmaz.
+
+- [ ] **setupVersion drift directive**  
+  Adim: Test vault `state/.config.json` icinde `setupVersion`'i eski deger yap, sonra snapshot al.  
+  Beklenen: Drift sanitize edilmis directive ile gorunur; bayat varliklar self-heal edilir veya net uyarilir.
+
+- [ ] **sleep migration integration**  
+  Komut: `dreamcontext sleep start`  
+  Beklenen: Epoch pinlenir; pending code migrations calisir; agent migration tasklari saklanir.  
+  Not: Bu adimi consolidation devam ederken ana repo uzerinde calistirma.
+
+---
+
+## 9. Recall v3, Snapshot Budget, Multi-People, Agent Feedback
+
+- [ ] **recall v3 filters**  
+  Komut: `dreamcontext memory recall "login" --top 10 --types knowledge,feature,task`  
+  Beklenen: Type filtresi uygulanir; score/path/snippet okunur.
+
+- [ ] **Turkish + synonym uplift sanity**  
+  Komut: `npm test -- --run tests/unit/recall-engine-v3.test.ts tests/unit/recall-synonyms.test.ts`  
+  Beklenen: Regression yok.
+
+- [ ] **snapshot budget**  
+  Komut: `dreamcontext snapshot --tokens` buyuk vault'ta  
+  Beklenen: Pinned preview limitleri ve demotion ladder snapshot'i siskin yapmaz.
+
+- [ ] **multi-people attribution**  
+  Komut:
+  ```bash
+  dreamcontext memory remember "ada API testini yazdi" --person ada
   dreamcontext memory recall "ada"
   ```
-  **Beklenen:** Kişi yazar olarak indekslenir; isimle recall edilebilir.
+  Beklenen: Person attribution recall edilebilir.
+
+- [ ] **agent feedback loop**  
+  Komut: `dreamcontext feedback --help`  
+  Beklenen: Draft/confirm/file akisi dokumante; gh yoksa kullaniciya net fallback.
 
 ---
 
-## 10. Dashboard (web UI)
+## 10. Dashboard Web UI
 
-- [ ] **10.1 başlatma** — `dreamcontext dashboard` (veya `--port 4173 --vault dctest`)
-  **Beklenen:** Tarayıcı `http://localhost:4173` açılır; sidebar gruplı navigasyon (Brain/Tasks/Knowledge/Features/Core/Council/Taxonomy/Sleep · Packs/Settings).
-- [ ] **10.2 Tasks — Kanban drag&drop** — kartı kolonlar arası sürükle.
-  **Beklenen:** Durum `PATCH /api/tasks/:slug` ile güncellenir.
-- [ ] **10.3 Eisenhower matrisi** — 2×2 ızgarada kartı quadrant'lar arası sürükle.
-  **Beklenen:** `priority` + `urgency` atomik güncellenir; tamamlananlar bu görünümde yok.
-- [ ] **10.4 Task detay paneli** — etiket chip ekle/sil (`×`), assignee/feature searchable select, due date, RICE bloğu; acceptance-criteria checkbox'ı işaretle.
-  **Beklenen:** Checkbox toggle, `<!-- node:id -->` içeren satırda ilgili mermaid düğümünün `:::status` sınıfını senkron eder.
-- [ ] **10.5 sağ-tık menü + delete danger zone** — kartı sağ-tıkla → Delete → onay diyaloğu.
-  **Beklenen:** "remote backend'e sync'te yayılır" uyarısıyla siler.
-- [ ] **10.6 Sync butonu** — yalnızca uzak backend'de görünür; tıkla.
-  **Beklenen:** `↕ N up · M down` / `⚠ error` / `⏳ another sync running` notu.
-- [ ] **10.7 ClickUp Settings** — Settings → Cloud Tasks: list picker, Test Connection, Provision fields, sync status badge, stale-server restart banner.
-  **Beklenen:** Bağlantı ✓/✗; provision sonucu; `/api/health` capabilities ile bayat-server tespiti banner'ı.
-- [ ] **10.8 Taxonomy görünümü** — facet chip kümeleri, kullanım sayıları, alias okları (read-only).
-- [ ] **10.9 Knowledge fullscreen** — bir dokümanı aç → File/Preview → `⛶` fullscreen.
-  **Beklenen:** In-app overlay (tarayıcı fullscreen değil); Esc kapatır; body scroll kilitli; Tab overlay içinde tuzaklı; kapanışta focus geri döner (review hardening).
-- [ ] **10.10 data-structures SQL** — bir SQL knowledge dokümanını aç.
-  **Beklenen:** ER diyagramı render (entity + PK/FK + kardinalite).
-- [ ] **10.11 Federation control plane** — Settings → Connections: bağlantı ekle, "shareable" toggle (anında kalıcı).
+Calistirma:
 
----
+```bash
+dreamcontext dashboard --port 4173 --vault /tmp/dctest
+```
 
-## 11. Desktop app (Tauri 2, macOS) — launcher + onboarding + Sleepy
+- [ ] **navigation shell**  
+  Beklenen: Brain/Tasks/Knowledge/Features/Core/Council/Taxonomy/Sleep ve Packs/Settings gruplari gorunur.
 
-> Çalıştırma (dev): repo kökünde `npm run build` sonrası
-> ```bash
-> cd desktop && npm install
-> DREAMCONTEXT_CLI=../dist/index.js DREAMCONTEXT_VAULT=/tmp/dctest npm run tauri dev
-> ```
-> Paketli (imzasız) build: `cd desktop && npm run tauri build -- --config /tmp/nosign.json --bundles app` → `src-tauri/target/release/bundle/macos/dreamcontext.app` (sağ-tık → Open ile Gatekeeper'ı aş).
+- [ ] **Tasks Kanban drag/drop**  
+  Adim: Task kartini kolon degistir.  
+  Beklenen: `PATCH /api/tasks/:slug`; status kalici.
 
-- [ ] **11.1 launcher** — vault pinlenmemiş başlat.
-  **Beklenen:** "Launcher · all projects", arama çubuğu, "+ Add Project", vault kart ızgarası; boş durumda "No projects yet".
-- [ ] **11.2 vault aç** — bir kartta "Open →".
-  **Beklenen:** Yeni WebviewWindow `?vault=<name>` ile açılır.
-- [ ] **11.3 onboarding — yeni proje** — "+ Add Project" → Create new: name+klasör → açıklama → kullanıcı → stack → öncelik → **platforms** (Claude pre-checked) → **skill packs** (hiçbiri seçili değil) → Review.
-  **Beklenen:** Wizard viewport içinde scroll olur (taşmaz, kompakt pack kartları); setup sonunda ✓ + handoff prompt + "Open project →".
-- [ ] **11.4 onboarding — mevcut klasör** — `_dream_context` olan klasör için yalnız platforms+packs adımları; olmayan için tam quiz.
-  **Beklenen:** Klasör problanır, name/stack auto-fill; doğru adım sayısı.
-- [ ] **11.5 Sleepy notch — hotkey** — Settings'te Sleepy'i etkinleştir, `Alt+Cmd+S` bas.
-  **Beklenen:** Menü çubuğundan notch paneli düşer (420×520, şeffaf); mascot paneli + capture bar.
-- [ ] **11.6 mod toggle sırası ve default** — toggle **Ask · Learn · Sleep** sırasında ve **Ask default seçili**.
-- [ ] **11.7 Ask modu** — soru yaz, Return.
-  **Beklenen:** "Sleepy is thinking…" → markdown render edilmiş cevap (Sonnet + thinking); yan etki yok; markdown listeleri okunaklı.
-- [ ] **11.8 Learn modu** — not yaz, Return.
-  **Beklenen:** Anında "captured ✓" (not `CHANGELOG.json`'a kaydedildi) + fire-and-forget enrichment cevabı.
-- [ ] **11.9 Sleep modu** — "💤 Sleep — consolidate <vault>" tıkla.
-  **Beklenen:** Input kilitli, mascot **uykuda**, pencere açık kalır; consolidation bitince ✓ Slept + özet; debt sıfırlanır.
-- [ ] **11.10 mascot moodları** — debt < 8 idle; **debt ≥ 8 drowsy**; Sleep sırasında asleep.
-  **Beklenen:** Animasyonlu WebP WKWebView'de play-button olmadan otomatik oynar.
-- [ ] **11.11 vault picker** — notch'taki dropdown projeyi değiştirir; mascot mood'u o projenin debt'ine göre güncellenir.
-- [ ] **11.12 dismiss** — Esc kapatır; dışarı tık kapatır (consolidation uçuştayken kapanmaz).
-- [ ] **11.13 config kalıcılığı** — hotkey'i değiştir, app'i yeniden başlat.
-  **Beklenen:** `~/.dreamcontext/sleepy.json` server-side kalıcı; hotkey restart sonrası korunur (server-side config restart'ı atlatır — `3dcd0c2`).
+- [ ] **Eisenhower matrix drag/drop**  
+  Adim: Kart quadrant degistir.  
+  Beklenen: Priority + urgency atomik guncellenir; completed task gorunmez.
+
+- [ ] **Task detail panel**  
+  Adim: Tags, assignee, feature, due date, RICE ve acceptance criteria checkbox test et.  
+  Beklenen: Checkbox `<!-- node:id -->` workflow class'ini sync eder.
+
+- [ ] **Context menu and delete danger zone**  
+  Adim: Kart sag tik > Delete.  
+  Beklenen: Onay dialogu; remote backend uyarisi; silme kalici.
+
+- [ ] **Cloud Tasks settings**  
+  Adim: Settings > Cloud Tasks.  
+  Beklenen: List picker, Test Connection, Provision fields, sync status badge, stale-server banner.
+
+- [ ] **Sync button visibility**  
+  Beklenen: Sadece remote backend etkinse Tasks toolbar'da gorunur; durum metni `up/down/error/running`.
+
+- [ ] **Connections settings**  
+  Adim: Settings > Connections.  
+  Beklenen: Add/list/toggle shareable; degisim kalici.
+
+- [ ] **Knowledge page**  
+  Beklenen: File/Preview tabs; Excalidraw preview; SQL ER render; fullscreen overlay.
+
+- [ ] **Taxonomy page**  
+  Beklenen: Facets, aliases, counts read-only.
 
 ---
 
-## 12. CLI auto-upgrade + update nudge (`79b9546`)
+## 11. Desktop App: Tauri Launcher, Onboarding, Updates
 
-- [ ] **12.1 check** — `dreamcontext upgrade --check`
-  **Beklenen:** npm registry'den sürüm kontrolü; yeni sürüm varsa bildirir, kurmaz.
-- [ ] **12.2 snapshot nudge guard** — `dreamcontext snapshot`
-  **Beklenen:** Yeni sürüm nudge'ı görünür ama app-context içinde (desktop) nudge guard ile bastırılır (`79b9546`); default-on background auto-upgrade davranışını gözlemle.
+Dev calistirma:
+
+```bash
+cd desktop
+DREAMCONTEXT_CLI=../dist/index.js DREAMCONTEXT_VAULT=/tmp/dctest npm run tauri dev
+```
+
+Unsigned build:
+
+```bash
+cd desktop
+npm run tauri build -- --bundles app
+```
+
+- [ ] **launcher empty state**  
+  Beklenen: "Launcher - all projects", search, Add Project, project cards, empty state.
+
+- [ ] **open project window**  
+  Adim: Bir vault kartinda Open.  
+  Beklenen: Yeni WebviewWindow `?vault=<name>` ile acilir; vault isolation dogru.
+
+- [ ] **onboarding new project**  
+  Adim: Add Project > Create New; name/folder/description/user/stack/priority/platforms/packs/review.  
+  Beklenen: Wizard viewport icinde scroll eder; platform secimi ve skill-pack secimi setup'a yansir; Open project calisir.
+
+- [ ] **onboarding existing folder**  
+  Adim: `_dream_context` olan ve olmayan klasorlerle dene.  
+  Beklenen: Olan klasor icin platforms/packs odakli kisa akis; olmayan icin full quiz.
+
+- [ ] **compact pack cards**  
+  Beklenen: Kucuk ekranda cards tasmaz; wizard kullanilabilir.
+
+- [ ] **desktop app command**  
+  Komut: `dreamcontext app --help`  
+  Beklenen: continuous app update komutlari/yardimi gorunur.
+
+- [ ] **desktop release workflow static check**  
+  Komut: `test -f .github/workflows/desktop-release.yml && sed -n '1,80p' .github/workflows/desktop-release.yml`  
+  Beklenen: macOS app build + release artifact akisi mevcut.
+
+- [ ] **continuous app update smoke**  
+  Adim: App update kontrolunu tetikle.  
+  Beklenen: `.app` shell kendini CLI-carried bundle ile guncelleyebilir; Apple notarization'a bagli degil; hata mesajlari net.
 
 ---
 
-## 13. install.sh (curl kurulum + macOS app) (`3077a02`)
+## 12. Sleepy Notch Quick Capture
 
-> **Dikkat:** Bunu temiz bir kabukta / izole dizinde test et. Yayın öncesi yerel script'i çalıştırabilirsin.
-- [ ] **13.1 yerel install.sh** — `sh install.sh` (test makinesinde)
-  **Beklenen:** CLI kurulur; **macOS'ta desktop app da kurulur** (`3077a02`).
-- [ ] **13.2 sürüm doğrula** — `dreamcontext --version`
-  **Beklenen:** `0.8.1` yazar (package.json ile uyumlu).
-- [ ] **13.3 curl yolu** — *yalnızca* repo public olduktan ve main'e merge sonrası aktif:
+Bu alan 2026-06-14'te cok commit aldi; elle mutlaka gez.
+
+- [ ] **enable and hotkey**  
+  Adim: Desktop Settings'te Sleepy etkinlestir; `Alt+Cmd+S`.  
+  Beklenen: Notch panel acilir; launcher hotkey sahibi; cross-window config degisince re-register olur.
+
+- [ ] **default mode and order**  
+  Beklenen: Toggle sirasi `Ask - Learn - Sleep`; default `Ask`.
+
+- [ ] **Ask mode**  
+  Adim: Soru yaz, Return.  
+  Beklenen: "Sleepy is thinking..." -> markdown render cevap; listeler okunur; yan etki yok.
+
+- [ ] **Learn mode**  
+  Adim: Not yaz, Return.  
+  Beklenen: Hemen capture; CHANGELOG note; background enrichment calisir; `claude` interactive login shell ile bulunur.
+
+- [ ] **Sleep mode**  
+  Adim: Sleep modunda consolidate baslat.  
+  Beklenen: Input locked; mascot asleep; pencere kapanmaz; is bitince ozet ve debt reset.
+
+- [ ] **dead-vault guard**  
+  Adim: Secili vault path'ini boz, capture dene.  
+  Beklenen: Kullaniciya net hata; server crash yok.
+
+- [ ] **mascot moods**  
+  Beklenen: debt < 8 idle; debt >= 8 drowsy; active sleep asleep.
+
+- [ ] **WebP autoplay in WKWebView**  
+  Beklenen: Mascot play-button olmadan oynar; muted/play fix calisir.
+
+- [ ] **server-side config persistence**  
+  Adim: Hotkey/config degistir, app'i restart et.  
+  Beklenen: `~/.dreamcontext/sleepy.json` korunur.
+
+- [ ] **vault picker**  
+  Adim: Notch dropdown'da vault degistir.  
+  Beklenen: Capture target ve sleep debt mood secili vault'a gore degisir.
+
+- [ ] **dismiss behavior**  
+  Beklenen: Esc/outside click kapatir; consolidation uctayken kapanmaz.
+
+---
+
+## 13. Launcher Federation Graph and v0.8.3 Polish
+
+- [ ] **per-project status dots**  
+  Adim: Launcher'da birden fazla vault ekle.  
+  Beklenen: Proje kartlari update/sleep/stale durumlarini ayirt edilebilir gosterir.
+
+- [ ] **interactive graph renders**  
+  Adim: Launcher graph gorunumunu ac.  
+  Beklenen: Nodes/edges gorunur; bos graph hata vermez; layout readable.
+
+- [ ] **drag to connect**  
+  Adim: Bir proje node'undan digerine baglanti kur.  
+  Beklenen: Connection kaydi olusur; Settings > Connections ile tutarli.
+
+- [ ] **brain settings persistence**  
+  Adim: Graph settings degistir, app restart.  
+  Beklenen: Server-side UI settings korunur.
+
+- [ ] **stale vault cleanup**  
+  Adim: Registry'deki bir vault path'ini gecersiz yap.  
+  Beklenen: Launcher stale gosterir; sync ve graph patlamaz; cleanup akisi net.
+
+- [ ] **launcher route tests**  
+  Komut: `npm test -- --run tests/unit/launcher-federation.test.ts tests/unit/launcher-scaffold.test.ts`  
+  Beklenen: Launcher backend regression yok.
+
+---
+
+## 14. Sleep Consolidation Quality
+
+- [ ] **sleep 360 tests**  
+  Komut: `npm test -- --run tests/unit/sleep-system-360.test.ts tests/unit/sleep-consolidation.test.ts tests/unit/sleep-quality-eval.test.ts`  
+  Beklenen: Sleep dedup, salience, attribution, quality scorer regression yok.
+
+- [ ] **no duplicate dispatch**  
+  Adim: Consolidation zaten devam ederken yeniden sleep tetiklemeyi dene.  
+  Beklenen: Ikinci dispatch engellenir veya net no-op; cift sleep agent yok.
+
+- [ ] **migration + federation specialists**  
+  Adim: Sleep start senaryosunda pending migration ve federation signal olustur.  
+  Beklenen: Dogru specialist talimatlari uretilir; dosya sahipligi cakisma yaratmaz.
+
+- [ ] **reflect after sleep**  
+  Komut: `dreamcontext reflect`  
+  Beklenen: Aday terimler sadece review icin; otomatik promotion yok.
+
+---
+
+## 15. Install, Upgrade, Release
+
+- [ ] **upgrade check**  
+  Komut: `dreamcontext upgrade --check`  
+  Beklenen: Registry check calisir; yeni surum varsa kurmadan bildirir.
+
+- [ ] **snapshot nudge guard**  
+  Komut: `dreamcontext snapshot` desktop/app context icindeyken  
+  Beklenen: Background auto-upgrade nudge app context'te bastirilir.
+
+- [ ] **install.sh local**  
+  Komut: `sh install.sh` temiz test ortaminda  
+  Beklenen: CLI kurulur; macOS'ta desktop app de kurulur.
+
+- [ ] **curl install path**  
+  Komut:
   ```bash
   curl -fsSL https://raw.githubusercontent.com/meanllbrl/dreamcontext/main/install.sh | sh
   ```
-  (Publish öncesi bu adım **N/A** — checklist'in 5–6 adımından sonra.)
+  Beklenen: Sadece repo public + main guncel olduktan sonra test edilir. Publish oncesi `[n/a]`.
+
+- [ ] **GitHub release v0.8.3**  
+  Komut: `gh release view v0.8.3`  
+  Beklenen: Release varsa assetler ve notes dogru. Yoksa publish blocker degil ama desktop auto-update icin release task'i acik kalir.
+
+- [ ] **npm publish final**  
+  Komut:
+  ```bash
+  npm login
+  npm publish --access public
+  ```
+  Beklenen: Publish basarili; sonrasinda global install smoke test yapilir.
 
 ---
 
-## 14. Yayın öncesi son kontrol (publish-checklist ile)
+## 16. Commit-to-Test Matrix
 
-- [ ] **14.1 sürüm doğru** — `package.json` `version` = `0.8.1`, `license` = `Apache-2.0`.
-- [ ] **14.2 pack dry-run** — `npm pack --dry-run`
-  **Beklenen:** `dist/`, `skill/`, `install.sh`, `README.md`, `LICENSE`, `NOTICE` listede.
-- [ ] **14.3 README + DEEP-DIVE güncel** — son hafta eklenen yüzeyler (federation, ClickUp tasks, desktop app, Sleepy, taxonomy) dökümanlara yansımış.
-- [ ] **14.4 build temiz** — `npm run build && npm test -- --run` tekrar yeşil.
-- [ ] Ardından publish-checklist adım 3→6: `npm login` → `npm publish --access public` → main'e merge + repo public → curl smoke test.
+Bu tablo "ne yaptik?" sorusunun test haritasi. Detayli ham diff icin Appendix A'daki komutlari kullan.
 
----
-
-## Hızlı kapsama özeti (son 7 gün → test bölümü)
-
-| Alan | Commit teması | Bölüm |
-|---|---|---|
-| Tasks + ClickUp backend | `#11` M1–M5, sync lock, provision, person↔assignee, deletion | §3 |
-| Taxonomy | faceted vocab, JSON storage, audit | §4 |
-| Features | PRD freshness, `features doctor`, authoring DX | §5 |
-| Knowledge | excalidraw boards, SQL fences, fullscreen viewer | §6, §10.9–10.10 |
-| Federation | vaults, connect, drain, digest sync, dead peer | §7, §10.11 |
-| Migration | versioned registry + ledger, setupVersion drift | §8 |
-| Recall v3 / snapshot budget / multi-people | `v0.7.0`, `#8` | §9 |
-| Dashboard | Eisenhower, tag chips, sync button, ClickUp settings | §10 |
-| Desktop app (Tauri) | launcher, onboarding, notch/Sleepy, modes, mascot | §11 |
-| CLI auto-upgrade | background upgrade + nudge guard | §12 |
-| install.sh | macOS app kurulumu | §13 |
+| Area | Main commits | What changed | Test sections |
+|---|---|---|---|
+| v0.6 control panel, native memory, reflection, landing | `b924fa5`, `f98d5d2`, `e66c18e` | Dashboard About/landing, config native-memory, reflect, skill packs, docs diagrams | 1, 2, 9, 10 |
+| Relicense and public repo scope | `a020584`, `c62e65a` | Apache-2.0, NOTICE/TRADEMARK, public repo cleanup | 0, 1, 15 |
+| Setup/init hardening | `ecfe365`, `486d418` | setup front door, selected-platform completeness | 2 |
+| Tasks list/filter and feature authoring | `2e6a48a`, `649a999`, `d9c07bb` | Task filters/grouping, non-lossy inserts, Eisenhower DnD | 3, 5, 10 |
+| Data structures and knowledge diagrams | `e7bd1c5`, `49e689f`, `d782095`, `5d09fea`, `40f8fbb`, `8b52232` | Data structures moved to knowledge, SQL fences, Excalidraw knowledge, safe diagram migration | 6, 10 |
+| Feature freshness and taxonomy | `d9a7cf4`, `029bf9e`, `9766b34`, `6ca4612` | `features doctor`, taxonomy JSON/vocab/audit/dashboard | 4, 5, 10 |
+| ClickUp task backend | `829d6c2` -> `2e9cc0c` | Generic backend, ClickUp config/API adapter, merge/sync, due dates, provision, deletion, locks | 3, 10 |
+| Migration system and setup drift | `37fd54d`, `c16c18c`, `55a74e8`, `cb96b44` | setupVersion drift, migration registry/ledger, sleep migration agent | 8, 14 |
+| Federation | `971ef7f`, `ba20011`, `f1e3b16`, `32f8a3b`, `f46ff98` | Vault registry, cross-vault recall, connections, digest inbox, stale peers, concurrency | 7, 10 |
+| Recall v3 and snapshot budget | `5d05a63`, `8dfb72b` | Recall uplift, snapshot budget, feedback loop, graphify spec | 9 |
+| Desktop app and launcher onboarding | `79b9546`, `737ad63`, `c7a6c8c`, `d7fce95`, `3077a02`, `e3dda6d`, `c8b6ca5`, `fb59832` | Tauri macOS beta, app command, continuous update, release workflow, install.sh app install, onboarding wizard | 11, 15 |
+| Sleepy notch capture | `64a0899`, `bc98378`, `87db4cd`, `3dcd0c2`, `2814e45`, `a8b35e8`, `1a69f7a`, `0b57126`, `45a314d`, `b30d311`, `79ff49e`, `afc1088`, `5d7fe52`, `a72430f`, `b7cb760`, `3bc0490` | Hotkey, vault picker, Ask/Learn/Sleep, mascot, markdown answer, server-side config, version 0.8.2 | 12 |
+| Launcher federation graph and sleep quality | `a41dc7b`, `e7dca76` | Graph UI, per-project status dots, stale cleanup, sleep quality eval, v0.8.3 context | 13, 14 |
 
 ---
 
-### Sonuç notları (test sonrası doldur)
+## Appendix A: Commit and Diff Commands Used
 
-- Geçen: __ / __
-- Açık hatalar:
-  - …
-- Yayına engel (blocker) var mı? ☐ Hayır ☐ Evet → …
+Use these to inspect the exact commits and diffs without bloating this file.
+
+```bash
+# All commits in the reviewed window
+git log --since='10 days ago' --date=short --pretty=format:'%h %ad %s'
+
+# Per-commit changed files and line counts
+git log --since='10 days ago' --numstat --date=short --pretty=format:'@@COMMIT@@ %h %ad %s'
+
+# Overall diff stat from v0.6 baseline to current HEAD
+git diff --stat b924fa5..HEAD
+git diff --shortstat b924fa5..HEAD
+
+# Full raw patch if needed
+git diff b924fa5..HEAD
+
+# Focused patches
+git diff b924fa5..HEAD -- src/lib/task-backend src/cli/commands/tasks.ts
+git diff b924fa5..HEAD -- src/lib/federation* src/cli/commands/federation.ts
+git diff b924fa5..HEAD -- dashboard/src/pages/CaptureBar.tsx dashboard/src/pages/CaptureBar.css
+git diff b924fa5..HEAD -- desktop src/cli/commands/app.ts src/server/routes/launcher.ts
+```
+
+---
+
+## Appendix B: Test Result Notes
+
+- Total checked: __ / __
+- Blockers:
+  - 
+- Non-blocking bugs:
+  - 
+- Publish decision:
+  - [ ] Go
+  - [ ] No-go
+  - [ ] Go with known risks

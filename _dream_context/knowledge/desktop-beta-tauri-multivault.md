@@ -7,16 +7,22 @@ description: >-
   four non-obvious gotchas (CLI bundling, Tauri ACL, relative URLs, build/sign),
   the in-app quiz-style project onboarding (scaffold endpoints, child-spawn
   pattern, auto-CLI-install), the Faz 1 GitHub Actions release pipeline
-  (E2E verified v0.8.1), the homebrew-vs-nvm CLI resolution gotcha, and the
-  Sleepy notch quick-capture companion (global hotkey, transparent notch window,
+  (E2E verified v0.8.3), the homebrew-vs-nvm CLI resolution gotcha, the Sleepy
+  notch quick-capture companion (global hotkey, transparent notch window,
   animated WebP mascot with mood thresholds, Learn/Ask/Sleep mode toggle, Sonnet
   enrichment with Markdown rendering, interactive-login-shell claude PATH fix,
-  tracked enrichment status UI, dead-vault filtering, focus/blur UX, asset bundling).
+  tracked enrichment status UI, dead-vault filtering, focus/blur UX, asset
+  bundling), the Launcher per-project status indicator (green/yellow/red,
+  upgrade-vs-update distinction), the interactive federation graph
+  (react-force-graph-2d, drag-to-connect, active-edge particles), brain-settings
+  server persistence (vault-scoped .brain-settings.json), and the Federation
+  Settings panel redesign (plain-language explainers, direction labels).
 type: knowledge
 tags:
   - architecture
   - domain
   - onboarding
+  - topic:federation
 pinned: false
 created: '2026-06-13'
 updated: '2026-06-14'
@@ -428,6 +434,125 @@ bullets and collapses loose-list `<p>` margins.
 Functional and live-verified. Animated WebP mascot autoplays in WKWebView. Learn/Ask/Sleep
 modes all functional. Visual design improved but **not yet formally user-accepted**.
 Feature PRD: `_dream_context/core/features/sleepy-notch-capture.md`.
+
+## Launcher per-project status & update (v0.8.3)
+
+### Upgrade-vs-update distinction
+
+Upgrading the global CLI (`npm install -g dreamcontext@latest`) refreshes the
+binary but does NOT touch any project's installed skills, agents, or hooks. Each
+project carries its own `setupVersion` in `_dream_context/state/.config.json`.
+When `setupVersion` lags behind the running CLI version, the project's agent
+tooling is stale until the user runs `dreamcontext update` INSIDE that project.
+
+### Status indicator
+
+`GET /api/launcher/status` returns per-vault:
+```
+{ name, path, exists, setupVersion, latestVersion, needsUpdate, shareable }
+```
+Color mapping displayed in the Launcher card:
+- **green** — folder exists AND `setupVersion >= latestVersion`
+- **yellow** — folder exists AND `setupVersion < latestVersion` (needs update)
+- **red** — folder does not exist (removable)
+
+A project that has never run `setup` shows `setupVersion: '0.0.0'` and therefore
+always appears yellow — intentional, since `update` also acts as first-run `setup`.
+
+### In-Launcher update flow
+
+`POST /api/launcher/update { vault }` spawns `dreamcontext update` in the project
+cwd using `defaultCliRunner` (no-shell, arg array, same pattern as scaffold). Returns
+the updated `VaultStatus`. The user never opens a terminal.
+
+`POST /api/launcher/unregister { vault }` removes the vault from the registry
+(folder-agnostic; files are NOT deleted). Intended for red-status (deleted-folder)
+cleanup. Idempotent.
+
+## Interactive federation graph (v0.8.3)
+
+### Purpose and location
+
+A `react-force-graph-2d` canvas (`dashboard/src/pages/LauncherGraph.tsx`, CSS:
+`LauncherGraph.css`) lives in the Launcher (not a per-project page) because
+federation is a cross-project concern. Per-project Settings retains the text-form
+`ConnectionsManager` for users who prefer a list.
+
+### Node and edge semantics
+
+- One node per registered vault, colored by STATUS (green `#34d399` / yellow
+  `#fbbf24` / red `#f87171`). Canvas-safe hex constants (CSS vars not available
+  on canvas).
+- Directed edges come from `GET /api/launcher/federation-graph`, which aggregates
+  `listVaults()` + each vault's `listConnections()` into
+  `{ nodes: VaultStatus[], edges: FederationEdge[] }`.
+- An edge `{ source, target, active }` is emitted iff the source's connection to
+  target has `direction: 'out' | 'both'` AND the connection is not stale AND both
+  vaults are registered. `active = target.shareable`.
+- **Active edges** (target has `shareable: true`) animate `linkDirectionalParticles`
+  in violet `#8b5cf6` — the "electric current" of live sync. Inactive edges are
+  dimmed, signaling the link is stored but inert.
+
+### Read model (critical mapping)
+
+Per `src/lib/federation-recall.ts`:  
+Vault A reads vault B iff A's connection to B has `direction: 'out' | 'both'`
+AND B's `shareable` flag is `true`.
+
+The graph surfaces BOTH: the edge (connection direction) and the shareable gate.
+
+### Drag-to-connect
+
+In **Connect mode** (toggle in graph toolbar), dragging from node A onto node B
+calls `POST /api/launcher/connection { from: A.name, to: B.name }`. This stores an
+`out` edge on A's side only. Two separate drags (A→B then B→A) create two
+independent `out` edges — the graph renders them as a two-way arrow. There is no
+`both` shortcut: two-way federation requires two explicit drags.
+
+`POST /api/launcher/connection/remove { from, to }` removes the edge.  
+`POST /api/launcher/shareable { vault, shareable }` toggles the shareable flag
+directly from a node panel in the graph.
+
+### Frontend hooks
+
+`dashboard/src/hooks/useLauncher.ts` provides: `useFederationGraph`,
+`useCreateConnection`, `useRemoveLauncherConnection`, `useToggleShareable`,
+`useUpdateProject`.
+
+## Brain-settings server persistence (v0.8.3)
+
+### The problem
+
+The desktop app assigns a new loopback port each launch, creating a new origin.
+`localStorage` is empty on every launch, so brain graph settings (node size,
+text-fade threshold, force parameters) reset every time.
+
+### Solution
+
+A new route file `src/server/routes/ui-settings.ts` provides:
+- `GET /api/brain-settings` — returns the settings JSON (or `{}` if absent or corrupt)
+- `PUT /api/brain-settings` — writes an opaque JSON blob; 256 KB size cap; validates
+  only that the body is a JSON object, never inspects fields.
+
+Settings persist at `_dream_context/state/.brain-settings.json` (vault-scoped, so
+different projects can have independent graph configurations).
+
+`dashboard/src/hooks/useGraphSettings.ts` hydrates from `GET /api/brain-settings`
+on mount. Writes go to both localStorage (flash-free instant render) AND the server
+(durable). This is the same write-through pattern used by Sleepy's `sleepy.json`.
+
+## Federation Settings panel redesign (v0.8.3)
+
+`dashboard/src/components/settings/ConnectionsManager.tsx` was rewritten with:
+- A **plain-language explainer block** describing what federation is and what
+  "A reads B" means before showing any controls.
+- A **Sharing card** (enables/disables this project as a federation source).
+- **Self-describing direction labels** replacing arrow-icon-only controls:
+  - ⮜ Read from
+  - ⮞ Share to
+  - ⇄ Two-way
+- Per-option **hints** explaining the effect of each direction choice.
+- New `federation.*` i18n keys wired into the existing localization layer.
 
 ## Status / deferred
 
