@@ -101,7 +101,8 @@ describe('snapshot hot-path guard (P1.6 / P3 inbox line)', () => {
 
     const snapshot = generateSnapshot();
     expect(snapshot).toContain('## Federation');
-    expect(snapshot).toContain('pending peer digest');
+    // Read-only federation: the inbox is inert; the line flags it as legacy.
+    expect(snapshot).toContain('legacy peer digest');
     // Still no peer corpus content leaked in.
     expect(snapshot).not.toContain(PEER_SENTINEL);
   });

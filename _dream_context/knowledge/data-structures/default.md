@@ -7,8 +7,7 @@ tags:
   - database
   - schema
 updated: "2026-06-09"
----
-```sql
+---```sql
 -- Data Structures — dreamcontext
 -- Updated: 2026-06-09
 --
@@ -143,5 +142,4 @@ updated: "2026-06-09"
 --   "compaction_log": [{                 -- LIFO, capped at 20
 --     "timestamp", "trigger", "debt", "session_count", "bookmark_count"
 --   }]
--- }
-```
+-- }```

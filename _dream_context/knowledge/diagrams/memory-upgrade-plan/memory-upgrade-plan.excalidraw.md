@@ -92,8 +92,7 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 → 5 H2 chunking → scale items only when corpus metrics trigger them ^3itSAk0S
 
 %%
-## Drawing
-```compressed-json
+## Drawing```compressed-json
 N4KAkARALgngDgUwgLgAQQQDwMYEMA2AlgCYBOuA7hADTgQBuCpAzoQPYB2KqATLZMzYBXUtiRoIACyhQ4zZAHoFAc0JRJQgEYA6bGwC2CgF7N6hbEcK4OCtptbErHALRY8RMpWdx8Q1TdIEfARcZgRmBShcZR5tHgBmbQAOGjoghH0EDihmbgBtcDBQMBKIEm4IAEEYAFEAdh5iADkAFlSSyFhECqgsKHbSzG4ANgAGflKYbiSJyAoSdW46uoBW
 
 bQBGAE5tnd3t2akEQmVpbha67RWD62Vg7nHCgShSNgBrBABhNnw2UgqAYnWCCBQIGkE0uGwr2ULyEHGIXx+fwkz2szDguEC2TBEAAZoR8PgAMqwO4SQQeHHMZ5vBAAdQWkm4fEeEGpL3eJJgZPQFPKB1hJw44VyaHWBzYGOwaimYtGDw6EBhwjgAEliKLUHkALoHXHkTLq7gcISEg6EeFYCq4UY42Hw4XMTUms2ssIIYjMzbrdZJFpJOotA6MFjs
@@ -246,6 +245,4 @@ BqIU4AmAGAJZAoBXIcPyIZj+Hd0KAuOEQCIxVQXoH0ASQbPECjNiC+IjwmYa+IyAj4jwInDfbecifir4
 
 xYHONBQiAXxLd1LEg4FARMgbgA6TS4ZSDEhBk4dSG543JgCaBe4MZN6TWQSZNIBgk6GnaTxk+xLsATsZgHqQ4AAJNPAlkibAXYsocdQx9vgdeNtjyQdIFwD1ySlwMAeEpBgfDsPKnVviLk8QOZ4g5aciOSkuHmzUx7ExwHhpoaL4HXAFwXyiyAOw1xgfoiwxw2NdQhDAFARlkyhKzA+4vZOnghkodF8oSAMoK2SBmZQCRSVkuZJh1MAIkGeSwwHZ
 
-J8gNyDuEJR/bIMVy5LIEAEsggAA=
-```
-%%
+J8gNyDuEJR/bIMVy5LIEAEsggAA=```%%

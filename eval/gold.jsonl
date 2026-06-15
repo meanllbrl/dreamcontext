@@ -1,30 +1,30 @@
 {"id":"q001","query":"BM25 ranking k1 1.5 b 0.75 over the corpus","expected":["feature/memory-recall-bm25"],"alt":["knowledge/decision-mem0-vs-bm25-recall"],"category":"exact-term","lang":"en"}
 {"id":"q002","query":"haiku single-call recall corpus index 8000 chars","expected":["knowledge/haiku-recall-architecture"],"alt":["feature/memory-recall-bm25"],"category":"exact-term","lang":"en"}
-{"id":"q003","query":"safeChildPath path traversal guard on api core filename","expected":["knowledge/dashboard-server-security"],"alt":["knowledge/control-plane-api","task/server-security-hardening"],"category":"exact-term","lang":"en"}
-{"id":"q004","query":"loopback bind 127.0.0.1 CSRF Origin Host check dashboard server","expected":["knowledge/dashboard-server-security"],"alt":["task/server-security-hardening"],"category":"exact-term","lang":"en"}
-{"id":"q005","query":"vault registry ~/.dreamcontext/vaults.json resolveVaultContextRoot","expected":["knowledge/vault-registry-multivault"],"alt":["task/v06-vault-management","feature/control-panel"],"category":"exact-term","lang":"en"}
+{"id":"q003","query":"safeChildPath path traversal guard on api core filename","expected":["knowledge/dashboard-server-security"],"alt":["knowledge/control-plane-api"],"category":"exact-term","lang":"en"}
+{"id":"q004","query":"loopback bind 127.0.0.1 CSRF Origin Host check dashboard server","expected":["knowledge/dashboard-server-security"],"alt":["knowledge/control-plane-api"],"category":"exact-term","lang":"en"}
+{"id":"q005","query":"vault registry ~/.dreamcontext/vaults.json resolveVaultContextRoot","expected":["knowledge/vault-registry-multivault"],"alt":["feature/control-panel"],"category":"exact-term","lang":"en"}
 {"id":"q006","query":"PATCH /api/config strict-pick platforms packs never spread body","expected":["knowledge/control-plane-api"],"alt":["feature/control-panel"],"category":"exact-term","lang":"en"}
 {"id":"q007","query":"RICE prioritization reach impact confidence effort score","expected":["feature/rice-prioritization"],"alt":[],"category":"exact-term","lang":"en"}
 {"id":"q008","query":"router plus niche specialists code review skill-aware","expected":["knowledge/multi-reviewer-pattern"],"alt":["feature/multi-review-skill"],"category":"exact-term","lang":"en"}
 {"id":"q009","query":"three reviewer parallel mandates critic pragmatist security","expected":["knowledge/three-reviewer-parallel-mandates-pattern"],"alt":["knowledge/decision-mem0-vs-bm25-recall"],"category":"exact-term","lang":"en"}
 {"id":"q010","query":"sleep debt scoring Alert Drowsy Sleepy Must Sleep thresholds","expected":["feature/sleep-consolidation"],"alt":[],"category":"exact-term","lang":"en"}
-{"id":"q011","query":"goal-skill orchestrator plan review implement validate 6-phase loop","expected":["feature/context-gate-and-goal-skill"],"alt":["task/goal-skill-and-related-skills-recall"],"category":"exact-term","lang":"en"}
+{"id":"q011","query":"goal-skill orchestrator plan review implement validate 6-phase loop","expected":["feature/context-gate-and-goal-skill"],"alt":[],"category":"exact-term","lang":"en"}
 {"id":"q012","query":"manifest bootstrap first-run never delete flag candidates","expected":["knowledge/manifest-bootstrap-safety-pattern"],"alt":["feature/manifest-based-install-update"],"category":"exact-term","lang":"en"}
 {"id":"q013","query":"why did we pick keyword search over a vector database for memory","expected":["knowledge/decision-mem0-vs-bm25-recall"],"alt":["feature/memory-recall-bm25"],"category":"paraphrase","lang":"en"}
 {"id":"q014","query":"how do agents remember things between sessions when they start fresh","expected":["feature/context-snapshot"],"alt":["feature/memory-recall-bm25"],"category":"paraphrase","lang":"en"}
-{"id":"q015","query":"protecting the local web server from malicious websites writing files","expected":["knowledge/dashboard-server-security"],"alt":["task/server-security-hardening"],"category":"paraphrase","lang":"en"}
+{"id":"q015","query":"protecting the local web server from malicious websites writing files","expected":["knowledge/dashboard-server-security"],"alt":["knowledge/control-plane-api"],"category":"paraphrase","lang":"en"}
 {"id":"q016","query":"having the LLM understand intent across languages instead of matching keywords","expected":["knowledge/haiku-recall-architecture"],"alt":["feature/memory-recall-bm25"],"category":"paraphrase","lang":"en"}
 {"id":"q017","query":"letting the agent debate a tough call with several personas before deciding","expected":["feature/council-skill"],"alt":[],"category":"paraphrase","lang":"en"}
 {"id":"q018","query":"cleaning up leftover files from old installs when upgrading","expected":["feature/manifest-based-install-update"],"alt":["knowledge/manifest-bootstrap-safety-pattern"],"category":"paraphrase","lang":"en"}
 {"id":"q019","query":"a numeric way to rank the backlog instead of gut feel","expected":["feature/rice-prioritization"],"alt":[],"category":"paraphrase","lang":"en"}
 {"id":"q020","query":"how the brain folds new learnings into core files while you work","expected":["feature/sleep-consolidation"],"alt":["feature/sleep-fanout-architecture"],"category":"paraphrase","lang":"en"}
 {"id":"q021","query":"the one-liner tagline and messaging rules we settled on for the product","expected":["knowledge/positioning"],"alt":[],"category":"paraphrase","lang":"en"}
-{"id":"q022","query":"how the rival Claude Code plugin with continuous learning compares to us","expected":["knowledge/competitive-analysis-ecc"],"alt":["task/ecc-inspired-roadmap"],"category":"paraphrase","lang":"en"}
-{"id":"q023","query":"splitting one big consolidation agent into focused parallel workers","expected":["feature/sleep-fanout-architecture"],"alt":["task/sleep-fanout-architecture"],"category":"paraphrase","lang":"en"}
+{"id":"q022","query":"how the rival Claude Code plugin with continuous learning compares to us","expected":["knowledge/competitive-analysis-ecc"],"alt":[],"category":"paraphrase","lang":"en"}
+{"id":"q023","query":"splitting one big consolidation agent into focused parallel workers","expected":["feature/sleep-fanout-architecture"],"alt":["knowledge/sleep-specialist-roster-decision"],"category":"paraphrase","lang":"en"}
 {"id":"q024","query":"opening the right project folder by name from the desktop","expected":["knowledge/vault-registry-multivault"],"alt":["feature/control-panel"],"category":"paraphrase","lang":"en"}
 {"id":"q025","query":"mem0 yerine neden BM25 seçtik","expected":["knowledge/decision-mem0-vs-bm25-recall"],"alt":["feature/memory-recall-bm25"],"category":"turkish","lang":"tr"}
 {"id":"q026","query":"hafıza geri çağırma nasıl çalışıyor","expected":["feature/memory-recall-bm25"],"alt":["knowledge/haiku-recall-architecture"],"category":"turkish","lang":"tr"}
-{"id":"q027","query":"dashboard sunucusu güvenlik açıkları nelerdi","expected":["knowledge/dashboard-server-security"],"alt":["task/server-security-hardening"],"category":"turkish","lang":"tr"}
+{"id":"q027","query":"dashboard sunucusu güvenlik açıkları nelerdi","expected":["knowledge/dashboard-server-security"],"alt":["knowledge/control-plane-api"],"category":"turkish","lang":"tr"}
 {"id":"q028","query":"uyku konsolidasyonu borç seviyeleri nasıl hesaplanıyor","expected":["feature/sleep-consolidation"],"alt":[],"category":"turkish","lang":"tr"}
 {"id":"q029","query":"görev önceliklendirme için sayısal puanlama","expected":["feature/rice-prioritization"],"alt":[],"category":"turkish","lang":"tr"}
 {"id":"q030","query":"projenin ürün konumlandırması ve sloganı","expected":["knowledge/positioning"],"alt":[],"category":"turkish","lang":"tr"}
@@ -35,26 +35,26 @@
 {"id":"q035","query":"multi-review skill'de router specialists'i nasıl dispatch ediyor","expected":["knowledge/multi-reviewer-pattern"],"alt":["feature/multi-review-skill"],"category":"mixed","lang":"mixed"}
 {"id":"q036","query":"ECC competitive analysis'te onların bizden üstün olduğu yerler","expected":["knowledge/competitive-analysis-ecc"],"alt":[],"category":"mixed","lang":"mixed"}
 {"id":"q037","query":"npm publish öncesi yapılması gereken checklist adımları","expected":["knowledge/publish-checklist"],"alt":[],"category":"mixed","lang":"mixed"}
-{"id":"q038","query":"goal-skill pack'in iteration cap'i ve escalate davranışı","expected":["feature/context-gate-and-goal-skill"],"alt":["task/goal-skill-and-related-skills-recall"],"category":"mixed","lang":"mixed"}
-{"id":"q039","query":"what's the current state of the dashboard control panel work","expected":["feature/control-panel"],"alt":["task/v06-control-panel-polish","task/web-dashboard"],"category":"recency","lang":"en"}
+{"id":"q038","query":"goal-skill pack'in iteration cap'i ve escalate davranışı","expected":["feature/context-gate-and-goal-skill"],"alt":[],"category":"mixed","lang":"mixed"}
+{"id":"q039","query":"what's the current state of the dashboard control panel work","expected":["feature/control-panel"],"alt":["feature/web-dashboard"],"category":"recency","lang":"en"}
 {"id":"q040","query":"latest memory recall design — are we on haiku now","expected":["knowledge/haiku-recall-architecture"],"alt":["knowledge/decision-mem0-vs-bm25-recall","feature/memory-recall-bm25"],"category":"recency","lang":"en"}
-{"id":"q041","query":"current sleep fan-out — how many specialists now","expected":["feature/sleep-fanout-architecture"],"alt":["task/sleep-fanout-3specialist-collapse","task/sleep-fanout-architecture"],"category":"recency","lang":"en"}
-{"id":"q042","query":"the in-progress memory uplift work right now","expected":["task/memory-uplift-handoff"],"alt":["task/memory-engine-360-roadmap"],"category":"recency","lang":"en"}
+{"id":"q041","query":"current sleep fan-out — how many specialists now","expected":["feature/sleep-fanout-architecture"],"alt":["knowledge/sleep-specialist-roster-decision"],"category":"recency","lang":"en"}
+{"id":"q042","query":"the in-progress memory uplift work right now","expected":["feature/memory-recall-bm25"],"alt":["knowledge/recall-engine-v2"],"category":"recency","lang":"en"}
 {"id":"q043","query":"latest decision on improving BM25 recall — link-aware or embeddings","expected":["knowledge/decision-link-aware-vs-embedding-recall"],"alt":["knowledge/decision-mem0-vs-bm25-recall"],"category":"recency","lang":"en"}
 {"id":"q044","query":"current multi-review pattern — is there still a coordinator agent","expected":["knowledge/multi-reviewer-pattern"],"alt":["feature/multi-review-skill"],"category":"recency","lang":"en"}
-{"id":"q045","query":"what we're actively building for the control panel polish slice","expected":["task/v06-control-panel-polish"],"alt":["task/v06-control-panel-vaults-tauri","feature/control-panel"],"category":"recency","lang":"en"}
-{"id":"q046","query":"newest pack install work in the dashboard","expected":["task/v06-dashboard-pack-install"],"alt":["feature/control-panel"],"category":"recency","lang":"en"}
+{"id":"q045","query":"what we're actively building for the control panel polish slice","expected":["feature/control-panel"],"alt":["knowledge/desktop-beta-tauri-multivault"],"category":"recency","lang":"en"}
+{"id":"q046","query":"newest pack install work in the dashboard","expected":["feature/optional-skill-packs"],"alt":["feature/control-panel"],"category":"recency","lang":"en"}
 {"id":"q047","query":"context-snapshot","expected":["feature/context-snapshot"],"alt":[],"category":"field-match","lang":"en"}
 {"id":"q048","query":"vault-registry-multivault","expected":["knowledge/vault-registry-multivault"],"alt":[],"category":"field-match","lang":"en"}
 {"id":"q049","query":"competitive analysis everything-claude-code","expected":["knowledge/competitive-analysis-ecc"],"alt":[],"category":"field-match","lang":"en"}
 {"id":"q050","query":"control-plane-api","expected":["knowledge/control-plane-api"],"alt":[],"category":"field-match","lang":"en"}
 {"id":"q051","query":"publish checklist","expected":["knowledge/publish-checklist"],"alt":[],"category":"field-match","lang":"en"}
 {"id":"q052","query":"manifest based install update","expected":["feature/manifest-based-install-update"],"alt":["knowledge/manifest-bootstrap-safety-pattern"],"category":"field-match","lang":"en"}
-{"id":"q053","query":"server security hardening task","expected":["task/server-security-hardening"],"alt":["knowledge/dashboard-server-security"],"category":"field-match","lang":"en"}
+{"id":"q053","query":"server security hardening task","expected":["knowledge/dashboard-server-security"],"alt":["knowledge/control-plane-api"],"category":"field-match","lang":"en"}
 {"id":"q054","query":"multi-product support tags onboarding domain","expected":["feature/multi-product-support"],"alt":[],"category":"field-match","lang":"en"}
 {"id":"q055","query":"the gold-set-first rule for deciding when to improve recall","expected":["knowledge/decision-link-aware-vs-embedding-recall"],"alt":["knowledge/decision-mem0-vs-bm25-recall"],"category":"topical-adjacency","lang":"en"}
 {"id":"q056","query":"wikilink traversal to boost related docs in BM25","expected":["knowledge/decision-link-aware-vs-embedding-recall"],"alt":["knowledge/decision-mem0-vs-bm25-recall"],"category":"topical-adjacency","lang":"en"}
 {"id":"q057","query":"why the sleep finalizer agent would have undone the 5 to 3 collapse","expected":["knowledge/decision-mem0-vs-bm25-recall"],"alt":["feature/sleep-fanout-architecture"],"category":"topical-adjacency","lang":"en"}
 {"id":"q058","query":"keeping inquirer prompts out of the dashboard server bundle","expected":["knowledge/control-plane-api"],"alt":["feature/control-panel"],"category":"topical-adjacency","lang":"en"}
-{"id":"q059","query":"the neuroscience paper behind bookmarks and consolidation competition","expected":["task/neuroscience-improvements"],"alt":["feature/sleep-consolidation"],"category":"topical-adjacency","lang":"en"}
-{"id":"q060","query":"post-edit auto-format and tsc check gates we adopted from a competitor","expected":["task/code-quality-hooks"],"alt":["knowledge/competitive-analysis-ecc"],"category":"topical-adjacency","lang":"en"}
+{"id":"q059","query":"the neuroscience paper behind bookmarks and consolidation competition","expected":["feature/sleep-consolidation"],"alt":[],"category":"topical-adjacency","lang":"en"}
+{"id":"q060","query":"post-edit auto-format and tsc check gates we adopted from a competitor","expected":["knowledge/competitive-analysis-ecc"],"alt":[],"category":"topical-adjacency","lang":"en"}

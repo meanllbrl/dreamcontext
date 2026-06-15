@@ -45,9 +45,7 @@ The sleep-product protocol (Pass B6) owns data-structures:
 3. **Pinnable**: schemas can be `pinned: true` to auto-load in the snapshot.
 4. **Dashboard SQL highlighting**: data-structures appear under the Knowledge view with full SQL syntax highlighting (highlight.js, theme-aware). **Requires the body to be a fenced \`\`\`sql block** — a bare `--` comment body renders as plain markdown paragraphs and receives no highlighting. The `migrateDataStructures` helper automatically wraps unfenced bodies in the fence; new projects get the fenced template via `dreamcontext init`.
 
-## Data-Structures Frontmatter Convention
-
-```yaml
+## Data-Structures Frontmatter Convention```yaml
 ---
 name: default
 type: data-structures
@@ -56,10 +54,7 @@ tags:
   - data-structures
   - database
   - schema
----
-```
-
-## Body Convention: ```sql Fenced Block
+---```## Body Convention: ```sql Fenced Block
 
 Every data-structures file body MUST be a single `\`\`\`sql` fenced block. Write all documentation as SQL comments (`-- ...`) inside the fence. This is the only format the dashboard highlights.
 

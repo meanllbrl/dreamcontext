@@ -4,6 +4,7 @@ import {
   useLauncherDefaults,
   useLauncherCatalog,
   useScaffoldProject,
+  useRegisterVault,
   type CliInstallResult,
   type ScaffoldPayload,
 } from '../hooks/useLauncher';
@@ -55,6 +56,7 @@ export function OnboardingWizard({ onClose, onReady }: Props) {
   const defaults = useLauncherDefaults();
   const catalog = useLauncherCatalog();
   const scaffold = useScaffoldProject();
+  const register = useRegisterVault();
 
   const [mode, setMode] = useState<Mode | null>(null);
   const [stepIndex, setStepIndex] = useState(0);
@@ -111,17 +113,32 @@ export function OnboardingWizard({ onClose, onReady }: Props) {
       setParentDir(picked);
       return;
     }
-    // Existing-folder pick: probe it, then route into the wizard. We no longer
-    // auto-open a folder that already has _dream_context — the user should still
-    // get to pick platforms + skill packs (which can install/refresh on connect).
+    // Existing-folder pick: probe it. A folder that ALREADY has a _dream_context/
+    // directory is a real project — there is nothing to set up, so we skip the
+    // quiz/setup entirely: just register it as a vault and open it. Only a folder
+    // WITHOUT _dream_context routes into the full setup flow.
     setProjectPath(picked);
     try {
       const probe = await probeFolder(picked);
       setName(probe.name);
       if (!stack && probe.stack) setStack(probe.stack);
       setHasContext(probe.hasContext);
-      // hasContext → STEPS_EXISTING_HASCTX (path, platforms, packs, review): step 1
-      // is 'platforms'. No context → full quiz: step 1 is 'description'.
+      if (probe.hasContext) {
+        // Register, then hand straight off to open the vault window. No init,
+        // no setup, no quiz. addVault throws if this name/path is ALREADY
+        // registered — that's not a failure here: the project simply already
+        // exists in the launcher, so we still open it. Any other error
+        // (e.g. path vanished) surfaces to the user.
+        try {
+          await register.mutateAsync({ name: probe.name, path: picked });
+        } catch (regErr) {
+          const msg = regErr instanceof Error ? regErr.message : String(regErr);
+          if (!/already registered/i.test(msg)) throw regErr;
+        }
+        onReady(probe.name);
+        return;
+      }
+      // No context → full quiz: step 1 is 'description'.
       setStepIndex(1);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

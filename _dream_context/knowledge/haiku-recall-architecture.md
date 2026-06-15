@@ -2,7 +2,7 @@
 id: haiku-recall-architecture
 name: "Haiku Single-Call Recall Architecture"
 description: "Why dreamcontext replaced multi-query BM25 keyword extraction with a single Haiku LLM call for intent-aware recall in the UserPromptSubmit hook. Covers the architecture, security hardening (execFileSync, corpus cap), fallback behaviour, multi-review security findings that shaped the implementation, and the relationship to the existing BM25 layer."
-tags: ["architecture", "decisions", "memory", "search"]
+tags: ["architecture", "decisions", "memory", "topic:recall"]
 pinned: false
 date: "2026-05-26"
 ---
@@ -21,9 +21,7 @@ The fix: replace keyword extraction with a single `claude --model haiku` call th
 
 **Key file:** `src/lib/recall-query-extractor.ts`
 
-### Flow (UserPromptSubmit hook, default mode)
-
-```
+### Flow (UserPromptSubmit hook, default mode)```
 user prompt (stdin)
   └─→ [haikuRecall(prompt, root)]
         ├─→ buildCorpus(root)           // same corpus as BM25 recall
@@ -43,10 +41,7 @@ user prompt (stdin)
         └─→ map doc keys → CorpusDoc[]  // resolved against live corpus, unknown keys dropped
               ├─→ RecallHit[]           // Haiku hits returned to hook
               ├─→ 'skip'               // greeting/ack, no injection
-              └─→ null                 // error → fallback to raw BM25
-```
-
-### Mode matrix (`DREAMCONTEXT_RECALL_MODE`)
+              └─→ null                 // error → fallback to raw BM25```### Mode matrix (`DREAMCONTEXT_RECALL_MODE`)
 
 | Value | Behaviour |
 |---|---|
@@ -54,9 +49,7 @@ user prompt (stdin)
 | `raw` | BM25 only, no external process |
 | `off` | No recall injection |
 
-### Haiku system prompt structure
-
-```
+### Haiku system prompt structure```
 You are a memory recall filter for an AI coding agent. Given a user prompt and a corpus index of project documents, select 0-3 documents that are DIRECTLY relevant to what the user needs.
 
 Rules:
@@ -69,10 +62,7 @@ Rules:
 Corpus:
 [slug + description + tags, one line per doc, capped at 8K chars]
 
-Return ONLY valid JSON: {"docs":["type/slug","type/slug"],"skip":false}
-```
-
-## Security Hardening (from Multi-Review Findings)
+Return ONLY valid JSON: {"docs":["type/slug","type/slug"],"skip":false}```## Security Hardening (from Multi-Review Findings)
 
 The Haiku call was multi-reviewed before shipping. Four findings were addressed:
 

@@ -83,6 +83,24 @@ describe('local tag edits push to the remote (per-tag endpoints)', () => {
     expect(remoteTags()).toEqual(['a', 'version:v2']);
   });
 
+  it('a version change leaves exactly one version tag even when the remote tag drifted from the base snapshot', async () => {
+    await backend.create({ name: 'Ver Drift', tags: ['a'], version: 'v1', variant: 'cli' });
+    await backend.sync('push');
+    expect(remoteTags()).toEqual(['a', 'version:v1']);
+
+    // Simulate drift: an external edit leaves a stale version tag on the remote
+    // that the base snapshot never recorded (e.g. version changed via a bound
+    // custom field, not the tag).
+    const remote = [...fake.tasks.values()][0];
+    remote.tags.push({ name: 'version:v-stale' });
+    expect(remoteTags()).toEqual(['a', 'version:v-stale', 'version:v1']);
+
+    await backend.updateFields('ver-drift', { version: 'v2', updated_at: '2026-06-11' });
+    await backend.sync('push');
+    // Both the diffed-away version:v1 AND the drifted version:v-stale are gone.
+    expect(remoteTags()).toEqual(['a', 'version:v2']);
+  });
+
   it('tag pushes converge: the follow-up sync is a total no-op', async () => {
     await backend.create({ name: 'Tag Conv', tags: ['a'], variant: 'cli' });
     await backend.sync('both');

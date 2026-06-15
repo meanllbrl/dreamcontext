@@ -20,6 +20,12 @@ import { generateSnapshot, generateSubagentBriefing } from './snapshot.js';
 import { listStaleRecs } from '../../lib/marketing/snapshot.js';
 import { isMarketingEnvPath } from '../../lib/marketing/path-guards.js';
 import { buildCorpus, bm25Search, loadSkillDocs, type RecallHit } from '../../lib/recall.js';
+import {
+  crossVaultRecall,
+  resolveConnectedVaults,
+  currentVaultTarget,
+  type FederatedHit,
+} from '../../lib/federation-recall.js';
 import { haikuRecall } from '../../lib/recall-query-extractor.js';
 import { ensureTaxonomyFile } from '../../lib/taxonomy.js';
 import { readVersionCache, isCacheFresh, refreshVersionCache, maybeAutoUpgrade } from '../../lib/version-check.js';
@@ -993,6 +999,42 @@ export function registerHookCommand(program: Command): void {
                   }
                 }
                 if (bumped) writeSleepState(root, state);
+              }
+
+              // ── Cross-vault LIVE READ (read-only federation) ──────────────
+              // When this vault has read connections (out/both) to shareable
+              // peers, surface THEIR canonical docs at query time — a live
+              // reference, never a copy. Zero added cost when there are no
+              // connections: resolveConnectedVaults returns only the current
+              // vault and we skip entirely.
+              try {
+                const { target: currentTarget } = currentVaultTarget(dirname(root));
+                const peerTargets = resolveConnectedVaults(currentTarget, root).filter(
+                  (t) => t.current !== true,
+                );
+                if (peerTargets.length > 0) {
+                  const { hits: peerHits } = crossVaultRecall(prompt, {
+                    vaults: peerTargets,
+                    topK: 3,
+                  });
+                  const strong = peerHits.filter((h: FederatedHit) => h.score >= 2.0);
+                  if (strong.length > 0) {
+                    const lines: string[] = ['', `— Connected peers (live read, top ${strong.length}) —`];
+                    for (const h of strong) {
+                      lines.push(`  [${h.doc.type}] ${h.vault}::${h.doc.relPath}`);
+                      if (h.snippet) lines.push(`    Why: ${h.snippet}`);
+                      else if (h.doc.description) lines.push(`    ${h.doc.description}`);
+                    }
+                    lines.push(
+                      '  (Live reference — recall the source vault directly with ' +
+                        '`dreamcontext memory recall <q> --vault <name>`. Nothing is copied here.)',
+                    );
+                    console.log(lines.join('\n'));
+                    hadRecallHits = true;
+                  }
+                }
+              } catch (peerErr) {
+                if (process.env.DREAMCONTEXT_DEBUG) console.error('[recall] peer read error:', (peerErr as Error).message ?? peerErr);
               }
             }
           }

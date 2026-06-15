@@ -251,4 +251,23 @@ describe('clickup PUSH (M3, mocked transport)', () => {
     expect(queue[0].id).toMatch(/^op_/);
     expect(queue[0].slug).toBe('queued');
   });
+
+  it('a push that fails after retries is recorded in report.failedPushes (never a silent partial)', async () => {
+    await backend.create({ name: 'Drops Out', variant: 'cli' });
+
+    // Rate-limited past the adapter's retries → the task cannot push.
+    fake.setFailMode({ kind: 'http', status: 429 });
+    const failed = await backend.sync('push');
+    expect(failed.failedPushes).toContain('drops-out');
+    expect(failed.errors.length).toBeGreaterThan(0);
+    // Still drift-flagged so the next pass re-selects it.
+    expect(syncStateFile().tasks['drops-out'].pendingPush).toBe(true);
+
+    // Recovery: a clean run pushes it and clears the failure list.
+    fake.setFailMode(null);
+    const ok = await backend.sync('push');
+    expect(ok.failedPushes).toEqual([]);
+    expect(ok.created).toBe(1);
+    expect(fake.tasks.size).toBe(1);
+  });
 });

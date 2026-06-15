@@ -146,8 +146,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 
 ## Embedded Files
 %%
-## Drawing
-```json
+## Drawing```json
 {
 	"type": "excalidraw",
 	"version": 2,
@@ -3962,6 +3961,4 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 		"viewBackgroundColor": "#fbfbfb"
 	},
 	"files": {}
-}
-```
-%%
+}```%%

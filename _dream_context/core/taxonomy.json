@@ -25,7 +25,9 @@
       "topic:sleep",
       "topic:taxonomy",
       "topic:domain",
-      "topic:federation"
+      "topic:federation",
+      "topic:clickup",
+      "topic:desktop"
     ]
   },
   "bareTags": [

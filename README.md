@@ -217,7 +217,7 @@ your-project/
 │   │   ├── sleep-tasks.md       # RemSleep specialists —
 │   │   ├── sleep-state.md       #   the agent fans out to
 │   │   ├── sleep-product.md     #   these three in parallel
-│   │   ├── sleep-federation.md  # conditional: when peer connections exist
+│   │   ├── sleep-federation.md  # disabled (read-only federation; copy-sync parked on roadmap)
 │   │   └── sleep-migration.md   # conditional: when a migration is pending
 │   └── settings.json           # 7 hooks (see Commands → System)
 ```
@@ -372,7 +372,7 @@ dreamcontext app status       # Show installed app version and state
 ```
 
 - **Multi-vault launcher.** The app lists every registered [vault](#federation) and opens each project in its **own window** — multi-vault is multi-window over one shared Node server, with each window pinned to its vault via a request header. A per-project status dot (green up-to-date / yellow needs-update / red folder-gone) lets you run `update` from the UI.
-- **Federation network view.** The launcher also renders your projects as an interactive board (Excalidraw-style cards) where you wire two kinds of relationship by clicking source → target: **reads** (violet — one project reads another's memory live during recall, gated by the target being Readable) and **sync** (teal — at sleep, a project's new knowledge is pushed into a listener's brain). Drawing a sync sets both sides' consent in one gesture; a node panel and an always-on "Connections" list spell out in plain language who reads and who listens to whom, each removable with one click.
+- **Federation network view.** The launcher also renders your projects as an interactive board (Excalidraw-style cards) where you wire a **reads** relationship by clicking source → target: a violet wire means one project reads another's canonical memory **live** during recall (a reference, never a copy), gated by the target being Readable. A node panel and an always-on "Connections" list spell out in plain language who reads whom, each removable with one click. (Copy-based "sync" is parked on the roadmap — federation only reads, live.)
 - **In-app onboarding, no terminal.** A quiz-style wizard creates a brand-new project (native folder picker) or initializes an existing folder, scaffolds `_dream_context/`, runs `setup`, and best-effort installs the global CLI. It's deterministic and LLM-free; the success screen hands you a prompt to paste into Claude Code for the rich enrichment pass.
 - **Sleepy — notch quick-capture _(beta)_.** A global-hotkey companion that drops a transparent notch panel over whatever you're doing, with an animated mascot whose mood follows your sleep debt. Pick a vault, type a thought, and choose a mode:
   - **Learn** — saves the note to project memory, then enriches it.
@@ -453,7 +453,7 @@ Hook injection is **ON by default**: top hits are auto-surfaced to the agent on 
 
 ## Federation
 
-Most people end up with more than one dreamcontext project. **Federation** lets those projects discover each other, recall across each other, and quietly share consolidated knowledge — all opt-in, all local, no server in the middle.
+Most people end up with more than one dreamcontext project. **Federation** lets those projects discover each other and recall across each other **live** — each vault stays the single source of truth for its own knowledge, and sees its peers' canonical knowledge by reference at query time. All opt-in, all local, no server in the middle, and **nothing is ever copied between vaults**.
 
 It starts with a **global vault registry** — every project you register is a *vault* the CLI (and the [desktop app](#desktop-app)) can address by name.
 
@@ -474,18 +474,20 @@ dreamcontext memory recall "<query>" --connected             # Span this vault +
 dreamcontext memory recall "<query>" --all-vaults            # Span this vault + every shareable vault
 ```
 
-**Connections + the sleep-driven digest inbox.** Connect two vaults and, during sleep consolidation, a conditional `sleep-federation` specialist pushes a recall-filtered **digest** of what changed into each consenting peer's inbox. The receiving project ingests those entries as first-class knowledge on its next drain — so a decision made in one repo can surface in a sibling repo without copy-paste.
+**Connections = a live read edge.** Connect to a peer and your recall (and the per-prompt recall hook) surfaces that peer's **canonical** docs live — a reference, never a copy. A decision made in one repo shows up in a sibling repo's recall *as it is in the source*, always current, with no stale duplicate left behind.
 
 ```bash
-dreamcontext connect <vault> --direction both --topics api,auth   # Connect to a peer (out | in | both)
+dreamcontext connect <vault> --direction out --topics api,auth   # Connect to read a peer (out = read)
 dreamcontext connections                  # Inspect this vault's federation connections
 dreamcontext disconnect <vault>           # Remove a connection
-dreamcontext federation status            # Inbox counts + per-connection sync watermarks
-dreamcontext federation sync --dry-run    # Preview the digests a sleep cycle would push
-dreamcontext federation drain             # Ingest pending inbox entries as knowledge, then consume them
+dreamcontext federation peers             # Compact summary of readable peers (ambient awareness)
+dreamcontext federation status            # Connections + any leftover federated copies
+dreamcontext federation purge --all       # Remove leftover federated:true copies from the old sync path
 ```
 
-Federation is **read-only and consent-gated by construction**: the browser-reachable dashboard route can only *preview* digests, never write into a peer; all writes live in the CLI (run by the sleep specialist), where the consent rule and watermark advance stay in one auditable place. Every ingested entry carries its provenance (origin vault, entry id, source timestamp). Dead or unreachable peers are marked stale and skipped, warned once.
+A peer is readable when your connection to it is `out`/`both`, it isn't stale, **and** it has opted in with `config shareable on`. Reads happen live at recall time; the transitive-leak guard keeps a third vault from seeing what merely passed through this one.
+
+> **Note — copy-based sync is parked on the roadmap.** Earlier builds pushed a lossy, truncated *digest* into peers at sleep (`federation sync`) and ingested it as `federated: true` copies (`federation drain`). That broke single-source-of-truth: copies went stale the moment the source changed and re-edits bred duplicates. Those verbs are now **inert no-ops** and the `sleep-federation` specialist is no longer dispatched. If a vault still holds old copies, clear them with `federation purge`. A redesigned opt-in offline-mirror mode may return later — its one genuine advantage is surviving a peer going offline, which live read can't.
 
 ## Commands
 
@@ -681,12 +683,13 @@ dreamcontext vaults discover [root] --register  # …and register the new ones
 dreamcontext vaults list                 # List registered vaults
 dreamcontext vaults remove <name>        # Unregister a vault
 dreamcontext config shareable <on|off>   # Allow/deny this vault being recalled by peers
-dreamcontext connect <vault> [--direction out|in|both] [--topics a,b]  # Connect to a peer
+dreamcontext connect <vault> [--direction out|in|both] [--topics a,b]  # Connect to read a peer (out = read)
 dreamcontext connections                 # Inspect federation connections
 dreamcontext disconnect <vault>          # Remove a connection
-dreamcontext federation status           # Inbox counts + per-connection sync watermarks
-dreamcontext federation sync [--dry-run] # Push (or preview) digests into consenting peers
-dreamcontext federation drain            # Ingest pending inbox entries as knowledge
+dreamcontext federation peers            # Compact summary of readable peers
+dreamcontext federation status           # Connections + any leftover federated copies
+dreamcontext federation purge --all      # Remove leftover federated:true copies (old sync path)
+# federation sync / drain are inert no-ops — copy-based sync is parked on the roadmap
 ```
 
 See the [Federation](#federation) section above for the full workflow.

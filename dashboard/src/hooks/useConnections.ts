@@ -62,7 +62,13 @@ export function useAddConnection() {
     mutationFn: (payload: ConnectPayload) =>
       api.post<ConnectionsResponse>('/connections', payload),
     onSuccess: () => {
+      // Invalidate the per-project list AND the cross-project launcher surfaces
+      // (vaults + federation graph + status) so an edge added/removed here shows
+      // up in the launcher graph without an app restart.
       queryClient.invalidateQueries({ queryKey: ['connections'] });
+      queryClient.invalidateQueries({ queryKey: ['vaults'] });
+      queryClient.invalidateQueries({ queryKey: ['launcher-status'] });
+      queryClient.invalidateQueries({ queryKey: ['launcher-federation-graph'] });
     },
   });
 }
@@ -75,6 +81,9 @@ export function useRemoveConnection() {
       api.del<ConnectionsResponse>(`/connections/${encodeURIComponent(vault)}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['connections'] });
+      queryClient.invalidateQueries({ queryKey: ['vaults'] });
+      queryClient.invalidateQueries({ queryKey: ['launcher-status'] });
+      queryClient.invalidateQueries({ queryKey: ['launcher-federation-graph'] });
     },
   });
 }

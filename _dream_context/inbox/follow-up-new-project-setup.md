@@ -33,9 +33,7 @@ built-in `WebviewWindow` API ile açılıyor.
 
 ---
 
-## Hızlı referans (manuel yapmak istersen)
-
-```bash
+## Hızlı referans (manuel yapmak istersen)```bash
 # YENİ proje
 mkdir -p ~/projects/<ad> && cd ~/projects/<ad>
 dreamcontext setup                 # _dream_context/ + skill + instructions
@@ -47,5 +45,4 @@ cd /path/to/existing
 dreamcontext setup
 dreamcontext vaults add "<ad>" "$(pwd)"
 
-dreamcontext vaults list           # doğrula → launcher'da görünür
-```
+dreamcontext vaults list           # doğrula → launcher'da görünür```

@@ -34,8 +34,7 @@ assemble ^yFbQsBum
 
 ## Embedded Files
 %%
-## Drawing
-```json
+## Drawing```json
 {
 	"type": "excalidraw",
 	"version": 2,
@@ -618,6 +617,4 @@ assemble ^yFbQsBum
 		"viewBackgroundColor": "#ffffff"
 	},
 	"files": {}
-}
-```
-%%
+}```%%

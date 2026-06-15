@@ -36,22 +36,15 @@ The review established that these are **must-fix before first npm publish**. The
 
 ## The Three Mitigations (v0.5.0)
 
-### 1. Loopback bind (`src/server/index.ts`)
-
-```typescript
+### 1. Loopback bind (`src/server/index.ts`)```typescript
 export interface ServerOptions {
   host?: string; // Defaults to '127.0.0.1'
 }
 
 const { host = '127.0.0.1' } = options;
-server.listen(port, host, () => { ... });
-```
+server.listen(port, host, () => { ... });```The server now defaults to `127.0.0.1`. A `--host` flag exists for power users who knowingly want network exposure (dashboard.ts passes it through), but the default is safe. A warning is printed when `host !== '127.0.0.1'`.
 
-The server now defaults to `127.0.0.1`. A `--host` flag exists for power users who knowingly want network exposure (dashboard.ts passes it through), but the default is safe. A warning is printed when `host !== '127.0.0.1'`.
-
-### 2. Origin/Host CSRF check (`src/server/middleware.ts`)
-
-```typescript
+### 2. Origin/Host CSRF check (`src/server/middleware.ts`)```typescript
 const LOCAL_ORIGIN_RE = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i;
 
 export function isCrossSiteWrite(req: IncomingMessage): boolean {
@@ -60,24 +53,16 @@ export function isCrossSiteWrite(req: IncomingMessage): boolean {
   const origin = req.headers.origin;
   if (!origin) return false;  // non-browser clients (curl, CLI) have no Origin
   return !LOCAL_ORIGIN_RE.test(origin);
-}
-```
+}```Mutating requests (`POST/PUT/PATCH/DELETE`) from a cross-site origin are rejected with 403. Non-browser clients (the CLI itself, `curl`) send no `Origin` header and pass through. CORS now reflects only loopback origins rather than `*`, so cross-origin reads from a third-party page are also blocked.
 
-Mutating requests (`POST/PUT/PATCH/DELETE`) from a cross-site origin are rejected with 403. Non-browser clients (the CLI itself, `curl`) send no `Origin` header and pass through. CORS now reflects only loopback origins rather than `*`, so cross-origin reads from a third-party page are also blocked.
-
-### 3. Path-traversal guard (`src/server/safe-path.ts`)
-
-```typescript
+### 3. Path-traversal guard (`src/server/safe-path.ts`)```typescript
 export function safeChildPath(baseDir: string, child: string): string | null {
   if (!child || child.includes('\0')) return null;
   const base = resolve(baseDir);
   const target = resolve(base, child);
   if (target !== base && !target.startsWith(base + sep)) return null;
   return target;
-}
-```
-
-Every route handler that builds a filesystem path from request input now calls `safeChildPath(dir, filename)` and returns 400 on null. This covers `GET /api/core/:filename`, `PUT /api/core/:filename`, `GET /api/knowledge/:slug`, and `PATCH /api/knowledge/:slug`.
+}```Every route handler that builds a filesystem path from request input now calls `safeChildPath(dir, filename)` and returns 400 on null. This covers `GET /api/core/:filename`, `PUT /api/core/:filename`, `GET /api/knowledge/:slug`, and `PATCH /api/knowledge/:slug`.
 
 ## Tests
 

@@ -98,12 +98,22 @@ describe('clickup members + person-tag assignee bridge', () => {
     expect(remote.tags.map((t) => t.name)).toEqual(['x']);
   });
 
-  it('an explicit assignee field wins over the person tag', async () => {
+  it('multiple person:<slug> tags push as multiple assignees', async () => {
+    await backend.create({ name: 'Co Owned', tags: ['person:mehmet-nuraydin', 'person:alice-smith'], variant: 'cli' });
+    await backend.sync('push');
+    const remote = [...fake.tasks.values()][0];
+    // Slugs sort → alice-smith (501) before mehmet-nuraydin (502).
+    expect(remote.assignees.map((a) => a.id).sort()).toEqual([501, 502]);
+    // person: tags never travel as plain remote tags.
+    expect(remote.tags.map((t) => t.name)).toEqual([]);
+  });
+
+  it('a legacy assignee field is folded in alongside person tags (union)', async () => {
     await backend.create({ name: 'Field Owner', tags: ['person:mehmet-nuraydin'], variant: 'cli' });
     await backend.updateFields('field-owner', { assignee: 'alice-smith', updated_at: '2026-06-11' });
     await backend.sync('push');
     const remote = [...fake.tasks.values()][0];
-    expect(remote.assignees.map((a) => a.id)).toEqual([501]);
+    expect(remote.assignees.map((a) => a.id).sort()).toEqual([501, 502]);
   });
 
   it('an unknown person slug pushes without an assignee (no crash, no bogus id)', async () => {
@@ -113,19 +123,21 @@ describe('clickup members + person-tag assignee bridge', () => {
     expect([...fake.tasks.values()][0].assignees).toEqual([]);
   });
 
-  it('pull maps a remote assignee to assignee field + person:<slug> tag, and stays convergent', async () => {
+  it('pull maps remote assignees to person:<slug> tags, and stays convergent', async () => {
     await backend.create({ name: 'Assigned Remotely', variant: 'cli' });
     await backend.sync('push');
     const rid = [...fake.tasks.keys()][0];
 
-    // Someone assigns it on ClickUp.
-    fake.editTask(rid, { assignees: [{ id: 502 }] });
+    // Someone assigns it (to two people) on ClickUp.
+    fake.editTask(rid, { assignees: [{ id: 502 }, { id: 501 }] });
     const report = await backend.sync('both');
     expect(report.errors).toEqual([]);
 
     const merged = mirror('assigned-remotely');
-    expect(merged).toContain('assignee: mehmet-nuraydin');
+    // Assignment lives entirely in person tags now — no `assignee:` field.
+    expect(merged).not.toContain('assignee:');
     expect(merged).toContain('person:mehmet-nuraydin');
+    expect(merged).toContain('person:alice-smith');
 
     // Convergence: the derived person tag must not register as local drift.
     fake.requests.length = 0;
@@ -146,7 +158,7 @@ describe('clickup members + person-tag assignee bridge', () => {
     await backend.sync('both');
 
     const merged = mirror('handover');
-    expect(merged).toContain('assignee: mehmet-nuraydin');
+    expect(merged).not.toContain('assignee:');
     expect(merged).toContain('person:mehmet-nuraydin');
     expect(merged).not.toContain('person:alice-smith');
   });

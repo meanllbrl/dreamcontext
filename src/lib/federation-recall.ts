@@ -95,7 +95,7 @@ export function crossVaultRecall(
   opts: CrossVaultRecallOptions,
 ): CrossVaultRecallResult {
   const home = opts.home;
-  const topK = opts.topK ?? 5;
+  const topK = opts.topK ?? 10;
   const now = opts.now ?? new Date();
 
   const hits: Array<{ hit: FederatedHit; current: boolean; order: number }> = [];

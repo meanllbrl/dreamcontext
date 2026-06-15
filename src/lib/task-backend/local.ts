@@ -447,6 +447,7 @@ ${input.why || '(To be defined)'}
       conflicts: [],
       pendingQueue: 0,
       errors: [],
+      failedPushes: [],
       watermark: null,
       noop: true,
     };

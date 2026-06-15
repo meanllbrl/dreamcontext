@@ -4,7 +4,7 @@ status: "in_review"
 created: "2026-05-09"
 updated: "2026-06-09"
 released_version: null
-tags: ["agents", "sleep", "consolidation"]
+tags: ["agents", "sleep", "topic:sleep"]
 related_tasks: ["sleep-fanout-architecture"]
 ---
 

@@ -78,8 +78,7 @@ Agents accumulate knowledge and make decisions across many sessions, but that kn
 
 **Sleep state file**: `_dream_context/state/.sleep.json`
 
-**Schema** (see also `_dream_context/core/6.system_flow.md` for full annotated schema):
-```json
+**Schema** (see also `_dream_context/core/6.system_flow.md` for full annotated schema):```json
 {
   "debt": 4,
   "last_sleep": "2026-02-24",
@@ -140,9 +139,7 @@ Agents accumulate knowledge and make decisions across many sessions, but that kn
       "bookmark_count": 1
     }
   ]
-}
-```
-
+}```
 **Hook flow**:
 1. Session ends → Claude Code fires Stop hook → `hook stop` reads stdin JSON, analyzes transcript, prepends session record to `sessions[]`, adds score to `debt`, writes state.
 2. Next session starts → Claude Code fires SessionStart hook → `hook session-start` finds sessions with `score: null`, analyzes their transcripts, updates scores and debt. Then generates and outputs the snapshot with any consolidation directive prepended.

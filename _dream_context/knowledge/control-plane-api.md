@@ -21,21 +21,14 @@ The v0.6 control-plane adds four REST routes (`/api/config`, `/api/packs`, `/api
 
 ## Route conventions
 
-All four new routes follow the same handler signature used by existing routes:
-
-```ts
-handleXxx(req: IncomingMessage, res: ServerResponse, params: Record<string, string>, contextRoot: string): void
-```
-
-`contextRoot` is the `_dream_context/` directory path. The project root is `dirname(contextRoot)`. Routes must compute the project root themselves — do not assume `process.cwd()`.
+All four new routes follow the same handler signature used by existing routes:```ts
+handleXxx(req: IncomingMessage, res: ServerResponse, params: Record<string, string>, contextRoot: string): void````contextRoot` is the `_dream_context/` directory path. The project root is `dirname(contextRoot)`. Routes must compute the project root themselves — do not assume `process.cwd()`.
 
 ## PATCH /api/config — strict-pick, never spread
 
 The config PATCH is the only mutating control-plane route. It accepts `{ platforms?, packs? }`.
 
-**Invariant:** the request body is NEVER spread into the patch object. A new `patch` object is built by extracting `platforms` and `packs` by name after individual validation:
-
-```ts
+**Invariant:** the request body is NEVER spread into the patch object. A new `patch` object is built by extracting `platforms` and `packs` by name after individual validation:```ts
 const patch: Partial<SetupConfig> = {};
 if (body.platforms !== undefined) {
   // validate via parsePlatformList + PLATFORM_CATALOG
@@ -44,10 +37,7 @@ if (body.platforms !== undefined) {
 if (body.packs !== undefined) {
   // validate: Array.isArray && every(el => typeof el === 'string' && el.length > 0)
   patch.packs = ...;
-}
-```
-
-This prevents prototype-pollution attacks (`__proto__`, `constructor.prototype`, etc.) — a crafted JSON body cannot overwrite `Object.prototype` fields via the patch.
+}```This prevents prototype-pollution attacks (`__proto__`, `constructor.prototype`, etc.) — a crafted JSON body cannot overwrite `Object.prototype` fields via the patch.
 
 Validation error codes: `invalid_body` (non-JSON), `invalid_platforms` (unknown platform id), `invalid_packs` (non-string or empty-string element), `no_changes` (both fields absent from body).
 
@@ -84,36 +74,22 @@ All seven slug→path joins in route handlers go through `safeChildPath(<dir>, \
 
 Location: `src/server/safe-path.ts` — `safeChildPath(baseDir: string, filename: string): string | null`.
 
-Helper pattern for DRY:
-```ts
+Helper pattern for DRY:```ts
 function resolveTaskPath(contextRoot: string, slug: string): string | null {
   return safeChildPath(getStateDir(contextRoot), `${slug}.md`);
-}
-```
-
+}```
 ## Catalog extraction — keep interactive deps out of server bundle
 
-`src/lib/catalog.ts` was extracted from `src/cli/commands/install-skill.ts` specifically because `install-skill.ts:7` is:
-
-```ts
-import { checkbox, confirm } from '@inquirer/prompts';
-```
-
-This is a **top-level static import**. Any server route that imports anything from `install-skill.ts` — even a pure utility like `loadCatalog` — will pull `@inquirer/prompts` and its TTY-manipulation deps into the tsup server bundle. This breaks on headless/non-TTY environments and bloats the bundle.
+`src/lib/catalog.ts` was extracted from `src/cli/commands/install-skill.ts` specifically because `install-skill.ts:7` is:```ts
+import { checkbox, confirm } from '@inquirer/prompts';```This is a **top-level static import**. Any server route that imports anything from `install-skill.ts` — even a pure utility like `loadCatalog` — will pull `@inquirer/prompts` and its TTY-manipulation deps into the tsup server bundle. This breaks on headless/non-TTY environments and bloats the bundle.
 
 **Rule:** server routes (`src/server/routes/*.ts`) must never import from `src/cli/commands/install-skill.ts`. They import catalog utilities from `src/lib/catalog.ts` only.
 
-`install-skill.ts` re-exports from `catalog.ts` so existing callers in the CLI path are unchanged:
-```ts
-export { loadCatalog, findPackageDir, type Catalog, ... } from '../../lib/catalog.js';
-```
-
-`catalog.ts` requires its own ESM `__dirname` shim:
-```ts
+`install-skill.ts` re-exports from `catalog.ts` so existing callers in the CLI path are unchanged:```ts
+export { loadCatalog, findPackageDir, type Catalog, ... } from '../../lib/catalog.js';```
+`catalog.ts` requires its own ESM `__dirname` shim:```ts
 import { fileURLToPath } from 'node:url';
-const __dirname = fileURLToPath(new URL('.', import.meta.url));
-```
-The original `__dirname` declaration lived at `install-skill.ts:364`, outside the moved function range — it cannot be implicitly carried over.
+const __dirname = fileURLToPath(new URL('.', import.meta.url));```The original `__dirname` declaration lived at `install-skill.ts:364`, outside the moved function range — it cannot be implicitly carried over.
 
 After moving, `findPackageDir` runs from `dist/lib/` (depth changes). The 3-candidate probe (`../../skill-packs`, `../skill-packs`, `skill-packs`) still reaches `skill-packs/` at the 2-hop candidate from `dist/lib/`. Smoke-test: `dreamcontext install-skill --list` should list packs after a fresh `npm run build`.
 

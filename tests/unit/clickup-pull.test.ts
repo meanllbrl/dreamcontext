@@ -185,7 +185,8 @@ describe('clickup PULL + merge (M4, mocked transport)', () => {
     const merged = mirror('lww-task');
     expect(merged).toContain('status: completed');
     expect(merged).toContain('updated_by: clickup'); // the winner is recorded
-    expect(merged).toContain('assignee: alice'); // ClickUp-authoritative assignee → member map
+    expect(merged).toContain('person:alice'); // ClickUp-authoritative assignee → person tag
+    expect(merged).not.toContain('assignee:'); // assignment lives in tags now
 
     // Case B: only LOCAL changed (remote bump is just a comment) → local wins, stays pending push.
     await backend.updateFields('lww-task', { status: 'in_progress', updated_at: '2026-06-11' });

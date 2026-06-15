@@ -56,8 +56,7 @@ Agents need to understand not just what was built but why — the user stories, 
 
 **Feature file location**: `_dream_context/core/features/<slug>.md`
 
-**Feature file schema**:
-```yaml
+**Feature file schema**:```yaml
 ---
 id: "feat_abc123"
 status: "active"
@@ -90,26 +89,20 @@ related_tasks: ["implement-auth", "write-api-docs"]
 <!-- LIFO: newest entry at top -->
 
 ### 2026-02-25 - Created
-- Feature PRD created.
-```
-
+- Feature PRD created.```
 **Commands** (`src/cli/commands/features.ts`):
 - `features create <name>` — loads template, substitutes `{{ID}}`, `{{DATE}}`, `{{WHY}}`, writes file. Non-TTY safe: reads from flags, no interactive prompts when stdout is not a terminal.
 - `features insert <name> <section> [content...]` — maps section alias to heading, calls `insertToSection()` (non-lossy: removes placeholder on first insert), updates frontmatter.
 - `features set <name> <tags|status|related_tasks> <value...>` — updates a single frontmatter field; comma-split for tags/related_tasks.
 
-**Section alias map**:
-```
+**Section alias map**:```
 changelog         → "Changelog"
 notes             → "Notes"
 technical_details → "Technical Details"
 constraints       → "Constraints & Decisions"
 user_stories      → "User Stories"
 acceptance_criteria → "Acceptance Criteria"
-why               → "Why"
-```
-
-**Snapshot integration** (`src/cli/commands/snapshot.ts`): For each feature file, reads frontmatter for `status`, `tags`, `related_tasks`; reads `## Why` section for first non-placeholder line; reads `## Changelog` for latest non-creation entry header + bullet. Truncates both to 120 characters.
+why               → "Why"```**Snapshot integration** (`src/cli/commands/snapshot.ts`): For each feature file, reads frontmatter for `status`, `tags`, `related_tasks`; reads `## Why` section for first non-placeholder line; reads `## Changelog` for latest non-creation entry header + bullet. Truncates both to 120 characters.
 
 **Library dependencies**:
 - `src/lib/frontmatter.ts` — `updateFrontmatterFields()`

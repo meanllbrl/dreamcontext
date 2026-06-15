@@ -2,7 +2,7 @@
 id: feat_uihUmOmu
 status: in_review
 created: '2026-06-14'
-updated: '2026-06-14'
+updated: '2026-06-15'
 released_version: null
 tags:
   - desktop
@@ -11,6 +11,7 @@ tags:
   - topic:federation
 related_tasks:
   - launcher-quiz-onboarding
+  - federation-read-only
 ---
 
 ## Why
@@ -23,9 +24,16 @@ skills/agents/hooks) was invisible — a stale project silently gave agents outd
 tooling. This feature gives the Launcher two new surfaces: a per-project STATUS
 indicator (green/yellow/red) that surfaces the upgrade-vs-update gap and lets the
 user trigger an in-project update from the Launcher; and an interactive force-directed
-graph where users drag to connect projects, creating directed "A reads B" federation
-edges without opening any settings page. Brain graph settings now also survive desktop
-relaunches (server-side persistence for the new-origin-per-launch localStorage gotcha).
+graph where users drag to connect projects, creating directed "A reads B" read-only
+federation edges without opening any settings page. Brain graph settings now also
+survive desktop relaunches (server-side persistence for the new-origin-per-launch
+localStorage gotcha).
+
+**Read-only federation (updated 2026-06-15).** Following the federation read-only
+pivot, the graph now shows ONLY read wires (violet). The teal sync/listen wires
+(copy-based digest push) were removed from the graph and all related UI (wire-kind
+toolbar, `useCreateSync`/`useRemoveSync` hooks, `SYNC_SOFT` color, `WireKind='sync'`
+branch). Copy-based sync is parked on the roadmap; federation is live-reference only.
 
 ## User Stories
 
@@ -38,14 +46,17 @@ relaunches (server-side persistence for the new-origin-per-launch localStorage g
 - [x] As a user, I can remove a red-status (deleted-folder) project from the registry
   directly from the Launcher, so stale entries don't accumulate.
 - [x] As a user, I can see an interactive graph of all my projects and the "reads"
-  edges between them (who reads whom for cross-project recall), so federation
-  relationships are visible at a glance.
+  edges between them (who reads whom for cross-project recall — live reference, nothing
+  copied), so federation relationships are visible at a glance.
 - [x] As a user, I can drag from one project node to another in the graph to create a
-  "reads" edge (A reads B), so I can set up cross-project recall without opening any
-  settings page.
+  "reads" edge (A reads B), so I can set up cross-project live recall without opening
+  any settings page.
 - [x] As a user, I can see which "reads" edges are active (target is shareable,
   particles flow) vs. inactive (target hasn't enabled sharing), so I understand which
   federation links are actually live.
+- [x] As a user, the graph shows only read wires (violet) with no sync/teal wires,
+  so the graph honestly represents read-only federation and is not misleading about
+  copy-based sync that is not yet available.
 - [x] As a user, I can toggle a project's shareable flag directly from the graph node
   panel, so I can enable/disable sharing without navigating to that project's Settings.
 - [x] As a user, my Brain graph display settings (node size, text-fade threshold,
@@ -77,13 +88,16 @@ relaunches (server-side persistence for the new-origin-per-launch localStorage g
 - [x] `POST /api/launcher/shareable` toggles a vault's `shareable` flag in its
   `.config.json`. STRICT-PICK; CSRF-guarded; private-by-default preserved.
 - [x] `LauncherGraph.tsx` renders a `react-force-graph-2d` canvas with one node per
-  vault (colored by status) and directed edges per federation-graph response. Active
-  edges (target shareable) animate `linkDirectionalParticles` in the violet accent
-  color; inactive edges are dimmed.
+  vault (colored by status) and directed read edges per federation-graph response.
+  Active read edges (target shareable) animate `linkDirectionalParticles` in the violet
+  accent color; inactive edges are dimmed. `WireKind` is narrowed to `'reads'` only;
+  sync/teal wires, `useCreateSync`/`useRemoveSync` hooks, and the wire-kind toolbar
+  are removed. `GraphGuide` rewrites the explainer to read-only framing.
 - [x] Drag-to-connect: in Connect mode, dragging from node A onto node B calls `POST
   /api/launcher/connection { from: A.name, to: B.name }`, then invalidates the
   federation-graph query. Two one-way `out` edges between A and B produce two
-  directed arrows rendered as a two-way link.
+  directed arrows rendered as a two-way link. (Sync create/remove endpoints removed
+  from the active surface; `useCreateSync`/`useRemoveSync` deleted.)
 - [x] `GET /api/brain-settings` / `PUT /api/brain-settings` (vault-scoped, new route
   `src/server/routes/ui-settings.ts`) persists an opaque JSON blob at
   `_dream_context/state/.brain-settings.json`. Client hydrates from server on mount
@@ -96,6 +110,7 @@ relaunches (server-side persistence for the new-origin-per-launch localStorage g
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
 
+- **[2026-06-15]** Sync/teal wires removed from the graph (read-only federation pivot). The prior `WireKind = 'reads' | 'sync'` branch, `SYNC`/`SYNC_SOFT` colors, `wireKind` state, and `useCreateSync`/`useRemoveSync` hooks are deleted. The graph now renders only violet read wires. Copy-based sync is parked on the roadmap; if it returns, `WireKind` gains a new member and the graph rendering is restored then. Dead sync CSS (harmless) deferred to a separate cleanup.
 - **[2026-06-14]** Brain settings persist at `_dream_context/state/.brain-settings.json`
   (not `~/.dreamcontext/`): vault-scoped so different projects can have different graph
   configurations. The server owns the file; the client blob is opaque (the server
@@ -151,22 +166,28 @@ Frontend files:
 
 Key library dependency: `react-force-graph-2d` (wraps `three.js`-free 2D canvas graph).
 
-`VaultStatus` interface (exported from `launcher.ts`):
-```ts
-{ name, path, exists, setupVersion, latestVersion, needsUpdate, shareable }
-```
-
-`FederationEdge` interface:
-```ts
-{ source, target, active }  // active = target.shareable
-```
-
-Federation read model: per `src/lib/federation-recall.ts`, vault A reads vault B iff
+`VaultStatus` interface (exported from `launcher.ts`):```ts
+{ name, path, exists, setupVersion, latestVersion, needsUpdate, shareable }```
+`FederationEdge` interface:```ts
+{ source, target, active }  // active = target.shareable```Federation read model: per `src/lib/federation-recall.ts`, vault A reads vault B iff
 A's connection to B has `direction: 'out' | 'both'` AND B's `shareable` is `true`. The
 launcher graph surfaces BOTH parts: the edge (connection) and the shareable gate.
 
+**Read-only pivot changes (2026-06-15, commit e464190):**
+- `LauncherGraph.tsx`: `WireKind` narrowed to `'reads'`; `SYNC`/`SYNC_SOFT` removed;
+  `useCreateSync`/`useRemoveSync` imports deleted; `wireKind` state + `wireKindRef`
+  removed; arc rendering simplified (one color path, one label path); `GraphGuide`
+  rewrites copy to read-only framing; SVG demo reduced to single read wire.
+- `dashboard/src/hooks/useLauncher.ts`: `useCreateSync`/`useRemoveSync` deleted.
+- `LauncherGraph.css`: sync-keyed CSS classes left in (harmless dead code; deferred cleanup).
+
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-06-15 - Read-only federation pivot (sleep-product consolidation, v0.7.0)
+- Sync/teal wires removed from the graph per federation read-only pivot (task: federation-read-only).
+- Added user story: graph shows only read wires; added constraint documenting the removal.
+- Updated Technical Details with read-only pivot changes. Added federation-read-only to related_tasks.
 
 ### 2026-06-14 - Feature PRD created (sleep-product consolidation, v0.8.3)
 - All user stories and acceptance criteria verified from code (a41dc7b).

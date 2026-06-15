@@ -15,6 +15,17 @@ skills:
 
 # Sleep — Federation Specialist
 
+> **⛔ DISABLED — DO NOT DISPATCH (read-only federation, copy-sync parked on roadmap).**
+> Federation is now a *live reference*: connected, shareable peers are read at
+> recall time and **nothing is ever copied** across a vault boundary. The
+> copy-based drain/distribute path below broke single-source-of-truth (lossy,
+> write-once-stale copies + duplicate/conflict noise on edit), so it is disabled:
+> `dreamcontext federation drain` / `sync` are inert no-ops, and the sleep flow no
+> longer fires this specialist. The contract below is retained for reference only,
+> pending a proper redesign of an opt-in offline-mirror mode. To clean up old
+> `federated:true` copies a previous sync wrote, run `dreamcontext federation purge
+> --all` (a deliberate, user-run action — not a sleep step).
+
 ## Scope and ownership
 
 | You touch | You NEVER touch |
@@ -69,8 +80,23 @@ The whole job is two idempotent commands, ALWAYS in this order:
    To inspect WITHOUT writing, use `dreamcontext federation sync --dry-run`
    (computes + prints, writes nothing, watermark not advanced).
 
-3. **Report** counts: ingested / collisions / conflicts surfaced / quarantined /
-   peers synced. Surface any conflict-note to the user explicitly.
+3. **Then refresh peer summaries** — rebuild the ambient READ-awareness cache so
+   the next session's snapshot "Connected projects" section reflects current
+   peer state (what each readable peer IS + what was last done there):
+
+   ```bash
+   dreamcontext federation peers
+   ```
+
+   - Resolves readable peers (out/both ∩ not-stale ∩ shareable), reads each
+     peer's core files (READ-ONLY), and writes the local cache
+     `state/.peer-summaries.json` that the snapshot hot path reads cheaply.
+   - Never touches a peer's files; never resolves a peer in the snapshot itself.
+   - Idempotent — re-running just rewrites the cache.
+
+4. **Report** counts: ingested / collisions / conflicts surfaced / quarantined /
+   peers synced / peers summarised. Surface any conflict-note to the user
+   explicitly.
 
 ## Gotchas
 

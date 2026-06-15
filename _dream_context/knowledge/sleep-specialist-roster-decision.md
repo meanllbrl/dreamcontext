@@ -2,7 +2,7 @@
 id: sleep-specialist-roster-decision
 name: "Sleep Specialist Roster Decision (issue #9 WS3)"
 description: "Evidence-based decision on whether to add a dedicated sleep-features specialist to the 3-specialist sleep roster. Measured feature-doc upkeep health (stale ratio, churn) and concluded: KEEP 3 + mandatory feature-upkeep self-report line."
-tags: ["decisions", "agents", "sleep", "consolidation"]
+tags: ["decisions", "agents", "sleep", "topic:sleep"]
 date: "2026-06-14"
 ---
 
@@ -24,9 +24,7 @@ rationalized after the fact.
 
 Source: `scripts/feature-upkeep-evidence.ts` (runs `analyzeFeatures()` over this project's
 `_dream_context/core/features/*.md` + task `related_feature` back-refs, plus a 90-day git
-churn ratio). Measured 2026-06-14 on the dreamcontext repo:
-
-```json
+churn ratio). Measured 2026-06-14 on the dreamcontext repo:```json
 {
   "total": 23,
   "stale": 2,
@@ -35,10 +33,7 @@ churn ratio). Measured 2026-06-14 on the dreamcontext repo:
   "dangling": 0,
   "freshPct": 91,
   "git90d": { "featureDocCommits": 24, "srcCommits": 105, "churnRatio": 0.229 }
-}
-```
-
-The three measured numbers that drive the decision:
+}```The three measured numbers that drive the decision:
 
 1. **Stale ratio = 9%** (2 of 23 feature PRDs stale >30d). Far below the ~40% threshold.
 2. **Fresh ratio = 91%** — feature docs are overwhelmingly current.

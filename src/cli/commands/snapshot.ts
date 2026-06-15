@@ -20,6 +20,7 @@ import { buildDriftDirective, resolveDriftState } from '../../lib/setup-drift.js
 import { readAssetDriftCache, cacheConfidentlyClean } from '../../lib/asset-drift-cache.js';
 import { computeFeatureFreshness, freshnessSnapshotNote } from '../../lib/feature-freshness.js';
 import { pendingInboxCount } from '../../lib/federation-inbox.js';
+import { readPeerSummaryCache } from '../../lib/federation-peer-summary.js';
 import {
   applyBudget, resolveBudget, demoteMemoryBlock, demoteTaskList,
   type BudgetSection,
@@ -987,17 +988,52 @@ export function generateSnapshot(rootOverride?: string): string {
   flush('marketing', { neverEvict: true });
 
   // 12. Federation inbox note — HOT-PATH SAFE. A single LOCAL readdir
-  // (`pendingInboxCount`) counts pending peer digest entries; it NEVER resolves
-  // a peer vault or builds a peer corpus (issue #25 LOCKED hot-path invariant).
-  // Surfaces a one-line nudge so the next sleep cycle drains the inbox.
+  // (`pendingInboxCount`); it NEVER resolves a peer vault or builds a peer
+  // corpus (issue #25 LOCKED hot-path invariant). Federation is now read-only:
+  // the copy-based drain is disabled, so any pending inbox entries are inert
+  // leftovers from the old sync path. Surface that they will NOT be ingested.
   const pendingFederation = pendingInboxCount(root);
   if (pendingFederation > 0) {
     parts.push(
-      `## Federation\n\n${pendingFederation} pending peer digest ` +
-        `entr${pendingFederation === 1 ? 'y' : 'ies'} in the inbox — run \`dreamcontext federation drain\` ` +
-        `(or let the next sleep cycle drain them).\n`,
+      `## Federation\n\n${pendingFederation} legacy peer digest ` +
+        `entr${pendingFederation === 1 ? 'y' : 'ies'} in the inbox — INERT (copy-based sync is ` +
+        `disabled; nothing will be ingested). Federation reads peers live instead. ` +
+        `Old federated copies can be removed with \`dreamcontext federation purge --all\`.\n`,
     );
     flush('federation', { neverEvict: true });
+  }
+
+  // 13. Connected projects — AMBIENT READ AWARENESS, HOT-PATH SAFE. Built PURELY
+  // from `readPeerSummaryCache(root)`: a single LOCAL file read of
+  // state/.peer-summaries.json in the CURRENT vault. NO peer resolution, NO peer
+  // corpus build — the cache is refreshed OFF the hot path (by `federation
+  // peers`, the sleep-federation cycle, and connect/disconnect). If the cache is
+  // absent or empty, the section is omitted entirely (issue #25 LOCKED hot-path
+  // invariant: no cross-vault work in generateSnapshot).
+  const peerCache = readPeerSummaryCache(root);
+  if (peerCache && peerCache.peers.length > 0) {
+    const lines: string[] = ['## Connected projects\n'];
+    lines.push(
+      'These projects are READABLE from here (out/both connection + shareable). ' +
+        'Recall reads their CANONICAL docs live (a reference — nothing is copied into this vault). ' +
+        'You have ambient awareness of what each is and what was last done there.\n',
+    );
+    for (const p of peerCache.peers) {
+      let head = `- **${p.vault}**`;
+      if (p.whatItIs) head += ` — ${p.whatItIs}`;
+      lines.push(head);
+      for (const act of p.lastActivity) lines.push(`  Last: ${act}`);
+      if (p.activeTask) lines.push(`  In progress: ${p.activeTask}`);
+      if (p.topTags.length > 0) lines.push(`  Tags: ${p.topTags.join(', ')}`);
+    }
+    lines.push('');
+    lines.push(
+      'Recall already spans these. To search one directly: ' +
+        '`dreamcontext memory recall <q> --vault <name>`.',
+    );
+    lines.push('');
+    parts.push(lines.join('\n'));
+    flush('connected-projects', { neverEvict: true });
   }
 
   // Final assembly through the token budget (see snapshot-budget.ts). The

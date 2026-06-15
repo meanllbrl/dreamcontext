@@ -69,8 +69,7 @@ Core context files have a ~200 line limit to stay lightweight. When deep researc
 - `_dream_context/knowledge/data-structures/<product>.md` — schemas/models (subdirectory; `default.md` for single-product)
 - `_dream_context/knowledge/products/<product>.md` — per-product knowledge in multi-product projects
 
-**Knowledge file schema**:
-```yaml
+**Knowledge file schema**:```yaml
 ---
 id: "know_abc123"
 name: "JWT Authentication Flow"
@@ -80,9 +79,7 @@ pinned: false
 date: "2026-02-25"
 ---
 
-Full content of the knowledge file here...
-```
-
+Full content of the knowledge file here...```
 **Commands** (`src/cli/commands/knowledge.ts`):
 - `knowledge create <name>` — interactive prompts for description, tags (comma-separated), and content if not provided via flags.
 - `knowledge index [--tag <tag>] [--plain]` — reads all `knowledge/*.md` via `buildKnowledgeIndex()`.

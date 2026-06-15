@@ -421,26 +421,41 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
     );
   };
 
-  // The engine treats the assignee FIELD and the person:<slug> TAG as one
-  // concept (field wins, tag is the dreamcontext convention) — the UI must
-  // present them as one too, or they look like two competing features.
-  const personTagOf = (tags: string[]): string | null => {
-    const tag = tags.find(t => t.startsWith('person:'));
-    return tag ? tag.slice('person:'.length) : null;
-  };
-  const withPersonTag = (tags: string[], person: string | null): string[] => {
+  // Assignment leans on person:<slug> tags — a task may have any number of
+  // assignees. The UI presents them as a distinct "Assignees" control, but
+  // they are stored (and synced to ClickUp) purely as tags. A legacy single
+  // `assignee` field is still honored as a fallback so old tasks render.
+  const personTagsOf = (tags: string[]): string[] =>
+    tags.filter(t => t.startsWith('person:')).map(t => t.slice('person:'.length));
+  const withPersonTags = (tags: string[], people: string[]): string[] => {
     const rest = tags.filter(t => !t.startsWith('person:'));
-    return person ? [...rest, `person:${person}`] : rest;
+    return [...rest, ...people.map(p => `person:${p}`)];
   };
-  const effectiveAssignee = task.assignee ?? personTagOf(task.tags);
+  const effectiveAssignees = (() => {
+    const set = new Set(personTagsOf(task.tags));
+    if (task.assignee) set.add(task.assignee); // legacy single-field fallback
+    return [...set];
+  })();
 
-  const handleAssigneeChange = (value: string) => {
-    const person = value || null;
-    // Keep the field AND the person tag coherent in one PATCH.
+  const setAssignees = (people: string[]) => {
+    // Assignment lives in person tags. Retire any legacy single `assignee`
+    // field in the same PATCH, otherwise a person assigned only via that field
+    // would reappear after removal (the tag PATCH alone wouldn't clear it).
+    const updates: Parameters<typeof updateTask.mutate>[0]['updates'] = {
+      tags: withPersonTags(task.tags, people),
+    };
+    if (task.assignee) updates.assignee = null;
     updateTask.mutate(
-      { slug: task.slug, updates: { assignee: person, tags: withPersonTag(task.tags, person) } },
+      { slug: task.slug, updates },
       { onError: onMutationError },
     );
+  };
+  const addAssignee = (value: string) => {
+    const person = value.trim();
+    if (person && !effectiveAssignees.includes(person)) setAssignees([...effectiveAssignees, person]);
+  };
+  const removeAssignee = (person: string) => {
+    setAssignees(effectiveAssignees.filter(p => p !== person));
   };
 
   const handleDelete = () => {
@@ -459,13 +474,22 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
   };
 
   const handleTagsChange = (tags: string[]) => {
-    // Editing a person tag IS an assignment change — keep the field in sync.
-    const person = personTagOf(tags);
+    // person: tags ARE assignments; they round-trip through the tag list,
+    // so editing tags (incl. person tags) is a single plain PATCH.
+    const updates: Parameters<typeof updateTask.mutate>[0]['updates'] = { tags };
+    // If the user removed the person tag that backed a legacy `assignee` field,
+    // retire that field too — otherwise effectiveAssignees folds it back in and
+    // the assignee ghosts back on the next render. Narrow by design: only when
+    // that exact person tag was present before and is gone now (so unrelated
+    // tag edits never drop a legacy-only assignee that has no person tag).
+    if (task.assignee) {
+      const personTag = `person:${task.assignee}`;
+      if (task.tags.includes(personTag) && !tags.includes(personTag)) {
+        updates.assignee = null;
+      }
+    }
     updateTask.mutate(
-      {
-        slug: task.slug,
-        updates: { tags, ...(person !== effectiveAssignee ? { assignee: person } : {}) },
-      },
+      { slug: task.slug, updates },
       { onError: onMutationError },
     );
   };
@@ -892,21 +916,40 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
               />
             </PropertyRow>
 
-            <PropertyRow label="Assignee">
-              <SearchableSelect
-                value={effectiveAssignee}
-                options={[
-                  ...(members ?? []).map(m => ({ value: m.slug, label: m.name, hint: m.slug })),
-                  ...(effectiveAssignee && !(members ?? []).some(m => m.slug === effectiveAssignee)
-                    ? [{ value: effectiveAssignee, label: effectiveAssignee }]
-                    : []),
-                ]}
-                placeholder="Unassigned"
-                searchPlaceholder="Search people…"
-                clearLabel="Unassigned"
-                allowCustom
-                onChange={v => handleAssigneeChange(v ?? '')}
-              />
+            <PropertyRow label="Assignees">
+              <div className="assignee-multi">
+                {effectiveAssignees.length > 0 && (
+                  <div className="assignee-chips">
+                    {effectiveAssignees.map(slug => {
+                      const m = (members ?? []).find(x => x.slug === slug);
+                      return (
+                        <span key={slug} className="assignee-chip">
+                          {m?.name ?? slug}
+                          <button
+                            type="button"
+                            className="assignee-chip__remove"
+                            aria-label={`Remove ${m?.name ?? slug}`}
+                            onClick={() => removeAssignee(slug)}
+                          >
+                            ×
+                          </button>
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
+                <SearchableSelect
+                  value={null}
+                  options={(members ?? [])
+                    .filter(m => !effectiveAssignees.includes(m.slug))
+                    .map(m => ({ value: m.slug, label: m.name, hint: m.slug }))}
+                  placeholder={effectiveAssignees.length > 0 ? 'Add assignee…' : 'Unassigned'}
+                  searchPlaceholder="Search people…"
+                  clearLabel="Unassigned"
+                  allowCustom
+                  onChange={v => { if (v) addAssignee(v); }}
+                />
+              </div>
             </PropertyRow>
 
             <PropertyRow label="Feature">

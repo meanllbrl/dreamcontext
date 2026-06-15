@@ -10,9 +10,24 @@ import {
   type ConnectionDirection,
 } from '../../lib/connections.js';
 import { VaultError } from '../../lib/vaults.js';
+import { refreshPeerSummaries } from '../../lib/federation-peer-summary.js';
 import { header, success, error, info, formatTable } from '../../lib/format.js';
 
 const DIRECTIONS: ConnectionDirection[] = ['out', 'in', 'both'];
+
+/**
+ * Refresh the ambient peer-summary cache after a read relationship changes, so a
+ * freshly-drawn (or removed) connection updates the snapshot's "Connected
+ * projects" section immediately. NEVER throws — a refresh failure must not fail
+ * the connect/disconnect that just succeeded.
+ */
+function refreshPeerSummariesQuietly(contextRoot: string): void {
+  try {
+    refreshPeerSummaries(contextRoot);
+  } catch {
+    // Best-effort: ambient awareness refresh must never break the command.
+  }
+}
 
 /** Resolve the current vault's registered name (or basename) from its context root. */
 function currentVaultName(contextRoot: string): string {
@@ -32,12 +47,12 @@ export function registerConnectionsCommand(program: Command): void {
   // ─── connect ─────────────────────────────────────────────────────────────────
   program
     .command('connect <vault>')
-    .description('Connect this vault to a peer for federation (out|in|both)')
-    .option('-d, --direction <direction>', 'Connection direction: out | in | both', 'both')
+    .description('Connect this vault to read a peer (live reference; out is a read edge)')
+    .option('-d, --direction <direction>', 'Connection direction: out | in | both (out = read)', 'out')
     .option('--topics <list>', 'Comma-separated topic filter (default: all topics)')
     .action((vault: string, opts: { direction?: string; topics?: string }) => {
       const contextRoot = ensureContextRoot();
-      const direction = (opts.direction ?? 'both').toLowerCase();
+      const direction = (opts.direction ?? 'out').toLowerCase();
       if (!(DIRECTIONS as string[]).includes(direction)) {
         error(`Unknown direction '${opts.direction}'.`, `Use one of: ${DIRECTIONS.join(', ')}.`);
         process.exitCode = 1;
@@ -59,6 +74,8 @@ export function registerConnectionsCommand(program: Command): void {
         success(
           `Connected to "${vault}" (${direction}${topics ? `, topics: ${topics.join(', ')}` : ''}).`,
         );
+        // A new read relationship → refresh ambient awareness immediately.
+        refreshPeerSummariesQuietly(contextRoot);
       } catch (err) {
         if (err instanceof VaultError) {
           error(err.message);
@@ -78,6 +95,8 @@ export function registerConnectionsCommand(program: Command): void {
       const removed = removeConnection(contextRoot, vault);
       if (removed) {
         success(`Disconnected from "${vault}".`);
+        // A removed read relationship → refresh ambient awareness immediately.
+        refreshPeerSummariesQuietly(contextRoot);
       } else {
         info(`No connection to "${vault}".`);
         process.exitCode = 1;

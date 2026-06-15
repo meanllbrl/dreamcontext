@@ -153,7 +153,7 @@ export function registerMemoryCommand(program: Command): void {
     .command('recall')
     .argument('<query...>', 'Search query (multiple words OK)')
     .description('BM25 search over knowledge + features + tasks + memory entries')
-    .option('-t, --top <n>', 'Number of hits to return', '5')
+    .option('-t, --top <n>', 'Number of hits to return', '10')
     .option('--types <types>', 'Comma-separated subset: knowledge,feature,task,memory')
     .option('--json', 'Emit JSON for piping into other tools')
     .option('--plain', 'Plain text output without colors')
@@ -175,16 +175,36 @@ export function registerMemoryCommand(program: Command): void {
       ) => {
         const root = ensureContextRoot();
         const query = queryParts.join(' ');
-        const topK = Math.max(1, Math.min(50, Number.parseInt(opts.top ?? '5', 10) || 5));
+        const topK = Math.max(1, Math.min(50, Number.parseInt(opts.top ?? '10', 10) || 10));
         const types = parseTypes(opts.types);
 
         // ── Federation branch (P1.2/P1.3) ──────────────────────────────────────
         // ANY of --vault / --connected / --all-vaults routes through cross-vault
-        // recall. With NO federation flag the path below is byte-identical to the
-        // pre-federation single-vault recall (regression-guarded).
+        // recall.
         const explicitVaults = opts.vault ?? [];
         if (explicitVaults.length > 0 || opts.connected || opts.allVaults) {
           recallFederated(root, query, topK, types, opts);
+          return;
+        }
+
+        // ── DEFAULT-SPAN (cross-project read by default) ───────────────────────
+        // With NO federation flag, the interactive `memory recall` CLI spans the
+        // current vault's eligible peers BY DEFAULT — same target set as
+        // `--connected` (out/both, non-stale, shareable peers). This is the
+        // explicit agent/Explore path; the always-on hook does NOT come through
+        // here (it calls bm25Search on a local-only corpus directly), so the
+        // SessionStart/generateSnapshot hot-path stays local-only (P1.6 LOCKED).
+        //
+        // GATE: only span when at least one eligible peer exists. With no
+        // eligible connections `resolveConnectedVaults` returns just the current
+        // vault, and we fall through to the byte-identical legacy local-only
+        // recall below (regression-guarded). Provenance stays visible because
+        // recallFederated namespaces every hit `<vault>::<type>/<slug>`.
+        const projectRoot = dirname(root);
+        const { target: currentTarget } = currentVaultTarget(projectRoot);
+        const connectedTargets = resolveConnectedVaults(currentTarget, root);
+        if (connectedTargets.length > 1) {
+          recallFederated(root, query, topK, types, { ...opts, connected: true });
           return;
         }
 
