@@ -491,29 +491,40 @@ dreamcontext memory status
 
 ## Cross-Project Federation (issue #25)
 
-Every `_dream_context/` is normally an island. Federation lets you reach across projects — recall what you worked out in *another* vault — using nothing but the local filesystem (no network, ever). Phase 1 is **read-only**: discovery + cross-vault recall + peer snapshots.
+Every `_dream_context/` is normally an island. Federation lets you reach across projects — recall what you worked out in *another* vault — using nothing but the local filesystem (no network, ever).
+
+**Ambient awareness — you start informed.** The session snapshot includes a `## Connected projects` section listing each readable peer with a one-line description and last activity. At session start you already know which sibling projects exist and roughly what's in them. For an up-to-date summary on demand:
 
 ```bash
-dreamcontext vaults discover [root] [--register]   # find every _dream_context/ under a tree (node_modules ignored, depth-bounded)
-dreamcontext memory recall <query...> --vault <name>   # also search a peer vault (repeatable)
-dreamcontext memory recall <query...> --all-vaults     # search current + every SHAREABLE registered vault
-dreamcontext memory recall <query...> --connected      # search current + out/both connections (degenerate=local until Phase 2)
+dreamcontext federation peers          # compact summary: what each peer is, last activity, active task, top tags
+```
+
+**PULL — recall already spans peers.** Plain `memory recall` automatically searches readable peer vaults alongside the current one. No flag needed. You get up to 10 hits, vault-tagged `<vault>::<type>/<slug>` so provenance is always visible:
+
+```bash
+dreamcontext memory recall "<query>"                   # current vault + all eligible readable peers (default)
+dreamcontext memory recall "<query>" --vault <name>    # current + one named peer (repeatable)
+dreamcontext memory recall "<query>" --connected       # current + out/both connections
+dreamcontext memory recall "<query>" --all-vaults      # current + every shareable vault
+```
+
+Eligible = direction `out`/`both`, status not stale, AND the peer is `shareable: true`. If no eligible connections exist, recall is local-only (unchanged). A peer vault being `shareable` controls whether *others* may read it — it never blocks you from reading a shareable peer, and the current vault is always searched. Non-shareable peers are silently excluded (never an error). Cross-vault hits are namespaced `<vault>::<type>/<slug>` so the same slug in two vaults never collides.
+
+Use `--vault <name>` when you know where the answer likely lives; the default span is the cheapest path when you don't.
+
+**PUSH — sleep-driven, already local.** There is no per-situation "when to read" rule to set. The standing connection resolves through two mechanisms: (1) on-demand PULL via recall above; (2) automatic PUSH at every sleep cycle, where the `sleep-federation` specialist runs drain-then-distribute — inbound peer digests are ingested as first-class local `knowledge/<slug>--from-<vault>.md` files (`federated: true` + provenance), so by the next session that knowledge is just sitting locally and surfaces through normal recall like any other doc. `federated: true` docs are excluded from outbound digests and cross-vault serving (transitive-leak guard).
+
+```bash
+dreamcontext vaults discover [root] [--register]   # find every _dream_context/ under a tree
+dreamcontext connect <vault> --direction out|in|both [--topics a,b]   # create a peer link
+dreamcontext connections list / disconnect <vault>                      # manage links
 dreamcontext snapshot --vault <name>               # print a peer vault's context snapshot
 dreamcontext config shareable on|off               # opt this project IN/OUT of peer recall (default: off)
 ```
 
-**Trust model — shareable gates READS, private by default.** A vault is invisible to peer recall until its owner runs `config shareable on`. New and migrated projects default to `shareable: false`. `shareable` is asymmetric: it controls whether OTHERS may pull *your* corpus — it never blocks *you* from reading a shareable peer, and the current vault is always searched regardless of its own flag. Non-shareable peers are silently excluded from `--all-vaults` (never an error). Cross-vault hits are namespaced `<vault>::<type>/<slug>` so the same slug in two vaults never collides.
-
-**When to reach across.** Use `--vault`/`--all-vaults` for "how did I solve this in project X?" / "did we already build Y somewhere?" before re-deriving knowledge that already exists in a sibling project.
-
-**Per-link connections (Phase 2).** `dreamcontext connect <vault> --direction out|in|both [--topics a,b]` builds an outgoing mesh in `state/.connections.json`; `connections list` / `disconnect <vault>` manage it. Direction is asymmetric: `out` = your digest may flow TO the peer, `in` = you accept the peer's digest, `both` = bidirectional. The dashboard Settings → Cross-Project Federation card edits all of this plus the shareable switch.
-
-**Sleep-driven digest inbox (Phase 3).** Federated knowledge crosses a boundary as a *directory of one-file-per-entry JSON digests* under `state/.federation-inbox/` (consumed entries archive to `consumed/`). The `sleep-federation` specialist runs two idempotent steps, ALWAYS in this order:
-
-1. **Drain** (`dreamcontext federation drain`) — ingest each pending inbox entry as **first-class** local `knowledge/<slug>.md` carrying `federated: true` + `origin{vault,entryId,sourceTimestamp}` provenance. A slug collision lands at `knowledge/<slug>--from-<vault>.md` (the local doc is never clobbered). A `conflict-note` entry is ingested AND surfaced as a bookmark for the user — never auto-resolved. Version-incompatible entries are quarantined in place.
-2. **Distribute** (`dreamcontext federation sync`) — for each `out`/`both` connection, the sender reads the RECEIVER's `.connections.json` and writes ONLY if the receiver declares `in`/`both` back (the **consent rule**); it computes a recall-filtered digest since `last_synced_at`, writes one file per entry into the peer's inbox, and advances the watermark. Draining first means freshly-ingested peer knowledge is in the corpus when the outbound digest is computed — and is then EXCLUDED from it, because `federated: true` docs are dropped from BOTH digest computation AND cross-vault recall serving (the transitive-leak guard: a third vault never sees what merely passed through this one). Filename dedup + watermark + that exclusion make an A↔B cycle echo-free.
-
-The SessionStart snapshot stays on the hot path: it only ever does a single local `pendingInboxCount` readdir to nudge "N pending peer digests — drain them"; it NEVER resolves a peer or builds a peer corpus. Dashboard previews via `POST /api/federation/sync` are **dry-run by construction** (no write function reachable from any server route).
+**Sleep-federation contract** (two idempotent steps, always drain-then-distribute):
+1. **Drain** (`dreamcontext federation drain`) — ingest pending inbox entries as first-class `knowledge/<slug>--from-<vault>.md`. A slug collision with a local doc is preserved as-is (local doc never clobbered). Conflicts surface as bookmarks for the user — never auto-resolved.
+2. **Distribute** (`dreamcontext federation sync`) — consent-gated (receiver must declare `in`/`both`), recall-filtered, watermarked push of changed docs into connected peers' inboxes. `federated: true` docs are never re-exported (transitive-leak guard). Dashboard previews via `POST /api/federation/sync` are dry-run by construction.
 
 ---
 

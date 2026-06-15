@@ -305,6 +305,50 @@
   touch-action: none; /* let pointer drag own the gesture in connect mode */
 }
 
+/* On-canvas zoom controls (+ / − / fit) — work in Connect AND View modes */
+.lgraph-zoom {
+  position: absolute;
+  left: var(--space-4);
+  top: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  z-index: 6;
+}
+
+.lgraph-zoom-btn {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-border);
+  background: color-mix(in srgb, var(--color-bg-secondary) 92%, #000);
+  color: var(--color-text);
+  border-radius: var(--radius-sm);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+  transition: background var(--transition-fast), border-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.lgraph-zoom-btn:hover {
+  border-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 18%, var(--color-bg-secondary));
+}
+
+.lgraph-zoom-btn:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.lgraph-zoom-fit {
+  font-size: 15px;
+  margin-top: 2px;
+}
+
 .lgraph-status {
   position: absolute;
   inset: 0;

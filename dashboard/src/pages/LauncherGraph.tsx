@@ -247,6 +247,27 @@ export function LauncherGraph() {
     }, 540);
   }, []);
 
+  // On-canvas zoom controls. Work in BOTH Connect and View modes (the library's
+  // wheel-zoom is disabled while connecting so drag-to-connect owns the gesture —
+  // these buttons drive `fg.zoom()` directly so users can always zoom). Clamped
+  // to a sane range so a node never disappears off the edge of usefulness.
+  const ZOOM_MIN = 0.15;
+  const ZOOM_MAX = 6;
+  const zoomBy = useCallback((factor: number) => {
+    const fg = fgRef.current;
+    if (!fg) return;
+    let z = 1;
+    try {
+      z = fg.zoom() as number;
+    } catch {
+      /* default 1 before first paint */
+    }
+    const next = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z * factor));
+    fg.zoom(next, 220);
+  }, []);
+  const zoomIn = useCallback(() => zoomBy(1.3), [zoomBy]);
+  const zoomOut = useCallback(() => zoomBy(1 / 1.3), [zoomBy]);
+
   const nodeAtScreen = useCallback(
     (sx: number, sy: number): GNode | null => {
       const fg = fgRef.current;
@@ -505,11 +526,17 @@ export function LauncherGraph() {
         setConnectMode((v) => !v);
       } else if (e.key === '?') {
         setShowGuide(true);
+      } else if (e.key === '+' || e.key === '=') {
+        zoomIn();
+      } else if (e.key === '-' || e.key === '_') {
+        zoomOut();
+      } else if (e.key === '0') {
+        fitView();
       }
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [showGuide, selected]);
+  }, [showGuide, selected, zoomIn, zoomOut, fitView]);
 
   const vaults = data?.nodes ?? [];
   const hasLinks = graphData.links.length > 0;
@@ -634,6 +661,47 @@ export function LauncherGraph() {
             Add at least two projects to start wiring relationships between them.
           </div>
         )}
+
+        {vaults.length >= 2 && (
+          // On-canvas zoom controls — work in both Connect and View modes.
+          // `onPointerDown` stops propagation so a click on a control never
+          // starts a drag-to-connect gesture on the canvas wrapper below.
+          <div
+            className="lgraph-zoom"
+            role="group"
+            aria-label="Zoom controls"
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              className="lgraph-zoom-btn"
+              onClick={zoomIn}
+              aria-label="Zoom in"
+              title="Zoom in"
+            >
+              +
+            </button>
+            <button
+              type="button"
+              className="lgraph-zoom-btn"
+              onClick={zoomOut}
+              aria-label="Zoom out"
+              title="Zoom out"
+            >
+              −
+            </button>
+            <button
+              type="button"
+              className="lgraph-zoom-btn lgraph-zoom-fit"
+              onClick={fitView}
+              aria-label="Fit graph to view"
+              title="Fit to view"
+            >
+              ⤢
+            </button>
+          </div>
+        )}
+
         {dims.w > 0 && vaults.length >= 2 && (
           <ForceGraph2D<GNode, GLink>
             ref={fgRef}
@@ -643,8 +711,13 @@ export function LauncherGraph() {
             backgroundColor="#0b0b12"
             nodeId="id"
             nodeRelSize={6}
+            // Pan is disabled in Connect mode so a press-drag on empty canvas
+            // arms a wire instead of scrolling the board. Wheel-zoom, however,
+            // is a separate gesture that never conflicts with drag-to-connect,
+            // so we keep it enabled in BOTH modes — together with the explicit
+            // +/−/fit buttons, the user can always zoom.
             enablePanInteraction={!connectMode}
-            enableZoomInteraction={!connectMode}
+            enableZoomInteraction={true}
             // Never drag nodes: in View mode a node-drag would swallow the click
             // so the detail panel (where you delete connections) never opens.
             enableNodeDrag={false}

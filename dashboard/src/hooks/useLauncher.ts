@@ -25,6 +25,29 @@ export interface RegisterPayload {
   path: string;
 }
 
+// ─── Query keys ───────────────────────────────────────────────────────────────
+
+/**
+ * Every query key that feeds a launcher surface (cards, graph, federation, and
+ * the per-project connections lists). Any mutation that adds a project, draws or
+ * removes a wire, or flips the shareable gate must invalidate ALL of these so the
+ * graph + lists refetch immediately — otherwise the new node/edge only appears
+ * after an app restart.
+ */
+const LAUNCHER_QUERY_KEYS: readonly (readonly string[])[] = [
+  ['vaults'],
+  ['launcher-status'],
+  ['launcher-federation-graph'],
+  ['connections'],
+];
+
+/** Invalidate every launcher-feeding query so all launcher surfaces refetch. */
+function invalidateLauncher(queryClient: ReturnType<typeof useQueryClient>): void {
+  for (const queryKey of LAUNCHER_QUERY_KEYS) {
+    queryClient.invalidateQueries({ queryKey });
+  }
+}
+
 // ─── Hooks ──────────────────────────────────────────────────────────────────
 
 /**
@@ -47,7 +70,7 @@ export function useRegisterVault() {
     mutationFn: (payload: RegisterPayload) =>
       api.post<RegisterResponse>('/launcher/register', payload),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['vaults'] });
+      invalidateLauncher(queryClient);
     },
   });
 }
@@ -107,7 +130,7 @@ export function useScaffoldProject() {
     mutationFn: (payload: ScaffoldPayload) =>
       api.post<ScaffoldResponse>('/launcher/scaffold', payload),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['vaults'] });
+      invalidateLauncher(queryClient);
     },
   });
 }
@@ -191,8 +214,7 @@ export function useUpdateProject() {
     mutationFn: (name: string) =>
       api.post<{ ok: true; status: VaultStatus }>('/launcher/update', { name }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['launcher-status'] });
-      queryClient.invalidateQueries({ queryKey: ['launcher-federation-graph'] });
+      invalidateLauncher(queryClient);
     },
   });
 }
@@ -204,9 +226,7 @@ export function useUnregisterVault() {
     mutationFn: (name: string) =>
       api.post<{ removed: boolean; vaults: Vault[] }>('/launcher/unregister', { name }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['vaults'] });
-      queryClient.invalidateQueries({ queryKey: ['launcher-status'] });
-      queryClient.invalidateQueries({ queryKey: ['launcher-federation-graph'] });
+      invalidateLauncher(queryClient);
     },
   });
 }
@@ -250,7 +270,7 @@ export function useCreateSync() {
     mutationFn: (vars: { from: string; to: string }) =>
       api.post<{ ok: true }>('/launcher/sync', vars),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['launcher-federation-graph'] });
+      invalidateLauncher(queryClient);
     },
   });
 }
@@ -262,7 +282,7 @@ export function useRemoveSync() {
     mutationFn: (vars: { from: string; to: string }) =>
       api.post<{ ok: true }>('/launcher/sync/remove', vars),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['launcher-federation-graph'] });
+      invalidateLauncher(queryClient);
     },
   });
 }
@@ -274,7 +294,7 @@ export function useCreateConnection() {
     mutationFn: (payload: { from: string; to: string }) =>
       api.post<{ ok: true }>('/launcher/connection', payload),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['launcher-federation-graph'] });
+      invalidateLauncher(queryClient);
     },
   });
 }
@@ -286,7 +306,7 @@ export function useRemoveLauncherConnection() {
     mutationFn: (payload: { from: string; to: string }) =>
       api.post<{ ok: true; removed: boolean }>('/launcher/connection/remove', payload),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['launcher-federation-graph'] });
+      invalidateLauncher(queryClient);
     },
   });
 }
@@ -298,8 +318,7 @@ export function useToggleShareable() {
     mutationFn: (payload: { name: string; shareable: boolean }) =>
       api.post<{ ok: true }>('/launcher/shareable', payload),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['launcher-federation-graph'] });
-      queryClient.invalidateQueries({ queryKey: ['launcher-status'] });
+      invalidateLauncher(queryClient);
     },
   });
 }

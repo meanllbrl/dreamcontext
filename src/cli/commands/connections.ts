@@ -10,9 +10,24 @@ import {
   type ConnectionDirection,
 } from '../../lib/connections.js';
 import { VaultError } from '../../lib/vaults.js';
+import { refreshPeerSummaries } from '../../lib/federation-peer-summary.js';
 import { header, success, error, info, formatTable } from '../../lib/format.js';
 
 const DIRECTIONS: ConnectionDirection[] = ['out', 'in', 'both'];
+
+/**
+ * Refresh the ambient peer-summary cache after a read relationship changes, so a
+ * freshly-drawn (or removed) connection updates the snapshot's "Connected
+ * projects" section immediately. NEVER throws — a refresh failure must not fail
+ * the connect/disconnect that just succeeded.
+ */
+function refreshPeerSummariesQuietly(contextRoot: string): void {
+  try {
+    refreshPeerSummaries(contextRoot);
+  } catch {
+    // Best-effort: ambient awareness refresh must never break the command.
+  }
+}
 
 /** Resolve the current vault's registered name (or basename) from its context root. */
 function currentVaultName(contextRoot: string): string {
@@ -59,6 +74,8 @@ export function registerConnectionsCommand(program: Command): void {
         success(
           `Connected to "${vault}" (${direction}${topics ? `, topics: ${topics.join(', ')}` : ''}).`,
         );
+        // A new read relationship → refresh ambient awareness immediately.
+        refreshPeerSummariesQuietly(contextRoot);
       } catch (err) {
         if (err instanceof VaultError) {
           error(err.message);
@@ -78,6 +95,8 @@ export function registerConnectionsCommand(program: Command): void {
       const removed = removeConnection(contextRoot, vault);
       if (removed) {
         success(`Disconnected from "${vault}".`);
+        // A removed read relationship → refresh ambient awareness immediately.
+        refreshPeerSummariesQuietly(contextRoot);
       } else {
         info(`No connection to "${vault}".`);
         process.exitCode = 1;

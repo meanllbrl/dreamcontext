@@ -709,7 +709,7 @@ export interface Bm25Options {
 export function bm25Search(
   query: string,
   corpus: CorpusDoc[],
-  topK = 5,
+  topK = 10,
   opts: Bm25Options = {},
 ): RecallHit[] {
   if (corpus.length === 0) return [];

@@ -69,8 +69,23 @@ The whole job is two idempotent commands, ALWAYS in this order:
    To inspect WITHOUT writing, use `dreamcontext federation sync --dry-run`
    (computes + prints, writes nothing, watermark not advanced).
 
-3. **Report** counts: ingested / collisions / conflicts surfaced / quarantined /
-   peers synced. Surface any conflict-note to the user explicitly.
+3. **Then refresh peer summaries** — rebuild the ambient READ-awareness cache so
+   the next session's snapshot "Connected projects" section reflects current
+   peer state (what each readable peer IS + what was last done there):
+
+   ```bash
+   dreamcontext federation peers
+   ```
+
+   - Resolves readable peers (out/both ∩ not-stale ∩ shareable), reads each
+     peer's core files (READ-ONLY), and writes the local cache
+     `state/.peer-summaries.json` that the snapshot hot path reads cheaply.
+   - Never touches a peer's files; never resolves a peer in the snapshot itself.
+   - Idempotent — re-running just rewrites the cache.
+
+4. **Report** counts: ingested / collisions / conflicts surfaced / quarantined /
+   peers synced / peers summarised. Surface any conflict-note to the user
+   explicitly.
 
 ## Gotchas
 

@@ -44,7 +44,7 @@ always beats blind exploration.
 
 **Protocol:**
 
-1. Run `dreamcontext memory recall "<query>" --top 5 --plain` via Bash.
+1. Run `dreamcontext memory recall "<query>" --top 10 --plain` via Bash.
 2. If the top hit has **score ≥ 5**, Read the top-1 (and top-2 if related)
    files immediately — that's almost certainly your answer.
 3. If hits exist but all scores are **< 2**, treat them as weak signal and
@@ -53,6 +53,11 @@ always beats blind exploration.
 5. When chaining recall into a script or programmatic step, use
    `--json` instead of `--plain` for a machine-readable payload, and
    `--types knowledge,feature,task,memory,changelog` to scope by corpus type.
+
+**Cross-vault hits are normal and useful.** Results tagged `<vault>::<type>/<slug>` come
+from connected readable peer projects — this is expected behavior, not noise. If the
+answer likely lives in a specific peer, scope the search with `--vault <name>` to
+search current + that one peer directly.
 
 Recall is appropriate for Track A (Documented Knowledge) and for Track B when
 the query is about a documented concept. It is NOT a substitute for Glob/Grep
@@ -127,7 +132,7 @@ NEVER use Bash for any command that modifies files or system state.
 ## Rules
 
 1. **Briefing is pre-loaded.** Never re-read files already summarized in your Sub-agent Briefing.
-2. **Recall before grep.** For any "where/why/what-do-we-know" query, try `dreamcontext memory recall "<query>" --top 5 --plain` BEFORE Glob/Grep. Read top hits if score ≥ 5; fall back to Glob/Grep only when recall is empty or weak (<2).
+2. **Recall before grep.** For any "where/why/what-do-we-know" query, try `dreamcontext memory recall "<query>" --top 10 --plain` BEFORE Glob/Grep. Read top hits if score ≥ 5; fall back to Glob/Grep only when recall is empty or weak (<2). Results tagged `<vault>::<type>/<slug>` are cross-vault hits from connected peers — expected and useful.
 3. **Hypothesize first.** No blind searching. Use what you know to target your search.
 4. **Parallel everything.** Multiple independent tool calls go in one turn.
 5. **Cheapest tool first.** Glob -> Grep -> Read. Skip steps when you can.

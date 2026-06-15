@@ -24,6 +24,7 @@ import {
   computeDigest,
   detectConflicts,
 } from '../../lib/federation-digest.js';
+import { refreshPeerSummaries } from '../../lib/federation-peer-summary.js';
 import { header, success, info, warn } from '../../lib/format.js';
 
 /** Default number of entries pushed per peer per sync. */
@@ -182,6 +183,37 @@ export function registerFederationCommand(program: Command): void {
       } else if (dryRun) {
         info(chalk.dim('Dry-run complete — nothing written, no watermarks advanced.'));
       }
+    });
+
+  // ─── peers ───────────────────────────────────────────────────────────────────
+  federation
+    .command('peers')
+    .description('Refresh + print compact summaries of readable peers (ambient awareness)')
+    .action(() => {
+      const contextRoot = ensureContextRoot();
+      // The REAL peer-read path (off the snapshot hot path): resolves readable
+      // peers, reads each peer's core files, and writes the local cache the
+      // snapshot's "Connected projects" section is fed from.
+      const peers = refreshPeerSummaries(contextRoot);
+
+      console.log(header('Federation Peers'));
+      if (peers.length === 0) {
+        info(
+          chalk.dim(
+            'No readable peers (need an out/both connection to a shareable vault). ' +
+              'Connect with `dreamcontext connect <vault> --direction out`.',
+          ),
+        );
+        return;
+      }
+      for (const p of peers) {
+        console.log(chalk.bold(`\n  ${p.vault}`) + (p.whatItIs ? chalk.dim(` — ${p.whatItIs}`) : ''));
+        for (const act of p.lastActivity) console.log(`    Last: ${act}`);
+        if (p.activeTask) console.log(`    In progress: ${p.activeTask}`);
+        if (p.topTags.length > 0) console.log(chalk.dim(`    Tags: ${p.topTags.join(', ')}`));
+      }
+      console.log('');
+      info(chalk.dim('Recall already spans these. Search one directly: `dreamcontext memory recall <q> --vault <name>`.'));
     });
 
   // ─── status ────────────────────────────────────────────────────────────────
