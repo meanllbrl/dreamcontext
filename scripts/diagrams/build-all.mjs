@@ -24,6 +24,8 @@ const DIAGRAMS = [
   { board: 'architecture.board.cjs', png: 'diagram-architecture.png', scale: 2 },
   { board: 'neuroscience.board.cjs', png: 'diagram-neuroscience.png', scale: 2 },
   { board: 'council.board.cjs', png: 'diagram-council.png', scale: 2 },
+  // Federation also emits a standalone PDF (linkable from DEEP-DIVE).
+  { board: 'federation.board.cjs', png: 'diagram-federation.png', pdf: 'diagram-federation.pdf', scale: 2 },
 ];
 
 if (!existsSync(OUT)) mkdirSync(OUT, { recursive: true });
@@ -42,6 +44,7 @@ await withRenderer(async (render) => {
     const boardMd = resolve(DIA, d.board.replace('.board.cjs', '.excalidraw.md'));
     if (!existsSync(boardMd)) continue;
     await render(boardMd, resolve(OUT, d.png), d.scale);
+    if (d.pdf) await render.pdf(boardMd, resolve(OUT, d.pdf), d.scale);
   }
 });
 console.log('✓ diagrams rebuilt');

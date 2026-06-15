@@ -65,6 +65,59 @@ export async function withRenderer(fn) {
     console.log(`  rendered ${outPng}  (${scene.elements.length} elements, scale ${scale})`);
   };
 
+  // Single-page PDF sized exactly to the diagram: export the same PNG blob, read its
+  // natural pixel size, lay it full-bleed in a throwaway page, and print to PDF.
+  render.pdf = async (boardMd, outPdf, scale = 2) => {
+    const scene = sceneFromBoard(boardMd);
+    const { dataUrl, w, h } = await page.evaluate(async ({ scene, scale }) => {
+      const { exportToBlob } = window.ExcalidrawLib;
+      const blob = await exportToBlob({
+        elements: scene.elements,
+        files: scene.files || null,
+        mimeType: 'image/png',
+        quality: 1,
+        appState: {
+          ...(scene.appState || {}),
+          exportBackground: true,
+          exportWithDarkMode: false,
+          viewBackgroundColor: '#ffffff',
+          exportScale: scale,
+        },
+        getDimensions: (w, h) => ({ width: w * scale, height: h * scale, scale }),
+      });
+      const dataUrl = await new Promise((res) => {
+        const fr = new FileReader();
+        fr.onload = () => res(fr.result);
+        fr.readAsDataURL(blob);
+      });
+      const dim = await new Promise((res) => {
+        const im = new Image();
+        im.onload = () => res({ w: im.naturalWidth, h: im.naturalHeight });
+        im.src = dataUrl;
+      });
+      return { dataUrl, w: dim.w, h: dim.h };
+    }, { scene, scale });
+
+    const pdfCtx = await browser.newContext();
+    const pdfPage = await pdfCtx.newPage();
+    await pdfPage.setContent(
+      `<!doctype html><html><body style="margin:0;padding:0">` +
+      `<img src="${dataUrl}" style="display:block;width:${w}px;height:${h}px"/></body></html>`,
+      { waitUntil: 'networkidle' },
+    );
+    await pdfPage.pdf({
+      path: outPdf,
+      width: `${w}px`,
+      height: `${h}px`,
+      printBackground: true,
+      pageRanges: '1',
+      margin: { top: '0', bottom: '0', left: '0', right: '0' },
+    });
+    await pdfPage.close();
+    await pdfCtx.close();
+    console.log(`  pdf ${outPdf}  (${w}x${h}px)`);
+  };
+
   try {
     await fn(render);
   } finally {

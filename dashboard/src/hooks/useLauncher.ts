@@ -221,9 +221,17 @@ export interface FederationEdge {
   active: boolean;
 }
 
+/** One vault's stored connection direction toward a peer (raw, for the graph). */
+export interface FederationConnection {
+  from: string;
+  to: string;
+  direction: 'out' | 'in' | 'both';
+}
+
 export interface FederationGraph {
   nodes: VaultStatus[];
   edges: FederationEdge[];
+  connections: FederationConnection[];
   latestVersion: string;
 }
 
@@ -232,6 +240,30 @@ export function useFederationGraph() {
   return useQuery({
     queryKey: ['launcher-federation-graph'],
     queryFn: () => api.get<FederationGraph>('/launcher/federation-graph'),
+  });
+}
+
+/** Enable a consented digest sync: `to` listens to `from`'s changes at sleep. */
+export function useCreateSync() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { from: string; to: string }) =>
+      api.post<{ ok: true }>('/launcher/sync', vars),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['launcher-federation-graph'] });
+    },
+  });
+}
+
+/** Stop a digest sync: `to` no longer listens to `from`. */
+export function useRemoveSync() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { from: string; to: string }) =>
+      api.post<{ ok: true }>('/launcher/sync/remove', vars),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['launcher-federation-graph'] });
+    },
   });
 }
 

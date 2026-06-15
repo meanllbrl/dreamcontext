@@ -18,6 +18,7 @@ import {
   listConnections,
   addConnection,
   removeConnection,
+  type ConnectionDirection,
 } from '../../lib/connections.js';
 import { readSetupConfig, updateSetupConfig } from '../../lib/setup-config.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
@@ -1009,23 +1010,28 @@ export async function handleLauncherFederationGraph(
   const known = new Set(vaults.map((v) => v.name));
 
   const edges: FederationEdge[] = [];
+  // Raw per-vault directions so the frontend can derive BOTH the live-read wires
+  // (out/both + target shareable) and the digest-sync wires ("to listens to from"
+  // = from out/both->to AND to in/both->from).
+  const connections: { from: string; to: string; direction: ConnectionDirection }[] = [];
   const seen = new Set<string>();
   for (const v of vaults) {
     if (!existsSync(resolve(v.path))) continue; // a dead vault can't host live edges
     const conns = listConnections(join(resolve(v.path), '_dream_context'));
     for (const c of conns) {
-      // A "reads" edge: this vault reaches across `out`/`both` peers.
-      if (c.direction !== 'out' && c.direction !== 'both') continue;
       if (!known.has(c.vault)) continue; // peer no longer registered
       if (c.status === 'stale') continue;
-      const key = `${v.name} ${c.vault}`;
+      connections.push({ from: v.name, to: c.vault, direction: c.direction });
+      // A "reads" edge: this vault reaches across `out`/`both` peers.
+      if (c.direction !== 'out' && c.direction !== 'both') continue;
+      const key = `${v.name} ${c.vault}`;
       if (seen.has(key)) continue;
       seen.add(key);
       edges.push({ source: v.name, target: c.vault, active: shareableByName.get(c.vault) === true });
     }
   }
 
-  sendJson(res, 200, { nodes, edges, latestVersion: latest });
+  sendJson(res, 200, { nodes, edges, connections, latestVersion: latest });
 }
 
 /**
@@ -1058,7 +1064,10 @@ export async function handleLauncherConnectionCreate(
   }
   const fromRoot = join(resolve(fromVault.path), '_dream_context');
   try {
-    addConnection(fromRoot, from, to, 'out', null);
+    // Merge, don't clobber: if `from` already accepts `to` (`in`), adding the
+    // read makes it `both` rather than overwriting the consent.
+    const cur = dirToward(fromRoot, to);
+    addConnection(fromRoot, from, to, addOut(cur?.dir ?? null), cur?.topics ?? null);
     sendJson(res, 200, { ok: true });
   } catch (err) {
     if (err instanceof VaultError) {
@@ -1099,8 +1108,130 @@ export async function handleLauncherConnectionRemove(
   }
   // resolveVaultContextRoot would re-validate the folder; we only need the path.
   const fromRoot = join(resolve(fromVault.path), '_dream_context');
-  const removed = removeConnection(fromRoot, to);
-  sendJson(res, 200, { ok: true, removed });
+  // Drop the A→B ordered relationship: remove A's `out` component (kills the
+  // live read) AND B's `in` consent toward A (kills "B listens to A"). A's own
+  // `in` toward B (a separate B→A relationship) is preserved.
+  const a = dirToward(fromRoot, to);
+  if (a) applyDir(fromRoot, from, to, dropOut(a.dir), a.topics);
+  const toRoot = vaultRoot(to);
+  if (toRoot) {
+    const b = dirToward(toRoot, from);
+    if (b) applyDir(toRoot, to, from, dropIn(b.dir), b.topics);
+  }
+  sendJson(res, 200, { ok: true, removed: true });
+}
+
+// ─── Direction algebra (out/in/both compose & decompose) ─────────────────────
+// `out` = "I share to + read" the peer; `in` = "I accept the peer's digest".
+// The launcher is cross-vault, so it can set BOTH sides of a consented sync in
+// one action (a per-vault Settings panel can only edit its own side).
+type Dir = 'out' | 'in' | 'both';
+const addOut = (d: Dir | null): Dir => (d === 'in' || d === 'both' ? 'both' : 'out');
+const addIn = (d: Dir | null): Dir => (d === 'out' || d === 'both' ? 'both' : 'in');
+const dropOut = (d: Dir): Dir | null => (d === 'both' ? 'in' : d === 'in' ? 'in' : null);
+const dropIn = (d: Dir): Dir | null => (d === 'both' ? 'out' : d === 'out' ? 'out' : null);
+
+/** The vault's stored direction toward `peer` (+ its topics), or null. */
+function dirToward(root: string, peer: string): { dir: Dir; topics: string[] | null } | null {
+  const c = listConnections(root).find((x) => x.vault === peer);
+  return c ? { dir: c.direction as Dir, topics: c.topics } : null;
+}
+
+/** Resolve a registered vault's `_dream_context` root, or null if unregistered. */
+function vaultRoot(name: string): string | null {
+  const v = listVaults().find((x) => x.name === name);
+  return v ? join(resolve(v.path), '_dream_context') : null;
+}
+
+/** Set (or remove when `next` is null) `fromName`'s connection direction to `peer`. */
+function applyDir(
+  fromRoot: string,
+  fromName: string,
+  peer: string,
+  next: Dir | null,
+  topics: string[] | null,
+): void {
+  if (next === null) removeConnection(fromRoot, peer);
+  else addConnection(fromRoot, fromName, peer, next, topics);
+}
+
+/**
+ * POST /api/launcher/sync — establish a consented digest sync so `to` listens to
+ * `from`'s changes: at sleep, `from` pushes its new knowledge into `to`'s inbox.
+ * Sets BOTH sides atomically — `from`:out→to (share) AND `to`:in→from (consent).
+ * Mutation; CSRF-guarded; STRICT-PICK (`from`, `to`). VaultError → 400.
+ */
+export async function handleLauncherSyncCreate(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  _contextRoot: string | null,
+): Promise<void> {
+  const body = await parseJsonBody(req);
+  if (!body) {
+    sendError(res, 400, 'invalid_body', 'Request body must be valid JSON.');
+    return;
+  }
+  const from = typeof body.from === 'string' ? body.from.trim() : '';
+  const to = typeof body.to === 'string' ? body.to.trim() : '';
+  if (!from || !to) {
+    sendError(res, 400, 'invalid_body', 'from and to must be non-empty strings.');
+    return;
+  }
+  const fromRoot = vaultRoot(from);
+  const toRoot = vaultRoot(to);
+  if (!fromRoot) {
+    sendError(res, 400, 'unknown_vault', `No registered vault named "${from}".`);
+    return;
+  }
+  if (!toRoot) {
+    sendError(res, 400, 'unknown_vault', `No registered vault named "${to}".`);
+    return;
+  }
+  try {
+    const a = dirToward(fromRoot, to);
+    addConnection(fromRoot, from, to, addOut(a?.dir ?? null), a?.topics ?? null);
+    const b = dirToward(toRoot, from);
+    addConnection(toRoot, to, from, addIn(b?.dir ?? null), b?.topics ?? null);
+    sendJson(res, 200, { ok: true });
+  } catch (err) {
+    if (err instanceof VaultError) {
+      sendError(res, 400, 'invalid_connection', err.message);
+      return;
+    }
+    console.error('[launcher] sync create failed:', err);
+    sendError(res, 500, 'sync_failed', 'Failed to enable sync.');
+  }
+}
+
+/**
+ * POST /api/launcher/sync/remove — stop `to` listening to `from` by dropping
+ * `to`'s `in` consent toward `from`. Leaves `from`'s `out` (the live read) intact.
+ * Idempotent; never throws. STRICT-PICK (`from`, `to`).
+ */
+export async function handleLauncherSyncRemove(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  _contextRoot: string | null,
+): Promise<void> {
+  const body = await parseJsonBody(req);
+  if (!body) {
+    sendError(res, 400, 'invalid_body', 'Request body must be valid JSON.');
+    return;
+  }
+  const from = typeof body.from === 'string' ? body.from.trim() : '';
+  const to = typeof body.to === 'string' ? body.to.trim() : '';
+  if (!from || !to) {
+    sendError(res, 400, 'invalid_body', 'from and to must be non-empty strings.');
+    return;
+  }
+  const toRoot = vaultRoot(to);
+  if (toRoot) {
+    const b = dirToward(toRoot, from);
+    if (b) applyDir(toRoot, to, from, dropIn(b.dir), b.topics);
+  }
+  sendJson(res, 200, { ok: true });
 }
 
 /**

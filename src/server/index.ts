@@ -31,6 +31,8 @@ import {
   handleLauncherFederationGraph,
   handleLauncherConnectionCreate,
   handleLauncherConnectionRemove,
+  handleLauncherSyncCreate,
+  handleLauncherSyncRemove,
   handleLauncherShareable,
   handleSleepyVideo,
   handleSleepyAnim,
@@ -129,6 +131,8 @@ function buildRouter(): Router {
   router.get('/api/launcher/federation-graph', handleLauncherFederationGraph);
   router.post('/api/launcher/connection', handleLauncherConnectionCreate);
   router.post('/api/launcher/connection/remove', handleLauncherConnectionRemove);
+  router.post('/api/launcher/sync', handleLauncherSyncCreate);
+  router.post('/api/launcher/sync/remove', handleLauncherSyncRemove);
   router.post('/api/launcher/shareable', handleLauncherShareable);
   router.get('/api/sleepy/video', handleSleepyVideo);
   router.get('/api/sleepy/anim', handleSleepyAnim);

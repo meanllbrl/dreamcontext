@@ -162,6 +162,24 @@ If the relevant task has `product: X` in frontmatter, the PRD MAY be product-sco
 
 ### Pass B — Knowledge
 
+#### B0. Organize — folders, grouping, and placement
+
+Before curating content, keep the knowledge store's *structure* logical. `knowledge/**/*.md` is indexed recursively (`buildKnowledgeIndex` globs `**/*.md`), so subfolders are fully recall-safe — grouping a file never hides it.
+
+**Diagrams → per-title folders (idempotent, any depth).** Preferred layout is `knowledge/diagrams/<title>/<title>.excalidraw.md` — the board plus its dark-sibling `.board.cjs`/`.json` living together. New boards often land flat (`knowledge/diagrams/<title>.excalidraw.md` next to `<title>.board.cjs`). Fold *canonical* flat boards into per-title folders every cycle:
+
+```bash
+dreamcontext migrations apply-diagrams   # idempotent: moves flat canonical boards + same-basename siblings, rewrites inbound [[wikilinks]] atomically; prints "nothing to organize" when already clean
+```
+
+Placement judgment FIRST: only canonical boards (architecture, system flows, roadmaps, durable plans a future session should recall) belong under `knowledge/diagrams/`. Scratch/exploratory/in-progress boards belong in `inbox/` or `workspace/` (dark by location — not indexed) — leave those alone; do NOT pull them into knowledge. Never hand-edit board scene JSON or wikilinks — the command owns both. This catches boards created *after* the one-time `0.7.2/diagrams-folder-convention` migration already recorded in the ledger (which `sleep-migration` will not re-fire for).
+
+**Knowledge → logical subfolders (grouping; moves are deep-only).** When ≥3 top-level `knowledge/*.md` files form a clear topical cluster a future session would browse together (mirroring the existing `data-structures/` and `products/` subfolders), group them under `knowledge/<group>/`. Moving files + rewriting links is a structural op — gate it exactly like merge-with-delete (B1.5):
+- **light/standard:** do NOT move. **Flag the cluster in your report** (`group candidate: <group>/ ← a.md, b.md, c.md`) for the next deep cycle.
+- **deep:** archive-before (the B1.5 safety net), then move the files and rewrite inbound `[[old-slug]]` references — **target token only**, preserve `|alias` and `#anchor`. Verify every file still lists: `dreamcontext knowledge index --plain`.
+
+Group only on a **sharp** topical boundary — the same B2 create-vs-extend test, applied to folders. Don't fragment (one folder per file) and don't over-nest. After any group/move, re-check the moved files' tags in Pass C so the folder and the tags tell the same story.
+
 #### B1. Decide: create, update, archive, or pin
 
 For each knowledge candidate (research finding, sleep-state flag, extracted overflow):
@@ -350,6 +368,10 @@ dreamcontext taxonomy resolve <tag>
   - 5 user stories, 5 acceptance criteria
 - No-op feature signals: 1 (signal "feature_advanced=marketing-dashboard-v0" — but PRD exists and no criteria moved)
 
+### Organization
+- Diagrams: ran `apply-diagrams` — folded knowledge/diagrams/federation.excalidraw.md (+federation.board.cjs) into diagrams/federation/ (canonical board, was flat). 0 ambiguous.
+- Knowledge grouping: group candidate flagged for deep cycle — `decisions/` ← decision-mem0-vs-bm25-recall.md, decision-link-aware-vs-embedding-recall.md, decision-meta-marketing-skill-adoption.md (4 sibling `decision-*` files browse together). Not moved (standard depth).
+
 ### Knowledge
 - Created: knowledge/jwt-rotation-policy.md (tags: security, decisions; from sleep-state flag) — sharp boundary, new tag-able topic
 - Extended (no new file): knowledge/competitive-analysis-ecc.md — folded the new ECC pricing finding into the existing file (soft distinction, same topic family) instead of forking a near-duplicate slug; updated `summary:`
@@ -375,6 +397,7 @@ Dropped-but-load-bearing self-check: <none | list any digest/auto-bookmark/resea
 6. **Don't create knowledge that already fits in memory.** A short technical decision belongs in `2.memory.md` (sleep-state's domain), not its own knowledge file.
 7. **Knowledge file threshold**: ≥3 paragraphs of content, or material that will be re-read in future sessions.
 8. **Fewest files, sharp boundaries (B2 rubric).** Default to extending an existing file. Fold soft distinctions in — same vertical/brand/topic family, a narrower slice, an increment. Create a new file only for a genuinely separate topic whose own tags sharpen discovery. Not super-files, not fragmentation.
+8a. **Keep the store organized (B0).** Every cycle, fold canonical flat diagram boards into per-title folders (`apply-diagrams`, idempotent, any depth). Group clustered top-level knowledge into logical subfolders only at `deep` depth (flag candidates at light/standard). Subfolders are recall-safe — the index globs `**/*.md`. Folder and tags must tell the same story.
 9. **Use standard tags only (prefer taxonomy vocab).** New tags fragment discovery; always check `dreamcontext taxonomy vocab` before tagging. Add new vocabulary via `taxonomy add` or `taxonomy alias` — never hand-edit `core/taxonomy.json` directly.
 10. **Process all flags from sleep-state** in your report — don't silently drop them.
 11. **No-op cheaply** when signals don't actually warrant work.
