@@ -502,7 +502,9 @@ describe('excalidraw-flat-regression', () => {
   it('live flat knowledge/diagrams/*.excalidraw.md still indexes+recalls with extraction; index content JSON-free', () => {
     // Use dreamcontext's own architecture.excalidraw.md as the regression fixture.
     const CONTEXT_ROOT = '/Users/mehmetnuraydin/projects/dreamcontext/_dream_context';
-    const FLAT_BOARD_SLUG = 'diagrams/architecture.excalidraw';
+    // Diagrams are now foldered per-title (diagrams/<title>/<title>.excalidraw.md),
+    // so the index slug carries the containing folder.
+    const FLAT_BOARD_SLUG = 'diagrams/architecture/architecture.excalidraw';
 
     const entries = buildKnowledgeIndex(CONTEXT_ROOT);
     const boardEntry = entries.find((e) => e.slug === FLAT_BOARD_SLUG);
