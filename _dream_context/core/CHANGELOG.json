@@ -1,5 +1,33 @@
 [
   {
+    "date": "2026-06-15",
+    "type": "feat",
+    "scope": "hook",
+    "description": "Add two targeted suppressions to the snapshot/hook pipeline. (1) Asset-drift scoping: the SessionStart 'update your dreamcontext' nag now stays silent when a content check confidently proves that no installed asset for this project would change on update — i.e. the CLI bump only touched skill-packs this project does not use. New src/cli/commands/asset-drift.ts (computeUsedAssetsChanged: temp-installs the real installers for the project's exact platforms+packs, byte-compares against disk, excludes settings.json and _dream_context/) and src/lib/asset-drift-cache.ts (persists verdict at state/.asset-drift.json, keyed on cliVersion+setupVersion). snapshot.ts getDriftDirective() reads the cache: when state=stale or bootstrap AND the cache confidently reports clean, the nag is suppressed; anything uncertain (no cache, version-mismatched, real change, error) falls open to the nag. The cache is refreshed in a detached process (hook refresh-asset-drift, new command) spawned on the existing once/24h tick in hook.ts, so the async installer stdout never contaminates the sync snapshot path. (2) Dashboard auto-open suppression: hook ensure-dashboard exits early when readAppManifest() !== null (the desktop beta app is installed), preventing a redundant browser tab alongside the native window. 13 new unit tests; full suite 1947 passed, build+typecheck clean.",
+    "breaking": false,
+    "summary": "Scope the SessionStart drift nag to actively-used skills; suppress dashboard auto-open when the beta app is installed",
+    "references": [
+      "file:src/cli/commands/asset-drift.ts",
+      "file:src/lib/asset-drift-cache.ts",
+      "file:src/cli/commands/snapshot.ts",
+      "file:src/cli/commands/hook.ts",
+      "knowledge:desktop-beta-tauri-multivault"
+    ]
+  },
+  {
+    "date": "2026-06-15",
+    "type": "chore",
+    "scope": "sleep",
+    "description": "Remove the hard rule that sleep/goal agents always bump touched tasks to in_review, never completed. New policy across agents/sleep-tasks.md, skill/SKILL.md, and skill-packs/goal-skill/SKILL.md: mark completed when the work is demonstrably done, low-risk, and already validated (chores, docs, mechanical refactors, tests-green fixes); use in_review only when a human genuinely must verify something (user-facing behaviour change, design/architecture decision, risky or critical-path work, or to hand over a close decision on superseded/abandoned work). Goal-skill Phase 6 PASS now directly marks completed rather than stopping at in_review and asking the user. Also extends sleep-tasks Step 6 from a staleness sweep to full backlog grooming: pivot-relevance reconcile (obsoleted tasks re-versioned or surfaced for close), version re-attach, and tag normalization to taxonomy facets each cycle.",
+    "breaking": false,
+    "summary": "Replace reflexive in_review bumps with reality-based status policy across sleep-tasks + goal-skill agents",
+    "references": [
+      "file:agents/sleep-tasks.md",
+      "file:skill/SKILL.md",
+      "file:skill-packs/goal-skill/SKILL.md"
+    ]
+  },
+  {
     "date": "2026-06-14",
     "type": "chore",
     "scope": "sleep",

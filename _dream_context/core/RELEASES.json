@@ -1,5 +1,16 @@
 [
   {
+    "id": "rel_QUejh1SP",
+    "version": "v0.8.4",
+    "date": "",
+    "summary": "Sleep task-status policy (complete done+validated, in_review only when needed) + drift nag scoped to actively-used skills + dashboard auto-open suppressed when beta app installed",
+    "breaking": false,
+    "status": "planning",
+    "features": [],
+    "tasks": [],
+    "changelog": []
+  },
+  {
     "id": "rel_tBa_6pby",
     "version": "v0.8.3",
     "date": "",

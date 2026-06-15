@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   useLauncherStatus,
   useUpdateProject,
@@ -23,12 +23,9 @@ export function LauncherPage() {
 
   const vaults = data?.vaults ?? [];
 
-  // Default to the network graph once there are relationships to see, but never
-  // override an explicit user choice (tracked once vaults first load).
-  const [userPickedView, setUserPickedView] = useState(false);
-  useEffect(() => {
-    if (!userPickedView && vaults.length >= 2) setView('graph');
-  }, [vaults.length, userPickedView]);
+  // Cards is ALWAYS the default surface — the network graph is opt-in via the
+  // toggle. (We used to auto-switch to the graph at ≥2 vaults; that surprised
+  // users who expected the familiar card list on every launch.)
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -66,7 +63,6 @@ export function LauncherPage() {
   }
 
   function pickView(v: View) {
-    setUserPickedView(true);
     setView(v);
   }
 

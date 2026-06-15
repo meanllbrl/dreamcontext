@@ -64,7 +64,7 @@ flowchart TD
     P5 -->|cap reached| ESC2[ESCALATE to user — do NOT proceed]
     P5 -->|PASS| P6{Phase 6 — goal-validator runs the chosen method: PASS?}
     P6 -->|FAIL| P4
-    P6 -->|PASS| DONE[Goal reached — task to in_review, ask the user to complete]
+    P6 -->|PASS| DONE[Goal reached — validation passed, mark task completed + tell the user]
 ```
 
 ### Phase 0 — Scope & validation method (ask the user)
@@ -143,9 +143,11 @@ recorded in the task and returns `PASS | FAIL` with evidence (exact command + ou
 
 - **FAIL** → append the failure report to the task (`dreamcontext tasks log`), and route
   **back to Phase 4** (IMPLEMENT). Loop IMPLEMENT → REVIEW → VALIDATE until validation PASSES.
-- **PASS** → the goal is reached. `dreamcontext tasks status <slug> in_review "all criteria
-  met; validation passed via <method>"`, then **ask the user to confirm completion** —
-  `tasks complete` is a user action; you never auto-complete.
+- **PASS** → the goal is reached. The user-chosen validation method *is* the definition of
+  done, and it passed with evidence — so close it: `dreamcontext tasks status <slug> completed
+  "all criteria met; validation passed via <method>"`, then **tell the user it's done** (what
+  shipped + the evidence). Only leave it in `in_review` instead if the validation surfaced
+  something a human should still eyeball before closing.
 
 ## Convergence rules (how the loops end)
 
@@ -166,7 +168,7 @@ recorded in the task and returns `PASS | FAIL` with evidence (exact command + ou
 | "I'll let the implementer review its own work." | Self-review is not review. Use a clean-context `reviewer`. |
 | "I'll skip asking the user how to validate, tests are obviously the way." | Phase 0 is non-negotiable. Validation criteria are the user's call. |
 | "We've looped 4 times, but I think this next one fixes it." | Cap is 3. Escalate. The user decides whether to keep going. |
-| "I'll auto-complete the task, validation passed." | `complete` is user-only. Move to `in_review` and ask. |
+| "I'll mark it complete because I *think* it's done." | Done is defined by Phase 6 validation passing with evidence — not by your hunch. Complete only after PASS. |
 
 ## Rationalization table
 
@@ -182,7 +184,7 @@ recorded in the task and returns `PASS | FAIL` with evidence (exact command + ou
 - **Orchestrator never writes production code.** Dispatch sub-agents.
 - **Plan reviewers run in parallel**, in one message. Sequential dispatch defeats the design.
 - **Never skip Phase 0's validation-method question.**
-- **Never auto-`complete` the task** — that's the user's action; you stop at `in_review`.
+- **`complete` only after Phase 6 PASS** — validation passing with evidence is the definition of done; never complete on a hunch, and never before validation.
 - **Tell `reviewer` to run `git diff` itself**; don't paste diffs into prompts.
 - **Caps are hard** (3 per loop). At the cap, escalate — never declare done.
 - **Use the `dreamcontext` skill** throughout — the task doc is the source of truth.

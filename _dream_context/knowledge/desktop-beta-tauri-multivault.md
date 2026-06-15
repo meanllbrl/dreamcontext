@@ -13,10 +13,14 @@ description: >-
   enrichment with Markdown rendering, interactive-login-shell claude PATH fix,
   tracked enrichment status UI, dead-vault filtering, focus/blur UX, asset
   bundling), the Launcher per-project status indicator (green/yellow/red,
-  upgrade-vs-update distinction), the interactive federation graph
-  (react-force-graph-2d, drag-to-connect, active-edge particles), brain-settings
-  server persistence (vault-scoped .brain-settings.json), and the Federation
-  Settings panel redesign (plain-language explainers, direction labels).
+  upgrade-vs-update distinction), the content-scoped drift nag (asset-drift.ts
+  computeUsedAssetsChanged + asset-drift-cache.ts cacheConfidentlyClean, detached
+  refresh-asset-drift hook, fails-open suppression gate), the ensure-dashboard
+  app-installed auto-open suppression (readAppManifest != null exit), the
+  interactive federation graph (react-force-graph-2d, drag-to-connect,
+  active-edge particles), brain-settings server persistence (vault-scoped
+  .brain-settings.json), and the Federation Settings panel redesign
+  (plain-language explainers, direction labels).
 type: knowledge
 tags:
   - architecture
@@ -25,7 +29,7 @@ tags:
   - topic:federation
 pinned: false
 created: '2026-06-13'
-updated: '2026-06-14'
+updated: '2026-06-15'
 ---
 
 ## What this is
@@ -445,6 +449,48 @@ project carries its own `setupVersion` in `_dream_context/state/.config.json`.
 When `setupVersion` lags behind the running CLI version, the project's agent
 tooling is stale until the user runs `dreamcontext update` INSIDE that project.
 
+### Content-scoped drift nag (v0.8.4)
+
+The SessionStart "stale project assets" directive fires on a cheap version
+comparison (`setupVersion < cliVersion`). But a CLI release may only add or
+change packs this project never installed — nagging then is a false positive;
+`dreamcontext update` would be a content no-op for the user.
+
+**Design**: `setup-drift.ts` still governs version-based detection
+(`stale`/`bootstrap`/`current`/`downgrade`/`disabled`). A separate content-scope
+layer reads a cached verdict and suppresses the nag only when the cache
+confidently proves no used asset changed:
+
+- **`src/cli/commands/asset-drift.ts` — `computeUsedAssetsChanged()`**: installs
+  the current CLI's canonical assets for the project's exact platforms + packs into
+  a throwaway temp dir using the REAL installers (zero mapping duplication of
+  the intricate pack→disk logic). Then byte-compares each produced file against the
+  project's on-disk copy. Comparison is temp→disk only (additions/modifications):
+  unused/extra on-disk files never trigger the nag. Two files are excluded from
+  comparison: `settings.json` (hooks are additively merged, never byte-identical)
+  and any path under `_dream_context/` (machine-state; `emptyManifest()` is passed
+  to the pack installer so no `.install-manifest.json` persists into the temp tree).
+
+- **`src/lib/asset-drift-cache.ts` — `AssetDriftCache`**: verdict persisted at
+  `_dream_context/state/.asset-drift.json` (machine-local, gitignored), keyed on
+  `(cliVersion, setupVersion)`. `cacheConfidentlyClean()` returns true ONLY when
+  the cache was computed for those exact versions AND `usedAssetsChanged === false`.
+  Every other state — absent, version-mismatched, or `changed=true` — FAILS OPEN
+  to the nag (better an extra nudge than a missed update).
+
+- **Why detached**: `generateSnapshot()` is synchronous and stdout-sensitive; the
+  installers are async and log to stdout. The verdict is therefore recomputed in a
+  detached `hook refresh-asset-drift` child process (`spawnAssetDriftRefresh()` in
+  `src/cli/commands/hook.ts`), piggybacking on the existing ≤once/24h version-check
+  tick (alongside `maybeTriggerAppUpdate()`). The snapshot reads only the cached
+  file. Convergence is bounded by the 24h cadence — the nag may show for at most
+  one session before the cache arrives.
+
+- **Suppression gate in snapshot**: `src/cli/commands/snapshot.ts` calls
+  `resolveDriftState()` first; when state is `stale` or `bootstrap` it then reads
+  the cache with `readAssetDriftCache()` and calls `cacheConfidentlyClean()`. Only
+  a confident `false` suppresses the directive; any other outcome shows the nag.
+
 ### Status indicator
 
 `GET /api/launcher/status` returns per-vault:
@@ -553,6 +599,14 @@ on mount. Writes go to both localStorage (flash-free instant render) AND the ser
   - ⇄ Two-way
 - Per-option **hints** explaining the effect of each direction choice.
 - New `federation.*` i18n keys wired into the existing localization layer.
+
+## `hook ensure-dashboard` auto-open suppression
+
+`hook ensure-dashboard` normally opens the dashboard in a browser tab on
+`SessionStart`. When the beta app is installed, the app owns the dashboard
+surface — opening a browser tab would be redundant and confusing. The hook now
+exits silently when `readAppManifest() !== null` (i.e. `~/.dreamcontext/app.json`
+exists). The check is synchronous and cheap; no-op on non-app machines.
 
 ## Status / deferred
 

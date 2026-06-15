@@ -139,15 +139,24 @@ A fresh session opening this task file should see the *current plan*.
 
 **Tip — recall before reconciling.** If you're unsure whether a decision observed this session was already captured elsewhere (memory entry, sibling task, knowledge file), run `dreamcontext memory recall "<topic>"` to surface the top hits across the corpus before you edit. Cheaper than grep, deterministic, and helps you avoid duplicating a decision that already lives in `2.memory.md` (which `sleep-state` owns).
 
-### 4. Status — never auto-complete
+### 4. Status — review only when genuinely needed
 
-Default rule: if work meaningfully advanced the task, bump to `in_review`:
+Pick the status that matches reality. **Do NOT reflexively bump everything to `in_review`** — that buries the few tasks that actually need the user's eyes under a pile that didn't, and leaves finished work rotting half-closed.
+
+| The task this cycle is… | Status |
+|---|---|
+| **Demonstrably done, low-risk, and already validated** — acceptance criteria met, tests green, nothing a human must second-guess (chores, docs, mechanical refactors, well-covered fixes) | `completed` — close it. |
+| **Done but it genuinely needs the user's verification** — a user-facing behaviour change, a design/architecture decision, a risky or critical-path change, or a criterion that can't be mechanically proven | `in_review` with a one-line "what to verify". |
+| **Work clearly continues next session** | leave `in_progress`. |
 
 ```bash
-dreamcontext tasks status <slug> in_review "Ready for user verification — <one-line of what's done>"
+# Done + validated + nothing to second-guess → close it:
+dreamcontext tasks status <slug> completed "<what shipped — done, validated, no review needed>"
+# A human must actually confirm something → hand it over:
+dreamcontext tasks status <slug> in_review "Needs your eyes — <the specific thing to verify>"
 ```
 
-Stay in `in_progress` only when work clearly continues next session. **Never use `completed`** — the user reviews and completes themselves.
+The single test: **would the user actually want to look at this before it's closed?** If yes → `in_review`. If it's done and there's nothing to second-guess → `completed`. When you're genuinely unsure, prefer `in_review`. Only the never-done categories below (superseded / abandoned / obsoleted) ever go to `in_review` *for closing* — that's handing the user a close decision, not a completion.
 
 ### 5. Version readiness signal (no auto-release)
 
@@ -162,36 +171,46 @@ dreamcontext tasks list --status completed
 
 If every task linked to the active version is `completed` (or only `in_review` remains), surface this in your report. Do **not** release — that's the user's call.
 
-### 6. Staleness sweep — the active list must stay honest
+### 6. Backlog grooming — the active list must stay honest
 
-An "active" backlog that nobody has touched in weeks isn't active — it bloats every SessionStart snapshot (each non-completed task costs snapshot tokens on every session) and buries the work that actually matters. Each cycle, sweep the whole active list, not just this cycle's tasks:
+A backlog that nobody has touched in weeks, or that still describes a plan we've since pivoted away from, isn't "active" — it bloats every SessionStart snapshot (each non-completed task costs snapshot tokens on every session) and buries the work that actually matters. Each cycle, groom the whole active list, not just this cycle's tasks:
 
 ```bash
 dreamcontext tasks list          # every non-completed task, with updated dates
 ```
 
-For each task whose `updated` is **21+ days old** and that no session in this cycle touched, pick one:
+**(a) Direction changes & relevance.** If this cycle revealed a pivot — a new idea, a changed plan, a dropped direction — propagate it to the backlog, don't leave stale tasks describing the old plan:
 
 | Situation | Action |
 |---|---|
-| Work was actually done but never logged | Reconcile it now (steps 3-4) — that's a capture failure, fix it. |
+| A task is partly obsoleted by the pivot | Reconcile its body (step 3): drop the obsolete user stories / criteria, replace stale Technical Details. Keep what's still relevant. |
+| A task is **wholly** made irrelevant by the pivot | Don't silently delete. `dreamcontext tasks status <slug> in_review "obsoleted by <pivot> — confirm close"` — closing someone's planned work is the user's call. |
+| A task now belongs to a different milestone/version | Fix its `version:` frontmatter (Edit the field directly — there's no status-time version verb) so it attaches to the right planning version. |
+
+**(b) Staleness.** For each task whose `updated` is **21+ days old** and that no session in this cycle touched, pick one:
+
+| Situation | Action |
+|---|---|
+| Work was actually done but never logged | Reconcile it now (steps 3-4) — that's a capture failure, fix it. If it's done + validated, `completed`; if it needs eyes, `in_review`. |
 | Superseded / absorbed by another task | Log a final entry naming the successor, then `dreamcontext tasks status <slug> in_review "superseded by <other-slug> — confirm close"`. |
 | Still genuinely planned, just not started | Leave it, but verify its priority isn't inflated — a `high` task untouched for a month is not high priority; downgrade via Edit. |
 | Abandoned / no longer relevant | `dreamcontext tasks status <slug> in_review "stale 21+ days, appears abandoned — confirm close"`. |
 
-Never silently delete a task and never auto-complete — `in_review` with an explicit reason hands the close decision to the user. List every staleness action in your report.
+**(c) Tagging.** Tags drive recall — sharpen them every cycle. Normalize every task's frontmatter `tags` to the taxonomy vocab (`dreamcontext taxonomy vocab`), and *add* missing facets (area / type / feature) where a task is under-tagged. A well-tagged backlog is found; a poorly-tagged one is re-derived blind.
+
+Never silently delete a task, and never `completed` a task that was never actually done — for superseded/abandoned/obsoleted work, `in_review` with an explicit reason hands the close decision to the user. List every grooming action in your report.
 
 ## Return — short report
 
 ```
 ## sleep-tasks report
-- Updated: <slug> (in_progress → in_review, "<reason>"), <slug> (logged)
+- Updated: <slug> (in_progress → completed, "<done, validated, no review needed>"), <slug> (in_progress → in_review, "<the specific thing the user must verify>"), <slug> (logged)
 - Folded in (no new task): <existing-slug> — broadened scope + added 2 user stories / 1 criterion for <smaller-piece> instead of forking a duplicate
 - Created: <slug> (status: in_progress, attached to vX.Y.Z) — genuinely separate concern
 - Body reconciled: <slug> (dropped phase 1 from User Stories; replaced Technical Details auth section)
 - Person attribution: <slug> tagged person:ada (multi-person project, ada drove this cycle's work) | OR: single-person project — no person tags injected
 - Version readiness: vX.Y.Z — 4/5 tasks ready for review
-- Staleness sweep: <slug> in_review ("stale 21+ days, appears abandoned"), <slug> priority high→medium (untouched 30d), 2 tasks left as-is (genuinely planned)
+- Backlog grooming: <slug> obsoleted by pivot → in_review ("confirm close"), <slug> re-attached v0.8.x→v0.9.0, <slug> tags normalized + facets added, <slug> priority high→medium (untouched 30d), 2 tasks left as-is (genuinely planned)
 - Cross-domain mentions: <slug> includes a memory-worthy decision about JWT — flagging for sleep-state
 - Skipped: <session_id> had no actionable task signal
 
@@ -202,7 +221,7 @@ Dropped-but-load-bearing self-check: <none | list any digest/auto-bookmark/task 
 
 1. **Dedup before creating.** Recall first; fold a smaller slice into the task that already covers it — broaden its title + insert sub-items — instead of forking a duplicate or a needless sub-task. A new task is only for a genuinely separate concern.
 2. **Body = current truth, Changelog = history.** Don't let the body lag behind decisions.
-3. **Never auto-complete.** Bump to `in_review`.
+3. **Status reflects reality, not a reflex.** `completed` for done + low-risk + already-validated work; `in_review` only when a human genuinely must verify something (or to hand over a close decision on superseded/abandoned/obsoleted work). Never `completed` a task that was never actually done; never silently delete.
 4. **Always attach to a planning version.** No orphan work.
 5. **Stay in your lane.** If you spot non-task work worth preserving, flag it — don't write it.
 6. **CLI first** for status/log/insert; **Edit** for surgical body reconciliation (including broadening `description:` / `## Why` when scope grows).

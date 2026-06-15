@@ -408,10 +408,10 @@ dreamcontext tasks insert <name> changelog "Implemented pagination for /api/task
 # Lifecycle
 dreamcontext tasks log <name> "what was done"                           # Quick changelog entry (MANDATORY)
 dreamcontext tasks status <name> in_review "Ready for review"           # Bump status (todo|in_progress|in_review|completed)
-dreamcontext tasks complete <name> "summary"                            # Mark complete (user only; sleep agent never auto-completes)
+dreamcontext tasks complete <name> "summary"                            # Convenience for marking complete
 ```
 
-**Status convention:** `todo` -> `in_progress` -> `in_review` -> `completed`. The sleep agent bumps tasks it touched to `in_review` (never `completed`) so the user can verify before declaring done. This prevents the "task rotting in todo" failure mode.
+**Status convention:** `todo` -> `in_progress` -> `in_review` -> `completed`. The sleep agent picks the status that matches reality — `completed` for work that's demonstrably done, low-risk, and already validated, and `in_review` only when a human genuinely must verify something (a behaviour change, a design decision, a risky/critical-path change). It does **not** reflexively park everything in `in_review`; finished work that needs no review is closed, so neither "task rotting in todo" nor "task rotting half-closed in in_review" happens.
 
 Task insert sections: `why`, `user_stories`, `acceptance_criteria`, `constraints`, `technical_details`, `notes`, `changelog`
 
@@ -601,7 +601,7 @@ All commands prefixed with `dreamcontext`. For reading/searching, use native too
 | `tasks rice <name> [--reach N] [--impact N] [--confidence N] [--effort N] [--clear]` | Print or update RICE values; no flags prints current values |
 | `tasks insert <name> <section> <content>` | Insert into task section |
 | `tasks status <name> <todo\|in_progress\|in_review\|completed> [reason...]` | Change task status (logs to changelog) |
-| `tasks complete <name>` | Complete task (user only; sleep agent uses `tasks status ... in_review`) |
+| `tasks complete <name>` | Complete task (convenience for `tasks status <name> completed`) |
 | `tasks log <name> <content>` | Log task progress |
 | `bookmark add "<message>" [-s 1\|2\|3] [--task <slug>]` | Bookmark an important moment with optional task link |
 | `bookmark list` | Show current bookmarks |

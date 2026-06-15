@@ -2,7 +2,7 @@
 id: feat_9qLM-gY_
 status: active
 created: '2026-02-25'
-updated: '2026-06-05'
+updated: '2026-06-15'
 released_version: 0.1.0
 tags:
   - architecture
@@ -51,6 +51,7 @@ Agents accumulate knowledge and make decisions across many sessions, but that kn
 
 ## Constraints & Decisions
 
+- **[2026-06-15]** Task-status lifecycle refined: `sleep-tasks` now marks `completed` for tasks that are demonstrably done, low-risk, and already validated (chores, docs, mechanical fixes, well-covered tests) instead of reflexively bumping everything to `in_review`. `in_review` is reserved for tasks where a human must genuinely verify something (user-facing behaviour changes, design/architecture decisions, risky changes) or for handing the user a close decision on superseded/abandoned/obsoleted tasks. Backlog grooming formalized as a mandatory per-cycle step: pivot-relevance propagation, version re-attachment, tag normalization to taxonomy vocab. Old "max `in_review`" rule retired — it buried finished work and left rotting tasks half-closed.
 - **[2026-06-04]** Dedup hardening shipped in specialist agent prompts. The top consolidation failure mode was fragmented near-duplicate tasks and knowledge files. `sleep-tasks` Step 2 now mandates recall-before-create + fold-in for smaller slices. `sleep-product` B2 adds a "sharp vs soft distinction" rubric — same family/vertical → extend existing file; genuinely separate topical concern → new file. See `sleep-fanout-architecture` PRD for specifics.
 - **[2026-06-02]** Continuous capture (auto-digest + auto-salience) shipped in `memory-uplift` PR. SessionStart catch-up path now produces auto-bookmarks via `detectSalience()` (structural pattern matching, no AI) and auto-digest corpus docs via `session-digest.ts`. Captures are rank-penalized (`CAPTURE_RANK_PENALTY = 0.5` on `rankScore` only) and capped (K=50 most-recent digests) to prevent corpus pollution. Previously 30/32 consolidations had zero bookmarks — this closes the awake-ripple tagging gap without requiring manual bookmark discipline.
 - **[2026-05-23]** Anti-bloat cap on core files tightened from 300 → **150 lines**. Sleep specialists (especially `sleep-state`) enforce this during consolidation: when a core file approaches the cap, content gets promoted to knowledge, archived, or condensed rather than appended.
@@ -168,7 +169,7 @@ Agents accumulate knowledge and make decisions across many sessions, but that kn
 - `src/cli/commands/transcript.ts` — transcript distill (structural JSONL filter)
 - `src/cli/commands/snapshot.ts` — bookmarks section, warm knowledge tier, contextual reminders, sleep history in output, extractFirstParagraph(), trigger matching + fired_count persistence
 - `skill/SKILL.md` — "Sleep" section defines the main-agent orchestration flow (parallel fan-out to specialists)
-- `agents/sleep-tasks.md` — domain: `_dream_context/state/*.md`. Logs progress, bumps statuses (max `in_review`), reconciles task bodies, updates Mermaid Workflow nodes. Always fire.
+- `agents/sleep-tasks.md` — domain: `_dream_context/state/*.md`. Logs progress, reconciles task bodies, updates Mermaid Workflow nodes. Status lifecycle: `completed` for demonstrably done + low-risk + already-validated tasks; `in_review` only when the user genuinely must verify something or for superseded/abandoned/obsoleted work (close decision handed to user). Also performs backlog grooming each cycle: pivot-relevance check, version re-attachment, tag normalization. Always fire.
 - `agents/sleep-state.md` — domain: `_dream_context/core/0.soul.md`, `1.user.md`, `2.memory.md`, `CHANGELOG.json`, `RELEASES.json`. Surgical core-file updates, anti-bloat sweep, changelog entries, planning-version readiness. Merged from old sleep-core + sleep-changelog. Always fire.
 - `agents/sleep-product.md` — domain: `_dream_context/knowledge/` + `_dream_context/core/features/*.md`. Creates/updates knowledge files, staleness sweep, updates and creates feature PRDs. Merged from old sleep-knowledge + sleep-features. Conditional dispatch.
 - `.codex/agents/prompts/` + `.codex/agents/*.toml` — mirror of the 3 specialist agent files for the codex harness. All 5 old specialist files removed.
@@ -199,6 +200,11 @@ Agents accumulate knowledge and make decisions across many sessions, but that kn
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-06-15 - Task-status lifecycle updated; sleep-tasks backlog grooming formalized
+- sleep-tasks "max `in_review`" rule replaced with judgement-based lifecycle: `completed` for done+low-risk+validated; `in_review` for genuine user verification or close decisions on superseded/obsoleted work.
+- Backlog grooming documented as mandatory per-cycle step: pivot-relevance, version re-attachment, tag normalization.
+- Technical Details updated: sleep-tasks description now reflects current behaviour.
 
 ### 2026-06-04 - Dedup hardening: specialist prompts updated with recall-before-create + consolidation rubric
 - Root cause: create-paths in both sleep-tasks and sleep-product lacked strong dedup gates.

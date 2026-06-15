@@ -16,7 +16,8 @@ import { readSetupConfig, isMultiPerson } from '../../lib/setup-config.js';
 import { isSkillInstalled } from '../../lib/catalog.js';
 import { readVersionCache, isCacheFresh, buildNudge, readAutoUpgradeMarker, shouldSuppressCliNudge } from '../../lib/version-check.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
-import { buildDriftDirective } from '../../lib/setup-drift.js';
+import { buildDriftDirective, resolveDriftState } from '../../lib/setup-drift.js';
+import { readAssetDriftCache, cacheConfidentlyClean } from '../../lib/asset-drift-cache.js';
 import { computeFeatureFreshness, freshnessSnapshotNote } from '../../lib/feature-freshness.js';
 import { pendingInboxCount } from '../../lib/federation-inbox.js';
 import {
@@ -399,11 +400,24 @@ function getDriftDirective(root: string): string {
     const projectRoot = dirname(root);
     const config = readSetupConfig(projectRoot);
     if (!config) return '';
-    return buildDriftDirective({
-      cliVersion: dreamcontextVersion(),
+    const cliVersion = dreamcontextVersion();
+    const driftInput = {
+      cliVersion,
       setupVersion: config.setupVersion,
       driftCheckEnv: process.env.DREAMCONTEXT_DRIFT_CHECK,
-    }) ?? '';
+    };
+    // Scope the nag: when version drift flags staleness, suppress it ONLY if a
+    // fresh content check (computed out-of-band by the detached refresher, see
+    // asset-drift.ts) confidently proved that no asset THIS project uses would
+    // change on update — i.e. the bump only touched packs it doesn't install.
+    // Anything less certain (no cache yet, version-mismatched cache, or a real
+    // change) falls open to the nag: better an extra nudge than a missed update.
+    const state = resolveDriftState(driftInput);
+    if (state === 'stale' || state === 'bootstrap') {
+      const cache = readAssetDriftCache(root);
+      if (cacheConfidentlyClean(cache, cliVersion, config.setupVersion)) return '';
+    }
+    return buildDriftDirective(driftInput) ?? '';
   } catch {
     return '';
   }

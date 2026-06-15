@@ -24,7 +24,8 @@ import { haikuRecall } from '../../lib/recall-query-extractor.js';
 import { ensureTaxonomyFile } from '../../lib/taxonomy.js';
 import { readVersionCache, isCacheFresh, refreshVersionCache, maybeAutoUpgrade } from '../../lib/version-check.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
-import { maybeTriggerAppUpdate } from './app.js';
+import { maybeTriggerAppUpdate, readAppManifest } from './app.js';
+import { runAssetDriftRefresh } from './asset-drift.js';
 import { loadCatalog } from './install-skill.js';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
@@ -554,6 +555,23 @@ function spawnDashboard(port: number): void {
   child.unref();
 }
 
+/**
+ * Recompute the used-asset drift cache in a DETACHED process. The compute uses
+ * the real installers (async + log to stdout), so it must not run inline in this
+ * sync, stdout-sensitive hook. `stdio: 'ignore'` discards the installer chatter;
+ * the child writes only the cache file the snapshot reads. Best-effort.
+ */
+function spawnAssetDriftRefresh(): void {
+  const cliEntry = process.argv[1];
+  if (!cliEntry) return;
+  const child = spawn(process.execPath, [cliEntry, 'hook', 'refresh-asset-drift'], {
+    detached: true,
+    stdio: 'ignore',
+    cwd: process.cwd(),
+  });
+  child.unref();
+}
+
 // ─── Command Registration ───────────────────────────────────────────────────
 
 export function registerHookCommand(program: Command): void {
@@ -884,6 +902,11 @@ export function registerHookCommand(program: Command): void {
             // only a new Tauri shell release replaces the bundle; the app runs
             // the global CLI for everything else). No-ops until releases exist.
             maybeTriggerAppUpdate();
+            // Piggyback too: refresh the used-asset drift verdict in a detached
+            // process so the SessionStart "stale assets" nag can stay silent when
+            // a CLI bump didn't actually change any pack this project installs.
+            // The child no-ops fast when there's no version drift to scope.
+            spawnAssetDriftRefresh();
           }
           // Auto-upgrade (DEFAULT ON; opt out with DREAMCONTEXT_AUTO_UPGRADE=0):
           // detached, non-blocking, at most once per target version per 24h.
@@ -1118,6 +1141,22 @@ export function registerHookCommand(program: Command): void {
       }
     });
 
+  // --- hook refresh-asset-drift ---
+  hook
+    .command('refresh-asset-drift')
+    .description('Recompute whether `dreamcontext update` would change any asset this project uses (detached cache refresh)')
+    .action(async () => {
+      // Drain any piped hook payload so stdin doesn't block; contents unused.
+      readStdin();
+      try {
+        const root = resolveContextRoot();
+        if (root) await runAssetDriftRefresh(root);
+      } catch {
+        // Best-effort cache refresh — must never surface or fail anything.
+      }
+      process.exit(0);
+    });
+
   // --- hook ensure-dashboard ---
   hook
     .command('ensure-dashboard')
@@ -1128,6 +1167,11 @@ export function registerHookCommand(program: Command): void {
 
       // Opt-out: DREAMCONTEXT_AUTO_DASHBOARD=0 disables auto-open entirely.
       if (process.env.DREAMCONTEXT_AUTO_DASHBOARD === '0') process.exit(0);
+
+      // If the desktop app is installed, it owns the dashboard/launcher surface —
+      // auto-opening a browser tab here would be redundant and confusing. Skip
+      // entirely (the user can still run `dreamcontext dashboard` by hand).
+      if (readAppManifest() !== null) process.exit(0);
 
       // Only for context-managed projects — nothing to show otherwise.
       const root = resolveContextRoot();
