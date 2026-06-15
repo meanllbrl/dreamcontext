@@ -69,8 +69,7 @@ hook.ts (PreCompact partial digest) · session-digest.ts (partial supersede) · 
 
 ## Embedded Files
 %%
-## Drawing
-```json
+## Drawing```json
 {
 	"type": "excalidraw",
 	"version": 2,
@@ -1430,6 +1429,4 @@ hook.ts (PreCompact partial digest) · session-digest.ts (partial supersede) · 
 		"viewBackgroundColor": "#ffffff"
 	},
 	"files": {}
-}
-```
-%%
+}```%%

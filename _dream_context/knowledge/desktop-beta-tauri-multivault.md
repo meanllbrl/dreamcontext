@@ -45,17 +45,12 @@ accessibility were explicitly OUT of scope.
 Task: `state/unified-dashboard-beta-multivault.md`. Deliverables produced:
 installed `/Applications/dreamcontext-beta.app` (ad-hoc signed) + a `.dmg`.
 
-## Architecture (the "A path" — same React+Node, Tauri just wraps it)
-
-```
+## Architecture (the "A path" — same React+Node, Tauri just wraps it)```
 .app launch → Rust shell (desktop/src-tauri/src/lib.rs)
   → find_node() (login shell `command -v node`, else /opt/homebrew etc.)
   → spawn: node <bundled dist/index.js> dashboard --port N --no-open --launcher
   → poll GET /api/health, then open window "main" at http://127.0.0.1:N/
-  → kill node child on RunEvent::ExitRequested (no orphan)
-```
-
-- **Launcher mode**: `dashboard --launcher` boots the server with `contextRoot = null`
+  → kill node child on RunEvent::ExitRequested (no orphan)```- **Launcher mode**: `dashboard --launcher` boots the server with `contextRoot = null`
   (no default vault). Vault-agnostic routes work (`/api/health`, `/api/vaults`,
   `/api/launcher/*`); every other `/api/*` route needs a vault.
 - **Per-window vault pinning**: the Launcher (`/`) lists vaults; clicking one opens
@@ -153,11 +148,8 @@ The server spawns the **bundled CLI** in a **child process** via `execFile`
 `cwd` is set to the target directory. The long-lived launcher server NEVER mutates
 its own `process.cwd()`.
 
-CLI entry point is resolved as:
-```
-process.env.DREAMCONTEXT_CLI ?? process.argv[1]
-```
-The env var override is the same hook the Rust shell uses (`lib.rs`), so test
+CLI entry point is resolved as:```
+process.env.DREAMCONTEXT_CLI ?? process.argv[1]```The env var override is the same hook the Rust shell uses (`lib.rs`), so test
 harnesses can inject a mock CLI without recompiling Tauri.
 
 Execution sequence per scaffold:
@@ -280,10 +272,7 @@ Brand diamond logo (white squircle) fitted to the Tauri icon set via `tauri icon
 A global-hotkey-summoned, transparent notch companion that captures thoughts/commands
 into any registered vault. Desktop-only; ships via desktop release, not npm.
 
-### Architecture
-
-```
-Global hotkey (tauri-plugin-global-shortcut, registered in launcher window JS)
+### Architecture```Global hotkey (tauri-plugin-global-shortcut, registered in launcher window JS)
   → toggleSleepyWindow() → WebviewWindow(label='sleepy', ?capture=1, transparent,
       alwaysOnTop, decorations=false, x=topCenter(420), y=0, 420×520 px)
       + win.setFocus() (grabs key focus immediately on open)
@@ -299,9 +288,7 @@ Global hotkey (tauri-plugin-global-shortcut, registered in launcher window JS)
           → poll GET /api/launcher/capture/status?id=<captureId> every 1.2s
               (Learn/Ask: 3-min ceiling; Sleep: ~15-min; unknown-streak guard)
               → renders Markdown response (marked + DOMPurify) in scrollable panel
-              Sleep: mascot sleeps anim, toggle+input locked, no auto-dismiss
-```
-
+              Sleep: mascot sleeps anim, toggle+input locked, no auto-dismiss```
 ### Hotkey registration details
 
 - Plugin: `tauri-plugin-global-shortcut`. Registered from the **dashboard JS** layer
@@ -493,11 +480,8 @@ confidently proves no used asset changed:
 
 ### Status indicator
 
-`GET /api/launcher/status` returns per-vault:
-```
-{ name, path, exists, setupVersion, latestVersion, needsUpdate, shareable }
-```
-Color mapping displayed in the Launcher card:
+`GET /api/launcher/status` returns per-vault:```
+{ name, path, exists, setupVersion, latestVersion, needsUpdate, shareable }```Color mapping displayed in the Launcher card:
 - **green** — folder exists AND `setupVersion >= latestVersion`
 - **yellow** — folder exists AND `setupVersion < latestVersion` (needs update)
 - **red** — folder does not exist (removable)

@@ -1,188 +1,58 @@
 import { Command } from 'commander';
-import { dirname } from 'node:path';
+import { realpathSync, unlinkSync } from 'node:fs';
+import { join, sep } from 'node:path';
 import chalk from 'chalk';
+import fg from 'fast-glob';
 import { ensureContextRoot } from '../../lib/context-path.js';
-import { currentVaultTarget } from '../../lib/federation-recall.js';
-import {
-  listConnections,
-  advanceWatermark,
-  markStale,
-  receiverConsents,
-  type Connection,
-} from '../../lib/connections.js';
-import { resolveVaultContextRoot, VaultError } from '../../lib/vaults.js';
-import {
-  drainInbox,
-  consumeEntry,
-  pendingInboxCount,
-  writeInboxEntry,
-  listConsumedEntries,
-} from '../../lib/federation-inbox.js';
-import { ingestEntry } from '../../lib/federation-ingest.js';
-import {
-  buildInterestProfile,
-  computeDigest,
-  detectConflicts,
-} from '../../lib/federation-digest.js';
+import { listConnections } from '../../lib/connections.js';
+import { readFrontmatter } from '../../lib/frontmatter.js';
+import { pendingInboxCount, listConsumedEntries } from '../../lib/federation-inbox.js';
 import { refreshPeerSummaries } from '../../lib/federation-peer-summary.js';
 import { header, success, info, warn } from '../../lib/format.js';
 
-/** Default number of entries pushed per peer per sync. */
-const DEFAULT_TOP_K = 10;
-
-/** Resolve the current vault's registered name (or basename). */
-function currentVaultName(contextRoot: string): string {
-  return currentVaultTarget(dirname(contextRoot)).name;
-}
-
-/** Connections this vault can SEND digests over (out/both, not stale). */
-function outboundConnections(contextRoot: string): Connection[] {
-  return listConnections(contextRoot).filter(
-    (c) => (c.direction === 'out' || c.direction === 'both') && c.status !== 'stale',
-  );
-}
+/**
+ * Federation is READ-ONLY (live reference). A connection means "this vault may
+ * READ a shareable peer's CANONICAL docs at recall time" — nothing is ever
+ * copied across a vault boundary. The copy-based digest path (`sync` push +
+ * `drain` ingest) is PARKED on the roadmap pending a redesign: it produced
+ * lossy, write-once-stale duplicates that broke single-source-of-truth. The
+ * `sync`/`drain` verbs remain registered but are INERT so any lingering
+ * sleep-cycle / hook invocation is a harmless no-op, never a silent copy.
+ */
+const SYNC_DISABLED_NOTE =
+  'Federation is read-only (live reference). Copy-based sync/drain is parked on the roadmap — ' +
+  'nothing was copied. Peers are read live during recall; clean up old copies with ' +
+  '`dreamcontext federation purge`.';
 
 /**
- * Register the federation digest verbs (issue #25 P3):
- *   - `federation drain`        — ingest inbox entries, move them to consumed/.
- *   - `federation sync [--dry-run]` — push recall-filtered digests to peers.
- *   - `federation status`       — inbox counts + per-connection watermarks.
+ * Register the federation verbs (issue #25, read-only):
+ *   - `federation peers`  — refresh + print compact summaries of readable peers.
+ *   - `federation status` — connection list + leftover federated-copy count.
+ *   - `federation purge`  — remove leftover `federated:true` copies (deliberate).
+ *   - `federation sync` / `federation drain` — INERT (roadmap; print a note).
  */
 export function registerFederationCommand(program: Command): void {
   const federation = program
     .command('federation')
-    .description('Sleep-driven cross-project federation: drain inbox, sync digests');
+    .description('Cross-project federation: read peers live; manage leftover copies');
 
-  // ─── drain ─────────────────────────────────────────────────────────────────
+  // ─── drain (inert — roadmap) ─────────────────────────────────────────────────
   federation
     .command('drain')
-    .description('Ingest pending inbox entries as first-class knowledge, then consume them')
+    .description('(disabled) copy-based ingest is parked on the roadmap — no-op')
     .action(() => {
-      const contextRoot = ensureContextRoot();
-      const { entries, quarantined } = drainInbox(contextRoot);
-
-      if (entries.length === 0 && quarantined.length === 0) {
-        info(chalk.dim('Federation inbox is empty — nothing to drain.'));
-        return;
-      }
-
-      let ingested = 0;
-      let collisions = 0;
-      let conflicts = 0;
-      for (const { file, entry } of entries) {
-        try {
-          const result = ingestEntry(contextRoot, entry);
-          ingested++;
-          if (result.collided) collisions++;
-          if (result.bookmarked) conflicts++;
-          // Only consume AFTER a successful ingest (atomic move → never re-drained).
-          consumeEntry(contextRoot, file);
-        } catch (err) {
-          warn(`Could not ingest "${file}": ${err instanceof Error ? err.message : String(err)}`);
-        }
-      }
-
-      console.log(header('Federation Drain'));
-      success(`Ingested ${ingested} entr${ingested === 1 ? 'y' : 'ies'} as first-class knowledge.`);
-      if (collisions > 0) {
-        info(`${collisions} slug collision(s) namespaced as knowledge/<slug>--from-<vault>.md.`);
-      }
-      if (conflicts > 0) {
-        warn(`${conflicts} conflict-note(s) surfaced as bookmarks — review manually (NOT auto-resolved).`);
-      }
-      if (quarantined.length > 0) {
-        warn(
-          `${quarantined.length} entr${quarantined.length === 1 ? 'y' : 'ies'} quarantined ` +
-            `(incompatible schema) — left in place: ${quarantined.map((q) => q.file).join(', ')}.`,
-        );
-      }
+      ensureContextRoot();
+      info(chalk.dim(SYNC_DISABLED_NOTE));
     });
 
-  // ─── sync ──────────────────────────────────────────────────────────────────
+  // ─── sync (inert — roadmap) ──────────────────────────────────────────────────
   federation
     .command('sync')
-    .description('Push recall-filtered digests into consenting peers’ inboxes')
-    .option('--dry-run', 'Compute + print the digests but write NOTHING (watermark not advanced)')
-    .action((opts: { dryRun?: boolean }) => {
-      const contextRoot = ensureContextRoot();
-      const dryRun = opts.dryRun === true;
-      const senderName = currentVaultName(contextRoot);
-      const outbound = outboundConnections(contextRoot);
-
-      console.log(header(dryRun ? 'Federation Sync (dry-run)' : 'Federation Sync'));
-      if (outbound.length === 0) {
-        info(chalk.dim('No out/both connections — nothing to sync.'));
-        return;
-      }
-
-      const syncedAt = new Date().toISOString();
-      let pushedPeers = 0;
-
-      for (const conn of outbound) {
-        let peerRoot: string;
-        try {
-          peerRoot = resolveVaultContextRoot(conn.vault);
-        } catch (err) {
-          if (err instanceof VaultError) {
-            warn(`Peer "${conn.vault}" is unreachable — skipping (stale).`);
-            if (!dryRun) markStale(contextRoot, conn.vault);
-            continue;
-          }
-          throw err;
-        }
-
-        // CONSENT (binding): only write if the RECEIVER declares in/both back to us.
-        if (!receiverConsents(peerRoot, senderName)) {
-          info(
-            chalk.dim(
-              `Peer "${conn.vault}" has not consented (no in/both link back to "${senderName}") — skipped.`,
-            ),
-          );
-          continue;
-        }
-
-        const profile = buildInterestProfile(peerRoot, conn.topics);
-        let entries = computeDigest(
-          contextRoot,
-          senderName,
-          profile,
-          conn.last_synced_at,
-          DEFAULT_TOP_K,
-        );
-        entries = detectConflicts(entries, peerRoot);
-
-        if (entries.length === 0) {
-          info(chalk.dim(`Peer "${conn.vault}": no new entries since last sync.`));
-          if (!dryRun) advanceWatermark(contextRoot, conn.vault, syncedAt);
-          continue;
-        }
-
-        if (dryRun) {
-          console.log(chalk.cyan(`\n  ${conn.vault} — ${entries.length} entr${entries.length === 1 ? 'y' : 'ies'} would be pushed:`));
-          for (const e of entries) {
-            const tag = e.kind === 'conflict-note' ? chalk.yellow(' [conflict-note]') : '';
-            console.log(`    - ${e.title}${tag}`);
-          }
-          pushedPeers++;
-          // Dry-run: NEVER write, NEVER advance the watermark.
-          continue;
-        }
-
-        let written = 0;
-        for (const entry of entries) {
-          // Provenance proves intended receiver via the registry-resolved peer root.
-          if (writeInboxEntry(peerRoot, entry).written) written++;
-        }
-        advanceWatermark(contextRoot, conn.vault, syncedAt);
-        pushedPeers++;
-        success(`Pushed ${written} new entr${written === 1 ? 'y' : 'ies'} to "${conn.vault}".`);
-      }
-
-      if (pushedPeers === 0) {
-        info(chalk.dim('No consenting peers with new entries.'));
-      } else if (dryRun) {
-        info(chalk.dim('Dry-run complete — nothing written, no watermarks advanced.'));
-      }
+    .description('(disabled) copy-based push is parked on the roadmap — no-op')
+    .option('--dry-run', '(ignored — sync is disabled)')
+    .action(() => {
+      ensureContextRoot();
+      info(chalk.dim(SYNC_DISABLED_NOTE));
     });
 
   // ─── peers ───────────────────────────────────────────────────────────────────
@@ -213,30 +83,143 @@ export function registerFederationCommand(program: Command): void {
         if (p.topTags.length > 0) console.log(chalk.dim(`    Tags: ${p.topTags.join(', ')}`));
       }
       console.log('');
-      info(chalk.dim('Recall already spans these. Search one directly: `dreamcontext memory recall <q> --vault <name>`.'));
+      info(
+        chalk.dim(
+          'Recall surfaces these peers’ canonical docs live. Search one directly: ' +
+            '`dreamcontext memory recall <q> --vault <name>`.',
+        ),
+      );
+    });
+
+  // ─── purge ─────────────────────────────────────────────────────────────────
+  federation
+    .command('purge')
+    .description('Remove leftover federated copies (knowledge/*.md with federated:true)')
+    .option('--vault <name>', 'Only remove copies whose origin.vault matches this name')
+    .option('--all', 'Remove every federated copy in this vault')
+    .option('--dry-run', 'List what would be removed without deleting')
+    .action((opts: { vault?: string; all?: boolean; dryRun?: boolean }) => {
+      const contextRoot = ensureContextRoot();
+      if (!opts.vault && !opts.all) {
+        warn('Specify --all (remove every federated copy) or --vault <name> (one origin).');
+        process.exitCode = 1;
+        return;
+      }
+
+      const found = findFederatedCopies(contextRoot, opts.vault);
+      console.log(header(opts.dryRun ? 'Federation Purge (dry-run)' : 'Federation Purge'));
+      if (found.length === 0) {
+        info(chalk.dim('No federated copies found — nothing to purge.'));
+        return;
+      }
+
+      let removed = 0;
+      for (const f of found) {
+        if (opts.dryRun) {
+          console.log(`  would remove: ${f.relPath}${f.originVault ? chalk.dim(` (from ${f.originVault})`) : ''}`);
+          continue;
+        }
+        try {
+          unlinkSync(f.path);
+          removed++;
+          console.log(`  removed: ${f.relPath}${f.originVault ? chalk.dim(` (from ${f.originVault})`) : ''}`);
+        } catch (err) {
+          warn(`Could not remove ${f.relPath}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+
+      if (opts.dryRun) {
+        info(chalk.dim(`${found.length} federated cop${found.length === 1 ? 'y' : 'ies'} would be removed.`));
+      } else {
+        success(`Purged ${removed} federated cop${removed === 1 ? 'y' : 'ies'}.`);
+      }
     });
 
   // ─── status ────────────────────────────────────────────────────────────────
   federation
     .command('status')
-    .description('Show inbox counts and per-connection sync watermarks')
+    .description('Show connections + any leftover federated copies')
     .action(() => {
       const contextRoot = ensureContextRoot();
+      const connections = listConnections(contextRoot);
+      const copies = findFederatedCopies(contextRoot).length;
+      // Legacy inbox counters — surfaced only so a user with a pre-existing inbox
+      // knows it is now inert (sync/drain disabled).
       const pending = pendingInboxCount(contextRoot);
       const consumed = listConsumedEntries(contextRoot).length;
-      const connections = listConnections(contextRoot);
 
       console.log(header('Federation Status'));
-      console.log(`  Inbox: ${chalk.bold(String(pending))} pending, ${consumed} consumed.`);
+      info(chalk.dim('Mode: read-only (live reference). Copy-based sync is parked on the roadmap.'));
       if (connections.length === 0) {
         info(chalk.dim('  No connections.'));
-        return;
+      } else {
+        console.log('  Connections (read):');
+        for (const c of connections) {
+          const reads = c.direction === 'out' || c.direction === 'both';
+          const staleTag = c.status === 'stale' ? chalk.red(' (stale)') : '';
+          const tag = reads ? chalk.green('reads') : chalk.dim('no-read');
+          console.log(`    - ${c.vault} [${c.direction}] ${tag}${staleTag}`);
+        }
       }
-      console.log('  Connections:');
-      for (const c of connections) {
-        const watermark = c.last_synced_at ?? chalk.dim('never');
-        const staleTag = c.status === 'stale' ? chalk.red(' (stale)') : '';
-        console.log(`    - ${c.vault} [${c.direction}]${staleTag} — last synced: ${watermark}`);
+      if (copies > 0) {
+        warn(`  ${copies} leftover federated cop${copies === 1 ? 'y' : 'ies'} — remove with \`dreamcontext federation purge --all\`.`);
+      }
+      if (pending > 0 || consumed > 0) {
+        info(chalk.dim(`  Legacy inbox: ${pending} pending, ${consumed} consumed (inert — sync disabled).`));
       }
     });
+}
+
+export interface FederatedCopy {
+  path: string;
+  relPath: string;
+  originVault: string | null;
+}
+
+/**
+ * Find every `federated: true` knowledge doc in the vault, optionally filtered to
+ * one `origin.vault`. These are the leftover copies a prior copy-based sync wrote;
+ * read-only federation never creates them. Never throws — unreadable files skip.
+ */
+export function findFederatedCopies(contextRoot: string, originVault?: string): FederatedCopy[] {
+  const knowledgeDir = join(contextRoot, 'knowledge');
+  let files: string[];
+  try {
+    // followSymbolicLinks:false + an explicit realpath escape guard below: this
+    // result feeds `unlinkSync`, so a symlink inside knowledge/ pointing outside
+    // the vault must never let purge delete an out-of-vault file.
+    files = fg.sync('**/*.md', { cwd: knowledgeDir, absolute: true, followSymbolicLinks: false });
+  } catch {
+    return [];
+  }
+  // Resolve the base too, so the escape check is symlink-consistent (e.g. macOS
+  // /var → /private/var) and only a TRUE escape out of knowledge/ is rejected.
+  let guard: string;
+  try {
+    guard = realpathSync(knowledgeDir) + sep;
+  } catch {
+    return [];
+  }
+  const out: FederatedCopy[] = [];
+  for (const file of files) {
+    try {
+      // Resolve symlinks and reject anything that escapes the knowledge dir.
+      if (!realpathSync(file).startsWith(guard)) continue;
+      const { data } = readFrontmatter(file);
+      if (data.federated !== true) continue;
+      const origin =
+        data.origin && typeof data.origin === 'object'
+          ? ((data.origin as Record<string, unknown>).vault as string | undefined)
+          : undefined;
+      if (originVault && origin !== originVault) continue;
+      out.push({
+        path: file,
+        relPath: `knowledge/${file.slice(knowledgeDir.length + 1)}`,
+        originVault: origin ?? null,
+      });
+    } catch {
+      // skip unreadable
+    }
+  }
+  return out;
 }

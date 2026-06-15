@@ -49,8 +49,7 @@ Agent starts with full context ^zhkT3XfQ
 
 ## Embedded Files
 %%
-## Drawing
-```json
+## Drawing```json
 {
 	"type": "excalidraw",
 	"version": 2,
@@ -1496,6 +1495,4 @@ Agent starts with full context ^zhkT3XfQ
 		"viewBackgroundColor": "#ffffff"
 	},
 	"files": {}
-}
-```
-%%
+}```%%

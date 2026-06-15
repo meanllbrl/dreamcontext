@@ -53,6 +53,10 @@ export async function openVaultWindow(name: string): Promise<void> {
       title: `dreamcontext — ${name}`,
       width: 1280,
       height: 800,
+      // Off by default Tauri turns on an OS-level drag/drop handler that
+      // swallows the webview's HTML5 dragover/drop events — which breaks the
+      // Kanban / Eisenhower task drag-and-drop. Disable it so DnD works.
+      dragDropEnabled: false,
     });
     await new Promise<void>((resolve, reject) => {
       win.once('tauri://created', () => resolve());

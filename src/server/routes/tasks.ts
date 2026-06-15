@@ -1,9 +1,11 @@
 import { IncomingMessage, ServerResponse } from 'node:http';
+import { dirname } from 'node:path';
 import { today } from '../../lib/id.js';
 import { parseJsonBody, sendJson, sendError } from '../middleware.js';
 import { recordDashboardChange, buildFieldSummary } from '../change-tracker.js';
 import type { FieldChange } from '../change-tracker.js';
 import { mergeRice, validateRiceInput, type RiceFields, type RiceInput } from '../../lib/rice.js';
+import { readSetupConfig } from '../../lib/setup-config.js';
 import {
   getTaskBackend,
   getTaskSyncStatus,
@@ -11,6 +13,7 @@ import {
   TaskBackendError,
   type TaskBackend,
   type TaskData,
+  type RemoteMember,
 } from '../../lib/task-backend/index.js';
 
 /** API view of a task: TaskData minus the backend-internal raw fields. */
@@ -173,8 +176,36 @@ export async function handleTasksSyncTest(
   sendJson(res, 200, { ...result, backend: backend.name });
 }
 
+/** Title-case a kebab slug for display: "mehmet-nuraydin" → "Mehmet Nuraydin". */
+function slugToName(slug: string): string {
+  return slug
+    .split('-')
+    .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w))
+    .join(' ');
+}
+
 /**
- * GET /api/tasks/members — assignee candidates (remote backends only).
+ * The project roster (`.config.json` `people`) as assignee candidates. This is
+ * the source on LOCAL projects (no remote member list), so the dashboard can
+ * offer a people dropdown instead of forcing the user to type `person:<slug>`.
+ */
+function rosterMembers(contextRoot: string): RemoteMember[] {
+  const config = readSetupConfig(dirname(contextRoot));
+  const people = config?.people ?? [];
+  // Roster candidates are keyed by slug — that slug becomes the `person:<slug>`
+  // tag. The remote member id (if any) is resolved inside the backend at sync
+  // time, so the route stays provider-agnostic and carries no remote id here.
+  return people.map((slug) => ({
+    slug,
+    id: '',
+    name: slugToName(slug),
+  }));
+}
+
+/**
+ * GET /api/tasks/members — assignee candidates. Merges remote members (when a
+ * remote backend exposes them) with the local project roster, keyed by slug so
+ * a person appears once. Remote entries win (they carry a real member id).
  */
 export async function handleTasksMembers(
   _req: IncomingMessage,
@@ -183,15 +214,18 @@ export async function handleTasksMembers(
   contextRoot: string,
 ): Promise<void> {
   const backend = backendFor(contextRoot);
-  if (!backend.listMembers) {
-    sendJson(res, 200, { members: [] });
-    return;
+  let remote: RemoteMember[] = [];
+  if (backend.listMembers) {
+    try {
+      remote = await backend.listMembers();
+    } catch {
+      remote = []; // offline/unconfigured → fall back to the roster, not an error
+    }
   }
-  try {
-    sendJson(res, 200, { members: await backend.listMembers() });
-  } catch {
-    sendJson(res, 200, { members: [] }); // offline/unconfigured → empty, not an error
-  }
+  const bySlug = new Map<string, RemoteMember>();
+  for (const m of rosterMembers(contextRoot)) bySlug.set(m.slug, m);
+  for (const m of remote) bySlug.set(m.slug, m); // remote wins (real member id)
+  sendJson(res, 200, { members: [...bySlug.values()] });
 }
 
 /**

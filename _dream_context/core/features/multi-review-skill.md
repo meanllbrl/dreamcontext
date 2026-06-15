@@ -57,15 +57,12 @@ The skill explicitly routes ≤10-line single-domain diffs to the existing `revi
 
 **Orchestration entry**: `.claude/skills/multi-review/SKILL.md` — the main agent loads this skill when `/multi-review` fires or a trigger phrase matches. The skill instructs the main agent to: (1) call `review-router` with the diff, (2) fan out specialists in parallel based on the JSON dispatch plan, (3) collect executive summaries, (4) call `review-coordinator` with full reports + summaries, (5) return coordinator output.
 
-**Router output schema**:
-```json
+**Router output schema**:```json
 {
   "tier": "Lite | Standard | Full",
   "specialists": ["security", "cloud-functions", "frontend", "edge-cases"],
   "file_map": { "<specialist>": ["<file>", ...] }
-}
-```
-
+}```
 **Specialist scope discipline**: each specialist receives only the `file_map` entries for its domain from the router output. No specialist reads the entire diff — scoped file lists keep context windows focused.
 
 **Coordinator isolation**: main agent passes all specialist full reports to `review-coordinator` in a single prompt. Coordinator emits one unified verdict. Main agent forwards verdict to user.

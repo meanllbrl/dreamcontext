@@ -703,6 +703,45 @@
   width: 110px;
 }
 
+/* Multi-assignee picker (detail panel) */
+.assignee-multi {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.assignee-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1, 4px);
+}
+
+.assignee-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px var(--space-2);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+  font-size: var(--font-size-xs, 11px);
+  border-radius: var(--radius-sm, 4px);
+}
+
+.assignee-chip__remove {
+  background: none;
+  border: none;
+  color: inherit;
+  opacity: 0.55;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 0 0 2px;
+}
+
+.assignee-chip__remove:hover {
+  opacity: 1;
+}
+
 /* Editable property inputs + delete row */
 .prop-text-input {
   background: var(--color-bg);

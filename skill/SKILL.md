@@ -319,7 +319,7 @@ Sleep debt reminders are injected on every user message (via UserPromptSubmit ho
      - user hint mentions knowledge or a feature
    - When unsure, **over-fire** `sleep-product` — it no-ops cheaply.
    - **Conditional fire**: `sleep-migration` when `dreamcontext migrations pending` produces output (pending agent migration tasks exist). Contract: no-content changes only (structure/paths/frontmatter/fences); writes ledger via `dreamcontext migrations record` on completion.
-   - **Conditional fire**: `sleep-federation` when `state/.connections.json` has active (non-stale) links OR the federation inbox has pending entries (check `dreamcontext federation status`). Contract: **drain THEN distribute** — `dreamcontext federation drain` (ingest peer digests into first-class `knowledge/*--from-*.md` with `federated:true` provenance, surface conflict-notes as bookmarks, never auto-resolve) then `dreamcontext federation sync` (consent-gated, recall-filtered push into connected peers' inboxes, watermark advances). Owns ONLY `.connections.json` + `.federation-inbox/` + `knowledge/*--from-*.md`. Idempotent — over-fire cheaply.
+   - **Do NOT fire `sleep-federation`.** Federation is read-only (live reference); the copy-based drain/distribute path is disabled and parked on the roadmap. Sleep copies NOTHING across vault boundaries — peers are read live at recall time, not synced at sleep. (The `sleep-federation` specialist + `federation sync`/`drain` are retained but inert.)
    - Pass each specialist a small text brief in its prompt: epoch, session IDs, active task slugs, planning version, signals relevant to that specialist, optional user hint. Do **not** include transcript content — specialists call `dreamcontext transcript distill <id>` themselves.
    - **Consolidation discipline (remind both specialists in the brief):** prefer *updating/extending* an existing entity over creating a new one. `sleep-tasks` folds a smaller slice into the task that already covers it (broaden its title + insert sub-items) rather than forking a duplicate or a needless sub-task; `sleep-product` keeps similar verticals/brands/topics in the fewest knowledge files, splitting only on a sharp topical boundary that sharpens tags. Duplicate tasks and fragmented near-duplicate knowledge are the top consolidation failure modes — but genuinely separate concerns/topics still get their own task/file.
 5. Wait for all specialist reports. Each returns a short structured report.
@@ -512,19 +512,24 @@ Eligible = direction `out`/`both`, status not stale, AND the peer is `shareable:
 
 Use `--vault <name>` when you know where the answer likely lives; the default span is the cheapest path when you don't.
 
-**PUSH — sleep-driven, already local.** There is no per-situation "when to read" rule to set. The standing connection resolves through two mechanisms: (1) on-demand PULL via recall above; (2) automatic PUSH at every sleep cycle, where the `sleep-federation` specialist runs drain-then-distribute — inbound peer digests are ingested as first-class local `knowledge/<slug>--from-<vault>.md` files (`federated: true` + provenance), so by the next session that knowledge is just sitting locally and surfaces through normal recall like any other doc. `federated: true` docs are excluded from outbound digests and cross-vault serving (transitive-leak guard).
+**Read-only — nothing is ever copied.** Federation is a *live reference*: a connected, shareable peer's CANONICAL docs are surfaced at recall time (PULL, above) and never written into your vault. Each vault stays the single source of truth for its own knowledge. There is no per-situation "when to read" rule — a connection is a standing "may read" agreement, resolved live by recall whenever it's relevant.
 
 ```bash
 dreamcontext vaults discover [root] [--register]   # find every _dream_context/ under a tree
-dreamcontext connect <vault> --direction out|in|both [--topics a,b]   # create a peer link
+dreamcontext connect <vault> --direction out [--topics a,b]   # create a read edge (out = read)
 dreamcontext connections list / disconnect <vault>                      # manage links
 dreamcontext snapshot --vault <name>               # print a peer vault's context snapshot
 dreamcontext config shareable on|off               # opt this project IN/OUT of peer recall (default: off)
 ```
 
-**Sleep-federation contract** (two idempotent steps, always drain-then-distribute):
-1. **Drain** (`dreamcontext federation drain`) — ingest pending inbox entries as first-class `knowledge/<slug>--from-<vault>.md`. A slug collision with a local doc is preserved as-is (local doc never clobbered). Conflicts surface as bookmarks for the user — never auto-resolved.
-2. **Distribute** (`dreamcontext federation sync`) — consent-gated (receiver must declare `in`/`both`), recall-filtered, watermarked push of changed docs into connected peers' inboxes. `federated: true` docs are never re-exported (transitive-leak guard). Dashboard previews via `POST /api/federation/sync` are dry-run by construction.
+**Copy-based sync is parked on the roadmap.** Earlier builds pushed a lossy, truncated *digest* of each vault into its peers at sleep (`federation sync`) and ingested it as `federated: true` copies (`federation drain`). That broke single-source-of-truth: copies were write-once, went stale the moment the source changed, and an edit produced duplicates + false conflict-notes. It is now **disabled** — `federation sync` / `federation drain` are inert no-ops, and the `sleep-federation` specialist is no longer dispatched. Re-introducing a copy/offline-mirror mode needs a proper design first (it's the one thing live read can't do: survive a peer going offline).
+
+**Cleaning up old copies.** If a vault still holds `federated: true` knowledge files from the old sync path, remove them deliberately:
+```bash
+dreamcontext federation status                     # shows connections + any leftover federated copies
+dreamcontext federation purge --all                # remove every federated:true copy in this vault
+dreamcontext federation purge --vault <name>       # remove only copies that came from one peer
+```
 
 ---
 

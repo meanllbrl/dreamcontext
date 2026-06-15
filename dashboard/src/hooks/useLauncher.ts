@@ -263,30 +263,6 @@ export function useFederationGraph() {
   });
 }
 
-/** Enable a consented digest sync: `to` listens to `from`'s changes at sleep. */
-export function useCreateSync() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (vars: { from: string; to: string }) =>
-      api.post<{ ok: true }>('/launcher/sync', vars),
-    onSuccess: () => {
-      invalidateLauncher(queryClient);
-    },
-  });
-}
-
-/** Stop a digest sync: `to` no longer listens to `from`. */
-export function useRemoveSync() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (vars: { from: string; to: string }) =>
-      api.post<{ ok: true }>('/launcher/sync/remove', vars),
-    onSuccess: () => {
-      invalidateLauncher(queryClient);
-    },
-  });
-}
-
 /** Create a "reads" edge: `from` reads `to` (stored as an `out` connection on `from`). */
 export function useCreateConnection() {
   const queryClient = useQueryClient();

@@ -67,16 +67,13 @@ Priority/urgency (Eisenhower) is too coarse for comparing tasks numerically. Whe
 
 ## Technical Details
 
-**Frontmatter shape** (additive, all-optional):
-```yaml
+**Frontmatter shape** (additive, all-optional):```yaml
 rice:
   reach: 5          # integer 1–10
   impact: 3         # integer 1–5
   confidence: 80    # integer in {25, 50, 75, 100}
   effort: 2         # number > 0, <= 52, weeks (0.5 step)
-  score: 6.0        # derived, null if any input missing
-```
-
+  score: 6.0        # derived, null if any input missing```
 **Key files**:
 - `src/lib/rice.ts` — `validateRiceInput`, `mergeRice`, `normalizeRice`, `computeScore`. Pure functions, no I/O.
 - `src/cli/commands/tasks.ts` — `--reach/--impact/--confidence/--effort` on `create`; new `rice <slug>` subcommand.

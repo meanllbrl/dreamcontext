@@ -24,9 +24,7 @@ The dreamcontext pattern is a hybrid: Cloudflare's routing + a dreamcontext-nati
 
 ## The Pattern
 
-**Structure (sequential phases, specialists in parallel within phase 2):**
-
-```
+**Structure (sequential phases, specialists in parallel within phase 2):**```
 diff
   └─→ [review-router]  (classifies: tier × domain → JSON dispatch plan)
          └─→ parallel dispatch:
@@ -35,12 +33,7 @@ diff
                [review-frontend]        ← React/frontend files
                [review-edge-cases]      ← default-on for tier >= Lite
          └─→ main agent reads all full reports, dedupes, emits unified verdict
-               READY_TO_MERGE / NEEDS_ATTENTION / NEEDS_WORK
-```
-
-**Router output (JSON):**
-
-```json
+               READY_TO_MERGE / NEEDS_ATTENTION / NEEDS_WORK```**Router output (JSON):**```json
 {
   "tier": "Lite | Standard | Full",
   "specialists": ["security", "cloud-functions", "frontend", "edge-cases"],
@@ -49,10 +42,7 @@ diff
     "cloud-functions": ["functions/src/processOrder.ts"],
     "frontend": ["src/components/Checkout.tsx"]
   }
-}
-```
-
-**Tier classification:**
+}```**Tier classification:**
 
 | Tier | Trigger | Specialists |
 |---|---|---|

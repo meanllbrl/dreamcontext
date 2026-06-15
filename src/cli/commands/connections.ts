@@ -47,12 +47,12 @@ export function registerConnectionsCommand(program: Command): void {
   // ─── connect ─────────────────────────────────────────────────────────────────
   program
     .command('connect <vault>')
-    .description('Connect this vault to a peer for federation (out|in|both)')
-    .option('-d, --direction <direction>', 'Connection direction: out | in | both', 'both')
+    .description('Connect this vault to read a peer (live reference; out is a read edge)')
+    .option('-d, --direction <direction>', 'Connection direction: out | in | both (out = read)', 'out')
     .option('--topics <list>', 'Comma-separated topic filter (default: all topics)')
     .action((vault: string, opts: { direction?: string; topics?: string }) => {
       const contextRoot = ensureContextRoot();
-      const direction = (opts.direction ?? 'both').toLowerCase();
+      const direction = (opts.direction ?? 'out').toLowerCase();
       if (!(DIRECTIONS as string[]).includes(direction)) {
         error(`Unknown direction '${opts.direction}'.`, `Use one of: ${DIRECTIONS.join(', ')}.`);
         process.exitCode = 1;

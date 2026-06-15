@@ -46,8 +46,7 @@ feeds back ^RcMi1Wdy
 
 ## Embedded Files
 %%
-## Drawing
-```json
+## Drawing```json
 {
 	"type": "excalidraw",
 	"version": 2,
@@ -1343,6 +1342,4 @@ feeds back ^RcMi1Wdy
 		"viewBackgroundColor": "#ffffff"
 	},
 	"files": {}
-}
-```
-%%
+}```%%

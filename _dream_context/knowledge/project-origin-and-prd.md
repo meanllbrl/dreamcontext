@@ -10,9 +10,7 @@ pinned: true
 
 ## Origin: The Pre-dreamcontext System
 
-The project evolved from an earlier, semi-structured `_dream_context/` directory system used in personal coding workflows. That original system had:
-
-```
+The project evolved from an earlier, semi-structured `_dream_context/` directory system used in personal coding workflows. That original system had:```
 _dream_context/
 ├── Core/
 │   ├── 0 - MEMORY & PREFERENCES.md
@@ -25,10 +23,7 @@ _dream_context/
 │   ├── [task-name].md
 │   ├── Task Pool/
 │   └── Finished/
-└── Inbox/    ← User's temporary storage (do NOT read)
-```
-
-The old system had **personality and identity mixed into the context management** files. The dreamcontext project decoupled these: soul/user/memory are separate concerns. The personality and identity parts were left behind.
+└── Inbox/    ← User's temporary storage (do NOT read)```The old system had **personality and identity mixed into the context management** files. The dreamcontext project decoupled these: soul/user/memory are separate concerns. The personality and identity parts were left behind.
 
 There was also a `Context/` directory that contained a `claude.md` — this became the inspiration for the modern `SKILL.md`.
 

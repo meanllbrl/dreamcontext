@@ -7,7 +7,7 @@ released_version: null
 tags:
   - memory
   - cli
-  - search
+  - topic:recall
   - decisions
 related_tasks:
   - recall-context-uplift-v07
@@ -124,13 +124,8 @@ dreamcontext's existing snapshot pre-loads soul + user + memory + active tasks +
 
 soul.md, 1.user.md, the remaining core 3–6 files, RELEASES.json, and sleep state are intentionally NOT indexed. They are always-loaded via snapshot and belong to the deterministic tier — recall is a complement, not a replacement.
 
-**BM25 formula:**
-
-```
-score(D, Q) = Σ over q in Q: IDF(q) · TF(q,D)·(k1+1) / (TF(q,D) + k1·(1-b + b·|D|/avgdl))
-```
-
-with k1=1.5, b=0.75. IDF uses the `log(1 + (N - df + 0.5) / (df + 0.5))` form so it stays non-negative.
+**BM25 formula:**```
+score(D, Q) = Σ over q in Q: IDF(q) · TF(q,D)·(k1+1) / (TF(q,D) + k1·(1-b + b·|D|/avgdl))```with k1=1.5, b=0.75. IDF uses the `log(1 + (N - df + 0.5) / (df + 0.5))` form so it stays non-negative.
 
 **Sleep-product specialist** (`agents/sleep-product.md`) does not need any changes — it already maintains knowledge files, feature PRDs, and the tag set. Recall reads what sleep-product already maintains.
 
@@ -175,17 +170,12 @@ Originally shipped opt-in with raw BM25 (2026-05-23). Flipped to default-on the 
 | `raw` | BM25 only, no external process |
 | `off` | No recall injection |
 
-**Output format (`— Memory recall (Haiku, top N) —`):**
-
-```
+**Output format (`— Memory recall (Haiku, top N) —`):**```
 — Memory recall (Haiku, top 2) —
   [feature] core/features/memory-recall-bm25.md
     Why dreamcontext chose BM25 over mem0 and ships Haiku-mode recall as default.
   [knowledge] knowledge/decision-mem0-vs-bm25-recall.md
-    Decision trace for mem0 rejection and BM25/Haiku adoption.
-```
-
-## CHANGELOG Schema (2026-05-23)
+    Decision trace for mem0 rejection and BM25/Haiku adoption.```## CHANGELOG Schema (2026-05-23)
 
 CHANGELOG entries gained three optional fields, all backwards-compatible:
 

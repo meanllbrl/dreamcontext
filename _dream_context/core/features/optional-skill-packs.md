@@ -63,9 +63,7 @@ Claude Code uses `description` to decide when to load the skill. Generic descrip
 
 ## Technical Details
 
-### Structure (Phase 1 + Level 2 complete + Phase 3 standalone skills, 50+ files)
-
-```
+### Structure (Phase 1 + Level 2 complete + Phase 3 standalone skills, 50+ files)```
 skill-packs/
   catalog.json                        # Master manifest (packs + agents)
   agents/                             # Optional agents (flat)
@@ -99,10 +97,7 @@ skill-packs/
     SKILL.md
     scripts/transcribe.sh             # executable (+x)
     scripts/build_frame_index.py
-    .gitignore
-```
-
-### Phase 3: Code-Bearing Standalone Skills (COMPLETE)
+    .gitignore```### Phase 3: Code-Bearing Standalone Skills (COMPLETE)
 
 `CatalogStandalone` type extended with optional `bundleDir: boolean` field. When `true`, `installStandaloneFiles` uses `cpSync` (recursive) instead of a single-file copy, preserving the full directory tree and all file permissions (exec bits). Uninstall removes the entire directory. Manifest tracks all files for clean uninstall.
 

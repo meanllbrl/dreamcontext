@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
 import { listVaults, resolveVaultContextRoot, VaultError } from './vaults.js';
 
@@ -90,11 +91,24 @@ export function readConnections(contextRoot: string): ConnectionsFile {
   }
 }
 
-/** Write the connections file with pretty JSON + trailing newline. */
+/**
+ * Write the connections file with pretty JSON + trailing newline.
+ *
+ * ATOMIC: serialise to a sibling temp file, then `rename` it over the target.
+ * `rename` is atomic on the same filesystem, so a reader never observes a
+ * half-written file, and two concurrent writers (the launcher server + a CLI
+ * invocation both doing read-modify-write) can no longer interleave a partial
+ * write that silently drops a direction. The temp name carries BOTH the pid and
+ * a random nonce, so two writes from the SAME process (the launcher's consent
+ * handshake writes both vaults' files from concurrent HTTP handlers) never pick
+ * the same scratch path and clobber each other before their renames land.
+ */
 export function writeConnections(contextRoot: string, file: ConnectionsFile): void {
   const path = connectionsPath(contextRoot);
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(file, null, 2) + '\n', 'utf-8');
+  const tmp = `${path}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`;
+  writeFileSync(tmp, JSON.stringify(file, null, 2) + '\n', 'utf-8');
+  renameSync(tmp, path);
 }
 
 /** List the current vault's connections (never throws). */

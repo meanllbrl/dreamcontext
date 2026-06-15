@@ -1,6 +1,83 @@
 [
   {
     "date": "2026-06-15",
+    "type": "chore",
+    "scope": "eval",
+    "description": "Fix stale eval hygiene: 21 of 60 lines in eval/gold.jsonl referenced task/* slugs that no longer exist — all tasks were consolidated into features and knowledge files over prior sleep cycles, leaving the tasks directory empty. Updated every dead ref to its live feature/knowledge successor, preserving each query's intent and the curated alt structure. Recall quality stayed healthy: recall@3 95%, recall@1 81.7% on the full 60-query gold set, confirming the repointed targets rank correctly. The eval/ directory (and _dream_context/) are not in the npm package so this is maintenance-only — no shipped product code changed. Verified the two other test failures observed (excalidraw-knowledge, recall-capture-stress) were pre-existing environment artifacts from a concurrent background consolidation rewriting the live vault mid-test, not caused by this change.",
+    "breaking": false,
+    "summary": "Repoint 21 dead task/* refs in eval/gold.jsonl to live feature/knowledge successors; recall@3 95%, recall@1 81.7%",
+    "references": [
+      "file:eval/gold.jsonl"
+    ]
+  },
+  {
+    "date": "2026-06-15",
+    "type": "fix",
+    "scope": "clickup",
+    "description": "Fix a bug where a ClickUp task could end up with two version tags (version:x + version:y) after a version change. Root cause: the push-diff reconciled the version tag against the base snapshot, but when version is changed via a bound custom FIELD (clickup.ts:1078 — the field outranks the tag), the merge writes the field value to base.version without updating the remote version tag. On the next push, the diff removes a phantom version tag (the one in the base snapshot) and leaves the real stale one. Fix in src/lib/task-backend/clickup.ts: non-version tags continue to diff against the base snapshot (so remote-only tags survive); version:* tags are now reconciled against the live remote tags returned by the PUT response — every live version:* tag other than the desired one is removed, and the desired tag is added if absent. This guarantees exactly one version tag survives after any version change regardless of how the version was last set. Regression test added to tests/unit/clickup-tags.test.ts covering the drift scenario (base snapshot unaware of stale remote version tag). 43 clickup tests pass, typecheck clean.",
+    "breaking": false,
+    "summary": "Fix version-tag drift: reconcile version:<v> against live PUT response tags, not base snapshot",
+    "references": [
+      "file:src/lib/task-backend/clickup.ts",
+      "file:tests/unit/clickup-tags.test.ts",
+      "task:multi-assignee-via-person-tags"
+    ]
+  },
+  {
+    "date": "2026-06-15",
+    "type": "feat",
+    "scope": "tasks",
+    "description": "Replace the scalar assignee field with a person-tag-based multi-assignee system. Person tags ('person:<slug>') are the single source of truth for assignment; the legacy scalar 'assignee' field migrates to a person tag on read and is deleted from frontmatter. The effective assignee list is derived by unioning person tags with the scalar field and filtering to roster members. ClickUp sync sends CREATE with 'assignees: [ids]' and UPDATE with an add/rem delta; unknown slugs are silently dropped. The server route (routes/tasks.ts) resolves the roster+remote member union by slug (remote-priority, provider-agnostic — no 'clickup' substring in the match). Dashboard: TaskDetailPanel now renders a multi-select assignee dropdown (person tags shown as chips with × removal) rather than a single text field; adding an assignee adds a person tag, removing one removes the tag and clears the legacy assignee field atomically to prevent ghost reappearance. Two ghost-assignment bugs fixed across three review rounds (FAIL→FAIL→PASS): the Assignees chip row correctly calls setAssignees (sets assignee:null), and handleTagsChange also clears assignee:null when the backing person tag is removed — guarded narrowly to avoid data loss on unrelated tag edits. 1975 tests pass, typecheck clean.",
+    "breaking": false,
+    "summary": "Multi-assignee via person tags: ClickUp delta sync, dashboard dropdown picker, ghost-reappearance fix",
+    "references": [
+      "file:src/lib/task-backend/clickup.ts",
+      "file:src/server/routes/tasks.ts",
+      "file:dashboard/src/components/tasks/TaskDetailPanel.tsx",
+      "file:dashboard/src/components/tasks/TaskDetailPanel.css",
+      "file:tests/unit/clickup-members.test.ts",
+      "file:tests/unit/clickup-pull.test.ts",
+      "file:tests/unit/tasks-members-route.test.ts",
+      "task:multi-assignee-via-person-tags"
+    ]
+  },
+  {
+    "date": "2026-06-15",
+    "type": "feat",
+    "scope": "federation",
+    "description": "Add cross-project read awareness to the snapshot and launcher network view. The SessionStart hook now surfaces connected peer vaults and their recall availability in the snapshot (federation-aware context). The launcher federation graph wires updated to reflect the read-only model: purple 'reads (live)' edges represent live recall connections, not digest sync; the consent handshake is enforced at the graph/connection layer. New tests cover federation consent and purge paths; federation-cycle tests deleted (sync/drain cycle no longer applies). Changes in tests/unit/federation-consent.test.ts and new tests/unit/federation-purge.test.ts; tests/unit/federation-cycle.test.ts removed. Launcher federation graph (LauncherGraph.tsx), useLauncher.ts, and snapshot.ts updated for read-only semantics.",
+    "breaking": false,
+    "summary": "Cross-project read awareness: snapshot hook and launcher wires show live federation read edges + consent handshake",
+    "references": [
+      "commit:e464190",
+      "file:dashboard/src/pages/LauncherGraph.tsx",
+      "file:dashboard/src/hooks/useLauncher.ts",
+      "file:src/cli/commands/snapshot.ts",
+      "file:tests/unit/federation-consent.test.ts",
+      "file:tests/unit/federation-purge.test.ts",
+      "knowledge:federation-cross-vault",
+      "task:federation-cross-project-mesh"
+    ]
+  },
+  {
+    "date": "2026-06-15",
+    "type": "feat",
+    "scope": "federation",
+    "description": "Replace the copy-based sync+drain model with a read-only live-reference architecture where each vault holds its own canonical knowledge and peers are queried live at recall time. The recall hook now live-reads connected peers (via crossVaultRecall) rather than ingesting copies; sync and drain are preserved as inert no-ops for future roadmap use but no longer do anything. New 'federation purge' CLI command removes all federated knowledge materialised from a specific peer, with symlink-escape protection and atomic .connections.json writes with a nonce. The lib copy-code is parked in-tree for the eventual redesign. README and DEEP-DIVE updated: federation intro rewritten to 'recall across each other live — nothing is ever copied'; CLI command refs updated to federation peers/status/purge; sync/drain marked as inert; copy-based sync noted as parked on the roadmap; 'Read-only by construction' section documents the real guards. The federation Excalidraw diagram alt-text updated (rendered image still shows old push/pull model; pending npm run diagrams regeneration). This was driven by a user correction that 'reads' connections were copying content instead of referencing — single-source-of-truth is a hard requirement.",
+    "breaking": false,
+    "summary": "Pivot federation from copy-sync to read-only live-reference model; add federation purge command",
+    "references": [
+      "commit:e464190",
+      "file:src/cli/commands/federation.ts",
+      "file:src/lib/connections.ts",
+      "file:README.md",
+      "file:DEEP-DIVE.md",
+      "knowledge:federation-cross-vault",
+      "task:federation-read-only"
+    ]
+  },
+  {
+    "date": "2026-06-15",
     "type": "feat",
     "scope": "hook",
     "description": "Add two targeted suppressions to the snapshot/hook pipeline. (1) Asset-drift scoping: the SessionStart 'update your dreamcontext' nag now stays silent when a content check confidently proves that no installed asset for this project would change on update — i.e. the CLI bump only touched skill-packs this project does not use. New src/cli/commands/asset-drift.ts (computeUsedAssetsChanged: temp-installs the real installers for the project's exact platforms+packs, byte-compares against disk, excludes settings.json and _dream_context/) and src/lib/asset-drift-cache.ts (persists verdict at state/.asset-drift.json, keyed on cliVersion+setupVersion). snapshot.ts getDriftDirective() reads the cache: when state=stale or bootstrap AND the cache confidently reports clean, the nag is suppressed; anything uncertain (no cache, version-mismatched, real change, error) falls open to the nag. The cache is refreshed in a detached process (hook refresh-asset-drift, new command) spawned on the existing once/24h tick in hook.ts, so the async installer stdout never contaminates the sync snapshot path. (2) Dashboard auto-open suppression: hook ensure-dashboard exits early when readAppManifest() !== null (the desktop beta app is installed), preventing a redundant browser tab alongside the native window. 13 new unit tests; full suite 1947 passed, build+typecheck clean.",

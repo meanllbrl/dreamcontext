@@ -4,8 +4,6 @@ import {
   useFederationGraph,
   useCreateConnection,
   useRemoveLauncherConnection,
-  useCreateSync,
-  useRemoveSync,
   useToggleShareable,
   useUpdateProject,
   type VaultStatus,
@@ -15,10 +13,8 @@ import './LauncherGraph.css';
 
 // ─── Excalidraw house palette (pastel card + ink outline), used on the canvas ──
 const INK = '#1f2430';
-const READ = '#6741d9'; // violet — a live "reads" wire
-const SYNC = '#0c8599'; // teal — a digest "sync" wire (changes flow to a listener)
+const READ = '#6741d9'; // violet — a live "reads" wire (the only wire kind)
 const READ_SOFT = 'rgba(103,65,217,0.9)';
-const SYNC_SOFT = 'rgba(12,133,153,0.95)';
 const CARD = {
   ok: { fill: '#b2f2bb', stroke: '#2f9e44' }, // green — up to date
   stale: { fill: '#ffec99', stroke: '#f08c00' }, // yellow — needs `dreamcontext update`
@@ -31,7 +27,9 @@ function cardStyle(n: VaultStatus): { fill: string; stroke: string } {
   return CARD.ok;
 }
 
-type WireKind = 'reads' | 'sync';
+// Read-only federation: the only wire kind is a live read. (`sync` is parked on
+// the roadmap; reintroduce a member here if/when a copy/mirror mode is designed.)
+type WireKind = 'reads';
 
 interface GNode extends VaultStatus {
   id: string;
@@ -118,19 +116,17 @@ function arrowHead(
 
 /**
  * The interactive cross-project federation board (Excalidraw-style). Every vault
- * is a rounded card; two kinds of wire connect them:
- *   • **reads** (violet): A→B = A reads B's memory LIVE during recall.
- *   • **sync**  (teal):  A→B = B listens to A's changes — at sleep, A's new
- *     knowledge is pushed into B's brain. Drawn from the change-SOURCE to the
- *     LISTENER, and set up with both sides' consent in one gesture.
- * Pick the wire kind in the toolbar, then click source → target (or drag).
+ * is a rounded card; a single kind of wire connects them:
+ *   • **reads** (violet): A→B = A reads B's CANONICAL memory LIVE during recall —
+ *     a reference, never a copy. The target must be Readable (shareable) for the
+ *     wire to be active; otherwise it is stored but inert.
+ * Click source → target (or drag) to wire a read. (Copy-based sync is parked on
+ * the roadmap — federation is read-only.)
  */
 export function LauncherGraph() {
   const { data, isLoading, isError, error } = useFederationGraph();
   const createConn = useCreateConnection();
   const removeConn = useRemoveLauncherConnection();
-  const createSync = useCreateSync();
-  const removeSync = useRemoveSync();
   const toggleShareable = useToggleShareable();
   const updateProject = useUpdateProject();
 
@@ -138,13 +134,9 @@ export function LauncherGraph() {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [dims, setDims] = useState({ w: 0, h: 0 });
   const [connectMode, setConnectMode] = useState(true);
-  const [wireKind, setWireKind] = useState<WireKind>('reads');
   const [selected, setSelected] = useState<GNode | null>(null);
   const [actionNote, setActionNote] = useState<string | null>(null);
   const [showGuide, setShowGuide] = useState(true);
-
-  const wireKindRef = useRef<WireKind>('reads');
-  wireKindRef.current = wireKind;
 
   const dragSource = useRef<GNode | null>(null);
   const downPos = useRef<{ x: number; y: number } | null>(null);
@@ -166,9 +158,9 @@ export function LauncherGraph() {
     return () => ro.disconnect();
   }, []);
 
-  // Derive the ordered relationships (one per directed read/sync) from the raw
-  // per-vault connection directions. A→B is a SYNC wire (B listens to A) when A
-  // shares out to B AND B accepts in from A; otherwise it's a live READS wire.
+  // Derive the ordered read relationships from raw per-vault connection
+  // directions. Read-only federation: every qualifying out/both edge becomes a
+  // live READS wire; `active` = the target is Readable (shareable).
   const rels = useMemo<Rel[]>(() => {
     const nodes = data?.nodes ?? [];
     const conns: FederationConnection[] = data?.connections ?? [];
@@ -180,17 +172,12 @@ export function LauncherGraph() {
       const d = dir.get(`${a}${b}`);
       return d === 'out' || d === 'both';
     };
-    const hasIn = (a: string, b: string) => {
-      const d = dir.get(`${a}${b}`);
-      return d === 'in' || d === 'both';
-    };
     const out: Rel[] = [];
     for (const c of conns) {
       if (!present.has(c.from) || !present.has(c.to)) continue;
       if (!hasOut(c.from, c.to)) continue;
       // B (=c.to) listens to A (=c.from) when B accepts A's digest.
-      if (hasIn(c.to, c.from)) out.push({ from: c.from, to: c.to, kind: 'sync', active: true });
-      else out.push({ from: c.from, to: c.to, kind: 'reads', active: shareable.get(c.to) === true });
+      out.push({ from: c.from, to: c.to, kind: 'reads', active: shareable.get(c.to) === true });
     }
     return out;
   }, [data]);
@@ -213,8 +200,8 @@ export function LauncherGraph() {
         kind: r.kind,
         active: r.active || (rev?.active ?? false),
         twoWay: !!rev,
-        // sync bows wider than reads; opposite directions bow opposite ways.
-        curv: (r.from < r.to ? 1 : -1) * (r.kind === 'sync' ? 0.26 : 0.13),
+        // Opposite directions bow opposite ways so reciprocal wires don't overlap.
+        curv: (r.from < r.to ? 1 : -1) * 0.13,
       });
     }
     return { nodes, links };
@@ -336,18 +323,6 @@ export function LauncherGraph() {
   const wire = useCallback(
     (src: GNode, dst: GNode) => {
       setActionNote(null);
-      if (wireKindRef.current === 'sync') {
-        createSync.mutate(
-          { from: src.id, to: dst.id },
-          {
-            onSuccess: () =>
-              setActionNote(`“${dst.name}” now listens to “${src.name}”’s changes (digest sync at sleep).`),
-            onError: (err) =>
-              setActionNote(err instanceof Error ? err.message : 'Failed to enable sync.'),
-          },
-        );
-        return;
-      }
       createConn.mutate(
         { from: src.id, to: dst.id },
         {
@@ -364,7 +339,7 @@ export function LauncherGraph() {
         },
       );
     },
-    [createConn, createSync],
+    [createConn],
   );
 
   function onPointerDown(e: React.PointerEvent) {
@@ -454,7 +429,7 @@ export function LauncherGraph() {
     if (!anchor || !pointer.current || !fg || anchor.x == null || anchor.y == null) return;
     const p = fg.screen2GraphCoords(pointer.current.x, pointer.current.y);
     ctx.save();
-    ctx.strokeStyle = wireKindRef.current === 'sync' ? SYNC : READ;
+    ctx.strokeStyle = READ;
     ctx.lineWidth = 2;
     ctx.setLineDash([6, 5]);
     ctx.globalAlpha = 0.95;
@@ -476,24 +451,15 @@ export function LauncherGraph() {
     const to = endId(l.target);
     const fromName = nodeById.get(from)?.name ?? from;
     const toName = nodeById.get(to)?.name ?? to;
-    if (l.kind === 'sync') {
-      if (!window.confirm(`Stop “${toName}” listening to “${fromName}”’s changes?`)) return;
-      removeSync.mutate({ from, to });
-      if (l.twoWay) removeSync.mutate({ from: to, to: from });
-    } else {
-      if (!window.confirm(`Remove the connection “${fromName}” → “${toName}”?`)) return;
-      removeConn.mutate({ from, to });
-      if (l.twoWay) removeConn.mutate({ from: to, to: from });
-    }
+    if (!window.confirm(`Remove the read “${fromName}” → “${toName}”?`)) return;
+    removeConn.mutate({ from, to });
+    if (l.twoWay) removeConn.mutate({ from: to, to: from });
   }
 
   // Plain-language label + direct (no-confirm) removal for the always-on list.
   function linkLabel(l: GLink): string {
     const from = nodeById.get(endId(l.source))?.name ?? endId(l.source);
     const to = nodeById.get(endId(l.target))?.name ?? endId(l.target);
-    if (l.kind === 'sync') {
-      return l.twoWay ? `${from} ⇄ ${to} — sync each other` : `${to} listens to ${from} (sync)`;
-    }
     return l.twoWay
       ? `${from} ⇄ ${to} — read each other`
       : `${from} reads ${to}${l.active ? '' : ' — not Readable yet'}`;
@@ -502,13 +468,8 @@ export function LauncherGraph() {
   function removeLink(l: GLink) {
     const from = endId(l.source);
     const to = endId(l.target);
-    if (l.kind === 'sync') {
-      removeSync.mutate({ from, to });
-      if (l.twoWay) removeSync.mutate({ from: to, to: from });
-    } else {
-      removeConn.mutate({ from, to });
-      if (l.twoWay) removeConn.mutate({ from: to, to: from });
-    }
+    removeConn.mutate({ from, to });
+    if (l.twoWay) removeConn.mutate({ from: to, to: from });
   }
 
   useEffect(() => {
@@ -547,32 +508,19 @@ export function LauncherGraph() {
     const out: { text: string; onRemove: () => void }[] = [];
     for (const r of rels) {
       if (r.from !== selected.id && r.to !== selected.id) continue;
-      if (r.kind === 'sync') {
-        if (r.from === selected.id)
-          out.push({
-            text: `“${r.to}” listens to your changes (sleep sync)`,
-            onRemove: () => removeSync.mutate({ from: r.from, to: r.to }),
-          });
-        else
-          out.push({
-            text: `You listen to “${r.from}”’s changes (sleep sync)`,
-            onRemove: () => removeSync.mutate({ from: r.from, to: r.to }),
-          });
-      } else {
-        if (r.from === selected.id)
-          out.push({
-            text: `You read “${r.to}” live${r.active ? '' : ' — not Readable yet'}`,
-            onRemove: () => removeConn.mutate({ from: r.from, to: r.to }),
-          });
-        else
-          out.push({
-            text: `“${r.from}” reads you live`,
-            onRemove: () => removeConn.mutate({ from: r.from, to: r.to }),
-          });
-      }
+      if (r.from === selected.id)
+        out.push({
+          text: `You read “${r.to}” live${r.active ? '' : ' — not Readable yet'}`,
+          onRemove: () => removeConn.mutate({ from: r.from, to: r.to }),
+        });
+      else
+        out.push({
+          text: `“${r.from}” reads you live`,
+          onRemove: () => removeConn.mutate({ from: r.from, to: r.to }),
+        });
     }
     return out;
-  }, [selected, rels, removeSync, removeConn]);
+  }, [selected, rels, removeConn]);
 
   return (
     <div className="lgraph">
@@ -586,24 +534,6 @@ export function LauncherGraph() {
           <span className="lgraph-mode-dot" aria-hidden />
           {connectMode ? 'Connect mode' : 'View mode'}
         </button>
-        {connectMode && (
-          <div className="lgraph-wiretype" role="group" aria-label="Wire kind">
-            <button
-              type="button"
-              className={`lgraph-wt lgraph-wt--read${wireKind === 'reads' ? ' lgraph-wt--on' : ''}`}
-              onClick={() => setWireKind('reads')}
-            >
-              Reads
-            </button>
-            <button
-              type="button"
-              className={`lgraph-wt lgraph-wt--sync${wireKind === 'sync' ? ' lgraph-wt--on' : ''}`}
-              onClick={() => setWireKind('sync')}
-            >
-              Sync
-            </button>
-          </div>
-        )}
         <button type="button" className="lgraph-help" onClick={() => setShowGuide(true)}>
           How it works
         </button>
@@ -617,18 +547,13 @@ export function LauncherGraph() {
         <span className="lgraph-hint">
           {connectMode
             ? pendingSource
-              ? wireKind === 'sync'
-                ? `Now click the project that should listen to “${pendingSource.name}”.`
-                : `Now click the project “${pendingSource.name}” should read.`
-              : wireKind === 'sync'
-                ? 'Click the change SOURCE, then who should LISTEN — or drag. Click a wire (or use Connections) to remove it.'
-                : 'Click a project then the one it should read — or drag. Click a wire (or use Connections) to remove it.'
+              ? `Now click the project “${pendingSource.name}” should read.`
+              : 'Click a project then the one it should read — or drag. Click a wire (or use Connections) to remove it.'
             : 'View mode — click a wire to remove it, or click a project for details. Press C to connect.'}
         </span>
         <span className="lgraph-legend">
           <span className="lgraph-legend-group">
-            <i className="lgwire lgwire--read" /> reads (live)
-            <i className="lgwire lgwire--sync" /> sync (listens at sleep)
+            <i className="lgwire lgwire--read" /> reads (live reference — nothing copied)
             <i className="lgwire lgwire--inert" /> not readable yet
           </span>
         </span>
@@ -731,7 +656,7 @@ export function LauncherGraph() {
             linkDirectionalParticles={(l: GLink) => (l.active ? 3 : 0)}
             linkDirectionalParticleSpeed={0.006}
             linkDirectionalParticleWidth={3.4}
-            linkDirectionalParticleColor={(l: GLink) => (l.kind === 'sync' ? '#7fe3d6' : '#c9b8ff')}
+            linkDirectionalParticleColor={() => '#c9b8ff'}
             linkCanvasObjectMode={() => 'replace'}
             linkCanvasObject={(l: GLink, ctx: CanvasRenderingContext2D, scale: number) => {
               const s = l.source as GNode;
@@ -756,12 +681,12 @@ export function LauncherGraph() {
               const angT = Math.atan2(ty - cpy, tx - cpx); // tangent into target
               const angS = Math.atan2(sy - cpy, sx - cpx); // tangent into source
 
-              const isSync = l.kind === 'sync';
+              // Read-only federation: every wire is a live READS wire.
               ctx.save();
               ctx.lineCap = 'round';
               if (l.active) {
-                ctx.strokeStyle = isSync ? SYNC_SOFT : READ_SOFT;
-                ctx.lineWidth = isSync ? 2.6 : 2.2;
+                ctx.strokeStyle = READ_SOFT;
+                ctx.lineWidth = 2.2;
                 ctx.setLineDash([]);
               } else {
                 ctx.strokeStyle = 'rgba(150,150,170,0.55)';
@@ -774,9 +699,9 @@ export function LauncherGraph() {
               ctx.stroke();
               ctx.setLineDash([]);
 
-              const head = l.active ? (isSync ? SYNC : READ) : 'rgba(150,150,170,0.75)';
-              arrowHead(ctx, tx, ty, angT, isSync ? 8 : 7, head);
-              if (l.twoWay) arrowHead(ctx, sx, sy, angS, isSync ? 8 : 7, head);
+              const head = l.active ? READ : 'rgba(150,150,170,0.75)';
+              arrowHead(ctx, tx, ty, angT, 7, head);
+              if (l.twoWay) arrowHead(ctx, sx, sy, angS, 7, head);
 
               if (scale > 0.75) {
                 // Label rides the curve apex (quadratic at t=0.5).
@@ -786,18 +711,12 @@ export function LauncherGraph() {
                 ctx.font = `600 ${fs}px -apple-system, BlinkMacSystemFont, sans-serif`;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'middle';
-                const label = isSync
-                  ? l.twoWay
-                    ? 'sync ⇄'
-                    : 'listens'
-                  : l.twoWay
-                    ? 'read each other'
-                    : 'reads';
+                const label = l.twoWay ? 'read each other' : 'reads';
                 const tw = ctx.measureText(label).width;
                 ctx.fillStyle = '#0b0b12';
                 roundRect(ctx, mx - tw / 2 - 3, my - fs / 2 - 2, tw + 6, fs + 4, 3);
                 ctx.fill();
-                ctx.fillStyle = isSync ? '#86e7d9' : '#c9b8ff';
+                ctx.fillStyle = '#c9b8ff';
                 ctx.fillText(label, mx, my);
               }
               ctx.restore();
@@ -831,7 +750,7 @@ export function LauncherGraph() {
 
               roundRect(ctx, x, y, w, h, 9);
               if (isPending || isHover) {
-                ctx.strokeStyle = wireKindRef.current === 'sync' ? SYNC : READ;
+                ctx.strokeStyle = READ;
                 ctx.lineWidth = 2.4;
               } else {
                 ctx.strokeStyle = style.stroke;
@@ -981,45 +900,34 @@ function GraphGuide({ hasLinks, onClose }: { hasLinks: boolean; onClose: () => v
       <button className="lgraph-guide-x" onClick={onClose} aria-label="Close">
         ✕
       </button>
-      <h3 className="lgraph-guide-title">Two ways to wire projects</h3>
+      <h3 className="lgraph-guide-title">How reading works</h3>
 
       <div className="lgraph-guide-demo" aria-hidden>
-        <svg viewBox="0 0 260 110" className="lgraph-guide-svg">
+        <svg viewBox="0 0 260 60" className="lgraph-guide-svg">
           {/* reads */}
-          <line className="lgraph-guide-flow" x1="92" y1="26" x2="168" y2="26" stroke="#6741d9" strokeWidth="2.4" />
-          <polygon points="168,22 176,26 168,30" fill="#6741d9" />
-          <rect x="14" y="12" width="70" height="28" rx="8" fill="#b2f2bb" stroke="#2f9e44" strokeWidth="1.6" />
-          <text x="49" y="27" textAnchor="middle" className="lgraph-guide-cardlabel">App</text>
-          <rect x="176" y="12" width="70" height="28" rx="8" fill="#b2f2bb" stroke="#2f9e44" strokeWidth="1.6" />
-          <circle cx="240" cy="16" r="3.2" fill="#6741d9" stroke="#0b0b12" strokeWidth="1" />
-          <text x="211" y="27" textAnchor="middle" className="lgraph-guide-cardlabel">Libs</text>
-          <text x="130" y="19" textAnchor="middle" className="lgraph-guide-wirelabel" fill="#b9a6ff">reads</text>
-          {/* sync */}
-          <line className="lgraph-guide-flow" x1="92" y1="84" x2="168" y2="84" stroke="#0c8599" strokeWidth="2.6" />
-          <polygon points="168,80 176,84 168,88" fill="#0c8599" />
-          <rect x="14" y="70" width="70" height="28" rx="8" fill="#b2f2bb" stroke="#2f9e44" strokeWidth="1.6" />
-          <text x="49" y="85" textAnchor="middle" className="lgraph-guide-cardlabel">App</text>
-          <rect x="176" y="70" width="70" height="28" rx="8" fill="#b2f2bb" stroke="#2f9e44" strokeWidth="1.6" />
-          <text x="211" y="85" textAnchor="middle" className="lgraph-guide-cardlabel">Libs</text>
-          <text x="130" y="77" textAnchor="middle" className="lgraph-guide-wirelabel" fill="#86e7d9">listens</text>
+          <line className="lgraph-guide-flow" x1="92" y1="30" x2="168" y2="30" stroke="#6741d9" strokeWidth="2.4" />
+          <polygon points="168,26 176,30 168,34" fill="#6741d9" />
+          <rect x="14" y="16" width="70" height="28" rx="8" fill="#b2f2bb" stroke="#2f9e44" strokeWidth="1.6" />
+          <text x="49" y="31" textAnchor="middle" className="lgraph-guide-cardlabel">App</text>
+          <rect x="176" y="16" width="70" height="28" rx="8" fill="#b2f2bb" stroke="#2f9e44" strokeWidth="1.6" />
+          <circle cx="240" cy="20" r="3.2" fill="#6741d9" stroke="#0b0b12" strokeWidth="1" />
+          <text x="211" y="31" textAnchor="middle" className="lgraph-guide-cardlabel">Libs</text>
+          <text x="130" y="23" textAnchor="middle" className="lgraph-guide-wirelabel" fill="#b9a6ff">reads</text>
         </svg>
       </div>
 
       <ul className="lgraph-guide-defs">
         <li>
           <span className="lgraph-key lgraph-key--read" /> <strong>Reads (violet):</strong> App reads
-          Libs' memory <em>live</em> during recall. Target must be Readable (violet pip).
-        </li>
-        <li>
-          <span className="lgraph-key lgraph-key--sync" /> <strong>Sync (teal):</strong> at sleep, the
-          source's new knowledge is pushed into the listener's brain. Arrow points
-          <strong> source → listener</strong>. Set up with both sides' consent in one click.
+          Libs' <em>canonical</em> memory <em>live</em> during recall — a reference, never a copy.
+          Each project stays the single source of truth for its own knowledge. The target must be
+          Readable (violet pip), or the wire is stored but inert.
         </li>
       </ul>
 
       <p className="lgraph-guide-foot">
-        Pick <strong>Reads</strong> or <strong>Sync</strong> in the toolbar, then click the source and
-        the target (or drag). Click any project to see exactly who reads it and who listens to it.
+        Click a project then the one it should read (or drag). Click any project to see exactly who
+        reads it. (Copy-based sync is parked on the roadmap — federation only reads, live.)
       </p>
 
       <button className="lgraph-guide-cta" onClick={onClose}>

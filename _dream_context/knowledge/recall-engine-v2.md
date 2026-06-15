@@ -2,7 +2,7 @@
 id: recall-engine-v2
 name: "Recall Engine v2 — BM25F + Stemming + Synonyms + Continuous Capture"
 description: "BM25F field-weighted recall engine v2: stemming, synonyms, recency/status re-rank, continuous capture, eval harness, and the score/rankScore decoupling invariant. Supersedes the original flat-BM25 implementation. Deterministic benchmark: overall recall@1 68.3→85.0%, recall@3 81.7→95.0%."
-tags: ["architecture", "decisions", "memory", "search"]
+tags: ["architecture", "decisions", "memory", "topic:recall"]
 pinned: false
 date: "2026-06-02"
 ---
@@ -21,13 +21,8 @@ v2 was shipped across PR #1 (`memory-uplift`) and PR #2 (`memory-capture-harden`
 
 ### BM25F Field Weighting (B2)
 
-Key file: `src/lib/recall.ts`, `buildFields()`, `FIELD_WEIGHTS`.
-
-```
-FIELD_WEIGHTS = { title: 3, tags: 2, description: 2, body: 1 }
-```
-
-Each field's token frequencies are multiplied by its weight and summed into `fieldFreq`. This `fieldFreq` feeds the `rankScore` (the derived sorting signal) — NOT the raw `score` (see Decoupling Invariant below). Result: title+tag hits dominate ordering; body-only matches are still findable but don't crowd out named docs. Pushed exact-term and field-match categories to 100% recall@1.
+Key file: `src/lib/recall.ts`, `buildFields()`, `FIELD_WEIGHTS`.```
+FIELD_WEIGHTS = { title: 3, tags: 2, description: 2, body: 1 }```Each field's token frequencies are multiplied by its weight and summed into `fieldFreq`. This `fieldFreq` feeds the `rankScore` (the derived sorting signal) — NOT the raw `score` (see Decoupling Invariant below). Result: title+tag hits dominate ordering; body-only matches are still findable but don't crowd out named docs. Pushed exact-term and field-match categories to 100% recall@1.
 
 ### Stemming — English + Turkish (B4)
 

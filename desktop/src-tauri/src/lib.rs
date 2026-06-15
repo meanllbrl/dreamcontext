@@ -248,6 +248,10 @@ fn host_dashboard(app: AppHandle) -> Result<(), String> {
     )
     .title("dreamcontext")
     .inner_size(1280.0, 800.0)
+    // Disable Tauri's OS-level drag/drop handler so the webview's own HTML5
+    // drag-and-drop (Kanban / Eisenhower task cards) fires. With this left on
+    // (the default), the native handler swallows dragover/drop events.
+    .drag_drop_enabled(false)
     .build()
     .map_err(|e| format!("Could not create the window: {e}"))?;
 

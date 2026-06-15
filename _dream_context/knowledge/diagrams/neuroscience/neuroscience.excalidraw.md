@@ -36,8 +36,7 @@ debt builds → sleep ^4mrjlCSw
 
 ## Embedded Files
 %%
-## Drawing
-```json
+## Drawing```json
 {
 	"type": "excalidraw",
 	"version": 2,
@@ -696,6 +695,4 @@ debt builds → sleep ^4mrjlCSw
 		"viewBackgroundColor": "#ffffff"
 	},
 	"files": {}
-}
-```
-%%
+}```%%

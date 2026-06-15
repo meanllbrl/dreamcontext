@@ -1,11 +1,33 @@
 [
   {
-    "id": "rel_QUejh1SP",
-    "version": "v0.8.4",
+    "id": "rel_smq8zf3o",
+    "version": "v0.9.0",
     "date": "",
-    "summary": "Sleep task-status policy (complete done+validated, in_review only when needed) + drift nag scoped to actively-used skills + dashboard auto-open suppressed when beta app installed",
+    "summary": "Multi-assignee via person tags (ClickUp sync + dashboard dropdown), federation read-only architectural cleanup",
     "breaking": false,
     "status": "planning",
+    "features": [],
+    "tasks": [],
+    "changelog": []
+  },
+  {
+    "id": "rel_TiQFSawY",
+    "version": "v0.8.5",
+    "date": "2026-06-15",
+    "summary": "Federation read-only pivot (live-reference model, no copy-sync), federation purge command, cross-project read awareness, launcher federation wires + consent handshake",
+    "breaking": false,
+    "status": "released",
+    "features": [],
+    "tasks": [],
+    "changelog": []
+  },
+  {
+    "id": "rel_QUejh1SP",
+    "version": "v0.8.4",
+    "date": "2026-06-15",
+    "summary": "Sleep task-status policy (complete done+validated, in_review only when needed) + drift nag scoped to actively-used skills + dashboard auto-open suppressed when beta app installed",
+    "breaking": false,
+    "status": "released",
     "features": [],
     "tasks": [],
     "changelog": []
@@ -13,10 +35,10 @@
   {
     "id": "rel_tBa_6pby",
     "version": "v0.8.3",
-    "date": "",
+    "date": "2026-06-14",
     "summary": "Launcher overhaul: per-project update status dots, interactive federation graph, brain-settings server-side persistence",
     "breaking": false,
-    "status": "planning",
+    "status": "released",
     "features": [],
     "tasks": [],
     "changelog": []
@@ -24,10 +46,10 @@
   {
     "id": "rel_ZKg_Nzn8",
     "version": "v0.8.1",
-    "date": "",
+    "date": "2026-06-14",
     "summary": "npm 0.8.1 publish — launcher platform+pack wizard, install.sh desktop step, onboarding UX polish",
     "breaking": false,
-    "status": "planning",
+    "status": "released",
     "features": [],
     "tasks": [],
     "changelog": []
@@ -53,10 +75,10 @@
   {
     "id": "rel_Xrtmgwry",
     "version": "v0.7.0",
-    "date": "",
+    "date": "2026-06-12",
     "summary": "data-structures migration, SQL fence, tasks filters, features doctor, multi-people, Eisenhower D&D, video VFR fix",
     "breaking": false,
-    "status": "planning",
+    "status": "released",
     "features": [],
     "tasks": [],
     "changelog": []

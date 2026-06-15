@@ -57,9 +57,7 @@ This turns the system from "remembers" toward "notices a rule."
 - `skill/SKILL.md` — `reflect` row in command table + one sleep-flow step (step 5a): run reflect, promote only load-bearing candidates into `2.memory.md`/knowledge, discard most as noise, NEVER auto-promote.
 - `tests/unit/reflection.test.ts` — 26 tests covering all 9 ACs (threshold, distinct-session dedup, exclusion, bounds, determinism, bigram>unigram preference, no-core-write snapshot, no-AI source grep).
 
-### Algorithm
-
-```
+### Algorithm```
 Evidence corpus = session digests (type:task, slug digest#<uuid>)
                + bookmarks (type:memory, slug bookmark#<id>)
 
@@ -73,10 +71,7 @@ Exclusion = corpus type 'knowledge'|'feature' + memory sections + excludedExtra 
 Filter: df >= minSessions AND term not in exclusion set
 Rank: sessionCount desc, totalOccurrences desc, term asc (total order, deterministic)
 Cap: maxCandidates (12); then capToBytes(lines, 8000)
-Bigram preference: drop unigram if a kept bigram contains it
-```
-
-### Output format
+Bigram preference: drop unigram if a kept bigram contains it```### Output format
 
 `state/.reflection.md` frontmatter: `type: reflection-candidates`, `generated_at: <ISO>`. Body: disclaimer header ("these are CANDIDATES — most are noise; promote only load-bearing ones") + candidate list with session count.
 

@@ -86,8 +86,7 @@ The only knobs ^28FfndnH
 
 ## Embedded Files
 %%
-## Drawing
-```json
+## Drawing```json
 {
 	"type": "excalidraw",
 	"version": 2,
@@ -1855,6 +1854,4 @@ The only knobs ^28FfndnH
 		"viewBackgroundColor": "#ffffff"
 	},
 	"files": {}
-}
-```
-%%
+}```%%

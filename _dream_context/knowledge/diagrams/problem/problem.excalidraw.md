@@ -38,8 +38,7 @@ straight to work ^IgbX1ELE
 
 ## Embedded Files
 %%
-## Drawing
-```json
+## Drawing```json
 {
 	"type": "excalidraw",
 	"version": 2,
@@ -1274,6 +1273,4 @@ straight to work ^IgbX1ELE
 		"viewBackgroundColor": "#ffffff"
 	},
 	"files": {}
-}
-```
-%%
+}```%%

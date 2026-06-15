@@ -50,11 +50,13 @@ import type {
   UpdateFieldsOptions,
 } from './types.js';
 
-// ─── person:<slug> tag ↔ assignee bridge ────────────────────────────────────
-// dreamcontext's existing person-tag convention drives the remote assignee:
-// tag a task `person:<slug>` and the push assigns it to that member; a remote
-// assignee pulls back as both the `assignee` field and the person tag.
-// person: tags never leave the mirror — ClickUp has real assignees instead.
+// ─── person:<slug> tags ↔ assignees bridge ──────────────────────────────────
+// dreamcontext leans on person tags for assignment: a task may carry any number
+// of `person:<slug>` tags, and each maps to a real ClickUp assignee. On push the
+// full set becomes the remote `assignees`; on pull the remote assignees come
+// back as person tags. person: tags never leave the mirror as plain tags —
+// ClickUp has real assignees instead. The legacy single `assignee` frontmatter
+// field is still read (folded into the set) so pre-existing tasks keep working.
 
 const PERSON_TAG_PREFIX = 'person:';
 
@@ -62,15 +64,29 @@ function stripPersonTags(tags: string[]): string[] {
   return tags.filter((t) => !t.startsWith(PERSON_TAG_PREFIX));
 }
 
-function personTagSlug(tags: string[]): string | null {
-  const tag = tags.find((t) => t.startsWith(PERSON_TAG_PREFIX));
-  return tag ? tag.slice(PERSON_TAG_PREFIX.length) : null;
+function personTagSlugs(tags: string[]): string[] {
+  return tags
+    .filter((t) => t.startsWith(PERSON_TAG_PREFIX))
+    .map((t) => t.slice(PERSON_TAG_PREFIX.length))
+    .filter(Boolean);
 }
 
-function withPersonTag(tags: string[], assignee: string | null): string[] {
+function withPersonTags(tags: string[], assignees: string[]): string[] {
   const out = stripPersonTags(tags);
-  if (assignee) out.push(`${PERSON_TAG_PREFIX}${assignee}`);
+  for (const slug of assignees) if (slug) out.push(`${PERSON_TAG_PREFIX}${slug}`);
   return out;
+}
+
+/**
+ * The assignee SET for a task: every `person:<slug>` tag, plus the legacy
+ * single `assignee` frontmatter field if present (back-compat). Returned
+ * sorted + de-duped so the value is order-stable for JSON-equality merges.
+ */
+function assigneeSlugsOf(raw: Record<string, unknown> | null, tags: string[]): string[] {
+  const set = new Set(personTagSlugs(tags));
+  const legacy = ((raw?.assignee as string | null | undefined) ?? null);
+  if (legacy) set.add(legacy);
+  return [...set].sort();
 }
 
 /**
@@ -549,9 +565,12 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     const baseNorm = new Set(baseEntries.map(normalizeEntry));
     const newEntries = currentEntries.filter((e) => !baseNorm.has(normalizeEntry(e)));
 
-    // assignee: explicit frontmatter field, else the person:<slug> tag.
-    const assigneeSlug = ((task.raw.assignee as string | null | undefined) ?? null) || personTagSlug(task.tags);
-    const assigneeId = assigneeSlug ? this.memberIdFor(assigneeSlug) : null;
+    // assignees: every person:<slug> tag (plus the legacy assignee field),
+    // mapped to ClickUp member ids. Unknown slugs drop out silently.
+    const assigneeIds = assigneeSlugsOf(task.raw, task.tags)
+      .map((s) => this.memberIdFor(s))
+      .filter((id): id is string => id !== null)
+      .map(Number);
 
     // Map the status against the list's actual status set; an unmappable
     // status is OMITTED (the remote keeps its value) instead of 400-ing.
@@ -586,7 +605,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
           ...fields,
           // person: tags stay local — the remote has real assignees.
           tags: tagsToClickUp(stripPersonTags(task.tags), task.version),
-          assignees: assigneeId ? [Number(assigneeId)] : [],
+          assignees: assigneeIds,
         },
       });
       remoteId = created.id;
@@ -599,18 +618,17 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       const baseFm = entry?.base_snapshot
         ? (matter(entry.base_snapshot.body).data as Record<string, unknown>)
         : null;
-      const baseAssigneeSlug = baseFm
-        ? (((baseFm.assignee as string | null | undefined) ?? null)
-            || personTagSlug(((baseFm.tags as string[]) ?? [])))
-        : null;
-      const baseAssigneeId = baseAssigneeSlug ? this.memberIdFor(baseAssigneeSlug) : null;
-      const assigneePatch = assigneeId !== baseAssigneeId
-        ? {
-            assignees: {
-              add: assigneeId ? [Number(assigneeId)] : [],
-              rem: baseAssigneeId ? [Number(baseAssigneeId)] : [],
-            },
-          }
+      const baseAssigneeIds = (baseFm
+        ? assigneeSlugsOf(baseFm, ((baseFm.tags as string[]) ?? []))
+        : []
+      )
+        .map((s) => this.memberIdFor(s))
+        .filter((id): id is string => id !== null)
+        .map(Number);
+      const add = assigneeIds.filter((id) => !baseAssigneeIds.includes(id));
+      const rem = baseAssigneeIds.filter((id) => !assigneeIds.includes(id));
+      const assigneePatch = add.length > 0 || rem.length > 0
+        ? { assignees: { add, rem } }
         : {};
 
       // UPDATE: ONE field-level PUT per task (rate-limit friendly by design).
@@ -622,22 +640,42 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
 
       // Tag deltas: ClickUp's PUT carries no tags — changed tags go through
       // the per-tag endpoints. person: tags stay local (assignees above).
+      const toAdd: string[] = [];
+      const toRemove: string[] = [];
+
+      // Non-version tags diff against the base snapshot, so remote-only tags
+      // (added in ClickUp) survive until a merge reconciles them.
       if (baseFm) {
-        const baseTags = tagsToClickUp(
-          stripPersonTags(((baseFm.tags as string[]) ?? [])),
-          ((baseFm.version as string | null | undefined) ?? null),
-        );
-        const desiredTags = tagsToClickUp(stripPersonTags(task.tags), task.version);
-        const toAdd = desiredTags.filter((t) => !baseTags.includes(t));
-        const toRemove = baseTags.filter((t) => !desiredTags.includes(t));
-        for (const tag of toAdd) {
-          await adapter.request('POST', `/task/${remoteId}/tag/${encodeURIComponent(tag)}`);
-        }
-        for (const tag of toRemove) {
-          await adapter.request('DELETE', `/task/${remoteId}/tag/${encodeURIComponent(tag)}`);
-        }
-        if (toAdd.length > 0 || toRemove.length > 0) needsTimestampRefetch = true;
+        const baseTags = stripPersonTags(((baseFm.tags as string[]) ?? []));
+        const desiredTags = stripPersonTags(task.tags);
+        toAdd.push(...desiredTags.filter((t) => !baseTags.includes(t)));
+        toRemove.push(...baseTags.filter((t) => !desiredTags.includes(t)));
       }
+
+      // version: is single-valued — at most ONE version:<v> may exist remotely.
+      // The base-snapshot diff alone misses a stale version tag whenever the
+      // snapshot's version drifted from the actual remote tag (e.g. the version
+      // was changed via a bound custom FIELD rather than the tag). Reconcile
+      // against the LIVE remote tags carried in the PUT response so a version
+      // change never leaves an orphaned version:<v> behind.
+      const desiredVersionTag = task.version ? `version:${task.version}` : null;
+      const liveTagNames = (updated.tags ?? []).map((t) => t.name).filter(Boolean);
+      for (const live of liveTagNames) {
+        if (live.startsWith('version:') && live !== desiredVersionTag && !toRemove.includes(live)) {
+          toRemove.push(live);
+        }
+      }
+      if (desiredVersionTag && !liveTagNames.includes(desiredVersionTag) && !toAdd.includes(desiredVersionTag)) {
+        toAdd.push(desiredVersionTag);
+      }
+
+      for (const tag of toAdd) {
+        await adapter.request('POST', `/task/${remoteId}/tag/${encodeURIComponent(tag)}`);
+      }
+      for (const tag of toRemove) {
+        await adapter.request('DELETE', `/task/${remoteId}/tag/${encodeURIComponent(tag)}`);
+      }
+      if (toAdd.length > 0 || toRemove.length > 0) needsTimestampRefetch = true;
     }
 
     // Custom-field deltas (urgency, summary, RICE, feature, …): write only
@@ -858,11 +896,18 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     const remotePriority = priorityFromClickUp(remote.priority);
     const remoteDesc = (remote.description ?? '').replace(/\r\n/g, '\n').trim();
     const remoteDue = dueDateFromClickUp(remote.due_date);
-    const firstAssignee = remote.assignees?.[0];
-    const remoteAssignee: string | null = firstAssignee
-      ? this.slugForMemberId(String(firstAssignee.id))
-        ?? memberSlug(String(firstAssignee.username ?? firstAssignee.id))
-      : null;
+    // Every remote assignee maps back to a person:<slug> tag (sorted + deduped
+    // for order-stable merges). dreamcontext leans on person tags, not a single
+    // assignee field, so the full set round-trips.
+    const remoteAssignees: string[] = [
+      ...new Set(
+        (remote.assignees ?? []).map(
+          (a) =>
+            this.slugForMemberId(String(a.id)) ??
+            memberSlug(String(a.username ?? a.id)),
+        ),
+      ),
+    ].sort();
 
     let slug = this.ledger.slugForRemoteId(remote.id);
 
@@ -878,13 +923,12 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
         status: remoteStatus,
         created_at: dateOf(serverTimeMs(remote.date_created) ?? remoteTime),
         updated_at: dateOf(remoteTime),
-        tags: withPersonTag(remoteTags, remoteAssignee),
+        tags: withPersonTags(remoteTags, remoteAssignees),
         parent_task: null,
         related_feature: null,
         version: remoteVersion,
         rice: null,
         due_date: remoteDue,
-        assignee: remoteAssignee,
         created_by: 'clickup',
         updated_by: 'clickup',
       };
@@ -927,8 +971,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       ? {
           tags: stripPersonTags(((baseFm.tags as string[]) ?? [])),
           version: (baseFm.version as string | null) ?? null,
-          assignee: ((baseFm.assignee as string | null | undefined) ?? null)
-            || personTagSlug(((baseFm.tags as string[]) ?? [])),
+          assignees: assigneeSlugsOf(baseFm, ((baseFm.tags as string[]) ?? [])),
         }
       : null;
 
@@ -977,12 +1020,13 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     const nameM = scalar(baseFm?.name as string | undefined, local.name, remote.name);
     const tagsM = scalar(baseTagInfo?.tags, stripPersonTags(local.tags), remoteTags);
     const versionM = scalar(baseTagInfo?.version, local.version, remoteVersion);
-    // assignee is ClickUp-authoritative; the local mirror still wins when the
-    // remote side did not move (a pending local assignment awaiting push).
+    // assignees are ClickUp-authoritative; the local mirror still wins when the
+    // remote side did not move (a pending local assignment awaiting push). The
+    // whole SET is merged LWW (slugs sorted → order-stable JSON equality).
     const assigneeM = scalar(
-      baseTagInfo?.assignee,
-      (((local.raw.assignee as string | null | undefined) ?? null) || personTagSlug(local.tags)),
-      remoteAssignee,
+      baseTagInfo?.assignees,
+      assigneeSlugsOf(local.raw, local.tags),
+      remoteAssignees,
     );
 
     // ── custom fields: decode remote values, per-field LWW like other scalars ──
@@ -1028,17 +1072,19 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       name: nameM.value,
       status: statusM.value,
       priority: priorityM.value,
-      tags: withPersonTag(tagsM.value, assigneeM.value),
+      tags: withPersonTags(tagsM.value, assigneeM.value),
       version: versionM.value,
       // Product rule: backlog ⇒ undated (applies to remote-originated state too).
       due_date: tagsM.value.some((t) => t.toLowerCase() === BACKLOG_TAG) ? null : dueM.value,
-      assignee: assigneeM.value,
       updated_at: remoteContributed && remoteTime !== null ? dateOf(remoteTime) : local.updated_at,
       // updated_by records the WINNER of the merge.
       updated_by: anyRemoteWin || conflicts.length > 0
         ? 'clickup'
         : (local.raw.updated_by ?? null),
     };
+    // Lean on person tags: a legacy single `assignee` field (spread from
+    // local.raw) is folded into the tag set above, so drop it from the mirror.
+    delete fm.assignee;
     // Apply custom-field winners (rice subfields rebuild the block — score
     // is always recomputed locally, never trusted from the remote).
     const ricePatch: RiceInput = {};
@@ -1077,7 +1123,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
         }
       }
       const remoteRender = this.renderMirror(
-        { ...fm, name: remote.name, status: remoteStatus, priority: remotePriority, tags: withPersonTag(remoteTags, remoteAssignee), version: remoteVersion, due_date: remoteTags.some((t) => t.toLowerCase() === BACKLOG_TAG) ? null : remoteDue, assignee: remoteAssignee, ...remoteFmOverrides, rice: remoteRice },
+        { ...fm, name: remote.name, status: remoteStatus, priority: remotePriority, tags: withPersonTags(remoteTags, remoteAssignees), version: remoteVersion, due_date: remoteTags.some((t) => t.toLowerCase() === BACKLOG_TAG) ? null : remoteDue, ...remoteFmOverrides, rice: remoteRice },
         remoteDesc,
         remoteEntries,
       );
@@ -1110,7 +1156,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
         ['name', nameM, local.name],
         ['tags', tagsM, stripPersonTags(local.tags)],
         ['version', versionM, local.version],
-        ['assignee', assigneeM, (local.raw.assignee as string | null | undefined) ?? null],
+        ['assignees', assigneeM, assigneeSlugsOf(local.raw, local.tags)],
         ['due_date', dueM, (local.raw.due_date as string | null | undefined) ?? null],
       ];
       for (const [field, merged, from] of namedScalars) {

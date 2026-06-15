@@ -15,6 +15,17 @@ skills:
 
 # Sleep — Federation Specialist
 
+> **⛔ DISABLED — DO NOT DISPATCH (read-only federation, copy-sync parked on roadmap).**
+> Federation is now a *live reference*: connected, shareable peers are read at
+> recall time and **nothing is ever copied** across a vault boundary. The
+> copy-based drain/distribute path below broke single-source-of-truth (lossy,
+> write-once-stale copies + duplicate/conflict noise on edit), so it is disabled:
+> `dreamcontext federation drain` / `sync` are inert no-ops, and the sleep flow no
+> longer fires this specialist. The contract below is retained for reference only,
+> pending a proper redesign of an opt-in offline-mirror mode. To clean up old
+> `federated:true` copies a previous sync wrote, run `dreamcontext federation purge
+> --all` (a deliberate, user-run action — not a sleep step).
+
 ## Scope and ownership
 
 | You touch | You NEVER touch |

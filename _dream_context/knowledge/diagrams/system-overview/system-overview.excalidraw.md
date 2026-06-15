@@ -27,8 +27,7 @@ Dashboard ^sysov008
 Sleep Consolidation ^sysov009
 
 %%
-## Drawing
-```json
+## Drawing```json
 {
   "type": "excalidraw",
   "version": 2,
@@ -78,6 +77,4 @@ Sleep Consolidation ^sysov009
     "viewBackgroundColor": "#ffffff"
   },
   "files": {}
-}
-```
-%%
+}```%%

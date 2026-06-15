@@ -2,7 +2,7 @@
 id: decision-mem0-vs-bm25-recall
 name: "Decision: mem0 (rejected) vs BM25 (adopted) for memory recall"
 description: "Why dreamcontext chose deterministic BM25 over the curated corpus instead of integrating mem0. Captures the 3-reviewer adversarial process, the 5 reviewer-converged issue categories, the 20-query benchmark results, and the Path A architecture summary."
-tags: ["decisions", "architecture", "memory", "search"]
+tags: ["decisions", "architecture", "memory", "topic:recall"]
 pinned: false
 date: "2026-05-23"
 ---
