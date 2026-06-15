@@ -65,6 +65,8 @@ installed `/Applications/dreamcontext-beta.app` (ad-hoc signed) + a `.dmg`.
 
 ## The four gotchas (expensive to find; remember these)
 
+> **v0.8.6 addition — gotcha #5:** Tauri's native OS-level drag-and-drop handler swallows `dragover`/`drop` events in the webview. If you ship HTML5 drag-and-drop features (Kanban task cards, Eisenhower matrix), you MUST disable the native handler in `lib.rs` via `.drag_drop_enabled(false)` on the `WebviewWindowBuilder`. Without this the webview never receives the HTML5 DnD events and cards cannot be dragged. File: `desktop/src-tauri/src/lib.rs`. Shipped v0.8.6.
+
 1. **Self-contained CLI bundle.** tsup left deps external; the `.app` ships `dist/`
    but NOT `node_modules` → runtime `ERR_MODULE_NOT_FOUND: nanoid`. Fix in
    `tsup.config.ts`: `noExternal` for all 7 runtime deps **plus** a `createRequire`

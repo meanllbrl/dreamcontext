@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, rmSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -61,10 +61,43 @@ describe('GET /api/tasks/members (roster fallback)', () => {
     expect(ada?.name).toBe('Ada Lovelace');
   });
 
-  it('returns an empty member list when there is no roster', async () => {
+  it('returns an empty member list when there is no roster and no tasks', async () => {
     const { res, status, body } = makeRes();
     await handleTasksMembers(req, res, {}, contextRoot);
     expect(status()).toBe(200);
     expect(body().members).toEqual([]);
+  });
+
+  it('surfaces people already assigned via person:<slug> tags when cloud sync is off', async () => {
+    // No roster, no remote backend — assignment lives purely in local task tags.
+    // The picker must still offer those people, otherwise assigning feels disabled.
+    writeFileSync(
+      join(contextRoot, 'state', 'ship-it.md'),
+      [
+        '---',
+        'id: task_abc123',
+        'name: Ship it',
+        'status: in_progress',
+        'priority: high',
+        'urgency: medium',
+        'tags:',
+        '  - backend',
+        '  - person:grace-hopper',
+        '  - person:alan-turing',
+        '---',
+        '',
+        '## Notes',
+        '',
+      ].join('\n'),
+    );
+
+    const { res, status, body } = makeRes();
+    await handleTasksMembers(req, res, {}, contextRoot);
+
+    expect(status()).toBe(200);
+    const slugs = body().members.map((m) => m.slug).sort();
+    expect(slugs).toEqual(['alan-turing', 'grace-hopper']);
+    const grace = body().members.find((m) => m.slug === 'grace-hopper');
+    expect(grace?.name).toBe('Grace Hopper');
   });
 });

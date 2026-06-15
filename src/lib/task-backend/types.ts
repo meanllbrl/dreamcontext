@@ -156,6 +156,13 @@ export interface SyncReport {
   conflicts: SyncConflict[];
   pendingQueue: number;
   errors: string[];
+  /**
+   * Slugs whose push FAILED this run (after the adapter exhausted its retries).
+   * Distinct from `errors` (free-form, also covers pull/delete/field failures):
+   * a non-empty list means the local→remote sync is INCOMPLETE, so callers must
+   * surface it loudly rather than report success.
+   */
+  failedPushes: string[];
   /** Remote server-time watermark after this sync (epoch ms), if any. */
   watermark: number | null;
   /** True when nothing had to be done (also the local backend's constant result). */

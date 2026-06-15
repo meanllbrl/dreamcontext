@@ -362,13 +362,24 @@ export function registerSleepCommand(program: Command): void {
         success(`Consolidation complete. Debt reset from ${previousDebt} to ${finalState.debt}.`);
       }
 
-      // Post-sleep task sync (issue #11): push the consolidation's task
-      // updates, then re-mirror. Strictly best-effort — a sync failure must
-      // never fail `sleep done`.
+      // Post-sleep task sync (issue #11): push the consolidation's task updates,
+      // then re-mirror. The consolidation touches EVERY reconciled task at once,
+      // so this is the heaviest burst the backend ever sees — the adapter paces
+      // itself under the rate ceiling (so one pass syncs everything) and retries
+      // transient failures. Still best-effort: a sync failure must never fail
+      // `sleep done` — but it must NEVER fail SILENTLY either.
       try {
         const backend = getTaskBackend(root);
         if (backend.name !== 'local') {
-          const report = await backend.sync('both');
+          let report = await backend.sync('both');
+          // Any task that still failed to push leaves the local→remote state
+          // incomplete. Retry the whole sync ONCE — the failed tasks are still
+          // drift-flagged, so they get re-selected, and the rate window has
+          // advanced. One extra pass, not a loop.
+          if (report.failedPushes.length > 0) {
+            warn(`Task sync: ${report.failedPushes.length} task(s) did not push — retrying once…`);
+            report = await backend.sync('both');
+          }
           if (report.conflicts.length > 0) {
             warn(`Task sync: ${report.conflicts.length} conflict(s) preserved under state/.conflicts/ — review them.`);
           }
@@ -376,12 +387,22 @@ export function registerSleepCommand(program: Command): void {
           if (pushedTotal > 0 || report.pulled > 0) {
             info(chalk.dim(`Task sync: pushed ${pushedTotal}, pulled ${report.pulled}.`));
           }
-          if (report.errors.length > 0) {
-            info(chalk.dim(`Task sync: skipped (${report.errors[0]}).`));
+          // LOUD on residual failure — never a dim one-liner. The mirror is
+          // ahead of the remote; the user must know to re-run.
+          if (report.failedPushes.length > 0) {
+            error(`Task sync INCOMPLETE: ${report.failedPushes.length} task(s) failed to push after retry — the remote is stale for: ${report.failedPushes.join(', ')}`);
+            for (const e of report.errors) warn(`  ${e}`);
+            warn('Run `dreamcontext tasks sync` to finish, or check the ClickUp token / connectivity.');
+          } else if (report.errors.length > 0) {
+            // Non-push errors (pull/delete/field) — surface, don't bury.
+            warn(`Task sync: completed with ${report.errors.length} non-fatal error(s):`);
+            for (const e of report.errors) warn(`  ${e}`);
           }
         }
-      } catch {
-        // best-effort by contract
+      } catch (err) {
+        // The sync engine itself threw (auth/lock/transport) — best-effort by
+        // contract, but visible: a swallowed failure is what hid the last bug.
+        warn(`Task sync: skipped — ${(err as Error).message ?? err}`);
       }
     });
 

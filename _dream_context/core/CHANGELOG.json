@@ -1,6 +1,51 @@
 [
   {
     "date": "2026-06-15",
+    "type": "fix",
+    "scope": "desktop",
+    "description": "Enable webview HTML5 drag-and-drop in the Tauri desktop app by setting allowFileDrop: false in lib.rs, which was previously blocking native DnD events in the Tasks view. Version bumped from 0.8.5 to 0.8.6 across all three version sources (tauri.conf.json, package.json, Cargo.toml — which had drifted to 0.8.2 and was realigned). Built, signed, and installed as dreamcontext-beta_0.8.6_aarch64.dmg to ~/Applications and /Applications; both the version string and the DnD fix verified in the installed bundle. Note: npm CLI and desktop app version lines are independent (per existing technical decision); package.json at 0.8.6 is a desktop-patch bump that does not conflict with the v0.9.0 feature planning milestone.",
+    "breaking": false,
+    "summary": "Desktop v0.8.6: webview HTML5 drag-and-drop fix for Tasks + version alignment across Cargo.toml/tauri.conf.json/package.json",
+    "references": [
+      "file:desktop/src-tauri/src/lib.rs",
+      "file:desktop/src-tauri/tauri.conf.json",
+      "file:desktop/src-tauri/Cargo.toml",
+      "file:package.json",
+      "knowledge:desktop-beta-tauri-multivault"
+    ]
+  },
+  {
+    "date": "2026-06-15",
+    "type": "fix",
+    "scope": "clickup",
+    "description": "Three hardening behaviors shipped together. First, the ClickUp adapter now initialises with ratePerMinute: 90 (deliberate headroom under ClickUp's 100/min hard cap) and maxRetries: 5 with Retry-After-respecting exponential backoff — previously ran at exactly 100 with zero margin, reliably hitting 429 at the window edge during full post-sleep bulk pushes. Second, SyncReport gains a structural failedPushes: string[] field; pushLocal records any un-pushable slug so a partial push can no longer masquerade as success. Third, sleep done auto-retries the full sync once when failedPushes is non-empty, then emits a red error() 'Task sync INCOMPLETE — these tasks are stale on remote' + dreamcontext tasks sync hint if any remain. Root cause of the prior hidden bug: sleep done printed the error dim as report.errors[0]. Tests: push 12/12, backend 31, sleep 74 all green.",
+    "breaking": false,
+    "summary": "ClickUp post-sleep sync hardening: rate margin, SyncReport.failedPushes, and visible failure in sleep done",
+    "references": [
+      "file:src/lib/task-backend/clickup.ts",
+      "file:src/lib/task-backend/types.ts",
+      "file:src/lib/task-backend/local.ts",
+      "file:src/cli/commands/sleep.ts",
+      "file:tests/unit/clickup-push.test.ts",
+      "task:post-sleep-clickup-sync-rate-limit-headroom-retry-no-silent-fail"
+    ]
+  },
+  {
+    "date": "2026-06-15",
+    "type": "fix",
+    "scope": "tasks",
+    "description": "Add a merge-precedence guard to the tasks-members route so task-derived assignee entries (id='') only fill gaps when no remote member record exists for a slug; remote members overwrite last and a real id can never be replaced by a stub. Wrap taskAssigneeMembers' list()+get() chain in a single try/catch that returns [] on any error, preventing a bad task read from DoS-ing the members endpoint. Reviewer PASS, 23 tests green.",
+    "breaking": false,
+    "summary": "Local-first assignee-candidate fix: task-derived entries fill gaps without clobbering real member ids",
+    "references": [
+      "file:src/server/routes/tasks.ts",
+      "file:src/lib/task-backend/local.ts",
+      "file:src/lib/task-backend/types.ts",
+      "task:multi-assignee-via-person-tags"
+    ]
+  },
+  {
+    "date": "2026-06-15",
     "type": "chore",
     "scope": "eval",
     "description": "Fix stale eval hygiene: 21 of 60 lines in eval/gold.jsonl referenced task/* slugs that no longer exist — all tasks were consolidated into features and knowledge files over prior sleep cycles, leaving the tasks directory empty. Updated every dead ref to its live feature/knowledge successor, preserving each query's intent and the curated alt structure. Recall quality stayed healthy: recall@3 95%, recall@1 81.7% on the full 60-query gold set, confirming the repointed targets rank correctly. The eval/ directory (and _dream_context/) are not in the npm package so this is maintenance-only — no shipped product code changed. Verified the two other test failures observed (excalidraw-knowledge, recall-capture-stress) were pre-existing environment artifacts from a concurrent background consolidation rewriting the live vault mid-test, not caused by this change.",

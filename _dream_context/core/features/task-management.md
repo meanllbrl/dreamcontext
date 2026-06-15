@@ -10,6 +10,7 @@ tags:
   - cli
 related_tasks:
   - multi-assignee-via-person-tags
+  - post-sleep-clickup-sync-rate-limit-headroom-retry-no-silent-fail
 ---
 
 ## Why
@@ -30,6 +31,8 @@ Work spans multiple sessions, and agents need a structured way to track what is 
 - [x] As an AI agent, I want to RICE-score tasks (reach, impact, confidence, effort) so that work can be prioritized quantitatively.
 - [x] As an AI agent, I want tasks to carry urgency and version fields so that Eisenhower Matrix and milestone grouping work correctly in the dashboard.
 - [x] As a developer, I can assign multiple team members to a task using `person:<slug>` tags, with ClickUp syncing the full assignee set bidirectionally, so task assignment is multi-person and survives push/pull cycles.
+
+- [x] As a developer, post-sleep ClickUp sync completes in a single pass without 429 errors, so bulk task pushes always reach ClickUp rather than silently dropping tasks.
 
 ## Acceptance Criteria
 
@@ -52,8 +55,12 @@ Work spans multiple sessions, and agents need a structured way to track what is 
 - [x] Multiple `person:<slug>` tags on a task represent multiple assignees; dashboard renders a multi-assignee chip picker; ClickUp push/pull maps the full set to ClickUp's native `assignees[]` array bidirectionally; legacy scalar `assignee` frontmatter is still read (migrated to person tag on pull); removing a person tag that backed the legacy `assignee` clears the legacy field to avoid ghost reappearance.
 - [x] ClickUp version-tag drift fixed: push diff reconciles `version:<v>` tags against LIVE remote tags from the PUT response (not the base snapshot), so exactly one version tag survives after any version change — including changes driven by a bound ClickUp version FIELD. Regression test in `tests/unit/clickup-tags.test.ts`.
 
+- [x] ClickUp adapter throttles at 90 req/min (below the 100/min hard cap) with maxRetries=5 and Retry-After-respecting exponential backoff; SyncReport.failedPushes[] structurally tracks which task slugs failed to push; sleep done auto-retries the full sync once on any failedPushes, then surfaces a prominent red 'Task sync INCOMPLETE' error with the slug list (not a dim warning) rather than treating the partial push as success.
+
 ## Constraints & Decisions
 
+
+- **[2026-06-15]** ClickUp rate-limit contract: ratePerMinute=90 (10 req/min headroom below the 100/min hard cap) ensures a full post-sleep bulk push completes in ONE window without hitting 429 at the rate-window edge. maxRetries=5 with Retry-After-respecting exponential backoff in ApiAdapter. SyncReport.failedPushes is a structural field — a partial push can never look like success. sleep done auto-retries once on failedPushes, then errors loudly if any remain.
 - **[2026-06-15]** `person:<slug>` tags are the source of truth for assignment (multiple assignees supported). The legacy scalar `assignee` frontmatter field is deprecated — still readable but not written. ClickUp push sends the full set of person-tag slugs resolved to ClickUp member IDs; pull maps ALL remote `assignees` back to `person:<slug>` tags. Set deltas computed on each sync cycle (add/remove set operations) to avoid clobbering.
 - **[2026-06-15]** ClickUp version-tag drift: the PUT response (not the base snapshot) is the authoritative source for live remote tags after a push. Version tag reconciliation must happen against the POST/PUT response, because a bound ClickUp version FIELD can change other tags server-side between the base snapshot and the push.
 - **[2026-06-09]** `tasks list` filter flags (`--tag`, `--any-tag`, `--version`, `--priority`, `--feature`) all compose as AND; `--any-tag` is OR within its own set. Multiple `--tag` flags require ALL tags present. Case-insensitive matching throughout. `--json` uses the same filter pipeline, emitting raw JSON for scripting.
@@ -104,6 +111,13 @@ rice:
 
 **Snapshot integration**: globs `state/*.md`, skips `status: completed`, shows slug/status/priority/updated date per task.
 
+**ClickUp sync reliability (v0.9.0)** (`src/lib/task-backend/clickup.ts`, `src/cli/commands/sleep.ts`):
+- `CLICKUP_RATE_PER_MINUTE = 90` (hard constant; deliberate 10 req/min headroom under ClickUp's 100/min cap).
+- `CLICKUP_MAX_RETRIES = 5` with Retry-After-respecting exponential backoff in `ApiAdapter`.
+- `SyncReport.failedPushes: string[]` — structural field; push loop appends slug on any error. A partial push can never silently look like success.
+- `sleep done` flow: if `failedPushes.length > 0` after first sync, auto-retries ONCE (full sync, not partial). If failures persist after retry, calls `error()` (red, loud) listing all failed slugs — not `warn()`.
+- Local backend (`src/lib/task-backend/local.ts`): `taskAssigneeMembers` wraps list+get in a single try/catch returning `[]` on any error (failure-isolated); `tasks-members` route folds task-derived entries (id='') to fill gaps without clobbering real IDs.
+
 ## Notes
 
 - The task `## Changelog` section is the agent's "breadcrumb trail" — the most critical piece for cross-session continuity. Agents should log every meaningful action, not just session summaries.
@@ -115,6 +129,9 @@ rice:
 <!-- LIFO: newest entry at top -->
 
 
+
+### 2026-06-15 - Update
+- ClickUp sync hardening (v0.9.0, task: post-sleep-clickup-sync-rate-limit-headroom-retry-no-silent-fail): adapter 90 req/min + maxRetries=5, SyncReport.failedPushes structural field, sleep done auto-retry + loud error. Local backend assignee-candidate fix: taskAssigneeMembers failure-isolated, tasks-members route folds task-derived entries (id='') without clobbering real IDs.
 ### 2026-06-15 - Update
 - ClickUp version-tag drift fix (session ce29af35): push diff now reconciles version:<v> against LIVE remote tags from PUT response rather than the base snapshot; exactly one version tag survives after any version change including field-driven changes. Regression test added.
 - Multi-assignee via person tags shipped (task: multi-assignee-via-person-tags): person:<slug> tags are the source of truth for assignment. ClickUp push sends full set; pull maps all remote assignees bidirectionally. Legacy scalar assignee field deprecated. Dashboard TaskDetailPanel: multi-chip picker, add picker. Ghost-reappearance fix: removing the backing person tag clears legacy assignee field. Passes multi-review (FAIL→FAIL→PASS cycle).

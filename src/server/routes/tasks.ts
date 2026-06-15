@@ -203,6 +203,31 @@ function rosterMembers(contextRoot: string): RemoteMember[] {
 }
 
 /**
+ * People already referenced as assignees across local tasks — the distinct set
+ * of `person:<slug>` tags (plus any legacy scalar `assignee`). These are the
+ * truth of who is actually assigned, so the picker stays populated even when no
+ * remote backend and no `.config.json` roster exist (i.e. cloud task management
+ * is off). Without this, a local-only project shows an empty assignee dropdown
+ * and assigning feels disabled.
+ */
+async function taskAssigneeMembers(backend: TaskBackend): Promise<RemoteMember[]> {
+  const slugs = new Set<string>();
+  try {
+    for (const summary of await backend.list()) {
+      const task = await backend.get(summary.name);
+      if (!task) continue;
+      for (const tag of task.tags ?? []) {
+        if (tag.startsWith('person:')) slugs.add(tag.slice('person:'.length));
+      }
+      if (task.assignee) slugs.add(task.assignee); // legacy scalar fallback
+    }
+  } catch {
+    return []; // never block the picker on a list/read failure
+  }
+  return [...slugs].map((slug) => ({ slug, id: '', name: slugToName(slug) }));
+}
+
+/**
  * GET /api/tasks/members — assignee candidates. Merges remote members (when a
  * remote backend exposes them) with the local project roster, keyed by slug so
  * a person appears once. Remote entries win (they carry a real member id).
@@ -224,6 +249,11 @@ export async function handleTasksMembers(
   }
   const bySlug = new Map<string, RemoteMember>();
   for (const m of rosterMembers(contextRoot)) bySlug.set(m.slug, m);
+  // People already assigned on local tasks — keeps the picker usable when cloud
+  // task management is off (no remote members) and the roster is unconfigured.
+  for (const m of await taskAssigneeMembers(backend)) {
+    if (!bySlug.has(m.slug)) bySlug.set(m.slug, m);
+  }
   for (const m of remote) bySlug.set(m.slug, m); // remote wins (real member id)
   sendJson(res, 200, { members: [...bySlug.values()] });
 }

@@ -121,6 +121,16 @@ export interface ClickUpBackendDeps {
 
 const CLICKUP_BASE_URL = 'https://api.clickup.com/api/v2';
 
+// ClickUp's hard limit is 100 requests/minute per token. Pace BELOW it so a
+// large burst (the post-sleep push of every reconciled task) self-throttles
+// under the ceiling instead of tipping into 429s at the window edge — the sync
+// just takes a little longer. The headroom also absorbs client/server window
+// skew and any concurrent requests sharing the token.
+const CLICKUP_RATE_PER_MINUTE = 90;
+// Survive transient 429/5xx past the throttle: exponential backoff honouring
+// Retry-After (handled in ApiAdapter). 5 attempts covers a full rate window.
+const CLICKUP_MAX_RETRIES = 5;
+
 export class ClickUpTaskBackend extends LocalTaskBackend {
   readonly name: string = 'clickup';
 
@@ -156,6 +166,8 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       this.adapterInstance = new ApiAdapter({
         baseUrl: CLICKUP_BASE_URL,
         authHeaders: () => ({ Authorization: token.token }),
+        ratePerMinute: CLICKUP_RATE_PER_MINUTE,
+        maxRetries: CLICKUP_MAX_RETRIES,
         fetchImpl: this.deps.fetchImpl,
         now: this.deps.now,
         sleep: this.deps.sleep,
@@ -461,6 +473,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       conflicts: [],
       pendingQueue: 0,
       errors: [],
+      failedPushes: [],
       watermark: null,
       noop: false,
     };
@@ -541,6 +554,9 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       try {
         await this.pushTask(slug, adapter, listId, report);
       } catch (err) {
+        // The task stays drifted (no last_synced bump) and will be re-selected
+        // next run — but record it so callers never read a partial push as done.
+        report.failedPushes.push(slug);
         report.errors.push(`push ${slug}: ${(err as Error).message ?? err}`);
       }
     }
