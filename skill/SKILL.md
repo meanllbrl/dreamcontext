@@ -443,11 +443,13 @@ Excalidraw boards (`.excalidraw.md`) are first-class knowledge files. Two layout
 
 **Per-title folder** (preferred convention): `knowledge/diagrams/<title>/<title>.excalidraw.md`
 
+**Optional category subfolder** (for many diagrams): group boards under a category, e.g. `knowledge/diagrams/<category>/<title>/<title>.excalidraw.md` (`diagrams/competitors/acme/acme.excalidraw.md`, `diagrams/system/recall/recall.excalidraw.md`). The dashboard Knowledge view renders these as a nested, collapsible folder tree, so categories stay navigable instead of collapsing into one flat Diagrams list. Nesting is free-form and any depth; the board still lives in its own `<title>/` folder. Generators that `require()` shared helpers via a relative path must account for the extra depth.
+
 Rules:
 - **REQUIRED frontmatter**: every board MUST have `name:` and `description:` fields. Boards with no `## Text Elements` section fall back to description-only recall — make it descriptive.
 - **Do NOT hand-edit scene JSON.** The `.excalidraw.md` file is generated output. Build a spec and run the generator (`.board.cjs`). Edit the spec, not the board.
 - **Spec is the source of truth.** If the spec and the board ever disagree, the spec wins. Commit both.
-- **Dark siblings**: all files inside a `knowledge/diagrams/<title>/` folder that are NOT the board itself (generator scripts `.board.cjs`, spec `.json`, helper `.md`) are excluded from the index, recall corpus, snapshot, and dashboard. They are tooling artifacts — they do NOT surface in memory.
+- **Dark siblings**: tooling files inside a `knowledge/diagrams/<title>/` folder — generator scripts (`.board.cjs`), spec `.json`, and frontmatter-less helper `.md` — are excluded from the index, recall corpus, snapshot, and dashboard. **Exception:** a companion `.md` that carries `name:` frontmatter is indexed as first-class knowledge, so you can co-locate a board with its detailed teardown (`acme/acme.excalidraw.md` + `acme/acme.teardown.md`) and have it recall normally. Only frontmatter-less notes stay dark.
 - **Memory indexes only frontmatter + ## Text Elements**: scene JSON, base64, and element ids are stripped before indexing. A 2 MB board with rich Text Elements is as searchable as a tiny board. The dashboard renderer still receives the raw body (with full scene JSON) via the detail API route.
 - **Migration is opt-in**: flat boards stay flat unless you explicitly ask for reorganization. Use `dreamcontext migrations pending` to see pending migration tasks; use `dreamcontext migrations apply-diagrams` to opt-in to organizing flat boards into per-title folders.
 

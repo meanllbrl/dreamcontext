@@ -321,11 +321,14 @@ function loadMarkdownDocs(
   const boardDirs = diagramFolderDirs(files);
   const out: CorpusDoc[] = [];
   for (const file of files) {
-    // Exclude dark siblings — tooling artifacts beside a board.
-    if (isDarkDiagramSibling(file, boardDirs)) continue;
-
     try {
       const { data, content } = readFrontmatter(file);
+      // Exclude dark siblings — tooling beside a board — UNLESS the .md declares
+      // itself as knowledge via `name:` frontmatter (a co-located teardown).
+      const isIndexableKnowledge =
+        typeof data.name === 'string' && data.name.trim() !== '';
+      if (isDarkDiagramSibling(file, boardDirs, isIndexableKnowledge)) continue;
+
       const slug = basename(file, '.md');
       const title = String(data.name ?? data.title ?? slug);
       const description = String(data.description ?? data.summary ?? '');

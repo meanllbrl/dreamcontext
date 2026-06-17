@@ -115,10 +115,29 @@
   margin-bottom: var(--space-1);
 }
 
+.knowledge-card-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+/* Sketch/diagram marker on Excalidraw cards so a board reads as "clickable
+   sketch" at a glance, distinct from text knowledge files. */
+.knowledge-card-icon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: var(--color-accent);
+}
+
 .knowledge-card-name {
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
   color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .pin-btn {

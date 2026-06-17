@@ -231,13 +231,28 @@ _dream_context/knowledge/diagrams/
 │   ├── my-board.excalidraw.md   ← generated board (do NOT hand-edit scene JSON)
 │   ├── my-board.board.cjs       ← generator (dark sibling — excluded from index/recall)
 │   └── my-board.json            ← spec / source of truth (dark sibling — excluded)
+├── competitors/                 ← optional category subfolder (groups many boards)
+│   └── acme/
+│       └── acme.excalidraw.md
 └── legacy-flat.excalidraw.md    ← flat layout still works; no forced migration
 ```
 
-**Dark siblings**: any file inside a `diagrams/<title>/` folder that is NOT the board itself
-is automatically excluded from the index, recall corpus, snapshot, and dashboard list.
-This includes generator scripts (`.board.cjs`), spec JSON, and any helper `.md` notes.
-They are tooling — they do not pollute memory.
+**Category subfolders** are optional and free-form: `diagrams/<category>/<title>/<title>.excalidraw.md`.
+The dashboard Knowledge view renders the whole `diagrams/` subtree as a nested, collapsible folder
+tree (each board shows a sketch icon), so a large diagram set stays navigable instead of collapsing
+into one flat list. A board's own `<title>/` folder is always its innermost folder. Note: a
+`.board.cjs` that `require()`s shared helpers by relative path must use a depth that matches its
+actual location.
+
+**Dark siblings**: tooling files inside a `diagrams/<title>/` folder are automatically excluded
+from the index, recall corpus, snapshot, and dashboard list — generator scripts (`.board.cjs`),
+spec JSON, and frontmatter-less helper `.md` notes. They are tooling — they do not pollute memory.
+
+**Companion knowledge is the exception**: a `.md` beside a board that carries `name:` frontmatter
+is indexed as first-class knowledge (not a dark sibling). This lets you co-locate a board with its
+detailed write-up — e.g. `acme/acme.excalidraw.md` next to `acme/acme.teardown.md` — and have the
+teardown recall normally. Only frontmatter-less notes stay dark, so good organization no longer
+costs you recall.
 
 **Flat layout** (`diagrams/<title>.excalidraw.md`) works without any migration. Use the
 per-title folder when you want to keep the board + generator + spec together cleanly.

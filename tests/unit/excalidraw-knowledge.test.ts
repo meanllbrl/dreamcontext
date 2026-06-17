@@ -356,7 +356,7 @@ describe('excalidraw-dark-siblings', () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('generator script + spec + sibling .md inside a diagram folder appear nowhere', () => {
+  it('generator script + spec + frontmatter-less sibling .md inside a diagram folder appear nowhere', () => {
     const boardDir = join(tmpDir, 'knowledge', 'diagrams', 'my-board');
 
     // Board file
@@ -368,10 +368,10 @@ describe('excalidraw-dark-siblings', () => {
       buildBoard({ textElements: ['Board content here'] }),
     );
 
-    // Dark siblings
+    // Dark siblings — note: the helper .md has NO frontmatter, so it stays dark.
     writeFileSync(join(boardDir, 'my-board.board.cjs'), '// generator script\n');
     writeFileSync(join(boardDir, 'my-board.json'), '{"elements": []}\n');
-    writeFileSync(join(boardDir, 'notes.md'), '---\nname: Notes\n---\n\nSome notes\n');
+    writeFileSync(join(boardDir, 'notes.md'), 'Some notes without frontmatter\n');
 
     const entries = buildKnowledgeIndex(tmpDir);
 
@@ -381,13 +381,57 @@ describe('excalidraw-dark-siblings', () => {
     );
     expect(boardEntry).toBeDefined();
 
-    // notes.md should NOT appear (dark sibling)
+    // notes.md should NOT appear (frontmatter-less dark sibling)
     const notesEntry = entries.find((e) => e.slug.includes('notes'));
     expect(notesEntry).toBeUndefined();
 
-    // Non-.md files are already excluded by glob (**/*.md only)
-    // — confirmed by: only .md dark siblings need explicit exclusion
+    // Non-.md files are already excluded by glob (markdown only)
+    // — confirmed by: only frontmatter-less .md dark siblings need explicit exclusion
     expect(entries).toHaveLength(1);
+  });
+
+  it('a companion .md WITH name: frontmatter beside a board is indexed and recalls', () => {
+    const boardDir = join(tmpDir, 'knowledge', 'diagrams', 'my-board');
+
+    writeExcalidrawFile(
+      tmpDir,
+      join('knowledge', 'diagrams', 'my-board', 'my-board.excalidraw.md'),
+      'My Board',
+      'My board description',
+      buildBoard({ textElements: ['Board content here'] }),
+    );
+
+    // Companion knowledge with frontmatter — a detailed teardown beside the board.
+    const COMPANION_TERM = 'companionteardownuniquetoken';
+    writeFileSync(
+      join(boardDir, 'my-board.teardown.md'),
+      `---\nname: My Board Teardown\ndescription: Detailed teardown\ntags: [teardown]\n---\n\n# Teardown\n\n${COMPANION_TERM} detailed analysis.\n`,
+    );
+
+    // A frontmatter-less helper stays dark.
+    writeFileSync(join(boardDir, 'scratch.md'), 'no frontmatter scratch note\n');
+
+    const entries = buildKnowledgeIndex(tmpDir);
+
+    // Companion IS indexed (first-class knowledge), with its frontmatter name.
+    const companion = entries.find(
+      (e) => e.slug === 'diagrams/my-board/my-board.teardown',
+    );
+    expect(companion).toBeDefined();
+    expect(companion!.name).toBe('My Board Teardown');
+
+    // Board still indexed.
+    expect(
+      entries.find((e) => e.slug === 'diagrams/my-board/my-board.excalidraw'),
+    ).toBeDefined();
+
+    // Frontmatter-less scratch stays dark.
+    expect(entries.find((e) => e.slug.includes('scratch'))).toBeUndefined();
+
+    // Companion is recallable by its unique term.
+    const corpus = buildCorpus(tmpDir, { types: ['knowledge'] });
+    const hits = bm25Search(COMPANION_TERM, corpus);
+    expect(hits.find((h) => h.doc.slug === 'my-board.teardown')).toBeDefined();
   });
 
   it('diagramFolderDirs identifies board directories correctly', () => {
@@ -405,30 +449,49 @@ describe('excalidraw-dark-siblings', () => {
     expect(dirs.has('/root/knowledge')).toBe(false);
   });
 
-  it('isDarkDiagramSibling excludes non-board siblings but not boards', () => {
+  it('isDarkDiagramSibling: board + frontmatter knowledge stay; tooling notes go dark', () => {
     const files = [
       '/root/knowledge/diagrams/my-board/my-board.excalidraw.md',
       '/root/knowledge/diagrams/my-board/notes.md',
-      '/root/knowledge/diagrams/my-board/spec.json', // .json is not .md so won't be in files
+      '/root/knowledge/diagrams/my-board/my-board.teardown.md',
     ];
 
     const dirs = diagramFolderDirs(files);
 
-    // Board itself: NOT a dark sibling
+    // Board itself: NEVER a dark sibling (3rd arg irrelevant)
     expect(
       isDarkDiagramSibling(
         '/root/knowledge/diagrams/my-board/my-board.excalidraw.md',
         dirs,
+        false,
       ),
     ).toBe(false);
 
-    // notes.md: IS a dark sibling
+    // Frontmatter-less note (isIndexableKnowledge=false): IS a dark sibling
+    expect(
+      isDarkDiagramSibling(
+        '/root/knowledge/diagrams/my-board/notes.md',
+        dirs,
+        false,
+      ),
+    ).toBe(true);
+
+    // Companion .md WITH name: frontmatter (isIndexableKnowledge=true): NOT dark
+    expect(
+      isDarkDiagramSibling(
+        '/root/knowledge/diagrams/my-board/my-board.teardown.md',
+        dirs,
+        true,
+      ),
+    ).toBe(false);
+
+    // Backward-safe: omitting the 3rd arg keeps the original dark behaviour
     expect(
       isDarkDiagramSibling('/root/knowledge/diagrams/my-board/notes.md', dirs),
     ).toBe(true);
 
-    // File not in a board dir: NOT a dark sibling
-    expect(isDarkDiagramSibling('/root/knowledge/other.md', dirs)).toBe(false);
+    // File not in a board dir: NEVER a dark sibling
+    expect(isDarkDiagramSibling('/root/knowledge/other.md', dirs, false)).toBe(false);
   });
 });
 
@@ -502,9 +565,10 @@ describe('excalidraw-flat-regression', () => {
   it('live flat knowledge/diagrams/*.excalidraw.md still indexes+recalls with extraction; index content JSON-free', () => {
     // Use dreamcontext's own architecture.excalidraw.md as the regression fixture.
     const CONTEXT_ROOT = '/Users/mehmetnuraydin/projects/dreamcontext/_dream_context';
-    // Diagrams are now foldered per-title (diagrams/<title>/<title>.excalidraw.md),
-    // so the index slug carries the containing folder.
-    const FLAT_BOARD_SLUG = 'diagrams/architecture/architecture.excalidraw';
+    // Diagrams are foldered per-title and grouped under a category subfolder
+    // (diagrams/<category>/<title>/<title>.excalidraw.md), so the index slug
+    // carries the full containing path. architecture lives under the `system` category.
+    const FLAT_BOARD_SLUG = 'diagrams/system/architecture/architecture.excalidraw';
 
     const entries = buildKnowledgeIndex(CONTEXT_ROOT);
     const boardEntry = entries.find((e) => e.slug === FLAT_BOARD_SLUG);
