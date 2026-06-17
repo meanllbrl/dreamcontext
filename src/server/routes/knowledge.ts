@@ -51,23 +51,36 @@ function parseEmbeddedFiles(body: string): Array<{ fileId: string; path: string 
 // is instant. sharp is optional: if it can't load (e.g. the app fell back to its
 // bundled dist with no node_modules), serve the original bytes so images still
 // render — just larger.
+//
+// Bounded LRU: the dashboard server is long-lived and a vault can hold many large
+// boards, so an unbounded Map would grow without limit (each entry holds a
+// multi-MB base64 string). Cap the entry count and evict the least-recently-used.
+const ASSET_CACHE_MAX = 256;
 const assetCache = new Map<string, { mimeType: string; dataURL: string; bytes: number }>();
+
+function cacheGet(key: string): { mimeType: string; dataURL: string; bytes: number } | undefined {
+  const hit = assetCache.get(key);
+  if (hit) { assetCache.delete(key); assetCache.set(key, hit); } // bump recency
+  return hit;
+}
+
+function cacheSet(key: string, value: { mimeType: string; dataURL: string; bytes: number }): void {
+  assetCache.set(key, value);
+  while (assetCache.size > ASSET_CACHE_MAX) {
+    const oldest = assetCache.keys().next().value;
+    if (oldest === undefined) break;
+    assetCache.delete(oldest);
+  }
+}
 
 /**
  * Compression strength scaled to how many images the board carries — gently, so
  * a sparse board stays crisp and a screenshot-heavy board doesn't balloon the
- * payload. Not aggressive: even the top tier keeps images readable.
+ * payload. Not aggressive: even the top tier keeps images readable. Phone
+ * screenshots are ~1170px wide, so the cap mostly avoids downscaling — the size
+ * win there is just PNG→WebP. Very heavy boards trim a touch.
  */
-function compressionFor(
-  tier: 'low' | 'high',
-  imageCount: number,
-): { maxDim: number; quality: number } {
-  // Two-pass progressive loading (see the dashboard ExcalidrawPreview):
-  //  - `low`: small + fast, drawn immediately so the board appears without delay.
-  //  - `high`: near-lossless, fetched in the background and swapped in place.
-  // Phone screenshots are ~1170px wide, so the high cap mostly avoids downscaling
-  // — the size win there is just PNG→WebP. Very heavy boards trim a touch.
-  if (tier === 'low') return { maxDim: 720, quality: 68 };
+function compressionFor(imageCount: number): { maxDim: number; quality: number } {
   if (imageCount > 40) return { maxDim: 1800, quality: 90 };
   return { maxDim: 2400, quality: 93 };
 }
@@ -80,7 +93,7 @@ async function loadAssetDataURL(
   let mtimeMs: number;
   try { mtimeMs = statSync(abs).mtimeMs; } catch { return null; }
   const key = `${abs}:${mtimeMs}:${maxDim}:${quality}`;
-  const cached = assetCache.get(key);
+  const cached = cacheGet(key);
   if (cached) return cached;
 
   const ext = extname(abs).toLowerCase();
@@ -100,7 +113,7 @@ async function loadAssetDataURL(
         dataURL: `data:image/webp;base64,${buf.toString('base64')}`,
         bytes: buf.length,
       };
-      assetCache.set(key, out);
+      cacheSet(key, out);
       return out;
     } catch { /* sharp unavailable / unsupported format — fall back to original */ }
   }
@@ -177,7 +190,7 @@ export async function handleKnowledgeGet(
  * and only image extensions are returned.
  */
 export async function handleKnowledgeAssets(
-  req: IncomingMessage,
+  _req: IncomingMessage,
   res: ServerResponse,
   params: Record<string, string>,
   contextRoot: string,
@@ -186,11 +199,6 @@ export async function handleKnowledgeAssets(
   const filePath = safeChildPath(getKnowledgeDir(contextRoot), `${slug}.md`);
   if (!filePath) { sendError(res, 400, 'invalid_path', `Invalid knowledge slug: ${slug}`); return; }
   if (!existsSync(filePath)) { sendError(res, 404, 'not_found', `Knowledge file not found: ${slug}`); return; }
-
-  // `?q=low` → fast preview pass; anything else → near-lossless. The dashboard
-  // requests `low` first, then upgrades to `high` in the background.
-  const q = new URL(req.url ?? '', 'http://localhost').searchParams.get('q');
-  const tier: 'low' | 'high' = q === 'low' ? 'low' : 'high';
 
   const { content } = readFrontmatter<Record<string, unknown>>(filePath);
   const embedded = parseEmbeddedFiles(content);
@@ -202,12 +210,13 @@ export async function handleKnowledgeAssets(
   const vaultRoot = dirname(contextRoot);
   const boardDir = dirname(filePath);
 
-  // Scale compression to the requested pass and the board's image count.
+  // Scale compression to the board's image count.
   const imageCount = embedded.filter(e => IMAGE_MIME[extname(e.path).toLowerCase()]).length;
-  const { maxDim, quality } = compressionFor(tier, imageCount);
+  const { maxDim, quality } = compressionFor(imageCount);
 
   const files: Record<string, { mimeType: string; dataURL: string }> = {};
   let total = 0;
+  let dropped = 0;
   for (const { fileId, path } of embedded) {
     if (!IMAGE_MIME[extname(path).toLowerCase()]) continue; // images only
     const candidates = [
@@ -220,9 +229,17 @@ export async function handleKnowledgeAssets(
     if (!abs) continue;
     const loaded = await loadAssetDataURL(abs, maxDim, quality);
     if (!loaded) continue;
+    if (total + loaded.bytes > MAX_ASSETS_BYTES) { dropped++; continue; }
     total += loaded.bytes;
-    if (total > MAX_ASSETS_BYTES) break;
     files[fileId] = { mimeType: loaded.mimeType, dataURL: loaded.dataURL };
+  }
+  if (dropped > 0) {
+    // Don't fail silently: a screenshot-heavy board past the cap renders with
+    // blank images, so make the truncation explainable in the server log.
+    console.warn(
+      `[knowledge-assets] ${slug}: payload cap (${MAX_ASSETS_BYTES} bytes) reached — ` +
+      `${dropped} image(s) omitted; board will render with missing images.`,
+    );
   }
 
   sendJson(res, 200, { files });

@@ -50,15 +50,14 @@ interface KnowledgeAssetsResponse {
 
 /**
  * Resolve an Excalidraw board's embedded images (Obsidian stores them as external
- * wikilinks, not base64 in the scene). `quality` selects the server pass: `low`
- * (small, drawn immediately) or `high` (near-lossless, fetched in the background
- * and swapped in). `staleTime: Infinity` + no interval: the base64 payload must
- * NOT ride the global 15s refetch — images only change when the board is reopened.
+ * wikilinks, not base64 in the scene). Fetched once at near-lossless quality and
+ * kept: `staleTime: Infinity` + no interval means the base64 payload does NOT ride
+ * the global 15s refetch — images only change when the board is reopened.
  */
-export function useKnowledgeAssets(slug: string, enabled: boolean, quality: 'low' | 'high') {
+export function useKnowledgeAssets(slug: string, enabled: boolean) {
   return useQuery({
-    queryKey: ['knowledge-assets', slug, quality],
-    queryFn: () => api.get<KnowledgeAssetsResponse>(`/knowledge-assets/${slug}?q=${quality}`),
+    queryKey: ['knowledge-assets', slug],
+    queryFn: () => api.get<KnowledgeAssetsResponse>(`/knowledge-assets/${slug}`),
     select: (data) => data.files,
     enabled: enabled && !!slug,
     staleTime: Infinity,

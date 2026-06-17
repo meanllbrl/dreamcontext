@@ -37,8 +37,12 @@ export function ExcalidrawPreview({ content, slug }: Props) {
   const scene = useMemo(() => extractExcalidrawScene(content), [content]);
 
   const hasEmbedded = useMemo(() => content.includes('## Embedded Files'), [content]);
-  const { data: assetFiles } = useKnowledgeAssets(slug ?? '', !!slug && hasEmbedded, 'high');
-  const waitingForAssets = !!slug && hasEmbedded && assetFiles === undefined;
+  const assetsQuery = useKnowledgeAssets(slug ?? '', !!slug && hasEmbedded);
+  const assetFiles = assetsQuery.data;
+  // Only block on the FIRST load. Once the query settles — success OR error — mount
+  // the board: on error we render it without embedded images rather than wedging it
+  // behind a permanent spinner (the scene itself parsed fine).
+  const waitingForAssets = !!slug && hasEmbedded && assetsQuery.isLoading;
 
   // Merge the resolved (full-quality) embedded images into the scene files map.
   const files = useMemo(() => {
