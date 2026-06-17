@@ -5,7 +5,7 @@ description: "Rationale and ownership routing for the data-structures → knowle
 tags:
   - architecture
   - decisions
-  - knowledge
+  - domain:knowledge
   - database
 pinned: false
 date: "2026-06-09"

@@ -2,7 +2,7 @@
 id: decision-link-aware-vs-embedding-recall
 name: "Decision: link-aware BM25 boost (implemented, OFF by default) vs embedding overlay (deferred)"
 description: "Two proposed BM25 recall improvements. Link-aware boost (Option A) was built and shipped OFF by default in 2026-06 (gold set precondition satisfied, but live corpus has ~0 wikilinks). Embedding overlay (Option B) remains deferred. See recall-engine-v2.md for the shipped implementation."
-tags: ["decisions", "architecture", "memory", "topic:recall"]
+tags: ["decisions", "architecture", "domain:knowledge", "topic:recall"]
 pinned: false
 date: "2026-05-23"
 updated: "2026-06-02"

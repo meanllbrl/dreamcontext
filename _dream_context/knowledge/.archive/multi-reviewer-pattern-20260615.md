@@ -2,7 +2,7 @@
 id: multi-reviewer-pattern
 name: "Multi-Reviewer Pattern (router + niche specialists)"
 description: "Productized multi-agent code review pattern: router classifies diffs by tier + domain, dispatches niche skill-aware specialists in parallel, main agent reads all reports and synthesizes directly (no coordinator sub-agent). Dreamcontext-native innovation: each specialist declares required skills in YAML frontmatter. Distinct from the pre-implementation three-reviewer-parallel-mandates pattern and the post-implementation sub-agent-iterative-reviewer pattern. v1.1: coordinator removed 2026-05-26."
-tags: ["architecture", "decisions", "agents"]
+tags: ["architecture", "decisions", "topic:agents"]
 pinned: false
 date: "2026-05-26"
 ---

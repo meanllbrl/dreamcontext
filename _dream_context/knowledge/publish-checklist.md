@@ -6,7 +6,7 @@ tags:
   - devops
   - decisions
 pinned: false
-date: '2026-05-31'
+date: '2026-06-15'
 ---
 
 # Publish / Release Checklist
@@ -54,8 +54,10 @@ npm login```Authenticate with your npm account. If you have 2FA enabled, have yo
 ready.
 
 ## 4. Publish```bash
-npm publish --access public```This pushes `dreamcontext@0.5.0` (the current version). Confirm the version is `0.5.0`
-in `package.json` before running.
+npm publish --access public```This pushes the current version. Confirm the version in `package.json` matches the
+intended release before running. As of 2026-06, current shipped version is v0.8.6;
+the active planning version is v0.9.0. Always bump `package.json` to the new version
+before publishing (the CI pipeline does NOT bump automatically).
 
 ## 5. Merge install.sh + README to main and make the repo public
 
@@ -67,7 +69,9 @@ Only after this step does the curl URL become active:```
 https://raw.githubusercontent.com/meanllbrl/dreamcontext/main/install.sh```## 6. Smoke test the curl install
 
 In a clean shell with no existing `_dream_context/`:```bash
-curl -fsSL https://raw.githubusercontent.com/meanllbrl/dreamcontext/main/install.sh | sh```Verify that `dreamcontext --version` prints `0.5.0` after the script completes.
+curl -fsSL https://raw.githubusercontent.com/meanllbrl/dreamcontext/main/install.sh | sh```Verify that `dreamcontext --version` prints the expected version after the script
+completes. Also run `dreamcontext app install` to confirm the desktop app artifact
+resolves from the GitHub Release (the binary is published separately from npm).
 
 ## Notes
 

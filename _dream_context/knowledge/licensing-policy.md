@@ -8,7 +8,6 @@ description: >-
 tags:
   - decisions
   - devops
-  - distribution
 pinned: false
 date: '2026-06-06'
 ---

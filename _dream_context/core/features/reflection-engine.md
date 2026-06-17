@@ -8,7 +8,7 @@ tags:
   - architecture
   - backend
   - decisions
-  - memory
+  - domain:knowledge
 related_tasks:
   - reflection-engine
 ---

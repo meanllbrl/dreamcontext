@@ -2,7 +2,7 @@
 id: federation-cross-vault
 name: "Cross-Vault Federation — When & What Two Vaults Read"
 description: "End-to-end model of dreamcontext federation: current read-only live-reference model (crossVaultRecall default-on for connected peers, per-prompt hook, zero copies) + the parked copy-based PUSH half (sleep-driven sync/drain, disabled) kept as history. Covers the consent + watermark + transitive-leak gates, federation purge, and why there is no 'when X read Y' trigger."
-tags: ["federation", "architecture", "memory", "recall", "decisions"]
+tags: ["topic:federation", "architecture", "domain:knowledge", "topic:recall", "decisions"]
 pinned: false
 date: "2026-06-15"
 ---
@@ -46,16 +46,20 @@ See the figure: `public/image/diagram-federation.png` (PDF: `public/image/diagra
 consenting peers live** — it builds each readable peer's corpus at query time and
 merges BM25 hits, namespaced `<vault>::<type>/<slug>`. It writes nothing.
 
-**This is now the DEFAULT, not flag-gated:**
-- `dreamcontext memory recall "<query>"` already spans connected read-peers when any
-  exist (`memory.ts` — `resolveConnectedVaults` ⇒ cross-vault recall; falls back to
-  local when there are none).
-- The **per-prompt UserPromptSubmit recall hook** (`hook.ts`) now ALSO spans connected
-  read-peers live and prints a `— Connected peers (live read) —` block. Zero added
-  cost when there are no read-connections (`resolveConnectedVaults` returns just the
-  current vault and the block is skipped).
+**This is the DEFAULT, not flag-gated (v0.8.5 matured this path significantly):**
+- `dreamcontext memory recall "<query>"` spans connected read-peers when any exist
+  (`memory.ts` — `resolveConnectedVaults` ⇒ cross-vault recall; falls back to local
+  when there are none). **Default cross-vault hit count: `topK = 10`** (was 5 before
+  v0.8.5 — raised to match the local recall depth for symmetric coverage).
+- The **per-prompt UserPromptSubmit recall hook** (`hook.ts`) spans connected read-peers
+  live and prints a `— Connected peers (live read) —` block. Zero added cost when there
+  are no read-connections (`resolveConnectedVaults` returns just the current vault and
+  the block is skipped).
 - Explicit scoping flags still work: `--connected` (out/both peers), `--all-vaults`
   (every shareable vault), `--vault <name>` (one named peer).
+- **`dreamcontext federation peers`** (v0.8.5) — CLI command that refreshes peer
+  summaries on demand and prints them compactly. Calls `refreshPeerSummaries()` from
+  `src/lib/federation-peer-summary.ts`; also runs automatically during the sleep cycle.
 
 The read gate is unchanged: peer B is readable from A iff A→B direction is `out`/`both`
 AND not stale AND B has `shareable: true`. `federated:true` docs are still excluded from
@@ -63,8 +67,10 @@ onward serving (transitive-leak guard) — though read-only federation no longer
 any.
 
 The SessionStart **snapshot** stays off the peer-resolution hot path: it shows a cheap
-ambient "Connected projects" glance from the local `.peer-summaries.json` cache and
-states that recall surfaces the peers' canonical docs live (no copies).
+**ambient "Connected projects" glance** from the local `state/.peer-summaries.json`
+cache (written by `federation peers` / sleep cycle / post-connection). Zero peer I/O at
+session start; recall surfaces the peers' canonical docs live (no copies). If the cache
+is absent the section is silently skipped.
 
 ---
 
@@ -130,4 +136,4 @@ The browser-reachable `POST /api/federation/sync` is dry-run by construction: it
 
 ## Last Verified
 
-2026-06-15.
+2026-06-15 (v0.8.5/v0.8.6).

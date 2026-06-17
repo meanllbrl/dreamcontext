@@ -2,7 +2,7 @@
 id: recall-engine-v2
 name: "Recall Engine v2 — BM25F + Stemming + Synonyms + Continuous Capture"
 description: "BM25F field-weighted recall engine v2: stemming, synonyms, recency/status re-rank, continuous capture, eval harness, and the score/rankScore decoupling invariant. Supersedes the original flat-BM25 implementation. Deterministic benchmark: overall recall@1 68.3→85.0%, recall@3 81.7→95.0%."
-tags: ["architecture", "decisions", "memory", "topic:recall"]
+tags: ["architecture", "decisions", "domain:knowledge", "topic:recall"]
 pinned: false
 date: "2026-06-02"
 ---

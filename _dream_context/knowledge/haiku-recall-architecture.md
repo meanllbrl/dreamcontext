@@ -2,7 +2,7 @@
 id: haiku-recall-architecture
 name: "Haiku Single-Call Recall Architecture"
 description: "Why dreamcontext replaced multi-query BM25 keyword extraction with a single Haiku LLM call for intent-aware recall in the UserPromptSubmit hook. Covers the architecture, security hardening (execFileSync, corpus cap), fallback behaviour, multi-review security findings that shaped the implementation, and the relationship to the existing BM25 layer."
-tags: ["architecture", "decisions", "memory", "topic:recall"]
+tags: ["architecture", "decisions", "domain:knowledge", "topic:recall"]
 pinned: false
 date: "2026-05-26"
 ---

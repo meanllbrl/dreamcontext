@@ -2,7 +2,7 @@
 id: three-reviewer-parallel-mandates-pattern
 name: "Three-reviewer parallel-mandates pattern"
 description: "Pre-implementation adversarial review using 3 parallel reviewer sub-agents with DIFFERENT mandates (critic / pragmatist / security). They converge on the same fundamentals from different angles, producing a much stronger reject/accept signal than any single review. Distinct from the post-implementation iterative-reviewer pattern."
-tags: ["architecture", "decisions", "agents"]
+tags: ["architecture", "decisions", "topic:agents"]
 pinned: false
 date: "2026-05-23"
 ---

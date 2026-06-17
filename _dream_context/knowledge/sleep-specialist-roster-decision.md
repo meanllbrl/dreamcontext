@@ -2,7 +2,7 @@
 id: sleep-specialist-roster-decision
 name: "Sleep Specialist Roster Decision (issue #9 WS3)"
 description: "Evidence-based decision on whether to add a dedicated sleep-features specialist to the 3-specialist sleep roster. Measured feature-doc upkeep health (stale ratio, churn) and concluded: KEEP 3 + mandatory feature-upkeep self-report line."
-tags: ["decisions", "agents", "sleep", "topic:sleep"]
+tags: ["decisions", "topic:agents", "topic:sleep"]
 date: "2026-06-14"
 ---
 

@@ -1,6 +1,126 @@
 [
   {
     "date": "2026-06-15",
+    "type": "chore",
+    "scope": "release",
+    "description": "Desktop app version in tauri.conf.json was still at 0.8.2 after the npm v0.8.5 publish. Bumped tauri.conf.json to 0.8.5 (commit 9d89b53), pushed the v0.8.5 tag, which triggered desktop-release.yml and produced the GitHub Release with the aarch64.app.tar.gz and .sha256 assets. npm v0.8.5 had been published separately; this commit aligned the desktop channel to match. v0.8.4 was npm-only (no desktop tag).",
+    "breaking": false,
+    "summary": "v0.8.5 desktop GitHub Release: Tauri version realigned 0.8.2->0.8.5, v0.8.5 tag pushed, CI built aarch64 .app",
+    "references": [
+      "commit:9d89b53",
+      "task:launcher-federation-overhaul"
+    ]
+  },
+  {
+    "date": "2026-06-15",
+    "type": "refactor",
+    "scope": "sleep-product",
+    "description": "Added Pass B0 to sleep-product so structural hygiene runs every consolidation cycle rather than only at one-time version-gated migrations. Step 1: calls dreamcontext migrations apply-diagrams each cycle to fold canonical flat boards into per-title subfolders and atomically rewrite wikilinks (idempotent; new boards that appear mid-flight are caught without a separate migration). Scratch boards in inbox/workspace are left in place. Step 2 (deep-only): groups knowledge files with 3+ files sharing a clear topic into knowledge/<group>/ subfolders; knowledge/**/*.md is indexed recursively so subfolder recall is unaffected. Mirror agent files (.claude/agents/, .codex/agents/prompts/) were also updated to match the canonical sleep-product.md after stale sections were found.",
+    "breaking": false,
+    "summary": "sleep-product Pass B0 (Organize): ongoing idempotent diagram foldering + knowledge subfolder grouping every cycle",
+    "references": [
+      "task:sleep-product-folder-organization",
+      "file:agents/sleep-product.md"
+    ]
+  },
+  {
+    "date": "2026-06-15",
+    "type": "fix",
+    "scope": "tests",
+    "description": "A test that referenced the flat knowledge/diagrams/recall.excalidraw.md board slug broke after the sleep-product folder-organization pass moved the board into a per-title subfolder (knowledge/diagrams/recall/recall.excalidraw.md). The test was updated to reference the new foldered slug so the suite stays green after diagram organization.",
+    "breaking": false,
+    "summary": "Excalidraw flat-board regression: repoint test to foldered diagram slug after sleep-product org pass",
+    "references": [
+      "file:tests/unit/recall.test.ts",
+      "knowledge:recall.excalidraw"
+    ]
+  },
+  {
+    "date": "2026-06-15",
+    "type": "fix",
+    "scope": "desktop",
+    "description": "Disabled HTML5 drag-and-drop in the Tauri webview via drag_drop_enabled(false) in lib.rs to prevent the webview intercepting drag events before the dashboard's own drag handlers could fire. Realigned all three Tauri version strings (tauri.conf.json, desktop/package.json, Cargo.toml) to 0.8.6; the Cargo.toml crate version had drifted at 0.8.2 since the v0.8.5 Tauri bump only updated tauri.conf.json. Both fixes were included in the squash-merge of PR #34.",
+    "breaking": false,
+    "summary": "Desktop Tauri v0.8.6: webview HTML5 DnD fix + version realignment across tauri.conf.json/package.json/Cargo.toml",
+    "references": [
+      "commit:9e260e9",
+      "commit:9d89b53",
+      "file:desktop/src-tauri/src/lib.rs",
+      "file:desktop/src-tauri/tauri.conf.json",
+      "file:desktop/src-tauri/Cargo.toml"
+    ]
+  },
+  {
+    "date": "2026-06-15",
+    "type": "fix",
+    "scope": "clickup",
+    "description": "Singleton version tags (version:<v>) must be reconciled against the live remote tags returned in the PUT response, not the base snapshot. The base snapshot drifts whenever the tag value is changed via a bound custom FIELD rather than the tag itself (clickup.ts:1078). Fix strips all live version:* tags except the desired one and adds the desired tag if absent from the live set. Non-singleton tags continue to diff against the base snapshot so remote-only tags survive until a pull merge. Also in this cluster: ClickUp rate limiter dialed to ratePerMinute:90 (headroom under 100/min hard cap), maxRetries:5 with Retry-After exponential backoff, SyncReport.failedPushes[] structural field so partial pushes cannot masquerade as success, and sleep done auto-retries once on non-empty failedPushes before surfacing a red error with the stale task list.",
+    "breaking": false,
+    "summary": "ClickUp version-tag drift fix: reconcile against live PUT-response tags, not base snapshot",
+    "references": [
+      "commit:5bc4bdc",
+      "file:src/lib/task-backend/clickup.ts",
+      "file:tests/unit/clickup-tags.test.ts",
+      "changelog:2026-06-15|tasks"
+    ]
+  },
+  {
+    "date": "2026-06-15",
+    "type": "feat",
+    "scope": "tasks",
+    "description": "Task assignment moved from a scalar 'assignee' field to person:<slug> tags as the single source of truth; the legacy scalar field migrates on read and is then deleted. Effective assignees = union of person tags and legacy field, filtered to the configured roster. ClickUp sync sends CREATE with assignees:ids and UPDATE with an {add, rem} delta. Dashboard surfaces a person picker chip row (not a text field) so users assign without knowing internal slugs. Removing an assignee via any UI path clears both the person tag and the legacy assignee field atomically. A new /api/tasks-members route returns the roster for the picker. Source: task:post-sleep-clickup-sync-rate-limit-headroom-retry-no-silent-fail",
+    "breaking": false,
+    "summary": "Multi-assignee via person:<slug> tags as source of truth + ClickUp delta sync + dashboard chip picker",
+    "references": [
+      "commit:5bc4bdc",
+      "file:src/lib/task-backend/clickup.ts",
+      "file:dashboard/src/components/tasks/TaskDetailPanel.tsx",
+      "file:src/server/routes/tasks.ts"
+    ]
+  },
+  {
+    "date": "2026-06-15",
+    "type": "feat",
+    "scope": "launcher",
+    "description": "LauncherGraph now renders two distinct arc types: purple 'reads' wires (live cross-vault recall) and teal 'listens' wires (sleep digest sync). A new /api/federation/sync endpoint writes both sides of the consent handshake atomically (A:out + B:in) so the graph can wire sync paths without the user opening two Settings panels. Nodes show a plain-language relationship list ('Tilki listens to your changes', 'Tilki reads you live'). Toggle toolbar switches between Reads and Sync modes. Guide panel explains the two-layer model (live read vs sleep digest) with a mini diagram. NUL-byte in launcher.ts removed as part of this pass.",
+    "breaking": false,
+    "summary": "Launcher federation network view: dual-wire graph (reads/sync), consent handshake endpoint, connection guide",
+    "references": [
+      "commit:6f04942",
+      "task:launcher-federation-overhaul",
+      "file:dashboard/src/pages/LauncherGraph.tsx",
+      "file:src/server/routes/launcher.ts"
+    ]
+  },
+  {
+    "date": "2026-06-15",
+    "type": "feat",
+    "scope": "federation",
+    "description": "Recall now auto-spans readable peers (direction out/both, non-stale, peer shareable) without any flag; default result count raised from 5 to 10. A new 'federation peers' command lists registered connections with live status. The SessionStart snapshot injects an ambient 'Connected projects' section from the local peer-summaries cache (state/.peer-summaries.json), keeping the hot-path lock-free. Introduced via the v0.8.5/0.8.6 federation overhaul; copy-sync (drain+digest-inbox) parked as a no-op — live-reference is the canonical read model.",
+    "breaking": false,
+    "summary": "Federation read-awareness: recall spans readable peers by default, new 'federation peers' command, ambient Connected-projects snapshot",
+    "references": [
+      "commit:6f04942",
+      "feature:federation-cross-vault",
+      "task:launcher-federation-overhaul",
+      "file:src/lib/federation-recall.ts",
+      "file:state/.peer-summaries.json"
+    ]
+  },
+  {
+    "date": "2026-06-15",
+    "type": "chore",
+    "scope": "release",
+    "description": "Squash-merged PR #34, ran build+test (green), published dreamcontext@0.8.6 to npm with user-provided OTP, pushed the v0.8.6 tag which triggered desktop-release.yml. The Tauri .app was built, ad-hoc signed, and uploaded to a non-draft non-prerelease GitHub Release (dreamcontext-beta 0.8.6) with both required assets: aarch64.app.tar.gz and .sha256. The release satisfies the client /releases/latest auto-update lookup so the in-app updater works end-to-end.",
+    "breaking": false,
+    "summary": "Ship dreamcontext@0.8.6 to npm and GitHub desktop release (aarch64 .app.tar.gz)",
+    "references": [
+      "commit:9e260e9",
+      "task:launcher-federation-overhaul"
+    ]
+  },
+  {
+    "date": "2026-06-15",
     "type": "fix",
     "scope": "desktop",
     "description": "Enable webview HTML5 drag-and-drop in the Tauri desktop app by setting allowFileDrop: false in lib.rs, which was previously blocking native DnD events in the Tasks view. Version bumped from 0.8.5 to 0.8.6 across all three version sources (tauri.conf.json, package.json, Cargo.toml — which had drifted to 0.8.2 and was realigned). Built, signed, and installed as dreamcontext-beta_0.8.6_aarch64.dmg to ~/Applications and /Applications; both the version string and the DnD fix verified in the installed bundle. Note: npm CLI and desktop app version lines are independent (per existing technical decision); package.json at 0.8.6 is a desktop-patch bump that does not conflict with the v0.9.0 feature planning milestone.",

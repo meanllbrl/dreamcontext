@@ -5,7 +5,7 @@ created: '2026-05-23'
 updated: '2026-06-10'
 released_version: null
 tags:
-  - memory
+  - domain:knowledge
   - cli
   - topic:recall
   - decisions

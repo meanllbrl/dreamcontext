@@ -1,7 +1,7 @@
 ---
 title: Technical Decisions Archive
 description: Archive of granular implementation decisions from dashboard, skill-packs, council, and infrastructure work (2026-03 through 2026-04). Core architecture decisions remain in 2.memory.md.
-tags: [architecture, decisions, dashboard, backend]
+tags: [architecture, decisions, frontend, backend]
 created: "2026-04-25"
 pinned: false
 ---

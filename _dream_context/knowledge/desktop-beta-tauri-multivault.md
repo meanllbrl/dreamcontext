@@ -3,24 +3,26 @@ id: knowledge_desktop_beta_tauri_multivault
 name: desktop-beta-tauri-multivault
 description: >-
   How dreamcontext-beta (the Tauri 2 macOS app) wraps the existing React+Node
-  dashboard for multi-vault / multi-window use: multi-window architecture, the
-  four non-obvious gotchas (CLI bundling, Tauri ACL, relative URLs, build/sign),
+  dashboard for multi-vault / multi-window use: multi-window architecture, five
+  non-obvious gotchas (CLI bundling, Tauri ACL, relative URLs, build/sign, v0.8.6
+  DnD handler must be disabled via drag_drop_enabled(false) for HTML5 DnD to work),
   the in-app quiz-style project onboarding (scaffold endpoints, child-spawn
-  pattern, auto-CLI-install), the Faz 1 GitHub Actions release pipeline
-  (E2E verified v0.8.3), the homebrew-vs-nvm CLI resolution gotcha, the Sleepy
-  notch quick-capture companion (global hotkey, transparent notch window,
-  animated WebP mascot with mood thresholds, Learn/Ask/Sleep mode toggle, Sonnet
-  enrichment with Markdown rendering, interactive-login-shell claude PATH fix,
-  tracked enrichment status UI, dead-vault filtering, focus/blur UX, asset
-  bundling), the Launcher per-project status indicator (green/yellow/red,
-  upgrade-vs-update distinction), the content-scoped drift nag (asset-drift.ts
-  computeUsedAssetsChanged + asset-drift-cache.ts cacheConfidentlyClean, detached
-  refresh-asset-drift hook, fails-open suppression gate), the ensure-dashboard
-  app-installed auto-open suppression (readAppManifest != null exit), the
-  interactive federation graph (react-force-graph-2d, drag-to-connect,
-  active-edge particles), brain-settings server persistence (vault-scoped
-  .brain-settings.json), and the Federation Settings panel redesign
-  (plain-language explainers, direction labels).
+  pattern, auto-CLI-install, hasContext skip-quiz for pre-initialized folders),
+  the Faz 1 GitHub Actions release pipeline (E2E verified v0.8.3+), the
+  homebrew-vs-nvm CLI resolution gotcha, the Sleepy notch quick-capture companion
+  (global hotkey, transparent notch window, animated WebP mascot with mood
+  thresholds, Learn/Ask/Sleep mode toggle, Sonnet enrichment with Markdown
+  rendering, interactive-login-shell claude PATH fix, tracked enrichment status UI,
+  dead-vault filtering, focus/blur UX, asset bundling), the Launcher per-project
+  status indicator (green/yellow/red, upgrade-vs-update distinction), the
+  content-scoped drift nag (asset-drift.ts computeUsedAssetsChanged +
+  asset-drift-cache.ts cacheConfidentlyClean, detached refresh-asset-drift hook,
+  fails-open suppression gate), the ensure-dashboard app-installed auto-open
+  suppression (readAppManifest != null exit), the interactive federation graph
+  (react-force-graph-2d, read-only violet edges, drag-to-connect, active-edge
+  particles), brain-settings server persistence (vault-scoped .brain-settings.json),
+  and the Federation Settings panel redesign (plain-language explainers, direction
+  labels).
 type: knowledge
 tags:
   - architecture
@@ -30,6 +32,7 @@ tags:
 pinned: false
 created: '2026-06-13'
 updated: '2026-06-15'
+released_version: v0.8.6
 ---
 
 ## What this is

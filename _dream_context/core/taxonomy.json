@@ -27,7 +27,13 @@
       "topic:domain",
       "topic:federation",
       "topic:clickup",
-      "topic:desktop"
+      "topic:desktop",
+      "topic:agents",
+      "topic:branding",
+      "topic:competitive",
+      "topic:prd",
+      "topic:history",
+      "topic:schema"
     ]
   },
   "bareTags": [
@@ -49,6 +55,14 @@
     "retrieval": "topic:recall",
     "db": "domain:database",
     "auth": "domain:security",
-    "consolidation": "topic:sleep"
+    "consolidation": "topic:sleep",
+    "distribution": "devops",
+    "branding": "topic:branding",
+    "agents": "topic:agents",
+    "memory": "domain:knowledge",
+    "federation": "topic:federation",
+    "recall": "topic:recall",
+    "schema": "topic:schema",
+    "data-structures": "domain:database"
   }
 }

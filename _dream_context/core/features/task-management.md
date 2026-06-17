@@ -8,6 +8,7 @@ tags:
   - backend
   - architecture
   - cli
+  - 'topic:clickup'
 related_tasks:
   - multi-assignee-via-person-tags
   - post-sleep-clickup-sync-rate-limit-headroom-retry-no-silent-fail

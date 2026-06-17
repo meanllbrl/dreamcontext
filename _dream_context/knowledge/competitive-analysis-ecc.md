@@ -2,7 +2,7 @@
 id: competitive-analysis-ecc
 name: "Competitive Analysis: everything-claude-code (ECC)"
 description: "Deep analysis of affaan-m/everything-claude-code (55K stars, Anthropic hackathon winner). Covers architecture differences, their advantages, our advantages, and actionable insights for dreamcontext improvement."
-tags: ["competitive-analysis", "ecc", "hooks", "continuous-learning", "architecture", "roadmap"]
+tags: ["topic:competitive", "architecture", "decisions"]
 date: "2026-03-01"
 ---
 

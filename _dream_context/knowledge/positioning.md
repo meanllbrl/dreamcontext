@@ -4,7 +4,7 @@ name: positioning
 description: Canonical product positioning and messaging rules
 tags:
   - decisions
-  - branding
+  - topic:branding
 pinned: false
 date: '2026-05-31'
 ---
