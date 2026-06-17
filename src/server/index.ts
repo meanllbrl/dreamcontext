@@ -9,7 +9,7 @@ import { handleHealthGet } from './routes/health.js';
 import { handleTasksList, handleTasksCreate, handleTasksGet, handleTasksUpdate, handleTasksChangelog, handleTasksInsert, handleTasksSyncStatus, handleTasksSync, handleTasksSyncTest, handleTasksDelete, handleTasksMembers, handleTasksContainers, handleTasksProvision } from './routes/tasks.js';
 import { handleSleepGet, handleSleepUpdate } from './routes/sleep.js';
 import { handleCoreList, handleCoreGet, handleCoreUpdate } from './routes/core.js';
-import { handleKnowledgeList, handleKnowledgeGet, handleKnowledgeUpdate } from './routes/knowledge.js';
+import { handleKnowledgeList, handleKnowledgeGet, handleKnowledgeUpdate, handleKnowledgeAssets } from './routes/knowledge.js';
 import { handleFeaturesList, handleFeaturesGet } from './routes/features.js';
 import { handleChangelogGet, handleReleasesGet, handleUnreleasedGet, handleReleaseGet, handleReleasesCreate, handleReleasesUpdate } from './routes/changelog.js';
 import { handleGraphGet, handleGraphContentGet } from './routes/graph.js';
@@ -91,6 +91,10 @@ function buildRouter(): Router {
   // Knowledge — `*slug` is a rest param so subdir-qualified slugs work
   // (e.g. data-structures/default, products/lina).
   router.get('/api/knowledge', handleKnowledgeList);
+  // Embedded-image resolver for Excalidraw boards — registered before the
+  // catch-all `*slug` GET so it isn't shadowed (distinct `knowledge-assets`
+  // prefix, but keep it explicit).
+  router.get('/api/knowledge-assets/*slug', handleKnowledgeAssets);
   router.get('/api/knowledge/*slug', handleKnowledgeGet);
   router.patch('/api/knowledge/*slug', handleKnowledgeUpdate);
 

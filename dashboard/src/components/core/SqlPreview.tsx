@@ -290,10 +290,23 @@ export function SqlPreview({ content }: { content: string }) {
     };
   }, [updatePaths]);
 
+  // No CREATE TABLE / entity parsed (e.g. a comment-only or DDL-light fence).
+  // Don't dead-end: show the raw SQL so the content is still readable, with a
+  // hint that the relational view needs parseable table definitions.
   if (schema.entities.length === 0) {
+    const hasSql = content.trim().length > 0;
     return (
       <div className="sql-preview">
-        <div className="sql-preview-empty">No schema entities found in this file.</div>
+        {hasSql ? (
+          <>
+            <div className="sql-preview-empty sql-preview-empty--hint">
+              No table definitions to diagram — showing the raw SQL.
+            </div>
+            <pre className="sql-preview-raw"><code>{content.trim()}</code></pre>
+          </>
+        ) : (
+          <div className="sql-preview-empty">No schema entities found in this file.</div>
+        )}
       </div>
     );
   }

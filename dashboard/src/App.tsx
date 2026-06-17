@@ -50,6 +50,13 @@ const queryClient = new QueryClient({
       staleTime: 5000,
       retry: 1,
       refetchOnWindowFocus: true,
+      // Live-update while the app stays open (sleep debt, tasks, knowledge all
+      // go stale as the agent works). Polls only when the tab is visible, and
+      // react-query's structural sharing skips re-renders when nothing changed,
+      // so this is cheap against the local server. The Header also exposes a
+      // manual refresh button for an immediate pull.
+      refetchInterval: 15_000,
+      refetchIntervalInBackground: false,
     },
     mutations: {
       retry: 0,

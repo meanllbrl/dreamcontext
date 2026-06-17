@@ -9,15 +9,20 @@ import { isExcalidrawSlug } from '../lib/excalidraw';
 import { tagHue } from '../lib/tagColor';
 import './KnowledgePage.css';
 
-// Data-structures knowledge files store their schema as a fenced ```sql block.
+// Data-structures knowledge files store their schema as fenced ```sql blocks.
 // Extract the raw SQL so it can be rendered as a relational/ER view (like the
 // Core page does for standalone .sql files) instead of plain syntax highlighting.
-const SQL_FENCE = /```sql\s*\n([\s\S]*?)```/i;
+//
+// A file may carry SEVERAL ```sql fences — e.g. a narrative design doc opens with
+// a comment-only fence, then defines tables in later fences. Matching only the
+// first fence (the comments) yielded zero entities → "No schema entities found".
+// Concatenate every fence so all CREATE TABLEs reach the parser.
+const SQL_FENCE = /```sql\s*\n([\s\S]*?)```/gi;
 
 function extractSchemaSql(slug: string, content: string): string | null {
   if (!slug.startsWith('data-structures/')) return null;
-  const match = content.match(SQL_FENCE);
-  return match ? match[1] : null;
+  const blocks = [...content.matchAll(SQL_FENCE)].map(m => m[1]);
+  return blocks.length > 0 ? blocks.join('\n\n') : null;
 }
 
 type KnowledgeListEntry = { slug: string; name: string; description: string; tags: string[]; pinned: boolean };
@@ -253,7 +258,7 @@ export function KnowledgePage() {
   const renderContent = (detailDoc: NonNullable<typeof detail>) => {
     if (viewTab === 'preview' && detailDoc.content) {
       if (isExcalidrawSlug(detailDoc.slug)) {
-        return <ExcalidrawPreview content={detailDoc.content} />;
+        return <ExcalidrawPreview content={detailDoc.content} slug={detailDoc.slug} />;
       }
       const schemaSql = extractSchemaSql(detailDoc.slug, detailDoc.content);
       return schemaSql
