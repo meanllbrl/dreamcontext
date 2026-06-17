@@ -1,0 +1,30 @@
+/* The Excalidraw editor fills the preview pane and blends with the app bg. */
+.excalidraw-canvas-wrap {
+  height: 100%;
+  width: 100%;
+  position: relative;
+}
+
+.excalidraw-preview .excalidraw {
+  height: 100%;
+  width: 100%;
+  background: transparent !important;
+}
+
+.excalidraw-preview .excalidraw .layer-ui__wrapper,
+.excalidraw-preview .excalidraw .App-menu,
+.excalidraw-preview .excalidraw .excalidraw__canvas-wrapper {
+  background: transparent;
+}
+
+/* Read-only preview: hide the editor chrome we don't need (hamburger menu, the
+   top-right island, help, welcome screen). Keep the bottom zoom controls — handy
+   for inspecting the screenshots. */
+.excalidraw-preview .excalidraw .main-menu-trigger,
+.excalidraw-preview .excalidraw .dropdown-menu-button,
+.excalidraw-preview .excalidraw .layer-ui__wrapper__top-right,
+.excalidraw-preview .excalidraw .welcome-screen-center,
+.excalidraw-preview .excalidraw .help-icon,
+.excalidraw-preview .excalidraw .layer-ui__wrapper__footer-right {
+  display: none !important;
+}

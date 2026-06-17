@@ -148,19 +148,31 @@ export function diagramFolderDirs(allFiles: string[]): Set<string> {
 }
 
 /**
- * Returns true when `filePath` is a non-board sibling inside a diagram folder.
+ * Returns true when `filePath` is a tooling sibling inside a diagram folder
+ * that should stay OUT of the index / recall / snapshot / dashboard.
  *
- * Conditions:
- * - The file's directory is in `dirsSet` (i.e. it sits next to a board).
- * - The file itself is NOT an Excalidraw board.
+ * Role-based, not blind co-location:
+ * - Not next to a board (`dirsSet`) → not dark.
+ * - The board itself (`*.excalidraw.md`) → not dark (indexed as Text Elements).
+ * - A companion `.md` that declares itself as knowledge via `name:` frontmatter
+ *   (`isIndexableKnowledge`) → NOT dark. This lets a detailed teardown/notes
+ *   file live beside its board and still recall as first-class knowledge.
+ * - Everything else beside a board (frontmatter-less helper `.md`, generator
+ *   scripts, spec JSON) → dark.
  *
- * This excludes sibling .md beside a board, while never excluding the boards
- * themselves. Folders without a board are unaffected. Works for nested paths
- * like `knowledge/products/<name>/` boards.
+ * `isIndexableKnowledge` defaults to `false`, so callers that don't pass it keep
+ * the original "any non-board sibling is dark" behaviour (backward-safe). The
+ * predicate stays O(1) with no fs calls — the caller supplies the flag from the
+ * frontmatter it already reads. Non-`.md` files never reach here in practice:
+ * both consumers glob markdown files only.
  */
 export function isDarkDiagramSibling(
   filePath: string,
   dirsSet: Set<string>,
+  isIndexableKnowledge = false,
 ): boolean {
-  return dirsSet.has(dirname(filePath)) && !isExcalidrawPath(filePath);
+  if (!dirsSet.has(dirname(filePath))) return false;
+  if (isExcalidrawPath(filePath)) return false;
+  if (isIndexableKnowledge) return false;
+  return true;
 }

@@ -67,12 +67,15 @@ export function buildKnowledgeIndex(contextRoot: string): KnowledgeEntry[] {
   const entries: KnowledgeEntry[] = [];
 
   for (const file of files) {
-    // Dark siblings: helper/notes .md files that live beside a board.
-    // They are tooling artifacts, not recall surfaces.
-    if (isDarkDiagramSibling(file, boardDirs)) continue;
-
     try {
       const { data, content } = readFrontmatter(file);
+      // Dark siblings: tooling files beside a board (generator/spec/notes) are
+      // excluded — UNLESS the .md declares itself as knowledge via `name:`
+      // frontmatter, which surfaces a co-located teardown as first-class.
+      const isIndexableKnowledge =
+        typeof data.name === 'string' && data.name.trim() !== '';
+      if (isDarkDiagramSibling(file, boardDirs, isIndexableKnowledge)) continue;
+
       const slug = relative(knowledgeDir, file).replace(/\\/g, '/').replace(/\.md$/, '');
       // For Excalidraw boards: store only extracted text (frontmatter + Text
       // Elements labels) — never scene JSON/base64. This keeps entry.content

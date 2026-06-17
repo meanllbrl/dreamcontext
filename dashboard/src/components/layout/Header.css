@@ -186,6 +186,37 @@
   color: var(--color-text);
 }
 
+.header-refresh {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-md);
+  color: var(--color-text-secondary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.header-refresh:hover:not(:disabled) {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
+
+.header-refresh:disabled {
+  cursor: default;
+}
+
+.header-refresh--spinning svg {
+  animation: header-refresh-spin 0.7s linear infinite;
+}
+
+@keyframes header-refresh-spin {
+  to { transform: rotate(360deg); }
+}
+
 /* CSS @media cannot use custom properties in this Vite setup, so 640 is a
    documented literal representing the "narrow mobile" breakpoint.
    Zoom is a desktop affordance; hiding it prevents header crowding at narrow. */

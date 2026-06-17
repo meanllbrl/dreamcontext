@@ -48,10 +48,18 @@ test('close button exits; list/search state untouched', async ({ page }) => {
 });
 
 test('excalidraw board re-fits to the full-screen canvas', async ({ page }) => {
-  const folder = page.locator('.knowledge-folder-header', { hasText: 'Diagrams' });
-  test.skip(!(await folder.count()), 'no diagrams folder in this vault');
-  await folder.first().click();
-  await page.locator('.knowledge-card', { hasText: '.excalidraw' }).first().click();
+  // Boards may be grouped under category subfolders (diagrams/<category>/<title>/),
+  // so a board card can be nested several folders deep. Expand collapsed folders
+  // one at a time — each click reveals its children, which may be further folders
+  // or the card itself — until a board card is reachable.
+  const board = page.locator('.knowledge-card', { hasText: '.excalidraw' }).first();
+  for (let i = 0; i < 20 && (await board.count()) === 0; i++) {
+    const collapsed = page.locator('.knowledge-folder-header[aria-expanded="false"]').first();
+    if ((await collapsed.count()) === 0) break;
+    await collapsed.click();
+  }
+  test.skip((await board.count()) === 0, 'no excalidraw board in this vault');
+  await board.click();
 
   // Pane render first (lazy excalidraw bundle). The svg attaches at its natural
   // export size and is scaled to fit two rAFs later — wait until it fits its

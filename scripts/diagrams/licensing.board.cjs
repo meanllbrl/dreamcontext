@@ -1,6 +1,6 @@
 // licensing.board.cjs — visual explainer of dreamcontext's open-source / source-available options.
 // Run:  node scripts/diagrams/licensing.board.cjs
-// Renders to _dream_context/knowledge/diagrams/licensing.excalidraw.md (open in Obsidian Excalidraw).
+// Renders to _dream_context/knowledge/diagrams/product/licensing/licensing.excalidraw.md (open in Obsidian Excalidraw).
 const path = require('path');
 const SKILL = path.join(__dirname, '..', '..', '.claude', 'skills', 'excalidraw', 'scripts');
 const { buildExcalidraw } = require(path.join(SKILL, 'build_excalidraw.js'));
@@ -99,6 +99,6 @@ P(node({ x: 1000, y: STEPS_Y, w: 480, h: 66, color: 'blue', fontSize: 16, text: 
 P(connector({ from: [500, STEPS_Y + 33], to: [520, STEPS_Y + 33] }));
 P(connector({ from: [980, STEPS_Y + 33], to: [1000, STEPS_Y + 33] }));
 
-const out = path.join(__dirname, '..', '..', '_dream_context', 'knowledge', 'diagrams', 'licensing.excalidraw.md');
+const out = path.join(__dirname, '..', '..', '_dream_context', 'knowledge', 'diagrams', 'product', 'licensing', 'licensing.excalidraw.md');
 buildExcalidraw({ out, elements: els, background: '#fbfbfb' });
 console.log('licensing board →', out);

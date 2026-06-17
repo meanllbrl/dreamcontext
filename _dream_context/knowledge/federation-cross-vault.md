@@ -13,7 +13,7 @@ date: "2026-06-15"
 
 The honest answer: **there is no such rule to set, because federation is not event-/trigger-driven.** A connection is not a conditional ("when working on auth, read the API vault"). It is a standing agreement that resolves through two mechanisms — a **PUSH** half that runs at sleep time and a **PULL** half that runs on demand. Neither needs a per-situation setting.
 
-See the figure: `public/image/diagram-federation.png` (PDF: `public/image/diagram-federation.pdf`). Board source: `_dream_context/knowledge/diagrams/federation.board.cjs`.
+See the figure: `public/image/diagram-federation.png` (PDF: `public/image/diagram-federation.pdf`). Board source: `_dream_context/knowledge/diagrams/system/federation/federation.board.cjs`.
 
 ## STATUS: federation is READ-ONLY (single-source-of-truth)
 

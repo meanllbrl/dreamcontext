@@ -26,7 +26,7 @@ npm run diagrams   # rebuild every Excalidraw board → re-render public/image/d
   council · recall) and any new mechanics.
 
 The figures are generated from editable Excalidraw boards at
-`_dream_context/knowledge/diagrams/*.board.cjs` (house-style via the `excalidraw` skill).
+`_dream_context/knowledge/diagrams/**/*.board.cjs` (house-style via the `excalidraw` skill).
 `npm run diagrams` re-runs each board spec (writing the `.excalidraw.md` you can open in
 Obsidian) and re-renders the PNGs the docs embed, via `scripts/diagrams/build-all.mjs`
 (headless `@excalidraw/excalidraw`). If a mechanism changed, edit the board spec, re-run,

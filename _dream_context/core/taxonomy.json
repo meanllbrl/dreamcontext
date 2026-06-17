@@ -33,7 +33,9 @@
       "topic:competitive",
       "topic:prd",
       "topic:history",
-      "topic:schema"
+      "topic:schema",
+      "topic:excalidraw",
+      "topic:dashboard"
     ]
   },
   "bareTags": [
@@ -63,6 +65,8 @@
     "federation": "topic:federation",
     "recall": "topic:recall",
     "schema": "topic:schema",
-    "data-structures": "domain:database"
+    "data-structures": "domain:database",
+    "excalidraw": "topic:excalidraw",
+    "dashboard": "topic:dashboard"
   }
 }

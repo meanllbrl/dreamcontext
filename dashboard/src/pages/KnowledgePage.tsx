@@ -9,15 +9,20 @@ import { isExcalidrawSlug } from '../lib/excalidraw';
 import { tagHue } from '../lib/tagColor';
 import './KnowledgePage.css';
 
-// Data-structures knowledge files store their schema as a fenced ```sql block.
+// Data-structures knowledge files store their schema as fenced ```sql blocks.
 // Extract the raw SQL so it can be rendered as a relational/ER view (like the
 // Core page does for standalone .sql files) instead of plain syntax highlighting.
-const SQL_FENCE = /```sql\s*\n([\s\S]*?)```/i;
+//
+// A file may carry SEVERAL ```sql fences — e.g. a narrative design doc opens with
+// a comment-only fence, then defines tables in later fences. Matching only the
+// first fence (the comments) yielded zero entities → "No schema entities found".
+// Concatenate every fence so all CREATE TABLEs reach the parser.
+const SQL_FENCE = /```sql\s*\n([\s\S]*?)```/gi;
 
 function extractSchemaSql(slug: string, content: string): string | null {
   if (!slug.startsWith('data-structures/')) return null;
-  const match = content.match(SQL_FENCE);
-  return match ? match[1] : null;
+  const blocks = [...content.matchAll(SQL_FENCE)].map(m => m[1]);
+  return blocks.length > 0 ? blocks.join('\n\n') : null;
 }
 
 type KnowledgeListEntry = { slug: string; name: string; description: string; tags: string[]; pinned: boolean };
@@ -59,6 +64,75 @@ export function leafName(entry: KnowledgeListEntry, folder: string | null): stri
   return entry.name;
 }
 
+// ─── Nested folder tree ──────────────────────────────────────────────────────
+//
+// Knowledge slugs are full relative paths (`diagrams/competitors/acme/acme.excalidraw`,
+// `data-structures/default`). The old grouping split on the FIRST `/` only, so
+// every diagram collapsed into one flat "Diagrams" folder. We build a recursive
+// tree instead, so category subfolders (e.g. Competitors) nest under Diagrams.
+//
+// Board self-wrapper collapse: by convention a board lives in a folder named
+// after itself (`<title>/<title>.excalidraw`). That wrapper segment is noise in
+// the tree, so we drop it — the board renders as a card directly under its
+// category, labeled `<title>.excalidraw` (via leafName).
+
+export interface KnowledgeTreeNode {
+  name: string;   // last path segment, e.g. "competitors"
+  path: string;   // full folder path, e.g. "diagrams/competitors"
+  label: string;  // prettyFolder(name)
+  folders: KnowledgeTreeNode[];
+  cards: KnowledgeListEntry[];
+}
+
+/** Total cards in this subtree (including descendants) — shown as the folder count. */
+export function countTreeCards(node: KnowledgeTreeNode): number {
+  return node.cards.length + node.folders.reduce((sum, f) => sum + countTreeCards(f), 0);
+}
+
+/**
+ * Build a nested folder tree from a flat entry list. Root-level files (no `/`)
+ * are returned separately so they render flat below the folders.
+ */
+export function buildKnowledgeTree(
+  entries: KnowledgeListEntry[],
+): { roots: KnowledgeListEntry[]; folders: KnowledgeTreeNode[] } {
+  const roots: KnowledgeListEntry[] = [];
+  const top: KnowledgeTreeNode = { name: '', path: '', label: '', folders: [], cards: [] };
+
+  const childFolder = (parent: KnowledgeTreeNode, seg: string): KnowledgeTreeNode => {
+    let child = parent.folders.find(f => f.name === seg);
+    if (!child) {
+      const path = parent.path ? `${parent.path}/${seg}` : seg;
+      child = { name: seg, path, label: prettyFolder(seg), folders: [], cards: [] };
+      parent.folders.push(child);
+    }
+    return child;
+  };
+
+  for (const e of entries) {
+    const segments = e.slug.split('/');
+    const leaf = segments[segments.length - 1];
+    let chain = segments.slice(0, -1);
+    // Collapse the board's self-named wrapper folder (`<title>/<title>.excalidraw`).
+    if (isExcalidrawSlug(e.slug) && chain.length > 0) {
+      const base = leaf.replace(/\.excalidraw$/, '');
+      if (chain[chain.length - 1] === base) chain = chain.slice(0, -1);
+    }
+    if (chain.length === 0) { roots.push(e); continue; }
+    let node = top;
+    for (const seg of chain) node = childFolder(node, seg);
+    node.cards.push(e);
+  }
+
+  const sortNode = (n: KnowledgeTreeNode) => {
+    n.folders.sort((a, b) => a.label.localeCompare(b.label));
+    n.cards.sort((a, b) => leafName(a, n.path).localeCompare(leafName(b, n.path)));
+    n.folders.forEach(sortNode);
+  };
+  sortNode(top);
+  return { roots, folders: top.folders };
+}
+
 export function KnowledgePage() {
   const { t } = useI18n();
   const { data: entries, isLoading, isError, error } = useKnowledgeList();
@@ -82,24 +156,9 @@ export function KnowledgePage() {
     );
   }, [entries, search]);
 
-  // Group entries whose slug carries a folder path (e.g. `diagrams/recall`) into
-  // collapsible folders. Root-level files render flat below the folders.
-  const { rootEntries, folders } = useMemo(() => {
-    const roots: KnowledgeListEntry[] = [];
-    const map = new Map<string, KnowledgeListEntry[]>();
-    for (const e of filtered) {
-      const idx = e.slug.indexOf('/');
-      if (idx === -1) { roots.push(e); continue; }
-      const folder = e.slug.slice(0, idx);
-      const bucket = map.get(folder);
-      if (bucket) bucket.push(e);
-      else map.set(folder, [e]);
-    }
-    const grouped = [...map.entries()]
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([folder, items]) => ({ folder, label: prettyFolder(folder), entries: items }));
-    return { rootEntries: roots, folders: grouped };
-  }, [filtered]);
+  // Group entries whose slug carries a folder path (e.g. `diagrams/competitors/acme`)
+  // into a recursive collapsible tree. Root-level files render flat below the folders.
+  const { roots: rootEntries, folders } = useMemo(() => buildKnowledgeTree(filtered), [filtered]);
 
   // While searching, auto-expand every folder so matches are visible.
   const searching = search.trim().length > 0;
@@ -120,7 +179,18 @@ export function KnowledgePage() {
       onClick={() => { setSelected(entry.slug); setViewTab('preview'); }}
     >
       <div className="knowledge-card-header">
-        <span className="knowledge-card-name">{leafName(entry, folder)}</span>
+        <span className="knowledge-card-title">
+          {isExcalidrawSlug(entry.slug) && (
+            <span className="knowledge-card-icon" title="Diagram / sketch" aria-label="Diagram">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M12 20h9" />
+                <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" />
+              </svg>
+            </span>
+          )}
+          <span className="knowledge-card-name">{leafName(entry, folder)}</span>
+        </span>
         <button
           className={`pin-btn ${entry.pinned ? 'pin-btn--active' : ''}`}
           onClick={(e) => {
@@ -141,6 +211,29 @@ export function KnowledgePage() {
         ))}
       </div>
     </button>
+  );
+
+  // Recursive: a folder renders its child folders first, then its own cards.
+  // Indentation comes from `.knowledge-folder-items` (margin + left border),
+  // which nests naturally at each level.
+  const renderFolder = (node: KnowledgeTreeNode) => (
+    <div key={node.path} className="knowledge-folder">
+      <button
+        className="knowledge-folder-header"
+        onClick={() => toggleFolder(node.path)}
+        aria-expanded={isOpen(node.path)}
+      >
+        <span className="knowledge-folder-chevron">{isOpen(node.path) ? '▾' : '▸'}</span>
+        <span className="knowledge-folder-name">{node.label}</span>
+        <span className="knowledge-folder-count">{countTreeCards(node)}</span>
+      </button>
+      {isOpen(node.path) && (
+        <div className="knowledge-folder-items">
+          {node.folders.map(renderFolder)}
+          {node.cards.map(entry => renderCard(entry, node.path))}
+        </div>
+      )}
+    </div>
   );
 
   // Shared between the inline pane and the full-screen overlay so the active
@@ -165,7 +258,7 @@ export function KnowledgePage() {
   const renderContent = (detailDoc: NonNullable<typeof detail>) => {
     if (viewTab === 'preview' && detailDoc.content) {
       if (isExcalidrawSlug(detailDoc.slug)) {
-        return <ExcalidrawPreview content={detailDoc.content} />;
+        return <ExcalidrawPreview content={detailDoc.content} slug={detailDoc.slug} />;
       }
       const schemaSql = extractSchemaSql(detailDoc.slug, detailDoc.content);
       return schemaSql
@@ -193,24 +286,7 @@ export function KnowledgePage() {
             <div className="core-empty">{t('common.empty')}</div>
           )}
 
-          {folders.map(group => (
-            <div key={group.folder} className="knowledge-folder">
-              <button
-                className="knowledge-folder-header"
-                onClick={() => toggleFolder(group.folder)}
-                aria-expanded={isOpen(group.folder)}
-              >
-                <span className="knowledge-folder-chevron">{isOpen(group.folder) ? '▾' : '▸'}</span>
-                <span className="knowledge-folder-name">{group.label}</span>
-                <span className="knowledge-folder-count">{group.entries.length}</span>
-              </button>
-              {isOpen(group.folder) && (
-                <div className="knowledge-folder-items">
-                  {group.entries.map(entry => renderCard(entry, group.folder))}
-                </div>
-              )}
-            </div>
-          ))}
+          {folders.map(renderFolder)}
 
           {rootEntries.map(entry => renderCard(entry))}
         </div>

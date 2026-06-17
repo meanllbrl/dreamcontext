@@ -19,6 +19,28 @@
   font-size: var(--font-size-sm);
 }
 
+/* Raw-SQL fallback: parser found no tables to diagram, but there IS SQL. */
+.sql-preview-empty--hint {
+  height: auto;
+  justify-content: flex-start;
+  padding: var(--space-2) var(--space-1);
+  font-style: italic;
+}
+
+.sql-preview-raw {
+  margin: 0;
+  padding: var(--space-3);
+  overflow: auto;
+  border-radius: var(--radius-md);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  white-space: pre;
+  tab-size: 2;
+}
+
 /* ─── SVG Overlay ─── */
 .sql-preview-svg {
   position: absolute;

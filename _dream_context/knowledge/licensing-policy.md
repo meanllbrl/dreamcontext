@@ -30,7 +30,7 @@ A "no-resale / no-commercial-products, but personal + internal-company use allow
 - **GitHub license badge** is detected from LICENSE file content and updates only after the new Apache LICENSE is committed + pushed (showed MIT until then).
 
 ### Files changed this decision
-LICENSE (Apache 2.0 full text, Copyright 2026 Mehmet Nuraydin), NOTICE (attribution + trademark pointer; added to package.json `files`), TRADEMARK.md (brand policy), CONTRIBUTING.md (Apache + DCO sign-off, no CLA), package.json `license`: MIT->Apache-2.0, README License section, GitHub repo description (AgentContext->dreamcontext). Visual explainer board: _dream_context/knowledge/diagrams/licensing.excalidraw.md (generator scripts/diagrams/licensing.board.cjs).
+LICENSE (Apache 2.0 full text, Copyright 2026 Mehmet Nuraydin), NOTICE (attribution + trademark pointer; added to package.json `files`), TRADEMARK.md (brand policy), CONTRIBUTING.md (Apache + DCO sign-off, no CLA), package.json `license`: MIT->Apache-2.0, README License section, GitHub repo description (AgentContext->dreamcontext). Visual explainer board: _dream_context/knowledge/diagrams/product/licensing/licensing.excalidraw.md (generator scripts/diagrams/licensing.board.cjs).
 
 ### Governance
 Contributions under Apache-2.0 with **DCO** sign-off (`git commit -s`), not a CLA — Apache's per-contributor patent grant covers the patent risk; DCO keeps provenance clean.

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useTheme } from '../../context/ThemeContext';
 import { useSleep, getSleepLevel, getSleepLevelKey } from '../../hooks/useSleep';
 import { UpdateBadge } from './UpdateBadge';
@@ -31,7 +32,21 @@ interface HeaderProps {
 export function Header({ onNavigate }: HeaderProps) {
   const { theme, setTheme, resolved } = useTheme();
   const { data: sleep } = useSleep();
+  const queryClient = useQueryClient();
   const [zoom, setZoom] = useState(getStoredZoom);
+  const [refreshing, setRefreshing] = useState(false);
+
+  // Manual refresh: pull every active query at once (sleep debt, tasks,
+  // knowledge, …). Queries also poll on an interval, but this gives an
+  // immediate update without waiting or switching pages.
+  const refreshAll = async () => {
+    setRefreshing(true);
+    try {
+      await queryClient.refetchQueries({ type: 'active' });
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   useEffect(() => {
     applyZoom(zoom);
@@ -88,6 +103,18 @@ export function Header({ onNavigate }: HeaderProps) {
         </div>
       </div>
       <div className="header-right">
+        <button
+          className={`header-refresh ${refreshing ? 'header-refresh--spinning' : ''}`}
+          onClick={refreshAll}
+          disabled={refreshing}
+          title="Refresh now"
+          aria-label="Refresh now"
+        >
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M13.65 4.5A6 6 0 1 0 14 8" />
+            <path d="M14 2v3h-3" />
+          </svg>
+        </button>
         <UpdateBadge onManagePacks={onNavigate ? () => onNavigate('packs') : undefined} />
         <div className="zoom-controls">
           <button
