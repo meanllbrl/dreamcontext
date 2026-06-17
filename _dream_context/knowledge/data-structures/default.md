@@ -3,9 +3,9 @@ name: default
 type: data-structures
 product: default
 tags:
-  - data-structures
+  - domain:database
   - database
-  - schema
+  - topic:schema
 updated: "2026-06-09"
 ---```sql
 -- Data Structures — dreamcontext

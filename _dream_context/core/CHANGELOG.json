@@ -1,5 +1,100 @@
 [
   {
+    "date": "2026-06-17",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "Add automatic live refresh to the dashboard so sleep debt, task lists, and knowledge entries update without the user switching pages or reloading. Global react-query refetchInterval set to 15 seconds, active only when the browser tab is visible (refetchIntervalInBackground: false) to avoid background traffic. A Refresh button in the Header provides on-demand re-fetch for users who want immediate sync after a sleep consolidation. The currently open knowledge document (identified by the active slug in KnowledgePage) is excluded from the polling query so a board in the canvas editor never reloads mid-pan and loses scroll state.",
+    "breaking": false,
+    "summary": "Live refresh: 15s refetchInterval (visible-tab only) + header Refresh button; open board excluded from poll to prevent mid-pan reload",
+    "references": [
+      "commit:d106c5c",
+      "file:dashboard/src/App.tsx",
+      "file:dashboard/src/components/layout/Header.tsx",
+      "file:dashboard/src/hooks/useKnowledge.ts",
+      "file:dashboard/src/pages/KnowledgePage.tsx",
+      "task:issue-20-excalidraw-knowledge",
+      "url:https://github.com/meanllbrl/dreamcontext/pull/35"
+    ]
+  },
+  {
+    "date": "2026-06-17",
+    "type": "fix",
+    "scope": "dashboard",
+    "description": "extractSchemaSql previously stopped at the first sql fenced block; if that block contained only comments (a common pattern for describing tables before listing column types), it produced no parsed entities and displayed 'No schema entities found'. Fix: concatenate all sql fenced blocks before parsing. SqlPreview also gains a fallback to display highlighted raw SQL when the parser finds no entities, so data-structure files never show a blank panel even when the SQL does not match the expected entity syntax.",
+    "breaking": false,
+    "summary": "SQL preview: concatenate ALL sql fences so a comment-only first fence no longer yields 'No schema entities found'; fallback to raw SQL",
+    "references": [
+      "commit:d106c5c",
+      "file:dashboard/src/components/core/SqlPreview.tsx",
+      "file:dashboard/src/components/core/SqlPreview.css",
+      "task:issue-20-excalidraw-knowledge",
+      "url:https://github.com/meanllbrl/dreamcontext/pull/35"
+    ]
+  },
+  {
+    "date": "2026-06-17",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "Obsidian stores embedded screenshots in Excalidraw boards as ## Embedded Files wikilinks (not base64 inline data), so the dashboard canvas rendered blank placeholders where images should appear. New GET /api/knowledge-assets/:slug route (src/server/routes/knowledge.ts) parses the ## Embedded Files map from the board body, resolves each referenced path under the vault root (containment-guarded to prevent path traversal, images-only filter), downscales and recompresses to WebP via sharp (optional dependency — falls back to returning the original if sharp is unavailable), and caches the result keyed by path+mtime. The canvas component requests each asset at high-pass quality. The route accepts the board slug; the resolver picks the board's frontmatter-declared vault root for multi-vault safety.",
+    "breaking": false,
+    "summary": "Board embedded-image resolution via GET /api/knowledge-assets/:slug — Obsidian wikilink paths resolved, downscaled to WebP via sharp",
+    "references": [
+      "commit:d106c5c",
+      "file:src/server/routes/knowledge.ts",
+      "file:src/server/index.ts",
+      "file:dashboard/src/hooks/useKnowledge.ts",
+      "task:issue-20-excalidraw-knowledge",
+      "url:https://github.com/meanllbrl/dreamcontext/pull/35"
+    ]
+  },
+  {
+    "date": "2026-06-17",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "Replace the static exportToSvg() rendering path in ExcalidrawPreview with a live Excalidraw canvas editor in view mode (ExcalidrawCanvas.tsx). The motivation: a large board's exported SVG is rasterized once by WebKit/WKWebView and then sampled down as the user zooms, producing soft, blurry output. The canvas editor re-draws at every zoom level via its own renderer, so text and embedded screenshots stay crisp at any scale. New features: native wheel-pan / pinch-zoom, fit-and-center on first open (scrollToContent called after mount + layout-settle timer + ResizeObserver to guarantee it fires after flex-pane final size is known), loading spinner during bundle lazy-load. The ExcalidrawPreview component now acts as a dispatcher: .excalidraw slugs route to ExcalidrawCanvas; all other knowledge files continue to the existing markdown/mermaid path. Inline preview fills the detail pane like full-screen.",
+    "breaking": false,
+    "summary": "Excalidraw boards render via real canvas editor (view mode) instead of exported SVG — crisp at all zoom levels, native pan/zoom",
+    "references": [
+      "commit:d106c5c",
+      "file:dashboard/src/components/core/ExcalidrawCanvas.tsx",
+      "file:dashboard/src/components/core/ExcalidrawPreview.tsx",
+      "task:issue-20-excalidraw-knowledge",
+      "url:https://github.com/meanllbrl/dreamcontext/pull/35"
+    ]
+  },
+  {
+    "date": "2026-06-17",
+    "type": "feat",
+    "scope": "knowledge",
+    "description": "Replace the flat diagram list in the dashboard KnowledgePage with a recursive nested folder tree. Categories like diagrams/competitors/acme/ now nest as collapsible sub-folders instead of all collapsing into a single flat Diagrams list. A board's redundant self-named wrapper folder (<title>/<title>.excalidraw) is automatically collapsed for cleaner display. Excalidraw cards display a sketch icon so a diagram is recognizable at a glance. The 12 project boards were reorganized under system/ (architecture, federation, how-it-works, recall, system-overview), memory-science/ (memory-upgrade-plan, memory-uplift-comparison, neuroscience, sleep), and product/ (council, licensing, problem) subfolders. The data layer already used full nested slugs, so the backend needed no changes; build-all.mjs was updated to resolve boards by glob rather than fixed paths so it is robust to any nesting depth. SKILL.md and skill-packs/excalidraw/SKILL.md updated to document the optional category-subfolder convention; flat-regression and e2e tests updated to match foldered slugs.",
+    "breaking": false,
+    "summary": "Nested diagram tree: dashboard renders diagrams/ as recursive collapsible folder tree; 12 boards reorganized under system/, memory-science/, product/",
+    "references": [
+      "commit:e110d9f",
+      "file:dashboard/src/pages/KnowledgePage.tsx",
+      "file:scripts/diagrams/build-all.mjs",
+      "file:skill/SKILL.md",
+      "task:knowledge-diagram-nesting",
+      "url:https://github.com/meanllbrl/dreamcontext/pull/35"
+    ]
+  },
+  {
+    "date": "2026-06-17",
+    "type": "feat",
+    "scope": "knowledge",
+    "description": "Add role-based companion-knowledge indexing so .md files that live beside an Excalidraw board in a per-title folder are no longer unconditionally excluded from the index, recall corpus, snapshot, and dashboard. The dark-sibling gate is now intent-driven: isDarkDiagramSibling() gains an optional isIndexableKnowledge arg (defaults false — backward-safe); a companion .md that carries name: frontmatter is treated as first-class knowledge and passed the flag by knowledge-index.ts and recall.ts (frontmatter is parsed once, no extra fs reads). Generator scripts (.board.cjs), spec JSON, and frontmatter-less helper notes remain dark. This allows co-located teardown and context docs (e.g. acme/acme.excalidraw.md + acme.teardown.md) to recall normally without moving files out of their natural board folder. Verified end-to-end via knowledge index --plain and memory recall.",
+    "breaking": false,
+    "summary": "Role-based companion-knowledge indexing: co-located .md with name: frontmatter now indexes as first-class knowledge",
+    "references": [
+      "commit:e110d9f",
+      "file:src/lib/excalidraw-text.ts",
+      "file:src/lib/knowledge-index.ts",
+      "file:src/lib/recall.ts",
+      "task:knowledge-diagram-nesting",
+      "url:https://github.com/meanllbrl/dreamcontext/pull/35"
+    ]
+  },
+  {
     "date": "2026-06-15",
     "type": "chore",
     "scope": "release",

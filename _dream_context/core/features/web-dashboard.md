@@ -2,7 +2,7 @@
 id: feat_O7LODr7O
 status: active
 created: '2026-02-25'
-updated: '2026-06-12'
+updated: '2026-06-17'
 released_version: 0.1.0
 tags:
   - frontend
@@ -15,6 +15,7 @@ related_tasks:
   - landing-page-v2
   - dashboard-alignment
   - data-structures-to-knowledge
+  - knowledge-diagram-nesting
 ---
 
 ## Why
@@ -56,7 +57,9 @@ Users need a visual interface to manage agent context without using the terminal
 - [x] As a user, the goal-skill orchestration is a flagship spotlight faculty with its own landscape loop diagram so I understand how planning-review-implementation-validation works end-to-end.
 - [x] As a user, flow animations in diagrams are compositor-smooth (CSS Motion Path dots riding offset-path/offset-distance rather than stroke-dashoffset), so 27 simultaneous dots cause 0 jank frames.
 
-- [x] As a user, I can view Excalidraw diagrams stored in knowledge/diagrams/ rendered as real hand-drawn boards (pan/zoom, theme-aware) in the dashboard's Knowledge Preview tab, rather than seeing raw compressed JSON.
+- [x] As a user, I can view Excalidraw diagrams stored in knowledge/diagrams/ rendered as real hand-drawn boards (native canvas, crisp at any zoom, wheel-pan/pinch-zoom, auto-centered on load) in the dashboard's Knowledge Preview tab.
+- [x] As a user, embedded screenshots in Excalidraw boards (Obsidian SHA1-linked) resolve and render in the dashboard canvas view, so boards that reference screenshots are visually complete.
+- [x] As a user, the dashboard header has a refresh button so I can reload the current page's data without navigating away (sleep debt, tasks, knowledge all update in place).
 - [x] As a user, I see the data-structures knowledge file rendered as the relational/ER view (entities with PK/FK fields and relationship lines) in the Knowledge Preview tab, identical to the view the Core page previously provided for .sql files.
 - [x] As a user, I can expand any knowledge document (markdown, SQL/ER, excalidraw, raw file view) into a full-screen in-app overlay via a ⛶ button next to the File/Preview tabs, and exit with Esc or the close button, so large boards and long documents are readable.
 - [x] As a user, nested `diagrams/{title}/` excalidraw boards display under the Diagrams group with a clean leaf name (basename), not a redundant `title/title.excalidraw` label.
@@ -172,9 +175,14 @@ Users need a visual interface to manage agent context without using the terminal
 - [ ] Build: `npm run build` builds dashboard then CLI, dashboard output copied to dist/dashboard/
 - [ ] All existing 258+ tests continue to pass
 
-- [x] Excalidraw preview: knowledge files with slug matching diagrams/*.excalidraw render via ExcalidrawPreview component; handles both plain ```json and Obsidian-recompressed ```compressed-json (LZString-base64) fence types; zoom-to-fit with panzoom on mount; theme-aware; heavy bundle lazy-loaded via React.lazy.
-- [x] Data-structures ER view in Knowledge: files with slug starting with data-structures/ detect the ```sql fence, extract the body, and render SqlPreview (same relational/ER component as the Core page). Non-schema knowledge files are unaffected and continue using MarkdownPreview.
+- [x] Excalidraw preview: knowledge files with slug matching diagrams/*.excalidraw render via `Excalidraw` canvas component (view-mode, lazy-loaded); boards are crisp at all zoom levels (live re-draw vs. one-shot SVG rasterization); `scrollToContent({fitToViewport:true})` called on mount + 100ms settle + ResizeObserver so board is always centered and fit; handles both `json` and `compressed-json` fence variants.
+- [x] Embedded-image resolution for Excalidraw boards: `GET /api/knowledge-assets/:slug` parses `## Embedded Files` SHA1→path map, resolves image paths under vault (containment-guarded, image extensions only), down-scales to WebP via sharp (mtime-cached), returns base64 `files` map; dashboard merges resolved files into scene before canvas mount so Obsidian-linked screenshots render.
+- [x] Live refresh header button: clicking refresh calls `queryClient.invalidateQueries()` for the active page without a full page reload; sleep debt, tasks, and knowledge data all update in place.
+- [x] Data-structures ER view in Knowledge: files with slug starting with data-structures/ detect the ```sql fence (fenceConcat fallback for multi-fence files), extract the body, and render SqlPreview. Non-schema knowledge files are unaffected and continue using MarkdownPreview.
 - [x] Nested excalidraw grouping (#20): depth-2 `diagrams/{title}/` slugs show leaf `{title}` under Diagrams; `leafName` uses basename (collapsing redundant `{title}/{title}.excalidraw`), not prefix-strip; `isExcalidrawSlug` matches nested slugs; knowledge detail route stays raw (renderer needs the raw scene — memory gets extracted text, see knowledge-base PRD).
+- [x] Recursive nested folder tree: KnowledgePage.tsx builds a full recursive folder tree for knowledge/diagrams (and all knowledge subfolders), not just single-level depth. Category boards nest as collapsible sub-folders. Board cards show pen/sketch icon.
+- [x] Excalidraw canvas rendering: `ExcalidrawPreview` uses live `@excalidraw/excalidraw` canvas (view-mode) instead of `exportToSvg()`. Lazy-loaded. `scrollToContent` via mount + 100ms timer + ResizeObserver. See `knowledge/dashboard-knowledge-rendering.md`.
+- [x] `GET /api/knowledge-assets/:slug`: resolves Obsidian embedded images (SHA1→WebP base64, sharp, mtime-cached, safeChildPath-guarded). Key files: `src/server/routes/knowledge.ts`, `src/server/index.ts`.
 - [x] Page-title headers removed from Tasks, Features, and Knowledge pages (content starts without a redundant h1 title) to reclaim vertical space.
 - [x] Sleep page layout width matches other pages (full-width alignment consistent across all pages).
 - [x] Features page search box added.
@@ -182,6 +190,8 @@ Users need a visual interface to manage agent context without using the terminal
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
 
+- **[2026-06-17]** Excalidraw canvas over SVG export (PR #35): `exportToSvg()` rasterizes boards once — WebKit samples a 2556×4646 px SVG down to viewport → soft on high-DPI, not recoverable on zoom. Replaced with the live `Excalidraw` canvas component (view-mode): re-draws per zoom level, crisp at all scales. Trade-off: larger runtime bundle (lazy-loaded via React.lazy, no initial load cost). `scrollToContent` must be called at mount + 100ms timer + ResizeObserver to catch flex-pane layout settling; a single mount-time call fires before final dimensions. See `knowledge/dashboard-knowledge-rendering.md` for full rendering architecture.
+- **[2026-06-17]** `knowledge-assets` route is image-only, safeChildPath-guarded (PR #35): resolves Obsidian board embedded images (SHA1→path→base64 WebP via sharp); containment guard + image-extension allowlist prevent path traversal. Mtime-cached; recompresses on file change. See `knowledge/dashboard-server-security.md` for the broader security model.
 - **[2026-06-12]** Knowledge fullscreen is an in-app fixed dialog, NOT the browser Fullscreen API: predictable theming/layout, no UA chrome or permission quirks, and it keeps the overlay inside the app's stacking/theme context. Single-render-site invariant: never mount the same document twice (excalidraw export and mermaid ids collide) — the pane unmounts while the overlay is open. Deferred follow-ups (explicit owner decision, anti-over-engineering): (1) Core-page fullscreen adoption via the same `FullscreenOverlay`, (2) single-instance render to avoid remount cost on toggle, (3) shared icon-button CSS class.
 - **[2026-06-09]** Eisenhower Matrix drag & drop: the existing matrix had `onDragStart={() => {}}` no-op handlers — only structure, no interactivity. Implemented using native HTML5 DnD API (consistent with Kanban). A quadrant receives `onDragOver` + `onDrop`; on drop, both `priority` and `urgency` are patched atomically via the existing PATCH /api/tasks endpoint. No new DnD library added — native API is sufficient for the 2×2 grid (4 drop targets, no complex reordering). `eisenhower.ts` maps quadrant ID to `{priority, urgency}` pairs.
 - **[2026-06-06]** `overflow-x: hidden` vs `clip` on the `.about` container: `overflow-x: hidden` creates a new scroll container, so any `position: sticky` descendant resolves its scroll container to `.about` (not `.shell-main`) and pins immediately — the whole spotlight was stuck. `overflow-x: clip` clips visually without creating a scroll container, preserving sticky semantics. Fix: `.about { overflow-x: clip }` in AboutPage.css. This is a general CSS invariant: if a section has sticky children, its overflow must be `clip` (or `visible`), never `hidden` or `auto`.
@@ -321,6 +331,13 @@ Users need a visual interface to manage agent context without using the terminal
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-06-17 - Excalidraw canvas rendering + embedded image resolution + live refresh (PR #35, branch fix/dashboard-render-and-refresh)
+- `ExcalidrawPreview` component switched from `exportToSvg()` static export to live `Excalidraw` canvas (view-mode, lazy-loaded). Boards are crisp at any zoom; native wheel-pan/pinch-zoom. `scrollToContent` called on mount + 100ms timer + ResizeObserver for reliable fit-and-center.
+- New `GET /api/knowledge-assets/:slug` server route: resolves Obsidian `## Embedded Files` SHA1→path map, reads and down-scales images to WebP via sharp (mtime-cached, containment-guarded). Dashboard merges resolved files into scene before canvas mount so board screenshots render.
+- SQL fence-concat fallback: multi-fence SQL files are joined before SqlPreview to fix partial rendering.
+- Live-refresh button added to Header: `queryClient.invalidateQueries()` for active page — no full page reload.
+- Nested diagram tree (PR companion, commit e110d9f): KnowledgePage renders knowledge/diagrams as recursive nested folder tree; build-all.mjs glob-based board resolution; generator require() depths fixed. 1978 tests green; dashboard + CLI builds green.
 
 ### 2026-06-12 - Knowledge fullscreen (#21/PR #30) + Taxonomy page + nested excalidraw grouping (#20)
 - Generic `FullscreenOverlay` (in-app fixed dialog, not browser Fullscreen API): Esc + close button, document-capture keydown, focus trap excluding disabled elements, focus restore, body scroll lock with scrollbar-width compensation; hardened from review (capture listener, `:not(:disabled)`, `:only-child` CSS specificity).
