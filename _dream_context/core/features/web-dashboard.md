@@ -2,7 +2,7 @@
 id: feat_O7LODr7O
 status: active
 created: '2026-02-25'
-updated: '2026-06-17'
+updated: '2026-06-18'
 released_version: 0.1.0
 tags:
   - frontend
@@ -190,6 +190,8 @@ Users need a visual interface to manage agent context without using the terminal
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
 
+
+- **[2026-06-18]** Excalidraw canvas gate on isLoading, not data===undefined (PR #35 review fix): gating board render on data===undefined would permanently wedge the board behind a spinner whenever the /api/knowledge-assets fetch errors (no embedded images, sharp unavailable, etc.). Gate on isLoading instead — board mounts on success OR error; only held while actively fetching. Additionally, initialData is frozen at Excalidraw canvas mount: the component does not react to files prop changes after mount, so a two-pass low→high progressive image swap is impossible (requires remount, resets pan/zoom). Current approach: single-pass — wait for useKnowledgeAssets to resolve, then mount once with the final files map. See knowledge/dashboard-knowledge-rendering.md for full rationale.
 - **[2026-06-17]** Excalidraw canvas over SVG export (PR #35): `exportToSvg()` rasterizes boards once — WebKit samples a 2556×4646 px SVG down to viewport → soft on high-DPI, not recoverable on zoom. Replaced with the live `Excalidraw` canvas component (view-mode): re-draws per zoom level, crisp at all scales. Trade-off: larger runtime bundle (lazy-loaded via React.lazy, no initial load cost). `scrollToContent` must be called at mount + 100ms timer + ResizeObserver to catch flex-pane layout settling; a single mount-time call fires before final dimensions. See `knowledge/dashboard-knowledge-rendering.md` for full rendering architecture.
 - **[2026-06-17]** `knowledge-assets` route is image-only, safeChildPath-guarded (PR #35): resolves Obsidian board embedded images (SHA1→path→base64 WebP via sharp); containment guard + image-extension allowlist prevent path traversal. Mtime-cached; recompresses on file change. See `knowledge/dashboard-server-security.md` for the broader security model.
 - **[2026-06-12]** Knowledge fullscreen is an in-app fixed dialog, NOT the browser Fullscreen API: predictable theming/layout, no UA chrome or permission quirks, and it keeps the overlay inside the app's stacking/theme context. Single-render-site invariant: never mount the same document twice (excalidraw export and mermaid ids collide) — the pane unmounts while the overlay is open. Deferred follow-ups (explicit owner decision, anti-over-engineering): (1) Core-page fullscreen adoption via the same `FullscreenOverlay`, (2) single-instance render to avoid remount cost on toggle, (3) shared icon-button CSS class.

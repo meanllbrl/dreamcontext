@@ -1,5 +1,20 @@
 [
   {
+    "date": "2026-06-18",
+    "type": "fix",
+    "scope": "dashboard",
+    "description": "Four correctness and hygiene fixes applied in commit d30bac1 after PR #35 merged. (a) ExcalidrawPreview now gates the loading spinner on assetsQuery.isLoading rather than assetFiles === undefined; on an asset-fetch error the query settles (isLoading=false) so the board mounts and renders without images rather than spinning forever behind a permanent 'Loading diagram…' overlay. (b) Removed the dead low-quality tier and the quality query param from useKnowledgeAssets and the /api/knowledge-assets route — the dashboard only ever requested high quality and the canvas freezes initialData at mount, making a low→high progressive swap impossible; the misleading comments were corrected. (c) MAX_ASSETS_BYTES truncation now logs a warning that names the slug and the number of images dropped, and continues packing smaller images rather than hard-breaking on the first oversized one. (d) The in-memory assetCache is bounded to a 256-entry LRU (recency-bumping cacheGet + evicting cacheSet) to prevent unbounded memory growth in a long-lived dashboard server.",
+    "breaking": false,
+    "summary": "Post-merge review fixes: spinner-on-error, dead two-pass removal, MAX_ASSETS_BYTES warning, 256-entry assetCache LRU",
+    "references": [
+      "commit:d30bac1",
+      "file:dashboard/src/components/core/ExcalidrawPreview.tsx",
+      "file:dashboard/src/hooks/useKnowledge.ts",
+      "file:src/server/routes/knowledge.ts",
+      "url:https://github.com/meanllbrl/dreamcontext/pull/35"
+    ]
+  },
+  {
     "date": "2026-06-17",
     "type": "feat",
     "scope": "dashboard",

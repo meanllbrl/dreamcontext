@@ -16,7 +16,7 @@ tags:
   - topic:dashboard
 pinned: false
 created: '2026-06-17'
-updated: '2026-06-17'
+updated: '2026-06-18'
 ---
 
 ## Why this exists
@@ -56,7 +56,7 @@ The dashboard Knowledge page renders three distinct file types (Markdown, SQL/ER
 
 The React component merges these resolved files into the scene before mounting the `Excalidraw` canvas: `setScene({ ...parsed, files: { ...resolved } })`.
 
-**Caching:** responses are cached by `path+mtime` (stat-based) so repeated renders don't re-compress.
+**Caching:** responses are cached by `path+mtime` in a **bounded 256-entry LRU** (path+mtime as the cache key). The LRU bound prevents unbounded memory growth on large boards with many distinct images: once the cache reaches 256 entries, the least-recently-used entry is evicted. Repeated renders of the same image at the same mtime hit the cache and skip `sharp` re-compression entirely.
 
 ### SQL / data-structures: SqlPreview ER view
 
@@ -75,14 +75,17 @@ The Knowledge page and all other pages now have a **refresh button in the header
 - **Canvas over SVG (2026-06-17):** `exportToSvg()` was the prior approach (cheaper — no live canvas mount). Replaced because rasterization at export time produces soft results on retina screens and zoom does not re-sharpen. The live canvas option is more expensive but gives crisp rendering at any zoom level and native pan/pinch.
 - **scrollToContent triple-trigger (2026-06-17):** A single `onMount` call fires before the flex-pane reaches its final layout dimensions (board lands off-center). Adding a 100 ms timer + ResizeObserver guarantees the board is fit-and-centered after any layout change, including fullscreen transitions.
 - **knowledge-assets route is image-only, containment-guarded (2026-06-17):** The route resolves paths embedded in board files. It enforces `safeChildPath()` and an explicit image-extension allowlist to prevent path traversal and arbitrary file exposure. See `dashboard-server-security.md` for the broader security model.
+- **Gate board render on `isLoading`, not `data === undefined` (2026-06-17):** The `useKnowledgeAssets` query can return `data === undefined` in two distinct states: (a) still loading, or (b) a fetch error. Gating on `data === undefined` would leave the board behind a permanent spinner whenever the assets endpoint errors (e.g., board has no embedded images, `sharp` not installed, etc.). The correct gate is `isLoading`: mount the `Excalidraw` canvas on success OR on error; only block while actively fetching. This means the board renders in both the happy path (files merged into scene) and the degraded path (assets unavailable, Obsidian-linked images invisible but board shape intact).
+- **frozen `initialData` prevents progressive two-pass swap (2026-06-17):** The `Excalidraw` canvas captures `initialData` (including the `files` map) at mount time and treats it as immutable — it does not react to subsequent prop changes for the `files` field. This makes a low→high resolution progressive image swap (mount with placeholders, then swap in high-res) impossible: the second pass would require a remount keyed by slug, which is exactly what we do not want (it resets pan/zoom state). The current approach is single-pass: wait for the `useKnowledgeAssets` fetch to complete, then mount the canvas once with the final `files` map. The `isLoading` gate above enforces this.
 
 ## Sources
 
 - Commit `d106c5c` — `feat(dashboard): Excalidraw canvas rendering + board image resolution, SQL fences, live refresh`
-- PR #35 (open, branch `fix/dashboard-render-and-refresh`)
-- Session `b9137911-a9d0-42f7-863d-f8d56831ba5d`
+- Commit `d30bac1` — post-merge review fixes (spinner gate, dead quality tier, truncation log, LRU cache bound)
+- PR #35 (merged locally into main; merge commit `ea4d614`)
+- Session `b9137911-a9d0-42f7-863d-f8d56831ba5d` (initial implementation), `6cc05c69-f6b8-4fbc-9e1a-7221103ddd9b` (code review + merge + fixes)
 - Related: `dashboard-server-security.md` (security invariants), `knowledge-base` feature PRD (memory/render invariant)
 
 ## Last verified
 
-2026-06-17 (PR #35 open; commit d106c5c on branch fix/dashboard-render-and-refresh)
+2026-06-18 (PR #35 merged; commit 2064b55 on main)
