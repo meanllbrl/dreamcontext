@@ -1,10 +1,13 @@
 ---
-id: "feat_kCUdOcvt"
-status: "in_review"
-created: "2026-06-12"
-updated: "2026-06-12"
-released_version: null
-tags: ["architecture", "decisions", "backend"]
+id: feat_kCUdOcvt
+status: in_review
+created: '2026-06-12'
+updated: '2026-06-18'
+released_version: v0.8.7
+tags:
+  - architecture
+  - decisions
+  - backend
 related_tasks: []
 ---
 

@@ -1,11 +1,16 @@
 ---
-id: "feat_council001"
-status: "in_review"
-created: "2026-04-19"
-updated: "2026-04-19"
-released_version: null
-tags: ["skills", "cli", "sub-agents", "decision-making"]
-related_tasks: ["council-skill"]
+id: feat_council001
+status: in_review
+created: '2026-04-19'
+updated: '2026-06-18'
+released_version: v0.8.7
+tags:
+  - skills
+  - cli
+  - sub-agents
+  - decision-making
+related_tasks:
+  - council-skill
 ---
 
 ## Why

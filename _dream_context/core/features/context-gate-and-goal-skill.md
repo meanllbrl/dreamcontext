@@ -1,11 +1,17 @@
 ---
-id: "feat_rL12JiTu"
-status: "in_review"
-created: "2026-05-31"
-updated: "2026-05-31"
-released_version: null
-tags: ["skills", "cli", "sub-agents", "hook", "orchestration"]
-related_tasks: ["goal-skill-and-related-skills-recall"]
+id: feat_rL12JiTu
+status: in_review
+created: '2026-05-31'
+updated: '2026-06-18'
+released_version: v0.8.7
+tags:
+  - skills
+  - cli
+  - sub-agents
+  - hook
+  - orchestration
+related_tasks:
+  - goal-skill-and-related-skills-recall
 ---
 
 ## Why

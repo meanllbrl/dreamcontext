@@ -2,8 +2,8 @@
 id: feat_vYyVonQ3
 status: in_progress
 created: '2026-06-10'
-updated: '2026-06-10'
-released_version: null
+updated: '2026-06-18'
+released_version: v0.8.7
 tags:
   - cli
   - backend

@@ -1,11 +1,15 @@
 ---
-id: "feat_bTBRuxX0"
-status: "in_review"
-created: "2026-03-24"
-updated: "2026-06-05"
-released_version: null
-tags: ["skills", "cli", "distribution"]
-related_tasks: ["optional-skill-packs"]
+id: feat_bTBRuxX0
+status: in_review
+created: '2026-03-24'
+updated: '2026-06-18'
+released_version: v0.8.7
+tags:
+  - skills
+  - cli
+  - distribution
+related_tasks:
+  - optional-skill-packs
 ---
 
 ## Why

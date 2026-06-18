@@ -2,8 +2,8 @@
 id: feat_bt9zRxgL
 status: in_review
 created: '2026-06-13'
-updated: '2026-06-14'
-released_version: null
+updated: '2026-06-18'
+released_version: v0.8.7
 tags:
   - desktop
   - onboarding

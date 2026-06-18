@@ -2,8 +2,8 @@
 id: feat_UF2kRQGT
 status: in_review
 created: '2026-06-14'
-updated: '2026-06-14'
-released_version: null
+updated: '2026-06-18'
+released_version: v0.8.7
 tags:
   - frontend
   - backend

@@ -1,6 +1,19 @@
 [
   {
     "date": "2026-06-18",
+    "type": "chore",
+    "scope": "release",
+    "description": "Release v0.8.7 published on both channels. npm: dreamcontext@0.8.7 live on the registry (verified via npm view dreamcontext version). GitHub Release: non-draft, marked Latest at https://github.com/meanllbrl/dreamcontext/releases/tag/v0.8.7, with assets dreamcontext-beta_0.8.7_aarch64.app.tar.gz (27 MB) and matching .sha256, built by desktop-release.yml (build, ad-hoc sign, package, verify, publish all green) triggered by the v0.8.7 tag push. The release bundles all PR #35 work: role-based companion-knowledge indexing, Excalidraw canvas-editor board rendering, embedded-image asset endpoint (sharp/WebP, containment-guarded, 256-entry LRU), SQL-fence concatenation, live refresh, and the 4 post-merge review fixes. Also fixed in commit df47cfe: desktop/package.json was stuck at 0.6.0 through the entire 0.8.x line; realigned to 0.8.7 together with Cargo.toml and tauri.conf.json.",
+    "breaking": false,
+    "summary": "v0.8.7 shipped on npm + GitHub (desktop .app); desktop/package.json realigned from 0.6.0 to 0.8.7",
+    "references": [
+      "commit:3e5262b",
+      "commit:df47cfe",
+      "url:https://github.com/meanllbrl/dreamcontext/releases/tag/v0.8.7"
+    ]
+  },
+  {
+    "date": "2026-06-18",
     "type": "fix",
     "scope": "dashboard",
     "description": "Four correctness and hygiene fixes applied in commit d30bac1 after PR #35 merged. (a) ExcalidrawPreview now gates the loading spinner on assetsQuery.isLoading rather than assetFiles === undefined; on an asset-fetch error the query settles (isLoading=false) so the board mounts and renders without images rather than spinning forever behind a permanent 'Loading diagram…' overlay. (b) Removed the dead low-quality tier and the quality query param from useKnowledgeAssets and the /api/knowledge-assets route — the dashboard only ever requested high quality and the canvas freezes initialData at mount, making a low→high progressive swap impossible; the misleading comments were corrected. (c) MAX_ASSETS_BYTES truncation now logs a warning that names the slug and the number of images dropped, and continues packing smaller images rather than hard-breaking on the first oversized one. (d) The in-memory assetCache is bounded to a 256-entry LRU (recency-bumping cacheGet + evicting cacheSet) to prevent unbounded memory growth in a long-lived dashboard server.",

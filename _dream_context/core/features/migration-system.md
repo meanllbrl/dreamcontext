@@ -1,11 +1,16 @@
 ---
-id: "feat_43YmPwNg"
-status: "in_review"
-created: "2026-06-12"
-updated: "2026-06-12"
-released_version: null
-tags: ["architecture", "backend", "devops"]
-related_tasks: ["issue-23-migration-system", "issue-20-excalidraw-knowledge"]
+id: feat_43YmPwNg
+status: in_review
+created: '2026-06-12'
+updated: '2026-06-18'
+released_version: v0.8.7
+tags:
+  - architecture
+  - backend
+  - devops
+related_tasks:
+  - issue-23-migration-system
+  - issue-20-excalidraw-knowledge
 ---
 
 ## Why

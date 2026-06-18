@@ -2,12 +2,12 @@
 id: feat_mem0Recall1
 status: in_review
 created: '2026-05-23'
-updated: '2026-06-10'
-released_version: null
+updated: '2026-06-18'
+released_version: v0.8.7
 tags:
-  - domain:knowledge
+  - 'domain:knowledge'
   - cli
-  - topic:recall
+  - 'topic:recall'
   - decisions
 related_tasks:
   - recall-context-uplift-v07

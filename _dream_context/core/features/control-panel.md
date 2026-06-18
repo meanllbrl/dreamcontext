@@ -2,8 +2,8 @@
 id: feat_ControlPanel_v06
 status: in_review
 created: '2026-05-31'
-updated: '2026-06-05'
-released_version: null
+updated: '2026-06-18'
+released_version: v0.8.7
 tags:
   - control-panel
   - backend

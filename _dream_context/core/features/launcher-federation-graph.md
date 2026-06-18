@@ -2,13 +2,13 @@
 id: feat_uihUmOmu
 status: in_review
 created: '2026-06-14'
-updated: '2026-06-15'
-released_version: null
+updated: '2026-06-18'
+released_version: v0.8.7
 tags:
   - desktop
   - frontend
   - backend
-  - topic:federation
+  - 'topic:federation'
 related_tasks:
   - launcher-quiz-onboarding
   - federation-read-only

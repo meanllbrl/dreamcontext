@@ -1,11 +1,18 @@
 ---
-id: "feat_mBa5T4nU"
-status: "in_review"
-created: "2026-05-22"
-updated: "2026-06-12"
-released_version: null
-tags: ["devops", "onboarding", "architecture"]
-related_tasks: ["v04-ws1-install-update-overhaul", "v06-control-plane-backend", "v06-control-panel-frontend", "issue-22-setup-version-drift"]
+id: feat_mBa5T4nU
+status: in_review
+created: '2026-05-22'
+updated: '2026-06-18'
+released_version: v0.8.7
+tags:
+  - devops
+  - onboarding
+  - architecture
+related_tasks:
+  - v04-ws1-install-update-overhaul
+  - v06-control-plane-backend
+  - v06-control-panel-frontend
+  - issue-22-setup-version-drift
 ---
 
 ## Why

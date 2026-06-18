@@ -1,10 +1,13 @@
 ---
-id: "feat_mPr0d4Ct"
-status: "in_review"
-created: "2026-05-22"
-updated: "2026-05-22"
-released_version: null
-tags: ["architecture", "domain", "onboarding"]
+id: feat_mPr0d4Ct
+status: in_review
+created: '2026-05-22'
+updated: '2026-06-18'
+released_version: v0.8.7
+tags:
+  - architecture
+  - domain
+  - onboarding
 related_tasks: []
 ---
 

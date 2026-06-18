@@ -2,13 +2,13 @@
 id: feat_ReflectionEngine_v06
 status: in_review
 created: '2026-06-04'
-updated: '2026-06-05'
-released_version: null
+updated: '2026-06-18'
+released_version: v0.8.7
 tags:
   - architecture
   - backend
   - decisions
-  - domain:knowledge
+  - 'domain:knowledge'
 related_tasks:
   - reflection-engine
 ---

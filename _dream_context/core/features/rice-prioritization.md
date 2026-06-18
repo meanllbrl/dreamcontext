@@ -1,9 +1,9 @@
 ---
-id: "feat_3VeOJa6a"
-status: "in_review"
-created: "2026-05-09"
-updated: "2026-05-09"
-released_version: null
+id: feat_3VeOJa6a
+status: in_review
+created: '2026-05-09'
+updated: '2026-06-18'
+released_version: v0.8.7
 tags:
   - tasks
   - prioritization
