@@ -121,4 +121,40 @@ describe('wikilink-rewrite', () => {
     expect(result).toContain('[[new]] outside');        // non-fenced — rewritten
     expect(result).not.toContain('[[new]] still inside');
   });
+
+  it('round-trips content with fences byte-for-byte when no remap matches (regression: dropped fence-boundary newlines)', () => {
+    const samples = [
+      'a [[x]] b\n\n```ts\ncode\n```\n',                       // blank line before fence
+      '```ts\ncode\n```\n\nafter [[x]]\n',                      // blank line after fence
+      'pre\n```ts\nc\n```\nmid\n```js\nd\n```\npost\n',         // multiple fences, no blanks
+      '# H\n\ntext\n\n```sql\nSELECT 1;\n```\n\nmore\n',        // realistic knowledge body
+    ];
+    for (const s of samples) {
+      // empty remap and non-matching remap must both be exact identities
+      expect(rewriteFileContent(s, new Map())).toBe(s);
+      expect(rewriteFileContent(s, new Map([['nope', 'other']]))).toBe(s);
+    }
+  });
+
+  it('rewrites a wikilink next to a fence without eating the surrounding blank lines', () => {
+    const content = [
+      'See [[old]] now.',
+      '',
+      '```sql',
+      'SELECT 1; -- [[old]] stays literal',
+      '```',
+      '',
+      'End [[old]].',
+    ].join('\n');
+    const result = rewriteFileContent(content, new Map([['old', 'grp/old']]));
+    expect(result).toBe([
+      'See [[grp/old]] now.',
+      '',
+      '```sql',
+      'SELECT 1; -- [[old]] stays literal',
+      '```',
+      '',
+      'End [[grp/old]].',
+    ].join('\n'));
+  });
 });

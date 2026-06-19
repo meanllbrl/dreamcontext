@@ -176,7 +176,7 @@ Placement judgment FIRST: only canonical boards (architecture, system flows, roa
 
 **Knowledge → logical subfolders (grouping; moves are deep-only).** When ≥3 top-level `knowledge/*.md` files form a clear topical cluster a future session would browse together (mirroring the existing `data-structures/` and `products/` subfolders), group them under `knowledge/<group>/`. Moving files + rewriting links is a structural op — gate it exactly like merge-with-delete (B1.5):
 - **light/standard:** do NOT move. **Flag the cluster in your report** (`group candidate: <group>/ ← a.md, b.md, c.md`) for the next deep cycle.
-- **deep:** archive-before (the B1.5 safety net), then move the files and rewrite inbound `[[old-slug]]` references — **target token only**, preserve `|alias` and `#anchor`. Verify every file still lists: `dreamcontext knowledge index --plain`.
+- **deep:** archive-before (the B1.5 safety net), then for each file run `dreamcontext knowledge move <slug> <group>` — it moves the file into `knowledge/<group>/` AND rewrites inbound `[[old-slug]]` references atomically (target token only; `|alias` and `#anchor` preserved). Do NOT hand-move + hand-edit links. Verify every file still lists: `dreamcontext knowledge index --plain`.
 
 Group only on a **sharp** topical boundary — the same B2 create-vs-extend test, applied to folders. Don't fragment (one folder per file) and don't over-nest. After any group/move, re-check the moved files' tags in Pass C so the folder and the tags tell the same story.
 

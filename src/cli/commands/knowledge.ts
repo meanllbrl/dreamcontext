@@ -8,6 +8,7 @@ import { writeFrontmatter } from '../../lib/frontmatter.js';
 import { generateId, slugify, today } from '../../lib/id.js';
 import { success, error, info, header } from '../../lib/format.js';
 import { buildKnowledgeIndex, STANDARD_TAGS } from '../../lib/knowledge-index.js';
+import { moveKnowledgeFile } from '../../lib/knowledge-move.js';
 import { readSleepState, writeSleepState, bumpKnowledgeAccess } from './sleep.js';
 
 function getKnowledgeDir(): string {
@@ -122,6 +123,57 @@ export function registerKnowledgeCommand(program: Command): void {
         for (const tag of STANDARD_TAGS) {
           console.log(`  ${chalk.magentaBright(tag)}`);
         }
+      }
+    });
+
+  // Move (group into a topical subfolder)
+  knowledge
+    .command('move')
+    .argument('<slug>', 'Knowledge file slug (path relative to knowledge/, without .md)')
+    .argument('<folder>', 'Destination folder relative to knowledge/ (free-form topical grouping, e.g. "fitness" or "fitness/wellbeing")')
+    .description('Move a knowledge file into a topical subfolder, rewriting inbound [[wikilinks]] atomically')
+    .action((slug: string, folder: string) => {
+      const root = ensureContextRoot();
+      const result = moveKnowledgeFile(root, slug, folder);
+
+      if (!result.ok) {
+        error(result.message);
+        return;
+      }
+
+      // Keep decay tracking continuous: migrate the knowledge_access key so the
+      // moved file does not lose its access history. Best-effort — a failure
+      // here must never undo a successful on-disk move.
+      try {
+        const state = readSleepState(root);
+        const record = state.knowledge_access[result.oldSlug];
+        if (record) {
+          // Merge rather than skip when the target slug already has a record
+          // (move-back, or the target was touched independently): keep the
+          // higher count and the more recent access date, and ALWAYS drop the
+          // old key so it never lingers pointing at a now-missing file.
+          const existing = state.knowledge_access[result.newSlug];
+          state.knowledge_access[result.newSlug] = existing
+            ? {
+                count: Math.max(existing.count, record.count),
+                last_accessed:
+                  existing.last_accessed > record.last_accessed
+                    ? existing.last_accessed
+                    : record.last_accessed,
+              }
+            : record;
+          delete state.knowledge_access[result.oldSlug];
+          writeSleepState(root, state);
+        }
+      } catch {
+        /* access tracking is best-effort; the move already succeeded */
+      }
+
+      success(`Moved ${result.oldPath} → ${result.newPath}`);
+      if (result.wikilinksRewritten.length > 0) {
+        info(`Rewrote inbound [[wikilinks]] in ${result.wikilinksRewritten.length} file(s).`);
+      } else {
+        info('No inbound [[wikilinks]] needed rewriting.');
       }
     });
 

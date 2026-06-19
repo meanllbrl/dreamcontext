@@ -431,6 +431,8 @@ Task insert sections: `why`, `user_stories`, `acceptance_criteria`, `constraints
 
 **Knowledge**: Index auto-loaded each session. Pin frequently-needed files (`pinned: true` in frontmatter). Read non-pinned on demand. Create with `dreamcontext knowledge create <name>`.
 
+**Grouping into topical subfolders**: `knowledge/**/*.md` is indexed recursively, so a file under `knowledge/<folder>/` stays first-class in the index, recall, snapshot, and dashboard (its slug becomes `<folder>/<name>`). To group a flat file into a topical subfolder, use `dreamcontext knowledge move <slug> <folder>` — it moves the file AND rewrites inbound `[[wikilinks]]` atomically (target token only; `|alias` and `#anchor` preserved). Folder names are free-form — nothing is reserved. Do NOT hand-move files + hand-edit wikilinks; the command owns both.
+
 Standard tags: `architecture`, `api`, `frontend`, `backend`, `database`, `devops`, `security`, `testing`, `design`, `decisions`, `onboarding`, `domain`. Custom tags allowed. For the full resolved project vocabulary (including faceted tags and aliases), run `dreamcontext taxonomy vocab`. The project vocabulary is maintained in `core/taxonomy.json`; scaffold it with `dreamcontext taxonomy init`. Mutate vocabulary via CLI — never hand-edit the JSON: `dreamcontext taxonomy add <facet:value>` for new tags, `dreamcontext taxonomy alias <alias> <canonical>` for merges, `dreamcontext taxonomy resolve <tag>` to check classification. sleep-product runs taxonomy maintenance during Pass C.
 
 **Taxonomy**: Tags drive BM25 recall precision. Prefer canonical faceted tags (`topic:recall`, `domain:database`) over bare duplicates. Run `dreamcontext taxonomy audit` to surface non-canonical or orphan tags.
@@ -606,6 +608,7 @@ All commands prefixed with `dreamcontext`. For reading/searching, use native too
 | `knowledge create <name>` | Create knowledge file |
 | `knowledge index [--tag <tag>]` | Show knowledge index |
 | `knowledge tags` | List standard tags |
+| `knowledge move <slug> <folder>` | Move a knowledge file into a topical subfolder (`knowledge/<folder>/<slug>.md`), rewriting inbound `[[wikilinks]]` atomically. Free-form folders — nothing reserved. Use this instead of hand-moving + hand-editing links |
 | `knowledge touch <slug>` | Record access to knowledge file (decay tracking) |
 | `memory recall <query...> [--top N] [--types ...] [--json\|--plain]` | BM25 recall across knowledge, features, tasks, memory entries |
 | `memory remember <text...> [--title t] [--tasks slugs]` | Capture a one-off knowledge entry mid-session (sleep reconciles later) |
