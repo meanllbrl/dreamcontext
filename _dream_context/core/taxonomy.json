@@ -35,7 +35,9 @@
       "topic:history",
       "topic:schema",
       "topic:excalidraw",
-      "topic:dashboard"
+      "topic:dashboard",
+      "topic:skills",
+      "topic:cli"
     ]
   },
   "bareTags": [
@@ -67,6 +69,8 @@
     "schema": "topic:schema",
     "data-structures": "domain:database",
     "excalidraw": "topic:excalidraw",
-    "dashboard": "topic:dashboard"
+    "dashboard": "topic:dashboard",
+    "skills": "topic:skills",
+    "cli": "topic:cli"
   }
 }

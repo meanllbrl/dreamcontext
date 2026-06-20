@@ -600,20 +600,26 @@ describe('excalidraw-flat-regression', () => {
 // ─── AC8: excalidraw-docs (light presence test) ───────────────────────────────
 
 describe('excalidraw-docs', () => {
-  it('skill/SKILL.md documents folder convention and required frontmatter', () => {
-    const skillContent = readFileSync(
-      '/Users/mehmetnuraydin/projects/dreamcontext/skill/SKILL.md',
+  it('skill surfaces the context-folder convention and documents board rules in the reference', () => {
+    const ROOT = '/Users/mehmetnuraydin/projects/dreamcontext';
+    const skillContent = readFileSync(join(ROOT, 'skill', 'SKILL.md'), 'utf-8');
+    const refContent = readFileSync(
+      join(ROOT, 'skill', 'references', 'knowledge-and-recall.md'),
       'utf-8',
     );
 
-    // Documents the per-title folder convention
-    expect(skillContent).toContain('diagrams/<title>/<title>.excalidraw.md');
-    // Documents do-not-hand-edit
-    expect(skillContent).toContain('do NOT hand-edit');
-    // Documents required name + description
-    expect(skillContent).toContain('REQUIRED frontmatter');
-    // Documents dark siblings excluded from index/recall
-    expect(skillContent).toContain('dark sibling');
+    // The always-loaded SKILL.md surfaces the PROMOTED convention: diagrams live
+    // inside their context folder (not a segregated top-level diagrams/ dump).
+    expect(skillContent).toContain('context folder');
+    expect(skillContent).toContain('INSIDE their context folder');
+
+    // The knowledge-and-recall reference carries the board depth:
+    // context-folder placement, do-not-hand-edit, required frontmatter, dark siblings.
+    expect(refContent).toContain('context folder');
+    expect(refContent).toContain('.excalidraw.md');
+    expect(refContent).toContain('Do NOT hand-edit');
+    expect(refContent).toContain('REQUIRED frontmatter');
+    expect(refContent).toContain('Dark siblings');
   });
 
   it('skill-packs/excalidraw/SKILL.md documents dreamcontext knowledge conventions', () => {

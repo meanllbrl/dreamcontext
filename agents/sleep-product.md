@@ -166,13 +166,13 @@ If the relevant task has `product: X` in frontmatter, the PRD MAY be product-sco
 
 Before curating content, keep the knowledge store's *structure* logical. `knowledge/**/*.md` is indexed recursively (`buildKnowledgeIndex` globs `**/*.md`), so subfolders are fully recall-safe — grouping a file never hides it.
 
-**Diagrams → per-title folders (idempotent, any depth).** Preferred layout is `knowledge/diagrams/<title>/<title>.excalidraw.md` — the board plus its dark-sibling `.board.cjs`/`.json` living together. New boards often land flat (`knowledge/diagrams/<title>.excalidraw.md` next to `<title>.board.cjs`). Fold *canonical* flat boards into per-title folders every cycle:
+**Diagrams → co-located in their context folder (promoted layout).** A canonical board belongs **inside the context folder it documents**, alongside that context's knowledge — `knowledge/<context>/<title>/<title>.excalidraw.md` (the board plus its dark-sibling `.board.cjs`/`.json` in its own `<title>/` wrapper). Diagrams are NOT a segregated top-level dump; they live with the context they illustrate. When you group a context (below) and that context has a board, move the board into the context folder too so the folder tells one story.
 
 ```bash
-dreamcontext migrations apply-diagrams   # idempotent: moves flat canonical boards + same-basename siblings, rewrites inbound [[wikilinks]] atomically; prints "nothing to organize" when already clean
+dreamcontext migrations apply-diagrams   # legacy/structural: folds flat boards UNDER knowledge/diagrams/ into per-title subfolders + rewrites [[wikilinks]] atomically; idempotent, prints "nothing to organize" when clean
 ```
 
-Placement judgment FIRST: only canonical boards (architecture, system flows, roadmaps, durable plans a future session should recall) belong under `knowledge/diagrams/`. Scratch/exploratory/in-progress boards belong in `inbox/` or `workspace/` (dark by location — not indexed) — leave those alone; do NOT pull them into knowledge. Never hand-edit board scene JSON or wikilinks — the command owns both. This catches boards created *after* the one-time `0.7.2/diagrams-folder-convention` migration already recorded in the ledger (which `sleep-migration` will not re-fire for).
+`apply-diagrams` is the **legacy** mechanism for boards still under a top-level `knowledge/diagrams/` tree (it does flat→per-title, not context-grouping). Run it each cycle to keep legacy boards tidy; it's safe and idempotent. For NEW canonical boards, place them in their context folder directly. Placement judgment FIRST: only canonical boards (architecture, flows, roadmaps a future session should recall) go under `knowledge/`. Scratch/exploratory/in-progress boards belong in `inbox/` or `workspace/` (dark by location — not indexed) — leave those alone; do NOT pull them into knowledge. Never hand-edit board scene JSON or wikilinks — the command owns both.
 
 **Knowledge → logical subfolders (grouping; moves are deep-only).** When ≥3 top-level `knowledge/*.md` files form a clear topical cluster a future session would browse together (mirroring the existing `data-structures/` and `products/` subfolders), group them under `knowledge/<group>/`. Moving files + rewriting links is a structural op — gate it exactly like merge-with-delete (B1.5):
 - **light/standard:** do NOT move. **Flag the cluster in your report** (`group candidate: <group>/ ← a.md, b.md, c.md`) for the next deep cycle.
@@ -370,7 +370,7 @@ dreamcontext taxonomy resolve <tag>
 
 ### Organization
 - Diagrams: ran `apply-diagrams` — folded knowledge/diagrams/federation.excalidraw.md (+federation.board.cjs) into diagrams/federation/ (canonical board, was flat). 0 ambiguous.
-- Knowledge grouping: group candidate flagged for deep cycle — `decisions/` ← decision-mem0-vs-bm25-recall.md, decision-link-aware-vs-embedding-recall.md, decision-meta-marketing-skill-adoption.md (4 sibling `decision-*` files browse together). Not moved (standard depth).
+- Knowledge grouping: group candidate flagged for deep cycle — `decisions/` ← decision-mem0-vs-bm25-recall.md, decision-link-aware-vs-embedding-recall.md, decision-meta-marketing-skill-adoption.md (3 sibling `decision-*` files browse together). Not moved (standard depth).
 
 ### Knowledge
 - Created: knowledge/jwt-rotation-policy.md (tags: security, decisions; from sleep-state flag) — sharp boundary, new tag-able topic
@@ -394,10 +394,10 @@ Dropped-but-load-bearing self-check: <none | list any digest/auto-bookmark/resea
 3. **Tick criteria only when verifiable.** Code shipped + tests pass, or user confirmed in session.
 4. **Never set `released_version`.** That's the user's release call.
 5. **Create PRDs for buildable concepts** that don't have one — they will be lost otherwise.
-6. **Don't create knowledge that already fits in memory.** A short technical decision belongs in `2.memory.md` (sleep-state's domain), not its own knowledge file.
+6. **Single source of truth — feature vs knowledge.** A topic lives in exactly ONE home. A **feature** PRD documents what a capability *is* (user stories, acceptance criteria); **knowledge** holds research/decisions/rationale; a short technical decision belongs in `2.memory.md` (sleep-state's domain). NEVER create a knowledge file for something that is a feature, never keep a knowledge copy of content that lives in a feature (or vice-versa), and never have both a feature and a knowledge doc covering the same topic — one is the home, the other may only *reference* it. When in doubt, the feature is the home for product capabilities.
 7. **Knowledge file threshold**: ≥3 paragraphs of content, or material that will be re-read in future sessions.
 8. **Fewest files, sharp boundaries (B2 rubric).** Default to extending an existing file. Fold soft distinctions in — same vertical/brand/topic family, a narrower slice, an increment. Create a new file only for a genuinely separate topic whose own tags sharpen discovery. Not super-files, not fragmentation.
-8a. **Keep the store organized (B0).** Every cycle, fold canonical flat diagram boards into per-title folders (`apply-diagrams`, idempotent, any depth). Group clustered top-level knowledge into logical subfolders only at `deep` depth (flag candidates at light/standard). Subfolders are recall-safe — the index globs `**/*.md`. Folder and tags must tell the same story.
+8a. **Keep the store organized (B0).** NEW boards belong in their context folder (`knowledge/<context>/<title>/`); `apply-diagrams` is reserved for folding legacy flat `knowledge/diagrams/` boards into per-title folders (idempotent, any depth). Group clustered top-level knowledge into logical subfolders only at `deep` depth (flag candidates at light/standard). Subfolders are recall-safe — the index globs `**/*.md`. Folder and tags must tell the same story.
 9. **Use standard tags only (prefer taxonomy vocab).** New tags fragment discovery; always check `dreamcontext taxonomy vocab` before tagging. Add new vocabulary via `taxonomy add` or `taxonomy alias` — never hand-edit `core/taxonomy.json` directly.
 10. **Process all flags from sleep-state** in your report — don't silently drop them.
 11. **No-op cheaply** when signals don't actually warrant work.

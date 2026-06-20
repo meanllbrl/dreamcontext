@@ -1,9 +1,10 @@
 ---
 name: sleep-tasks
 description: >
-  Sleep-cycle specialist that owns task files. Dispatched by dreamcontext-rem-sleep in
-  parallel with other specialists. Reconciles task bodies to current truth, bumps statuses,
-  creates new tasks for untracked work, attaches everything to the active planning version.
+  Sleep-cycle specialist that owns task files. Dispatched by the main agent during the
+  sleep flow, in parallel with other specialists. Reconciles task bodies to current truth,
+  bumps statuses, creates new tasks for untracked work, attaches everything to the active
+  planning version.
 tools: Read, Write, Edit, Bash, Glob, Grep
 model: sonnet
 skills:

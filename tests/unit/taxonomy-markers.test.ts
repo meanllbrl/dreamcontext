@@ -45,11 +45,27 @@ describe('skill/SKILL.md markers', () => {
     expect(content).toContain('Tag before you create.');
   });
 
-  it('has a pointer to core/taxonomy.json in the knowledge section', () => {
+  it('has a pointer to dreamcontext taxonomy vocab command', () => {
+    expect(content).toContain('dreamcontext taxonomy vocab');
+  });
+});
+
+// ── skill/references/knowledge-and-recall.md markers ─────────────────────────
+// The taxonomy depth lives in the knowledge-and-recall reference (progressive
+// disclosure); the always-loaded SKILL.md names the capability + points here.
+
+describe('skill/references/knowledge-and-recall.md markers', () => {
+  const content = readFileSync(
+    join(ROOT, 'skill', 'references', 'knowledge-and-recall.md'),
+    'utf-8',
+  );
+
+  it('has a pointer to core/taxonomy.json', () => {
     expect(content).toContain('core/taxonomy.json');
   });
 
-  it('has a pointer to dreamcontext taxonomy vocab command', () => {
-    expect(content).toContain('dreamcontext taxonomy vocab');
+  it('documents the taxonomy vocab + alias commands', () => {
+    expect(content).toContain('taxonomy vocab');
+    expect(content).toContain('taxonomy alias');
   });
 });

@@ -205,9 +205,13 @@ See `reference/format.md` for the exact `.excalidraw.md` anatomy reverse-enginee
 
 ## Boards as first-class knowledge in dreamcontext
 
-When the project uses dreamcontext, Excalidraw boards belong in `_dream_context/knowledge/diagrams/`.
-They are indexed and recalled just like any knowledge file — but memory extracts ONLY the
-`## Text Elements` section (never the scene JSON).
+When the project uses dreamcontext, an Excalidraw board belongs **inside the context folder it
+documents** — co-located with that context's knowledge, e.g.
+`_dream_context/knowledge/<context>/<title>/<title>.excalidraw.md`. Diagrams are NOT a segregated
+top-level dump; they live with the context they illustrate (`knowledge/**/*.md` is indexed
+recursively, so a board in a context subfolder is fully recalled). Boards are indexed and recalled
+like any knowledge file — but memory extracts ONLY the `## Text Elements` section (never the scene
+JSON).
 
 ### Required frontmatter
 
@@ -225,26 +229,29 @@ excalidraw-plugin: parsed
 
 ### Folder convention (preferred)
 
+A board lives in its own `<title>/` wrapper folder, INSIDE the context it documents:
+
 ```
-_dream_context/knowledge/diagrams/
-├── my-board/
-│   ├── my-board.excalidraw.md   ← generated board (do NOT hand-edit scene JSON)
-│   ├── my-board.board.cjs       ← generator (dark sibling — excluded from index/recall)
-│   └── my-board.json            ← spec / source of truth (dark sibling — excluded)
-├── competitors/                 ← optional category subfolder (groups many boards)
-│   └── acme/
-│       └── acme.excalidraw.md
-└── legacy-flat.excalidraw.md    ← flat layout still works; no forced migration
+_dream_context/knowledge/
+├── recall/                          ← a context folder (its knowledge + its diagram)
+│   ├── recall-engine-v2.md
+│   └── recall/
+│       ├── recall.excalidraw.md     ← generated board (do NOT hand-edit scene JSON)
+│       ├── recall.board.cjs         ← generator (dark sibling — excluded from index/recall)
+│       └── recall.json              ← spec / source of truth (dark sibling — excluded)
+├── system/
+│   └── architecture/
+│       └── architecture.excalidraw.md
+└── diagrams/                        ← LEGACY top-level tree still works (apply-diagrams maintains it)
+    └── legacy-flat.excalidraw.md
 ```
 
-**Category subfolders** are optional and free-form: `diagrams/<category>/<title>/<title>.excalidraw.md`.
-The dashboard Knowledge view renders the whole `diagrams/` subtree as a nested, collapsible folder
-tree (each board shows a sketch icon), so a large diagram set stays navigable instead of collapsing
-into one flat list. A board's own `<title>/` folder is always its innermost folder. Note: a
-`.board.cjs` that `require()`s shared helpers by relative path must use a depth that matches its
-actual location.
+Nesting is free-form, any depth — the dashboard Knowledge view renders the whole `knowledge/` tree
+as a nested, collapsible folder tree (each board shows a sketch icon), so a large diagram set stays
+navigable. A board's own `<title>/` folder is always its innermost folder. Note: a `.board.cjs`
+that `require()`s shared helpers by relative path must use a depth that matches its actual location.
 
-**Dark siblings**: tooling files inside a `diagrams/<title>/` folder are automatically excluded
+**Dark siblings**: tooling files inside a board's `<title>/` folder are automatically excluded
 from the index, recall corpus, snapshot, and dashboard list — generator scripts (`.board.cjs`),
 spec JSON, and frontmatter-less helper `.md` notes. They are tooling — they do not pollute memory.
 
@@ -254,8 +261,9 @@ detailed write-up — e.g. `acme/acme.excalidraw.md` next to `acme/acme.teardown
 teardown recall normally. Only frontmatter-less notes stay dark, so good organization no longer
 costs you recall.
 
-**Flat layout** (`diagrams/<title>.excalidraw.md`) works without any migration. Use the
-per-title folder when you want to keep the board + generator + spec together cleanly.
+**Flat legacy layout** (`diagrams/<title>.excalidraw.md`) still works without migration, but new
+boards belong in their context folder (above); use a per-title `<title>/` folder to keep the
+board + generator + spec together cleanly.
 
 ### Memory contract
 
@@ -270,18 +278,20 @@ per-title folder when you want to keep the board + generator + spec together cle
 
 | Board nature | Location | Indexed? |
 |---|---|---|
-| Canonical / source-of-truth (architecture, system flows, roadmaps, durable plans the agent should recall in future sessions) | `_dream_context/knowledge/diagrams/<title>/` | Yes — indexed, recalled |
+| Canonical / source-of-truth (architecture, system flows, roadmaps, durable plans the agent should recall in future sessions) | inside its `knowledge/<context>/<title>/` folder | Yes — indexed, recalled |
 | Temporary / scratch / exploratory / in-progress | `inbox/` or `workspace/` (dark by location) | No — not indexed, will not pollute recall |
 
-**Decision rule**: "Will a future session need to know this? → `knowledge/diagrams/`. Throwaway/working? → `inbox/` or `workspace/`."
+**Decision rule**: "Will a future session need to know this? → its context folder under `knowledge/`. Throwaway/working? → `inbox/` or `workspace/`."
 
-Promote a board from inbox/workspace to `knowledge/diagrams/` only once it becomes canonical.
+Promote a board from inbox/workspace into its context folder only once it becomes canonical.
 
-### Migration
+### Legacy `knowledge/diagrams/` + migration
 
-Flat boards in `knowledge/diagrams/` do NOT auto-migrate.
+Older projects kept all boards under a single top-level `knowledge/diagrams/` tree. That still
+indexes and renders, and `sleep-product` keeps the store organized over time — but new boards
+should go in their **context folder** (above), not the segregated dump.
 
-- `dreamcontext migrations pending` — see pending migration task instructions (including 0.7.2 diagrams-folder-convention).
-- `dreamcontext migrations apply-diagrams` — opt-in: moves flat `knowledge/diagrams/*.excalidraw.md` boards into per-title folders AND rewrites all inbound [[wikilinks]] atomically. Safe to re-run. Do NOT hand-edit wikilinks manually.
+- `dreamcontext migrations pending` — see pending migration task instructions (incl. 0.7.2 diagrams-folder-convention).
+- `dreamcontext migrations apply-diagrams` — structural/legacy: folds flat `knowledge/diagrams/*.excalidraw.md` boards into per-title folders AND rewrites inbound [[wikilinks]] atomically. Safe to re-run. Do NOT hand-edit wikilinks manually.
 
 Only organize boards you confirm are canonical knowledge. Temp/scratch boards stay in inbox/workspace.
