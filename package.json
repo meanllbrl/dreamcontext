@@ -1,6 +1,6 @@
 {
   "name": "dreamcontext",
-  "version": "0.8.7",
+  "version": "0.8.8",
   "description": "dreamcontext — the persistent brain for your AI agents. Remembers what you built, knows how your project works.",
   "type": "module",
   "bin": {
