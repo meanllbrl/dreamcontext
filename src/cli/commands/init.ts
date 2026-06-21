@@ -351,7 +351,7 @@ export function registerInitCommand(program: Command): void {
       // project half-installed: the agent never loads this context. Offer to finish
       // the install right here so the user isn't stranded. Suppressed when init is
       // run as a child of `setup` (which installs afterwards itself) or when the
-      // integration is already present (e.g. the dreamcontext-initializer agent runs
+      // integration is already present (e.g. the `initializer` skill runs
       // `init` from inside an existing .claude/, only the context dir was missing).
       const viaSetup = process.env[SETUP_INTERNAL_ENV] === '1';
       // `every`, not `some`: the integration counts as present only when ALL

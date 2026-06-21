@@ -300,8 +300,10 @@ Status: `todo → in_progress → in_review → completed`. Sections: `why`, `us
 ## Sub-Agents
 
 - **`dreamcontext-explore`** — context-accelerated codebase exploration. Use for ALL exploration (default Explore is blocked). Uses the SubagentStart briefing to narrow searches.
-- **`dreamcontext-initializer`** — dispatch when a project has no `_dream_context/`: *"This project needs an _dream_context/ directory. Scan the codebase and set it up."*
+- **`initializer` skill** — the **interactive, sub-agent-driven brain bootstrap**. Invoke it via the `Skill` tool when this project has **no `_dream_context/`** or a **sparse** one (empty `knowledge/`, zero features, untouched template stubs). It orchestrates scout → confirm-hierarchy → progressive ingest → verify, migrating whatever material the user has into the proper knowledge/feature/task hierarchy. It drives its own sub-agents (`initializer-scout`, `initializer-ingestor`, `initializer-verifier`) and handles codebase-only repos too (a light scout + ingest pass) — there is no separate bootstrap agent.
 - **Sleep specialists** (`sleep-tasks`, `sleep-state`, `sleep-product`, `sleep-migration`) — dispatched by the main agent during the sleep flow only.
+
+**First-run self-recognition (do not skip):** if you notice the brain is missing or sparse, **do not silently scaffold and move on, and do not wait to be asked** — proactively offer: *"I don't have a brain for this project yet. Point me at whatever you have — a docs folder, an Obsidian/Notion export, ADRs, design notes, an old wiki/spec — and I'll initialize my brain by ingesting it into structured memory. Or I can bootstrap from just the codebase."* Then invoke the `initializer` skill.
 
 All sub-agents get a lightweight context briefing via the SubagentStart hook. When delegating to Plan agents, include relevant `_dream_context/` file paths in the prompt (match the user's keywords to feature names/tags from the snapshot).
 

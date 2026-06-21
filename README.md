@@ -211,8 +211,12 @@ your-project/
 ├── .claude/
 │   ├── skills/dreamcontext/
 │   │   └── SKILL.md            # Teaches the agent the system
+│   ├── skills/initializer/
+│   │   └── SKILL.md            # Interactive brain bootstrap (drives the initializer-* agents)
 │   ├── agents/
-│   │   ├── dreamcontext-initializer.md
+│   │   ├── initializer-scout.md     # bootstrap: intake → ingestion manifest
+│   │   ├── initializer-ingestor.md  # bootstrap: fan-out write into the hierarchy
+│   │   ├── initializer-verifier.md  # bootstrap: PASS/FAIL gate
 │   │   ├── dreamcontext-explore.md
 │   │   ├── sleep-tasks.md       # RemSleep specialists —
 │   │   ├── sleep-state.md       #   the agent fans out to

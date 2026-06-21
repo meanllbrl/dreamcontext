@@ -9,6 +9,7 @@
   "files": [
     "dist",
     "skill",
+    "skill-initializer",
     "skill-packs",
     "agents",
     "README.md",

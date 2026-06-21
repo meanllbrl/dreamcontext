@@ -16,9 +16,10 @@ Bana **interaktif** rehberlik et:
 2. **Yeni proje** ise: proje adını ve üst dizini sor (varsayılan `~/projects`), klasörü oluştur.
    **Var olan klasör** ise: tam klasör yolunu sor.
 3. O klasörde `dreamcontext setup` çalıştır (init + skill + instructions; `_dream_context/` oluşur).
-4. Ardından **dreamcontext-initializer** akışını interaktif yürüt — kodu/araçları/tech-stack'i
-   tarayıp bana sorular sorarak `_dream_context/`'i zengin doldur (soul, user, memory, tech_stack,
-   ilk task/knowledge). Boş bir iskelet bırakma.
+4. Ardından **`initializer` skill'ini** (`/initializer`) interaktif yürüt — elimde döküman/
+   wiki/export varsa onları sor ve ingest et; yoksa kodu/araçları/tech-stack'i tarayıp bana
+   sorular sorarak `_dream_context/`'i zengin doldur (soul, user, memory, tech_stack, ilk
+   task/knowledge). Boş bir iskelet bırakma.
 5. `dreamcontext vaults add "<ad>" "<MUTLAK-yol>"` ile vault olarak kaydet, `dreamcontext vaults list`
    ile doğrula.
 6. Bana söyle: dreamcontext-beta launcher'ında görünecek (uygulama açıksa launcher penceresini

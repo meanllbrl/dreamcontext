@@ -81,6 +81,28 @@ describe('platform-aware install flow (integration)', () => {
     expect(existsSync(join(tmpDir, '.claude', 'skills', 'dreamcontext', 'SKILL.md'))).toBe(false);
   });
 
+  it('install-skill installs the initializer core skill + 3 sub-agents (claude)', () => {
+    run('init --yes --name "Test" --description "d" --stack "Node" --priority "p"', tmpDir);
+    run('install-skill --platforms claude', tmpDir);
+
+    // The interactive bootstrap orchestrator ships as a core skill alongside dreamcontext.
+    expect(existsSync(join(tmpDir, '.claude', 'skills', 'initializer', 'SKILL.md'))).toBe(true);
+    const skill = readFileSync(join(tmpDir, '.claude', 'skills', 'initializer', 'SKILL.md'), 'utf-8');
+    expect(skill).toContain('name: initializer');
+
+    // Its 3 worker sub-agents install via the core agents/ glob.
+    for (const a of ['initializer-scout', 'initializer-ingestor', 'initializer-verifier']) {
+      expect(existsSync(join(tmpDir, '.claude', 'agents', `${a}.md`))).toBe(true);
+    }
+  });
+
+  it('install-skill installs the initializer core skill for codex too', () => {
+    run('init --yes --name "Test" --description "d" --stack "Node" --priority "p"', tmpDir);
+    run('install-skill --platforms codex', tmpDir);
+    expect(existsSync(join(tmpDir, '.agents', 'skills', 'initializer', 'SKILL.md'))).toBe(true);
+    expect(existsSync(join(tmpDir, '.codex', 'agents', 'initializer-scout.toml'))).toBe(true);
+  });
+
   it('install-instructions can install both CLAUDE.md and AGENTS.md in one command', () => {
     run('init --yes --name "Test" --description "d" --stack "Node" --priority "p"', tmpDir);
     run('install-instructions --platforms claude,codex --mode append', tmpDir);

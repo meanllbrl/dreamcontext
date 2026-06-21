@@ -800,6 +800,23 @@ export async function installCoreForPlatform(
     }
   }
 
+  // Copy the `initializer` core skill (the interactive, sub-agent-driven brain
+  // bootstrap orchestrator). It is foundational, not an optional pack: every
+  // project that lacks/under-populates a brain needs it, and the dreamcontext
+  // core skill directs the agent to invoke it. Shipped at repo root in
+  // `skill-initializer/` (package.json `files`), mirroring how the dreamcontext
+  // skill ships from `skill/`. Recorded 'core' so `update` refreshes it.
+  // Non-fatal if absent (older/partial packages still install the rest).
+  const initSkillSource = findPackageFile('skill-initializer', 'SKILL.md');
+  if (initSkillSource) {
+    const initDestDir = join(skillRoot, 'initializer');
+    mkdirSync(initDestDir, { recursive: true });
+    writeFileSync(join(initDestDir, 'SKILL.md'), readFileSync(initSkillSource, 'utf-8'), 'utf-8');
+    const initSkillRel = `${skillRootRel}/initializer/SKILL.md`;
+    recordIfManifest(manifest, initSkillRel, 'core');
+    installed.push(platformPrefixed(platform, initSkillRel));
+  }
+
   const agentsSourceDir = findPackageDir('agents');
   if (agentsSourceDir) {
     const agentFiles = readdirSync(agentsSourceDir).filter((f) => f.endsWith('.md'));
