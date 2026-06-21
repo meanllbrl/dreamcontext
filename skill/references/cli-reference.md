@@ -21,10 +21,12 @@ Every command and flag, grouped. All commands are prefixed with `dreamcontext`. 
 | `config native-memory enable\|disable` | Toggle Claude Code's native auto-memory (disabled by default so dreamcontext owns memory). |
 | `config shareable on\|off` | Toggle whether peer vaults may recall this project (default off/private). |
 | `config people [names...]` | Set the people roster; syncs the `## People` block in `1.user.md`. `--clear` for single-person. |
-| `config task-backend local\|clickup` | **[Advanced]** Switch the task backend (see [integrations.md](integrations.md)). |
+| `config task-backend local\|clickup\|github` | **[Advanced]** Switch the task backend — one cloud sync at a time (see [integrations.md](integrations.md)). |
 | `config clickup-token [token]` | Store a ClickUp API key in the gitignored secrets file. `--user <name>` to scope it. |
 | `config clickup-list <teamId> <spaceId> <listId>` | Set the ClickUp sync target. `--migrate` / `--keep` when changing lists. |
 | `config clickup-member <person> <memberId>` | Map a roster person to a ClickUp member id. `--token-env <ENV>`. |
+| `config github-token [token]` | Store a GitHub token in the gitignored secrets file (also reads `GITHUB_TOKEN`/`GH_TOKEN`). `--user <name>` to scope it. |
+| `config github-repo <owner> <repo>` | Set the GitHub sync target (`owner`/`repo`). |
 
 ---
 

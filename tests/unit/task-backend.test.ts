@@ -3,9 +3,10 @@ import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync, realpathSyn
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { getTaskBackend, LocalTaskBackend, ClickUpTaskBackend } from '../../src/lib/task-backend/index.js';
+import { getTaskBackend, LocalTaskBackend, ClickUpTaskBackend, GitHubTaskBackend } from '../../src/lib/task-backend/index.js';
 import { ApiAdapter } from '../../src/lib/task-backend/api-adapter.js';
 import { makeFakeClickUp } from './clickup-fake.js';
+import { makeFakeGitHub } from './github-fake.js';
 import { readSetupConfig, updateSetupConfig, type SetupConfig } from '../../src/lib/setup-config.js';
 import { writeClickUpToken, resolveClickUpToken, maskToken } from '../../src/lib/task-backend/secrets.js';
 import { clickupMemberMap, resolvePeople } from '../../src/lib/task-backend/identity.js';
@@ -360,6 +361,33 @@ describe('task backend', () => {
     };
     return {
       backend: new ClickUpTaskBackend(contextRoot, config, { adapter, now, sleep }),
+      cleanup: () => rmSync(projectRoot, { recursive: true, force: true }),
+    };
+  });
+
+  // THE SAME conformance suite, against the GitHub Issues backend with mocked
+  // HTTP — no special-casing: the contract is identical to local + clickup.
+  describeTaskBackendConformance('github (mocked HTTP transport)', async () => {
+    const { contextRoot, projectRoot } = makeTmpProject();
+    const fake = makeFakeGitHub();
+    let clock = 1000;
+    const now = () => (clock += 7);
+    const sleep = async () => { clock += 1; };
+    const adapter = new ApiAdapter({
+      baseUrl: 'https://api.github.com',
+      authHeaders: () => ({ Authorization: 'Bearer ghp_test' }),
+      fetchImpl: fake.fetchImpl,
+      now,
+      sleep,
+    });
+    const config: SetupConfig = {
+      ...BASE_CONFIG,
+      taskBackend: 'github',
+      cloudTaskManagement: true,
+      github: { owner: 'meanllbrl', repo: 'dreamcontext', changelogTarget: 'comments' },
+    };
+    return {
+      backend: new GitHubTaskBackend(contextRoot, config, { adapter, now, sleep }),
       cleanup: () => rmSync(projectRoot, { recursive: true, force: true }),
     };
   });

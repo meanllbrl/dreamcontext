@@ -25,6 +25,12 @@ interface SecretsFile {
     /** Per-person tokens keyed by person slug (identity layer). */
     users?: Record<string, string>;
   };
+  github?: {
+    /** Default token (single-user projects). */
+    token?: string;
+    /** Per-person tokens keyed by person slug (identity layer). */
+    users?: Record<string, string>;
+  };
 }
 
 function secretsPath(projectRoot: string): string {
@@ -82,6 +88,47 @@ export function writeClickUpToken(projectRoot: string, token: string, user?: str
   try { chmodSync(path, 0o600); } catch { /* best-effort on exotic filesystems */ }
 }
 
+/**
+ * Store a GitHub token. `user` scopes the token to a person slug (per-user keys
+ * for the identity layer); omitted ⇒ the project default token. Shares the same
+ * `.secrets.json` as ClickUp under a `github` block — same gitignore-first
+ * abort guard, same never-logged invariant.
+ *
+ * Throws (writing NOTHING) when the .gitignore entry cannot be ensured.
+ */
+export function writeGitHubToken(projectRoot: string, token: string, user?: string): void {
+  if (!token || !token.trim()) {
+    throw new Error('Token must be a non-empty string.');
+  }
+
+  // ORDERING GUARANTEE: gitignore first; abort on failure.
+  try {
+    ensureGitignoreEntries(projectRoot, [SECRETS_GITIGNORE_ENTRY], {
+      comment: 'dreamcontext secrets (never commit)',
+    });
+  } catch (err) {
+    throw new Error(
+      `Refusing to write the secrets file: .gitignore could not be updated (${(err as Error).message}). ` +
+      'The API key must never be committable, even transiently.',
+    );
+  }
+
+  const path = secretsPath(projectRoot);
+  mkdirSync(dirname(path), { recursive: true });
+
+  const secrets = readSecretsFile(projectRoot);
+  secrets.github = secrets.github ?? {};
+  if (user && user.trim()) {
+    secrets.github.users = { ...(secrets.github.users ?? {}), [user.trim()]: token.trim() };
+  } else {
+    secrets.github.token = token.trim();
+  }
+
+  writeFileSync(path, JSON.stringify(secrets, null, 2) + '\n', { encoding: 'utf-8', mode: 0o600 });
+  // mode in writeFileSync only applies on create — enforce on rewrite too.
+  try { chmodSync(path, 0o600); } catch { /* best-effort on exotic filesystems */ }
+}
+
 export interface ResolvedToken {
   token: string;
   source: 'env' | 'secrets';
@@ -115,6 +162,36 @@ export function resolveClickUpToken(
     if (v && v.trim()) return { token: v.trim(), source: 'secrets', via: `users.${opts.user}` };
   }
   const v = secrets.clickup?.token;
+  if (v && v.trim()) return { token: v.trim(), source: 'secrets', via: 'token' };
+  return null;
+}
+
+/**
+ * Resolve a GitHub token. Order (mirrors ClickUp): env → secrets file.
+ *  1. `opts.envVar` (per-person `tokenEnv` from the identity layer)
+ *  2. `GITHUB_TOKEN` / `GH_TOKEN`
+ *  3. secrets file per-user slot (`opts.user`)
+ *  4. secrets file default slot
+ */
+export function resolveGitHubToken(
+  projectRoot: string,
+  opts?: { envVar?: string; user?: string },
+): ResolvedToken | null {
+  if (opts?.envVar) {
+    const v = process.env[opts.envVar];
+    if (v && v.trim()) return { token: v.trim(), source: 'env', via: opts.envVar };
+  }
+  for (const envVar of ['GITHUB_TOKEN', 'GH_TOKEN']) {
+    const v = process.env[envVar];
+    if (v && v.trim()) return { token: v.trim(), source: 'env', via: envVar };
+  }
+
+  const secrets = readSecretsFile(projectRoot);
+  if (opts?.user) {
+    const v = secrets.github?.users?.[opts.user];
+    if (v && v.trim()) return { token: v.trim(), source: 'secrets', via: `users.${opts.user}` };
+  }
+  const v = secrets.github?.token;
   if (v && v.trim()) return { token: v.trim(), source: 'secrets', via: 'token' };
   return null;
 }

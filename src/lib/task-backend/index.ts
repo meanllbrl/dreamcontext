@@ -4,12 +4,14 @@ import { ensureContextRoot } from '../context-path.js';
 import { readSetupConfig, type SetupConfig } from '../setup-config.js';
 import { LocalTaskBackend } from './local.js';
 import { createClickUpBackend, type ClickUpBackendDeps } from './clickup.js';
+import { createGitHubBackend, type GitHubBackendDeps } from './github.js';
 import { SyncLedger } from './sync-state.js';
 import type { TaskBackend, TaskSyncStatus } from './types.js';
 
 export * from './types.js';
 export { LocalTaskBackend, isSafeTaskSlug, readTaskFile } from './local.js';
 export { ClickUpTaskBackend, createClickUpBackend, discoverClickUpLists, type DiscoveredList } from './clickup.js';
+export { GitHubTaskBackend, createGitHubBackend, discoverGitHubRepos, type DiscoveredRepo, type GitHubBackendDeps } from './github.js';
 export { SyncLedger } from './sync-state.js';
 export {
   installTaskSyncHooks,
@@ -29,12 +31,15 @@ export { ensureRemoteBackendGitignore, REMOTE_BACKEND_GITIGNORE_ENTRIES } from '
  *   when they already loaded it); `undefined` means "read it from disk".
  *
  * `taskBackend` absent or `"local"` → the file-based backend (the default and
- * the pre-#11 behavior). `"clickup"` → the ClickUp remote backend (M3).
+ * the pre-#11 behavior). `"clickup"` → the ClickUp remote backend. `"github"`
+ * → the GitHub Issues remote backend (same local-mirror pattern). The `deps`
+ * shape is shared by the remote backends (adapter/fetchImpl/now/sleep), so the
+ * union type stays minimal and non-breaking.
  */
 export function getTaskBackend(
   contextRoot?: string,
   config?: SetupConfig | null,
-  deps?: ClickUpBackendDeps,
+  deps?: ClickUpBackendDeps & GitHubBackendDeps,
 ): TaskBackend {
   const root = contextRoot ?? ensureContextRoot();
   const cfg = config !== undefined ? config : readSetupConfig(dirname(root));
@@ -43,6 +48,10 @@ export function getTaskBackend(
     // Mirror reads/writes work offline; only sync() needs token/list (and
     // reports rather than throws when they're missing).
     return createClickUpBackend(root, cfg ?? null, deps);
+  }
+  if (cfg?.taskBackend === 'github') {
+    // Same offline-first mirror pattern; only sync() needs token/repo.
+    return createGitHubBackend(root, cfg ?? null, deps);
   }
   return new LocalTaskBackend(join(root, 'state'));
 }

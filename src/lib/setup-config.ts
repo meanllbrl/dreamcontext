@@ -26,9 +26,10 @@ export interface SetupConfig {
   /**
    * Where tasks live (issue #11). Absent ⇒ "local" — existing projects with no
    * field behave exactly as before. "clickup" routes task verbs through the
-   * ClickUp remote backend with a gitignored local mirror.
+   * ClickUp remote backend with a gitignored local mirror. "github" routes them
+   * through the GitHub Issues remote backend (same local-mirror pattern).
    */
-  taskBackend?: 'local' | 'clickup';
+  taskBackend?: 'local' | 'clickup' | 'github';
   /**
    * The Advanced Config switch behind the setup prompt. true ⇒ a remote task
    * backend is in use (taskBackend says which one).
@@ -36,6 +37,8 @@ export interface SetupConfig {
   cloudTaskManagement?: boolean;
   /** Remote coordinates + options for the ClickUp backend (issue #11). */
   clickup?: ClickUpConfig;
+  /** Remote coordinates + options for the GitHub Issues backend. */
+  github?: GitHubConfig;
   /**
    * Per-person remote identity, keyed by the person slug from `people`.
    * Additive: people without an entry simply have no remote identity yet.
@@ -58,6 +61,15 @@ export interface ClickUpConfig {
   changelogTarget?: 'comments';
 }
 
+export interface GitHubConfig {
+  /** Repo owner (user or org login). The pickable "container" is `owner/repo`. */
+  owner?: string;
+  /** Repo name. */
+  repo?: string;
+  /** Where changelog entries land remotely. Comments are the natural GitHub fit. */
+  changelogTarget?: 'comments';
+}
+
 export interface PersonIdentity {
   /** Optional role label (seedable from knowledge/team_owners.md). */
   role?: string;
@@ -74,6 +86,16 @@ function sanitizeClickUp(raw: unknown): ClickUpConfig | undefined {
   if (typeof o.teamId === 'string') out.teamId = o.teamId;
   if (typeof o.spaceId === 'string') out.spaceId = o.spaceId;
   if (typeof o.listId === 'string') out.listId = o.listId;
+  if (o.changelogTarget === 'comments') out.changelogTarget = o.changelogTarget;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function sanitizeGitHub(raw: unknown): GitHubConfig | undefined {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const o = raw as Record<string, unknown>;
+  const out: GitHubConfig = {};
+  if (typeof o.owner === 'string') out.owner = o.owner;
+  if (typeof o.repo === 'string') out.repo = o.repo;
   if (o.changelogTarget === 'comments') out.changelogTarget = o.changelogTarget;
   return Object.keys(out).length > 0 ? out : undefined;
 }
@@ -119,12 +141,13 @@ export function readSetupConfig(projectRoot: string): SetupConfig | null {
         typeof parsed.disableNativeMemory === 'boolean' ? parsed.disableNativeMemory : true,
       // Absent / unknown value ⇒ undefined (treated as "local" everywhere).
       taskBackend:
-        parsed.taskBackend === 'local' || parsed.taskBackend === 'clickup'
+        parsed.taskBackend === 'local' || parsed.taskBackend === 'clickup' || parsed.taskBackend === 'github'
           ? parsed.taskBackend
           : undefined,
       cloudTaskManagement:
         typeof parsed.cloudTaskManagement === 'boolean' ? parsed.cloudTaskManagement : undefined,
       clickup: sanitizeClickUp(parsed.clickup),
+      github: sanitizeGitHub(parsed.github),
       peopleIdentity: sanitizePeopleIdentity(parsed.peopleIdentity),
       // Federation read gate (issue #25). Absent / non-boolean ⇒ undefined,
       // which `isShareable` treats as private (the default-false invariant).
@@ -166,6 +189,7 @@ export function updateSetupConfig(
     taskBackend: patch.taskBackend ?? existing.taskBackend,
     cloudTaskManagement: patch.cloudTaskManagement ?? existing.cloudTaskManagement,
     clickup: patch.clickup ?? existing.clickup,
+    github: patch.github ?? existing.github,
     peopleIdentity: patch.peopleIdentity ?? existing.peopleIdentity,
     shareable: patch.shareable ?? existing.shareable,
   };

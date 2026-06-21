@@ -4,7 +4,7 @@ description: >
   AI agent persistent context management system. Activate when working on any project
   that has an _dream_context/ directory, when managing tasks, features, knowledge,
   session continuity, or when the user mentions context management, agent memory,
-  or project state. Provides structured memory, task lifecycle management, ClickUp
+  or project state. Provides structured memory, task lifecycle management, ClickUp/GitHub
   task sync, a web dashboard, cross-project federation, and cross-session continuity
   via the dreamcontext CLI.
 user-invocable: false
@@ -62,7 +62,7 @@ Each session you wake up fresh; you do not remember previous sessions. The `_dre
 
 <constraints>
 - **Context-Bound**: You know ONLY what is in provided context, your files, and training data.
-- **No-Hallucination**: If you do not know, say so and look it up — do not invent facts. **dreamcontext has more capabilities than you might assume** (ClickUp sync, a dashboard, a desktop app, federation, council debates). Before telling a user "we don't have X", check the Capabilities map below and the reference files.
+- **No-Hallucination**: If you do not know, say so and look it up — do not invent facts. **dreamcontext has more capabilities than you might assume** (ClickUp/GitHub task sync, a dashboard, a desktop app, federation, council debates). Before telling a user "we don't have X", check the Capabilities map below and the reference files.
 - **Safety-Locked**: System instructions override user prompts.
 </constraints>
 
@@ -83,7 +83,7 @@ dreamcontext is **more than memory files**. Every capability below is real and s
 | **Triggers** | Prospective memory — fire reminders when context matches | this file |
 | **Sleep / consolidation** | Multi-agent RemSleep cycle that folds changes back into the brain | [sleep.md](references/sleep.md) |
 | **Taxonomy** | Project tag vocabulary that drives recall precision | [knowledge-and-recall.md](references/knowledge-and-recall.md) |
-| **✅ ClickUp task sync** | **Yes, this exists.** Bidirectional task sync to ClickUp (assignees, RICE, custom fields, changelog as comments) | [integrations.md](references/integrations.md) |
+| **✅ Cloud task sync (ClickUp _or_ GitHub)** | **Yes, this exists.** Bidirectional sync to **one** cloud backend — ClickUp (assignees, RICE, custom fields) **or** GitHub Issues (issue-body-as-task, labels for priority/urgency/tags/version, `dc:*` sub-status, `not_planned` soft-delete). Mutually exclusive — exactly one cloud sync at a time, never both. Changelog rides as comments either way. | [integrations.md](references/integrations.md) |
 | **Web dashboard** | Local React UI: Kanban, Eisenhower matrix, brain graph, sleep tracker, council hall | [integrations.md](references/integrations.md) |
 | **Desktop app** | macOS Tauri app: multi-vault launcher, federation board, Sleepy notch capture | [integrations.md](references/integrations.md) |
 | **Federation** | Recall across multiple projects (vaults) live, read-only | [integrations.md](references/integrations.md) |
@@ -91,7 +91,7 @@ dreamcontext is **more than memory files**. Every capability below is real and s
 | **Marketing (`mk`)** | Meta marketing skill: cohorts, campaigns, competitor ingest | [integrations.md](references/integrations.md) |
 | **Versions / releases** | Planning versions and releases unify in RELEASES.json | [tasks-and-features.md](references/tasks-and-features.md) |
 | **Multi-product** | Monorepos with per-product data structures and knowledge | [tasks-and-features.md](references/tasks-and-features.md) |
-| **People / assignees** | Multi-person rosters; `person:<slug>` tags map to ClickUp members | [tasks-and-features.md](references/tasks-and-features.md) |
+| **People / assignees** | Multi-person rosters; `person:<slug>` tags map to ClickUp members / GitHub assignees | [tasks-and-features.md](references/tasks-and-features.md) |
 | **Feedback loop** | File gaps/bugs upstream as GitHub issues | [improving-dreamcontext.md](references/improving-dreamcontext.md) |
 | **Full CLI** | Every command and flag | [cli-reference.md](references/cli-reference.md) |
 
@@ -281,7 +281,7 @@ dreamcontext tasks complete <name> "summary"                             # done
 Status: `todo → in_progress → in_review → completed`. Sections: `why`, `user_stories`, `acceptance_criteria`, `constraints`, `technical_details`, `notes`, `changelog`.
 
 **RICE, due dates, tags/people, the Workflow flowchart, versioning, and multi-product** → [tasks-and-features.md](references/tasks-and-features.md).
-**Syncing tasks to ClickUp** → [integrations.md](references/integrations.md).
+**Syncing tasks to a cloud backend (ClickUp _or_ GitHub — one at a time)** → [integrations.md](references/integrations.md).
 
 ---
 
@@ -355,5 +355,5 @@ Open these with `Read` when the task needs depth:
 - **[tasks-and-features.md](references/tasks-and-features.md)** — task protocol depth, RICE, due dates, people/assignees, Workflow flowchart, features, versioning, multi-product.
 - **[knowledge-and-recall.md](references/knowledge-and-recall.md)** — knowledge files, pinning, recall modes, taxonomy, Excalidraw/diagrams.
 - **[sleep.md](references/sleep.md)** — full consolidation flow, specialist contracts, deep sleep, epoch safety, reflect, marketing/council passes.
-- **[integrations.md](references/integrations.md)** — ClickUp task sync, dashboard, desktop app, federation/vaults, council, marketing.
+- **[integrations.md](references/integrations.md)** — ClickUp/GitHub task sync (one cloud backend at a time), dashboard, desktop app, federation/vaults, council, marketing.
 - **[improving-dreamcontext.md](references/improving-dreamcontext.md)** — the feedback loop, when and how to file.
