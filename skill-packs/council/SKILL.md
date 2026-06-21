@@ -119,8 +119,9 @@ the user. Ask:
 
 - **y** → `dreamcontext council promote <debate_id>` (writes
   `_dream_context/knowledge/decision-<slug>.md`)
-- **n / later** → leave as-is. The rem-sleep agent will pick it up during the next
-  consolidation cycle and decide based on your engagement signals.
+- **n / later** → leave as-is. The next sleep consolidation will pick it up (the
+  main agent runs `dreamcontext council list --unpromoted` during the sleep flow)
+  and decide based on your engagement signals.
 
 ## Hard rules
 

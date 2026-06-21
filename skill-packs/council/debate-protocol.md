@@ -23,7 +23,7 @@ and idempotency notes.
 | `council synthesize <id>` | Prepare synthesis | Prints manifest. Status → `synthesizing`. |
 | `council complete <id>` | Finalize | Requires `final-report.md` to exist. |
 | `council promote <id>` | Copy to knowledge/ | Trims to Verdict + Why + Minority views + Open risks. Skips What-was-debated + Appendix. |
-| `council list [--unpromoted\|--all]` | Triage | `--unpromoted` used by rem-sleep agent. |
+| `council list [--unpromoted\|--all]` | Triage | `--unpromoted` used during the sleep consolidation (council-promote check). |
 | `council show <id>` | Inspection | Prints debate metadata + round-log. |
 
 ### Sub-agent commands

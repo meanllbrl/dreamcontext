@@ -779,6 +779,27 @@ export async function installCoreForPlatform(
   recordIfManifest(manifest, coreSkillRel, 'core');
   installed.push(platformPrefixed(platform, coreSkillRel));
 
+  // Copy the skill's references/ directory (progressive-disclosure docs the
+  // agent Reads on demand). The skill is a folder, not a lone SKILL.md — the
+  // references carry the full CLI surface, ClickUp/dashboard/federation
+  // integrations, and the deep sleep/task/knowledge protocols. Without these,
+  // the always-loaded core only NAMES capabilities; the references are where
+  // their depth lives. Each is recorded as 'core' so `update` refreshes (and
+  // never prunes) them alongside SKILL.md.
+  const refsSourceDir = join(dirname(skillSource), 'references');
+  if (existsSync(refsSourceDir)) {
+    const refsDestDir = join(skillDestDir, 'references');
+    cpSync(refsSourceDir, refsDestDir, { recursive: true });
+    const refFiles = readdirSync(refsSourceDir).filter((f) => f.endsWith('.md'));
+    for (const rf of refFiles) {
+      const refRel = `${skillRootRel}/dreamcontext/references/${rf}`;
+      recordIfManifest(manifest, refRel, 'core');
+    }
+    if (refFiles.length > 0) {
+      installed.push(platformPrefixed(platform, `${skillRootRel}/dreamcontext/references/ ${chalk.dim(`(${refFiles.length} reference${refFiles.length === 1 ? '' : 's'})`)}`));
+    }
+  }
+
   const agentsSourceDir = findPackageDir('agents');
   if (agentsSourceDir) {
     const agentFiles = readdirSync(agentsSourceDir).filter((f) => f.endsWith('.md'));

@@ -46,13 +46,21 @@ describe('runUpgrade --check', () => {
     }
   });
 
-  it('calls the installer when check is false (default install mode)', () => {
+  it('calls the installer when check is false (default install mode)', async () => {
     const installer = vi.fn();
     const latestVersion = () => '9.9.9';
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     try {
-      runUpgrade(false, { installer, latestVersion });
+      // runUpgrade is async; await it and inject no-op vault/app deps so the
+      // cascade tail (app + per-project refresh) is deterministic and never
+      // touches live machine state during the test.
+      await runUpgrade(false, {
+        installer,
+        latestVersion,
+        appInstalledCheck: () => false,
+        vaultLister: () => [],
+      });
       expect(installer).toHaveBeenCalledOnce();
       expect(installer).toHaveBeenCalledWith(['install', '-g', 'dreamcontext@latest']);
     } finally {
@@ -95,5 +103,133 @@ describe('runUpgrade --check', () => {
     } finally {
       consoleSpy.mockRestore();
     }
+  });
+});
+
+describe('runUpgrade — one command refreshes app + every project', () => {
+  const installer = () => {};
+  const silence = () => vi.spyOn(console, 'log').mockImplementation(() => {});
+
+  it('with --yes: updates the desktop app (if installed) then every registered project, in order', async () => {
+    const spy = silence();
+    const order: string[] = [];
+    try {
+      await runUpgrade(false, {
+        installer,
+        yes: true,
+        appInstalledCheck: () => true,
+        appUpdater: () => { order.push('app'); return { ok: true }; },
+        vaultLister: () => [
+          { name: 'alpha', path: '/tmp/alpha' },
+          { name: 'beta', path: '/tmp/beta' },
+        ],
+        projectUpdater: (v) => { order.push(v.name); return { vault: v, ok: true }; },
+      });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(order).toEqual(['app', 'alpha', 'beta']);
+  });
+
+  it('does not touch the app updater when the app is not installed', async () => {
+    const spy = silence();
+    let appCalled = false;
+    try {
+      await runUpgrade(false, {
+        installer,
+        yes: true,
+        appInstalledCheck: () => false,
+        appUpdater: () => { appCalled = true; return { ok: true }; },
+        vaultLister: () => [],
+      });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(appCalled).toBe(false);
+  });
+
+  it('non-interactive without --yes refreshes nothing (hint only, no spawns)', async () => {
+    const spy = silence();
+    let projCalled = false;
+    let appCalled = false;
+    try {
+      await runUpgrade(false, {
+        installer,
+        // no `yes`, no `confirmAll` injected, and vitest stdin is not a TTY
+        appInstalledCheck: () => true,
+        appUpdater: () => { appCalled = true; return { ok: true }; },
+        vaultLister: () => [{ name: 'alpha', path: '/tmp/alpha' }],
+        projectUpdater: (v) => { projCalled = true; return { vault: v, ok: true }; },
+      });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(appCalled).toBe(false);
+    expect(projCalled).toBe(false);
+  });
+
+  it('declining the project prompt refreshes nothing', async () => {
+    const spy = silence();
+    let projCalled = false;
+    try {
+      await runUpgrade(false, {
+        installer,
+        appInstalledCheck: () => false,
+        vaultLister: () => [{ name: 'alpha', path: '/tmp/alpha' }],
+        projectUpdater: (v) => { projCalled = true; return { vault: v, ok: true }; },
+        confirmAll: async () => false,
+      });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(projCalled).toBe(false);
+  });
+
+  it('accepting the project prompt refreshes every project', async () => {
+    const spy = silence();
+    const updated: string[] = [];
+    try {
+      await runUpgrade(false, {
+        installer,
+        appInstalledCheck: () => false,
+        vaultLister: () => [
+          { name: 'alpha', path: '/tmp/alpha' },
+          { name: 'beta', path: '/tmp/beta' },
+        ],
+        projectUpdater: (v) => { updated.push(v.name); return { vault: v, ok: true }; },
+        confirmAll: async () => true,
+      });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(updated).toEqual(['alpha', 'beta']);
+  });
+
+  it('isolates a failing project: one bad vault does not abort the rest', async () => {
+    const spy = silence();
+    const attempted: string[] = [];
+    try {
+      await runUpgrade(false, {
+        installer,
+        yes: true,
+        appInstalledCheck: () => false,
+        vaultLister: () => [
+          { name: 'alpha', path: '/tmp/alpha' },
+          { name: 'beta', path: '/tmp/beta' },
+        ],
+        // alpha fails (updater returns { ok: false }, mirroring the real
+        // defaultProjectUpdater which catches and never throws); beta MUST still
+        // be attempted — a single bad vault cannot abort the fan-out.
+        projectUpdater: (v) => {
+          attempted.push(v.name);
+          return v.name === 'alpha'
+            ? { vault: v, ok: false, error: 'boom' }
+            : { vault: v, ok: true };
+        },
+      });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(attempted).toEqual(['alpha', 'beta']);
   });
 });

@@ -34,7 +34,7 @@ Identity is sacred — a fresh session must immediately understand who the agent
 |---|---|
 | `core/0-4.*`, `core/6.*` files (Edit, surgical) | task files (sleep-tasks owns) |
 | `dreamcontext core changelog add` | knowledge files incl. `knowledge/data-structures/<product>.md` (sleep-product owns + writes; you only flag staleness) |
-| `dreamcontext core releases {add,update,active,list,show}` | feature PRDs (sleep-product owns) |
+| `dreamcontext core releases {add,active,list,show}` | feature PRDs (sleep-product owns) |
 | `dreamcontext trigger add` (context-dependent reminders) | |
 
 ## Inputs
@@ -114,7 +114,7 @@ dreamcontext tasks list --status completed
 
 If every task linked to the active planning version is `completed` (or only `in_review` remains and the user has been verifying), surface release readiness in your report.
 
-**Never run `dreamcontext core releases update --status released`** unless the user's hint explicitly asks for it. Releasing is the user's decision.
+**Never run `dreamcontext core releases add --status released`** unless the user's hint explicitly asks for it. Releasing is the user's decision.
 
 If no active planning version exists, create one before adding entries (otherwise entries float unattached):
 
@@ -250,7 +250,7 @@ You do **not** edit knowledge files. Produce flags for `sleep-product` to act on
 - Entries added: 4
   - feat(council) — "Add multi-persona debate system…"
   - fix(snapshot) — "Cap pinned-preview at 730 lines…"
-  - refactor(rem-sleep) — "Split monolithic protocol into orchestrator + 5 specialists…"
+  - refactor(sleep) — "Split monolithic sleep protocol into main-agent flow + specialists…"
   - docs(readme) — "Update sleep section…"
 - Active version: v0.3.0 (planning) — 2 of 4 tasks in_review, 1 in_progress, 1 todo. Not release-ready yet.
 - Skipped: 3 commits in this range were sleep-state churn (`.sleep.json` updates) — not user-facing.

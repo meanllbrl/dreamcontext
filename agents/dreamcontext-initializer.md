@@ -141,6 +141,15 @@ Distill — don't dump. Summarize the doc's durable decisions/structure into the
 knowledge file; link back to the source path in the body. Prefer a few
 high-signal knowledge files over copying every markdown file verbatim.
 
+**Single source of truth — knowledge ≠ features.** Don't create a knowledge file
+for something you scaffolded as a feature in Step 4. Features are product docs
+(what a capability *is* — user stories, acceptance criteria); knowledge is
+research, decisions, and rationale. If a doc describes a capability that's
+already a feature, let the feature own it (knowledge may reference it). Never
+ship the same topic as both a feature and a knowledge file. When grouping
+several related knowledge files, place them in a context subfolder
+(`knowledge/<context>/`) — the index is recursive, so they stay first-class.
+
 ### Step 7: Populate the Core Files
 
 Use the gathered intelligence to write rich, meaningful content.

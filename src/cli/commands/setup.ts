@@ -1,8 +1,10 @@
 import { Command } from 'commander';
 import { existsSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import chalk from 'chalk';
 import { input, checkbox, confirm } from '@inquirer/prompts';
 import { error, info, miniBox } from '../../lib/format.js';
+import { readAppManifest, detectPlatform } from './app.js';
 import { getInitPath } from '../../lib/context-path.js';
 import {
   DEFAULT_PLATFORMS,
@@ -139,6 +141,61 @@ export interface SetupOptions {
   packs?: string;
   multiProduct?: string;
   keepNativeMemory?: boolean;
+  /** Force-install the macOS desktop app (non-interactive). */
+  installApp?: boolean;
+  /** Never install the desktop app. */
+  skipApp?: boolean;
+  /** Injected app installer (testing); defaults to spawning `npx dreamcontext app install`. */
+  appInstaller?: () => void;
+  /** Injected app-installed check (testing); defaults to readAppManifest() !== null. */
+  appInstalledCheck?: () => boolean;
+}
+
+/**
+ * On macOS, offer to install the desktop app as part of setup so a new machine
+ * comes up complete in one command. Gated for safety:
+ *  - `--skip-app` or `DREAMCONTEXT_INSTALL_NO_APP=1` → never.
+ *  - not macOS, or app already installed → skip silently.
+ *  - `--install-app` → force.
+ *  - interactive TTY (and not `--defaults`) → ask (default yes); `--yes` auto-accepts
+ *    the prompt there.
+ *  - `--defaults` or non-interactive without `--install-app` → skip with a hint
+ *    (never download unattended in a script/CI/test run; use `--install-app` to force).
+ */
+async function maybeInstallApp(opts: SetupOptions): Promise<void> {
+  if (opts.skipApp) return;
+  if (process.env.DREAMCONTEXT_INSTALL_NO_APP === '1') return;
+  try {
+    if (detectPlatform().os !== 'darwin') return; // desktop app is macOS-only
+  } catch {
+    return;
+  }
+  const installed = (opts.appInstalledCheck ?? (() => readAppManifest() !== null))();
+  if (installed) {
+    info(chalk.dim('Desktop app already installed — skipping.'));
+    return;
+  }
+
+  const interactive = process.stdin.isTTY === true && !opts.defaults;
+  let proceed = opts.installApp === true || (!!opts.yes && interactive);
+  if (!proceed && interactive) {
+    proceed = await confirm({
+      message: 'Install the macOS desktop app too? (manage all your vaults in one window)',
+      default: true,
+    });
+  }
+  if (!proceed) {
+    info(chalk.dim('Desktop app not installed — add it anytime with `dreamcontext app install`.'));
+    return;
+  }
+
+  info('Installing the desktop app...');
+  try {
+    (opts.appInstaller ?? (() =>
+      execFileSync('npx', ['dreamcontext', 'app', 'install'], { stdio: 'inherit' })))();
+  } catch (e) {
+    info(chalk.yellow(`Desktop app install skipped: ${(e as Error).message}`));
+  }
 }
 
 export async function runSetup(opts: SetupOptions): Promise<void> {
@@ -238,6 +295,9 @@ export async function runSetup(opts: SetupOptions): Promise<void> {
       disableNativeMemory,
     });
 
+    // ─── 5b. Desktop app (macOS) ──────────────────────────────────────────
+    await maybeInstallApp(opts);
+
     // ─── 6. Summary ───────────────────────────────────────────────────────
     const manifestPath = '_dream_context/state/.install-manifest.json';
     console.log();
@@ -276,6 +336,8 @@ export function registerSetupCommand(program: Command): void {
     .option('--packs <list>', 'Comma-separated pack names to install')
     .option('--multi-product <list>', 'Comma-separated product names for multi-product setup')
     .option('--keep-native-memory', "Keep Claude Code's native auto-memory (default: disabled so dreamcontext owns memory)")
+    .option('--install-app', 'Also install the macOS desktop app (non-interactive)')
+    .option('--skip-app', 'Do not install the desktop app')
     .action(async (opts: SetupOptions) => {
       try {
         await runSetup(opts);

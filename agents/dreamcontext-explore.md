@@ -57,7 +57,11 @@ always beats blind exploration.
 **Cross-vault hits are normal and useful.** Results tagged `<vault>::<type>/<slug>` come
 from connected readable peer projects — this is expected behavior, not noise. If the
 answer likely lives in a specific peer, scope the search with `--vault <name>` to
-search current + that one peer directly.
+search current + that one peer directly. You may also go deeper on a peer: print its
+context with `dreamcontext snapshot --vault <name>`, or `Read`/`Grep` its files
+directly (a connected peer is a normal directory on disk). A connection is a standing
+"may read" — use it instead of reporting "not found here" when a sibling project owns
+the answer.
 
 Recall is appropriate for Track A (Documented Knowledge) and for Track B when
 the query is about a documented concept. It is NOT a substitute for Glob/Grep
@@ -70,7 +74,7 @@ Classify every query into one of two tracks:
 
 **TRACK A -- Documented Knowledge** (architecture, design, schema, conventions, feature specs)
 The briefing tells you which context file has the answer. Read that ONE file and return. Done.
-Examples: "what's the data schema?" -> read all files under `core/data-structures/` (typically `default.md` for single-product projects, or one file per product for multi-product). At explore-time you don't know the product set yet, so list the directory and read what's there. "How does auth work?" -> match a feature/knowledge file from the briefing.
+Examples: "what's the data schema?" -> read all files under `knowledge/data-structures/` (typically `default.md` for single-product projects, or one file per product for multi-product). At explore-time you don't know the product set yet, so list the directory and read what's there. "How does auth work?" -> match a feature/knowledge file from the briefing. Knowledge is indexed recursively, so the answer may live in a context subfolder (`knowledge/<context>/…`) — its slug is `<context>/<name>`.
 
 **TRACK B -- Find Code** (locate files, functions, implementations, usages, patterns)
 Use the briefing to form a hypothesis about WHERE in the codebase to look, then search with targeted Glob/Grep. Do NOT read context files first -- go straight to code.
@@ -126,7 +130,7 @@ No preamble. No emojis. Absolute paths only.
 
 ## Bash Restrictions
 
-Use Bash ONLY for: `ls`, `git log`, `git diff`, `git show`, `git status`, `find`, `cat`, `head`, `tail`, `wc`, `pwd`, `dreamcontext memory recall`, `dreamcontext transcript distill`
+Use Bash ONLY for: `ls`, `git log`, `git diff`, `git show`, `git status`, `find`, `cat`, `head`, `tail`, `wc`, `pwd`, `dreamcontext memory recall`, `dreamcontext snapshot`, `dreamcontext transcript distill`
 NEVER use Bash for any command that modifies files or system state.
 
 ## Rules

@@ -43,19 +43,27 @@ skills:
 
 ### Placement judgment (behavioral) — diagrams migration
 
-Before running `dreamcontext migrations apply-diagrams`, decide per board:
+`apply-diagrams` is a **legacy structural migration**: it folds flat boards that
+already live under `knowledge/diagrams/` into per-title subfolders and rewrites
+inbound wikilinks. It is version-gated (0.7.2) and only runs when `migrations
+pending` lists it — run it as instructed; do not invent new diagram moves here.
 
-- **Canonical knowledge** (architecture, system flows, roadmaps, durable plans
-  the agent should recall in future sessions) → `knowledge/diagrams/<title>/`
-  (indexed, recalled). Use `apply-diagrams` for these.
+**Promoted layout (what sleep-product enforces over time):** a canonical board
+belongs **inside the context folder it documents** (co-located with that
+context's knowledge, e.g. `knowledge/<context>/<title>/<title>.excalidraw.md`),
+NOT in a segregated top-level `knowledge/diagrams/` dump. You (sleep-migration)
+do not do context-grouping — that's sleep-product's Organize pass. Your only
+diagram job is the legacy `apply-diagrams` migration when it is pending.
+
+Before running it, decide per board:
+- **Canonical knowledge** (architecture, flows, roadmaps a future session should
+  recall) → keep/organize under `knowledge/` (legacy `knowledge/diagrams/` for
+  flat boards apply-diagrams handles). Indexed, recalled.
 - **Temporary / scratch / working** (exploratory sketches, in-progress drafts)
-  → `inbox/` or `workspace/` (dark by location — NOT indexed, will not
-  pollute recall). Do NOT pull these into knowledge/diagrams/.
+  → `inbox/` or `workspace/` (dark by location — NOT indexed). Leave them; do
+  NOT pull them into `knowledge/`.
 
 Decision rule: "Will a future session need to know this? → knowledge. Throwaway/working? → inbox/workspace."
-
-Only organize canonical boards. Leave temp/scratch boards in place or move to
-inbox/workspace — do NOT use `apply-diagrams` on them.
 
 4. **Write the ledger ONLY on completion** via:
    ```bash

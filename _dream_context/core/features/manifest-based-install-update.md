@@ -2,7 +2,7 @@
 id: feat_mBa5T4nU
 status: in_review
 created: '2026-05-22'
-updated: '2026-06-18'
+updated: '2026-06-20'
 released_version: v0.8.7
 tags:
   - devops
@@ -13,6 +13,9 @@ related_tasks:
   - v06-control-plane-backend
   - v06-control-panel-frontend
   - issue-22-setup-version-drift
+  - cli-auto-upgrade
+  - continuous-app-update
+  - dreamcontext-skill-folder-overhaul
 ---
 
 ## Why
@@ -38,6 +41,8 @@ v0.5.0 extended this with: (1) a one-command `install.sh` curl script, (2) a `dr
 - [x] As a developer, I want `dreamcontext upgrade` to update the globally-installed CLI binary and then refresh project files in one command.
 - [x] As an agent, I want the SessionStart snapshot to tell me when a newer dreamcontext is available so I can inform the user to run `dreamcontext upgrade`.
 - [x] As a dreamcontext user, I can see at SessionStart when my project's installed skill/agents/hooks lag the CLI (setupVersion drift) and have the agent self-heal via `dreamcontext update`, so that upgrades never silently leave projects on stale assets.
+- [ ] As a developer, I want `dreamcontext upgrade` to also update the desktop app (if installed) and offer to refresh every registered project, so one command keeps the entire dreamcontext ecosystem current.
+- [ ] As a developer, I want `dreamcontext setup` to offer to install the macOS desktop app, so I can get the full dreamcontext experience from a single setup command.
 
 ## Acceptance Criteria
 
@@ -58,6 +63,8 @@ v0.5.0 extended this with: (1) a one-command `install.sh` curl script, (2) a `dr
 - [ ] `dreamcontext update --dry-run` lists changes without writing.
 - [x] `install.sh` at repo root: POSIX sh, `set -e`, checks Node ≥18, runs `npm install -g dreamcontext`, calls `dreamcontext update` if `_dream_context/` exists or prompts `setup` otherwise, prints a success banner with the positioning one-liner. No `sudo`, no `eval`, no nested remote fetch.
 - [x] `dreamcontext upgrade` command (`src/cli/commands/upgrade.ts`): runs `npm install -g dreamcontext@latest` then instructs the user to run `dreamcontext update` in each project. `--check` flag prints current vs available version without installing.
+- [ ] `dreamcontext upgrade` cascades: after CLI upgrade, (1) calls `maybeUpdateApp` to update the desktop app if installed, (2) prompts to refresh all registered projects via `dreamcontext update`; `--yes` does it all non-interactively; safely skipped in non-TTY/CI runs.
+- [ ] `dreamcontext setup` calls `maybeInstallApp` after integration install: on macOS, prompts to install the desktop app; force with `--install-app`; opt out with `--skip-app` or `DREAMCONTEXT_INSTALL_NO_APP=1`; never downloads unattended in non-TTY runs.
 - [x] `src/lib/version-check.ts`: `readVersionCache`, `isCacheFresh` (TTL 24h), `compareVersions` (semver-lite), `buildNudge` (pure, returns string or null), `refreshVersionCache` (only networked function, runs from UserPromptSubmit hook). Cache stored at `_dream_context/state/.version-check.json`.
 - [x] `generateSnapshot()` in `snapshot.ts` injects `## Update Available` block when a fresh cache indicates installed < latest. Never makes a network call — reads only the cache file.
 - [x] UserPromptSubmit hook lazy-refreshes the version cache (at most once per 24h TTL, wrapped in try/catch, failure writes `latestCli: null` silently).
@@ -74,6 +81,8 @@ v0.5.0 extended this with: (1) a one-command `install.sh` curl script, (2) a `dr
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
 
+- **[2026-06-20]** `upgrade` cascade app-update: `maybeUpdateApp` re-uses the same app detection/update helpers from `app.ts`. Safely skipped if the app is not installed. The cross-project refresh calls `dreamcontext update` in each registered vault path via spawned process; `confirmAll` is injectable for test control.
+- **[2026-06-20]** `setup` app-install: `maybeInstallApp` is gated on macOS + (TTY or `--install-app` flag). `--yes` alone does NOT trigger app download in non-TTY runs (CI safety). `DREAMCONTEXT_INSTALL_NO_APP=1` is the machine-level opt-out.
 - **[2026-06-12]** Drift detection (#22) is read-only at SessionStart: `resolveDriftState` is pure; the snapshot never auto-runs `update` (the agent does, on directive). `--packs-only` must never clear drift. Scope guards honored: no changes to `version-check.ts` logic, hooks (no auto-update), or `snapshot-budget.ts` (the never-evict skip is the existing mechanism). The drift directive text must keep saying update is content-safe.
 - **[2026-05-22]** Manifest is written atomically via temp-file + rename pattern to prevent corruption on cancellation. If the write is interrupted, the old manifest remains intact.
 - **[2026-05-22]** `isSafeDeletePath` only returns true for paths under `.claude/`, `.agents/`, `.codex/`. Files outside these prefixes (including `_dream_context/` itself) are never candidates for auto-deletion — user-owned data is protected by design.
@@ -150,6 +159,11 @@ Also see: `project-initialization.md` for `init` scaffolding semantics.
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-06-20 - Upgrade cascade + setup app-install (working tree, uncommitted)
+- `dreamcontext upgrade` now cascades: CLI upgrade → `maybeUpdateApp` (desktop app) → prompt to refresh all registered projects; `--yes` = unattended; +5 unit tests green.
+- `dreamcontext setup` now offers to install the macOS desktop app via `maybeInstallApp`; `--install-app` / `--skip-app` / `DREAMCONTEXT_INSTALL_NO_APP=1` control; never unattended.
+- Added 2 user stories, 2 acceptance criteria, 2 constraints; related_tasks += cli-auto-upgrade, continuous-app-update, dreamcontext-skill-folder-overhaul.
 
 ### 2026-06-12 - Setup version drift detection + self-heal (#22, PR #24)
 - `src/lib/setup-drift.ts` pure state machine (current/stale/bootstrap/downgrade/disabled, 0.0.0 sentinels fail-safe).
