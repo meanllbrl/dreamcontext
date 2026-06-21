@@ -6,6 +6,26 @@ import { resolveContextRoot } from '../../lib/context-path.js';
 import { header } from '../../lib/format.js';
 import { listUnfencedDataStructures } from '../../lib/data-structures-migration.js';
 
+/**
+ * Remove content that represents documented mentions of placeholder syntax
+ * rather than actual unfilled placeholders. Strips:
+ *   - fenced code blocks (```...```)
+ *   - inline-code spans (`...`)
+ *   - double-quoted strings ("...")
+ *
+ * What remains is plain prose where a bare `{{TOKEN}}`, `(Add your ...)`, or
+ * `(To be defined)` is a genuine unfilled stub.
+ */
+function stripDocumentedMentions(content: string): string {
+  // Remove fenced code blocks first (multi-line, greedy across newlines)
+  let result = content.replace(/```[\s\S]*?```/g, '');
+  // Remove inline-code spans
+  result = result.replace(/`[^`]*`/g, '');
+  // Remove double-quoted strings (single-line only to avoid runaway matches)
+  result = result.replace(/"[^"\n]*"/g, '');
+  return result;
+}
+
 interface CheckResult {
   name: string;
   status: 'ok' | 'warn' | 'error';
@@ -31,10 +51,13 @@ function checkFile(root: string, relPath: string, label: string, required: boole
     };
   }
 
-  // Check for placeholder content in markdown files
+  // Check for placeholder content in markdown files.
+  // Ignore mentions that appear inside fenced code blocks, inline-code spans,
+  // or double-quoted strings — those are documented examples, not real stubs.
   if (relPath.endsWith('.md')) {
     const content = readFileSync(fullPath, 'utf-8');
-    if (content.includes('(Add your') || content.includes('{{') || content.includes('(To be defined)')) {
+    const stripped = stripDocumentedMentions(content);
+    if (stripped.includes('(Add your') || stripped.includes('{{') || stripped.includes('(To be defined)')) {
       return {
         name: label,
         status: 'warn',

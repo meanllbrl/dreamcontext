@@ -9,6 +9,7 @@ import { generateId, slugify, today } from '../../lib/id.js';
 import { success, error, info, header } from '../../lib/format.js';
 import { buildKnowledgeIndex, STANDARD_TAGS } from '../../lib/knowledge-index.js';
 import { moveKnowledgeFile } from '../../lib/knowledge-move.js';
+import { mergeKnowledgeFiles } from '../../lib/knowledge-merge.js';
 import { readSleepState, writeSleepState, bumpKnowledgeAccess } from './sleep.js';
 
 function getKnowledgeDir(): string {
@@ -174,6 +175,61 @@ export function registerKnowledgeCommand(program: Command): void {
         info(`Rewrote inbound [[wikilinks]] in ${result.wikilinksRewritten.length} file(s).`);
       } else {
         info('No inbound [[wikilinks]] needed rewriting.');
+      }
+    });
+
+  // Merge (fold one knowledge file into another)
+  knowledge
+    .command('merge')
+    .argument('<src>', 'Source knowledge file slug (path relative to knowledge/, without .md)')
+    .argument('<dst>', 'Destination knowledge file slug (path relative to knowledge/, without .md)')
+    .description('Merge one knowledge file into another, repointing inbound [[wikilinks]] and deleting the source')
+    .action((src: string, dst: string) => {
+      const root = ensureContextRoot();
+      const result = mergeKnowledgeFiles(root, src, dst);
+
+      if (!result.ok) {
+        error(result.message);
+        return;
+      }
+
+      // Keep decay tracking continuous: migrate the knowledge_access key so the
+      // merged (deleted) file does not lose its access history. Best-effort — a
+      // failure here must never undo a successful on-disk merge.
+      try {
+        const state = readSleepState(root);
+        const srcRecord = state.knowledge_access[result.srcSlug];
+        if (srcRecord) {
+          const existing = state.knowledge_access[result.dstSlug];
+          state.knowledge_access[result.dstSlug] = existing
+            ? {
+                count: Math.max(existing.count, srcRecord.count),
+                last_accessed:
+                  existing.last_accessed > srcRecord.last_accessed
+                    ? existing.last_accessed
+                    : srcRecord.last_accessed,
+              }
+            : srcRecord;
+          delete state.knowledge_access[result.srcSlug];
+          writeSleepState(root, state);
+        }
+      } catch {
+        /* access tracking is best-effort; the merge already succeeded */
+      }
+
+      success(`Merged ${result.srcPath} → ${result.dstPath}`);
+      if (result.wikilinksRewritten.length > 0) {
+        info(`Rewrote inbound [[wikilinks]] in ${result.wikilinksRewritten.length} file(s).`);
+      } else {
+        info('No inbound [[wikilinks]] needed rewriting.');
+      }
+      if (result.tagsAdded.length > 0) {
+        info(`Tags added to dst: ${result.tagsAdded.join(', ')}`);
+      }
+      if (result.contentMerged) {
+        info('Source content appended to destination. Source file deleted.');
+      } else {
+        info('Content already merged (marker present). Source file deleted.');
       }
     });
 
