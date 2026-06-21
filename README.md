@@ -244,6 +244,11 @@ This writes managed fenced blocks into `CLAUDE.md` and/or `AGENTS.md` at the pro
 
 The core `dreamcontext` skill (installed by `install-skill`) teaches your agent the context system itself. On top of that, dreamcontext ships **curated skill packs and standalone skills** that give your agent domain expertise — loaded on demand, only when the work calls for it, so they cost nothing the rest of the time.
 
+Two more skills install with the core (no pack needed) and run only when the moment calls for them — both drive their own sub-agents:
+
+- **`initializer`** — interactive brain **bootstrap**. It recognizes a missing or sparse `_dream_context/` (or that you're migrating notes from another folder, or loading a large docs export into an existing brain) and ingests whatever you have — a docs folder, an Obsidian/Notion export, ADRs, an old wiki, or just the codebase — into the proper knowledge / feature / task hierarchy (scout → confirm → ingest → verify).
+- **`curator`** — interactive brain **refactor**: the periodic re-organization the conservative sleep cycle won't do. It can MOVE, MERGE, SPLIT, RENAME, RE-TYPE, and RETIRE content to conform the whole brain to current conventions — deduping near-duplicate knowledge (`dreamcontext knowledge merge`), enforcing single-source-of-truth, and normalizing tags (audit → confirm plan → execute → verify).
+
 ```bash
 # Browse and install interactively (terminal checkbox UI)
 dreamcontext install-skill --packs
@@ -523,22 +528,37 @@ dreamcontext tasks complete <name>        # Mark completed
 
 All flags (`--description`, `--priority`, `--status`, `--tags`, `--why`, `--urgency`, `--version`) are optional. Defaults to medium priority/urgency and todo status, so the command works non-interactively for agent use.
 
-#### Cloud Task Management (ClickUp backend)
+#### Remote Task Backends — ClickUp or GitHub Issues
 
-Tasks default to local markdown files. Optionally they can live in a ClickUp
-list instead — same CLI verbs, same dashboard, same recall/snapshot behavior,
-backed by a gitignored local mirror:
+Tasks default to local markdown files. Optionally they can live in a remote
+backend instead — a **ClickUp** list or **GitHub Issues** — with the same CLI
+verbs, the same dashboard, the same recall/snapshot behavior, backed by a
+gitignored local mirror:
 
 ```bash
+# ClickUp
 dreamcontext config task-backend clickup            # switch backend (gitignores mirror/sync files, installs git triggers)
 dreamcontext config clickup-list <teamId> <spaceId> <listId>
 dreamcontext config clickup-token [--user <name>]   # stored in a gitignored secrets file (0600), never in .config.json
+
+# GitHub Issues
+dreamcontext config task-backend github             # switch backend (same gitignored mirror + git triggers)
+dreamcontext config github-repo <owner> <repo>      # target repo (the switch flow also auto-discovers repos your token can see)
+echo "$GITHUB_TOKEN" | dreamcontext config github-token   # stored in the gitignored secrets file (0600), never in .config.json
+
+# Either backend — same verbs:
 dreamcontext tasks sync [push|pull|both]            # manual two-way sync
 dreamcontext tasks sync-hooks install               # best-effort post-commit/pre-push triggers (can never fail git)
 ```
 
-- Talks to the ClickUp REST API directly (no MCP) — works headless in git
-  hooks, post-sleep consolidation, and cron.
+- Both backends talk to the provider's REST API directly (no MCP) — so sync
+  works headless in git hooks, post-sleep consolidation, and cron.
+- **GitHub** maps each task to an issue: the issue body holds the task and
+  changelog entries become comments; `todo` / `in_progress` / `in_review` ride
+  `dc:*` labels and priority / urgency / tags / version ride reserved-prefix
+  labels. Only `completed` closes the issue, and a delete soft-closes it as
+  `not_planned` (the REST API can't hard-delete). It reuses the same pluggable
+  adapter and sync engine as ClickUp ([issue #11](https://github.com/meanllbrl/dreamcontext/issues/11)).
 - Sync is watermark-based on ClickUp **server time**: one field-level `PUT`
   per task under the ~100 req/min rate limit, changelog entries become
   comments (union-merged), prose merges 3-way against the last synced base.
