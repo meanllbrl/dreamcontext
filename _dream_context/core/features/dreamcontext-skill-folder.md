@@ -1,13 +1,13 @@
 ---
-id: "feat_IV4p9Yjx"
-status: "in_progress"
-created: "2026-06-20"
-updated: "2026-06-20"
-released_version: null
+id: feat_IV4p9Yjx
+status: in_progress
+created: '2026-06-20'
+updated: '2026-06-21'
+released_version: v0.8.8
 tags:
   - skills
   - cli
-  - topic:agents
+  - 'topic:agents'
   - devops
 related_tasks:
   - dreamcontext-skill-folder-overhaul

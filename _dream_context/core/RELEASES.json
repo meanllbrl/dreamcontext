@@ -1,5 +1,123 @@
 [
   {
+    "id": "rel_0MCK4TJO",
+    "version": "v0.8.8",
+    "date": "2026-06-21",
+    "summary": "v0.8.8: dreamcontext upgrade cascade (CLI → desktop app → refresh every registered vault), setup desktop-app install offer, skill converted to a folder (lean core + references/), and the agent/skill-pack compliance pass.",
+    "breaking": false,
+    "status": "released",
+    "features": [
+      "feat_IV4p9Yjx"
+    ],
+    "tasks": [
+      "task_skMgMuDT",
+      "task_mezNuF_9",
+      "task_BXGwTrkM",
+      "task_PWGYgkhM"
+    ],
+    "changelog": [
+      {
+        "date": "2026-06-21",
+        "type": "feat",
+        "scope": "release",
+        "description": "v0.8.8 shipped on npm (dreamcontext@0.8.8, verified live via npm view). Bundles four orthogonal concerns: (1) `dreamcontext upgrade` CASCADE — upgrades the CLI, then updates the macOS desktop app if installed, then offers to refresh every registered vault; `--yes` runs it unattended; runUpgrade is now async with injectable installer/vaultLister/projectUpdater/appInstalledCheck/appUpdater/confirmAll. (2) `dreamcontext setup` now offers the macOS desktop-app install (--install-app / --skip-app / DREAMCONTEXT_INSTALL_NO_APP=1), gated to never download unattended in non-TTY/CI. (3) The `dreamcontext` skill converted from a single 53KB SKILL.md into a skill FOLDER — lean always-loaded core (Capabilities-at-a-Glance map) + references/{cli-reference,integrations,tasks-and-features,knowledge-and-recall,sleep,improving-dreamcontext}.md, copied next to SKILL.md for both platforms by install-skill and recorded in the manifest as kind 'core'. (4) Agent + skill-pack compliance pass: removed retired dreamcontext-rem-sleep orchestrator refs (main agent runs the sleep flow), reframed diagrams to context-grouped folders, added the feature-vs-knowledge single-source-of-truth boundary. Validated by a 5-reviewer parallel orchestration + holistic sign-off; full suite ~1986 green, build + doctor clean.",
+        "breaking": false,
+        "summary": "v0.8.8 npm: upgrade cascade + desktop-app setup offer + skill→folder + agent/pack compliance",
+        "references": [
+          "commit:e8f54dd",
+          "commit:1d6f95f",
+          "task:cli-auto-upgrade",
+          "task:dreamcontext-skill-folder-overhaul",
+          "task:agents-skills-dreamcontext-compliance"
+        ]
+      },
+      {
+        "date": "2026-06-20",
+        "type": "refactor",
+        "scope": "agents/skill",
+        "description": "Compliance sweep across every installed sub-agent and skill pack to align with conventions that shipped across v0.8.x but were only partially propagated. Removed retired dreamcontext-rem-sleep orchestrator references from sleep-migration, sleep-product, sleep-state, sleep-tasks, and council/debate-protocol (main agent runs the sleep flow — there is no rem-sleep dispatcher). Reframed Excalidraw SKILL.md diagram layout from a segregated knowledge/diagrams/ dump to context-grouped folders (board co-located in its context folder at knowledge/<context>/<title>/<title>.excalidraw.md); apply-diagrams is now documented as the legacy flat-board maintenance mechanism, not the new-board path. dreamcontext-explore updated to use knowledge/data-structures/ (not the stale core/data-structures/) and documents peer-read: the agent may read a connected peer's files directly or print its context via snapshot --vault. dreamcontext-initializer updated with the current skill-folder shape and the single-source-of-truth feature-vs-knowledge boundary. sleep-product gained explicit Rule 6 (single source of truth — feature vs knowledge). Council SKILL.md and debate-protocol.md changed rem-sleep references to sleep-flow/main-agent. Full test suite: 1986 green. Two isolated agent probes confirmed the updated definitions answer layout, data-structures-path, peer-read, and dispatch-authority questions correctly. Work is in the working tree, uncommitted.",
+        "breaking": false,
+        "summary": "Bring all sub-agents and skill packs into compliance with current dreamcontext conventions (rem-sleep refs, diagram layout, data-structures path, peer-read, single-source-of-truth rule)",
+        "references": [
+          "file:agents/dreamcontext-explore.md",
+          "file:agents/dreamcontext-initializer.md",
+          "file:agents/sleep-migration.md",
+          "file:agents/sleep-product.md",
+          "file:agents/sleep-state.md",
+          "file:agents/sleep-tasks.md",
+          "file:skill-packs/council/SKILL.md",
+          "file:skill-packs/council/debate-protocol.md",
+          "file:skill-packs/excalidraw/SKILL.md",
+          "changelog:2026-05-09-sleep-148",
+          "changelog:2026-06-15-sleep-product-16"
+        ]
+      },
+      {
+        "date": "2026-06-20",
+        "type": "chore",
+        "scope": "cli",
+        "description": "Investigated integrating headroom-ai (a Python context-compression proxy) to address context window overflow in long Claude Code sessions (issue #36). A goal-skill cycle built a Phase-1 implementation plan and two multi-review passes surfaced blocking issues: the eval A/B harness was scoped to tests/ but the eval script lived in eval/, the snapshot header strings used for splitting mismatched the actual emitted headers, and the proxy architecture introduced a dependency on a Python venv for a CLI tool that is fully Node/ESM. Decision: headroom-ai is the wrong layer — context compression is a Claude Code / API concern, not a dreamcontext concern. The implementation branch (feat/36-context-compression, worktree dreamcontext-issue-36) and all probe artefacts were cleaned up entirely. Issue #36 remains closed with this rationale as the closing comment. Working tree restored to clean main at 23c2b21.",
+        "breaking": false,
+        "summary": "Explored and rejected headroom-ai context compression integration (issue #36 closed, wrong layer)",
+        "references": [
+          "url:https://github.com/meanllbrl/dreamcontext/issues/36"
+        ]
+      },
+      {
+        "date": "2026-06-20",
+        "type": "refactor",
+        "scope": "skill",
+        "description": "Four focused rule updates in SKILL.md. Rule 2 (skill triage) now explicitly states agents must only name skills that appear in their available-skills list — no phantom skill references. Rule 4 (single source of truth) adds a clear feature-vs-knowledge boundary: a topic is EITHER a feature PRD OR knowledge, never both; in-progress work lives in a task. Rule 5 (tasks) refines the five-minute threshold to 'extend don't fork' — check for an existing task and broaden it before creating a new one. New Rule 13 instructs agents that connected peer projects are readable via memory recall (which already spans peers) and direct file reads or dreamcontext-explore scoped to the peer path. Also: ClickUp reference reframed as a cloud/remote task backend; 'reading a specific peer' how-to added. Validated by spawning isolated agents with the new skill and verifying they correctly identified ClickUp sync, federation, and peer access as available.",
+        "breaking": false,
+        "summary": "SKILL.md operational rules updated: skill-triage, single-source-of-truth, task-extension, and peer-reading clarified",
+        "references": [
+          "file:skill/SKILL.md"
+        ]
+      },
+      {
+        "date": "2026-06-20",
+        "type": "feat",
+        "scope": "setup",
+        "description": "Added a desktop-app install step at the end of dreamcontext setup on macOS. If the app is not already installed, setup now offers to run dreamcontext app install in the same session so a new machine comes up complete in one command. Three escape hatches: --install-app forces the install non-interactively, --skip-app suppresses it, and the environment variable DREAMCONTEXT_INSTALL_NO_APP=1 prevents any download (CI/scripts). In an interactive TTY without any flag the prompt defaults to yes. The step is silently skipped on non-macOS platforms, when the app is already installed, or in a non-interactive run without --install-app. The install is best-effort: a failure only prints a warning and the rest of setup continues normally.",
+        "breaking": false,
+        "summary": "dreamcontext setup offers to install the macOS desktop app (--install-app / --skip-app / DREAMCONTEXT_INSTALL_NO_APP=1)",
+        "references": [
+          "file:src/cli/commands/setup.ts"
+        ]
+      },
+      {
+        "date": "2026-06-20",
+        "type": "feat",
+        "scope": "upgrade",
+        "description": "Expanded dreamcontext upgrade into a machine-wide updater cascade. After installing the new CLI version from npm, the command detects whether the macOS desktop app is installed and updates it via npx dreamcontext app update, then offers to refresh every registered project in the vault registry via npx dreamcontext update --yes in each project directory. With --yes the entire cascade runs non-interactively; in an interactive TTY the project refresh is confirmed with a single prompt; in a non-interactive context without --yes a hint is printed but nothing spawns unattended. One bad project never aborts the rest — per-vault results are reported individually. Five unit tests added for the new injection points. This makes dreamcontext upgrade the single command that keeps the whole machine current; agents must not run per-project updates by hand.",
+        "breaking": false,
+        "summary": "dreamcontext upgrade cascades: CLI, then desktop app (if installed), then all registered projects",
+        "references": [
+          "file:src/cli/commands/upgrade.ts",
+          "file:tests/unit/upgrade.test.ts"
+        ]
+      },
+      {
+        "date": "2026-06-20",
+        "type": "feat",
+        "scope": "skill",
+        "description": "Rewrote the core dreamcontext skill from a single monolithic SKILL.md into a progressive-disclosure folder: a lean always-loaded SKILL.md (with a full Capabilities-at-a-Glance table naming every feature including ClickUp sync, dashboard, desktop app, federation, council, and marketing) plus six on-demand reference files (cli-reference.md, tasks-and-features.md, knowledge-and-recall.md, sleep.md, integrations.md, improving-dreamcontext.md). The SKILL.md front-loads what dreamcontext CAN do so agents stop misreporting missing capabilities; depth moves to references read only when the task demands it. installCoreForPlatform now copies the references/ directory and records each file in the install manifest so dreamcontext update and asset-drift checks keep them in sync. Motivation: recurring agent error where capabilities like ClickUp, federation, and the dashboard were denied as nonexistent because the old single-file skill named too little.",
+        "breaking": false,
+        "summary": "dreamcontext skill is now a folder (SKILL.md + references/*.md) with a Capabilities-at-a-Glance map",
+        "references": [
+          "file:skill/SKILL.md",
+          "file:skill/references/cli-reference.md",
+          "file:skill/references/integrations.md",
+          "file:skill/references/sleep.md",
+          "file:skill/references/tasks-and-features.md",
+          "file:skill/references/knowledge-and-recall.md",
+          "file:skill/references/improving-dreamcontext.md",
+          "file:src/cli/commands/install-skill.ts"
+        ]
+      }
+    ]
+  },
+  {
     "id": "rel_rQ37iWh_",
     "version": "v0.8.7",
     "date": "2026-06-18",
