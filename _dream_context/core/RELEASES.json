@@ -1,5 +1,16 @@
 [
   {
+    "id": "rel_7TmjhQCQ",
+    "version": "0.9.1",
+    "date": "",
+    "summary": "",
+    "breaking": false,
+    "status": "planning",
+    "features": [],
+    "tasks": [],
+    "changelog": []
+  },
+  {
     "id": "rel_0MCK4TJO",
     "version": "v0.8.8",
     "date": "2026-06-21",
@@ -2378,10 +2389,10 @@
   {
     "id": "rel_smq8zf3o",
     "version": "v0.9.0",
-    "date": "",
+    "date": "2026-06-21",
     "summary": "v0.9.0 planning — next milestone (scope TBD after v0.8.6 shipped)",
     "breaking": false,
-    "status": "planning",
+    "status": "released",
     "features": [],
     "tasks": [],
     "changelog": []
@@ -2759,6 +2770,7 @@
         "description": "Agent context initialized",
         "breaking": false
       }
-    ]
+    ],
+    "status": "released"
   }
 ]

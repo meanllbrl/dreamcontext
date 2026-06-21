@@ -1,6 +1,20 @@
 [
   {
     "date": "2026-06-21",
+    "type": "chore",
+    "scope": "tasks",
+    "description": "Before syncing the dreamcontext task list to GitHub Issues (taskBackend=github, repo meanllbrl/dreamcontext), the 85 completed task files that had never been pushed to GitHub were consolidated into 9 per-release 'shipped' issue-task files (shipped-v0-1-0-foundational through shipped-v0-9-0), one per release line. The originals were moved to _dream_context/state/archive/ via plain filesystem move. Safety confirmed: only dreamcontext tasks delete enqueues a remote close (soft-delete as not_planned); a plain archive move is sync-invisible because the non-recursive *.md glob used by tasks list and sync excludes the archive/ subdirectory. The 20 tasks already synced as closed GitHub issues #4-#36 were left untouched. This pre-sync hygiene keeps the GitHub tracker to one closed issue per release instead of ~100 fine-grained historical tasks.",
+    "breaking": false,
+    "summary": "Consolidate 85 un-synced completed tasks into 9 per-release shipped issue-tasks; archive originals to state/archive/ pre-GitHub-sync",
+    "references": [
+      "task:shipped-v0-1-0-foundational",
+      "task:shipped-v0-9-0",
+      "knowledge:decision-github-task-backend",
+      "url:https://github.com/meanllbrl/dreamcontext/issues/41"
+    ]
+  },
+  {
+    "date": "2026-06-21",
     "type": "feat",
     "scope": "curator",
     "description": "Add the 'curator' skill: an orchestrator (skill-curator/SKILL.md) that drives curator-audit, curator-executor (fan-out workers per domain: knowledge, features, tasks, versions), and curator-verifier sub-agents. Unlike sleep, which is conservative and additive, the curator is the periodic brain-refactor pass that is permitted to MOVE, MERGE, SPLIT, RENAME, RE-TYPE, and RETIRE. Scope per sub-agent: knowledge (summarize/compress bloated files, normalize tags to taxonomy, knowledge move into current folder hierarchy, merge duplicate/near-duplicate files and repoint wikilinks); single-source-of-truth enforcement (no topic as both a feature and knowledge file, no duplicate knowledge); features (reconcile status, rename to current vocabulary, dedup vs knowledge, flag stale); task backlog management (remove/merge stale or duplicate tasks, detect demonstrably-finished tasks, attach orphans to the right planning version); versions/releases (reconcile statuses). Installed as a CORE skill + CORE agents (always installed, same wiring as the initializer). Shipped the 'knowledge merge' primitive as a new CLI command to support curator's MERGE action. Dogfood run reorganized THIS brain: deduped overlapping knowledge files, reconciled task and feature statuses, normalized taxonomy, verified zero duplicate-topic docs and ZERO feature-vs-knowledge collisions after the run. Merged via PR #40, merge commit 71d875f.",

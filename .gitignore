@@ -34,3 +34,11 @@ e2e/shots/
 # Scratch downloads (videos, transcripts, media pulled for analysis)
 _download/
 docs/
+
+# dreamcontext remote task backend (derived mirror + sync state)
+_dream_context/state/*.md
+_dream_context/state/.tasks-sync.lock
+_dream_context/state/.tasks-sync.json
+_dream_context/state/.tasks-queue.json
+_dream_context/state/.conflicts/
+_dream_context/state/.secrets.json

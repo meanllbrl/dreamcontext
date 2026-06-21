@@ -67,3 +67,19 @@ The "open a field" idea (priority/urgency/status/RICE as first-class fields) is 
 - `provisionRemote()` → create the recommended `dc:*` label set on the repo (the GitHub analog of ClickUp custom-field provisioning).
 - `discoverContainers()` → list the user's/org's repos (the pickable "container" is a repo).
 - `testConnection()` → `GET /user` with the token.
+
+## Pre-sync consolidation hygiene
+
+**Pattern (verified 2026-06-21):** before syncing a brain that has accumulated many completed tasks to GitHub for the first time, merge completed tasks **by version** into one "shipped" task per release, then archive the originals to `state/archive/`. This keeps the GitHub tracker clean — one closed issue per release instead of dozens or hundreds of granular tasks.
+
+**Why a plain archive move is sync-invisible (load-bearing facts from source):**
+- Task discovery globs `state/*.md` NON-recursively (`src/lib/task-backend/local.ts` + `src/cli/commands/tasks.ts`). Anything under `state/archive/` is excluded from both `tasks list` and `sync`.
+- A plain filesystem move (`state/<task>.md` → `state/archive/<task>.md`) does NOT enqueue a remote close. The moved tasks simply disappear from the sync ledger.
+- Only `dreamcontext tasks delete` triggers a remote close (soft-delete → closed as `not_planned` on GitHub).
+- New (un-synced) tasks without a `remoteId` never push a close either — they are treated as local-only until a `sync` push creates the remote issue.
+
+**Practical checklist for a mass-consolidation run before first sync:**
+1. Group all completed tasks by version tag.
+2. For each version, create one "shipped-vX.Y.Z" summary task (captures the aggregate user stories / what shipped).
+3. Move the originals to `state/archive/` (plain `mv` — sync-invisible).
+4. Run `dreamcontext tasks sync` — only the summary tasks push as new issues, which are then immediately closed as `completed`.
