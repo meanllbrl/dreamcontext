@@ -1,17 +1,19 @@
 ---
 id: feat_LDQn2Bi8
-status: active
+status: in_review
 created: '2026-02-25'
-updated: '2026-06-15'
+updated: '2026-06-21'
 released_version: 0.1.0
 tags:
   - backend
   - architecture
-  - cli
+  - topic:cli
   - 'topic:clickup'
+  - 'topic:github'
 related_tasks:
   - multi-assignee-via-person-tags
   - post-sleep-clickup-sync-rate-limit-headroom-retry-no-silent-fail
+  - github-task-backend
 ---
 
 ## Why
@@ -34,6 +36,10 @@ Work spans multiple sessions, and agents need a structured way to track what is 
 - [x] As a developer, I can assign multiple team members to a task using `person:<slug>` tags, with ClickUp syncing the full assignee set bidirectionally, so task assignment is multi-person and survives push/pull cycles.
 
 - [x] As a developer, post-sleep ClickUp sync completes in a single pass without 429 errors, so bulk task pushes always reach ClickUp rather than silently dropping tasks.
+- [x] As a developer, I can set `taskBackend: "github"` with an `owner/repo` and a personal access token, so my dreamcontext tasks sync bidirectionally to that repo's GitHub Issues.
+- [x] As a developer, completing a task closes its GitHub issue as `completed` and deleting a task closes it as `not_planned` (soft-delete — issue history preserved), so issue state mirrors task lifecycle without destroying history.
+- [x] As a developer, my task's markdown body, changelog (as issue comments), priority/urgency/tags/version (as labels) and assignees round-trip through GitHub Issues without loss.
+- [x] As a developer, I can discover which repos to sync to, test the connection, and provision the recommended `dc:*` label set on a repo from the CLI or dashboard.
 
 ## Acceptance Criteria
 
@@ -57,10 +63,13 @@ Work spans multiple sessions, and agents need a structured way to track what is 
 - [x] ClickUp version-tag drift fixed: push diff reconciles `version:<v>` tags against LIVE remote tags from the PUT response (not the base snapshot), so exactly one version tag survives after any version change — including changes driven by a bound ClickUp version FIELD. Regression test in `tests/unit/clickup-tags.test.ts`.
 
 - [x] ClickUp adapter throttles at 90 req/min (below the 100/min hard cap) with maxRetries=5 and Retry-After-respecting exponential backoff; SyncReport.failedPushes[] structurally tracks which task slugs failed to push; sleep done auto-retries the full sync once on any failedPushes, then surfaces a prominent red 'Task sync INCOMPLETE' error with the slug list (not a dim warning) rather than treating the partial push as success.
+- [x] GitHub backend: `getTaskBackend()` resolves `'github'` to `GitHubTaskBackend extends LocalTaskBackend`; `github-map.ts` is pure (no I/O), maps status↔(state+state_reason+`dc:*` labels), priority/urgency/tags/version↔labels, body↔issue body, changelog↔issue comments; sync reuses `merge.ts`/`sync-state.ts`/`api-adapter.ts` unchanged (zero provider strings in the generic engine); delete = soft-delete via `state_reason: not_planned` (no hard-delete — GitHub REST limitation, user-confirmed); Projects-v2 GraphQL custom fields deferred to Tier-2. 129 tests green. Full rationale: `knowledge/decision-github-task-backend.md`.
 
 ## Constraints & Decisions
 
 
+- **[2026-06-21]** GitHub Issues backend shipped (PR #38, 129 tests green). Plain-Issues REST only; Projects-v2 GraphQL (full status-field fidelity) is Tier-2. The 4-state dreamcontext status degrades to open/closed + `dc:*` labels on plain issues. Delete = soft-delete (`not_planned` close) because GitHub REST cannot hard-delete issues. Full decision + mapping table: `knowledge/decision-github-task-backend.md`.
+- **[2026-06-21]** The pluggable `TaskBackend` interface (`src/lib/task-backend/types.ts`) is the provider boundary — no provider-specific logic may cross it. Provider-generic engine (`merge.ts`, `sync-state.ts`, `api-adapter.ts`) has zero provider strings; adding a new provider means `<name>.ts` + `<name>-map.ts` only.
 - **[2026-06-15]** ClickUp rate-limit contract: ratePerMinute=90 (10 req/min headroom below the 100/min hard cap) ensures a full post-sleep bulk push completes in ONE window without hitting 429 at the rate-window edge. maxRetries=5 with Retry-After-respecting exponential backoff in ApiAdapter. SyncReport.failedPushes is a structural field — a partial push can never look like success. sleep done auto-retries once on failedPushes, then errors loudly if any remain.
 - **[2026-06-15]** `person:<slug>` tags are the source of truth for assignment (multiple assignees supported). The legacy scalar `assignee` frontmatter field is deprecated — still readable but not written. ClickUp push sends the full set of person-tag slugs resolved to ClickUp member IDs; pull maps ALL remote `assignees` back to `person:<slug>` tags. Set deltas computed on each sync cycle (add/remove set operations) to avoid clobbering.
 - **[2026-06-15]** ClickUp version-tag drift: the PUT response (not the base snapshot) is the authoritative source for live remote tags after a push. Version tag reconciliation must happen against the POST/PUT response, because a bound ClickUp version FIELD can change other tags server-side between the base snapshot and the push.
@@ -112,6 +121,19 @@ rice:
 
 **Snapshot integration**: globs `state/*.md`, skips `status: completed`, shows slug/status/priority/updated date per task.
 
+**GitHub Issues backend (v0.9.0)** (`src/lib/task-backend/github.ts`, `github-map.ts`, `github-fields.ts`):
+- `GitHubTaskBackend extends LocalTaskBackend` — mirrors remote to local; offline reads/writes work without network.
+- `github-map.ts` (pure, no I/O): status↔(`state`+`state_reason`+`dc:*` label), priority/urgency/tags/version↔labels (`version:x` label), body↔issue body (`## Changelog` stripped), changelog entries↔issue comments (union-merge with dedup).
+- Push: `completed`→closed/`completed`; `delete`→closed/`not_planned` (soft-delete); `todo`/`in_progress`/`in_review`→open + `dc:*` label; reopen→open/`reopened` + label.
+- Pull: closed+`completed`→`completed`; closed+`not_planned`→local mirror removed; open→status from `dc:*` label (default `todo`).
+- `sync()` reuses `merge.ts`/`sync-state.ts`/`api-adapter.ts` unchanged; `ApiAdapter` configured for `api.github.com` with Bearer auth (5000 req/hr); delta fetch uses `GET /repos/{o}/{r}/issues?state=all&since=<watermark>` with Link-header pagination. Watermark source: issue `updated_at` (ISO-8601 epoch ms).
+- `provisionRemote()`: creates `dc:*` label set on the repo. `discoverContainers()`: lists user/org repos. `listMembers()`: repo collaborators. `testConnection()`: `GET /user`.
+- Assignees round-trip via `person:<slug>` tags (reuses v0.8.6 person-tag system); non-collaborator assignees skipped gracefully (never a 4xx abort).
+- `setup-config.ts`: `taskBackend: 'github'` + `GitHubConfig{owner, repo}`; `secrets.ts`: GitHub token via `.secrets.json` (gitignored).
+- Dashboard Settings: GitHub panel paralleling ClickUp (connect, test, pick repo, provision labels).
+- Token scope: classic PAT needs `repo`; fine-grained needs Issues (read/write) + Metadata.
+- Projects-v2 GraphQL custom fields (full 4-state Status field) explicitly deferred to Tier-2.
+
 **ClickUp sync reliability (v0.9.0)** (`src/lib/task-backend/clickup.ts`, `src/cli/commands/sleep.ts`):
 - `CLICKUP_RATE_PER_MINUTE = 90` (hard constant; deliberate 10 req/min headroom under ClickUp's 100/min cap).
 - `CLICKUP_MAX_RETRIES = 5` with Retry-After-respecting exponential backoff in `ApiAdapter`.
@@ -130,6 +152,9 @@ rice:
 <!-- LIFO: newest entry at top -->
 
 
+
+### 2026-06-21 - GitHub Issues backend shipped (PR #38)
+- Added GitHub Issues as the second remote task backend (129 tests green). GitHubTaskBackend extends LocalTaskBackend; github-map.ts (pure, no I/O); sync reuses generic engine unchanged. Delete = soft-delete (not_planned close). Dashboard Settings GitHub panel. Feature status bumped to in_review.
 
 ### 2026-06-15 - Update
 - ClickUp sync hardening (v0.9.0, task: post-sleep-clickup-sync-rate-limit-headroom-retry-no-silent-fail): adapter 90 req/min + maxRetries=5, SyncReport.failedPushes structural field, sleep done auto-retry + loud error. Local backend assignee-candidate fix: taskAssigneeMembers failure-isolated, tasks-members route folds task-derived entries (id='') without clobbering real IDs.

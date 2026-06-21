@@ -37,7 +37,9 @@
       "topic:excalidraw",
       "topic:dashboard",
       "topic:skills",
-      "topic:cli"
+      "topic:cli",
+      "topic:github",
+      "topic:task-backend"
     ]
   },
   "bareTags": [

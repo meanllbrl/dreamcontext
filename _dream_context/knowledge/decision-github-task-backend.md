@@ -1,8 +1,8 @@
 ---
 id: decision-github-task-backend
 name: "Decision: GitHub Issues as the second remote task backend"
-description: "Why dreamcontext is adding GitHub Issues (not Projects) as its second cloud task backend, and the exact field/status/close mapping: issue-body-as-task, completed↔closed(completed), delete↔closed(not_planned) soft-delete, dc:* labels for sub-status, Projects-v2 GraphQL custom fields deferred to Tier-2. Reuses the issue-#11 pluggable TaskBackend + provider-generic sync engine."
-tags: ["decisions", "architecture", "topic:clickup", "backend", "cli"]
+description: "Why dreamcontext added GitHub Issues (not Projects) as its second cloud task backend, and the exact field/status/close mapping: issue-body-as-task, completed↔closed(completed), delete↔closed(not_planned) soft-delete, dc:* labels for sub-status, Projects-v2 GraphQL custom fields deferred to Tier-2. Reuses the issue-#11 pluggable TaskBackend + provider-generic sync engine. SHIPPED: PR #38 merged, 129 tests green."
+tags: ["decisions", "architecture", "topic:github", "topic:task-backend", "backend", "topic:cli"]
 pinned: false
 date: "2026-06-21"
 ---
@@ -11,7 +11,7 @@ date: "2026-06-21"
 
 dreamcontext shipped a pluggable task backend in issue #11, but only the **ClickUp** remote backend was built — issue #11 originally floated a GitHub *Projects* direction and shipped ClickUp-ONLY, which in turn caused issue #14 (teams onboarding/notifications layer) to be closed `not_planned`. The user asked to revisit GitHub as a second cloud sync target. This file captures the design we converged on so a future session does not relitigate it or re-derive the mapping from scratch.
 
-**The implementation is tracked in the `github-task-backend` task** (state/). This doc is the durable *why* + mapping table; the task is the *what* (acceptance criteria + file plan). Do not duplicate the checklist here.
+**STATUS: SHIPPED.** PR #38 merged to `main` 2026-06-21. 129 tests green. Feature captured in `core/features/task-management.md` (extended with GitHub backend user stories + ACs). This doc is the durable *why* + mapping table; do not duplicate rationale in the feature file.
 
 ## The Architecture It Plugs Into (already built, issue #11)
 
