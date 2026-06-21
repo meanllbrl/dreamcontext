@@ -33,6 +33,7 @@ import { dreamcontextVersion } from '../../lib/manifest.js';
 import { maybeTriggerAppUpdate, readAppManifest } from './app.js';
 import { runAssetDriftRefresh } from './asset-drift.js';
 import { loadCatalog } from './install-skill.js';
+import { detectSessionStartTrigger, detectPromptTrigger, renderOffer } from '../../lib/initializer-detect.js';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -661,7 +662,20 @@ export function registerHookCommand(program: Command): void {
       const input = readStdin();
 
       const root = resolveContextRoot();
-      if (!root) process.exit(0);
+      if (!root) {
+        // No brain at all. If cwd is a real project, surface the initializer
+        // offer (the no-brain trigger) before exiting. Own try/catch so this
+        // detection can NEVER turn a clean "no context, stay silent" into a crash.
+        try {
+          if (process.env.DREAMCONTEXT_INITIALIZER_HOOK !== '0') {
+            const trigger = detectSessionStartTrigger(process.cwd(), null);
+            if (trigger) console.log(renderOffer(trigger));
+          }
+        } catch (initErr) {
+          if (process.env.DREAMCONTEXT_DEBUG) console.error('[initializer] error:', (initErr as Error).message ?? initErr);
+        }
+        process.exit(0);
+      }
 
       // Seed core/taxonomy.json on installs that predate the taxonomy system, so
       // tagging behaviors work from the very first session after an upgrade —
@@ -754,6 +768,20 @@ export function registerHookCommand(program: Command): void {
       if (directive) {
         console.log(directive);
       }
+
+      // Sparse-brain detection: a `_dream_context/` that is still the empty init
+      // shell (empty knowledge/, zero features, untouched template core) should
+      // proactively offer the initializer. Own try/catch — must never break the
+      // snapshot/directive/sleep-debt path below.
+      try {
+        if (process.env.DREAMCONTEXT_INITIALIZER_HOOK !== '0') {
+          const trigger = detectSessionStartTrigger(process.cwd(), root);
+          if (trigger) console.log(renderOffer(trigger));
+        }
+      } catch (initErr) {
+        if (process.env.DREAMCONTEXT_DEBUG) console.error('[initializer] error:', (initErr as Error).message ?? initErr);
+      }
+
       console.log(snapshot);
     });
 
@@ -865,6 +893,23 @@ export function registerHookCommand(program: Command): void {
         return;
       }
       if (reminder) console.log(reminder);
+
+      // Initializer opportunity (migrate-from-folder / mass-new-source): the user
+      // is pointing at an existing brain/notes folder to MIGRATE, or a sizable new
+      // external source to INGEST into this already-initialized brain. Requires
+      // both intent and an existing on-disk source, so normal prompts stay silent.
+      // Own try/catch — must never break recall, the skills gate, or the rest of
+      // this handler. Suppressed during sleep by the early return above; honor the
+      // env opt-out for parity with the other gates.
+      if (process.env.DREAMCONTEXT_INITIALIZER_HOOK !== '0') {
+        try {
+          const prompt = String((input as Record<string, unknown>).prompt ?? '');
+          const trigger = detectPromptTrigger(prompt, { cwd: process.cwd(), root });
+          if (trigger) console.log(renderOffer(trigger));
+        } catch (initErr) {
+          if (process.env.DREAMCONTEXT_DEBUG) console.error('[initializer] error:', (initErr as Error).message ?? initErr);
+        }
+      }
 
       // Marketing nudge: only fires when there are unconfirmed Performance
       // Monitor recommendations from >24h ago. Must NOT fire on every prompt
