@@ -54,7 +54,7 @@ For non-file-change work (architecture discussion, a decision with no edits): `d
 6. **`dreamcontext reflect`** — each candidate is a term seen across multiple sessions not yet in soul/user/memory/knowledge. Promote into `2.memory.md` or a knowledge file ONLY if genuinely load-bearing; most are noise — discard. Never auto-promote.
 7. **Marketing pass** if `_dream_context/marketing/` exists: `dreamcontext mk rem-sleep`.
 8. **Council promote check:** `dreamcontext council list --unpromoted` — promote if the user engaged positively.
-9. **`dreamcontext sleep done "<one-paragraph summary stitched from specialist reports>"`** — clears pre-epoch state, resets debt, writes a history entry. (If the ClickUp backend is active and any task pushes failed, this auto-retries once, then errors loudly with the failed slugs.)
+9. **`dreamcontext sleep done "<one-paragraph summary stitched from specialist reports>"`** — clears pre-epoch state, resets debt, writes a history entry. (If a remote backend — ClickUp or GitHub — is active and any task pushes failed, this auto-retries once, then errors loudly with the failed slugs.)
 10. **Report** the consolidated summary to the user.
 
 ---

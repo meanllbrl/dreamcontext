@@ -1,7 +1,7 @@
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname } from 'node:path';
 import { parseJsonBody, sendJson, sendError } from '../middleware.js';
-import { readSetupConfig, updateSetupConfig, type ClickUpConfig } from '../../lib/setup-config.js';
+import { readSetupConfig, updateSetupConfig, type ClickUpConfig, type GitHubConfig } from '../../lib/setup-config.js';
 import { applyClaudeAutoMemory } from '../../lib/claude-settings.js';
 import { parsePlatformList, PLATFORM_CATALOG } from '../../lib/platforms.js';
 import { ensureRemoteBackendGitignore } from '../../lib/task-backend/paths.js';
@@ -43,9 +43,10 @@ export async function handleConfigUpdate(
     platforms?: ReturnType<typeof parsePlatformList>['platforms'];
     packs?: string[];
     disableNativeMemory?: boolean;
-    taskBackend?: 'local' | 'clickup';
+    taskBackend?: 'local' | 'clickup' | 'github';
     cloudTaskManagement?: boolean;
     clickup?: ClickUpConfig;
+    github?: GitHubConfig;
     shareable?: boolean;
   } = {};
 
@@ -84,12 +85,12 @@ export async function handleConfigUpdate(
 
   // Task backend (issue #11) — strict-pick, like everything else here.
   if (body.taskBackend !== undefined) {
-    if (body.taskBackend !== 'local' && body.taskBackend !== 'clickup') {
-      sendError(res, 400, 'invalid_task_backend', 'taskBackend must be "local" or "clickup".');
+    if (body.taskBackend !== 'local' && body.taskBackend !== 'clickup' && body.taskBackend !== 'github') {
+      sendError(res, 400, 'invalid_task_backend', 'taskBackend must be "local", "clickup" or "github".');
       return;
     }
     patch.taskBackend = body.taskBackend;
-    patch.cloudTaskManagement = body.taskBackend === 'clickup';
+    patch.cloudTaskManagement = body.taskBackend === 'clickup' || body.taskBackend === 'github';
   }
 
   if (body.cloudTaskManagement !== undefined) {
@@ -140,6 +141,34 @@ export async function handleConfigUpdate(
     patch.clickup = { ...existing, ...picked };
   }
 
+  if (body.github !== undefined) {
+    if (body.github === null || typeof body.github !== 'object' || Array.isArray(body.github)) {
+      sendError(res, 400, 'invalid_github', 'github must be an object.');
+      return;
+    }
+    const raw = body.github as Record<string, unknown>;
+    const picked: GitHubConfig = {};
+    for (const key of ['owner', 'repo'] as const) {
+      if (raw[key] !== undefined) {
+        if (typeof raw[key] !== 'string' || !(raw[key] as string).trim()) {
+          sendError(res, 400, 'invalid_github', `github.${key} must be a non-empty string.`);
+          return;
+        }
+        picked[key] = (raw[key] as string).trim();
+      }
+    }
+    if (raw.changelogTarget !== undefined) {
+      if (raw.changelogTarget !== 'comments') {
+        sendError(res, 400, 'invalid_github', 'github.changelogTarget must be "comments".');
+        return;
+      }
+      picked.changelogTarget = 'comments';
+    }
+    // Merge over the existing block so partial PATCHes don't drop coordinates.
+    const existing = readSetupConfig(dirname(contextRoot))?.github ?? {};
+    patch.github = { ...existing, ...picked };
+  }
+
   if (
     patch.platforms === undefined &&
     patch.packs === undefined &&
@@ -147,9 +176,10 @@ export async function handleConfigUpdate(
     patch.taskBackend === undefined &&
     patch.cloudTaskManagement === undefined &&
     patch.clickup === undefined &&
+    patch.github === undefined &&
     patch.shareable === undefined
   ) {
-    sendError(res, 400, 'no_changes', 'Provide at least one of: platforms, packs, disableNativeMemory, taskBackend, cloudTaskManagement, clickup, shareable.');
+    sendError(res, 400, 'no_changes', 'Provide at least one of: platforms, packs, disableNativeMemory, taskBackend, cloudTaskManagement, clickup, github, shareable.');
     return;
   }
 
@@ -157,7 +187,7 @@ export async function handleConfigUpdate(
 
   // Flipping to a remote backend gitignores the derived files FIRST — the
   // mirror/sync state must never be committable.
-  if (patch.taskBackend === 'clickup') {
+  if (patch.taskBackend === 'clickup' || patch.taskBackend === 'github') {
     try {
       ensureRemoteBackendGitignore(projectRoot);
     } catch (err) {

@@ -14,10 +14,13 @@ import {
   maskToken,
   resolveClickUpToken,
   writeClickUpToken,
+  resolveGitHubToken,
+  writeGitHubToken,
 } from '../../lib/task-backend/secrets.js';
 import { ensureRemoteBackendGitignore } from '../../lib/task-backend/paths.js';
 import { installTaskSyncHooks, uninstallTaskSyncHooks, hasManagedTaskSyncHooks } from '../../lib/task-backend/git-hooks.js';
 import { createClickUpBackend, discoverClickUpLists } from '../../lib/task-backend/clickup.js';
+import { createGitHubBackend, discoverGitHubRepos } from '../../lib/task-backend/github.js';
 import { SyncLedger } from '../../lib/task-backend/sync-state.js';
 import { join } from 'node:path';
 import { confirm, select } from '@inquirer/prompts';
@@ -78,6 +81,16 @@ function printConfig(projectRoot: string): void {
       console.log(`  ClickUp token:  ${tokenLine}`);
       if (cfg.clickup?.listId) {
         console.log(`  ClickUp list:   ${chalk.dim(cfg.clickup.listId)}`);
+      }
+    }
+    if (cfg.taskBackend === 'github') {
+      const resolved = resolveGitHubToken(projectRoot);
+      const tokenLine = resolved
+        ? chalk.green('present') + chalk.dim(` (${resolved.source === 'env' ? `env:${resolved.via}` : 'secrets file'}, ${maskToken(resolved.token)})`)
+        : chalk.yellow('absent') + chalk.dim(' (set with `dreamcontext config github-token`)');
+      console.log(`  GitHub token:   ${tokenLine}`);
+      if (cfg.github?.owner && cfg.github?.repo) {
+        console.log(`  GitHub repo:    ${chalk.dim(`${cfg.github.owner}/${cfg.github.repo}`)}`);
       }
     }
   }
@@ -157,19 +170,21 @@ export function registerConfigCommand(program: Command): void {
 
   config
     .command('task-backend <backend>')
-    .description('[Advanced] Switch the task backend: local | clickup (issue #11)')
+    .description('[Advanced] Switch the task backend: local | clickup | github (issue #11)')
     .action(async (backend: string) => {
       const projectRoot = requireProjectRoot();
       if (!projectRoot) return;
 
       const b = backend.toLowerCase();
-      if (b !== 'local' && b !== 'clickup') {
-        error(`Unknown backend '${backend}'.`, 'Use: dreamcontext config task-backend <local|clickup>');
+      if (b !== 'local' && b !== 'clickup' && b !== 'github') {
+        error(`Unknown backend '${backend}'.`, 'Use: dreamcontext config task-backend <local|clickup|github>');
         process.exitCode = 1;
         return;
       }
 
-      if (b === 'clickup') {
+      const isRemote = b === 'clickup' || b === 'github';
+
+      if (isRemote) {
         // The mirror + sync state are derived files — gitignore them BEFORE
         // flipping the backend so nothing derived is ever committable.
         try {
@@ -186,7 +201,7 @@ export function registerConfigCommand(program: Command): void {
 
       updateSetupConfig(projectRoot, {
         taskBackend: b,
-        cloudTaskManagement: b === 'clickup',
+        cloudTaskManagement: isRemote,
       });
       success(`Task backend set to ${b}.`);
       if (b === 'local' && hasManagedTaskSyncHooks(projectRoot)) {
@@ -200,16 +215,19 @@ export function registerConfigCommand(program: Command): void {
           info(chalk.dim('git sync hooks are still installed (harmless no-ops on local). Remove with `dreamcontext tasks sync-hooks uninstall`.'));
         }
       }
-      if (b === 'clickup') {
+      if (isRemote) {
         // Best-effort git triggers (post-commit/pre-push); they can never
         // fail or block git, and a non-dreamcontext hook is never clobbered.
+        // Backend-generic — they no-op on local and drive sync on any remote.
         try {
           const hooks = installTaskSyncHooks(projectRoot);
           if (hooks.installed.length > 0) {
             info(chalk.dim(`git sync hooks installed: ${hooks.installed.join(', ')} (best-effort, never block git).`));
           }
         } catch { /* hooks are a convenience — never fail the switch */ }
+      }
 
+      if (b === 'clickup') {
         const token = resolveClickUpToken(projectRoot);
         const cfg = readSetupConfig(projectRoot);
 
@@ -315,6 +333,101 @@ export function registerConfigCommand(program: Command): void {
           }
           if (!cfg?.clickup?.listId) {
             info(chalk.dim('Set the ClickUp list with `dreamcontext config clickup-list <teamId> <spaceId> <listId>`.'));
+          }
+        }
+      }
+
+      if (b === 'github') {
+        const token = resolveGitHubToken(projectRoot);
+        const cfg = readSetupConfig(projectRoot);
+
+        if (process.stdin.isTTY) {
+          // Guided onboarding parallels ClickUp: token → connection test → pick
+          // owner/repo from the API (no id hunting) → provision dc:* labels.
+          if (!token) {
+            const key = (await promptInput({
+              message: 'GitHub token (classic PAT with `repo`, or fine-grained with Issues + Metadata; goes to the gitignored secrets file — leave empty to add later):',
+            })).trim();
+            if (key) {
+              try {
+                writeGitHubToken(projectRoot, key);
+                success(`GitHub token stored (${maskToken(key)}).`);
+              } catch (err) {
+                error((err as Error).message);
+              }
+            } else {
+              info(chalk.dim('No token saved. Add one later with `dreamcontext config github-token`.'));
+            }
+          }
+
+          const liveToken = resolveGitHubToken(projectRoot);
+          let connected = false;
+          if (liveToken) {
+            const contextRoot = join(projectRoot, '_dream_context');
+            const probe = createGitHubBackend(contextRoot, readSetupConfig(projectRoot));
+            const test = await probe.testConnection();
+            if (test.ok) {
+              success(`Connected to GitHub as ${test.user}.`);
+              connected = true;
+            } else {
+              error(`Connection test failed: ${test.error}`);
+            }
+          }
+
+          // Repo picker — fetched from the API, no owner/repo spelunking.
+          let cfgNow = readSetupConfig(projectRoot);
+          if (connected && !(cfgNow?.github?.owner && cfgNow?.github?.repo)) {
+            try {
+              info(chalk.dim('Fetching your GitHub repositories…'));
+              const repos = await discoverGitHubRepos(liveToken!.token);
+              if (repos.length > 0) {
+                const picked = await select({
+                  message: 'Which repository should tasks sync to?',
+                  choices: repos.map((r) => ({
+                    value: r,
+                    name: chalk.bold(r.full_name),
+                  })),
+                  pageSize: Math.min(12, repos.length),
+                });
+                updateSetupConfig(projectRoot, {
+                  github: {
+                    owner: picked.owner,
+                    repo: picked.name,
+                    changelogTarget: 'comments',
+                  },
+                });
+                success(`Sync target: ${picked.full_name}.`);
+              } else {
+                info(chalk.dim('No repositories visible to this token. Set one later with `dreamcontext config github-repo <owner> <repo>`.'));
+              }
+            } catch (err) {
+              error(`Could not list repositories: ${(err as Error).message}`);
+              info(chalk.dim('Set the target manually: `dreamcontext config github-repo <owner> <repo>`.'));
+            }
+            cfgNow = readSetupConfig(projectRoot);
+          }
+
+          // Provision the recommended dc:* labels — finish in a working state.
+          if (connected && cfgNow?.github?.owner && cfgNow?.github?.repo) {
+            const contextRoot = join(projectRoot, '_dream_context');
+            const backend = createGitHubBackend(contextRoot, cfgNow);
+
+            if (await confirm({ message: 'Create the recommended `dc:*` labels on the repo (sub-status, priority, urgency, …)?', default: true })) {
+              const result = await backend.provisionRemote();
+              if (result.created.length > 0) success(`Created labels: ${result.created.join(', ')}`);
+              else console.log(chalk.dim('  All recommended labels already exist.'));
+              for (const e of result.errors) error(e);
+            }
+
+            info(chalk.dim('Assignees: tag tasks `person:<slug>` (the person must be a repo collaborator) or pick one in the dashboard.'));
+          }
+        } else {
+          // Non-interactive (scripts/CI): print the next steps instead.
+          if (!token) {
+            info(chalk.dim('No GitHub token found. Add one with `dreamcontext config github-token`.'));
+          }
+          if (!(cfg?.github?.owner && cfg?.github?.repo)) {
+            info(chalk.dim('Set the GitHub repo with `dreamcontext config github-repo <owner> <repo>`.'));
           }
         }
       }
@@ -515,6 +628,77 @@ export function registerConfigCommand(program: Command): void {
       info(chalk.dim('Saved to _dream_context/state/.secrets.json (gitignored, mode 0600).'));
       if (!hasSecretsFile(projectRoot)) {
         // Defensive: should be unreachable — writeClickUpToken just wrote it.
+        error('Secrets file missing after write — check filesystem permissions.');
+        process.exitCode = 1;
+      }
+    });
+
+  config
+    .command('github-repo <owner> <repo>')
+    .description('Set the GitHub owner/repo the tasks sync against')
+    .action((owner: string, repo: string) => {
+      const projectRoot = requireProjectRoot();
+      if (!projectRoot) return;
+      const existing = readSetupConfig(projectRoot)?.github ?? {};
+      updateSetupConfig(projectRoot, {
+        github: { ...existing, owner: owner.trim(), repo: repo.trim(), changelogTarget: existing.changelogTarget ?? 'comments' },
+      });
+      success(`GitHub target set: ${owner.trim()}/${repo.trim()}.`);
+    });
+
+  config
+    .command('github-token [token]')
+    .description('Store a GitHub token in the gitignored secrets file (never .config.json)')
+    .option('--user <name>', 'Scope the token to a person from the people roster')
+    .action(async (token: string | undefined, opts: { user?: string }) => {
+      const projectRoot = requireProjectRoot();
+      if (!projectRoot) return;
+
+      let value = token;
+      if (!value) {
+        // Piped value (echo "$KEY" | dreamcontext config github-token) or prompt.
+        if (!process.stdin.isTTY) {
+          try {
+            const { readFileSync } = await import('node:fs');
+            value = readFileSync(0, 'utf-8').trim();
+          } catch {
+            value = '';
+          }
+        }
+        if (!value) {
+          value = (await promptInput({ message: 'GitHub token (classic PAT with `repo`, or fine-grained with Issues + Metadata):' })).trim();
+        }
+      }
+
+      if (!value) {
+        error('No token provided.');
+        process.exitCode = 1;
+        return;
+      }
+
+      const user = opts.user ? slugify(opts.user) : undefined;
+      try {
+        // writeGitHubToken guarantees the .gitignore entry exists BEFORE the
+        // secrets file is written, and aborts if .gitignore can't be updated.
+        writeGitHubToken(projectRoot, value, user);
+      } catch (err) {
+        error((err as Error).message);
+        process.exitCode = 1;
+        return;
+      }
+
+      success(
+        user
+          ? `GitHub token stored for ${user} (${maskToken(value)}).`
+          : `GitHub token stored (${maskToken(value)}).`,
+      );
+      if (token) {
+        // Passed as a CLI argument → it's now in shell history.
+        info(chalk.dim('Tip: pipe it next time (`echo "$KEY" | dreamcontext config github-token`) to keep it out of shell history.'));
+      }
+      info(chalk.dim('Saved to _dream_context/state/.secrets.json (gitignored, mode 0600).'));
+      if (!hasSecretsFile(projectRoot)) {
+        // Defensive: should be unreachable — writeGitHubToken just wrote it.
         error('Secrets file missing after write — check filesystem permissions.');
         process.exitCode = 1;
       }

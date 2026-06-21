@@ -90,9 +90,12 @@ export function SettingsPage() {
     DEFAULT_CONFIG.disableNativeMemory,
   );
   const [cloudTasks, setCloudTasks] = useState(false);
+  const [taskProvider, setTaskProvider] = useState<'clickup' | 'github'>('clickup');
   const [clickupTeam, setClickupTeam] = useState('');
   const [clickupSpace, setClickupSpace] = useState('');
   const [clickupList, setClickupList] = useState('');
+  const [githubOwner, setGithubOwner] = useState('');
+  const [githubRepo, setGithubRepo] = useState('');
   const [testResult, setTestResult] = useState<ConnectionTestResponse | null>(null);
   const [testing, setTesting] = useState(false);
   const [provisionNote, setProvisionNote] = useState<string | null>(null);
@@ -125,12 +128,20 @@ export function SettingsPage() {
     staleTime: 5 * 60 * 1000,
   });
 
-  const handlePickContainer = (listId: string | null) => {
-    const picked = (containers ?? []).find(c => c.ids.listId === listId);
+  // Containers carry a backend-specific id bag (ClickUp: teamId/spaceId/listId;
+  // GitHub: owner/repo). The picker keys on `path` (the full, human-readable
+  // name) so it is provider-agnostic and stays unique across both shapes.
+  const handlePickContainer = (path: string | null) => {
+    const picked = (containers ?? []).find(c => c.path === path);
     if (!picked) return;
-    setClickupTeam(picked.ids.teamId);
-    setClickupSpace(picked.ids.spaceId);
-    setClickupList(picked.ids.listId);
+    if (taskProvider === 'github') {
+      setGithubOwner(picked.ids.owner ?? '');
+      setGithubRepo(picked.ids.repo ?? '');
+    } else {
+      setClickupTeam(picked.ids.teamId ?? '');
+      setClickupSpace(picked.ids.spaceId ?? '');
+      setClickupList(picked.ids.listId ?? '');
+    }
     markDirty();
   };
 
@@ -159,10 +170,13 @@ export function SettingsPage() {
     setPlatforms(base.platforms);
     setDisableNativeMemory(base.disableNativeMemory ?? true);
     const cfg = config as SetupConfig | null;
-    setCloudTasks(cfg?.taskBackend === 'clickup');
+    setCloudTasks(cfg?.taskBackend === 'clickup' || cfg?.taskBackend === 'github');
+    setTaskProvider(cfg?.taskBackend === 'github' ? 'github' : 'clickup');
     setClickupTeam(cfg?.clickup?.teamId ?? '');
     setClickupSpace(cfg?.clickup?.spaceId ?? '');
     setClickupList(cfg?.clickup?.listId ?? '');
+    setGithubOwner(cfg?.github?.owner ?? '');
+    setGithubRepo(cfg?.github?.repo ?? '');
     setDirty(false);
     setSaveSuccess(false);
   }, [config]);
@@ -190,13 +204,17 @@ export function SettingsPage() {
   };
 
   const handleSave = () => {
+    const taskBackend = cloudTasks ? taskProvider : 'local';
     updateConfig.mutate(
       {
         platforms,
         disableNativeMemory,
-        taskBackend: cloudTasks ? 'clickup' : 'local',
-        ...(cloudTasks
+        taskBackend,
+        ...(cloudTasks && taskProvider === 'clickup'
           ? { clickup: { teamId: clickupTeam || undefined, spaceId: clickupSpace || undefined, listId: clickupList || undefined } }
+          : {}),
+        ...(cloudTasks && taskProvider === 'github'
+          ? { github: { owner: githubOwner || undefined, repo: githubRepo || undefined } }
           : {}),
       },
       {
@@ -227,7 +245,7 @@ export function SettingsPage() {
     try {
       setTestResult(await api.post<ConnectionTestResponse>('/tasks/sync-test', {}));
     } catch (err) {
-      setTestResult({ ok: false, backend: 'clickup', error: err instanceof Error ? err.message : String(err) });
+      setTestResult({ ok: false, backend: taskProvider, error: err instanceof Error ? err.message : String(err) });
     } finally {
       setTesting(false);
     }
@@ -287,53 +305,114 @@ export function SettingsPage() {
             />
             <span>{t('settings.cloud_tasks.label')}</span>
           </label>
-          <p className="settings-field-hint">{t('settings.cloud_tasks.hint')}</p>
+          <p className="settings-field-hint">
+            {taskProvider === 'github' ? t('settings.cloud_tasks.github.hint') : t('settings.cloud_tasks.hint')}
+          </p>
           {cloudTasks && (
             <>
-              {(containers ?? []).length > 0 && (
-                <div className="settings-field-row">
-                  <label>List</label>
-                  <SearchableSelect
-                    value={clickupList || null}
-                    options={(containers ?? []).map(c => ({ value: c.ids.listId, label: c.path }))}
-                    placeholder="Pick the list to sync to…"
-                    searchPlaceholder="Search lists…"
-                    clearLabel="(keep current)"
-                    onChange={handlePickContainer}
-                  />
-                </div>
+              <div className="settings-field-row">
+                <label>{t('settings.cloud_tasks.provider')}</label>
+                <select
+                  className="settings-text-input"
+                  value={taskProvider}
+                  onChange={(e) => {
+                    const next = e.target.value as 'clickup' | 'github';
+                    setTaskProvider(next);
+                    setTestResult(null);
+                    markDirty();
+                  }}
+                >
+                  <option value="clickup">{t('settings.cloud_tasks.provider.clickup')}</option>
+                  <option value="github">{t('settings.cloud_tasks.provider.github')}</option>
+                </select>
+              </div>
+
+              {taskProvider === 'clickup' && (
+                <>
+                  {(containers ?? []).length > 0 && (
+                    <div className="settings-field-row">
+                      <label>{t('settings.cloud_tasks.list_label')}</label>
+                      <SearchableSelect
+                        value={clickupList ? ((containers ?? []).find(c => c.ids.listId === clickupList)?.path ?? null) : null}
+                        options={(containers ?? []).map(c => ({ value: c.path, label: c.path }))}
+                        placeholder={t('settings.cloud_tasks.list_pick')}
+                        searchPlaceholder={t('settings.cloud_tasks.list_search')}
+                        clearLabel={t('settings.cloud_tasks.keep_current')}
+                        onChange={handlePickContainer}
+                      />
+                    </div>
+                  )}
+                  <div className="settings-field-row">
+                    <label>{t('settings.cloud_tasks.team')}</label>
+                    <input
+                      className="settings-text-input"
+                      value={clickupTeam}
+                      onChange={(e) => { setClickupTeam(e.target.value); markDirty(); }}
+                    />
+                  </div>
+                  <div className="settings-field-row">
+                    <label>{t('settings.cloud_tasks.space')}</label>
+                    <input
+                      className="settings-text-input"
+                      value={clickupSpace}
+                      onChange={(e) => { setClickupSpace(e.target.value); markDirty(); }}
+                    />
+                  </div>
+                  <div className="settings-field-row">
+                    <label>{t('settings.cloud_tasks.list')}</label>
+                    <input
+                      className="settings-text-input"
+                      value={clickupList}
+                      onChange={(e) => { setClickupList(e.target.value); markDirty(); }}
+                    />
+                  </div>
+                  <p className="settings-field-hint">{t('settings.cloud_tasks.token_hint')}</p>
+                </>
               )}
-              <div className="settings-field-row">
-                <label>{t('settings.cloud_tasks.team')}</label>
-                <input
-                  className="settings-text-input"
-                  value={clickupTeam}
-                  onChange={(e) => { setClickupTeam(e.target.value); markDirty(); }}
-                />
-              </div>
-              <div className="settings-field-row">
-                <label>{t('settings.cloud_tasks.space')}</label>
-                <input
-                  className="settings-text-input"
-                  value={clickupSpace}
-                  onChange={(e) => { setClickupSpace(e.target.value); markDirty(); }}
-                />
-              </div>
-              <div className="settings-field-row">
-                <label>{t('settings.cloud_tasks.list')}</label>
-                <input
-                  className="settings-text-input"
-                  value={clickupList}
-                  onChange={(e) => { setClickupList(e.target.value); markDirty(); }}
-                />
-              </div>
-              <p className="settings-field-hint">{t('settings.cloud_tasks.token_hint')}</p>
+
+              {taskProvider === 'github' && (
+                <>
+                  {(containers ?? []).length > 0 && (
+                    <div className="settings-field-row">
+                      <label>{t('settings.cloud_tasks.github.repo')}</label>
+                      <SearchableSelect
+                        value={githubOwner && githubRepo ? `${githubOwner}/${githubRepo}` : null}
+                        options={(containers ?? []).map(c => ({ value: c.path, label: c.path }))}
+                        placeholder={t('settings.cloud_tasks.github.pick')}
+                        searchPlaceholder={t('settings.cloud_tasks.github.search')}
+                        clearLabel={t('settings.cloud_tasks.keep_current')}
+                        onChange={handlePickContainer}
+                      />
+                    </div>
+                  )}
+                  <div className="settings-field-row">
+                    <label>{t('settings.cloud_tasks.github.owner')}</label>
+                    <input
+                      className="settings-text-input"
+                      value={githubOwner}
+                      onChange={(e) => { setGithubOwner(e.target.value); markDirty(); }}
+                    />
+                  </div>
+                  <div className="settings-field-row">
+                    <label>{t('settings.cloud_tasks.github.repo')}</label>
+                    <input
+                      className="settings-text-input"
+                      value={githubRepo}
+                      onChange={(e) => { setGithubRepo(e.target.value); markDirty(); }}
+                    />
+                  </div>
+                  <p className="settings-field-hint">{t('settings.cloud_tasks.github.token_hint')}</p>
+                </>
+              )}
+
               <div className="settings-test-row">
                 <button className="btn" onClick={handleTestConnection} disabled={testing}>
                   {testing ? t('settings.cloud_tasks.testing') : t('settings.cloud_tasks.test')}
                 </button>
                 <button className="btn" onClick={handleProvision} disabled={provisioning}>
-                  {provisioning ? 'Provisioning…' : 'Provision fields'}
+                  {provisioning
+                    ? (taskProvider === 'github' ? t('settings.cloud_tasks.github.provisioning') : t('settings.cloud_tasks.provisioning'))
+                    : (taskProvider === 'github' ? t('settings.cloud_tasks.github.provision') : t('settings.cloud_tasks.provision'))}
                 </button>
                 {provisionNote && <span className="settings-field-hint">{provisionNote}</span>}
                 {testResult && testResult.ok && (

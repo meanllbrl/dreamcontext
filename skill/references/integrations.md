@@ -1,14 +1,18 @@
-# Integrations — ClickUp, Dashboard, Desktop App, Federation, Council, Marketing
+# Integrations — ClickUp / GitHub, Dashboard, Desktop App, Federation, Council, Marketing
 
-This reference covers everything beyond the local markdown brain. **If a user asks whether dreamcontext integrates with ClickUp, runs a dashboard, syncs across projects, or runs debates — the answer is yes.** Details below.
+This reference covers everything beyond the local markdown brain. **If a user asks whether dreamcontext integrates with ClickUp or GitHub Issues, runs a dashboard, syncs across projects, or runs debates — the answer is yes.** Details below.
 
 ---
 
-## ✅ Cloud / remote task management (ClickUp)
+## ✅ Cloud / remote task management (ClickUp _or_ GitHub — one at a time)
 
-**dreamcontext has a first-class cloud task-management integration.** Tasks always stay as local markdown (`state/<task>.md`) — the canonical source of truth, works offline — and a **pluggable remote task backend** mirrors them bidirectionally to a cloud task manager. The shipping provider is **ClickUp** (issue #11, tested); the backend is an adapter interface (`local` | `clickup`), so the door is open to other providers, but ClickUp is the one available today. If a user asks about "a cloud task system," "ClickUp," or "remote task sync" — **this is it; the answer is yes.**
+**dreamcontext has a first-class cloud task-management integration.** Tasks always stay as local markdown (`state/<task>.md`) — the canonical source of truth, works offline — and a **pluggable remote task backend** mirrors them bidirectionally to a cloud task manager. Two providers ship today: **ClickUp** (issue #11) and **GitHub Issues** (v0.9.0). If a user asks about "a cloud task system," "ClickUp," "GitHub issue sync," or "remote task sync" — **this is it; the answer is yes.**
 
-### What it does
+> **⚠️ Exactly ONE cloud sync at a time — never both.** `taskBackend` is a single value: `local` | `clickup` | `github`. A project syncs to ClickUp **or** GitHub, not both at once. Switching the backend replaces the active sync target — the previous provider's saved coordinates stay on disk but go dormant, because `getTaskBackend()` only ever resolves the one that matches `taskBackend`. It never runs two syncs. Pick one per project.
+
+### ClickUp
+
+#### What it does
 - **Bidirectional sync** (`push`, `pull`, or `both`) between local task files and a ClickUp list.
 - **Status mapping** between dreamcontext statuses (`todo/in_progress/in_review/completed`) and ClickUp statuses.
 - **RICE + custom fields**: provisions recommended ClickUp custom fields (urgency, summary, RICE reach/impact/confidence/effort, …) and round-trips them.
@@ -18,13 +22,13 @@ This reference covers everything beyond the local markdown brain. **If a user as
 - **Rate-limit hardened**: throttles at 90 req/min (under ClickUp's 100/min cap), retries with Retry-After backoff, and a partial push can never look like success — `sleep done` auto-retries once on failed pushes, then errors loudly with the failed slugs.
 - **Git triggers**: best-effort `post-commit` / `pre-push` hooks sync automatically (they never block or fail git).
 
-### Enabling it (guided)
+#### Enabling it (guided)
 ```bash
 dreamcontext config task-backend clickup
 ```
 Interactively this: gitignores the derived mirror/sync state → prompts for the API key (stored in the gitignored `state/.secrets.json`, mode 0600 — never `.config.json`) → tests the connection → lets you **pick the list from the API** (no URL hunting) → offers to provision custom fields → runs the first sync. Non-interactively it prints the next steps.
 
-### Manual / scripted configuration
+#### Manual / scripted configuration
 ```bash
 # Store the API key out of shell history (preferred): pipe it
 echo "$CLICKUP_TOKEN" | dreamcontext config clickup-token
@@ -43,7 +47,7 @@ dreamcontext config clickup-member <person> <memberId> [--token-env <ENV>]
 dreamcontext config task-backend local
 ```
 
-### Day-to-day sync commands
+#### Day-to-day sync commands
 ```bash
 dreamcontext tasks sync [push|pull|both]   # default: both; no-op on the local backend
 dreamcontext tasks sync --hook             # best-effort mode for git hooks (never fails, exit 0)
@@ -53,13 +57,45 @@ dreamcontext tasks provision               # create the recommended custom field
 dreamcontext tasks sync-hooks install|uninstall   # manage the git sync triggers
 ```
 
-### Inspecting state
+#### Inspecting state
 ```bash
 dreamcontext config show        # shows task backend, ClickUp token presence (masked), and list id
 ```
 The mirror, sync ledger, and conflict files are derived and gitignored — never commit them, never hand-edit them.
 
-**Key mental model:** local markdown is canonical; ClickUp is a sync target. A user on the local backend has ClickUp *available*, just not *enabled* — point them to `dreamcontext config task-backend clickup`.
+### GitHub Issues
+
+The same backend interface, talking **plain GitHub Issues over REST** (no GraphQL). Tasks map ~1:1 onto issues — the **issue body is the task markdown** — and the four-state status is carried by issue `state`/`state_reason` plus `dc:*` labels.
+
+#### What it does
+- **Bidirectional sync** (`push`/`pull`/`both`) between local task files and a repo's Issues.
+- **Status mapping:** `completed` → issue **closed** `state_reason: completed`; `todo`/`in_progress`/`in_review` → **open** + a `dc:*` sub-status label (`dc:in-progress`, `dc:in-review`; `todo` = no label); reopen → **open** `state_reason: reopened`.
+- **Soft-delete (the one divergence from ClickUp):** `tasks delete` **closes** the issue as `state_reason: not_planned` — it NEVER hard-deletes (GitHub REST can't, and issue history is preserved). Inbound, a `not_planned` close removes the local mirror (any unsaved local edits are preserved to `.conflicts/` first).
+- **Fields as labels:** priority/urgency/tags/version ride as labels (`priority:*`, `urgency:*`, `version:*`, plus your plain tags). RICE stays local-only (no custom fields on plain issues — see Tier-2).
+- **Assignees:** `person:<slug>` tags ↔ issue assignees (must be repo collaborators); a non-collaborator assignee is skipped gracefully, never a 4xx that aborts the sync. See "People & assignees" in [tasks-and-features.md](tasks-and-features.md).
+- **Changelog as comments:** task changelog entries post as issue comments (union-merged, deduped — same pattern as ClickUp).
+- **Conflict safety + watermark:** reuses the SAME generic sync engine (ledger / watermark / op-queue / 3-way merge) as ClickUp, unchanged. Watermark is the issue `updated_at` (server time). Delta fetch is `GET /repos/{o}/{r}/issues?state=all&since=<ISO>` with **page-number pagination** (pull-requests filtered out).
+- **Rate-limit hardened:** paces under GitHub's 5000 req/hr cap with Retry-After backoff; a partial push can never look like success.
+
+#### Enabling it (guided)
+```bash
+dreamcontext config task-backend github
+```
+Interactively this: gitignores the derived mirror/sync state → prompts for a token (stored in the gitignored `state/.secrets.json`, mode 0600 — never `.config.json`) → tests the connection (`GET /user`) → lets you **pick the repo from the API** → offers to provision the recommended `dc:*` labels → runs the first sync.
+
+#### Manual / scripted configuration
+```bash
+echo "$GITHUB_TOKEN" | dreamcontext config github-token   # also reads GITHUB_TOKEN / GH_TOKEN from the env
+dreamcontext config github-token                          # or prompt interactively
+dreamcontext config github-repo <owner> <repo>            # set the sync target explicitly
+dreamcontext config task-backend local                    # back to local-only
+```
+Token scope: a classic PAT needs `repo`; a fine-grained token needs **Issues** (read/write) + **Metadata**. The day-to-day sync commands (`tasks sync`, `tasks members`, `tasks provision`, `sync-hooks`) and `config show` work identically to ClickUp — they're backend-generic.
+
+#### Deferred — Tier-2 (GitHub Projects v2)
+Priority/urgency/status as first-class **board fields** would need GitHub **Projects v2**, which is GraphQL-only and doesn't fit the REST adapter cleanly. It's a documented Tier-2 follow-up; this backend ships **plain Issues only**.
+
+**Key mental model:** local markdown is canonical; the cloud provider is a sync *target*, and only ONE is ever active. A user on the local backend has both ClickUp **and** GitHub *available*, just not *enabled* — point them to `dreamcontext config task-backend <clickup|github>`.
 
 ---
 

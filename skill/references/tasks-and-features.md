@@ -85,7 +85,7 @@ dreamcontext tasks tag <name> person:mehmet        # add another assignee
 dreamcontext tasks tag <name> person:ada --remove  # unassign
 ```
 - `person:<slug>` tags are the source of truth for assignment and support **multiple assignees**. The legacy scalar `assignee` field is deprecated (still read, not written).
-- With ClickUp enabled, the full assignee set round-trips to ClickUp's native `assignees[]` bidirectionally; map each person to a member with `dreamcontext config clickup-member <person> <memberId>` (see [integrations.md](integrations.md)).
+- With ClickUp enabled, the full assignee set round-trips to ClickUp's native `assignees[]` bidirectionally; map each person to a member with `dreamcontext config clickup-member <person> <memberId>`. With **GitHub** enabled, `person:<slug>` tags round-trip to issue assignees (repo collaborators; a non-collaborator is skipped, never a sync error). (see [integrations.md](integrations.md)).
 - `DREAMCONTEXT_PERSON` env names the current person for attribution.
 
 ---
