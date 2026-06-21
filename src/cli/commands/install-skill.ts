@@ -817,6 +817,25 @@ export async function installCoreForPlatform(
     installed.push(platformPrefixed(platform, initSkillRel));
   }
 
+  // Copy the `curator` core skill (the interactive, sub-agent-driven brain
+  // REFACTOR orchestrator). Like the initializer it is foundational, not an
+  // optional pack: every maturing brain accretes drift that sleep won't re-order
+  // (duplicate knowledge, topics living as both feature and knowledge, stale
+  // statuses, off-vocab tags), and the dreamcontext core skill directs the agent
+  // to invoke it. Shipped at repo root in `skill-curator/` (package.json
+  // `files`), mirroring how the dreamcontext + initializer skills ship. Recorded
+  // 'core' so `update` refreshes it. Non-fatal if absent (older/partial packages
+  // still install the rest).
+  const curatorSkillSource = findPackageFile('skill-curator', 'SKILL.md');
+  if (curatorSkillSource) {
+    const curatorDestDir = join(skillRoot, 'curator');
+    mkdirSync(curatorDestDir, { recursive: true });
+    writeFileSync(join(curatorDestDir, 'SKILL.md'), readFileSync(curatorSkillSource, 'utf-8'), 'utf-8');
+    const curatorSkillRel = `${skillRootRel}/curator/SKILL.md`;
+    recordIfManifest(manifest, curatorSkillRel, 'core');
+    installed.push(platformPrefixed(platform, curatorSkillRel));
+  }
+
   const agentsSourceDir = findPackageDir('agents');
   if (agentsSourceDir) {
     const agentFiles = readdirSync(agentsSourceDir).filter((f) => f.endsWith('.md'));

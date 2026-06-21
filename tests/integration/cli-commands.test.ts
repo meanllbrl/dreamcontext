@@ -485,6 +485,75 @@ parent_task: null
       const output = run('knowledge index --plain --tag nonexistent', tmpDir);
       expect(output).toContain('No knowledge files found matching tag "nonexistent"');
     });
+
+    describe('knowledge merge', () => {
+      const knowledgeDir = () => join(tmpDir, '_dream_context', 'knowledge');
+
+      it('merges src into dst: dst gets src body under marker, src is deleted, third-file link repointed', () => {
+        // Create src and dst knowledge files directly
+        writeFileSync(
+          join(knowledgeDir(), 'merge-src.md'),
+          '---\nname: merge-src\ndescription: source\ntags: ["extra-tag"]\n---\n\nSource body content.\n',
+          'utf-8',
+        );
+        writeFileSync(
+          join(knowledgeDir(), 'merge-dst.md'),
+          '---\nname: merge-dst\ndescription: destination\ntags: ["base-tag"]\n---\n\nDest body content.\n',
+          'utf-8',
+        );
+        // Third file with a [[merge-src]] link
+        writeFileSync(
+          join(knowledgeDir(), 'third-file.md'),
+          '---\nname: third\ndescription: third\ntags: []\n---\n\nSee [[merge-src]] for details.\n',
+          'utf-8',
+        );
+
+        const output = run('knowledge merge merge-src merge-dst', tmpDir);
+
+        // Command exits ok (no error prefix)
+        expect(output).not.toContain('Error:');
+        expect(output).toContain('merge-src');
+        expect(output).toContain('merge-dst');
+
+        // dst file contains the merged marker and src body
+        const dstContent = readFileSync(join(knowledgeDir(), 'merge-dst.md'), 'utf-8');
+        expect(dstContent).toContain('<!-- merged-from: merge-src -->');
+        expect(dstContent).toContain('Source body content.');
+        expect(dstContent).toContain('Dest body content.');
+
+        // src file is deleted
+        expect(existsSync(join(knowledgeDir(), 'merge-src.md'))).toBe(false);
+
+        // third-file link repointed from [[merge-src]] to [[merge-dst]]
+        const thirdContent = readFileSync(join(knowledgeDir(), 'third-file.md'), 'utf-8');
+        expect(thirdContent).toContain('[[merge-dst]]');
+        expect(thirdContent).not.toContain('[[merge-src]]');
+      });
+
+      it('reports an error when src does not exist', () => {
+        writeFileSync(
+          join(knowledgeDir(), 'only-dst.md'),
+          '---\nname: only-dst\ndescription: dst\ntags: []\n---\n\nContent.\n',
+          'utf-8',
+        );
+
+        const output = run('knowledge merge ghost-src only-dst', tmpDir);
+        expect(output).toContain('ghost-src');
+        expect(existsSync(join(knowledgeDir(), 'only-dst.md'))).toBe(true);
+      });
+
+      it('reports an error when dst does not exist', () => {
+        writeFileSync(
+          join(knowledgeDir(), 'orphan-src.md'),
+          '---\nname: orphan-src\ndescription: src\ntags: []\n---\n\nContent.\n',
+          'utf-8',
+        );
+
+        const output = run('knowledge merge orphan-src ghost-dst', tmpDir);
+        expect(output).toContain('ghost-dst');
+        expect(existsSync(join(knowledgeDir(), 'orphan-src.md'))).toBe(true);
+      });
+    });
   });
 
   describe('install-skill', () => {
@@ -1064,6 +1133,45 @@ parent_task: null
       expect(output).toContain('Latest Release');
       expect(output).toContain('1.0.0');
       expect(output).toContain('First release');
+    });
+
+    describe('set-status', () => {
+      it('flips a planning release to released with a date', () => {
+        run('core releases add --ver 0.6.0 --summary "Beta" --status planning', tmpDir);
+        const out = run('core releases set-status 0.6.0 released --date 2026-06-05', tmpDir);
+        expect(out).toContain('0.6.0');
+        expect(out).toContain('released');
+        expect(out).toContain('2026-06-05');
+
+        const releases = JSON.parse(readFileSync(join(tmpDir, '_dream_context', 'core', 'RELEASES.json'), 'utf-8'));
+        const entry = releases.find((r: any) => r.version === '0.6.0');
+        expect(entry).toBeTruthy();
+        expect(entry.status).toBe('released');
+        expect(entry.date).toBe('2026-06-05');
+      });
+
+      it('errors on a nonexistent version', () => {
+        const out = run('core releases set-status 9.9.9 released', tmpDir);
+        expect(out).toContain('not found');
+        expect(out).toContain('9.9.9');
+      });
+
+      it('errors on an invalid status value', () => {
+        run('core releases add --ver 0.7.0 --summary "RC" --status planning', tmpDir);
+        const out = run('core releases set-status 0.7.0 shipped', tmpDir);
+        expect(out).toContain("must be 'planning' or 'released'");
+      });
+
+      it('preserves all other fields after update', () => {
+        run('core releases add --ver 0.8.0 --summary "RC2" --status planning', tmpDir);
+        run('core releases set-status 0.8.0 released --date 2026-06-10', tmpDir);
+        const releases = JSON.parse(readFileSync(join(tmpDir, '_dream_context', 'core', 'RELEASES.json'), 'utf-8'));
+        const entry = releases.find((r: any) => r.version === '0.8.0');
+        expect(entry.summary).toBe('RC2');
+        expect(entry.id).toMatch(/^rel_/);
+        expect(Array.isArray(entry.features)).toBe(true);
+        expect(Array.isArray(entry.tasks)).toBe(true);
+      });
     });
   });
 

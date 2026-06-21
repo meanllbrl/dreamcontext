@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { join } from 'node:path';
 import { input, select, checkbox } from '@inquirer/prompts';
 import { ensureContextRoot } from '../../lib/context-path.js';
-import { insertToJsonArray } from '../../lib/json-file.js';
+import { insertToJsonArray, readJsonArray, writeJsonArray } from '../../lib/json-file.js';
 import { generateId, today } from '../../lib/id.js';
 import { success, error, info, header, formatTable } from '../../lib/format.js';
 import {
@@ -355,5 +355,51 @@ export function registerCoreCommand(program: Command): void {
           console.log(`    - ${e.date} [${e.type}] ${e.scope}: ${e.description.slice(0, 80)}`);
         }
       }
+    });
+
+  releases
+    .command('set-status')
+    .argument('<version>', 'Existing release version to update')
+    .argument('<status>', 'New status: planning or released')
+    .option('--date <YYYY-MM-DD>', 'Set or update the release date')
+    .description('Update the status (and optionally date) of an existing release entry')
+    .action((version: string, status: string, opts: { date?: string }) => {
+      if (status !== 'planning' && status !== 'released') {
+        error(`Status must be 'planning' or 'released', got: ${status}`);
+        return;
+      }
+
+      const root = ensureContextRoot();
+      const releasesPath = join(root, 'core', 'RELEASES.json');
+
+      // Read raw array to preserve all fields and insertion order
+      let raw: ReleaseEntry[];
+      try {
+        raw = readJsonArray<ReleaseEntry>(releasesPath);
+      } catch (e: any) {
+        error(`Could not read RELEASES.json: ${e.message}`);
+        return;
+      }
+
+      const idx = raw.findIndex(r => r.version === version);
+      if (idx === -1) {
+        const available = raw.map(r => r.version).join(', ') || '(none)';
+        error(`Release not found: ${version}. Available: ${available}`);
+        return;
+      }
+
+      raw[idx].status = status as 'planning' | 'released';
+      if (opts.date) {
+        raw[idx].date = opts.date;
+      }
+
+      if (status === 'released' && !raw[idx].date) {
+        info(`Warning: v${version} is now 'released' but has no date. Set one with --date YYYY-MM-DD.`);
+      }
+
+      writeJsonArray(releasesPath, raw);
+
+      const dateLabel = raw[idx].date ? ` (${raw[idx].date})` : '';
+      success(`v${version} → ${status}${dateLabel}`);
     });
 }
