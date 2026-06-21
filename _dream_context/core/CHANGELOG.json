@@ -1,5 +1,44 @@
 [
   {
+    "date": "2026-06-21",
+    "type": "refactor",
+    "scope": "onboarding",
+    "description": "Deleted the single-pass dreamcontext-initializer bootstrap agent (source + all platform mirrors). Its role is now owned by the new 'initializer' skill, which drives initializer-scout/ingestor/verifier and handles codebase-only repos via a light scout+ingest pass — a single bootstrap surface, no parallel agent. Rewired references in skill/SKILL.md, skill-initializer/SKILL.md, src/templates/AGENTS.md + CLAUDE.md, root AGENTS.md, README.md, _dream_context/core/6.system_flow.md, src/cli/commands/init.ts comment, and the inbox follow-up note. Feature PRDs (project-initialization, tag-taxonomy) left for sleep to reconcile.",
+    "breaking": false,
+    "summary": "Remove standalone dreamcontext-initializer agent — folded into the interactive 'initializer' skill",
+    "references": [
+      "task:initializer-skill"
+    ]
+  },
+  {
+    "date": "2026-06-21",
+    "type": "feat",
+    "scope": "knowledge",
+    "description": "`dreamcontext knowledge move <slug> <folder>` — atomically moves a knowledge file into a context folder and rewrites every wikilink to it across the vault in the same operation. Merged to main via PR #37 (commit 2ee639f); issue #33 auto-closed. Landed on top of the v0.8.8 release commit, so it ships in the next npm cut (v0.9.0 planning bucket). Resolved a SKILL.md docs-restructure conflict on merge by porting the docs into references/*.md.",
+    "breaking": false,
+    "summary": "knowledge move <slug> <folder>: atomic move + wikilink rewrite (PR #37, closes #33)",
+    "references": [
+      "commit:2ee639f",
+      "task:knowledge-move-command",
+      "url:https://github.com/meanllbrl/dreamcontext/pull/37"
+    ]
+  },
+  {
+    "date": "2026-06-21",
+    "type": "feat",
+    "scope": "release",
+    "description": "v0.8.8 shipped on npm (dreamcontext@0.8.8, verified live via npm view). Bundles four orthogonal concerns: (1) `dreamcontext upgrade` CASCADE — upgrades the CLI, then updates the macOS desktop app if installed, then offers to refresh every registered vault; `--yes` runs it unattended; runUpgrade is now async with injectable installer/vaultLister/projectUpdater/appInstalledCheck/appUpdater/confirmAll. (2) `dreamcontext setup` now offers the macOS desktop-app install (--install-app / --skip-app / DREAMCONTEXT_INSTALL_NO_APP=1), gated to never download unattended in non-TTY/CI. (3) The `dreamcontext` skill converted from a single 53KB SKILL.md into a skill FOLDER — lean always-loaded core (Capabilities-at-a-Glance map) + references/{cli-reference,integrations,tasks-and-features,knowledge-and-recall,sleep,improving-dreamcontext}.md, copied next to SKILL.md for both platforms by install-skill and recorded in the manifest as kind 'core'. (4) Agent + skill-pack compliance pass: removed retired dreamcontext-rem-sleep orchestrator refs (main agent runs the sleep flow), reframed diagrams to context-grouped folders, added the feature-vs-knowledge single-source-of-truth boundary. Validated by a 5-reviewer parallel orchestration + holistic sign-off; full suite ~1986 green, build + doctor clean.",
+    "breaking": false,
+    "summary": "v0.8.8 npm: upgrade cascade + desktop-app setup offer + skill→folder + agent/pack compliance",
+    "references": [
+      "commit:e8f54dd",
+      "commit:1d6f95f",
+      "task:cli-auto-upgrade",
+      "task:dreamcontext-skill-folder-overhaul",
+      "task:agents-skills-dreamcontext-compliance"
+    ]
+  },
+  {
     "date": "2026-06-20",
     "type": "refactor",
     "scope": "agents/skill",

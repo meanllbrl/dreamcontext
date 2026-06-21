@@ -300,8 +300,12 @@ Status: `todo → in_progress → in_review → completed`. Sections: `why`, `us
 ## Sub-Agents
 
 - **`dreamcontext-explore`** — context-accelerated codebase exploration. Use for ALL exploration (default Explore is blocked). Uses the SubagentStart briefing to narrow searches.
-- **`dreamcontext-initializer`** — dispatch when a project has no `_dream_context/`: *"This project needs an _dream_context/ directory. Scan the codebase and set it up."*
+- **`initializer` skill** — the **interactive, sub-agent-driven brain bootstrap**. Invoke it via the `Skill` tool when this project has **no `_dream_context/`** or a **sparse** one (empty `knowledge/`, zero features, untouched template stubs). It orchestrates scout → confirm-hierarchy → progressive ingest → verify, migrating whatever material the user has into the proper knowledge/feature/task hierarchy. It drives its own sub-agents (`initializer-scout`, `initializer-ingestor`, `initializer-verifier`) and handles codebase-only repos too (a light scout + ingest pass) — there is no separate bootstrap agent.
 - **Sleep specialists** (`sleep-tasks`, `sleep-state`, `sleep-product`, `sleep-migration`) — dispatched by the main agent during the sleep flow only.
+
+**First-run self-recognition (do not skip):** if you notice the brain is missing or sparse, **do not silently scaffold and move on, and do not wait to be asked** — proactively offer: *"I don't have a brain for this project yet. Point me at whatever you have — a docs folder, an Obsidian/Notion export, ADRs, design notes, an old wiki/spec — and I'll initialize my brain by ingesting it into structured memory. Or I can bootstrap from just the codebase."* Then invoke the `initializer` skill.
+
+**The hooks now surface this for you.** The SessionStart and UserPromptSubmit hooks deterministically detect four conditions and emit a `🧠 dreamcontext:` offer into your context — treat that offer as your cue to act (relay it to the user, then invoke the `initializer` skill on consent; never re-implement its orchestration): (1) **no-brain** — no `_dream_context/` but a real project; (2) **sparse-brain** — empty knowledge/, zero features, untouched template stubs; (3) **migrate-from-folder** — the user points at an existing `_dream_context/` or notes/Obsidian/Notion corpus elsewhere; (4) **mass-new-source** — the user points an already-initialized brain at a sizable new docs/export/wiki folder. (Set `DREAMCONTEXT_INITIALIZER_HOOK=0` to silence.)
 
 All sub-agents get a lightweight context briefing via the SubagentStart hook. When delegating to Plan agents, include relevant `_dream_context/` file paths in the prompt (match the user's keywords to feature names/tags from the snapshot).
 

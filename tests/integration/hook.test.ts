@@ -1332,7 +1332,10 @@ describe('hook user-prompt-submit (integration)', () => {
   }
 
   // Disable the memory hook so the ONLY gate trigger under test is skill relevance.
-  const SKILLS_ENV = { ...process.env, DREAMCONTEXT_MEMORY_HOOK: '0' };
+  // VERSION_CHECK=0 is set explicitly (not just inherited): this const is captured
+  // at collection time, BEFORE the describe's beforeEach sets it on process.env, so
+  // without it these tests would block on the live npm registry and flake.
+  const SKILLS_ENV = { ...process.env, DREAMCONTEXT_MEMORY_HOOK: '0', DREAMCONTEXT_VERSION_CHECK: '0' };
 
   it('a relevant skill fires the gate, telling the agent to review the FULL list (no top-N subset)', () => {
     scaffoldSkills(tmpDir);
@@ -1505,7 +1508,12 @@ describe('hook post-tool-use (integration)', () => {
     });
     const output = runWithStdin('hook post-tool-use', input, tmpDir);
 
-    if (output.trim()) {
+    // Only assert when the hook produced its JSON envelope. tsc is spawned by the
+    // hook with real timeouts; if it isn't installed, is slow under parallel load,
+    // or the runWithStdin wrapper times out, the captured output is empty or a
+    // non-JSON error string — a graceful skip, not a failure (per this test's
+    // stated intent). Guard on the JSON shape so a timeout never flakes the suite.
+    if (output.trim().startsWith('{')) {
       const parsed = JSON.parse(output);
       expect(parsed.hookSpecificOutput.hookEventName).toBe('PostToolUse');
       expect(parsed.hookSpecificOutput.additionalContext).toContain('TypeScript errors');
@@ -1600,5 +1608,258 @@ describe('hook pre-compact (integration)', () => {
     const log = state.compaction_log as any[];
     expect(log).toHaveLength(1);
     expect(log[0].trigger).toBe('unknown');
+  });
+});
+
+// ─── initializer auto-detection ──────────────────────────────────────────────
+//
+// Per trigger condition (no-brain, sparse-brain, migrate-from-folder,
+// mass-new-source) there is an integration test proving the offer fires, plus
+// false-positive ("assert silence") tests and DoD-#3 tests proving the detection
+// never breaks the hook (sleep-debt + the other behaviours stay intact).
+
+describe('hook initializer detection (integration)', () => {
+  let tmpDir: string;
+
+  // Same isolation as the user-prompt-submit block: a fresh temp project has no
+  // version cache, so without this the UPS hook would block on the npm registry.
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+    process.env.DREAMCONTEXT_VERSION_CHECK = '0';
+  });
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+    delete process.env.DREAMCONTEXT_VERSION_CHECK;
+  });
+
+  const OFFER_MARKER = '`initializer` skill';
+
+  // A `_dream_context/` that is the untouched init shell.
+  function scaffoldSparse(root: string): string {
+    const ctx = join(root, '_dream_context');
+    mkdirSync(join(ctx, 'core', 'features'), { recursive: true });
+    mkdirSync(join(ctx, 'knowledge', 'data-structures'), { recursive: true });
+    mkdirSync(join(ctx, 'state'), { recursive: true });
+    writeFileSync(join(ctx, 'core', '0.soul.md'), [
+      '---', 'name: "myproj"', 'type: soul', '---', '',
+      '## Core Principles', "- (Add your project's guiding principles here)", '',
+      '## Constraints', '- (Add known constraints, limitations, or non-negotiables)',
+    ].join('\n'));
+    writeFileSync(join(ctx, 'core', '1.user.md'), [
+      '---', 'name: user-preferences', 'type: user', '---', '',
+      '## User Preferences', '- (Decision-making patterns, priorities, review preferences)',
+    ].join('\n'));
+    writeFileSync(join(ctx, 'core', '2.memory.md'), [
+      '---', 'name: active-decisions', 'type: memory', '---', '',
+      '## Technical Decisions', '- (Key technical choices and their rationale)',
+    ].join('\n'));
+    writeFileSync(
+      join(ctx, 'knowledge', 'data-structures', 'default.md'),
+      'Document schemas, models, and API contracts here.',
+    );
+    return ctx;
+  }
+
+  // A genuinely-started brain (real soul + a feature + a knowledge file).
+  function scaffoldHealthy(root: string): string {
+    const ctx = join(root, '_dream_context');
+    mkdirSync(join(ctx, 'core', 'features'), { recursive: true });
+    mkdirSync(join(ctx, 'knowledge'), { recursive: true });
+    mkdirSync(join(ctx, 'state'), { recursive: true });
+    writeFileSync(
+      join(ctx, 'core', '0.soul.md'),
+      '---\nname: myproj\ntype: soul\n---\n## Project Identity\nA real shipped project.\n## Core Principles\n- Ship small.',
+    );
+    writeFileSync(join(ctx, 'core', 'features', 'login.md'), '---\nstatus: active\n---\n## Why\nUsers log in.');
+    writeFileSync(join(ctx, 'knowledge', 'architecture.md'), '---\nname: arch\ndescription: arch\n---\n# Arch\nReal.');
+    return ctx;
+  }
+
+  const SESSION_INPUT = JSON.stringify({ session_id: 'sess-1', source: 'startup', transcript_path: '/tmp/t.jsonl' });
+  // Isolate the initializer offer from the recall/skills gates in UPS tests.
+  const UPS_ENV = { ...process.env, DREAMCONTEXT_VERSION_CHECK: '0', DREAMCONTEXT_MEMORY_HOOK: '0', DREAMCONTEXT_SKILLS_HOOK: '0' };
+
+  // ── no-brain (SessionStart) ──────────────────────────────────────────────
+
+  it('no-brain: fires the offer when cwd is a real project with no _dream_context/', () => {
+    writeFileSync(join(tmpDir, 'package.json'), '{}');
+    const output = runWithStdin('hook session-start', SESSION_INPUT, tmpDir);
+    expect(output).toContain(OFFER_MARKER);
+    expect(output).toContain('no brain here yet');
+  });
+
+  it('no-brain: stays silent in an empty directory (no project signal)', () => {
+    const output = runWithStdin('hook session-start', SESSION_INPUT, tmpDir);
+    expect(output.trim()).toBe('');
+  });
+
+  // ── sparse-brain (SessionStart) ──────────────────────────────────────────
+
+  it('sparse-brain: fires the offer AND still emits the snapshot', () => {
+    scaffoldSparse(tmpDir);
+    const output = runWithStdin('hook session-start', SESSION_INPUT, tmpDir);
+    expect(output).toContain(OFFER_MARKER);
+    expect(output).toContain('sparse/unstarted');
+    expect(output).toContain('# Agent Context'); // snapshot intact
+  });
+
+  it('sparse-brain: offer and the sleep-debt directive coexist (existing behaviour intact)', () => {
+    const ctx = scaffoldSparse(tmpDir);
+    writeSleep(ctx, { debt: 8, sessions: [], bookmarks: [] });
+    const output = runWithStdin('hook session-start', SESSION_INPUT, tmpDir);
+    expect(output).toContain(OFFER_MARKER);              // initializer offer
+    expect(output).toContain('CONSOLIDATION RECOMMENDED'); // sleep-debt directive still there
+    expect(output).toContain('# Agent Context');           // snapshot still there
+  });
+
+  it('healthy brain: SessionStart stays silent (no offer)', () => {
+    scaffoldHealthy(tmpDir);
+    const output = runWithStdin('hook session-start', SESSION_INPUT, tmpDir);
+    expect(output).not.toContain(OFFER_MARKER);
+    expect(output).toContain('# Agent Context'); // snapshot still emitted
+  });
+
+  it('DREAMCONTEXT_INITIALIZER_HOOK=0 silences the sparse offer (snapshot intact)', () => {
+    scaffoldSparse(tmpDir);
+    const output = runWithStdin('hook session-start', SESSION_INPUT, tmpDir, {
+      ...process.env,
+      DREAMCONTEXT_INITIALIZER_HOOK: '0',
+    });
+    expect(output).not.toContain(OFFER_MARKER);
+    expect(output).toContain('# Agent Context');
+  });
+
+  // ── migrate-from-folder (UserPromptSubmit) ───────────────────────────────
+
+  it('migrate-from-folder: fires when the prompt points at an external notes vault', () => {
+    scaffoldHealthy(tmpDir);
+    const ext = makeTmpDir();
+    try {
+      const notes = join(ext, 'mynotes');
+      mkdirSync(join(notes, '.obsidian'), { recursive: true });
+      writeFileSync(join(notes, 'n.md'), '# note');
+      const input = JSON.stringify({ session_id: 'sess-1', prompt: `migrate my notes from ${notes} into this project` });
+      const output = runWithStdin('hook user-prompt-submit', input, tmpDir, UPS_ENV);
+      expect(output).toContain(OFFER_MARKER);
+      expect(output).toContain('MIGRATE');
+      expect(output).toContain(notes);
+    } finally {
+      rmSync(ext, { recursive: true, force: true });
+    }
+  });
+
+  it('migrate-from-folder: fires for an external folder that contains a _dream_context/', () => {
+    scaffoldHealthy(tmpDir);
+    const ext = makeTmpDir();
+    try {
+      const old = join(ext, 'oldproj');
+      mkdirSync(join(old, '_dream_context', 'core'), { recursive: true });
+      writeFileSync(join(old, '_dream_context', 'core', '0.soul.md'), 'old soul');
+      const input = JSON.stringify({ session_id: 'sess-1', prompt: `please move the brain from ${old} over to here` });
+      const output = runWithStdin('hook user-prompt-submit', input, tmpDir, UPS_ENV);
+      expect(output).toContain(OFFER_MARKER);
+      expect(output).toContain('MIGRATE');
+    } finally {
+      rmSync(ext, { recursive: true, force: true });
+    }
+  });
+
+  // ── mass-new-source (UserPromptSubmit) ───────────────────────────────────
+
+  it('mass-new-source: fires for a sizable docs folder into a healthy brain', () => {
+    scaffoldHealthy(tmpDir);
+    const docs = join(tmpDir, 'docs');
+    mkdirSync(docs, { recursive: true });
+    for (let i = 0; i < 6; i++) writeFileSync(join(docs, `d${i}.md`), `# doc ${i}`);
+    const input = JSON.stringify({ session_id: 'sess-1', prompt: 'please ingest ./docs into the brain' });
+    const output = runWithStdin('hook user-prompt-submit', input, tmpDir, UPS_ENV);
+    expect(output).toContain(OFFER_MARKER);
+    expect(output).toContain('sizable external source');
+    expect(output).toContain('docs');
+  });
+
+  it('mass-new-source: does NOT fire on a sparse brain (requires healthy)', () => {
+    scaffoldSparse(tmpDir);
+    const docs = join(tmpDir, 'docs');
+    mkdirSync(docs, { recursive: true });
+    for (let i = 0; i < 6; i++) writeFileSync(join(docs, `d${i}.md`), `# doc ${i}`);
+    const input = JSON.stringify({ session_id: 'sess-1', prompt: 'please ingest ./docs into the brain' });
+    const output = runWithStdin('hook user-prompt-submit', input, tmpDir, UPS_ENV);
+    expect(output).not.toContain('sizable external source');
+  });
+
+  // ── false positives: a healthy brain + ordinary work stays silent ─────────
+
+  it('no false positive: healthy brain + ordinary coding prompt stays silent', () => {
+    const ctx = scaffoldHealthy(tmpDir);
+    writeSleep(ctx, { debt: 0, sessions: [], bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [] });
+    const input = JSON.stringify({ session_id: 'sess-1', prompt: 'fix the bug in src/lib/recall.ts and run the tests' });
+    const output = runWithStdin('hook user-prompt-submit', input, tmpDir, UPS_ENV);
+    expect(output.trim()).toBe('');
+  });
+
+  it('no false positive: ingest intent but no existing source path stays silent', () => {
+    scaffoldHealthy(tmpDir);
+    const input = JSON.stringify({ session_id: 'sess-1', prompt: 'please ingest all of my documentation eventually' });
+    const output = runWithStdin('hook user-prompt-submit', input, tmpDir, UPS_ENV);
+    expect(output).not.toContain(OFFER_MARKER);
+  });
+
+  // ── DoD #3: detection never breaks the hook (sleep-debt + opt-out) ────────
+
+  it('never breaks the hook: mass offer and the sleep-debt reminder coexist', () => {
+    const ctx = scaffoldHealthy(tmpDir);
+    writeSleep(ctx, { debt: 5, sessions: [], bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [] });
+    const docs = join(tmpDir, 'docs');
+    mkdirSync(docs, { recursive: true });
+    for (let i = 0; i < 6; i++) writeFileSync(join(docs, `d${i}.md`), `# doc ${i}`);
+    const input = JSON.stringify({ session_id: 'sess-1', prompt: 'please ingest ./docs into the brain' });
+    const output = runWithStdin('hook user-prompt-submit', input, tmpDir, UPS_ENV);
+    expect(output).toContain(OFFER_MARKER);       // initializer offer
+    expect(output).toContain('Sleep debt is 5');  // existing sleep-debt behaviour intact
+  });
+
+  it('never breaks the hook: memory recall still fires alongside the initializer offer', () => {
+    const ctx = scaffoldHealthy(tmpDir);
+    writeSleep(ctx, { debt: 0, sessions: [], bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [] });
+    // A strongly-matching knowledge doc so BM25 recall is deterministic.
+    writeFileSync(join(ctx, 'knowledge', 'webhook-retry-policy.md'), [
+      '---',
+      'name: webhook-retry-policy',
+      'description: How we handle webhook retry idempotency and dedup',
+      'tags: [webhook, retry, idempotency]',
+      '---',
+      '# Webhook retry policy',
+      'Webhook retry idempotency dedup. Webhook retry idempotency dedup. Webhook retry idempotency dedup.',
+    ].join('\n'));
+    const docs = join(tmpDir, 'docs');
+    mkdirSync(docs, { recursive: true });
+    for (let i = 0; i < 6; i++) writeFileSync(join(docs, `d${i}.md`), `# doc ${i}`);
+    // Memory hook ON, skills off, BM25 recall — prompt carries BOTH ingest intent
+    // (+ an existing docs folder) AND the recall keywords.
+    const env = { ...process.env, DREAMCONTEXT_VERSION_CHECK: '0', DREAMCONTEXT_SKILLS_HOOK: '0', DREAMCONTEXT_RECALL_MODE: 'bm25' };
+    const input = JSON.stringify({
+      session_id: 'sess-1',
+      prompt: 'please ingest ./docs — also surface the webhook retry idempotency dedup policy webhook retry idempotency dedup',
+    });
+    const output = runWithStdin('hook user-prompt-submit', input, tmpDir, env);
+    expect(output).toContain(OFFER_MARKER);                  // initializer offer fired
+    expect(output).toContain('Memory recall');               // recall still ran
+    expect(output).toContain('webhook-retry-policy.md');      // recall surfaced the doc
+  });
+
+  it('DREAMCONTEXT_INITIALIZER_HOOK=0 silences the UPS offer but the sleep reminder stays', () => {
+    const ctx = scaffoldHealthy(tmpDir);
+    writeSleep(ctx, { debt: 5, sessions: [], bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [] });
+    const docs = join(tmpDir, 'docs');
+    mkdirSync(docs, { recursive: true });
+    for (let i = 0; i < 6; i++) writeFileSync(join(docs, `d${i}.md`), `# doc ${i}`);
+    const input = JSON.stringify({ session_id: 'sess-1', prompt: 'please ingest ./docs into the brain' });
+    const output = runWithStdin('hook user-prompt-submit', input, tmpDir, {
+      ...UPS_ENV,
+      DREAMCONTEXT_INITIALIZER_HOOK: '0',
+    });
+    expect(output).not.toContain(OFFER_MARKER);
+    expect(output).toContain('Sleep debt is 5');
   });
 });

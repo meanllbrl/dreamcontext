@@ -77,7 +77,7 @@ All pass → confirm briefly, execute. No ceremony.
 | `dreamcontext-explore` | All codebase exploration | Context-accelerated search using pre-loaded knowledge |
 | `sleep-tasks` / `sleep-state` | Sleep debt prompt fires, or after major work | Always-fire specialists during sleep fan-out — own task files / (core identity + changelog + releases) respectively |
 | `sleep-product` | Conditionally during sleep fan-out (research/decision/feature signals) | Knowledge files + feature PRDs |
-| `dreamcontext-initializer` | Project lacks `_dream_context/` | Bootstraps the structure |
+| `initializer` skill | Project lacks `_dream_context/` or it's sparse | Interactive, sub-agent-driven bootstrap — OFFER to ingest the user's material (docs/wiki/export) into the knowledge/feature/task hierarchy; don't silently scaffold. Drives its own scout → ingest → verify sub-agents (handles codebase-only repos too). |
 | `Reviewer` | Code is written and ready for PR | Flags Critical/Major only. Never mid-implementation. |
 </sub_agents>
 
