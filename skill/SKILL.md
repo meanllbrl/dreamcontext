@@ -290,7 +290,7 @@ Status: `todo → in_progress → in_review → completed`. Sections: `why`, `us
 - **Quick updates (no sleep):** edit `0.soul.md`/`1.user.md`/`2.memory.md` directly; `dreamcontext core changelog add` for code changes; `dreamcontext tasks log` for progress.
 - **Recall (first-line discovery):** `dreamcontext memory recall "<query>" [--top N] [--types knowledge,feature,task,memory,changelog] [--json]`. Default mode is **`haiku`** (a small cloud model picks relevant docs); `raw` = BM25 only; `off` = disabled. Control with `dreamcontext recall on|raw|off|status`. Auto-injected on prompts (opt out `DREAMCONTEXT_MEMORY_HOOK=0`).
 - **Quick capture:** `dreamcontext memory remember "<text>"` writes a `type=note` CHANGELOG entry; sleep reconciles it later. (`2.memory.md` no longer has a LIFO ship-narrative section — ship events live in CHANGELOG.)
-- **Knowledge files:** index auto-loaded; create with `dreamcontext knowledge create <name>`; pin frequently-needed ones (`pinned: true`); read non-pinned on demand and `knowledge touch` after.
+- **Knowledge files:** index auto-loaded; create with `dreamcontext knowledge create <name>`; pin frequently-needed ones (`pinned: true`); read non-pinned on demand and `knowledge touch` after. Group a flat file into a context folder with `dreamcontext knowledge move <slug> <folder>` (atomic move + inbound `[[wikilink]]` rewrite — never `mv` + hand-edit links).
 - **Features are sleep-only** (see rule 9).
 
 **Recall modes, taxonomy, Excalidraw boards/diagrams, multi-product knowledge** → [knowledge-and-recall.md](references/knowledge-and-recall.md).

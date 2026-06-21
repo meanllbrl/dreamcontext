@@ -4,6 +4,7 @@ import {
   writeFileSync,
   renameSync,
   mkdirSync,
+  unlinkSync,
 } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import fg from 'fast-glob';
@@ -69,11 +70,10 @@ export function rewriteWikilinks(
       renameSync(tmp, file);
       changed.push(file);
     } catch {
-      // Clean up tmp if rename failed
+      // Delete the orphaned tmp file if the write/rename failed (the original
+      // file is left untouched and is simply omitted from `changed`).
       try {
-        if (existsSync(tmp)) {
-          writeFileSync(tmp, ''); // truncate
-        }
+        if (existsSync(tmp)) unlinkSync(tmp);
       } catch { /* ignore */ }
     }
   }
@@ -123,13 +123,23 @@ export function rewriteFileContent(
         rest = '';
       }
 
+      // `.trim()` is load-bearing for CRLF files: on `\r\n` content the line
+      // splits leave a trailing `\r`, so a line-final `[[slug]]` yields a target
+      // of `slug\r` — trimming restores the exact slug used as the remap key.
       const newTarget = remapMap.get(target.trim());
       if (!newTarget) return match; // not in remaps, leave unchanged
       return `[[${newTarget}${rest}]]`;
     });
   });
 
-  return rewrittenSegments.join('');
+  // Join with '\n' (NOT ''): splitOnCodeFences partitions the file's lines and
+  // each segment was reconstructed with `lines.join('\n')`, so the single line
+  // break BETWEEN adjacent segments lives in neither. Concatenating segments
+  // directly drops that newline at every fence boundary (eating blank lines and
+  // even merging the text/fence lines). Because the segments are a contiguous
+  // partition of all lines, `segments.join('\n')` is identical to the original
+  // content when nothing is remapped — i.e. the round-trip is lossless.
+  return rewrittenSegments.join('\n');
 }
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────

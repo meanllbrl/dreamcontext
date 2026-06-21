@@ -31,7 +31,13 @@ knowledge/
 └── products/<product>.md
 ```
 
-**Don't reorganize by hand-moving files + hand-editing links.** Context grouping is normally done by `sleep-product` during consolidation — its "Organize" pass groups files that share a clear topic into `knowledge/<context>/` and atomically rewrites inbound `[[wikilinks]]`. During active work, just create knowledge with `dreamcontext knowledge create` and let sleep organize — never `mv` + hand-edit links by hand. When creating a brand-new doc you may place it directly in its context folder.
+**Don't reorganize by hand-moving files + hand-editing links.** To group an existing flat file into a context folder, use the atomic command:
+
+```bash
+dreamcontext knowledge move <slug> <folder>   # knowledge/<slug>.md → knowledge/<folder>/<basename>.md
+```
+
+It moves the file **and** rewrites every inbound `[[wikilink]]` in one atomic step (target token only; `|alias` and `#anchor` are preserved), keeps the file first-class in index/recall/snapshot/dashboard, and migrates its `knowledge_access` decay key. Folder names are free-form — nothing is reserved; nested folders are allowed; path traversal and clobbering an existing destination are rejected. Context grouping is normally done by `sleep-product` during consolidation — its "Organize" pass groups files that share a clear topic and calls this same command. During active work, just create knowledge with `dreamcontext knowledge create` and let sleep organize, or run `knowledge move` yourself — but never `mv` + hand-edit links by hand. When creating a brand-new doc you may place it directly in its context folder.
 
 ---
 

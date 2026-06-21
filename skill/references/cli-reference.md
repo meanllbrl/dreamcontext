@@ -85,9 +85,10 @@ Sections for `features insert`: `changelog`, `notes`, `technical_details`, `cons
 | `knowledge create <name>` | Create a knowledge file. `-d/--description`, `-t/--tags <csv>`, `-c/--content`. |
 | `knowledge index` | Show the knowledge index. `--tag <tag>`, `--plain`. |
 | `knowledge tags` | List standard tags. `--plain`. |
+| `knowledge move <slug> <folder>` | Move `knowledge/<slug>.md` → `knowledge/<folder>/<basename>.md` and rewrite inbound `[[wikilinks]]` atomically (target token only; `\|alias`/`#anchor` preserved). Free-form folders — nothing reserved; nested allowed; path traversal + clobber rejected. Use this instead of `mv` + hand-editing links. |
 | `knowledge touch <slug>` | Record access (decay/staleness tracking + warm loading). |
 
-> `knowledge/**/*.md` is indexed **recursively**, so knowledge organized into context folders (`knowledge/<context>/…`) stays first-class. Context grouping is normally done by `sleep-product` during consolidation (it moves files and rewrites inbound `[[wikilink]]`s atomically); legacy flat `knowledge/diagrams/` boards are folded by `migrations apply-diagrams`. Never hand-move + hand-edit links. See [knowledge-and-recall.md](knowledge-and-recall.md).
+> `knowledge/**/*.md` is indexed **recursively**, so knowledge organized into context folders (`knowledge/<context>/…`) stays first-class. Group a flat file into a context folder with `knowledge move <slug> <folder>` (atomic move + wikilink rewrite); `sleep-product` calls this same command during consolidation; legacy flat `knowledge/diagrams/` boards are folded by `migrations apply-diagrams`. Never hand-move + hand-edit links. See [knowledge-and-recall.md](knowledge-and-recall.md).
 
 ---
 
