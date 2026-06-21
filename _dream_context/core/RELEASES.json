@@ -2462,10 +2462,10 @@
   {
     "id": "rel_gjZ_5YAi",
     "version": "v0.6.0",
-    "date": "",
+    "date": "2026-06-05",
     "summary": "Control panel: backend control-plane, dashboard wiring, --vault + Tauri shell. Recall engine overhaul: BM25F + TR/EN stemming + synonyms + score/rank decoupling (recall@1 68→85%, @3 82→95%). Continuous capture: auto-digest + salience + capture guard (CAPTURE_RANK_PENALTY=0.5, MAX_INDEXED_DIGESTS=50).",
     "breaking": false,
-    "status": "planning",
+    "status": "released",
     "features": [],
     "tasks": [],
     "changelog": []
@@ -2476,7 +2476,7 @@
     "date": "",
     "summary": "Positioning locked ('persistent brain — remembers, knows, learning to act'), one-command curl|sh install, in-session update nudge (upgrade command + version-check), goal-skill orchestration pack (plan→review→implement→validate), Related-skills recall hook, multi-review skill (router + 4 specialists, direct synthesis), BIV/BID skill packs, Haiku single-call recall, server security hardening (loopback bind, CSRF guard, CORS lockdown, path-traversal guard — shipped as v0.5.1 fast-follow).",
     "breaking": false,
-    "status": "planning",
+    "status": "released",
     "features": [],
     "tasks": [],
     "changelog": []
@@ -2487,7 +2487,7 @@
     "date": "",
     "summary": "Manifest-aware install/update system (setup command, .install-manifest.json, stale-file pruning), multi-product support (monorepo init, per-product data-structures and knowledge injection in snapshot), BM25 memory recall (deterministic, zero new deps, hook-injected by default), snapshot improvements (pinned knowledge index, sleep state removed from snapshot, CHANGELOG schema adds summary + references + supersedes), anti-bloat ceiling tightened to 150 lines, 3D Brain graph view (react-force-graph-3d + three, lazy-loaded chunk), mermaid rendering fixed across all dashboard pages via shared useMermaidRender hook.",
     "breaking": false,
-    "status": "planning",
+    "status": "released",
     "features": [],
     "tasks": [
       "v04-ws1-install-update-overhaul",
@@ -2502,7 +2502,7 @@
     "date": "",
     "summary": "Sleep cycle fan-out: 3 specialists (sleep-tasks always, sleep-state always, sleep-product conditional) — collapsed from original 5 (sleep-core+sleep-changelog merged into sleep-state; sleep-knowledge+sleep-features merged into sleep-product) to cut launch + synthesis overhead; non-overlapping file domains preserve no-stomp guarantee. Main agent fans out directly, no orchestrator. Plus marketing/council passes, plan-mode-to-task import.",
     "breaking": false,
-    "status": "planning",
+    "status": "released",
     "features": [],
     "tasks": [],
     "changelog": []

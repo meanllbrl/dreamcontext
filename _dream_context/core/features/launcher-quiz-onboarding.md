@@ -1,8 +1,8 @@
 ---
 id: feat_bt9zRxgL
-status: in_review
+status: active
 created: '2026-06-13'
-updated: '2026-06-18'
+updated: '2026-06-21'
 released_version: v0.8.7
 tags:
   - desktop

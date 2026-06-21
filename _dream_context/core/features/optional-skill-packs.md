@@ -1,8 +1,8 @@
 ---
 id: feat_bTBRuxX0
-status: in_review
+status: active
 created: '2026-03-24'
-updated: '2026-06-18'
+updated: '2026-06-21'
 released_version: v0.8.7
 tags:
   - skills

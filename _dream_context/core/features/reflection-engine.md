@@ -1,8 +1,8 @@
 ---
 id: feat_ReflectionEngine_v06
-status: in_review
+status: active
 created: '2026-06-04'
-updated: '2026-06-18'
+updated: '2026-06-21'
 released_version: v0.8.7
 tags:
   - architecture

@@ -1,8 +1,8 @@
 ---
 id: feat_mBa5T4nU
-status: in_review
+status: active
 created: '2026-05-22'
-updated: '2026-06-20'
+updated: '2026-06-21'
 released_version: v0.8.7
 tags:
   - devops
