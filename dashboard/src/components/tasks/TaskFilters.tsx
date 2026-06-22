@@ -7,7 +7,7 @@ import './TaskFilters.css';
 
 export type SortField = 'updated_at' | 'created_at' | 'priority' | 'urgency' | 'name' | 'rice';
 export type GroupBy = 'status' | 'priority' | 'urgency' | 'tags' | 'version' | 'none';
-export type ViewMode = 'kanban' | 'eisenhower' | 'scatter' | 'list';
+export type ViewMode = 'kanban' | 'eisenhower' | 'scatter' | 'list' | 'timeline' | 'calendar' | 'heatmap';
 export type DateField = 'created_at' | 'updated_at';
 
 export interface FilterState {
@@ -155,6 +155,44 @@ function ListIcon() {
   return (
     <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
       <path d="M2 3.5H12M2 7H12M2 10.5H12" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
+    </svg>
+  );
+}
+
+function TimelineIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
+      <rect x="1" y="2" width="8" height="2.6" rx="1.1" fill="currentColor"/>
+      <rect x="4" y="5.7" width="9" height="2.6" rx="1.1" fill="currentColor"/>
+      <rect x="2.5" y="9.4" width="6.5" height="2.6" rx="1.1" fill="currentColor"/>
+    </svg>
+  );
+}
+
+function CalendarViewIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
+      <rect x="1.5" y="2.5" width="11" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.2"/>
+      <path d="M1.5 5.5H12.5" stroke="currentColor" strokeWidth="1.2"/>
+      <path d="M4.5 1V3.5M9.5 1V3.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
+      <rect x="3.4" y="7" width="2" height="2" rx="0.4" fill="currentColor"/>
+      <rect x="6.4" y="7" width="2" height="2" rx="0.4" fill="currentColor"/>
+    </svg>
+  );
+}
+
+function HeatmapIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
+      <rect x="1" y="1" width="3" height="3" rx="0.7" fill="currentColor" opacity="0.35"/>
+      <rect x="5.5" y="1" width="3" height="3" rx="0.7" fill="currentColor" opacity="0.7"/>
+      <rect x="10" y="1" width="3" height="3" rx="0.7" fill="currentColor" opacity="0.5"/>
+      <rect x="1" y="5.5" width="3" height="3" rx="0.7" fill="currentColor"/>
+      <rect x="5.5" y="5.5" width="3" height="3" rx="0.7" fill="currentColor" opacity="0.4"/>
+      <rect x="10" y="5.5" width="3" height="3" rx="0.7" fill="currentColor" opacity="0.85"/>
+      <rect x="1" y="10" width="3" height="3" rx="0.7" fill="currentColor" opacity="0.6"/>
+      <rect x="5.5" y="10" width="3" height="3" rx="0.7" fill="currentColor" opacity="0.3"/>
+      <rect x="10" y="10" width="3" height="3" rx="0.7" fill="currentColor" opacity="0.5"/>
     </svg>
   );
 }
@@ -476,6 +514,33 @@ export function TaskFilters({
           title="List view"
         >
           <ListIcon />
+        </button>
+        <button
+          className={`filter-view-btn ${filters.viewMode === 'timeline' ? 'filter-view-btn--active' : ''}`}
+          onClick={() => onFilterChange('viewMode', 'timeline')}
+          title="Timeline (Gantt)"
+          aria-label="Timeline (Gantt) view"
+          aria-pressed={filters.viewMode === 'timeline'}
+        >
+          <TimelineIcon />
+        </button>
+        <button
+          className={`filter-view-btn ${filters.viewMode === 'calendar' ? 'filter-view-btn--active' : ''}`}
+          onClick={() => onFilterChange('viewMode', 'calendar')}
+          title="Calendar"
+          aria-label="Calendar view"
+          aria-pressed={filters.viewMode === 'calendar'}
+        >
+          <CalendarViewIcon />
+        </button>
+        <button
+          className={`filter-view-btn ${filters.viewMode === 'heatmap' ? 'filter-view-btn--active' : ''}`}
+          onClick={() => onFilterChange('viewMode', 'heatmap')}
+          title="Activity heatmap"
+          aria-label="Activity heatmap view"
+          aria-pressed={filters.viewMode === 'heatmap'}
+        >
+          <HeatmapIcon />
         </button>
       </div>
 

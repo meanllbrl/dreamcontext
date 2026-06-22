@@ -1,0 +1,336 @@
+.gantt {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* ─── Legend ─── */
+.gantt-legend {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.gantt-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  text-transform: capitalize;
+}
+
+.gantt-legend-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  display: inline-block;
+}
+
+.gantt-legend-spacer {
+  flex: 1;
+}
+
+.gantt-legend-count {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-tertiary);
+}
+
+/* ─── Scroll frame ─── */
+.gantt-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-elevated);
+}
+
+.gantt-inner {
+  position: relative;
+  min-width: 100%;
+}
+
+/* ─── Header ─── */
+.gantt-header {
+  display: flex;
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: var(--color-bg-elevated);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.gantt-corner {
+  flex: 0 0 auto;
+  border-right: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  position: sticky;
+  left: 0;
+  z-index: 4;
+}
+
+.gantt-track-head {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.gantt-tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+}
+
+.gantt-tick--week::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: -10000px;
+  left: 0;
+  width: 1px;
+  background: var(--color-border);
+  opacity: 0.5;
+}
+
+.gantt-tick--major::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: -10000px;
+  left: 0;
+  width: 1px;
+  background: var(--color-border);
+  opacity: 1;
+}
+
+.gantt-tick-label {
+  font-size: 10px;
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-tertiary);
+  padding-left: 3px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.gantt-tick--major .gantt-tick-label {
+  color: var(--color-text-secondary);
+  font-weight: var(--font-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* ─── Today marker ─── */
+.gantt-today-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  z-index: 5;
+}
+
+.gantt-today-flag {
+  position: absolute;
+  top: 4px;
+  left: 0;
+  transform: translateX(-50%);
+  font-size: 9px;
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-on-brand);
+  background: var(--color-accent);
+  border-radius: var(--radius-full);
+  padding: 1px 6px;
+  white-space: nowrap;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.gantt-today-rule {
+  position: absolute;
+  top: 30px;
+  bottom: 0;
+  width: 1px;
+  background: var(--color-accent);
+  opacity: 0.5;
+  z-index: 2;
+  pointer-events: none;
+}
+
+/* ─── Body / rows ─── */
+.gantt-body {
+  position: relative;
+}
+
+.gantt-row {
+  display: flex;
+  align-items: stretch;
+  height: 34px;
+  border-bottom: 1px solid var(--color-border);
+  animation: gantt-row-in 260ms ease both;
+}
+
+.gantt-row:last-child {
+  border-bottom: none;
+}
+
+@keyframes gantt-row-in {
+  from { opacity: 0; transform: translateX(-6px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.gantt-row-label {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+  border: none;
+  border-right: 1px solid var(--color-border);
+  background: var(--color-bg-elevated);
+  cursor: pointer;
+  text-align: left;
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  transition: background var(--transition-fast);
+}
+
+.gantt-row-label:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.gantt-row-name {
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+}
+
+.gantt-row-assignee {
+  font-size: 10px;
+  color: var(--color-text-tertiary);
+  background: var(--color-bg-tertiary);
+  border-radius: var(--radius-full);
+  padding: 1px 6px;
+  white-space: nowrap;
+  max-width: 70px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gantt-row-track {
+  flex: 0 0 auto;
+  position: relative;
+}
+
+.gantt-bar {
+  position: absolute;
+  top: 7px;
+  height: 20px;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+  transition: filter var(--transition-fast), transform var(--transition-fast);
+}
+
+.gantt-bar:hover {
+  filter: brightness(1.06);
+  transform: translateY(-1px);
+}
+
+.gantt-bar--done {
+  opacity: 0.65;
+}
+
+.gantt-bar--overdue {
+  outline: 2px solid var(--color-error);
+  outline-offset: 1px;
+}
+
+.gantt-bar-label {
+  font-size: 11px;
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-on-brand);
+  padding: 0 var(--space-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ─── Empty state ─── */
+.gantt-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-12) var(--space-4);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-lg);
+  text-align: center;
+}
+
+.gantt-empty-title {
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+  margin: 0;
+}
+
+.gantt-empty-sub {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  margin: 0;
+}
+
+/* ─── Unscheduled tray (shared shape with RICE unscored) ─── */
+.gantt-unscheduled {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+}
+
+.gantt-unscheduled-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text);
+}
+
+.gantt-unscheduled-toggle:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.gantt-unscheduled-cards {
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-top: 1px solid var(--color-border);
+  overflow-x: auto;
+}
+
+.gantt-unscheduled-cards > * {
+  flex: 0 0 220px;
+}
+
+.gantt-chevron {
+  transition: transform var(--transition-fast);
+  color: var(--color-text-tertiary);
+}
+
+.gantt-chevron--open {
+  transform: rotate(180deg);
+}

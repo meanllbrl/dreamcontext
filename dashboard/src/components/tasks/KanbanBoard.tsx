@@ -11,6 +11,9 @@ import { TaskCreateModal } from './TaskCreateModal';
 import { TaskDetailPanel } from './TaskDetailPanel';
 import { EisenhowerMatrix } from './EisenhowerMatrix';
 import { RiceScatter } from './RiceScatter';
+import { TimelineGantt } from './TimelineGantt';
+import { TaskCalendar } from './TaskCalendar';
+import { ActivityHeatmap } from './ActivityHeatmap';
 import { TaskCard } from './TaskCard';
 import { VersionManager } from './VersionManager';
 import './KanbanBoard.css';
@@ -525,6 +528,21 @@ export function KanbanBoard() {
             />
           ))}
         </div>
+      ) : filters.viewMode === 'timeline' ? (
+        <TimelineGantt
+          tasks={filtered}
+          onTaskClick={(task) => setSelectedSlug(task.slug)}
+        />
+      ) : filters.viewMode === 'calendar' ? (
+        <TaskCalendar
+          tasks={filtered}
+          onTaskClick={(task) => setSelectedSlug(task.slug)}
+        />
+      ) : filters.viewMode === 'heatmap' ? (
+        <ActivityHeatmap
+          tasks={filtered}
+          onSelectDay={(_date, dayTasks) => { if (dayTasks.length > 0) setSelectedSlug(dayTasks[0].slug); }}
+        />
       ) : (
         <div className="kanban-columns">
           {renderColumns()}

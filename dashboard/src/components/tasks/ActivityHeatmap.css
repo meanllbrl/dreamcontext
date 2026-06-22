@@ -1,0 +1,206 @@
+.heatmap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* ─── Toolbar ─── */
+.heatmap-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.heatmap-metric-toggle {
+  display: flex;
+  gap: 2px;
+  background: var(--color-bg-tertiary);
+  border-radius: var(--radius-md);
+  padding: 2px;
+}
+
+.heatmap-metric-btn {
+  padding: 5px var(--space-3);
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.heatmap-metric-btn:hover {
+  color: var(--color-text);
+}
+
+.heatmap-metric-btn--active {
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  box-shadow: var(--shadow-sm);
+}
+
+.heatmap-stats {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.heatmap-stat {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.heatmap-stat strong {
+  color: var(--color-text);
+  font-weight: var(--font-weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.heatmap-stat--muted {
+  color: var(--color-text-tertiary);
+}
+
+/* ─── Canvas ─── */
+.heatmap-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-elevated);
+  padding: var(--space-3);
+}
+
+.heatmap-canvas {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: min-content;
+}
+
+/* Cell sizing tokens */
+.heatmap {
+  --hm-cell: 12px;
+  --hm-gap: 3px;
+  --hm-label-w: 30px;
+}
+
+/* ─── Month row ─── */
+.heatmap-months {
+  display: grid;
+  grid-template-columns: var(--hm-label-w) repeat(53, calc(var(--hm-cell) + var(--hm-gap)));
+  height: 14px;
+  align-items: end;
+}
+
+.heatmap-month {
+  grid-row: 1;
+  font-size: 10px;
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-tertiary);
+  line-height: 1;
+}
+
+/* ─── Body: weekday labels + week columns ─── */
+.heatmap-body {
+  display: flex;
+  gap: var(--hm-gap);
+}
+
+.heatmap-weekdays {
+  display: grid;
+  grid-template-rows: repeat(7, var(--hm-cell));
+  gap: var(--hm-gap);
+  width: calc(var(--hm-label-w) - var(--hm-gap));
+}
+
+.heatmap-weekdays span {
+  font-size: 9px;
+  color: var(--color-text-tertiary);
+  line-height: var(--hm-cell);
+  height: var(--hm-cell);
+}
+
+.heatmap-weeks {
+  display: flex;
+  gap: var(--hm-gap);
+}
+
+.heatmap-week {
+  display: grid;
+  grid-template-rows: repeat(7, var(--hm-cell));
+  gap: var(--hm-gap);
+}
+
+/* ─── Cells ─── */
+.heatmap-cell {
+  width: var(--hm-cell);
+  height: var(--hm-cell);
+  border-radius: 3px;
+  border: none;
+  padding: 0;
+  background: var(--color-bg-tertiary);
+  cursor: pointer;
+  transition: transform var(--transition-fast), outline-color var(--transition-fast);
+}
+
+.heatmap-cell:not(:disabled):hover {
+  transform: scale(1.25);
+  outline: 1px solid var(--color-accent);
+}
+
+.heatmap-cell--empty {
+  background: transparent;
+  cursor: default;
+  pointer-events: none;
+}
+
+.heatmap-cell--l0 {
+  background: var(--color-bg-tertiary);
+  cursor: default;
+}
+
+.heatmap-cell--l1 { background: color-mix(in srgb, var(--color-accent) 28%, transparent); }
+.heatmap-cell--l2 { background: color-mix(in srgb, var(--color-accent) 50%, transparent); }
+.heatmap-cell--l3 { background: color-mix(in srgb, var(--color-accent) 74%, transparent); }
+.heatmap-cell--l4 { background: var(--color-accent); }
+
+/* ─── Legend ─── */
+.heatmap-legend {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  align-self: flex-end;
+  margin-top: 2px;
+}
+
+.heatmap-legend .heatmap-cell {
+  cursor: default;
+}
+
+.heatmap-legend .heatmap-cell:hover {
+  transform: none;
+  outline: none;
+}
+
+.heatmap-legend-label {
+  font-size: 10px;
+  color: var(--color-text-tertiary);
+  margin: 0 4px;
+}
+
+/* Visually hidden, still read by screen readers (clip pattern, as RiceScatter). */
+.heatmap-sr-list {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
