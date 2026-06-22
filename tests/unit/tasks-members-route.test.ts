@@ -6,6 +6,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { handleTasksMembers } from '../../src/server/routes/tasks.js';
 import { writeSetupConfig } from '../../src/lib/setup-config.js';
 import type { RemoteMember } from '../../src/lib/task-backend/index.js';
+import { SyncLedger } from '../../src/lib/task-backend/index.js';
 
 /**
  * GET /api/tasks/members on a LOCAL project must surface the roster (config
@@ -99,5 +100,68 @@ describe('GET /api/tasks/members (roster fallback)', () => {
     expect(slugs).toEqual(['alan-turing', 'grace-hopper']);
     const grace = body().members.find((m) => m.slug === 'grace-hopper');
     expect(grace?.name).toBe('Grace Hopper');
+  });
+});
+
+describe('GET /api/tasks/members (remote backend gates non-members)', () => {
+  // No real ClickUp token anywhere → listMembers() falls back to the cached
+  // member set (which we seed below) instead of hitting the network.
+  beforeEach(() => {
+    delete process.env.CLICKUP_TOKEN;
+    delete process.env.CLICKUP_API_KEY;
+  });
+
+  it('drops roster/task-derived stubs that match no real member, keeping only member-backed candidates', async () => {
+    // Remote (ClickUp) backend configured. The roster contains a non-member
+    // ("emrecan") AND a real member ("aylin-yilmaz"); a task already carries an
+    // unmappable person:bektas tag. Only the real, member-backed slug may be
+    // offered — picking a stub would mint an unmappable assignee.
+    writeSetupConfig(tmpDir, {
+      platforms: ['claude'],
+      packs: [],
+      multiProduct: false,
+      setupVersion: '1',
+      disableNativeMemory: false,
+      taskBackend: 'clickup',
+      clickup: { teamId: 't', spaceId: 's', listId: 'list1' },
+      people: ['emrecan', 'aylin-yilmaz'],
+    } as never);
+
+    writeFileSync(
+      join(contextRoot, 'state', 'handoff.md'),
+      [
+        '---',
+        'id: task_xyz',
+        'name: Handoff',
+        'status: todo',
+        'priority: medium',
+        'urgency: medium',
+        'tags:',
+        '  - person:bektas',
+        '---',
+        '',
+        '## Notes',
+        '',
+      ].join('\n'),
+    );
+
+    // Seed the cached member roster (real remote ids) — listMembers() returns
+    // this when the live refresh fails (no token → no network).
+    const ledger = new SyncLedger(contextRoot);
+    ledger.writeMembers({
+      'aylin-yilmaz': { id: '102', name: 'Aylin Yilmaz' },
+      'alper-caymaz': { id: '105', name: 'Alper Caymaz' },
+    });
+
+    const { res, status, body } = makeRes();
+    await handleTasksMembers(req, res, {}, contextRoot);
+
+    expect(status()).toBe(200);
+    const members = body().members;
+    // Only the two real members survive; emrecan (roster stub) and bektas
+    // (task-derived stub) are filtered out.
+    expect(members.map((m) => m.slug).sort()).toEqual(['alper-caymaz', 'aylin-yilmaz']);
+    // And every offered candidate carries a real remote id.
+    expect(members.every((m) => m.id !== '')).toBe(true);
   });
 });

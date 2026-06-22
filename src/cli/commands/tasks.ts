@@ -7,7 +7,8 @@ import { readSection, extractMermaidNodes, nodeStatus, countCheckboxes } from '.
 import { prepareSectionInsert, SECTION_MAP } from '../../lib/section-insert.js';
 import { promptInput } from '../../lib/prompt.js';
 import { slugify, today } from '../../lib/id.js';
-import { success, error, header } from '../../lib/format.js';
+import { success, error, header, warn } from '../../lib/format.js';
+import { matchMember } from '../../lib/task-backend/member-match.js';
 import { readSetupConfig, isMultiPerson } from '../../lib/setup-config.js';
 import { getActivePlanningVersion } from '../../lib/active-version.js';
 import { mergeRice, validateRiceInput, type RiceFields, type RiceInput } from '../../lib/rice.js';
@@ -35,6 +36,47 @@ function getStateDir(): string {
 /** Commander collector for repeatable string options (e.g. `--tag a --tag b`). */
 function collectOption(value: string, previous: string[]): string[] {
   return previous.concat(value);
+}
+
+/**
+ * Resolve a human-entered person reference to a CANONICAL, member-backed slug
+ * for a `person:<slug>` tag. On a remote backend whose members are known, the
+ * input is fuzzy-matched against the real roster so we never mint an unmappable
+ * slug — an unmapped slug is silently dropped on push and the remote then
+ * defaults the assignee to the API-token owner. On a local backend (or when members are
+ * unavailable) it falls back to a plain slugify with no warning, since free-text
+ * assignment is harmless there.
+ *
+ * Returns `{ abort: true }` on an ambiguous match (a message is printed and the
+ * caller must stop rather than guess an assignee).
+ */
+async function resolvePersonSlug(
+  backend: TaskBackend,
+  input: string,
+): Promise<{ slug: string } | { abort: true }> {
+  const fallback = slugify(input);
+  if (!backend.listMembers) return { slug: fallback };
+  let members;
+  try {
+    members = await backend.listMembers();
+  } catch {
+    return { slug: fallback }; // offline — keep intent; the push-side warning catches it
+  }
+  if (members.length === 0) return { slug: fallback };
+
+  const match = matchMember(input, members);
+  if (match.kind === 'exact' || match.kind === 'fuzzy') {
+    if (match.member.slug !== fallback) {
+      console.log(chalk.dim(`  → assignee "${input}" resolved to ${match.member.slug} (${match.member.name}).`));
+    }
+    return { slug: match.member.slug };
+  }
+  if (match.kind === 'ambiguous') {
+    error(`Ambiguous assignee "${input}" — matches ${match.matches.map((m) => m.slug).join(', ')}. Be more specific.`);
+    return { abort: true };
+  }
+  warn(`"${input}" matches no member on the "${backend.name}" backend — recording person:${fallback}, but it will NOT sync until they are a member (see \`dreamcontext tasks members\`).`);
+  return { slug: fallback };
 }
 
 /** Render one task as a colorized human-readable line. */
@@ -240,7 +282,9 @@ export function registerTasksCommand(program: Command): void {
       if (opts.person && opts.person.trim()) {
         const projectRoot = dirname(ensureContextRoot());
         if (isMultiPerson(readSetupConfig(projectRoot))) {
-          const personTag = `person:${slugify(opts.person)}`;
+          const resolved = await resolvePersonSlug(backend, opts.person);
+          if ('abort' in resolved) return;
+          const personTag = `person:${resolved.slug}`;
           if (!tags.includes(personTag)) tags.push(personTag);
         }
       }
@@ -445,14 +489,32 @@ export function registerTasksCommand(program: Command): void {
         const drop = new Set(given.map((t) => t.toLowerCase()));
         next = task.tags.filter((t) => !drop.has(t.toLowerCase()));
       } else {
-        next = [...task.tags];
+        // Canonicalize person:<slug> assignments to a real member slug so we
+        // never record an unmappable assignee (silently dropped on push, which
+        // makes the remote default the assignee to the API-token owner).
+        const addTags: string[] = [];
         for (const t of given) {
+          if (t.startsWith('person:')) {
+            const raw = t.slice('person:'.length).trim();
+            if (!raw) {
+              error('Empty assignee: `person:` needs a slug, e.g. `person:emrecan-tetik` (see `dreamcontext tasks members`).');
+              return;
+            }
+            const resolved = await resolvePersonSlug(backend, raw);
+            if ('abort' in resolved) return;
+            addTags.push(`person:${resolved.slug}`);
+          } else {
+            addTags.push(t);
+          }
+        }
+        next = [...task.tags];
+        for (const t of addTags) {
           if (!next.some((x) => x.toLowerCase() === t.toLowerCase())) next.push(t);
         }
         // A person tag is an assignment — only one person tag at a time.
         const persons = next.filter((t) => t.startsWith('person:'));
         if (persons.length > 1) {
-          const keep = given.filter((t) => t.startsWith('person:')).pop() ?? persons[persons.length - 1];
+          const keep = addTags.filter((t) => t.startsWith('person:')).pop() ?? persons[persons.length - 1];
           next = next.filter((t) => !t.startsWith('person:') || t === keep);
         }
       }
@@ -641,6 +703,9 @@ export function registerTasksCommand(program: Command): void {
         }
         for (const e of report.errors) {
           console.log(chalk.red(`  error: ${e}`));
+        }
+        for (const w of report.warnings) {
+          console.log(chalk.yellow(`  warning: ${w}`));
         }
       } catch (err) {
         if (opts.hook) {

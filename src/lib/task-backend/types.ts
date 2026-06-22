@@ -163,6 +163,14 @@ export interface SyncReport {
    * surface it loudly rather than report success.
    */
   failedPushes: string[];
+  /**
+   * Non-fatal data-quality warnings surfaced by a sync (e.g. a `person:<slug>`
+   * assignee tag that resolves to no remote member, so it was left unassigned
+   * rather than silently falling back to the API-token owner). The task itself
+   * still synced — distinct from `errors`/`failedPushes` — but the user must be
+   * told, never silently dropped. Callers surface these loudly.
+   */
+  warnings: string[];
   /** Remote server-time watermark after this sync (epoch ms), if any. */
   watermark: number | null;
   /** True when nothing had to be done (also the local backend's constant result). */

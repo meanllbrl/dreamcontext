@@ -187,6 +187,37 @@ describe('clickup PUSH (M3, mocked transport)', () => {
     expect(remote.assignees.map((a) => a.id)).toEqual([501]);
   });
 
+  it('an unmapped person:<slug> is surfaced as a warning, never silently dropped', async () => {
+    await backend.create({ name: 'Mixed Assign', variant: 'cli' });
+    // person:alice maps (config → 501); person:bob maps to nothing.
+    await backend.updateFields('mixed-assign', {
+      tags: ['person:alice', 'person:bob'],
+      updated_at: '2026-06-12',
+    });
+    const report = await backend.sync('push');
+
+    // The mappable assignee still lands on the remote…
+    const remote = [...fake.tasks.values()][0];
+    expect(remote.assignees.map((a) => a.id)).toEqual([501]);
+    // …and the unmappable one is REPORTED (not silently dropped).
+    expect(report.warnings.some((w) => w.includes('person:bob'))).toBe(true);
+  });
+
+  it('an all-unmapped assignee set creates with NO assignees + a warning (no token-owner fallback hidden)', async () => {
+    await backend.create({ name: 'Lost Assign', variant: 'cli' });
+    await backend.updateFields('lost-assign', {
+      tags: ['person:nobody'],
+      updated_at: '2026-06-12',
+    });
+    const report = await backend.sync('push');
+
+    // ClickUp gets an empty assignee set — the wrong-but-visible state — and the
+    // warning makes the dropped assignment loud instead of silent.
+    const remote = [...fake.tasks.values()][0];
+    expect(remote.assignees).toEqual([]);
+    expect(report.warnings.some((w) => w.includes('person:nobody'))).toBe(true);
+  });
+
   it('created_by/updated_by are recorded on mutations (attribution)', async () => {
     await backend.create({ name: 'Attributed', variant: 'cli' });
     const task = await backend.get('attributed');

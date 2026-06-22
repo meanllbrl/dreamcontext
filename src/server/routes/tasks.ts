@@ -231,6 +231,15 @@ async function taskAssigneeMembers(backend: TaskBackend): Promise<RemoteMember[]
  * GET /api/tasks/members — assignee candidates. Merges remote members (when a
  * remote backend exposes them) with the local project roster, keyed by slug so
  * a person appears once. Remote entries win (they carry a real member id).
+ *
+ * On a REMOTE backend whose member roster is known, only member-backed
+ * candidates are returned: roster/task-derived stubs (id '') that match no real
+ * member are dropped. Offering them is the bug — picking one mints a
+ * `person:<slug>` tag that resolves to no member and is silently dropped on
+ * push (the remote then defaults the assignee to the API-token owner). On a
+ * LOCAL backend (or a remote one whose members are momentarily unavailable) the
+ * stubs are kept, because there free-text assignment is harmless and the
+ * alternative is an empty, seemingly-broken picker.
  */
 export async function handleTasksMembers(
   _req: IncomingMessage,
@@ -255,7 +264,15 @@ export async function handleTasksMembers(
     if (!bySlug.has(m.slug)) bySlug.set(m.slug, m);
   }
   for (const m of remote) bySlug.set(m.slug, m); // remote wins (real member id)
-  sendJson(res, 200, { members: [...bySlug.values()] });
+
+  let members = [...bySlug.values()];
+  // Remote backend WITH a known member roster → assignees must round-trip to a
+  // real member, so non-member stubs (id '') are not offered. Gate on a
+  // non-empty `remote` so a transient empty fetch doesn't blank the picker.
+  if (backend.listMembers && remote.length > 0) {
+    members = members.filter((m) => m.id !== '');
+  }
+  sendJson(res, 200, { members });
 }
 
 /**

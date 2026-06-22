@@ -474,6 +474,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       pendingQueue: 0,
       errors: [],
       failedPushes: [],
+      warnings: [],
       watermark: null,
       noop: false,
     };
@@ -582,11 +583,24 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     const newEntries = currentEntries.filter((e) => !baseNorm.has(normalizeEntry(e)));
 
     // assignees: every person:<slug> tag (plus the legacy assignee field),
-    // mapped to ClickUp member ids. Unknown slugs drop out silently.
-    const assigneeIds = assigneeSlugsOf(task.raw, task.tags)
-      .map((s) => this.memberIdFor(s))
-      .filter((id): id is string => id !== null)
-      .map(Number);
+    // mapped to ClickUp member ids. A slug that maps to NO member is NOT
+    // silently dropped — it is surfaced as a warning (otherwise an all-unmapped
+    // create sends an empty assignee set and ClickUp defaults the assignee to
+    // the API-token owner, with no signal to the user).
+    const assigneeIds: number[] = [];
+    const unmappedAssignees: string[] = [];
+    for (const s of assigneeSlugsOf(task.raw, task.tags)) {
+      const id = this.memberIdFor(s);
+      if (id !== null) assigneeIds.push(Number(id));
+      else unmappedAssignees.push(s);
+    }
+    if (unmappedAssignees.length > 0) {
+      report.warnings.push(
+        `push ${slug}: assignee ${unmappedAssignees.map((s) => `person:${s}`).join(', ')} ` +
+        `maps to no ClickUp member — left unassigned (add them to the list, or map with ` +
+        `\`dreamcontext config clickup-member <slug> <id>\`).`,
+      );
+    }
 
     // Map the status against the list's actual status set; an unmappable
     // status is OMITTED (the remote keeps its value) instead of 400-ing.
