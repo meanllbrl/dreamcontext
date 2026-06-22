@@ -95,6 +95,26 @@ export async function handleTasksCreate(
     riceBlock = mergeRice(null, riceInput);
   }
 
+  // Optional date range — validated YYYY-MM-DD (or absent). Synced to the remote
+  // backend like any other field; the backend enforces the backlog-undated rule.
+  const isYmdDate = (v: unknown): v is string =>
+    typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(`${v}T00:00:00Z`));
+  let startDate: string | null = null;
+  let dueDate: string | null = null;
+  for (const [key, set] of [['start_date', (v: string) => { startDate = v; }], ['due_date', (v: string) => { dueDate = v; }]] as const) {
+    if (body[key] !== undefined && body[key] !== null) {
+      if (!isYmdDate(body[key])) {
+        sendError(res, 400, `invalid_${key}`, `${key} must be YYYY-MM-DD or null.`);
+        return;
+      }
+      set(body[key] as string);
+    }
+  }
+  if (startDate && dueDate && startDate > dueDate) {
+    sendError(res, 400, 'invalid_date_range', `start_date (${startDate}) cannot be after due_date (${dueDate}).`);
+    return;
+  }
+
   const backend = backendFor(contextRoot);
   let task: TaskData;
   try {
@@ -107,6 +127,8 @@ export async function handleTasksCreate(
       why,
       version,
       rice: riceBlock,
+      start_date: startDate,
+      due_date: dueDate,
       variant: 'dashboard',
     });
   } catch (err) {
@@ -419,7 +441,7 @@ export async function handleTasksUpdate(
     }
   }
 
-  const allowedFields = ['status', 'priority', 'urgency', 'description', 'tags', 'name', 'related_feature', 'version', 'due_date', 'assignee'];
+  const allowedFields = ['status', 'priority', 'urgency', 'description', 'tags', 'name', 'related_feature', 'version', 'start_date', 'due_date', 'assignee'];
   for (const field of allowedFields) {
     if (body[field] !== undefined) {
       const oldVal = (oldData[field] ?? null) as FieldChange['from'];
@@ -471,10 +493,24 @@ export async function handleTasksUpdate(
     return;
   }
 
-  // Validate due_date (YYYY-MM-DD or null to clear)
-  if (updates.due_date !== undefined && updates.due_date !== null) {
-    if (typeof updates.due_date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(updates.due_date)) {
-      sendError(res, 400, 'invalid_due_date', 'due_date must be YYYY-MM-DD or null.');
+  // Validate start_date / due_date (YYYY-MM-DD or null to clear). Both ride the
+  // same shape and both sync to the remote backend.
+  const isYmd = (v: unknown): v is string =>
+    typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(`${v}T00:00:00Z`));
+  for (const dateField of ['start_date', 'due_date'] as const) {
+    if (updates[dateField] !== undefined && updates[dateField] !== null && !isYmd(updates[dateField])) {
+      sendError(res, 400, `invalid_${dateField}`, `${dateField} must be YYYY-MM-DD or null.`);
+      return;
+    }
+  }
+  // Range sanity: the EFFECTIVE start (after this patch) must not be after the
+  // effective due. A backlog task clears both in the backend, so only check when
+  // both resolve to a real date here.
+  {
+    const effStart = updates.start_date !== undefined ? updates.start_date : existing.start_date;
+    const effDue = updates.due_date !== undefined ? updates.due_date : existing.due_date;
+    if (isYmd(effStart) && isYmd(effDue) && effStart > effDue) {
+      sendError(res, 400, 'invalid_date_range', `start_date (${effStart}) cannot be after due_date (${effDue}).`);
       return;
     }
   }

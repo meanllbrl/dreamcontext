@@ -37,6 +37,49 @@ function collectOption(value: string, previous: string[]): string[] {
   return previous.concat(value);
 }
 
+/** True for a real calendar date in YYYY-MM-DD form (rejects e.g. 2026-13-40). */
+function isCalendarDate(value: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`));
+}
+
+/**
+ * Set or CLEAR one end of a task's date range. `raw` is a YYYY-MM-DD or the
+ * literal "clear". Shared by `tasks start` and `tasks due` so both behave
+ * identically (validation, range sanity start≤due, backlog-removal notice, and
+ * the same remote-synced write path). Backlog handling is enforced in the
+ * backend; here we just surface the "backlog removed" notice.
+ */
+async function setTaskDate(
+  backend: TaskBackend,
+  slug: string,
+  field: 'start_date' | 'due_date',
+  raw: string,
+): Promise<void> {
+  const label = field === 'start_date' ? 'Start date' : 'Due date';
+  if (raw.toLowerCase() === 'clear') {
+    await backend.updateFields(slug, { [field]: null, updated_at: today() });
+    success(`${label} cleared on ${slug}`);
+    return;
+  }
+  if (!isCalendarDate(raw)) {
+    error(`${label} must be a valid YYYY-MM-DD (or "clear").`);
+    return;
+  }
+  const before = await backend.get(slug);
+  // Range sanity: a start date can never be after the due date.
+  const start = field === 'start_date' ? raw : (before?.start_date ?? null);
+  const due = field === 'due_date' ? raw : (before?.due_date ?? null);
+  if (start && due && start > due) {
+    error(`Start date (${start}) cannot be after the due date (${due}). Adjust or clear the other date first.`);
+    return;
+  }
+  const updated = await backend.updateFields(slug, { [field]: raw, updated_at: today() });
+  success(`${label} on ${slug}: ${raw}`);
+  if (before?.tags.some((t) => t.toLowerCase() === 'backlog') && !updated.tags.some((t) => t.toLowerCase() === 'backlog')) {
+    console.log(chalk.dim('  backlog tag removed — a dated task is planned, not backlog.'));
+  }
+}
+
 /** Render one task as a colorized human-readable line. */
 function renderTaskLine(t: TaskRecord, opts: { long?: boolean } = {}): string {
   const statusColor =
@@ -200,8 +243,9 @@ export function registerTasksCommand(program: Command): void {
     .option('--impact <n>', 'RICE impact (integer 1–5)')
     .option('--confidence <n>', 'RICE confidence (25, 50, 75, or 100)')
     .option('--effort <n>', 'RICE effort in weeks (> 0, ≤ 52)')
-    .option('--due <date>', 'Due date (YYYY-MM-DD)')
-    .action(async (name: string, opts: { description?: string; priority?: string; urgency?: string; status?: string; tags?: string; why?: string; version?: string; person?: string; reach?: string; impact?: string; confidence?: string; effort?: string; due?: string }) => {
+    .option('--start <date>', 'Planned start date (YYYY-MM-DD)')
+    .option('--due <date>', 'Due/end date (YYYY-MM-DD)')
+    .action(async (name: string, opts: { description?: string; priority?: string; urgency?: string; status?: string; tags?: string; why?: string; version?: string; person?: string; reach?: string; impact?: string; confidence?: string; effort?: string; start?: string; due?: string }) => {
       const backend = getTaskBackend();
       const slug = slugify(name);
 
@@ -262,8 +306,16 @@ export function registerTasksCommand(program: Command): void {
         riceBlock = mergeRice(null, riceInput);
       }
 
-      if (opts.due !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(opts.due)) {
-        error('Due date must be YYYY-MM-DD.');
+      if (opts.due !== undefined && !isCalendarDate(opts.due)) {
+        error('Due date must be a valid YYYY-MM-DD.');
+        return;
+      }
+      if (opts.start !== undefined && !isCalendarDate(opts.start)) {
+        error('Start date must be a valid YYYY-MM-DD.');
+        return;
+      }
+      if (opts.start && opts.due && opts.start > opts.due) {
+        error(`Start date (${opts.start}) cannot be after the due date (${opts.due}).`);
         return;
       }
 
@@ -278,6 +330,7 @@ export function registerTasksCommand(program: Command): void {
           why,
           version,
           rice: riceBlock,
+          start_date: opts.start ?? null,
           due_date: opts.due ?? null,
           variant: 'cli',
         });
@@ -385,32 +438,30 @@ export function registerTasksCommand(program: Command): void {
       success(`Task deleted: ${slug}${backend.name !== 'local' ? ' (remote deletion on next sync)' : ''}`);
     });
 
-  // Due date on existing tasks (synced natively to the remote backend)
+  // Planned START date on existing tasks (synced to the remote backend)
   tasks
-    .command('due')
+    .command('start')
     .argument('<name>', 'Task slug or name')
     .argument('<date>', 'YYYY-MM-DD, or "clear" to remove')
-    .description('Set or clear a task due date')
+    .description('Set or clear a task planned start date (the range start)')
     .action(async (name: string, date: string) => {
       const backend = getTaskBackend();
       const slug = await resolveTaskSlug(backend, name);
       if (!slug) return;
+      await setTaskDate(backend, slug, 'start_date', date);
+    });
 
-      if (date.toLowerCase() === 'clear') {
-        await backend.updateFields(slug, { due_date: null, updated_at: today() });
-        success(`Due date cleared on ${slug}`);
-        return;
-      }
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00Z`))) {
-        error('Due date must be a valid YYYY-MM-DD (or "clear").');
-        return;
-      }
-      const before = await backend.get(slug);
-      const updated = await backend.updateFields(slug, { due_date: date, updated_at: today() });
-      success(`Due date on ${slug}: ${date}`);
-      if (before?.tags.some((t) => t.toLowerCase() === 'backlog') && !updated.tags.some((t) => t.toLowerCase() === 'backlog')) {
-        console.log(chalk.dim('  backlog tag removed — a dated task is planned, not backlog.'));
-      }
+  // DUE/end date on existing tasks (synced to the remote backend)
+  tasks
+    .command('due')
+    .argument('<name>', 'Task slug or name')
+    .argument('<date>', 'YYYY-MM-DD, or "clear" to remove')
+    .description('Set or clear a task due/end date (the range end)')
+    .action(async (name: string, date: string) => {
+      const backend = getTaskBackend();
+      const slug = await resolveTaskSlug(backend, name);
+      if (!slug) return;
+      await setTaskDate(backend, slug, 'due_date', date);
     });
 
   // Tag management on existing tasks (person:<slug> tags drive remote assignees)

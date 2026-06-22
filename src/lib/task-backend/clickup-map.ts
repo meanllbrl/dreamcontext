@@ -18,6 +18,8 @@ export interface ClickUpTask {
   date_created?: string | null;
   /** Epoch-ms as a string — ClickUp SERVER time. The watermark source. */
   date_updated?: string | null;
+  /** Epoch-ms (string or number) — ClickUp's native planned-start field. */
+  start_date?: string | number | null;
   due_date?: string | number | null;
   custom_fields?: Array<Record<string, unknown>> | null;
 }
@@ -145,20 +147,32 @@ export function tagsFromClickUp(remote: ClickUpTask['tags']): { tags: string[]; 
   };
 }
 
-// ─── Due date ──────────────────────────────────────────────────────────────
+// ─── Calendar dates (start_date / due_date) ──────────────────────────────────
+// ClickUp's start_date and due_date are both native epoch-ms fields, so a
+// single calendar-date codec serves both. The `dueDate*`/`startDate*` names
+// below are thin, self-documenting aliases over the shared codec.
 
 /** YYYY-MM-DD → ClickUp epoch-ms. UTC noon keeps the calendar day stable in any timezone. */
-export function dueDateToClickUp(date: string | null | undefined): number | null {
+export function calendarDateToClickUp(date: string | null | undefined): number | null {
   if (!date) return null;
   const ms = Date.parse(`${date}T12:00:00Z`);
   return Number.isFinite(ms) ? ms : null;
 }
 
-/** ClickUp due_date (epoch-ms string) → YYYY-MM-DD (UTC date part). */
-export function dueDateFromClickUp(value: string | number | null | undefined): string | null {
+/** ClickUp epoch-ms (string or number) → YYYY-MM-DD (UTC date part). */
+export function calendarDateFromClickUp(value: string | number | null | undefined): string | null {
   const ms = serverTimeMs(value ?? null);
   return ms === null ? null : new Date(ms).toISOString().split('T')[0];
 }
+
+/** YYYY-MM-DD → ClickUp due_date epoch-ms. */
+export const dueDateToClickUp = calendarDateToClickUp;
+/** ClickUp due_date (epoch-ms) → YYYY-MM-DD. */
+export const dueDateFromClickUp = calendarDateFromClickUp;
+/** YYYY-MM-DD → ClickUp start_date epoch-ms. */
+export const startDateToClickUp = calendarDateToClickUp;
+/** ClickUp start_date (epoch-ms) → YYYY-MM-DD. */
+export const startDateFromClickUp = calendarDateFromClickUp;
 
 // ─── Server time ───────────────────────────────────────────────────────────
 

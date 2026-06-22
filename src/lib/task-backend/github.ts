@@ -7,6 +7,9 @@ import { ApiAdapter } from './api-adapter.js';
 import { foldAscii } from './clickup-map.js';
 import {
   bodyToIssueBody,
+  composeIssueBody,
+  parseDatesBlock,
+  stripDatesBlock,
   deleteToGitHub,
   githubTimeMs,
   githubTimeIso,
@@ -553,7 +556,13 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       status: task.status,
     });
 
-    const body = bodyToIssueBody(task.body);
+    // GitHub has no native date fields, so start/due ride INSIDE the issue body
+    // as a marked block (the only way they reliably sync over plain REST).
+    // Backlog tasks are undated by rule → no block.
+    const isBacklog = task.tags.some((t) => t.toLowerCase() === BACKLOG_TAG);
+    const startLocal = isBacklog ? null : ((task.raw.start_date as string | null | undefined) ?? null);
+    const dueLocal = isBacklog ? null : ((task.raw.due_date as string | null | undefined) ?? null);
+    const body = composeIssueBody(bodyToIssueBody(task.body), startLocal, dueLocal);
 
     let remoteId = this.ledger.remoteIdFor(slug);
     let serverTime: number | null = null;
@@ -793,7 +802,14 @@ export class GitHubTaskBackend extends LocalTaskBackend {
 
     const { tags: remoteTags, priority: remotePriority, urgency: remoteUrgency, version: remoteVersion } =
       labelsFromGitHub(issue.labels);
-    const remoteBody = (issue.body ?? '').replace(/\r\n/g, '\n').trim();
+    // Dates live in a marked block inside the issue body — parse them out, then
+    // strip the block so the prose that goes into the 3-way merge is date-free.
+    const normalizedIssueBody = (issue.body ?? '').replace(/\r\n/g, '\n');
+    const { start: remoteStartRaw, due: remoteDueRaw } = parseDatesBlock(normalizedIssueBody);
+    const remoteBacklog = remoteTags.some((t) => t.toLowerCase() === BACKLOG_TAG);
+    const remoteStart = remoteBacklog ? null : remoteStartRaw;
+    const remoteDue = remoteBacklog ? null : remoteDueRaw;
+    const remoteBody = stripDatesBlock(normalizedIssueBody).trim();
     // Every assignee login maps back to a person:<slug> tag. Guard the resolve
     // path so a non-collaborator / unknown login is skipped, not a crash.
     const remoteAssignees: string[] = [
@@ -829,7 +845,8 @@ export class GitHubTaskBackend extends LocalTaskBackend {
         related_feature: null,
         version: remoteVersion,
         rice: null,
-        due_date: null,
+        start_date: remoteStart,
+        due_date: remoteDue,
         created_by: 'github',
         updated_by: 'github',
       };
@@ -929,8 +946,20 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       assigneeSlugsOf(local.raw, local.tags),
       remoteAssignees,
     );
+    // Dates round-trip through the issue-body block (parsed above), merged LWW
+    // just like the other scalars so a clear or an edit propagates either way.
+    const dueM = scalar(
+      (baseFm?.due_date as string | null | undefined) ?? null,
+      (local.raw.due_date as string | null | undefined) ?? null,
+      remoteDue,
+    );
+    const startM = scalar(
+      (baseFm?.start_date as string | null | undefined) ?? null,
+      (local.raw.start_date as string | null | undefined) ?? null,
+      remoteStart,
+    );
 
-    const scalarResults = [statusM, priorityM, urgencyM, nameM, tagsM, versionM, assigneeM];
+    const scalarResults = [statusM, priorityM, urgencyM, nameM, tagsM, versionM, assigneeM, dueM, startM];
     const anyLocalWin = scalarResults.some((r) => r.winner === 'local');
     const anyRemoteWin = scalarResults.some((r) => r.winner === 'remote');
     const remoteAddedEntries = mergedEntries.length > localEntries.length;
@@ -949,9 +978,12 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       urgency: urgencyM.value,
       tags: withPersonTags(tagsM.value, assigneeM.value),
       version: versionM.value,
+      start_date: tagsM.value.some((t) => t.toLowerCase() === BACKLOG_TAG)
+        ? null
+        : startM.value,
       due_date: tagsM.value.some((t) => t.toLowerCase() === BACKLOG_TAG)
         ? null
-        : ((local.raw.due_date as string | null | undefined) ?? null),
+        : dueM.value,
       updated_at: remoteContributed && remoteTime !== null ? dateOf(remoteTime) : local.updated_at,
       updated_by: anyRemoteWin || conflicts.length > 0 ? 'github' : (local.raw.updated_by ?? null),
     };
@@ -970,9 +1002,12 @@ export class GitHubTaskBackend extends LocalTaskBackend {
           urgency: remoteUrgency ?? fm.urgency,
           tags: withPersonTags(remoteTags, remoteAssignees),
           version: remoteVersion,
+          start_date: remoteTags.some((t) => t.toLowerCase() === BACKLOG_TAG)
+            ? null
+            : remoteStart,
           due_date: remoteTags.some((t) => t.toLowerCase() === BACKLOG_TAG)
             ? null
-            : ((local.raw.due_date as string | null | undefined) ?? null),
+            : remoteDue,
         },
         remoteBody,
         remoteEntries,
@@ -1006,6 +1041,8 @@ export class GitHubTaskBackend extends LocalTaskBackend {
         ['tags', tagsM, stripPersonTags(local.tags)],
         ['version', versionM, local.version],
         ['assignees', assigneeM, assigneeSlugsOf(local.raw, local.tags)],
+        ['due_date', dueM, (local.raw.due_date as string | null | undefined) ?? null],
+        ['start_date', startM, (local.raw.start_date as string | null | undefined) ?? null],
       ];
       for (const [field, merged, from] of namedScalars) {
         if (merged.winner === 'remote') {

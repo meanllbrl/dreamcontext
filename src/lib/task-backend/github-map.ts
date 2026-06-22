@@ -264,6 +264,79 @@ export function bodyToIssueBody(body: string): string {
   return out.join('\n').trimEnd() + '\n';
 }
 
+// ─── Dates (start_date / due_date) — encoded IN the issue body ─────────────────
+// GitHub Issues have no native date fields, so to make dates RELIABLY sync we
+// persist them inside the issue body as a marked, human-visible block. The block
+// is the single source of truth on the remote: it round-trips deterministically,
+// is stripped from the prose before any 3-way merge (so dates never collide with
+// prose edits), and is re-composed on push from the merged frontmatter values.
+// A task with no dates carries NO block (the body bytes stay exactly as before).
+
+const DATES_OPEN = '<!-- dc:dates -->';
+const DATES_CLOSE = '<!-- /dc:dates -->';
+const DATE_RE = /\b(\d{4}-\d{2}-\d{2})\b/;
+
+/**
+ * Render the dates block for an issue body, or '' when neither date is set.
+ * Visible form (so it reads well in the GitHub UI):
+ *   <!-- dc:dates -->
+ *   > 🗓️ **Start:** 2026-06-22 · **Due:** 2026-06-27
+ *   <!-- /dc:dates -->
+ */
+export function renderDatesBlock(start: string | null | undefined, due: string | null | undefined): string {
+  const parts: string[] = [];
+  if (start) parts.push(`**Start:** ${start}`);
+  if (due) parts.push(`**Due:** ${due}`);
+  if (parts.length === 0) return '';
+  return `${DATES_OPEN}\n> 🗓️ ${parts.join(' · ')}\n${DATES_CLOSE}`;
+}
+
+/** Parse the dates block out of an issue body. Missing block / dates → nulls. */
+export function parseDatesBlock(body: string | null | undefined): { start: string | null; due: string | null } {
+  if (!body) return { start: null, due: null };
+  const open = body.indexOf(DATES_OPEN);
+  const close = body.indexOf(DATES_CLOSE);
+  if (open === -1 || close === -1 || close < open) return { start: null, due: null };
+  const inner = body.slice(open + DATES_OPEN.length, close);
+  const startMatch = inner.match(/\*\*Start:\*\*\s*/);
+  const dueMatch = inner.match(/\*\*Due:\*\*\s*/);
+  const after = (m: RegExpMatchArray | null): string | null => {
+    if (!m || m.index === undefined) return null;
+    const d = inner.slice(m.index + m[0].length).match(DATE_RE);
+    return d ? d[1] : null;
+  };
+  return { start: after(startMatch), due: after(dueMatch) };
+}
+
+/** Remove the dates block (and the blank lines hugging it) from an issue body. */
+export function stripDatesBlock(body: string | null | undefined): string {
+  if (!body) return '';
+  const open = body.indexOf(DATES_OPEN);
+  const close = body.indexOf(DATES_CLOSE);
+  if (open === -1 || close === -1 || close < open) return body;
+  const before = body.slice(0, open).replace(/\n+$/, '');
+  const after = body.slice(close + DATES_CLOSE.length).replace(/^\n+/, '');
+  if (before && after) return `${before}\n\n${after}`;
+  return before || after;
+}
+
+/**
+ * Compose the full issue body for a push: the dates block (when any date is set)
+ * above the changelog-free prose. `prose` is expected to already be the output
+ * of {@link bodyToIssueBody}. Idempotent — strips any stray block from `prose`
+ * first so re-pushes never stack duplicate blocks.
+ */
+export function composeIssueBody(
+  prose: string,
+  start: string | null | undefined,
+  due: string | null | undefined,
+): string {
+  const cleanProse = stripDatesBlock(prose).trimEnd();
+  const block = renderDatesBlock(start, due);
+  if (!block) return cleanProse ? `${cleanProse}\n` : '';
+  return cleanProse ? `${block}\n\n${cleanProse}\n` : `${block}\n`;
+}
+
 // ─── Server time / watermark ──────────────────────────────────────────────────
 
 /**

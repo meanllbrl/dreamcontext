@@ -163,26 +163,28 @@ export function describeTaskBackendConformance(
     });
 
     it('BACKLOG RULE: backlog-tagged tasks are undated; dating one un-backlogs it', async () => {
-      // create with both → backlog wins, due dropped
+      // create with both → backlog wins, BOTH start + due dropped
       const created = await backend.create({
-        name: 'Backlog Born', tags: ['backlog', 'x'], due_date: '2026-09-09', variant: 'cli',
+        name: 'Backlog Born', tags: ['backlog', 'x'], start_date: '2026-09-01', due_date: '2026-09-09', variant: 'cli',
       });
       expect(created.due_date).toBeNull();
+      expect(created.start_date).toBeNull();
       expect(created.tags).toContain('backlog');
 
-      // tagging an existing dated task as backlog clears the due date
-      await backend.create({ name: 'Dated Then Parked', due_date: '2026-10-10', variant: 'cli' });
+      // tagging an existing dated task as backlog clears BOTH dates
+      await backend.create({ name: 'Dated Then Parked', start_date: '2026-10-01', due_date: '2026-10-10', variant: 'cli' });
       const parked = await backend.updateFields('dated-then-parked', {
         tags: ['backlog'], updated_at: '2026-06-12',
       });
       expect(parked.due_date).toBeNull();
+      expect(parked.start_date).toBeNull();
       expect(parked.tags).toContain('backlog');
 
-      // explicitly scheduling a backlog task pulls it OUT of backlog
+      // explicitly scheduling a backlog task (via the START date) un-backlogs it
       const scheduled = await backend.updateFields('backlog-born', {
-        due_date: '2026-11-11', updated_at: '2026-06-12',
+        start_date: '2026-11-01', updated_at: '2026-06-12',
       });
-      expect(scheduled.due_date).toBe('2026-11-11');
+      expect(scheduled.start_date).toBe('2026-11-01');
       expect(scheduled.tags).not.toContain('backlog');
       expect(scheduled.tags).toContain('x'); // other tags survive
     });

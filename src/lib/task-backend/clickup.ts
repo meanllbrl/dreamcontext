@@ -9,6 +9,8 @@ import {
   bodyToDescription,
   dueDateFromClickUp,
   dueDateToClickUp,
+  startDateFromClickUp,
+  startDateToClickUp,
   foldAscii,
   normalizeEntry,
   priorityFromClickUp,
@@ -591,18 +593,25 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     // Map the status against the list's actual status set; an unmappable
     // status is OMITTED (the remote keeps its value) instead of 400-ing.
     const mappedStatus = statusToClickUp(task.status, this.ledger.readListStatuses());
-    // due_date rides the same single PUT/POST (a NATIVE ClickUp field).
-    // Sent when set, or as null to clear one the remote already had.
+    // start_date + due_date ride the same single PUT/POST (both NATIVE ClickUp
+    // fields). Each is sent when set, or as null to CLEAR one the remote already
+    // had (so clears propagate). Backlog tasks are undated by rule → both null.
     const isBacklog = task.tags.some((t) => t.toLowerCase() === BACKLOG_TAG);
     const dueLocal = isBacklog ? null : ((task.raw.due_date as string | null | undefined) ?? null);
-    const baseFmDue = entry?.base_snapshot
-      ? (((matter(entry.base_snapshot.body).data as Record<string, unknown>).due_date as string | null | undefined) ?? null)
+    const startLocal = isBacklog ? null : ((task.raw.start_date as string | null | undefined) ?? null);
+    const baseSnapshotFm = entry?.base_snapshot
+      ? (matter(entry.base_snapshot.body).data as Record<string, unknown>)
       : null;
+    const baseFmDue = (baseSnapshotFm?.due_date as string | null | undefined) ?? null;
+    const baseFmStart = (baseSnapshotFm?.start_date as string | null | undefined) ?? null;
     const fields = {
       name: task.name,
       description: bodyToDescription(task.body),
       ...(mappedStatus !== null ? { status: mappedStatus } : {}),
       priority: priorityToClickUp(task.priority),
+      ...(startLocal !== null || baseFmStart !== null
+        ? { start_date: startDateToClickUp(startLocal), start_date_time: false }
+        : {}),
       ...(dueLocal !== null || baseFmDue !== null
         ? { due_date: dueDateToClickUp(dueLocal), due_date_time: false }
         : {}),
@@ -912,6 +921,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     const remotePriority = priorityFromClickUp(remote.priority);
     const remoteDesc = (remote.description ?? '').replace(/\r\n/g, '\n').trim();
     const remoteDue = dueDateFromClickUp(remote.due_date);
+    const remoteStart = startDateFromClickUp(remote.start_date);
     // Every remote assignee maps back to a person:<slug> tag (sorted + deduped
     // for order-stable merges). dreamcontext leans on person tags, not a single
     // assignee field, so the full set round-trips.
@@ -944,6 +954,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
         related_feature: null,
         version: remoteVersion,
         rice: null,
+        start_date: remoteStart,
         due_date: remoteDue,
         created_by: 'clickup',
         updated_by: 'clickup',
@@ -1067,8 +1078,13 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       ((local.raw.due_date as string | null | undefined) ?? null),
       remoteDue,
     );
+    const startM = scalar(
+      ((baseFm?.start_date as string | null | undefined) ?? null) as string | null,
+      ((local.raw.start_date as string | null | undefined) ?? null),
+      remoteStart,
+    );
 
-    const scalarResults = [statusM, priorityM, nameM, tagsM, versionM, assigneeM, dueM];
+    const scalarResults = [statusM, priorityM, nameM, tagsM, versionM, assigneeM, dueM, startM];
     const anyLocalWin = scalarResults.some((r) => r.winner === 'local')
       || fieldWinners.some((r) => r.winner === 'local');
     const anyRemoteWin = scalarResults.some((r) => r.winner === 'remote')
@@ -1091,6 +1107,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       tags: withPersonTags(tagsM.value, assigneeM.value),
       version: versionM.value,
       // Product rule: backlog ⇒ undated (applies to remote-originated state too).
+      start_date: tagsM.value.some((t) => t.toLowerCase() === BACKLOG_TAG) ? null : startM.value,
       due_date: tagsM.value.some((t) => t.toLowerCase() === BACKLOG_TAG) ? null : dueM.value,
       updated_at: remoteContributed && remoteTime !== null ? dateOf(remoteTime) : local.updated_at,
       // updated_by records the WINNER of the merge.
@@ -1139,7 +1156,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
         }
       }
       const remoteRender = this.renderMirror(
-        { ...fm, name: remote.name, status: remoteStatus, priority: remotePriority, tags: withPersonTags(remoteTags, remoteAssignees), version: remoteVersion, due_date: remoteTags.some((t) => t.toLowerCase() === BACKLOG_TAG) ? null : remoteDue, ...remoteFmOverrides, rice: remoteRice },
+        { ...fm, name: remote.name, status: remoteStatus, priority: remotePriority, tags: withPersonTags(remoteTags, remoteAssignees), version: remoteVersion, start_date: remoteTags.some((t) => t.toLowerCase() === BACKLOG_TAG) ? null : remoteStart, due_date: remoteTags.some((t) => t.toLowerCase() === BACKLOG_TAG) ? null : remoteDue, ...remoteFmOverrides, rice: remoteRice },
         remoteDesc,
         remoteEntries,
       );
@@ -1174,6 +1191,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
         ['version', versionM, local.version],
         ['assignees', assigneeM, assigneeSlugsOf(local.raw, local.tags)],
         ['due_date', dueM, (local.raw.due_date as string | null | undefined) ?? null],
+        ['start_date', startM, (local.raw.start_date as string | null | undefined) ?? null],
       ];
       for (const [field, merged, from] of namedScalars) {
         if (merged.winner === 'remote') {
