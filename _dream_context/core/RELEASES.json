@@ -1,11 +1,22 @@
 [
   {
-    "id": "rel_0w_ndOqT",
-    "version": "v0.9.2",
+    "id": "rel_2iZF9IEY",
+    "version": "v0.10.0",
     "date": "",
-    "summary": "Sprint-aware version filter + per-project custom fields + task-format override engine; time-axis views (timeline/Gantt, calendar, activity heatmap); clearable date ranges synced to ClickUp/GitHub; assignee member-resolution hardening (PRs #67-#69, #73)",
+    "summary": "Next planning milestone after v0.9.2 — richer task-model follow-ons, dashboard polish, recall test stability",
     "breaking": false,
     "status": "planning",
+    "features": [],
+    "tasks": [],
+    "changelog": []
+  },
+  {
+    "id": "rel_0w_ndOqT",
+    "version": "v0.9.2",
+    "date": "2026-06-23",
+    "summary": "Sprint-aware version filter + per-project custom fields + task-format override engine; time-axis views (timeline/Gantt, calendar, activity heatmap); clearable date ranges synced to ClickUp/GitHub; assignee member-resolution hardening (PRs #67-#69, #73)",
+    "breaking": false,
+    "status": "released",
     "features": [],
     "tasks": [],
     "changelog": []

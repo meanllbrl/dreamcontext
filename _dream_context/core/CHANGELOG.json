@@ -3,6 +3,17 @@
     "date": "2026-06-23",
     "type": "chore",
     "scope": "release",
+    "description": "v0.9.2 finalized: published to npm (dreamcontext@0.9.2 verified live via npm info) and shipped the desktop GitHub Release (aarch64 .app + .sha256, marked Latest). RELEASES.json v0.9.2 flipped planning->released (2026-06-23). shipped-v0-9-2 task completed. Opened v0.10.0 as the next active planning version and re-homed the unfinished v0.9.2 tasks (settings i18n nit, recall-stress test timeout, override-template follow-on) onto it.",
+    "breaking": false,
+    "summary": "v0.9.2 released to npm + desktop; release flipped to released, v0.10.0 opened as next planning version",
+    "references": [
+      "url:https://www.npmjs.com/package/dreamcontext"
+    ]
+  },
+  {
+    "date": "2026-06-23",
+    "type": "chore",
+    "scope": "release",
     "description": "Pushed the v0.9.2 git tag; desktop-release.yml CI workflow (CI run 28054590225) built the aarch64 macOS app, applied ad-hoc codesign, packaged as dreamcontext-beta_0.9.2_aarch64.app.tar.gz with a matching .sha256 asset, and published GitHub Release 'dreamcontext-beta 0.9.2' as non-draft and marked Latest. npm publish is still in progress — the desktop side is fully shipped but the CLI package is not yet confirmed live on npm; v0.9.2 should not be marked released until npm is confirmed.",
     "breaking": false,
     "summary": "v0.9.2 desktop GitHub Release shipped: v0.9.2 tag pushed, CI built aarch64 .app (ad-hoc signed), published to GitHub Releases as Latest (CI run 28054590225)",
