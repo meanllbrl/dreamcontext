@@ -1,5 +1,21 @@
 [
   {
+    "date": "2026-06-22",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "Added three time-axis task views to the dashboard, switchable from the existing view toggle and driven by the same filter set as Kanban/Eisenhower/RICE. Timeline/Gantt: status-colored bars created→due (prefers start_date when present) with today marker, overdue outline, adaptive ticks, and an Unscheduled tray. Calendar: Monday-first month grid with due-date chips, overdue/today highlighting, and due/unscheduled counts. Activity heatmap: GitHub-style 53-week grid with Created/Updated/Completed/Due metric toggle and an SR-only daily summary. Shared local-time date logic in calendar-utils.ts (taskSpan() is forward-compatible with the in-flight start_date feature via a typed cast). Verified via tsc -b, vite build, and live Playwright; multi-reviewer (design+engineering) iterated to PASS with 5 fixes (sparse-data heatmap scaling, after-midnight goToday, calendar-valid dateOf, SR-only heatmap list, aria-pressed toggles).",
+    "breaking": false,
+    "summary": "Dashboard: timeline (Gantt), calendar & activity-heatmap task views",
+    "references": [
+      "task:task-management-views-timeline-gantt-calendar-and-activity-heatmap",
+      "commit:02f8a64",
+      "url:https://github.com/meanllbrl/dreamcontext/pull/68"
+    ],
+    "authors": [
+      "mehmet"
+    ]
+  },
+  {
     "date": "2026-06-21",
     "type": "chore",
     "scope": "tasks",

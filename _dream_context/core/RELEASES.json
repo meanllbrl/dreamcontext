@@ -1,5 +1,16 @@
 [
   {
+    "id": "rel_nMFERK8W",
+    "version": "v0.10.0",
+    "date": "",
+    "summary": "Time-axis task planning views (timeline/calendar/heatmap) + task date ranges & sync hardening",
+    "breaking": false,
+    "status": "planning",
+    "features": [],
+    "tasks": [],
+    "changelog": []
+  },
+  {
     "id": "rel_7TmjhQCQ",
     "version": "0.9.1",
     "date": "",

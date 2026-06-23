@@ -29,7 +29,8 @@ Users need a visual interface to manage agent context without using the terminal
 - [ ] As a user, I want to drag tasks between columns (todo, in_progress, completed) so that I can update status without typing commands
 - [ ] As a user, I want to filter tasks by status, priority, urgency, tags, version, text search, and date range so that I can find specific tasks quickly
 - [ ] As a user, I want to group tasks by status, priority, urgency, version, or tags so that I can organize the board to my preference
-- [ ] As a user, I want to switch between Kanban and Eisenhower Matrix views so that I can see tasks by prioritization quadrant
+- [ ] As a user, I want to switch between Kanban, Eisenhower Matrix, RICE scatter, list, Timeline (Gantt), Calendar, and Activity Heatmap views so that I can see tasks by status, prioritization, and time
+- [ ] As a user, I want time-axis views (timeline/calendar/heatmap) so that I can plan when work lands and see load/completions over time
 - [ ] As a user, I want to create new tasks from the dashboard with name, description, priority, urgency, version, and tags so that I can add work without the CLI
 - [ ] As a user, I want to update task fields (status, priority, description) and add changelog entries from a detail panel so that I can keep tasks current
 - [ ] As a user, I want to see the agent character in the top-left corner showing sleep state (alert, drowsy, sleepy, must sleep) so that I know when consolidation is needed
@@ -83,6 +84,10 @@ Users need a visual interface to manage agent context without using the terminal
 - [x] Create task modal: name (required), description, priority, urgency, version, tags
 - [x] Detail panel slides in from right on task click: shows all fields, status/priority/urgency/version dropdowns, changelog with add entry form
 - [x] Eisenhower Matrix view: 2×2 priority×urgency grid, excludes completed tasks; tasks draggable between quadrants (updates priority+urgency on drop)
+- [x] Timeline (Gantt) view: status-colored bars from created→due (prefers `start_date` when the model gains it), sticky task labels with priority dot + assignee, today marker, overdue outline, adaptive day/week/month ticks, collapsible Unscheduled tray
+- [x] Calendar view: Monday-first month grid with tasks as chips on their due date, overdue + today highlighting, month nav, due/unscheduled counts
+- [x] Activity heatmap view: GitHub-style 53-week grid with Created/Updated/Completed/Due metric toggle, intensity buckets, SR-only daily summary, peak/active-day stats
+- [x] Shared time-axis date logic in `calendar-utils.ts` (local-time helpers + `taskSpan()`, forward-compatible with the in-flight `start_date` feature via a typed cast)
 - [x] MultiSelectFilter: checkbox-based, type-ahead search shown when >5 options, All/None toggle
 - [x] Version Manager: planning/released sections, stats header, Release button to promote
 - [x] Flowchart-to-acceptance-criteria sync: `<!-- node:<id> -->` markers in task body link mermaid node IDs to checkboxes; toggling a checkbox updates the corresponding mermaid node's `:::class` (done/active/todo/blocked) and vice versa.
@@ -333,6 +338,12 @@ Users need a visual interface to manage agent context without using the terminal
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-06-22 - Time-axis task views: Timeline (Gantt), Calendar, Activity heatmap (PR #68, branch feat/task-timeline-calendar-heatmap-views)
+- Three new `viewMode`s added to the task board, switchable from the existing TaskFilters toggle and driven by the same filtered task set as Kanban/Eisenhower/RICE/list. New components under `dashboard/src/components/tasks/`: `TimelineGantt`, `TaskCalendar`, `ActivityHeatmap` (+ CSS); wired via `KanbanBoard.tsx` render branches and a `ViewMode` union extension in `TaskFilters.tsx`.
+- Timeline/Gantt: status-colored bars spanning created→due with a today rule, overdue outline, adaptive day/week/month ticks, sticky labels (priority dot + assignee), and a collapsible Unscheduled tray for due-less tasks. Calendar: Monday-first month grid, due-date chips with overdue/today states, month nav, due/unscheduled counts. Activity heatmap: GitHub-style 53-week grid with Created/Updated/Completed/Due metric toggle, intensity buckets, and an SR-only daily summary.
+- Shared local-time date logic lives in `calendar-utils.ts`; `taskSpan()` reads a not-yet-existing `start_date` via a typed cast so the Gantt auto-upgrades when the date-range backend feature lands (no rework, no coupling) — see knowledge/patterns/forward-compatible-field-cast.md.
+- Verified via `tsc -b`, `vite build`, and a live Playwright pass (overdue/today/future tasks, 0 console errors). Multi-reviewer (design + engineering) iterated to PASS; 5 fixes: sparse-data heatmap scaling, after-midnight `goToday`, calendar-valid `dateOf`, SR-only heatmap list, `aria-pressed` toggles. Components are prop-driven and reusable for the planned launcher cross-project task view.
 
 ### 2026-06-17 - Excalidraw canvas rendering + embedded image resolution + live refresh (PR #35, branch fix/dashboard-render-and-refresh)
 - `ExcalidrawPreview` component switched from `exportToSvg()` static export to live `Excalidraw` canvas (view-mode, lazy-loaded). Boards are crisp at any zoom; native wheel-pan/pinch-zoom. `scrollToContent` called on mount + 100ms timer + ResizeObserver for reliable fit-and-center.
