@@ -52,6 +52,7 @@ export interface SyncStateFile {
   /** Local-clock throttles (request-budget only — never used for merge logic). */
   lastMetaRefreshAt?: number;
   lastReconcileAt?: number;
+  lastLabelProvisionAt?: number;
 }
 
 export interface CachedMember {
@@ -189,11 +190,11 @@ export class SyncLedger {
     this.writeSyncState(state);
   }
 
-  readThrottle(key: 'lastMetaRefreshAt' | 'lastReconcileAt'): number | null {
+  readThrottle(key: 'lastMetaRefreshAt' | 'lastReconcileAt' | 'lastLabelProvisionAt'): number | null {
     return this.readSyncState()[key] ?? null;
   }
 
-  writeThrottle(key: 'lastMetaRefreshAt' | 'lastReconcileAt', at: number): void {
+  writeThrottle(key: 'lastMetaRefreshAt' | 'lastReconcileAt' | 'lastLabelProvisionAt', at: number): void {
     const state = this.readSyncState();
     state[key] = at;
     this.writeSyncState(state);

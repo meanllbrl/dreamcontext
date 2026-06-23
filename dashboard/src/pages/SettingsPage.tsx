@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useI18n } from '../context/I18nContext';
 import { api } from '../api/client';
 import { useConfig, useUpdateConfig, type PlatformId, type SetupConfig } from '../hooks/useConfig';
 import { SearchableSelect } from '../components/tasks/SearchableSelect';
 import { ConnectionsManager } from '../components/settings/ConnectionsManager';
+import { TaskOverrideEditor } from '../components/settings/TaskOverrideEditor';
 import { isDesktop } from '../lib/desktop';
 import {
   readSleepyConfig,
@@ -59,6 +60,18 @@ interface ConnectionTestResponse {
   note?: string;
 }
 
+interface ProviderTokenStatus {
+  set: boolean;
+  source: 'env' | 'secrets' | null;
+  masked: string | null;
+}
+
+// Token status is reported for the ACTIVE backend only (the server resolves the
+// provider from the saved config); `backend` says which one it describes.
+interface TokenStatusResponse extends ProviderTokenStatus {
+  backend: string;
+}
+
 // ─── Platform options (duplicated client-side — can't import from src/lib) ────
 
 interface PlatformOption {
@@ -78,12 +91,41 @@ const DEFAULT_CONFIG: Pick<SetupConfig, 'platforms' | 'disableNativeMemory'> = {
   disableNativeMemory: true,
 };
 
+// ─── Section navigation (in-page menu) ────────────────────────────────────────
+
+type SettingsSectionId = 'platforms' | 'tasks' | 'format' | 'memory' | 'connections' | 'sleepy';
+
+interface SettingsNavItem {
+  id: SettingsSectionId;
+  icon: string;
+  labelKey: string;
+  desktopOnly?: boolean;
+  beta?: boolean;
+}
+
+// Monochrome geometric glyphs matching the main Sidebar's icon language.
+// Task Format sits just above Sleepy — both are the newer, beta-tier surfaces.
+const SETTINGS_NAV: SettingsNavItem[] = [
+  { id: 'platforms', icon: '⬡', labelKey: 'settings.nav.platforms' },
+  { id: 'tasks', icon: '⇅', labelKey: 'settings.nav.tasks' },
+  { id: 'memory', icon: '❖', labelKey: 'settings.nav.memory' },
+  { id: 'connections', icon: '⊕', labelKey: 'settings.nav.connections' },
+  { id: 'format', icon: '▤', labelKey: 'settings.nav.format', beta: true },
+  { id: 'sleepy', icon: '☾', labelKey: 'settings.nav.sleepy', desktopOnly: true },
+];
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function SettingsPage() {
   const { t } = useI18n();
+  const queryClient = useQueryClient();
   const { data: config, isLoading: configLoading, isError: configError } = useConfig();
   const updateConfig = useUpdateConfig();
+
+  // In-page section nav: only one settings group is shown at a time so a
+  // specific setting is quick to find instead of buried in one long scroll.
+  const [activeSection, setActiveSection] = useState<SettingsSectionId>('platforms');
+  const navItems = SETTINGS_NAV.filter((item) => !item.desktopOnly || isDesktop());
 
   const [platforms, setPlatforms] = useState<PlatformId[]>(DEFAULT_CONFIG.platforms);
   const [disableNativeMemory, setDisableNativeMemory] = useState<boolean>(
@@ -96,10 +138,16 @@ export function SettingsPage() {
   const [clickupList, setClickupList] = useState('');
   const [githubOwner, setGithubOwner] = useState('');
   const [githubRepo, setGithubRepo] = useState('');
+  // API-key inputs are write-only: empty by default, never seeded from the server
+  // (the token is never sent back). A non-empty value is saved on Save/Test/Provision.
+  const [clickupToken, setClickupToken] = useState('');
+  const [githubToken, setGithubToken] = useState('');
   const [testResult, setTestResult] = useState<ConnectionTestResponse | null>(null);
   const [testing, setTesting] = useState(false);
   const [provisionNote, setProvisionNote] = useState<string | null>(null);
+  const [provisionPreview, setProvisionPreview] = useState<ProvisionResult | null>(null);
   const [provisioning, setProvisioning] = useState(false);
+  const [persistError, setPersistError] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   // Sleepy notch quick-capture (desktop-only, persisted in localStorage; applies live).
@@ -117,6 +165,19 @@ export function SettingsPage() {
     queryFn: () => api.get<{ status: SyncStatus }>('/tasks/sync-status'),
     select: (d) => d.status,
   });
+
+  // Whether an API key is already configured (and from where), without ever
+  // pulling the secret itself — drives the "key set ✓" indicator.
+  const { data: tokenStatus } = useQuery({
+    queryKey: ['tasks-token-status'],
+    queryFn: () => api.get<TokenStatusResponse>('/tasks/token-status'),
+    enabled: cloudTasks,
+  });
+  // The status describes the SAVED backend; only trust it for the provider the
+  // form currently shows (switching the dropdown before saving shouldn't claim a
+  // key is set for the newly-picked provider).
+  const providerTokenStatus: ProviderTokenStatus | undefined =
+    tokenStatus && tokenStatus.backend === taskProvider ? tokenStatus : undefined;
 
   // Pickable lists straight from the remote API — same picker the CLI
   // onboarding uses, so nobody hunts ids out of URLs in the dashboard either.
@@ -145,18 +206,98 @@ export function SettingsPage() {
     markDirty();
   };
 
-  const handleProvision = async () => {
+  /**
+   * Persist the cloud-task form to disk: write the API key (if one was typed)
+   * into the gitignored secrets store, then PATCH the provider coordinates.
+   * Test Connection and Provision call this FIRST so they always act on what is
+   * on screen — the old flow tested stale saved config and reported "not set".
+   * Returns true on success; sets `persistError` and returns false on failure.
+   */
+  const persistCloudConfig = async (): Promise<boolean> => {
+    const taskBackend = cloudTasks ? taskProvider : 'local';
+    const typedToken = (taskProvider === 'github' ? githubToken : clickupToken).trim();
+    try {
+      // Config FIRST: this sets `taskBackend`, so the server resolves the right
+      // backend for the token write and every subsequent test/provision call.
+      await updateConfig.mutateAsync({
+        platforms,
+        disableNativeMemory,
+        taskBackend,
+        ...(cloudTasks && taskProvider === 'clickup'
+          ? { clickup: { teamId: clickupTeam || undefined, spaceId: clickupSpace || undefined, listId: clickupList || undefined } }
+          : {}),
+        ...(cloudTasks && taskProvider === 'github'
+          ? { github: { owner: githubOwner || undefined, repo: githubRepo || undefined } }
+          : {}),
+      });
+      // Then the API key into the active backend's gitignored secrets store.
+      if (cloudTasks && typedToken) {
+        await api.post('/tasks/token', { token: typedToken });
+      }
+      // The secret is on disk now — drop it from React state and refresh derived
+      // queries (key status, pickable containers, sync badge).
+      if (typedToken) {
+        if (taskProvider === 'github') setGithubToken(''); else setClickupToken('');
+      }
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['tasks-token-status'] }),
+        queryClient.invalidateQueries({ queryKey: ['tasks-containers'] }),
+        queryClient.invalidateQueries({ queryKey: ['tasks-sync-status'] }),
+      ]);
+      setDirty(false);
+      setPersistError(null);
+      return true;
+    } catch (err) {
+      setPersistError(err instanceof Error ? err.message : String(err));
+      return false;
+    }
+  };
+
+  const formatProvisionResult = (result: ProvisionResult): string =>
+    result.errors.length > 0
+      ? `⚠ ${result.errors[0]}`
+      : result.created.length > 0
+        ? `✓ ${t('settings.cloud_tasks.provision_created')}: ${result.created.join(', ')}${result.backfilled > 0 ? ` · ${t('settings.cloud_tasks.provision_backfilled').replace('{n}', String(result.backfilled))}` : ''}`
+        : `✓ ${t('settings.cloud_tasks.provision_nothing')}`;
+
+  // One-line status under the API-key input: where the key comes from, masked.
+  const tokenStatusHint = (s?: ProviderTokenStatus): string => {
+    if (!s || !s.set) return t('settings.cloud_tasks.api_key_none');
+    if (s.source === 'env') return `${t('settings.cloud_tasks.api_key_env')} ${s.masked ?? ''}`.trim();
+    return `${t('settings.cloud_tasks.api_key_set')} ${s.masked ?? ''}`.trim();
+  };
+
+  // Step 1 of provisioning: auto-save, then a DRY RUN that previews exactly which
+  // fields/labels will be created vs already exist — nothing is written yet.
+  const handleProvisionPreview = async () => {
+    setProvisioning(true);
+    setProvisionNote(null);
+    setProvisionPreview(null);
+    try {
+      if (!(await persistCloudConfig())) return;
+      const { result } = await api.post<{ result: ProvisionResult }>('/tasks/provision', { dryRun: true });
+      if (result.created.length === 0 && result.errors.length === 0) {
+        // Nothing to do — say so instead of showing an empty confirm panel.
+        setProvisionNote(`✓ ${t('settings.cloud_tasks.provision_nothing')}`);
+      } else {
+        setProvisionPreview(result);
+      }
+    } catch (err) {
+      setProvisionNote(`⚠ ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setProvisioning(false);
+    }
+  };
+
+  // Step 2: the user confirmed the preview — actually create the fields/labels.
+  const handleProvisionConfirm = async () => {
     setProvisioning(true);
     setProvisionNote(null);
     try {
-      const { result } = await api.post<{ result: ProvisionResult }>('/tasks/provision', {});
-      setProvisionNote(
-        result.errors.length > 0
-          ? `⚠ ${result.errors[0]}`
-          : result.created.length > 0
-            ? `✓ Created: ${result.created.join(', ')}${result.backfilled > 0 ? ` · backfilled ${result.backfilled} value(s)` : ''}`
-            : '✓ All recommended fields already exist.',
-      );
+      const { result } = await api.post<{ result: ProvisionResult }>('/tasks/provision', { dryRun: false });
+      setProvisionPreview(null);
+      setProvisionNote(formatProvisionResult(result));
+      void queryClient.invalidateQueries({ queryKey: ['tasks-sync-status'] });
     } catch (err) {
       setProvisionNote(`⚠ ${err instanceof Error ? err.message : String(err)}`);
     } finally {
@@ -203,27 +344,9 @@ export function SettingsPage() {
     setSaveSuccess(false);
   };
 
-  const handleSave = () => {
-    const taskBackend = cloudTasks ? taskProvider : 'local';
-    updateConfig.mutate(
-      {
-        platforms,
-        disableNativeMemory,
-        taskBackend,
-        ...(cloudTasks && taskProvider === 'clickup'
-          ? { clickup: { teamId: clickupTeam || undefined, spaceId: clickupSpace || undefined, listId: clickupList || undefined } }
-          : {}),
-        ...(cloudTasks && taskProvider === 'github'
-          ? { github: { owner: githubOwner || undefined, repo: githubRepo || undefined } }
-          : {}),
-      },
-      {
-        onSuccess: () => {
-          setDirty(false);
-          setSaveSuccess(true);
-        },
-      },
-    );
+  const handleSave = async () => {
+    setSaveSuccess(false);
+    if (await persistCloudConfig()) setSaveSuccess(true);
   };
 
   const markDirty = () => {
@@ -242,7 +365,11 @@ export function SettingsPage() {
   const handleTestConnection = async () => {
     setTesting(true);
     setTestResult(null);
+    setProvisionPreview(null);
     try {
+      // Auto-save first so the probe runs against the on-screen values (incl. a
+      // freshly typed API key), not whatever was last persisted.
+      if (!(await persistCloudConfig())) return;
       setTestResult(await api.post<ConnectionTestResponse>('/tasks/sync-test', {}));
     } catch (err) {
       setTestResult({ ok: false, backend: taskProvider, error: err instanceof Error ? err.message : String(err) });
@@ -276,6 +403,25 @@ export function SettingsPage() {
         <div className="settings-empty-notice">{t('settings.no_config')}</div>
       )}
 
+      <div className="settings-body">
+        <nav className="settings-nav" aria-label={t('settings.title')}>
+          {navItems.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className={`settings-nav-item${activeSection === item.id ? ' settings-nav-item--active' : ''}`}
+              aria-current={activeSection === item.id ? 'page' : undefined}
+              onClick={() => setActiveSection(item.id)}
+            >
+              <span className="settings-nav-icon" aria-hidden="true">{item.icon}</span>
+              <span className="settings-nav-label">{t(item.labelKey)}</span>
+              {item.beta && <span className="settings-beta-badge">BETA</span>}
+            </button>
+          ))}
+        </nav>
+
+        <div className="settings-content">
+      {activeSection === 'platforms' && (
       <section className="settings-section">
         <h2 className="settings-section-title">{t('settings.platforms')}</h2>
         <div className="settings-checkboxes">
@@ -292,7 +438,9 @@ export function SettingsPage() {
           ))}
         </div>
       </section>
+      )}
 
+      {activeSection === 'tasks' && (
       <section className="settings-section">
         <h2 className="settings-section-title">{t('settings.tasks')}</h2>
         <div className="settings-checkboxes">
@@ -366,6 +514,18 @@ export function SettingsPage() {
                       onChange={(e) => { setClickupList(e.target.value); markDirty(); }}
                     />
                   </div>
+                  <div className="settings-field-row">
+                    <label>{t('settings.cloud_tasks.api_key')}</label>
+                    <input
+                      type="password"
+                      className="settings-text-input"
+                      autoComplete="off"
+                      value={clickupToken}
+                      placeholder={providerTokenStatus?.set ? (providerTokenStatus.masked ?? '••••••••') : t('settings.cloud_tasks.api_key_placeholder')}
+                      onChange={(e) => { setClickupToken(e.target.value); markDirty(); }}
+                    />
+                  </div>
+                  <p className="settings-field-hint">{tokenStatusHint(providerTokenStatus)}</p>
                   <p className="settings-field-hint">{t('settings.cloud_tasks.token_hint')}</p>
                 </>
               )}
@@ -401,20 +561,31 @@ export function SettingsPage() {
                       onChange={(e) => { setGithubRepo(e.target.value); markDirty(); }}
                     />
                   </div>
+                  <div className="settings-field-row">
+                    <label>{t('settings.cloud_tasks.api_key')}</label>
+                    <input
+                      type="password"
+                      className="settings-text-input"
+                      autoComplete="off"
+                      value={githubToken}
+                      placeholder={providerTokenStatus?.set ? (providerTokenStatus.masked ?? '••••••••') : t('settings.cloud_tasks.api_key_placeholder')}
+                      onChange={(e) => { setGithubToken(e.target.value); markDirty(); }}
+                    />
+                  </div>
+                  <p className="settings-field-hint">{tokenStatusHint(providerTokenStatus)}</p>
                   <p className="settings-field-hint">{t('settings.cloud_tasks.github.token_hint')}</p>
                 </>
               )}
 
               <div className="settings-test-row">
-                <button className="btn" onClick={handleTestConnection} disabled={testing}>
+                <button className="btn btn--secondary" onClick={handleTestConnection} disabled={testing || provisioning}>
                   {testing ? t('settings.cloud_tasks.testing') : t('settings.cloud_tasks.test')}
                 </button>
-                <button className="btn" onClick={handleProvision} disabled={provisioning}>
-                  {provisioning
+                <button className="btn btn--secondary" onClick={handleProvisionPreview} disabled={provisioning || testing}>
+                  {provisioning && !provisionPreview
                     ? (taskProvider === 'github' ? t('settings.cloud_tasks.github.provisioning') : t('settings.cloud_tasks.provisioning'))
                     : (taskProvider === 'github' ? t('settings.cloud_tasks.github.provision') : t('settings.cloud_tasks.provision'))}
                 </button>
-                {provisionNote && <span className="settings-field-hint">{provisionNote}</span>}
                 {testResult && testResult.ok && (
                   <span className="settings-test-ok">
                     ✓ {testResult.note ?? `${t('settings.cloud_tasks.test_ok')} ${testResult.user}`}
@@ -424,6 +595,44 @@ export function SettingsPage() {
                   <span className="settings-test-err">✗ {testResult.error}</span>
                 )}
               </div>
+              {persistError && <p className="settings-test-err">✗ {persistError}</p>}
+              {provisionNote && <p className="settings-field-hint">{provisionNote}</p>}
+
+              {provisionPreview && (
+                <div className="settings-provision-preview">
+                  <p className="settings-provision-preview-title">
+                    {taskProvider === 'github'
+                      ? t('settings.cloud_tasks.github.preview_title')
+                      : t('settings.cloud_tasks.preview_title')}
+                  </p>
+                  {provisionPreview.created.length > 0 && (
+                    <p className="settings-provision-line">
+                      <span className="settings-provision-badge settings-provision-badge--new">
+                        {t('settings.cloud_tasks.preview_will_create').replace('{n}', String(provisionPreview.created.length))}
+                      </span>{' '}
+                      {provisionPreview.created.join(', ')}
+                    </p>
+                  )}
+                  {provisionPreview.existing.length > 0 && (
+                    <p className="settings-provision-line settings-provision-line--muted">
+                      <span className="settings-provision-badge">
+                        {t('settings.cloud_tasks.preview_existing').replace('{n}', String(provisionPreview.existing.length))}
+                      </span>{' '}
+                      {provisionPreview.existing.join(', ')}
+                    </p>
+                  )}
+                  <div className="settings-provision-actions">
+                    <button className="btn btn--primary" onClick={handleProvisionConfirm} disabled={provisioning}>
+                      {provisioning
+                        ? t('settings.cloud_tasks.provision_creating')
+                        : t('settings.cloud_tasks.provision_confirm').replace('{n}', String(provisionPreview.created.length))}
+                    </button>
+                    <button className="btn btn--ghost" onClick={() => setProvisionPreview(null)} disabled={provisioning}>
+                      {t('settings.cloud_tasks.provision_cancel')}
+                    </button>
+                  </div>
+                </div>
+              )}
               {syncStatus && syncStatus.backend !== 'local' && (
                 <p className="settings-sync-badge">
                   {t('settings.cloud_tasks.status')}: {syncStatus.pendingPush} {t('settings.cloud_tasks.pending')}
@@ -434,7 +643,11 @@ export function SettingsPage() {
           )}
         </div>
       </section>
+      )}
 
+      {activeSection === 'format' && <TaskOverrideEditor />}
+
+      {activeSection === 'memory' && (
       <section className="settings-section">
         <h2 className="settings-section-title">{t('settings.memory')}</h2>
         <div className="settings-checkboxes">
@@ -450,14 +663,17 @@ export function SettingsPage() {
           <p className="settings-field-hint">{t('settings.native_memory.hint')}</p>
         </div>
       </section>
+      )}
 
+      {activeSection === 'connections' && (
       <ConnectionsManager
         shareable={shareable}
         onToggleShareable={handleToggleShareable}
         shareablePending={updateConfig.isPending}
       />
+      )}
 
-      {isDesktop() && (
+      {activeSection === 'sleepy' && isDesktop() && (
         <section className="settings-section">
           <h2 className="settings-section-title">
             Sleepy — notch quick-capture
@@ -501,6 +717,8 @@ export function SettingsPage() {
           </div>
         </section>
       )}
+        </div>
+      </div>
     </div>
   );
 }

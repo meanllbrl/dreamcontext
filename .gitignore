@@ -29,7 +29,11 @@ test-results/
 playwright-report/
 e2e/shots/
 .playwright/
+.playwright-mcp/
 .codex/
+
+# Local verification screenshots
+version-filter-sprint-aware.png
 
 # Scratch downloads (videos, transcripts, media pulled for analysis)
 _download/

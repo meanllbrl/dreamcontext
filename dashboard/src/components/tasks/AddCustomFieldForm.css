@@ -1,0 +1,78 @@
+.acf-add-btn {
+  margin-top: 8px;
+  padding: 6px 10px;
+  font-size: var(--font-size-sm);
+  color: var(--color-accent);
+  background: transparent;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  width: 100%;
+}
+
+.acf-add-btn:hover {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+}
+
+.acf-form {
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.acf-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.acf-row--top {
+  align-items: flex-start;
+}
+
+.acf-label {
+  flex: 0 0 96px;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-tertiary);
+}
+
+.acf-row .field-input,
+.acf-row .field-select,
+.acf-row .field-textarea {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.acf-sync {
+  display: flex;
+  gap: 14px;
+  flex: 1 1 auto;
+}
+
+.acf-check {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.acf-error {
+  font-size: var(--font-size-sm);
+  color: var(--color-error);
+}
+
+.acf-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

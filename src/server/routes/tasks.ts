@@ -7,6 +7,17 @@ import type { FieldChange } from '../change-tracker.js';
 import { mergeRice, validateRiceInput, type RiceFields, type RiceInput } from '../../lib/rice.js';
 import { readSetupConfig } from '../../lib/setup-config.js';
 import {
+  loadTaskOverride,
+  readTaskOverrideRaw,
+  writeTaskOverrideDoc,
+  upsertCustomField,
+  removeCustomField,
+  fieldKey,
+  SYNC_TARGETS,
+  type CustomFieldType,
+  type SyncTarget,
+} from '../../lib/overrides.js';
+import {
   getTaskBackend,
   getTaskSyncStatus,
   isSafeTaskSlug,
@@ -24,6 +35,175 @@ function toApiTask(task: TaskData): Omit<TaskData, 'raw' | 'rawBody'> {
 
 function backendFor(contextRoot: string): TaskBackend {
   return getTaskBackend(contextRoot);
+}
+
+/**
+ * Validate + coerce a `custom_fields` patch against the project's override
+ * schema (`overrides/task.md`). With an override present, an undeclared key is
+ * rejected and values are coerced/validated by type (number, select options).
+ * With no override, the patch is accepted as-is (string-coerced) so the field
+ * surface still works for ad-hoc use. `null`/`''` clears a field.
+ */
+function validateCustomFields(
+  contextRoot: string,
+  raw: unknown,
+): { ok: true; value: Record<string, string | number | null> } | { ok: false; error: string } {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    return { ok: false, error: 'custom_fields must be an object.' };
+  }
+  const defs = loadTaskOverride(contextRoot)?.customFields ?? [];
+  const byKey = new Map(defs.map((d) => [d.key, d] as const));
+  const out: Record<string, string | number | null> = {};
+  for (const [key, val] of Object.entries(raw as Record<string, unknown>)) {
+    const def = byKey.get(key);
+    if (defs.length > 0 && !def) {
+      return { ok: false, error: `Unknown custom field "${key}" (declared: ${defs.map((d) => d.key).join(', ') || '(none)'}).` };
+    }
+    if (val === null || val === '') { out[key] = null; continue; }
+    if (def?.type === 'number') {
+      const n = Number(val);
+      if (!Number.isFinite(n)) return { ok: false, error: `Custom field "${key}" must be a number.` };
+      out[key] = n;
+    } else if (def?.type === 'select' && def.options && def.options.length > 0) {
+      const match = def.options.find((o) => o.toLowerCase() === String(val).toLowerCase());
+      if (!match) return { ok: false, error: `Custom field "${key}" must be one of: ${def.options.join(', ')}.` };
+      out[key] = match;
+    } else {
+      out[key] = String(val);
+    }
+  }
+  return { ok: true, value: out };
+}
+
+/**
+ * GET /api/task-overrides — the active task override schema (custom-field defs +
+ * presence), so the dashboard can render typed inputs. Empty/absent → no fields.
+ */
+export async function handleTaskOverrides(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const ov = loadTaskOverride(contextRoot);
+  sendJson(res, 200, {
+    present: ov !== null,
+    customFields: ov?.customFields ?? [],
+    warnings: ov?.warnings ?? [],
+  });
+}
+
+/** GET /api/task-overrides/doc — the RAW override markdown (for the Settings editor). */
+export async function handleTaskOverrideDocGet(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const raw = readTaskOverrideRaw(contextRoot);
+  const ov = loadTaskOverride(contextRoot);
+  sendJson(res, 200, {
+    present: raw !== '',
+    raw,
+    customFields: ov?.customFields ?? [],
+    warnings: ov?.warnings ?? [],
+  });
+}
+
+/** PUT /api/task-overrides/doc — write the RAW override markdown verbatim. */
+export async function handleTaskOverrideDocSave(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const body = await parseJsonBody(req);
+  if (!body || typeof body.raw !== 'string') {
+    sendError(res, 400, 'invalid_body', 'Body must be { raw: string }.');
+    return;
+  }
+  const MAX = 256 * 1024;
+  if (Buffer.byteLength(body.raw, 'utf-8') > MAX) {
+    sendError(res, 413, 'too_large', `Override exceeds ${MAX} bytes.`);
+    return;
+  }
+  const ov = writeTaskOverrideDoc(contextRoot, body.raw);
+  recordDashboardChange(contextRoot, {
+    entity: 'task',
+    action: 'update',
+    target: 'overrides/task.md',
+    summary: 'Edited the task format override',
+  });
+  sendJson(res, 200, {
+    present: ov !== null,
+    customFields: ov?.customFields ?? [],
+    warnings: ov?.warnings ?? [],
+  });
+}
+
+const FIELD_TYPES: CustomFieldType[] = ['text', 'number', 'select', 'date'];
+
+/** POST /api/task-overrides/fields — add or replace ONE custom-field definition. */
+export async function handleTaskOverrideAddField(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const body = await parseJsonBody(req);
+  if (!body) { sendError(res, 400, 'invalid_body', 'Request body must be JSON.'); return; }
+
+  const name = typeof body.name === 'string' ? body.name.trim() : '';
+  if (!name) { sendError(res, 400, 'missing_name', 'Field name is required.'); return; }
+
+  const type = String(body.type ?? 'text').toLowerCase() as CustomFieldType;
+  if (!FIELD_TYPES.includes(type)) {
+    sendError(res, 400, 'invalid_type', `type must be one of: ${FIELD_TYPES.join(', ')}`);
+    return;
+  }
+
+  const key = typeof body.key === 'string' && body.key.trim() ? fieldKey(body.key) : fieldKey(name);
+  if (!key) { sendError(res, 400, 'invalid_key', 'Field id could not be derived.'); return; }
+
+  const options = Array.isArray(body.options)
+    ? body.options.map((o: unknown) => String(o).trim()).filter(Boolean)
+    : undefined;
+  if (type === 'select' && (!options || options.length === 0)) {
+    sendError(res, 400, 'missing_options', 'A select field needs at least one option.');
+    return;
+  }
+
+  const sync = Array.isArray(body.sync)
+    ? body.sync.map((s: unknown) => String(s).toLowerCase()).filter((s: string): s is SyncTarget => (SYNC_TARGETS as string[]).includes(s))
+    : undefined;
+
+  const prompt = typeof body.prompt === 'string' && body.prompt.trim() ? body.prompt.trim() : undefined;
+  const required = body.required === true;
+  const ask = body.ask === true;
+
+  const ov = upsertCustomField(contextRoot, { name, key, type, required, options, sync, prompt, ask });
+  recordDashboardChange(contextRoot, {
+    entity: 'task',
+    action: 'update',
+    target: 'overrides/task.md',
+    summary: `Defined custom field '${name}' (${type})`,
+  });
+  sendJson(res, 200, { present: true, customFields: ov.customFields, warnings: ov.warnings });
+}
+
+/** DELETE /api/task-overrides/fields/:key — remove a custom-field definition. */
+export async function handleTaskOverrideRemoveField(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const ov = removeCustomField(contextRoot, params.key ?? '');
+  sendJson(res, 200, {
+    present: ov !== null,
+    customFields: ov?.customFields ?? [],
+    warnings: ov?.warnings ?? [],
+  });
 }
 
 /**
@@ -115,6 +295,14 @@ export async function handleTasksCreate(
     return;
   }
 
+  // Optional override-declared custom fields, validated against the schema.
+  let customFields: Record<string, string | number | null> | undefined;
+  if (body.custom_fields !== undefined && body.custom_fields !== null) {
+    const v = validateCustomFields(contextRoot, body.custom_fields);
+    if (!v.ok) { sendError(res, 400, 'invalid_custom_fields', v.error); return; }
+    customFields = v.value;
+  }
+
   const backend = backendFor(contextRoot);
   let task: TaskData;
   try {
@@ -129,6 +317,7 @@ export async function handleTasksCreate(
       rice: riceBlock,
       start_date: startDate,
       due_date: dueDate,
+      ...(customFields ? { custom_fields: customFields } : {}),
       variant: 'dashboard',
     });
   } catch (err) {
@@ -320,19 +509,82 @@ export async function handleTasksContainers(
 
 /**
  * POST /api/tasks/provision — create the recommended remote fields.
+ *
+ * Body `{ dryRun: true }` PREVIEWS the change (reports what would be created vs
+ * what already exists) without mutating the remote — the Settings page shows
+ * this before the user commits to actually provisioning.
  */
 export async function handleTasksProvision(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const body = (await parseJsonBody(req)) ?? {};
+  const dryRun = body.dryRun === true;
+  const backend = backendFor(contextRoot);
+  if (!backend.provisionRemote) {
+    sendError(res, 400, 'not_supported', `Task backend "${backend.name}" has no remote to provision.`);
+    return;
+  }
+  sendJson(res, 200, { result: await backend.provisionRemote({ dryRun }) });
+}
+
+/**
+ * GET /api/tasks/token-status — report whether an API token is configured for
+ * the ACTIVE remote backend (and where it comes from), WITHOUT echoing the
+ * secret. Lets the Settings page show "key set ✓ (••••1234)" vs "no key". Stays
+ * provider-agnostic: the backend owns the resolve+mask logic.
+ */
+export async function handleTasksTokenStatus(
   _req: IncomingMessage,
   res: ServerResponse,
   _params: Record<string, string>,
   contextRoot: string,
 ): Promise<void> {
   const backend = backendFor(contextRoot);
-  if (!backend.provisionRemote) {
-    sendError(res, 400, 'not_supported', `Task backend "${backend.name}" has no remote to provision.`);
+  const status = backend.tokenStatus
+    ? backend.tokenStatus()
+    : { set: false, source: null, masked: null };
+  sendJson(res, 200, { backend: backend.name, ...status });
+}
+
+/**
+ * POST /api/tasks/token — store the API token for the ACTIVE remote backend into
+ * its gitignored secrets store (never `.config.json`). Body `{ token }`. The
+ * token is never logged or echoed back; the response only confirms it was
+ * written. Provider-agnostic: each backend owns where its own token lives.
+ */
+export async function handleTasksSetToken(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const body = await parseJsonBody(req);
+  if (!body) {
+    sendError(res, 400, 'invalid_body', 'Request body must be valid JSON.');
     return;
   }
-  sendJson(res, 200, { result: await backend.provisionRemote() });
+  const token = body.token;
+  if (typeof token !== 'string' || !token.trim()) {
+    sendError(res, 400, 'invalid_token', 'token must be a non-empty string.');
+    return;
+  }
+  const backend = backendFor(contextRoot);
+  if (!backend.setToken) {
+    sendError(res, 400, 'not_supported', `Task backend "${backend.name}" has no remote token to set.`);
+    return;
+  }
+  try {
+    backend.setToken(token.trim());
+  } catch (err) {
+    // The secrets writer aborts (writing nothing) if it cannot gitignore the
+    // file first — surface that as a server error, never a silent success.
+    sendError(res, 500, 'token_write_failed', (err as Error).message ?? String(err));
+    return;
+  }
+  sendJson(res, 200, { ok: true, backend: backend.name });
 }
 
 /**
@@ -495,6 +747,23 @@ export async function handleTasksUpdate(
         field: 'rice',
         from: existingRice as FieldChange['from'],
         to: next as FieldChange['to'],
+      });
+    }
+  }
+
+  // Custom-field update: a partial patch is validated then MERGED onto the
+  // existing map (so other fields survive). `null`/`''` clears one field.
+  if (body.custom_fields !== undefined && body.custom_fields !== null) {
+    const v = validateCustomFields(contextRoot, body.custom_fields);
+    if (!v.ok) { sendError(res, 400, 'invalid_custom_fields', v.error); return; }
+    const existingCf = existing.custom_fields ?? {};
+    const merged = { ...existingCf, ...v.value };
+    if (JSON.stringify(existingCf) !== JSON.stringify(merged)) {
+      updates.custom_fields = merged;
+      fieldChanges.push({
+        field: 'custom_fields',
+        from: existingCf as FieldChange['from'],
+        to: merged as FieldChange['to'],
       });
     }
   }

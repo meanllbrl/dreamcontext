@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, rmSync, existsSync, readFileSync, realpathSync } from 'node:fs';
+import { mkdirSync, rmSync, existsSync, readFileSync, writeFileSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -258,5 +258,83 @@ describe('github PUSH (A3/A7, mocked transport)', () => {
       if (saved.GITHUB_TOKEN !== undefined) process.env.GITHUB_TOKEN = saved.GITHUB_TOKEN;
       if (saved.GH_TOKEN !== undefined) process.env.GH_TOKEN = saved.GH_TOKEN;
     }
+  });
+});
+
+describe('user-defined custom fields via overrides/task.md (GitHub: labels + body block)', () => {
+  function writeOverride(): GitHubTaskBackend {
+    mkdirSync(join(contextRoot, 'overrides'), { recursive: true });
+    writeFileSync(
+      join(contextRoot, 'overrides', 'task.md'),
+      [
+        '---',
+        'custom_fields:',
+        '  - { name: "Team", type: select, options: [platform, growth], sync: [github] }',
+        '  - { name: "Story Points", type: number, sync: [github] }',
+        '  - { name: "Sprint", type: text, sync: [github] }',
+        '---',
+        '## Why',
+        '{{WHY}}',
+        '',
+      ].join('\n'),
+      'utf-8',
+    );
+    return makeBackend();
+  }
+
+  it('select rides as a `<key>:<value>` label; number/text ride in the dc:fields body block', async () => {
+    backend = writeOverride();
+    await backend.create({
+      name: 'GH Fielded',
+      custom_fields: { team: 'platform', story_points: 8, sprint: '24.3' },
+      variant: 'cli',
+    });
+    const report = await backend.sync('push');
+    expect(report.errors).toEqual([]);
+
+    const issue = [...fake.issues.values()][0];
+    expect(labelNames(issue)).toContain('team:platform');
+    expect(issue.body).toContain('**Story Points:** 8');
+    expect(issue.body).toContain('**Sprint:** 24.3');
+    // body-block fields are NOT labels
+    expect(labelNames(issue).some((l) => l.startsWith('story_points'))).toBe(false);
+  });
+
+  it('round-trips custom fields back into the mirror on pull, then converges (no churn)', async () => {
+    backend = writeOverride();
+    await backend.create({ name: 'GH Round', custom_fields: { team: 'platform', story_points: 8 }, variant: 'cli' });
+    await backend.sync('both');
+
+    const again = await backend.sync('both');
+    expect(again.pushed).toBe(0);
+    expect(again.pulled).toBe(0);
+
+    const merged = readFileSync(join(contextRoot, 'state', 'gh-round.md'), 'utf-8');
+    expect(merged).toContain('team: platform');
+    expect(merged).toMatch(/story_points: ['"]?8['"]?/);
+  });
+
+  it('provision REUSES an existing team:platform label and CREATES the missing team:growth', async () => {
+    backend = writeOverride();
+    fake.labels.set('team:platform', { name: 'team:platform', color: 'ededed', description: '' });
+    const result = await backend.provisionRemote!();
+    expect(result.errors).toEqual([]);
+    expect(result.existing).toContain('team:platform');
+    expect(result.created).toContain('team:growth');
+  });
+
+  it('provisionRemote({ dryRun: true }) PREVIEWS labels without creating any', async () => {
+    backend = writeOverride();
+    fake.labels.set('team:platform', { name: 'team:platform', color: 'ededed', description: '' });
+    fake.requests.length = 0;
+
+    const preview = await backend.provisionRemote!({ dryRun: true });
+    expect(preview.existing).toContain('team:platform');
+    expect(preview.created).toContain('team:growth'); // would create
+    expect(preview.created).toContain('dc:in-progress'); // recommended labels too
+
+    // Nothing was actually created: only the seeded label exists, no POST fired.
+    expect([...fake.labels.keys()]).toEqual(['team:platform']);
+    expect(fake.requests.filter((r) => r.method === 'POST')).toHaveLength(0);
   });
 });

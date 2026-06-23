@@ -13,6 +13,7 @@ import { buildKnowledgeIndex } from '../../lib/knowledge-index.js';
 import { buildCoreIndex } from '../../lib/core-index.js';
 import { buildMarketingSnapshot } from '../../lib/marketing/snapshot.js';
 import { readSetupConfig, isMultiPerson } from '../../lib/setup-config.js';
+import { loadTaskOverride, renderOverrideBriefing } from '../../lib/overrides.js';
 import { isSkillInstalled } from '../../lib/catalog.js';
 import { readVersionCache, isCacheFresh, buildNudge, readAutoUpgradeMarker, shouldSuppressCliNudge } from '../../lib/version-check.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
@@ -137,6 +138,9 @@ function getActiveTaskEntries(root: string): ActiveTaskEntry[] {
 
   const taskFiles = fg.sync('*.md', { cwd: stateDir, absolute: true });
   const entries: ActiveTaskEntry[] = [];
+  // Declared custom fields (from overrides/task.md) — used to surface each task's
+  // custom-field VALUES inline so the agent sees them without opening the file.
+  const declaredFields = loadTaskOverride(root)?.customFields ?? [];
 
   for (const file of taskFiles) {
     try {
@@ -163,6 +167,21 @@ function getActiveTaskEntries(root: string): ActiveTaskEntry[] {
           }
         }
       } catch { /* skip */ }
+
+      // Custom fields (project task-format override): show each declared field's
+      // value inline so the agent never misses them; flag required ones still empty.
+      if (declaredFields.length > 0) {
+        const cf = data.custom_fields && typeof data.custom_fields === 'object' && !Array.isArray(data.custom_fields)
+          ? (data.custom_fields as Record<string, unknown>)
+          : {};
+        const rendered = declaredFields.map((f) => {
+          const v = cf[f.key];
+          const has = v !== undefined && v !== null && String(v).trim() !== '';
+          if (has) return `${f.key}=${String(v)}`;
+          return f.required ? `${f.key}=⚠ UNSET (required)` : `${f.key}=unset`;
+        });
+        line += `\n  Custom fields: ${rendered.join(', ')}`;
+      }
 
       entries.push({ text: line, status, priority, updated });
     } catch {
@@ -471,6 +490,17 @@ export function generateSnapshot(rootOverride?: string): string {
     parts.push('');
   }
   flush('identity', { neverEvict: true });
+
+  // 2b. Active task-format override — the MAIN agent must honor the project's
+  // custom task shape + custom fields (with per-field prompts) exactly like the
+  // sub-agents do. neverEvict: a format contract is load-bearing for every task.
+  const taskOverride = loadTaskOverride(root);
+  if (taskOverride) {
+    parts.push('## Task Format Override (ACTIVE — follow for every task)\n');
+    parts.push(renderOverrideBriefing(taskOverride));
+    parts.push('');
+    flush('task-override', { neverEvict: true });
+  }
 
   // 3. Memory file (full content) — WHAT the agent knows.
   // Demotion: Technical Decisions keeps the newest N bullets, older collapse
@@ -1068,6 +1098,16 @@ export function generateSubagentBriefing(): string {
   parts.push('`dreamcontext memory recall "<keywords>"` (BM25 over knowledge/features/tasks/');
   parts.push('memory/changelog, <100ms, zero token overhead) BEFORE Glob/Grep — it frequently');
   parts.push('beats blind exploration outright.\n');
+
+  // 1c. Active project overrides — a project-local task format/field override
+  // shadows the shipped task shape. soul/user bodies never reach sub-agents;
+  // THIS does, so every sub-agent that creates or reconciles a task must honor it.
+  const subOverride = loadTaskOverride(root);
+  if (subOverride) {
+    parts.push('ACTIVE TASK-FORMAT OVERRIDE:');
+    parts.push(renderOverrideBriefing(subOverride));
+    parts.push('');
+  }
 
   // 2. Project summary (first meaningful line from soul file content)
   const soulPath = join(root, 'core', '0.soul.md');

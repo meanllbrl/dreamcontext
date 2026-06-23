@@ -1,5 +1,268 @@
 [
   {
+    "date": "2026-06-23",
+    "type": "refactor",
+    "scope": "knowledge",
+    "description": "Four top-level decision files (decision-github-task-backend.md, decision-link-aware-vs-embedding-recall.md, decision-mem0-vs-bm25-recall.md, decision-meta-marketing-skill-adoption.md) moved from _dream_context/knowledge/ to _dream_context/knowledge/decisions/. A fifth file, decision-task-format-override-and-custom-fields.md, was added new at the decisions/ location. Git shows the four originals as deleted and the decisions/ folder as untracked — the move was a filesystem rename rather than a git mv, so recall-engine references and knowledge_access keys may need updating to the new slug paths (decision-github-task-backend → decisions/decision-github-task-backend). Flagging for sleep-product to verify index and recall cross-references are updated.",
+    "breaking": false,
+    "summary": "Move flat decision-*.md knowledge files into decisions/ subfolder; add decision-task-format-override-and-custom-fields.md",
+    "references": [
+      "file:_dream_context/knowledge/decisions/decision-task-format-override-and-custom-fields.md"
+    ]
+  },
+  {
+    "date": "2026-06-23",
+    "type": "chore",
+    "scope": "multi-review",
+    "description": "Ran /multi-review full-tier (security + frontend + edge-cases) on the feat/dashboard-sprint-aware-version-filter branch (49 tracked files, +2791/-553). Verdict: NEEDS_ATTENTION — no Criticals. Two Majors identified and intentionally deferred: (1) silent catch {} in clickup.ts:566 and github.ts:535 swallows auto-provision errors with no log and no report.errors entry, masking sync failures silently; (2) missing aria-label on TaskOverrideEditor icon buttons (edit/remove only carry title). Minors: 500 handler leaks err.message including absolute paths (src/server/index.ts:285, mitigated by loopback-only CORS); parseFieldsBlock regex case-sensitive (github.ts:912); hardcoded 'Custom' i18n string in TaskDetailPanel; hardcoded px spacing in override CSS. Two coordinator downgrade calls: TOCTOU findings downgraded (synchronous fs + single-threaded Node makes intra-process interleave impossible); dangerouslySetInnerHTML downgraded (pre-existing, not introduced by this diff). Branch pushed to remote without fixing the deferred items — fixes tracked as known issues.",
+    "breaking": false,
+    "summary": "multi-review (full tier, 3 specialists) on sprint-aware branch: NEEDS_ATTENTION; 2 Majors deferred; branch pushed as-is",
+    "references": [
+      "file:src/lib/task-backend/clickup.ts",
+      "file:src/lib/task-backend/github.ts",
+      "file:src/server/index.ts",
+      "file:dashboard/src/components/settings/TaskOverrideEditor.tsx"
+    ]
+  },
+  {
+    "date": "2026-06-23",
+    "type": "feat",
+    "scope": "tasks",
+    "description": "Add ask:boolean to CustomFieldDef (overrides.ts parse + upsert + server POST /task-overrides/fields + useTasks.ts type). When ask:true, renderOverrideBriefing tags the field [ASK THE USER] and emits an ASK-FIRST rule: the agent must ask the user for the value before creating the task, using the field's prompt as the question, and wait for the answer before proceeding. This captures human-judgment fields (e.g. time estimates, business-impact calls) that the agent should not infer on its own. In autonomous contexts with no user to ask (sleep reconcile, headless runs), the agent leaves the field unset and notes it — never invents a value. Dashboard: AddCustomFieldForm gains an 'Ask me' toggle alongside the Required toggle. Tests: 3 new cases in overrides.test.ts (ask parse, ask tag in briefing, ask-without-prompt). All 161 unit test files green; CLI + dashboard typecheck clean.",
+    "breaking": false,
+    "summary": "Custom field ask flag: agent asks user interactively instead of inferring; ASK-FIRST rule in briefing + dashboard toggle",
+    "references": [
+      "file:src/lib/overrides.ts",
+      "file:dashboard/src/components/tasks/AddCustomFieldForm.tsx",
+      "file:dashboard/src/hooks/useTasks.ts",
+      "file:tests/unit/overrides.test.ts",
+      "feature:task-management",
+      "knowledge:decisions/decision-task-format-override-and-custom-fields"
+    ]
+  },
+  {
+    "date": "2026-06-23",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "Add the TaskOverrideEditor component to the new Task Format settings panel. The editor has two zones: a structured list of declared custom fields (each showing name, type, required flag, and a remove action) backed by the AddCustomFieldForm for adding or editing fields; and a read-only view of the raw overrides/task.md markdown — the body template is intentionally not editable in the dashboard, keeping git/CLI as the source of truth. A collapsible 'How the format works' explanation covers YAML frontmatter, body template, and CLI usage. The panel carries a BETA badge and is placed above the Sleepy section in the nav order. Source: file:dashboard/src/components/settings/TaskOverrideEditor.tsx; file:dashboard/src/components/settings/TaskOverrideEditor.css; file:dashboard/src/components/tasks/AddCustomFieldForm.tsx.",
+    "breaking": false,
+    "summary": "Task Format settings panel: structured custom-field add/edit UI + read-only template view + 'How the format works' doc",
+    "references": [
+      "file:dashboard/src/components/settings/TaskOverrideEditor.tsx",
+      "file:dashboard/src/components/settings/TaskOverrideEditor.css",
+      "file:dashboard/src/components/tasks/AddCustomFieldForm.tsx",
+      "file:dashboard/src/components/tasks/AddCustomFieldForm.css"
+    ]
+  },
+  {
+    "date": "2026-06-23",
+    "type": "chore",
+    "scope": "release",
+    "description": "Advance the version to 0.9.2 across the full monorepo version surface: root package.json, desktop/package.json, desktop/src-tauri/tauri.conf.json, Cargo.toml (app-lib), and Cargo.lock. Followed immediately by an npm run build + npm link to serve the merged custom-field, required-flag, and start-stamp changes via the global dreamcontext CLI. The desktop app and npm package move in lockstep at this build line even though the active planning version is v0.10.0 — version 0.9.x marks the task-model hardening sprint before a v0.10.0 feature gate.",
+    "breaking": false,
+    "summary": "Bump all version strings to 0.9.2 (package.json, desktop/package.json, tauri.conf.json, Cargo.toml, Cargo.lock) + rebuild npm-link",
+    "references": [
+      "file:package.json",
+      "file:desktop/package.json",
+      "file:desktop/src-tauri/tauri.conf.json",
+      "file:desktop/src-tauri/Cargo.toml",
+      "file:desktop/src-tauri/Cargo.lock"
+    ]
+  },
+  {
+    "date": "2026-06-23",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "Add a persistent left-rail navigation menu to the Settings page that switches between six panels — Platforms, Tasks, Memory, Connections, Task Format (BETA), and Sleepy (desktop-only). Previously all settings lived on a single continuously scrolled page; the new nav shows only one section at a time. The active section is highlighted in the nav, desktop-only sections (Sleepy) are conditionally rendered, and the Task Format panel carries a BETA badge. Source: file:dashboard/src/pages/SettingsPage.tsx; file:dashboard/src/pages/SettingsPage.css.",
+    "breaking": false,
+    "summary": "Settings left-rail section-nav: 6-panel switcher (Platforms/Tasks/Memory/Connections/Task Format/Sleepy) replaces single-page scroll",
+    "references": [
+      "file:dashboard/src/pages/SettingsPage.tsx",
+      "file:dashboard/src/pages/SettingsPage.css"
+    ]
+  },
+  {
+    "date": "2026-06-23",
+    "type": "change",
+    "scope": "tasks",
+    "description": "Per design decision (required should fail, not warn): blockOnMissingRequired() in tasks.ts now REFUSES the action and sets process.exitCode=1 when a required custom field is unset — at tasks create (task not created), tasks complete, and tasks status completed|in_review (transition refused). The error names each unset field + the exact fix command (--field … for create, tasks field … for transitions) + the field's prompt. Escape hatch for intentional drafts / automation: --allow-missing-required flag on create, or DREAMCONTEXT_ALLOW_MISSING_REQUIRED=1 env (honored by complete/status too), which downgrades the failure to a warning. Blast radius is the CLI command only — the dashboard create path (server route → backend.create) is unaffected, so quick-create still works. Verified: create-without-required → exit 1 + no file; --field or the escape → exit 0; complete with required empty → refused. Supersedes today's warn-only backstop entry. Skill ref + cli-reference + mirror updated.",
+    "breaking": false,
+    "summary": "Required custom fields now HARD-FAIL the action (non-zero exit) at create/complete/advance instead of warning; --allow-missing-required escape for drafts",
+    "references": [
+      "file:src/cli/commands/tasks.ts",
+      "feature:task-management"
+    ]
+  },
+  {
+    "date": "2026-06-23",
+    "type": "feat",
+    "scope": "tasks",
+    "description": "Root-caused a report that an agent created a task without setting a required custom field. Diagnosis: the data + snapshot were correct (override marks the field required; snapshot briefs [REQUIRED] + flags ⚠ UNSET), but the briefing is ADVISORY and a stale agent session never reloads it. Fix: warnUnsetRequiredFields() in src/cli/commands/tasks.ts — after tasks create, tasks complete, and tasks status completed|in_review, the CLI prints a loud warning naming each unset required custom field plus the exact 'dreamcontext tasks field <slug> <key> <value>' command (with the field's prompt as a hint). Because the global CLI is shared, this fires even for agent sessions whose in-context briefing predates the rebuild — the miss is surfaced in tool output at create/complete time, not silently. Smoke-verified: warns on create-without-field and on complete-with-required-unset; silent when the field is set. Skill ref updated.",
+    "breaking": false,
+    "summary": "tasks create/complete/status now WARN loudly (with the exact fix command) when a required custom field is left unset — deterministic backstop independent of snapshot freshness",
+    "references": [
+      "file:src/cli/commands/tasks.ts",
+      "feature:task-management"
+    ]
+  },
+  {
+    "date": "2026-06-23",
+    "type": "feat",
+    "scope": "tasks",
+    "description": "Two-part extension of the per-project custom-field system. (1) REQUIRED flag: CustomFieldDef gains required:boolean (overrides.ts parse + upsert + server POST /task-overrides/fields). renderOverrideBriefing now tags each field [REQUIRED]/[optional] and emits a hard rule that required fields must be set before a task leaves todo. (2) VISIBILITY: a task's custom-field VALUES are now surfaced to the agent without opening the file — the SessionStart snapshot Active Tasks block renders 'Custom fields: key=value, key=⚠ UNSET (required)' per task (snapshot.ts getActiveTaskEntries), and tasks list --long renders them too (TaskRecord.custom_fields added in task-query.ts). Skills updated behaviorally: SKILL.md Tasks-essentials + references/tasks-and-features.md document required + the inline-visibility + the mandatory-required rule; .claude/skills mirror re-synced. (3) DASHBOARD: TaskOverrideEditor now manages fields structurally — AddCustomFieldForm wired in with add AND edit (upsert by id) + a Required toggle; the raw markdown is now READ-ONLY (a generated preview; Save/Start-from-template removed) so template editing is not exposed in the UI; field cards show required/optional + edit/remove. Tests: overrides.test.ts asserts required parse + [REQUIRED] briefing; 88 affected unit tests green; end-to-end smoke confirmed snapshot + tasks list + doctor surface the fields and flag required-unset.",
+    "breaking": false,
+    "summary": "Custom fields gain a required/optional flag and become visible to the agent everywhere (snapshot, tasks list, briefing); dashboard manages them structurally",
+    "references": [
+      "file:src/lib/overrides.ts",
+      "file:src/cli/commands/snapshot.ts",
+      "file:src/lib/task-query.ts",
+      "file:src/server/routes/tasks.ts",
+      "feature:task-management",
+      "knowledge:decisions/decision-task-format-override-and-custom-fields"
+    ]
+  },
+  {
+    "date": "2026-06-23",
+    "type": "docs",
+    "scope": "all",
+    "description": "Documentation pass propagating the v0.10.0 task model into every doc surface. README: Tasks section (date ranges, user-declared custom fields, member resolution) + Dashboard section (sprint-aware filter, assignee filter, Settings token/override editing). DEEP-DIVE: new Project task overrides section (override mechanism, custom fields, agent briefing, per-backend sync, dates & assignee resolution), four new Dashboard surfaces, and a v0.10.0 roadmap entry. Skill: SKILL.md structure tree (overrides/task.md, .active-version.json) + Tasks capability row; tasks-and-features.md custom-field key/prompt + briefing note; integrations.md ClickUp/GitHub custom fields + date sync + member resolution + dashboard token/provision. The .claude/skills/dreamcontext mirror was re-synced byte-identical to skill/ source. Extends the earlier cli-reference/tasks-and-features-only docs entry to the full doc set.",
+    "breaking": false,
+    "summary": "Sync README + DEEP-DIVE + dreamcontext skill (SKILL.md, integrations) to all v0.10.0 task-model capabilities",
+    "references": [
+      "file:README.md",
+      "file:DEEP-DIVE.md",
+      "file:skill/SKILL.md",
+      "file:skill/references/integrations.md"
+    ]
+  },
+  {
+    "date": "2026-06-23",
+    "type": "feat",
+    "scope": "tasks",
+    "description": "The first time a task transitions to in_progress, start_date is stamped with today if it is still unset; an explicitly planned start is never overwritten and no other transition stamps. The decision is isolated in the pure, unit-tested shouldStampStartDate(newStatus, currentStart) helper, applied in both the CLI (tasks status) and the server PATCH route. Test: tasks-start-stamp.test.ts.",
+    "breaking": false,
+    "summary": "Auto-stamp start_date on first move to in_progress when unset (planned start never overwritten)",
+    "references": [
+      "file:src/cli/commands/tasks.ts",
+      "file:tests/unit/tasks-start-stamp.test.ts",
+      "feature:task-management"
+    ]
+  },
+  {
+    "date": "2026-06-23",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "The remote backend API token can be entered from the dashboard. GET /api/tasks/token-status reports whether a token is set for the active backend and its source (secrets|env) with a masked value; POST /api/tasks/token persists it to the gitignored state/.secrets.json (per-backend namespace, never clobbers the other backend, never echoed in the response, refuses local-only, auto-gitignores). Backends gained setToken/tokenStatus. Provision now runs as a two-step preview: a dry run reports which custom fields/labels would be created vs already exist before committing. Test: tasks-token-route.test.ts.",
+    "breaking": false,
+    "summary": "Cloud-task token entry from dashboard Settings (gitignored secrets, masked, never echoed) + dry-run provision preview",
+    "references": [
+      "file:src/server/routes/tasks.ts",
+      "file:dashboard/src/pages/SettingsPage.tsx",
+      "feature:web-dashboard"
+    ]
+  },
+  {
+    "date": "2026-06-23",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "The dashboard Version filter is now sprint-aware. state/.active-version.json holds the active planning version (the current sprint), re-validated against RELEASES.json on read so a released milestone can never silently capture new tasks. New routes GET/PUT /api/releases/active (registered before /api/releases/:version so the literal active is not captured by the matcher); PUT lazily creates a planning entry for a bare version string and returns 409 for an already-released version. VersionFilter.tsx distinguishes current/planning/released sprints with status icons, per-row Set-current and Mark-complete actions, search, and completed-at-bottom sort. Hooks: useActiveVersion/useSetActiveVersion/useCompleteVersion. Test: releases-active-route.test.ts.",
+    "breaking": false,
+    "summary": "Sprint-aware version filter: current/planning/released sprints with set-current + mark-complete; backed by state/.active-version.json",
+    "references": [
+      "file:src/lib/active-version.ts",
+      "file:src/server/routes/changelog.ts",
+      "file:dashboard/src/components/tasks/VersionFilter.tsx",
+      "task:feat-dashboard-sprint-aware-version-filter-current-completed-actions-status-sort",
+      "feature:web-dashboard"
+    ]
+  },
+  {
+    "date": "2026-06-23",
+    "type": "feat",
+    "scope": "tasks",
+    "description": "Added src/lib/overrides.ts: a project drops _dream_context/overrides/task.md to shadow the default task shape. Frontmatter custom_fields declares a schema (name, key, type=text|number|select|date, options, sync=[clickup,github], prompt); body is the scaffold template plus an optional ## Agent Instructions section. Discovery is by file-presence so absent the file every consumer is byte-identical to defaults (zero regression). Values are set with tasks field <slug> <key> [value|clear] and tasks create --field key=value, validated against the schema, stored in task frontmatter custom_fields. Sync: ClickUp native fields (select=drop_down); GitHub select=<key>:<value> label, others=<!-- dc:fields --> body block; tasks provision reuses remote fields/labels by name. renderOverrideBriefing injects the field list + prompts + Agent Instructions into the SessionStart snapshot and every sub-agent. doctor validates the override (non-fatal warnings). Tests: overrides.test.ts, clickup-fields.test.ts, github-map.test.ts.",
+    "breaking": false,
+    "summary": "Task-format & custom-field overrides via overrides/task.md (declared fields sync to ClickUp/GitHub; briefed to agents)",
+    "references": [
+      "file:src/lib/overrides.ts",
+      "knowledge:decisions/decision-task-format-override-and-custom-fields",
+      "feature:task-management"
+    ]
+  },
+  {
+    "date": "2026-06-23",
+    "type": "chore",
+    "scope": "cli",
+    "description": "The published npm global (v0.9.0) was replaced with an npm link pointing at this repo's dist/ so the merged code (PRs #67-69) is immediately testable. Confirmed live via smoke test: CLI loads, tasks start/tasks due accept 'clear', tasks members command present, dashboard bundle in dashboard/dist/. Tauri desktop app (PID 81674) was holding a pre-merge Node server in memory from a prior launch; required a full app relaunch (Cmd+Q + reopen) to pick up the updated CLI — relaunching causes the thin-shell pivot to re-spawn the server from the now-linked global CLI. Stale orphan servers on ports 49393, 51773 (launcher orphans) and 4173/4319 were cleaned. The dreamcontext-11 vault server on :5555 was left untouched.",
+    "breaking": false,
+    "summary": "npm link global dreamcontext to this repo; verified CLI + dashboard + desktop beta all serve merged code; cleaned stale orphan servers",
+    "references": [
+      "commit:83d3a2f"
+    ]
+  },
+  {
+    "date": "2026-06-23",
+    "type": "docs",
+    "scope": "skill",
+    "description": "Updated skill/references/cli-reference.md and skill/references/tasks-and-features.md to document the PR #67 and #69 additions. cli-reference.md: added the tasks start command entry (YYYY-MM-DD|clear), added --start flag to tasks create, clarified that tasks due sets the range end. tasks-and-features.md: renamed 'Due dates & urgency' section to 'Dates & urgency', added the full start/due range semantics (inverted-range rejection, backlog-tag removal, Timeline/Calendar rendering), documented the assignee member-resolution behavior (fuzzy match → warn on unmatched, never silently drop, tasks members for roster). Files are uncommitted.",
+    "breaking": false,
+    "summary": "Update skill reference docs for tasks start/due date ranges and assignee member-resolution behavior",
+    "references": [
+      "file:skill/references/cli-reference.md",
+      "file:skill/references/tasks-and-features.md",
+      "commit:83d3a2f",
+      "commit:d1dbb31"
+    ]
+  },
+  {
+    "date": "2026-06-23",
+    "type": "chore",
+    "scope": "tasks",
+    "description": "Three open PRs (#67 date-ranges, #68 timeline/calendar/heatmap, #69 assignee resolution) all touched overlapping files. Merged locally in conflict-ascending order (lowest overlap first: #68 → #67 → #69). One genuine conflict: src/cli/commands/tasks.ts — PR #67 added isCalendarDate+setTaskDate helpers and PR #69 added resolvePersonSlug at the same position; resolution kept both plus a separating closing brace. Local WIP was stashed first (stash diff confirmed the stash was an earlier draft subsumed by the merged PRs, delta ~51 lines). 2209 tests green; one benchmark timeout (recall-capture-stress) was pre-existing/flaky-slow, not a regression. Fast-forwarded main and pushed, which auto-closed all three PRs. Post-merge multi-reviewer PASS: backend and frontend findings all cleared (dangerouslySetInnerHTML pre-existing, KanbanBoard date filter uses non-nullable fields, calendar-utils uses correct local-time math).",
+    "breaking": false,
+    "summary": "Merge PRs #67, #68, #69 via local integration: stash WIP → ordered merge → resolve conflict → tests green → fast-forward main",
+    "references": [
+      "commit:83d3a2f",
+      "commit:d1dbb31",
+      "commit:f20d4d2",
+      "url:https://github.com/meanllbrl/dreamcontext/pull/67",
+      "url:https://github.com/meanllbrl/dreamcontext/pull/68",
+      "url:https://github.com/meanllbrl/dreamcontext/pull/69"
+    ]
+  },
+  {
+    "date": "2026-06-23",
+    "type": "fix",
+    "scope": "tasks",
+    "description": "Add member-match.ts: a fuzzy-match layer that canonicalizes a person slug or display name against the live member roster returned by each backend (tasks members). Exact match wins; case-insensitive and slug-normalized fuzzy match follows; an ambiguous match aborts with an explicit error listing the candidates; an unrecognized name is recorded but emits a warning that the assignment won't sync until the person is a member. The silent fallback to the API token owner's account (a ClickUp behavior) is eliminated. tasks members CLI command exposes the roster for inspection. TaskDetailPanel shows an assignee chip row with the resolved names. Integration: merged via local conflict resolution (both PR #67 and #69 added helpers at the same location in tasks.ts; both kept, separated by a closing brace). 62 member-match unit tests + tasks-members-route tests added.",
+    "breaking": false,
+    "summary": "Resolve assignees to real members via fuzzy match; warn on unmatched, never silently drop (PR #69)",
+    "references": [
+      "commit:83d3a2f",
+      "commit:778c234",
+      "file:src/lib/task-backend/member-match.ts",
+      "file:src/cli/commands/tasks.ts",
+      "task:clickup-sync-unmapped-person-slug-tags-silently-drop-assignee-falls-back-to-api-token-owner-assignee-picker-offers-non-member-free-text-slugs",
+      "url:https://github.com/meanllbrl/dreamcontext/pull/69"
+    ]
+  },
+  {
+    "date": "2026-06-23",
+    "type": "feat",
+    "scope": "tasks",
+    "description": "Add a planned start date field to tasks, making the existing due date the end of a range. Both ends are independently settable and clearable via CLI (tasks start/tasks due with 'clear') and via the dashboard date picker with a clear button. An inverted range is rejected server-side. Setting either date on a backlog-tagged task removes the backlog tag automatically. Start and due dates sync to both the ClickUp and GitHub backends: ClickUp uses the native start/due fields; GitHub uses a 'dc:start:YYYY-MM-DD' label. github-map.ts was added to house the GitHub date serialization. Conformance tests added (clickup-start-date.test.ts, github-dates.test.ts, 170 cases). The dashboard Timeline/Gantt and Calendar views consume start_date for bar width and positioning, forward-compatible via a typed cast in calendar-utils.taskSpan().",
+    "breaking": false,
+    "summary": "Clearable due dates + start/end date ranges reliably synced to ClickUp and GitHub backends (PR #67)",
+    "references": [
+      "commit:d1dbb31",
+      "commit:5e1b3b0",
+      "file:src/lib/task-backend/github-map.ts",
+      "file:src/lib/task-backend/clickup-map.ts",
+      "task:tasks-clearable-due-dates-start-end-date-ranges-reliably-synced-to-backend",
+      "url:https://github.com/meanllbrl/dreamcontext/pull/67"
+    ]
+  },
+  {
     "date": "2026-06-22",
     "type": "feat",
     "scope": "dashboard",

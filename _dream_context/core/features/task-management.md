@@ -2,7 +2,7 @@
 id: feat_LDQn2Bi8
 status: in_review
 created: '2026-02-25'
-updated: '2026-06-21'
+updated: '2026-06-23'
 released_version: 0.1.0
 tags:
   - backend
@@ -14,6 +14,10 @@ related_tasks:
   - multi-assignee-via-person-tags
   - post-sleep-clickup-sync-rate-limit-headroom-retry-no-silent-fail
   - github-task-backend
+  - tasks-clearable-due-dates-start-end-date-ranges-reliably-synced-to-backend
+  - clickup-sync-unmapped-person-slug-tags-silently-drop-assignee-falls-back-to-api-token-owner-assignee-picker-offers-non-member-free-text-slugs
+  - per-project-format-rule-overrides-for-specialist-agents-task-feature-knowledge
+  - feat-dashboard-sprint-aware-version-filter-current-completed-actions-status-sort
 ---
 
 ## Why
@@ -40,6 +44,22 @@ Work spans multiple sessions, and agents need a structured way to track what is 
 - [x] As a developer, completing a task closes its GitHub issue as `completed` and deleting a task closes it as `not_planned` (soft-delete — issue history preserved), so issue state mirrors task lifecycle without destroying history.
 - [x] As a developer, my task's markdown body, changelog (as issue comments), priority/urgency/tags/version (as labels) and assignees round-trip through GitHub Issues without loss.
 - [x] As a developer, I can discover which repos to sync to, test the connection, and provision the recommended `dc:*` label set on a repo from the CLI or dashboard.
+- [x] As an agent/user, I can set a `start_date` alongside the existing `due_date` so that tasks have a planned date range, not just a deadline.
+- [x] As an agent/user, I can clear either date outright (`tasks due <name> clear`, `tasks start <name> clear`) without editing YAML manually.
+- [x] As an agent/user, the start≤due constraint is enforced at the CLI and API level so invalid ranges are rejected immediately.
+- [x] As an agent/user, setting any date on a task auto-removes the `backlog` tag so the task graduates from the backlog.
+- [x] As an agent/user, creating a task with `--person <name>` resolves the name against the real member roster (fuzzy match by display name / first name), so the resulting `person:<slug>` tag maps to a real member and survives a backend sync round-trip.
+- [x] As a developer, unmapped `person:<slug>` tags never silently drop an assignee — the sync surface (push to ClickUp or GitHub) emits a `SyncReport.warnings[]` entry and skips the assignment, so failures are visible, not silent.
+
+- [x] As a project maintainer, I can drop `_dream_context/overrides/task.md` into my brain to declare custom fields (name, key, type, options, sync targets, prompt) that attach extra project-specific data to every task, so tasks carry domain-specific attributes without forking the CLI.
+- [x] As a project maintainer, I can mark a custom field as `required: true` so that the CLI refuses to create or complete a task (or transition it to `completed`/`in_review`) while that field is unset, preventing stale or incomplete task records from entering the done pipeline.
+- [x] As a project maintainer, custom fields of type `select` sync to ClickUp as native `drop_down` list fields (provisioned by name, reusing existing fields); other types sync as `short_text` or `number` fields; `select` values sync to GitHub as `key:value` labels; all other types ride in a `<!-- dc:fields -->` body block.
+- [x] As an AI agent, I receive a `renderOverrideBriefing()` in the SessionStart snapshot and every sub-agent briefing when an override is active, so I fill every custom field per its `prompt` consistently across sessions.
+- [x] As an AI agent, I can see each task's current custom field values directly in the snapshot Active Tasks block (`Custom fields: key=value / key=⚠ UNSET (required)`) and in `tasks list --long`, so I know at a glance which required fields are missing without opening individual task files.
+- [x] As a developer, I can set, view, and manage custom field values with `dreamcontext tasks field <slug> <key> <value>`.
+- [x] As a developer, the active planning version ("current sprint") is stored in `state/.active-version.json` and re-validated against RELEASES.json on every read, so a released sprint never silently remains "active".
+- [x] As an agent, setting a task to `in_progress` for the first time auto-stamps `start_date` with today (unless a start date was already planned), so the Timeline Gantt auto-populates without manual date entry.
+- [x] As a project maintainer, I can mark a custom field as `ask: true` so the agent asks the user for the value at interactive task-creation time (rather than inventing it), enabling fields like time estimates where the user's judgment is required and a fabricated value would be harmful.
 
 ## Acceptance Criteria
 
@@ -64,10 +84,35 @@ Work spans multiple sessions, and agents need a structured way to track what is 
 
 - [x] ClickUp adapter throttles at 90 req/min (below the 100/min hard cap) with maxRetries=5 and Retry-After-respecting exponential backoff; SyncReport.failedPushes[] structurally tracks which task slugs failed to push; sleep done auto-retries the full sync once on any failedPushes, then surfaces a prominent red 'Task sync INCOMPLETE' error with the slug list (not a dim warning) rather than treating the partial push as success.
 - [x] GitHub backend: `getTaskBackend()` resolves `'github'` to `GitHubTaskBackend extends LocalTaskBackend`; `github-map.ts` is pure (no I/O), maps status↔(state+state_reason+`dc:*` labels), priority/urgency/tags/version↔labels, body↔issue body, changelog↔issue comments; sync reuses `merge.ts`/`sync-state.ts`/`api-adapter.ts` unchanged (zero provider strings in the generic engine); delete = soft-delete via `state_reason: not_planned` (no hard-delete — GitHub REST limitation, user-confirmed); Projects-v2 GraphQL custom fields deferred to Tier-2. 129 tests green. Full rationale: `knowledge/decision-github-task-backend.md`.
+- [x] Date ranges (PR #67): `start_date` added to `TaskFrontmatter`/`TaskData`/`CreateTaskInput`. `tasks start <name> <date|clear>` new CLI verb. `tasks due <name> clear` supported. `tasks create --start/--due`. Start≤due validated in CLI, server routes, and each backend adapter. ClickUp: `start_date` is a native field — pushed/pulled/LWW-merged/cleared symmetrically with `due_date`. GitHub: dates ride in a `<!-- dc:dates -->` block inside the issue body (composed above prose on push; parsed+stripped before 3-way prose merge on pull). `normalizeBacklogFields()` clears BOTH dates when the `backlog` tag is applied; setting any date removes `backlog`. Conformance test added to `task-backend-conformance.ts`.
+- [x] Backlog precedence rule: `normalizeBacklogFields()` enforces — adding the `backlog` tag clears both `start_date` and `due_date`; setting a date removes the `backlog` tag. Applied in all three backends (local, ClickUp, GitHub) so the rule is consistent regardless of sync path.
+- [x] Member resolution (PR #69): new pure matcher `src/lib/task-backend/member-match.ts` (`matchMember`): ASCII/Turkish-folded fuzzy match against the live member roster (display name and first name); returns `{ kind: 'exact'|'fuzzy'|'ambiguous'|'no-match', member?, candidates? }`. `tasks create --person <name>` and `tasks tag person:<slug>` resolve through the matcher on a remote backend — canonical slug on match, abort with candidates on ambiguous, loud warning on no-match (records intent but states it won't sync). Local backend unchanged (free-text is harmless with no remote). Covered by `tests/unit/member-match.test.ts`.
+- [x] Push-path safety net (PR #69): `pushTask` in `clickup.ts` and `github.ts` splits resolved/unmapped `person:<slug>` sets and appends a `SyncReport.warnings[]` entry per unmapped slug. The task still pushes; the assignment gap is surfaced loudly in `sleep done` and `tasks sync`, not silently dropped. New structural field on `SyncReport` (`warnings: string[]`) parallel to `failedPushes`.
+- [x] Dashboard picker enforcement (PR #69): `TaskDetailPanel` picker sets `allowCustom = false` on a remote backend; non-member chips already on a task flagged ⚠ "won't sync" (red dashed). `GET /api/tasks/members` route drops `id:''` stub entries when a real roster exists. Loading-window safe: `remoteBacked` defaults to `true` while `syncStatus` is `undefined` (prevents transient free-text re-enable during roster fetch).
+
+- [x] Custom field override system (`src/lib/overrides.ts`): `loadTaskOverride(contextRoot)` parses `_dream_context/overrides/task.md` frontmatter `custom_fields:` list; absent file → null (zero-regression). Each def must have `name`, optional `key` (defaults to snake_case of name), `type` (text|number|select|date), `options` (select only), `sync` (clickup|github, defaults to both), `prompt`. Malformed entries are dropped with `warnings[]` — never thrown, never fatal to task creation.
+- [x] ClickUp custom-field bridge (`src/lib/task-backend/clickup-fields.ts`): `buildSpecs(userDefs)` merges user-defined field defs into the built-in KEY_SPECS (built-in key collision → built-in wins). `matchCustomFields(defs, specs)` binds list custom fields to specs by folded name. `localFieldValue(fm, key)` reads built-in fields from their dedicated frontmatter paths; reads user fields from `fm.custom_fields[key]`. `encodeFieldValue`/`decodeFieldValue` handle drop_down option ID resolution. `userProvisionDefs(userDefs)` maps custom field types to ClickUp API types for `tasks provision`.
+- [x] GitHub custom-field sync: `select` fields → `key:value` GitHub labels (via `github-map.ts`); all other types → `<!-- dc:fields -->` body block (parsed on pull, stripped before prose merge — same pattern as `<!-- dc:dates -->`).
+- [x] `renderOverrideBriefing(ov)` renders a concise agent briefing (template note + custom field list with prompts); injected into the SessionStart snapshot and sub-agent briefing by `generateSubagentBriefing()` when an override is present.
+- [x] `tasks field <slug> <key> <value>` CLI verb: sets a value in the task's `custom_fields:` frontmatter map; validates the key exists in the active override.
+- [x] Custom field defs accept an optional `required: true` boolean. `loadTaskOverride()` passes this flag through in each `CustomFieldDef`.
+- [x] Hard-fail enforcement: `tasks create`, `tasks complete`, and `tasks status <name> completed|in_review` each call `checkRequiredFields(task, override)` before mutating; if any required field is unset the command exits with code 1 and prints a descriptive error listing the unset field(s) — the action is refused. The `--allow-missing-required` flag (or env var `DREAMCONTEXT_ALLOW_MISSING_REQUIRED=1`) bypasses the check for draft/WIP use. Blast radius is CLI command paths only; the dashboard create flow does not enforce the hard-fail (it may show a warning instead).
+- [x] Agent visibility of custom field values: the snapshot Active Tasks block renders per-task `Custom fields: key=value / key=⚠ UNSET (required)` when an override is active; `tasks list --long` includes the `custom_fields` map from `TaskRecord.custom_fields` in its per-task output.
+- [x] `tasks status <name> in_progress` auto-stamps `start_date` with today on the FIRST transition to `in_progress` if no start date is set; isolated in the pure `shouldStampStartDate()` helper; an already-planned start date is never overwritten. No other status transition stamps.
+- [x] Active planning version: `state/.active-version.json` holds `{ active_planning_version: string | null }`; re-validated against RELEASES.json on read (cleared if the version is no longer `planning`). CLI: `dreamcontext core releases active` / `dreamcontext core releases set-active <version>` / `dreamcontext core releases clear-active`. Dashboard: `GET/PUT /api/releases/active`.
+- [x] `CustomFieldDef` supports `ask?: boolean`. When `ask: true`, `renderOverrideBriefing()` tags the field `[ASK THE USER]` in the briefing and emits an `ASK-FIRST:` rule block — agent asks the user for the value before creating the task (in interactive sessions) and leaves the field unset with a note in no-user contexts (sleep, autonomous reconcile). No CLI hard-fail for `ask` fields (leaving unset in no-user context is valid). Dashboard: `AddCustomFieldForm` has an "Ask me" toggle; `POST /api/task-overrides/fields` carries `ask` boolean. Architecture rationale: `[[decisions/decision-task-format-override-and-custom-fields]]`.
 
 ## Constraints & Decisions
 
+- **[2026-06-23]** `ask: true` fields — ask-before-create for human-judgment fields: a field marked `ask` has a behavioral rule injected into the override briefing ("`[ASK THE USER]`" annotation + `ASK-FIRST:` block). The agent asks the user for the value at interactive task creation and leaves it unset (with a note) in no-user contexts (sleep/autonomous). This prevents the agent from satisfying a `required` gate by inventing a number. `ask` and `required` are orthogonal flags and may coexist on the same field. Full design: `[[decisions/decision-task-format-override-and-custom-fields]]`.
+- **[2026-06-23]** Required-field hard-fail: the enforcement gate (`checkRequiredFields`) fires at `tasks create`, `tasks complete`, and `tasks status … completed|in_review`. Blast radius is CLI command paths only — the dashboard task-create flow is excluded (advisory warning only) to avoid breaking the UI for partially-filled drafts. The `--allow-missing-required` / `DREAMCONTEXT_ALLOW_MISSING_REQUIRED=1` draft escape is intentional: agents or automation pipelines may need to create skeleton tasks before fields are known. Advisory briefing alone (snapshot `⚠ UNSET`) is not sufficient to prevent stale tasks reaching done status — hard-fail is the only lever that works across stale sessions where the briefing may not be read.
+- **[2026-06-23]** Agent visibility of custom field values is a two-part lever: (1) the snapshot Active Tasks block renders per-task `Custom fields:` with values and `⚠ UNSET (required)` annotations so any session sees the state at startup; (2) `tasks list --long` emits `TaskRecord.custom_fields` so scripting and sub-agent automation can read them without opening individual task files.
+- **[2026-06-23]** Custom field override system (`src/lib/overrides.ts`): the override lives in `_dream_context/overrides/task.md` (inside the brain), so it survives `dreamcontext update` and travels with the project. Discovery is purely by file presence — absent file = byte-identical to shipped defaults. Malformed entries emit warnings, never exceptions (broken override must never block task creation or sync). A user-declared field key that collides with a built-in ClickUp bridge key (urgency, description, rice fields, etc.) is silently dropped — the built-in wins. gray-matter's string-interned parse cache is cloned before mutation to prevent cache poisoning across multiple `upsertCustomField` calls on the same serialized string.
+- **[2026-06-23]** `start_date` auto-stamp on first `in_progress` transition: rule is pure (`shouldStampStartDate()`), isolated from the status-bump mutation path, and only fires when `start_date` is null. Existing planned start dates are never overwritten. No other status transition stamps (rationale: `in_progress` is the point at which planning turns into execution; other transitions don't mark a start).
+- **[2026-06-23]** Active planning version is stored in a dedicated `state/.active-version.json` file (not in RELEASES.json or `.config.json`) because it is ephemeral mutable runtime state — it changes within a release cycle and should not pollute the canonical release ledger. Re-validated on every read so a released sprint can never linger as "active" after `mark-complete`.
 
+- **[2026-06-23]** Member resolution shipped (PR #69): `member-match.ts` is pure (no I/O) and provider-generic — it resolves a typed name against any `TaskMember[]` slice returned by the backend's `listMembers()`. The matcher is ASCII/Turkish-folded (handles diacritics common in the team's names). On a remote backend, the CLI refuses to mint an unmappable `person:<slug>`; on a local backend it is permissive (no roster to check). Push path: unmapped slugs are skipped and logged in `SyncReport.warnings[]` — they NEVER silently assign the API-token owner.
+- **[2026-06-23]** Date-range model shipped (PR #67): `start_date` is the official planned-start field; `due_date` remains the end/deadline. Backlog rule: `backlog` ↔ no dates (bi-directional; setting a date removes `backlog`; adding `backlog` clears both dates). GitHub dates ride in a `<!-- dc:dates -->` body block because GitHub Issues have no native date fields (milestone is too coarse). The `<!-- dc:dates -->` block is composed ABOVE the prose and stripped before prose-merge so it never contaminates the human-readable body diff. `tasks start` is a new top-level CLI verb to make the start-date surface as discoverable as `tasks due`.
 - **[2026-06-21]** GitHub Issues backend shipped (PR #38, 129 tests green). Plain-Issues REST only; Projects-v2 GraphQL (full status-field fidelity) is Tier-2. The 4-state dreamcontext status degrades to open/closed + `dc:*` labels on plain issues. Delete = soft-delete (`not_planned` close) because GitHub REST cannot hard-delete issues. Full decision + mapping table: `knowledge/decision-github-task-backend.md`.
 - **[2026-06-21]** The pluggable `TaskBackend` interface (`src/lib/task-backend/types.ts`) is the provider boundary — no provider-specific logic may cross it. Provider-generic engine (`merge.ts`, `sync-state.ts`, `api-adapter.ts`) has zero provider strings; adding a new provider means `<name>.ts` + `<name>-map.ts` only.
 - **[2026-06-15]** ClickUp rate-limit contract: ratePerMinute=90 (10 req/min headroom below the 100/min hard cap) ensures a full post-sleep bulk push completes in ONE window without hitting 429 at the rate-window edge. maxRetries=5 with Retry-After-respecting exponential backoff in ApiAdapter. SyncReport.failedPushes is a structural field — a partial push can never look like success. sleep done auto-retries once on failedPushes, then errors loudly if any remain.
@@ -84,7 +129,7 @@ Work spans multiple sessions, and agents need a structured way to track what is 
 
 **Task file location**: `_dream_context/state/<slug>.md`
 
-**Task file schema** (current as of v0.6.0):```yaml
+**Task file schema** (current as of v0.10.0 — includes custom_fields):```yaml
 ---
 id: "task_abc123"
 name: "Implement auth middleware"
@@ -98,12 +143,17 @@ tags: []
 version: "v0.6.0"         # optional planning-version association
 parent_task: null
 related_feature: null     # feature slug for cross-link
+start_date: null          # YYYY-MM-DD or null (v0.10.0) — planned start
+due_date: null            # YYYY-MM-DD or null — deadline / planned end
 rice:
   reach: 5
   impact: 3
   confidence: 75
   effort: 2
   score: 5.625
+custom_fields:          # populated by `tasks field` or dashboard; synced to ClickUp/GitHub per override def
+  sprint_goal: "Ship auth module"
+  complexity: "medium"
 ---```
 **Commands** (`src/cli/commands/tasks.ts`):
 - `tasks create <name>` — interactive or flag-driven (`-d`, `-p`, `-t`, `-w`). RICE flags: `--reach`, `--impact`, `--confidence`, `--effort` (additive).
@@ -111,9 +161,12 @@ rice:
 - `tasks tags [--all]` — distinct tag counts (includes completed when `--all`).
 - `tasks rice <name>` — print or update RICE fields; `--clear` removes all.
 - `tasks log <name> [content]` — LIFO insert into `## Changelog`.
-- `tasks status <name> <status> [reason]` — bump status with automatic changelog entry.
+- `tasks status <name> <status> [reason]` — bump status with automatic changelog entry. Auto-stamps `start_date` with today the FIRST time a task enters `in_progress` if it has no start date yet (an explicitly-planned start is never overwritten; no other transition stamps). Decision isolated in the pure `shouldStampStartDate()` helper (unit-tested).
 - `tasks complete <name> [summary]` — sets `status: completed`.
 - `tasks insert <name> <section> <content>` — inserts into any named section.
+- `tasks start <name> <date|clear>` — sets or clears `start_date` (v0.10.0).
+- `tasks due <name> <date|clear>` — sets or clears `due_date`; `clear` sentinel accepted (v0.10.0).
+- `tasks field <name> <key> <value>` — set a custom field value in `custom_fields:` frontmatter; validates key against active override (v0.10.0).
 
 **Lookup logic** (`findTaskFile`): exact slug → prefix match → substring match.
 
@@ -134,6 +187,40 @@ rice:
 - Token scope: classic PAT needs `repo`; fine-grained needs Issues (read/write) + Metadata.
 - Projects-v2 GraphQL custom fields (full 4-state Status field) explicitly deferred to Tier-2.
 
+**Task format override + custom fields (v0.10.0)** (`src/lib/overrides.ts`, `src/lib/task-backend/clickup-fields.ts`) — architecture rationale: `[[decisions/decision-task-format-override-and-custom-fields]]`:
+- `_dream_context/overrides/task.md` — optional project file. Frontmatter `custom_fields:` list; body = scaffold template + optional `## Agent Instructions` block (stripped on scaffold, kept for agents). Absence = zero-regression.
+- `loadTaskOverride(contextRoot)` → `TaskOverride | null`: parses, validates, returns `{ template, agentInstructions, customFields, warnings }`. Malformed entries dropped with warnings.
+- `CustomFieldDef` shape: `{ name, key, type, options?, sync, prompt, required?: boolean }`. The `required` flag is optional (falsy = not required). Used by `checkRequiredFields(task, override)` at `tasks create`, `tasks complete`, and `tasks status … completed|in_review`.
+- `checkRequiredFields(task, override)` — pure helper: returns a list of unset required field keys. Caller exits with code 1 on non-empty result. Bypassed by `--allow-missing-required` / `DREAMCONTEXT_ALLOW_MISSING_REQUIRED=1`.
+- `ask?: boolean` on `CustomFieldDef` — parsed by `loadTaskOverride()`; persisted by `upsertCustomField()` (sets `entry.ask = true`). `renderOverrideBriefing()` annotates ask fields with `[ASK THE USER]` and, if any ask fields exist, appends an `ASK-FIRST:` rule block instructing agents never to fabricate the value and to ask the user at interactive task creation. Dashboard: `AddCustomFieldForm` "Ask me" checkbox; `POST /api/task-overrides/fields` carries `ask` boolean; `useTasks.ts` types carry the flag.
+- Snapshot rendering: when an override is active, the Active Tasks block appends per-task `Custom fields: key=value / key=⚠ UNSET (required)`. `tasks list --long` includes `custom_fields` from `TaskRecord`.
+- `upsertCustomField(contextRoot, input)` / `removeCustomField(contextRoot, key)`: atomic read-modify-write with gray-matter; clones the parsed data object to avoid cache poisoning.
+- `renderOverrideBriefing(ov)`: agent-facing text listing the override + custom fields with types and prompts; injected at snapshot + sub-agent briefing time.
+- `fieldKey(name)` — ASCII/Turkish-fold → snake_case → stable key; used for local map key and GitHub label namespace.
+- `buildSpecs(userDefs)` (in `clickup-fields.ts`): merges user field defs into built-in KEY_SPECS for the ClickUp bridge; user fields map to `kind: 'string' | 'number'` based on type.
+- `userProvisionDefs(userDefs)`: maps user field types to ClickUp API types for `tasks provision`.
+- `customFieldsFor(defs, target)`: filters by sync target (clickup | github).
+
+**Active planning version (v0.10.0)** (`src/lib/active-version.ts`):
+- `state/.active-version.json` — `{ active_planning_version: string | null }`. Read-time re-validation against RELEASES.json ensures a released sprint never lingers as active.
+- `getActivePlanningVersion(contextRoot)`, `setActivePlanningVersion(version, contextRoot)`, `clearActivePlanningVersion(contextRoot)`.
+- `setActivePlanningVersion` throws if the version is not found in RELEASES.json or is not in `planning` status (must create the release entry first).
+- Dashboard: `GET /PUT /api/releases/active` (in `src/server/routes/changelog.ts`, registered before `/:version`).
+
+**Date range fields (v0.10.0)** (`src/lib/task-backend/`):
+- `types.ts`: `TaskData.start_date?: string | null` added alongside `due_date`.
+- `clickup-map.ts`: maps `start_date` ↔ ClickUp `start_date` (ms epoch ↔ ISO string), symmetric with `due_date`.
+- `clickup.ts`: `pushTask` writes both fields when present; `pullTask` reads both; base-snapshot clear propagation handles both.
+- `github-map.ts` extension: serialises start/due in a `<!-- dc:dates -->` block composed above the changelog-free prose body on push; parsed + stripped before the 3-way prose merge on pull; LWW-merged as scalars.
+- `local.ts`: `normalizeBacklogFields()` — mutual exclusion enforcement: backlog tag → clears both dates; any date set → removes backlog tag. Applied for all backends.
+- Server routes (`src/server/routes/tasks.ts`): PATCH/POST validate start≤due constraint; test coverage in `tests/unit/clickup-start-date.test.ts` and `tests/unit/github-dates.test.ts`.
+
+**Member resolution (v0.10.0)** (`src/lib/task-backend/member-match.ts`):
+- `matchMember(input: string, roster: TaskMember[]): MatchResult` — pure function, no I/O. ASCII/Turkish-fold normalization (`á→a`, `ç→c`, etc.). Tries exact slug, then exact display name, then first-name match; returns `ambiguous` rather than guessing when >1 candidate shares the same normalized first name.
+- Integrated in `src/cli/commands/tasks.ts` for `tasks create --person` and `tasks tag person:<slug>` (on remote backends only).
+- `SyncReport.warnings: string[]` — new field on `types.ts`, populated by `clickup.ts`/`github.ts` push paths for unmapped slugs; surfaced in `sleep done` (red) and `tasks sync` output.
+- Covered by `tests/unit/member-match.test.ts`.
+
 **ClickUp sync reliability (v0.9.0)** (`src/lib/task-backend/clickup.ts`, `src/cli/commands/sleep.ts`):
 - `CLICKUP_RATE_PER_MINUTE = 90` (hard constant; deliberate 10 req/min headroom under ClickUp's 100/min cap).
 - `CLICKUP_MAX_RETRIES = 5` with Retry-After-respecting exponential backoff in `ApiAdapter`.
@@ -151,7 +238,13 @@ rice:
 ## Changelog
 <!-- LIFO: newest entry at top -->
 
-
+### 2026-06-23 - Task format override + custom fields + active sprint version (v0.10.0)
+- `src/lib/overrides.ts`: project-local `overrides/task.md` declares custom fields (name/key/type/options/sync/prompt); `loadTaskOverride` parses + validates; malformed entries drop with warnings, never fatal. `upsertCustomField`/`removeCustomField` for atomic CRUD. `renderOverrideBriefing` injected into snapshot + sub-agent briefing.
+- ClickUp bridge (`clickup-fields.ts`): `buildSpecs(userDefs)` merges user defs; `matchCustomFields` binds by folded name; `localFieldValue` reads custom_fields map for user keys; `userProvisionDefs` maps types for provision.
+- GitHub: select → `key:value` labels; others → `<!-- dc:fields -->` body block (parsed/stripped on pull, same pattern as dc:dates).
+- `tasks field <slug> <key> <value>` CLI verb. Dashboard: `TaskCustomFields`/`CustomFieldInput` in TaskDetailPanel; `TaskOverrideEditor`/`AddCustomFieldForm` in Settings; backed by 5 new `/api/task-overrides/*` routes.
+- `state/.active-version.json` + `src/lib/active-version.ts`: active planning version with re-validation on read. `GET/PUT /api/releases/active` dashboard routes.
+- `tasks status in_progress` auto-stamps `start_date` on first transition (`shouldStampStartDate()` pure helper).
 
 ### 2026-06-21 - GitHub Issues backend shipped (PR #38)
 - Added GitHub Issues as the second remote task backend (129 tests green). GitHubTaskBackend extends LocalTaskBackend; github-map.ts (pure, no I/O); sync reuses generic engine unchanged. Delete = soft-delete (not_planned close). Dashboard Settings GitHub panel. Feature status bumped to in_review.

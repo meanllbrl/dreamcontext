@@ -13,6 +13,11 @@ import {
 import type { ReleaseEntry } from '../../lib/release-discovery.js';
 import { backPopulateFeatures } from '../../lib/release-backpopulate.js';
 import { recordDashboardChange } from '../change-tracker.js';
+import {
+  getActivePlanningVersion,
+  setActivePlanningVersion,
+  clearActivePlanningVersion,
+} from '../../lib/active-version.js';
 
 /**
  * GET /api/changelog - Get changelog entries
@@ -73,6 +78,96 @@ export async function handleUnreleasedGet(
   const features = findUnreleasedFeatures(contextRoot);
   const changelog = findUnreleasedChangelog(contextRoot);
   sendJson(res, 200, { tasks, features, changelog });
+}
+
+/**
+ * GET /api/releases/active - Get the active planning version ("current sprint").
+ * Returns { active: string | null }. MUST be registered before /api/releases/:version
+ * so the `:version` segment matcher does not capture the literal "active".
+ */
+export async function handleActiveVersionGet(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  sendJson(res, 200, { active: getActivePlanningVersion(contextRoot) });
+}
+
+/**
+ * PUT /api/releases/active - Set or clear the active planning version.
+ * Body: { version: string | null }.
+ *  - null / "" → clear the active planning version.
+ *  - a version that has no RELEASES.json entry yet → lazily create a planning
+ *    entry for it, then mark it active (lets a sprint that only ever existed as a
+ *    task `version:` string become "current" in one tap).
+ *  - a version that is already `released` → 409 (a shipped sprint can't be current).
+ */
+export async function handleActiveVersionSet(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const body = await parseJsonBody(req);
+  if (!body) {
+    sendError(res, 400, 'invalid_body', 'Request body must be JSON.');
+    return;
+  }
+
+  const raw = body.version;
+
+  // Clear
+  if (raw === null || raw === undefined || raw === '') {
+    clearActivePlanningVersion(contextRoot);
+    recordDashboardChange(contextRoot, {
+      entity: 'core',
+      action: 'update',
+      target: 'state/.active-version.json',
+      summary: 'Cleared active planning version',
+    });
+    sendJson(res, 200, { active: null });
+    return;
+  }
+
+  if (typeof raw !== 'string' || !raw.trim()) {
+    sendError(res, 400, 'invalid_version', 'Version must be a non-empty string or null.');
+    return;
+  }
+  const version = raw.trim();
+
+  const existing = getExistingReleases(contextRoot);
+  const match = existing.find(r => r.version === version);
+  if (match && match.status === 'released') {
+    sendError(res, 409, 'already_released', `Version ${version} is already released; it cannot be the current sprint.`);
+    return;
+  }
+
+  // Lazily materialize a planning entry for an unregistered sprint name.
+  if (!match) {
+    const entry: ReleaseEntry = {
+      id: generateId('rel'),
+      version,
+      date: '',
+      summary: '',
+      breaking: false,
+      status: 'planning',
+      features: [],
+      tasks: [],
+      changelog: [],
+    };
+    insertToJsonArray(join(contextRoot, 'core', 'RELEASES.json'), entry);
+  }
+
+  setActivePlanningVersion(version, contextRoot);
+  recordDashboardChange(contextRoot, {
+    entity: 'core',
+    action: 'update',
+    target: 'state/.active-version.json',
+    summary: `Set active planning version to ${version}`,
+  });
+
+  sendJson(res, 200, { active: version });
 }
 
 /**

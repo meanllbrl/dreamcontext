@@ -36,6 +36,12 @@ export interface TaskFrontmatter {
   assignee?: string | null;
   created_by?: string | null;
   updated_by?: string | null;
+  /**
+   * User-defined custom fields (override-declared, see src/lib/overrides.ts).
+   * A flat key→value map keyed by the field's snake_case key. Absent on tasks
+   * in projects without a `_dream_context/overrides/task.md`.
+   */
+  custom_fields?: Record<string, string | number | null> | null;
 }
 
 /** Lightweight listing row. Identical to the normalized TaskRecord the CLI uses. */
@@ -60,6 +66,8 @@ export interface TaskData {
   start_date: string | null;
   due_date: string | null;
   assignee: string | null;
+  /** User-defined custom-field values (override-declared). Empty when none. */
+  custom_fields: Record<string, string | number | null>;
   why: string;
   user_stories: string;
   acceptance_criteria: string;
@@ -102,6 +110,8 @@ export interface CreateTaskInput {
   rice?: RiceFields | null;
   start_date?: string | null;
   due_date?: string | null;
+  /** Seed user-defined custom-field values at creation (override-declared). */
+  custom_fields?: Record<string, string | number | null>;
   /**
    * Which historical template produced the file. The CLI and the dashboard
    * have always written different task skeletons (full template with Workflow
@@ -212,10 +222,27 @@ export interface TaskBackend {
   sync(direction?: SyncDirection): Promise<SyncReport>;
   /** Remote connectivity probe (Settings "Test connection"). Absent on local. */
   testConnection?(): Promise<ConnectionTestResult>;
+  /**
+   * Persist the remote API token into this backend's gitignored secrets store
+   * (never `.config.json`). Throws if the secret could not be written safely.
+   * Absent on local (no remote to authenticate against).
+   */
+  setToken?(token: string): void;
+  /**
+   * Report whether an API token is configured (and where it comes from), masked
+   * — never the raw secret. Drives the Settings "key set ✓" indicator. Absent on
+   * local.
+   */
+  tokenStatus?(): TokenStatus;
   /** People with access to the remote container (assignee candidates). Absent on local. */
   listMembers?(): Promise<RemoteMember[]>;
-  /** Create the recommended remote structure (custom fields). Absent on local. */
-  provisionRemote?(): Promise<RemoteProvisionResult>;
+  /**
+   * Create the recommended remote structure (custom fields / labels). Absent on
+   * local. With `{ dryRun: true }` NOTHING is created or backfilled — the result
+   * reports what WOULD be created (`created`) vs what already exists, so the UI
+   * can preview the change before committing to it.
+   */
+  provisionRemote?(opts?: { dryRun?: boolean }): Promise<RemoteProvisionResult>;
   /** Enumerate pickable remote containers (lists/boards). Absent on local. */
   discoverContainers?(): Promise<RemoteContainer[]>;
 }
@@ -230,7 +257,7 @@ export interface RemoteContainer {
 }
 
 export interface RemoteProvisionResult {
-  /** Field names created on the remote container. */
+  /** Field names created on the remote container (under `dryRun`: would be created). */
   created: string[];
   /** Recommended fields that already existed (matched by name). */
   existing: string[];
@@ -252,6 +279,15 @@ export interface RemoteMember {
 export type ConnectionTestResult =
   | { ok: true; user: string }
   | { ok: false; error: string };
+
+/** Masked API-token status for the Settings page (never carries the raw token). */
+export interface TokenStatus {
+  set: boolean;
+  /** Where the resolved token came from, or null when none is configured. */
+  source: 'env' | 'secrets' | null;
+  /** Last-4 masked token (e.g. "••••••••1234"), or null when none is set. */
+  masked: string | null;
+}
 
 /** Lightweight sync status for dashboard badges / doctor output. */
 export interface TaskSyncStatus {

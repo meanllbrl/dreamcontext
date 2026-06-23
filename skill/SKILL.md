@@ -75,7 +75,7 @@ dreamcontext is **more than memory files**. Every capability below is real and s
 | Capability | What it is | Reference |
 |---|---|---|
 | **Structured memory** | soul/user/memory + knowledge + tasks, auto-loaded each session | this file |
-| **Tasks** | Working documents with changelog, RICE, due dates, status lifecycle, assignees | [tasks-and-features.md](references/tasks-and-features.md) |
+| **Tasks** | Working documents with changelog, RICE, status lifecycle, start/due date ranges, resolved assignees, and project-declared custom fields (`overrides/task.md`) | [tasks-and-features.md](references/tasks-and-features.md) |
 | **Features (PRDs)** | Retrospective product docs, updated only during sleep | [tasks-and-features.md](references/tasks-and-features.md) |
 | **Knowledge** | Tagged deep docs, pinning, staleness, Excalidraw diagrams | [knowledge-and-recall.md](references/knowledge-and-recall.md) |
 | **Memory recall** | Haiku/BM25 search over the whole corpus; auto-injected on prompts | [knowledge-and-recall.md](references/knowledge-and-recall.md) |
@@ -280,6 +280,8 @@ dreamcontext tasks complete <name> "summary"                             # done
 
 Status: `todo → in_progress → in_review → completed`. Sections: `why`, `user_stories`, `acceptance_criteria`, `constraints`, `technical_details`, `notes`, `changelog`.
 
+**Custom fields (if this project declares them).** When `_dream_context/overrides/task.md` exists, every task carries project-defined custom fields. Their **values are surfaced to you inline** — in the snapshot's Active Tasks block and in `dreamcontext tasks list --long` — so you can see them without opening the file; unset **required** fields show as `⚠ UNSET (required)`. When you create or reconcile a task, **set every declared field** (`dreamcontext tasks field <slug> <key> <value>` or `tasks create --field key=value`). **REQUIRED fields are mandatory — never create or complete a task with a required field left empty.** Fields marked **[ASK THE USER]** (`ask: true`) capture a human judgment (e.g. a time estimate) — **ask the user for the value when creating the task instead of guessing it.** The full schema + sync behavior → [tasks-and-features.md](references/tasks-and-features.md).
+
 **RICE, due dates, tags/people, the Workflow flowchart, versioning, and multi-product** → [tasks-and-features.md](references/tasks-and-features.md).
 **Syncing tasks to a cloud backend (ClickUp _or_ GitHub — one at a time)** → [integrations.md](references/integrations.md).
 
@@ -343,9 +345,12 @@ _dream_context/
 │   │   └── <title>/<title>.excalidraw.md  ← diagrams live INSIDE their context folder
 │   ├── data-structures/{default,<product>}.md   ← schemas (recall-indexed; ```sql body)
 │   └── products/<product>.md         ← per-product knowledge (multi-product)
+├── overrides/
+│   └── task.md                       ← OPTIONAL: project task template + custom_fields schema (briefed to agents)
 ├── state/
-│   ├── <task>.md                     ← Active tasks (frontmatter may include product:)
+│   ├── <task>.md                     ← Active tasks (frontmatter may include product:, start_date, due_date, custom_fields)
 │   ├── .config.json                  ← platforms, packs, multiProduct, taskBackend, people…
+│   ├── .active-version.json          ← current sprint (active planning version)
 │   ├── .sleep.json  .secrets.json (gitignored)  .active-task
 ```
 

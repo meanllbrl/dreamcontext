@@ -1,0 +1,46 @@
+.custom-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.custom-fields-title {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-tertiary);
+}
+
+.custom-fields-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.custom-field-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.custom-field-label {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  flex: 0 0 auto;
+}
+
+.custom-field-row .field-input,
+.custom-field-row .field-select {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 60%;
+}
+
+/* Required-field marker (red asterisk next to the label). */
+.custom-field-req {
+  margin-left: 2px;
+  color: var(--color-error);
+  font-weight: var(--font-weight-bold);
+}

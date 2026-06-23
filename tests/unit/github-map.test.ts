@@ -11,6 +11,10 @@ import {
   labelNamesOf,
   isReservedLabel,
   bodyToIssueBody,
+  composeIssueBody,
+  renderFieldsBlock,
+  parseFieldsBlock,
+  stripFieldsBlock,
   splitChangelogEntries,
   normalizeEntry,
   githubTimeMs,
@@ -124,12 +128,12 @@ describe('label compose / decompose (priority + urgency + tags + version + dc:*)
   it('labelsFromGitHub splits reserved prefixes out and keeps the rest as user tags', () => {
     expect(
       labelsFromGitHub(['backend', 'cli', 'priority:high', 'urgency:low', 'version:v0.9.0', 'dc:in-progress']),
-    ).toEqual({ tags: ['backend', 'cli'], priority: 'high', urgency: 'low', version: 'v0.9.0' });
+    ).toEqual({ tags: ['backend', 'cli'], priority: 'high', urgency: 'low', version: 'v0.9.0', customFields: {} });
   });
 
   it('defaults priority to medium and urgency/version to null when absent (ClickUp parity)', () => {
-    expect(labelsFromGitHub(['bug'])).toEqual({ tags: ['bug'], priority: 'medium', urgency: null, version: null });
-    expect(labelsFromGitHub([])).toEqual({ tags: [], priority: 'medium', urgency: null, version: null });
+    expect(labelsFromGitHub(['bug'])).toEqual({ tags: ['bug'], priority: 'medium', urgency: null, version: null, customFields: {} });
+    expect(labelsFromGitHub([])).toEqual({ tags: [], priority: 'medium', urgency: null, version: null, customFields: {} });
   });
 
   it('ignores an unknown priority value, keeping the medium default', () => {
@@ -140,9 +144,24 @@ describe('label compose / decompose (priority + urgency + tags + version + dc:*)
     const original = { tags: ['backend', 'cli'], priority: 'critical', urgency: 'high', version: 'v1.2.3' };
     const composed = labelsToGitHub({ ...original, status: 'in_review' });
     const back = labelsFromGitHub(composed);
-    expect(back).toEqual(original);
+    expect(back).toEqual({ ...original, customFields: {} });
     // and the sub-status survives separately
     expect(statusFromLabels(composed)).toBe('in_review');
+  });
+
+  it('carves out override-declared select custom fields as `<key>:<value>` (not tags)', () => {
+    const labels = labelsToGitHub({
+      tags: ['backend'],
+      priority: 'high',
+      selectFields: [{ key: 'team', value: 'platform' }, { key: 'env', value: 'prod' }],
+    });
+    expect(labels).toContain('team:platform');
+    expect(labels).toContain('env:prod');
+    const back = labelsFromGitHub(labels, ['team', 'env']);
+    expect(back.tags).toEqual(['backend']);
+    expect(back.customFields).toEqual({ team: 'platform', env: 'prod' });
+    // Without the declared keys, those labels fall back to plain tags.
+    expect(labelsFromGitHub(labels).tags).toEqual(['backend', 'team:platform', 'env:prod']);
   });
 
   it('labelNamesOf accepts both object labels and bare strings', () => {
@@ -183,6 +202,49 @@ describe('bodyToIssueBody (strips the ## Changelog section)', () => {
     expect(out).toContain('## A');
     expect(out).toContain('## B');
     expect(out).not.toContain('### x');
+  });
+});
+
+describe('custom-fields body block (<!-- dc:fields -->)', () => {
+  const defs = [
+    { name: 'Story Points', key: 'story_points' },
+    { name: 'Sprint', key: 'sprint' },
+  ];
+
+  it('renders, parses, and strips a fields block round-trip', () => {
+    const block = renderFieldsBlock([
+      { name: 'Story Points', value: 8 },
+      { name: 'Sprint', value: '24.3 · cycle' },
+    ]);
+    expect(block).toContain('**Story Points:** 8');
+    expect(block).toContain('**Sprint:** 24.3 · cycle');
+
+    const body = `${block}\n\n## Why\nbecause`;
+    expect(parseFieldsBlock(body, defs)).toEqual({ story_points: '8', sprint: '24.3 · cycle' });
+    expect(stripFieldsBlock(body).trim()).toBe('## Why\nbecause');
+  });
+
+  it('renders nothing when no field has a value (no block, no body churn)', () => {
+    expect(renderFieldsBlock([{ name: 'Story Points', value: null }, { name: 'Sprint', value: '' }])).toBe('');
+  });
+
+  it('parseFieldsBlock returns {} when the block is absent', () => {
+    expect(parseFieldsBlock('## Why\njust prose', defs)).toEqual({});
+  });
+
+  it('composeIssueBody stacks the dates block and the fields block above the prose', () => {
+    const block = renderFieldsBlock([{ name: 'Story Points', value: 8 }]);
+    const out = composeIssueBody('## Why\nbecause', '2026-06-22', '2026-06-27', block);
+    expect(out).toContain('**Start:** 2026-06-22');
+    expect(out).toContain('**Story Points:** 8');
+    expect(out.trimEnd().endsWith('because')).toBe(true);
+    // Idempotent: re-composing from its own output never stacks duplicate blocks.
+    const again = composeIssueBody(out, '2026-06-22', '2026-06-27', block);
+    expect(again).toBe(out);
+  });
+
+  it('composeIssueBody with no blocks is byte-identical to the prose path', () => {
+    expect(composeIssueBody('## Why\nbecause', null, null, '')).toBe('## Why\nbecause\n');
   });
 });
 

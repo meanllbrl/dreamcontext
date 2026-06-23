@@ -2,7 +2,7 @@
 id: feat_O7LODr7O
 status: active
 created: '2026-02-25'
-updated: '2026-06-18'
+updated: '2026-06-23'
 released_version: 0.1.0
 tags:
   - frontend
@@ -16,6 +16,7 @@ related_tasks:
   - dashboard-alignment
   - data-structures-to-knowledge
   - knowledge-diagram-nesting
+  - feat-dashboard-sprint-aware-version-filter-current-completed-actions-status-sort
 ---
 
 ## Why
@@ -29,8 +30,8 @@ Users need a visual interface to manage agent context without using the terminal
 - [ ] As a user, I want to drag tasks between columns (todo, in_progress, completed) so that I can update status without typing commands
 - [ ] As a user, I want to filter tasks by status, priority, urgency, tags, version, text search, and date range so that I can find specific tasks quickly
 - [ ] As a user, I want to group tasks by status, priority, urgency, version, or tags so that I can organize the board to my preference
-- [ ] As a user, I want to switch between Kanban, Eisenhower Matrix, RICE scatter, list, Timeline (Gantt), Calendar, and Activity Heatmap views so that I can see tasks by status, prioritization, and time
-- [ ] As a user, I want time-axis views (timeline/calendar/heatmap) so that I can plan when work lands and see load/completions over time
+- [x] As a user, I want to switch between Kanban, Eisenhower Matrix, RICE scatter, list, Timeline (Gantt), Calendar, and Activity Heatmap views so that I can see tasks by status, prioritization, and time
+- [x] As a user, I want time-axis views (timeline/calendar/heatmap) so that I can plan when work lands and see load/completions over time
 - [ ] As a user, I want to create new tasks from the dashboard with name, description, priority, urgency, version, and tags so that I can add work without the CLI
 - [ ] As a user, I want to update task fields (status, priority, description) and add changelog entries from a detail panel so that I can keep tasks current
 - [ ] As a user, I want to see the agent character in the top-left corner showing sleep state (alert, drowsy, sleepy, must sleep) so that I know when consolidation is needed
@@ -57,6 +58,14 @@ Users need a visual interface to manage agent context without using the terminal
 - [x] As a user, the "One brain, many faculties" features showcase is a pinned scroll-scrubbed spotlight: the header+stage stay sticky while a tall track scrolls past; scroll progress continuously crossfades faculty panels (opacity+translateY on refs, zero React renders per frame); snap-to-nearest settles any intermediate frame on scroll idle.
 - [x] As a user, the goal-skill orchestration is a flagship spotlight faculty with its own landscape loop diagram so I understand how planning-review-implementation-validation works end-to-end.
 - [x] As a user, flow animations in diagrams are compositor-smooth (CSS Motion Path dots riding offset-path/offset-distance rather than stroke-dashoffset), so 27 simultaneous dots cause 0 jank frames.
+
+- [x] As a user, the task board's version filter is sprint-aware: it shows the current sprint with a star badge and a "Current" quick-pick, distinguishes planning / unregistered / released sprints with status icons, sorts active sprints first and collapses released ones, and lets me set a sprint as current or mark it complete directly from the dropdown, so I can manage sprint focus from the board without using the CLI.
+- [x] As a user, I can enter my ClickUp or GitHub API token directly in the Settings page cloud provider panel (never stored in `.config.json`, always written to the gitignored `.secrets.json`) so I don't need to use the CLI to authenticate.
+- [x] As a user, I can preview what `tasks provision` would create (dry-run) before committing, so I can see exactly which remote fields / labels will be provisioned without side effects.
+- [x] As a user, the Settings page has a left-rail section-nav (Platforms / Cloud Tasks / Task Format / Memory / Connections / Sleepy) so I can jump to any settings section without scrolling, with Task Format appearing above Sleepy, a BETA badge, and a "How the format works" documentation link.
+- [x] As a user, I can view and edit the project's task format override (`overrides/task.md`) from the Settings page, including the full markdown body (displayed read-only) and any declared custom field definitions, so I can manage the project's task schema from the dashboard.
+- [x] As a user, I can add, edit, and remove custom field definitions (name, key, type, options, sync target, agent prompt, required flag, ask flag) from the Settings page without manually editing YAML; the AddCustomFieldForm includes a Required toggle and an "Ask me" toggle so I can mark fields mandatory or agent-ask-only.
+- [x] As a user, custom field values on a task are displayed in the task detail panel and can be edited inline; required fields are marked with a `*` indicator so I know which fields must be filled before completing the task.
 
 - [x] As a user, I can view Excalidraw diagrams stored in knowledge/diagrams/ rendered as real hand-drawn boards (native canvas, crisp at any zoom, wheel-pan/pinch-zoom, auto-centered on load) in the dashboard's Knowledge Preview tab.
 - [x] As a user, embedded screenshots in Excalidraw boards (Obsidian SHA1-linked) resolve and render in the dashboard canvas view, so boards that reference screenshots are visually complete.
@@ -94,6 +103,14 @@ Users need a visual interface to manage agent context without using the terminal
 - [x] Race-safe rapid checkbox toggles: `pendingBodyRef` pattern computes successive optimistic bodies from the latest in-flight state (not stale server state); reverts on API failure.
 - [x] Server PATCH body size limit raised to 1 MB; `---` front-matter delimiters sanitized from body before writing to prevent parse corruption.
 - [x] Mermaid edge-line corruption fix: lines containing edge operators (`-->`, `---`, `-.->`, etc.) are never treated as node definitions during class-injection pass.
+- [x] TaskDetailPanel shows a Start date editor alongside the Due date field; both are clearable; start≤due validation prevents invalid ranges (PR #67).
+- [x] Assignee multi-select filter (KanbanBoard filter bar): shown only when a cloud backend is configured; filters by `person:<slug>` tag; hidden for local-only setups (PR #67).
+- [x] Dashboard assignee picker (`TaskDetailPanel`) only offers real roster members on a remote backend (`allowCustom` disabled); already-assigned non-member chips flagged with a "won't sync" warning chip (red dashed) (PR #69).
+- [x] `GET /api/tasks/members` drops `id:''` stubs when a real member roster is available, so the picker is never polluted with unresolvable free-text slugs (PR #69).
+- [x] Sprint-aware `VersionFilter` component replaces the generic `MultiSelectFilter` for the version facet: status icons (star=current, dot=planning, hollow=unregistered, check=released), "current" badge, release date on completed rows, per-row Set-current (star) + Complete (check) actions, "Current" quick-pick chip, collapsible Completed section, status-aware sort (current→planning→unregistered→backlog→released, completed sink to bottom).
+- [x] `GET /api/releases/active` returns `{ active: string | null }` (registered before `:version` route to prevent segment capture); `PUT /api/releases/active` accepts `{ version: string | null }` — null/empty clears; a planning entry is lazily created for an unregistered version name; 409 on an already-released version; records a dashboard change.
+- [x] `useActiveVersion`, `useSetActiveVersion`, `useCompleteVersion` hooks; `VersionFilter.tsx/.css` wired through `TaskFilters` + `KanbanBoard` (versionItems join of task version strings + RELEASES + active).
+- [x] `TaskCustomFields` component renders custom field values in `TaskDetailPanel`; `CustomFieldInput` provides type-appropriate controls (text, number, date, select); `AddCustomFieldForm` for adding new field defs; all wired to task `custom_fields:` frontmatter.
 
 ### Sleep State
 - [ ] Agent avatar (diamond logo) in header: full color when alert, dims progressively, pulses with "zzz" when must_sleep
@@ -131,6 +148,23 @@ Users need a visual interface to manage agent context without using the terminal
 #### Taxonomy Page
 - [x] Taxonomy page (`dashboard/src/pages/TaxonomyPage.tsx/.css`, `useTaxonomy.ts` hook): facet chip clusters with alias-resolved usage tallies, alias arrows, drift/audit panel; linked from nav + CorePage.
 - [x] Backed by read-only `GET /api/taxonomy` (vocabulary + usage tallies + audit buckets); all mutations stay CLI-only.
+
+### Settings — Cloud Provider / Token Entry (v0.10.0)
+- [x] Settings page has a cloud provider panel for the active backend (ClickUp or GitHub); shows current token masked status (`GET /api/tasks/token-status`).
+- [x] Token entry field: writes to gitignored `.secrets.json` via `POST /api/tasks/token`; token never echoed in response; visible feedback (set / cleared).
+- [x] Dry-run provision preview: "Preview" button calls `POST /api/tasks/provision?dryRun=true` and shows what fields/labels would be created (created[], existing[]) before the user clicks "Provision".
+- [x] Actual provision button calls `POST /api/tasks/provision` (no dryRun); errors surface inline.
+
+### Settings — Section Navigation (v0.10.0)
+- [x] Settings page has a left-rail section-nav menu with anchors: Platforms / Cloud Tasks / Task Format / Memory / Connections / Sleepy. Task Format appears above Sleepy and carries a BETA badge plus a "How the format works" documentation link. Clicking a nav item smooth-scrolls to the corresponding section.
+
+### Settings — Task Override Editor (v0.10.0)
+- [x] `TaskOverrideEditor` component in `dashboard/src/components/settings/`: displays the active `overrides/task.md` raw markdown as a **read-only** view (not an editable textarea) and the list of parsed custom field defs.
+- [x] `AddCustomFieldForm` component: add a new field definition (name, type, options, sync targets, prompt, **Required toggle**, **"Ask me" toggle**). Calls `POST /api/task-overrides/fields` (upsert, carries `ask: boolean`). Editing an existing def pre-populates the form including the required and ask flags.
+- [x] Per-field remove button: calls `DELETE /api/task-overrides/fields/:key`.
+- [x] `GET /api/task-overrides` returns `{ customFields, agentInstructions, warnings }`; `GET /api/task-overrides/doc` returns raw markdown; `PUT /api/task-overrides/doc` saves verbatim.
+- [x] Doctor surface: `dreamcontext doctor` warns on malformed `overrides/task.md` (surfaced from `loadTaskOverride().warnings`).
+- [x] `TaskCustomFields` in `TaskDetailPanel` renders required fields with a `*` marker so the user knows which fields block task completion.
 
 ### Features
 - [x] Feature list shows all features with slug, status badge, tags
@@ -195,6 +229,13 @@ Users need a visual interface to manage agent context without using the terminal
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
 
+- **[2026-06-23]** `ask: true` on a custom field adds an "Ask me" toggle in `AddCustomFieldForm`; the flag is serialized via `POST /api/task-overrides/fields` and carried in `useTasks.ts` types. The dashboard itself does not enforce any "ask-before-create" flow — the behavioral rule is injected into the agent's briefing (`renderOverrideBriefing`) so it fires in CLI/agent contexts, not in the quick-draft dashboard create flow. Design rationale: `[[decisions/decision-task-format-override-and-custom-fields]]`.
+- **[2026-06-23]** Settings section-nav left rail: Platforms / Cloud Tasks / Task Format / Memory / Connections / Sleepy order; Task Format above Sleepy because it is a power-user capability that benefits from proximity to Cloud Tasks (both relate to the task model). BETA badge on Task Format signals the override schema may evolve. "How the format works" doc link opens the relevant section of the skill reference.
+- **[2026-06-23]** Task override markdown panel is read-only in the dashboard (not an editable textarea): direct YAML/markdown editing is error-prone and bypasses the structured `upsertCustomField` validation path. The AddCustomFieldForm is the canonical edit surface; it also persists the `required` flag via `POST /api/task-overrides/fields`. Raw file editing remains a CLI / text-editor operation.
+- **[2026-06-23]** Sprint-aware version filter sort order: current → planning → unregistered → backlog → released (completed sink to bottom). `versionItems` is the join of task version strings + RELEASES entries + the active version — so a sprint that exists only as a task tag (not registered in RELEASES.json) still appears as "unregistered" and can be promoted from the dropdown. Dates shown only for released/completed sprints (no schema change needed).
+- **[2026-06-23]** `PUT /api/releases/active` registered BEFORE `GET/PUT /api/releases/:version` in the router so the literal string "active" is not captured as a `:version` param. The route lazily creates a planning RELEASES.json entry for an unregistered sprint name before marking it active; returns 409 if the version is already released (can't un-release from the dashboard).
+- **[2026-06-23]** Cloud token entry is always `POST /api/tasks/token` → `.secrets.json` (gitignored); never `.config.json`. Token is not echoed in any API response — the response only confirms success. `GET /api/tasks/token-status` returns `{ set, source, masked, backend }` so the UI can show "configured via env" vs "secrets file" without exposing the value.
+- **[2026-06-23]** Task override editor reads/writes `_dream_context/overrides/task.md` via `GET /api/task-overrides/doc` + `PUT /api/task-overrides/doc`. Custom-field CRUD uses `POST /api/task-overrides/fields` (upsert) + `DELETE /api/task-overrides/fields/:key`. A malformed override is surfaced as `warnings[]` in the API response — never silently ignored, never fatal. The override file lives inside the brain so it survives `dreamcontext update`.
 
 - **[2026-06-18]** Excalidraw canvas gate on isLoading, not data===undefined (PR #35 review fix): gating board render on data===undefined would permanently wedge the board behind a spinner whenever the /api/knowledge-assets fetch errors (no embedded images, sharp unavailable, etc.). Gate on isLoading instead — board mounts on success OR error; only held while actively fetching. Additionally, initialData is frozen at Excalidraw canvas mount: the component does not react to files prop changes after mount, so a two-pass low→high progressive image swap is impossible (requires remount, resets pan/zoom). Current approach: single-pass — wait for useKnowledgeAssets to resolve, then mount once with the final files map. See knowledge/dashboard-knowledge-rendering.md for full rationale.
 - **[2026-06-17]** Excalidraw canvas over SVG export (PR #35): `exportToSvg()` rasterizes boards once — WebKit samples a 2556×4646 px SVG down to viewport → soft on high-DPI, not recoverable on zoom. Replaced with the live `Excalidraw` canvas component (view-mode): re-draws per zoom level, crisp at all scales. Trade-off: larger runtime bundle (lazy-loaded via React.lazy, no initial load cost). `scrollToContent` must be called at mount + 100ms timer + ResizeObserver to catch flex-pane layout settling; a single mount-time call fires before final dimensions. See `knowledge/dashboard-knowledge-rendering.md` for full rendering architecture.
@@ -245,7 +286,21 @@ Users need a visual interface to manage agent context without using the terminal
 - `dashboard/src/components/tasks/KanbanBoard.tsx` - Main board with filtering/sorting/grouping
 
 ### API Endpoints
-~26 endpoints covering: tasks (5), sleep (2), core (3), knowledge (3), features (2), changelog (1), releases (3 — list/show/add with planning support), health (1), config (2 — GET+PATCH), packs (1), version-check (1), vaults (1), council (3), taxonomy (1 — read-only GET). Versions API (was 3 endpoints) deleted; versions now handled via releases routes. All mutating endpoints call recordDashboardChange() except `PATCH /api/config` (entity union not widened in v0.6).
+~36 endpoints covering: tasks (5 + 3 new: members, provision, token-status, token), sleep (2), core (3), knowledge (3), features (2), changelog (1), releases (4 — list/show/add + active GET/PUT), health (1), config (2 — GET+PATCH), packs (1), version-check (1), vaults (1), council (3), taxonomy (1 — read-only GET), task-overrides (5 — schema, doc GET/PUT, field upsert/remove).
+
+New in v0.10.0:
+- `GET /api/releases/active` — returns `{ active: string | null }` (current sprint)
+- `PUT /api/releases/active` — set (lazily creates planning entry) or clear; 409 on released version
+- `GET /api/tasks/token-status` — `{ set, source, masked, backend }` for the active cloud backend
+- `POST /api/tasks/token` — write token to `.secrets.json` (gitignored); token never echoed
+- `POST /api/tasks/provision[?dryRun=true]` — create recommended remote fields/labels; dry-run returns preview only
+- `GET /api/task-overrides` — `{ customFields, agentInstructions, warnings }` from `overrides/task.md`
+- `GET /api/task-overrides/doc` — raw markdown of the override file
+- `PUT /api/task-overrides/doc` — save raw markdown verbatim
+- `POST /api/task-overrides/fields` — upsert one custom field def (name, key, type, options, sync, prompt)
+- `DELETE /api/task-overrides/fields/:key` — remove field def by key
+
+All mutating endpoints call recordDashboardChange() except `PATCH /api/config` (entity union not widened in v0.6).
 
 ### Build Pipeline
 1. `npm run build:dashboard` - Vite builds React app to dashboard/dist/
@@ -318,6 +373,27 @@ Users need a visual interface to manage agent context without using the terminal
 - `dashboard/src/pages/TaxonomyPage.tsx/.css` + `dashboard/src/hooks/useTaxonomy.ts` — facet chip clusters (usage counts), alias arrows, drift/audit panel.
 - `GET /api/taxonomy` (read-only): vocabulary + alias-resolved usage tallies + audit buckets. Mutations are CLI-only (`taxonomy add/alias`) — see the tag-taxonomy PRD.
 
+### Sprint-Aware Version Filter (v0.10.0)
+
+- `dashboard/src/components/tasks/VersionFilter.tsx/.css` — sprint-aware multi-select replacing the generic `MultiSelectFilter` for the version facet. Props: `versionItems: VersionItem[]` (joined from task version strings + RELEASES + active-version state), `selected: string[]`, `onChange`. Status icons: star (current), dot (planning), hollow circle (unregistered), check (released). Per-row actions: Set-current (star button → `useSetActiveVersion`), Mark-complete (check button → `useCompleteVersion`). "Current" quick-pick chip at top. Collapsible "Completed sprints" section. Sort order: current → planning → unregistered → backlog → released.
+- `dashboard/src/hooks/useVersions.ts` — `useActiveVersion()`, `useSetActiveVersion()`, `useCompleteVersion()` hooks (TanStack Query over `GET/PUT /api/releases/active`).
+- `src/lib/active-version.ts` — `getActivePlanningVersion(contextRoot)` reads `state/.active-version.json`, re-validates against RELEASES.json on every read (auto-clears if the stored version is no longer `planning`). `setActivePlanningVersion`, `clearActivePlanningVersion`.
+- `src/server/routes/changelog.ts` — `GET/PUT /api/releases/active` registered before the `:version` segment route.
+
+### Settings — Cloud Token + Provision (v0.10.0)
+
+- `dashboard/src/pages/SettingsPage.tsx` — extended with a Cloud Provider panel: token-status badge (`GET /api/tasks/token-status`), password input + save for token entry (`POST /api/tasks/token`), dry-run preview panel, and Provision button.
+- `src/server/routes/tasks.ts` — `GET /api/tasks/token-status`, `POST /api/tasks/token`, `POST /api/tasks/provision[?dryRun]` handlers; each backend owns its own `tokenStatus()` + token-write path (provider-agnostic server surface).
+
+### Task Override Editor (v0.10.0)
+
+- `dashboard/src/components/settings/TaskOverrideEditor.tsx/.css` — displays the active `overrides/task.md` raw markdown as a **read-only** panel and the parsed custom-field list (name, type, options, sync targets, prompt, required flag, remove button). Settings page has a left-rail section-nav (Platforms / Cloud Tasks / Task Format / Memory / Connections / Sleepy); Task Format section carries a BETA badge and "How the format works" doc link.
+- `dashboard/src/components/tasks/AddCustomFieldForm.tsx/.css` — form for adding/editing a field def: name, type (text|number|select|date), options (select only), sync checkboxes, prompt textarea, **Required toggle** (`required: boolean`), **"Ask me" toggle** (`ask: boolean`). Editing pre-populates all fields.
+- `dashboard/src/components/tasks/CustomFieldInput.tsx` — type-appropriate input control (text/number/date input or select).
+- `dashboard/src/components/tasks/TaskCustomFields.tsx/.css` — renders a task's `custom_fields:` map in `TaskDetailPanel` using `CustomFieldInput`; required fields display a `*` marker.
+- `src/server/routes/tasks.ts` — `GET /api/task-overrides`, `GET|PUT /api/task-overrides/doc`, `POST /api/task-overrides/fields` (accepts `required` boolean), `DELETE /api/task-overrides/fields/:key`; all delegate to `src/lib/overrides.ts`.
+- `src/lib/overrides.ts` — `loadTaskOverride`, `readTaskOverrideRaw`, `writeTaskOverrideDoc`, `upsertCustomField`, `removeCustomField`, `renderOverrideBriefing` — pure aside from one file read; malformed entries dropped with warnings, never fatal. `upsertCustomField` persists `required` when present.
+
 ### Council Page
 
 - [x] CouncilHall: searchable grid of debates with status badge, persona count, round progress indicator
@@ -338,6 +414,12 @@ Users need a visual interface to manage agent context without using the terminal
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-06-23 - Sprint-aware version filter + cloud token entry + provision preview + task override/custom-fields UI (v0.10.0)
+- `VersionFilter` component replaces the generic MultiSelectFilter for the version facet: sprint-aware with current/planning/unregistered/released status icons, Set-current + Mark-complete per-row actions, "Current" quick-pick, collapsible Completed section, status-aware sort.
+- `GET/PUT /api/releases/active` backend; `state/.active-version.json` re-validates against RELEASES.json on every read.
+- Settings cloud provider panel: token-status badge, masked token entry (`POST /api/tasks/token` → `.secrets.json`), dry-run provision preview, Provision button.
+- `TaskOverrideEditor` in Settings: view/edit `overrides/task.md` body + custom-field CRUD (`AddCustomFieldForm`, per-field remove). `TaskCustomFields` + `CustomFieldInput` in TaskDetailPanel for per-task custom field viewing/editing. Server: `GET /api/task-overrides`, doc GET/PUT, field upsert/remove. Backed by `src/lib/overrides.ts` (pure library, malformed entries never fatal).
 
 ### 2026-06-22 - Time-axis task views: Timeline (Gantt), Calendar, Activity heatmap (PR #68, branch feat/task-timeline-calendar-heatmap-views)
 - Three new `viewMode`s added to the task board, switchable from the existing TaskFilters toggle and driven by the same filtered task set as Kanban/Eisenhower/RICE/list. New components under `dashboard/src/components/tasks/`: `TimelineGantt`, `TaskCalendar`, `ActivityHeatmap` (+ CSS); wired via `KanbanBoard.tsx` render branches and a `ViewMode` union extension in `TaskFilters.tsx`.

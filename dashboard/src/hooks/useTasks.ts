@@ -28,6 +28,7 @@ export interface Task {
   start_date?: string | null;
   due_date?: string | null;
   assignee?: string | null;
+  custom_fields?: Record<string, string | number | null>;
   rice: RiceFields | null;
   why: string;
   user_stories: string;
@@ -56,13 +57,41 @@ interface CreateTaskInput {
   tags?: string[];
   why?: string;
   version?: string;
+  custom_fields?: Record<string, string | number | null>;
 }
 
 interface UpdateTaskInput {
   slug: string;
   updates: Partial<Pick<Task, 'status' | 'priority' | 'urgency' | 'description' | 'tags' | 'name' | 'related_feature' | 'version' | 'due_date' | 'start_date' | 'assignee' | 'body'>> & {
     rice?: RiceInput | null;
+    custom_fields?: Record<string, string | number | null>;
   };
+}
+
+/** A project-declared custom field (from _dream_context/overrides/task.md). */
+export interface CustomFieldDef {
+  name: string;
+  key: string;
+  type: 'text' | 'number' | 'select' | 'date';
+  /** Whether the agent must set this field on every task. */
+  required?: boolean;
+  options?: string[];
+  sync: Array<'clickup' | 'github'>;
+  /** System prompt telling the agent how to determine this field's value. */
+  prompt?: string;
+  /** Whether Claude asks the user for this value instead of inferring it. */
+  ask?: boolean;
+}
+
+export interface AddCustomFieldInput {
+  name: string;
+  key?: string;
+  type: 'text' | 'number' | 'select' | 'date';
+  required?: boolean;
+  options?: string[];
+  sync?: Array<'clickup' | 'github'>;
+  prompt?: string;
+  ask?: boolean;
 }
 
 interface InsertTaskSectionInput {
@@ -172,6 +201,67 @@ export function useSyncTasks() {
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
       queryClient.invalidateQueries({ queryKey: ['tasks-sync-status'] });
     },
+  });
+}
+
+/** The active task custom-field schema (from overrides/task.md). Empty when none. */
+export function useTaskOverrides() {
+  return useQuery({
+    queryKey: ['task-overrides'],
+    queryFn: () => api.get<{ present: boolean; customFields: CustomFieldDef[] }>('/task-overrides'),
+    select: (d) => d.customFields ?? [],
+    staleTime: 10 * 60 * 1000,
+  });
+}
+
+export interface TaskOverrideDoc {
+  present: boolean;
+  raw: string;
+  customFields: CustomFieldDef[];
+  warnings: string[];
+}
+
+/** The RAW override markdown (for the Settings editor). */
+export function useTaskOverrideDoc() {
+  return useQuery({
+    queryKey: ['task-override-doc'],
+    queryFn: () => api.get<TaskOverrideDoc>('/task-overrides/doc'),
+  });
+}
+
+function invalidateOverrides(queryClient: ReturnType<typeof useQueryClient>) {
+  queryClient.invalidateQueries({ queryKey: ['task-overrides'] });
+  queryClient.invalidateQueries({ queryKey: ['task-override-doc'] });
+  queryClient.invalidateQueries({ queryKey: ['tasks'] });
+}
+
+/** Save the RAW override markdown. */
+export function useSaveTaskOverrideDoc() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (raw: string) =>
+      api.put<{ present: boolean; customFields: CustomFieldDef[]; warnings: string[] }>('/task-overrides/doc', { raw }),
+    onSuccess: () => invalidateOverrides(queryClient),
+  });
+}
+
+/** Add or replace one custom-field definition (project-wide schema). */
+export function useAddCustomFieldDef() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: AddCustomFieldInput) =>
+      api.post<{ customFields: CustomFieldDef[]; warnings: string[] }>('/task-overrides/fields', input),
+    onSuccess: () => invalidateOverrides(queryClient),
+  });
+}
+
+/** Remove a custom-field definition by id/key. */
+export function useRemoveCustomFieldDef() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (key: string) =>
+      api.del<{ customFields: CustomFieldDef[] }>(`/task-overrides/fields/${encodeURIComponent(key)}`),
+    onSuccess: () => invalidateOverrides(queryClient),
   });
 }
 

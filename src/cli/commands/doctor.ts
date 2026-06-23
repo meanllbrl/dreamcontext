@@ -5,6 +5,7 @@ import chalk from 'chalk';
 import { resolveContextRoot } from '../../lib/context-path.js';
 import { header } from '../../lib/format.js';
 import { listUnfencedDataStructures } from '../../lib/data-structures-migration.js';
+import { hasTaskOverride, loadTaskOverride } from '../../lib/overrides.js';
 
 /**
  * Remove content that represents documented mentions of placeholder syntax
@@ -196,6 +197,34 @@ function checkDataStructures(root: string): CheckResult[] {
   return results;
 }
 
+/**
+ * Validate an optional `_dream_context/overrides/task.md` (task_dlhc0fFQ).
+ * Silent when absent (it's opt-in); warns — never silently ignores — on a
+ * malformed override (bad frontmatter, unknown field type, duplicate keys).
+ */
+function checkOverrides(root: string): CheckResult[] {
+  if (!hasTaskOverride(root)) return [];
+  const rel = 'overrides/task.md';
+  const ov = loadTaskOverride(root);
+  if (!ov) {
+    return [{ name: 'Task override', status: 'warn', message: `${rel}: unreadable` }];
+  }
+  const results: CheckResult[] = ov.warnings.map((w) => ({
+    name: 'Task override',
+    status: 'warn' as const,
+    message: w,
+  }));
+  if (ov.warnings.length === 0) {
+    const n = ov.customFields.length;
+    results.push({
+      name: 'Task override',
+      status: 'ok',
+      message: `${rel} (${n} custom field${n === 1 ? '' : 's'})`,
+    });
+  }
+  return results;
+}
+
 export function registerDoctorCommand(program: Command): void {
   program
     .command('doctor')
@@ -229,6 +258,7 @@ export function registerDoctorCommand(program: Command): void {
         checkFile(root, 'core/3.style_guide_and_branding.md', 'Style guide', false),
         checkFile(root, 'core/4.tech_stack.md', 'Tech stack', false),
         ...checkDataStructures(root),
+        ...checkOverrides(root),
 
         // Taxonomy vocabulary (non-fatal: absent means DEFAULT_VOCABULARY used)
         ...(!existsSync(join(root, 'core', 'taxonomy.json'))

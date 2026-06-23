@@ -17,6 +17,8 @@ export interface TaskRecord {
   related_feature: string | null;
   parent_task: string | null;
   rice: RiceFields | null;
+  /** Project-declared custom field values (overrides/task.md); {} when none. */
+  custom_fields: Record<string, string | number | null>;
   created_at: string;
   updated_at: string;
   file: string;
@@ -108,6 +110,10 @@ export function toTaskRecord(
     related_feature: strOrNull(data.related_feature),
     parent_task: strOrNull(data.parent_task),
     rice: normalizeRice(data.rice),
+    custom_fields:
+      data.custom_fields && typeof data.custom_fields === 'object' && !Array.isArray(data.custom_fields)
+        ? (data.custom_fields as Record<string, string | number | null>)
+        : {},
     created_at: str(data.created_at, '-'),
     updated_at: str(data.updated_at ?? data.created_at, '-'),
     file,

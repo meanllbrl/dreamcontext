@@ -125,6 +125,8 @@ dreamcontext tasks log <slug> "<one-line summary of what was done or decided>"
 
 **(b) Reconcile the task body to current truth.** This is load-bearing.
 
+> **Project override — check first.** If `_dream_context/overrides/task.md` exists, this project has a CUSTOM task shape. READ it before reconciling: follow ITS section names and `## Agent Instructions`, not the defaults below, and keep each declared `custom_fields` value current via `dreamcontext tasks field <slug> <key> <value>` (these sync to ClickUp/GitHub). The SubagentStart briefing flags when an override is active. Absent the file, use the default shape below.
+
 The task body (Why, User Stories, Acceptance Criteria, Constraints & Decisions, Technical Details, Notes) is *current state*. The Changelog is *history*. If the user pivoted mid-session — "we're skipping phase 1", "dropping the offline requirement", "switching the auth approach" — the body must reflect the new plan, not the old one with a buried changelog note.
 
 | Change observed | Action |

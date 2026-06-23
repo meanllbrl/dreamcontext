@@ -4,7 +4,7 @@ name: "Decision: GitHub Issues as the second remote task backend"
 description: "Why dreamcontext added GitHub Issues (not Projects) as its second cloud task backend, and the exact field/status/close mapping: issue-body-as-task, completed↔closed(completed), delete↔closed(not_planned) soft-delete, dc:* labels for sub-status, Projects-v2 GraphQL custom fields deferred to Tier-2. Reuses the issue-#11 pluggable TaskBackend + provider-generic sync engine. SHIPPED: PR #38 merged, 129 tests green."
 tags: ["decisions", "architecture", "topic:github", "topic:task-backend", "backend", "topic:cli"]
 pinned: false
-date: "2026-06-21"
+date: "2026-06-23"
 ---
 
 ## Why This Exists
@@ -34,7 +34,7 @@ Add **GitHub ISSUES** (not Projects) as the second remote backend. Chosen model:
 | `## Changelog` entries | **issue comments** (union-merged, conflict-free — same pattern as ClickUp `clickup-map.ts` `bodyToDescription`/`splitChangelogEntries`) |
 | priority / urgency / tags / version | **labels** (`version:x` rides as a label, exactly as ClickUp) |
 | assignee (v0.8.6 person-tags) | issue **assignees** (must be repo collaborators; `listMembers` = repo collaborators) |
-| due_date | milestone (coarse) |
+| start_date + due_date | `<!-- dc:dates start="…" due="…" -->` block inside issue body (no native date fields on GitHub Issues; milestone is too coarse — superseded by PR #67) |
 | status (4-state) | see below — **only `completed` closes the issue** |
 
 ### Status / close model (the sharp edge)

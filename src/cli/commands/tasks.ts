@@ -11,6 +11,7 @@ import { success, error, header, warn } from '../../lib/format.js';
 import { matchMember } from '../../lib/task-backend/member-match.js';
 import { readSetupConfig, isMultiPerson } from '../../lib/setup-config.js';
 import { getActivePlanningVersion } from '../../lib/active-version.js';
+import { loadTaskOverride, fieldKey, type CustomFieldDef } from '../../lib/overrides.js';
 import { mergeRice, validateRiceInput, type RiceFields, type RiceInput } from '../../lib/rice.js';
 import {
   getTaskBackend,
@@ -41,6 +42,17 @@ function collectOption(value: string, previous: string[]): string[] {
 /** True for a real calendar date in YYYY-MM-DD form (rejects e.g. 2026-13-40). */
 function isCalendarDate(value: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`));
+}
+
+/**
+ * Whether moving a task to `newStatus` should auto-stamp its actual start date.
+ * Rule: the FIRST time a task enters `in_progress` with no `start_date` yet, we
+ * record today as the real start. An already-set (explicitly planned) start is
+ * never overwritten, and no other transition stamps anything — so this only ever
+ * captures a previously-unrecorded start.
+ */
+export function shouldStampStartDate(newStatus: string, currentStart: string | null | undefined): boolean {
+  return newStatus === 'in_progress' && !currentStart;
 }
 
 /**
@@ -79,6 +91,63 @@ async function setTaskDate(
   if (before?.tags.some((t) => t.toLowerCase() === 'backlog') && !updated.tags.some((t) => t.toLowerCase() === 'backlog')) {
     console.log(chalk.dim('  backlog tag removed — a dated task is planned, not backlog.'));
   }
+}
+
+/** Resolve + validate a custom-field value against the override schema (if any). */
+function coerceCustomFieldValue(
+  def: CustomFieldDef | undefined,
+  raw: string,
+): { ok: true; value: string | number } | { ok: false; message: string } {
+  if (def?.type === 'number') {
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return { ok: false, message: `Field "${def.key}" is a number; "${raw}" is not numeric.` };
+    return { ok: true, value: n };
+  }
+  if (def?.type === 'select' && def.options && def.options.length > 0) {
+    const match = def.options.find((o) => o.toLowerCase() === raw.toLowerCase());
+    if (!match) return { ok: false, message: `Field "${def.key}" is a select; "${raw}" is not one of: ${def.options.join(', ')}` };
+    return { ok: true, value: match };
+  }
+  return { ok: true, value: raw };
+}
+
+/**
+ * Set or clear ONE user-defined custom field on a task. Validates against the
+ * override schema when present (unknown key / bad number / bad select option are
+ * rejected, never silently written). Merges into the existing custom_fields map
+ * so other fields survive, then writes through the backend (synced on next sync).
+ */
+async function setCustomField(
+  backend: TaskBackend,
+  slug: string,
+  key: string,
+  raw: string | undefined,
+): Promise<void> {
+  const task = await backend.get(slug);
+  if (!task) { error(`Task not found: ${slug}`); return; }
+
+  const override = loadTaskOverride(ensureContextRoot());
+  const defs = override?.customFields ?? [];
+  const def = defs.find((d) => d.key === key || d.key === fieldKey(key));
+  const realKey = def?.key ?? fieldKey(key);
+  if (defs.length > 0 && !def) {
+    error(`No custom field "${key}" declared in overrides/task.md (declared: ${defs.map((d) => d.key).join(', ') || '(none)'}).`);
+    return;
+  }
+
+  const current: Record<string, string | number | null> = { ...(task.custom_fields ?? {}) };
+  if (raw === undefined || raw.toLowerCase() === 'clear') {
+    current[realKey] = null;
+    await backend.updateFields(slug, { custom_fields: current, updated_at: today() });
+    success(`Custom field "${realKey}" cleared on ${slug}`);
+    return;
+  }
+
+  const coerced = coerceCustomFieldValue(def, raw);
+  if (!coerced.ok) { error(coerced.message); return; }
+  current[realKey] = coerced.value;
+  await backend.updateFields(slug, { custom_fields: current, updated_at: today() });
+  success(`Custom field "${realKey}" set to "${coerced.value}" on ${slug}`);
 }
 
 /**
@@ -135,9 +204,74 @@ function renderTaskLine(t: TaskRecord, opts: { long?: boolean } = {}): string {
     const meta: string[] = [];
     if (t.version) meta.push(`v:${t.version}`);
     if (t.tags.length > 0) meta.push(t.tags.map((tag) => `#${tag}`).join(' '));
+    const cfKeys = Object.keys(t.custom_fields ?? {});
+    if (cfKeys.length > 0) {
+      meta.push(
+        cfKeys
+          .map((k) => {
+            const v = t.custom_fields[k];
+            return v === null || v === undefined || String(v).trim() === '' ? `${k}=unset` : `${k}=${String(v)}`;
+          })
+          .join('  '),
+      );
+    }
     if (meta.length > 0) line += `\n${' '.repeat(15)}${chalk.dim(meta.join('  '))}`;
   }
   return line;
+}
+
+/** REQUIRED custom fields (from overrides/task.md) left unset on a task. */
+function missingRequiredFields(
+  values: Record<string, unknown> | undefined,
+  root: string,
+): CustomFieldDef[] {
+  const requiredDefs = (loadTaskOverride(root)?.customFields ?? []).filter((d) => d.required);
+  return requiredDefs.filter((d) => {
+    const v = values?.[d.key];
+    return v === undefined || v === null || String(v).trim() === '';
+  });
+}
+
+/** Whether an explicit draft escape was given (per-command flag or env var). */
+function allowMissingRequired(flag?: boolean): boolean {
+  return flag === true || process.env.DREAMCONTEXT_ALLOW_MISSING_REQUIRED === '1';
+}
+
+/** Print one fix hint per unset required field (exact command + the field's prompt). */
+function printRequiredHints(missing: CustomFieldDef[], fix: (key: string) => string): void {
+  for (const d of missing) {
+    const hint = d.prompt ? `  (${d.prompt.length > 100 ? d.prompt.slice(0, 100) + '…' : d.prompt})` : '';
+    console.log(chalk.dim(`  → ${fix(d.key)}${hint}`));
+  }
+}
+
+/**
+ * Hard backstop to the snapshot briefing: when REQUIRED custom fields are unset,
+ * BLOCK the action (returns true → caller aborts; sets a non-zero exit code).
+ * An explicit draft escape (`--allow-missing-required` / env) downgrades it to a
+ * warning so automated/intentional drafts still go through.
+ */
+function blockOnMissingRequired(
+  action: string,
+  slug: string,
+  values: Record<string, unknown> | undefined,
+  root: string,
+  fix: (key: string) => string,
+  allowDraft?: boolean,
+): boolean {
+  const missing = missingRequiredFields(values, root);
+  if (missing.length === 0) return false;
+  const names = missing.map((d) => d.key).join(', ');
+  if (allowMissingRequired(allowDraft)) {
+    warn(`${action} "${slug}" with unset required field(s): ${names} (allowed via --allow-missing-required).`);
+    printRequiredHints(missing, fix);
+    return false;
+  }
+  error(`Cannot ${action} "${slug}": required custom field(s) unset — ${names}. This project requires them on every task.`);
+  printRequiredHints(missing, fix);
+  error('Set them, or pass --allow-missing-required (or DREAMCONTEXT_ALLOW_MISSING_REQUIRED=1) for a draft.');
+  process.exitCode = 1;
+  return true;
 }
 
 /**
@@ -287,7 +421,9 @@ export function registerTasksCommand(program: Command): void {
     .option('--effort <n>', 'RICE effort in weeks (> 0, ≤ 52)')
     .option('--start <date>', 'Planned start date (YYYY-MM-DD)')
     .option('--due <date>', 'Due/end date (YYYY-MM-DD)')
-    .action(async (name: string, opts: { description?: string; priority?: string; urgency?: string; status?: string; tags?: string; why?: string; version?: string; person?: string; reach?: string; impact?: string; confidence?: string; effort?: string; start?: string; due?: string }) => {
+    .option('--field <key=value...>', 'Set a declared custom field (repeatable): --field team=platform --field story_points=8')
+    .option('--allow-missing-required', 'Create even when required custom fields are unset (intentional draft)')
+    .action(async (name: string, opts: { description?: string; priority?: string; urgency?: string; status?: string; tags?: string; why?: string; version?: string; person?: string; reach?: string; impact?: string; confidence?: string; effort?: string; start?: string; due?: string; field?: string[]; allowMissingRequired?: boolean }) => {
       const backend = getTaskBackend();
       const slug = slugify(name);
 
@@ -363,6 +499,32 @@ export function registerTasksCommand(program: Command): void {
         return;
       }
 
+      // --field key=value pairs → custom_fields, validated against the override.
+      let customFields: Record<string, string | number> | undefined;
+      if (opts.field && opts.field.length > 0) {
+        const defs = loadTaskOverride(ensureContextRoot())?.customFields ?? [];
+        customFields = {};
+        for (const pair of opts.field) {
+          const eq = pair.indexOf('=');
+          if (eq === -1) { error(`--field expects key=value, got "${pair}".`); return; }
+          const rawKey = pair.slice(0, eq).trim();
+          const rawVal = pair.slice(eq + 1).trim();
+          const def = defs.find((d) => d.key === rawKey || d.key === fieldKey(rawKey));
+          if (defs.length > 0 && !def) {
+            error(`No custom field "${rawKey}" declared in overrides/task.md (declared: ${defs.map((d) => d.key).join(', ') || '(none)'}).`);
+            return;
+          }
+          const coerced = coerceCustomFieldValue(def, rawVal);
+          if (!coerced.ok) { error(coerced.message); return; }
+          customFields[def?.key ?? fieldKey(rawKey)] = coerced.value;
+        }
+      }
+
+      // Hard gate: refuse to create when a REQUIRED custom field is unset
+      // (escape with --allow-missing-required for an intentional draft).
+      if (blockOnMissingRequired('create', slug, customFields, ensureContextRoot(),
+          (k) => `--field ${k}="<value>"`, opts.allowMissingRequired)) return;
+
       try {
         await backend.create({
           name,
@@ -376,6 +538,7 @@ export function registerTasksCommand(program: Command): void {
           rice: riceBlock,
           start_date: opts.start ?? null,
           due_date: opts.due ?? null,
+          ...(customFields ? { custom_fields: customFields } : {}),
           variant: 'cli',
         });
       } catch (err) {
@@ -506,6 +669,20 @@ export function registerTasksCommand(program: Command): void {
       const slug = await resolveTaskSlug(backend, name);
       if (!slug) return;
       await setTaskDate(backend, slug, 'due_date', date);
+    });
+
+  // User-defined custom fields (declared in overrides/task.md; synced to the remote backend)
+  tasks
+    .command('field')
+    .argument('<name>', 'Task slug or name')
+    .argument('<key>', 'Custom field key (as declared in overrides/task.md)')
+    .argument('[value]', 'Value to set, or "clear" / omit to clear')
+    .description('Set or clear a user-defined custom field (synced to the remote backend)')
+    .action(async (name: string, key: string, value: string | undefined) => {
+      const backend = getTaskBackend();
+      const slug = await resolveTaskSlug(backend, name);
+      if (!slug) return;
+      await setCustomField(backend, slug, key, value);
     });
 
   // Tag management on existing tasks (person:<slug> tags drive remote assignees)
@@ -640,6 +817,11 @@ export function registerTasksCommand(program: Command): void {
         summary = await promptInput({ message: 'Completion summary (optional):', default: 'Task completed.' });
       }
 
+      // Hard gate: can't mark a task done with required custom fields empty.
+      const current = await backend.get(slug);
+      if (blockOnMissingRequired('complete', slug, current?.custom_fields, ensureContextRoot(),
+          (k) => `dreamcontext tasks field ${slug} ${k} "<value>"`)) return;
+
       await backend.complete(slug, summary);
       success(`Task completed: ${slug}`);
     });
@@ -650,7 +832,7 @@ export function registerTasksCommand(program: Command): void {
     .argument('<name>')
     .argument('<new-status>', 'todo, in_progress, in_review, or completed')
     .argument('[reason...]', 'Optional reason for the status change')
-    .description('Change a task\'s status (logs the change in the changelog)')
+    .description('Change a task\'s status (logs the change; stamps start_date on first in_progress if unset)')
     .action(async (name: string, newStatus: string, reasonParts: string[]) => {
       const validStatuses = ['todo', 'in_progress', 'in_review', 'completed'];
       if (!validStatuses.includes(newStatus)) {
@@ -662,6 +844,13 @@ export function registerTasksCommand(program: Command): void {
       const slug = await resolveTaskSlug(backend, name);
       if (!slug) return;
 
+      // Hard gate: can't move a task to a ready/done state with required fields empty.
+      if (newStatus === 'completed' || newStatus === 'in_review') {
+        const cur = await backend.get(slug);
+        if (blockOnMissingRequired(newStatus === 'completed' ? 'complete' : 'move to in_review', slug, cur?.custom_fields, ensureContextRoot(),
+            (k) => `dreamcontext tasks field ${slug} ${k} "<value>"`)) return;
+      }
+
       const reason = reasonParts.join(' ').trim();
       const headerLabel = newStatus === 'completed' ? 'Completed' : `Status → ${newStatus}`;
       const logContent = reason
@@ -669,8 +858,22 @@ export function registerTasksCommand(program: Command): void {
         : `### ${today()} - ${headerLabel}`;
 
       await backend.addChangelog(slug, logContent, { fallbackAppend: true });
-      await backend.updateFields(slug, { status: newStatus, updated_at: today() });
+
+      // Auto-stamp the real start date the first time work actually begins (see
+      // shouldStampStartDate). Only fetch the task on the transition that can
+      // stamp, so other status changes stay a single write.
+      const now = today();
+      const before = newStatus === 'in_progress' ? await backend.get(slug) : null;
+      const startStamped = shouldStampStartDate(newStatus, before?.start_date);
+      await backend.updateFields(slug, {
+        status: newStatus,
+        updated_at: now,
+        ...(startStamped ? { start_date: now } : {}),
+      });
       success(`Task ${slug} → ${newStatus}`);
+      if (startStamped) {
+        console.log(chalk.dim(`  start date set to ${now} (work started).`));
+      }
     });
 
   // Log entry (cross-session continuity)

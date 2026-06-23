@@ -1,12 +1,13 @@
 import { useState, useMemo, useCallback } from 'react';
 import type { Task } from '../../hooks/useTasks';
 import { useTasks, useUpdateTask, useSyncStatus, useSyncTasks, useDeleteTask, useTaskMembers } from '../../hooks/useTasks';
-import { useVersions } from '../../hooks/useVersions';
+import { useVersions, useActiveVersion, useSetActiveVersion, useCompleteVersion, type Version } from '../../hooks/useVersions';
 import { useProject } from '../../context/ProjectContext';
 import { useI18n } from '../../context/I18nContext';
 import { useSavedViews, saveView, deleteView, type SavedView } from '../../stores/savedViews';
 import { KanbanColumn } from './KanbanColumn';
 import { TaskFilters, DEFAULT_FILTERS, type FilterState, type SortField, type GroupBy } from './TaskFilters';
+import type { VersionFilterItem } from './VersionFilter';
 import { TaskCreateModal } from './TaskCreateModal';
 import { TaskDetailPanel } from './TaskDetailPanel';
 import { EisenhowerMatrix } from './EisenhowerMatrix';
@@ -20,6 +21,29 @@ import './KanbanBoard.css';
 
 const PRIORITY_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
 const URGENCY_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+
+const BACKLOG_RE = /^backlog$/i;
+
+/** Sort version/sprint rows so active work is on top and completed sinks to the bottom. */
+function versionRank(it: VersionFilterItem): number {
+  if (it.isCurrent) return 0;
+  if (it.status === 'planning') return 1;
+  if (it.status === 'released') return 4;
+  return BACKLOG_RE.test(it.value) ? 3 : 2; // unregistered: backlog last among the active group
+}
+
+function sortVersionItems(items: VersionFilterItem[]): VersionFilterItem[] {
+  return [...items].sort((a, b) => {
+    const ra = versionRank(a);
+    const rb = versionRank(b);
+    if (ra !== rb) return ra - rb;
+    // Completed: newest release first. Everyone else: natural order (S2 < S10, v0.9 < v0.10).
+    if (a.status === 'released' && b.status === 'released') {
+      if (a.date && b.date && a.date !== b.date) return b.date.localeCompare(a.date);
+    }
+    return a.value.localeCompare(b.value, undefined, { numeric: true });
+  });
+}
 
 const STATUS_COLUMNS = [
   { key: 'todo', labelKey: 'tasks.todo', colorVar: '--color-status-todo' },
@@ -233,6 +257,9 @@ export function KanbanBoard() {
   const { projectId } = useProject();
   const { data: tasks, isLoading, isError, error } = useTasks();
   const { data: versions } = useVersions();
+  const { data: activeVersion } = useActiveVersion();
+  const setActiveVersion = useSetActiveVersion();
+  const completeVersion = useCompleteVersion();
   const updateTask = useUpdateTask();
   const { data: syncStatus } = useSyncStatus();
   const { data: members } = useTaskMembers();
@@ -376,16 +403,40 @@ export function KanbanBoard() {
     return Array.from(set).sort();
   }, [tasks]);
 
-  const allVersions = useMemo(() => {
-    const set = new Set<string>();
+  const versionItems = useMemo<VersionFilterItem[]>(() => {
+    const byVersion = new Map<string, Version>();
+    for (const v of versions ?? []) byVersion.set(v.version, v);
+
+    const counts = new Map<string, number>();
+    const names = new Set<string>();
     for (const t of tasks ?? []) {
-      if (t.version) set.add(t.version);
+      if (t.version) {
+        names.add(t.version);
+        counts.set(t.version, (counts.get(t.version) ?? 0) + 1);
+      }
     }
-    for (const v of versions ?? []) {
-      set.add(v.version);
-    }
-    return Array.from(set).sort();
-  }, [tasks, versions]);
+    for (const v of versions ?? []) names.add(v.version);
+
+    const items: VersionFilterItem[] = [...names].map(value => {
+      const rel = byVersion.get(value);
+      const status: VersionFilterItem['status'] = rel ? rel.status : 'unregistered';
+      return {
+        value,
+        status,
+        date: rel?.date || undefined,
+        isCurrent: !!activeVersion && value === activeVersion,
+        taskCount: counts.get(value) ?? 0,
+      };
+    });
+    return sortVersionItems(items);
+  }, [tasks, versions, activeVersion]);
+
+  // Which version row has an in-flight current/complete mutation (disables its actions).
+  const versionBusy = setActiveVersion.isPending
+    ? setActiveVersion.variables ?? null
+    : completeVersion.isPending
+      ? completeVersion.variables?.version ?? null
+      : null;
 
   const handleDrop = (slug: string, newValue: string, groupBy: GroupBy) => {
     switch (groupBy) {
@@ -515,7 +566,11 @@ export function KanbanBoard() {
         onLoadPreset={handleLoadPreset}
         onDeletePreset={handleDeletePreset}
         allTags={allTags}
-        allVersions={allVersions}
+        versionItems={versionItems}
+        currentVersion={activeVersion ?? null}
+        onSetCurrentVersion={(v) => setActiveVersion.mutate(v)}
+        onCompleteVersion={(item) => completeVersion.mutate({ version: item.value, exists: item.status !== 'unregistered' })}
+        versionBusy={versionBusy}
         onVersionManagerClick={() => setShowVersionManager(true)}
         syncSlot={syncSlot}
         showAssignee={isCloud}

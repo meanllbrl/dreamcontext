@@ -10,6 +10,9 @@ import {
   composeIssueBody,
   parseDatesBlock,
   stripDatesBlock,
+  renderFieldsBlock,
+  parseFieldsBlock,
+  stripFieldsBlock,
   deleteToGitHub,
   githubTimeMs,
   githubTimeIso,
@@ -25,9 +28,10 @@ import {
   type GitHubIssue,
 } from './github-map.js';
 import { RECOMMENDED_LABELS } from './github-fields.js';
+import { customFieldsFor, loadTaskOverride, type CustomFieldDef } from '../overrides.js';
 import { recordDashboardChange, type FieldChange } from '../change-tracker.js';
 import { resolveActor } from './identity.js';
-import { resolveGitHubToken } from './secrets.js';
+import { resolveGitHubToken, writeGitHubToken, maskToken } from './secrets.js';
 import { BACKLOG_TAG, LocalTaskBackend } from './local.js';
 import { merge3Bodies, mergeScalar, unionChangelog } from './merge.js';
 import { SyncLedger, hashContent } from './sync-state.js';
@@ -39,6 +43,7 @@ import type {
   SyncDirection,
   SyncReport,
   TaskData,
+  TokenStatus,
   UpdateFieldsOptions,
 } from './types.js';
 
@@ -152,6 +157,35 @@ export class GitHubTaskBackend extends LocalTaskBackend {
 
   protected get projectRoot(): string {
     return dirname(this.contextRoot);
+  }
+
+  private _userFieldDefs?: CustomFieldDef[];
+  /** Override-declared custom fields targeting GitHub (cached per instance). */
+  protected userFieldDefs(): CustomFieldDef[] {
+    if (this._userFieldDefs === undefined) {
+      const ov = loadTaskOverride(this.contextRoot);
+      this._userFieldDefs = ov ? customFieldsFor(ov.customFields, 'github') : [];
+    }
+    return this._userFieldDefs;
+  }
+
+  /** `select` fields ride as `<key>:<value>` labels. */
+  protected selectFieldDefs(): CustomFieldDef[] {
+    return this.userFieldDefs().filter((d) => d.type === 'select');
+  }
+
+  /** text / number / date fields ride in the `<!-- dc:fields -->` body block. */
+  protected bodyFieldDefs(): CustomFieldDef[] {
+    return this.userFieldDefs().filter((d) => d.type !== 'select');
+  }
+
+  /** Read a custom-field value off raw task frontmatter (null when unset). */
+  protected customFieldValue(raw: Record<string, unknown>, key: string): string | null {
+    const cf = (raw.custom_fields ?? null) as Record<string, unknown> | null;
+    const v = cf?.[key];
+    if (v === undefined || v === null) return null;
+    const s = String(v).trim();
+    return s === '' || s === 'null' ? null : s;
   }
 
   protected getToken(): string | null {
@@ -354,11 +388,29 @@ export class GitHubTaskBackend extends LocalTaskBackend {
   /**
    * Create the recommended `dc:*` / convention labels that don't already exist
    * (GET labels → POST missing). Idempotent: an existing name is skipped.
+   *
+   * `{ dryRun: true }` reports what WOULD be created (`created`) vs what already
+   * exists, creating NOTHING — the Settings preview.
    */
-  async provisionRemote(): Promise<{ created: string[]; existing: string[]; backfilled: number; errors: string[] }> {
+  async provisionRemote(opts?: { dryRun?: boolean }): Promise<{ created: string[]; existing: string[]; backfilled: number; errors: string[] }> {
     const adapter = this.getAdapter();
     const { owner, repo } = this.requireRepo();
+    const { created, existing, errors } = await this.createMissingLabels(adapter, owner, repo, opts?.dryRun === true);
+    return { created, existing, backfilled: 0, errors };
+  }
 
+  /**
+   * Label-creation core, shared by `provisionRemote` (the manual button) and
+   * `sync()` (auto-provision). Lists the repo labels (GET) then POSTs the
+   * missing recommended ones. `dryRun` reports the delta without POSTing. Safe to
+   * call from inside `sync()` (no nested sync, no throw).
+   */
+  private async createMissingLabels(
+    adapter: ApiAdapter,
+    owner: string,
+    repo: string,
+    dryRun: boolean,
+  ): Promise<{ created: string[]; existing: string[]; errors: string[] }> {
     const created: string[] = [];
     const existing: string[] = [];
     const errors: string[] = [];
@@ -379,9 +431,24 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       errors.push(`list labels: ${(err as Error).message ?? err}`);
     }
 
-    for (const def of RECOMMENDED_LABELS) {
+    // Recommended labels + one label per option of every override-declared
+    // `select` custom field (`<key>:<option>`). An existing name is REUSED, not
+    // recreated (present-set check + 422 swallow) — the reuse-if-exists rule.
+    const fieldLabels = this.selectFieldDefs().flatMap((d) =>
+      (d.options ?? []).map((opt) => ({
+        name: `${d.key}:${opt}`,
+        color: 'ededed',
+        description: `dreamcontext custom field: ${d.name}`,
+      })),
+    );
+
+    for (const def of [...RECOMMENDED_LABELS, ...fieldLabels]) {
       if (present.has(def.name.toLowerCase())) {
         existing.push(def.name);
+        continue;
+      }
+      if (dryRun) {
+        created.push(def.name); // would create — preview only
         continue;
       }
       try {
@@ -397,7 +464,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       }
     }
 
-    return { created, existing, backfilled: 0, errors };
+    return { created, existing, errors };
   }
 
   /** Pickable repos for the Settings onboarding (token resolved internally). */
@@ -421,6 +488,19 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     } catch (err) {
       return { ok: false, error: (err as Error).message ?? String(err) };
     }
+  }
+
+  /** Settings inline API-key entry: persist the token into the secrets store. */
+  setToken(token: string): void {
+    writeGitHubToken(this.projectRoot, token);
+  }
+
+  /** Settings "key set ✓" indicator: resolved token status, masked. */
+  tokenStatus(): TokenStatus {
+    const resolved = resolveGitHubToken(this.projectRoot);
+    return resolved
+      ? { set: true, source: resolved.source, masked: maskToken(resolved.token) }
+      : { set: false, source: null, masked: null };
   }
 
   // ── Sync engine ───────────────────────────────────────────────────────────
@@ -455,6 +535,15 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       try {
         const { owner, repo } = this.requireRepo();
         await this.refreshMembers(this.getAdapter(), owner, repo);
+        // Auto-provision the recommended labels so a push always has them with
+        // proper colors (GitHub would otherwise auto-create them gray). Throttled
+        // to once per hour (a labels GET per sync would be wasteful), best-effort:
+        // a failure here must never break the sync.
+        const lastProvision = this.ledger.readThrottle('lastLabelProvisionAt');
+        if (lastProvision === null || this.nowMs() - lastProvision >= GitHubTaskBackend.META_REFRESH_MS) {
+          this.ledger.writeThrottle('lastLabelProvisionAt', this.nowMs());
+          await this.createMissingLabels(this.getAdapter(), owner, repo, false);
+        }
       } catch { /* config errors surface below via pull/push */ }
       if (direction === 'pull' || direction === 'both') {
         await this.pullRemote(report);
@@ -562,21 +651,30 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     // The FULL computed label set (PATCH labels REPLACES the whole set on
     // GitHub, so we always send everything the map derives for this task — a
     // `backlog` tag rides verbatim as a label, no special-casing needed).
+    // Override-declared `select` custom fields ride here as `<key>:<value>`.
     const labels = labelsToGitHub({
       tags: stripPersonTags(task.tags),
       priority: task.priority,
       urgency: task.urgency,
       version: task.version,
       status: task.status,
+      selectFields: this.selectFieldDefs().map((d) => ({
+        key: d.key,
+        value: this.customFieldValue(task.raw, d.key),
+      })),
     });
 
     // GitHub has no native date fields, so start/due ride INSIDE the issue body
     // as a marked block (the only way they reliably sync over plain REST).
-    // Backlog tasks are undated by rule → no block.
+    // Backlog tasks are undated by rule → no block. Non-select custom fields
+    // ride in their own `<!-- dc:fields -->` body block alongside the dates.
+    const fieldsBlock = renderFieldsBlock(
+      this.bodyFieldDefs().map((d) => ({ name: d.name, value: this.customFieldValue(task.raw, d.key) })),
+    );
     const isBacklog = task.tags.some((t) => t.toLowerCase() === BACKLOG_TAG);
     const startLocal = isBacklog ? null : ((task.raw.start_date as string | null | undefined) ?? null);
     const dueLocal = isBacklog ? null : ((task.raw.due_date as string | null | undefined) ?? null);
-    const body = composeIssueBody(bodyToIssueBody(task.body), startLocal, dueLocal);
+    const body = composeIssueBody(bodyToIssueBody(task.body), startLocal, dueLocal, fieldsBlock);
 
     let remoteId = this.ledger.remoteIdFor(slug);
     let serverTime: number | null = null;
@@ -814,16 +912,29 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       .map((c) => (c.body ?? '').trim())
       .filter(Boolean);
 
-    const { tags: remoteTags, priority: remotePriority, urgency: remoteUrgency, version: remoteVersion } =
-      labelsFromGitHub(issue.labels);
-    // Dates live in a marked block inside the issue body — parse them out, then
-    // strip the block so the prose that goes into the 3-way merge is date-free.
+    const selectDefs = this.selectFieldDefs();
+    const bodyDefs = this.bodyFieldDefs();
+    const { tags: remoteTags, priority: remotePriority, urgency: remoteUrgency, version: remoteVersion, customFields: remoteSelectFields } =
+      labelsFromGitHub(issue.labels, selectDefs.map((d) => d.key));
+    // Dates + custom fields live in marked blocks inside the issue body — parse
+    // them out, then strip the blocks so the prose that goes into the 3-way
+    // merge is block-free.
     const normalizedIssueBody = (issue.body ?? '').replace(/\r\n/g, '\n');
     const { start: remoteStartRaw, due: remoteDueRaw } = parseDatesBlock(normalizedIssueBody);
+    const remoteBodyFields = parseFieldsBlock(normalizedIssueBody, bodyDefs);
+    // Combined remote custom-field state (select labels + body block), keyed by
+    // local field key. Values are coerced back to the declared type so a NUMBER
+    // field that round-trips through the string body block (8 → "8") does not
+    // read as a remote "change" against the numeric local value on every pull.
+    const remoteCustomFields: Record<string, string | number> = {};
+    for (const [k, v] of Object.entries({ ...remoteSelectFields, ...remoteBodyFields })) {
+      const def = this.userFieldDefs().find((d) => d.key === k);
+      remoteCustomFields[k] = def?.type === 'number' && Number.isFinite(Number(v)) ? Number(v) : v;
+    }
     const remoteBacklog = remoteTags.some((t) => t.toLowerCase() === BACKLOG_TAG);
     const remoteStart = remoteBacklog ? null : remoteStartRaw;
     const remoteDue = remoteBacklog ? null : remoteDueRaw;
-    const remoteBody = stripDatesBlock(normalizedIssueBody).trim();
+    const remoteBody = stripFieldsBlock(stripDatesBlock(normalizedIssueBody)).trim();
     // Every assignee login maps back to a person:<slug> tag. Guard the resolve
     // path so a non-collaborator / unknown login is skipped, not a crash.
     const remoteAssignees: string[] = [
@@ -863,6 +974,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
         due_date: remoteDue,
         created_by: 'github',
         updated_by: 'github',
+        ...(Object.keys(remoteCustomFields).length > 0 ? { custom_fields: remoteCustomFields } : {}),
       };
       const written = this.writeMirror(slug, fm, remoteBody, remoteEntries);
       this.ledger.recordMapping({ slug, dcId: fm.id as string, backend: this.name, remoteId });
@@ -973,9 +1085,28 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       remoteStart,
     );
 
+    // Custom fields (select labels + body block) — per-field LWW like the dates.
+    const declaredFieldKeys = [...selectDefs, ...bodyDefs].map((d) => d.key);
+    const localCustom = (local.raw.custom_fields ?? {}) as Record<string, unknown>;
+    const baseCustom = (baseFm?.custom_fields ?? null) as Record<string, unknown> | null;
+    const customFieldsM: Record<string, string | number | null> = { ...localCustom } as Record<string, string | number | null>;
+    const remoteCustomBase: Record<string, string | number | null> = { ...localCustom } as Record<string, string | number | null>;
+    let anyCustomLocalWin = false;
+    let anyCustomRemoteWin = false;
+    for (const key of declaredFieldKeys) {
+      const baseV = (baseCustom?.[key] as string | number | null | undefined) ?? null;
+      const localV = (localCustom[key] as string | number | null | undefined) ?? null;
+      const remoteV = (remoteCustomFields[key] as string | number | undefined) ?? null;
+      const m = scalar<string | number | null>(baseV, localV, remoteV);
+      customFieldsM[key] = m.value;
+      remoteCustomBase[key] = remoteV;
+      if (m.winner === 'local') anyCustomLocalWin = true;
+      if (m.winner === 'remote') anyCustomRemoteWin = true;
+    }
+
     const scalarResults = [statusM, priorityM, urgencyM, nameM, tagsM, versionM, assigneeM, dueM, startM];
-    const anyLocalWin = scalarResults.some((r) => r.winner === 'local');
-    const anyRemoteWin = scalarResults.some((r) => r.winner === 'remote');
+    const anyLocalWin = scalarResults.some((r) => r.winner === 'local') || anyCustomLocalWin;
+    const anyRemoteWin = scalarResults.some((r) => r.winner === 'remote') || anyCustomRemoteWin;
     const remoteAddedEntries = mergedEntries.length > localEntries.length;
     const remoteContributed = anyRemoteWin || remoteAddedEntries || mergedBody !== localBody;
 
@@ -1000,6 +1131,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
         : dueM.value,
       updated_at: remoteContributed && remoteTime !== null ? dateOf(remoteTime) : local.updated_at,
       updated_by: anyRemoteWin || conflicts.length > 0 ? 'github' : (local.raw.updated_by ?? null),
+      ...(declaredFieldKeys.length > 0 ? { custom_fields: customFieldsM } : {}),
     };
     delete fm.assignee;
 
@@ -1022,6 +1154,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
           due_date: remoteTags.some((t) => t.toLowerCase() === BACKLOG_TAG)
             ? null
             : remoteDue,
+          ...(declaredFieldKeys.length > 0 ? { custom_fields: remoteCustomBase } : {}),
         },
         remoteBody,
         remoteEntries,

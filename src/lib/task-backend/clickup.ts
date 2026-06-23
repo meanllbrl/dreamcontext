@@ -30,14 +30,19 @@ import {
   isPullable,
   localFieldValue,
   matchCustomFields,
+  buildSpecs,
+  userProvisionDefs,
+  BUILTIN_FIELD_KEYS,
   RECOMMENDED_FIELD_DEFS,
   RICE_KEYS,
   type ClickUpFieldDef,
   type ClickUpFieldValue,
   type FieldBinding,
 } from './clickup-fields.js';
+import { customFieldsFor, loadTaskOverride, type CustomFieldDef } from '../overrides.js';
 import { recordDashboardChange, type FieldChange } from '../change-tracker.js';
 import { clickupMemberMap, resolveActor, resolveActorToken } from './identity.js';
+import { writeClickUpToken, resolveClickUpToken, maskToken } from './secrets.js';
 import { BACKLOG_TAG, LocalTaskBackend } from './local.js';
 import { merge3Bodies, mergeScalar, unionChangelog } from './merge.js';
 import { SyncLedger, hashContent } from './sync-state.js';
@@ -49,6 +54,7 @@ import type {
   SyncDirection,
   SyncReport,
   TaskData,
+  TokenStatus,
   UpdateFieldsOptions,
 } from './types.js';
 
@@ -312,8 +318,21 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     } catch { /* field bridge is opt-in — absence is fine */ }
   }
 
+  private _userFieldDefs?: CustomFieldDef[];
+  /** Override-declared custom fields targeting ClickUp (cached per instance). */
+  protected userFieldDefs(): CustomFieldDef[] {
+    if (this._userFieldDefs === undefined) {
+      const ov = loadTaskOverride(this.contextRoot);
+      this._userFieldDefs = ov ? customFieldsFor(ov.customFields, 'clickup') : [];
+    }
+    return this._userFieldDefs;
+  }
+
   protected fieldBindings(): FieldBinding[] {
-    return matchCustomFields(this.ledger.readCustomFields<ClickUpFieldDef>());
+    return matchCustomFields(
+      this.ledger.readCustomFields<ClickUpFieldDef>(),
+      buildSpecs(this.userFieldDefs()),
+    );
   }
 
   /**
@@ -355,44 +374,24 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
    * Create the recommended custom fields on the list (verified live:
    * POST /list/:id/field works on ClickUp v2). Skips fields the bridge
    * already binds; refreshes the cache so the next sync uses them at once.
+   *
+   * `{ dryRun: true }` reports what WOULD be created (`created`) vs what already
+   * exists, creating NOTHING and skipping backfill — the Settings preview.
    */
-  async provisionRemote(): Promise<{ created: string[]; existing: string[]; backfilled: number; errors: string[] }> {
+  async provisionRemote(opts?: { dryRun?: boolean }): Promise<{ created: string[]; existing: string[]; backfilled: number; errors: string[] }> {
+    const dryRun = opts?.dryRun === true;
     const adapter = this.getAdapter();
     const listId = this.requireListId();
 
     // Fresh defs → which recommended keys are already bound?
     this.membersRefreshed = false;
     await this.refreshMembers(adapter, listId, true);
-    const bound = new Set(this.fieldBindings().map((b) => b.key));
 
-    const created: string[] = [];
-    const existing: string[] = [];
-    const errors: string[] = [];
+    const { created, existing, errors } = await this.createMissingFields(adapter, listId, dryRun);
 
-    for (const def of RECOMMENDED_FIELD_DEFS) {
-      if (bound.has(def.key)) {
-        existing.push(def.name);
-        continue;
-      }
-      try {
-        await adapter.request('POST', `/list/${listId}/field`, {
-          body: {
-            name: def.name,
-            type: def.type,
-            ...(def.options
-              ? { type_config: { options: def.options.map((name) => ({ name })) } }
-              : {}),
-          },
-        });
-        created.push(def.name);
-      } catch (err) {
-        errors.push(`${def.name}: ${(err as Error).message ?? err}`);
-      }
-    }
-
-    if (created.length > 0) {
-      this.membersRefreshed = false;
-      await this.refreshMembers(adapter, listId, true); // re-cache with the new defs
+    // Preview mode: report the delta only; never mutate (no creation, no backfill).
+    if (dryRun) {
+      return { created, existing, backfilled: 0, errors };
     }
 
     // BACKFILL: already-synced tasks have no hash drift, so the delta push
@@ -437,6 +436,65 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     return { created, existing, backfilled, errors };
   }
 
+  /**
+   * Field-creation core, shared by `provisionRemote` (the manual button) and
+   * `sync()` (auto-provision). Reads the CURRENTLY cached field bindings — the
+   * caller is responsible for refreshing them first — so it adds no network when
+   * nothing is missing. `dryRun` reports the delta without POSTing anything.
+   * Never backfills and never triggers a nested sync (so it is safe to call from
+   * inside `sync()`).
+   */
+  private async createMissingFields(
+    adapter: ApiAdapter,
+    listId: string,
+    dryRun: boolean,
+  ): Promise<{ created: string[]; existing: string[]; errors: string[] }> {
+    const bound = new Set(this.fieldBindings().map((b) => b.key));
+    const created: string[] = [];
+    const existing: string[] = [];
+    const errors: string[] = [];
+
+    // Recommended fields + every override-declared custom field. A field whose
+    // folded name already binds on the list is REUSED (reported `existing`),
+    // never recreated — the user's "use it if it's already there" requirement.
+    const provisionDefs: Array<{ key: string; name: string; type: string; options?: string[] }> = [
+      ...RECOMMENDED_FIELD_DEFS,
+      ...userProvisionDefs(this.userFieldDefs()),
+    ];
+
+    for (const def of provisionDefs) {
+      if (bound.has(def.key)) {
+        existing.push(def.name);
+        continue;
+      }
+      if (dryRun) {
+        created.push(def.name); // would create — preview only
+        continue;
+      }
+      try {
+        await adapter.request('POST', `/list/${listId}/field`, {
+          body: {
+            name: def.name,
+            type: def.type,
+            ...(def.options
+              ? { type_config: { options: def.options.map((name) => ({ name })) } }
+              : {}),
+          },
+        });
+        created.push(def.name);
+      } catch (err) {
+        errors.push(`${def.name}: ${(err as Error).message ?? err}`);
+      }
+    }
+
+    if (!dryRun && created.length > 0) {
+      this.membersRefreshed = false;
+      await this.refreshMembers(adapter, listId, true); // re-cache with the new defs
+    }
+
+    return { created, existing, errors };
+  }
+
   /** Pickable lists for the Settings onboarding (token resolved internally). */
   async discoverContainers(): Promise<Array<{ ids: Record<string, string>; path: string; name: string }>> {
     const token = resolveActorToken(this.projectRoot, this.contextRoot, this.config);
@@ -458,6 +516,19 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     } catch (err) {
       return { ok: false, error: (err as Error).message ?? String(err) };
     }
+  }
+
+  /** Settings inline API-key entry: persist the token into the secrets store. */
+  setToken(token: string): void {
+    writeClickUpToken(this.projectRoot, token);
+  }
+
+  /** Settings "key set ✓" indicator: resolved token status, masked. */
+  tokenStatus(): TokenStatus {
+    const resolved = resolveClickUpToken(this.projectRoot);
+    return resolved
+      ? { set: true, source: resolved.source, masked: maskToken(resolved.token) }
+      : { set: false, source: null, masked: null };
   }
 
   // ── Sync engine ───────────────────────────────────────────────────────────
@@ -494,6 +565,15 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       // Member cache refresh (assignee candidates) — best-effort, 1 request.
       try {
         await this.refreshMembers(this.getAdapter(), this.requireListId());
+      } catch { /* config errors surface below via pull/push */ }
+      // Auto-provision the recommended custom fields so a push always has
+      // somewhere to write — the user shouldn't have to remember the button.
+      // Reads the just-refreshed field cache, so it costs ZERO network in the
+      // steady state (everything already bound); only the first sync after the
+      // list is configured actually creates fields. Best-effort: a failure here
+      // must never break the sync.
+      try {
+        await this.createMissingFields(this.getAdapter(), this.requireListId(), false);
       } catch { /* config errors surface below via pull/push */ }
       if (direction === 'pull' || direction === 'both') {
         await this.pullRemote(report);
@@ -1136,6 +1216,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     // is always recomputed locally, never trusted from the remote).
     const ricePatch: RiceInput = {};
     let riceTouched = false;
+    const customPatch: Record<string, string | number | null> = {};
     for (const fw of fieldWinners) {
       if ((RICE_KEYS as string[]).includes(fw.key)) {
         if (fw.value !== localFieldValue(local.raw, fw.key as never)) riceTouched = true;
@@ -1146,10 +1227,20 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
         fm.version = fw.value; // a bound version FIELD outranks the version tag
         continue;
       }
+      if (!BUILTIN_FIELD_KEYS.has(fw.key)) {
+        customPatch[fw.key] = fw.value; // override-declared custom field
+        continue;
+      }
       fm[fw.key] = fw.value;
     }
     if (riceTouched) {
       fm.rice = mergeRice(normalizeRice(local.raw.rice), ricePatch);
+    }
+    if (Object.keys(customPatch).length > 0) {
+      fm.custom_fields = {
+        ...((local.raw.custom_fields as Record<string, unknown>) ?? {}),
+        ...customPatch,
+      };
     }
 
     const written = this.writeMirror(slug, fm, mergedDesc, mergedEntries);
@@ -1159,18 +1250,24 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     const keptLocal = anyLocalWin || proseLocalKept || localOnlyEntries.length > 0;
     if (keptLocal) {
       const remoteFmOverrides: Record<string, unknown> = {};
+      const remoteCustom: Record<string, unknown> = {};
       let remoteRice = normalizeRice(fm.rice);
       for (const [key, value] of Object.entries(remoteFieldState)) {
         if ((RICE_KEYS as string[]).includes(key)) {
           remoteRice = mergeRice(remoteRice, { [key]: value ?? undefined } as RiceInput);
         } else if (key === 'version') {
           remoteFmOverrides.version = value;
+        } else if (!BUILTIN_FIELD_KEYS.has(key)) {
+          remoteCustom[key] = value;
         } else {
           remoteFmOverrides[key] = value;
         }
       }
+      const remoteCustomOverride = Object.keys(remoteCustom).length > 0
+        ? { custom_fields: { ...((fm.custom_fields as Record<string, unknown>) ?? {}), ...remoteCustom } }
+        : {};
       const remoteRender = this.renderMirror(
-        { ...fm, name: remote.name, status: remoteStatus, priority: remotePriority, tags: withPersonTags(remoteTags, remoteAssignees), version: remoteVersion, start_date: remoteTags.some((t) => t.toLowerCase() === BACKLOG_TAG) ? null : remoteStart, due_date: remoteTags.some((t) => t.toLowerCase() === BACKLOG_TAG) ? null : remoteDue, ...remoteFmOverrides, rice: remoteRice },
+        { ...fm, name: remote.name, status: remoteStatus, priority: remotePriority, tags: withPersonTags(remoteTags, remoteAssignees), version: remoteVersion, start_date: remoteTags.some((t) => t.toLowerCase() === BACKLOG_TAG) ? null : remoteStart, due_date: remoteTags.some((t) => t.toLowerCase() === BACKLOG_TAG) ? null : remoteDue, ...remoteFmOverrides, ...remoteCustomOverride, rice: remoteRice },
         remoteDesc,
         remoteEntries,
       );

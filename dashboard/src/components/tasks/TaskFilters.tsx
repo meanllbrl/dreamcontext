@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { useI18n } from '../../context/I18nContext';
 import { FilterPopover } from './FilterPopover';
 import { MultiSelectFilter } from './MultiSelectFilter';
+import { VersionFilter, type VersionFilterItem } from './VersionFilter';
 import { MiniCalendar } from './MiniCalendar';
 import './TaskFilters.css';
 
@@ -62,7 +63,11 @@ interface TaskFiltersProps {
   onLoadPreset: (preset: FilterPreset) => void;
   onDeletePreset: (id: string) => void;
   allTags: string[];
-  allVersions: string[];
+  versionItems: VersionFilterItem[];
+  currentVersion: string | null;
+  onSetCurrentVersion: (version: string) => void;
+  onCompleteVersion: (item: VersionFilterItem) => void;
+  versionBusy?: string | null;
   onVersionManagerClick: () => void;
   showAssignee?: boolean;
   assigneeOptions?: { value: string; label: string }[];
@@ -295,7 +300,11 @@ export function TaskFilters({
   onLoadPreset,
   onDeletePreset,
   allTags,
-  allVersions,
+  versionItems,
+  currentVersion,
+  onSetCurrentVersion,
+  onCompleteVersion,
+  versionBusy,
   onVersionManagerClick,
   showAssignee,
   assigneeOptions = [],
@@ -314,7 +323,6 @@ export function TaskFilters({
   const groupLabel = GROUP_OPTIONS.find(o => o.value === filters.groupBy)?.label;
 
   const tagOptions = useMemo(() => allTags.map(t => ({ value: t, label: t })), [allTags]);
-  const versionOptions = useMemo(() => allVersions.map(v => ({ value: v, label: v })), [allVersions]);
 
   const subGroupOptions = useMemo(
     () => GROUP_OPTIONS.filter(o => o.value !== filters.groupBy && o.value !== 'none').concat({ value: 'none', label: 'No sub-group' }),
@@ -391,17 +399,19 @@ export function TaskFilters({
         />
       )}
 
-      {/* Version multi-select */}
-      {versionOptions.length > 0 && (
-        <MultiSelectFilter
-          id="version"
-          label="Version"
-          options={versionOptions}
+      {/* Version / sprint filter (sprint-aware: current, completed, per-row actions) */}
+      {versionItems.length > 0 && (
+        <VersionFilter
+          items={versionItems}
           selected={filters.versionFilter}
           onChange={v => onFilterChange('versionFilter', v)}
+          currentVersion={currentVersion}
           isOpen={openPopover === 'version'}
           onToggle={() => toggle('version')}
           onClose={close}
+          onSetCurrent={onSetCurrentVersion}
+          onComplete={onCompleteVersion}
+          busyVersion={versionBusy}
         />
       )}
 

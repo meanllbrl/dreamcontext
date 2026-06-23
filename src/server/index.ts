@@ -6,12 +6,12 @@ import { Router } from './router.js';
 import { handleCors, isCrossSiteWrite, sendError } from './middleware.js';
 import { serveStatic } from './static.js';
 import { handleHealthGet } from './routes/health.js';
-import { handleTasksList, handleTasksCreate, handleTasksGet, handleTasksUpdate, handleTasksChangelog, handleTasksInsert, handleTasksSyncStatus, handleTasksSync, handleTasksSyncTest, handleTasksDelete, handleTasksMembers, handleTasksContainers, handleTasksProvision } from './routes/tasks.js';
+import { handleTasksList, handleTasksCreate, handleTasksGet, handleTasksUpdate, handleTasksChangelog, handleTasksInsert, handleTasksSyncStatus, handleTasksSync, handleTasksSyncTest, handleTasksDelete, handleTasksMembers, handleTasksContainers, handleTasksProvision, handleTasksTokenStatus, handleTasksSetToken, handleTaskOverrides, handleTaskOverrideDocGet, handleTaskOverrideDocSave, handleTaskOverrideAddField, handleTaskOverrideRemoveField } from './routes/tasks.js';
 import { handleSleepGet, handleSleepUpdate } from './routes/sleep.js';
 import { handleCoreList, handleCoreGet, handleCoreUpdate } from './routes/core.js';
 import { handleKnowledgeList, handleKnowledgeGet, handleKnowledgeUpdate, handleKnowledgeAssets } from './routes/knowledge.js';
 import { handleFeaturesList, handleFeaturesGet } from './routes/features.js';
-import { handleChangelogGet, handleReleasesGet, handleUnreleasedGet, handleReleaseGet, handleReleasesCreate, handleReleasesUpdate } from './routes/changelog.js';
+import { handleChangelogGet, handleReleasesGet, handleUnreleasedGet, handleReleaseGet, handleReleasesCreate, handleReleasesUpdate, handleActiveVersionGet, handleActiveVersionSet } from './routes/changelog.js';
 import { handleGraphGet, handleGraphContentGet } from './routes/graph.js';
 import { handleCouncilList, handleCouncilGet, handleCouncilResearchGet } from './routes/council.js';
 import { handleConfigGet, handleConfigUpdate } from './routes/config.js';
@@ -73,6 +73,13 @@ function buildRouter(): Router {
   router.get('/api/tasks/members', handleTasksMembers);
   router.get('/api/tasks/containers', handleTasksContainers);
   router.post('/api/tasks/provision', handleTasksProvision);
+  router.get('/api/tasks/token-status', handleTasksTokenStatus);
+  router.post('/api/tasks/token', handleTasksSetToken);
+  router.get('/api/task-overrides', handleTaskOverrides);
+  router.get('/api/task-overrides/doc', handleTaskOverrideDocGet);
+  router.put('/api/task-overrides/doc', handleTaskOverrideDocSave);
+  router.post('/api/task-overrides/fields', handleTaskOverrideAddField);
+  router.delete('/api/task-overrides/fields/:key', handleTaskOverrideRemoveField);
   router.get('/api/tasks/:slug', handleTasksGet);
   router.delete('/api/tasks/:slug', handleTasksDelete);
   router.patch('/api/tasks/:slug', handleTasksUpdate);
@@ -171,6 +178,10 @@ function buildRouter(): Router {
   router.get('/api/changelog', handleChangelogGet);
   router.get('/api/releases', handleReleasesGet);
   router.get('/api/releases/unreleased', handleUnreleasedGet);
+  // Active planning version ("current sprint"). Static `/active` segments must be
+  // registered before the `:version` matcher so they are not captured by it.
+  router.get('/api/releases/active', handleActiveVersionGet);
+  router.put('/api/releases/active', handleActiveVersionSet);
   router.get('/api/releases/:version', handleReleaseGet);
   router.post('/api/releases', handleReleasesCreate);
   router.patch('/api/releases/:version', handleReleasesUpdate);
