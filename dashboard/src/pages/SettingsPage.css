@@ -1,6 +1,109 @@
 .settings-page {
-  max-width: 880px;
+  max-width: 1080px;
   margin-inline: auto;
+}
+
+/* ─── In-page section nav (left rail switches the visible section) ─── */
+.settings-body {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-6);
+}
+
+.settings-nav {
+  flex: 0 0 200px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  position: sticky;
+  top: var(--space-4);
+}
+
+.settings-content {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* The row already aligns the first card to the nav — drop its extra top gap. */
+.settings-content > .settings-section:first-child {
+  margin-top: 0;
+}
+
+.settings-nav-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  text-align: left;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.settings-nav-item:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
+
+.settings-nav-item:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.settings-nav-item:active {
+  transform: scale(0.98);
+}
+
+.settings-nav-item--active {
+  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+  border-color: color-mix(in srgb, var(--color-accent) 35%, transparent);
+  color: var(--color-text);
+}
+
+.settings-nav-item--active .settings-nav-icon {
+  color: var(--color-accent);
+}
+
+.settings-nav-icon {
+  flex: 0 0 auto;
+  width: var(--space-5);
+  text-align: center;
+  font-size: var(--font-size-base);
+  line-height: 1;
+  color: var(--color-text-tertiary);
+}
+
+.settings-nav-label {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Narrow viewports: the rail becomes a horizontal scroller above the content. */
+@media (max-width: 720px) {
+  .settings-body {
+    flex-direction: column;
+    gap: var(--space-4);
+  }
+  .settings-nav {
+    flex: 0 0 auto;
+    flex-direction: row;
+    position: static;
+    width: 100%;
+    gap: var(--space-2);
+    overflow-x: auto;
+    padding-bottom: var(--space-1);
+  }
+  .settings-nav-item {
+    width: auto;
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
 }
 
 .settings-header {
@@ -137,10 +240,76 @@
 .settings-test-row {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--space-3);
   margin-top: var(--space-3);
 }
 
 .settings-test-ok { color: var(--color-success, #22c55e); font-size: var(--font-size-sm); }
-.settings-test-err { color: var(--color-danger, #ef4444); font-size: var(--font-size-sm); }
+.settings-test-err { color: var(--color-danger, #ef4444); font-size: var(--font-size-sm); margin: var(--space-2) 0 0; }
 .settings-sync-badge { font-size: var(--font-size-sm); color: var(--color-text-secondary); margin-top: var(--space-2); }
+
+/* Secondary button: a clearly bordered/filled affordance for the Test connection
+   and Provision actions (the bare `.btn` had no background/border at all, so it
+   read as plain text). */
+.btn--secondary {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+}
+
+.btn--secondary:hover:not(:disabled) {
+  background: var(--color-bg);
+  border-color: var(--color-text-tertiary);
+}
+
+/* ─── Provision preview (dry-run before committing) ─── */
+.settings-provision-preview {
+  margin-top: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.settings-provision-preview-title {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+}
+
+.settings-provision-line {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  line-height: 1.6;
+}
+
+.settings-provision-line--muted { color: var(--color-text-secondary); }
+
+.settings-provision-badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: var(--font-weight-semibold);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+}
+
+.settings-provision-badge--new {
+  color: var(--color-accent-text);
+  background: var(--color-accent);
+  border-color: transparent;
+}
+
+.settings-provision-actions {
+  display: flex;
+  gap: var(--space-3);
+  margin-top: var(--space-1);
+}

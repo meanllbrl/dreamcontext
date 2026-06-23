@@ -1,0 +1,170 @@
+.tov-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 10px 0;
+}
+
+.tov-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-secondary);
+}
+
+.tov-field-name {
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+}
+
+.tov-field-meta {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.tov-field-meta code {
+  font-family: var(--font-mono);
+}
+
+.tov-field-prompt {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  font-style: italic;
+  flex-basis: 100%;
+}
+
+.tov-remove {
+  border: none;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-lg);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.tov-remove:hover { color: var(--color-error); }
+
+.tov-warnings {
+  margin: 8px 0;
+  padding-left: 18px;
+  font-size: var(--font-size-sm);
+  color: var(--color-error);
+}
+
+.tov-editor {
+  width: 100%;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-relaxed);
+  padding: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  color: var(--color-text);
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.tov-editor:focus {
+  outline: none;
+  border-color: var(--color-accent);
+}
+
+.tov-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+/* ─── Collapsible "How the format works" guide ─── */
+.tov-doc {
+  margin: var(--space-2) 0 var(--space-3);
+  padding: 0 var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+}
+
+.tov-doc > summary {
+  cursor: pointer;
+  padding: var(--space-3) 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text);
+}
+
+.tov-doc[open] > summary {
+  border-bottom: 1px solid var(--color-border);
+}
+
+.tov-doc-body {
+  padding: var(--space-3) 0 var(--space-2);
+  font-size: var(--font-size-sm);
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+}
+
+.tov-doc-body p { margin: 0 0 var(--space-2); }
+.tov-doc-body ul { margin: 0 0 var(--space-2); padding-left: var(--space-5); }
+.tov-doc-body li { margin-bottom: 2px; }
+.tov-doc-body strong { color: var(--color-text); }
+
+.tov-doc-body code {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  padding: 1px 4px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
+
+.tov-doc-note { color: var(--color-text-tertiary); }
+
+/* ─── Field requirement badge + per-field actions ─── */
+.tov-field-req {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-tertiary);
+  border: 1px solid var(--color-border);
+}
+
+.tov-field-req--on {
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+  border-color: color-mix(in srgb, var(--color-accent) 35%, transparent);
+}
+
+.tov-field-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.tov-edit {
+  border: none;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.tov-edit:hover { color: var(--color-accent); }
+
+.tov-preview-label {
+  display: block;
+  margin: var(--space-3) 0 var(--space-1);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.tov-preview-label code { font-family: var(--font-mono); }

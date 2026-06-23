@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { useCreateTask } from '../../hooks/useTasks';
+import { useCreateTask, useTaskOverrides } from '../../hooks/useTasks';
 import { usePlanningVersions } from '../../hooks/useVersions';
 import { useI18n } from '../../context/I18nContext';
+import { CustomFieldInput } from './CustomFieldInput';
 import './TaskCreateModal.css';
 
 interface TaskCreateModalProps {
@@ -12,6 +13,7 @@ export function TaskCreateModal({ onClose }: TaskCreateModalProps) {
   const { t } = useI18n();
   const createTask = useCreateTask();
   const { data: versions } = usePlanningVersions();
+  const { data: customFieldDefs } = useTaskOverrides();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [priority, setPriority] = useState('medium');
@@ -19,12 +21,16 @@ export function TaskCreateModal({ onClose }: TaskCreateModalProps) {
   const [tagsInput, setTagsInput] = useState('');
   const [why, setWhy] = useState('');
   const [version, setVersion] = useState('');
+  const [customFields, setCustomFields] = useState<Record<string, string | number | null>>({});
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
 
     const tags = tagsInput.split(',').map(t => t.trim()).filter(Boolean);
+    const filledFields = Object.fromEntries(
+      Object.entries(customFields).filter(([, v]) => v !== null && v !== ''),
+    );
 
     createTask.mutate(
       {
@@ -32,6 +38,7 @@ export function TaskCreateModal({ onClose }: TaskCreateModalProps) {
         urgency: urgency !== 'medium' ? urgency : undefined,
         why: why.trim() || undefined,
         version: version || undefined,
+        custom_fields: Object.keys(filledFields).length > 0 ? filledFields : undefined,
       },
       { onSuccess: () => onClose() },
     );
@@ -112,6 +119,16 @@ export function TaskCreateModal({ onClose }: TaskCreateModalProps) {
               placeholder="Comma-separated tags"
             />
           </label>
+          {(customFieldDefs ?? []).map(field => (
+            <label className="field" key={field.key}>
+              <span className="field-label">{field.name}</span>
+              <CustomFieldInput
+                field={field}
+                value={customFields[field.key]}
+                onChange={(v) => setCustomFields(prev => ({ ...prev, [field.key]: v }))}
+              />
+            </label>
+          ))}
           <div className="modal-actions">
             <button type="button" className="btn btn--ghost" onClick={onClose}>
               {t('tasks.cancel')}

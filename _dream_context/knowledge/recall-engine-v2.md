@@ -73,7 +73,7 @@ Key file: `src/lib/recall.ts`, `buildLinkAdjacency()`, `LINK_DECAY = 0.3`.
 
 Mechanism: after BM25 scoring, parse `[[wikilink]]` references in top-K hits. Boost each linked doc's `rankScore` by `0.3 × parent_rankScore` (per hop, capped at 2 hops). The adjacency map is built from `[[slug]]` patterns in doc bodies.
 
-**Why off**: the live corpus has ~0 real wikilinks at time of shipping. Enabling it would be a no-op and complicates future debugging. The deferral condition from `decision-link-aware-vs-embedding-recall.md` ("gold set first") has now been satisfied by the 60-query gold set, so the mechanism was built and unit-tested as promised — activation remains a single `enableLinkBoost: true` option in `Bm25Options`. See [[decision-link-aware-vs-embedding-recall]] for the original defer rationale.
+**Why off**: the live corpus has ~0 real wikilinks at time of shipping. Enabling it would be a no-op and complicates future debugging. The deferral condition from `decision-link-aware-vs-embedding-recall.md` ("gold set first") has now been satisfied by the 60-query gold set, so the mechanism was built and unit-tested as promised — activation remains a single `enableLinkBoost: true` option in `Bm25Options`. See [[decisions/decision-link-aware-vs-embedding-recall]] for the original defer rationale.
 
 ## The Decoupling Invariant
 
@@ -173,8 +173,8 @@ No category regressed. 1063 tests passing (post-build).
 
 ## Decision Document Status Updates
 
-- **[[decision-mem0-vs-bm25-recall]]**: still canonical. The gold-set now EXISTS and validates the BM25 path. The "conditions to revisit" criteria (corpus >500 docs + recall@5 <85%) have not been met.
-- **[[decision-link-aware-vs-embedding-recall]]**: link-aware boost (Option A) is now **implemented** (`buildLinkAdjacency()` + LINK_DECAY logic), shipped **OFF by default** pending real `[[wikilink]]` adoption in the corpus. The gold-set precondition ("gather misses before building") is satisfied — the mechanism was built. The file's "deferral" language is now outdated; see status note in that file.
+- **[[decisions/decision-mem0-vs-bm25-recall]]**: still canonical. The gold-set now EXISTS and validates the BM25 path. The "conditions to revisit" criteria (corpus >500 docs + recall@5 <85%) have not been met.
+- **[[decisions/decision-link-aware-vs-embedding-recall]]**: link-aware boost (Option A) is now **implemented** (`buildLinkAdjacency()` + LINK_DECAY logic), shipped **OFF by default** pending real `[[wikilink]]` adoption in the corpus. The gold-set precondition ("gather misses before building") is satisfied — the mechanism was built. The file's "deferral" language is now outdated; see status note in that file.
 - **[[haiku-recall-architecture]]**: still accurate for the Haiku query strategy. v2 adds that the corpus index sent to Haiku is now **relevance-ranked** (B6) rather than positional, fixing the silent half-corpus omission.
 
 ## Sources
@@ -195,7 +195,7 @@ v3 shipped four engine changes, tuned on the 60q train set and validated on a NE
 
 **Results (frozen 242-doc corpus, old→new)** — train: r@1 86.7→91.7, r@3 93.3→96.7, MRR 0.906→0.943, paraphrase r@1 66.7→91.7, TR r@3 87.5→100. Held-out (blind): r@1 83.3→93.3, r@3 90.0→96.7, MRR 0.875→0.957, TR r@1 70→90, TR r@3 80→100. **No category regressed on either set.** Held-out improved more than train — no overfitting signature.
 
-**Link-aware boost: tested and REJECTED.** With ~13 real wikilinks in the corpus, enabling `linkAware` cratered train r@1 to 68.3 (hub docs like memory-engine-360-roadmap hijack everything they link). Stays OFF; the `enableLinkBoost` deferral in [[decision-link-aware-vs-embedding-recall]] is now resolved negatively with data.
+**Link-aware boost: tested and REJECTED.** With ~13 real wikilinks in the corpus, enabling `linkAware` cratered train r@1 to 68.3 (hub docs like memory-engine-360-roadmap hijack everything they link). Stays OFF; the `enableLinkBoost` deferral in [[decisions/decision-link-aware-vs-embedding-recall]] is now resolved negatively with data.
 
 **Measurement discipline learned**: the live corpus mutates while you work (your own tracking task, session digests). Engine A/Bs must run on a frozen corpus — `scripts/recall-ab.ts` filters captures + in-flight tasks. The capture-e2e test's 2.0-floor assertion turned out to depend on the v2 cookie/cookies stemmer bug inflating IDF on a 4-doc fixture; fixed by adding unrelated filler docs (realistic IDF), not by weakening the guard.
 

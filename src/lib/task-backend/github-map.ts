@@ -167,6 +167,8 @@ export function labelsToGitHub(input: {
   urgency?: string | null;
   version?: string | null;
   status?: string | null;
+  /** Override-declared `select` custom fields — ride as `<key>:<value>` labels. */
+  selectFields?: Array<{ key: string; value: string | null }>;
 }): string[] {
   const out: string[] = [];
   for (const tag of input.tags ?? []) {
@@ -175,6 +177,11 @@ export function labelsToGitHub(input: {
   if (input.priority && input.priority.trim()) out.push(`${PRIORITY_PREFIX}${input.priority.trim()}`);
   if (input.urgency && input.urgency.trim()) out.push(`${URGENCY_PREFIX}${input.urgency.trim()}`);
   if (input.version && input.version.trim()) out.push(`${VERSION_PREFIX}${input.version.trim()}`);
+  for (const f of input.selectFields ?? []) {
+    if (f.key && f.value !== null && String(f.value).trim()) {
+      out.push(`${f.key}:${String(f.value).trim()}`);
+    }
+  }
   if (input.status) {
     const sub = subStatusLabel(input.status);
     if (sub) out.push(sub);
@@ -190,19 +197,27 @@ export function labelsToGitHub(input: {
  * separately via `statusFromGitHub`). Everything else is a verbatim user tag.
  * Mirrors ClickUp defaults: priority defaults to `medium` when no label is set.
  */
-export function labelsFromGitHub(labelNames: Array<{ name: string } | string> | string[] | null | undefined): {
+export function labelsFromGitHub(
+  labelNames: Array<{ name: string } | string> | string[] | null | undefined,
+  selectFieldKeys: string[] = [],
+): {
   tags: string[];
   priority: string;
   urgency: string | null;
   version: string | null;
+  /** Values of override-declared `select` custom fields carried as labels. */
+  customFields: Record<string, string>;
 } {
   const names = labelNamesOf(labelNames);
   const tags: string[] = [];
   let priority = 'medium';
   let urgency: string | null = null;
   let version: string | null = null;
+  const customFields: Record<string, string> = {};
+  // Match the LONGEST key first so a `team_lead:` field isn't shadowed by `team:`.
+  const fieldKeys = [...selectFieldKeys].sort((a, b) => b.length - a.length);
 
-  for (const name of names) {
+  outer: for (const name of names) {
     const lower = name.toLowerCase();
     if (lower.startsWith(PRIORITY_PREFIX)) {
       const p = name.slice(PRIORITY_PREFIX.length).trim().toLowerCase();
@@ -220,10 +235,17 @@ export function labelsFromGitHub(labelNames: Array<{ name: string } | string> | 
     if (lower.startsWith(DC_PREFIX)) {
       continue; // sub-status; read via statusFromGitHub
     }
+    for (const key of fieldKeys) {
+      if (lower.startsWith(`${key.toLowerCase()}:`)) {
+        const v = name.slice(key.length + 1).trim();
+        if (v) customFields[key] = v;
+        continue outer;
+      }
+    }
     tags.push(name);
   }
 
-  return { tags, priority, urgency, version };
+  return { tags, priority, urgency, version, customFields };
 }
 
 /** Normalize a GitHub `labels` array (objects OR strings) to a string[]. */
@@ -320,6 +342,75 @@ export function stripDatesBlock(body: string | null | undefined): string {
   return before || after;
 }
 
+// ─── Custom fields (text / number / date) — encoded IN the issue body ──────────
+// GitHub plain Issues have no custom fields; `select` fields ride as labels (see
+// labelsToGitHub). Every OTHER override-declared field rides here, in a marked,
+// human-visible body block — the same reliable round-trip the dates block uses.
+// One line per field (so values may contain any punctuation). The block is the
+// single source of truth on the remote, stripped before the 3-way prose merge,
+// and re-composed on push from the merged frontmatter values. No fields → no
+// block (the body bytes stay exactly as before).
+
+const FIELDS_OPEN = '<!-- dc:fields -->';
+const FIELDS_CLOSE = '<!-- /dc:fields -->';
+
+/**
+ * Render the custom-fields block, or '' when no field has a value. Visible form:
+ *   <!-- dc:fields -->
+ *   > 🏷️ **Story Points:** 8
+ *   > **Sprint:** 24.3
+ *   <!-- /dc:fields -->
+ */
+export function renderFieldsBlock(fields: Array<{ name: string; value: string | number | null | undefined }>): string {
+  const lines: string[] = [];
+  for (const f of fields) {
+    if (f.value === null || f.value === undefined) continue;
+    const v = String(f.value).trim();
+    if (v === '') continue;
+    lines.push(`> ${lines.length === 0 ? '🏷️ ' : ''}**${f.name}:** ${v}`);
+  }
+  if (lines.length === 0) return '';
+  return `${FIELDS_OPEN}\n${lines.join('\n')}\n${FIELDS_CLOSE}`;
+}
+
+/**
+ * Parse the custom-fields block out of an issue body. `defs` maps each field's
+ * display name to its local key; the returned map is keyed by local key.
+ * Missing block / unmatched fields → omitted (no key).
+ */
+export function parseFieldsBlock(
+  body: string | null | undefined,
+  defs: Array<{ name: string; key: string }>,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!body) return out;
+  const open = body.indexOf(FIELDS_OPEN);
+  const close = body.indexOf(FIELDS_CLOSE);
+  if (open === -1 || close === -1 || close < open) return out;
+  const inner = body.slice(open + FIELDS_OPEN.length, close);
+  for (const def of defs) {
+    const escaped = def.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const m = inner.match(new RegExp(`\\*\\*${escaped}:\\*\\*\\s*([^\\n]+)`));
+    if (m) {
+      const v = m[1].trim();
+      if (v) out[def.key] = v;
+    }
+  }
+  return out;
+}
+
+/** Remove the custom-fields block (and the blank lines hugging it) from a body. */
+export function stripFieldsBlock(body: string | null | undefined): string {
+  if (!body) return '';
+  const open = body.indexOf(FIELDS_OPEN);
+  const close = body.indexOf(FIELDS_CLOSE);
+  if (open === -1 || close === -1 || close < open) return body;
+  const before = body.slice(0, open).replace(/\n+$/, '');
+  const after = body.slice(close + FIELDS_CLOSE.length).replace(/^\n+/, '');
+  if (before && after) return `${before}\n\n${after}`;
+  return before || after;
+}
+
 /**
  * Compose the full issue body for a push: the dates block (when any date is set)
  * above the changelog-free prose. `prose` is expected to already be the output
@@ -330,11 +421,13 @@ export function composeIssueBody(
   prose: string,
   start: string | null | undefined,
   due: string | null | undefined,
+  fieldsBlock = '',
 ): string {
-  const cleanProse = stripDatesBlock(prose).trimEnd();
-  const block = renderDatesBlock(start, due);
-  if (!block) return cleanProse ? `${cleanProse}\n` : '';
-  return cleanProse ? `${block}\n\n${cleanProse}\n` : `${block}\n`;
+  const cleanProse = stripFieldsBlock(stripDatesBlock(prose)).trimEnd();
+  const datesBlock = renderDatesBlock(start, due);
+  const blocks = [datesBlock, fieldsBlock].filter(Boolean).join('\n\n');
+  if (!blocks) return cleanProse ? `${cleanProse}\n` : '';
+  return cleanProse ? `${blocks}\n\n${cleanProse}\n` : `${blocks}\n`;
 }
 
 // ─── Server time / watermark ──────────────────────────────────────────────────

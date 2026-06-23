@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { basename, join, resolve, sep } from 'node:path';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 import fg from 'fast-glob';
+import { loadTaskOverride } from '../overrides.js';
 import { readFrontmatter, updateFrontmatterFields, writeFrontmatter } from '../frontmatter.js';
 import { insertToSection, listSections, readSection } from '../markdown.js';
 import { generateId, slugify, today } from '../id.js';
@@ -77,8 +78,13 @@ export function normalizeBacklogFields(
   return { ...patch, due_date: null, start_date: null };
 }
 
-/** Resolve the task template exactly as the pre-refactor CLI did. */
-function getTaskTemplate(): string {
+/**
+ * Resolve the task template. A project-local `_dream_context/overrides/task.md`
+ * (passed in as `overrideTemplate`) shadows the shipped default; absent one,
+ * this is byte-identical to the pre-refactor CLI resolution (golden-pinned).
+ */
+function getTaskTemplate(overrideTemplate?: string | null): string {
+  if (overrideTemplate && overrideTemplate.trim()) return overrideTemplate;
   const candidates = [
     join(new URL('.', import.meta.url).pathname, '..', '..', 'templates', 'task.md'),
     join(new URL('.', import.meta.url).pathname, '..', 'templates', 'task.md'),
@@ -198,6 +204,10 @@ export function readTaskFile(filePath: string): TaskData {
     start_date: (data.start_date as string) ?? null,
     due_date: (data.due_date as string) ?? null,
     assignee: (data.assignee as string) ?? null,
+    custom_fields:
+      data.custom_fields && typeof data.custom_fields === 'object' && !Array.isArray(data.custom_fields)
+        ? (data.custom_fields as Record<string, string | number | null>)
+        : {},
     why: readSectionSafe(filePath, 'Why'),
     user_stories: readSectionSafe(filePath, 'User Stories'),
     acceptance_criteria: readSectionSafe(filePath, 'Acceptance Criteria'),
@@ -273,12 +283,15 @@ export class LocalTaskBackend implements TaskBackend {
       throw new TaskBackendError('already_exists', `Task already exists: ${slug}`);
     }
 
+    // Project-local format/field override (absent → byte-identical to defaults).
+    const override = loadTaskOverride(dirname(this.stateDir));
+
     if (input.variant === 'cli') {
       // Byte-exact replica of the pre-refactor `tasks create` action: template
       // substitution first, then a SECOND gray-matter rewrite when rice is set
       // (which re-serializes the YAML — that two-write shape is pinned by the
       // golden test, so don't "optimize" it into one write).
-      const template = getTaskTemplate();
+      const template = getTaskTemplate(override?.template);
       const content = template
         .replaceAll('{{ID}}', generateId('task'))
         .replaceAll('{{NAME}}', input.name)
@@ -364,6 +377,19 @@ ${input.why || '(To be defined)'}
       }
       if (input.due_date) {
         updateFrontmatterFields(filePath, { due_date: input.due_date });
+      }
+    }
+
+    // Seed override-declared custom fields (additive — only when the project
+    // ships an override, so no-override creation stays byte-identical). Declared
+    // keys are scaffolded to null so the schema is visible; provided values win.
+    const declared = override?.customFields ?? [];
+    if (declared.length > 0 || input.custom_fields) {
+      const seeded: Record<string, string | number | null> = {};
+      for (const def of declared) seeded[def.key] = null;
+      Object.assign(seeded, input.custom_fields ?? {});
+      if (Object.keys(seeded).length > 0) {
+        updateFrontmatterFields(filePath, { custom_fields: seeded });
       }
     }
 

@@ -1,4 +1,5 @@
 import { foldAscii } from './clickup-map.js';
+import type { CustomFieldDef } from '../overrides.js';
 
 /**
  * Custom-field bridge — issue #11 follow-up.
@@ -44,7 +45,8 @@ export type CustomFieldKey =
   | 'updated_by';
 
 interface KeySpec {
-  key: CustomFieldKey;
+  /** Canonical built-in key, or an override-declared custom-field key. */
+  key: string;
   /** Folded name candidates that bind a list field to this key. */
   names: string[];
   kind: 'string' | 'number';
@@ -67,16 +69,60 @@ const KEY_SPECS: KeySpec[] = [
 ];
 
 export interface FieldBinding {
-  key: CustomFieldKey;
+  key: string;
   spec: KeySpec;
   field: ClickUpFieldDef;
 }
 
-/** Bind the list's custom fields to canonical keys (folded-name match). */
-export function matchCustomFields(defs: ClickUpFieldDef[]): FieldBinding[] {
+/** All built-in canonical keys — distinguishes them from user custom fields. */
+export const BUILTIN_FIELD_KEYS: Set<string> = new Set(KEY_SPECS.map((s) => s.key));
+
+/**
+ * Build the active spec list: the built-in KEY_SPECS plus one spec per
+ * override-declared custom field (folded name → match candidate; number type →
+ * numeric). A user field whose key collides with a built-in is dropped (the
+ * built-in wins) so the bridge never double-binds one list field.
+ */
+export function buildSpecs(userDefs: CustomFieldDef[] = []): KeySpec[] {
+  const specs: KeySpec[] = [...KEY_SPECS];
+  for (const def of userDefs) {
+    if (BUILTIN_FIELD_KEYS.has(def.key)) continue;
+    if (specs.some((s) => s.key === def.key)) continue;
+    specs.push({
+      key: def.key,
+      names: [foldAscii(def.name)],
+      kind: def.type === 'number' ? 'number' : 'string',
+      pull: true,
+    });
+  }
+  return specs;
+}
+
+/**
+ * Map override-declared custom fields to the `tasks provision` create shape
+ * (paralleling RECOMMENDED_FIELD_DEFS). `select` → drop_down with options;
+ * `number` → number; `text`/`date` → short_text (plain-string round-trip).
+ */
+export function userProvisionDefs(
+  userDefs: CustomFieldDef[],
+): Array<{ key: string; name: string; type: string; options?: string[] }> {
+  return userDefs.map((d) => ({
+    key: d.key,
+    name: d.name,
+    type: d.type === 'number' ? 'number' : d.type === 'select' ? 'drop_down' : 'short_text',
+    ...(d.type === 'select' && d.options ? { options: d.options } : {}),
+  }));
+}
+
+/**
+ * Bind the list's custom fields to canonical keys (folded-name match). Pass a
+ * `specs` set built by {@link buildSpecs} to include override-declared fields;
+ * defaults to the built-ins only.
+ */
+export function matchCustomFields(defs: ClickUpFieldDef[], specs: KeySpec[] = KEY_SPECS): FieldBinding[] {
   const bindings: FieldBinding[] = [];
   const taken = new Set<string>();
-  for (const spec of KEY_SPECS) {
+  for (const spec of specs) {
     const def = defs.find(
       (d) => !taken.has(d.id) && spec.names.includes(foldAscii(d.name ?? '')),
     );
@@ -88,10 +134,14 @@ export function matchCustomFields(defs: ClickUpFieldDef[]): FieldBinding[] {
   return bindings;
 }
 
-/** Read the local value for a key from raw task frontmatter. */
+/**
+ * Read the local value for a key from raw task frontmatter. Built-in keys read
+ * their dedicated field; any other key is an override-declared custom field,
+ * read from the flat `custom_fields` map.
+ */
 export function localFieldValue(
   fm: Record<string, unknown>,
-  key: CustomFieldKey,
+  key: string,
 ): string | number | null {
   const rice = (fm.rice ?? null) as Record<string, unknown> | null;
   switch (key) {
@@ -106,6 +156,14 @@ export function localFieldValue(
     case 'version': return strOrNull(fm.version);
     case 'created_by': return strOrNull(fm.created_by);
     case 'updated_by': return strOrNull(fm.updated_by);
+    default: {
+      const cf = (fm.custom_fields ?? null) as Record<string, unknown> | null;
+      const v = cf?.[key];
+      if (v === undefined || v === null) return null;
+      if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+      const s = String(v).trim();
+      return s === '' || s === 'null' ? null : s;
+    }
   }
 }
 

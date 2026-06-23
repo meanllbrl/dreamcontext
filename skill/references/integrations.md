@@ -15,8 +15,9 @@ This reference covers everything beyond the local markdown brain. **If a user as
 #### What it does
 - **Bidirectional sync** (`push`, `pull`, or `both`) between local task files and a ClickUp list.
 - **Status mapping** between dreamcontext statuses (`todo/in_progress/in_review/completed`) and ClickUp statuses.
-- **RICE + custom fields**: provisions recommended ClickUp custom fields (urgency, summary, RICE reach/impact/confidence/effort, …) and round-trips them.
-- **Assignees**: `person:<slug>` tags map to ClickUp member IDs bidirectionally (multi-assignee; the full `assignees[]` set survives push/pull). See "People & assignees" in [tasks-and-features.md](tasks-and-features.md).
+- **RICE + custom fields**: provisions recommended ClickUp custom fields (urgency, summary, RICE reach/impact/confidence/effort, …) and round-trips them. **User-declared custom fields** (from `overrides/task.md`) also round-trip — `select` → native drop_down, others → native list field. See "Task format & custom-field overrides" in [tasks-and-features.md](tasks-and-features.md).
+- **Date ranges**: a task's planned `start` and `due`/end both map to ClickUp's native start/due fields (push, pull, LWW-merge, and clear all symmetric).
+- **Assignees**: `person:<slug>` tags map to ClickUp members bidirectionally (multi-assignee; the full `assignees[]` set survives push/pull). Names **resolve against the live roster** — exact/fuzzy match canonicalizes to the member's slug, an ambiguous name aborts, an unmatched name warns (recorded but won't sync, never silently reassigned to the token owner). See "People & assignees" in [tasks-and-features.md](tasks-and-features.md).
 - **Changelog as comments**: task changelog entries post as ClickUp comments (`changelogTarget: 'comments'`).
 - **Conflict safety**: conflicting edits are preserved as conflict files rather than silently overwritten; a sync ledger tracks a watermark, pending pushes, and an op queue.
 - **Rate-limit hardened**: throttles at 90 req/min (under ClickUp's 100/min cap), retries with Retry-After backoff, and a partial push can never look like success — `sleep done` auto-retries once on failed pushes, then errors loudly with the failed slugs.
@@ -53,7 +54,7 @@ dreamcontext tasks sync [push|pull|both]   # default: both; no-op on the local b
 dreamcontext tasks sync --hook             # best-effort mode for git hooks (never fails, exit 0)
 dreamcontext tasks sync --json             # machine-readable sync report
 dreamcontext tasks members [--json]        # people with access to the remote list (assignee candidates)
-dreamcontext tasks provision               # create the recommended custom fields on the list
+dreamcontext tasks provision               # create recommended + override-declared custom fields (reuses existing ones by name)
 dreamcontext tasks sync-hooks install|uninstall   # manage the git sync triggers
 ```
 
@@ -71,8 +72,9 @@ The same backend interface, talking **plain GitHub Issues over REST** (no GraphQ
 - **Bidirectional sync** (`push`/`pull`/`both`) between local task files and a repo's Issues.
 - **Status mapping:** `completed` → issue **closed** `state_reason: completed`; `todo`/`in_progress`/`in_review` → **open** + a `dc:*` sub-status label (`dc:in-progress`, `dc:in-review`; `todo` = no label); reopen → **open** `state_reason: reopened`.
 - **Soft-delete (the one divergence from ClickUp):** `tasks delete` **closes** the issue as `state_reason: not_planned` — it NEVER hard-deletes (GitHub REST can't, and issue history is preserved). Inbound, a `not_planned` close removes the local mirror (any unsaved local edits are preserved to `.conflicts/` first).
-- **Fields as labels:** priority/urgency/tags/version ride as labels (`priority:*`, `urgency:*`, `version:*`, plus your plain tags). RICE stays local-only (no custom fields on plain issues — see Tier-2).
-- **Assignees:** `person:<slug>` tags ↔ issue assignees (must be repo collaborators); a non-collaborator assignee is skipped gracefully, never a 4xx that aborts the sync. See "People & assignees" in [tasks-and-features.md](tasks-and-features.md).
+- **Fields as labels:** priority/urgency/tags/version ride as labels (`priority:*`, `urgency:*`, `version:*`, plus your plain tags). RICE stays local-only (no native custom fields on plain issues — see Tier-2).
+- **User custom fields + dates in the body:** override-declared `select` fields become `<key>:<value>` labels; other custom fields land in a `<!-- dc:fields -->` block, and a task's start/due dates in a `<!-- dc:dates -->` block — both composed above the prose and stripped before the 3-way merge so they never pollute the body diff.
+- **Assignees:** `person:<slug>` tags ↔ issue assignees (must be repo collaborators); a non-collaborator assignee is skipped gracefully, never a 4xx that aborts the sync. Names **resolve against the live roster** (same matcher as ClickUp: exact/fuzzy → canonical slug, ambiguous → abort, unmatched → warn, never silently dropped). See "People & assignees" in [tasks-and-features.md](tasks-and-features.md).
 - **Changelog as comments:** task changelog entries post as issue comments (union-merged, deduped — same pattern as ClickUp).
 - **Conflict safety + watermark:** reuses the SAME generic sync engine (ledger / watermark / op-queue / 3-way merge) as ClickUp, unchanged. Watermark is the issue `updated_at` (server time). Delta fetch is `GET /repos/{o}/{r}/issues?state=all&since=<ISO>` with **page-number pagination** (pull-requests filtered out).
 - **Rate-limit hardened:** paces under GitHub's 5000 req/hr cap with Retry-After backoff; a partial push can never look like success.
@@ -114,11 +116,12 @@ dreamcontext dashboard --launcher      # vault-agnostic launcher mode (resolves 
 A SessionStart hook auto-opens it when a session starts and no server is running (opt out with `DREAMCONTEXT_AUTO_DASHBOARD=0`).
 
 **What's in it:**
-- **Kanban board** — drag-and-drop, multi-select filters (status/priority/urgency/tags/version) with type-ahead, sorting, grouping; Notion-style task detail panel to create tasks, change status, add changelog entries.
+- **Kanban board** — drag-and-drop, multi-select filters (status/priority/urgency/tags/version, +assignee on a cloud backend) with type-ahead, sorting, grouping; Notion-style task detail panel to create tasks, change status, edit start/due dates and custom fields, add changelog entries. The **version filter is sprint-aware** — current / planning / released sprints with set-current + mark-complete actions (backed by `state/.active-version.json`).
 - **Eisenhower matrix** — priority×urgency quadrant planning; **Scatter view** uses RICE scores.
 - **Core editor** — split-pane markdown editing + live preview for soul/user/memory/etc.
 - **Knowledge manager** — search, pin/unpin; **Feature PRD viewer**; **SQL ER diagram** preview for data-structures.
 - **Version manager** — plan and release versions.
+- **Settings — cloud tasks** — enter the ClickUp/GitHub API token from the UI (written to gitignored `state/.secrets.json`, masked, never echoed), Test Connection, and **preview-then-provision** custom fields (a dry run lists what would be created vs. already exists); plus a **Task Format & Custom Fields** editor for `overrides/task.md` (raw template + structured field schema).
 - **Sleep tracker** — debt gauge, session-history timeline, and a list of every manual change made through the dashboard (recorded to `.sleep.json` so the agent consolidates your edits during sleep).
 - **Brain graph** — interactive network of memory/knowledge/features/decisions with explicit + inferred edges.
 - **Council Hall** — every debate as a searchable card grid; detail view with Overview / Agents / Matrix tabs.

@@ -333,12 +333,12 @@ It also ships a built-in **“What is this?”** explainer page — a full landi
 <tr>
 <td width="50%">
 
-**Kanban board** with drag-and-drop, multi-select filters (status, priority, urgency, tags, version) with type-ahead search, sorting, and grouping by any field. **Eisenhower matrix** view for priority-urgency quadrant planning. Create tasks, update status, add changelog entries from a Notion-style detail panel.
+**Kanban board** with drag-and-drop, multi-select filters (status, priority, urgency, tags, version, and assignee on a cloud backend) with type-ahead search, sorting, and grouping by any field. A **sprint-aware version filter** distinguishes the current sprint, planning sprints, and released sprints, with set-current / mark-complete actions inline. **Eisenhower matrix** view for priority-urgency quadrant planning. Create tasks, update status, edit start/due dates and custom fields, and add changelog entries from a Notion-style detail panel.
 
 </td>
 <td width="50%">
 
-**Core editor** with split-pane markdown editing and live preview. Knowledge manager with search and pin/unpin. Feature PRD viewer. SQL ER diagram preview. **Version manager** for planning and releasing versions.
+**Core editor** with split-pane markdown editing and live preview. Knowledge manager with search and pin/unpin. Feature PRD viewer. SQL ER diagram preview. **Version manager** for planning and releasing versions. **Settings** for cloud-task config — enter the ClickUp/GitHub token (stored gitignored, masked, never echoed), preview-then-provision custom fields, and edit the project's task-format override and custom-field schema.
 
 </td>
 </tr>
@@ -521,12 +521,19 @@ dreamcontext tasks list --all             # List all tasks
 dreamcontext tasks list --status in_progress  # Filter by status
 dreamcontext tasks create <name>          # Create a task
 dreamcontext tasks create <name> --priority high --status in_progress --tags "api,auth" --urgency high --version v0.2.0
+dreamcontext tasks create <name> --start 2026-06-25 --due 2026-07-01      # planned date range
+dreamcontext tasks start <name> 2026-06-25  # set/clear the planned start (range start)
+dreamcontext tasks due <name> 2026-07-01    # set/clear the due/end (range end)
+dreamcontext tasks field <name> team platform  # set/clear a user-declared custom field
 dreamcontext tasks log <name> <content>   # Log progress (newest first)
 dreamcontext tasks insert <name> <section> <content>  # Insert into a named section
 dreamcontext tasks complete <name>        # Mark completed
 ```
 
-All flags (`--description`, `--priority`, `--status`, `--tags`, `--why`, `--urgency`, `--version`) are optional. Defaults to medium priority/urgency and todo status, so the command works non-interactively for agent use.
+All flags (`--description`, `--priority`, `--status`, `--tags`, `--why`, `--urgency`, `--version`, `--start`, `--due`, `--field key=value`) are optional. Defaults to medium priority/urgency and todo status, so the command works non-interactively for agent use.
+
+- **Date ranges.** A task has an optional planned `start` and a `due`/end — set or clear either end independently (`tasks start`/`tasks due` accept a `clear` sentinel). Start must be on or before due; an inverted range is rejected. Setting any date removes the `backlog` tag, and the first move to `in_progress` auto-stamps `start_date` with today if it is still unset (a planned start is never overwritten). Both dates render in the dashboard Timeline (Gantt) and Calendar views, and sync to ClickUp (native start/due fields) and GitHub (a `<!-- dc:dates -->` issue-body block).
+- **User-declared custom fields.** Drop an optional `_dream_context/overrides/task.md` to declare your own task fields (`text` / `number` / `select` / `date`) and override the scaffolded task template. Set values with `--field key=value` on create or `tasks field <name> <key> [value|clear]`; values are validated against the schema and sync to both backends — `select` as a ClickUp drop-down / GitHub `key:value` label, the rest as a ClickUp custom field / GitHub `<!-- dc:fields -->` body block. `tasks provision` creates any missing remote fields and reuses ones that already exist by name. Absent the override file, tasks behave exactly as the defaults (zero regression). Full schema → [skill reference](skill/references/tasks-and-features.md).
 
 #### Remote Task Backends — ClickUp or GitHub Issues
 
@@ -568,20 +575,30 @@ dreamcontext tasks sync-hooks install               # best-effort post-commit/pr
 - Offline edits queue in `state/.tasks-queue.json` and replay idempotently.
 - Tokens resolve env (`CLICKUP_TOKEN`, or a per-person `tokenEnv`) → secrets
   file; `config show` only ever prints a masked token.
-- **Assignees need no manual mapping**: each sync caches the list's members;
+- **Assignees resolve to real members**: each sync caches the list's members;
   `dreamcontext tasks members` shows them with their slugs. Tag a task
-  `person:<slug>` (or set the `assignee` field) and the push assigns the
-  ClickUp member; a remote assignment pulls back as both the field and the
-  tag. `config clickup-member` stays available as an explicit override.
+  `person:<slug>` (or pass `--person <name>`) and on a cloud backend the name is
+  resolved against the live roster — an exact or fuzzy match (display name /
+  first name, diacritic-folded) canonicalizes to the member's slug, an
+  **ambiguous** name aborts so you can be more specific, and an unmatched name is
+  recorded but **warns** it won't sync until that person is a member. Assignments
+  are never silently dropped or reassigned to the token owner. The full
+  `assignees[]` set round-trips bidirectionally; `config clickup-member` stays
+  available as an explicit override.
 - **Tags edit anywhere**: `dreamcontext tasks tag <name> <tags…> [--remove]`
   edits tags on existing tasks; changed tags push through ClickUp's per-tag
   endpoints (its PUT carries none), and assignee handovers/removals push as
   add/rem deltas.
-- **Due dates**: `tasks create --due 2026-07-01` / `tasks due <name> <date|clear>`
-  — synced natively in both directions.
-- **Custom-field bridge**: create list fields named Urgency / Summary / Reach /
-  Impact / Confidence / Effort / Score / Feature / Version and sync writes and
-  reads them automatically.
+- **Date ranges**: `tasks create --start … --due …` / `tasks start <name> <date|clear>`
+  / `tasks due <name> <date|clear>` — planned start + due/end, validated start≤due,
+  synced natively to ClickUp's start/due fields and to a `<!-- dc:dates -->` block
+  in the GitHub issue body.
+- **Custom-field bridge**: the recommended RICE/meta fields (Urgency / Summary /
+  Reach / Impact / Confidence / Effort / Score / Feature / Version) plus any
+  fields you declare in `overrides/task.md` are provisioned and round-tripped
+  automatically — `select` fields as a ClickUp drop-down / GitHub label, others as
+  a native ClickUp field / GitHub body block. `tasks provision` reuses existing
+  remote fields by name instead of duplicating them.
 - **Docs**: illustrated user guide → [docs/clickup.md](docs/clickup.md);
   technical reference → [docs/remote-task-setup.md](docs/remote-task-setup.md).
 

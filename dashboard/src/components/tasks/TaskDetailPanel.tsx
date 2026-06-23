@@ -3,8 +3,10 @@ import { marked } from 'marked';
 import mermaid from 'mermaid';
 import panzoom from 'panzoom';
 import type { Task, RiceFields, RiceInput } from '../../hooks/useTasks';
-import { useUpdateTask, useAddTaskChangelog, useDeleteTask, useTaskMembers, useFeatureOptions, useSyncStatus } from '../../hooks/useTasks';
+import { useUpdateTask, useAddTaskChangelog, useDeleteTask, useTaskMembers, useFeatureOptions, useSyncStatus, useTaskOverrides } from '../../hooks/useTasks';
 import { SearchableSelect } from './SearchableSelect';
+import { TaskCustomFields } from './TaskCustomFields';
+import { AddCustomFieldForm } from './AddCustomFieldForm';
 import { usePlanningVersions } from '../../hooks/useVersions';
 import { useI18n } from '../../context/I18nContext';
 import { useTheme } from '../../context/ThemeContext';
@@ -373,6 +375,7 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
   // user could mint an unsyncable slug — the exact bug this guards against.
   const remoteBacked = syncStatus === undefined ? true : syncStatus.backend !== 'local';
   const { data: featureOptions } = useFeatureOptions();
+  const { data: customFieldDefs } = useTaskOverrides();
   const { data: versions } = usePlanningVersions();
   const [changelogEntry, setChangelogEntry] = useState('');
   const [newTag, setNewTag] = useState('');
@@ -416,6 +419,15 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
   const handleRiceUpdate = (patch: RiceInput | null) => {
     updateTask.mutate(
       { slug: task.slug, updates: { rice: patch } },
+      { onError: onMutationError },
+    );
+  };
+
+  const handleCustomFieldChange = (key: string, value: string | number | null) => {
+    // The server merges this onto the existing custom_fields map, so a single
+    // key patch is enough; it syncs to ClickUp/GitHub on the next task sync.
+    updateTask.mutate(
+      { slug: task.slug, updates: { custom_fields: { [key]: value } } },
       { onError: onMutationError },
     );
   };
@@ -908,6 +920,17 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
                 onToggle={() => setRiceExpanded(v => !v)}
                 onUpdate={handleRiceUpdate}
               />
+            </PropertyRow>
+
+            <PropertyRow label="Custom">
+              <div className="custom-fields-cell">
+                <TaskCustomFields
+                  defs={customFieldDefs ?? []}
+                  values={task.custom_fields}
+                  onCommit={handleCustomFieldChange}
+                />
+                <AddCustomFieldForm />
+              </div>
             </PropertyRow>
 
             <PropertyRow label="Name">

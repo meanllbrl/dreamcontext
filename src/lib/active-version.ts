@@ -8,12 +8,12 @@ interface ActiveVersionState {
   active_planning_version: string | null;
 }
 
-function statePath(): string {
-  return join(ensureContextRoot(), 'state', '.active-version.json');
+function statePath(contextRoot: string): string {
+  return join(contextRoot, 'state', '.active-version.json');
 }
 
-export function getActivePlanningVersion(): string | null {
-  const path = statePath();
+export function getActivePlanningVersion(contextRoot: string = ensureContextRoot()): string | null {
+  const path = statePath(contextRoot);
   if (!existsSync(path)) return null;
   let stored: string | null;
   try {
@@ -27,7 +27,7 @@ export function getActivePlanningVersion(): string | null {
   // status (e.g. it was released), treat as unset to avoid silently attaching new tasks
   // to a released milestone.
   try {
-    const releases = getExistingReleases(ensureContextRoot());
+    const releases = getExistingReleases(contextRoot);
     const match = releases.find((r) => r.version === stored);
     if (!match || match.status !== 'planning') return null;
   } catch {
@@ -36,8 +36,8 @@ export function getActivePlanningVersion(): string | null {
   return stored;
 }
 
-export function setActivePlanningVersion(version: string): void {
-  const releases = getExistingReleases(ensureContextRoot());
+export function setActivePlanningVersion(version: string, contextRoot: string = ensureContextRoot()): void {
+  const releases = getExistingReleases(contextRoot);
   const match = releases.find((r) => r.version === version);
   if (!match) {
     throw new Error(`Version "${version}" not found in RELEASES.json. Create it first with: dreamcontext core releases add --ver ${version} --status planning --summary "..." --yes`);
@@ -45,9 +45,9 @@ export function setActivePlanningVersion(version: string): void {
   if (match.status !== 'planning') {
     throw new Error(`Version "${version}" has status "${match.status}", not "planning". Only planning versions can be marked active.`);
   }
-  writeJsonObject<ActiveVersionState>(statePath(), { active_planning_version: version });
+  writeJsonObject<ActiveVersionState>(statePath(contextRoot), { active_planning_version: version });
 }
 
-export function clearActivePlanningVersion(): void {
-  writeJsonObject<ActiveVersionState>(statePath(), { active_planning_version: null });
+export function clearActivePlanningVersion(contextRoot: string = ensureContextRoot()): void {
+  writeJsonObject<ActiveVersionState>(statePath(contextRoot), { active_planning_version: null });
 }

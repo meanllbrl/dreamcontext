@@ -36,19 +36,21 @@ Every command and flag, grouped. All commands are prefixed with `dreamcontext`. 
 |---|---|
 | `tasks list` | List/filter/group tasks (excludes completed by default). Flags: `-s/--status`, `-a/--all`, `--tag <t>` (repeatable, AND), `--any-tag <t>` (repeatable, OR), `--version <id>`, `--priority <level>`, `--feature <slug>`, `-g/--group-by tag\|version\|priority\|status`, `--long`, `--tags`, `--json`. Filters compose (AND), case-insensitive. |
 | `tasks tags` | Distinct task tags with counts. `-a/--all`, `--json`. |
-| `tasks create <name>` | Create a task. Flags: `-d/--description`, `-p/--priority critical\|high\|medium\|low`, `-u/--urgency …`, `-s/--status`, `-t/--tags <csv>`, `-w/--why`, `-v/--version`, `--person <name>`, `--reach <1-10>`, `--impact <1-5>`, `--confidence 25\|50\|75\|100`, `--effort <weeks>`, `--due YYYY-MM-DD`. |
+| `tasks create <name>` | Create a task. Flags: `-d/--description`, `-p/--priority critical\|high\|medium\|low`, `-u/--urgency …`, `-s/--status`, `-t/--tags <csv>`, `-w/--why`, `-v/--version`, `--person <name>`, `--reach <1-10>`, `--impact <1-5>`, `--confidence 25\|50\|75\|100`, `--effort <weeks>`, `--start YYYY-MM-DD`, `--due YYYY-MM-DD`, `--field <key=value>` (repeatable; sets declared custom fields), `--allow-missing-required` (create a draft even when a required custom field is unset). **Fails** if a required custom field is unset and `--allow-missing-required` is not given. |
 | `tasks rice <name>` | Print or update RICE values. `--reach`/`--impact`/`--confidence`/`--effort`, `--clear`. |
-| `tasks due <name> <YYYY-MM-DD\|clear>` | Set or clear a due date. |
+| `tasks start <name> <YYYY-MM-DD\|clear>` | Set or clear a planned start date (range start). Must be ≤ the due date; setting it removes the `backlog` tag. |
+| `tasks due <name> <YYYY-MM-DD\|clear>` | Set or clear a due/end date (range end). |
 | `tasks tag <name> <tags...>` | Add (or `--remove`) tags. `person:<slug>` assigns a person. |
+| `tasks field <name> <key> [value\|clear]` | Set or clear a user-defined custom field declared in `overrides/task.md` (synced to ClickUp/GitHub). Validates select options + number types. |
 | `tasks insert <name> <section> <content...>` | Insert into a section: `why`, `user_stories`, `acceptance_criteria`, `constraints`, `technical_details`, `notes`, `changelog`. |
 | `tasks log <name> [content...]` | Add a changelog entry (cross-session continuity). **Use every session.** |
-| `tasks status <name> <todo\|in_progress\|in_review\|completed> [reason...]` | Change status (logs to changelog). |
+| `tasks status <name> <todo\|in_progress\|in_review\|completed> [reason...]` | Change status (logs to changelog). On the first move to `in_progress`, stamps `start_date` with today if it is unset (a planned start is never overwritten). |
 | `tasks complete <name> [summary...]` | Mark completed (convenience). |
 | `tasks delete <name>` | Delete a task (propagates to remote backend on sync). `--yes`. |
 | `tasks doctor [name]` | Validate the Workflow flowchart is in sync with Acceptance Criteria (all tasks if name omitted). |
 | `tasks sync [push\|pull\|both]` | Sync with the remote backend (no-op on local). `--hook`, `--json`. |
 | `tasks members` | People with access to the remote list (assignee candidates). `--json`. |
-| `tasks provision` | Create recommended custom fields on the remote list. |
+| `tasks provision` | Create recommended + override-declared custom fields on the remote backend (ClickUp list fields / GitHub labels). Reuses any that already exist by name. |
 | `tasks sync-hooks install\|uninstall` | Manage best-effort git sync triggers (post-commit, pre-push). |
 
 Sections for `tasks insert`: `why`, `user_stories`, `acceptance_criteria`, `constraints`, `technical_details`, `notes`, `changelog`. See [tasks-and-features.md](tasks-and-features.md) for the full protocol.
