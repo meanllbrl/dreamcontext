@@ -466,6 +466,13 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
     });
   };
 
+  const handleStartChange = (value: string) => {
+    updateTask.mutate(
+      { slug: task.slug, updates: { start_date: value || null } },
+      { onError: onMutationError },
+    );
+  };
+
   const handleDueChange = (value: string) => {
     updateTask.mutate(
       { slug: task.slug, updates: { due_date: value || null } },
@@ -962,6 +969,21 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
                 allowCustom
                 onChange={v => handleTextField('related_feature', v ?? '')}
               />
+            </PropertyRow>
+
+            <PropertyRow label="Start">
+              {task.tags.some(t => t.toLowerCase() === 'backlog') ? (
+                <span className="prop-text" title="Backlog tasks are undated by rule — remove the backlog tag to schedule.">
+                  — backlog tasks are undated
+                </span>
+              ) : (
+                <input
+                  type="date"
+                  className="field-select prop-select"
+                  value={task.start_date ?? ''}
+                  onChange={e => handleStartChange(e.target.value)}
+                />
+              )}
             </PropertyRow>
 
             <PropertyRow label="Due">

@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback } from 'react';
 import type { Task } from '../../hooks/useTasks';
-import { useTasks, useUpdateTask, useSyncStatus, useSyncTasks, useDeleteTask } from '../../hooks/useTasks';
+import { useTasks, useUpdateTask, useSyncStatus, useSyncTasks, useDeleteTask, useTaskMembers } from '../../hooks/useTasks';
 import { useVersions } from '../../hooks/useVersions';
 import { useProject } from '../../context/ProjectContext';
 import { useI18n } from '../../context/I18nContext';
@@ -92,6 +92,13 @@ function applyFilters(tasks: Task[], filters: FilterState): Task[] {
 
   if (filters.versionFilter.length > 0) {
     result = result.filter(t => t.version !== null && filters.versionFilter.includes(t.version));
+  }
+
+  if (filters.assigneeFilter.length > 0) {
+    result = result.filter(t =>
+      t.tags.some(tag => tag.startsWith('person:') && filters.assigneeFilter.includes(tag.slice('person:'.length)))
+      || (t.assignee != null && filters.assigneeFilter.includes(t.assignee)),
+    );
   }
 
   if (filters.dateFrom || filters.dateTo) {
@@ -228,8 +235,16 @@ export function KanbanBoard() {
   const { data: versions } = useVersions();
   const updateTask = useUpdateTask();
   const { data: syncStatus } = useSyncStatus();
+  const { data: members } = useTaskMembers();
   const syncTasks = useSyncTasks();
   const deleteTask = useDeleteTask();
+
+  const isCloud = !!syncStatus && syncStatus.backend !== 'local';
+  const assigneeOptions = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const m of members ?? []) if (!seen.has(m.slug)) seen.set(m.slug, m.name || m.slug);
+    return [...seen].map(([value, label]) => ({ value, label }));
+  }, [members]);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; task: Task } | null>(null);
 
   const handleTaskContextMenu = (task: Task, e: React.MouseEvent) => {
@@ -503,6 +518,8 @@ export function KanbanBoard() {
         allVersions={allVersions}
         onVersionManagerClick={() => setShowVersionManager(true)}
         syncSlot={syncSlot}
+        showAssignee={isCloud}
+        assigneeOptions={assigneeOptions}
       />
 
       {filters.viewMode === 'eisenhower' ? (

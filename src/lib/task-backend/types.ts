@@ -28,7 +28,9 @@ export interface TaskFrontmatter {
   related_feature: string | null;
   version: string | null;
   rice: RiceFields | null;
-  /** Optional due date (YYYY-MM-DD). Absent on tasks that never set one. */
+  /** Optional planned START of the task's date range (YYYY-MM-DD). */
+  start_date?: string | null;
+  /** Optional due/END date (YYYY-MM-DD). Absent on tasks that never set one. */
   due_date?: string | null;
   /** Remote identity — present only for synced tasks on a remote backend. */
   assignee?: string | null;
@@ -55,6 +57,7 @@ export interface TaskData {
   related_feature: string | null;
   version: string | null;
   rice: RiceFields | null;
+  start_date: string | null;
   due_date: string | null;
   assignee: string | null;
   why: string;
@@ -97,6 +100,7 @@ export interface CreateTaskInput {
   why?: string;
   version?: string | null;
   rice?: RiceFields | null;
+  start_date?: string | null;
   due_date?: string | null;
   /**
    * Which historical template produced the file. The CLI and the dashboard

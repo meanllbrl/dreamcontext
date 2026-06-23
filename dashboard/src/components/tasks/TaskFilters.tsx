@@ -16,6 +16,7 @@ export interface FilterState {
   urgencyFilter: string[];
   tagFilter: string[];
   versionFilter: string[];
+  assigneeFilter: string[];
   searchQuery: string;
   dateField: DateField;
   dateFrom: string;
@@ -33,6 +34,7 @@ export const DEFAULT_FILTERS: FilterState = {
   urgencyFilter: [],
   tagFilter: [],
   versionFilter: [],
+  assigneeFilter: [],
   searchQuery: '',
   dateField: 'updated_at',
   dateFrom: '',
@@ -62,6 +64,8 @@ interface TaskFiltersProps {
   allTags: string[];
   allVersions: string[];
   onVersionManagerClick: () => void;
+  showAssignee?: boolean;
+  assigneeOptions?: { value: string; label: string }[];
 }
 
 // ─── Icons ───
@@ -254,6 +258,7 @@ function countActiveFilters(f: FilterState): number {
   if (f.urgencyFilter.length > 0) n++;
   if (f.tagFilter.length > 0) n++;
   if (f.versionFilter.length > 0) n++;
+  if (f.assigneeFilter.length > 0) n++;
   if (f.searchQuery.trim()) n++;
   if (f.dateFrom || f.dateTo) n++;
   if (f.minRice !== null && f.minRice !== undefined) n++;
@@ -292,6 +297,8 @@ export function TaskFilters({
   allTags,
   allVersions,
   onVersionManagerClick,
+  showAssignee,
+  assigneeOptions = [],
 }: TaskFiltersProps) {
   const { t } = useI18n();
   const [openPopover, setOpenPopover] = useState<string | null>(null);
@@ -394,6 +401,20 @@ export function TaskFilters({
           onChange={v => onFilterChange('versionFilter', v)}
           isOpen={openPopover === 'version'}
           onToggle={() => toggle('version')}
+          onClose={close}
+        />
+      )}
+
+      {/* Assignee multi-select (cloud-backed) */}
+      {showAssignee && assigneeOptions.length > 0 && (
+        <MultiSelectFilter
+          id="assignee"
+          label="Assignee"
+          options={assigneeOptions}
+          selected={filters.assigneeFilter}
+          onChange={v => onFilterChange('assigneeFilter', v)}
+          isOpen={openPopover === 'assignee'}
+          onToggle={() => toggle('assignee')}
           onClose={close}
         />
       )}
