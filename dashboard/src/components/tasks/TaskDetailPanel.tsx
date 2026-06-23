@@ -3,7 +3,7 @@ import { marked } from 'marked';
 import mermaid from 'mermaid';
 import panzoom from 'panzoom';
 import type { Task, RiceFields, RiceInput } from '../../hooks/useTasks';
-import { useUpdateTask, useAddTaskChangelog, useDeleteTask, useTaskMembers, useFeatureOptions } from '../../hooks/useTasks';
+import { useUpdateTask, useAddTaskChangelog, useDeleteTask, useTaskMembers, useFeatureOptions, useSyncStatus } from '../../hooks/useTasks';
 import { SearchableSelect } from './SearchableSelect';
 import { usePlanningVersions } from '../../hooks/useVersions';
 import { useI18n } from '../../context/I18nContext';
@@ -364,6 +364,14 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
   const addChangelog = useAddTaskChangelog();
   const deleteTask = useDeleteTask();
   const { data: members } = useTaskMembers();
+  const { data: syncStatus } = useSyncStatus();
+  // On a remote backend (ClickUp/GitHub) an assignee MUST resolve to a real
+  // member to round-trip — so the picker offers ONLY members (no free-text) and
+  // any already-assigned slug that isn't a member is flagged "won't sync".
+  // While sync-status is still loading (`undefined`), default to the SAFE state
+  // (treat as remote): never open free-text during the load window, or a fast
+  // user could mint an unsyncable slug — the exact bug this guards against.
+  const remoteBacked = syncStatus === undefined ? true : syncStatus.backend !== 'local';
   const { data: featureOptions } = useFeatureOptions();
   const { data: versions } = usePlanningVersions();
   const [changelogEntry, setChangelogEntry] = useState('');
@@ -929,9 +937,18 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
                   <div className="assignee-chips">
                     {effectiveAssignees.map(slug => {
                       const m = (members ?? []).find(x => x.slug === slug);
+                      // On a remote backend, a slug that matches no real member
+                      // won't sync — flag it so it's not mistaken for assigned.
+                      const unmapped = remoteBacked && !m;
                       return (
-                        <span key={slug} className="assignee-chip">
+                        <span
+                          key={slug}
+                          className={`assignee-chip${unmapped ? ' assignee-chip--unmapped' : ''}`}
+                          title={unmapped ? `"${slug}" is not a member of this backend — it won't sync. Remove it and pick a real member.` : undefined}
+                        >
                           {m?.name ?? slug}
+                          {unmapped && <span className="assignee-chip__warn" aria-hidden="true">⚠</span>}
+                          {unmapped && <span className="assignee-chip__sr">(not a member — won't sync)</span>}
                           <button
                             type="button"
                             className="assignee-chip__remove"
@@ -953,7 +970,9 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
                   placeholder={effectiveAssignees.length > 0 ? 'Add assignee…' : 'Unassigned'}
                   searchPlaceholder="Search people…"
                   clearLabel="Unassigned"
-                  allowCustom
+                  // Free-text only on a local backend; a remote backend accepts
+                  // members only (typing a non-member slug is the bug we're fixing).
+                  allowCustom={!remoteBacked}
                   onChange={v => { if (v) addAssignee(v); }}
                 />
               </div>

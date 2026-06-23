@@ -439,6 +439,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       pendingQueue: 0,
       errors: [],
       failedPushes: [],
+      warnings: [],
       watermark: null,
       noop: false,
     };
@@ -539,11 +540,24 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     const newEntries = currentEntries.filter((e) => !baseNorm.has(normalizeEntry(e)));
 
     // assignees: every person:<slug> tag (plus the legacy field), resolved to
-    // GitHub logins via the collaborator cache. Unknown slugs drop out silently
-    // (GitHub also ignores unknown assignees on write — never a 4xx abort).
-    const assignees = assigneeSlugsOf(task.raw, task.tags)
-      .map((s) => this.loginForSlug(s))
-      .filter((login): login is string => login !== null);
+    // GitHub logins via the collaborator cache. A slug that resolves to NO
+    // collaborator is surfaced as a warning rather than silently dropped (GitHub
+    // ignores unknown assignees on write — never a 4xx abort, but the user must
+    // still be told the assignment did not land).
+    const assignees: string[] = [];
+    const unmappedAssignees: string[] = [];
+    for (const s of assigneeSlugsOf(task.raw, task.tags)) {
+      const login = this.loginForSlug(s);
+      if (login !== null) assignees.push(login);
+      else unmappedAssignees.push(s);
+    }
+    if (unmappedAssignees.length > 0) {
+      report.warnings.push(
+        `push ${slug}: assignee ${unmappedAssignees.map((s) => `person:${s}`).join(', ')} ` +
+        `is not a collaborator on this repo — left unassigned (invite them, or use a ` +
+        `\`person:<slug>\` matching their GitHub login).`,
+      );
+    }
 
     // The FULL computed label set (PATCH labels REPLACES the whole set on
     // GitHub, so we always send everything the map derives for this task — a

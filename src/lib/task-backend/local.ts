@@ -463,6 +463,7 @@ ${input.why || '(To be defined)'}
       pendingQueue: 0,
       errors: [],
       failedPushes: [],
+      warnings: [],
       watermark: null,
       noop: true,
     };

@@ -398,6 +398,13 @@ export function registerSleepCommand(program: Command): void {
             warn(`Task sync: completed with ${report.errors.length} non-fatal error(s):`);
             for (const e of report.errors) warn(`  ${e}`);
           }
+          // Data-quality warnings (e.g. an unmapped assignee left unassigned).
+          // The task synced, but assignment silently failing is exactly the
+          // class of bug we refuse to bury — surface every one.
+          if (report.warnings.length > 0) {
+            warn(`Task sync: ${report.warnings.length} assignment warning(s):`);
+            for (const w of report.warnings) warn(`  ${w}`);
+          }
         }
       } catch (err) {
         // The sync engine itself threw (auth/lock/transport) — best-effort by
