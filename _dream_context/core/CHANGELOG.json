@@ -1,6 +1,61 @@
 [
   {
     "date": "2026-06-23",
+    "type": "chore",
+    "scope": "release",
+    "description": "Pushed the v0.9.2 git tag; desktop-release.yml CI workflow (CI run 28054590225) built the aarch64 macOS app, applied ad-hoc codesign, packaged as dreamcontext-beta_0.9.2_aarch64.app.tar.gz with a matching .sha256 asset, and published GitHub Release 'dreamcontext-beta 0.9.2' as non-draft and marked Latest. npm publish is still in progress — the desktop side is fully shipped but the CLI package is not yet confirmed live on npm; v0.9.2 should not be marked released until npm is confirmed.",
+    "breaking": false,
+    "summary": "v0.9.2 desktop GitHub Release shipped: v0.9.2 tag pushed, CI built aarch64 .app (ad-hoc signed), published to GitHub Releases as Latest (CI run 28054590225)",
+    "references": [
+      "url:https://github.com/meanllbrl/dreamcontext/releases/tag/v0.9.2"
+    ]
+  },
+  {
+    "date": "2026-06-23",
+    "type": "docs",
+    "scope": "docs",
+    "description": "Update README.md, DEEP-DIVE.md, skill/references/{integrations,tasks-and-features,sleep}.md, agents/{sleep-tasks,sleep-state,curator-worker,curator-auditor}.md, skill-packs/goal-skill/SKILL.md, and the .claude/agents mirrors. Corrections: (1) Phantom v0.10.0 labels removed from docs — these docs described v0.9.1/v0.9.2 shipped work, not the v0.10.0 planning milestone; DEEP-DIVE version-history timeline extended with the missing v0.9.1 and v0.9.2 entries. (2) Time-axis dashboard views (timeline/Gantt, calendar, activity heatmap) documented in README Dashboard section and DEEP-DIVE. (3) required and ask custom-field flags documented, including the inline surfacing in the snapshot Active-Tasks block and the sub-agent briefing. (4) core releases active CLI command documented in tasks-and-features.md reference.",
+    "breaking": false,
+    "summary": "Docs + skill + agent compliance pass: correct phantom v0.10.0 labels; add time-axis views, required/ask flags, core releases active CLI to README/DEEP-DIVE/skill/agents",
+    "references": [
+      "file:README.md",
+      "file:DEEP-DIVE.md",
+      "file:skill/references/integrations.md",
+      "file:skill/references/tasks-and-features.md",
+      "file:skill/references/sleep.md",
+      "file:agents/sleep-tasks.md",
+      "file:agents/sleep-state.md",
+      "file:agents/curator-worker.md",
+      "file:agents/curator-auditor.md",
+      "file:skill-packs/goal-skill/SKILL.md"
+    ]
+  },
+  {
+    "date": "2026-06-23",
+    "type": "chore",
+    "scope": "git",
+    "description": "After merging PR #73 to main, performed a full cleanup of merged feature branches. Deleted 7 local and 9 remote feat/* branches that had already been merged into main. User's convention: feat/* branches are created per workstream, merged via PR-numbered --no-ff merge commits, then immediately deleted from both local and remote after merge. This keeps the branch graph clean for the next sprint.",
+    "breaking": false,
+    "summary": "Branch housekeeping: deleted 7 merged local + 9 merged remote feat/* branches post-PR #73 merge",
+    "references": [
+      "commit:182e6a3"
+    ]
+  },
+  {
+    "date": "2026-06-23",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "Merge PR #73 (feat/dashboard-sprint-aware-version-filter) to main via --no-ff merge commit 182e6a3. Resolved version conflicts across 5 files (package.json, desktop/package.json, tauri.conf.json, Cargo.toml, Cargo.lock) to v0.9.2 — the branch's next-release number supersedes the interim v0.9.1 released on main. Build passed (CLI + dashboard); 2261 tests passed; one pre-existing slow stress test (recall-capture-stress.test.ts) timed out at its hardcoded 30s limit on a loaded machine but is not a regression from this merge. GitHub auto-marked PR #73 merged on push; remote branch deleted.",
+    "breaking": false,
+    "summary": "PR #73 merged to main: sprint-aware version filter + per-project custom fields + task-format override engine (v0.9.2)",
+    "references": [
+      "commit:182e6a3",
+      "commit:7ffb437",
+      "commit:b47dd42"
+    ]
+  },
+  {
+    "date": "2026-06-23",
     "type": "refactor",
     "scope": "knowledge",
     "description": "Four top-level decision files (decision-github-task-backend.md, decision-link-aware-vs-embedding-recall.md, decision-mem0-vs-bm25-recall.md, decision-meta-marketing-skill-adoption.md) moved from _dream_context/knowledge/ to _dream_context/knowledge/decisions/. A fifth file, decision-task-format-override-and-custom-fields.md, was added new at the decisions/ location. Git shows the four originals as deleted and the decisions/ folder as untracked — the move was a filesystem rename rather than a git mv, so recall-engine references and knowledge_access keys may need updating to the new slug paths (decision-github-task-backend → decisions/decision-github-task-backend). Flagging for sleep-product to verify index and recall cross-references are updated.",

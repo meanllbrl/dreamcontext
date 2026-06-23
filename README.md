@@ -333,7 +333,7 @@ It also ships a built-in **“What is this?”** explainer page — a full landi
 <tr>
 <td width="50%">
 
-**Kanban board** with drag-and-drop, multi-select filters (status, priority, urgency, tags, version, and assignee on a cloud backend) with type-ahead search, sorting, and grouping by any field. A **sprint-aware version filter** distinguishes the current sprint, planning sprints, and released sprints, with set-current / mark-complete actions inline. **Eisenhower matrix** view for priority-urgency quadrant planning. Create tasks, update status, edit start/due dates and custom fields, and add changelog entries from a Notion-style detail panel.
+**Kanban board** with drag-and-drop, multi-select filters (status, priority, urgency, tags, version, and assignee on a cloud backend) with type-ahead search, sorting, and grouping by any field. A **sprint-aware version filter** distinguishes the current sprint, planning sprints, and released sprints, with set-current / mark-complete actions inline. The same tasks also render along the time axis: a **Timeline (Gantt)** of start→due ranges, a **Calendar**, an **Activity heatmap** of completion cadence, and an **Eisenhower matrix** for priority-urgency quadrant planning. Create tasks, update status, edit start/due dates and custom fields, and add changelog entries from a Notion-style detail panel.
 
 </td>
 <td width="50%">

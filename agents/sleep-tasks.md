@@ -113,6 +113,8 @@ jq -r '.people // [] | join(", ")' _dream_context/state/.config.json 2>/dev/null
 
 When the person is already tagged on the task, no action is needed — the tag is additive. Do not remove a previously-set `person:` tag for a person who was quiet this cycle; they remain attributed for prior work.
 
+On a **remote backend** (ClickUp/GitHub), an unmapped `person:<slug>` is NOT silently dropped — the push path records a `SyncReport.warnings[]` entry surfaced loudly in `tasks sync` / `sleep done`. If you tag a person whose slug may not match the live member roster, note it in your report so that warning isn't lost.
+
 **Single-person projects (`.config.json` `people` has 0 or 1 entry): this step is a NO-OP.** Never inject a `person:` tag on a solo project. The output must stay byte-identical to today.
 
 ### 3. Log progress AND reconcile the body — both required
@@ -126,6 +128,10 @@ dreamcontext tasks log <slug> "<one-line summary of what was done or decided>"
 **(b) Reconcile the task body to current truth.** This is load-bearing.
 
 > **Project override — check first.** If `_dream_context/overrides/task.md` exists, this project has a CUSTOM task shape. READ it before reconciling: follow ITS section names and `## Agent Instructions`, not the defaults below, and keep each declared `custom_fields` value current via `dreamcontext tasks field <slug> <key> <value>` (these sync to ClickUp/GitHub). The SubagentStart briefing flags when an override is active. Absent the file, use the default shape below.
+>
+> Two custom-field rules that bite in the **autonomous** sleep context:
+> 1. **`required: true` fields hard-fail.** `dreamcontext tasks create` and any transition to `completed`/`in_review` exit non-zero when a required field is unset. If you must close a task whose required field is genuinely unknowable autonomously, set it via `tasks field` first; only as a last resort pass `--allow-missing-required`, and flag the gap in your report.
+> 2. **`ask: true` fields are human judgment — never fabricate them.** There is no user in a sleep cycle, so leave an unset `ask` field unset and name it in your report so the user fills it next session. Inventing a value to satisfy a `required` gate corrupts the data.
 
 The task body (Why, User Stories, Acceptance Criteria, Constraints & Decisions, Technical Details, Notes) is *current state*. The Changelog is *history*. If the user pivoted mid-session — "we're skipping phase 1", "dropping the offline requirement", "switching the auth approach" — the body must reflect the new plan, not the old one with a buried changelog note.
 
@@ -137,8 +143,11 @@ The task body (Why, User Stories, Acceptance Criteria, Constraints & Decisions, 
 | New decision | `dreamcontext tasks insert <slug> constraints "<decision>"` |
 | New edge case / open question | `dreamcontext tasks insert <slug> notes "<note>"` |
 | New requirement added | `dreamcontext tasks insert <slug> acceptance_criteria "<criterion>"` |
+| A planned schedule surfaced (start/end dates discussed) | Set them: `dreamcontext tasks start <slug> <YYYY-MM-DD>` and `dreamcontext tasks due <slug> <YYYY-MM-DD>` (start ≤ due enforced). Clear a wrong date with `tasks start <slug> clear` / `tasks due <slug> clear`. |
 
 A fresh session opening this task file should see the *current plan*.
+
+**Dates.** Tasks carry a `start_date`/`due_date` range in frontmatter (both `YYYY-MM-DD|null`). The first transition to `in_progress` auto-stamps `start_date` with today if it was unset — this is correct; **do NOT strip an auto-stamped `start_date`** as "unexpected". A task tagged `backlog` must have no dates, and a dated task must not be `backlog` (mutual exclusion) — don't set a date on a backlog item without removing the tag.
 
 **Tip — recall before reconciling.** If you're unsure whether a decision observed this session was already captured elsewhere (memory entry, sibling task, knowledge file), run `dreamcontext memory recall "<topic>"` to surface the top hits across the corpus before you edit. Cheaper than grep, deterministic, and helps you avoid duplicating a decision that already lives in `2.memory.md` (which `sleep-state` owns).
 

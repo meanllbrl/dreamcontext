@@ -128,8 +128,10 @@ version: "v0.9.0"         # planning-version association (auto-set to active pla
 parent_task: null
 related_feature: null     # feature slug for cross-link
 product: null             # multi-product scoping (optional)
-due: null                 # YYYY-MM-DD
+start_date: null          # YYYY-MM-DD or null — planned start (range start)
+due_date: null            # YYYY-MM-DD or null — due / planned end (range end)
 rice: { reach: 5, impact: 3, confidence: 75, effort: 2, score: 5.625 }
+custom_fields: {}         # project-declared fields (only when overrides/task.md exists)
 ---
 ```
 Files live at `_dream_context/state/<slug>.md`. Lookup is fuzzy: exact slug → prefix → substring.

@@ -1,9 +1,9 @@
 [
   {
-    "id": "rel_nMFERK8W",
-    "version": "v0.10.0",
+    "id": "rel_0w_ndOqT",
+    "version": "v0.9.2",
     "date": "",
-    "summary": "Time-axis task planning views (timeline/calendar/heatmap) + task date ranges & sync hardening",
+    "summary": "Sprint-aware version filter + per-project custom fields + task-format override engine; time-axis views (timeline/Gantt, calendar, activity heatmap); clearable date ranges synced to ClickUp/GitHub; assignee member-resolution hardening (PRs #67-#69, #73)",
     "breaking": false,
     "status": "planning",
     "features": [],
@@ -12,11 +12,11 @@
   },
   {
     "id": "rel_7TmjhQCQ",
-    "version": "0.9.1",
-    "date": "",
-    "summary": "",
+    "version": "v0.9.1",
+    "date": "2026-06-23",
+    "summary": "v0.9.1: assignee member-resolution (PR #69), clearable due dates + start/end date ranges synced to backends (PR #67), timeline/Gantt + calendar + activity heatmap dashboard views (PR #68)",
     "breaking": false,
-    "status": "planning",
+    "status": "released",
     "features": [],
     "tasks": [],
     "changelog": []

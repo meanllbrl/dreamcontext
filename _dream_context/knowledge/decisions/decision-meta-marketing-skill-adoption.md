@@ -22,7 +22,8 @@ created_at: '2026-05-02'
 updated_at: '2026-05-02'
 tags:
   - decisions
-  - domain
+  - topic:skills
+  - topic:agents
 pinned: false
 ---
 

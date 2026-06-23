@@ -118,6 +118,7 @@ A SessionStart hook auto-opens it when a session starts and no server is running
 **What's in it:**
 - **Kanban board** — drag-and-drop, multi-select filters (status/priority/urgency/tags/version, +assignee on a cloud backend) with type-ahead, sorting, grouping; Notion-style task detail panel to create tasks, change status, edit start/due dates and custom fields, add changelog entries. The **version filter is sprint-aware** — current / planning / released sprints with set-current + mark-complete actions (backed by `state/.active-version.json`).
 - **Eisenhower matrix** — priority×urgency quadrant planning; **Scatter view** uses RICE scores.
+- **Time-axis task views** — **Timeline (Gantt)** rendering each task's start→due range, a **Calendar**, and an **Activity heatmap** of completion cadence (all driven by the same `start_date`/`due_date` range).
 - **Core editor** — split-pane markdown editing + live preview for soul/user/memory/etc.
 - **Knowledge manager** — search, pin/unpin; **Feature PRD viewer**; **SQL ER diagram** preview for data-structures.
 - **Version manager** — plan and release versions.

@@ -63,7 +63,7 @@ For non-file-change work (architecture discussion, a decision with no edits): `d
 
 | Specialist | Owns | Notes |
 |---|---|---|
-| `sleep-tasks` | Task files (`state/*.md`) | Reconciles task bodies to truth, bumps statuses, creates tasks for untracked work, attaches to the planning version. |
+| `sleep-tasks` | Task files (`state/*.md`) | Reconciles task bodies to truth, bumps statuses, creates tasks for untracked work, attaches to the planning version, sets the start/due range, and keeps declared custom fields current (never fabricating `ask` fields in the no-user sleep context). |
 | `sleep-state` | Core identity (soul, user, memory, core 3–6), CHANGELOG, RELEASES | Records patterns/decisions/preferences, writes a changelog entry per meaningful change since the epoch, surfaces release readiness, enforces anti-bloat ceilings, flags stale knowledge for `sleep-product`. |
 | `sleep-product` | Knowledge files + feature PRDs | Creates/reconciles `knowledge/*.md` and `core/features/*.md`, processes staleness flags, maintains the knowledge index + taxonomy. |
 | `sleep-migration` | Structure only | Moves/renames folders, normalizes frontmatter, wraps fences. Never alters body prose. |

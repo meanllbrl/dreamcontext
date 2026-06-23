@@ -54,7 +54,7 @@ Each row in your batch is `source → ACTION → target`. Execute it with the ri
 | **RE-TYPE** | Topic in the wrong type: create it in the correct type (`features create` from a knowledge file, or `knowledge create` from a feature), fold the content across, then RETIRE the original. Leave a one-line redirect note + `[[link]]` so nothing dangles. |
 | **RETIRE** | Never silent-delete. Either `knowledge merge` into the canonical file, or `knowledge move <slug> archive` to keep it findable. Repoint inbound links either way. |
 | **RETAG** | Edit the file's frontmatter `tags` to the canonical `taxonomy vocab` values from the batch (faceted `topic:` / `domain:`). `dreamcontext taxonomy add <tag>` only if the plan introduces a genuinely new canonical tag. |
-| **STATUS-BUMP** | `dreamcontext tasks status <slug> <status> "<evidence>"` or `dreamcontext features set <name> status <status>`. Status must reflect demonstrable reality (cite the changelog/release/code evidence from the plan). |
+| **STATUS-BUMP** | `dreamcontext tasks status <slug> <status> "<evidence>"` or `dreamcontext features set <name> status <status>`. Status must reflect demonstrable reality (cite the changelog/release/code evidence from the plan). A task move to `completed`/`in_review` **hard-fails (exit 1)** if the task has an unset `required` custom field (`overrides/task.md`) — set it with `dreamcontext tasks field <slug> <key> <value>` first, and confirm the CLI exit was 0 before reporting the bump done. |
 | **COMPRESS** | Summarize the bloated file in place under the live line ceiling; extract the overflow detail into a new `knowledge/<context>/<slug>.md` and leave a summary + `[[link]]`. |
 
 ## Hard limits

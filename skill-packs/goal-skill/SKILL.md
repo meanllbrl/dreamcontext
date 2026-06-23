@@ -122,6 +122,11 @@ dreamcontext tasks status <slug> in_progress "plan validated; implementing"
 
 If `<slug>` already exists, de-collide (append a short suffix) rather than clobbering.
 
+If the project declares **custom task fields** (`_dream_context/overrides/task.md`), `tasks create`
+hard-fails (exit 1) on an unset `required` field — set each with `--field key=value` on create. For
+any field marked `ask: true`, ask the user for the value back in Phase 0 (it's a human judgment) rather
+than fabricating it. The SubagentStart briefing lists the active fields and their prompts.
+
 ### Phase 4 — IMPLEMENT
 
 Dispatch **one** `goal-implementer` (sonnet; escalate to opus for genuinely hard goals)

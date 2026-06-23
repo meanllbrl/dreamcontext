@@ -122,6 +122,8 @@ If no active planning version exists, create one before adding entries (otherwis
 dreamcontext core releases add --ver vX.Y.Z --status planning --summary "<theme>" --yes
 ```
 
+The active planning version (the "current sprint") is persisted in `state/.active-version.json`, re-validated against `RELEASES.json` on every read so a released or missing pointer auto-clears. New tasks without an explicit `--version` auto-attach to it. Set or switch it with `dreamcontext core releases active <version>`, clear with `--clear`, print with no argument. **After creating a new planning version, set it active** so `sleep-tasks`' auto-attach lands the cycle's new work on the right version.
+
 ### Pass B — Core identity reconciliation
 
 You apply **two different gates** depending on whether the target file describes user intent or code reality.
