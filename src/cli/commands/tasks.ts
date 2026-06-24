@@ -645,6 +645,41 @@ export function registerTasksCommand(program: Command): void {
       success(`Task deleted: ${slug}${backend.name !== 'local' ? ' (remote deletion on next sync)' : ''}`);
     });
 
+  // Rename a task — the slug-safe way (#77). Renaming changes the name-derived
+  // slug; doing it by hand and re-syncing used to DUPLICATE the remote task
+  // (reconciliation joined on slug, not the stable dcId). This rewrites the
+  // name + renames the file + migrates the sync ledger in place, so the next
+  // sync UPDATES the same remote task instead of creating a duplicate.
+  tasks
+    .command('rename')
+    .argument('<name>', 'Current task slug or name')
+    .argument('<new-name>', 'The new task name')
+    .description('Rename a task (file + slug + remote mapping) — never duplicates the remote task')
+    .action(async (name: string, newName: string) => {
+      const backend = getTaskBackend();
+      const slug = await resolveTaskSlug(backend, name);
+      if (!slug) return;
+
+      try {
+        const newSlug = await backend.rename(slug, newName);
+        if (newSlug === slug) {
+          success(`Renamed (name only, slug unchanged): ${slug}`);
+        } else {
+          success(
+            `Renamed: ${slug} → ${newSlug}` +
+            (backend.name !== 'local' ? ' (same remote task updated on next sync — no duplicate)' : ''),
+          );
+        }
+      } catch (err) {
+        if (err instanceof TaskBackendError) {
+          error(err.message);
+          process.exitCode = 1;
+          return;
+        }
+        throw err;
+      }
+    });
+
   // Planned START date on existing tasks (synced to the remote backend)
   tasks
     .command('start')

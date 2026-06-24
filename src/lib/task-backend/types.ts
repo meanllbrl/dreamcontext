@@ -216,6 +216,13 @@ export interface TaskBackend {
   complete(slug: string, summary?: string): Promise<TaskData>;
   /** Delete a task (remote backends propagate the deletion on sync). */
   delete(slug: string): Promise<void>;
+  /**
+   * Rename a task: rewrite its name, move its file to the new name-derived slug,
+   * and (on remote backends) re-key the sync mapping by the stable dcId so the
+   * SAME remote task is updated on the next sync — never duplicated (#77).
+   * Returns the resulting slug (unchanged when only the display name changed).
+   */
+  rename(slug: string, newName: string): Promise<string>;
   /** Resolve a human-entered name to a slug (exact → prefix → substring). */
   resolveSlug(name: string): Promise<SlugResolution>;
   /** Two-way sync with the remote. No-op for the local backend. */

@@ -114,6 +114,17 @@ export class SyncLedger {
     return this.readMap().find((e) => e.remoteId === remoteId)?.slug ?? null;
   }
 
+  /**
+   * Look up a mapping by the STABLE dcId (the task's `id:` frontmatter), not the
+   * name-derived slug. This is the rename-safe join key: a task's slug changes
+   * when it is renamed, but its dcId never does — so reconciliation must key on
+   * dcId to avoid re-creating a renamed task as a duplicate remote task (#77).
+   */
+  entryForDcId(dcId: string): TaskMapEntry | null {
+    if (!dcId) return null;
+    return this.readMap().find((e) => e.dcId === dcId) ?? null;
+  }
+
   recordMapping(entry: TaskMapEntry): void {
     const map = this.readMap().filter((e) => e.slug !== entry.slug);
     map.push(entry);
@@ -123,6 +134,44 @@ export class SyncLedger {
 
   removeMapping(slug: string): void {
     writeJson(this.mapPath, this.readMap().filter((e) => e.slug !== slug));
+  }
+
+  /**
+   * Re-key every ledger record for a RENAMED task from `oldSlug` to `newSlug`,
+   * preserving its stable identity (dcId / backend / remoteId), its sync state
+   * (base snapshot, watermark, localHash — so the rename pushes as an UPDATE and
+   * the 3-way merge keeps its base), and any queued write-ahead ops. This is the
+   * surgery that lets a rename update the SAME remote task instead of duplicating
+   * it (#77). No-op when the slug is unchanged or nothing is mapped under it.
+   */
+  migrateSlug(oldSlug: string, newSlug: string): void {
+    if (!oldSlug || !newSlug || oldSlug === newSlug) return;
+
+    // Committed id-map: move the entry (keep dcId/backend/remoteId), drop any
+    // stale record sitting on the target slug so we never leave a duplicate.
+    const map = this.readMap();
+    const entry = map.find((e) => e.slug === oldSlug);
+    if (entry) {
+      const next = map.filter((e) => e.slug !== oldSlug && e.slug !== newSlug);
+      next.push({ ...entry, slug: newSlug });
+      next.sort((a, b) => a.slug.localeCompare(b.slug));
+      writeJson(this.mapPath, next);
+    }
+
+    // Sync state: the renamed task's history (base snapshot/watermark/hash) is
+    // authoritative — carry it onto the new slug and drop the old key.
+    const state = this.readSyncState();
+    if (state.tasks[oldSlug]) {
+      state.tasks[newSlug] = state.tasks[oldSlug];
+      delete state.tasks[oldSlug];
+      this.writeSyncState(state);
+    }
+
+    // Write-ahead queue: re-key any pending ops so they replay under the new slug.
+    const queue = this.readQueue();
+    if (queue.some((q) => q.slug === oldSlug)) {
+      writeJson(this.queuePath, queue.map((q) => (q.slug === oldSlug ? { ...q, slug: newSlug } : q)));
+    }
   }
 
   removeTaskSync(slug: string): void {
@@ -298,4 +347,50 @@ export class SyncLedger {
   queuedSlugs(): string[] {
     return [...new Set(this.readQueue().map((q) => q.slug))];
   }
+}
+
+/**
+ * Heal RENAMED tasks in the ledger before a sync runs (#77). Provider-agnostic:
+ * it speaks only ledger + the `{slug, dcId}` of the live task files, so it works
+ * identically for every remote backend and never touches wire shapes.
+ *
+ * A rename changes a task's name-derived slug but never its stable dcId. Without
+ * this pass, the map still points the remote task at the OLD slug, so push would
+ * re-create it as a duplicate and pull's "vanished mirror" branch could resurrect
+ * the old file. Here we detect a map entry whose slug no longer has a file but
+ * whose dcId matches a live file under a new slug, and migrate the entry in place.
+ *
+ * Non-destructive and idempotent: a stale slug whose dcId has no live file is left
+ * alone (that is a deletion, reconciled elsewhere), and a rename whose target slug
+ * is ALREADY mapped is skipped (never clobber an existing mapping — that residue is
+ * an old duplicate for manual/`--reconcile` cleanup, not something to auto-merge).
+ *
+ * @returns the `{ from, to }` slug migrations applied (for logging / reporting).
+ */
+export function reconcileRenamedTasks(
+  ledger: SyncLedger,
+  liveTasks: Array<{ slug: string; dcId: string }>,
+): Array<{ from: string; to: string }> {
+  const map = ledger.readMap();
+  if (map.length === 0) return [];
+
+  const liveSlugs = new Set(liveTasks.map((t) => t.slug));
+  const liveByDcId = new Map<string, string>();
+  for (const t of liveTasks) {
+    if (t.dcId && !liveByDcId.has(t.dcId)) liveByDcId.set(t.dcId, t.slug);
+  }
+  const mapSlugs = new Set(map.map((e) => e.slug));
+
+  const migrations: Array<{ from: string; to: string }> = [];
+  for (const entry of map) {
+    if (liveSlugs.has(entry.slug)) continue; // slug still has a file — valid
+    const newSlug = liveByDcId.get(entry.dcId);
+    if (!newSlug || newSlug === entry.slug) continue; // no rename (deletion, etc.)
+    if (mapSlugs.has(newSlug)) continue; // target already mapped — don't clobber
+    ledger.migrateSlug(entry.slug, newSlug);
+    mapSlugs.delete(entry.slug);
+    mapSlugs.add(newSlug);
+    migrations.push({ from: entry.slug, to: newSlug });
+  }
+  return migrations;
 }

@@ -47,6 +47,7 @@ Every command and flag, grouped. All commands are prefixed with `dreamcontext`. 
 | `tasks status <name> <todo\|in_progress\|in_review\|completed> [reason...]` | Change status (logs to changelog). On the first move to `in_progress`, stamps `start_date` with today if it is unset (a planned start is never overwritten). |
 | `tasks complete <name> [summary...]` | Mark completed (convenience). |
 | `tasks delete <name>` | Delete a task (propagates to remote backend on sync). `--yes`. |
+| `tasks rename <name> <new-name>` | Rename a task: rewrites the name, moves the file to the new slug, and re-keys the sync mapping by the stable dcId so the **same** remote task/issue is updated on next sync — never duplicated. Use this instead of hand-editing `name:` + renaming the file. |
 | `tasks doctor [name]` | Validate the Workflow flowchart is in sync with Acceptance Criteria (all tasks if name omitted). |
 | `tasks sync [push\|pull\|both]` | Sync with the remote backend (no-op on local). `--hook`, `--json`. |
 | `tasks members` | People with access to the remote list (assignee candidates). `--json`. |

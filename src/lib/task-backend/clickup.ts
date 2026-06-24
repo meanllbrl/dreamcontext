@@ -45,7 +45,7 @@ import { clickupMemberMap, resolveActor, resolveActorToken } from './identity.js
 import { writeClickUpToken, resolveClickUpToken, maskToken } from './secrets.js';
 import { BACKLOG_TAG, LocalTaskBackend } from './local.js';
 import { merge3Bodies, mergeScalar, unionChangelog } from './merge.js';
-import { SyncLedger, hashContent } from './sync-state.js';
+import { SyncLedger, hashContent, reconcileRenamedTasks } from './sync-state.js';
 import type {
   AddChangelogOptions,
   CreateTaskInput,
@@ -256,6 +256,16 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     if (remoteId && !this.applyingRemote) {
       this.ledger.enqueue({ id: generateId('op'), kind: 'delete', slug, ts: this.nowMs(), remoteId });
     }
+  }
+
+  async rename(slug: string, newName: string): Promise<string> {
+    // Move the file + rewrite the name (the local backend also enqueues a push
+    // op under the OLD slug via our updateFields override).
+    const newSlug = await super.rename(slug, newName);
+    // Re-key the ledger (map + sync-state + queued ops) so the SAME ClickUp task
+    // is matched by its stable dcId and UPDATED on next sync — never duplicated.
+    if (newSlug !== slug && !this.applyingRemote) this.ledger.migrateSlug(slug, newSlug);
+    return newSlug;
   }
 
   // ── Members (assignee candidates) ────────────────────────────────────────
@@ -562,6 +572,14 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     }
 
     try {
+      // Heal renamed tasks FIRST (#77): re-key the ledger from any stale slug to
+      // the renamed file's current slug (matched by stable dcId) before either
+      // direction runs — so push UPDATEs the same remote task (no duplicate) and
+      // pull resolves it by the live slug (no resurrected mirror).
+      const renamed = reconcileRenamedTasks(this.ledger, this.liveTaskIdentities());
+      for (const r of renamed) {
+        report.warnings.push(`renamed: ${r.from} → ${r.to} (remapped to existing remote task; no duplicate created)`);
+      }
       // Member cache refresh (assignee candidates) — best-effort, 1 request.
       try {
         await this.refreshMembers(this.getAdapter(), this.requireListId());
@@ -712,6 +730,18 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     };
 
     let remoteId = this.ledger.remoteIdFor(slug);
+    if (!remoteId) {
+      // Rename-safe join (#77): the slug may have changed, but the STABLE dcId
+      // still maps to an existing remote task. Re-key the ledger and UPDATE it
+      // rather than CREATE a duplicate. (The sync() pre-pass normally heals this
+      // first; this is the per-task safety net so the create branch is only ever
+      // taken for a genuinely new, never-synced task.)
+      const byDcId = this.ledger.entryForDcId(task.id);
+      if (byDcId && byDcId.slug !== slug) {
+        this.ledger.migrateSlug(byDcId.slug, slug);
+        remoteId = byDcId.remoteId;
+      }
+    }
     let serverTime: number | null = null;
     // Tag/field endpoints bump date_updated without returning it — refetch
     // once at the end so the watermark covers our own writes (no echo pull).
