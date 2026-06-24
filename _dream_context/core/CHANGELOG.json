@@ -1,5 +1,45 @@
 [
   {
+    "date": "2026-06-24",
+    "type": "fix",
+    "scope": "dashboard",
+    "description": "Fix for GitHub issue #76. The GitHub task-backend settings page showed a single generic label for both the discovered-repo picker (populated by org discovery) and the manual repository text input, making it impossible to tell them apart without reading the source. Added a new i18n key github.repo_picker = 'Discovered repository' and re-pointed the picker label to it; the manual-input label remains 'Repository'. tsc -b passes clean. PR #84 (fix/76-github-repo-label-i18n) is open against main, not yet merged.",
+    "breaking": false,
+    "summary": "Distinct i18n label for GitHub discovered-repo picker vs manual-repo input",
+    "references": [
+      "commit:baa56c6",
+      "url:https://github.com/meanllbrl/dreamcontext/pull/84"
+    ]
+  },
+  {
+    "date": "2026-06-24",
+    "type": "fix",
+    "scope": "tests",
+    "description": "Fix for GitHub issue #74. The recall-capture-stress test suite had hardcoded 30s per-assertion timeouts that regularly exceeded on a machine under parallel load (observed 105-126s wall-clock vs ~50s baseline on a quiet machine). Two inline timeouts raised to 90s — sufficient headroom for a 2-2.5x overloaded machine at the issue's stated ~50s baseline. Test logic and assertions are unchanged; this is a pure timeout-threshold adjustment. PR #83 (fix/74-recall-stress-timeout) is open against main, not yet merged.",
+    "breaking": false,
+    "summary": "Raise recall-capture-stress inline timeouts 30s->90s to prevent false flake on loaded machines",
+    "references": [
+      "commit:5a91787",
+      "url:https://github.com/meanllbrl/dreamcontext/pull/83"
+    ]
+  },
+  {
+    "date": "2026-06-24",
+    "type": "fix",
+    "scope": "tasks",
+    "description": "Two related fixes shipped together on PR #79 (fix/77-rename-sync-dcid, closes #77 and #78). First: remote sync reconciliation was keyed on task name-slug, which is mutable — renaming a task caused it to be treated as a new remote item rather than an update to the existing one. Fixed by keying reconciliation on the stable dcId field instead. Second: the delta-pull watermark-gating meant that assignees set below the watermark on the remote side were never re-examined, leaving pre-existing drift (e.g. 9 remotely-assigned tasks with no local person: tag) unhealed indefinitely. Fix adds detectAssigneeDrift() (read-only) + reconcileAssignees() (idempotent heal that re-baselines the ledger and journals the change) on both ClickUp and GitHub backends; merge.ts gains planAssigneeHeal() which heals only when remote moved and local did not, so no pending-push local assignment is ever clobbered. New CLI surface: tasks sync --reconcile (heal) and tasks doctor --remote (surface drift without modifying). 10 new tests covering gap reproduction, idempotent heal, and pending-assignment non-clobber. PR is open against main, not yet merged.",
+    "breaking": false,
+    "summary": "Key remote sync reconciliation on stable dcId (not name-slug); add sync --reconcile to heal pre-existing assignee drift",
+    "references": [
+      "commit:6297328",
+      "commit:bfad6dc",
+      "file:src/lib/task-backend/merge.ts",
+      "file:src/lib/task-backend/clickup.ts",
+      "file:src/lib/task-backend/github.ts",
+      "url:https://github.com/meanllbrl/dreamcontext/pull/79"
+    ]
+  },
+  {
     "date": "2026-06-23",
     "type": "chore",
     "scope": "release",
