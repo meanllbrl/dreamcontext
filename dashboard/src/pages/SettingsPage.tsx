@@ -534,7 +534,7 @@ export function SettingsPage() {
                 <>
                   {(containers ?? []).length > 0 && (
                     <div className="settings-field-row">
-                      <label>{t('settings.cloud_tasks.github.repo')}</label>
+                      <label>{t('settings.cloud_tasks.github.repo_picker')}</label>
                       <SearchableSelect
                         value={githubOwner && githubRepo ? `${githubOwner}/${githubRepo}` : null}
                         options={(containers ?? []).map(c => ({ value: c.path, label: c.path }))}
