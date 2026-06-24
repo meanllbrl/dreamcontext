@@ -2,7 +2,7 @@
 id: feat_LDQn2Bi8
 status: in_review
 created: '2026-02-25'
-updated: '2026-06-23'
+updated: '2026-06-24'
 released_version: 0.1.0
 tags:
   - backend
@@ -18,6 +18,7 @@ related_tasks:
   - clickup-sync-unmapped-person-slug-tags-silently-drop-assignee-falls-back-to-api-token-owner-assignee-picker-offers-non-member-free-text-slugs
   - per-project-format-rule-overrides-for-specialist-agents-task-feature-knowledge
   - feat-dashboard-sprint-aware-version-filter-current-completed-actions-status-sort
+  - fix-77-rename-sync-dcid
 ---
 
 ## Why
@@ -38,6 +39,12 @@ Work spans multiple sessions, and agents need a structured way to track what is 
 - [x] As an AI agent, I want to RICE-score tasks (reach, impact, confidence, effort) so that work can be prioritized quantitatively.
 - [x] As an AI agent, I want tasks to carry urgency and version fields so that Eisenhower Matrix and milestone grouping work correctly in the dashboard.
 - [x] As a developer, I can assign multiple team members to a task using `person:<slug>` tags, with ClickUp syncing the full assignee set bidirectionally, so task assignment is multi-person and survives push/pull cycles.
+
+- [ ] As a developer, I can run `dreamcontext tasks rename <name> <new-name>` to rename a task (file + frontmatter + ledger) atomically, so the remote task is updated in place rather than duplicated.
+- [ ] As a developer, renaming a task via `tasks rename` preserves the stable `dcId` and the `remoteId` in the sync ledger, so the remote record is updated (not re-created) on the next `tasks sync`.
+- [ ] As a developer, running `tasks sync` after a hand-edit rename (name + file) auto-heals the ledger by matching on `dcId` before push, so a duplicate remote task is never created even if `tasks rename` was not used.
+- [ ] As a developer, I can run `dreamcontext tasks sync --reconcile` to pull back any remote-side assignee changes that accumulated below the watermark, so ClickUp/GitHub UI assignments self-heal without a full re-sync.
+- [ ] As a developer, `tasks doctor --remote` shows assignee drift (read-only remote probe) without requiring a full sync, so I can audit before committing to a reconcile pass.
 
 - [x] As a developer, post-sleep ClickUp sync completes in a single pass without 429 errors, so bulk task pushes always reach ClickUp rather than silently dropping tasks.
 - [x] As a developer, I can set `taskBackend: "github"` with an `owner/repo` and a personal access token, so my dreamcontext tasks sync bidirectionally to that repo's GitHub Issues.
@@ -102,8 +109,16 @@ Work spans multiple sessions, and agents need a structured way to track what is 
 - [x] Active planning version: `state/.active-version.json` holds `{ active_planning_version: string | null }`; re-validated against RELEASES.json on read (cleared if the version is no longer `planning`). CLI: `dreamcontext core releases active` / `dreamcontext core releases set-active <version>` / `dreamcontext core releases clear-active`. Dashboard: `GET/PUT /api/releases/active`.
 - [x] `CustomFieldDef` supports `ask?: boolean`. When `ask: true`, `renderOverrideBriefing()` tags the field `[ASK THE USER]` in the briefing and emits an `ASK-FIRST:` rule block — agent asks the user for the value before creating the task (in interactive sessions) and leaves the field unset with a note in no-user contexts (sleep, autonomous reconcile). No CLI hard-fail for `ask` fields (leaving unset in no-user context is valid). Dashboard: `AddCustomFieldForm` has an "Ask me" toggle; `POST /api/task-overrides/fields` carries `ask` boolean. Architecture rationale: `[[decisions/decision-task-format-override-and-custom-fields]]`.
 
+- [ ] `tasks rename <name> <new-name>`: rewrites `name:` in frontmatter, renames the `.md` file, migrates the ledger slug in `.tasks-map.json` (preserving `dcId`/`remoteId`/base snapshot), and pushes a name update to the active remote backend.
+- [ ] `reconcileRenamedTasks(ledger, liveTasks)` (provider-agnostic pre-pass in `sync-state.ts`): before pull+push, detects any task whose current file slug differs from the map slug for its `dcId` and calls `migrateSlug` — non-destructive and idempotent; genuine deletions and already-migrated entries are left alone.
+- [ ] `tasks sync --reconcile`: runs `detectAssigneeDrift()` (full remote fetch, read-only) then `reconcileAssignees()` (adopt remote assignee set into `person:` tags, re-baseline ledger, journal). Heal runs last, after push settles local-first changes, so no unpushed local change is clobbered.
+- [ ] `tasks doctor --remote`: read-only remote fetch reporting assignee drift per task; local-only by default (no `--remote` = no network, no change to existing behavior).
+- [ ] `planAssigneeHeal(local, base, remote, pendingPush)` (pure helper in `merge.ts`): heals only when remote moved AND local did not AND no pending push exists; four-case decision table covers in-sync, local-pending, two-sided, and remote-moved.
+
 ## Constraints & Decisions
 
+- **[2026-06-24]** Sync reconciliation identity is the stable `dcId` (not the name-slug). The slug is the join key ONLY for a task never yet synced (no `remoteId`). Once a `remoteId` is established, `dcId` is the sole reconciliation key — rename-proof. `reconcileRenamedTasks()` runs as a provider-agnostic pre-pass before every `sync()` in both backends. Agents MUST use `tasks rename` (not hand-edit + file rename) to avoid bypassing the ledger migration. Full rationale: `[[decisions/decision-sync-identity-and-reconciliation]]`.
+- **[2026-06-24]** Assignee pull-back already works via the watermarked delta pull; the gap was below-watermark drift (pre-sync UI assignments). `--reconcile` is the opt-in heal path; `tasks doctor` stays local-only by design. The `planAssigneeHeal()` decision function is pure and in `merge.ts` so it is provider-agnostic and unit-testable without network I/O. Full rationale: `[[decisions/decision-sync-identity-and-reconciliation]]`.
 - **[2026-06-23]** `ask: true` fields — ask-before-create for human-judgment fields: a field marked `ask` has a behavioral rule injected into the override briefing ("`[ASK THE USER]`" annotation + `ASK-FIRST:` block). The agent asks the user for the value at interactive task creation and leaves it unset (with a note) in no-user contexts (sleep/autonomous). This prevents the agent from satisfying a `required` gate by inventing a number. `ask` and `required` are orthogonal flags and may coexist on the same field. Full design: `[[decisions/decision-task-format-override-and-custom-fields]]`.
 - **[2026-06-23]** Required-field hard-fail: the enforcement gate (`checkRequiredFields`) fires at `tasks create`, `tasks complete`, and `tasks status … completed|in_review`. Blast radius is CLI command paths only — the dashboard task-create flow is excluded (advisory warning only) to avoid breaking the UI for partially-filled drafts. The `--allow-missing-required` / `DREAMCONTEXT_ALLOW_MISSING_REQUIRED=1` draft escape is intentional: agents or automation pipelines may need to create skeleton tasks before fields are known. Advisory briefing alone (snapshot `⚠ UNSET`) is not sufficient to prevent stale tasks reaching done status — hard-fail is the only lever that works across stale sessions where the briefing may not be read.
 - **[2026-06-23]** Agent visibility of custom field values is a two-part lever: (1) the snapshot Active Tasks block renders per-task `Custom fields:` with values and `⚠ UNSET (required)` annotations so any session sees the state at startup; (2) `tasks list --long` emits `TaskRecord.custom_fields` so scripting and sub-agent automation can read them without opening individual task files.
