@@ -48,8 +48,8 @@ Every command and flag, grouped. All commands are prefixed with `dreamcontext`. 
 | `tasks complete <name> [summary...]` | Mark completed (convenience). |
 | `tasks delete <name>` | Delete a task (propagates to remote backend on sync). `--yes`. |
 | `tasks rename <name> <new-name>` | Rename a task: rewrites the name, moves the file to the new slug, and re-keys the sync mapping by the stable dcId so the **same** remote task/issue is updated on next sync — never duplicated. Use this instead of hand-editing `name:` + renaming the file. |
-| `tasks doctor [name]` | Validate the Workflow flowchart is in sync with Acceptance Criteria (all tasks if name omitted). |
-| `tasks sync [push\|pull\|both]` | Sync with the remote backend (no-op on local). `--hook`, `--json`. |
+| `tasks doctor [name]` | Validate the Workflow flowchart is in sync with Acceptance Criteria (all tasks if name omitted). `--remote` also checks the remote backend for assignee drift (needs a token). |
+| `tasks sync [push\|pull\|both]` | Sync with the remote backend (no-op on local). `--hook`, `--reconcile` (heal pre-existing assignee drift below the watermark — #78), `--json`. |
 | `tasks members` | People with access to the remote list (assignee candidates). `--json`. |
 | `tasks provision` | Create recommended + override-declared custom fields on the remote backend (ClickUp list fields / GitHub labels). Reuses any that already exist by name. |
 | `tasks sync-hooks install\|uninstall` | Manage best-effort git sync triggers (post-commit, pre-push). |

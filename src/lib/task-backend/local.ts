@@ -518,7 +518,8 @@ ${input.why || '(To be defined)'}
   }
 
   async sync(direction: SyncDirection = 'both'): Promise<SyncReport> {
-    // Local backend has no remote — sync is a structured no-op.
+    // Local backend has no remote — sync is a structured no-op. (The `opts`
+    // param in the interface, including `reconcile`, is irrelevant here.)
     return {
       backend: this.name,
       direction,
@@ -533,6 +534,7 @@ ${input.why || '(To be defined)'}
       errors: [],
       failedPushes: [],
       warnings: [],
+      reconciled: 0,
       watermark: null,
       noop: true,
     };
