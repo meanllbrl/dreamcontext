@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve, sep } from 'node:path';
 import fg from 'fast-glob';
 import { loadTaskOverride } from '../overrides.js';
@@ -252,6 +252,23 @@ export class LocalTaskBackend implements TaskBackend {
     return fg.sync('*.md', { cwd: this.stateDir, absolute: true });
   }
 
+  /**
+   * The `{ slug, dcId }` join keys for every live task file — what rename
+   * reconciliation (#77) needs to map a renamed file's new slug back to its
+   * stable dcId. File access lives here (the local backend owns it); the remote
+   * backends inherit it and feed it to `reconcileRenamedTasks`.
+   */
+  protected liveTaskIdentities(): Array<{ slug: string; dcId: string }> {
+    const out: Array<{ slug: string; dcId: string }> = [];
+    for (const file of this.taskFiles()) {
+      try {
+        const { data } = readFrontmatter<{ id?: string }>(file);
+        if (data.id) out.push({ slug: basename(file, '.md'), dcId: data.id });
+      } catch { /* skip unreadable */ }
+    }
+    return out;
+  }
+
   async list(filter?: TaskFilter): Promise<TaskSummary[]> {
     const all: TaskSummary[] = [];
     for (const file of this.taskFiles()) {
@@ -452,6 +469,32 @@ ${input.why || '(To be defined)'}
     rmSync(path);
   }
 
+  async rename(slug: string, newName: string): Promise<string> {
+    const path = this.requirePath(slug);
+    const trimmed = newName.trim();
+    if (!trimmed) {
+      throw new TaskBackendError('invalid_input', 'New task name cannot be empty.');
+    }
+    const newSlug = slugify(trimmed);
+    if (!newSlug || !isSafeTaskSlug(newSlug)) {
+      throw new TaskBackendError('invalid_input', `Invalid task name: ${newName}`);
+    }
+    // Slug unchanged (a casing/punctuation tweak) → update the name field only.
+    if (newSlug === slug) {
+      await this.updateFields(slug, { name: trimmed, updated_at: today() });
+      return slug;
+    }
+    if (existsSync(this.taskPath(newSlug))) {
+      throw new TaskBackendError('already_exists', `A task already exists at slug "${newSlug}".`);
+    }
+    // Rewrite the name on the OLD file first (so remote backends enqueue a push
+    // for the rename), then move the file to the new slug. The id-map migration
+    // is layered on by the remote backends' override.
+    await this.updateFields(slug, { name: trimmed, updated_at: today() });
+    renameSync(path, this.taskPath(newSlug));
+    return newSlug;
+  }
+
   async resolveSlug(name: string): Promise<SlugResolution> {
     const slug = slugify(name);
 
@@ -475,7 +518,8 @@ ${input.why || '(To be defined)'}
   }
 
   async sync(direction: SyncDirection = 'both'): Promise<SyncReport> {
-    // Local backend has no remote — sync is a structured no-op.
+    // Local backend has no remote — sync is a structured no-op. (The `opts`
+    // param in the interface, including `reconcile`, is irrelevant here.)
     return {
       backend: this.name,
       direction,
@@ -490,6 +534,7 @@ ${input.why || '(To be defined)'}
       errors: [],
       failedPushes: [],
       warnings: [],
+      reconciled: 0,
       watermark: null,
       noop: true,
     };

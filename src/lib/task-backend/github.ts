@@ -33,14 +33,16 @@ import { recordDashboardChange, type FieldChange } from '../change-tracker.js';
 import { resolveActor } from './identity.js';
 import { resolveGitHubToken, writeGitHubToken, maskToken } from './secrets.js';
 import { BACKLOG_TAG, LocalTaskBackend } from './local.js';
-import { merge3Bodies, mergeScalar, unionChangelog } from './merge.js';
-import { SyncLedger, hashContent } from './sync-state.js';
+import { merge3Bodies, mergeScalar, planAssigneeHeal, unionChangelog } from './merge.js';
+import { SyncLedger, hashContent, reconcileRenamedTasks } from './sync-state.js';
 import type {
   AddChangelogOptions,
+  AssigneeDrift,
   CreateTaskInput,
   InsertSectionOptions,
   RemoteMember,
   SyncDirection,
+  SyncOptions,
   SyncReport,
   TaskData,
   TokenStatus,
@@ -297,6 +299,16 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     }
   }
 
+  async rename(slug: string, newName: string): Promise<string> {
+    // Move the file + rewrite the name (the local backend also enqueues a push
+    // op under the OLD slug via our updateFields override).
+    const newSlug = await super.rename(slug, newName);
+    // Re-key the ledger (map + sync-state + queued ops) so the SAME issue is
+    // matched by its stable dcId and UPDATED on next sync — never duplicated.
+    if (newSlug !== slug && !this.applyingRemote) this.ledger.migrateSlug(slug, newSlug);
+    return newSlug;
+  }
+
   // ── Members (assignee candidates = repo collaborators) ────────────────────
 
   private membersRefreshed = false;
@@ -505,7 +517,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
 
   // ── Sync engine ───────────────────────────────────────────────────────────
 
-  async sync(direction: SyncDirection = 'both'): Promise<SyncReport> {
+  async sync(direction: SyncDirection = 'both', opts: SyncOptions = {}): Promise<SyncReport> {
     const report: SyncReport = {
       backend: this.name,
       direction,
@@ -520,6 +532,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       errors: [],
       failedPushes: [],
       warnings: [],
+      reconciled: 0,
       watermark: null,
       noop: false,
     };
@@ -532,6 +545,14 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     }
 
     try {
+      // Heal renamed tasks FIRST (#77): re-key the ledger from any stale slug to
+      // the renamed file's current slug (matched by stable dcId) before either
+      // direction runs — so push UPDATEs the same issue (no duplicate) and pull
+      // resolves it by the live slug (no resurrected mirror).
+      const renamed = reconcileRenamedTasks(this.ledger, this.liveTaskIdentities());
+      for (const r of renamed) {
+        report.warnings.push(`renamed: ${r.from} → ${r.to} (remapped to existing remote task; no duplicate created)`);
+      }
       try {
         const { owner, repo } = this.requireRepo();
         await this.refreshMembers(this.getAdapter(), owner, repo);
@@ -550,6 +571,12 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       }
       if (direction === 'push' || direction === 'both') {
         await this.pushLocal(report);
+      }
+      // Heal pre-existing assignee drift LAST (#78): adopt the remote assignee
+      // set for tasks whose drift sits below the watermark (a normal delta pull
+      // never re-examines them). Opt-in (`--reconcile`) — costs a full fetch.
+      if (opts.reconcile) {
+        await this.reconcileAssignees(report);
       }
     } catch (err) {
       report.errors.push((err as Error).message ?? String(err));
@@ -677,6 +704,18 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     const body = composeIssueBody(bodyToIssueBody(task.body), startLocal, dueLocal, fieldsBlock);
 
     let remoteId = this.ledger.remoteIdFor(slug);
+    if (!remoteId) {
+      // Rename-safe join (#77): the slug may have changed, but the STABLE dcId
+      // still maps to an existing issue. Re-key the ledger and UPDATE it rather
+      // than CREATE a duplicate. (The sync() pre-pass normally heals this first;
+      // this is the per-task safety net so the create branch is only ever taken
+      // for a genuinely new, never-synced task.)
+      const byDcId = this.ledger.entryForDcId(task.id);
+      if (byDcId && byDcId.slug !== slug) {
+        this.ledger.migrateSlug(byDcId.slug, slug);
+        remoteId = byDcId.remoteId;
+      }
+    }
     let serverTime: number | null = null;
 
     if (!remoteId) {
@@ -1297,6 +1336,124 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       if (items.length < perPage) break;
     }
     return out;
+  }
+
+  // ── Assignee reconcile (#78) ──────────────────────────────────────────────
+
+  /** remoteId (issue number) → sorted person-slug assignee set, for every issue. */
+  private async fetchRemoteAssigneeMap(adapter: ApiAdapter, owner: string, repo: string): Promise<Map<string, string[]>> {
+    const out = new Map<string, string[]>();
+    const perPage = 100;
+    for (let page = 1; ; page++) {
+      const batch = await adapter.request<Array<GitHubIssue & { pull_request?: unknown }>>(
+        'GET',
+        this.issuesPath(owner, repo),
+        { query: { state: 'all', per_page: perPage, page } },
+      );
+      const items = Array.isArray(batch) ? batch : [];
+      for (const i of items) {
+        if (i.pull_request !== undefined) continue; // PRs are not tasks
+        out.set(
+          String(i.number),
+          [...new Set(
+            (i.assignees ?? [])
+              .map((a) => {
+                try {
+                  return a?.login ? this.slugForLogin(a.login) : null;
+                } catch {
+                  return null;
+                }
+              })
+              .filter((s): s is string => Boolean(s)),
+          )].sort(),
+        );
+      }
+      if (items.length < perPage) break;
+    }
+    return out;
+  }
+
+  /**
+   * Read-only assignee-drift scan (#78): mapped tasks whose remote assignee set
+   * differs from local `person:` tags and that a `--reconcile` would safely heal
+   * (remote moved, local did not). Hits the network (full issue list + member refresh).
+   */
+  async detectAssigneeDrift(): Promise<AssigneeDrift[]> {
+    const adapter = this.getAdapter();
+    const { owner, repo } = this.requireRepo();
+    await this.refreshMembers(adapter, owner, repo, true); // fresh login→slug
+    const remoteMap = await this.fetchRemoteAssigneeMap(adapter, owner, repo);
+
+    const out: AssigneeDrift[] = [];
+    for (const entry of this.ledger.readMap()) {
+      const remote = remoteMap.get(entry.remoteId);
+      if (remote === undefined) continue; // remote gone — deletion path owns it
+      const local = await this.getLocal(entry.slug);
+      if (!local) continue;
+      const localAssignees = assigneeSlugsOf(local.raw, local.tags);
+      const syncEntry = this.ledger.taskSync(entry.slug);
+      const baseFm = syncEntry?.base_snapshot
+        ? (matter(syncEntry.base_snapshot.body).data as Record<string, unknown>)
+        : null;
+      const baseAssignees = baseFm ? assigneeSlugsOf(baseFm, ((baseFm.tags as string[]) ?? [])) : null;
+      if (planAssigneeHeal(localAssignees, baseAssignees, remote, !!syncEntry?.pendingPush) === 'heal') {
+        out.push({ slug: entry.slug, local: localAssignees, remote });
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Apply the assignee-drift heal: replace each healable task's `person:` tags
+   * with the remote set and re-baseline the ledger so the next sync sees it as
+   * settled (no echo push, no re-pull). Idempotent.
+   */
+  protected async reconcileAssignees(report: SyncReport): Promise<void> {
+    let drift: AssigneeDrift[];
+    try {
+      drift = await this.detectAssigneeDrift();
+    } catch (err) {
+      report.errors.push(`reconcile assignees: ${(err as Error).message ?? err}`);
+      return;
+    }
+    for (const d of drift) {
+      try {
+        const local = await this.getLocal(d.slug);
+        if (!local) continue;
+        const newTags = withPersonTags(local.tags, d.remote);
+        this.applyingRemote = true;
+        try {
+          await super.updateFields(d.slug, {
+            tags: newTags,
+            updated_by: this.name,
+            ...(local.raw.assignee != null ? { assignee: null } : {}),
+          });
+        } finally {
+          this.applyingRemote = false;
+        }
+        const newRaw = readFileSync(this.taskPath(d.slug), 'utf-8');
+        const entry = this.ledger.taskSync(d.slug);
+        this.ledger.updateTaskSync(d.slug, {
+          last_synced_at: entry?.last_synced_at ?? 0,
+          base_snapshot: { hash: hashContent(newRaw), body: newRaw },
+          localHash: hashContent(newRaw),
+          pendingPush: false,
+        });
+        report.reconciled++;
+        try {
+          recordDashboardChange(this.contextRoot, {
+            entity: 'task',
+            action: 'update',
+            target: `state/${d.slug}.md`,
+            field: 'assignees',
+            fields: [{ field: 'assignees', from: d.local, to: d.remote }],
+            summary: `Reconciled assignees on '${d.slug}' from ${this.name} (${d.remote.map((s) => `person:${s}`).join(', ') || 'unassigned'})`,
+          });
+        } catch { /* the journal must never break a sync */ }
+      } catch (err) {
+        report.errors.push(`reconcile ${d.slug}: ${(err as Error).message ?? err}`);
+      }
+    }
   }
 
   /** Read the mirror without any remote bookkeeping (super.get under a clear name). */

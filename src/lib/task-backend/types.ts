@@ -149,6 +149,27 @@ export type SlugResolution =
 
 export type SyncDirection = 'push' | 'pull' | 'both';
 
+export interface SyncOptions {
+  /**
+   * Heal pre-existing assignee drift in one pass (#78). The normal delta pull is
+   * watermark-gated, so a remote-side assignee change made BELOW the watermark is
+   * never re-examined and never reaches local `person:<slug>` tags. With this set,
+   * the sync re-fetches every mapped remote task regardless of the delta window and
+   * adopts the remote assignee set wherever local hasn't itself diverged. No-op for
+   * the local backend; idempotent (a second run heals nothing).
+   */
+  reconcile?: boolean;
+}
+
+/** A task whose remote assignees differ from its local `person:<slug>` tags (#78). */
+export interface AssigneeDrift {
+  slug: string;
+  /** Local assignee person-slugs (current `person:` tags + legacy field), sorted. */
+  local: string[];
+  /** Remote assignee person-slugs, sorted — what a `--reconcile` pass would adopt. */
+  remote: string[];
+}
+
 export interface SyncConflict {
   slug: string;
   /** Where the losing local copy was preserved (state/.conflicts/...). */
@@ -187,6 +208,12 @@ export interface SyncReport {
   warnings: string[];
   /** Remote server-time watermark after this sync (epoch ms), if any. */
   watermark: number | null;
+  /**
+   * Tasks whose local assignees were HEALED to the remote set by a `--reconcile`
+   * pass (#78). Always 0 unless `SyncOptions.reconcile` was set; a non-zero count
+   * means below-watermark assignee drift was found and fixed.
+   */
+  reconciled: number;
   /** True when nothing had to be done (also the local backend's constant result). */
   noop: boolean;
   /** Set when the sync did not run at all (another sync holds the lock). */
@@ -216,10 +243,23 @@ export interface TaskBackend {
   complete(slug: string, summary?: string): Promise<TaskData>;
   /** Delete a task (remote backends propagate the deletion on sync). */
   delete(slug: string): Promise<void>;
+  /**
+   * Rename a task: rewrite its name, move its file to the new name-derived slug,
+   * and (on remote backends) re-key the sync mapping by the stable dcId so the
+   * SAME remote task is updated on the next sync — never duplicated (#77).
+   * Returns the resulting slug (unchanged when only the display name changed).
+   */
+  rename(slug: string, newName: string): Promise<string>;
   /** Resolve a human-entered name to a slug (exact → prefix → substring). */
   resolveSlug(name: string): Promise<SlugResolution>;
   /** Two-way sync with the remote. No-op for the local backend. */
-  sync(direction?: SyncDirection): Promise<SyncReport>;
+  sync(direction?: SyncDirection, opts?: SyncOptions): Promise<SyncReport>;
+  /**
+   * Read-only scan for assignee drift (#78): mapped tasks whose remote assignees
+   * differ from their local `person:` tags and that a `--reconcile` would heal.
+   * Hits the network (full remote fetch). Absent on local (no remote to compare).
+   */
+  detectAssigneeDrift?(): Promise<AssigneeDrift[]>;
   /** Remote connectivity probe (Settings "Test connection"). Absent on local. */
   testConnection?(): Promise<ConnectionTestResult>;
   /**

@@ -645,6 +645,41 @@ export function registerTasksCommand(program: Command): void {
       success(`Task deleted: ${slug}${backend.name !== 'local' ? ' (remote deletion on next sync)' : ''}`);
     });
 
+  // Rename a task — the slug-safe way (#77). Renaming changes the name-derived
+  // slug; doing it by hand and re-syncing used to DUPLICATE the remote task
+  // (reconciliation joined on slug, not the stable dcId). This rewrites the
+  // name + renames the file + migrates the sync ledger in place, so the next
+  // sync UPDATES the same remote task instead of creating a duplicate.
+  tasks
+    .command('rename')
+    .argument('<name>', 'Current task slug or name')
+    .argument('<new-name>', 'The new task name')
+    .description('Rename a task (file + slug + remote mapping) — never duplicates the remote task')
+    .action(async (name: string, newName: string) => {
+      const backend = getTaskBackend();
+      const slug = await resolveTaskSlug(backend, name);
+      if (!slug) return;
+
+      try {
+        const newSlug = await backend.rename(slug, newName);
+        if (newSlug === slug) {
+          success(`Renamed (name only, slug unchanged): ${slug}`);
+        } else {
+          success(
+            `Renamed: ${slug} → ${newSlug}` +
+            (backend.name !== 'local' ? ' (same remote task updated on next sync — no duplicate)' : ''),
+          );
+        }
+      } catch (err) {
+        if (err instanceof TaskBackendError) {
+          error(err.message);
+          process.exitCode = 1;
+          return;
+        }
+        throw err;
+      }
+    });
+
   // Planned START date on existing tasks (synced to the remote backend)
   tasks
     .command('start')
@@ -912,24 +947,26 @@ export function registerTasksCommand(program: Command): void {
     .argument('[direction]', 'push, pull, or both (default: both)')
     .description('Sync tasks with the configured remote backend (no-op for local)')
     .option('--hook', 'Best-effort mode for git hooks: never fails, bounded time, exit 0')
+    .option('--reconcile', 'Also heal pre-existing assignee drift: re-pull assignees for every mapped task regardless of the sync watermark (#78)')
     .option('--json', 'Emit the sync report as JSON')
-    .action(async (direction: string | undefined, opts: { hook?: boolean; json?: boolean }) => {
+    .action(async (direction: string | undefined, opts: { hook?: boolean; reconcile?: boolean; json?: boolean }) => {
       const dir = (direction ?? 'both') as 'push' | 'pull' | 'both';
       if (!['push', 'pull', 'both'].includes(dir)) {
         error('Direction must be one of: push, pull, both');
         return;
       }
+      const syncOpts = { reconcile: !!opts.reconcile };
       try {
         const backend = getTaskBackend();
         const report = opts.hook
           ? await Promise.race([
-              backend.sync(dir),
+              backend.sync(dir, syncOpts),
               new Promise<null>((resolveTimeout) => {
                 const t = setTimeout(() => resolveTimeout(null), 15000);
                 (t as unknown as { unref?: () => void }).unref?.();
               }),
             ])
-          : await backend.sync(dir);
+          : await backend.sync(dir, syncOpts);
         if (report === null) {
           // Hook-mode timeout: report and exit clean — git must never block.
           console.log(chalk.dim('tasks sync: timed out (hook mode) — skipped.'));
@@ -948,7 +985,11 @@ export function registerTasksCommand(program: Command): void {
           return;
         }
         const deletedPart = report.deleted > 0 ? `, deleted ${report.deleted}` : '';
-        success(`Sync (${report.direction}): pushed ${report.pushed}, pulled ${report.pulled}, created ${report.created}${deletedPart}, comments ${report.commentsAdded}`);
+        const reconciledPart = report.reconciled > 0 ? `, reconciled ${report.reconciled}` : '';
+        success(`Sync (${report.direction}): pushed ${report.pushed}, pulled ${report.pulled}, created ${report.created}${deletedPart}, comments ${report.commentsAdded}${reconciledPart}`);
+        if (syncOpts.reconcile && report.reconciled === 0) {
+          console.log(chalk.dim('  reconcile: no assignee drift found — local already matches the remote.'));
+        }
         if (report.pendingQueue > 0) {
           console.log(chalk.yellow(`  ${report.pendingQueue} queued op(s) pending (offline?) — will replay on next sync.`));
         }
@@ -1055,12 +1096,14 @@ export function registerTasksCommand(program: Command): void {
     });
 
   // Doctor: validate Workflow flowchart matches Acceptance Criteria
-  // (doctor stays local-only by design — issue #11)
+  // (the default checks stay LOCAL-ONLY by design — issue #11; the optional
+  //  `--remote` assignee-drift probe is the one network check, opt-in — #78)
   tasks
     .command('doctor')
     .argument('[name]', 'Task name (omit to check every task)')
     .description('Validate Workflow flowchart is in sync with Acceptance Criteria')
-    .action(async (name?: string) => {
+    .option('--remote', 'Also check the remote backend for assignee drift (requires a token; #78)')
+    .action(async (name: string | undefined, opts: { remote?: boolean }) => {
       const dir = getStateDir();
       let files: string[];
       if (name) {
@@ -1094,6 +1137,38 @@ export function registerTasksCommand(program: Command): void {
         process.exitCode = 1;
       } else {
         success(`All ${files.length} task(s) clean.`);
+      }
+
+      // Opt-in remote probe (#78): assignee drift between the remote and local
+      // person tags. Best-effort — a missing token / offline remote prints a
+      // skip note rather than failing the local checks above.
+      if (opts.remote) {
+        console.log();
+        console.log(header('Remote assignee drift'));
+        const backend = getTaskBackend();
+        if (typeof backend.detectAssigneeDrift !== 'function') {
+          console.log(chalk.dim(`  Backend "${backend.name}" has no remote assignees — nothing to check.`));
+          return;
+        }
+        try {
+          const drifts = await backend.detectAssigneeDrift();
+          if (drifts.length === 0) {
+            success('No assignee drift — local person tags match the remote.');
+          } else {
+            for (const d of drifts) {
+              const localTxt = d.local.length ? d.local.join(', ') : '(unassigned)';
+              const remoteTxt = d.remote.length ? d.remote.join(', ') : '(unassigned)';
+              console.log(`  ${chalk.yellow('drift')}   ${d.slug}: local [${localTxt}] → remote [${remoteTxt}]`);
+            }
+            console.log();
+            console.log(
+              chalk.yellow(`  ${drifts.length} task(s) have remote assignee drift. `) +
+              `Run ${chalk.cyan('dreamcontext tasks sync --reconcile')} to heal them.`,
+            );
+          }
+        } catch (err) {
+          console.log(chalk.dim(`  Skipped (remote unreachable): ${(err as Error).message ?? err}`));
+        }
       }
     });
 }

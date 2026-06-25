@@ -167,6 +167,35 @@ export function mergeScalar<T>(
   return { value: remote, winner: 'remote' };
 }
 
+export type AssigneeHealDecision = 'heal' | 'in_sync' | 'pending' | 'local_diverged';
+
+/**
+ * Decide whether one task's local assignees should be HEALED to the remote set
+ * during a `--reconcile` pass (#78). Assignees are remote-authoritative, but a
+ * heal must never clobber a local change that simply hasn't pushed yet:
+ *   - local == remote          → already in sync, nothing to do
+ *   - a local push is pending   → let the normal sync push it first
+ *   - local diverged from base  → a genuine two-sided change → leave it for a
+ *                                 full sync/merge (surfaced, not silently healed)
+ *   - else (local == base, only the remote moved) → safe to adopt the remote set
+ *
+ * Slug arrays compare order-insensitively (callers already pass them sorted, but
+ * we sort defensively so a caller's ordering can never change the decision).
+ */
+export function planAssigneeHeal(
+  local: string[],
+  base: string[] | null,
+  remote: string[],
+  pendingPush: boolean,
+): AssigneeHealDecision {
+  const eq = (a: string[], b: string[]) =>
+    JSON.stringify([...a].sort()) === JSON.stringify([...b].sort());
+  if (eq(local, remote)) return 'in_sync';
+  if (pendingPush) return 'pending';
+  if (base !== null && !eq(local, base)) return 'local_diverged';
+  return 'heal';
+}
+
 /**
  * Union-merge changelog entries (conflict-free by construction).
  * Remote-only entries stack on top (LIFO), local order preserved below.
