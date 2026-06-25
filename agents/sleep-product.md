@@ -317,22 +317,31 @@ dreamcontext taxonomy init
 
 This is idempotent — if `core/taxonomy.json` already exists, no change is made.
 
-#### C2. Audit the corpus
+#### C2. Audit the corpus, then bulk-heal the safe drift
 
 ```bash
-dreamcontext taxonomy audit
+dreamcontext taxonomy audit              # see the drift
+dreamcontext taxonomy audit --fix --dry-run   # preview the exact safe rewrites (writes nothing)
+dreamcontext taxonomy audit --fix             # apply: alias/normalizable tags → canonical, corpus-wide
 ```
 
-Review the output. Buckets to act on:
+`audit --fix` is the **safe bulk path** — it rewrites ONLY tags whose `normalizeTag → resolveAlias`
+yields a *different canonical* tag (aliases like `db → domain:database`, casing like `Architecture →
+architecture`). It NEVER touches already-canonical tags (so `decisions` is not churned to `decision`)
+and NEVER guesses an orphan — orphans are reported as *"needs a vocab decision"* and left untouched.
+This is what makes corpus-wide normalization safe to run every cycle. Then act on the buckets `--fix`
+deliberately doesn't auto-resolve:
 
 | Bucket | Action |
 |--------|--------|
-| `nonCanonical` / `alias` tags | Edit the offending file's frontmatter `tags:` array surgically — replace the alias with the canonical (e.g. `db` → `domain:database`). One file at a time; verify each change is correct before moving on. |
-| `orphan` tags | If the tag is a real project concept, add it to the vocabulary via `dreamcontext taxonomy add <tag>`. If it was a typo or leftover, remove it from the file's frontmatter. |
+| `alias` / normalizable tags | **Run `taxonomy audit --fix`** — one shot, corpus-wide, idempotent. Don't hand-edit these file by file anymore. |
+| `orphan` tags (a real concept) | **Alias-then-fix:** `dreamcontext taxonomy alias <orphan> <canonical>` (or `taxonomy add <facet:value>` if it's a brand-new canonical), then re-run `taxonomy audit --fix` to apply it everywhere. |
+| `orphan` tags (typo / leftover) | Remove it from the offending file's frontmatter surgically. |
 | `nearDups` in vocab | If two vocab entries are near-duplicates by accident, remove the weaker one by hand-editing `core/taxonomy.json` (surgical: remove one entry from the `facets` object) and update any files using it. |
 | `untagged` docs | Tag them if content is clear; leave them if the doc is a stub. |
 
-**Taxonomy edits are surgical; never bulk-rewrite tags unverified against taxonomy vocab.** Confirm each change against the audit output before writing it.
+**The only bulk rewrite you may run is `taxonomy audit --fix`** (it is verified-by-construction against
+the vocabulary). Any OTHER tag edit stays surgical and confirmed against the audit output.
 
 #### C3. Grow the Domain Vocabulary
 

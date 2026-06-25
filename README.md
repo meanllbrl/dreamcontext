@@ -623,6 +623,10 @@ dreamcontext knowledge index              # List all with descriptions + tags
 dreamcontext knowledge index --tag api    # Filter by tag
 dreamcontext knowledge tags               # List standard tags
 dreamcontext knowledge touch <slug>       # Record access (staleness tracking)
+
+dreamcontext taxonomy vocab               # Canonical faceted tag vocabulary
+dreamcontext taxonomy audit               # Surface non-canonical / orphan tags (read-only)
+dreamcontext taxonomy audit --fix         # Bulk-normalize alias/normalizable tags → canonical (--dry-run to preview)
 ```
 
 Set `pinned: true` in frontmatter to auto-load a knowledge file in every snapshot. Knowledge files not accessed in 30+ days are flagged as stale. Recently accessed files appear in a "warm knowledge" tier with first-paragraph previews.

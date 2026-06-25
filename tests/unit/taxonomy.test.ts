@@ -13,6 +13,7 @@ import {
   nearDuplicates,
   aliasGroups,
   auditCorpus,
+  planTagRewrites,
   serializeVocabulary,
   parseVocabularyJson,
   loadProjectVocabulary,
@@ -256,6 +257,108 @@ describe('auditCorpus', () => {
     const result = auditCorpus(docs, DEFAULT_VOCABULARY);
     expect(result.untagged).not.toContain('doc-a');
     expect(result.nonCanonical.some((x) => x.doc === 'doc-a')).toBe(false);
+  });
+});
+
+// ── planTagRewrites (audit --fix) ─────────────────────────────────────────────
+
+describe('planTagRewrites', () => {
+  // A vocab with an explicit bare→faceted alias, mirroring the task's examples
+  // (e.g. `excalidraw` → `topic:excalidraw`) once a project adds it via CLI.
+  const vocab: Vocabulary = {
+    facetTags: {
+      domain: ['domain:database'],
+      layer: [],
+      kind: [],
+      topic: ['topic:recall', 'topic:excalidraw'],
+    },
+    aliases: {
+      search: 'topic:recall',
+      db: 'domain:database',
+      excalidraw: 'topic:excalidraw',
+    },
+    bareTags: ['architecture', 'decisions'],
+  };
+
+  it('rewrites an alias to its canonical (search → topic:recall)', () => {
+    const plan = planTagRewrites(['search'], vocab);
+    expect(plan.rewrites).toEqual([{ from: 'search', to: 'topic:recall' }]);
+    expect(plan.newTags).toEqual(['topic:recall']);
+    expect(plan.unresolved).toEqual([]);
+  });
+
+  it('rewrites a bare→faceted alias from the vocab (excalidraw → topic:excalidraw)', () => {
+    const plan = planTagRewrites(['excalidraw'], vocab);
+    expect(plan.rewrites).toEqual([{ from: 'excalidraw', to: 'topic:excalidraw' }]);
+    expect(plan.newTags).toEqual(['topic:excalidraw']);
+  });
+
+  it('normalizes casing drift on a canonical-after-normalization tag (Architecture → architecture)', () => {
+    const plan = planTagRewrites(['Architecture'], vocab);
+    expect(plan.rewrites).toEqual([{ from: 'Architecture', to: 'architecture' }]);
+    expect(plan.newTags).toEqual(['architecture']);
+  });
+
+  it('leaves an already-canonical faceted tag untouched', () => {
+    const plan = planTagRewrites(['topic:recall'], vocab);
+    expect(plan.rewrites).toEqual([]);
+    expect(plan.newTags).toEqual(['topic:recall']);
+    expect(plan.unresolved).toEqual([]);
+  });
+
+  it('NEVER rewrites an already-canonical bare tag even when normalizeTag would singularize it (decisions stays decisions)', () => {
+    // The load-bearing guard: `decisions` is canonical; normalizeTag→`decision`
+    // must NOT trigger a rewrite, or the whole corpus churns plural→singular.
+    const plan = planTagRewrites(['decisions'], vocab);
+    expect(plan.rewrites).toEqual([]);
+    expect(plan.newTags).toEqual(['decisions']);
+    expect(plan.unresolved).toEqual([]);
+  });
+
+  it('leaves an orphan tag untouched and reports it as unresolved', () => {
+    const plan = planTagRewrites(['P2'], vocab);
+    expect(plan.rewrites).toEqual([]);
+    expect(plan.newTags).toEqual(['P2']);
+    expect(plan.unresolved).toEqual(['P2']);
+  });
+
+  it('dedupes when a rewrite collides with an existing canonical tag', () => {
+    const plan = planTagRewrites(['search', 'topic:recall'], vocab);
+    expect(plan.rewrites).toEqual([{ from: 'search', to: 'topic:recall' }]);
+    expect(plan.newTags).toEqual(['topic:recall']); // collapsed, not duplicated
+  });
+
+  it('handles a mixed list: alias + canonical + orphan', () => {
+    const plan = planTagRewrites(['db', 'architecture', 'P3'], vocab);
+    expect(plan.rewrites).toEqual([{ from: 'db', to: 'domain:database' }]);
+    expect(plan.newTags).toEqual(['domain:database', 'architecture', 'P3']);
+    expect(plan.unresolved).toEqual(['P3']);
+  });
+
+  it('is idempotent — re-running the plan on its own output yields zero rewrites', () => {
+    const once = planTagRewrites(['search', 'Architecture', 'db'], vocab);
+    const twice = planTagRewrites(once.newTags, vocab);
+    expect(twice.rewrites).toEqual([]);
+    expect(twice.newTags).toEqual(once.newTags);
+  });
+
+  it('collapses a duplicate source tag — one rewrite, not two', () => {
+    const plan = planTagRewrites(['search', 'search'], vocab);
+    expect(plan.rewrites).toEqual([{ from: 'search', to: 'topic:recall' }]); // not duplicated
+    expect(plan.newTags).toEqual(['topic:recall']);
+  });
+
+  it('skips empty / whitespace-only tags without crashing', () => {
+    const plan = planTagRewrites(['', '   ', 'search'], vocab);
+    expect(plan.rewrites).toEqual([{ from: 'search', to: 'topic:recall' }]);
+    expect(plan.newTags).toEqual(['topic:recall']);
+  });
+
+  it('does not mutate the input tags array', () => {
+    const input = ['search', 'architecture'];
+    const copy = [...input];
+    planTagRewrites(input, vocab);
+    expect(input).toEqual(copy);
   });
 });
 

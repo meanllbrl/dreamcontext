@@ -128,11 +128,14 @@ Consistent tags make recall sharp; fragmented near-duplicate tags degrade it. Be
 dreamcontext taxonomy vocab [--facet <facet>] [--json]   # resolved vocabulary (defaults + core/taxonomy.json)
 dreamcontext taxonomy resolve <tag>                       # normalized form, classification, canonical
 dreamcontext taxonomy audit [--json]                      # surface non-canonical / orphan tags (read-only)
+dreamcontext taxonomy audit --fix [--dry-run] [--json]    # BULK-normalize alias/normalizable tags → canonical
 dreamcontext taxonomy init                                # scaffold core/taxonomy.json (idempotent)
 dreamcontext taxonomy add <facet:value>                   # add a new vocabulary tag
 dreamcontext taxonomy alias <alias> <canonical>           # merge a shorthand into a canonical tag
 ```
 Standard bare tags: `architecture`, `api`, `frontend`, `backend`, `database`, `devops`, `security`, `testing`, `design`, `decisions`, `onboarding`, `domain`. **Never hand-edit `core/taxonomy.json`** — mutate via the CLI. `sleep-product` runs taxonomy maintenance during consolidation.
+
+**Bulk-healing tag drift (`audit --fix`).** `taxonomy audit` only *reports* drift; `taxonomy audit --fix` *fixes* it in one shot across every knowledge/feature/task file. For each frontmatter tag it computes `normalizeTag → resolveAlias`; if that yields a **different tag that is canonical** in the vocabulary it rewrites it (e.g. `search → topic:recall`, `excalidraw → topic:excalidraw` once you've added that alias, `Architecture → architecture`). It is **safe by construction**: already-canonical tags are never touched (so `decisions` is not churned to `decision`), and orphan tags with no alias/canonical target are left untouched and reported as *"needs a vocab decision"* — resolve those first with `taxonomy add`/`taxonomy alias`, then re-run. The workflow is **alias-then-fix**: `taxonomy alias <orphan> <canonical>` teaches the mapping once, `audit --fix` applies it everywhere. Preview with `--fix --dry-run` (writes nothing), apply with `--fix`, automate with `--fix --json`. Idempotent — a second run is a no-op.
 
 ---
 

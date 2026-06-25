@@ -20,6 +20,7 @@ Free-form tags fragment discovery: every agent and session invents near-duplicat
 - [x] As an AI agent, I can read the project tag vocabulary (`taxonomy vocab`) and resolve any tag's classification (`taxonomy resolve <tag>`) so I tag documents consistently across sessions.
 - [x] As an AI agent, I can grow the vocabulary only through validated mutations (`taxonomy add`, `taxonomy alias`) so the vocabulary cannot silently drift or cycle.
 - [x] As a developer, I can audit the corpus (`taxonomy audit`) to see non-canonical tags, orphans, near-duplicates, and untagged docs so tag debt is visible and fixable.
+- [x] As a sleep agent / developer, I can BULK-heal tag drift in one shot (`taxonomy audit --fix`) — alias/normalizable tags rewritten to canonical across every knowledge/feature/task file — so drift is fixed safely during a sleep cycle instead of by hand-editing dozens of files. Already-canonical tags are never touched; orphans with no canonical target are reported, never guessed. `--dry-run` previews, `--json` automates, and the operation is idempotent.
 - [x] As a user, projects that predate the feature get `core/taxonomy.json` seeded automatically at SessionStart so no manual action or sleep cycle is required.
 - [x] As a user, I can browse the taxonomy in the dashboard (facet chips, usage counts, alias arrows, audit panel) — see the web-dashboard PRD.
 
@@ -31,6 +32,7 @@ Free-form tags fragment discovery: every agent and session invents near-duplicat
 - [x] `taxonomy alias <alias> <canonical>`: canonical must exist; no alias chains or cycles.
 - [x] `taxonomy resolve <tag>` prints classification (canonical / alias→target / orphan); `taxonomy vocab [--facet <f>]` prints the resolved vocabulary.
 - [x] `taxonomy audit` buckets the live corpus (knowledge, features, tasks, memory, bookmarks): nonCanonical, alias-resolvable, orphan, nearDups, untagged.
+- [x] `taxonomy audit --fix` bulk-normalizes tags across knowledge/feature/task files via the pure `planTagRewrites()` (`normalizeTag → resolveAlias`, rewrite only when the target is a DIFFERENT canonical tag). Guard: already-canonical tags are never rewritten (so the plural/singular twin `decisions`/`decision` is not churned). Orphans with no canonical target are left untouched and reported. `--dry-run` writes nothing; `--json` emits the plan; idempotent. Tests: `tests/unit/taxonomy.test.ts` (planTagRewrites) + `tests/integration/taxonomy-fix.test.ts`.
 - [x] `taxonomy init` and `dreamcontext init` share the same idempotent `ensureTaxonomyFile`; the SessionStart hook seeds `core/taxonomy.json` crash-safely on installs that predate the feature (first session after upgrade, no user action).
 - [x] Sleep agents (`sleep-product`, initializer) are instructed to mutate the vocabulary ONLY via the CLI commands — never hand-edit the JSON.
 - [x] Dashboard: read-only `GET /api/taxonomy` + Taxonomy page (detailed in the web-dashboard PRD).

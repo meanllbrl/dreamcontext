@@ -635,3 +635,81 @@ export function auditCorpus(
 
   return buckets;
 }
+
+// ─── Bulk tag normalization (audit --fix) ──────────────────────────────────────
+
+export interface TagRewrite {
+  from: string;
+  to: string;
+}
+
+export interface TagFixPlan {
+  /** The rewrites to apply (raw tag -> canonical), in document order. */
+  rewrites: TagRewrite[];
+  /** The resulting tag list: rewritten + deduped, original order preserved. */
+  newTags: string[];
+  /**
+   * Non-canonical tags with NO safe canonical target (orphans / unknowns with
+   * no alias and no normalization-to-canonical). Left UNTOUCHED — a human/sleep
+   * agent must decide (`taxonomy add` / `taxonomy alias`) before they can be
+   * auto-fixed.
+   */
+  unresolved: string[];
+}
+
+/**
+ * Plan canonical rewrites for ONE document's tag list, using the vocabulary's
+ * normalization + alias map. Pure — never touches disk.
+ *
+ * A raw tag is rewritten to `target` iff `normalizeTag` → `resolveAlias` yields
+ * a DIFFERENT tag that is canonical in the vocab. This covers BOTH:
+ *   - alias resolution      (`search` → `topic:recall`, `db` → `domain:database`)
+ *   - normalization drift    (`Architecture` → `architecture`, `Topic:Recall` → `topic:recall`)
+ *
+ * Tags that are already canonical are kept as-is. Orphan/unknown tags with no
+ * canonical target are kept as-is and reported in `unresolved` — we NEVER rewrite
+ * a tag to a non-canonical form, so the fix is always safe and convergent.
+ *
+ * Idempotent: running the plan on its own `newTags` output yields zero rewrites.
+ */
+export function planTagRewrites(tags: string[], vocab: Vocabulary): TagFixPlan {
+  const rewrites: TagRewrite[] = [];
+  const unresolved: string[] = [];
+  const newTags: string[] = [];
+  const seen = new Set<string>();
+  const pushUnique = (t: string): void => {
+    if (!newTags.includes(t)) newTags.push(t);
+  };
+
+  for (const raw of tags) {
+    if (typeof raw !== 'string' || raw.trim() === '') continue;
+    // Skip a duplicate raw tag in the same doc — process each distinct tag once,
+    // so `rewrites`/`totalRewrites` reflect real work and a doc with a repeated
+    // tag collapses cleanly instead of double-counting.
+    if (seen.has(raw)) continue;
+    seen.add(raw);
+
+    // Already-canonical tags are NEVER touched. This is the load-bearing guard:
+    // a tag like `decisions` is a canonical bare tag even though `normalizeTag`
+    // would singularize it to `decision` (the plural/singular twin is a vocab
+    // near-dup, not a per-file fix). Only NON-canonical tags get rewritten, so
+    // the fix never churns good tags or fights an established convention.
+    if (isCanonical(raw, vocab)) {
+      pushUnique(raw);
+      continue;
+    }
+
+    const norm = normalizeTag(raw);
+    const target = resolveAlias(norm, vocab);
+    if (target !== raw && isCanonical(target, vocab)) {
+      rewrites.push({ from: raw, to: target });
+      pushUnique(target);
+    } else {
+      // Non-canonical with no safe canonical target — leave it, report it.
+      if (!unresolved.includes(raw)) unresolved.push(raw);
+      pushUnique(raw);
+    }
+  }
+
+  return { rewrites, newTags, unresolved };
+}

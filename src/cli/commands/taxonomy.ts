@@ -3,6 +3,7 @@ import chalk from 'chalk';
 import { ensureContextRoot } from '../../lib/context-path.js';
 import { header, info, success } from '../../lib/format.js';
 import { buildCorpus } from '../../lib/recall.js';
+import { readFrontmatter, updateFrontmatterFields } from '../../lib/frontmatter.js';
 import {
   loadProjectVocabulary,
   auditCorpus,
@@ -12,10 +13,78 @@ import {
   classifyTag,
   resolveAlias,
   normalizeTag,
+  planTagRewrites,
   FACETS,
   tagIndexValue,
   type Facet,
+  type Vocabulary,
+  type TagRewrite,
 } from '../../lib/taxonomy.js';
+
+// ─── audit --fix helpers ───────────────────────────────────────────────────────
+
+/** Corpus types whose individual files carry a frontmatter `tags:` array. */
+const FIX_ELIGIBLE_TYPES = new Set(['knowledge', 'feature', 'task']);
+
+interface FileFix {
+  relPath: string;
+  slug: string;
+  path: string;
+  rewrites: TagRewrite[];
+  newTags: string[];
+}
+
+interface TaxonomyFixReport {
+  files: FileFix[];
+  /** slug -> non-canonical tags with no safe canonical target (need a vocab decision). */
+  unresolved: Array<{ slug: string; tags: string[] }>;
+  totalRewrites: number;
+}
+
+/**
+ * Compute (and optionally apply) the bulk tag-normalization plan across every
+ * knowledge/feature/task file. Reads RAW frontmatter per file (not the
+ * corpus-normalized tags) so the plan matches exactly what gets written.
+ */
+function runTaxonomyFix(root: string, vocab: Vocabulary, apply: boolean): TaxonomyFixReport {
+  const corpus = buildCorpus(root);
+  const seen = new Set<string>();
+  const files: FileFix[] = [];
+  const unresolved: Array<{ slug: string; tags: string[] }> = [];
+  let totalRewrites = 0;
+
+  for (const doc of corpus) {
+    if (!FIX_ELIGIBLE_TYPES.has(doc.type)) continue;
+    if (seen.has(doc.path)) continue; // one file = one plan
+    seen.add(doc.path);
+
+    let rawTags: string[];
+    try {
+      const { data } = readFrontmatter(doc.path);
+      rawTags = Array.isArray((data as { tags?: unknown }).tags)
+        ? ((data as { tags: unknown[] }).tags.filter((t): t is string => typeof t === 'string'))
+        : [];
+    } catch {
+      continue; // unreadable / malformed frontmatter — skip, never throw
+    }
+    if (rawTags.length === 0) continue;
+
+    const plan = planTagRewrites(rawTags, vocab);
+    if (plan.unresolved.length > 0) {
+      unresolved.push({ slug: doc.slug, tags: plan.unresolved });
+    }
+    if (plan.rewrites.length === 0) continue;
+
+    totalRewrites += plan.rewrites.length;
+    files.push({ relPath: doc.relPath, slug: doc.slug, path: doc.path, rewrites: plan.rewrites, newTags: plan.newTags });
+
+    if (apply) {
+      updateFrontmatterFields(doc.path, { tags: plan.newTags });
+    }
+  }
+
+  return { files, unresolved, totalRewrites };
+}
 
 export function registerTaxonomyCommand(program: Command): void {
   const taxonomy = program
@@ -81,14 +150,59 @@ export function registerTaxonomyCommand(program: Command): void {
       console.log(chalk.dim('  Run: dreamcontext taxonomy init  to scaffold core/taxonomy.json'));
     });
 
-  // audit — read-only corpus audit
+  // audit — read-only corpus audit (or --fix to bulk-normalize)
   taxonomy
     .command('audit')
-    .description('Audit corpus tags against the vocabulary (read-only, exit 0)')
+    .description('Audit corpus tags against the vocabulary (read-only). Use --fix to bulk-normalize.')
     .option('--json', 'Emit JSON')
-    .action((opts: { json?: boolean }) => {
+    .option('--fix', 'Rewrite alias/normalizable tags to canonical form across knowledge/feature/task files')
+    .option('--dry-run', 'With --fix: print the exact rewrite plan but write nothing')
+    .action((opts: { json?: boolean; fix?: boolean; dryRun?: boolean }) => {
       const root = ensureContextRoot();
       const vocab = loadProjectVocabulary(root);
+
+      // ── --fix path: bulk-normalize tags (apply unless --dry-run) ──────────────
+      if (opts.fix) {
+        const apply = !opts.dryRun;
+        const report = runTaxonomyFix(root, vocab, apply);
+
+        if (opts.json) {
+          console.log(JSON.stringify({ applied: apply, ...report }, null, 2));
+          return;
+        }
+
+        console.log(header(apply ? 'Taxonomy Fix' : 'Taxonomy Fix (dry-run)'));
+
+        if (report.files.length === 0) {
+          console.log(`\n  ${chalk.green('✓')} No alias/normalizable tags found — nothing to fix.`);
+        } else {
+          const verb = apply ? 'Rewrote' : 'Would rewrite';
+          console.log(`\n  ${apply ? chalk.green('✓') : chalk.cyan('•')} ${verb} ${chalk.bold(String(report.totalRewrites))} tag${report.totalRewrites === 1 ? '' : 's'} across ${chalk.bold(String(report.files.length))} file${report.files.length === 1 ? '' : 's'}:`);
+          for (const f of report.files) {
+            console.log(`\n    ${chalk.dim(f.relPath)}`);
+            for (const r of f.rewrites) {
+              console.log(`      ${chalk.yellow(r.from)} → ${chalk.magentaBright(r.to)}`);
+            }
+          }
+        }
+
+        if (report.unresolved.length > 0) {
+          const count = report.unresolved.reduce((n, u) => n + u.tags.length, 0);
+          console.log(`\n  ${chalk.yellow('Needs a vocab decision')} (${count} tag${count === 1 ? '' : 's'} — no alias/canonical, left untouched):`);
+          for (const u of report.unresolved) {
+            console.log(`    ${chalk.dim(u.slug)}: ${u.tags.map((t) => chalk.yellow(t)).join(', ')}`);
+          }
+          console.log(chalk.dim('\n  Resolve with: dreamcontext taxonomy add <tag>  OR  taxonomy alias <orphan> <canonical>, then re-run --fix.'));
+        }
+
+        if (!apply && report.files.length > 0) {
+          console.log(chalk.dim('\n  Dry run — nothing written. Re-run without --dry-run to apply.'));
+        }
+        console.log('');
+        return;
+      }
+
+      // ── default path: read-only audit ────────────────────────────────────────
       const corpus = buildCorpus(root);
 
       // Build slim doc list for audit (slug + tags only).
@@ -113,9 +227,15 @@ export function registerTaxonomyCommand(program: Command): void {
 
       if (buckets.nonCanonical.length > 0) {
         console.log(`\n  ${chalk.yellow('Non-canonical tags')} (${buckets.nonCanonical.length}):`);
+        let fixable = 0;
         for (const { doc, tag, suggestion } of buckets.nonCanonical) {
-          const hint = suggestion !== tag ? chalk.dim(` → ${suggestion}`) : '';
+          const willFix = suggestion !== tag;
+          if (willFix) fixable++;
+          const hint = willFix ? chalk.dim(` → ${suggestion}`) : '';
           console.log(`    ${chalk.dim(doc)}: ${chalk.yellow(tag)}${hint}`);
+        }
+        if (fixable > 0) {
+          console.log(chalk.dim(`\n  ↳ ${fixable} alias/normalizable occurrence${fixable === 1 ? '' : 's'} — \`dreamcontext taxonomy audit --fix\` rewrites these in knowledge/feature/task files (\`--fix --dry-run\` to preview; changelog/memory tags are managed elsewhere).`));
         }
       } else {
         console.log(`  ${chalk.green('✓')} All tags are canonical`);

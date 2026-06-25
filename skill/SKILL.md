@@ -196,7 +196,7 @@ When in doubt about a command or flag, open [cli-reference.md](references/cli-re
 
 10. **Use `dreamcontext-explore`, not `Explore`.** The default Explore agent is blocked via a PreToolUse hook. `dreamcontext-explore` checks curated context first, saving thousands of tokens.
 
-11. **Tag before you create.** Before tagging a task/feature/knowledge, consult `dreamcontext taxonomy vocab` and reuse canonical faceted tags (`topic:recall`, `domain:security`) before inventing new ones. Fragmenting tags degrades recall.
+11. **Tag before you create.** Before tagging a task/feature/knowledge, consult `dreamcontext taxonomy vocab` and reuse canonical faceted tags (`topic:recall`, `domain:security`) before inventing new ones. Fragmenting tags degrades recall. To heal accumulated drift in one shot, run `dreamcontext taxonomy audit --fix` (bulk-normalizes alias/normalizable tags to canonical across the corpus — safe, idempotent, `--dry-run` to preview; orphans are reported, never guessed).
 
 12. **Be surgical.** Only touch what changed. ~150-line soft limit on context files — extract detail to knowledge, keep a summary + reference. LIFO inserts go at the top (CHANGELOG, task changelog, constraint sections).
 
