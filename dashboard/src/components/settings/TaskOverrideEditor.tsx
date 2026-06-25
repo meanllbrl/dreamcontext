@@ -90,12 +90,14 @@ export function TaskOverrideEditor() {
                   type="button"
                   className="tov-edit"
                   title="Edit field"
+                  aria-label={`Edit field ${f.name}`}
                   onClick={() => setEditing(f)}
                 >✎</button>
                 <button
                   type="button"
                   className="tov-remove"
                   title="Remove field"
+                  aria-label={`Remove field ${f.name}`}
                   onClick={() => { if (editing?.key === f.key) setEditing(null); removeField.mutate(f.key); }}
                 >×</button>
               </div>

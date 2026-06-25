@@ -595,7 +595,11 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       // must never break the sync.
       try {
         await this.createMissingFields(this.getAdapter(), this.requireListId(), false);
-      } catch { /* config errors surface below via pull/push */ }
+      } catch (err) {
+        // Best-effort, but never silent: surface the failure in the report so a
+        // missing remote field isn't a mystery (#dashboard-custom-fields review).
+        report.errors.push('auto-provision: ' + ((err as Error).message ?? err));
+      }
       if (direction === 'pull' || direction === 'both') {
         await this.pullRemote(report);
       }

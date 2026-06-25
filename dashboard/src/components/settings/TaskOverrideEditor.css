@@ -1,16 +1,16 @@
 .tov-fields {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin: 10px 0;
+  gap: var(--space-2);
+  margin: var(--space-3) 0;
 }
 
 .tov-field {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   flex-wrap: wrap;
-  padding: 6px 10px;
+  padding: var(--space-2) var(--space-3);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   background: var(--color-bg-secondary);
@@ -49,8 +49,8 @@
 .tov-remove:hover { color: var(--color-error); }
 
 .tov-warnings {
-  margin: 8px 0;
-  padding-left: 18px;
+  margin: var(--space-2) 0;
+  padding-left: var(--space-5);
   font-size: var(--font-size-sm);
   color: var(--color-error);
 }
@@ -60,7 +60,7 @@
   font-family: var(--font-mono);
   font-size: var(--font-size-sm);
   line-height: var(--line-height-relaxed);
-  padding: 12px;
+  padding: var(--space-3);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-bg);
@@ -77,8 +77,8 @@
 .tov-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-top: 10px;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
 }
 
 /* ─── Collapsible "How the format works" guide ─── */
@@ -117,7 +117,7 @@
 .tov-doc-body code {
   font-family: var(--font-mono);
   font-size: var(--font-size-xs);
-  padding: 1px 4px;
+  padding: 1px var(--space-1);
   border-radius: var(--radius-sm);
   background: var(--color-bg-tertiary);
   color: var(--color-text);
@@ -129,7 +129,7 @@
 .tov-field-req {
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-medium);
-  padding: 1px 8px;
+  padding: 1px var(--space-2);
   border-radius: 999px;
   background: var(--color-bg-tertiary);
   color: var(--color-text-tertiary);

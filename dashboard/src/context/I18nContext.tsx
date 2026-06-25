@@ -47,6 +47,7 @@ const translations: Record<string, Record<string, string>> = {
     'tasks.cancel': 'Cancel',
     'tasks.changelog': 'Changelog',
     'tasks.add_entry': 'Add Entry',
+    'tasks.customFields.sectionLabel': 'Custom',
     'rice.title': 'RICE',
     'rice.reach': 'Reach',
     'rice.impact': 'Impact',

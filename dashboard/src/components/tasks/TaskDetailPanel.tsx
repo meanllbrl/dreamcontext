@@ -922,7 +922,7 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
               />
             </PropertyRow>
 
-            <PropertyRow label="Custom">
+            <PropertyRow label={t('tasks.customFields.sectionLabel')}>
               <div className="custom-fields-cell">
                 <TaskCustomFields
                   defs={customFieldDefs ?? []}

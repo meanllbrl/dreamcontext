@@ -127,7 +127,16 @@ export async function handleTaskOverrideDocSave(
     sendError(res, 413, 'too_large', `Override exceeds ${MAX} bytes.`);
     return;
   }
-  const ov = writeTaskOverrideDoc(contextRoot, body.raw);
+  let ov: ReturnType<typeof writeTaskOverrideDoc>;
+  try {
+    ov = writeTaskOverrideDoc(contextRoot, body.raw);
+  } catch (err) {
+    // A filesystem failure must not bubble up as an unhandled 500 with a raw
+    // err.message (which would leak the override path). Log + generic body.
+    console.error('[task-overrides] write failed:', err);
+    sendError(res, 500, 'write_failed', 'Failed to write the task override.');
+    return;
+  }
   recordDashboardChange(contextRoot, {
     entity: 'task',
     action: 'update',

@@ -390,7 +390,9 @@ export function parseFieldsBlock(
   const inner = body.slice(open + FIELDS_OPEN.length, close);
   for (const def of defs) {
     const escaped = def.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const m = inner.match(new RegExp(`\\*\\*${escaped}:\\*\\*\\s*([^\\n]+)`));
+    // `i` flag: tolerate capitalisation variants of the field name in the body
+    // (e.g. `**Story Points:**` vs a `story points` def) — github review nit.
+    const m = inner.match(new RegExp(`\\*\\*${escaped}:\\*\\*\\s*([^\\n]+)`, 'i'));
     if (m) {
       const v = m[1].trim();
       if (v) out[def.key] = v;

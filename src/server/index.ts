@@ -282,8 +282,10 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
         // Static files (dashboard SPA)
         serveStatic(req, res, dashboardDir);
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Internal server error';
-        sendError(res, 500, 'internal_error', message);
+        // Log the real error server-side; return a generic body so internal
+        // paths / exception details never leak to the browser (defense in depth).
+        console.error(`[server] unhandled error: ${req.method ?? 'GET'} ${req.url ?? '/'}`, err);
+        sendError(res, 500, 'internal_error', 'Internal server error');
       }
     });
 
