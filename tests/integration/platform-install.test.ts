@@ -125,6 +125,26 @@ describe('platform-aware install flow (integration)', () => {
     expect(existsSync(join(tmpDir, '.codex', 'agents', 'curator-auditor.toml'))).toBe(true);
   });
 
+  it('install-skill installs the deep-research core skill (claude)', () => {
+    run('init --yes --name "Test" --description "d" --stack "Node" --priority "p"', tmpDir);
+    run('install-skill --platforms claude', tmpDir);
+
+    // The iterative corpus-synthesis orchestrator ships as a core skill alongside dreamcontext.
+    const skillPath = join(tmpDir, '.claude', 'skills', 'dreamcontext-deep-research', 'SKILL.md');
+    expect(existsSync(skillPath)).toBe(true);
+    const skill = readFileSync(skillPath, 'utf-8');
+    expect(skill).toContain('name: dreamcontext-deep-research');
+
+    // It reuses the existing dreamcontext-explore searcher — no dedicated sub-agent file.
+    expect(existsSync(join(tmpDir, '.claude', 'agents', 'dreamcontext-explore.md'))).toBe(true);
+  });
+
+  it('install-skill installs the deep-research core skill for codex too', () => {
+    run('init --yes --name "Test" --description "d" --stack "Node" --priority "p"', tmpDir);
+    run('install-skill --platforms codex', tmpDir);
+    expect(existsSync(join(tmpDir, '.agents', 'skills', 'dreamcontext-deep-research', 'SKILL.md'))).toBe(true);
+  });
+
   it('install-instructions can install both CLAUDE.md and AGENTS.md in one command', () => {
     run('init --yes --name "Test" --description "d" --stack "Node" --priority "p"', tmpDir);
     run('install-instructions --platforms claude,codex --mode append', tmpDir);

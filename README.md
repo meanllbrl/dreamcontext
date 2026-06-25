@@ -213,6 +213,8 @@ your-project/
 │   │   └── SKILL.md            # Teaches the agent the system
 │   ├── skills/initializer/
 │   │   └── SKILL.md            # Interactive brain bootstrap (drives the initializer-* agents)
+│   ├── skills/dreamcontext-deep-research/
+│   │   └── SKILL.md            # Iterative corpus synthesis (fans out dreamcontext-explore searchers)
 │   ├── agents/
 │   │   ├── initializer-scout.md     # bootstrap: intake → ingestion manifest
 │   │   ├── initializer-ingestor.md  # bootstrap: fan-out write into the hierarchy
@@ -244,10 +246,11 @@ This writes managed fenced blocks into `CLAUDE.md` and/or `AGENTS.md` at the pro
 
 The core `dreamcontext` skill (installed by `install-skill`) teaches your agent the context system itself. On top of that, dreamcontext ships **curated skill packs and standalone skills** that give your agent domain expertise — loaded on demand, only when the work calls for it, so they cost nothing the rest of the time.
 
-Two more skills install with the core (no pack needed) and run only when the moment calls for them — both drive their own sub-agents:
+Three more skills install with the core (no pack needed) and run only when the moment calls for them — each drives its own sub-agents:
 
 - **`initializer`** — interactive brain **bootstrap**. It recognizes a missing or sparse `_dream_context/` (or that you're migrating notes from another folder, or loading a large docs export into an existing brain) and ingests whatever you have — a docs folder, an Obsidian/Notion export, ADRs, an old wiki, or just the codebase — into the proper knowledge / feature / task hierarchy (scout → confirm → ingest → verify).
 - **`curator`** — interactive brain **refactor**: the periodic re-organization the conservative sleep cycle won't do. It can MOVE, MERGE, SPLIT, RENAME, RE-TYPE, and RETIRE content to conform the whole brain to current conventions — deduping near-duplicate knowledge (`dreamcontext knowledge merge`), enforcing single-source-of-truth, and normalizing tags (audit → confirm plan → execute → verify).
+- **`dreamcontext-deep-research`** — the heavy, iterative counterpart to the fast `dreamcontext-explore` searcher, for **large / multi-project / federated** brains. When one explore pass comes back thin, the main agent fans out parallel `dreamcontext-explore` searchers across the whole curated corpus **and connected peer vaults**, loops to close gaps, **adversarially verifies** the load-bearing claims, and synthesizes a **cited** report — not raw hits (`/dreamcontext-deep-research`). Read-only; it researches *your brain* the way the generic deep-research skill researches the open web.
 
 ```bash
 # Browse and install interactively (terminal checkbox UI)
@@ -785,7 +788,7 @@ dreamcontext install-claude-md           # Legacy alias: CLAUDE.md only
 
 ## Works With
 
-- **Claude Code**: full support via skill, core sub-agents (initializer, explore, the three primary RemSleep specialists — sleep-tasks, sleep-state, sleep-product — plus conditional sleep-federation and sleep-migration specialists), 7 hooks, plus optional pack sub-agents (council persona/synthesizer, multi-review specialists, goal-skill orchestrators)
+- **Claude Code**: full support via skill, core sub-agents (initializer, explore, the iterative `dreamcontext-deep-research` synthesis skill, the three primary RemSleep specialists — sleep-tasks, sleep-state, sleep-product — plus conditional sleep-federation and sleep-migration specialists), 7 hooks, plus optional pack sub-agents (council persona/synthesizer, multi-review specialists, goal-skill orchestrators)
 - **Codex**: project-level skills (`.agents/skills`), managed `AGENTS.md`, native `.codex/agents/*.toml`, and managed `.codex/config.toml` hooks (best-effort parity where event semantics differ)
 - **Desktop app (macOS beta)**: native Tauri 2 multi-vault launcher with in-app onboarding and the Sleepy notch quick-capture companion — wraps the same dashboard server (`dreamcontext app install`)
 - **Web Dashboard**: local UI with Kanban, Core editor, Knowledge, Features, Brain graph, Sleep tracker, and Council Hall (ships in the package)

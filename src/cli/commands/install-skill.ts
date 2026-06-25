@@ -836,6 +836,26 @@ export async function installCoreForPlatform(
     installed.push(platformPrefixed(platform, curatorSkillRel));
   }
 
+  // Copy the `dreamcontext-deep-research` core skill (the iterative, sub-agent-driven
+  // corpus-synthesis orchestrator — the heavy counterpart to dreamcontext-explore).
+  // Like the initializer and curator it is foundational, not an optional pack: any
+  // large or multi-project/federated brain eventually hits a question one explore pass
+  // can't synthesize, and the dreamcontext core skill directs the agent to escalate to
+  // it. Shipped at repo root in `skill-deep-research/` (package.json `files`), mirroring
+  // how the dreamcontext + initializer + curator skills ship. It reuses the existing
+  // `dreamcontext-explore` agent as its searcher/verifier (no new sub-agent file).
+  // Recorded 'core' so `update` refreshes it. Non-fatal if absent (older/partial
+  // packages still install the rest).
+  const deepResearchSkillSource = findPackageFile('skill-deep-research', 'SKILL.md');
+  if (deepResearchSkillSource) {
+    const deepResearchDestDir = join(skillRoot, 'dreamcontext-deep-research');
+    mkdirSync(deepResearchDestDir, { recursive: true });
+    writeFileSync(join(deepResearchDestDir, 'SKILL.md'), readFileSync(deepResearchSkillSource, 'utf-8'), 'utf-8');
+    const deepResearchSkillRel = `${skillRootRel}/dreamcontext-deep-research/SKILL.md`;
+    recordIfManifest(manifest, deepResearchSkillRel, 'core');
+    installed.push(platformPrefixed(platform, deepResearchSkillRel));
+  }
+
   const agentsSourceDir = findPackageDir('agents');
   if (agentsSourceDir) {
     const agentFiles = readdirSync(agentsSourceDir).filter((f) => f.endsWith('.md'));

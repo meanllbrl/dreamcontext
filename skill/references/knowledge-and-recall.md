@@ -102,6 +102,11 @@ Writes a CHANGELOG entry (`type=note`, `scope=quick`); the sleep cycle reconcile
 - BM25 is keyword/stemming-based, not semantic — "ML practitioner" won't match "data scientist" (haiku mode mitigates this).
 - Recall does **not** replace the SessionStart snapshot (soul/user/memory/active-tasks/knowledge-index are always pre-loaded). It is not a vector DB or mem0; the corpus is the same set the sleep agents curate.
 
+### Two depths of search: explore vs deep-research
+Recall feeds two read surfaces — pick by how much synthesis the question needs:
+- **`dreamcontext-explore`** (fast, single-pass): one sub-agent, recall-then-grep, one answer. Use for "where is X?" / "how does Y work?" on one project. This is the default and handles the vast majority of lookups.
+- **`dreamcontext-deep-research` skill** (iterative, multi-agent): when a question needs **synthesis across a large or multi-project / federated corpus** and one explore pass comes back thin. The main agent decomposes the question, fans out parallel `dreamcontext-explore` searchers across the corpus **and connected peer vaults**, loops to close gaps, **adversarially verifies** the load-bearing claims, then writes a **synthesized, cited** report. Invoke via `/dreamcontext-deep-research`. **Escalation rule:** start with explore; escalate only when one pass and one answer leave a cross-corpus question half-answered. It is read-only — synthesis, not mutation.
+
 ---
 
 ## Root-cause analysis pattern

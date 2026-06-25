@@ -37,6 +37,11 @@ future if that ever becomes necessary.
 - Run the tests: `npm test`
 - Keep changes focused; one concern per PR.
 - For anything non-trivial, open an issue first so we can align on direction.
+- **Keep the docs in lockstep.** Any change to dreamcontext's behavior or capabilities must also
+  update, in the same PR: (1) the `dreamcontext` skill + its `references/` (`skill/SKILL.md`,
+  `skill/references/*.md`) so the agent that loads them knows the new reality; (2) the related
+  agents / skills / skill packs (`agents/*.md`, `skill-*/`, `skill-packs/**`); and (3) `README.md`
+  and `DEEP-DIVE.md`. A feature without its docs is incomplete.
 
 ## Shipping a migration
 
