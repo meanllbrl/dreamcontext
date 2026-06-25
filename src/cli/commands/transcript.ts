@@ -24,6 +24,7 @@ interface TranscriptEntry {
       type: string;
       name?: string;
       text?: string;
+      thinking?: string;
       input?: Record<string, unknown>;
       content?: string | Array<{ text?: string }>;
     }>;
