@@ -1,5 +1,21 @@
 [
   {
+    "date": "2026-06-25",
+    "type": "feat",
+    "scope": "skills",
+    "description": "Add dreamcontext-deep-research, a core orchestration skill that is the heavy iterative counterpart to dreamcontext-explore for questions that need synthesis across large or federated corpora. Where explore is a single-pass Haiku agent with a tight budget, deep-research decomposes the question, fans out parallel explore searchers over the full curated corpus and connected peer vaults, gap-loops until coverage is sufficient, adversarially verifies load-bearing claims, then synthesizes a cited report. Crucially, it reuses dreamcontext-explore as its searcher and verifier — no new sub-agent, no new codex mirror to maintain — a deliberate design choice enforced by the Claude Code constraint that sub-agents cannot reliably fan out to further sub-agents. Named dreamcontext-deep-research (not the generic deep-research) to avoid colliding with the web-search skill. Installed as a core artifact via installCoreForPlatform, mirroring the curator and initializer blocks, so dreamcontext update refreshes it into existing projects. Discoverability wired via an escalation note in agents/dreamcontext-explore.md, the Sub-Agents section of skill/SKILL.md, and a two-depths-of-search note in skill/references/knowledge-and-recall.md. Decision rationale captured in knowledge/deep-research-mode-decision.md. 2307 tests pass, tsc clean.",
+    "breaking": false,
+    "summary": "Add `dreamcontext-deep-research` core skill: corpus-native iterative synthesizer that fans out `dreamcontext-explore` searchers over full vault + peers and returns cited reports",
+    "references": [
+      "commit:628a275",
+      "file:skill-deep-research/SKILL.md",
+      "file:src/cli/commands/install-skill.ts",
+      "file:agents/dreamcontext-explore.md",
+      "knowledge:deep-research-mode-decision",
+      "task:add-a-deep-research-mode-beyond-dreamcontext-explore-for-large-multi-project-tagged-corpora"
+    ]
+  },
+  {
     "date": "2026-06-24",
     "type": "fix",
     "scope": "dashboard",

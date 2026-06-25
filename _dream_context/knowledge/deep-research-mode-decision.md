@@ -71,6 +71,7 @@ tiny single-project brain — scale the machinery to the corpus.
 - Discoverability: core `skill/SKILL.md` Sub-Agents section + `references/knowledge-and-recall.md`
   (the two-depths-of-search note) + the escalation note in `agents/dreamcontext-explore.md`.
 - Tests: `tests/unit/deep-research-skill.test.ts` (skill contract) + `tests/integration/platform-install.test.ts` (install copies it, claude + codex).
+- Capability spec (user stories, acceptance criteria): `core/features/dreamcontext-deep-research.md`.
 
 ## Relationship to Other Decisions
 
