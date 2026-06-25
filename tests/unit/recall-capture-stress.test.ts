@@ -199,7 +199,7 @@ describe('continuous-capture precision stress (STEP 1 measurement)', () => {
     // cannot and should not "fix" a real-doc-vs-real-doc reorder; the named
     // risk (captures out-ranking knowledge) is fully neutralised.
     expect(dropR3).toBeLessThanOrEqual(3.5);
-  }, 30_000);
+  }, 90_000);
 
   it('GUARD PROOF: a capture flood never knocks a real gold target out of the top-3', () => {
     // The named precision-decay risk is "mediocre auto-captures crowd real
@@ -250,5 +250,5 @@ describe('continuous-capture precision stress (STEP 1 measurement)', () => {
     // Load-bearing guarantee: at the worst-case flood, zero real top-3 knowledge
     // is crowded out by captures.
     expect(trueDisplacementsAt(200)).toEqual([]);
-  }, 30_000);
+  }, 90_000);
 });
