@@ -79,12 +79,11 @@ export function normalizeBacklogFields(
 }
 
 /**
- * Resolve the task template. A project-local `_dream_context/overrides/task.md`
- * (passed in as `overrideTemplate`) shadows the shipped default; absent one,
- * this is byte-identical to the pre-refactor CLI resolution (golden-pinned).
+ * The shipped task template (file on disk, else inline fallback). Byte-identical
+ * to the pre-refactor CLI resolution (golden-pinned). Override grafting lives in
+ * `resolveScaffoldTemplate`, NOT here — this is always the default.
  */
-function getTaskTemplate(overrideTemplate?: string | null): string {
-  if (overrideTemplate && overrideTemplate.trim()) return overrideTemplate;
+function getTaskTemplate(): string {
   const candidates = [
     join(new URL('.', import.meta.url).pathname, '..', '..', 'templates', 'task.md'),
     join(new URL('.', import.meta.url).pathname, '..', 'templates', 'task.md'),
@@ -161,6 +160,66 @@ flowchart TD
 ### {{DATE}} - Created
 - Task created.
 `;
+}
+
+/**
+ * The canonical frontmatter header (`---…---`) of the shipped task template —
+ * the structural contract every surface depends on (id, status, dates, tags,
+ * version). Extracted so an override, whose OWN frontmatter is repurposed for
+ * the `custom_fields:` schema and whose body carries only the section layout,
+ * still scaffolds a task WITH a valid frontmatter rather than a header-less,
+ * id-less file.
+ */
+function shippedFrontmatterBlock(): string {
+  const lines = getTaskTemplate().split('\n');
+  if (lines[0]?.trim() !== '---') return '';
+  const close = lines.findIndex((l, i) => i > 0 && l.trim() === '---');
+  return close === -1 ? '' : lines.slice(0, close + 1).join('\n');
+}
+
+/**
+ * Resolve the full scaffold template for `tasks create`. Absent an override it
+ * is the shipped template verbatim (byte-identical — golden-pinned). With an
+ * override BODY present, the shipped frontmatter contract is grafted onto the
+ * project's custom body sections, so a scaffolded task is BOTH well-formed
+ * (carries id/status/…) AND in the project's declared shape. (The override's
+ * frontmatter is not a task header — `loadTaskOverride` consumes it as the
+ * custom-field schema — so it must never be used as the scaffold's frontmatter.)
+ */
+function resolveScaffoldTemplate(overrideTemplate?: string | null): string {
+  if (!overrideTemplate || !overrideTemplate.trim()) return getTaskTemplate();
+  const fm = shippedFrontmatterBlock();
+  if (!fm) return overrideTemplate; // defensive: no header to graft onto
+  return `${fm}\n\n${overrideTemplate.trim()}\n`;
+}
+
+/**
+ * Substitute a task template's `{{TOKEN}}` placeholders. Shared by the CLI and
+ * the dashboard create paths so a project override (`overrides/task.md`) renders
+ * IDENTICALLY from both surfaces — only the no-override fallback differs per
+ * surface. `name`/`status`/`description` are passed explicitly because the two
+ * surfaces default them differently (the CLI keeps the requested status and
+ * falls back to the name for a blank description; the dashboard always starts a
+ * task in `todo`, trims the name, and allows a blank description). Keeping this
+ * one function means the CLI override path stays byte-for-byte what it was
+ * (golden-pinned) while the dashboard gains the same behavior.
+ */
+function renderTaskTemplate(
+  template: string,
+  input: CreateTaskInput,
+  opts: { name: string; status: string; description: string },
+): string {
+  return template
+    .replaceAll('{{ID}}', generateId('task'))
+    .replaceAll('{{NAME}}', opts.name)
+    .replaceAll('{{DESCRIPTION}}', opts.description)
+    .replaceAll('{{PRIORITY}}', input.priority ?? 'medium')
+    .replaceAll('{{URGENCY}}', input.urgency ?? 'medium')
+    .replaceAll('{{STATUS}}', opts.status)
+    .replaceAll('{{TAGS}}', JSON.stringify(input.tags ?? []))
+    .replaceAll('{{DATE}}', today())
+    .replaceAll('{{WHY}}', input.why || '(To be defined)')
+    .replaceAll('{{VERSION}}', input.version ? `"${input.version}"` : 'null');
 }
 
 function readSectionSafe(filePath: string, sectionName: string): string {
@@ -308,18 +367,12 @@ export class LocalTaskBackend implements TaskBackend {
       // substitution first, then a SECOND gray-matter rewrite when rice is set
       // (which re-serializes the YAML — that two-write shape is pinned by the
       // golden test, so don't "optimize" it into one write).
-      const template = getTaskTemplate(override?.template);
-      const content = template
-        .replaceAll('{{ID}}', generateId('task'))
-        .replaceAll('{{NAME}}', input.name)
-        .replaceAll('{{DESCRIPTION}}', input.description ?? input.name)
-        .replaceAll('{{PRIORITY}}', input.priority ?? 'medium')
-        .replaceAll('{{URGENCY}}', input.urgency ?? 'medium')
-        .replaceAll('{{STATUS}}', input.status ?? 'todo')
-        .replaceAll('{{TAGS}}', JSON.stringify(input.tags ?? []))
-        .replaceAll('{{DATE}}', today())
-        .replaceAll('{{WHY}}', input.why || '(To be defined)')
-        .replaceAll('{{VERSION}}', input.version ? `"${input.version}"` : 'null');
+      const template = resolveScaffoldTemplate(override?.template);
+      const content = renderTaskTemplate(template, input, {
+        name: input.name,
+        status: input.status ?? 'todo',
+        description: input.description ?? input.name,
+      });
 
       writeFileSync(filePath, content, 'utf-8');
       if (input.rice) {
@@ -327,6 +380,30 @@ export class LocalTaskBackend implements TaskBackend {
       }
       // start_date / due_date are additive: only written when provided, so
       // tasks created without them keep the exact pre-#11 bytes (golden-pinned).
+      if (input.start_date) {
+        updateFrontmatterFields(filePath, { start_date: input.start_date });
+      }
+      if (input.due_date) {
+        updateFrontmatterFields(filePath, { due_date: input.due_date });
+      }
+    } else if (override?.template && override.template.trim()) {
+      // The dashboard ALSO honors the project's custom task shape, so a task
+      // created from the UI is indistinguishable from one created via the CLI.
+      // Gated on an override being present: absent one, the no-override skeleton
+      // below runs unchanged and stays byte-identical (golden-pinned). Dashboard
+      // semantics are preserved within the override: always start in `todo`,
+      // trim the name, allow a blank description. Schedule/score fields the
+      // template has no placeholder for are layered on afterward (as the CLI
+      // override path does), so a custom template needn't know about them.
+      const content = renderTaskTemplate(resolveScaffoldTemplate(override.template), input, {
+        name: input.name.trim(),
+        status: 'todo',
+        description: input.description ?? '',
+      });
+      writeFileSync(filePath, content, 'utf-8');
+      if (input.rice) {
+        updateFrontmatterFields(filePath, { rice: input.rice });
+      }
       if (input.start_date) {
         updateFrontmatterFields(filePath, { start_date: input.start_date });
       }
