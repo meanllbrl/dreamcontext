@@ -117,6 +117,7 @@ const translations: Record<string, Record<string, string>> = {
     'settings.cloud_tasks.github.hint': 'Tasks sync to a GitHub repository\'s Issues; a gitignored local mirror keeps recall, snapshots, and the dashboard working unchanged.',
     'settings.cloud_tasks.github.owner': 'Owner',
     'settings.cloud_tasks.github.repo': 'Repository',
+    'settings.cloud_tasks.github.repo_picker': 'Discovered repository',
     'settings.cloud_tasks.github.pick': 'Pick the repository to sync to…',
     'settings.cloud_tasks.github.search': 'Search repositories…',
     'settings.cloud_tasks.github.token_hint': 'The token is saved to a gitignored secrets file (never in this config). You can also set it from the CLI with `dreamcontext config github-token`. Needs `repo` scope (classic) or Issues read/write + Metadata (fine-grained).',
