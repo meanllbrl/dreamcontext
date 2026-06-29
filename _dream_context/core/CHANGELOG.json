@@ -1,6 +1,19 @@
 [
   {
     "date": "2026-06-29",
+    "type": "fix",
+    "scope": "server",
+    "description": "Fix the dashboard static server returning index.html (Content-Type: text/html) for any path missing on disk, including hashed JS/CSS chunks. Under the continuous-app-update model, a stale tab or WKWebView referenced previous-build asset hashes that no longer exist; the SPA fallback returned HTML under a script type=module request, intermittently tripping the 'text/html is not a valid JavaScript MIME type' error. Fix gates the SPA fallback to genuine navigation requests (Accept: text/html header or extensionless path); a request for a missing file that carries a file extension now returns a proper 404. Adds .mjs/.map/.webp to the MIME type table as defensive hardening (.mjs would otherwise serve as application/octet-stream — the same bug class). New tests/unit/server-static.test.ts reproduces the reported failure.",
+    "breaking": false,
+    "summary": "Gate SPA fallback to navigation requests; missing asset files with extensions now return 404; add .mjs/.map/.webp to MIME table",
+    "references": [
+      "commit:7ab9750",
+      "file:src/server/static.ts",
+      "file:tests/unit/server-static.test.ts"
+    ]
+  },
+  {
+    "date": "2026-06-29",
     "type": "feat",
     "scope": "desktop",
     "description": "Map three macOS editing gestures in the embedded xterm to the control sequences Claude Code's interactive prompt already honors, using attachCustomKeyEventHandler (xterm does not emit these combos itself). Shift+Enter sends a backslash+CR continuation for a newline without submitting; Option+Delete sends Ctrl+W (\\x17) to delete the previous word; Cmd+Delete sends Ctrl+U (\\x15) to delete to the line start. All other keys fall through to xterm unchanged.",

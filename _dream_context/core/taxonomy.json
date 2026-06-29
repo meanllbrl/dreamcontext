@@ -41,7 +41,8 @@
       "topic:github",
       "topic:task-backend",
       "topic:pm",
-      "topic:roadmap"
+      "topic:roadmap",
+      "topic:embeddings"
     ]
   },
   "bareTags": [

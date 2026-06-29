@@ -1,12 +1,16 @@
 ---
 id: decision-link-aware-vs-embedding-recall
 name: "Decision: link-aware BM25 boost (implemented, OFF by default) vs embedding overlay (deferred)"
-description: "Two proposed BM25 recall improvements. Link-aware boost (Option A) was built and shipped OFF by default in 2026-06 (gold set precondition satisfied, but live corpus has ~0 wikilinks). Embedding overlay (Option B) remains deferred. See recall-engine-v2.md for the shipped implementation."
+description: "Two proposed BM25 recall improvements. Link-aware boost (Option A) was built and shipped OFF by default in 2026-06. Embedding overlay (Option B) was superseded 2026-06-29 — see decision-embedding-layer.md for the full hybrid recall + semantic dedup design."
 tags: ["decisions", "architecture", "domain:knowledge", "topic:recall"]
 pinned: false
 date: "2026-05-23"
 updated: "2026-06-02"
 ---
+
+## Status Update (2026-06-29)
+
+> **SUPERSEDED (Option B).** The embedding overlay deferral was lifted on 2026-06-29. See [[decisions/decision-embedding-layer]] for the full design — hybrid BM25+dense (RRF), `@xenova/transformers` + `multilingual-e5-small`, content-hash chunk cache, flag-gated and A/B-gated. The gold-set precondition stated here was satisfied (`eval/gold.jsonl` + `eval/gold-heldout.jsonl` exist). Option B is no longer deferred.
 
 ## Status Update (2026-06-02)
 
@@ -14,7 +18,7 @@ updated: "2026-06-02"
 
 The implementation lives in `src/lib/recall.ts` (`buildLinkAdjacency()`, `LINK_DECAY = 0.3`) and is **OFF by default** (`enableLinkBoost: false` in `Bm25Options`). The live corpus has ~0 actual `[[wikilink]]` references, so enabling it would be a no-op. It activates via a single options flag and is fully unit-tested.
 
-**Option B (embedding overlay) remains deferred** — no material change to the reasoning below.
+**Option B (embedding overlay) — SUPERSEDED.** See [[decisions/decision-embedding-layer]] above.
 
 See `knowledge/recall-engine-v2.md` for the full v2 architecture including the link-aware mechanism.
 
