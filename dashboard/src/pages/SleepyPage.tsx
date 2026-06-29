@@ -8,7 +8,7 @@ import {
 } from '../hooks/useSleepyChat';
 import { BrandMark } from '../components/brand/BrandMark';
 import { DocContent } from '../components/sleepy/DocContent';
-import { AgentSlot } from '../components/sleepy/AgentSurface';
+import { AgentSlot, AgentControlsSlot } from '../components/sleepy/AgentSurface';
 import { MarkdownPreview } from '../components/core/MarkdownPreview';
 import { TypeIcon, SearchIcon, SparkIcon } from '../components/sleepy/TypeIcons';
 import type { Page } from '../components/layout/Sidebar';
@@ -432,6 +432,9 @@ export function SleepyPage({ onOpenDoc }: SleepyPageProps) {
           <div onClick={() => setModeTo('agent')} style={{ ...modeTabBase, ...(agentMode ? activeTab : idleTab) }}><span style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', fontWeight: 700 }}>&gt;_</span> Agent<span style={agentBetaBadge}>BETA</span></div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          {/* Agent-mode session controls (bypass default + new session) — owned by the
+              persistent AgentSurface, portaled into this anchor across from the tabs. */}
+          {agentMode && <AgentControlsSlot />}
           {showMeta && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontFamily: 'var(--font-mono)', fontSize: '11.5px', color: 'var(--text-6)', whiteSpace: 'nowrap' }}>
               <span style={{ color: 'var(--text-3)' }}>{rows.length}</span><span>results</span>

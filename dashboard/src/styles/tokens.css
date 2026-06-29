@@ -156,6 +156,14 @@
   --color-error: hsl(0 72% 51%);
   --color-error-subtle: hsl(0 72% 96%);
 
+  /* ─── Agent mascot mood palette (collapsed in-app agent states) ───
+     Theme-independent state hues for the docked Sleepy agent. `thinking` and
+     `working` reuse --color-warning / --color-success; these two have no semantic
+     equivalent, so they live here as the single source for both the dock UI
+     (AgentTerminal.css) and the mascot itself (SleepyMascot.css). */
+  --mood-sleeping: #7d8cff;   /* calm indigo */
+  --mood-waiting: #ff5fc4;    /* magenta — finished & waving for you */
+
   /* ─── Priority Colors ─── */
   --color-priority-critical: hsl(0 72% 51%);
   --color-priority-high: var(--color-caution);

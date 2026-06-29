@@ -49,8 +49,13 @@
   width: 18px;
   height: 26px;
   border-radius: 9px;
-  background: linear-gradient(180deg, #c4b6ff, #8b7bff);
-  box-shadow: 0 0 14px rgba(157, 140, 255, 0.7);
+  /* Eye colour is per-mood — each status owns a distinct hue + glow so the
+     collapsed agent's state is obvious at a glance. Defaults to brand violet. */
+  --eye-top: #c4b6ff;
+  --eye-bot: #8b7bff;
+  --eye-glow: rgba(157, 140, 255, 0.7);
+  background: linear-gradient(180deg, var(--eye-top), var(--eye-bot));
+  box-shadow: 0 0 14px var(--eye-glow);
   transform-origin: center;
 }
 .smascot-smile {
@@ -100,7 +105,85 @@
 .smascot-zzz span:nth-child(2) { font-size: 14px; right: -7px; animation-delay: 1s; }
 .smascot-zzz span:nth-child(3) { font-size: 17px; right: -15px; animation-delay: 2s; }
 
+/* Thinking (AMBER): pondering — eyes open, drifting UPWARD and glancing while a
+   soft brightness pulse runs. Deliberately unlike working's fast flat scan. */
+.smascot-thinking .smascot-eye {
+  --eye-top: #ffe0a0;
+  --eye-bot: #ffae3b;
+  --eye-glow: rgba(255, 174, 59, 0.8);
+  animation: smascot-think-pulse 1.5s ease-in-out infinite;
+}
+.smascot-thinking .smascot-eyes { animation: smascot-ponder 2.6s ease-in-out infinite; }
+.smascot-thinking .smascot-smile path { stroke: var(--color-warning); }
+.smascot-thinking .smascot-smile { transform: translateY(-1px) scaleY(0.85); }
+.smascot-thinking .smascot-face { animation-duration: 3.4s; }
+.smascot-thinking .smascot-halo {
+  animation-duration: 2.4s;
+  background: radial-gradient(circle, rgba(255, 174, 59, 0.3), transparent 66%);
+}
+
+/* Working (GREEN): heads-down and busy — quick bob, brighter pulsing halo, eyes
+   scanning back and forth like it's reading/typing. Reads as "still on it". */
+.smascot-working .smascot-eye {
+  --eye-top: #a8f7c8;
+  --eye-bot: #34d97a;
+  --eye-glow: rgba(74, 222, 128, 0.85);
+}
+.smascot-working .smascot-smile path { stroke: var(--color-success); }
+.smascot-working .smascot-face { animation-duration: 1.5s; }
+.smascot-working .smascot-halo {
+  animation-duration: 1.6s;
+  background: radial-gradient(circle, rgba(74, 222, 128, 0.32), transparent 66%);
+}
+.smascot-working .smascot-eyes { animation: smascot-scan 1.1s ease-in-out infinite; }
+
+/* Waving / WAITING (MAGENTA): done and happy — a curled-up smile, a gentle
+   whole-body tilt, and a little hand that waves hello. Paired with the
+   "finished" notification chip on the bubble. */
+.smascot-waving .smascot-eye {
+  --eye-top: #ffc4ec;
+  --eye-bot: #ff5fc4;
+  --eye-glow: rgba(255, 95, 196, 0.85);
+}
+.smascot-waving .smascot-smile path { stroke: var(--mood-waiting); }
+.smascot-waving .smascot-halo { background: radial-gradient(circle, rgba(255, 95, 196, 0.3), transparent 66%); }
+.smascot-waving .smascot-face { animation: smascot-greet 2.4s ease-in-out infinite; }
+.smascot-waving .smascot-smile { transform: translateY(1px) scaleY(1.15); }
+.smascot-hand {
+  position: absolute;
+  right: 6%;
+  bottom: 14%;
+  width: 13px;
+  height: 13px;
+  border-radius: 6px 6px 6px 2px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--mood-waiting) 55%, white), var(--mood-waiting));
+  box-shadow: 0 0 10px color-mix(in srgb, var(--mood-waiting) 75%, transparent);
+  transform-origin: bottom left;
+  animation: smascot-wave 1s ease-in-out infinite;
+}
+
 /* ── Keyframes ─────────────────────────────────────────────────────────── */
+@keyframes smascot-scan {
+  0%, 100% { transform: translateX(-2px); }
+  50% { transform: translateX(2px); }
+}
+/* Thinking: eyes drift up + glance side to side (looking up, pondering). */
+@keyframes smascot-ponder {
+  0%, 100% { transform: translate(-2px, -2.5px); }
+  50% { transform: translate(2px, -3.5px); }
+}
+@keyframes smascot-think-pulse {
+  0%, 100% { opacity: 0.68; }
+  50% { opacity: 1; }
+}
+@keyframes smascot-greet {
+  0%, 100% { transform: translateY(1px) rotate(-3deg); }
+  50% { transform: translateY(-3px) rotate(3deg); }
+}
+@keyframes smascot-wave {
+  0%, 100% { transform: rotate(-18deg); }
+  50% { transform: rotate(22deg); }
+}
 @keyframes smascot-bob {
   0%, 100% { transform: translateY(2px); }
   50% { transform: translateY(-4px); }
@@ -127,5 +210,7 @@
   .smascot-halo,
   .smascot-face,
   .smascot-eye,
+  .smascot-eyes,
+  .smascot-hand,
   .smascot-zzz span { animation: none !important; }
 }

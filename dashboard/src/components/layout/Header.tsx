@@ -22,6 +22,10 @@ function getStoredZoom(): number {
 
 function applyZoom(zoom: number) {
   document.documentElement.style.setProperty('--zoom', String(zoom));
+  // Broadcast so surfaces that don't read CSS font tokens can react — notably the
+  // embedded Agent terminal, whose xterm font size is set imperatively in JS and
+  // would otherwise ignore app zoom entirely.
+  window.dispatchEvent(new CustomEvent('dreamcontext-zoom', { detail: zoom }));
 }
 
 /** Active vault display name (passed by the launcher via `?vault=`). */

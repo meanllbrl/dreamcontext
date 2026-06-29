@@ -1,6 +1,6 @@
 import './SleepyMascot.css';
 
-export type SleepyMood = 'idle' | 'sleepy' | 'sleeps';
+export type SleepyMood = 'idle' | 'sleepy' | 'sleeps' | 'thinking' | 'working' | 'waving';
 
 /** Base design size the mascot is drawn at; `size` scales the whole thing. */
 const BASE = 92;
@@ -48,6 +48,8 @@ export function SleepyMascot({ mood = 'idle', size = BASE, compact = false }: Sl
             <path d="M12 8 Q48 42 84 8" stroke="#9d8cff" strokeWidth="5" strokeLinecap="round" />
           </svg>
         </div>
+        {/* A little waving hand — only when Sleepy is done and saying hi. */}
+        {mood === 'waving' && <span className="smascot-hand" aria-hidden />}
       </div>
     </div>
   );
