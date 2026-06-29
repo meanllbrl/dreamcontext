@@ -7,8 +7,8 @@ released_version: v0.8.7
 tags:
   - tasks
   - prioritization
-  - dashboard
-  - cli
+  - 'topic:dashboard'
+  - 'topic:cli'
 related_tasks:
   - rice-prioritization
 ---

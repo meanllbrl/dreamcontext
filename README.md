@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="public/image/dreamcontext.png" alt="dreamcontext" width="120" />
+  <img src="dashboard/public/favicon.svg" alt="dreamcontext" width="96" />
 </p>
 
-<h1 align="center">dreamcontext</h1>
+<h1 align="center">dream<span>context</span></h1>
 
 <p align="center">
   dreamcontext is the persistent brain for your AI agents — and for you.<br/>
@@ -13,11 +13,17 @@
 </p>
 
 <p align="center">
+  <strong>Meet Sleepy</strong> — ask your project's brain in plain language, or search it instantly.<br/>
+  Ranked hits, grounded answers, jump-to-source. <strong>Local · instant · no tokens.</strong>
+</p>
+
+<p align="center">
   <a href="#why">Why</a> &nbsp;&middot;&nbsp;
   <a href="#how-it-works">How It Works</a> &nbsp;&middot;&nbsp;
   <a href="#quick-start">Quick Start</a> &nbsp;&middot;&nbsp;
   <a href="#skills">Skills</a> &nbsp;&middot;&nbsp;
   <a href="#staying-up-to-date">Updating</a> &nbsp;&middot;&nbsp;
+  <a href="#sleepy--search--ask-your-brain">Sleepy</a> &nbsp;&middot;&nbsp;
   <a href="#dashboard">Dashboard</a> &nbsp;&middot;&nbsp;
   <a href="#desktop-app">Desktop App</a> &nbsp;&middot;&nbsp;
   <a href="#council">Council</a> &nbsp;&middot;&nbsp;
@@ -36,6 +42,18 @@
 </p>
 
 > **Under active development.** APIs and commands may change before v1.0.
+
+---
+
+## Sleepy — search & ask your brain
+
+**Sleepy** is the front door to your project's brain — the first thing you see in the dashboard. It turns the structured context dreamcontext maintains into something you can interrogate directly:
+
+- **Search** — type a query and get instantly-ranked hits across your knowledge, features, tasks, core and memory. Each hit shows the most relevant chunk and jumps straight to the source.
+- **Ask** — pose a question in plain language and Sleepy answers from your own brain, with the source documents cited inline.
+- **Chat** — go deeper with a real, multi-turn conversation: Sleepy runs a **Claude Code** session *inside your vault*, streamed live, so it can read across the whole project to answer follow-ups. It's **read-only by design** — planning permission mode plus disallowed action tools and a guard prompt mean it can never write, edit, or run commands — and you pick the depth: **normal** for fast answers, **intelligent** for harder questions.
+
+Search and the extractive Ask run on the same field-weighted **BM25** recall engine as `dreamcontext memory recall` — entirely **local, instant, and zero-token**; nothing is sent to an external model and the answer is grounded in your own files. Chat is the one surface that calls a model, and even then it only ever **reads** your project. The idle view shows your context "in orbit" — knowledge, features, tasks, core and memory circling the dream gem — so you can focus a single type or just start typing.
 
 ---
 
@@ -336,7 +354,7 @@ It also ships a built-in **“What is this?”** explainer page — a full landi
 <tr>
 <td width="50%">
 
-**Kanban board** with drag-and-drop, multi-select filters (status, priority, urgency, tags, version, and assignee on a cloud backend) with type-ahead search, sorting, and grouping by any field. A **sprint-aware version filter** distinguishes the current sprint, planning sprints, and released sprints, with set-current / mark-complete actions inline. The same tasks also render along the time axis: a **Timeline (Gantt)** of start→due ranges, a **Calendar**, an **Activity heatmap** of completion cadence, and an **Eisenhower matrix** for priority-urgency quadrant planning. Create tasks, update status, edit start/due dates and custom fields, and add changelog entries from a Notion-style detail panel.
+**Tasks board** — a drag-and-drop Kanban with **saved views** (each carrying its own persisted filter, sort, and grouping), a two-pane **include/exclude filter** menu (status, priority, tags, version, assignee) with type-ahead search, a **Versions popover** to scope to one or more planning versions, toggleable card **Properties** badges (due date, RICE score, assignees), and an **At-Risk alert** surfacing past-due or blocked tasks. View preferences persist two ways — shared and team-versioned in `overrides/board.json`, or private to your machine in `state/board.local.json` — so they survive the desktop app's per-launch port change. A **sprint-aware version filter** distinguishes current, planning, and released sprints, with set-current / mark-complete actions inline. The same tasks also render along the time axis: a **Timeline (Gantt)** of start→due ranges, a **Calendar**, an **Activity heatmap** of completion cadence, an **Eisenhower matrix** for priority-urgency quadrant planning, and a **RICE** prioritization view. Create tasks, update status, edit start/due dates and custom fields, and add changelog entries from a Notion-style detail panel.
 
 </td>
 <td width="50%">
@@ -371,7 +389,7 @@ It also ships a built-in **“What is this?”** explainer page — a full landi
 </tr>
 </table>
 
-Light and dark mode with system preference detection. Brand palette: purple-to-magenta gradient. Visby CF font with system font fallback.
+The sidebar groups every page into four job-based sections — **Workspace**, **Memory**, **Brain**, and **Control Panel** — under a single dream-gem brand lockup. Light and dark mode with system preference detection. Brand palette: violet, anchored by the folded-diamond dream-gem logo and a two-tone wordmark. Visby CF font with system font fallback.
 
 ## Desktop App
 
@@ -386,7 +404,7 @@ dreamcontext app status       # Show installed app version and state
 - **Multi-vault launcher.** The app lists every registered [vault](#federation) and opens each project in its **own window** — multi-vault is multi-window over one shared Node server, with each window pinned to its vault via a request header. A per-project status dot (green up-to-date / yellow needs-update / red folder-gone) lets you run `update` from the UI.
 - **Federation network view.** The launcher also renders your projects as an interactive board (Excalidraw-style cards) where you wire a **reads** relationship by clicking source → target: a violet wire means one project reads another's canonical memory **live** during recall (a reference, never a copy), gated by the target being Readable. A node panel and an always-on "Connections" list spell out in plain language who reads whom, each removable with one click. (Copy-based "sync" is parked on the roadmap — federation only reads, live.)
 - **In-app onboarding, no terminal.** A quiz-style wizard creates a brand-new project (native folder picker) or initializes an existing folder, scaffolds `_dream_context/`, runs `setup`, and best-effort installs the global CLI. It's deterministic and LLM-free; the success screen hands you a prompt to paste into Claude Code for the rich enrichment pass.
-- **Sleepy — notch quick-capture _(beta)_.** A global-hotkey companion that drops a transparent notch panel over whatever you're doing, with an animated mascot whose mood follows your sleep debt. Pick a vault, type a thought, and choose a mode:
+- **Sleepy — notch quick-capture _(beta)_.** Off by default — enable it in dashboard Settings → Sleepy. A global-hotkey companion that drops a transparent notch panel over whatever you're doing, with an animated mascot whose mood follows your sleep debt. Pick a vault, type a thought, and choose a mode:
   - **Learn** — saves the note to project memory, then enriches it.
   - **Ask** — one-shot Q&A about the project; nothing is saved.
   - **Sleep** — triggers a full consolidation cycle for that vault from the notch.
@@ -795,7 +813,7 @@ dreamcontext install-claude-md           # Legacy alias: CLAUDE.md only
 - **Claude Code**: full support via skill, core sub-agents (initializer, explore, the iterative `dreamcontext-deep-research` synthesis skill, the three primary RemSleep specialists — sleep-tasks, sleep-state, sleep-product — plus conditional sleep-federation and sleep-migration specialists), 7 hooks, plus optional pack sub-agents (council persona/synthesizer, multi-review specialists, goal-skill orchestrators)
 - **Codex**: project-level skills (`.agents/skills`), managed `AGENTS.md`, native `.codex/agents/*.toml`, and managed `.codex/config.toml` hooks (best-effort parity where event semantics differ)
 - **Desktop app (macOS beta)**: native Tauri 2 multi-vault launcher with in-app onboarding and the Sleepy notch quick-capture companion — wraps the same dashboard server (`dreamcontext app install`)
-- **Web Dashboard**: local UI with Kanban, Core editor, Knowledge, Features, Brain graph, Sleep tracker, and Council Hall (ships in the package)
+- **Web Dashboard**: local UI with Sleepy search/ask/chat, Tasks board, Core editor, Knowledge, Features, Brain graph, Sleep tracker, and Council Hall (ships in the package)
 - **Obsidian**: `_dream_context/` can be opened as an Obsidian vault; the directory is scaffolded with curated vault settings at `dreamcontext init` time
 
 More agents coming soon.

@@ -4,39 +4,7 @@
   flex-direction: column;
 }
 
-.knowledge-search {
-  width: 100%;
-  max-width: 400px;
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-bg);
-  font-size: var(--font-size-sm);
-  margin-bottom: var(--space-4);
-  transition: border-color var(--transition-fast);
-}
-
-.knowledge-search:focus {
-  border-color: var(--color-accent);
-  outline: none;
-}
-
-.knowledge-layout {
-  display: flex;
-  gap: var(--space-4);
-  flex: 1;
-  min-height: 0;
-}
-
-.knowledge-list {
-  width: 320px;
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  overflow-y: auto;
-}
-
+/* ── Folder tree (browse surface) ────────────────────────────────────── */
 .knowledge-folder {
   display: flex;
   flex-direction: column;
@@ -49,14 +17,15 @@
   gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-bg-secondary);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-tertiary);
   cursor: pointer;
-  transition: border-color var(--transition-fast);
+  transition: border-color var(--transition-fast), background var(--transition-fast);
 }
 
 .knowledge-folder-header:hover {
   border-color: var(--color-border-hover);
+  background: var(--color-bg-secondary);
 }
 
 .knowledge-folder-chevron {
@@ -75,10 +44,13 @@
 
 .knowledge-folder-count {
   font-size: var(--font-size-xs);
-  color: var(--color-text-tertiary);
-  background: var(--color-bg-tertiary);
-  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
   padding: 0 var(--space-2);
+  min-width: 22px;
+  text-align: center;
 }
 
 .knowledge-folder-items {
@@ -90,22 +62,26 @@
   border-left: 1px solid var(--color-border);
 }
 
+/* ── Knowledge card ──────────────────────────────────────────────────── */
 .knowledge-card {
   padding: var(--space-3);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   text-align: left;
-  background: var(--color-bg);
-  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  background: var(--color-bg-secondary);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
 }
 
 .knowledge-card:hover {
   border-color: var(--color-border-hover);
+  box-shadow: var(--shadow-md);
+  transform: translateX(2px);
 }
 
 .knowledge-card--active {
   border-color: var(--color-accent);
-  box-shadow: 0 0 0 1px var(--color-accent);
+  box-shadow: inset 3px 0 0 0 var(--color-accent), var(--shadow-md);
+  background: var(--color-accent-soft);
 }
 
 .knowledge-card-header {
@@ -169,18 +145,37 @@
   flex-wrap: wrap;
 }
 
-.knowledge-detail {
-  flex: 1;
-  min-width: 0;
-}
-
+/* ── Detail pane ─────────────────────────────────────────────────────── */
 /* Inline preview pane: let an Excalidraw board fill the detail area (the
    `.core-viewer` is already a full-height flex column) instead of collapsing to
-   its 420px min-height — so the inline Preview fills nicely, the same way the
-   full-screen overlay does via `.fullscreen-overlay-body > :only-child`. */
-.knowledge-detail .core-viewer > .excalidraw-preview {
+   its 420px min-height. The detail now lives inside the BrainSearch widget's
+   right column (`.bsearch-detail`). */
+.bsearch-detail .core-viewer > .excalidraw-preview {
   flex: 1;
   min-height: 0;
+}
+
+.knowledge-detail-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  height: 100%;
+  min-height: 320px;
+  text-align: center;
+  color: var(--color-text-tertiary);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-xl);
+  background: var(--color-bg-secondary);
+}
+
+.knowledge-detail-empty-icon { color: var(--color-border-hover); }
+.knowledge-detail-empty p {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  max-width: 280px;
+  margin: 0;
 }
 
 /* Expand-to-fullscreen toggle next to the File/Preview tabs. */
@@ -200,16 +195,4 @@
 .core-expand-btn:hover {
   background: var(--color-bg-tertiary);
   color: var(--color-text);
-}
-
-/* CSS @media cannot use custom properties in this Vite setup, so 1024 is a
-   documented literal representing the "tablet" breakpoint. */
-@media (max-width: 1024px) {
-  .knowledge-layout {
-    flex-direction: column;
-  }
-
-  .knowledge-list {
-    width: 100%;
-  }
 }

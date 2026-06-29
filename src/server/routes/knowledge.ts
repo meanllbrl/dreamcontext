@@ -174,6 +174,9 @@ export async function handleKnowledgeGet(
       date: data.date ?? '',
       pinned: data.pinned === true,
       content,
+      // mtime lets the dashboard compare the rendered version against the polled
+      // list and live-refetch this doc only when its file actually changed.
+      mtime: statSync(filePath).mtimeMs,
     },
   });
 }
@@ -309,6 +312,7 @@ export async function handleKnowledgeUpdate(
       date: data.date ?? '',
       pinned: data.pinned === true,
       content,
+      mtime: statSync(filePath).mtimeMs,
     },
   });
 }

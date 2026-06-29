@@ -13,6 +13,57 @@
   transition: width var(--transition-normal);
 }
 
+/* Brand lockup at the top of the rail. */
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3) var(--space-3);
+  margin-bottom: var(--space-1);
+  border-bottom: 1px solid var(--color-border);
+  user-select: none;
+}
+
+.sidebar-brand-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.sidebar-brand-word {
+  font-family: var(--font-family-display);
+  font-weight: var(--font-weight-bold);
+  font-size: 15px;
+  letter-spacing: -0.015em;
+  color: var(--color-text);
+  white-space: nowrap;
+}
+
+.sidebar-brand-word span {
+  color: var(--color-accent);
+}
+
+.sidebar-brand-vault {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar--collapsed .sidebar-brand {
+  justify-content: center;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.sidebar--collapsed .sidebar-brand-text {
+  display: none;
+}
+
 /* Pin the "What is this?" entry to the bottom of the rail. */
 .sidebar-footer {
   margin-top: auto;
@@ -195,21 +246,42 @@
   background: var(--color-accent);
 }
 
-.sidebar-item--active .sidebar-icon {
-  color: var(--color-accent);
+/* Shared icon badge — the rounded, tinted box every rail icon sits in. This is
+   the container that used to belong to Sleepy alone; promoting it to all items
+   makes the custom SVG family read as one set (and lets Sleepy's eyes share it). */
+.sidebar-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-tertiary);
+  box-shadow: 0 0 0 1px var(--color-border);
+  color: var(--color-text-tertiary);
+  transition:
+    color var(--transition-fast),
+    background var(--transition-fast),
+    box-shadow var(--transition-fast);
 }
 
-.sidebar-icon {
-  font-size: var(--font-size-base);
-  width: 18px;
-  text-align: center;
-  flex-shrink: 0;
-  color: var(--color-text-tertiary);
-  transition: color var(--transition-fast);
+.sidebar-icon svg {
+  display: block;
 }
 
 .sidebar-item:hover .sidebar-icon {
   color: var(--color-text);
+  box-shadow: 0 0 0 1px var(--color-border-strong, var(--color-border));
+}
+
+/* Active item: the badge lights up in the accent so the current section is
+   unmistakable even at a glance in the collapsed icon-only rail. */
+.sidebar-item--active .sidebar-icon {
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
+  box-shadow: 0 0 0 1px var(--color-accent);
 }
 
 .sidebar-label {
@@ -217,4 +289,43 @@
   overflow: hidden;
   text-overflow: ellipsis;
   letter-spacing: var(--letter-spacing-body);
+}
+
+/* ─── Lab tag ─────────────────────────────────────────────────────────────── */
+/* A tiny "Lab" chip marking experimental surfaces (e.g. Council). Mirrors the
+   Settings BETA badge so the two read as the same family of "not-final" markers.
+   It rides at the trailing edge of the nav item and disappears with the label
+   when the rail collapses to icon-only. */
+.sidebar-lab-tag {
+  margin-left: auto;
+  flex-shrink: 0;
+  padding: 0 5px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: var(--font-weight-bold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  line-height: 1.6;
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 35%, transparent);
+}
+
+.sidebar--collapsed .sidebar-lab-tag {
+  display: none;
+}
+
+/* Sleepy rail mascot — the two eyes blink, mirroring the Ask-idle face. */
+@keyframes sidebarSleepyBlink {
+  0%, 90%, 100% { transform: scaleY(1); }
+  95% { transform: scaleY(0.12); }
+}
+.sidebar-sleepy-eye {
+  width: 4px;
+  height: 7px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #c4b6ff, #8b7bff);
+  transform-origin: center;
+  animation: sidebarSleepyBlink 4.4s ease-in-out infinite;
 }

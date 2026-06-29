@@ -257,6 +257,26 @@ describe('detectPatterns — REFLECTION_NOISE filters digest chrome', () => {
     // pipeline is not noise
     expect(terms).toContain('pipeline');
   });
+
+  it('does not surface sub-agent/tooling coordination chrome (task_OwbFN_IV)', () => {
+    // These are the stemmed tokens that leak from task-notification XML,
+    // agent-resume JSON, tool-use ids, and skill-loader headers. They flooded
+    // reflect candidates before the bookmark-misclassification fix. They must
+    // never surface as recurring patterns even at the session threshold.
+    const noise = ['toolu', 'agentid', 'subagent', 'notification', 'success', 'resum'];
+    const corpus: CorpusDoc[] = [
+      makeBookmark('a', [...noise, 'pipeline']),
+      makeBookmark('b', [...noise, 'pipeline']),
+      makeBookmark('c', [...noise, 'pipeline']),
+    ];
+    const result = detectPatterns(corpus, { minSessions: 3 });
+    const terms = result.candidates.map((c) => c.term);
+    for (const n of noise) {
+      expect(terms.some((t) => t === n || t.split(' ').includes(n))).toBe(false);
+    }
+    // a real domain term alongside the chrome still surfaces
+    expect(terms).toContain('pipeline');
+  });
 });
 
 // ── Bounded output tests (AC4) ─────────────────────────────────────────────────

@@ -11,7 +11,7 @@ import { handleSleepGet, handleSleepUpdate } from './routes/sleep.js';
 import { handleCoreList, handleCoreGet, handleCoreUpdate } from './routes/core.js';
 import { handleKnowledgeList, handleKnowledgeGet, handleKnowledgeUpdate, handleKnowledgeAssets } from './routes/knowledge.js';
 import { handleFeaturesList, handleFeaturesGet } from './routes/features.js';
-import { handleChangelogGet, handleReleasesGet, handleUnreleasedGet, handleReleaseGet, handleReleasesCreate, handleReleasesUpdate, handleActiveVersionGet, handleActiveVersionSet } from './routes/changelog.js';
+import { handleChangelogGet, handleReleasesGet, handleUnreleasedGet, handleReleaseGet, handleReleasesCreate, handleReleasesUpdate, handleReleasesDelete, handleActiveVersionGet, handleActiveVersionSet } from './routes/changelog.js';
 import { handleGraphGet, handleGraphContentGet } from './routes/graph.js';
 import { handleCouncilList, handleCouncilGet, handleCouncilResearchGet } from './routes/council.js';
 import { handleConfigGet, handleConfigUpdate } from './routes/config.js';
@@ -40,12 +40,25 @@ import {
   handleSleepyConfigSet,
 } from './routes/launcher.js';
 import { handleBrainSettingsGet, handleBrainSettingsPut } from './routes/ui-settings.js';
+import { handleBoardGet, handleBoardSharedPut, handleBoardLocalPut } from './routes/board.js';
+import {
+  handleSleepyChatSend,
+  handleSleepyChatStream,
+  handleSleepyChatHistory,
+  handleSleepyChatReset,
+} from './routes/sleepy-chat.js';
+import {
+  handleAgentCapabilities,
+  handleOpenTerminal,
+  attachAgentTerminal,
+} from './routes/agent-terminal.js';
 import { handleConnectionsList, handleConnectionsCreate, handleConnectionsDelete } from './routes/connections.js';
 import { handleFederationInboxGet, handleFederationSyncPost } from './routes/federation.js';
 import { handlePacksGet } from './routes/packs.js';
 import { handlePackInstall, handlePackUninstall } from './routes/packs-install.js';
 import { handleVersionCheckGet } from './routes/version-check.js';
 import { handleTaxonomyGet } from './routes/taxonomy.js';
+import { handleRecallGet, handleRecallHaikuGet } from './routes/recall.js';
 import { listVaults } from '../lib/vaults.js';
 
 export interface ServerOptions {
@@ -109,6 +122,11 @@ function buildRouter(): Router {
   router.get('/api/features', handleFeaturesList);
   router.get('/api/features/:slug', handleFeaturesGet);
 
+  // Recall — local BM25 search across the brain (powers the Sleepy view).
+  // The /haiku variant adds intent-aware, LLM-filtered recall for Ask mode.
+  router.get('/api/recall/haiku', handleRecallHaikuGet);
+  router.get('/api/recall', handleRecallGet);
+
   // Graph
   router.get('/api/graph', handleGraphGet);
   router.get('/api/graph/content', handleGraphContentGet);
@@ -148,6 +166,21 @@ function buildRouter(): Router {
   router.get('/api/sleepy/video', handleSleepyVideo);
   router.get('/api/sleepy/anim', handleSleepyAnim);
 
+  // Sleepy "Ask" — a real, read-only Claude Code conversation in the active
+  // vault, streamed over SSE. /stream is registered before the bare /chat GET
+  // (distinct exact paths; explicit order keeps intent clear).
+  router.get('/api/sleepy/chat/stream', handleSleepyChatStream);
+  router.post('/api/sleepy/chat/reset', handleSleepyChatReset);
+  router.get('/api/sleepy/chat', handleSleepyChatHistory);
+  router.post('/api/sleepy/chat', handleSleepyChatSend);
+
+  // Agent terminal — real interactive Claude Code in the vault (desktop-only).
+  // /capabilities is vault-agnostic; /open-terminal needs the active vault.
+  // The embedded terminal itself is a WebSocket upgrade (see attachAgentTerminal),
+  // not a router route.
+  router.get('/api/agent/capabilities', handleAgentCapabilities);
+  router.post('/api/agent/open-terminal', handleOpenTerminal);
+
   // Vaults + federation connections (issue #25 P2)
   router.get('/api/vaults', handleVaultsGet);
   router.get('/api/connections', handleConnectionsList);
@@ -168,6 +201,13 @@ function buildRouter(): Router {
   router.get('/api/brain-settings', handleBrainSettingsGet);
   router.put('/api/brain-settings', handleBrainSettingsPut);
 
+  // Tasks-board preferences (saved views) — split persistence:
+  //   shared → overrides/board.json (version-controlled, "save for all")
+  //   local  → state/board.local.json (git-ignored, "save for yourself")
+  router.get('/api/board', handleBoardGet);
+  router.put('/api/board/shared', handleBoardSharedPut);
+  router.put('/api/board/local', handleBoardLocalPut);
+
   // Version check
   router.get('/api/version-check', handleVersionCheckGet);
 
@@ -185,12 +225,13 @@ function buildRouter(): Router {
   router.get('/api/releases/:version', handleReleaseGet);
   router.post('/api/releases', handleReleasesCreate);
   router.patch('/api/releases/:version', handleReleasesUpdate);
+  router.delete('/api/releases/:version', handleReleasesDelete);
 
   return router;
 }
 
 /** API path prefixes that do NOT need a vault — they work in launcher mode. */
-const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/vaults', '/api/launcher', '/api/sleepy'];
+const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/agent/capabilities'];
 
 function isVaultAgnostic(pathname: string): boolean {
   return VAULT_AGNOSTIC_PREFIXES.some(
@@ -288,6 +329,10 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
         sendError(res, 500, 'internal_error', 'Internal server error');
       }
     });
+
+    // Agent terminal: bridge a WebSocket to a node-pty running real Claude Code.
+    // Self-gates (desktop + loopback + node-pty present); a no-op otherwise.
+    attachAgentTerminal(server);
 
     server.on('error', (err: NodeJS.ErrnoException) => {
       if (err.code === 'EADDRINUSE') {

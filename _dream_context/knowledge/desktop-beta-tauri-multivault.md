@@ -10,19 +10,24 @@ description: >-
   pattern, auto-CLI-install, hasContext skip-quiz for pre-initialized folders),
   the Faz 1 GitHub Actions release pipeline (E2E verified v0.8.3+), the
   homebrew-vs-nvm CLI resolution gotcha, the Sleepy notch quick-capture companion
-  (global hotkey, transparent notch window, animated WebP mascot with mood
-  thresholds, Learn/Ask/Sleep mode toggle, Sonnet enrichment with Markdown
-  rendering, interactive-login-shell claude PATH fix, tracked enrichment status UI,
-  dead-vault filtering, focus/blur UX, asset bundling), the Launcher per-project
-  status indicator (green/yellow/red, upgrade-vs-update distinction), the
-  content-scoped drift nag (asset-drift.ts computeUsedAssetsChanged +
-  asset-drift-cache.ts cacheConfidentlyClean, detached refresh-asset-drift hook,
-  fails-open suppression gate), the ensure-dashboard app-installed auto-open
-  suppression (readAppManifest != null exit), the interactive federation graph
-  (react-force-graph-2d, read-only violet edges, drag-to-connect, active-edge
-  particles), brain-settings server persistence (vault-scoped .brain-settings.json),
-  and the Federation Settings panel redesign (plain-language explainers, direction
-  labels).
+  (global hotkey; non-activating NSPanel via tauri-nspanel v2; hover-to-open via
+  Rust CoreGraphics cursor poll; coded SleepyMascot.tsx replacing animated WebP;
+  PanelEnabled opt-in default false; Learn/Ask/Sleep mode toggle; Sonnet enrichment
+  with Markdown rendering; interactive-login-shell claude PATH fix; tracked
+  enrichment status UI; dead-vault filtering; focus/blur UX), the in-app Agent
+  terminal (xterm.js + @xterm/addon-webgl + node-pty WS bridge; session persistence
+  via display:none hoist above App.tsx page switch; bypassPermissions opt-in;
+  drag-to-split; desktop-only DREAMCONTEXT_DESKTOP gate; dev-workflow note: only
+  Rust/lib.rs changes need tauri build, dashboard changes just need npm run build +
+  app relaunch), the Launcher per-project status indicator (green/yellow/red,
+  upgrade-vs-update distinction), the content-scoped drift nag (asset-drift.ts
+  computeUsedAssetsChanged + asset-drift-cache.ts cacheConfidentlyClean, detached
+  refresh-asset-drift hook, fails-open suppression gate), the ensure-dashboard
+  app-installed auto-open suppression (readAppManifest != null exit), the
+  interactive federation graph (react-force-graph-2d, read-only violet edges,
+  drag-to-connect, active-edge particles), brain-settings server persistence
+  (vault-scoped .brain-settings.json), and the Federation Settings panel redesign
+  (plain-language explainers, direction labels).
 type: knowledge
 tags:
   - architecture
@@ -31,7 +36,7 @@ tags:
   - topic:federation
 pinned: false
 created: '2026-06-13'
-updated: '2026-06-15'
+updated: '2026-06-29'
 released_version: v0.8.6
 ---
 
@@ -405,6 +410,18 @@ Sleepy section moved to the **bottom** of Settings (after Connections) and carri
 `BETA` badge (`<span class="settings-beta-badge">`) styled in the project's accent
 colour (`--color-accent`, violet).
 
+**Disabling closes the whole notch (not just the hotkey).** The notch presence has
+three Rust-owned entry points — the global hotkey, the always-on perch, and
+hover-to-open — but `SleepyConfig.enabled` originally gated only the hotkey
+(`applySleepyHotkey` unregisters). So a disabled Sleepy still showed the perch and
+opened on hover. Fix: a `PanelEnabled` atomic in `lib.rs` (default **false** — Sleepy
+is opt-in, so the notch never appears before it's enabled). The launcher mirrors the
+persisted flag to Rust via a `sleepy:enabled` event emitted from `applySleepyHotkey`
+(which already runs on mount, cross-window `storage` sync, and Settings change). Rust's
+`apply_sleepy_enabled`: enabled → `show_perch`; disabled → hide any shown capture panel
++ `hide_perch`. Both `show_perch` and the hover watcher are gated on `is_enabled`, and
+`build_perch_panel` now builds the perch hidden (no startup `order_front`).
+
 ### Modes: Learn / Ask / Sleep
 
 A segmented toggle in the capture bar header selects the interaction mode:
@@ -596,6 +613,51 @@ on mount. Writes go to both localStorage (flash-free instant render) AND the ser
 surface — opening a browser tab would be redundant and confusing. The hook now
 exits silently when `readAppManifest() !== null` (i.e. `~/.dreamcontext/app.json`
 exists). The check is synchronous and cheap; no-op on non-app machines.
+
+## In-app Agent Terminal (2026-06-28)
+
+A full interactive Claude Code terminal embedded in the Sleepy page of the dashboard. Desktop-only; never ships in the npm package.
+
+### Architecture
+
+```
+GET /api/agent/capabilities  →  { available: true }  (DREAMCONTEXT_DESKTOP gate)
+GET /api/agent/capabilities  →  { available: false } (npm/browser build)
+
+WS /api/agent/terminal?vault=<name>&bypass=<bool>
+  ← loopback-only (strict remoteAddress check)
+  → node-pty: $SHELL -ilc 'exec claude [--dangerously-skip-permissions]'
+       cwd = vault project root
+  ← AgentTerminal.tsx (xterm.js + @xterm/addon-webgl + @xterm/addon-fit)
+```
+
+### Key decisions
+
+**Session persistence (display:none hoist):** `App.tsx` uses `switch (nav.page)` returning one mounted page, so navigating away unmounts `SleepyPage` → kills `AgentTerminal` → closes WebSocket + PTY. Fix: `AgentTerminal` is instantiated ABOVE the `switch` as a single long-lived owner, toggled via `display:none` (never unmounted) when Sleepy is not active. The xterm DOM node is re-shown and re-fit (`fitAddon.fit()`) on reveal. Tear-down only on explicit Close/Restart or app quit.
+
+**WebGL renderer + Sometype Mono font metrics:** `@xterm/addon-webgl` gives GPU-composited, crisp-at-any-DPR text (comparable to Zed's terminal). Automatic fallback to the default canvas renderer on WebGL context-loss. The Sometype Mono font (regular + 600 weight) must be fully loaded and committed to `term.open()` before the WebGL addon is initialized — loading the font after `open()` results in thin/stretched glyphs because the glyph atlas is already committed to the wrong cell width. Fix: load via `FontFaceSet.load()`, await, then call `term.open()`, then attach the WebGL addon.
+
+**bypassPermissions (default OFF):** The terminal runs real `claude` with full file-write capability. The bypass flag is opt-in; when armed, a standing orange warning chip is shown and the WS query param `bypass=true` passes `--dangerously-skip-permissions` to the claude spawn. Read-only Chat (Phase 3, `--permission-mode plan`) is always available and unaffected.
+
+**Drag-to-split:** Dragging one agent tab onto another (or onto the terminal body) creates a side-by-side split layout. The drag-over handler gates `preventDefault()` on `dataTransfer.types` (available during dragover), not on React state (not settled on first hover). `⌘D` and the `⊟` button also split.
+
+### Key files
+
+- `src/server/routes/agent-terminal.ts` — `attachAgentTerminal(server)`: WS upgrade + node-pty spawn; `GET /api/agent/capabilities`; `POST /api/agent/open-terminal` (osascript fallback for external terminal).
+- `src/server/index.ts` — `attachAgentTerminal(server)` wired at bottom.
+- `dashboard/src/components/sleepy/AgentTerminal.tsx` — xterm.js + `@xterm/addon-webgl` + `@xterm/addon-fit`; `readXtermTheme()` maps design tokens to xterm theme; dynamic Sometype Mono font load before `term.open()`; drag-to-split logic.
+- `dashboard/src/components/sleepy/AgentTerminal.css`.
+- `dashboard/src/pages/SleepyPage.tsx` — `mode: 'search' | 'ask' | 'agent'` tabs; `<AgentTerminal />` rendered in agent mode. **AgentTerminal hoisted above `App.tsx` page switch.**
+
+### Desktop dev workflow note
+
+**Dashboard/CSS/React/server-route changes do NOT need a Tauri rebuild.** The app's Rust shell spawns the global CLI (`find_global_cli` → `$SHELL -lc 'command -v dreamcontext'`) and serves this repo's `dist/` on a random loopback port. The fast loop:
+1. `npm run build` (builds dashboard → dist/dashboard, then CLI → dist/index.js via tsup)
+2. **⌘Q + reopen the desktop app** (new random port → new origin → empty WKWebView cache → serves the freshly built dist)
+
+Do NOT use `⌘R` (refresh): WKWebView's document cache retains the OLD bundle at the same loopback port. A new launch picks a new port, bypassing the cache entirely.
+
+**Only Rust/lib.rs changes require** a full `tauri build` + `dreamcontext app install` (rebuilds the native Rust binary). Examples: changes to `NSPanel` behaviour, `find_global_cli`, `apply_sleepy_enabled`, new Tauri commands.
 
 ## Status / deferred
 

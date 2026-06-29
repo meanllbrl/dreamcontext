@@ -44,10 +44,14 @@ export function CorePage({ onNavigateTaxonomy }: CorePageProps = {}) {
     queryFn: () => api.get<{ files: CoreFile[] }>('/core'),
   });
 
+  // Land on the first file instead of an empty pane. `selected` only holds an
+  // explicit user choice; until then `active` falls back to the first file.
+  const active = selected ?? filesData?.files?.[0]?.filename ?? null;
+
   const { data: fileDetail } = useQuery({
-    queryKey: ['core', selected],
-    queryFn: () => api.get<CoreFileDetail>(`/core/${selected}`),
-    enabled: !!selected,
+    queryKey: ['core', active],
+    queryFn: () => api.get<CoreFileDetail>(`/core/${active}`),
+    enabled: !!active,
   });
 
   const saveFile = useMutation({
@@ -67,8 +71,8 @@ export function CorePage({ onNavigateTaxonomy }: CorePageProps = {}) {
   };
 
   const handleSave = () => {
-    if (selected && editContent !== null) {
-      saveFile.mutate({ filename: selected, content: editContent });
+    if (active && editContent !== null) {
+      saveFile.mutate({ filename: active, content: editContent });
     }
   };
 
@@ -78,10 +82,10 @@ export function CorePage({ onNavigateTaxonomy }: CorePageProps = {}) {
   const files = filesData?.files ?? [];
 
   const renderContent = () => {
-    if (!selected || !fileDetail) return null;
+    if (!active || !fileDetail) return null;
 
     // taxonomy.json has a dedicated page — short-circuit with a navigation prompt.
-    if (selected === 'taxonomy.json' && onNavigateTaxonomy) {
+    if (active === 'taxonomy.json' && onNavigateTaxonomy) {
       return (
         <div className="core-taxonomy-link">
           <p className="core-taxonomy-link-hint">
@@ -95,13 +99,13 @@ export function CorePage({ onNavigateTaxonomy }: CorePageProps = {}) {
     }
 
     if (viewTab === 'preview') {
-      if (selected.endsWith('.sql') && fileDetail.content) {
+      if (active.endsWith('.sql') && fileDetail.content) {
         return <SqlPreview content={fileDetail.content} />;
       }
-      if (selected.endsWith('.json') && fileDetail.data) {
-        return <JsonPreview data={fileDetail.data} filename={selected} />;
+      if (active.endsWith('.json') && fileDetail.data) {
+        return <JsonPreview data={fileDetail.data} filename={active} />;
       }
-      if (selected.endsWith('.md') && fileDetail.content) {
+      if (active.endsWith('.md') && fileDetail.content) {
         return <MarkdownPreview content={fileDetail.content} frontmatter={fileDetail.frontmatter} />;
       }
     }
@@ -115,13 +119,12 @@ export function CorePage({ onNavigateTaxonomy }: CorePageProps = {}) {
 
   return (
     <div className="core-page">
-      <h1 className="page-title">{t('core.title')}</h1>
       <div className="core-layout">
         <div className="core-list">
           {files.map((file, index) => (
             <button
               key={file.filename}
-              className={`core-list-item ${selected === file.filename ? 'core-list-item--active' : ''} animate-stagger animate-stagger-${Math.min(index + 1, 8)}`}
+              className={`core-list-item ${active === file.filename ? 'core-list-item--active' : ''} animate-stagger animate-stagger-${Math.min(index + 1, 8)}`}
               onClick={() => { setSelected(file.filename); setIsEditing(false); setViewTab('preview'); }}
             >
               <span className="core-list-name">{file.name}</span>
@@ -131,15 +134,15 @@ export function CorePage({ onNavigateTaxonomy }: CorePageProps = {}) {
         </div>
 
         <div className="core-detail">
-          {!selected && (
+          {!active && (
             <div className="core-empty">Select a file to view.</div>
           )}
-          {selected && fileDetail && !isEditing && (
+          {active && fileDetail && !isEditing && (
             <div className="core-viewer">
               <div className="core-viewer-header">
                 <h2 className="core-viewer-title">{fileDetail.filename}</h2>
                 <div className="core-viewer-actions">
-                  {hasPreview(selected) && (
+                  {hasPreview(active) && (
                     <div className="core-tabs">
                       <button
                         className={`core-tab ${viewTab === 'file' ? 'core-tab--active' : ''}`}
@@ -163,10 +166,10 @@ export function CorePage({ onNavigateTaxonomy }: CorePageProps = {}) {
               {renderContent()}
             </div>
           )}
-          {selected && isEditing && (
+          {active && isEditing && (
             <div className="core-editor">
               <div className="core-editor-header">
-                <h2 className="core-viewer-title">Editing: {selected}</h2>
+                <h2 className="core-viewer-title">Editing: {active}</h2>
                 <div className="core-editor-actions">
                   <button className="btn btn--ghost" onClick={() => setIsEditing(false)}>Cancel</button>
                   <button className="btn btn--primary" onClick={handleSave} disabled={saveFile.isPending}>

@@ -13,6 +13,12 @@
 
 .shell-main {
   flex: 1;
+  /* Flex items default to min-width:auto and refuse to shrink below their
+     content's min-content width. The Tasks board's nowrap toolbar has a large
+     min-content width, so without this the whole board overflows the window
+     horizontally (columns scroll, first column clips under the sidebar).
+     min-width:0 lets shell-main shrink to the available width instead. */
+  min-width: 0;
   overflow-y: auto;
   padding: var(--space-4);
   background: transparent;

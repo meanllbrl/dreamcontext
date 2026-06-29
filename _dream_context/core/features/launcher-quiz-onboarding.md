@@ -5,7 +5,7 @@ created: '2026-06-13'
 updated: '2026-06-21'
 released_version: v0.8.7
 tags:
-  - desktop
+  - 'topic:desktop'
   - onboarding
   - backend
   - frontend

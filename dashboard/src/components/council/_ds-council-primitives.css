@@ -1,0 +1,102 @@
+/* Extracted from src/pages/CouncilPage.css by /design-sync — standalone styles for the synced council primitives (StatusBadge, ModelBadge, StatTile, PersonaAvatar). Keep in sync if those components' classes change. */
+
+.council-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-full);
+  color: white;
+  font-weight: var(--font-weight-bold);
+  line-height: 1;
+  flex-shrink: 0;
+  box-shadow: inset 0 0 0 1px hsl(0 0% 100% / 0.2);
+}
+
+.council-model-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 5px;
+  border: 1px solid;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.04em;
+  line-height: 1.5;
+  text-transform: lowercase;
+  white-space: nowrap;
+}
+
+.council-aspect {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  padding: 0 5px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  line-height: 1.5;
+}
+
+.council-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-full);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: var(--font-weight-medium);
+  letter-spacing: 0.04em;
+}
+
+.council-status--sm { font-size: 10px; }
+
+.council-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.council-status--running  { background: hsl(220 90% 56% / 0.12); color: hsl(220 90% 45%); }
+.council-status--running .council-status-dot { background: hsl(220 90% 56%); }
+.council-status--complete { background: hsl(142 71% 40% / 0.12); color: hsl(142 71% 35%); }
+.council-status--complete .council-status-dot { background: hsl(142 71% 40%); }
+.council-status--synth    { background: var(--color-accent-soft); color: var(--color-accent); }
+.council-status--synth .council-status-dot { background: var(--color-accent); }
+.council-status--pending  { background: var(--color-bg-tertiary); color: var(--color-text-secondary); }
+.council-status--pending .council-status-dot { background: var(--color-text-tertiary); }
+
+/* Stat tile (used on Overview) */
+.council-stat-tile {
+  padding: 4px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  text-align: center;
+}
+
+.council-stat-tile--warning { border-color: hsl(38 92% 50% / 0.3);  background: hsl(38 92% 50% / 0.04); }
+.council-stat-tile--dissent { border-color: hsl(280 70% 55% / 0.3); background: hsl(280 70% 55% / 0.04); }
+.council-stat-tile--brand   { border-color: var(--color-accent-soft); background: var(--color-accent-soft); }
+
+.council-stat-value {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-bold);
+  color: var(--color-text);
+  line-height: 1;
+}
+
+.council-stat-tile--warning .council-stat-value { color: hsl(38 92% 40%); }
+.council-stat-tile--dissent .council-stat-value { color: hsl(280 70% 48%); }
+.council-stat-tile--brand   .council-stat-value { color: var(--color-accent); }
+
+.council-stat-label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-tertiary);
+  margin-top: 1px;
+}

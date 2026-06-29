@@ -4,57 +4,25 @@
   flex-direction: column;
 }
 
-.features-search {
-  width: 100%;
-  max-width: 400px;
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-bg);
-  font-size: var(--font-size-sm);
-  margin-bottom: var(--space-4);
-  transition: border-color var(--transition-fast);
-}
-
-.features-search:focus {
-  border-color: var(--color-accent);
-  outline: none;
-}
-
-.features-layout {
-  display: flex;
-  gap: var(--space-4);
-  flex: 1;
-  min-height: 0;
-}
-
-.features-list {
-  width: 280px;
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  overflow-y: auto;
-}
-
+/* ── Feature card (browse surface) ───────────────────────────────────── */
 .feature-card {
   padding: var(--space-3);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   text-align: left;
-  background: var(--color-bg-elevated);
-  transition: all var(--transition-bounce);
+  background: var(--color-bg-secondary);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
 }
 
 .feature-card:hover {
-  border-color: var(--color-accent);
-  box-shadow: var(--shadow-lg);
-  transform: translateX(4px);
+  border-color: var(--color-border-hover);
+  box-shadow: var(--shadow-md);
+  transform: translateX(2px);
 }
 
 .feature-card--active {
   border-color: var(--color-accent);
-  box-shadow: inset 4px 0 0 0 var(--color-accent), var(--shadow-md);
+  box-shadow: inset 3px 0 0 0 var(--color-accent), var(--shadow-md);
   background: var(--color-accent-soft);
 }
 
@@ -62,6 +30,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: var(--space-2);
   margin-bottom: var(--space-2);
 }
 
@@ -74,8 +43,11 @@
 
 .feature-card-name {
   font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
+  font-weight: var(--font-weight-semibold);
   color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .feature-status {
@@ -134,10 +106,29 @@
   border-color: rgba(251, 146, 60, 0.28);
 }
 
-.features-detail {
-  flex: 1;
-  min-width: 0;
-  overflow-y: auto;
+/* ── Detail pane (inside .bsearch-detail) ────────────────────────────── */
+.bsearch-detail .core-viewer { height: 100%; }
+
+.feature-detail-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  height: 100%;
+  min-height: 320px;
+  text-align: center;
+  color: var(--color-text-tertiary);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-xl);
+  background: var(--color-bg-secondary);
+}
+.feature-detail-empty-icon { color: var(--color-border-hover); }
+.feature-detail-empty p {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  max-width: 280px;
+  margin: 0;
 }
 
 .feature-viewer {
@@ -148,14 +139,35 @@
 
 .feature-meta {
   display: flex;
-  gap: var(--space-4);
+  align-items: center;
+  gap: var(--space-3);
+  margin: var(--space-3) 0;
+}
+.feature-meta-dates {
   font-size: var(--font-size-xs);
   color: var(--color-text-tertiary);
 }
 
 .feature-tasks {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+.feature-tasks-label {
   font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
+  font-weight: var(--font-weight-medium);
+}
+.feature-task-chip {
+  font-size: var(--font-size-xs);
+  font-family: var(--font-mono);
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
 }
 
 .feature-section {
@@ -200,16 +212,4 @@
   background: rgba(251, 146, 60, 0.16);
   color: #fdba74;
   border-color: rgba(251, 146, 60, 0.28);
-}
-
-/* CSS @media cannot use custom properties in this Vite setup, so 1024 is a
-   documented literal representing the "tablet" breakpoint. */
-@media (max-width: 1024px) {
-  .features-layout {
-    flex-direction: column;
-  }
-
-  .features-list {
-    width: 100%;
-  }
 }

@@ -10,6 +10,42 @@ export function isDesktop(): boolean {
 }
 
 /**
+ * Start dragging the current window from a title-bar mousedown.
+ *
+ * Why this exists instead of `data-tauri-drag-region`: our windows are created
+ * with `dragDropEnabled: false` (so the Kanban / Eisenhower HTML5 drag-and-drop
+ * works — see `openVaultWindow`). On Tauri v2 / wry that same flag also disables
+ * the built-in `data-tauri-drag-region` handler, so the custom title bar became
+ * un-draggable. We re-implement dragging manually: a left-button mousedown on
+ * the bar (but NOT on an interactive control) calls `startDragging()`.
+ *
+ * No-op outside the desktop shell, so the web/dev build is unaffected.
+ */
+export async function startWindowDrag(target: EventTarget | null): Promise<void> {
+  if (!isDesktop()) return;
+  // Never hijack a click meant for a control (buttons, inputs, links, etc.).
+  if (target instanceof Element && target.closest('button, input, a, select, textarea, [role="button"], [data-no-drag]')) {
+    return;
+  }
+  try {
+    const { getCurrentWindow } = await import('@tauri-apps/api/window');
+    await getCurrentWindow().startDragging();
+  } catch { /* ACL / non-desktop — ignore */ }
+}
+
+/** Toggle maximize on a title-bar double-click (standard macOS behaviour). */
+export async function toggleMaximizeWindow(target: EventTarget | null): Promise<void> {
+  if (!isDesktop()) return;
+  if (target instanceof Element && target.closest('button, input, a, select, textarea, [role="button"], [data-no-drag]')) {
+    return;
+  }
+  try {
+    const { getCurrentWindow } = await import('@tauri-apps/api/window');
+    await getCurrentWindow().toggleMaximize();
+  } catch { /* ACL / non-desktop — ignore */ }
+}
+
+/**
  * Pick a folder. In the desktop app this is the native macOS folder picker via
  * the Tauri dialog plugin; in a browser (dev) it falls back to a prompt so the
  * flow is still exercisable. Returns the chosen absolute path, or null if the
@@ -53,6 +89,10 @@ export async function openVaultWindow(name: string): Promise<void> {
       title: `dreamcontext — ${name}`,
       width: 1280,
       height: 800,
+      // macOS: transparent title bar so our own header IS the title bar and the
+      // traffic-light buttons float over it (matches the launcher window).
+      titleBarStyle: 'overlay',
+      hiddenTitle: true,
       // Off by default Tauri turns on an OS-level drag/drop handler that
       // swallows the webview's HTML5 dragover/drop events — which breaks the
       // Kanban / Eisenhower task drag-and-drop. Disable it so DnD works.

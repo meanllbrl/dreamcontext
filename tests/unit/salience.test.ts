@@ -72,6 +72,57 @@ describe('detectSalience', () => {
     expect(moments).toEqual([]);
   });
 
+  it('does NOT classify a sub-agent task-notification as a User correction', () => {
+    const d = empty();
+    // task-notifications contain words like "no"/"instead" but are pure noise.
+    d.userMessages = ['<task-notification>Agent foo finished; no further action instead.</task-notification>'];
+    const moments = detectSalience(d);
+    expect(moments).toEqual([]);
+  });
+
+  it('does NOT classify agent-resume JSON as a User correction', () => {
+    const d = empty();
+    d.userMessages = ['{"success":true,"message":"Agent abc had no active task; resumed instead."}'];
+    const moments = detectSalience(d);
+    expect(moments).toEqual([]);
+  });
+
+  it('does NOT classify a skill-loader header as a User correction', () => {
+    const d = empty();
+    d.userMessages = ['Base directory for this skill: /home/u/.claude/skills/no-instead'];
+    const moments = detectSalience(d);
+    expect(moments).toEqual([]);
+  });
+
+  it('does NOT classify a bare mid-sentence "no"/"not" as a correction', () => {
+    const d = empty();
+    // Tool-output-flavoured prose that trips the OLD bare-word regex.
+    d.userMessages = [
+      'There are no open tabs in the browser right now.',
+      'The endpoint returned 404 not found.',
+    ];
+    const moments = detectSalience(d);
+    expect(moments).toEqual([]);
+  });
+
+  it('does NOT classify a bare Turkish "değil" as a correction', () => {
+    const d = empty();
+    d.userMessages = ['Bu bir hata değil, beklenen davranış.'];
+    const moments = detectSalience(d);
+    expect(moments).toEqual([]);
+  });
+
+  it('still detects a real correction that sits alongside coordination noise', () => {
+    const d = empty();
+    d.userMessages = [
+      '<task-notification>Agent done; resumed</task-notification>',
+      'No, actually use yarn instead of npm here.',
+    ];
+    const moments = detectSalience(d);
+    expect(moments.some(m => m.salience === 2 && m.message.includes('User correction'))).toBe(true);
+    expect(moments).toHaveLength(1);
+  });
+
   it('dedupes and caps at 5 moments', () => {
     const d = empty();
     d.userMessages = Array.from({ length: 10 }, () => 'No, actually wrong instead.');

@@ -1,4 +1,5 @@
 import type { DistilledSection } from '../cli/commands/transcript.js';
+import { isSystemNoiseMessage } from '../cli/commands/transcript.js';
 
 export interface SalientMoment {
   message: string;
@@ -16,7 +17,14 @@ export interface SalientMoment {
 // Exported (WS-DEBT) so the Stop/SessionStart substance scorer can reuse the
 // SAME decision/correction vocabulary that auto-salience uses — one source of
 // truth for "this line carries a decision/correction signal".
-export const CORRECTION_RE = /\b(no|actually|wrong|instead|hayır|yanlış|değil)\b/i;
+// Anchored to genuine correction phrasing rather than bare negation words, so a
+// stray "no"/"not"/"değil" inside ordinary prose or (residual) tool output can't
+// seed a false 'User correction' bookmark. Matches: a LEADING no/nope/hayır;
+// the discourse marker "actually"; "instead of"; a standalone wrong/incorrect/
+// yanlış; or the Turkish "öyle değil". A bare mid-sentence "no"/"değil" does NOT
+// match. See task_OwbFN_IV.
+export const CORRECTION_RE =
+  /^(no|nope|hayır)\b|\bactually\b|\binstead of\b|\b(wrong|incorrect)\b|\byanlış\b|öyle değil/i;
 export const DECISION_RE = /\b(decided|chose|switched to|will use|karar|seçtik)\b/i;
 
 const MAX_MOMENTS = 5;
@@ -54,8 +62,11 @@ export function detectSalience(distilled: DistilledSection): SalientMoment[] {
     moments.push({ message: clamped, salience });
   };
 
-  // 1. User corrections (salience 2).
+  // 1. User corrections (salience 2). Defense-in-depth: skip system-injected
+  //    coordination noise (sub-agent notifications, agent-resume JSON, skill
+  //    headers) even if it reached userMessages — it is never a real correction.
   for (const msg of distilled.userMessages) {
+    if (isSystemNoiseMessage(msg)) continue;
     if (CORRECTION_RE.test(msg)) {
       push(`User correction: ${msg}`, 2);
     }
@@ -74,6 +85,7 @@ export function detectSalience(distilled: DistilledSection): SalientMoment[] {
     ...distilled.userMessages,
   ];
   for (const src of decisionSources) {
+    if (isSystemNoiseMessage(src)) continue;
     if (DECISION_RE.test(src)) {
       push(`Decision: ${src}`, 2);
     }

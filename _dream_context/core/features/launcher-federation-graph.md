@@ -5,7 +5,7 @@ created: '2026-06-14'
 updated: '2026-06-18'
 released_version: v0.8.7
 tags:
-  - desktop
+  - 'topic:desktop'
   - frontend
   - backend
   - 'topic:federation'

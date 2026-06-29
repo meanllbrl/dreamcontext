@@ -5,10 +5,10 @@ created: '2026-04-19'
 updated: '2026-06-21'
 released_version: v0.8.7
 tags:
-  - skills
-  - cli
-  - sub-agents
-  - decision-making
+  - 'topic:skills'
+  - 'topic:cli'
+  - 'topic:agents'
+  - decisions
 related_tasks:
   - council-skill
 ---

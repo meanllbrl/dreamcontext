@@ -3,11 +3,14 @@ import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-quer
 import { api, setActiveVault } from './api/client';
 import { LauncherPage } from './pages/LauncherPage';
 import { CaptureBar } from './pages/CaptureBar';
+import { SleepyPerch } from './components/sleepy/SleepyPerch';
 import { applySleepyHotkey, readSleepyConfig, initSleepyFromServer, SLEEPY_CONFIG_KEY } from './lib/sleepy';
 import { ThemeProvider } from './context/ThemeContext';
 import { I18nProvider } from './context/I18nContext';
 import { ProjectProvider } from './context/ProjectContext';
 import { Shell, type ShellNavigation } from './components/layout/Shell';
+import { AgentSurface } from './components/sleepy/AgentSurface';
+import { SleepyPage } from './pages/SleepyPage';
 import { TasksPage } from './pages/TasksPage';
 import { SleepPage } from './pages/SleepPage';
 import { CorePage } from './pages/CorePage';
@@ -76,6 +79,8 @@ function PageRouter({ nav }: { nav: ShellNavigation }) {
   };
 
   switch (nav.page) {
+    case 'sleepy':
+      return <SleepyPage onOpenDoc={(page, slug) => nav.navigate(page, slug)} />;
     case 'brain':
       return <BrainPage onNavigate={handleBrainNavigate} />;
     case 'tasks':
@@ -134,6 +139,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryStat
 const params = new URLSearchParams(window.location.search);
 const initialVault = params.get('vault');
 const captureMode = params.get('capture') === '1';
+const perchMode = params.get('perch') === '1';
 if (initialVault) {
   setActiveVault(initialVault);
 }
@@ -170,6 +176,15 @@ export function App() {
     );
   }
 
+  // The always-on left-of-notch companion (`?perch=1`) — just the mascot.
+  if (perchMode) {
+    return (
+      <ErrorBoundary>
+        <SleepyPerch />
+      </ErrorBoundary>
+    );
+  }
+
   // No vault pinned → this is the Launcher window (list of all projects).
   if (!initialVault) {
     return (
@@ -194,6 +209,10 @@ export function App() {
               <Shell>
                 {(nav) => <PageRouter nav={nav} />}
               </Shell>
+              {/* Mounted ONCE, outside the page switch: the embedded Claude Code
+                  terminal positions itself over SleepyPage's Agent tab and keeps
+                  its PTY/scrollback alive across navigation. */}
+              <AgentSurface />
             </I18nProvider>
           </ThemeProvider>
         </ProjectProvider>

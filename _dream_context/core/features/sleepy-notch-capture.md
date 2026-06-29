@@ -2,7 +2,7 @@
 id: feat_UF2kRQGT
 status: in_review
 created: '2026-06-14'
-updated: '2026-06-18'
+updated: '2026-06-28'
 released_version: v0.8.7
 tags:
   - frontend
@@ -10,6 +10,7 @@ tags:
   - domain
 related_tasks:
   - sleepy-notch-capture
+  - sleepy-notch-panel-redesign
 ---
 
 ## Why
@@ -26,9 +27,14 @@ Developers lose quick thoughts, commands, and notes between coding sessions. The
 - [x] As a user, I want the dropdown to only show vaults with existing folders so that I cannot accidentally capture into a deleted project.
 - [x] As a user, I want to select which project receives the capture from a dropdown so that captures go to the right vault.
 - [x] As a user, I want to configure the hotkey and toggle the feature on/off from Settings so that I have control without editing config files.
-- [ ] As a user, I want the visual design of the notch bar to feel polished and native so that it is a pleasant, non-jarring part of my workflow. (Visual design currently iterating — not yet user-accepted.)
+- [x] As a user, I want the visual design of the notch bar to feel polished and native so that it is a pleasant, non-jarring part of my workflow. (NSPanel redesign shipped; in_review for final acceptance.)
 
 - [x] As a user, I want to ask a one-shot question about a project from the notch (Ask mode) and get Claude's answer without anything being saved to memory.
+
+- [x] As a user, I want Sleepy to summon from any app without dreamcontext gaining focus, so that my workflow is not interrupted.
+- [x] As a user, I want Sleepy to open via a hover over the MacBook notch (in addition to the hotkey) so I can access it without memorizing a key combination.
+- [x] As a user, I want Sleepy to be disabled by default (opt-in via Settings) so that it never surprises me on first launch.
+- [x] As a user, I want the mascot to be a coded animated character (not a video/WebP file) so that it renders crisply at any size and mood transitions are instant.
 
 - [x] As a user, I want to trigger a full dreamcontext consolidation from the notch (Sleep mode) and see the result inline so that I do not need a terminal.
 
@@ -54,10 +60,24 @@ Developers lose quick thoughts, commands, and notes between coding sessions. The
 - [x] Mascot animated WebP clips (15fps, ~2.5 MB each, 3 clips) + `.mp4` sources bundled as Tauri resources (`desktop/src-tauri/sleepy → Resources/sleepy`); served by `GET /api/sleepy/anim?mode=`; `DREAMCONTEXT_SLEEPY_DIR` env var injected by Rust shell.
 - [x] Assets do NOT ship in the npm CLI package.
 - [x] Settings "Sleepy" section moved to the bottom (after Connections) with a BETA badge.
-- [ ] Visual design accepted by user. (Mascot layout and notch panel improved this cycle — still not formally accepted.)
+- [x] Visual design in_review: NSPanel non-activating notch-native redesign shipped; pending final user sign-off.
+
+### Notch Panel Redesign (2026-06-28)
+- [x] Sleepy runs as a non-activating `NSPanel` via `tauri-nspanel` v2: floats over the focused app, receives keystrokes, without activating dreamcontext — verified opening over TextEdit while TextEdit stayed active.
+- [x] Global hotkey reliably fires from any app: JS registers the OS-wide shortcut (`sleepy:toggle`), Rust owns the panel. Stored `Cmd+H` combo (reserved key) auto-falls-back to `Alt+Cmd+S`.
+- [x] Hover-to-open: Rust CoreGraphics cursor poll triggers panel show when cursor enters the notch area; auto-closes on leave unless the user has engaged (committed); no key-steal required.
+- [x] Open-from-notch animation: cap-drop `clip-path` reveal replayed on each `sleepy:shown` event.
+- [x] Notch-emergence CSS: pure `#000` neck+body+concave shoulders so the panel reads as the MacBook notch growing a tongue.
+- [x] `SleepyMascot.tsx/.css` — coded animated mascot (violet dream-gem, blinks/breathes/Zzz) replaces the WebP animated clips; mood driven by sleep debt (`idle`/`sleepy`/`sleeps`).
+- [x] `PanelEnabled` atomic state in Rust (default `false` — opt-in): `sleepy:enabled` event from launcher JS mirrors the persisted enabled flag; `apply_sleepy_enabled` shows/hides the perch accordingly. Disabling closes the notch entirely (not just the hotkey).
+- [x] `build_perch_panel` builds hidden; `show_perch` and hover-to-open watcher are both gated on `is_enabled`.
 
 ## Constraints & Decisions
 
+- **[2026-06-28]** **Non-activating NSPanel via `tauri-nspanel` v2.** The original `WebviewWindow` (decorations-free, always-on-top) activates dreamcontext when summoned from another app — the MacBook notch companion pattern requires the capture panel to steal keystrokes without stealing app focus. `tauri-nspanel` wraps `NSPanel` with `.isFloatingPanel = true` and `.becomesKeyOnlyIfNeeded = true`, giving non-activating floating panel behaviour not exposed by the Tauri window API.
+- **[2026-06-28]** **Hover-to-open via Rust CoreGraphics cursor poll.** Registering a `CGEventTap` for cursor movement from JS/Tauri would require elevated permissions. The Rust shell polls cursor position against the static notch rect (hard-coded at top-center for MacBook) on a background thread; the notch rect is device-specific but safe to hard-code for the target hardware family. Auto-closes on cursor leave unless `sleepy:committed` is set (user is typing).
+- **[2026-06-28]** **PanelEnabled state: opt-in, default false.** Showing the Sleepy perch on first launch would confuse users who haven't set it up. `PanelEnabled` is an atomic Rust state (default false); the launcher JS mirrors it from the persisted `~/.dreamcontext/sleepy.json` `enabled` flag on mount and on `storage` events. This means the notch is visually absent until the user enables it in Settings — consistent with the existing hotkey-toggle model.
+- **[2026-06-28]** **Coded mascot replaces animated WebP.** The WebP clips are large (~2.5 MB each) and mood transitions require swapping the `src` attribute (flicker). `SleepyMascot.tsx` is a pure CSS animation (blink keyframe, breath scale, Zzz float) with instant mood-class switching and zero asset bundle cost. Trade-off: less photorealistic than the WebP clips; acceptable given the mascot's role is contextual indicator, not hero asset.
 - **[2026-06-14]** Ask mode has no side effects -- no CHANGELOG write, no file changes. One-shot Q&A only. Sleep mode triggers real consolidation -- full dreamcontext sleep flow, takes minutes, uses tokens, modifies _dream_context files.
 - **[2026-06-14]** Claude runs on Sonnet + medium thinking -- enrichment, Ask, and Sleep spawns use claude --model sonnet; prompts lead with 'Think hard' (Claude Code's medium-thinking keyword).
 - **[2026-06-14]** Enrichment uses interactive login shell (-ilc) -- claude is commonly added to PATH in ~/.zshrc (e.g. ~/.local/bin) which a non-interactive login shell (-lc) does NOT source. Stdout and stderr captured separately so rc-file chatter never pollutes Claude's reply.
@@ -75,7 +95,15 @@ Developers lose quick thoughts, commands, and notes between coding sessions. The
 
 ## Technical Details
 
-**Rust shell (`desktop/src-tauri/src/lib.rs`):** adds `tauri-plugin-global-shortcut` plugin; sets `DREAMCONTEXT_SLEEPY_DIR` env to `<resource_dir>/sleepy` (where bundled `.webp` and `.mp4` clips live).
+### Notch Redesign (2026-06-28)
+
+**Rust shell (`desktop/src-tauri/src/lib.rs`):** `tauri-nspanel` v2 plugin; `PanelEnabled` `AtomicBool` (default false); `apply_sleepy_enabled(enabled)` command: `show_perch()` / hide any capture panel + `order_out` perch. `build_perch_panel` builds hidden (no startup `order_front`). `show_perch` and hover-to-open watcher gated on `is_enabled`. Cursor poll thread: reads `CGEventGetLocation`, checks notch rect, emits `sleepy:hover-enter/leave` events.
+
+**`SleepyMascot.tsx/.css`:** coded animated mascot — violet diamond shape, `blink` keyframe (eyelid clip-path), `breath` scale oscillation, `zzz` floating text. Mood class (`idle`/`sleepy`/`sleeps`) applied via `data-mood` attribute; CSS handles all visual transitions with zero JS re-render.
+
+**`sleepy.ts` — PanelEnabled:** `enableSleepy(enabled)` calls `POST /api/launcher/sleepy-config` with `{enabled}`, then emits `sleepy:enabled` event across windows. Launcher JS listens on `storage` events to mirror enabled state. `applySleepyEnabled` in `App.tsx` sends `invoke('apply_sleepy_enabled', {enabled})` to Rust.
+
+**Rust shell (`desktop/src-tauri/src/lib.rs`):** adds `tauri-plugin-global-shortcut` plugin; sets `DREAMCONTEXT_SLEEPY_DIR` env to `<resource_dir>/sleepy` (where bundled `.webp` and `.mp4` clips live — legacy, superseded by coded mascot).
 
 **Capability (`desktop/src-tauri/capabilities/default.json`):** `global-shortcut:allow-register`, `global-shortcut:allow-unregister-all`, core window/webview permissions — scoped to the `http://127.0.0.1:*` loopback origin.
 
@@ -108,6 +136,14 @@ Developers lose quick thoughts, commands, and notes between coding sessions. The
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-06-28 - Notch panel redesign: NSPanel, hover-to-open, coded mascot, PanelEnabled
+- Non-activating `NSPanel` via `tauri-nspanel` v2: works from any app without stealing focus. Global hotkey reliable; `Cmd+H` reserved-key fallback to `Alt+Cmd+S`.
+- `SleepyMascot.tsx` coded animated mascot replaces animated WebP (blink/breath/Zzz, zero asset cost).
+- Open-from-notch cap-drop animation (`clip-path` reveal on `sleepy:shown`).
+- Hover-to-open: Rust CoreGraphics cursor poll triggers show; auto-close on leave unless committed.
+- `PanelEnabled` atomic Rust state (default false — opt-in): disabling hides notch entirely.
+- Status: in_review.
 
 ### 2026-06-14 - Update
 - 2026-06-14 - Animated WebP mascot; Learn/Ask/Sleep toggle; Sonnet+thinking; Markdown rendering; list fix; claude PATH fix; debt threshold raised to 8. Mascot switched from video to animated WebP img via new GET /api/sleepy/anim?mode= route. Three-mode toggle: Learn (save+enrich), Ask (one-shot Q&A, no memory write), Sleep (full consolidation, input locked). Enrichment uses claude --model sonnet with Think hard prompt. Ask answers rendered via marked+DOMPurify. List rendering fix: .cap-md sets explicit bullets over global reset. Spawn changed from -lc to -ilc for Finder-app PATH. Stdout/stderr captured separately. Poll ceiling widened to ~15 min for Sleep mode. sleepingRef guards close-on-blur during consolidation.

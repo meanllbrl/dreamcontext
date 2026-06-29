@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Default capability for the dreamcontext desktop shell. Grants the tightest permission set needed: core defaults, multi-window creation, native folder dialog, and shell spawn/kill scoped to the Node child.",
-  "windows": ["main", "vault-*", "sleepy"],
+  "windows": ["main", "vault-*", "sleepy", "sleepy-perch"],
   "remote": {
     "urls": ["http://localhost:*", "http://127.0.0.1:*"]
   },
@@ -14,6 +14,11 @@
     "core:window:allow-show",
     "core:window:allow-hide",
     "core:window:allow-set-position",
+    "core:window:allow-start-dragging",
+    "core:window:allow-toggle-maximize",
+    "core:event:allow-emit",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
     "global-shortcut:allow-register",
     "global-shortcut:allow-unregister",
     "global-shortcut:allow-unregister-all",

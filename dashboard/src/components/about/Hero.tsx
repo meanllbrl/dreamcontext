@@ -1,3 +1,4 @@
+import { BrandMark } from '../brand/BrandMark';
 import './Hero.css';
 
 /**
@@ -16,47 +17,8 @@ export function Hero() {
     <header className="about-hero">
       <div className="about-hero-copy">
         <a className="about-lockup" href="#top" aria-label="dreamcontext">
-          <svg
-            className="about-lockup-mark"
-            width="34"
-            height="34"
-            viewBox="0 0 32 32"
-            fill="none"
-            xmlns="http://www.w3.org/2000/svg"
-            aria-hidden="true"
-          >
-            <path d="M16 2L28 16L16 30L4 16L16 2Z" fill="url(#hero-mark-outer)" />
-            <path
-              d="M16 9L22 16L16 23L10 16L16 9Z"
-              fill="url(#hero-mark-inner)"
-              opacity="0.75"
-            />
-            <defs>
-              <linearGradient
-                id="hero-mark-outer"
-                x1="4"
-                y1="2"
-                x2="28"
-                y2="30"
-                gradientUnits="userSpaceOnUse"
-              >
-                <stop stopColor="var(--color-vivid-purple)" />
-                <stop offset="1" stopColor="var(--color-electric-blue)" />
-              </linearGradient>
-              <linearGradient
-                id="hero-mark-inner"
-                x1="10"
-                y1="9"
-                x2="22"
-                y2="23"
-                gradientUnits="userSpaceOnUse"
-              >
-                <stop stopColor="var(--color-electric-blue)" />
-                <stop offset="1" stopColor="var(--color-vivid-purple)" />
-              </linearGradient>
-            </defs>
-          </svg>
-          <span className="about-lockup-word">dreamcontext</span>
+          <BrandMark size={34} className="about-lockup-mark" glow />
+          <span className="about-lockup-word">dream<span style={{ color: 'var(--color-accent)' }}>context</span></span>
         </a>
 
         <h1 className="about-title">

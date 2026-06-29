@@ -5,11 +5,10 @@ created: '2026-05-31'
 updated: '2026-06-21'
 released_version: v0.8.7
 tags:
-  - skills
-  - cli
-  - sub-agents
-  - hook
-  - orchestration
+  - 'topic:skills'
+  - 'topic:cli'
+  - 'topic:agents'
+  - architecture
 related_tasks:
   - goal-skill-and-related-skills-recall
 ---

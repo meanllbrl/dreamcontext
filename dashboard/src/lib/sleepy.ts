@@ -10,15 +10,18 @@ import { api } from '../api/client';
 /** localStorage key for the Sleepy config (exported so other windows can watch it). */
 export const SLEEPY_CONFIG_KEY = 'sleepy:config:v1';
 const CONFIG_KEY = SLEEPY_CONFIG_KEY;
-const SLEEPY_LABEL = 'sleepy';
-/** Width/height (logical px) of the notch bar window. Sized to fit the 200px notch
- *  panel + gap + the 360px capture bar at its tallest (multi-line textarea), with
- *  room for drop shadows. y stays 0 so the notch panel hangs flush from the top. */
-const WIN_W = 420;
-// Tall enough for the notch panel + capture bar + the (optional) Claude
-// enrichment response panel below. The window is transparent, so unused height
-// is invisible — only the panels paint.
-const WIN_H = 520;
+
+/** Event names bridged to the Rust shell, which owns the non-activating notch
+ *  panel (see desktop/src-tauri/src/lib.rs). The launcher window registers the
+ *  OS-wide hotkey and emits `TOGGLE`; the capture page emits `HIDE` on Esc /
+ *  click-away. Rust must own the window because only an NSPanel can float over
+ *  the focused app and accept keystrokes without activating dreamcontext. */
+const EVT_TOGGLE = 'sleepy:toggle';
+const EVT_HIDE = 'sleepy:hide';
+/** Mirrors the persisted `enabled` flag to Rust, which owns the notch perch +
+ *  hover-to-open. Disabling Sleepy must close the notch entirely, not just unbind
+ *  the hotkey — Rust shows/hides the perch in response. */
+const EVT_ENABLED = 'sleepy:enabled';
 
 export interface SleepyConfig {
   enabled: boolean;
@@ -81,78 +84,51 @@ export async function initSleepyFromServer(): Promise<SleepyConfig> {
   }
 }
 
-/** Top-center position (logical px) just under the menubar/notch. */
-async function topCenter(width: number): Promise<{ x: number; y: number }> {
+/**
+ * Toggle the notch panel. We don't create the window here — the Rust shell owns
+ * it (only an NSPanel can float over the focused app and take keystrokes without
+ * activating dreamcontext). Emitting an event also means the hotkey works from
+ * ANY app: the launcher webview stays alive in the background, the global
+ * shortcut fires, and Rust shows/hides the panel over whatever is focused.
+ */
+export async function toggleSleepyWindow(): Promise<void> {
+  if (!isDesktop()) return;
   try {
-    const { currentMonitor } = await import('@tauri-apps/api/window');
-    const mon = await currentMonitor();
-    const scale = mon?.scaleFactor ?? 1;
-    const logicalW = (mon?.size.width ?? 1440) / scale;
-    // y:0 so the black panel hangs flush from the top, merging with the notch.
-    return { x: Math.max(0, Math.round((logicalW - width) / 2)), y: 0 };
-  } catch {
-    return { x: 420, y: 0 };
+    const { emit } = await import('@tauri-apps/api/event');
+    await emit(EVT_TOGGLE);
+  } catch (err) {
+    console.warn('[sleepy] toggle emit failed:', err);
   }
 }
 
-/** Toggle the notch capture window: open it if closed, close it if open. */
-export async function toggleSleepyWindow(): Promise<void> {
+/** Hide the notch panel (order it out, keeping the webview warm for next time). */
+export async function hideSleepyWindow(): Promise<void> {
   if (!isDesktop()) return;
-  const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
-  const existing = await WebviewWindow.getByLabel(SLEEPY_LABEL);
-  if (existing) {
-    await existing.close();
-    return;
-  }
-  const { x, y } = await topCenter(WIN_W);
-  // Absolute same-origin URL → the real dashboard server, not Tauri's placeholder.
-  const win = new WebviewWindow(SLEEPY_LABEL, {
-    url: `${window.location.origin}/?capture=1`,
-    width: WIN_W,
-    height: WIN_H,
-    x,
-    y,
-    decorations: false,
-    transparent: true,
-    alwaysOnTop: true,
-    skipTaskbar: true,
-    resizable: false,
-    shadow: false,
-    focus: true,
-    title: 'dreamcontext capture',
-  });
-  await new Promise<void>((res) => {
-    win.once('tauri://created', () => res());
-    win.once('tauri://error', () => res());
-  });
-  // Make it the key window immediately so the user can type / press Esc without
-  // first clicking it. Without this the user must click the panel to focus it —
-  // and that click activates the dreamcontext app, so closing it then surfaces
-  // the main window ("it opened the app"). Grabbing focus on open avoids that.
   try {
-    await win.setFocus();
+    const { emit } = await import('@tauri-apps/api/event');
+    await emit(EVT_HIDE);
   } catch {
     /* best-effort */
   }
 }
 
-export async function closeSleepyWindow(): Promise<void> {
-  if (!isDesktop()) return;
-  const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
-  const w = await WebviewWindow.getByLabel(SLEEPY_LABEL);
-  if (w) await w.close();
-}
-
-/** Close the window we're running in (used by the capture bar's Esc). Robust: it
- *  closes the current webview window directly rather than looking it up by label. */
-export async function closeSelf(): Promise<void> {
+/** Tell Rust the panel is engaged (focused/clicked) so the notch-hover watcher
+ *  pins it open instead of auto-closing it when the cursor drifts away. */
+export async function markSleepyCommitted(): Promise<void> {
   if (!isDesktop()) return;
   try {
-    const { getCurrentWebviewWindow } = await import('@tauri-apps/api/webviewWindow');
-    await getCurrentWebviewWindow().close();
+    const { emit } = await import('@tauri-apps/api/event');
+    await emit('sleepy:committed');
   } catch {
-    await closeSleepyWindow();
+    /* best-effort */
   }
+}
+
+/** Dismiss Sleepy (used by the capture bar's Esc + click-away). Hides rather than
+ *  closes so the panel reopens instantly — and, being a non-activating panel,
+ *  dismissing never surfaces the dreamcontext main window. */
+export async function closeSelf(): Promise<void> {
+  await hideSleepyWindow();
 }
 
 /**
@@ -175,17 +151,71 @@ export async function onSleepyFocusChange(cb: (focused: boolean) => void): Promi
 }
 
 /**
+ * Subscribe to the Rust-emitted `sleepy:shown` event, fired every time the panel
+ * is shown (hotkey, hover, or toggle). The capture bar uses it to replay its
+ * "drop out of the notch" open animation on each summon, since the webview is
+ * reused (hidden/shown) rather than recreated. Returns an unsubscribe fn.
+ */
+export async function onSleepyShown(cb: () => void): Promise<() => void> {
+  if (!isDesktop()) return () => {};
+  try {
+    const { listen } = await import('@tauri-apps/api/event');
+    return await listen('sleepy:shown', () => cb());
+  } catch {
+    return () => {};
+  }
+}
+
+/**
+ * macOS-reserved single-Cmd combos the focused app swallows BEFORE a global
+ * shortcut can see them — the #1 reason "the hotkey doesn't work when another app
+ * is focused". `Cmd+H` (hide), `Cmd+Q` (quit), `Cmd+W`, `Cmd+M`, `Cmd+Tab`,
+ * `Cmd+Space` (Spotlight), `Cmd+,`. We refuse to bind these and fall back to the
+ * default so Sleepy actually opens from anywhere.
+ */
+const RESERVED_HOTKEYS = new Set([
+  'cmd+h',
+  'cmd+q',
+  'cmd+w',
+  'cmd+m',
+  'cmd+tab',
+  'cmd+space',
+  'cmd+,',
+  'cmd+comma',
+]);
+
+/** True if `hotkey` is a macOS-reserved combo a focused app will intercept. */
+export function isReservedHotkey(hotkey: string): boolean {
+  return RESERVED_HOTKEYS.has(hotkey.trim().toLowerCase().replace(/\s+/g, ''));
+}
+
+/**
  * (Re)apply the global hotkey from config. Unregisters any prior binding first,
- * then registers the new one when enabled. The press toggles the notch window.
- * No-op (and never throws) outside the desktop app.
+ * then registers the new one when enabled. The press toggles the notch panel.
+ * Reserved single-Cmd combos are rejected in favor of the default so the shortcut
+ * still fires from other apps. No-op (and never throws) outside the desktop app.
  */
 export async function applySleepyHotkey(cfg: SleepyConfig): Promise<void> {
   if (!isDesktop()) return;
+  // Mirror the enabled flag to Rust so disabling Sleepy closes the notch (perch +
+  // hover-to-open), not just the hotkey. Called on every config apply (mount,
+  // cross-window storage sync, Settings change), so the notch always tracks state.
+  try {
+    const { emit } = await import('@tauri-apps/api/event');
+    await emit(EVT_ENABLED, cfg.enabled);
+  } catch (err) {
+    console.warn('[sleepy] enabled emit failed:', err);
+  }
   try {
     const { register, unregisterAll } = await import('@tauri-apps/plugin-global-shortcut');
     await unregisterAll();
     if (!cfg.enabled || !cfg.hotkey.trim()) return;
-    await register(cfg.hotkey, (event) => {
+    // A reserved combo would be eaten by the focused app — bind the default instead.
+    const hotkey = isReservedHotkey(cfg.hotkey) ? DEFAULT_SLEEPY.hotkey : cfg.hotkey;
+    if (hotkey !== cfg.hotkey) {
+      console.warn(`[sleepy] "${cfg.hotkey}" is macOS-reserved; using "${hotkey}" so it works from any app.`);
+    }
+    await register(hotkey, (event) => {
       // The handler fires on both press and release — act only on press.
       if (event.state === 'Pressed') void toggleSleepyWindow();
     });

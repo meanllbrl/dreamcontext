@@ -1,5 +1,264 @@
 [
   {
+    "date": "2026-06-28",
+    "type": "fix",
+    "scope": "dashboard",
+    "description": "Five fixes to the dashboard shipped in this cycle. (1) Board overflow: added min-width:0 to .shell-main (Shell.css) so the flex container shrinks below its content min-width; without this the nowrap toolbar (~1100px) made the entire board overflow the window, clipping the first Kanban column under the sidebar. (2) Responsive toolbar: added a ResizeObserver-driven 'More' overflow chip to BoardToolbar — View/Group/Versions/Properties collapse into it when scrollWidth > clientWidth; their existing popover bodies render as left-flyouts from the More panel; the search box still shrinks fully before anything collapses. (3) WKWebView drag-highlight flicker: removed per-column onColumnDragLeave from KanbanBoard (which fires on silhouette reflow and on WKWebView's null relatedTarget mid-drag), and instead clears dragOverKey at the board-row container level only when relatedTarget is non-null and genuinely outside the row; drop/dragEnd still call endDrag() for reliable cleanup. (4) Knowledge subfolder slug 404: BrainSearch now derives the knowledge slug from hit.path (knowledge/.../x.md -> .../x) instead of the bare hit.slug field, so sub-folder knowledge files open correctly. (5) Settings page max-width corrected from hardcoded 1080px to the --page-max-width token (1200px), matching all other pages.",
+    "breaking": false,
+    "summary": "Fix Tasks board overflow (Shell.css min-width:0), responsive BoardToolbar 'More' menu, WKWebView drag flicker, knowledge subfolder slug 404, settings width token",
+    "references": [
+      "file:dashboard/src/components/layout/Shell.css",
+      "file:dashboard/src/components/tasks/BoardToolbar.tsx",
+      "file:dashboard/src/components/tasks/KanbanBoard.tsx",
+      "file:dashboard/src/pages/SettingsPage.css",
+      "task:full-redesign-dashboard-and-desktop"
+    ]
+  },
+  {
+    "date": "2026-06-28",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "Four interrelated task-management improvements to the dashboard. (1) Eisenhower matrix drag-drop: tasks can now be dragged between the four urgency/importance quadrants directly on the matrix view. (2) Sprint-aware version filter: the Tasks board Versions popover highlights the active planning sprint and filters tasks to it inline. (3) In-review status color changed to red (--color-error token), applying consistently to the Kanban column border/dot, filter chips, RICE/calendar status indicators, and the new context menu. (4) Context menu flyout submenus in the Kanban card right-click menu: 'Move to status' and 'Set priority' now open compact flyout submenus adjacent to the parent row (with viewport-edge flip-left guard) instead of expanding all statuses/priorities inline, reducing the menu's vertical footprint from ~360px to ~190px. Escape-to-close, current-value check marks, and all selection callbacks preserved.",
+    "breaking": false,
+    "summary": "Add Eisenhower matrix drag-drop between quadrants; sprint-aware version filter; in-review status red; context menu flyout submenus",
+    "references": [
+      "file:dashboard/src/components/tasks/EisenhowerMatrix.tsx",
+      "file:dashboard/src/components/tasks/KanbanBoard.tsx",
+      "file:dashboard/src/styles/tokens.css",
+      "task:eisenhower-matrixi-drag-drop",
+      "task:feat-dashboard-sprint-aware-version-filter-current-completed-actions-status-sort"
+    ]
+  },
+  {
+    "date": "2026-06-28",
+    "type": "refactor",
+    "scope": "dashboard",
+    "description": "Removed the h1.page-title headline from every page that still had one: Core Files, Settings, Sleep, Packs, Taxonomy, and the Council header (title + LAB badge + tagline). The sidebar nav already labels the active page, making per-page headlines redundant chrome. 'New debate' moved from the Council header into the search/filter toolbar row as the primary action, anchored right. Core Files page now derives an active file as selected ?? first-file on load, matching the Knowledge/Tasks/Features master-detail pattern — no more empty 'Select a file to view.' state on first landing. The change applies uniformly: if there is a sidebar label, there is no page headline.",
+    "breaking": false,
+    "summary": "Remove page headlines from all dashboard pages; Core Files shows first file by default instead of empty state",
+    "references": [
+      "file:dashboard/src/pages/CorePage.tsx",
+      "file:dashboard/src/pages/CouncilPage.tsx",
+      "file:dashboard/src/pages/SettingsPage.tsx",
+      "file:dashboard/src/pages/SleepPage.tsx",
+      "file:dashboard/src/pages/PacksPage.tsx",
+      "file:dashboard/src/pages/TaxonomyPage.tsx"
+    ]
+  },
+  {
+    "date": "2026-06-28",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "Rebuilt the Council page with two distinct states. Empty state: a brand showcase explainer with a 'Put your hardest decisions to a council.' headline, an animated FlowDiagram stage showing 6 persona archetypes (Architect, Pragmatist, Skeptic, Researcher, Advocate, Strategist) debating in a ring and converging into a synthesizer verdict, plus a 'Start your first debate' CTA. Populated state: Council + LAB badge header, a dismissible 'How Council works' banner carrying the mini animated diagram above the search bar, and the existing debate grid below. The sidebar Council entry now carries a LAB chip. 'New debate' moved out of the header and into the filter toolbar row. Additionally added ?page=<page> deep-link support in Shell.tsx so loading the dashboard with a ?page= param lands directly on that page, skipping the remembered nav state.",
+    "breaking": false,
+    "summary": "Redesign Council page: animated empty-state showcase, LAB badge, dismissible how-it-works banner, and ?page= deep-link support",
+    "references": [
+      "file:dashboard/src/pages/CouncilPage.tsx",
+      "file:dashboard/src/components/council/CouncilEmptyState.tsx",
+      "file:dashboard/src/components/council/CouncilShowcase.tsx",
+      "file:dashboard/src/components/council/CreateDebateModal.tsx",
+      "file:dashboard/src/components/layout/Shell.tsx"
+    ]
+  },
+  {
+    "date": "2026-06-28",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "Rebuilt the Sleep page into a single continuous card. getSleepMood(debt) drives the hero's Sleepy face: awake (debt <=6), drowsy (7-9), asleep (>=10) with floating Zzz animation, all inside a level-tinted aura. The separate Sleep cloud panel was folded into the same card below a hairline border-top divider with a faint violet wash at the seam. The redundant 'Sleep cloud' header, cloud glyph, and subtitle were removed; the queued-item count moved up into the hero headline as a small accent pill (visible only when there is something queued). The card chrome is now a single .sleep-card element tinted by debt level via modifier classes (--alert / --drowsy / --sleepy / --must_sleep). CSS dead-weight for the old separate card (puffed top, shadow, own heading) removed.",
+    "breaking": false,
+    "summary": "Redesign Sleep page: mood-driven Sleepy mascot (debt-aware face) and sleep-cloud merged into one continuous card",
+    "references": [
+      "file:dashboard/src/pages/SleepPage.tsx",
+      "file:dashboard/src/pages/SleepPage.css"
+    ]
+  },
+  {
+    "date": "2026-06-28",
+    "type": "feat",
+    "scope": "desktop",
+    "description": "Upgraded the embedded Claude Code terminal (AgentTerminal.tsx) to production grade across four dimensions. (1) Render quality: added @xterm/addon-webgl for GPU-rendered crisp text matching Zed crispness, with automatic canvas-renderer fallback on WebGL context-loss. Sometype Mono font is pre-loaded and re-applied one frame after open so the WebGL glyph atlas builds with correct cell widths, fixing stretched glyphs. (2) Session persistence: hoisted the terminal instance (xterm, WebSocket, PTY state) above App.tsx's switch(nav.page) so navigating to Tasks, Council, or any page and back keeps the same live Claude Code session alive; only CSS visibility toggles, nothing unmounts on page navigation. (3) Drag-to-split panes: dragging one Agent tab onto another merges them into a side-by-side terminal split; the divider is draggable to resize. (4) Removed the bypass-warning banner from the terminal header; the 'bypass' pill in the tab strip remains. Also added a BETA badge to the Agent tab consistent with Council LAB / Settings BETA styling.",
+    "breaking": false,
+    "summary": "Add production-grade Agent terminal: WebGL renderer, session persistence above App.tsx switch, BETA badge, Sometype Mono fix, drag-to-split",
+    "references": [
+      "file:dashboard/src/components/sleepy/AgentTerminal.tsx",
+      "file:src/server/routes/agent-terminal.ts",
+      "task:feat-desktop-in-app-conversational-agent-surface-bm25-search-claude-chat-embedded-terminal"
+    ]
+  },
+  {
+    "date": "2026-06-28",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "Full rebuild of the dashboard Tasks board (Board.dc.html design reference) into a production violet-themed surface. New capabilities: (1) Saved views — each view carries its own independently persisted filter, sort, and grouping configuration; BoardViewTabs.tsx renders the tab rail; views are named and managed via the toolbar. (2) Two-pane include/exclude Filter menu — a FilterPopover with separate include/exclude panels for status, priority, tags, version, and assignee. (3) Versions popover — filter to one or more planning versions directly from the toolbar. (4) Card Properties — toggleable property badges on BoardCard.tsx (due date, RICE score, assignees). (5) AtRiskAlert.tsx surfaces tasks that are past due or blocked. New files: dashboard/src/components/tasks/{boardModel.ts, useBoard.ts, BoardViewTabs.tsx, BoardToolbar.tsx, BoardColumn.tsx, BoardCard.tsx, SaveScopeDialog.tsx, AtRiskAlert.tsx, Board.css}. Persistence model: board preferences (views, sorts, filters, grouping) split across a version-controlled overrides/board.json ('save for all' — permanent and team-shareable, never lost to a browser origin or per-launch loopback port) and a gitignored state/board.local.json ('save for yourself' — per-machine overrides and private views), merged on read by the client. SaveScopeDialog presents the user with the choice on every save action. New backend routes GET /api/board, PUT /api/board/shared, PUT /api/board/local (src/server/routes/board.ts, mirrors the ui-settings.ts pattern). Existing Eisenhower, Timeline, Calendar, Heatmap, and RICE views plus the rich task detail panel are preserved.",
+    "breaking": false,
+    "summary": "Rebuild Tasks board to violet design: saved views, two-pane filter/sort/group, Versions popover, card Properties, shared+local persistence",
+    "references": [
+      "file:src/server/routes/board.ts",
+      "file:dashboard/src/components/tasks/boardModel.ts",
+      "file:dashboard/src/hooks/useBoard.ts",
+      "file:dashboard/src/components/tasks/BoardViewTabs.tsx",
+      "file:dashboard/src/components/tasks/BoardToolbar.tsx",
+      "file:dashboard/src/components/tasks/BoardColumn.tsx",
+      "file:dashboard/src/components/tasks/BoardCard.tsx",
+      "file:dashboard/src/components/tasks/SaveScopeDialog.tsx",
+      "file:dashboard/src/components/tasks/AtRiskAlert.tsx",
+      "task:feat-dashboard-redesign-tasks-board-saved-views-with-shared-local-persistence"
+    ]
+  },
+  {
+    "date": "2026-06-28",
+    "type": "fix",
+    "scope": "cli",
+    "description": "Three related fixes to the transcript distill and salience pipeline (src/cli/commands/transcript.ts, src/lib/salience.ts, src/lib/reflection.ts). (1) transcript.ts:131-140: user-role blocks containing tool_result content were being extracted into userMessages — these are pure tool output, not user text, and were causing sub-agent task-notification XML and skill-loader headers to be misidentified as user messages and scored for salience. Fix: the tool_result branch is removed; only type:text blocks in user-role messages are collected. (2) CORRECTION_RE in salience.ts was matching bare 'no' and 'değil' (Turkish negative) anywhere in a message, generating false correction bookmarks on any sentence containing those words. Narrowed the regex to genuine correction phrases ('no, that's wrong', 'incorrect', 'hayır doğru değil', etc.). (3) REFLECTION_NOISE in reflection.ts extended with sub-agent chrome tokens (toolu, agentid, subagent, notification, success, resum) so these never surface as reflect candidates. Coverage tests added for all three. 66 affected-file tests pass post-fix.",
+    "breaking": false,
+    "summary": "Fix bookmark/salience pipeline: drop tool_result from userMessages, narrow CORRECTION_RE, add REFLECTION_NOISE for sub-agent chrome",
+    "references": [
+      "file:src/cli/commands/transcript.ts",
+      "file:src/lib/salience.ts",
+      "file:src/lib/reflection.ts",
+      "file:tests/unit/reflection.test.ts",
+      "file:tests/unit/salience.test.ts",
+      "file:tests/unit/transcript-distill.test.ts",
+      "task:bookmark-auto-capture-misclassifies-sub-agent-notifications-skill-loader-text-as-user-correction"
+    ]
+  },
+  {
+    "date": "2026-06-28",
+    "type": "fix",
+    "scope": "desktop",
+    "description": "Three related Sleepy notch / desktop window fixes shipped across multiple sessions. (1) Enabled opt-in: a new PanelEnabled atomic bool in Rust (desktop/src-tauri/src/lib.rs) defaults to false — the notch perch and hover-open watcher no longer start unconditionally at launch, so users who have never turned Sleepy on no longer see the notch appear. A new `sleepy:enabled` JS event (sent by applySleepyHotkey in dashboard/src/lib/sleepy.ts, which runs on mount, on storage sync, and on every Settings change) mirrors the persisted enabled flag into Rust's apply_sleepy_enabled, which shows or hides the perch and closes any open panel accordingly. (2) Perch sizing: perch width reduced from 104 px to 56 px and right padding from 8 px to 3 px so the tongue fits tightly to the notch face without overflow. (3) Titlebar text-selection: added user-select:none and -webkit-user-select:none to the .header rule in the launcher CSS; previously a double-click on the vault name in the title bar selected the text rather than triggering window maximize/restore, breaking the expected Tauri double-click behavior.",
+    "breaking": false,
+    "summary": "Fix Sleepy notch: opt-in by default, perch tight-to-notch, titlebar user-select prevents double-click text selection",
+    "references": [
+      "file:desktop/src-tauri/src/lib.rs",
+      "file:dashboard/src/lib/sleepy.ts",
+      "task:sleepy-notch-panel-redesign"
+    ]
+  },
+  {
+    "date": "2026-06-28",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "Add src/server/routes/sleepy-chat.ts and useSleepyChat.ts hook. The Sleepy Ask panel now supports real, multi-turn Claude Code conversations running inside the active vault's project directory, streamed over SSE. A first message spawns `claude -p \"<msg>\" --output-format stream-json`; subsequent messages use `--resume <sessionId>` for continuity; reset drops the stored session. Read-only is enforced three ways: (1) `--permission-mode plan` (load-bearing: blocks all mutating/action tools including Write/Edit/Bash and any connected MCP write tools without enumeration); (2) `--disallowedTools` removes orchestration tools (Task, Skill, Agent, CronCreate, etc.) so the chat cannot fan out into sub-agents or background flows; (3) a guard system prompt tells Sleepy to ignore session directives and just answer. Two tiers exposed in the UI as 'normal' (sonnet) and 'intelligent' (opus); the real model names are hidden from the UI. Session id + transcript persist server-side in the vault's state directory, surviving the desktop app's per-launch loopback-port change that would otherwise wipe localStorage.",
+    "breaking": false,
+    "summary": "Add Sleepy chat: real Claude Code SSE chat via `claude -p --resume` with read-only enforcement and normal/intelligent model tiers",
+    "references": [
+      "file:src/server/routes/sleepy-chat.ts",
+      "file:dashboard/src/hooks/useSleepyChat.ts",
+      "task:sleepy-intelligent-search-toggle-real-claude-code-ask-chat"
+    ]
+  },
+  {
+    "date": "2026-06-28",
+    "type": "fix",
+    "scope": "dashboard",
+    "description": "Two related Sleepy page fixes shipped together. First: the type-constellation and the filter chips were driven by two separate state variables — constSel (single-select, drives constellation highlight) and types[] (multi-select, drives chips) — that could drift apart whenever either was touched. Removed constSel entirely; types[] is now the single source of truth for both UIs. selectConst() delegates to toggleType(); the constellation's selected/dim classes derive from types.includes(t); the center gem and 'All' chip both clear types[]. Constellation is now multi-select (consistent with chips). Second: the Ask tab's composeAnswer call had no error handling on the /api/recall/haiku fetch — a server timeout, 500, or network drop left the answer pane blank. The catch now falls back to recallOnce (direct BM25 search) and flips the answer badge to 'local recall · grounded' so Ask always returns something.",
+    "breaking": false,
+    "summary": "Fix Sleepy page: unify constellation/chip state; add Haiku fallback to BM25 on server error",
+    "references": [
+      "file:dashboard/src/pages/SleepyPage.tsx",
+      "file:dashboard/src/hooks/useRecall.ts"
+    ]
+  },
+  {
+    "date": "2026-06-28",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "The Sleepy nav rail item now uses a SleepyEyes sub-component — two eye spans animated with a CSS scaleY blink every 4.4s, matching the blink timing of the idle mascot face on the Ask/Search page. This reinforces Sleepy as a recognizable persona across the dashboard rather than just a nav label. Implemented in Sidebar.tsx and Sidebar.css via a @keyframes blink rule; no JS state involved. The eye marks are the same two-eyes avatar that fronts Sleepy's answer bubbles, scaled down to sit inside the shared .sidebar-icon container so it reads as one of the family.",
+    "breaking": false,
+    "summary": "Add blinking Sleepy eyes animation to sidebar nav icon (scaleY blink every 4.4s, matching Ask bubble mascot)",
+    "references": [
+      "file:dashboard/src/components/layout/Sidebar.tsx",
+      "file:dashboard/src/components/layout/Sidebar.css"
+    ]
+  },
+  {
+    "date": "2026-06-28",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "Replaced the flat 9-item sidebar list with a hierarchical, job-to-be-done structure. Four groups: Workspace (Sleepy, Tasks, Council — surfaces you actively drive each day), Memory (Core, Knowledge, Features, Taxonomy — the brain's stored content), Brain (Map, Sleep Cycle — graph health and consolidation), Control Panel (Packs, Settings — unchanged). Key naming decisions: 'Sleepy' stays as the first Workspace item (it is the ask/recall surface, not a notch config); the consolidation page is renamed 'Sleep Cycle' (not 'Sleep') to avoid the Sleepy/Sleep naming collision; the 3D graph page is renamed 'Map' (not 'Brain') to prevent a Brain-in-Brain label. Old names retired: 'Core Files' → 'Core', 'Brain' → 'Map', 'Sleep State' → 'Sleep Cycle'. Sidebar.tsx, I18nContext.tsx updated; new SleepyEyes SVG sub-component added for the Sleepy rail icon.",
+    "breaking": false,
+    "summary": "Restructure sidebar nav into 4 job-based groups (Workspace / Memory / Brain / Control Panel)",
+    "references": [
+      "file:dashboard/src/components/layout/Sidebar.tsx",
+      "file:dashboard/src/context/I18nContext.tsx"
+    ]
+  },
+  {
+    "date": "2026-06-28",
+    "type": "feat",
+    "scope": "taxonomy",
+    "description": "Add `dreamcontext taxonomy audit --fix` (commit bd45856). Before this command existed, fixing non-canonical tags required per-task manual edits. `audit --fix` runs a single in-process pass: reads taxonomy.json vocabulary, scans every task file under state/ and knowledge files for any tag that maps to a canonical faceted alias (e.g. 'agent' → 'topic:agents', 'cli' → 'topic:cli'), and rewrites the files in bulk without touching other frontmatter. Normalized ~89 tags across active tasks and knowledge in the post-deep-research consolidation cycle. The dry-run path (audit without --fix) is unchanged — it still only reports drift.",
+    "breaking": false,
+    "summary": "Add `taxonomy audit --fix` to bulk-normalize non-canonical tags to canonical faceted form in one shot",
+    "references": [
+      "commit:bd45856",
+      "file:src/cli/commands/taxonomy.ts"
+    ]
+  },
+  {
+    "date": "2026-06-27",
+    "type": "feat",
+    "scope": "design-system",
+    "description": "Synced the dreamcontext dashboard as a design system to https://claude.ai/design/p/81c09a7e-7c02-470b-bb9f-0727c20f3b91 using the design-sync skill's synth-entry mode — a custom bundle entry re-exporting only the 16 scoped components (council: StatusBadge, ModelBadge, StatTile, PersonaAvatar; tasks: TaskCard, KanbanColumn, SubGroupSection, EisenhowerMatrix, RiceScatter, ActivityHeatmap, MiniCalendar, SearchableSelect, MultiSelectFilter, FilterPopover, VersionFilter, CustomFieldInput). Hand-authored .d.ts contracts for all 16, extracted scoped CSS from page-level stylesheets; 16/16 previews graded good. In the process discovered and fixed a latent bug: a literal non-ASCII byte in the SearchableSelect highlight regex crashed the entire bundle unless the file was served as UTF-8 — the regex is now escaped, bundle is 100% ASCII. Re-sync artifacts committed to .design-sync/ (config.json, NOTES.md, conventions.md, previews/). .gitignore updated for build-generated design-sync outputs.",
+    "breaking": false,
+    "summary": "Sync 16 dashboard primitives to claude.ai/design via synth-entry mode; fix SearchableSelect literal-byte regex crash",
+    "references": [
+      "file:dashboard/src/components/tasks/SearchableSelect.tsx",
+      "file:.design-sync/NOTES.md",
+      "url:https://claude.ai/design/p/81c09a7e-7c02-470b-bb9f-0727c20f3b91"
+    ]
+  },
+  {
+    "date": "2026-06-27",
+    "type": "chore",
+    "scope": "desktop",
+    "description": "Regenerated the complete Tauri icon set (desktop/src-tauri/icons/) — icns, ico, png at all sizes, iOS AppIcon variants, and Android mipmap-* densities — using the new violet folded-diamond 'dream gem' logo. Rebuilt the Tauri .app bundle and reinstalled it to ~/Applications/dreamcontext-beta.app via npm link + tauri build + re-sign. The running Dock icon now matches the finalized brand identity. Tests 2323 pass (1 known-flaky integration tsc-timeout in hook.test.ts, which passes 109/109 in isolation — pre-existing).",
+    "breaking": false,
+    "summary": "Regenerate full Tauri icon set (icns/ico/png/ios/android) from new dream-gem logo + rebuild and reinstall native macOS app",
+    "references": [
+      "file:desktop/src-tauri/icons/icon.icns",
+      "file:desktop/src-tauri/icons/icon.png"
+    ]
+  },
+  {
+    "date": "2026-06-27",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "Replace the placeholder logo and duplicate header wordmark with the finalized 'dream gem' identity. BrandMark.tsx is a scalable SVG of the violet folded-diamond (light-lavender rounded diamond + central leaf/eye + right wing + glow ring) built with useId() for SSR safety; drives the sidebar lockup, context-constellation center, and the regenerated favicon.svg. The wordmark is two-tone — 'dream' in light and 'context' in violet. Header restructured to the canonical three-zone layout: sidebar-toggle (left), vault name centered, theme-toggle + avatar (right) — implemented via new shared dashboard/src/hooks/useSidebarCollapse.ts so the toggle migrated cleanly from sidebar to header and the sidebar's old standalone Collapse row was removed. The existing e2e collapse test-id was preserved on the new button. README and index.html title/meta updated to reflect the rebrand.",
+    "breaking": false,
+    "summary": "Violet rebrand: folded-diamond SVG logo, two-tone wordmark, restructured header (toggle/vault/controls), single brand lockup in sidebar",
+    "references": [
+      "file:dashboard/src/components/brand/BrandMark.tsx",
+      "file:dashboard/public/favicon.svg",
+      "file:dashboard/src/components/layout/Header.tsx",
+      "file:dashboard/src/components/layout/Header.css",
+      "file:dashboard/src/components/layout/Sidebar.tsx",
+      "file:dashboard/src/components/layout/Sidebar.css",
+      "file:dashboard/src/hooks/useSidebarCollapse.ts",
+      "file:README.md",
+      "file:dashboard/index.html"
+    ]
+  },
+  {
+    "date": "2026-06-27",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "Add dashboard/src/pages/SleepyPage.tsx (+.css) implementing the design's Search.dc.html. Search tab delivers instant local BM25 over the full brain corpus (knowledge, features, tasks, memory, changelog); Ask tab composes a grounded, extractive answer purely from top recall hits — no LLM, zero tokens, inline citations — upholding the 'local · instant · no tokens' promise. Results display in flat or grouped mode with a context-constellation idle state; selecting a hit opens a side-panel rendered by the canonical per-type renderer (DocContent.tsx fetches the full record via /api/knowledge|features|tasks/:slug because recall stores only extracted board text for Excalidraw items). New dashboard/src/hooks/useRecall.ts drives the debounced search. New src/server/routes/recall.ts (registered in src/server/index.ts) exposes GET /api/recall?q=&types=&top= over bm25Search/buildCorpus with an 8-second corpus cache — the first HTTP surface of recall to the dashboard. Sleepy is registered as the first Workspace nav item and the default landing page (App.tsx, Shell.tsx, Sidebar.tsx, I18nContext.tsx).",
+    "breaking": false,
+    "summary": "Add 'Sleepy' Search/Ask surface: instant BM25 local search + extractive zero-token Ask composed from recall hits",
+    "references": [
+      "file:dashboard/src/pages/SleepyPage.tsx",
+      "file:dashboard/src/pages/SleepyPage.css",
+      "file:src/server/routes/recall.ts",
+      "file:src/server/index.ts",
+      "file:dashboard/src/hooks/useRecall.ts",
+      "file:dashboard/src/components/sleepy/DocContent.tsx",
+      "file:dashboard/src/App.tsx",
+      "file:dashboard/src/components/layout/Sidebar.tsx"
+    ]
+  },
+  {
     "date": "2026-06-25",
     "type": "feat",
     "scope": "skills",

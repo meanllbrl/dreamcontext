@@ -5,8 +5,7 @@ created: '2026-05-09'
 updated: '2026-06-21'
 released_version: v0.8.7
 tags:
-  - agents
-  - sleep
+  - 'topic:agents'
   - 'topic:sleep'
 related_tasks:
   - sleep-fanout-architecture

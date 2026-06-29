@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 
@@ -9,6 +10,8 @@ export interface KnowledgeEntry {
   date: string;
   pinned: boolean;
   content: string;
+  /** File last-modified time (ms epoch). Drives mtime-gated live refresh of the open doc. */
+  mtime: number;
 }
 
 interface KnowledgeListResponse {
@@ -64,6 +67,33 @@ export function useKnowledgeAssets(slug: string, enabled: boolean) {
     refetchInterval: false,
     refetchOnWindowFocus: false,
   });
+}
+
+/**
+ * Live-refresh the open knowledge doc when its file changes on disk.
+ *
+ * The detail + assets queries deliberately opt out of the global 15s poll
+ * (`staleTime: Infinity`) so an open Excalidraw board never re-exports mid-pan.
+ * That left them stale until restart. This watches the file's `mtime` — which
+ * DOES ride the polled list — and refetches the open doc + its assets only when
+ * the on-disk version is newer than what's rendered. So the board reloads only
+ * on a genuine change (the moment you actually want it), never on a blind tick.
+ *
+ * Pass the freshest list `mtime` (from the polled list) and the rendered doc's
+ * `mtime` (from the detail query); a no-op when either is missing or unchanged.
+ */
+export function useKnowledgeLiveRefresh(
+  slug: string | null,
+  listMtime: number | undefined,
+  detailMtime: number | undefined,
+): void {
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    if (!slug || listMtime === undefined || detailMtime === undefined) return;
+    if (listMtime <= detailMtime) return;
+    queryClient.invalidateQueries({ queryKey: ['knowledge', slug] });
+    queryClient.invalidateQueries({ queryKey: ['knowledge-assets', slug] });
+  }, [slug, listMtime, detailMtime, queryClient]);
 }
 
 export function useToggleKnowledgePin() {

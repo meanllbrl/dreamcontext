@@ -115,16 +115,21 @@ dreamcontext dashboard --launcher      # vault-agnostic launcher mode (resolves 
 ```
 A SessionStart hook auto-opens it when a session starts and no server is running (opt out with `DREAMCONTEXT_AUTO_DASHBOARD=0`).
 
+The sidebar is grouped into **Workspace** (Sleepy, Tasks, Council), **Memory** (Core, Knowledge, Features, Taxonomy), **Brain** (Map, Sleep Cycle), and **Control** (Packs, Settings), plus a "What is this?" page.
+
 **What's in it:**
-- **Kanban board** — drag-and-drop, multi-select filters (status/priority/urgency/tags/version, +assignee on a cloud backend) with type-ahead, sorting, grouping; Notion-style task detail panel to create tasks, change status, edit start/due dates and custom fields, add changelog entries. The **version filter is sprint-aware** — current / planning / released sprints with set-current + mark-complete actions (backed by `state/.active-version.json`).
+- **Sleepy** (Workspace) — the dashboard's Search + Ask surface: a scoped recall widget that runs the same engine as the CLI (empty query = browse; typing = live debounced BM25; "Intelligent" = a Haiku intent pass), plus an in-app **interactive Claude Code** agent (multi-session tabs, split panes; desktop-gated, read-only by default). This is the dashboard twin of the desktop Sleepy notch.
+- **Tasks board** — drag-and-drop Kanban with **saved views** (each carrying its own persisted filter/sort/grouping), a two-pane **include/exclude** filter (status/priority/tags/version/assignee) with type-ahead, a **Versions** popover, toggleable card **Properties** badges, and an **At-Risk alert**; view prefs persist shared (`overrides/board.json`) or local (`state/board.local.json`). Notion-style task detail panel to create tasks, change status, edit start/due dates and custom fields, add changelog entries. The **version filter is sprint-aware** — current / planning / released sprints with set-current + mark-complete actions (backed by `state/.active-version.json`).
 - **Eisenhower matrix** — priority×urgency quadrant planning; **Scatter view** uses RICE scores.
 - **Time-axis task views** — **Timeline (Gantt)** rendering each task's start→due range, a **Calendar**, and an **Activity heatmap** of completion cadence (all driven by the same `start_date`/`due_date` range).
 - **Core editor** — split-pane markdown editing + live preview for soul/user/memory/etc.
 - **Knowledge manager** — search, pin/unpin; **Feature PRD viewer**; **SQL ER diagram** preview for data-structures.
+- **Taxonomy** (Memory) — view and edit the tag vocabulary (facets, aliases) from the UI; mirrors `dreamcontext taxonomy`.
+- **Packs** (Control) — browse and install/refresh skill packs from the UI.
 - **Version manager** — plan and release versions.
 - **Settings — cloud tasks** — enter the ClickUp/GitHub API token from the UI (written to gitignored `state/.secrets.json`, masked, never echoed), Test Connection, and **preview-then-provision** custom fields (a dry run lists what would be created vs. already exists); plus a **Task Format & Custom Fields** editor for `overrides/task.md` (raw template + structured field schema).
-- **Sleep tracker** — debt gauge, session-history timeline, and a list of every manual change made through the dashboard (recorded to `.sleep.json` so the agent consolidates your edits during sleep).
-- **Brain graph** — interactive network of memory/knowledge/features/decisions with explicit + inferred edges.
+- **Sleep Cycle** (sleep tracker) — debt gauge, session-history timeline, and a list of every manual change made through the dashboard (recorded to `.sleep.json` so the agent consolidates your edits during sleep).
+- **Map** (brain graph) — interactive network of memory/knowledge/features/decisions with explicit + inferred edges.
 - **Council Hall** — every debate as a searchable card grid; detail view with Overview / Agents / Matrix tabs.
 - **"What is this?"** explainer page with live faculty diagrams.
 

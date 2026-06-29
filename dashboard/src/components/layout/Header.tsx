@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useTheme } from '../../context/ThemeContext';
-import { useSleep, getSleepLevel, getSleepLevelKey } from '../../hooks/useSleep';
+import { startWindowDrag, toggleMaximizeWindow } from '../../lib/desktop';
 import { UpdateBadge } from './UpdateBadge';
 import type { Page } from './Sidebar';
 import './Header.css';
@@ -24,17 +24,37 @@ function applyZoom(zoom: number) {
   document.documentElement.style.setProperty('--zoom', String(zoom));
 }
 
+/** Active vault display name (passed by the launcher via `?vault=`). */
+function readVaultLabel(): string {
+  if (typeof window === 'undefined') return '';
+  try {
+    return new URLSearchParams(window.location.search).get('vault') ?? '';
+  } catch {
+    return '';
+  }
+}
+
 interface HeaderProps {
   /** Switch the active page (used by the update badge to open Packs). */
   onNavigate?: (page: Page) => void;
+  /** Whether the rail is collapsed (drives the toggle icon state). */
+  sidebarCollapsed: boolean;
+  /** Collapse/expand the rail — the title-bar owns this control. */
+  onToggleSidebar: () => void;
 }
 
-export function Header({ onNavigate }: HeaderProps) {
+/**
+ * Title bar. Mirrors the design: a sidebar toggle on the left, the active vault
+ * name centered, and utility controls on the right. The brand wordmark lives
+ * ONLY in the sidebar lockup now — the header no longer repeats it.
+ */
+export function Header({ onNavigate, sidebarCollapsed, onToggleSidebar }: HeaderProps) {
   const { theme, setTheme, resolved } = useTheme();
-  const { data: sleep } = useSleep();
   const queryClient = useQueryClient();
   const [zoom, setZoom] = useState(getStoredZoom);
   const [refreshing, setRefreshing] = useState(false);
+
+  const vaultLabel = readVaultLabel();
 
   // Manual refresh: pull every active query at once (sleep debt, tasks,
   // knowledge, …). Queries also poll on an interval, but this gives an
@@ -51,10 +71,6 @@ export function Header({ onNavigate }: HeaderProps) {
   useEffect(() => {
     applyZoom(zoom);
   }, [zoom]);
-
-  const debt = sleep?.debt ?? 0;
-  const level = getSleepLevel(debt);
-  const levelKey = getSleepLevelKey(debt);
 
   const cycleTheme = () => {
     const next = theme === 'system' ? 'light' : theme === 'light' ? 'dark' : 'system';
@@ -76,32 +92,57 @@ export function Header({ onNavigate }: HeaderProps) {
   };
 
   return (
-    <header className="header">
+    <header
+      className="header"
+      // NOTE: deliberately NO `data-tauri-drag-region`. That attribute injects
+      // Tauri's OWN drag + double-click-maximize handlers, and the dblclick →
+      // toggleMaximize part fires even with `dragDropEnabled: false` — competing
+      // with our handler (and macOS native zoom) and flickering the window
+      // between maximized/restored. We remove it and own both gestures in JS.
+      //
+      // Drag: start ONLY after the pointer moves past a small threshold, so plain
+      // clicks and double-clicks are NOT forwarded to the native window (which
+      // would trigger native zoom on top of ours). Maximize is our single,
+      // deterministic onDoubleClick below.
+      onMouseDown={(e) => {
+        if (e.button !== 0) return;
+        const target = e.target;
+        if (target instanceof Element &&
+            target.closest('button, input, a, select, textarea, [role="button"], [data-no-drag]')) return;
+        const sx = e.clientX, sy = e.clientY;
+        const onMove = (me: MouseEvent) => {
+          if (Math.abs(me.clientX - sx) > 4 || Math.abs(me.clientY - sy) > 4) {
+            cleanup();
+            void startWindowDrag(target);
+          }
+        };
+        const cleanup = () => {
+          window.removeEventListener('mousemove', onMove);
+          window.removeEventListener('mouseup', cleanup);
+        };
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup', cleanup);
+      }}
+      onDoubleClick={(e) => void toggleMaximizeWindow(e.target)}
+    >
       <div className="header-left">
-        <div className={`agent-avatar agent-avatar--${levelKey}`}>
-          <svg width="28" height="28" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M14 2L24 14L14 26L4 14L14 2Z" fill="url(#diamond-gradient)" opacity={levelKey === 'must_sleep' ? 0.4 : levelKey === 'sleepy' ? 0.6 : levelKey === 'drowsy' ? 0.8 : 1} />
-            <path d="M14 8L19 14L14 20L9 14L14 8Z" fill="url(#diamond-inner)" opacity={levelKey === 'must_sleep' ? 0.3 : 0.7} />
-            <defs>
-              <linearGradient id="diamond-gradient" x1="4" y1="2" x2="24" y2="26" gradientUnits="userSpaceOnUse">
-                <stop stopColor="hsl(287, 100%, 33%)" />
-                <stop offset="1" stopColor="hsl(311, 97%, 43%)" />
-              </linearGradient>
-              <linearGradient id="diamond-inner" x1="9" y1="8" x2="19" y2="20" gradientUnits="userSpaceOnUse">
-                <stop stopColor="hsl(276, 74%, 50%)" />
-                <stop offset="1" stopColor="hsl(287, 100%, 45%)" />
-              </linearGradient>
-            </defs>
+        <button
+          className="header-icon-btn"
+          data-testid="sidebar-collapse"
+          onClick={onToggleSidebar}
+          title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          aria-expanded={!sidebarCollapsed}
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <rect x="1.4" y="2.4" width="13.2" height="11.2" rx="2.2" stroke="currentColor" strokeWidth="1.4" />
+            <line x1="6.1" y1="2.8" x2="6.1" y2="13.2" stroke="currentColor" strokeWidth="1.4" />
           </svg>
-          {levelKey === 'must_sleep' && <span className="zzz">zzz</span>}
-        </div>
-        <div className="header-brand">
-          <span className="brand-name">dreamcontext</span>
-          <span className={`sleep-badge sleep-badge--${levelKey}`}>
-            {level} ({debt})
-          </span>
-        </div>
+        </button>
       </div>
+
+      {vaultLabel && <div className="header-vault" title={vaultLabel}>{vaultLabel}</div>}
+
       <div className="header-right">
         <button
           className={`header-refresh ${refreshing ? 'header-refresh--spinning' : ''}`}
@@ -117,19 +158,9 @@ export function Header({ onNavigate }: HeaderProps) {
         </button>
         <UpdateBadge onManagePacks={onNavigate ? () => onNavigate('packs') : undefined} />
         <div className="zoom-controls">
-          <button
-            className="zoom-btn"
-            onClick={() => changeZoom(-1)}
-            disabled={!canZoomOut}
-            title="Zoom out"
-          >-</button>
+          <button className="zoom-btn" onClick={() => changeZoom(-1)} disabled={!canZoomOut} title="Zoom out">-</button>
           <span className="zoom-label">{Math.round(zoom * 100)}%</span>
-          <button
-            className="zoom-btn"
-            onClick={() => changeZoom(1)}
-            disabled={!canZoomIn}
-            title="Zoom in"
-          >+</button>
+          <button className="zoom-btn" onClick={() => changeZoom(1)} disabled={!canZoomIn} title="Zoom in">+</button>
         </div>
         <button className="theme-toggle" onClick={cycleTheme} title={`Theme: ${themeLabel}`}>
           {resolved === 'dark' ? (

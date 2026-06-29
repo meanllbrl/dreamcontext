@@ -5,9 +5,9 @@ created: '2026-03-24'
 updated: '2026-06-21'
 released_version: v0.8.7
 tags:
-  - skills
-  - cli
-  - distribution
+  - 'topic:skills'
+  - 'topic:cli'
+  - devops
 related_tasks:
   - optional-skill-packs
 ---

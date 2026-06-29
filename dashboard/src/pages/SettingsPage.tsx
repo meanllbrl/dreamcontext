@@ -381,7 +381,6 @@ export function SettingsPage() {
   return (
     <div className="settings-page">
       <div className="settings-header">
-        <h1 className="page-title">{t('settings.title')}</h1>
         <div className="settings-save-row">
           {saveSuccess && !dirty && (
             <span className="settings-saved">{t('settings.saved')}</span>

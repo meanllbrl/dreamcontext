@@ -1,0 +1,101 @@
+/* Extracted by /design-sync from TaskFilters.css (.filter-chip*) and TaskCreateModal.css (.field-input/.field-select) — the trigger-chip and form-control styles the synced MultiSelectFilter / VersionFilter / CustomFieldInput components need but don't co-locate. Re-extract if those classes change. */
+
+/* --- filter trigger chips --- */
+/* ─── Filter Chips ─── */
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  font-family: var(--font-family);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all var(--transition-fast);
+  user-select: none;
+}
+.filter-chip:hover {
+  border-color: var(--color-border-hover);
+  color: var(--color-text);
+  background: var(--color-bg-secondary);
+}
+.filter-chip--active {
+  border-color: var(--color-accent);
+  color: var(--color-text);
+  background: var(--color-accent-soft);
+}
+.filter-chip--active:hover {
+  background: var(--color-accent-soft);
+}
+.filter-chip--subtle {
+  border-color: transparent;
+  background: transparent;
+}
+.filter-chip--subtle:hover {
+  background: var(--color-bg-secondary);
+  border-color: var(--color-border);
+}
+.filter-chip-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  flex-shrink: 0;
+}
+.filter-chip-label {
+  line-height: 1;
+}
+.filter-chip-chevron {
+  transition: transform var(--transition-fast);
+  opacity: 0.5;
+  flex-shrink: 0;
+}
+.filter-chip-chevron--open {
+  transform: rotate(180deg);
+}
+.filter-chip-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: var(--radius-full);
+  background: var(--color-accent);
+  color: var(--color-text-on-brand);
+  font-size: 9px;
+  font-weight: var(--font-weight-bold);
+  line-height: 1;
+}
+/* ─── Dark Mode Adjustments ─── */
+[data-theme='dark'] .filter-chip--active {
+  background: var(--color-accent-soft);
+}
+[data-theme='dark'] .filter-chip--active:hover {
+  background: var(--color-accent-soft);
+}
+
+/* --- form field inputs --- */
+.field-input,
+.field-textarea,
+.field-select {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  box-shadow: inset 0 2px 4px hsl(0 0% 0% / 0.05);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-bounce);
+}
+.field-input:focus,
+.field-textarea:focus,
+.field-select:focus {
+  border-color: var(--color-accent);
+  outline: none;
+  box-shadow: inset 0 2px 4px hsl(0 0% 0% / 0.05), var(--shadow-glow);
+}

@@ -1,0 +1,23 @@
+/* The left-of-notch companion: a solid-black rounded tab that reads as an
+   extension of the physical notch, with Sleepy clearly visible on the black.
+   Flush/square at the very top (merges with the menu-bar/notch line) → rounded
+   bottom corners. */
+.perch-root {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #000;
+  /* Square top + right edge so it butts seamlessly against the physical notch on
+     the right; only the bottom-left rounds, like the notch's own corner. */
+  border-radius: 0 0 0 10px;
+  cursor: pointer;
+  padding-right: 3px; /* tiny nudge off the notch seam; keep Sleepy snug */
+  -webkit-user-select: none;
+  user-select: none;
+  overflow: hidden;
+  transition: filter 0.15s ease, transform 0.12s ease;
+}
+.perch-root:hover { filter: brightness(1.18); }
+.perch-root:active { transform: scale(0.95); }

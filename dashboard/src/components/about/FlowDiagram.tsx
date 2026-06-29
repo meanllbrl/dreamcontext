@@ -42,6 +42,10 @@ export interface FlowEdge {
   d: string;
   comet?: boolean;
   dashed?: boolean;
+  /** Draw a directional arrowhead at the path end (opt-in). */
+  arrow?: boolean;
+  /** Thinner, lower-contrast wire — for dense meshes where 2px reads as heavy. */
+  thin?: boolean;
   delay?: number;
   dur?: number;
   travel?: number;
@@ -106,6 +110,7 @@ export function FlowDiagram({ spec, className, size = 'full' }: FlowDiagramProps
   const safe = uid.replace(/[^a-zA-Z0-9_-]/g, '');
   const nodeId = `fd-node-${safe}`;
   const dotId = `fd-dot-${safe}`;
+  const arrowId = `fd-arrow-${safe}`;
   const dotR = size === 'mini' ? 5 : 7;
 
   return (
@@ -128,6 +133,20 @@ export function FlowDiagram({ spec, className, size = 'full' }: FlowDiagramProps
             <stop offset="0.45" className="fd-dot-mid" />
             <stop offset="1" className="fd-dot-edge" />
           </radialGradient>
+          {/* Directional arrowhead, applied per-edge via marker-end when an edge
+              opts in (arrow: true). orient="auto" rotates it to the path tangent. */}
+          <marker
+            id={arrowId}
+            viewBox="0 0 10 10"
+            refX="8.5"
+            refY="5"
+            markerWidth="6.5"
+            markerHeight="6.5"
+            orient="auto-start-reverse"
+            markerUnits="userSpaceOnUse"
+          >
+            <path d="M0 1 L9 5 L0 9 z" className="fd-arrowhead" />
+          </marker>
         </defs>
 
         {/* ── Edges (drawn first, behind nodes) ───────────────────────────── */}
@@ -136,7 +155,8 @@ export function FlowDiagram({ spec, className, size = 'full' }: FlowDiagramProps
             <g key={edge.id}>
               <path
                 d={edge.d}
-                className={`fd-wire${edge.dashed ? ' fd-wire--dashed' : ''}`}
+                className={`fd-wire${edge.dashed ? ' fd-wire--dashed' : ''}${edge.thin ? ' fd-wire--thin' : ''}`}
+                markerEnd={edge.arrow ? `url(#${arrowId})` : undefined}
               />
               {edge.comet !== false && (
                 // A small glowing dot rides the edge via the CSS Motion Path

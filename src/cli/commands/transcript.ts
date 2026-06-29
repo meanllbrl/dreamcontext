@@ -43,6 +43,39 @@ export interface DistilledSection {
 }
 
 /**
+ * True when a `role:user` transcript turn is system-injected sub-agent /
+ * tooling coordination noise rather than a real human message. These turns
+ * structurally resemble a user message (they arrive on the `user` role as
+ * tool results or harness injections) but carry ZERO durable lesson content:
+ *
+ *   1. `<task-notification>` XML blocks (background sub-agent completion pings)
+ *   2. agent-resume JSON — `{"success":true,"message":"Agent ... resumed ..."}`
+ *   3. skill-loader headers — `Base directory for this skill: ...`
+ *
+ * They must never seed a 'User correction' bookmark (salience auto-capture runs
+ * over `userMessages`) nor bloat a session digest. Substring-anchored: a turn
+ * that merely CONTAINS one of these blocks is treated as noise, because in
+ * practice the harness emits each on its own dedicated turn. See task_OwbFN_IV.
+ */
+export function isSystemNoiseMessage(text: string): boolean {
+  const t = text.trim();
+  if (!t) return true;
+  // 1. Sub-agent task-notification XML blocks.
+  if (/<\/?task-notification\b/i.test(t)) return true;
+  // 2. Agent-resume JSON: a success envelope referencing an Agent resume.
+  if (
+    /"success"\s*:\s*(?:true|false)/.test(t) &&
+    /\bAgent\b/.test(t) &&
+    /(?:resumed|no active task)/i.test(t)
+  ) {
+    return true;
+  }
+  // 3. Skill-loader header echoed verbatim into the turn.
+  if (/Base directory for this skill\s*:/i.test(t)) return true;
+  return false;
+}
+
+/**
  * Parse a JSONL transcript file and extract high-signal content.
  * Pure Node.js structural filtering, no AI.
  * If sinceTimestamp is provided, only entries after that timestamp are included.
@@ -85,7 +118,13 @@ export function distillTranscript(transcriptPath: string, sinceTimestamp?: strin
         if (typeof msg.content === 'string') {
           text = msg.content;
         } else if (Array.isArray(msg.content)) {
-          // Collect all text from array content (multiple text blocks, tool results, etc)
+          // Collect ONLY genuine user-typed text. In Claude Code transcripts a
+          // tool result is stored as a role:'user' record carrying a
+          // `tool_result` block — that is machine output, NOT something the human
+          // typed. Folding it into userMessages let tool output (e.g. Playwright
+          // "No open tabs") seed false 'User correction' bookmarks, so we skip
+          // tool_result blocks here. Genuine typed text always arrives as a
+          // string or a {type:'text'} block. See task_OwbFN_IV.
           for (const block of msg.content) {
             if (typeof block === 'string') {
               text += block + ' ';
@@ -94,22 +133,16 @@ export function distillTranscript(transcriptPath: string, sinceTimestamp?: strin
               if (block.type === 'text' && typeof block.text === 'string') {
                 text += block.text + ' ';
               }
-              // Handle tool result blocks that may have content array
-              else if ((block as Record<string, unknown>).type === 'tool_result' && Array.isArray((block as Record<string, unknown>).content)) {
-                const content = (block as Record<string, unknown>).content as Array<unknown>;
-                for (const contentBlock of content) {
-                  if (typeof contentBlock === 'string') {
-                    text += contentBlock + ' ';
-                  } else if (contentBlock && typeof contentBlock === 'object' && (contentBlock as Record<string, unknown>).type === 'text') {
-                    text += ((contentBlock as Record<string, unknown>).text || '') + ' ';
-                  }
-                }
-              }
+              // tool_result blocks are deliberately ignored (machine output).
             }
           }
         }
         const trimmed = text.trim();
-        if (trimmed && trimmed.length > 0) {
+        // Drop system-injected coordination noise (sub-agent notifications,
+        // agent-resume JSON, skill-loader headers) BEFORE it can be mined as a
+        // user message — otherwise salience auto-capture misclassifies it as a
+        // 'User correction' bookmark. See task_OwbFN_IV.
+        if (trimmed && trimmed.length > 0 && !isSystemNoiseMessage(trimmed)) {
           result.userMessages.push(trimmed);
         }
         continue;

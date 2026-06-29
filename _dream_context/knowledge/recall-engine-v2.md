@@ -201,6 +201,27 @@ v3 shipped four engine changes, tuned on the 60q train set and validated on a NE
 
 Regression locks: `tests/unit/recall-engine-v3.test.ts`.
 
+## HTTP Exposure — `/api/recall` (added 2026-06-27)
+
+The BM25 recall engine is now exposed over HTTP for dashboard consumers, making it available without a CLI subprocess.
+
+**Route:** `src/server/routes/recall.ts`, registered at `GET /api/recall` in `src/server/index.ts`.
+
+**Parameters:**
+- `q` — query string (empty returns `{hits: [], tookMs: 0}` immediately)
+- `types` — comma-separated `CorpusType` filter; defaults to all five types (`knowledge,feature,task,memory,changelog`)
+- `top` — result count; default 12, clamped to 1–50 (CLI default is 5; UI shows more)
+
+**Response shape:** `{ query, tookMs, hits[] }` where each hit carries `type, slug, title, path, description, tags, snippet, body, score, rankScore`. The `score`/`rankScore` decoupling invariant is preserved — both are returned and rounded to 4dp.
+
+**Corpus cache:** A module-level `Map<string, {corpus, builtAt}>` caches the built corpus per `contextRoot::sortedTypes` key for 8 seconds (TTL: `CORPUS_TTL_MS = 8_000`). Prevents redundant vault disk-scans on debounced keystrokes from the dashboard search view. Cache lives in the server process; no persistence. Short TTL means edits made while the search view is open show up within 8 seconds.
+
+**Client hooks (`dashboard/src/hooks/useRecall.ts`):**
+- `useRecall(query, types, topK=12)` — React Query hook with `staleTime: 5_000`; debounced (300ms by default) for use in the live search input.
+- `recallOnce(query, types, topK=4)` — one-shot `fetch` for the Ask mode answer synthesis (fires once on submit, not on every keystroke).
+
+**Consumer:** the Sleepy Search/Ask view (`dashboard/src/pages/SleepyPage.tsx`). See `features/sleepy-search-ask.md` for the full product description.
+
 ## Last Verified
 
-2026-06-10.
+2026-06-27.

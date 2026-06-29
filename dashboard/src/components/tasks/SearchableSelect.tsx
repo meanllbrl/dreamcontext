@@ -22,12 +22,15 @@ interface SearchableSelectProps {
 
 /** Diacritic/Turkish-insensitive fold so "meh" matches "Mehmet Nuraydın". */
 function fold(s: string): string {
+  // Code points written escaped (not as literal bytes) so the compiled bundle
+  // stays ASCII and is safe regardless of how it's served (a literal-byte
+  // regex range breaks when the bundle isn't served as UTF-8).
   return s
-    .replace(/ı/g, 'i').replace(/İ/g, 'i')
-    .replace(/ş/g, 's').replace(/Ş/g, 's')
-    .replace(/ğ/g, 'g').replace(/Ğ/g, 'g')
+    .replace(/\u0131/g, 'i').replace(/\u0130/g, 'i') // dotless i / dotted I
+    .replace(/\u015f/g, 's').replace(/\u015e/g, 's') // s-cedilla
+    .replace(/\u011f/g, 'g').replace(/\u011e/g, 'g') // g-breve
     .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
+    .replace(/[\u0300-\u036f]/g, '') // combining diacritical marks
     .toLowerCase();
 }
 

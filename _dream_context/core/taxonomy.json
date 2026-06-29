@@ -73,6 +73,11 @@
     "excalidraw": "topic:excalidraw",
     "dashboard": "topic:dashboard",
     "skills": "topic:skills",
-    "cli": "topic:cli"
+    "cli": "topic:cli",
+    "desktop": "topic:desktop",
+    "sleep": "topic:sleep",
+    "sub-agents": "topic:agents",
+    "orchestration": "architecture",
+    "hook": "architecture"
   }
 }

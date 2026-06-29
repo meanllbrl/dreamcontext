@@ -5,10 +5,10 @@ created: '2026-05-24'
 updated: '2026-06-21'
 released_version: v0.8.7
 tags:
-  - skills
-  - cli
-  - sub-agents
-  - code-review
+  - 'topic:skills'
+  - 'topic:cli'
+  - 'topic:agents'
+  - kind:testing
 related_tasks:
   - multi-review-skill
 ---

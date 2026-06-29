@@ -1,63 +1,92 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useI18n } from '../../context/I18nContext';
+import { BrandMark } from '../brand/BrandMark';
+import { NavIcon } from './NavIcons';
 import './Sidebar.css';
 
-export type Page = 'tasks' | 'core' | 'knowledge' | 'features' | 'sleep' | 'brain' | 'council' | 'settings' | 'packs' | 'about' | 'taxonomy';
+/** The active vault's display name, as passed by the launcher via `?vault=`. */
+function readVaultLabel(): string {
+  if (typeof window === 'undefined') return '';
+  try {
+    return new URLSearchParams(window.location.search).get('vault') ?? '';
+  } catch {
+    return '';
+  }
+}
+
+export type Page = 'sleepy' | 'tasks' | 'core' | 'knowledge' | 'features' | 'sleep' | 'brain' | 'council' | 'settings' | 'packs' | 'about' | 'taxonomy';
 
 interface SidebarProps {
   activePage: Page;
   onNavigate: (page: Page) => void;
+  /** Collapsed state, owned by the Shell and toggled from the title bar. */
+  collapsed: boolean;
 }
 
-interface NavItem { page: Page; icon: string; labelKey: string }
+interface NavItem { page: Page; labelKey: string; lab?: boolean }
 interface NavGroup { labelKey: string; items: NavItem[] }
 
-// Grouped so the nav reads as a sensible structure rather than a flat list:
-// the project "Workspace" views vs. the "Control Panel" (config/packs).
+/**
+ * The Sleepy mascot's two-eyes avatar — the same mark that fronts Sleepy's
+ * answer bubbles — scaled down to sit in the nav rail in place of a glyph. The
+ * badge box around it is supplied by `.sidebar-icon`, the shared container every
+ * rail icon shares, so Sleepy reads as one of the family rather than a one-off.
+ */
+function SleepyEyes() {
+  return (
+    <>
+      <span className="sidebar-sleepy-eye" />
+      <span className="sidebar-sleepy-eye" />
+    </>
+  );
+}
+
+// Grouped by job-to-be-done so the rail reads as a scannable hierarchy rather
+// than one flat list of 9+ items:
+//   Workspace    — daily surfaces you actively drive (ask/recall, tasks, debate)
+//   Memory       — the brain's stored content you curate
+//   Brain        — the brain's shape & health (graph + consolidation)
+//   Control Panel— config / packs
+// Naming: "Sleepy" stays the ask/recall surface; the consolidation page is
+// "Sleep Cycle" (not "Sleep State") to avoid colliding with "Sleepy"; the graph
+// is "Map" (not "Brain") to avoid Brain-in-Brain.
 const NAV_GROUPS: NavGroup[] = [
   {
     labelKey: 'nav.group.workspace',
     items: [
-      { page: 'brain', icon: '◉', labelKey: 'nav.brain' },
-      { page: 'tasks', icon: '▦', labelKey: 'nav.tasks' },
-      { page: 'knowledge', icon: '✦', labelKey: 'nav.knowledge' },
-      { page: 'features', icon: '⚑', labelKey: 'nav.features' },
-      { page: 'core', icon: '◈', labelKey: 'nav.core' },
-      { page: 'council', icon: '⚔', labelKey: 'nav.council' },
-      { page: 'taxonomy', icon: '◆', labelKey: 'nav.taxonomy' },
-      { page: 'sleep', icon: '◑', labelKey: 'nav.sleep' },
+      { page: 'sleepy', labelKey: 'nav.sleepy' },
+      { page: 'tasks', labelKey: 'nav.tasks' },
+      { page: 'council', labelKey: 'nav.council', lab: true },
+    ],
+  },
+  {
+    labelKey: 'nav.group.memory',
+    items: [
+      { page: 'core', labelKey: 'nav.core' },
+      { page: 'knowledge', labelKey: 'nav.knowledge' },
+      { page: 'features', labelKey: 'nav.features' },
+      { page: 'taxonomy', labelKey: 'nav.taxonomy' },
+    ],
+  },
+  {
+    labelKey: 'nav.group.brain',
+    items: [
+      { page: 'brain', labelKey: 'nav.brain' },
+      { page: 'sleep', labelKey: 'nav.sleep' },
     ],
   },
   {
     labelKey: 'nav.group.control',
     items: [
-      { page: 'packs', icon: '◳', labelKey: 'nav.packs' },
-      { page: 'settings', icon: '⚙', labelKey: 'nav.settings' },
+      { page: 'packs', labelKey: 'nav.packs' },
+      { page: 'settings', labelKey: 'nav.settings' },
     ],
   },
 ];
 
-const COLLAPSE_STORAGE_KEY = 'dreamcontext.dashboard.sidebarCollapsed';
 // One-time first-run nudge: the "What is this?" entry pulses until the user
 // opens it once, then this flag persists so it never nags again.
 const ABOUT_SEEN_STORAGE_KEY = 'dreamcontext.dashboard.aboutSeen';
-
-// CSS cannot drive @media from custom properties in this Vite setup, so 1024
-// is a documented literal matching the responsive breakpoint in Sidebar.css.
-// Guard against non-browser environments (SSR, jsdom-less test runners).
-const NARROW_QUERY =
-  typeof window !== 'undefined' && window.matchMedia
-    ? window.matchMedia('(max-width: 1024px)')
-    : null;
-
-function readUserPref(): boolean {
-  if (typeof window === 'undefined') return false;
-  try {
-    return window.localStorage.getItem(COLLAPSE_STORAGE_KEY) === '1';
-  } catch {
-    return false;
-  }
-}
 
 function readAboutSeen(): boolean {
   if (typeof window === 'undefined') return false;
@@ -68,41 +97,11 @@ function readAboutSeen(): boolean {
   }
 }
 
-export function Sidebar({ activePage, onNavigate }: SidebarProps) {
+export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
   const { t } = useI18n();
-  // userPref: the user's explicit toggle preference, persisted to localStorage.
-  const [userPref, setUserPref] = useState<boolean>(readUserPref);
-  // forced: derived from matchMedia; auto-collapses the rail at <=1024px.
-  // It never writes to localStorage — it's a viewport state, not a preference.
-  const [forced, setForced] = useState<boolean>(NARROW_QUERY?.matches ?? false);
   // aboutSeen: whether the user has opened "What is this?" at least once.
   // Until then, the entry bounces to invite the first click.
   const [aboutSeen, setAboutSeen] = useState<boolean>(readAboutSeen);
-
-  useEffect(() => {
-    if (!NARROW_QUERY) return;
-    const handler = (e: MediaQueryListEvent) => setForced(e.matches);
-    NARROW_QUERY.addEventListener('change', handler);
-    return () => NARROW_QUERY.removeEventListener('change', handler);
-  }, []);
-
-  // The rendered state is the union: forced viewport OR user preference.
-  const collapsed = forced || userPref;
-
-  // Toggle mutates only userPref (persists to localStorage).
-  // When forced dominates the toggle is effectively inert, which is acceptable —
-  // no overlay/hamburger is added per the design constraints.
-  const toggle = () => {
-    setUserPref((prev) => {
-      const next = !prev;
-      try {
-        window.localStorage.setItem(COLLAPSE_STORAGE_KEY, next ? '1' : '0');
-      } catch {
-        // localStorage unavailable — ignore
-      }
-      return next;
-    });
-  };
 
   // Opening "What is this?" retires the first-run nudge for good.
   const openAbout = () => {
@@ -123,26 +122,24 @@ export function Sidebar({ activePage, onNavigate }: SidebarProps) {
   // Continuous stagger index across groups for the entrance animation.
   let staggerIndex = 0;
 
+  const vaultLabel = readVaultLabel();
+
   return (
     <nav className={`sidebar${collapsed ? ' sidebar--collapsed' : ''}`} aria-label="Primary">
-      <button
-        type="button"
-        className="sidebar-toggle"
-        data-testid="sidebar-collapse"
-        onClick={toggle}
-        aria-expanded={!collapsed}
-        aria-label={collapsed ? t('nav.expand') : t('nav.collapse')}
-        title={collapsed ? t('nav.expand') : t('nav.collapse')}
-      >
-        <span className="sidebar-toggle-icon">{collapsed ? '»' : '«'}</span>
-        <span className="sidebar-label">{t('nav.collapse')}</span>
-      </button>
+      {/* Brand lockup — the dream gem + wordmark + active vault. */}
+      <div className="sidebar-brand" title="dreamcontext">
+        <BrandMark size={30} glow />
+        <div className="sidebar-brand-text">
+          <span className="sidebar-brand-word">dream<span>context</span></span>
+          {vaultLabel && <span className="sidebar-brand-vault">{vaultLabel}</span>}
+        </div>
+      </div>
 
       {NAV_GROUPS.map((group) => (
         <div key={group.labelKey} className="sidebar-group">
           <span className="sidebar-group-label">{t(group.labelKey)}</span>
           <ul className="sidebar-nav">
-            {group.items.map(({ page, icon, labelKey }) => {
+            {group.items.map(({ page, labelKey, lab }) => {
               staggerIndex += 1;
               const label = t(labelKey);
               return (
@@ -150,11 +147,12 @@ export function Sidebar({ activePage, onNavigate }: SidebarProps) {
                   <button
                     className={`sidebar-item ${activePage === page ? 'sidebar-item--active' : ''}`}
                     onClick={() => onNavigate(page)}
-                    title={label}
+                    title={lab ? `${label} — ${t('nav.lab')}` : label}
                     aria-current={activePage === page ? 'page' : undefined}
                   >
-                    <span className="sidebar-icon">{icon}</span>
+                    <span className="sidebar-icon">{page === 'sleepy' ? <SleepyEyes /> : <NavIcon page={page} />}</span>
                     <span className="sidebar-label">{label}</span>
+                    {lab && <span className="sidebar-lab-tag">{t('nav.lab')}</span>}
                   </button>
                 </li>
               );
@@ -171,7 +169,7 @@ export function Sidebar({ activePage, onNavigate }: SidebarProps) {
           title={t('nav.about')}
           aria-current={activePage === 'about' ? 'page' : undefined}
         >
-          <span className="sidebar-icon">✷</span>
+          <span className="sidebar-icon"><NavIcon page="about" /></span>
           <span className="sidebar-label">{t('nav.about')}</span>
         </button>
       </div>

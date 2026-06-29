@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import fg from 'fast-glob';
 import { readFrontmatter } from './frontmatter.js';
@@ -42,6 +42,12 @@ export interface KnowledgeEntry {
   date: string;
   pinned: boolean;
   content: string;
+  /**
+   * File last-modified time (ms epoch). Rides the polled list response so the
+   * dashboard can detect an on-disk change and live-refresh the open document —
+   * including Excalidraw boards — without a blind interval reload.
+   */
+  mtime: number;
   pinnedPreviewLines?: number;
   pinnedPreviewAll?: boolean;
 }
@@ -92,6 +98,7 @@ export function buildKnowledgeIndex(contextRoot: string): KnowledgeEntry[] {
         date: String(data.date ?? ''),
         pinned: data.pinned === true,
         content: indexedContent,
+        mtime: statSync(file).mtimeMs,
       };
       if (typeof data.pinned_preview_lines === 'number' && data.pinned_preview_lines > 0) {
         entry.pinnedPreviewLines = data.pinned_preview_lines;

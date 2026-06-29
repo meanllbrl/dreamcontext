@@ -2,98 +2,396 @@
   height: 100%;
 }
 
-.sleep-overview {
-  display: flex;
-  gap: var(--space-6);
-  align-items: flex-start;
+/* ─── Sleep card — the Sleepy companion + the cloud, one continuous surface ───
+   A single card tinted by the current sleep level: the mascot band up top, then
+   the sleep cloud (everything the next consolidation will weave in) flowing on
+   below a hairline divider — no second card, no second header. */
+.sleep-card {
   margin-bottom: var(--space-8);
+  border-radius: var(--radius-2xl);
+  border: 1px solid var(--color-border);
+  background:
+    radial-gradient(120% 90% at 0% 0%, var(--sleep-tint, var(--color-accent-soft)) 0%, transparent 52%),
+    var(--color-bg-secondary);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
 }
 
-.sleep-gauge {
+/* Level tints — drive the card wash, the aura glow, and the debt accent. */
+.sleep-card--alert {
+  --sleep-tint: var(--color-success-subtle);
+  --sleep-ink: var(--color-success);
+  --sleep-glow: rgba(39, 200, 90, 0.30);
+}
+.sleep-card--drowsy {
+  --sleep-tint: var(--color-warning-subtle);
+  --sleep-ink: var(--color-warning);
+  --sleep-glow: rgba(255, 122, 0, 0.26);
+}
+.sleep-card--sleepy {
+  --sleep-tint: var(--color-accent-soft);
+  --sleep-ink: var(--color-accent);
+  --sleep-glow: rgba(123, 104, 238, 0.34);
+}
+.sleep-card--must_sleep {
+  --sleep-tint: var(--color-error-subtle);
+  --sleep-ink: var(--color-error);
+  --sleep-glow: rgba(255, 90, 95, 0.30);
+}
+
+/* Hero band — the mascot (mood follows sleep debt) glowing inside a soft aura,
+   paired with the debt number, the queued-item count, a tagline, and the last
+   consolidation. The card chrome lives on .sleep-card; this is just the layout. */
+.sleep-hero {
   display: flex;
-  flex-direction: column;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-8) var(--space-10);
+}
+
+/* Mascot stage: the face sits in a breathing radial glow tinted by the level. */
+.sleep-hero-stage {
+  position: relative;
+  display: flex;
   align-items: center;
   justify-content: center;
-  width: 160px;
-  height: 160px;
-  border-radius: var(--radius-xl);
-  flex-shrink: 0;
-  box-shadow: var(--shadow-md);
-  transition: transform var(--transition-bounce), box-shadow var(--transition-fast);
+  flex: none;
+  width: 168px;
+  height: 168px;
 }
 
-.sleep-gauge:hover {
-  transform: translateY(-4px) scale(1.02);
-  box-shadow: var(--shadow-xl);
+.sleep-hero-aura {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--sleep-glow, rgba(123, 104, 238, 0.34)), transparent 68%);
+  animation: sleep-hero-aura 6s ease-in-out infinite;
 }
 
-.sleep-gauge--alert {
-  background: var(--color-success-subtle);
-  color: var(--color-success);
-}
-
-.sleep-gauge--drowsy {
-  background: var(--color-warning-subtle);
-  color: var(--color-warning);
-}
-
-.sleep-gauge--sleepy {
-  background: var(--color-accent-soft);
-  color: var(--color-accent);
-}
-
-.sleep-gauge--must_sleep {
-  background: var(--color-error-subtle);
-  color: var(--color-error);
-}
-
-.sleep-gauge-number {
-  font-size: var(--font-size-2xl);
-  font-weight: var(--font-weight-bold);
-  line-height: 1;
-}
-
-.sleep-gauge-label {
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
-  margin-top: var(--space-1);
-}
-
-.sleep-details {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
+.sleep-hero-body {
   flex: 1;
   min-width: 0;
-  padding: var(--space-4);
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
 }
 
-.sleep-detail {
+.sleep-hero-headline {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.sleep-hero-level {
+  font-family: var(--font-family-display);
+  font-size: var(--font-size-2xl);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: var(--letter-spacing-heading);
+  line-height: var(--line-height-snug);
+  color: var(--color-text);
+}
+
+.sleep-hero-debt {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-full);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+}
+
+.sleep-hero-debt-num {
+  font-family: var(--font-family-display);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-bold);
+  line-height: 1;
+  color: var(--sleep-ink, var(--color-accent));
+}
+
+.sleep-hero-debt-unit {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-tertiary);
+}
+
+/* Queued-item count — what the cloud below holds, surfaced up in the headline. */
+.sleep-hero-cloud-count {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-full);
+}
+
+.sleep-hero-tagline {
+  font-size: var(--font-size-base);
+  line-height: var(--line-height-normal);
+  color: var(--color-text-secondary);
+  max-width: 64ch;
+}
+
+.sleep-hero-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-8);
+  margin-top: var(--space-2);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+}
+
+.sleep-hero-meta-item {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
+  min-width: 0;
 }
 
-.sleep-detail-label {
+.sleep-hero-meta-item--summary {
+  flex: 1;
+  min-width: 240px;
+}
+
+.sleep-hero-meta-label {
   font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
+  font-weight: var(--font-weight-semibold);
   color: var(--color-text-tertiary);
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
 
-.sleep-detail-value {
+.sleep-hero-meta-value {
   font-size: var(--font-size-sm);
+  font-family: var(--font-mono);
   color: var(--color-text);
 }
 
-.sleep-detail-value--summary {
+.sleep-hero-meta-value--summary {
+  font-family: var(--font-family-text);
   color: var(--color-text-secondary);
   line-height: var(--line-height-relaxed);
+}
+
+@keyframes sleep-hero-aura {
+  0%, 100% { opacity: 0.85; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.06); }
+}
+
+@media (max-width: 720px) {
+  .sleep-hero {
+    flex-direction: column;
+    text-align: center;
+    padding: var(--space-8) var(--space-6);
+  }
+  .sleep-hero-headline { justify-content: center; }
+  .sleep-hero-meta { justify-content: center; }
+  .sleep-hero-tagline { max-width: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sleep-hero-aura { animation: none !important; }
+}
+
+/* ─── Sleep cloud — everything the next consolidation will weave in ──────────
+   Flows on inside the same card, separated from the hero by a hairline divider
+   and a faint violet wash rising from the seam. No own border, header, or glyph
+   — it reads as the second half of one surface, not a second card. */
+.sleep-cloud {
+  position: relative;
+  padding: var(--space-7) var(--space-10) var(--space-8);
+  border-top: 1px solid var(--color-border);
+  background: radial-gradient(140% 90% at 50% 0%, var(--color-accent-soft) 0%, transparent 46%);
+}
+
+.sleep-cloud--empty {
+  padding-block: var(--space-6);
+}
+
+/* Stat row — the at-a-glance "cloud" of what's queued. */
+.sleep-cloud-stats {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-6);
+}
+
+.cloud-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-full);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-sm);
+}
+
+.cloud-stat-icon {
+  display: inline-flex;
+  color: var(--color-accent);
+}
+
+.cloud-stat-count {
+  font-family: var(--font-family-display);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-bold);
+  line-height: 1;
+  color: var(--color-text);
+}
+
+.cloud-stat-label {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+}
+
+/* Grouped activity — one cluster per source (dashboard / sessions / …). */
+.sleep-cloud-body {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.cloud-group-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-1);
+}
+
+.cloud-group-title {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+}
+
+.cloud-group-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 var(--space-2);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-secondary);
+  background: var(--color-bg-tertiary);
+  border-radius: var(--radius-full);
+}
+
+.cloud-group-hint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  line-height: var(--line-height-normal);
+  margin-bottom: var(--space-3);
+}
+
+.cloud-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.cloud-row {
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
+}
+
+.cloud-row:hover {
+  border-color: var(--color-accent);
+  box-shadow: var(--shadow-md);
+  transform: translateX(2px);
+}
+
+.cloud-row-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-1);
+}
+
+.cloud-row-time {
+  font-size: var(--font-size-xs);
+  font-family: var(--font-mono);
+  color: var(--color-text-tertiary);
+}
+
+.cloud-row-text {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  line-height: var(--line-height-normal);
+}
+
+/* Entity badge on a dashboard-activity row. */
+.cloud-entity {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+}
+.cloud-entity svg { color: var(--color-accent); }
+
+/* Action chip (create / update / delete). */
+.cloud-action {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  text-transform: capitalize;
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-full);
+  color: var(--color-text-secondary);
+  background: var(--color-bg-tertiary);
+}
+.cloud-action--create { color: var(--color-success); background: var(--color-success-subtle); }
+.cloud-action--update { color: var(--color-accent); background: var(--color-accent-soft); }
+.cloud-action--delete { color: var(--color-error); background: var(--color-error-subtle); }
+
+/* Salience stars on a highlight row. */
+.cloud-salience {
+  font-size: var(--font-size-xs);
+  letter-spacing: 1px;
+  color: var(--color-warning);
+}
+
+/* Empty cloud — calm, fully-rested state. */
+.sleep-cloud-empty {
+  position: relative;
+  text-align: center;
+  padding: var(--space-4) var(--space-4) var(--space-2);
+}
+.sleep-cloud-empty-title {
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+  margin-bottom: var(--space-1);
+}
+.sleep-cloud-empty-sub {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  line-height: var(--line-height-relaxed);
+  max-width: 52ch;
+  margin: 0 auto;
+}
+
+@media (max-width: 720px) {
+  .sleep-cloud {
+    padding: var(--space-6) var(--space-6) var(--space-7);
+  }
+  .sleep-cloud-stats { gap: var(--space-2); }
 }
 
 .sleep-section {
@@ -106,40 +404,7 @@
   margin-bottom: var(--space-4);
 }
 
-.session-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.session-item {
-  padding: var(--space-3);
-  background: var(--color-bg-elevated);
-  border-radius: var(--radius-md);
-  border: 1px solid var(--color-border);
-  box-shadow: var(--shadow-sm);
-  transition: all var(--transition-bounce);
-}
-
-.session-item:hover {
-  transform: translateX(4px);
-  box-shadow: var(--shadow-md);
-  border-color: var(--color-accent);
-}
-
-.session-header {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  margin-bottom: var(--space-1);
-}
-
-.session-time {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-tertiary);
-  font-family: var(--font-mono);
-}
-
+/* Session metrics — reused by the cloud's work-session rows. */
 .session-score {
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);
@@ -149,12 +414,6 @@
 .session-changes {
   font-size: var(--font-size-xs);
   color: var(--color-text-tertiary);
-}
-
-.session-message {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-secondary);
-  line-height: var(--line-height-normal);
 }
 
 /* ─── Changelog (project ship-narrative from CHANGELOG.json) ─────────────────── */
@@ -182,16 +441,6 @@
   text-transform: none;
   letter-spacing: 0;
   color: var(--color-text-secondary);
-}
-
-/* The pending group is what the next sleep will consolidate — accented rail. */
-.changelog-group--pending {
-  border-left: 2px solid var(--color-accent);
-  padding-left: var(--space-3);
-}
-
-.changelog-group--pending .changelog-group-title {
-  color: var(--color-accent);
 }
 
 .changelog-list {

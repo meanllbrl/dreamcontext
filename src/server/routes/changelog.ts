@@ -1,7 +1,8 @@
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { readJsonArray, insertToJsonArray } from '../../lib/json-file.js';
+import { readJsonArray, insertToJsonArray, writeJsonArray } from '../../lib/json-file.js';
+import { getTaskBackend } from '../../lib/task-backend/index.js';
 import { parseJsonBody, sendJson, sendError } from '../middleware.js';
 import { generateId, today } from '../../lib/id.js';
 import {
@@ -249,7 +250,33 @@ export async function handleReleasesCreate(
 }
 
 /**
- * PATCH /api/releases/:version - Update a release (status, summary, date)
+ * Reassign or clear the `version` field on every task currently pointing at
+ * `from`. `to === null` clears it (delete flow); a string re-points it (rename
+ * flow). Goes through the configured task backend so the edit is journaled and
+ * syncs like any other task change. Returns the number of tasks touched.
+ */
+async function repointTasksVersion(
+  contextRoot: string,
+  from: string,
+  to: string | null,
+): Promise<number> {
+  const backend = getTaskBackend(contextRoot);
+  const summaries = await backend.list();
+  const affected = summaries.filter((t) => t.version === from);
+  for (const t of affected) {
+    await backend.updateFields(t.name, { version: to, updated_at: today() });
+  }
+  return affected.length;
+}
+
+/**
+ * PATCH /api/releases/:version - Update a release (status, summary, date) and/or
+ * rename it. A rename (`body.version` differs from the path version) rewrites
+ * the RELEASES.json entry, re-points every task carrying the old version string,
+ * and moves the active-planning pointer if it tracked the old name. An
+ * unregistered "ghost" (a version string present only on tasks, with no
+ * RELEASES.json entry) supports rename only — there is no entry to mutate, just
+ * the tasks.
  */
 export async function handleReleasesUpdate(
   req: IncomingMessage,
@@ -276,12 +303,45 @@ export async function handleReleasesUpdate(
   }
 
   const idx = entries.findIndex(r => r.version === params.version);
+
+  const renameTo = typeof body.version === 'string' ? (body.version as string).trim() : undefined;
+  const isRename = renameTo !== undefined && renameTo !== params.version;
+
+  // Validate a requested rename target up front (applies to ghosts too).
+  if (isRename) {
+    if (!renameTo) {
+      sendError(res, 400, 'invalid_version', 'New version name must not be empty.');
+      return;
+    }
+    if (entries.some((r, i) => i !== idx && r.version === renameTo)) {
+      sendError(res, 409, 'already_exists', `A release named ${renameTo} already exists.`);
+      return;
+    }
+  }
+
+  // Ghost (no RELEASES.json entry): the only meaningful PATCH is a rename, which
+  // simply re-points the tasks carrying that version string. A ghost can never
+  // be the active-planning version, so the pointer needs no update.
   if (idx === -1) {
+    if (isRename) {
+      const moved = await repointTasksVersion(contextRoot, params.version, renameTo!);
+      recordDashboardChange(contextRoot, {
+        entity: 'task',
+        action: 'update',
+        target: 'state/* (version)',
+        summary: `Renamed unregistered version ${params.version} → ${renameTo} (${moved} task${moved === 1 ? '' : 's'})`,
+      });
+      sendJson(res, 200, { release: null, renamed: { from: params.version, to: renameTo }, tasksRepointed: moved });
+      return;
+    }
     sendError(res, 404, 'not_found', `Release not found: ${params.version}`);
     return;
   }
 
   const release = entries[idx];
+  // Capture before any mutation: the active pointer re-validates against the
+  // on-disk entry, which still carries the old name at this point.
+  const wasActive = isRename && getActivePlanningVersion(contextRoot) === params.version;
 
   if (body.status !== undefined) {
     const s = body.status as string;
@@ -303,15 +363,87 @@ export async function handleReleasesUpdate(
     release.date = (body.date as string).trim();
   }
 
-  const { writeJsonArray } = await import('../../lib/json-file.js');
+  if (isRename) {
+    release.version = renameTo!;
+  }
+
   writeJsonArray(filePath, entries);
+
+  let tasksRepointed = 0;
+  if (isRename) {
+    tasksRepointed = await repointTasksVersion(contextRoot, params.version, release.version);
+    if (wasActive) {
+      // The active-planning pointer tracked the old name; move it to the new
+      // one (only planning versions can be active; setActive re-validates).
+      if (release.status === 'planning') setActivePlanningVersion(release.version, contextRoot);
+      else clearActivePlanningVersion(contextRoot);
+    }
+  }
 
   recordDashboardChange(contextRoot, {
     entity: 'core',
     action: 'update',
     target: `core/RELEASES.json#${release.version}`,
-    summary: `Updated release ${release.version}`,
+    summary: isRename
+      ? `Renamed release ${params.version} → ${release.version} (${tasksRepointed} task${tasksRepointed === 1 ? '' : 's'})`
+      : `Updated release ${release.version}`,
   });
 
-  sendJson(res, 200, { release });
+  sendJson(res, 200, {
+    release,
+    ...(isRename ? { renamed: { from: params.version, to: release.version }, tasksRepointed } : {}),
+  });
+}
+
+/**
+ * DELETE /api/releases/:version - Remove a release. The RELEASES.json entry (if
+ * any) is dropped and every task pointing at the version has its `version` field
+ * cleared to null (warn+clear policy — tasks are kept, never deleted). Also
+ * works on an unregistered "ghost" (version string only present on tasks): there
+ * is no entry to drop, so it just clears the tasks. The active-planning pointer
+ * is cleared if it tracked the deleted version.
+ */
+export async function handleReleasesDelete(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const filePath = join(contextRoot, 'core', 'RELEASES.json');
+
+  // Capture before mutating: the active pointer re-validates against the
+  // on-disk entry, which still exists at this point.
+  const wasActive = getActivePlanningVersion(contextRoot) === params.version;
+
+  let wasRegistered = false;
+  if (existsSync(filePath)) {
+    const entries = readJsonArray<ReleaseEntry>(filePath);
+    for (const entry of entries) {
+      if (!entry.status) entry.status = 'released';
+    }
+    const idx = entries.findIndex(r => r.version === params.version);
+    if (idx !== -1) {
+      entries.splice(idx, 1);
+      writeJsonArray(filePath, entries);
+      wasRegistered = true;
+    }
+  }
+
+  const tasksCleared = await repointTasksVersion(contextRoot, params.version, null);
+
+  if (wasActive) clearActivePlanningVersion(contextRoot);
+
+  if (!wasRegistered && tasksCleared === 0) {
+    sendError(res, 404, 'not_found', `Version not found: ${params.version}`);
+    return;
+  }
+
+  recordDashboardChange(contextRoot, {
+    entity: 'core',
+    action: 'delete',
+    target: `core/RELEASES.json#${params.version}`,
+    summary: `Deleted version ${params.version}${wasRegistered ? '' : ' (unregistered)'}; cleared ${tasksCleared} task${tasksCleared === 1 ? '' : 's'}`,
+  });
+
+  sendJson(res, 200, { deleted: true, version: params.version, wasRegistered, tasksCleared });
 }

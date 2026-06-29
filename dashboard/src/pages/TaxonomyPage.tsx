@@ -77,8 +77,6 @@ export function TaxonomyPage() {
 
   return (
     <div className="taxonomy-page">
-      <h1 className="page-title">{t('taxonomy.title')}</h1>
-
       {/* ── Facet groups ── */}
       <section className="taxonomy-section">
         <h2 className="taxonomy-section-heading">Faceted Tags</h2>

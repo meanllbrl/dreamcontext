@@ -177,7 +177,7 @@
   /* ─── Status Colors (workflow) ─── */
   --color-status-todo: var(--color-caution);
   --color-status-in-progress: var(--color-deep-violet);
-  --color-status-in-review: var(--color-vivid-purple);
+  --color-status-in-review: var(--color-error);
   --color-status-completed: hsl(142 71% 40%);
 
   /* ─── Shadows — ClickUp's subtle elevation philosophy ─── */
@@ -202,7 +202,7 @@
 
   /* ─── Layout (compact density) ─── */
   --sidebar-width: 220px;
-  --header-height: 52px;
+  --header-height: 42px;
   --page-max-width: 1200px;
   --card-padding: 12px;
 }
@@ -244,7 +244,7 @@
 
   --color-status-todo: #ffae3b;
   --color-status-in-progress: #9d8cff;
-  --color-status-in-review: #c4b5fd;
+  --color-status-in-review: var(--color-error);
   --color-status-completed: #4ade80;
 
   --color-priority-critical: #ff5a5f;

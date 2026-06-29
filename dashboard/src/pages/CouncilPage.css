@@ -14,6 +14,231 @@
   gap: 0;
 }
 
+/* "Lab" badge — same family as the Settings BETA badge: this surface is
+   experimental and may change. Reused on the page title and the modal. */
+.council-lab-badge {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: var(--font-weight-bold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  vertical-align: middle;
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 35%, transparent);
+}
+
+.council-new-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 8px var(--space-4);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  background: var(--color-accent);
+  color: var(--color-accent-text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
+  transition: filter var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.council-new-btn span { font-size: 15px; line-height: 1; }
+
+.council-new-btn:hover {
+  filter: brightness(1.05);
+  box-shadow: var(--shadow-glow);
+}
+
+/* ────────────────────────────────────────
+   New-debate modal (Lab — points to /council)
+   ──────────────────────────────────────── */
+
+.council-modal-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: rgba(8, 10, 14, 0.5);
+  animation: council-modal-fade var(--transition-fast);
+}
+
+.council-modal {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 71;
+  width: 480px;
+  max-width: 92vw;
+  max-height: 88vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-6);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-xl);
+}
+
+.council-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.council-modal-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font-family: var(--font-family-display);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: -0.01em;
+  color: var(--color-text);
+}
+
+.council-modal-close {
+  border: 0;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+}
+
+.council-modal-close:hover { color: var(--color-text); background: var(--color-bg-tertiary); }
+
+.council-modal-lede {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+}
+
+.council-modal-soon {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--space-3) var(--space-4);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+}
+
+.council-modal-soon-tag {
+  align-self: flex-start;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: var(--font-weight-bold);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.council-modal-soon p {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  line-height: 1.55;
+  color: var(--color-text-secondary);
+}
+
+.council-modal-now {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  background: var(--color-accent-soft);
+}
+
+.council-modal-now-body {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+}
+
+.council-modal-cmd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 6px 6px 6px var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+}
+
+.council-modal-cmd code {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-accent);
+}
+
+.council-modal-cmd-copy {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.council-modal-cmd-copy:hover { border-color: var(--color-accent); color: var(--color-accent); }
+
+.council-modal-hint {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  line-height: 1.55;
+  color: var(--color-text-tertiary);
+}
+
+.council-modal-hint em { font-style: italic; color: var(--color-text-secondary); }
+
+.council-modal-foot {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.council-modal-btn {
+  padding: 8px var(--space-5);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  background: var(--color-accent);
+  color: var(--color-accent-text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  cursor: pointer;
+  transition: filter var(--transition-fast);
+}
+
+.council-modal-btn:hover { filter: brightness(1.05); }
+
+@keyframes council-modal-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .council-modal-scrim { animation: none; }
+}
+
 /* ────────────────────────────────────────
    Hall (grid of all councils)
    ──────────────────────────────────────── */
@@ -31,6 +256,13 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+/* New debate moved out of the (removed) page header into the toolbar row;
+   anchor it to the right edge as the row's primary action. */
+.council-hall-bar .council-new-btn {
+  margin-left: auto;
 }
 
 .council-hall-search {
@@ -200,6 +432,187 @@
   text-align: center;
   color: var(--color-text-tertiary);
   font-size: var(--font-size-sm);
+}
+
+.council-empty-msg { margin: 0; }
+
+/* ────────────────────────────────────────
+   Zero-state explainer ("What is Council?")
+   Mirrors the About page: brand mark · kicker · heading · 01/02/03 steps · CTA.
+   ──────────────────────────────────────── */
+
+.council-intro {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: var(--space-3);
+  max-width: 760px;
+  width: 100%;
+  margin: 0 auto;
+  padding: var(--space-10) var(--space-4) var(--space-8);
+}
+
+.council-intro-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 72px;
+  height: 72px;
+  border-radius: var(--radius-xl);
+  background: var(--color-accent-soft);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 28%, transparent);
+  margin-bottom: var(--space-1);
+}
+
+.council-intro-kicker {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--color-accent);
+}
+
+.council-intro-title {
+  margin: 0;
+  font-family: var(--font-family-display);
+  font-size: var(--font-size-2xl);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--line-height-snug);
+  letter-spacing: var(--letter-spacing-heading);
+  color: var(--color-text);
+}
+
+.council-intro-title span {
+  background: var(--gradient-brand);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.council-intro-lead {
+  margin: 0;
+  max-width: 580px;
+  font-size: var(--font-size-base);
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+}
+
+.council-intro-cta {
+  margin-top: var(--space-3);
+  padding: 10px var(--space-5);
+  font-size: var(--font-size-base);
+}
+
+.council-intro-foot {
+  margin: var(--space-1) 0 0;
+  max-width: 480px;
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+  color: var(--color-text-tertiary);
+}
+
+/* ────────────────────────────────────────
+   Showcase stage — the animated round-table debate diagram, framed like the
+   About-page faculty spotlight (gradient panel + corner tag).
+   ──────────────────────────────────────── */
+
+.council-stage {
+  position: relative;
+  width: 100%;
+  margin: var(--space-4) 0 var(--space-1);
+  padding: var(--space-6) var(--space-5) var(--space-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2xl);
+  background:
+    radial-gradient(120% 100% at 50% 0%, var(--color-accent-soft), transparent 60%),
+    var(--color-bg-secondary);
+  box-shadow: var(--shadow-md);
+}
+
+.council-stage-tag {
+  position: absolute;
+  top: var(--space-4);
+  left: var(--space-5);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: var(--font-weight-bold);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 30%, transparent);
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+}
+
+.council-stage-flow { max-width: 600px; }
+
+/* ────────────────────────────────────────
+   Populated-state banner — slim "how it works" card above the grid.
+   ──────────────────────────────────────── */
+
+.council-banner {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  padding: var(--space-3) var(--space-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background:
+    radial-gradient(140% 120% at 100% 50%, var(--color-accent-soft), transparent 55%),
+    var(--color-bg-secondary);
+  overflow: hidden;
+}
+
+.council-banner-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.council-banner-body {
+  margin: 0;
+  max-width: 460px;
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+}
+
+.council-banner-flow {
+  flex-shrink: 0;
+  width: 280px;
+  max-width: 42%;
+}
+
+.council-banner-flow .fd { margin: 0; }
+
+.council-banner-close {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  border: 0;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+}
+
+.council-banner-close:hover { color: var(--color-text); background: var(--color-bg-tertiary); }
+
+@media (max-width: 720px) {
+  .council-intro { padding-top: var(--space-6); }
+  .council-banner-flow { display: none; }
 }
 
 /* ────────────────────────────────────────

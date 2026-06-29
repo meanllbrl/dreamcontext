@@ -143,6 +143,7 @@ See [sleep.md](sleep.md) for the full flow.
 |---|---|
 | `taxonomy vocab` | Show the resolved vocabulary (defaults + `core/taxonomy.json`). `--json`, `--facet <facet>`. |
 | `taxonomy audit` | Audit corpus tags against the vocabulary (read-only). `--json`. |
+| `taxonomy audit --fix` | **Bulk-normalize** alias/normalizable tags → canonical faceted form across every knowledge/feature/task file. Safe + idempotent: already-canonical tags are untouched; orphan tags with no alias/canonical target are reported, never guessed. `--dry-run` previews the rewrite plan and writes nothing; `--json` for automation. Workflow is alias-then-fix: teach a mapping with `taxonomy alias`, then `audit --fix`. |
 | `taxonomy init` | Scaffold `core/taxonomy.json` (idempotent). |
 | `taxonomy add <tag>` | Add a tag to the vocabulary. |
 | `taxonomy alias <alias> <canonical>` | Add an alias→canonical mapping. |

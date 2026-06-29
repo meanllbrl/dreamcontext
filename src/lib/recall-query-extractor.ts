@@ -27,8 +27,14 @@ If pure greeting: {"skip":true}`;
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 
-const defaultExecutor: ClaudeExecutor = (prompt, systemPrompt) => {
-  return execFileSync('claude', [
+/**
+ * Build a stateless `claude --model haiku` executor. The hook path uses the long
+ * default timeout; the dashboard route passes a shorter one so the recall can't
+ * out-live the HTTP socket. Flags are identical either way — the only knob is the
+ * timeout — so both callers share one hardened invocation.
+ */
+export function makeClaudeExecutor(timeoutMs = DEFAULT_TIMEOUT_MS): ClaudeExecutor {
+  return (prompt, systemPrompt) => execFileSync('claude', [
     '--model', 'haiku',
     '-p',
     '--setting-sources', '',
@@ -38,11 +44,13 @@ const defaultExecutor: ClaudeExecutor = (prompt, systemPrompt) => {
     '--system-prompt', systemPrompt,
     prompt,
   ], {
-    timeout: DEFAULT_TIMEOUT_MS,
+    timeout: timeoutMs,
     encoding: 'utf-8',
     stdio: ['pipe', 'pipe', 'pipe'],
   });
-};
+}
+
+const defaultExecutor: ClaudeExecutor = makeClaudeExecutor();
 
 export function buildCorpusIndex(corpus: CorpusDoc[]): string {
   return corpus.map(d => {

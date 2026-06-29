@@ -1,13 +1,23 @@
-/* Notch companion — a black mascot panel hanging from the notch, with a capture
-   bar below. The window is transparent; only these two panels are visible. */
+/* Sleepy — the notch quick-capture companion.
+
+   The window is transparent and non-activating (an NSPanel floating over whatever
+   app is focused). Visually, ONE pure-black mass grows straight out of the
+   physical MacBook notch: a notch-width "neck" merges with the hardware notch at
+   the very top (#000, seamless), then flares into a wider "body" below with
+   concave shoulders — the Dynamic-Island silhouette. Everything that touches the
+   top is true black so it reads as the notch itself, not a card stuck near it. */
 
 .cap-root {
+  --body-w: 468px;   /* wider — uses the space better than the old 384 */
+  --notch-h: 40px;   /* menu-bar/notch height — content stays below the hardware notch */
+  --ink: #000;       /* exact MacBook-notch black */
+  --accent: #8b5cf6; /* violet brand accent */
+
   position: fixed;
   inset: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
   background: transparent;
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
@@ -15,76 +25,66 @@
   overflow: hidden;
 }
 
-/* The black panel hangs flush from the top, the SAME width as the capture bar
-   below so the two read as one cohesive column dropping from the notch. Flat top,
-   rounded BOTTOM corners. Its solid black is seamless with the clips' black bg. */
-.cap-notch {
-  width: 360px;
-  height: 150px;
-  background: #000;
-  border-radius: 0 0 22px 22px;
+/* Positioning context, centered under the notch. The open animation (unrolling
+   out of the notch) is driven imperatively via the Web Animations API on each
+   show — see playOpen() in CaptureBar.tsx — so nothing remounts and there's no
+   flicker. transform-origin keeps the unroll anchored at the notch. */
+.cap-emerge {
+  position: relative;
+  width: var(--body-w);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  transform-origin: top center;
+  will-change: clip-path, transform, opacity;
+}
+
+/* The body: one pure-black panel flush to the very top, so the hardware notch
+   merges into its top edge. Flat top (seamless with the notch) → rounded bottom.
+   A single soft shadow that hugs the rounded shape (no blocky halo). */
+.cap-body {
+  position: relative;
+  width: var(--body-w);
+  box-sizing: border-box;
+  background: var(--ink);
+  border-radius: 4px 4px 26px 26px;
   overflow: hidden;
+  border: 0.5px solid rgba(255, 255, 255, 0.08);
+  border-top: none;
+  box-shadow: 0 20px 44px -16px rgba(0, 0, 0, 0.7);
+  /* The top of the panel sits flush at the screen top, where the physical notch
+     covers it. Pad the content down past the menu-bar/notch line so the mascot's
+     eyes aren't hidden behind the hardware notch. */
+  padding-top: var(--notch-h);
+}
+
+/* Mascot band — the coded Sleepy face, centered on the black body. */
+.cap-mascot {
+  width: 100%;
+  height: 120px;
   display: flex;
   align-items: center;
   justify-content: center;
+  padding-top: 4px;
 }
 
-/* The clip fills the panel edge-to-edge: full width, object-fit cover crops the
-   16:9 letterbox top/bottom so the centered mascot fills the banner horizontally
-   with no black gutters on the sides. */
-.cap-char {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-  pointer-events: none;
-}
-/* Suppress WKWebView's native media UI (the centered play-button overlay it
-   shows when autoplay is pending/blocked) — the clip is decorative and driven
-   by JS autoplay; we never want chrome over it. */
-.cap-char::-webkit-media-controls,
-.cap-char::-webkit-media-controls-overlay-play-button,
-.cap-char::-webkit-media-controls-start-playback-button,
-.cap-char::-webkit-media-controls-panel {
-  display: none !important;
-  -webkit-appearance: none;
-}
-
-/* Capture input bar — dark frosted card, a bit wider than the notch panel, sitting
-   just below it with a small gap. */
+/* Capture controls live directly on the black body. */
 .cap-bar {
-  width: 360px;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 14px 16px;
-  border-radius: 18px;
-  background: rgba(22, 19, 30, 0.82);
-  backdrop-filter: blur(30px) saturate(180%);
-  -webkit-backdrop-filter: blur(30px) saturate(180%);
-  border: 0.5px solid rgba(255, 255, 255, 0.12);
-  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5);
-  transition: border-color 0.25s ease;
+  gap: 10px;
+  padding: 2px 22px 20px;
 }
-.cap-bar.cap-saved {
-  border-color: rgba(120, 230, 160, 0.5);
-}
-.cap-bar.cap-error {
-  border-color: rgba(255, 120, 120, 0.5);
-}
+/* A thin status accent line at the very top of the controls. */
+.cap-emerge.cap-saved .cap-body { border-color: rgba(110, 231, 160, 0.4); }
+.cap-emerge.cap-error .cap-body { border-color: rgba(255, 138, 138, 0.45); }
 
 .cap-bar-head {
   display: flex;
   align-items: center;
   gap: 8px;
-}
-.cap-bar-label {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.4px;
-  text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.45);
+  padding-top: 4px;
 }
 
 .cap-vault-wrap {
@@ -103,7 +103,7 @@
   padding: 0 16px 0 0;
   cursor: pointer;
   outline: none;
-  max-width: 170px;
+  max-width: 160px;
 }
 .cap-vault option {
   color: #111;
@@ -121,8 +121,10 @@
   font-size: 11px;
   color: rgba(255, 255, 255, 0.4);
 }
+.cap-status-saved { color: #6ee7a0; }
+.cap-status-error { color: #ff8a8a; }
 
-/* Learn | Ask segmented toggle, right-aligned in the header. */
+/* Ask · Learn · Sleep segmented toggle. */
 .cap-mode-toggle {
   display: inline-flex;
   padding: 2px;
@@ -145,52 +147,35 @@
   cursor: pointer;
   transition: background 0.18s ease, color 0.18s ease;
 }
-.cap-mode-opt:hover {
-  color: rgba(255, 255, 255, 0.8);
-}
+.cap-mode-opt:hover { color: rgba(255, 255, 255, 0.85); }
 .cap-mode-opt.is-active {
-  background: rgba(123, 104, 238, 0.9);
+  background: var(--accent);
   color: #fff;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 1px 5px rgba(139, 92, 246, 0.5);
 }
-.cap-mode-opt:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
+.cap-mode-opt:disabled { opacity: 0.4; cursor: default; }
 
-/* Sleep action button — replaces the textarea in Sleep mode. */
+/* Sleep action button (replaces the textarea in Sleep mode). */
 .cap-sleep-btn {
   appearance: none;
   width: 100%;
   box-sizing: border-box;
   display: block;
-  padding: 10px 12px;
+  padding: 11px 12px;
   border-radius: 12px;
-  border: 0.5px solid rgba(123, 104, 238, 0.5);
-  background: rgba(123, 104, 238, 0.16);
-  color: rgba(255, 255, 255, 0.92);
+  border: 0.5px solid rgba(139, 92, 246, 0.5);
+  background: rgba(139, 92, 246, 0.16);
+  color: rgba(255, 255, 255, 0.94);
   font: inherit;
   font-size: 13.5px;
   font-weight: 600;
   cursor: pointer;
   transition: background 0.18s ease, opacity 0.18s ease;
 }
-.cap-sleep-btn:hover:not(:disabled) {
-  background: rgba(123, 104, 238, 0.28);
-}
-.cap-sleep-btn:disabled {
-  opacity: 0.55;
-  cursor: default;
-}
-.cap-status-saved {
-  color: #6ee7a0;
-}
-.cap-status-error {
-  color: #ff8a8a;
-}
+.cap-sleep-btn:hover:not(:disabled) { background: rgba(139, 92, 246, 0.28); }
+.cap-sleep-btn:disabled { opacity: 0.55; cursor: default; }
 
-/* Full reason for a failed capture (e.g. a deleted vault path), shown under the
-   input so the user sees WHY, not just "failed". */
+/* Full reason for a failed capture, shown under the input. */
 .cap-error-msg {
   font-size: 11px;
   line-height: 1.35;
@@ -198,7 +183,39 @@
   word-break: break-word;
 }
 
-/* Background Claude enrichment: a live spinner while it runs, then its response. */
+/* Multi-line, Apple-style input: rounded, subtle inset fill, no harsh border. */
+.cap-input {
+  width: 100%;
+  box-sizing: border-box;
+  display: block;
+  background: rgba(255, 255, 255, 0.06);
+  border: 0.5px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  outline: none;
+  color: rgba(255, 255, 255, 0.96);
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 400;
+  line-height: 1.4;
+  letter-spacing: 0.1px;
+  padding: 10px 13px;
+  resize: none;
+  overflow-y: auto;
+  max-height: 120px;
+  transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+.cap-input:focus {
+  background: rgba(255, 255, 255, 0.09);
+  border-color: rgba(139, 92, 246, 0.55);
+  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.16);
+}
+.cap-input::placeholder { color: rgba(255, 255, 255, 0.4); }
+.cap-input::-webkit-scrollbar { width: 6px; }
+.cap-input::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.18); border-radius: 3px; }
+
+/* Background Claude run: live spinner, then its response. */
 .cap-enrich {
   display: flex;
   flex-direction: column;
@@ -216,43 +233,30 @@
   font-weight: 600;
   color: rgba(255, 255, 255, 0.62);
 }
-.cap-enrich-done {
-  color: #6ee7a0;
-}
-.cap-enrich-err {
-  color: #ff8a8a;
-}
+.cap-enrich-done { color: #6ee7a0; }
+.cap-enrich-err { color: #ff8a8a; }
 .cap-enrich-body {
   font-size: 12px;
   line-height: 1.45;
   color: rgba(255, 255, 255, 0.82);
   white-space: pre-wrap;
   word-break: break-word;
-  max-height: 150px;
+  max-height: 180px;
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
 }
-.cap-enrich-body::-webkit-scrollbar {
-  width: 6px;
-}
-.cap-enrich-body::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.18);
-  border-radius: 3px;
-}
+.cap-enrich-body::-webkit-scrollbar { width: 6px; }
+.cap-enrich-body::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.18); border-radius: 3px; }
 
-/* Compact markdown styling for the rendered answer/response. */
+/* Compact markdown for the rendered answer/response. */
 .cap-md > :first-child { margin-top: 0; }
 .cap-md > :last-child { margin-bottom: 0; }
 .cap-md p { margin: 0 0 6px; }
-/* The global reset zeroes list-style/padding; restore them here so bullets show
-   and items aren't flush-left. */
 .cap-md ul { margin: 4px 0 6px; padding-left: 18px; list-style: disc; }
 .cap-md ol { margin: 4px 0 6px; padding-left: 18px; list-style: decimal; }
 .cap-md li { margin: 2px 0; }
 .cap-md li::marker { color: rgba(255, 255, 255, 0.45); }
-/* Loose lists (blank lines between items) wrap each item's text in <p>; collapse
-   that inner margin so items don't get big vertical gaps. */
 .cap-md li > p { margin: 0; }
 .cap-md h1,
 .cap-md h2,
@@ -278,7 +282,7 @@
 .cap-md strong { color: rgba(255, 255, 255, 0.95); font-weight: 700; }
 .cap-md hr { border: none; border-top: 0.5px solid rgba(255, 255, 255, 0.12); margin: 8px 0; }
 
-/* Small inline spinner for the running enrichment state. */
+/* Inline spinner for the running enrichment state. */
 .cap-spinner {
   width: 12px;
   height: 12px;
@@ -289,46 +293,5 @@
   flex: none;
 }
 @keyframes cap-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-/* Multi-line, Apple-style text field: rounded, subtle inset fill, no harsh border.
-   Auto-grows (height set inline by JS) from 1 line up to ~5, then scrolls. */
-.cap-input {
-  width: 100%;
-  box-sizing: border-box;
-  display: block;
-  background: rgba(255, 255, 255, 0.06);
-  border: 0.5px solid rgba(255, 255, 255, 0.08);
-  border-radius: 12px;
-  outline: none;
-  color: rgba(255, 255, 255, 0.96);
-  font-family: inherit;
-  font-size: 15px;
-  font-weight: 400;
-  line-height: 1.4;
-  letter-spacing: 0.1px;
-  padding: 9px 12px;
-  resize: none;
-  overflow-y: auto;
-  max-height: 120px;
-  transition: background 0.2s ease, border-color 0.2s ease;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
-}
-.cap-input:focus {
-  background: rgba(255, 255, 255, 0.09);
-  border-color: rgba(255, 255, 255, 0.16);
-}
-.cap-input::placeholder {
-  color: rgba(255, 255, 255, 0.4);
-}
-.cap-input::-webkit-scrollbar {
-  width: 6px;
-}
-.cap-input::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.18);
-  border-radius: 3px;
+  to { transform: rotate(360deg); }
 }

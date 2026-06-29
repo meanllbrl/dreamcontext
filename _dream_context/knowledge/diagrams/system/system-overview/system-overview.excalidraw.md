@@ -1,7 +1,11 @@
 ---
 name: System Overview
-description: High-level dreamcontext system overview — session capture, memory consolidation, and recall pipeline.
-tags: [architecture, excalidraw]
+description: >-
+  High-level dreamcontext system overview — session capture, memory
+  consolidation, and recall pipeline.
+tags:
+  - architecture
+  - 'topic:excalidraw'
 excalidraw-plugin: parsed
 ---
 

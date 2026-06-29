@@ -17,6 +17,15 @@ export function setActiveVault(v: string | null): void {
   activeVault = v;
 }
 
+/**
+ * The pinned vault name, for callers that can't use the header — notably the
+ * agent-terminal WebSocket (the browser WS API can't set request headers), which
+ * carries the vault as a `?vault=<name>` query param instead.
+ */
+export function getActiveVault(): string | null {
+  return activeVault;
+}
+
 class ApiClient {
   private async request<T>(path: string, options?: RequestInit): Promise<T> {
     const headers: Record<string, string> = {

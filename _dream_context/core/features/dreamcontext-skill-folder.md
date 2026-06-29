@@ -5,8 +5,8 @@ created: '2026-06-20'
 updated: '2026-06-21'
 released_version: v0.8.8
 tags:
-  - skills
-  - cli
+  - 'topic:skills'
+  - 'topic:cli'
   - 'topic:agents'
   - devops
 related_tasks:

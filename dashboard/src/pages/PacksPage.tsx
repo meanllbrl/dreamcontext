@@ -238,8 +238,6 @@ export function PacksPage() {
 
   return (
     <div className="packs-page">
-      <h1 className="page-title">{t('packs.title')}</h1>
-
       {packs.length === 0 && standalone.length === 0 && (
         <div className="packs-empty">{t('common.empty')}</div>
       )}

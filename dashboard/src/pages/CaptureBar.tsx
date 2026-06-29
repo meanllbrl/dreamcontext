@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { api, setActiveVault } from '../api/client';
-import { closeSelf, onSleepyFocusChange } from '../lib/sleepy';
+import { closeSelf, onSleepyFocusChange, onSleepyShown, markSleepyCommitted } from '../lib/sleepy';
+import { SleepyMascot } from '../components/sleepy/SleepyMascot';
 import './CaptureBar.css';
 
 marked.setOptions({ gfm: true, breaks: true });
@@ -59,6 +60,9 @@ export function CaptureBar() {
   const [enrich, setEnrich] = useState<Enrich | null>(null);
   const [mode, setMode] = useState<Mode>('idle');
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  // The emerging black panel — animated open via the Web Animations API on each
+  // show (no React remount, so there's no flicker).
+  const emergeRef = useRef<HTMLDivElement>(null);
   // Active enrichment poll timer, so a new capture cancels the previous poll.
   const pollRef = useRef<number | null>(null);
   // True while the user is interacting with the native project dropdown — its
@@ -165,6 +169,40 @@ export function CaptureBar() {
     if (pollRef.current) window.clearTimeout(pollRef.current);
   }, []);
 
+  // Smoothly unroll the panel out of the notch + focus the input every time Rust
+  // shows the (reused) panel. Uses the Web Animations API directly on the element
+  // so nothing remounts — no flicker.
+  const playOpen = useCallback(() => {
+    const el = emergeRef.current;
+    if (el && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      el.getAnimations().forEach((a) => a.cancel());
+      el.animate(
+        [
+          { clipPath: 'inset(0 0 100% 0)', transform: 'translateY(-10px)', opacity: 0 },
+          { clipPath: 'inset(0 0 30% 0)', opacity: 1, offset: 0.6 },
+          { clipPath: 'inset(0 0 0 0)', transform: 'translateY(0)', opacity: 1 },
+        ],
+        { duration: 540, easing: 'cubic-bezier(0.16, 1, 0.3, 1)', fill: 'backwards' },
+      );
+    }
+    window.setTimeout(() => inputRef.current?.focus(), 20);
+  }, []);
+
+  // Play on first mount (first ever open) and on every subsequent show event.
+  useEffect(() => {
+    playOpen();
+    let cancelled = false;
+    let unsub = () => {};
+    void onSleepyShown(() => playOpen()).then((u) => {
+      if (cancelled) u();
+      else unsub = u;
+    });
+    return () => {
+      cancelled = true;
+      unsub();
+    };
+  }, [playOpen]);
+
   // Poll the background Claude run until it finishes, mirroring its state +
   // response into `enrich`. A new submit cancels any prior poll. `runMode` is the
   // mode that started the run, so the panel copy stays correct if the user flips
@@ -238,23 +276,22 @@ export function CaptureBar() {
   const displayMode: Mode = sleeping ? 'sleeps' : mode;
 
   return (
-    <div className="cap-root">
-      {/* Black panel hanging from the notch — the mascot's home. An animated WebP
-          via <img> autoplays unconditionally in WKWebView (which blocks <video>
-          autoplay and offers no Tauri override), so the mascot always feels alive. */}
-      <div className="cap-notch" data-tauri-drag-region>
-        <img
-          key={displayMode}
-          className="cap-char"
-          src={`/api/sleepy/anim?mode=${displayMode}`}
-          alt=""
-          draggable={false}
-        />
-      </div>
+    // Any click/keystroke inside pins the panel open against the hover auto-close.
+    <div className="cap-root" onMouseDown={() => void markSleepyCommitted()}>
+      {/* One pure-black panel flush to the very top, so the physical MacBook notch
+          merges into its top edge (#000, seamless) and it reads as the notch
+          widening into a panel. It unrolls open from the top on each summon. */}
+      <div className={`cap-emerge cap-${status}`} ref={emergeRef}>
+        <div className="cap-body" data-tauri-drag-region>
+          {/* Mascot band — Sleepy, drawn and animated entirely in code. Its mood
+              (idle / sleepy / sleeps) follows the selected project's sleep debt. */}
+          <div className="cap-mascot" data-tauri-drag-region>
+            <SleepyMascot mood={displayMode} size={116} />
+          </div>
 
-      {/* Capture input bar. */}
-      <div className={`cap-bar cap-${status}`}>
-        <div className="cap-bar-head">
+          {/* Capture controls. */}
+          <div className="cap-bar">
+            <div className="cap-bar-head">
           <div className="cap-vault-wrap">
             <select
               className="cap-vault"
@@ -324,6 +361,8 @@ export function CaptureBar() {
               autoGrow(e.target);
             }}
             onKeyDown={(e) => {
+              // Typing pins the panel open against the hover auto-close.
+              void markSleepyCommitted();
               // Enter submits; Shift+Enter inserts a newline (chat-style).
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
@@ -371,6 +410,8 @@ export function CaptureBar() {
               ))}
           </div>
         )}
+          </div>
+        </div>
       </div>
     </div>
   );

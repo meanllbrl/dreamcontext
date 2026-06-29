@@ -128,7 +128,15 @@ export function EisenhowerMatrix({ tasks, onTaskClick, onTaskMove }: EisenhowerM
               key={q.key}
               className={cls}
               onDragOver={(e) => handleDragOver(e, q.key)}
-              onDragLeave={() => setDragOverKey(prev => (prev === q.key ? null : prev))}
+              onDragLeave={(e) => {
+                // dragleave also fires when the pointer crosses onto a child
+                // (e.g. a TaskCard) inside this same quadrant. Ignore those —
+                // only clear when the pointer actually leaves the quadrant,
+                // otherwise the highlight flickers over card boundaries.
+                const next = e.relatedTarget as Node | null;
+                if (next && e.currentTarget.contains(next)) return;
+                setDragOverKey(prev => (prev === q.key ? null : prev));
+              }}
               onDrop={(e) => handleDrop(e, q.key)}
             >
               <div className="eisenhower-quadrant-header">

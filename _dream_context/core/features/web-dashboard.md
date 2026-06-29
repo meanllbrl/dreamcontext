@@ -2,7 +2,7 @@
 id: feat_O7LODr7O
 status: active
 created: '2026-02-25'
-updated: '2026-06-23'
+updated: '2026-06-29'
 released_version: 0.1.0
 tags:
   - frontend
@@ -17,6 +17,7 @@ related_tasks:
   - data-structures-to-knowledge
   - knowledge-diagram-nesting
   - feat-dashboard-sprint-aware-version-filter-current-completed-actions-status-sort
+  - feat-dashboard-redesign-tasks-board-saved-views-with-shared-local-persistence
 ---
 
 ## Why
@@ -25,23 +26,23 @@ Users need a visual interface to manage agent context without using the terminal
 
 ## User Stories
 
-- [ ] As a user, I want to run `dreamcontext dashboard` and have a web UI open in my browser so that I can manage my project context visually
-- [ ] As a user, I want to see a Kanban board of my tasks so that I can track work status at a glance
-- [ ] As a user, I want to drag tasks between columns (todo, in_progress, completed) so that I can update status without typing commands
-- [ ] As a user, I want to filter tasks by status, priority, urgency, tags, version, text search, and date range so that I can find specific tasks quickly
-- [ ] As a user, I want to group tasks by status, priority, urgency, version, or tags so that I can organize the board to my preference
+- [x] As a user, I want to run `dreamcontext dashboard` and have a web UI open in my browser so that I can manage my project context visually
+- [x] As a user, I want to see a Kanban board of my tasks so that I can track work status at a glance
+- [x] As a user, I want to drag tasks between columns (todo, in_progress, completed) so that I can update status without typing commands
+- [x] As a user, I want to filter tasks by status, priority, urgency, tags, version, text search, and date range so that I can find specific tasks quickly
+- [x] As a user, I want to group tasks by status, priority, urgency, version, or tags so that I can organize the board to my preference
 - [x] As a user, I want to switch between Kanban, Eisenhower Matrix, RICE scatter, list, Timeline (Gantt), Calendar, and Activity Heatmap views so that I can see tasks by status, prioritization, and time
 - [x] As a user, I want time-axis views (timeline/calendar/heatmap) so that I can plan when work lands and see load/completions over time
-- [ ] As a user, I want to create new tasks from the dashboard with name, description, priority, urgency, version, and tags so that I can add work without the CLI
-- [ ] As a user, I want to update task fields (status, priority, description) and add changelog entries from a detail panel so that I can keep tasks current
+- [x] As a user, I want to create new tasks from the dashboard with name, description, priority, urgency, version, and tags so that I can add work without the CLI
+- [x] As a user, I want to update task fields (status, priority, description) and add changelog entries from a detail panel so that I can keep tasks current
 - [ ] As a user, I want to see the agent character in the top-left corner showing sleep state (alert, drowsy, sleepy, must sleep) so that I know when consolidation is needed
 - [ ] As a user, I want a dedicated sleep page showing debt level, session history, and dashboard changes so that I can track sleep cycles in a beautiful UI
 - [ ] As a user, I want to read and edit core files (soul, user, memory, style guide, tech stack) with a markdown editor and live preview so that I can update project identity
 - [ ] As a user, I want to browse, search, and view knowledge files so that I can find stored knowledge quickly
 - [ ] As a user, I want to pin and unpin knowledge files from the dashboard so that important knowledge appears in the snapshot
-- [ ] As a user, I want to view feature PRDs with all their sections (Why, User Stories, Acceptance Criteria, etc.) so that I can review feature specs
-- [ ] As a user, I want to manage planning versions alongside released versions in a Version Manager so that I can track what's coming next
-- [ ] As a user, I want to promote a planning version to released from the Version Manager so that I can track release milestones
+- [x] As a user, I want to view feature PRDs with all their sections (Why, User Stories, Acceptance Criteria, etc.) so that I can review feature specs
+- [x] As a user, I want to manage planning versions alongside released versions in a Version Manager so that I can track what's coming next
+- [x] As a user, I want to promote a planning version to released from the Version Manager so that I can track release milestones
 - [ ] As a user, I want all manual changes I make in the dashboard to be recorded in the sleep file so that the agent consolidates them during the next sleep cycle
 - [ ] As a user, I want light and dark mode (with system preference detection) so that the UI matches my OS settings
 - [ ] As a user, I want multi-language support (English initially, i18n-ready) so that the dashboard can be localized in the future
@@ -74,6 +75,15 @@ Users need a visual interface to manage agent context without using the terminal
 - [x] As a user, I can expand any knowledge document (markdown, SQL/ER, excalidraw, raw file view) into a full-screen in-app overlay via a ⛶ button next to the File/Preview tabs, and exit with Esc or the close button, so large boards and long documents are readable.
 - [x] As a user, nested `diagrams/{title}/` excalidraw boards display under the Diagrams group with a clean leaf name (basename), not a redundant `title/title.excalidraw` label.
 - [x] As a user, I can browse the project tag taxonomy on a dedicated Taxonomy page (facet chip clusters with usage counts, alias arrows, drift/audit panel) so I can see vocabulary health without the CLI.
+
+- [x] As a user, the sleep page shows a mood-driven Sleepy mascot (awake/drowsy/asleep states by debt level) with a level-tinted aura and floating Zzz animation when asleep, so I understand consolidation urgency at a glance without reading raw numbers.
+- [x] As a user, the "sleep cloud" (pending consolidation items) and the sleep hero are presented as one unified card with a hairline divider, so the sleep overview feels cohesive rather than split across two separate panels.
+- [x] As a user, the board toolbar collapses View/Group/Versions/Properties chips into a `⋯ More` overflow menu at narrow widths (ResizeObserver-driven), so the board remains fully usable at any window width without horizontal overflow.
+- [x] As a user, Kanban card drag-to-move no longer flickers the drop silhouette in WKWebView (Tauri), because the clear-on-drag-leave is deferred to the board-row container level rather than per-column, eliminating spurious `relatedTarget=null` oscillation.
+- [x] As a user, the Council page has a rich empty-state explainer (animated 6-persona showcase diagram, "Start your first debate" CTA, "COUNCIL · LAB" branding) and a dismissible how-it-works banner in the populated state, so new users understand the feature before seeing any debates.
+- [x] As a user, the Council nav entry carries a LAB badge so I can spot the experimental feature from anywhere in the sidebar.
+- [x] As a user, `?page=<page>` deep-link support in the app shell lets me navigate directly to any page (e.g. `?page=council`), overriding the remembered page.
+- [x] As a user, task context-menu submenus ("Move to status", "Set priority") use flyout panels beside the parent row, reducing menu vertical footprint from ~360px to ~190px, flipping left when near the viewport edge.
 
 ## Acceptance Criteria
 
@@ -112,12 +122,23 @@ Users need a visual interface to manage agent context without using the terminal
 - [x] `useActiveVersion`, `useSetActiveVersion`, `useCompleteVersion` hooks; `VersionFilter.tsx/.css` wired through `TaskFilters` + `KanbanBoard` (versionItems join of task version strings + RELEASES + active).
 - [x] `TaskCustomFields` component renders custom field values in `TaskDetailPanel`; `CustomFieldInput` provides type-appropriate controls (text, number, date, select); `AddCustomFieldForm` for adding new field defs; all wired to task `custom_fields:` frontmatter.
 
+### Tasks Board Redesign — Saved Views + Shared/Local Preferences (v0.10.x)
+- [x] Board rebuilt to the violet design language (from `Board.dc.html`): saved-view tab bar, a combined two-pane Filter menu (per-field include `✓` / exclude `✕`), View-type chip, Group + sub-group chip, Sort chip + direction, Versions **popover** (popup, not a dropdown), and a card Properties chip (toggle which fields show on cards).
+- [x] **Saved views** carry their own filter / sort / group / sub-group / layout / search combination. Switching a view applies its config; editing it shows an "Unsaved changes · Reset · Save view" affordance in the tab bar; views have a kebab menu (Rename / Duplicate / Delete; default views are locked).
+- [x] **Version-controlled board preferences**: views, sorts, filters, grouping, and the managed version list persist to `_dream_context/overrides/board.json` (git-tracked — survives `dreamcontext update`). Saving a view "for everyone" writes here. This makes a view/sort/filter combination permanent and shared across the team, never lost to localStorage or a fresh desktop loopback origin.
+- [x] **Per-machine override**: saving a view "for yourself" writes to `_dream_context/state/board.local.json` (git-ignored). It holds private per-view overrides, local-only views, the active view, and card-property toggles. On read the client merges shared + local (local override wins for that view; local-only views append; a shared view with a private override shows a "•yours" marker).
+- [x] **Save-scope prompt**: every Save view / Create view opens a `SaveScopeDialog` ("Save for everyone" → `overrides/board.json`, vs "Save for yourself" → `state/board.local.json`), defaulting to the view's current home scope. Version add/remove writes to the shared file (project structure); active-view selection, collapse, and card-properties are per-machine (no prompt).
+- [x] Card properties (description / tags / priority dot / urgency bar / due / RICE / assignee / version) toggle which fields a `BoardCard` renders; the at-risk alert strip surfaces overdue / due-today / due-this-week counts with a "Show at-risk only" quick filter.
+- [x] Kanban drag-and-drop patches whichever dimension is grouped (status / priority / urgency / version / assignee). The existing Eisenhower / Timeline / Calendar / Heatmap / RICE views and the rich `TaskDetailPanel` + `TaskCreateModal` are preserved and fed the filtered task set via the new view-type switcher (NOT regressed to "coming soon").
+- [x] Backend: `GET /api/board` → `{ shared, local }`; `PUT /api/board/shared` and `PUT /api/board/local` (CSRF-guarded, strict-pick `board`, 512 KB cap, missing/corrupt reads back as `{}`). Mirrors the `ui-settings.ts` brain-settings pattern. New files: `dashboard/src/hooks/useBoard.ts`, `dashboard/src/components/tasks/boardModel.ts` + `BoardViewTabs/BoardToolbar/BoardColumn/BoardCard/SaveScopeDialog/AtRiskAlert.tsx` + `Board.css`; `src/server/routes/board.ts`.
+
 ### Sleep State
 - [ ] Agent avatar (diamond logo) in header: full color when alert, dims progressively, pulses with "zzz" when must_sleep
 - [ ] Sleep badge in header shows level name and debt number
-- [ ] Sleep page: large debt gauge with color coding (green/yellow/purple/red by level)
-- [ ] Sleep page: session history timeline with timestamps, scores, change counts
-- [ ] Sleep page: dashboard changes list with entity/action/summary
+- [x] Sleep page: mood-driven Sleepy mascot with `getSleepMood(debt)` helper — awake (≤6), drowsy (7–9), asleep (≥10); level-tinted aura on card; floating Zzz on the asleep state.
+- [x] Sleep page: session history and dashboard-activity cloud merged into a single card below the hero (hairline divider, matching padding, violet wash); "Sleep cloud" standalone header and subtitle removed.
+- [x] Sleep page: stat pills (Work sessions / Highlights) and per-group detail rows visible in the cloud section; dashboard activity groups rendered with create/update/delete chips.
+- [x] Sleep page layout width matches other pages (full-width alignment consistent across all pages).
 
 ### Core Files
 - [ ] File list in left panel shows all core files (0.soul.md through 5.data_structures.sql, CHANGELOG.json, RELEASES.json)
@@ -222,12 +243,30 @@ Users need a visual interface to manage agent context without using the terminal
 - [x] Recursive nested folder tree: KnowledgePage.tsx builds a full recursive folder tree for knowledge/diagrams (and all knowledge subfolders), not just single-level depth. Category boards nest as collapsible sub-folders. Board cards show pen/sketch icon.
 - [x] Excalidraw canvas rendering: `ExcalidrawPreview` uses live `@excalidraw/excalidraw` canvas (view-mode) instead of `exportToSvg()`. Lazy-loaded. `scrollToContent` via mount + 100ms timer + ResizeObserver. See `knowledge/dashboard-knowledge-rendering.md`.
 - [x] `GET /api/knowledge-assets/:slug`: resolves Obsidian embedded images (SHA1→WebP base64, sharp, mtime-cached, safeChildPath-guarded). Key files: `src/server/routes/knowledge.ts`, `src/server/index.ts`.
-- [x] Page-title headers removed from Tasks, Features, and Knowledge pages (content starts without a redundant h1 title) to reclaim vertical space.
+- [x] Page-title headers removed from ALL dashboard pages (Tasks, Features, Knowledge, Council, Core, Settings, Sleep, Packs, Taxonomy); content starts directly without a redundant `<h1>` title; sidebar nav already labels the active page.
 - [x] Sleep page layout width matches other pages (full-width alignment consistent across all pages).
 - [x] Features page search box added.
 
+### Board & UX Polish (2026-06-28)
+- [x] `BoardToolbar` responsive overflow: `ResizeObserver`-driven `shrinkToFit` loop collapses View/Group/Versions/Properties chips into a `⋯ More` flyout when `scrollWidth > clientWidth`; `shell-main { min-width: 0 }` prevents the board's `nowrap` toolbar from pushing the board wider than the window. The collapsed controls' existing popover bodies render as left-flyouts from the More panel.
+- [x] Kanban drag-flicker fix (WKWebView): `onColumnDragLeave` removed from per-column handlers (fires spuriously on silhouette reflow and when WKWebView reports `relatedTarget = null` mid-drag); `dragOverKey` now cleared only at the board-row container level on genuine leave of the row. Drop and drag-end still call `endDrag()` to reliably clear. No flicker in the desktop app.
+- [x] Task context-menu flyout submenus: "Move to status" and "Set priority" in `TaskContextMenu` use flyout submenus (hover/click-open, `flipLeft` guard near viewport edge); menu vertical footprint ~360px → ~190px.
+- [x] Knowledge subfolder slug fix: `BrainSearch` and `DocContent` derive the knowledge slug from `hit.path` (`knowledge/.../x.md` → `…/x`) rather than bare `hit.slug`, so nested knowledge files (e.g. `decisions/decision-mem0-vs-bm25`) open correctly in the side panel without a 404. Root-level knowledge files unaffected (their path-derived slug matches the bare slug).
+- [x] Settings page max-width now uses `var(--page-max-width)` (matches AboutPage and other pages); was previously hardcoded to 1080px.
+
+### Council Page Redesign (2026-06-28)
+- [x] Empty-state: full "What is this?" explainer (brand gem → "LAB · COUNCIL" kicker → gradient headline → lead paragraph) + animated 6-persona showcase stage (Architect / Pragmatist / Skeptic / Researcher / Advocate / Strategist debating in a ring, comets on edges, converging to synthesizer → decision report) + "Start your first debate" CTA + experimental footnote.
+- [x] Populated-state: Council + LAB badge header; "New debate" button in the filter toolbar row (not in a separate header section); dismissible "How Council works" banner above the debate grid; LAB chip on the Council sidebar nav entry.
+- [x] `?page=<page>` deep-link support in `Shell.tsx` (explicit page param overrides remembered page, validated against page list); enables direct navigation to any page.
+- [x] `FlowDiagram` engine reused for the Council showcase (6-persona ring with CSS Motion Path comets); same composited animation system as the About page — zero jank at full and mini sizes.
+
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
+
+- **[2026-06-28]** **Sleep page redesign: mood-driven mascot + unified cloud card.** `SleepPage.tsx` redesigned to lead with a mood-driven Sleepy mascot (`getSleepMood(debt)`: awake ≤6, drowsy 7-9, asleep ≥10; Zzz float + level-tinted aura). The standalone "Sleep cloud" card is merged into the hero card as a continuous section (hairline `border-top` divider, matching horizontal padding, faint violet wash) — no second card chrome. The at-a-glance `12 ITEMS` count moved to the hero headline as a pill. Note: this Sleepy mascot is the DASHBOARD version (`SleepPage.tsx`); the Sleepy notch mascot (`SleepyMascot.tsx`) is the coded animated gem in the notch capture panel.
+- **[2026-06-28]** **Board toolbar responsive overflow:** `BoardToolbar` implements `scrollWidth > clientWidth` shrink-to-fit via `ResizeObserver`; collapses View/Group/Versions/Properties (in that priority order, Properties first) into a `⋯ More` chip. `shell-main` gained `min-width: 0` (was `auto`) to prevent the nowrap toolbar from forcing the board wider than the window. Root cause of the prior overflow bug: `.shell-main { flex: 1 }` with the default `min-width: auto` refused to shrink below its content's min-content width (~1100px toolbar).
+- **[2026-06-28]** **Kanban drag-flicker root cause (WKWebView).** The board's `dragOverKey` state oscillated because: (1) inserting the "Drop to move here" silhouette at column top shifts cards → triggers `dragleave` on the column boundary; (2) WKWebView reports `relatedTarget = null` mid-drag → `!contains(null)` always true → key cleared spuriously. Fix: remove per-column `onColumnDragLeave`; clear `dragOverKey` only at the board-row container level (with a `relatedTarget !== null` guard). Drag-end + drop still call `endDrag()` to reliably clear.
+- **[2026-06-28]** Tasks-board preferences are split across TWO project files, never localStorage: SHARED views/sorts/filters/grouping + the version list live in version-controlled `_dream_context/overrides/board.json` ("save for all"); per-machine overrides + the active view + card-property toggles live in git-ignored `_dream_context/state/board.local.json` ("save for yourself"). Rationale: a saved view's filter/sort combination must be permanent and shareable, not lost to a browser's localStorage or the desktop app's per-launch loopback origin (the same gotcha `ui-settings.ts` solved for brain settings). `overrides/` was chosen for the shared file because it is git-tracked AND survives `dreamcontext update` (same home as `overrides/task.md`); `state/` is wholly git-ignored, so it is the natural per-machine home. Client merges shared + local on read (local override wins per-view; local-only views append). The dashboard design language had already moved to violet (`tokens.css`: `#7b68ee` light / `#9d8cff` dark), so the redesign reused the existing tokens rather than introducing a new palette. The old `TaskFilters`/`KanbanColumn`/`VersionManager`/`VersionFilter`/`MultiSelectFilter`/`FilterPopover`/`SubGroupSection`/`savedViews` store are now dead (replaced by the `boardModel` + `Board*` components) and are a follow-up cleanup candidate; `TaskCard` is retained because Eisenhower/RICE views still depend on it.
 
 - **[2026-06-23]** `ask: true` on a custom field adds an "Ask me" toggle in `AddCustomFieldForm`; the flag is serialized via `POST /api/task-overrides/fields` and carried in `useTasks.ts` types. The dashboard itself does not enforce any "ask-before-create" flow — the behavioral rule is injected into the agent's briefing (`renderOverrideBriefing`) so it fires in CLI/agent contexts, not in the quick-draft dashboard create flow. Design rationale: `[[decisions/decision-task-format-override-and-custom-fields]]`.
 - **[2026-06-23]** Settings section-nav left rail: Platforms / Cloud Tasks / Task Format / Memory / Connections / Sleepy order; Task Format above Sleepy because it is a power-user capability that benefits from proximity to Cloud Tasks (both relate to the task model). BETA badge on Task Format signals the override schema may evolve. "How the format works" doc link opens the relevant section of the skill reference.
@@ -300,7 +339,12 @@ New in v0.10.0:
 - `POST /api/task-overrides/fields` — upsert one custom field def (name, key, type, options, sync, prompt)
 - `DELETE /api/task-overrides/fields/:key` — remove field def by key
 
-All mutating endpoints call recordDashboardChange() except `PATCH /api/config` (entity union not widened in v0.6).
+Board preferences (saved views):
+- `GET /api/board` — `{ shared, local }` (overrides/board.json + state/board.local.json; each `{}` when missing/corrupt)
+- `PUT /api/board/shared` — write the version-controlled shared blob (`overrides/board.json`)
+- `PUT /api/board/local` — write the git-ignored per-machine blob (`state/board.local.json`)
+
+All mutating endpoints call recordDashboardChange() except `PATCH /api/config` (entity union not widened in v0.6) and the board-preference PUTs (UI prefs, not consolidation-worthy content).
 
 ### Build Pipeline
 1. `npm run build:dashboard` - Vite builds React app to dashboard/dist/
@@ -414,6 +458,17 @@ All mutating endpoints call recordDashboardChange() except `PATCH /api/config` (
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-06-28 - Sleep page redesign + Council redesign + board responsive toolbar + UX polish
+- Sleep page: mood-driven Sleepy mascot (`getSleepMood(debt)`: awake/drowsy/asleep) with level-tinted aura and Zzz. Sleep cloud + hero merged into one unified card (hairline divider).
+- Council page: empty-state with animated 6-persona showcase (FlowDiagram engine), populated-state with dismissible how-it-works banner + LAB badge on nav. `?page=` deeplink in `Shell.tsx`.
+- Board toolbar responsive overflow: `ResizeObserver`-driven `⋯ More` collapse; `shell-main { min-width: 0 }` prevents board overflow at any width.
+- Kanban drag-flicker fix (WKWebView `relatedTarget=null`): `dragOverKey` cleared only at board-row container level.
+- Task context-menu flyout submenus for "Move to status" / "Set priority" (~190px footprint).
+- Knowledge subfolder slug fix in `BrainSearch`/`DocContent`: derive slug from `hit.path`, not bare `hit.slug`.
+- Page-title `<h1>` headers removed from all remaining pages (Council, Core, Settings, Sleep, Packs, Taxonomy).
+- Settings page max-width aligned to `var(--page-max-width)` (was hardcoded 1080px).
+- No `In Review` status color: `--color-status-in-review` pointed to `--color-error` (red) for clear visual distinction.
 
 ### 2026-06-23 - Sprint-aware version filter + cloud token entry + provision preview + task override/custom-fields UI (v0.10.0)
 - `VersionFilter` component replaces the generic MultiSelectFilter for the version facet: sprint-aware with current/planning/unregistered/released status icons, Set-current + Mark-complete per-row actions, "Current" quick-pick, collapsible Completed section, status-aware sort.

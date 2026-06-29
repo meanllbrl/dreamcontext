@@ -1,14 +1,19 @@
-<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <path d="M16 2L28 16L16 30L4 16L16 2Z" fill="url(#g1)" />
-  <path d="M16 9L22 16L16 23L10 16L16 9Z" fill="url(#g2)" opacity="0.7" />
+<svg width="120" height="120" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
-    <linearGradient id="g1" x1="4" y1="2" x2="28" y2="30" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#8200a6" />
-      <stop offset="1" stop-color="#db04b4" />
+    <linearGradient id="body" x1="30" y1="20" x2="92" y2="104" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#e3dcff" />
+      <stop offset="1" stop-color="#c2b2ff" />
     </linearGradient>
-    <linearGradient id="g2" x1="10" y1="9" x2="22" y2="23" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#641787" />
-      <stop offset="1" stop-color="#8200a6" />
+    <linearGradient id="dark" x1="46" y1="34" x2="100" y2="86" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7b6ce0" />
+      <stop offset="1" stop-color="#5f4fce" />
     </linearGradient>
+    <clipPath id="clip"><rect x="26" y="26" width="68" height="68" rx="16" transform="rotate(45 60 60)" /></clipPath>
   </defs>
+  <rect x="22" y="22" width="76" height="76" rx="19" transform="rotate(45 60 60)" fill="none" stroke="#c9bcff" stroke-width="2.5" opacity="0.55" />
+  <g clip-path="url(#clip)">
+    <rect x="26" y="26" width="68" height="68" rx="16" transform="rotate(45 60 60)" fill="url(#body)" />
+    <path d="M63 40 Q61 60 66 79 Q85 70 100 60 Q85 49 63 40 Z" fill="url(#dark)" />
+    <path d="M46 35 Q33 60 46 85 Q59 60 46 35 Z" fill="url(#dark)" />
+  </g>
 </svg>

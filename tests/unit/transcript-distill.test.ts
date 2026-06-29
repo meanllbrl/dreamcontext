@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { distillTranscript, formatDistilled } from '../../src/cli/commands/transcript.js';
+import { distillTranscript, formatDistilled, isSystemNoiseMessage } from '../../src/cli/commands/transcript.js';
 
 function makeTmpDir(): string {
   const dir = join(tmpdir(), `ac-distill-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -113,11 +113,35 @@ describe('distillTranscript', () => {
     ].join('\n'));
 
     const result = distillTranscript(file);
-    expect(result.userMessages.length).toBeGreaterThanOrEqual(2);
+    // Genuine typed text blocks are kept; tool_result blocks (machine output)
+    // are dropped so they can never seed a false 'User correction' bookmark.
+    expect(result.userMessages).toHaveLength(2);
     expect(result.userMessages[0]).toContain('First block');
     expect(result.userMessages[0]).toContain('Second block');
     expect(result.userMessages[1]).toContain('success');
-    expect(result.userMessages[1]).toContain('Result details');
+    expect(result.userMessages[1]).not.toContain('Result details');
+  });
+
+  it('does NOT fold tool_result output into userMessages (false-correction guard)', () => {
+    const file = join(tmpDir, 'test.jsonl');
+    // A Claude Code tool result arrives as a role:'user' record carrying a
+    // tool_result block. Output like "No open tabs" must NOT become a user msg.
+    writeFileSync(file, [
+      JSON.stringify({
+        type: 'user',
+        message: {
+          role: 'user',
+          content: [
+            { type: 'tool_result', content: [
+              { type: 'text', text: 'No open tabs available' },
+            ]},
+          ],
+        },
+      }),
+    ].join('\n'));
+
+    const result = distillTranscript(file);
+    expect(result.userMessages).toEqual([]);
   });
 
   it('extracts agent text responses', () => {
@@ -347,5 +371,58 @@ describe('formatDistilled', () => {
     expect(output).not.toContain('### Code Changes');
     expect(output).not.toContain('### Errors');
     expect(output).not.toContain('### Bookmarks');
+  });
+});
+
+describe('isSystemNoiseMessage', () => {
+  it('flags sub-agent task-notification XML blocks', () => {
+    expect(isSystemNoiseMessage('<task-notification>Agent foo done</task-notification>')).toBe(true);
+    expect(isSystemNoiseMessage('  <task-notification>\n  ...\n  </task-notification>  ')).toBe(true);
+  });
+
+  it('flags agent-resume JSON envelopes', () => {
+    expect(isSystemNoiseMessage('{"success":true,"message":"Agent abc had no active task; resumed at turn 3"}')).toBe(true);
+    expect(isSystemNoiseMessage('{"success":false,"message":"Agent xyz resumed"}')).toBe(true);
+  });
+
+  it('flags skill-loader headers', () => {
+    expect(isSystemNoiseMessage('Base directory for this skill: /home/u/.claude/skills/foo')).toBe(true);
+  });
+
+  it('flags empty/whitespace-only turns', () => {
+    expect(isSystemNoiseMessage('   ')).toBe(true);
+  });
+
+  it('does NOT flag genuine user messages (even containing "success" or "agent")', () => {
+    expect(isSystemNoiseMessage('No, actually use yarn instead of npm here.')).toBe(false);
+    expect(isSystemNoiseMessage('The deploy was a success, ship it.')).toBe(false);
+    expect(isSystemNoiseMessage('Make the agent retry on failure.')).toBe(false);
+    expect(isSystemNoiseMessage('Tool result: success — Result details here')).toBe(false);
+  });
+});
+
+describe('distillTranscript drops system coordination noise from user messages', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('excludes task-notification, agent-resume JSON, and skill-loader turns', () => {
+    const file = join(tmpDir, 'noise.jsonl');
+    writeFileSync(file, [
+      userMessage('<task-notification>Agent foo finished; no action needed instead.</task-notification>'),
+      userMessage('{"success":true,"message":"Agent abc had no active task; resumed instead."}'),
+      userMessage('Base directory for this skill: /home/u/.claude/skills/no-instead'),
+      userMessage('No, actually use yarn instead of npm here.'),
+    ].join('\n'));
+
+    const result = distillTranscript(file);
+    // Only the real human correction survives.
+    expect(result.userMessages).toEqual(['No, actually use yarn instead of npm here.']);
   });
 });

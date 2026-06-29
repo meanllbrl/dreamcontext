@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { useKnowledgeList, useKnowledge, useToggleKnowledgePin } from '../hooks/useKnowledge';
+import { useKnowledgeList, useKnowledge, useToggleKnowledgePin, useKnowledgeLiveRefresh } from '../hooks/useKnowledge';
 import { useI18n } from '../context/I18nContext';
 import { FullscreenOverlay } from '../components/layout/FullscreenOverlay';
 import { MarkdownPreview } from '../components/core/MarkdownPreview';
@@ -7,6 +7,7 @@ import { SqlPreview } from '../components/core/SqlPreview';
 import { ExcalidrawPreview } from '../components/core/ExcalidrawPreview';
 import { isExcalidrawSlug } from '../lib/excalidraw';
 import { tagHue } from '../lib/tagColor';
+import { BrainSearch } from '../components/search/BrainSearch';
 import './KnowledgePage.css';
 
 // Data-structures knowledge files store their schema as fenced ```sql blocks.
@@ -137,7 +138,6 @@ export function KnowledgePage() {
   const { t } = useI18n();
   const { data: entries, isLoading, isError, error } = useKnowledgeList();
   const togglePin = useToggleKnowledgePin();
-  const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
   const [viewTab, setViewTab] = useState<'file' | 'preview'>('preview');
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -145,24 +145,24 @@ export function KnowledgePage() {
 
   const { data: detail } = useKnowledge(selected ?? '');
 
-  const filtered = useMemo(() => {
-    if (!entries) return [];
-    if (!search.trim()) return entries;
-    const q = search.toLowerCase();
-    return entries.filter(e =>
-      e.name.toLowerCase().includes(q) ||
-      e.description.toLowerCase().includes(q) ||
-      e.tags.some(t => t.toLowerCase().includes(q))
-    );
-  }, [entries, search]);
+  // Live-refresh the open doc (esp. Excalidraw boards) when its file changes on
+  // disk: the list poll carries each file's mtime; refetch the open doc only
+  // when its on-disk version is newer than what's rendered.
+  const selectedListMtime = useMemo(
+    () => entries?.find(e => e.slug === selected)?.mtime,
+    [entries, selected],
+  );
+  useKnowledgeLiveRefresh(selected, selectedListMtime, detail?.mtime);
 
-  // Group entries whose slug carries a folder path (e.g. `diagrams/competitors/acme`)
-  // into a recursive collapsible tree. Root-level files render flat below the folders.
-  const { roots: rootEntries, folders } = useMemo(() => buildKnowledgeTree(filtered), [filtered]);
+  // The full corpus renders as a collapsible folder tree (the idle "browse"
+  // surface). Search is no longer a substring filter over this list — the
+  // BrainSearch widget owns real recall and swaps the tree for ranked hits.
+  const { roots: rootEntries, folders } = useMemo(
+    () => buildKnowledgeTree(entries ?? []),
+    [entries],
+  );
 
-  // While searching, auto-expand every folder so matches are visible.
-  const searching = search.trim().length > 0;
-  const isOpen = (folder: string) => searching || expanded.has(folder);
+  const isOpen = (folder: string) => expanded.has(folder);
   const toggleFolder = (folder: string) => {
     setExpanded(prev => {
       const next = new Set(prev);
@@ -271,63 +271,80 @@ export function KnowledgePage() {
   if (isLoading) return <div className="loading">{t('common.loading')}</div>;
   if (isError) return <div className="error-state">Failed to load knowledge. {error?.message}</div>;
 
+  const browse = (
+    <>
+      {(!entries || entries.length === 0) && (
+        <div className="core-empty">{t('common.empty')}</div>
+      )}
+      {folders.map(renderFolder)}
+      {rootEntries.map(entry => renderCard(entry))}
+    </>
+  );
+
+  const detailPane = (
+    <>
+      {!selected && (
+        <div className="knowledge-detail-empty">
+          <span className="knowledge-detail-empty-icon" aria-hidden="true">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 6.2C10.1 4.9 7.8 4.2 5 4.2c-.9 0-1.7.1-2.5.3v13c.8-.2 1.6-.3 2.5-.3 2.8 0 5.1.7 7 2" />
+              <path d="M12 6.2c1.9-1.3 4.2-2 7-2 .9 0 1.7.1 2.5.3v13c-.8-.2-1.6-.3-2.5-.3-2.8 0-5.1.7-7 2" />
+              <line x1="12" y1="6.2" x2="12" y2="19.2" />
+            </svg>
+          </span>
+          <p>Select a knowledge file, or search to recall across your brain.</p>
+        </div>
+      )}
+      {selected && !detail && (
+        <div className="core-empty">Loading document…</div>
+      )}
+      {selected && detail && (
+        <div className="core-viewer">
+          <div className="core-viewer-header">
+            <h2 className="core-viewer-title">{detail.name}</h2>
+            <div className="core-viewer-actions">
+              {renderTabs()}
+              <button
+                className="core-expand-btn"
+                onClick={() => setFullscreen(true)}
+                title={t('knowledge.fullscreen')}
+                aria-label={t('knowledge.fullscreen')}
+              >
+                ⛶
+              </button>
+            </div>
+          </div>
+          {/* One render site for the content: the fixed-position overlay
+              replaces the pane copy, so the doc is never mounted twice —
+              that would double the heavy excalidraw export and duplicate
+              mermaid element ids. */}
+          {fullscreen ? (
+            <FullscreenOverlay
+              label={detail.name}
+              actions={renderTabs()}
+              onClose={() => setFullscreen(false)}
+            >
+              {renderContent(detail)}
+            </FullscreenOverlay>
+          ) : (
+            renderContent(detail)
+          )}
+        </div>
+      )}
+    </>
+  );
+
   return (
     <div className="knowledge-page">
-      <input
-        className="knowledge-search"
+      <BrainSearch
+        scope="knowledge"
         placeholder={t('knowledge.search')}
-        value={search}
-        onChange={e => setSearch(e.target.value)}
+        selectedSlug={selected}
+        onOpen={(hit) => { setSelected(hit.slug); setViewTab('preview'); }}
+        browse={browse}
+        detail={detailPane}
       />
-
-      <div className="knowledge-layout">
-        <div className="knowledge-list">
-          {filtered.length === 0 && (
-            <div className="core-empty">{t('common.empty')}</div>
-          )}
-
-          {folders.map(renderFolder)}
-
-          {rootEntries.map(entry => renderCard(entry))}
-        </div>
-
-        <div className="knowledge-detail">
-          {!selected && <div className="core-empty">Select a knowledge file to view.</div>}
-          {selected && detail && (
-            <div className="core-viewer">
-              <div className="core-viewer-header">
-                <h2 className="core-viewer-title">{detail.name}</h2>
-                <div className="core-viewer-actions">
-                  {renderTabs()}
-                  <button
-                    className="core-expand-btn"
-                    onClick={() => setFullscreen(true)}
-                    title={t('knowledge.fullscreen')}
-                    aria-label={t('knowledge.fullscreen')}
-                  >
-                    ⛶
-                  </button>
-                </div>
-              </div>
-              {/* One render site for the content: the fixed-position overlay
-                  replaces the pane copy, so the doc is never mounted twice —
-                  that would double the heavy excalidraw export and duplicate
-                  mermaid element ids. */}
-              {fullscreen ? (
-                <FullscreenOverlay
-                  label={detail.name}
-                  actions={renderTabs()}
-                  onClose={() => setFullscreen(false)}
-                >
-                  {renderContent(detail)}
-                </FullscreenOverlay>
-              ) : (
-                renderContent(detail)
-              )}
-            </div>
-          )}
-        </div>
-      </div>
     </div>
   );
 }

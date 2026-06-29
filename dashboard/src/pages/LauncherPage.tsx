@@ -69,7 +69,6 @@ export function LauncherPage() {
   return (
     <div className="launcher">
       <header className="launcher-bar">
-        <h1 className="launcher-title">Launcher · all projects</h1>
         <div className="launcher-actions">
           {vaults.length >= 2 && (
             <div className="launcher-viewtoggle" role="group" aria-label="View">

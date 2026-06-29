@@ -63,6 +63,48 @@ export function useUpdateVersion() {
   });
 }
 
+/**
+ * Rename a version. Works for both a registered RELEASES.json entry and an
+ * unregistered "ghost" (a version string only present on tasks). The server
+ * re-points every task carrying the old name, so the tasks list is invalidated
+ * too. Passing a `to` that collides with another version rejects (409).
+ */
+export function useRenameVersion() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ from, to }: { from: string; to: string }) =>
+      api.patch<ReleaseResponse>(`/releases/${encodeURIComponent(from)}`, { version: to }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['releases'] });
+      queryClient.invalidateQueries({ queryKey: ['tasks'] });
+    },
+  });
+}
+
+interface DeleteVersionResponse {
+  deleted: boolean;
+  version: string;
+  wasRegistered: boolean;
+  tasksCleared: number;
+}
+
+/**
+ * Delete a version. Removes the RELEASES.json entry (if any) and clears the
+ * `version` field on every task that pointed at it — tasks are kept, never
+ * deleted. Works on unregistered ghosts too (just clears the tasks).
+ */
+export function useDeleteVersion() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (version: string) =>
+      api.del<DeleteVersionResponse>(`/releases/${encodeURIComponent(version)}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['releases'] });
+      queryClient.invalidateQueries({ queryKey: ['tasks'] });
+    },
+  });
+}
+
 interface ActiveVersionResponse {
   active: string | null;
 }

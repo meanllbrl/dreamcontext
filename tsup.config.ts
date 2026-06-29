@@ -28,7 +28,14 @@ export default defineConfig({
     'fast-glob',
     'nanoid',
     'boxen',
+    // Pure-JS WebSocket server for the agent terminal's PTY bridge — bundle it so
+    // the .app (which ships dist/ without node_modules) can require it.
+    'ws',
   ],
+  // node-pty is a NATIVE module — it cannot be bundled. It's an optionalDependency,
+  // loaded via dynamic import() with graceful degradation (the agent terminal falls
+  // back to "Open in Terminal"). Kept external so tsup never tries to inline the .node.
+  external: ['node-pty'],
   onSuccess: async () => {
     cpSync('src/templates', 'dist/templates', { recursive: true });
     cpSync('agents', 'dist/agents', { recursive: true });

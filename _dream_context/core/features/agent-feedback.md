@@ -5,9 +5,9 @@ created: '2026-06-10'
 updated: '2026-06-21'
 released_version: v0.8.7
 tags:
-  - cli
+  - 'topic:cli'
   - backend
-  - agents
+  - 'topic:agents'
 related_tasks:
   - agent-feedback-loop
 ---

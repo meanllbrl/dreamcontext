@@ -1,0 +1,588 @@
+/* Agent terminal — themed to the dreamcontext design language.
+   xterm renders to a GPU (WebGL) canvas, so its colors are set in JS (see
+   readXtermTheme); this file owns the chrome around it + the inner padding the
+   canvas can't express. */
+
+/* The persistent host. Mounted once at the app shell and positioned (fixed) over
+   SleepyPage's Agent-tab slot by AgentSurface, so the PTY session survives page
+   navigation. Visibility + rect are driven imperatively; this just clips + paints
+   the backdrop so there's never a flash of page behind a sub-pixel gap. */
+.agent-surface {
+  position: fixed;
+  top: 0; left: 0;
+  /* Hidden until the positioning effect snaps it over the slot (display + rect are
+     driven imperatively), so there's never a first-frame flash at 0,0. */
+  display: none;
+  flex-direction: column;
+  z-index: 20;
+  overflow: hidden;
+  background: var(--color-bg);
+  contain: layout paint;
+}
+.agent-surface > * {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+}
+
+/* The in-page anchor SleepyPage renders while the Agent tab is active. Pure
+   layout — the real terminal paints over it from the fixed surface. `.sleepy-body`
+   is a plain block with a resolved height (flex child of the view column), so the
+   anchor fills it with height:100% (NOT flex:1, which would collapse to 0 here). */
+.agent-slot {
+  height: 100%;
+  width: 100%;
+}
+
+.agent-term {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg);
+}
+
+/* ── Tab strip ──────────────────────────────────────────────────────────────
+   Slim, decluttered: just the session tabs + new/split + bypass. Echoes the Sleepy
+   header's violet wash directly above it. Tabs are draggable (drop one on another,
+   or on the terminal area, to split into side-by-side panes). */
+.agent-tabbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 44px;
+  padding: 0 14px 0 18px;
+  border-bottom: 1px solid var(--color-border);
+  background: linear-gradient(180deg, rgba(123, 104, 238, 0.05), transparent);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.agent-tabbar::-webkit-scrollbar { display: none; }
+
+.agent-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: 0 0 auto;
+  height: 31px;
+  padding: 0 5px 0 11px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast), opacity var(--transition-fast);
+}
+.agent-tab:hover { background: var(--color-bg-tertiary); color: var(--color-text-secondary); }
+.agent-tab.active {
+  background: color-mix(in srgb, var(--color-accent) 16%, var(--color-bg-secondary));
+  border-color: color-mix(in srgb, var(--color-accent) 34%, transparent);
+  color: var(--color-text);
+  box-shadow: 0 1px 0 0 color-mix(in srgb, var(--color-accent) 60%, transparent) inset, 0 4px 12px -8px rgba(0, 0, 0, 0.7);
+}
+.agent-tab.dragging { opacity: 0.45; }
+.agent-tab.drop {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px var(--color-accent-soft);
+}
+.agent-tab-dot {
+  flex: 0 0 auto;
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--color-warning);
+  box-shadow: 0 0 7px currentColor;
+}
+.agent-tab-dot[data-status="open"] { background: var(--color-success); color: var(--color-success); }
+.agent-tab-dot[data-status="closed"] { background: var(--color-error); color: var(--color-error); }
+.agent-tab-dot[data-status="connecting"] {
+  background: var(--color-warning); color: var(--color-warning);
+  animation: agentDotPulse 1.3s ease-in-out infinite;
+}
+@keyframes agentDotPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.agent-tab-label { max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
+.agent-tab-rename {
+  width: 92px;
+  height: 21px;
+  padding: 0 6px;
+  border-radius: 6px;
+  border: 1px solid var(--color-accent);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-accent-soft);
+}
+/* Close affordance — a real ~20px hit target so a single click always lands. */
+.agent-tab-x {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: 0 0 auto;
+  width: 20px; height: 20px; border-radius: 6px;
+  font-size: 10px;
+  color: var(--color-text-tertiary);
+  opacity: 0;
+  transition: opacity var(--transition-fast), background var(--transition-fast), color var(--transition-fast), transform var(--transition-fast);
+}
+.agent-tab:hover .agent-tab-x { opacity: 0.7; }
+/* The active tab's close is always present — no hunt, no hover-to-find. */
+.agent-tab.active .agent-tab-x { opacity: 0.85; }
+.agent-tab-x:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--color-error) 20%, transparent);
+  color: var(--color-error);
+}
+.agent-tab-x:active { transform: scale(0.86); }
+
+.agent-tab-add,
+.agent-icon-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: 0 0 auto;
+  width: 26px; height: 26px;
+  border-radius: 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  line-height: 1;
+  transition: all var(--transition-fast);
+}
+.agent-tab-add { font-size: 16px; }
+.agent-icon-btn { font-size: 13px; }
+.agent-tab-add:hover,
+.agent-icon-btn:hover {
+  background: var(--color-bg-tertiary);
+  border-color: var(--color-border);
+  color: var(--color-text);
+}
+.agent-tab-add:active,
+.agent-icon-btn:active { transform: translateY(0.5px); }
+.agent-tab-add:focus-visible,
+.agent-icon-btn:focus-visible {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px var(--color-accent-soft);
+}
+
+/* Bypass pill (in the tab strip). */
+.agent-term-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding: 4px 9px;
+  border-radius: var(--radius-md);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  user-select: none;
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+.agent-term-pill:hover { color: var(--color-text-secondary); background: var(--color-bg-tertiary); }
+.agent-term-pill.on { color: var(--color-error); }
+.agent-term-pill.on:hover { color: var(--color-error); }
+.agent-term-pill input { accent-color: var(--color-error); width: 13px; height: 13px; }
+.agent-term-pill:focus-within {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-accent-soft);
+}
+
+/* Standing bypass banner. */
+.agent-term-banner {
+  flex: 0 0 auto;
+  padding: 8px 18px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  letter-spacing: -0.1px;
+  color: var(--color-error);
+  background: var(--color-error-subtle);
+  border-bottom: 1px solid color-mix(in srgb, var(--color-error) 28%, transparent);
+}
+
+/* ── Split panes ────────────────────────────────────────────────────────────── */
+.agent-panes {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+  position: relative;
+}
+.agent-panes.drop::after {
+  content: '';
+  position: absolute;
+  inset: 8px;
+  border: 2px dashed var(--color-accent);
+  border-radius: 12px;
+  background: var(--color-accent-soft);
+  pointer-events: none;
+  z-index: 5;
+}
+
+.agent-pane {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+/* A faint inner ring marks the focused pane in a split (not shown for a lone pane). */
+.agent-pane.focused::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 38%, transparent);
+  pointer-events: none;
+  z-index: 3;
+}
+
+/* Lone-pane controls — float top-right, revealed on hover/focus (declutter). */
+.agent-pane-tools {
+  position: absolute;
+  top: 7px; right: 9px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px 4px 3px 8px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--color-bg) 80%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-border) 60%, transparent);
+  backdrop-filter: blur(8px);
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+.agent-pane:hover .agent-pane-tools,
+.agent-pane.focused .agent-pane-tools { opacity: 1; }
+
+/* Split-pane header — always visible so you can read + act on the right pane. */
+.agent-pane-head {
+  flex: 0 0 auto;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 6px 0 11px;
+  border-bottom: 1px solid var(--color-border);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--color-accent) 7%, var(--color-bg)), var(--color-bg));
+}
+.agent-pane.focused .agent-pane-head {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--color-accent) 13%, var(--color-bg)), var(--color-bg));
+}
+.agent-pane-name { color: var(--color-text-secondary); }
+.agent-pane-state {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.02em;
+  color: var(--color-text-tertiary);
+}
+
+.agent-pane-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-right: 2px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--color-text-tertiary);
+}
+.agent-pane-status .dot {
+  flex: 0 0 auto;
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--color-warning);
+  box-shadow: 0 0 6px currentColor;
+}
+.agent-pane-status[data-status="open"] .dot { background: var(--color-success); color: var(--color-success); }
+.agent-pane-status[data-status="closed"] .dot { background: var(--color-error); color: var(--color-error); }
+.agent-pane-status[data-status="connecting"] .dot { animation: agentDotPulse 1.3s ease-in-out infinite; }
+
+/* ~24px hit target — comfortably clickable on the first try. */
+.agent-pane-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: 0 0 auto;
+  width: 24px; height: 24px;
+  border-radius: 7px;
+  background: transparent;
+  border: none;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast), transform var(--transition-fast);
+}
+.agent-pane-btn:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
+.agent-pane-btn.close:hover {
+  background: color-mix(in srgb, var(--color-error) 20%, transparent);
+  color: var(--color-error);
+}
+.agent-pane-btn:active { transform: scale(0.9); }
+.agent-pane-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-accent-soft);
+}
+
+/* Ended session → a centered, unmissable Reconnect surface over the dead pane. */
+.agent-pane-ended {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: color-mix(in srgb, var(--color-bg) 78%, transparent);
+  backdrop-filter: blur(3px);
+  animation: agentFadeIn var(--transition-fast);
+}
+.agent-pane-ended-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  max-width: 320px;
+}
+.agent-pane-ended-glyph {
+  width: 46px; height: 46px;
+  display: flex; align-items: center; justify-content: center;
+  margin-bottom: 13px;
+  border-radius: 13px;
+  font-family: var(--font-mono);
+  font-size: 18px;
+  color: var(--color-text-tertiary);
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+}
+.agent-pane-ended-title {
+  font-family: var(--font-family-display, var(--font-mono));
+  font-weight: 700;
+  font-size: 16px;
+  color: var(--color-text);
+  margin-bottom: 5px;
+}
+.agent-pane-ended-sub {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+  margin-bottom: 18px;
+}
+.agent-pane-ended-actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+.agent-pane-reconnect {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 9px 18px;
+  border-radius: 10px;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  background: linear-gradient(150deg, #8b7bff, #6f5ce0);
+  box-shadow: 0 6px 18px -7px rgba(123, 104, 238, 0.9);
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+}
+.agent-pane-reconnect:hover { transform: translateY(-1px); box-shadow: 0 9px 22px -7px rgba(123, 104, 238, 0.95); }
+.agent-pane-reconnect:active { transform: translateY(0); }
+.agent-pane-ended-close {
+  padding: 9px 16px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  transition: border-color var(--transition-fast), color var(--transition-fast);
+}
+.agent-pane-ended-close:hover { color: var(--color-text); border-color: var(--color-border-hover); }
+
+/* The xterm host slot. The detached container (.agent-pane-term) is appended here
+   imperatively; padding lives on .xterm so FitAddon subtracts it and the grid stays
+   aligned. */
+.agent-pane-slot {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+.agent-pane-term {
+  position: absolute;
+  inset: 0;
+}
+.agent-pane-slot .xterm {
+  height: 100%;
+  padding: 14px 20px;
+}
+.agent-pane-slot .xterm-viewport {
+  background-color: transparent !important;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-hover) transparent;
+}
+.agent-pane-slot .xterm-viewport::-webkit-scrollbar { width: 10px; }
+.agent-pane-slot .xterm-viewport::-webkit-scrollbar-track { background: transparent; }
+.agent-pane-slot .xterm-viewport::-webkit-scrollbar-thumb {
+  background: var(--color-border-hover);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+.agent-pane-slot .xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-tertiary);
+  background-clip: content-box;
+}
+
+/* Draggable split divider. */
+.agent-pane-divider {
+  flex: 0 0 auto;
+  width: 7px;
+  cursor: col-resize;
+  position: relative;
+  background: transparent;
+  touch-action: none;
+}
+.agent-pane-divider::after {
+  content: '';
+  position: absolute;
+  top: 0; bottom: 0; left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+  background: var(--color-border);
+  transition: background var(--transition-fast), width var(--transition-fast);
+}
+.agent-pane-divider:hover::after { background: var(--color-accent); width: 2px; }
+
+/* Garage — keeps backgrounded session terminals mounted (alive) but unseen. */
+.agent-garage { display: none; }
+
+/* ── Confirmation sheet — guards destructive session actions (native-alert feel) ─ */
+.agent-confirm-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: color-mix(in srgb, var(--color-bg) 55%, rgba(0, 0, 0, 0.55));
+  backdrop-filter: blur(4px);
+  animation: agentFadeIn 0.14s ease;
+}
+.agent-confirm {
+  width: 100%;
+  max-width: 384px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 26px 26px 18px;
+  border-radius: var(--radius-xl, 16px);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  box-shadow: 0 28px 70px -22px rgba(0, 0, 0, 0.78), 0 0 0 1px rgba(0, 0, 0, 0.18);
+  animation: agentSheetIn 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.agent-confirm-icon {
+  width: 46px; height: 46px;
+  display: flex; align-items: center; justify-content: center;
+  margin-bottom: 14px;
+  border-radius: 50%;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1;
+}
+.agent-confirm-icon.danger {
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-error) 34%, transparent);
+}
+.agent-confirm-icon.accent {
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 34%, transparent);
+}
+.agent-confirm-title {
+  font-family: var(--font-family-display, var(--font-mono));
+  font-weight: 700;
+  font-size: 17px;
+  letter-spacing: -0.01em;
+  color: var(--color-text);
+  margin-bottom: 7px;
+}
+.agent-confirm-msg {
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--color-text-secondary);
+  margin-bottom: 22px;
+  max-width: 320px;
+}
+.agent-confirm-actions {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+}
+.agent-confirm-btn {
+  flex: 1;
+  height: 40px;
+  border-radius: 11px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  font-size: 13.5px;
+  font-weight: 600;
+  font-family: var(--font-family-text, inherit);
+  transition: transform var(--transition-fast), background var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+.agent-confirm-btn:active { transform: scale(0.98); }
+.agent-confirm-btn:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--color-accent-soft); }
+.agent-confirm-btn.ghost {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  border-color: var(--color-border);
+}
+.agent-confirm-btn.ghost:hover { color: var(--color-text); border-color: var(--color-border-hover); }
+.agent-confirm-btn.danger {
+  color: #fff;
+  background: linear-gradient(150deg, #ff6b6f, #e5484d);
+  box-shadow: 0 8px 20px -8px rgba(229, 72, 77, 0.85);
+}
+.agent-confirm-btn.danger:hover { box-shadow: 0 11px 24px -8px rgba(229, 72, 77, 0.95); }
+.agent-confirm-btn.danger:focus-visible { box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-error) 34%, transparent); }
+.agent-confirm-btn.accent {
+  color: #fff;
+  background: linear-gradient(150deg, #8b7bff, #6f5ce0);
+  box-shadow: 0 8px 20px -8px rgba(123, 104, 238, 0.85);
+}
+.agent-confirm-btn.accent:hover { box-shadow: 0 11px 24px -8px rgba(123, 104, 238, 0.95); }
+.agent-confirm-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 14px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--color-text-tertiary);
+}
+.agent-confirm-hint span { opacity: 0.5; }
+.agent-confirm-hint kbd {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+}
+
+@keyframes agentFadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes agentSheetIn {
+  from { opacity: 0; transform: translateY(8px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Respect reduced-motion: kill the decorative pulses + entrance animations. */
+@media (prefers-reduced-motion: reduce) {
+  .agent-tab-dot,
+  .agent-pane-status .dot { animation: none !important; }
+  .agent-confirm,
+  .agent-confirm-scrim,
+  .agent-pane-ended { animation: none !important; }
+}

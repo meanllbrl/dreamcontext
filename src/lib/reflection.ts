@@ -49,6 +49,11 @@ const REFLECTION_NOISE = new Set([
   'sleep', 'wake', 'consolidat', 'recall', 'snapshot', 'hook',
   'transcript', 'distil', 'bookmark', 'trigger', 'knowleg',
   'featur', 'changelog', 'releas', 'version', 'plan', 'sprint',
+  // Sub-agent / tooling coordination chrome that leaks from transcripts:
+  // task-notification XML, agent-resume JSON, tool-use ids, skill loaders.
+  // (Stemmed forms — see tokenize/stemToken in recall.ts.) task_OwbFN_IV.
+  'toolu', 'agentid', 'subagent', 'notification', 'success',
+  'successfully', 'resum', 'directory', 'base',
 ]);
 
 // ── Types ─────────────────────────────────────────────────────────────────────

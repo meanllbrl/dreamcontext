@@ -6,7 +6,7 @@ updated: '2026-06-21'
 released_version: v0.8.7
 tags:
   - 'domain:knowledge'
-  - cli
+  - 'topic:cli'
   - 'topic:recall'
   - decisions
 related_tasks:
@@ -198,7 +198,7 @@ Both tier sizes (3 detailed, 10 titles-only, ~300 char body cap) are configurabl
 
 ## Open follow-ups (NOT v1)
 
-- Add to dashboard: a search box on the Brain page that calls `dreamcontext memory recall --json` and renders hits.
+- ~~Add to dashboard: a search box on the Brain page that calls `dreamcontext memory recall --json` and renders hits.~~ — **shipped 2026-06-27 as the Sleepy Search/Ask view** (`SleepyPage` + `/api/recall` HTTP endpoint). See `features/sleepy-search-ask.md`.
 - Consider exposing as a slash command (`/recall <query>`) for use inside Claude Code sessions.
 - Optional: persist last-N queries to `_dream_context/state/.sleep.json` for analytics (would not affect ranking, just visibility into what users search for).
 - If usage grows past ~500 docs, add a build-once-cache-in-memory pattern (`memory recall --watch`) to amortize tokenization cost.

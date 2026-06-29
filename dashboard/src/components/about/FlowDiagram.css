@@ -38,6 +38,16 @@
   stroke-linecap: round;
   opacity: 0.85;
 }
+/* Thinner, lower-contrast wire for dense meshes (e.g. the council cross-talk web)
+   where the default 2px stroke reads as heavy once many edges overlap. */
+.fd-wire--thin {
+  stroke: color-mix(in srgb, var(--color-text) 26%, transparent);
+  stroke-width: 1.4;
+}
+/* Directional arrowhead fill — matches the wire contrast in both themes. */
+.fd-arrowhead {
+  fill: color-mix(in srgb, var(--color-text) 50%, transparent);
+}
 
 /* The travelling dot: a small glowing orb riding each edge via the CSS Motion
    Path. We animate `offset-distance` (a compositor-friendly, transform-class

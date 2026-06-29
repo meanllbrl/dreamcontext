@@ -1,11 +1,33 @@
 [
   {
-    "id": "rel_2iZF9IEY",
-    "version": "v0.10.0",
+    "id": "rel_8l0E-2u9",
+    "version": "v0.11.0",
     "date": "",
-    "summary": "Next planning milestone after v0.9.2 — richer task-model follow-ons, dashboard polish, recall test stability",
+    "summary": "Next milestone after v0.10.0: desktop stale-dist (-ilc) fix, task-derived roadmap, excalidraw card-overflow fix, web read-only public surface",
     "breaking": false,
     "status": "planning",
+    "features": [],
+    "tasks": [],
+    "changelog": []
+  },
+  {
+    "id": "rel_CsHfTgP1",
+    "version": "BACKLOG",
+    "date": "",
+    "summary": "",
+    "breaking": false,
+    "status": "planning",
+    "features": [],
+    "tasks": [],
+    "changelog": []
+  },
+  {
+    "id": "rel_2iZF9IEY",
+    "version": "v0.10.0",
+    "date": "2026-06-29",
+    "summary": "v0.10.0 — in-app version management (rename + delete controls in the dashboard versions popover, backed by PATCH-rename/DELETE release routes with task re-pointing + active-pointer move + warn-and-clear delete); unregistered-version cleanup; desktop find_global_cli -ilc fix (nvm CLI now visible to the app); plus richer task-model follow-ons, dashboard polish, and recall test stability.",
+    "breaking": false,
+    "status": "released",
     "features": [],
     "tasks": [],
     "changelog": []

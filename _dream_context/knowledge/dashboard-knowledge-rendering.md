@@ -6,7 +6,9 @@ description: >-
   live @excalidraw/excalidraw canvas (not exported SVG), SQL via SqlPreview ER
   view, Markdown via MarkdownPreview, and the /api/knowledge-assets route for
   resolving Obsidian board embedded images (SHA1→path→base64 WebP via sharp).
-  Also covers the live-refresh header button and SQL fence-concat fallback.
+  Also covers the live-refresh header button, SQL fence-concat fallback, and the
+  DocContent pattern (search-result rendering reuses the same renderers via
+  full-record fetch per hit type).
 type: knowledge
 tags:
   - architecture
@@ -14,9 +16,10 @@ tags:
   - frontend
   - topic:excalidraw
   - topic:dashboard
+  - topic:recall
 pinned: false
 created: '2026-06-17'
-updated: '2026-06-18'
+updated: '2026-06-28'
 ---
 
 ## Why this exists
@@ -70,6 +73,31 @@ The Knowledge page and all other pages now have a **refresh button in the header
 
 **Key file:** `dashboard/src/components/layout/Header.tsx`, `dashboard/src/components/layout/Header.css`.
 
+### Search-result rendering — DocContent (added 2026-06-27)
+
+**Context:** The Sleepy Search/Ask view (`SleepyPage`) lets users open any recall hit into a side panel that renders the full document. Rather than writing a new renderer, the panel reuses the SAME `MarkdownPreview`, `SqlPreview`, and `ExcalidrawPreview` components that the dedicated Knowledge, Features, and Tasks pages use.
+
+**The full-record fetch pattern:** The recall corpus stores only *extracted* text. For Excalidraw boards this means the scene JSON is absent (recall uses `extractExcalidrawText()` for the BM25 body); for other files the body may be truncated. `DocContent` (`dashboard/src/components/sleepy/DocContent.tsx`) compensates by fetching the canonical record per hit type:
+
+| Hit type | Endpoint | Field |
+|---|---|---|
+| `knowledge` | `GET /api/knowledge/<slug>` | `entry.content` |
+| `feature` | `GET /api/features/<slug>` | `feature.content` |
+| `task` | `GET /api/tasks/<slug>` | `task.body` |
+| `memory` | (none) | recall `hit.body` directly |
+| `changelog` | (none) | recall `hit.body` directly |
+
+Memory and changelog entries are complete in the recall payload (no scene JSON or large bodies to worry about), so no detail fetch is needed for those types.
+
+**Renderer selection:**
+1. `isExcalidrawSlug(kSlug)` → `ExcalidrawPreview` (the live canvas from `core/ExcalidrawPreview.tsx`).
+2. Slug starts with `data-structures/` AND has SQL fences → `SqlPreview`.
+3. Everything else → `MarkdownPreview`.
+
+**Graceful degradation:** if the detail fetch errors (endpoint unavailable, network issue), `DocContent` falls back to `hit.body` from the recall payload and still renders. The invariant from the rendering pipeline section still holds: the server's knowledge/feature/task detail routes always return raw body; `DocContent` simply reuses that invariant.
+
+**INVARIANT (extended):** search-result rendering is a CONSUMER of the same renderers and the same API endpoints as the dedicated pages. Any change to `ExcalidrawPreview`, `SqlPreview`, or `MarkdownPreview` automatically applies to search-result opens too. Never build a parallel rendering path for search results.
+
 ## Decisions log
 
 - **Canvas over SVG (2026-06-17):** `exportToSvg()` was the prior approach (cheaper — no live canvas mount). Replaced because rasterization at export time produces soft results on retina screens and zoom does not re-sharpen. The live canvas option is more expensive but gives crisp rendering at any zoom level and native pan/pinch.
@@ -78,14 +106,29 @@ The Knowledge page and all other pages now have a **refresh button in the header
 - **Gate board render on `isLoading`, not `data === undefined` (2026-06-17):** The `useKnowledgeAssets` query can return `data === undefined` in two distinct states: (a) still loading, or (b) a fetch error. Gating on `data === undefined` would leave the board behind a permanent spinner whenever the assets endpoint errors (e.g., board has no embedded images, `sharp` not installed, etc.). The correct gate is `isLoading`: mount the `Excalidraw` canvas on success OR on error; only block while actively fetching. This means the board renders in both the happy path (files merged into scene) and the degraded path (assets unavailable, Obsidian-linked images invisible but board shape intact).
 - **frozen `initialData` prevents progressive two-pass swap (2026-06-17):** The `Excalidraw` canvas captures `initialData` (including the `files` map) at mount time and treats it as immutable — it does not react to subsequent prop changes for the `files` field. This makes a low→high resolution progressive image swap (mount with placeholders, then swap in high-res) impossible: the second pass would require a remount keyed by slug, which is exactly what we do not want (it resets pan/zoom state). The current approach is single-pass: wait for the `useKnowledgeAssets` fetch to complete, then mount the canvas once with the final `files` map. The `isLoading` gate above enforces this.
 
+### Knowledge subfolder slug derivation (BrainSearch / DocContent fix, 2026-06-28)
+
+**Problem:** The recall engine returns `slug` as the bare filename (e.g. `decision-mem0-vs-bm25`) for all knowledge files, regardless of their subfolder. The Knowledge page and `DocContent` used `hit.slug` directly to call `GET /api/knowledge/<slug>`. For root-level files this happened to work (the bare slug matched). For nested knowledge files (e.g. `knowledge/decisions/decision-mem0-vs-bm25.md`) the API call was `GET /api/knowledge/decision-mem0-vs-bm25` (no folder prefix) → 404 → silent empty side panel.
+
+**Fix:** `BrainSearch` and `DocContent` now derive the slug from `hit.path` for knowledge hits:
+```ts
+// hit.path = "knowledge/decisions/decision-mem0-vs-bm25.md"
+// → strip "knowledge/" prefix and ".md" suffix → "decisions/decision-mem0-vs-bm25"
+const kSlug = hit.path.replace(/^knowledge\//, '').replace(/\.md$/, '')
+```
+Feature hits continue using `hit.slug` directly (feature slugs are not foldered). The active-item highlight comparison also uses the path-derived slug so the selected item stays highlighted correctly.
+
+**Invariant:** The recall engine ALWAYS returns a bare filename in `slug`. Consumers of knowledge recall results MUST derive the foldered slug from `hit.path` — never rely on `hit.slug` for nested knowledge files.
+
 ## Sources
 
 - Commit `d106c5c` — `feat(dashboard): Excalidraw canvas rendering + board image resolution, SQL fences, live refresh`
 - Commit `d30bac1` — post-merge review fixes (spinner gate, dead quality tier, truncation log, LRU cache bound)
 - PR #35 (merged locally into main; merge commit `ea4d614`)
 - Session `b9137911-a9d0-42f7-863d-f8d56831ba5d` (initial implementation), `6cc05c69-f6b8-4fbc-9e1a-7221103ddd9b` (code review + merge + fixes)
-- Related: `dashboard-server-security.md` (security invariants), `knowledge-base` feature PRD (memory/render invariant)
+- 2026-06-27 — `DocContent` pattern added: `dashboard/src/components/sleepy/DocContent.tsx` (Sleepy Search/Ask view, full-record fetch)
+- Related: `dashboard-server-security.md` (security invariants), `knowledge-base` feature PRD (memory/render invariant), `features/sleepy-search-ask.md`
 
 ## Last verified
 
-2026-06-18 (PR #35 merged; commit 2064b55 on main)
+2026-06-28 (knowledge subfolder slug derivation fix in `BrainSearch` + `DocContent`; `DocContent` + full-record fetch pattern shipped 2026-06-27)

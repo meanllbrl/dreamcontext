@@ -142,4 +142,18 @@ describe('buildKnowledgeIndex', () => {
     expect(entries).toHaveLength(1);
     expect(entries[0].slug).toBe('real');
   });
+
+  // mtime drives the dashboard's mtime-gated live refresh of the open doc:
+  // it must be a positive number and advance when the file is rewritten.
+  it('exposes a numeric file mtime that advances on rewrite', async () => {
+    writeKnowledge(tmpDir, 'watched', 'name: Watched', 'v1');
+    const before = buildKnowledgeIndex(tmpDir)[0].mtime;
+    expect(typeof before).toBe('number');
+    expect(before).toBeGreaterThan(0);
+
+    await new Promise(r => setTimeout(r, 10));
+    writeKnowledge(tmpDir, 'watched', 'name: Watched', 'v2 changed on disk');
+    const after = buildKnowledgeIndex(tmpDir)[0].mtime;
+    expect(after).toBeGreaterThan(before);
+  });
 });

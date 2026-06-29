@@ -8,7 +8,7 @@ tags:
   - architecture
   - decisions
   - domain
-  - cli
+  - 'topic:cli'
 related_tasks: []
 ---
 

@@ -1,0 +1,131 @@
+/* Sleepy — the companion face. Matches the dashboard "Ask Sleepy anything"
+   surface (soft violet eyes + curved smile over a glow). Mood (idle / sleepy /
+   sleeps) follows sleep debt. All motion is CSS. */
+
+.smascot {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+
+/* Fixed 92×76 design box; the inline transform scales it to the requested size. */
+.smascot-scale {
+  position: relative;
+  width: 92px;
+  height: 76px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform-origin: center;
+}
+
+/* Soft violet halo behind the face (same recipe as the dashboard). */
+.smascot-halo {
+  position: absolute;
+  width: 128%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(123, 104, 238, 0.32), transparent 66%);
+  animation: smascot-halo 5s ease-in-out infinite;
+}
+
+/* Eyes + smile, gently bobbing together. */
+.smascot-face {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  animation: smascot-bob 4.6s ease-in-out infinite;
+}
+
+.smascot-eyes {
+  display: flex;
+  gap: 20px;
+  margin-bottom: 13px;
+}
+.smascot-eye {
+  width: 18px;
+  height: 26px;
+  border-radius: 9px;
+  background: linear-gradient(180deg, #c4b6ff, #8b7bff);
+  box-shadow: 0 0 14px rgba(157, 140, 255, 0.7);
+  transform-origin: center;
+}
+.smascot-smile {
+  position: relative;
+  overflow: visible;
+}
+
+/* Awake: blink now and then. */
+.smascot-idle .smascot-eye { animation: smascot-blink 4.4s ease-in-out infinite; }
+
+/* Drowsy: lids drop to half, eyes sink, slow heavy blinks; smile flattens. */
+.smascot-sleepy .smascot-eye {
+  height: 16px;
+  transform: translateY(5px) scaleY(0.78);
+  animation: smascot-blink-heavy 3.8s ease-in-out infinite;
+}
+.smascot-sleepy .smascot-smile { transform: translateY(-2px) scaleY(0.8); }
+.smascot-sleepy .smascot-face { animation-duration: 5.2s; }
+
+/* Asleep: eyes closed to calm pills, slow deep bob, floating Zzz. */
+.smascot-sleeps .smascot-eye {
+  height: 7px;
+  border-radius: 5px;
+}
+.smascot-sleeps .smascot-smile { opacity: 0.85; transform: scaleY(0.7); }
+.smascot-sleeps .smascot-face { animation-duration: 6s; }
+.smascot-sleeps .smascot-halo { animation-duration: 6s; }
+
+/* Zzz (asleep only). */
+.smascot-zzz {
+  position: absolute;
+  top: -6%;
+  right: 16%;
+  font-family: -apple-system, system-ui, sans-serif;
+  font-weight: 800;
+  color: #b9a6ff;
+  line-height: 1;
+  pointer-events: none;
+}
+.smascot-zzz span {
+  position: absolute;
+  opacity: 0;
+  text-shadow: 0 1px 5px rgba(99, 64, 230, 0.55);
+  animation: smascot-zzz 3s ease-in-out infinite;
+}
+.smascot-zzz span:nth-child(1) { font-size: 11px; animation-delay: 0s; }
+.smascot-zzz span:nth-child(2) { font-size: 14px; right: -7px; animation-delay: 1s; }
+.smascot-zzz span:nth-child(3) { font-size: 17px; right: -15px; animation-delay: 2s; }
+
+/* ── Keyframes ─────────────────────────────────────────────────────────── */
+@keyframes smascot-bob {
+  0%, 100% { transform: translateY(2px); }
+  50% { transform: translateY(-4px); }
+}
+@keyframes smascot-halo {
+  0%, 100% { opacity: 0.72; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.07); }
+}
+@keyframes smascot-blink {
+  0%, 91%, 100% { transform: scaleY(1); }
+  94%, 97% { transform: scaleY(0.12); }
+}
+@keyframes smascot-blink-heavy {
+  0%, 70%, 100% { transform: translateY(5px) scaleY(0.78); }
+  82%, 90% { transform: translateY(5px) scaleY(0.08); }
+}
+@keyframes smascot-zzz {
+  0% { opacity: 0; transform: translateY(6px) scale(0.6) rotate(-8deg); }
+  25% { opacity: 0.95; }
+  100% { opacity: 0; transform: translateY(-16px) scale(1.15) rotate(8deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .smascot-halo,
+  .smascot-face,
+  .smascot-eye,
+  .smascot-zzz span { animation: none !important; }
+}

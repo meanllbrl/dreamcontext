@@ -2,10 +2,13 @@ import { useMemo, useState } from 'react';
 import type { DebateIndexEntry } from '../../hooks/useCouncil';
 import { useI18n } from '../../context/I18nContext';
 import { PersonaAvatar } from './PersonaAvatar';
+import { CouncilEmptyState } from './CouncilEmptyState';
+import { CouncilBanner } from './CouncilShowcase';
 
 interface Props {
   debates: DebateIndexEntry[];
   onOpen: (id: string) => void;
+  onNew: () => void;
 }
 
 const STATUS_OPTIONS: { value: string; label: string }[] = [
@@ -45,7 +48,7 @@ function statusLabel(status: string): string {
   return 'Pending';
 }
 
-export function CouncilHall({ debates, onOpen }: Props) {
+export function CouncilHall({ debates, onOpen, onNew }: Props) {
   const { t } = useI18n();
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState('all');
@@ -55,8 +58,15 @@ export function CouncilHall({ debates, onOpen }: Props) {
     [debates, query, status],
   );
 
+  // No debates at all → drop the search/filter chrome (it would be empty noise)
+  // and show the "What is Council?" explainer with the single relevant action.
+  if (debates.length === 0) {
+    return <CouncilEmptyState onNew={onNew} />;
+  }
+
   return (
     <div className="council-hall">
+      <CouncilBanner />
       <div className="council-hall-bar">
         <label className="council-hall-search">
           <span aria-hidden>🔍</span>
@@ -78,10 +88,15 @@ export function CouncilHall({ debates, onOpen }: Props) {
           ))}
         </select>
         <span className="council-hall-count">{filtered.length} / {debates.length}</span>
+        <button type="button" className="council-new-btn" onClick={onNew}>
+          <span aria-hidden>＋</span> {t('council.new')}
+        </button>
       </div>
 
       {filtered.length === 0 ? (
-        <div className="council-empty">{t('council.empty.list')}</div>
+        <div className="council-empty">
+          <p className="council-empty-msg">{t('council.empty.nomatch')}</p>
+        </div>
       ) : (
         <div className="council-hall-grid">
           {filtered.map((d) => (

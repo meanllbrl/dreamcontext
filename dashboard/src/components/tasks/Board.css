@@ -1,0 +1,99 @@
+/* Redesigned Tasks board — shared primitives.
+   Component visuals are largely inline (faithful to the Board.dc.html design);
+   this file holds keyframes, the tag-hue palette, and a few interaction states
+   that inline styles can't express (hover, placeholder, scrollbars). */
+
+@keyframes bd_panelIn { from { transform: translateX(40px); opacity: .4; } to { transform: none; opacity: 1; } }
+@keyframes bd_pop { from { transform: translateY(-6px) scale(.98); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes bd_rowIn { from { transform: translateY(5px); opacity: .5; } to { transform: none; opacity: 1; } }
+@keyframes bd_pulse { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+@keyframes bd_fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes bd_spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+@keyframes bd_dropPulse { 0%, 100% { opacity: .5; } 50% { opacity: .9; } }
+
+/* No entry animation on cards: WebKit (the desktop app's WKWebView) replays CSS
+   animations when an element's box is recalculated or moved in the DOM, so cards
+   flickered on every board re-render (data refetch, hover, drag state). */
+.bd-card { will-change: transform; }
+
+/* Drag & drop — column drop target + landing silhouette */
+.bd-col-droptarget {
+  border-color: var(--color-accent) !important;
+  background: var(--color-accent-soft) !important;
+  box-shadow: inset 0 0 0 1px var(--color-accent);
+}
+.bd-drop-silhouette {
+  border: 1.5px dashed var(--color-accent);
+  border-radius: 12px;
+  background: var(--color-accent-soft);
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--color-accent);
+  animation: bd_dropPulse 1.1s ease-in-out infinite;
+}
+.bd-pop { animation: bd_pop .14s cubic-bezier(.2, .8, .2, 1); }
+.bd-panel { animation: bd_panelIn .24s cubic-bezier(.2, .8, .2, 1); }
+
+.bd-input::placeholder { color: var(--color-text-tertiary); opacity: .8; }
+.bd-input:focus { border-color: var(--color-accent) !important; }
+
+/* Hover affordances that inline style-hover can't carry into React */
+.bd-hover:hover { background: var(--color-bg-tertiary); }
+.bd-hover-text:hover { color: var(--color-text); }
+.bd-chip:hover { border-color: var(--color-border-hover); color: var(--color-text); }
+.bd-card-hover:hover {
+  border-color: var(--color-accent) !important;
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+.bd-row:hover { background: var(--color-bg-tertiary); }
+.bd-danger:hover { background: var(--color-error-subtle); color: var(--color-error) !important; }
+
+/* Tag hues — deterministic palette (mirrors the design's TAG_PALETTE) */
+.bd-tag {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 20px;
+  letter-spacing: 0.01em;
+  line-height: 1.4;
+  white-space: nowrap;
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-tertiary);
+  border: 1px solid transparent;
+}
+.bd-tag[data-hue="0"] { background: rgba(157,140,255,0.16); color: #c4b5fd; border-color: rgba(157,140,255,0.28); }
+.bd-tag[data-hue="1"] { background: rgba(96,165,250,0.16); color: #93c5fd; border-color: rgba(96,165,250,0.28); }
+.bd-tag[data-hue="2"] { background: rgba(248,113,113,0.16); color: #fca5a5; border-color: rgba(248,113,113,0.28); }
+.bd-tag[data-hue="3"] { background: rgba(74,222,128,0.14); color: #86efac; border-color: rgba(74,222,128,0.26); }
+.bd-tag[data-hue="4"] { background: rgba(251,146,60,0.16); color: #fdba74; border-color: rgba(251,146,60,0.28); }
+.bd-tag[data-hue="5"] { background: rgba(217,70,239,0.16); color: #f0abfc; border-color: rgba(217,70,239,0.28); }
+.bd-tag[data-hue="6"] { background: rgba(45,212,191,0.16); color: #5eead4; border-color: rgba(45,212,191,0.28); }
+.bd-tag[data-hue="7"] { background: rgba(244,114,182,0.16); color: #f9a8d4; border-color: rgba(244,114,182,0.28); }
+.bd-tag[data-hue="8"] { background: rgba(129,140,248,0.16); color: #a5b4fc; border-color: rgba(129,140,248,0.28); }
+.bd-tag[data-hue="9"] { background: rgba(251,191,36,0.16); color: #fcd34d; border-color: rgba(251,191,36,0.28); }
+
+[data-theme="light"] .bd-tag[data-hue="0"] { background: #ede9fe; color: #5b21b6; border-color: #ddd6fe; }
+[data-theme="light"] .bd-tag[data-hue="1"] { background: #dbeafe; color: #1d4ed8; border-color: #bfdbfe; }
+[data-theme="light"] .bd-tag[data-hue="2"] { background: #fee2e2; color: #b91c1c; border-color: #fecaca; }
+[data-theme="light"] .bd-tag[data-hue="3"] { background: #dcfce7; color: #15803d; border-color: #bbf7d0; }
+[data-theme="light"] .bd-tag[data-hue="4"] { background: #ffedd5; color: #c2410c; border-color: #fed7aa; }
+[data-theme="light"] .bd-tag[data-hue="5"] { background: #fae8ff; color: #86198f; border-color: #f5d0fe; }
+[data-theme="light"] .bd-tag[data-hue="6"] { background: #ccfbf1; color: #0f766e; border-color: #99f6e4; }
+[data-theme="light"] .bd-tag[data-hue="7"] { background: #fce7f3; color: #be185d; border-color: #fbcfe8; }
+[data-theme="light"] .bd-tag[data-hue="8"] { background: #e0e7ff; color: #4338ca; border-color: #c7d2fe; }
+[data-theme="light"] .bd-tag[data-hue="9"] { background: #fef3c7; color: #a16207; border-color: #fde68a; }
+
+.bd-scroll::-webkit-scrollbar { width: 10px; height: 10px; }
+.bd-scroll::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 8px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+.bd-scroll::-webkit-scrollbar-thumb:hover { background: var(--color-border-hover); background-clip: padding-box; }

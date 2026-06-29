@@ -9,12 +9,78 @@
   position: sticky;
   top: 0;
   z-index: 10;
+  /* It's a title bar — nothing in it is selectable. Without this, double-clicking
+     the centre (the vault name) SELECTS the text instead of behaving like the
+     empty corners, which broke the drag/double-click gestures there. */
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+/* Desktop shell (macOS overlay title bar): the native traffic-light buttons
+   float over the top-left of our header, so push the left cluster clear of
+   them. The whole bar is a drag region (see Header.tsx). */
+.tauri-overlay .header {
+  padding-left: 80px;
 }
 
 .header-left {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-2);
+}
+
+/* Sidebar toggle + any square icon button living in the title bar. */
+.header-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 26px;
+  border-radius: var(--radius-md);
+  color: var(--color-text-tertiary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.header-icon-btn:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
+
+/* Active vault name — absolutely centered so it stays put regardless of the
+   left/right cluster widths. */
+.header-vault {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  pointer-events: none;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.header-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 27px;
+  height: 27px;
+  margin-left: var(--space-1);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  font-size: 11.5px;
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-secondary);
+  user-select: none;
 }
 
 .agent-avatar {
@@ -72,10 +138,15 @@
 }
 
 .brand-name {
+  font-family: var(--font-family-display);
   font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-semibold);
+  font-weight: var(--font-weight-bold);
   letter-spacing: var(--letter-spacing-tight);
   color: var(--color-text);
+}
+
+.brand-name-accent {
+  color: var(--color-accent);
 }
 
 .sleep-badge {
