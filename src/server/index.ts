@@ -50,6 +50,8 @@ import {
 import {
   handleAgentCapabilities,
   handleOpenTerminal,
+  handleAgentInstall,
+  handleAgentInstallStatus,
   attachAgentTerminal,
 } from './routes/agent-terminal.js';
 import { handleConnectionsList, handleConnectionsCreate, handleConnectionsDelete } from './routes/connections.js';
@@ -180,6 +182,9 @@ function buildRouter(): Router {
   // not a router route.
   router.get('/api/agent/capabilities', handleAgentCapabilities);
   router.post('/api/agent/open-terminal', handleOpenTerminal);
+  // In-app prerequisite installer (Claude CLI / node-pty) — vault-agnostic.
+  router.post('/api/agent/install', handleAgentInstall);
+  router.get('/api/agent/install/status', handleAgentInstallStatus);
 
   // Vaults + federation connections (issue #25 P2)
   router.get('/api/vaults', handleVaultsGet);
@@ -231,7 +236,7 @@ function buildRouter(): Router {
 }
 
 /** API path prefixes that do NOT need a vault — they work in launcher mode. */
-const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/agent/capabilities'];
+const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/agent/capabilities', '/api/agent/install'];
 
 function isVaultAgnostic(pathname: string): boolean {
   return VAULT_AGNOSTIC_PREFIXES.some(

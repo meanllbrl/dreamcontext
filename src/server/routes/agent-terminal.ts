@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Server } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { existsSync, readdirSync, statSync, chmodSync } from 'node:fs';
@@ -73,6 +74,31 @@ async function hasNodePty(): Promise<boolean> {
   return ptyAvailable;
 }
 
+/** Bust the memoized node-pty probe so the next capabilities check re-imports
+ *  (e.g. right after the in-app installer materialised node-pty on disk). */
+function resetPtyCache(): void { ptyAvailable = null; }
+
+/**
+ * Is a command resolvable on the user's PATH, as the embedded terminal will see
+ * it? We probe through the SAME interactive-login shell (`-ilc`) the PTY spawn
+ * uses, so detection can't disagree with the real spawn — `claude` is commonly
+ * added to PATH in `~/.zshrc` (e.g. `~/.local/bin`), which only `-i` sources.
+ * `cmd` is an internal whitelist literal, never user input (no injection).
+ */
+function detectOnPath(cmd: 'claude' | 'npm', timeoutMs = 8000): Promise<boolean> {
+  return new Promise((resolve) => {
+    const shell = process.env.SHELL || '/bin/zsh';
+    let out = '';
+    let settled = false;
+    const done = (v: boolean) => { if (!settled) { settled = true; clearTimeout(timer); resolve(v); } };
+    const child = spawn(shell, ['-ilc', `command -v ${cmd}`], { stdio: ['ignore', 'pipe', 'ignore'] });
+    const timer = setTimeout(() => { try { child.kill(); } catch { /* gone */ } done(false); }, timeoutMs);
+    child.stdout?.on('data', (c: Buffer) => { out += c.toString('utf-8'); });
+    child.on('error', () => done(false));
+    child.on('close', () => done(out.trim().length > 0));
+  });
+}
+
 // ─── Vault / path helpers ───────────────────────────────────────────────────
 
 function projectRootOf(contextRoot: string): string {
@@ -101,13 +127,24 @@ export async function handleAgentCapabilities(
   res: ServerResponse,
 ): Promise<void> {
   const desktop = isDesktop();
+  // Probe the three prerequisites in parallel (only when desktop — they cost a
+  // login-shell spawn each). `nodePty` gates the embedded renderer; `claudeCli`
+  // gates whether the spawned shell can actually find `claude`; `npm` tells the
+  // UI whether the in-app installer can even run.
+  const [nodePty, claudeCli, npm] = desktop
+    ? await Promise.all([hasNodePty(), detectOnPath('claude'), detectOnPath('npm')])
+    : [false, false, false];
   sendJson(res, 200, {
     desktop,
     platform: process.platform,
     // Embedded terminal needs the desktop shell AND the native node-pty module.
-    embeddedTerminal: desktop && process.platform !== 'win32' && (await hasNodePty()),
+    embeddedTerminal: desktop && process.platform !== 'win32' && nodePty,
     // Launching the user's real terminal is macOS-only (osascript) today.
     openTerminal: desktop && process.platform === 'darwin',
+    // Prerequisite breakdown for the in-app Setup panel.
+    nodePty,
+    claudeCli,
+    npm,
   });
 }
 
@@ -162,6 +199,167 @@ export async function handleOpenTerminal(
   } catch (err) {
     sendError(res, 500, 'spawn_failed', err instanceof Error ? err.message : 'Could not open Terminal.');
   }
+}
+
+// ─── In-app prerequisite installer ────────────────────────────────────────────
+//
+// When the embedded terminal's prerequisites are missing — the `claude` CLI or the
+// native `node-pty` module — the Setup panel offers a one-click install instead of
+// only falling back to an external terminal. Installs run in the user's LOGIN shell
+// (so a Finder-launched app sees their real nvm/brew PATH) and are tracked like the
+// Sleepy capture runs: POST starts it + returns an id, the UI polls status.
+//
+// Trust model: identical to `ensure-cli.ts` / `open-terminal` — desktop-gated, and
+// the package names are FIXED internal literals, never user input. The only body
+// field is `target`, validated against a closed whitelist.
+
+type InstallTarget = 'claude' | 'pty';
+
+interface InstallRun {
+  state: 'running' | 'done' | 'error';
+  target: InstallTarget;
+  /** Combined stdout+stderr tail — shown live, and as the detail on failure. */
+  output: string;
+  startedAt: number;
+  endedAt?: number;
+}
+
+const installRuns = new Map<string, InstallRun>();
+const INSTALL_RUN_TTL_MS = 10 * 60 * 1000;
+const INSTALL_RUNS_MAX = 20;
+const INSTALL_WATCHDOG_MS = 5 * 60 * 1000; // kill a wedged npm after 5 min
+
+function pruneInstallRuns(): void {
+  const now = Date.now();
+  for (const [id, run] of installRuns) {
+    if (run.endedAt && now - run.endedAt > INSTALL_RUN_TTL_MS) installRuns.delete(id);
+  }
+  while (installRuns.size > INSTALL_RUNS_MAX) {
+    const oldest = installRuns.keys().next().value;
+    if (oldest === undefined) break;
+    installRuns.delete(oldest);
+  }
+}
+
+/**
+ * The package root of the running CLI (nearest ancestor with a package.json),
+ * walking up from the entry module. `node-pty` is installed HERE so it resolves
+ * from the bundled `dist/index.js` exactly as the runtime `import('node-pty')`
+ * does (node walks up to `<root>/node_modules`). Returns null if not found.
+ */
+function cliPackageRoot(): string | null {
+  let dir = process.argv[1] ? dirname(process.argv[1]) : '';
+  if (!dir) return null;
+  for (let i = 0; i < 8; i++) {
+    if (existsSync(join(dir, 'package.json'))) return dir;
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}
+
+/** Build the shell command + cwd for a target. Returns null if it can't be run here. */
+function installPlan(target: InstallTarget): { script: string; cwd?: string } | null {
+  if (target === 'claude') {
+    // Anthropic's official Claude Code distribution.
+    return { script: 'npm install -g @anthropic-ai/claude-code' };
+  }
+  // node-pty: install into the CLI's own package so the server can import it. Pinned
+  // to the declared range; `--no-save` leaves the package manifest untouched.
+  const root = cliPackageRoot();
+  if (!root) return null;
+  return { script: 'npm install node-pty@^1.1.0 --no-save', cwd: root };
+}
+
+/**
+ * POST /api/agent/install  { target: 'claude' | 'pty' }
+ * Starts a background install and returns `{ ok, runId }`. Poll status to track it.
+ */
+export async function handleAgentInstall(
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  if (!isDesktop()) {
+    sendError(res, 403, 'desktop_only', 'The in-app installer is only available in the desktop app.');
+    return;
+  }
+
+  let target: unknown;
+  try {
+    const chunks: Buffer[] = [];
+    for await (const c of req) chunks.push(c as Buffer);
+    target = chunks.length ? (JSON.parse(Buffer.concat(chunks).toString('utf-8')) as { target?: unknown }).target : undefined;
+  } catch { /* invalid body → 400 below */ }
+
+  if (target !== 'claude' && target !== 'pty') {
+    sendError(res, 400, 'bad_target', "Body must be { target: 'claude' | 'pty' }.");
+    return;
+  }
+  const plan = installPlan(target);
+  if (!plan) {
+    sendError(res, 500, 'no_install_path', "Couldn't locate the CLI package to install node-pty into.");
+    return;
+  }
+
+  pruneInstallRuns();
+  const runId = randomUUID();
+  const run: InstallRun = { state: 'running', target, output: '', startedAt: Date.now() };
+  installRuns.set(runId, run);
+
+  try {
+    const shell = process.env.SHELL || '/bin/zsh';
+    const child = spawn(shell, ['-ilc', plan.script], {
+      cwd: plan.cwd,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const append = (chunk: Buffer) => { run.output = (run.output + chunk.toString('utf-8')).slice(-8000); };
+    child.stdout?.on('data', append);
+    child.stderr?.on('data', append);
+    const watchdog = setTimeout(() => {
+      try { child.kill(); } catch { /* gone */ }
+      if (run.state === 'running') { run.state = 'error'; run.output += '\n[timed out after 5 min]'; run.endedAt = Date.now(); }
+    }, INSTALL_WATCHDOG_MS);
+    child.on('error', (err) => {
+      clearTimeout(watchdog);
+      if (run.state !== 'running') return;
+      run.state = 'error';
+      run.output = `Couldn't start install: ${err.message}. Run manually: ${plan.script}`;
+      run.endedAt = Date.now();
+    });
+    child.on('close', (code) => {
+      clearTimeout(watchdog);
+      if (run.state !== 'running') return;
+      if (code === 0) {
+        // node-pty just landed: restore the spawn-helper +x bit and bust the probe
+        // cache so the very next capabilities check reports the terminal as ready.
+        if (target === 'pty') { ensurePtyHelperExecutable(); resetPtyCache(); }
+        run.state = 'done';
+      } else {
+        run.state = 'error';
+        if (!run.output.trim()) run.output = `Install exited with code ${code}. Run manually: ${plan.script}`;
+      }
+      run.endedAt = Date.now();
+    });
+  } catch (err) {
+    run.state = 'error';
+    run.output = `Couldn't start install: ${err instanceof Error ? err.message : 'spawn failed'}`;
+    run.endedAt = Date.now();
+  }
+
+  sendJson(res, 200, { ok: true, runId });
+}
+
+/** GET /api/agent/install/status?id=<runId> — poll a background install. */
+export async function handleAgentInstallStatus(
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  const url = new URL(req.url || '/', `http://${req.headers.host}`);
+  const id = url.searchParams.get('id') ?? '';
+  const run = id ? installRuns.get(id) : undefined;
+  if (!run) { sendJson(res, 200, { state: 'unknown', output: '' }); return; }
+  sendJson(res, 200, { state: run.state, target: run.target, output: run.output.trim() });
 }
 
 // ─── Embedded terminal (WebSocket ↔ node-pty) ─────────────────────────────────
