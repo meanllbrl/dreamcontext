@@ -1,7 +1,7 @@
 import { useMemo, useState, useCallback, useEffect, type CSSProperties } from 'react';
 import type { Task } from '../../hooks/useTasks';
 import { useTasks, useUpdateTask, useDeleteTask, useTaskMembers } from '../../hooks/useTasks';
-import { useVersions } from '../../hooks/useVersions';
+import { useVersions, useActiveVersion } from '../../hooks/useVersions';
 import { useBoardState } from '../../hooks/useBoard';
 import {
   type Dim, type SaveScope,
@@ -33,6 +33,7 @@ export function KanbanBoard() {
   const { data: tasks = [], isLoading } = useTasks();
   const { data: members = [] } = useTaskMembers();
   const { data: realVersions = [] } = useVersions();
+  const { data: activeVersion = null } = useActiveVersion();
   const updateTask = useUpdateTask();
   const deleteTask = useDeleteTask();
 
@@ -68,9 +69,18 @@ export function KanbanBoard() {
     () => distinct([...realVersions.map((v) => v.version), ...tasks.map((t) => t.version).filter((v): v is string => !!v)]),
     [realVersions, tasks],
   );
+  const releasedVersions = useMemo(
+    () => realVersions.filter((v) => v.status === 'released').map((v) => v.version),
+    [realVersions],
+  );
+  // Resolves the version filter's virtual buckets (Current / Backlog / Completed).
+  const versionMeta = useMemo(
+    () => ({ active: activeVersion, released: releasedVersions }),
+    [activeVersion, releasedVersions],
+  );
 
   // ── filtering / grouping ──────────────────────────────────────────────────────
-  const filtered = useMemo(() => filterTasks(tasks, s.filters, s.search), [tasks, s.filters, s.search]);
+  const filtered = useMemo(() => filterTasks(tasks, s.filters, s.search, versionMeta), [tasks, s.filters, s.search, versionMeta]);
   const groupOpts = useMemo(() => ({ versionOrder: versionsForFilter, assignees }), [versionsForFilter, assignees]);
 
   const columns: { data: BoardColumnData; colKey: string }[] = useMemo(() => {
@@ -93,9 +103,9 @@ export function KanbanBoard() {
 
   const viewCounts = useMemo(() => {
     const m: Record<string, number> = {};
-    s.views.forEach((v) => { m[v.id] = filterTasks(tasks, v.config.filters, v.config.search).length; });
+    s.views.forEach((v) => { m[v.id] = filterTasks(tasks, v.config.filters, v.config.search, versionMeta).length; });
     return m;
-  }, [s.views, tasks]);
+  }, [s.views, tasks, versionMeta]);
 
   // ── at-risk alert ──────────────────────────────────────────────────────────────
   const atRisk = useMemo(() => {
@@ -200,6 +210,8 @@ export function KanbanBoard() {
         allTags={allTags}
         assignees={assignees}
         versionsForFilter={versionsForFilter}
+        activeVersion={activeVersion}
+        releasedVersions={releasedVersions}
         openMenu={openMenu}
         setOpenMenu={setOpenMenu}
         onNewTask={() => setShowCreate(true)}

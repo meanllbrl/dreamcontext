@@ -151,11 +151,30 @@ function asFieldFilter(v: unknown): FieldFilter {
   }
   return emptyFieldFilter();
 }
+/**
+ * Migrate a persisted version filter to the virtual-bucket vocabulary. Saved views
+ * created before the "Backlog" smart bucket stored the literal `backlog` string in
+ * inc/exc; that row no longer renders on its own (it folds into the @backlog bucket),
+ * so without this an old literal token would be an un-dismissable ghost — the bucket
+ * would show as off while the filter is silently active. Rewrites any backlog-matching
+ * token to VV_BACKLOG, case-insensitively, de-duping if both forms are present.
+ */
+function normVersionFilter(fld: FieldFilter): FieldFilter {
+  const migrate = (xs: string[]): string[] => {
+    const out: string[] = [];
+    for (const x of xs) {
+      const tok = BACKLOG_RE.test(x) ? VV_BACKLOG : x;
+      if (!out.includes(tok)) out.push(tok);
+    }
+    return out;
+  };
+  return { inc: migrate(fld.inc), exc: migrate(fld.exc) };
+}
 function normFilters(v: unknown): BoardFilters {
   const o = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>;
   return {
     status: asFieldFilter(o.status), priority: asFieldFilter(o.priority), urgency: asFieldFilter(o.urgency),
-    tags: asFieldFilter(o.tags), version: asFieldFilter(o.version), assignee: asFieldFilter(o.assignee),
+    tags: asFieldFilter(o.tags), version: normVersionFilter(asFieldFilter(o.version)), assignee: asFieldFilter(o.assignee),
     due: (typeof o.due === 'string' ? o.due : 'all') as DueFilter,
     minRice: typeof o.minRice === 'number' ? o.minRice : 0,
   };
@@ -318,14 +337,52 @@ function matchField(val: string, fld: FieldFilter | undefined): boolean {
   return true;
 }
 
-export function filterTasks(tasks: Task[], f: BoardFilters, search: string): Task[] {
+// ─── Virtual ("smart") version buckets ───────────────────────────────────────────
+// Pseudo-version filter tokens that resolve dynamically against the active sprint
+// and the released-version set, rather than equalling a literal task `version:`
+// string. They give the version filter higher-level selections — the current
+// sprint, the backlog, and anything completed — and, because they resolve at
+// filter time, a saved view that filters by "Current" always tracks whatever sprint
+// is active. The "@" prefix keeps them from ever colliding with a real version name.
+export const VV_CURRENT = '@current';
+export const VV_BACKLOG = '@backlog';
+export const VV_COMPLETED = '@completed';
+export const VIRTUAL_VERSIONS: readonly string[] = [VV_CURRENT, VV_BACKLOG, VV_COMPLETED];
+export const BACKLOG_RE = /^backlog$/i;
+
+/** Runtime metadata the version filter needs to resolve the virtual buckets. */
+export interface VersionMeta {
+  /** The active planning version ("current sprint"), or null if none is set. */
+  active: string | null;
+  /** Version names whose RELEASES.json status is 'released' (completed sprints). */
+  released: readonly string[];
+}
+export const EMPTY_VERSION_META: VersionMeta = { active: null, released: [] };
+
+/** Does a task's version value satisfy a single filter token (literal or virtual)? */
+export function versionTokenMatches(version: string, token: string, meta: VersionMeta): boolean {
+  if (token === VV_CURRENT) return meta.active != null && version === meta.active;
+  if (token === VV_COMPLETED) return meta.released.includes(version);
+  if (token === VV_BACKLOG) return BACKLOG_RE.test(version);
+  return version === token;
+}
+
+/** Version-aware include/exclude match — like matchField, but understands the virtual buckets. */
+function matchVersionField(version: string, fld: FieldFilter | undefined, meta: VersionMeta): boolean {
+  if (!fld) return true;
+  if (fld.inc.length && !fld.inc.some((tok) => versionTokenMatches(version, tok, meta))) return false;
+  if (fld.exc.length && fld.exc.some((tok) => versionTokenMatches(version, tok, meta))) return false;
+  return true;
+}
+
+export function filterTasks(tasks: Task[], f: BoardFilters, search: string, versionMeta: VersionMeta = EMPTY_VERSION_META): Task[] {
   const q = (search || '').trim().toLowerCase();
   return tasks.filter((t) => {
     if (!matchField(t.status, f.status)) return false;
     if (!matchField(t.priority, f.priority)) return false;
     if (!matchField(t.urgency, f.urgency)) return false;
     if (!matchField(taskAssignee(t), f.assignee)) return false;
-    if (!matchField(taskVersion(t), f.version)) return false;
+    if (!matchVersionField(taskVersion(t), f.version, versionMeta)) return false;
     if (f.tags.inc.length && !f.tags.inc.some((tg) => t.tags.includes(tg))) return false;
     if (f.tags.exc.length && f.tags.exc.some((tg) => t.tags.includes(tg))) return false;
     if (f.minRice) { const r = taskRice(t); if (!(r != null && r >= f.minRice)) return false; }
