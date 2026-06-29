@@ -19,6 +19,7 @@ related_tasks:
   - feat-dashboard-sprint-aware-version-filter-current-completed-actions-status-sort
   - feat-dashboard-redesign-tasks-board-saved-views-with-shared-local-persistence
   - dashboard-version-rename-and-delete-controls
+  - board-version-filter-smart-buckets
 ---
 
 ## Why
@@ -87,6 +88,7 @@ Users need a visual interface to manage agent context without using the terminal
 - [x] As a user, the Council nav entry carries a LAB badge so I can spot the experimental feature from anywhere in the sidebar.
 - [x] As a user, `?page=<page>` deep-link support in the app shell lets me navigate directly to any page (e.g. `?page=council`), overriding the remembered page.
 - [x] As a user, task context-menu submenus ("Move to status", "Set priority") use flyout panels beside the parent row, reducing menu vertical footprint from ~360px to ~190px, flipping left when near the viewport edge.
+- [x] As a user, the version filter shows smart semantic buckets — **Current** (active sprint), **Backlog** (tasks without a version), and **Completed** (any released sprint) — above the literal version list with is/not toggles and live task counts, so I can filter by sprint state without knowing the active sprint name; saved views referencing `@current` always track the live active sprint automatically.
 
 ## Acceptance Criteria
 
@@ -124,6 +126,15 @@ Users need a visual interface to manage agent context without using the terminal
 - [x] `GET /api/releases/active` returns `{ active: string | null }` (registered before `:version` route to prevent segment capture); `PUT /api/releases/active` accepts `{ version: string | null }` — null/empty clears; a planning entry is lazily created for an unregistered version name; 409 on an already-released version; records a dashboard change.
 - [x] `useActiveVersion`, `useSetActiveVersion`, `useCompleteVersion` hooks; `VersionFilter.tsx/.css` wired through `TaskFilters` + `KanbanBoard` (versionItems join of task version strings + RELEASES + active).
 - [x] `TaskCustomFields` component renders custom field values in `TaskDetailPanel`; `CustomFieldInput` provides type-appropriate controls (text, number, date, select); `AddCustomFieldForm` for adding new field defs; all wired to task `custom_fields:` frontmatter.
+
+### Version Filter — Smart Semantic Buckets
+- [x] `@current` virtual token resolves at filter time to tasks whose version equals the active sprint name; chip only renders when an active sprint exists.
+- [x] `@backlog` virtual token resolves to tasks with no version assigned; the literal "backlog" row in the version list is folded into this bucket when `@backlog` is present, preventing a duplicate row.
+- [x] `@completed` virtual token resolves to tasks in any released/completed sprint (version field matches any version with `status: 'released'` in RELEASES.json).
+- [x] Each smart bucket chip shows a live count of matching tasks and supports is/not toggle (include vs exclude).
+- [x] `BoardToolbar.tsx` gates each bucket's rendering on applicability: `@current` requires an active sprint; `@backlog` shown when relevant; `@completed` shown when any completed releases exist.
+- [x] `normFilters()` migration pass rewrites persisted literal `'backlog'` in the version array → `'@backlog'` on saved-view load, preventing old state becoming an un-dismissable ghost filter row.
+- [x] Saved views containing `@current` always resolve to the live active sprint — changing the active sprint updates what `@current` matches with no version-name staleness in the view.
 
 ### Version Rename + Delete Controls (v0.10.0)
 - [x] Every row in the Versions popover has an **✎ rename** inline-edit control and a **🗑 delete** control with a confirm dialog.
@@ -274,6 +285,8 @@ Users need a visual interface to manage agent context without using the terminal
 
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
+
+- **[2026-06-29]** **Version filter smart buckets: virtual filter token design.** `@current`, `@backlog`, `@completed` are `@`-prefixed sentinel constants (in `boardModel.ts`) that resolve at *filter time* against live `versionMeta` (active sprint + released-version set) rather than equalling a stored field value. A saved view referencing `@current` always tracks the live sprint without storing its name. `versionTokenMatches(token, version, versionMeta)` encapsulates resolution; `matchVersionField` and `filterTasks` receive the `versionMeta` param. `normFilters()` includes a migration pass: persisted literal `'backlog'` in the version array → `'@backlog'`, preventing old saved-view state from becoming an un-dismissable ghost row when the literal backlog row is folded into the bucket. `BoardToolbar.tsx` gates each chip on applicability (presence of active sprint, unversioned tasks, released sprints). See `knowledge/patterns/virtual-filter-tokens.md` for the reusable pattern.
 
 - **[2026-06-29]** **Version "ghost" mechanic and rename/delete policy.** An "unregistered version" (ghost) is a string present only on tasks' `version:` frontmatter field with no corresponding entry in `RELEASES.json`; the Versions popover derives ghosts live by joining task version strings against RELEASES. Ghosts cannot be deleted as records (there is no record); "delete" means finding all tasks behind the ghost and clearing their `version:` field. Rename on a ghost re-points tasks only. Rename on a registered version additionally renames the RELEASES.json key and moves the active-version pointer. **Delete policy**: tasks are NEVER deleted; their `version:` field is set to `null` (warn-and-clear). The rename/delete backend uses `repointTasksVersion()` which goes through `LocalTaskBackend.updateFields`, so changes are journaled and synced like any other task edit. Route registration order matters: `PATCH /api/releases/:version` must be registered BEFORE `GET/PUT /api/releases/:version` would otherwise matter — but the rename PATCH extends the existing PATCH handler, so no ordering issue. 409 on collision guard prevents creating a duplicate key.
 - **[2026-06-28]** **Sleep page redesign: mood-driven mascot + unified cloud card.** `SleepPage.tsx` redesigned to lead with a mood-driven Sleepy mascot (`getSleepMood(debt)`: awake ≤6, drowsy 7-9, asleep ≥10; Zzz float + level-tinted aura). The standalone "Sleep cloud" card is merged into the hero card as a continuous section (hairline `border-top` divider, matching horizontal padding, faint violet wash) — no second card chrome. The at-a-glance `12 ITEMS` count moved to the hero headline as a pill. Note: this Sleepy mascot is the DASHBOARD version (`SleepPage.tsx`); the Sleepy notch mascot (`SleepyMascot.tsx`) is the coded animated gem in the notch capture panel.
@@ -441,6 +454,13 @@ All mutating endpoints call recordDashboardChange() except `PATCH /api/config` (
 - `src/lib/active-version.ts` — `getActivePlanningVersion(contextRoot)` reads `state/.active-version.json`, re-validates against RELEASES.json on every read (auto-clears if the stored version is no longer `planning`). `setActivePlanningVersion`, `clearActivePlanningVersion`.
 - `src/server/routes/changelog.ts` — `GET/PUT /api/releases/active` registered before the `:version` segment route.
 
+### Version Filter — Smart Semantic Buckets
+
+- `dashboard/src/components/tasks/boardModel.ts`: `VV_CURRENT = '@current'`, `VV_BACKLOG = '@backlog'`, `VV_COMPLETED = '@completed'` sentinel constants; `versionTokenMatches(token, version, versionMeta)` resolves each pseudo-value against live `versionMeta`; `matchVersionField(task, selected, versionMeta)` iterates selected tokens (mix of real version names + virtual tokens); `filterTasks` extended to accept `versionMeta` param.
+- `dashboard/src/components/tasks/KanbanBoard.tsx`: builds `versionMeta = { activeVersion, releasedVersions }` from `useActiveVersion()` + RELEASES entries; passes down to `filterTasks`.
+- `dashboard/src/components/tasks/BoardToolbar.tsx`: renders Current / Backlog / Completed bucket chips above the literal version list, each gated on applicability; folds literal backlog row out of the rendered version list when `@backlog` chip is active.
+- `normFilters()` (in board persistence / view-load path): migration pass that rewrites literal `'backlog'` in `version` array → `'@backlog'` on every saved-view filter load.
+
 ### Settings — Cloud Token + Provision (v0.10.0)
 
 - `dashboard/src/pages/SettingsPage.tsx` — extended with a Cloud Provider panel: token-status badge (`GET /api/tasks/token-status`), password input + save for token entry (`POST /api/tasks/token`), dry-run preview panel, and Provision button.
@@ -475,6 +495,13 @@ All mutating endpoints call recordDashboardChange() except `PATCH /api/config` (
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-06-29 - Version filter smart semantic buckets (@current / @backlog / @completed)
+- `boardModel.ts`: added `VV_CURRENT/@current`, `VV_BACKLOG/@backlog`, `VV_COMPLETED/@completed` virtual token constants; `versionTokenMatches`, `matchVersionField`, `filterTasks` extended to resolve tokens against live `versionMeta` (active sprint + released-version set).
+- `KanbanBoard.tsx`: builds `versionMeta` from `useActiveVersion()` + RELEASES entries; passes to `filterTasks`.
+- `BoardToolbar.tsx`: renders Current / Backlog / Completed bucket chips above the literal version list, gated on applicability; folds literal backlog row into `@backlog` bucket.
+- `normFilters()`: migration pass rewrites persisted literal `'backlog'` → `'@backlog'` on saved-view load, preventing ghost filter rows after the UI option folds out.
+- Saved views referencing `@current` always track the live active sprint; no stale sprint name stored in view state.
 
 ### 2026-06-29 - In-app version rename + delete (shipped v0.10.0)
 - `PATCH /api/releases/:version` extended: accepts `{newVersion}` — renames RELEASES.json entry, re-points all tasks via `repointTasksVersion()`, moves active-version pointer; 409 on collision; works on ghost versions (task re-point only).
