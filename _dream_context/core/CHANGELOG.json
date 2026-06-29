@@ -1,6 +1,32 @@
 [
   {
     "date": "2026-06-29",
+    "type": "feat",
+    "scope": "sleepy",
+    "description": "Add in-app prerequisite detection and installation to the Agent screen. GET /api/agent/capabilities now additionally reports claudeCli, nodePty, and npm availability, each probed via $SHELL -ilc so the detection path matches the PTY spawn's PATH (finds claude in ~/.local/bin, etc.). New POST /api/agent/install {claude|pty} and GET /api/agent/install/status endpoints mirror the Sleepy capture-run Map+poll pattern: the claude install target runs npm i -g @anthropic-ai/claude-code; the pty target installs node-pty into the CLI package directory, then chmods the spawn-helper and busts the probe cache. A Setup panel on the Agent screen renders any missing prerequisite with a one-click install button and re-checks on success. Start-agent is now gated on both node-pty and claude being present. All install endpoints are desktop-gated, loopback-only, and use a closed target whitelist.",
+    "breaking": false,
+    "summary": "In-app prerequisite installer: capabilities endpoint reports claudeCli/nodePty/npm; one-click install panel; Start-agent gated on both",
+    "references": [
+      "commit:351d14e",
+      "file:src/server/routes/agent-terminal.ts",
+      "file:src/server/index.ts",
+      "file:dashboard/src/components/sleepy/AgentSurface.tsx"
+    ]
+  },
+  {
+    "date": "2026-06-29",
+    "type": "fix",
+    "scope": "sleepy",
+    "description": "Fix unreadable Claude Code output in the embedded in-app Agent terminal on both light and dark themes. readXtermTheme() in AgentSurface.tsx was mapping ANSI black/white/brightBlack directly to design tokens, which inverted luminance in light mode and made dim grays too light in dark mode; minimumContrastRatio was set to 1, disabling xterm's contrast safety-net. Claude's TUI blocks (ANSI 7/8 background + default foreground) collapsed to same-luminance-on-same-luminance and were unreadable. Fix: set minimumContrastRatio to 4.5 and replaced the design-token mapping with a conventional per-theme grayscale ANSI ramp so ANSI dark/light colors follow each theme's luminance expectations correctly.",
+    "breaking": false,
+    "summary": "Fix Agent terminal unreadable text in both themes (minimumContrastRatio 4.5 + conventional ANSI grayscale ramp)",
+    "references": [
+      "commit:351d14e",
+      "file:dashboard/src/components/sleepy/AgentSurface.tsx"
+    ]
+  },
+  {
+    "date": "2026-06-29",
     "type": "chore",
     "scope": "release",
     "description": "Released v0.10.0 to both distribution channels. npm publish of 0.10.0 is live on the registry. The GitHub desktop-release CI workflow (macos-14, .github/workflows/desktop-release.yml) built and published the v0.10.0 GitHub Release with the ad-hoc deep-signed dreamcontext-beta_0.10.0_aarch64.app.tar.gz (29.3 MB) and accompanying .sha256 artifact. The workflow derives the app version from the git tag (VERSION=tag minus v prefix), so tauri.conf.json must stay in sync for the internal .app version to match. RELEASES.json v0.10.0 status set to released, date 2026-06-29. v0.11.0 opened as the new active planning milestone (desktop stale-dist fix, task-derived roadmap, excalidraw card-overflow fix, web read-only public surface).",
