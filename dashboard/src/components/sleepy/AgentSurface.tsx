@@ -36,6 +36,10 @@ interface Capabilities {
   platform: string;
   embeddedTerminal: boolean;
   openTerminal: boolean;
+  // Prerequisite breakdown (drives the in-app Setup panel).
+  nodePty: boolean;
+  claudeCli: boolean;
+  npm: boolean;
 }
 
 type TermStatus = 'connecting' | 'open' | 'closed';
@@ -87,6 +91,18 @@ function readXtermTheme(): ITheme {
   const bg = g('--color-bg', '#14171f');
   const text = g('--color-text', '#f5f6fa');
   const accent = g('--color-accent', '#9d8cff');
+  // The 16 ANSI slots must keep conventional luminance ordering (0 = darkest →
+  // 15 = lightest) REGARDLESS of theme. The old mapping wired black/white/brightBlack
+  // straight to design tokens, which inverted them in light mode (black→#e9ebf0,
+  // white→#646464) and made the dim grays too light in dark mode — so when Claude's
+  // TUI fills a region with ANSI 7/8 as a background, the foreground collapsed to
+  // same-luminance-on-same-luminance (the unreadable pale blocks). The grayscale ramp
+  // is tuned per-theme so background fills BLEND with the surface; foreground
+  // readability on any pairing is then guaranteed by `minimumContrastRatio` below.
+  const isLight = currentTermTheme() === 'light';
+  const ramp = isLight
+    ? { black: '#292d34', brightBlack: '#646464', white: '#e9ebf0', brightWhite: '#ffffff' }
+    : { black: '#20242e', brightBlack: '#3b4151', white: '#c8ccd9', brightWhite: '#f5f6fa' };
   return {
     background: bg,
     foreground: text,
@@ -94,22 +110,22 @@ function readXtermTheme(): ITheme {
     cursorAccent: bg,
     selectionBackground: g('--color-accent-soft', 'rgba(157,140,255,0.30)'),
     selectionForeground: text,
-    black: g('--color-bg-tertiary', '#2a2f3d'),
+    black: ramp.black,
     red: g('--color-error', '#ff5a5f'),
     green: g('--color-success', '#4ade80'),
     yellow: g('--color-warning', '#ffae3b'),
     blue: '#5b9dff',
     magenta: accent,
     cyan: '#3bd6c6',
-    white: g('--color-text-secondary', '#c8ccd9'),
-    brightBlack: g('--color-text-tertiary', '#9aa0b3'),
+    white: ramp.white,
+    brightBlack: ramp.brightBlack,
     brightRed: '#ff7a7f',
     brightGreen: '#6ee7a0',
     brightYellow: '#ffc46b',
     brightBlue: '#8bbcff',
     brightMagenta: accent,
     brightCyan: '#6fe3d6',
-    brightWhite: text,
+    brightWhite: ramp.brightWhite,
   };
 }
 
@@ -178,7 +194,11 @@ function createSession(bypass: boolean, onStatus: () => void): Session {
     theme: readXtermTheme(),
     allowProposedApi: true,
     scrollback: 5000,
-    minimumContrastRatio: 1, // keep our themed ANSI palette exact
+    // AA contrast floor: xterm auto-lifts any foreground that falls too close to its
+    // actual cell background. Without this (was 1 = off), Claude's TUI blocks that pair
+    // a default foreground with an ANSI 7/8 background fill rendered as unreadable
+    // same-on-same text in BOTH themes. Readability beats exact brand-colour fidelity.
+    minimumContrastRatio: 4.5,
   });
   const fit = new FitAddon();
   term.loadAddon(fit);
@@ -326,14 +346,13 @@ export function AgentSurface() {
   const started = tabs.length > 0;
   const activeTab = tabs.find(t => t.id === activeTabId) ?? null;
 
-  // ── Capabilities (fetched once; surface stays inert until the Agent tab opens) ─
-  useEffect(() => {
-    let alive = true;
-    api.get<Capabilities>('/agent/capabilities')
-      .then(c => { if (alive) setCaps(c); })
-      .catch(() => { if (alive) setCapsError(true); });
-    return () => { alive = false; };
+  // ── Capabilities (fetched on mount; re-fetched after an in-app install so a
+  //    freshly-installed prerequisite flips to ready without an app relaunch) ────
+  const refreshCaps = useCallback(async (): Promise<Capabilities | null> => {
+    try { const c = await api.get<Capabilities>('/agent/capabilities'); setCaps(c); return c; }
+    catch { setCapsError(true); return null; }
   }, []);
+  useEffect(() => { void refreshCaps(); }, [refreshCaps]);
 
   // ── Session/tab actions ──────────────────────────────────────────────────────
   const spawn = useCallback(() => {
@@ -715,20 +734,25 @@ export function AgentSurface() {
           (⌘D, or drag one tab onto another).
         </p>
         <BypassToggle bypass={bypass} setBypass={setBypass} />
-        <div style={{ display: 'flex', gap: '12px', marginTop: '22px', flexWrap: 'wrap', justifyContent: 'center' }}>
-          {caps.embeddedTerminal && (
-            <button onClick={startFirst} style={primaryBtn}>▸ Start agent in app</button>
-          )}
-          {caps.openTerminal && (
-            <button onClick={openExternal} style={caps.embeddedTerminal ? secondaryBtn : primaryBtn}>↗ Open in Terminal</button>
-          )}
-        </div>
-        {!caps.embeddedTerminal && caps.openTerminal && (
-          <p style={{ ...subStyle, fontSize: '12px', marginTop: '14px', color: 'var(--color-text-tertiary)' }}>
-            The embedded terminal needs the native <code>node-pty</code> module (absent in this build) —
-            launching your real terminal at the project path instead.
-          </p>
-        )}
+        {(() => {
+          // The embedded terminal is usable only when BOTH its renderer (node-pty)
+          // and the `claude` binary it spawns are present. Missing either → show the
+          // in-app Setup panel rather than silently spawning a shell that 404s claude.
+          const ready = caps.embeddedTerminal && caps.claudeCli;
+          return (
+            <>
+              <div style={{ display: 'flex', gap: '12px', marginTop: '22px', flexWrap: 'wrap', justifyContent: 'center' }}>
+                {ready && (
+                  <button onClick={startFirst} style={primaryBtn}>▸ Start agent in app</button>
+                )}
+                {caps.openTerminal && (
+                  <button onClick={openExternal} style={ready ? secondaryBtn : primaryBtn}>↗ Open in Terminal</button>
+                )}
+              </div>
+              {!ready && <Prereqs caps={caps} onRefresh={refreshCaps} />}
+            </>
+          );
+        })()}
       </Centered>
     );
   }
@@ -903,6 +927,90 @@ function BypassToggle({ bypass, setBypass }: { bypass: boolean; setBypass: (b: b
     </div>
   );
 }
+
+// ── Setup panel: one-click install of the embedded terminal's prerequisites ──────
+// Shown when `claude` and/or `node-pty` are missing. Each install runs server-side
+// in the user's login shell (so a Finder-launched app sees their real PATH) and is
+// polled to completion; a success re-checks capabilities so the row flips to ready.
+
+type InstallTarget = 'claude' | 'pty';
+
+function Prereqs({ caps, onRefresh }: { caps: Capabilities; onRefresh: () => Promise<Capabilities | null> }) {
+  const [busy, setBusy] = useState<InstallTarget | null>(null);
+  const [log, setLog] = useState('');
+  const [err, setErr] = useState('');
+
+  const runInstall = useCallback(async (target: InstallTarget) => {
+    setBusy(target); setErr(''); setLog('');
+    try {
+      const { runId } = await api.post<{ ok: boolean; runId: string }>('/agent/install', { target });
+      // Poll until the background install ends (the server watchdog caps it ~5 min).
+      for (let i = 0; i < 260; i++) {
+        await new Promise(r => setTimeout(r, 1300));
+        const s = await api.get<{ state: string; output: string }>(`/agent/install/status?id=${encodeURIComponent(runId)}`);
+        if (s.output) setLog(s.output);
+        if (s.state === 'done') { await onRefresh(); return; }
+        if (s.state === 'error') { setErr(s.output || 'Install failed.'); return; }
+        if (s.state === 'unknown') { setErr('The install run expired before it finished.'); return; }
+      }
+      setErr('Install is taking unusually long — check a real terminal.');
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Could not start the install.');
+    } finally {
+      setBusy(null);
+    }
+  }, [onRefresh]);
+
+  const rows: { target: InstallTarget; label: string; ok: boolean; desc: string }[] = [
+    { target: 'claude', label: 'Claude CLI', ok: caps.claudeCli, desc: 'Anthropic’s claude command — the agent that runs in the terminal.' },
+    { target: 'pty', label: 'Embedded terminal engine', ok: caps.nodePty, desc: 'The native node-pty module that renders Claude Code in-app.' },
+  ];
+  const canInstall = caps.npm;
+  const blocked = !canInstall || busy !== null;
+
+  return (
+    <div style={{ marginTop: '22px', width: '100%', maxWidth: '440px', textAlign: 'left' }}>
+      <p style={{ ...subStyle, fontSize: '13px', marginBottom: '12px', color: 'var(--color-text-tertiary)' }}>
+        Set up what the in-app terminal needs:
+      </p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        {rows.map(row => (
+          <div key={row.target} style={prereqRow}>
+            <span style={{ fontSize: '15px', width: '18px', flexShrink: 0, textAlign: 'center' }}>{row.ok ? '✅' : '⬜'}</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: '13.5px', fontWeight: 600, color: 'var(--color-text)' }}>{row.label}</div>
+              <div style={{ fontSize: '12px', color: 'var(--color-text-tertiary)', lineHeight: 1.4 }}>{row.desc}</div>
+            </div>
+            {row.ok
+              ? <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-success)', flexShrink: 0 }}>Ready</span>
+              : (
+                <button
+                  onClick={() => runInstall(row.target)}
+                  disabled={blocked}
+                  style={{ ...secondaryBtn, padding: '7px 14px', fontSize: '13px', flexShrink: 0, opacity: blocked ? 0.55 : 1, cursor: blocked ? 'not-allowed' : 'pointer' }}
+                >
+                  {busy === row.target ? '⏳ Installing…' : 'Install'}
+                </button>
+              )}
+          </div>
+        ))}
+      </div>
+
+      {!canInstall && (
+        <div style={{ ...bannerStyle, marginTop: '12px', background: 'rgba(255,174,59,0.1)', border: '1px solid rgba(255,174,59,0.32)', color: 'var(--color-text-secondary)' }}>
+          npm wasn’t found on your PATH, so these can’t be auto-installed. Install Node.js from <code>nodejs.org</code> (or via Homebrew), then reopen this screen.
+        </div>
+      )}
+      {busy && log && (
+        <pre style={installLog}>{log.split('\n').slice(-6).join('\n')}</pre>
+      )}
+      {err && <div style={{ ...bannerStyle, marginTop: '10px' }}>{err}</div>}
+    </div>
+  );
+}
+
+const prereqRow: CSSProperties = { display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 12px', borderRadius: '10px', background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' };
+const installLog: CSSProperties = { padding: '10px 12px', borderRadius: '8px', background: 'var(--color-bg-tertiary)', color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)', fontSize: '11px', lineHeight: 1.45, whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: '120px', overflow: 'auto', margin: '10px 0 0' };
 
 function BypassPill({ bypass, setBypass }: { bypass: boolean; setBypass: (b: boolean) => void }) {
   return (
