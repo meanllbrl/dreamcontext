@@ -6,7 +6,7 @@ import { VersionsPopover } from './VersionsPopover';
 import {
   type BoardFilters, type CardProps, type Dim, type DueFilter, type Layout, type SortKey,
   DIMS, DIM_LABEL, PRIO_ORDER, SORT_LABEL, STATUS_ORDER, STATUS_META, URG_ORDER,
-  dimGet, levelLabel, prioColor, urgColor,
+  dimGet, levelLabel, prioColor, urgColor, taskAssignees,
 } from './boardModel';
 
 export type MenuKey = 'filter' | 'viewtype' | 'group' | 'sort' | 'versions' | 'props' | null;
@@ -92,13 +92,20 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
   };
 
   const countBy = (dim: Dim, val: string) => allTasks.filter((t) => dimGet(t, dim) === val).length;
+  // Assignee is multi-valued (a task may carry several person tags), so it can't
+  // use the single-value dimGet path — count a task under EVERY assignee it has.
+  const countAssignee = (val: string) =>
+    allTasks.filter((t) => {
+      const vals = taskAssignees(t);
+      return val === 'none' ? vals.length === 0 : vals.includes(val);
+    }).length;
 
   const fieldOpts = (key: keyof BoardFilters): FieldOpt[] => {
     if (key === 'status') return STATUS_ORDER.map((k) => ({ value: k, label: STATUS_META[k].label, color: STATUS_META[k].color, count: countBy('status', k) }));
     if (key === 'priority') return PRIO_ORDER.map((k) => ({ value: k, label: levelLabel(k), color: prioColor(k), count: countBy('priority', k) }));
     if (key === 'urgency') return URG_ORDER.map((k) => ({ value: k, label: levelLabel(k), color: urgColor(k), count: countBy('urgency', k) }));
     if (key === 'version') return [...versionsForFilter, 'none'].filter((v, i, a) => a.indexOf(v) === i).map((k) => ({ value: k, label: k === 'none' ? 'No version' : k, color: null, count: countBy('version', k) }));
-    if (key === 'assignee') return assignees.map((a) => ({ value: a.value, label: a.label, color: a.value === 'none' ? null : a.color, count: countBy('assignee', a.value) }));
+    if (key === 'assignee') return assignees.map((a) => ({ value: a.value, label: a.label, color: a.value === 'none' ? null : a.color, count: countAssignee(a.value) }));
     return allTags.map((tg) => ({ value: tg, label: tg, color: null, count: allTasks.filter((t) => t.tags.includes(tg)).length }));
   };
 

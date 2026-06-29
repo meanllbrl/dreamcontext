@@ -242,7 +242,34 @@ export function taskDue(t: Task): string | null { return t.due_date ?? null; }
 export function taskRice(t: Task): number | null {
   return t.rice && typeof t.rice.score === 'number' ? t.rice.score : null;
 }
-export function taskAssignee(t: Task): string { return t.assignee && t.assignee.trim() ? t.assignee : 'none'; }
+const PERSON_TAG = 'person:';
+/**
+ * Every assignee on a task, as person-slugs. Assignment lives in `person:<slug>`
+ * tags — the canonical store the detail panel and CLI write — with the legacy
+ * scalar `assignee` field folded in as a fallback so old tasks still resolve.
+ * Deduped, person-tag order first. An empty array means unassigned.
+ *
+ * The board (filter, group-by, card avatar) must read assignees the SAME way the
+ * detail panel writes them, or person-tag-assigned tasks read as "Unassigned"
+ * everywhere except the detail panel.
+ */
+export function taskAssignees(t: Task): string[] {
+  const out: string[] = [];
+  for (const tag of t.tags) {
+    if (tag.startsWith(PERSON_TAG)) {
+      const slug = tag.slice(PERSON_TAG.length).trim();
+      if (slug && !out.includes(slug)) out.push(slug);
+    }
+  }
+  const legacy = t.assignee?.trim();
+  if (legacy && !out.includes(legacy)) out.push(legacy);
+  return out;
+}
+/** The task's primary assignee (first of {@link taskAssignees}) or `'none'`. */
+export function taskAssignee(t: Task): string {
+  const a = taskAssignees(t);
+  return a.length ? a[0] : 'none';
+}
 export function taskVersion(t: Task): string { return t.version && t.version.trim() ? t.version : 'none'; }
 
 export function levelLabel(k: string): string { return LEVEL_META[k]?.label ?? k; }
@@ -318,13 +345,27 @@ function matchField(val: string, fld: FieldFilter | undefined): boolean {
   return true;
 }
 
+/**
+ * Multi-assignee-aware filter: a task matches `inc` if ANY of its assignees is
+ * included, and fails `exc` if ANY of its assignees is excluded. A task with no
+ * assignees tests as the single value `'none'`.
+ */
+function matchAssignee(t: Task, fld: FieldFilter | undefined): boolean {
+  if (!fld) return true;
+  const vals = taskAssignees(t);
+  const eff = vals.length ? vals : ['none'];
+  if (fld.inc.length && !eff.some((v) => fld.inc.includes(v))) return false;
+  if (fld.exc.length && eff.some((v) => fld.exc.includes(v))) return false;
+  return true;
+}
+
 export function filterTasks(tasks: Task[], f: BoardFilters, search: string): Task[] {
   const q = (search || '').trim().toLowerCase();
   return tasks.filter((t) => {
     if (!matchField(t.status, f.status)) return false;
     if (!matchField(t.priority, f.priority)) return false;
     if (!matchField(t.urgency, f.urgency)) return false;
-    if (!matchField(taskAssignee(t), f.assignee)) return false;
+    if (!matchAssignee(t, f.assignee)) return false;
     if (!matchField(taskVersion(t), f.version)) return false;
     if (f.tags.inc.length && !f.tags.inc.some((tg) => t.tags.includes(tg))) return false;
     if (f.tags.exc.length && f.tags.exc.some((tg) => t.tags.includes(tg))) return false;
@@ -392,6 +433,13 @@ export function dimGroups(
     const order = [...opts.versionOrder.filter((v) => v !== 'none'), 'none'];
     return order.map((k) => ({ key: k, label: k === 'none' ? 'No version' : k, color: 'var(--color-accent)', tasks: tasks.filter((t) => taskVersion(t) === k) }));
   }
-  // assignee
-  return opts.assignees.map((a) => ({ key: a.value, label: a.label, color: a.color, tasks: tasks.filter((t) => taskAssignee(t) === a.value) }));
+  // assignee — a task lands under EACH of its assignees (multi-assignee swimlanes);
+  // tasks with no assignee fall under the 'none' column.
+  return opts.assignees.map((a) => ({
+    key: a.value, label: a.label, color: a.color,
+    tasks: tasks.filter((t) => {
+      const vals = taskAssignees(t);
+      return a.value === 'none' ? vals.length === 0 : vals.includes(a.value);
+    }),
+  }));
 }

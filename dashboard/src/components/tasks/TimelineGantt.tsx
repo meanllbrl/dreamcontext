@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { Task } from '../../hooks/useTasks';
 import { TaskCard } from './TaskCard';
+import { taskAssignee } from './boardModel';
 import {
   STATUS_COLOR_VAR, MONTH_SHORT,
   formatISO, todayISO, parseISO, addDays, diffDays, taskSpan,
@@ -164,7 +165,7 @@ export function TimelineGantt({ tasks, onTaskClick }: TimelineGanttProps) {
                   >
                     <span className={`priority-dot priority-dot--${task.priority}`} />
                     <span className="gantt-row-name">{task.name}</span>
-                    {task.assignee && <span className="gantt-row-assignee">{task.assignee}</span>}
+                    {taskAssignee(task) !== 'none' && <span className="gantt-row-assignee">{taskAssignee(task)}</span>}
                   </button>
                   <div className="gantt-row-track" style={{ width: trackW }}>
                     <button
