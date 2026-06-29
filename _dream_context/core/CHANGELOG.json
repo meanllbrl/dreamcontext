@@ -2,6 +2,47 @@
   {
     "date": "2026-06-29",
     "type": "feat",
+    "scope": "desktop",
+    "description": "Map three macOS editing gestures in the embedded xterm to the control sequences Claude Code's interactive prompt already honors, using attachCustomKeyEventHandler (xterm does not emit these combos itself). Shift+Enter sends a backslash+CR continuation for a newline without submitting; Option+Delete sends Ctrl+W (\\x17) to delete the previous word; Cmd+Delete sends Ctrl+U (\\x15) to delete to the line start. All other keys fall through to xterm unchanged.",
+    "breaking": false,
+    "summary": "Add macOS line-editing keybindings to the in-app Agent terminal: Shift+Enter (newline), Option+Delete (delete word), Cmd+Delete (delete to line start)",
+    "references": [
+      "commit:c080de0",
+      "file:dashboard/src/components/sleepy/AgentSurface.tsx"
+    ]
+  },
+  {
+    "date": "2026-06-29",
+    "type": "fix",
+    "scope": "dashboard",
+    "description": "The board model read only the legacy scalar assignee field for filtering, grouping, and card display — tasks assigned via person:<slug> tags (which the detail panel writes) showed as Unassigned everywhere except the detail panel. Fix introduces taskAssignees() that derives all assignees from person: tags with a scalar fallback, and taskAssignee() for the primary. Filter matching is now multi-aware (matchAssignee checks all assignees); group-by places a task under each assignee bucket it belongs to; the KanbanBoard assignee option list is built from every person referenced across tasks; BoardToolbar per-assignee counts are multi-aware; TimelineGantt row label uses the derived primary assignee.",
+    "breaking": false,
+    "summary": "Board reads assignees from person:<slug> tags in filter, group-by, card properties, and Gantt; legacy scalar field retained as fallback",
+    "references": [
+      "commit:dbe8c27",
+      "file:dashboard/src/components/tasks/boardModel.ts",
+      "file:dashboard/src/components/tasks/KanbanBoard.tsx",
+      "file:dashboard/src/components/tasks/TimelineGantt.tsx"
+    ]
+  },
+  {
+    "date": "2026-06-29",
+    "type": "feat",
+    "scope": "sleep",
+    "description": "Add mutual exclusion to the sleep consolidation path. sleep_started_at in .sleep.json is the primary lock; inspectSleepLock() centralizes read + 30m stale TTL so a crashed consolidation self-heals instead of wedging the brain permanently. sleep start refuses a live lock (exit 1), auto-reclaims a stale one, and accepts --force for deliberate override. Hook directives/reminders suppress under a live lock but fall through a stale one. The Tauri launcher rejects a concurrent desktop Sleep with a 409 response. An atomic O_EXCL file stamp lock (src/lib/file-lock.ts, 60s stale TTL) closes the cross-process check-then-stamp race: 8/16-way parallel sleep start now yields exactly 1 winner (was 2-4 before). Separately, the debt scale was rescaled ×2: Alert 0-7 / Drowsy 8-13 / Sleepy 14-19 / Must Sleep 20+; directives fire at >=8 / >=14 / >=20; rhythm reminder at 5 sessions. Thresholds centralized as named constants (DEBT_DROWSY/DEBT_SLEEPY/DEBT_MUST_SLEEP/RHYTHM_SESSIONS) in sleep-consolidation.ts as the single source of truth — PRD, SKILL.md, and system-flow docs updated to match.",
+    "breaking": false,
+    "summary": "Atomic consolidation mutex + debt scale rescaled ×2: sleep_started_at is the lock; O_EXCL stamp lock (file-lock.ts) makes check-then-stamp race-free; 30m stale TTL self-heals crashes; Alert 0-7/Drowsy 8-13/Sleepy 14-19/Must Sleep 20+",
+    "references": [
+      "commit:4c9a166",
+      "file:src/lib/file-lock.ts",
+      "file:src/cli/commands/sleep.ts",
+      "file:src/lib/sleep-consolidation.ts",
+      "file:src/server/routes/launcher.ts"
+    ]
+  },
+  {
+    "date": "2026-06-29",
+    "type": "feat",
     "scope": "sleepy",
     "description": "Add in-app prerequisite detection and installation to the Agent screen. GET /api/agent/capabilities now additionally reports claudeCli, nodePty, and npm availability, each probed via $SHELL -ilc so the detection path matches the PTY spawn's PATH (finds claude in ~/.local/bin, etc.). New POST /api/agent/install {claude|pty} and GET /api/agent/install/status endpoints mirror the Sleepy capture-run Map+poll pattern: the claude install target runs npm i -g @anthropic-ai/claude-code; the pty target installs node-pty into the CLI package directory, then chmods the spawn-helper and busts the probe cache. A Setup panel on the Agent screen renders any missing prerequisite with a one-click install button and re-checks on success. Start-agent is now gated on both node-pty and claude being present. All install endpoints are desktop-gated, loopback-only, and use a closed target whitelist.",
     "breaking": false,

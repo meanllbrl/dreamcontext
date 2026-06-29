@@ -20,6 +20,7 @@ related_tasks:
   - feat-dashboard-redesign-tasks-board-saved-views-with-shared-local-persistence
   - dashboard-version-rename-and-delete-controls
   - board-version-filter-smart-buckets
+  - multi-assignee-via-person-tags
 ---
 
 ## Why
@@ -122,6 +123,7 @@ Users need a visual interface to manage agent context without using the terminal
 - [x] Assignee multi-select filter (KanbanBoard filter bar): shown only when a cloud backend is configured; filters by `person:<slug>` tag; hidden for local-only setups (PR #67).
 - [x] Dashboard assignee picker (`TaskDetailPanel`) only offers real roster members on a remote backend (`allowCustom` disabled); already-assigned non-member chips flagged with a "won't sync" warning chip (red dashed) (PR #69).
 - [x] `GET /api/tasks/members` drops `id:''` stubs when a real member roster is available, so the picker is never polluted with unresolvable free-text slugs (PR #69).
+- [x] `boardModel.taskAssignees(task)` derives all assignees from `person:<slug>` tags (multi-aware, with legacy scalar `assignee` fallback); `taskAssignee()` returns the primary assignee. All board views — filter counts, group-by, card display, and Gantt labels — derive from this unified `person:` tag read. Group-by places a task under each of its assignees. Fixes assignees appearing as Unassigned in the board when set via person-tags (fix/dashboard-assignee-person-tags).
 - [x] Sprint-aware `VersionFilter` component replaces the generic `MultiSelectFilter` for the version facet: status icons (star=current, dot=planning, hollow=unregistered, check=released), "current" badge, release date on completed rows, per-row Set-current (star) + Complete (check) actions, "Current" quick-pick chip, collapsible Completed section, status-aware sort (current→planning→unregistered→backlog→released, completed sink to bottom).
 - [x] `GET /api/releases/active` returns `{ active: string | null }` (registered before `:version` route to prevent segment capture); `PUT /api/releases/active` accepts `{ version: string | null }` — null/empty clears; a planning entry is lazily created for an unregistered version name; 409 on an already-released version; records a dashboard change.
 - [x] `useActiveVersion`, `useSetActiveVersion`, `useCompleteVersion` hooks; `VersionFilter.tsx/.css` wired through `TaskFilters` + `KanbanBoard` (versionItems join of task version strings + RELEASES + active).
@@ -285,6 +287,8 @@ Users need a visual interface to manage agent context without using the terminal
 
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
+
+- **[2026-06-29]** **Assignee reading from `person:` tags (board model unification).** The board model previously read only the legacy scalar `assignee` field; tasks whose assignee was stored exclusively as `person:<slug>` tags appeared as Unassigned in filter/group-by/properties/gantt (though the detail panel showed them correctly, since it reads tags directly). Fix: `boardModel.taskAssignees(task)` derives all assignees from `person:` tags with legacy scalar fallback; `taskAssignee()` returns the primary. All board views (filter counts, group-by, card avatars, Gantt labels) now flow through this derivation. Multi-assign is modeled: group-by places a task under each of its assignees. `KanbanBoard` builds the assignee option list from every referenced person in the task set.
 
 - **[2026-06-29]** **Version filter smart buckets: virtual filter token design.** `@current`, `@backlog`, `@completed` are `@`-prefixed sentinel constants (in `boardModel.ts`) that resolve at *filter time* against live `versionMeta` (active sprint + released-version set) rather than equalling a stored field value. A saved view referencing `@current` always tracks the live sprint without storing its name. `versionTokenMatches(token, version, versionMeta)` encapsulates resolution; `matchVersionField` and `filterTasks` receive the `versionMeta` param. `normFilters()` includes a migration pass: persisted literal `'backlog'` in the version array → `'@backlog'`, preventing old saved-view state from becoming an un-dismissable ghost row when the literal backlog row is folded into the bucket. `BoardToolbar.tsx` gates each chip on applicability (presence of active sprint, unversioned tasks, released sprints). See `knowledge/patterns/virtual-filter-tokens.md` for the reusable pattern.
 
@@ -495,6 +499,13 @@ All mutating endpoints call recordDashboardChange() except `PATCH /api/config` (
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-06-29 - Assignee reading from person:<slug> tags (board filter, group-by, properties, gantt)
+- `boardModel`: `taskAssignees()` derives assignees from `person:` tags + legacy scalar fallback; `taskAssignee()` returns primary. `matchAssignee` multi-aware.
+- `KanbanBoard`: assignee option list built from all referenced persons in the task set.
+- `BoardToolbar`: per-assignee filter counts are multi-aware.
+- `TimelineGantt`: row label uses derived assignee, not raw scalar.
+- Root cause: task detail panel writes `person:<slug>` tags and retires the scalar, but the board model read only the scalar — tag-only assignees appeared as Unassigned everywhere except the detail panel.
 
 ### 2026-06-29 - Version filter smart semantic buckets (@current / @backlog / @completed)
 - `boardModel.ts`: added `VV_CURRENT/@current`, `VV_BACKLOG/@backlog`, `VV_COMPLETED/@completed` virtual token constants; `versionTokenMatches`, `matchVersionField`, `filterTasks` extended to resolve tokens against live `versionMeta` (active sprint + released-version set).

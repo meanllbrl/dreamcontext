@@ -2,7 +2,7 @@
 id: feat_9qLM-gY_
 status: active
 created: '2026-02-25'
-updated: '2026-06-15'
+updated: '2026-06-29'
 released_version: 0.1.0
 tags:
   - architecture
@@ -10,6 +10,7 @@ tags:
   - decisions
 related_tasks:
   - sleep-fanout-architecture
+  - enforce-mutual-exclusion-on-sleep-consolidation-lock
 ---
 
 ## Why
@@ -29,6 +30,7 @@ Agents accumulate knowledge and make decisions across many sessions, but that kn
 - [x] As an AI agent, I want persistent sleep debt reminders on every user message so consolidation urgency cannot be forgotten across a session.
 - [x] As an AI agent, I want high-signal moments from each session (corrections, error→fix, decisions) automatically bookmarked so the brain's "awake-ripple tagging" works without manual bookmarks.
 - [x] As an AI agent, I want auto-digested session transcripts indexed into recall so decisions from session N are searchable in N+1 before any sleep consolidation runs.
+- [x] As a developer, I want concurrent sleep consolidation attempts to fail fast with an explicit error so that two parallel sessions cannot corrupt consolidation state.
 
 ## Acceptance Criteria
 
@@ -48,9 +50,11 @@ Agents accumulate knowledge and make decisions across many sessions, but that kn
 - `hook session-start` catch-up path runs `detectSalience()` on any undigested sessions and writes auto-bookmarks to `.sleep.json`; then runs `session-digest.ts` to index bounded (≤8KB) transcript digests into the recall corpus.
 - Auto-salience detectors fire on: user-correction (`no/actually/wrong/instead/hayır/yanlış/değil`, salience 2), error→fix (any error + any code change present, salience 1), decision keyword (`decided/chose/switched to/will use/karar/seçtik`, salience 2). Max 5 moments per session.
 - Auto-captured digests and bookmarks indexed with `capture: true`; `CAPTURE_RANK_PENALTY = 0.5` applied in `rankScore` only (never raw `score`) so captures never crowd out curated knowledge.
+- `sleep start` acquires an O_EXCL atomic stamp lock (via `src/lib/file-lock.ts`) before pinning the epoch; a concurrent caller that loses the race receives `SleepLockStatus.HELD`. `inspectSleepLock(state, nowMs)` returns the lock status with a 30-minute stale TTL — stale locks are auto-broken and re-raced. The launcher returns HTTP 409 "Sleep already running" when a live lock is detected, so callers receive an explicit signal rather than silent state corruption.
 
 ## Constraints & Decisions
 
+- **[2026-06-29]** Mutual-exclusion lock for sleep consolidation. `sleep start` acquires an O_EXCL atomic stamp lock via `src/lib/file-lock.ts`; a concurrent caller loses the race and receives `SleepLockStatus.HELD`. The launcher returns HTTP 409 "Sleep already running" when a live lock is held. `inspectSleepLock(state, nowMs)` exposes lock status with a 30-minute stale TTL (auto-broken and re-raced after expiry). `sleep_started_at` in `SleepState` serves as both the epoch stamp (`markSleepStart()`) and the lock's on-state timestamp. Reuses the O_EXCL pattern from `SyncLedger.acquireSyncLock`, generalized into a shared primitive. Rationale: an advisory check-then-write on a JSON field cannot prevent two processes from both passing the check before either writes.
 - **[2026-06-29]** Debt scale rescaled ×2 and centralized. Levels are now Alert 0–7 · Drowsy 8–13 · Sleepy 14–19 · **Must Sleep 20+** (was 10+); directives fire at debt ≥8 (offer) / ≥14 (recommended) / ≥20 (required), and the rhythm reminder at **5** sessions-since-last-sleep (was 3). Per-session scoring is unchanged (max +3), so the consolidation cadence roughly doubles. All thresholds now live as named constants (`DEBT_DROWSY=8`, `DEBT_SLEEPY=14`, `DEBT_MUST_SLEEP=20`, `RHYTHM_SESSIONS=5`) in `sleep-consolidation.ts` — `sleepinessLevel`/`sleepinessRange`/`depthFromDebt` and every hook directive derive from them, so the scale can't drift across files again. Supersedes the 2026-03-01 tightening below.
 - **[2026-06-15]** Task-status lifecycle refined: `sleep-tasks` now marks `completed` for tasks that are demonstrably done, low-risk, and already validated (chores, docs, mechanical fixes, well-covered tests) instead of reflexively bumping everything to `in_review`. `in_review` is reserved for tasks where a human must genuinely verify something (user-facing behaviour changes, design/architecture decisions, risky changes) or for handing the user a close decision on superseded/abandoned/obsoleted tasks. Backlog grooming formalized as a mandatory per-cycle step: pivot-relevance propagation, version re-attachment, tag normalization to taxonomy vocab. Old "max `in_review`" rule retired — it buried finished work and left rotting tasks half-closed.
 - **[2026-06-04]** Dedup hardening shipped in specialist agent prompts. The top consolidation failure mode was fragmented near-duplicate tasks and knowledge files. `sleep-tasks` Step 2 now mandates recall-before-create + fold-in for smaller slices. `sleep-product` B2 adds a "sharp vs soft distinction" rubric — same family/vertical → extend existing file; genuinely separate topical concern → new file. See `sleep-fanout-architecture` PRD for specifics.
@@ -82,6 +86,7 @@ Agents accumulate knowledge and make decisions across many sessions, but that kn
 **Schema** (see also `_dream_context/core/6.system_flow.md` for full annotated schema):```json
 {
   "debt": 4,
+  "sleep_started_at": null,
   "last_sleep": "2026-02-24",
   "last_sleep_summary": "Consolidated auth implementation and API design decisions",
   "sessions_since_last_sleep": 2,
@@ -162,6 +167,8 @@ Agents accumulate knowledge and make decisions across many sessions, but that kn
 **Key files**:
 - `src/cli/commands/hook.ts` — hook stop, hook session-start, hook user-prompt-submit, hook post-tool-use, hook pre-compact, transcript analysis, debt scoring, bookmark linking, rhythm counter, findProjectConfig(), resolveLocalBin()
 - `src/cli/commands/sleep.ts` — sleep status, sleep add, sleep done, sleep debt, sleep history, SleepState type (Bookmark, Trigger, SleepHistoryEntry, KnowledgeAccessRecord), readSleepState/writeSleepState, freshDefaults()
+- `src/lib/sleep-consolidation.ts` — `DEBT_DROWSY`/`DEBT_SLEEPY`/`DEBT_MUST_SLEEP`/`RHYTHM_SESSIONS` constants; `sleepinessLevel`/`sleepinessRange`/`depthFromDebt`; `markSleepStart()`/`inspectSleepLock(state, nowMs)`/`SleepLockStatus`; `clearSleepLock()`
+- `src/lib/file-lock.ts` — `acquireFileLock(lockPath, nowMs, staleMs)`: O_EXCL atomic stamp lock via `wx` flag; stale-TTL break + re-race; cross-process mutex reused by both sleep and sync paths
 - `src/cli/commands/bookmark.ts` — bookmark add/list/clear
 - `src/cli/commands/trigger.ts` — trigger add/list/remove
 - `src/cli/commands/transcript.ts` — transcript distill (structural JSONL filter)
@@ -198,6 +205,13 @@ Agents accumulate knowledge and make decisions across many sessions, but that kn
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-06-29 - Atomic mutual-exclusion lock for `sleep start`
+- `src/lib/file-lock.ts`: O_EXCL atomic stamp lock (`acquireFileLock`); stale-TTL break + re-race (30-min TTL). Shared primitive reused by SyncLedger.
+- `sleep start` acquires the lock before pinning the epoch; concurrent caller receives `SleepLockStatus.HELD`.
+- `inspectSleepLock(state, nowMs)` in `sleep-consolidation.ts`: exposes lock status with stale-TTL check; `clearSleepLock()` releases on `sleep done`.
+- Launcher route: HTTP 409 "Sleep already running" when a live lock is detected — explicit signal instead of silent corruption.
+- `sleep_started_at` in `SleepState` serves as both the epoch stamp and the lock's on-state indicator.
 
 ### 2026-06-29 - Debt scale rescaled ×2 (Must Sleep = 20) + centralized into constants
 - Levels: Alert 0–7 · Drowsy 8–13 · Sleepy 14–19 · Must Sleep 20+ (was 0-3/4-6/7-9/10+). Directives at ≥8/≥14/≥20; rhythm reminder at 5 sessions (was 3). Per-session scoring unchanged (max +3).
