@@ -39,7 +39,9 @@
       "topic:skills",
       "topic:cli",
       "topic:github",
-      "topic:task-backend"
+      "topic:task-backend",
+      "topic:pm",
+      "topic:roadmap"
     ]
   },
   "bareTags": [
@@ -78,6 +80,8 @@
     "sleep": "topic:sleep",
     "sub-agents": "topic:agents",
     "orchestration": "architecture",
-    "hook": "architecture"
+    "hook": "architecture",
+    "planning": "topic:pm",
+    "roadmap": "topic:roadmap"
   }
 }

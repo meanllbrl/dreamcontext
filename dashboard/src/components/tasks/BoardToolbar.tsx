@@ -6,7 +6,8 @@ import { VersionsPopover } from './VersionsPopover';
 import {
   type BoardFilters, type CardProps, type Dim, type DueFilter, type Layout, type SortKey,
   DIMS, DIM_LABEL, PRIO_ORDER, SORT_LABEL, STATUS_ORDER, STATUS_META, URG_ORDER,
-  dimGet, levelLabel, prioColor, urgColor, taskAssignees,
+  BACKLOG_RE, VV_BACKLOG, VV_COMPLETED, VV_CURRENT,
+  dimGet, levelLabel, prioColor, taskAssignees, taskVersion, urgColor,
 } from './boardModel';
 
 export type MenuKey = 'filter' | 'viewtype' | 'group' | 'sort' | 'versions' | 'props' | null;
@@ -19,6 +20,10 @@ interface BoardToolbarProps {
   allTags: string[];
   assignees: AssigneeOpt[];
   versionsForFilter: string[];
+  /** The active planning version ("current sprint"), or null. Powers the "Current" smart bucket. */
+  activeVersion: string | null;
+  /** Version names with a released status. Powers the "Completed" smart bucket. */
+  releasedVersions: string[];
   openMenu: MenuKey;
   setOpenMenu: (m: MenuKey) => void;
   onNewTask: () => void;
@@ -68,7 +73,7 @@ const excBtn = (on: boolean): CSSProperties => ({ flex: '0 0 auto', width: 22, h
 
 interface FieldOpt { value: string; label: string; color: string | null; count: number }
 
-export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilter, openMenu, setOpenMenu, onNewTask, flash }: BoardToolbarProps) {
+export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilter, activeVersion, releasedVersions, openMenu, setOpenMenu, onNewTask, flash }: BoardToolbarProps) {
   const [filterPane, setFilterPane] = useState<keyof BoardFilters | null>(null);
   const f = s.filters;
   const toggle = (m: MenuKey) => { setOpenMenu(openMenu === m ? null : m); if (m !== 'filter') setFilterPane(null); };
@@ -104,7 +109,10 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
     if (key === 'status') return STATUS_ORDER.map((k) => ({ value: k, label: STATUS_META[k].label, color: STATUS_META[k].color, count: countBy('status', k) }));
     if (key === 'priority') return PRIO_ORDER.map((k) => ({ value: k, label: levelLabel(k), color: prioColor(k), count: countBy('priority', k) }));
     if (key === 'urgency') return URG_ORDER.map((k) => ({ value: k, label: levelLabel(k), color: urgColor(k), count: countBy('urgency', k) }));
-    if (key === 'version') return [...versionsForFilter, 'none'].filter((v, i, a) => a.indexOf(v) === i).map((k) => ({ value: k, label: k === 'none' ? 'No version' : k, color: null, count: countBy('version', k) }));
+    if (key === 'version') return [...versionsForFilter, 'none']
+      .filter((v, i, a) => a.indexOf(v) === i)
+      .filter((v) => v === 'none' || !BACKLOG_RE.test(v)) // backlog is offered as the "Backlog" smart bucket above
+      .map((k) => ({ value: k, label: k === 'none' ? 'No version' : k, color: null, count: countBy('version', k) }));
     if (key === 'assignee') return assignees.map((a) => ({ value: a.value, label: a.label, color: a.value === 'none' ? null : a.color, count: countAssignee(a.value) }));
     return allTags.map((tg) => ({ value: tg, label: tg, color: null, count: allTasks.filter((t) => t.tags.includes(tg)).length }));
   };
@@ -120,6 +128,30 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
     if (fld.inc.length) parts.push(`${fld.inc.length} is`);
     if (fld.exc.length) parts.push(`${fld.exc.length} is not`);
     return { text: parts.join(' · ') || 'Any', active: fld.inc.length + fld.exc.length > 0 };
+  };
+
+  // Virtual ("smart") version buckets, shown above the literal version list. Each is
+  // offered only when it actually applies: Current when a sprint is active, Backlog
+  // when any task sits in the backlog, Completed when a released version exists.
+  const releasedSet = new Set(releasedVersions);
+  const versionVirtuals: FieldOpt[] = [];
+  if (activeVersion) versionVirtuals.push({ value: VV_CURRENT, label: 'Current', color: 'var(--color-accent)', count: allTasks.filter((t) => taskVersion(t) === activeVersion).length });
+  if (allTasks.some((t) => BACKLOG_RE.test(taskVersion(t)))) versionVirtuals.push({ value: VV_BACKLOG, label: 'Backlog', color: 'var(--color-text-tertiary)', count: allTasks.filter((t) => BACKLOG_RE.test(taskVersion(t))).length });
+  if (releasedSet.size) versionVirtuals.push({ value: VV_COMPLETED, label: 'Completed', color: 'var(--color-status-completed)', count: allTasks.filter((t) => releasedSet.has(taskVersion(t))).length });
+
+  // One include/exclude option row, shared by the literal options and the smart buckets.
+  const toggleRow = (section: keyof BoardFilters, o: FieldOpt) => {
+    const fld = f[section] as unknown as { inc: string[]; exc: string[] };
+    const incOn = fld.inc.includes(o.value), excOn = fld.exc.includes(o.value);
+    return (
+      <div key={o.value} className="bd-row" style={optRow}>
+        {o.color && <span style={{ width: 8, height: 8, borderRadius: '50%', background: o.color, flex: '0 0 auto' }} />}
+        <span style={{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{o.label}</span>
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--color-text-tertiary)' }}>{o.count}</span>
+        <span onClick={() => s.cycleFilter(section, o.value, 'inc')} title="Include" style={incBtn(incOn)}>✓</span>
+        <span onClick={() => s.cycleFilter(section, o.value, 'exc')} title="Exclude" style={excBtn(excOn)}>✕</span>
+      </div>
+    );
   };
 
   const activeCount =
@@ -345,19 +377,19 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
                     <span style={radioBox(f.minRice === o.v)}>{f.minRice === o.v ? '●' : ''}</span>
                   </div>
                 ))}
-                {isToggleField && fieldOpts(activeSection).map((o) => {
-                  const fld = f[activeSection] as { inc: string[]; exc: string[] };
-                  const incOn = fld.inc.includes(o.value), excOn = fld.exc.includes(o.value);
-                  return (
-                    <div key={o.value} className="bd-row" style={optRow}>
-                      {o.color && <span style={{ width: 8, height: 8, borderRadius: '50%', background: o.color, flex: '0 0 auto' }} />}
-                      <span style={{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{o.label}</span>
-                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--color-text-tertiary)' }}>{o.count}</span>
-                      <span onClick={() => s.cycleFilter(activeSection, o.value, 'inc')} title="Include" style={incBtn(incOn)}>✓</span>
-                      <span onClick={() => s.cycleFilter(activeSection, o.value, 'exc')} title="Exclude" style={excBtn(excOn)}>✕</span>
-                    </div>
-                  );
-                })}
+                {isToggleField && activeSection === 'version' && (
+                  <>
+                    {versionVirtuals.length > 0 && (
+                      <>
+                        <div style={{ ...sectionLabel, padding: '4px 8px 3px' }}>Smart</div>
+                        {versionVirtuals.map((o) => toggleRow('version', o))}
+                        <div style={{ ...sectionLabel, padding: '9px 8px 3px', marginTop: 2, borderTop: '1px solid var(--color-border)' }}>Versions</div>
+                      </>
+                    )}
+                    {fieldOpts('version').map((o) => toggleRow('version', o))}
+                  </>
+                )}
+                {isToggleField && activeSection !== 'version' && fieldOpts(activeSection).map((o) => toggleRow(activeSection, o))}
               </div>
             )}
           </div>

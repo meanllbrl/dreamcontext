@@ -27,6 +27,21 @@
   },
   {
     "date": "2026-06-29",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "Add three virtual 'smart' bucket rows to the Tasks board Version filter (BoardToolbar.tsx), rendered above the literal sprint list with the same is/not toggle and live task counts: Current (the active planning sprint, gated on .active-version.json), Backlog (backlog-tagged tasks, folds out the literal 'backlog' row to avoid duplication), and Completed (any task on a released sprint, collapsing the full released-version set into one selection). Implemented via @current/@backlog/@completed pseudo-tokens that never collide with real version names. versionTokenMatches/matchVersionField in boardModel.ts resolve tokens against a VersionMeta object (active version string + released version set) at filter time; filterTasks() accepts an optional versionMeta (backward compatible, defaults to EMPTY_VERSION_META). KanbanBoard.tsx wires useActiveVersion + released-versions list into versionMeta and threads it into both filterTasks calls and the toolbar. normVersionFilter() in boardModel.ts migrates any pre-existing literal 'backlog' token in a saved view's inc/exc array to @backlog on load (idempotent, case-insensitive) so old saved views are not orphaned as un-dismissable ghosts. Committed c8a910d on feat/board-version-smart-buckets, merged via PR #104.",
+    "breaking": false,
+    "summary": "Board version filter gains Current/Backlog/Completed smart buckets — @-prefixed virtual tokens resolve against live active/released state at filter time",
+    "references": [
+      "commit:c8a910d",
+      "file:dashboard/src/components/tasks/boardModel.ts",
+      "file:dashboard/src/components/tasks/KanbanBoard.tsx",
+      "file:dashboard/src/components/tasks/BoardToolbar.tsx",
+      "url:https://github.com/meanllbrl/dreamcontext/pull/104"
+    ]
+  },
+  {
+    "date": "2026-06-29",
     "type": "chore",
     "scope": "release",
     "description": "Released v0.10.0 to both distribution channels. npm publish of 0.10.0 is live on the registry. The GitHub desktop-release CI workflow (macos-14, .github/workflows/desktop-release.yml) built and published the v0.10.0 GitHub Release with the ad-hoc deep-signed dreamcontext-beta_0.10.0_aarch64.app.tar.gz (29.3 MB) and accompanying .sha256 artifact. The workflow derives the app version from the git tag (VERSION=tag minus v prefix), so tauri.conf.json must stay in sync for the internal .app version to match. RELEASES.json v0.10.0 status set to released, date 2026-06-29. v0.11.0 opened as the new active planning milestone (desktop stale-dist fix, task-derived roadmap, excalidraw card-overflow fix, web read-only public surface).",
