@@ -15,13 +15,14 @@ description: >-
   PanelEnabled opt-in default false; Learn/Ask/Sleep mode toggle; Sonnet enrichment
   with Markdown rendering; interactive-login-shell claude PATH fix; tracked
   enrichment status UI; dead-vault filtering; focus/blur UX), the in-app Agent
-  terminal (xterm.js + @xterm/addon-webgl + node-pty WS bridge; session persistence
-  via display:none hoist above App.tsx page switch; bypassPermissions opt-in;
-  drag-to-split; desktop-only DREAMCONTEXT_DESKTOP gate; dev-workflow note: only
+  terminal — AgentSurface.tsx (xterm.js + @xterm/addon-webgl + node-pty WS bridge;
+  session persistence via display:none hoist; bypassPermissions opt-in; drag-to-split;
+  readability fix: minimumContrastRatio 4.5 + per-theme ANSI ramp; in-app prereq
+  installer: GET /api/agent/capabilities + POST /api/agent/install; dev-workflow: only
   Rust/lib.rs changes need tauri build, dashboard changes just need npm run build +
-  app relaunch), find_global_cli -ilc fix SHIPPED v0.10.0 (empirical note: dev
-  machine had both -lc and -ilc resolve nvm CLI because global is npm-linked to repo,
-  so all three resolution paths pointed at same fresh dist), the Launcher per-project
+  app relaunch), find_global_cli -ilc fix SHIPPED v0.10.0 (note: global was a
+  separate installed copy until this session re-ran npm link; see dev footgun note),
+  the Launcher per-project
   status indicator (green/yellow/red, upgrade-vs-update distinction), the
   content-scoped drift nag, the ensure-dashboard app-installed auto-open suppression,
   the interactive federation graph (react-force-graph-2d, read-only violet edges,
@@ -229,16 +230,15 @@ ad-hoc signing already satisfies Apple Silicon's must-be-signed rule). Two parts
    `~/.zshrc` so nvm/mise/volta-managed CLIs are visible to the app even when
    launched from Finder or Spotlight. This fix shipped via `tauri build` +
    `dreamcontext app install` in v0.10.0.
-   **Empirical nuance (v0.10.0 dev machine)**: On the development machine BOTH
-   `-lc` and `-ilc` resolved the nvm `dreamcontext`, and the global CLI is
-   `npm link`-ed directly to the repo (`<nvm>/bin/dreamcontext →
-   ../lib/node_modules/dreamcontext/dist/index.js`). As a result all three CLI
-   resolution paths — `DREAMCONTEXT_CLI` override (set via launchctl to
-   `dist/index.js`), the global (npm-linked to the same `dist/`), and the
-   freshly-rebuilt bundled fallback — pointed at the same fresh dist during
-   testing. The stale-dist symptom was therefore NOT reproducible on the dev
-   machine; it manifests on user machines where the global CLI is a separate
-   installed copy that hasn't been updated yet.
+   **Empirical nuance (v0.10.0 dev machine — corrected 2026-06-29)**: At the time
+   of the v0.10.0 release the dev machine's global CLI was a **separate installed
+   copy** (`<nvm>/lib/node_modules/dreamcontext` — a real directory, not a symlink),
+   not `npm link`-ed to the repo. `npm link` was re-run in this session to restore
+   the linked-repo dev setup. Once re-linked, all three resolution paths —
+   `DREAMCONTEXT_CLI` override (set via launchctl to `dist/index.js`), the global
+   (npm-linked to the same `dist/`), and the freshly-rebuilt bundled fallback —
+   point at the same fresh dist. The stale-dist symptom (app serving an older dist)
+   manifests on user machines with a separately installed, stale global CLI.
    **Verified on dev**: a launched `.app` spawns
    `node <nvm>/bin/dreamcontext dashboard …` (the GLOBAL CLI), so server /
    dashboard / route / all `dist/` logic stays fresh via the existing CLI
@@ -638,14 +638,17 @@ A full interactive Claude Code terminal embedded in the Sleepy page of the dashb
 ### Architecture
 
 ```
-GET /api/agent/capabilities  →  { available: true }  (DREAMCONTEXT_DESKTOP gate)
-GET /api/agent/capabilities  →  { available: false } (npm/browser build)
+GET /api/agent/capabilities  →  { desktop, embeddedTerminal, openTerminal, nodePty, claudeCli, npm }
+  (DREAMCONTEXT_DESKTOP gate; nodePty/claudeCli/npm probed via $SHELL -ilc for PATH parity with PTY)
+
+POST /api/agent/install { target: 'claude'|'pty' }  →  { ok, runId }
+GET  /api/agent/install/status?id=<runId>           →  { state, output }
 
 WS /api/agent/terminal?vault=<name>&bypass=<bool>
   ← loopback-only (strict remoteAddress check)
   → node-pty: $SHELL -ilc 'exec claude [--dangerously-skip-permissions]'
        cwd = vault project root
-  ← AgentTerminal.tsx (xterm.js + @xterm/addon-webgl + @xterm/addon-fit)
+  ← AgentSurface.tsx (xterm.js + @xterm/addon-webgl + @xterm/addon-fit)
 ```
 
 ### Key decisions
@@ -656,15 +659,19 @@ WS /api/agent/terminal?vault=<name>&bypass=<bool>
 
 **bypassPermissions (default OFF):** The terminal runs real `claude` with full file-write capability. The bypass flag is opt-in; when armed, a standing orange warning chip is shown and the WS query param `bypass=true` passes `--dangerously-skip-permissions` to the claude spawn. Read-only Chat (Phase 3, `--permission-mode plan`) is always available and unaffected.
 
+**Readability fix — minimumContrastRatio 4.5 + per-theme ANSI ramp:** `readXtermTheme()` originally mapped the 16 ANSI slots straight to design tokens, which inverted luminance in light mode (ANSI black→light background colour, ANSI white→dark foreground colour) and made dim grays too light in dark mode. Combined with `minimumContrastRatio: 1` (contrast net deliberately OFF "to keep the palette exact"), Claude's TUI blocks that pair a default foreground with an ANSI 7/8 background fill collapsed to same-luminance-on-same-luminance → unreadable in both themes. Fix: `minimumContrastRatio: 4.5` (xterm auto-lifts any too-low-contrast foreground — mechanism-independent guarantee) + a conventional per-theme grayscale ANSI ramp (slot 0=darkest…slot 15=lightest, tuned per theme so block fills blend). Lesson: in an embedded TUI, readability > exact brand-colour fidelity; never set `minimumContrastRatio` to 1 when hosting ANSI output you don't control.
+
+**In-app prerequisite installer:** `GET /api/agent/capabilities` now reports `claudeCli`, `nodePty`, and `npm`, each probed via `$SHELL -ilc` matching the PTY spawn's PATH (`claude` commonly lives in `~/.local/bin` sourced only by `~/.zshrc`; a non-interactive `-lc` shell won't source it). `POST /api/agent/install { target: 'claude'|'pty' }` + `GET /api/agent/install/status?id=` mirror the Sleepy capture-run pattern: in-memory `installRuns` Map, 10-min TTL prune, 5-min watchdog, login-shell spawn. Targets: `claude` → `npm install -g @anthropic-ai/claude-code`; `pty` → `npm install node-pty@^1.1.0 --no-save` into the CLI's own package root (nearest ancestor `package.json` walking up from `process.argv[1]`, so node-pty resolves from the bundled dist exactly as `import('node-pty')` does), then `ensurePtyHelperExecutable()` (`chmod +x` all prebuilt spawn-helpers) and bust the memoized `ptyAvailable` cache so the next capabilities check reports ready without a relaunch. `AgentSurface.tsx` `Prereqs` component lists missing prerequisites with one-click Install + live log tail + auto re-check; Start-agent gated on BOTH `embeddedTerminal` AND `claudeCli`. Routes in `src/server/routes/agent-terminal.ts`, registered in `src/server/index.ts` and added to `VAULT_AGNOSTIC_PREFIXES`. Desktop-gated, loopback-only, closed target whitelist (bad target → 400).
+
 **Drag-to-split:** Dragging one agent tab onto another (or onto the terminal body) creates a side-by-side split layout. The drag-over handler gates `preventDefault()` on `dataTransfer.types` (available during dragover), not on React state (not settled on first hover). `⌘D` and the `⊟` button also split.
 
 ### Key files
 
-- `src/server/routes/agent-terminal.ts` — `attachAgentTerminal(server)`: WS upgrade + node-pty spawn; `GET /api/agent/capabilities`; `POST /api/agent/open-terminal` (osascript fallback for external terminal).
-- `src/server/index.ts` — `attachAgentTerminal(server)` wired at bottom.
-- `dashboard/src/components/sleepy/AgentTerminal.tsx` — xterm.js + `@xterm/addon-webgl` + `@xterm/addon-fit`; `readXtermTheme()` maps design tokens to xterm theme; dynamic Sometype Mono font load before `term.open()`; drag-to-split logic.
-- `dashboard/src/components/sleepy/AgentTerminal.css`.
-- `dashboard/src/pages/SleepyPage.tsx` — `mode: 'search' | 'ask' | 'agent'` tabs; `<AgentTerminal />` rendered in agent mode. **AgentTerminal hoisted above `App.tsx` page switch.**
+- `src/server/routes/agent-terminal.ts` — `attachAgentTerminal(server)`: WS upgrade + node-pty spawn; `GET /api/agent/capabilities` (now includes `claudeCli`/`nodePty`/`npm`); `POST /api/agent/install` / `GET /api/agent/install/status` (in-app prereq installer); `POST /api/agent/open-terminal` (osascript fallback for external terminal).
+- `src/server/index.ts` — `attachAgentTerminal(server)` wired at bottom; install routes registered in `VAULT_AGNOSTIC_PREFIXES`.
+- `dashboard/src/components/sleepy/AgentSurface.tsx` — xterm.js + `@xterm/addon-webgl` + `@xterm/addon-fit`; `readXtermTheme()` with `minimumContrastRatio: 4.5` + per-theme ANSI grayscale ramp; `Prereqs` component (Setup panel); dynamic Sometype Mono font load before `term.open()`; drag-to-split logic.
+- `dashboard/src/components/sleepy/AgentTerminal.css` (stylesheet; filename retained as-is).
+- `dashboard/src/pages/SleepyPage.tsx` — `mode: 'search' | 'ask' | 'agent'` tabs; `<AgentSurface />` rendered in agent mode. **AgentSurface hoisted above `App.tsx` page switch.**
 
 ### Desktop dev workflow note
 
@@ -678,7 +685,9 @@ Do NOT use `⌘R` (refresh): WKWebView's document cache retains the OLD bundle a
 
 **Last verified: 2026-06-29 (v0.10.0).** Version rename/delete dashboard feature was built (JS-only change), built via `npm run build`, and tested by ⌘Q + reopen — no Tauri rebuild required and the new routes were live immediately. The `-ilc` fix was baked in simultaneously via `tauri build` + `dreamcontext app install` as part of the v0.10.0 release.
 
-**Dev-machine empirical note (2026-06-29):** On the development machine the `DREAMCONTEXT_CLI` launchctl override was set to the repo's `dist/index.js`, AND the global CLI was `npm link`-ed to the same repo. So all three resolution paths (`DREAMCONTEXT_CLI` override, global, bundled fallback) pointed at the same fresh dist. The stale-dist symptom (app serving an older dist than expected) manifests on user machines with a separately installed/stale global CLI — not reproducible in the linked-repo dev setup.
+**Dev-machine empirical note (corrected 2026-06-29):** At the start of this session the dev machine's global CLI was a **separate installed copy** (`<nvm>/lib/node_modules/dreamcontext` — a real directory, not a symlink), NOT `npm link`-ed to the repo. `npm link` was re-run in this session to restore the linked-repo dev setup. **npm-linked dev footgun:** even when the global IS npm-linked to the repo, the embedded terminal silently downgrades to "Open in Terminal" unless (a) `node-pty` is installed in the repo's `node_modules` (it is an optional dep — a plain `npm install` can skip it) AND (b) its prebuilt spawn-helper has `+x` (the tarball ships `-rw-r--r--` → `posix_spawnp failed` at runtime). `ensurePtyHelperExecutable()` restores `+x` at runtime; the in-app installer's `pty` target handles the missing-module case from the UI. The stale-dist symptom (app serving an older dist) is a separate concern — manifests on user machines with a separately installed, stale global CLI.
+
+Feature PRD: `_dream_context/core/features/in-app-agent-terminal.md`.
 
 ## Status / deferred
 
