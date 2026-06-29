@@ -19,12 +19,12 @@ description: >-
   via display:none hoist above App.tsx page switch; bypassPermissions opt-in;
   drag-to-split; desktop-only DREAMCONTEXT_DESKTOP gate; dev-workflow note: only
   Rust/lib.rs changes need tauri build, dashboard changes just need npm run build +
-  app relaunch), the Launcher per-project status indicator (green/yellow/red,
-  upgrade-vs-update distinction), the content-scoped drift nag (asset-drift.ts
-  computeUsedAssetsChanged + asset-drift-cache.ts cacheConfidentlyClean, detached
-  refresh-asset-drift hook, fails-open suppression gate), the ensure-dashboard
-  app-installed auto-open suppression (readAppManifest != null exit), the
-  interactive federation graph (react-force-graph-2d, read-only violet edges,
+  app relaunch), find_global_cli -ilc fix SHIPPED v0.10.0 (empirical note: dev
+  machine had both -lc and -ilc resolve nvm CLI because global is npm-linked to repo,
+  so all three resolution paths pointed at same fresh dist), the Launcher per-project
+  status indicator (green/yellow/red, upgrade-vs-update distinction), the
+  content-scoped drift nag, the ensure-dashboard app-installed auto-open suppression,
+  the interactive federation graph (react-force-graph-2d, read-only violet edges,
   drag-to-connect, active-edge particles), brain-settings server persistence
   (vault-scoped .brain-settings.json), and the Federation Settings panel redesign
   (plain-language explainers, direction labels).
@@ -34,7 +34,7 @@ tags:
   - domain
   - onboarding
   - topic:federation
-pinned: false
+pinned: true
 created: '2026-06-13'
 updated: '2026-06-29'
 released_version: v0.8.6
@@ -222,9 +222,24 @@ ad-hoc signing already satisfies Apple Silicon's must-be-signed rule). Two parts
 
 1. **Thin-shell pivot** (`lib.rs` `find_global_cli` + `resolve_cli`). The app
    PREFERS the globally-installed, auto-upgrading CLI over its bundled `dist/`.
-   Resolution order: `DREAMCONTEXT_CLI` env → global (`$SHELL -lc 'command -v
-   dreamcontext'`, same login-shell trick as `find_node`) → bundled resource →
-   dev cwd. **Verified**: a launched `.app` spawns
+   Resolution order: `DREAMCONTEXT_CLI` env → global → bundled resource →
+   dev cwd. **v0.10.0 fix (SHIPPED)**: `find_global_cli` was changed from
+   `$SHELL -lc 'command -v dreamcontext'` to `$SHELL -ilc 'command -v
+   dreamcontext'` (interactive login shell, `lib.rs:215`). The `-i` flag sources
+   `~/.zshrc` so nvm/mise/volta-managed CLIs are visible to the app even when
+   launched from Finder or Spotlight. This fix shipped via `tauri build` +
+   `dreamcontext app install` in v0.10.0.
+   **Empirical nuance (v0.10.0 dev machine)**: On the development machine BOTH
+   `-lc` and `-ilc` resolved the nvm `dreamcontext`, and the global CLI is
+   `npm link`-ed directly to the repo (`<nvm>/bin/dreamcontext →
+   ../lib/node_modules/dreamcontext/dist/index.js`). As a result all three CLI
+   resolution paths — `DREAMCONTEXT_CLI` override (set via launchctl to
+   `dist/index.js`), the global (npm-linked to the same `dist/`), and the
+   freshly-rebuilt bundled fallback — pointed at the same fresh dist during
+   testing. The stale-dist symptom was therefore NOT reproducible on the dev
+   machine; it manifests on user machines where the global CLI is a separate
+   installed copy that hasn't been updated yet.
+   **Verified on dev**: a launched `.app` spawns
    `node <nvm>/bin/dreamcontext dashboard …` (the GLOBAL CLI), so server /
    dashboard / route / all `dist/` logic stays fresh via the existing CLI
    auto-upgrade with NO app rebuild. ~95% of changes ride this; the bundled copy
@@ -269,9 +284,11 @@ fires on `v*` tags. Pipeline steps:
 
 ### Homebrew-vs-nvm CLI resolution in the app
 
-`ensureCliInstalled` probes `$SHELL -lc 'command -v dreamcontext'`. On a machine with BOTH Homebrew and nvm, Homebrew appears earlier in the login-shell PATH than nvm — so the probe resolves the Homebrew global, and `npm install -g` also targets Homebrew. If a developer updated a different (nvm-managed) global CLI, the app-spawned server runs the OLDER Homebrew copy. This explained a "stale dashboard" bug during development: the app was serving an older Node server build than expected.
+**`find_global_cli` (Rust, `lib.rs:215`) — UPDATED to `-ilc` in v0.10.0.** This is the primary resolution path for the app's server spawning. It now uses `$SHELL -ilc 'command -v dreamcontext'` (interactive login shell) so nvm/mise/volta-managed CLIs are visible.
 
-**Fix / mitigation:** publishing the CLI to npm and having the user's global install sourced from one consistent toolchain (not a mix of brew + nvm) is the real fix. The thin-shell pivot (app prefers global CLI) amplifies this: it's a feature when the global stays fresh, a footgun when two globals diverge.
+**`ensureCliInstalled` (JS, `src/lib/ensure-cli.ts`) — still uses `-lc`.** This is the scaffold helper (run during project onboarding) that checks/installs the global CLI. It uses `$SHELL -lc 'command -v dreamcontext'` (login shell, non-interactive). On a machine with BOTH Homebrew and nvm, Homebrew appears earlier in the login-shell PATH — so the probe resolves the Homebrew global, and `npm install -g` targets Homebrew. If a developer updated a different (nvm-managed) global CLI, the scaffold check resolves the wrong one. This is a known residual gotcha (different from the `find_global_cli` issue which is now fixed).
+
+**Fix / mitigation for `ensureCliInstalled`:** publishing the CLI to npm and having the user's global install sourced from one consistent toolchain (not a mix of brew + nvm) is the real fix. The thin-shell pivot (app prefers global CLI) amplifies this: it's a feature when the global stays fresh, a footgun when two globals diverge.
 
 ### App icon
 
@@ -651,13 +668,17 @@ WS /api/agent/terminal?vault=<name>&bypass=<bool>
 
 ### Desktop dev workflow note
 
-**Dashboard/CSS/React/server-route changes do NOT need a Tauri rebuild.** The app's Rust shell spawns the global CLI (`find_global_cli` → `$SHELL -lc 'command -v dreamcontext'`) and serves this repo's `dist/` on a random loopback port. The fast loop:
+**Dashboard/CSS/React/server-route changes do NOT need a Tauri rebuild.** The app's Rust shell spawns the global CLI (`find_global_cli` → `$SHELL -ilc 'command -v dreamcontext'`, `-ilc` fix shipped v0.10.0) and serves this repo's `dist/` on a random loopback port. The fast loop:
 1. `npm run build` (builds dashboard → dist/dashboard, then CLI → dist/index.js via tsup)
 2. **⌘Q + reopen the desktop app** (new random port → new origin → empty WKWebView cache → serves the freshly built dist)
 
 Do NOT use `⌘R` (refresh): WKWebView's document cache retains the OLD bundle at the same loopback port. A new launch picks a new port, bypassing the cache entirely.
 
 **Only Rust/lib.rs changes require** a full `tauri build` + `dreamcontext app install` (rebuilds the native Rust binary). Examples: changes to `NSPanel` behaviour, `find_global_cli`, `apply_sleepy_enabled`, new Tauri commands.
+
+**Last verified: 2026-06-29 (v0.10.0).** Version rename/delete dashboard feature was built (JS-only change), built via `npm run build`, and tested by ⌘Q + reopen — no Tauri rebuild required and the new routes were live immediately. The `-ilc` fix was baked in simultaneously via `tauri build` + `dreamcontext app install` as part of the v0.10.0 release.
+
+**Dev-machine empirical note (2026-06-29):** On the development machine the `DREAMCONTEXT_CLI` launchctl override was set to the repo's `dist/index.js`, AND the global CLI was `npm link`-ed to the same repo. So all three resolution paths (`DREAMCONTEXT_CLI` override, global, bundled fallback) pointed at the same fresh dist. The stale-dist symptom (app serving an older dist than expected) manifests on user machines with a separately installed/stale global CLI — not reproducible in the linked-repo dev setup.
 
 ## Status / deferred
 

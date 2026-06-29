@@ -1,5 +1,58 @@
 [
   {
+    "date": "2026-06-29",
+    "type": "chore",
+    "scope": "release",
+    "description": "Released v0.10.0 to both distribution channels. npm publish of 0.10.0 is live on the registry. The GitHub desktop-release CI workflow (macos-14, .github/workflows/desktop-release.yml) built and published the v0.10.0 GitHub Release with the ad-hoc deep-signed dreamcontext-beta_0.10.0_aarch64.app.tar.gz (29.3 MB) and accompanying .sha256 artifact. The workflow derives the app version from the git tag (VERSION=tag minus v prefix), so tauri.conf.json must stay in sync for the internal .app version to match. RELEASES.json v0.10.0 status set to released, date 2026-06-29. v0.11.0 opened as the new active planning milestone (desktop stale-dist fix, task-derived roadmap, excalidraw card-overflow fix, web read-only public surface).",
+    "breaking": false,
+    "summary": "v0.10.0 released: npm publish live + GitHub desktop-release CI published v0.10.0 .app",
+    "references": [
+      "commit:6638cb5"
+    ]
+  },
+  {
+    "date": "2026-06-29",
+    "type": "feat",
+    "scope": "sleepy",
+    "description": "Rebuilt AgentSurface.tsx and AgentTerminal.css for native macOS quality UX. User pain points fixed first: (1) Close/restart now works on first click by consuming the mousedown event before the blur handler fires, preventing the click-twice-to-close issue. (2) A native-style confirmation sheet appears before ending a still-running Claude session (Enter to confirm, Esc to cancel); already-ended sessions close instantly without confirmation. Additional UX polish: always-visible active-tab close button (previously only appeared on hover, so it was undiscoverable); middle-click closes a tab; bigger hit targets on all interactive controls; an ended-session pane shows a prominent Reconnect button instead of a tiny hover icon; persistent split-pane headers show the pane label at all times so users know which pane they are acting on; double-click renames a tab inline; status dots in the tab strip (green/amber/red) encode live/idle/ended state at a glance. A11y: added keyboard-navigable confirm dialog; reduced-motion media query skips animations.",
+    "breaking": false,
+    "summary": "Rebuild Agent section UX: native confirmation sheet, bigger hit targets, middle-click close, status dots, reconnect overlay",
+    "references": [
+      "commit:6638cb5",
+      "file:dashboard/src/components/sleepy/AgentSurface.tsx",
+      "file:dashboard/src/components/sleepy/AgentTerminal.css"
+    ]
+  },
+  {
+    "date": "2026-06-29",
+    "type": "fix",
+    "scope": "desktop",
+    "description": "Fixed find_global_cli in desktop/src-tauri/src/lib.rs to use an interactive login shell (-ilc) instead of the prior non-interactive form. A non-interactive shell skips ~/.zshrc, making nvm-managed binaries (including the dreamcontext CLI itself) invisible to the Finder-launched Tauri app. The -ilc flag forces rc-file sourcing so the full user PATH is available at app launch time. Also bumped desktop/src-tauri/tauri.conf.json from 0.9.2 to 0.10.0, which was stale; the built .app now reports the correct version in About and Sparkle update checks. Both fixes shipped in the v0.10.0 desktop release: the GitHub CI workflow (desktop-release.yml, macos-14 runner) built, deep-signed, and published dreamcontext-beta_0.10.0_aarch64.app.tar.gz (29.3 MB) + .sha256 to the GitHub Release.",
+    "breaking": false,
+    "summary": "find_global_cli uses -ilc so nvm-installed CLI is visible; tauri.conf.json bumped to 0.10.0",
+    "references": [
+      "commit:6638cb5",
+      "file:desktop/src-tauri/src/lib.rs",
+      "file:desktop/src-tauri/tauri.conf.json"
+    ]
+  },
+  {
+    "date": "2026-06-29",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "Add rename and delete controls to every row of the Versions popover in the dashboard (VersionsPopover.tsx). PATCH /api/releases/:version was extended to support rename: it rewrites the RELEASES.json entry, re-points every task whose version field held the old string, moves the active-planning pointer if needed, returns 409 on a name collision, and supports unregistered ghost versions (derived from tasks with no RELEASES.json entry) with no-op on the absent entry. A new DELETE /api/releases/:version implements warn-and-clear semantics: the entry is dropped, any task referencing it has its version field cleared (task body is preserved), and the active-planning pointer is also cleared. A shared repointTasksVersion() helper in changelog.ts centralises the re-pointing logic across rename and delete. New React hooks useRenameVersion and useDeleteVersion wire the backend into the popover. Nine focused unit tests in tests/unit/releases-rename-delete-route.test.ts cover rename/ghost/collision/active-move and delete/ghost/active-clear/404 cases. Ghost-cleanup session also re-pointed two 0.9.2 typo tasks to the real v0.9.2 and cleared the v0.1.0 ghost.",
+    "breaking": false,
+    "summary": "In-app version rename and delete: popover controls + PATCH-rename/DELETE routes with task re-pointing",
+    "references": [
+      "commit:6638cb5",
+      "file:src/server/routes/changelog.ts",
+      "file:src/server/index.ts",
+      "file:dashboard/src/components/tasks/VersionsPopover.tsx",
+      "file:dashboard/src/hooks/useVersions.ts",
+      "file:tests/unit/releases-rename-delete-route.test.ts"
+    ]
+  },
+  {
     "date": "2026-06-28",
     "type": "fix",
     "scope": "dashboard",

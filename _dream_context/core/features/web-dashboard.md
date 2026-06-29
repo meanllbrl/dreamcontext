@@ -18,6 +18,7 @@ related_tasks:
   - knowledge-diagram-nesting
   - feat-dashboard-sprint-aware-version-filter-current-completed-actions-status-sort
   - feat-dashboard-redesign-tasks-board-saved-views-with-shared-local-persistence
+  - dashboard-version-rename-and-delete-controls
 ---
 
 ## Why
@@ -43,6 +44,8 @@ Users need a visual interface to manage agent context without using the terminal
 - [x] As a user, I want to view feature PRDs with all their sections (Why, User Stories, Acceptance Criteria, etc.) so that I can review feature specs
 - [x] As a user, I want to manage planning versions alongside released versions in a Version Manager so that I can track what's coming next
 - [x] As a user, I want to promote a planning version to released from the Version Manager so that I can track release milestones
+- [x] As a user, I can rename a version from the Versions popover (registered or ghost) so that I can normalize naming inconsistencies without CLI file edits; all tasks re-point automatically and the active-sprint pointer follows.
+- [x] As a user, I can delete a registered version from the Versions popover with a confirmation dialog that warns how many tasks will be cleared (warn-and-clear policy: tasks kept, version field nulled), so I can clean up stale releases without orphaning tasks.
 - [ ] As a user, I want all manual changes I make in the dashboard to be recorded in the sleep file so that the agent consolidates them during the next sleep cycle
 - [ ] As a user, I want light and dark mode (with system preference detection) so that the UI matches my OS settings
 - [ ] As a user, I want multi-language support (English initially, i18n-ready) so that the dashboard can be localized in the future
@@ -121,6 +124,15 @@ Users need a visual interface to manage agent context without using the terminal
 - [x] `GET /api/releases/active` returns `{ active: string | null }` (registered before `:version` route to prevent segment capture); `PUT /api/releases/active` accepts `{ version: string | null }` — null/empty clears; a planning entry is lazily created for an unregistered version name; 409 on an already-released version; records a dashboard change.
 - [x] `useActiveVersion`, `useSetActiveVersion`, `useCompleteVersion` hooks; `VersionFilter.tsx/.css` wired through `TaskFilters` + `KanbanBoard` (versionItems join of task version strings + RELEASES + active).
 - [x] `TaskCustomFields` component renders custom field values in `TaskDetailPanel`; `CustomFieldInput` provides type-appropriate controls (text, number, date, select); `AddCustomFieldForm` for adding new field defs; all wired to task `custom_fields:` frontmatter.
+
+### Version Rename + Delete Controls (v0.10.0)
+- [x] Every row in the Versions popover has an **✎ rename** inline-edit control and a **🗑 delete** control with a confirm dialog.
+- [x] **Rename** (`PATCH /api/releases/:version` with `{newVersion}`): rewrites the `RELEASES.json` entry key, re-points every task whose `version:` field matches the old string via `repointTasksVersion()`, moves the `.active-version.json` pointer if it pointed at the old name. Returns 409 on a name collision. Works on unregistered ghost versions (re-points tasks only, no RELEASES.json entry to rename).
+- [x] **Delete** (`DELETE /api/releases/:version`): removes the entry from `RELEASES.json`; sets `version: null` on all tasks that pointed at the deleted version (warn-and-clear policy — tasks are NEVER deleted); clears the active-version pointer if it pointed there. Ghost versions (no RELEASES.json entry) clear-and-exit cleanly.
+- [x] Delete confirm dialog surface: counts how many tasks will have their version cleared and surfaces the count ("X tasks will have their version cleared"). `window.confirm`-style consistent with other destructive dashboard controls.
+- [x] `repointTasksVersion(oldVersion, newVersion)` shared helper via `LocalTaskBackend.updateFields` so re-points are journaled (changelog + cloud sync) like any other task field change.
+- [x] 9 route tests covering rename (registered / ghost / collision / active-move / back-compat) and delete (registered+tasks / ghost / active-clear / 404) — all pass; existing release suite still green.
+- [x] `useRenameVersion` and `useDeleteVersion` TanStack Query mutation hooks wired to `VersionsPopover.tsx` and `useVersions.ts`.
 
 ### Tasks Board Redesign — Saved Views + Shared/Local Preferences (v0.10.x)
 - [x] Board rebuilt to the violet design language (from `Board.dc.html`): saved-view tab bar, a combined two-pane Filter menu (per-field include `✓` / exclude `✕`), View-type chip, Group + sub-group chip, Sort chip + direction, Versions **popover** (popup, not a dropdown), and a card Properties chip (toggle which fields show on cards).
@@ -263,6 +275,7 @@ Users need a visual interface to manage agent context without using the terminal
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
 
+- **[2026-06-29]** **Version "ghost" mechanic and rename/delete policy.** An "unregistered version" (ghost) is a string present only on tasks' `version:` frontmatter field with no corresponding entry in `RELEASES.json`; the Versions popover derives ghosts live by joining task version strings against RELEASES. Ghosts cannot be deleted as records (there is no record); "delete" means finding all tasks behind the ghost and clearing their `version:` field. Rename on a ghost re-points tasks only. Rename on a registered version additionally renames the RELEASES.json key and moves the active-version pointer. **Delete policy**: tasks are NEVER deleted; their `version:` field is set to `null` (warn-and-clear). The rename/delete backend uses `repointTasksVersion()` which goes through `LocalTaskBackend.updateFields`, so changes are journaled and synced like any other task edit. Route registration order matters: `PATCH /api/releases/:version` must be registered BEFORE `GET/PUT /api/releases/:version` would otherwise matter — but the rename PATCH extends the existing PATCH handler, so no ordering issue. 409 on collision guard prevents creating a duplicate key.
 - **[2026-06-28]** **Sleep page redesign: mood-driven mascot + unified cloud card.** `SleepPage.tsx` redesigned to lead with a mood-driven Sleepy mascot (`getSleepMood(debt)`: awake ≤6, drowsy 7-9, asleep ≥10; Zzz float + level-tinted aura). The standalone "Sleep cloud" card is merged into the hero card as a continuous section (hairline `border-top` divider, matching horizontal padding, faint violet wash) — no second card chrome. The at-a-glance `12 ITEMS` count moved to the hero headline as a pill. Note: this Sleepy mascot is the DASHBOARD version (`SleepPage.tsx`); the Sleepy notch mascot (`SleepyMascot.tsx`) is the coded animated gem in the notch capture panel.
 - **[2026-06-28]** **Board toolbar responsive overflow:** `BoardToolbar` implements `scrollWidth > clientWidth` shrink-to-fit via `ResizeObserver`; collapses View/Group/Versions/Properties (in that priority order, Properties first) into a `⋯ More` chip. `shell-main` gained `min-width: 0` (was `auto`) to prevent the nowrap toolbar from forcing the board wider than the window. Root cause of the prior overflow bug: `.shell-main { flex: 1 }` with the default `min-width: auto` refused to shrink below its content's min-content width (~1100px toolbar).
 - **[2026-06-28]** **Kanban drag-flicker root cause (WKWebView).** The board's `dragOverKey` state oscillated because: (1) inserting the "Drop to move here" silhouette at column top shifts cards → triggers `dragleave` on the column boundary; (2) WKWebView reports `relatedTarget = null` mid-drag → `!contains(null)` always true → key cleared spuriously. Fix: remove per-column `onColumnDragLeave`; clear `dragOverKey` only at the board-row container level (with a `relatedTarget !== null` guard). Drag-end + drop still call `endDrag()` to reliably clear.
@@ -326,6 +339,10 @@ Users need a visual interface to manage agent context without using the terminal
 
 ### API Endpoints
 ~36 endpoints covering: tasks (5 + 3 new: members, provision, token-status, token), sleep (2), core (3), knowledge (3), features (2), changelog (1), releases (4 — list/show/add + active GET/PUT), health (1), config (2 — GET+PATCH), packs (1), version-check (1), vaults (1), council (3), taxonomy (1 — read-only GET), task-overrides (5 — schema, doc GET/PUT, field upsert/remove).
+
+New in v0.10.0 (version rename + delete):
+- `PATCH /api/releases/:version` — extended to accept `{ newVersion }`: renames the entry in RELEASES.json, re-points all tasks, moves active-version pointer; 409 on collision; works on ghosts (task re-point only).
+- `DELETE /api/releases/:version` — warn-and-clear: removes RELEASES.json entry, sets `version: null` on all referencing tasks, clears active-version pointer if it pointed there.
 
 New in v0.10.0:
 - `GET /api/releases/active` — returns `{ active: string | null }` (current sprint)
@@ -458,6 +475,12 @@ All mutating endpoints call recordDashboardChange() except `PATCH /api/config` (
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-06-29 - In-app version rename + delete (shipped v0.10.0)
+- `PATCH /api/releases/:version` extended: accepts `{newVersion}` — renames RELEASES.json entry, re-points all tasks via `repointTasksVersion()`, moves active-version pointer; 409 on collision; works on ghost versions (task re-point only).
+- `DELETE /api/releases/:version`: removes entry, clears `version:` on referencing tasks (warn-and-clear, tasks never deleted), clears active-version pointer.
+- `VersionsPopover.tsx`: every version row now has ✎ rename (inline edit) + 🗑 delete (with task-count confirm dialog).
+- `useRenameVersion` + `useDeleteVersion` hooks in `useVersions.ts`. 9 new route tests green.
 
 ### 2026-06-28 - Sleep page redesign + Council redesign + board responsive toolbar + UX polish
 - Sleep page: mood-driven Sleepy mascot (`getSleepMood(debt)`: awake/drowsy/asleep) with level-tinted aura and Zzz. Sleep cloud + hero merged into one unified card (hairline divider).

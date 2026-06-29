@@ -29,6 +29,10 @@ Developers using dreamcontext need a fast, in-app way to query their project bra
 - [x] As a user, the Sleepy view is the first item in the Workspace navigation and the default landing page, so it is always one click away.
 - [x] As a user, I can ask a follow-up question in a multi-turn chat and get Claude's answer grounded in my project context, so that I get explanations and reasoning, not just search hits. (Phase 3 — shipped)
 - [x] As a power user, I can open an embedded Agent terminal in the app and run an interactive Claude Code session against this vault, with session persistence across page navigation and a bypass-permissions opt-in toggle. (Phase 4, beta — shipped)
+- [x] As a user, closing or restarting a live Claude session shows a native confirmation sheet so I never accidentally kill a running task without a chance to cancel. (Phase 4 UX — shipped)
+- [x] As a user, each split pane has a persistent header (label, status dot, restart, close) so I always know which pane I am acting on. (Phase 4 UX — shipped)
+- [x] As a user, I can double-click a tab to rename it so I can label agent sessions meaningfully. (Phase 4 UX — shipped)
+- [x] As a user, an ended session shows a prominent Reconnect card overlaid on the dead pane so I never hunt for a tiny icon. (Phase 4 UX — shipped)
 
 ## Acceptance Criteria
 
@@ -80,8 +84,23 @@ Developers using dreamcontext need a fast, in-app way to query their project bra
 - [x] Sometype Mono font loaded and committed before `term.open()` so WebGL glyph atlas builds with correct cell metrics (fixes thin/stretched text rendering).
 - [x] Agent tab selection persists across Sleepy tab navigation (Search/Ask/Agent); switching pages and returning restores the last active Sleepy tab.
 
+### Shipped — Phase 4 UX Rebuild: Agent Section polish (2026-06-29, `AgentSurface.tsx`)
+- [x] **First-click close reliability**: close/restart controls on tabs and panes call `stopPropagation` + `preventDefault` on `mousedown` so drag on a `draggable` tab does not eat the click. Hit targets enlarged (tab ✕ 16→20px, pane buttons 18→24px). Active tab's ✕ always visible (no hover-hunt).
+- [x] **Middle-click close**: middle-click on a tab closes it (native terminal muscle-memory).
+- [x] **Confirmation sheet before killing a live session**: closing or restarting a tab/pane where Claude is still running (`status === 'open'`) surfaces a native-style `ConfirmRequest` dialog ("End this session?"; Enter confirms, Esc/backdrop-click cancels). Already-ended sessions tear down instantly with no nag. Multi-pane tabs state the number of live sessions at stake.
+- [x] **`⌘W` guarded close**: keyboard close routes through the same confirm path.
+- [x] **Persistent split-pane headers**: each split pane has a sticky header (label · status dot · restart · close) so the focused pane is always identifiable. Focused pane brightens via a CSS `data-focused` attribute.
+- [x] **Status dots**: green = live/open, amber (pulsing) = connecting, red = ended — visible at all times in both tab strip and pane headers.
+- [x] **Double-click tab to rename**: inline `<input>` with glow ring; Enter or blur commits, Esc cancels without saving.
+- [x] **Active-tab auto-scroll**: the active tab auto-scrolls into view in the tab strip when switched.
+- [x] **Reconnect overlay on ended panes**: a centered card ("Session ended → ↻ Reconnect / Close pane") replaces the dead terminal area, discoverable without hunting for a small hover icon.
+- [x] **Accessibility**: `role="alertdialog"`, `aria-modal`, `aria-label` on the confirm dialog; `aria-pressed` on tab close; `prefers-reduced-motion` guard disables all pulse/animation keyframes for the tab strip and pane headers.
+- [x] **Tab strip native polish**: active tab lifted with accent top-edge + violet wash; `border-radius` + `overflow: clip` so items never bleed.
+
 ## Constraints & Decisions
 
+- **[2026-06-29]** **Agent terminal UX — confirmation-sheet scope rule.** The confirm sheet fires ONLY when the session `status === 'open'` (Claude still running). Already-ended sessions (`status === 'closed'`) tear down instantly. This prevents nag fatigue when the user is cleaning up a finished terminal. For multi-pane tabs, the tab-close confirm counts live sessions (`liveCount()`) and surfaces the number. `⌘W` is routed through the same `askClosePane` / `askCloseTab` guarded path so keyboard shortcuts are equally safe.
+- **[2026-06-29]** **Close-button drag-eat fix (root cause).** The tab strip renders its items with `draggable="true"` for drag-to-reorder. A `mousedown` on a child button (the ✕) starts the drag event sequence and consumes the pointer — the click never fires. Fix: `stopPropagation + preventDefault` on `mousedown` in the close button handler. This applies to EVERY control inside a draggable container; the pattern is reusable. Also enlarging hit targets (16→20px tab ✕, 18→24px pane buttons) so accidental near-miss clicks are rarer.
 - **[2026-06-28]** **Session persistence via display:none hoist above App.tsx page switch.** `App.tsx` uses `switch (nav.page)` returning one mounted page at a time; navigating away unmounts `SleepyPage` → unmounts `AgentTerminal` → kills the WebSocket and PTY. Fix: `AgentTerminal` is instantiated ABOVE the page switch as a single persistent owner, toggled via `display:none` (not unmounted) when Sleepy is not the active page. The xterm DOM node is shown/re-fit on reveal; the WebSocket and PTY stay alive the whole time.
 - **[2026-06-28]** **WebGL renderer (`@xterm/addon-webgl`) with canvas fallback.** GPU-composited text (crisp at any DPR, comparable to Zed). Automatic fallback to the default canvas renderer on WebGL context-loss. Sometype Mono must be pre-loaded before `term.open()` so the WebGL glyph atlas builds with correct cell-width metrics — loading after open produces thin/stretched characters because the atlas is already committed.
 - **[2026-06-28]** **`bypassPermissions` default OFF.** The terminal runs real `claude` with full write access (same as a terminal session). The bypass flag is opt-in with a persistent warning chip when armed. Phase 3 read-only Chat (`--permission-mode plan`) is always available and unaffected by this toggle.
@@ -125,6 +144,29 @@ Developers using dreamcontext need a fast, in-app way to query their project bra
 
 **`dashboard/src/hooks/useSleepyChat.ts`:** manages SSE connection lifecycle, chat history state, streaming partial text accumulation.
 
+### Phase 4 UX — AgentSurface.tsx / AgentTerminal.css
+
+**`AgentSurface.tsx`** (new types and state added):
+- `ConfirmRequest` interface: `{ title, message, confirmLabel, tone: 'danger'|'accent', onConfirm }` — the pending destructive action.
+- `confirm: ConfirmRequest | null` state — when non-null, the overlay renders.
+- `renamingId: string` state — tab being inline-renamed (double-click to enter, blur/Enter to commit, Esc to cancel).
+- `isLive(sid)` / `liveCount(sids[])` — derived from `sessions.current.get(sid)?.status === 'open'`.
+- `askClosePane(tabId, sid)` / `askCloseTab(tabId)` — guard wrappers that either close directly (ended) or raise `confirm`.
+- `commitRename(id, raw)` — trims and sets the tab title.
+- Close/restart buttons: `onMouseDown: stopPropagation+preventDefault` to prevent drag-eat of the click.
+- `⌘W` handler routes through `askCloseTab`.
+- `ConfirmDialog` rendered as a fixed overlay with `role="alertdialog"`, `aria-modal`, `aria-label`; `Escape` and backdrop-click cancel.
+- `PaneFragment` receives a `label` prop; renders a persistent sticky header (label · status dot · restart button · close button). Ended pane renders a `ReconnectCard` overlay instead of the dead terminal.
+
+**`AgentTerminal.css`** (changes):
+- Active tab: accent top-edge (`border-top: 2px solid var(--color-accent)`), violet wash (`--color-accent-soft` background).
+- Tab close button: always visible on active tab; 20px × 20px.
+- Rename input: glow ring on focus.
+- Split-pane header: sticky, `z-index` above terminal; focused pane gets `background: var(--color-surface-raised)`.
+- Status dot CSS classes: `.dot-open` (green), `.dot-connecting` (amber, `@keyframes pulse`), `.dot-closed` (red).
+- Reconnect overlay: centered card, auto-height.
+- `@media (prefers-reduced-motion: reduce)`: pauses all `pulse`/`breath` keyframes.
+
 ## Notes
 
 - The "Ask" name is forward-looking. The current implementation is grounded-extractive (zero LLM); Phase 3 adds real Claude chat. Keep these distinct in product communication.
@@ -134,6 +176,18 @@ Developers using dreamcontext need a fast, in-app way to query their project bra
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-06-29 - Phase 4 Agent UX rebuild (AgentSurface.tsx + AgentTerminal.css)
+- First-click close fix: `stopPropagation`+`preventDefault` on `mousedown` in draggable tab strip; hit targets enlarged (tab ✕ 20px, pane buttons 24px); active tab ✕ always visible.
+- Middle-click tab close.
+- Native-style confirmation sheet before killing a live Claude session (`status=open`); `⌘W` routed through same guard.
+- Persistent split-pane headers (label · status dot · restart · close); focused pane brightens.
+- Status dots: green (live/pulsing amber for connecting/red ended) in tab strip and pane headers.
+- Double-click tab to inline-rename (glowing input, Enter/blur commits, Esc cancels).
+- Active-tab auto-scroll in tab strip.
+- Reconnect overlay card on ended panes (replaces tiny hover icon).
+- a11y: `role="alertdialog"`, `aria-modal`, `aria-label` on confirm; `prefers-reduced-motion` disables all pulse/animation.
+- Build: tsc clean, `npm run build` exit 0; visual render verified via static harness with real stylesheets.
 
 ### 2026-06-28 - Phase 4 shipped: embedded Agent terminal (beta)
 - `AgentTerminal.tsx`: xterm.js + `@xterm/addon-webgl` (GPU renderer, canvas fallback) + node-pty WS bridge (`/api/agent/terminal?vault=&bypass=`).
