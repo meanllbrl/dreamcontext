@@ -240,15 +240,15 @@ Sleep debt accumulates automatically via hooks (per Write/Edit). The SessionStar
 
 | Debt | Level | Required behavior |
 |------|-------|-------------------|
-| 0–3 | Alert | No action |
-| 4–6 | Drowsy | After completing a task, **inform the user and offer** consolidation |
-| 7–9 | Sleepy | At session start, **inform the user and recommend** consolidation before new work |
-| 10+ | Must sleep | **Consolidate now**, before or right after the current task |
+| 0–7 | Alert | No action |
+| 8–13 | Drowsy | After completing a task, **inform the user and offer** consolidation |
+| 14–19 | Sleepy | At session start, **inform the user and recommend** consolidation before new work |
+| 20+ | Must sleep | **Consolidate now**, before or right after the current task |
 
-A ★★★ bookmark or 3+ sessions since last sleep also triggers an advisory.
+A ★★★ bookmark or 5+ sessions since last sleep also triggers an advisory.
 
-**Post-task check (MANDATORY):** after completing any task or major implementation, check debt. If ≥4, tell the user: *"Sleep debt is [N]. I can consolidate now to preserve this work. Want me to run it?"* Never silently finish.
-**Auto-sleep (act without asking):** task completed with debt ≥7, or major implementation finished with debt ≥4.
+**Post-task check (MANDATORY):** after completing any task or major implementation, check debt. If ≥8, tell the user: *"Sleep debt is [N]. I can consolidate now to preserve this work. Want me to run it?"* Never silently finish.
+**Auto-sleep (act without asking):** task completed with debt ≥14, or major implementation finished with debt ≥8.
 
 **The flow (main agent runs this directly — sub-agents can't reliably fan out):**
 1. Tell the user you're consolidating.

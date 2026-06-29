@@ -39,6 +39,7 @@ import { randomUUID } from 'node:crypto';
 import { readSleepState } from '../../cli/commands/sleep.js';
 import {
   consolidationDepth,
+  inspectSleepLock,
   isDestructiveAllowed,
   type ConsolidationDepth,
 } from '../../lib/sleep-consolidation.js';
@@ -77,6 +78,17 @@ function pruneCaptureRuns(): void {
     captureRuns.delete(oldest);
   }
 }
+
+/**
+ * Vault path → capture id of the Sleep consolidation currently running for that
+ * vault. A consolidation is mutually exclusive per vault (it rewrites the shared
+ * .sleep.json + core files); this in-process guard rejects a second desktop
+ * Sleep BEFORE its agent has had a chance to stamp the .sleep.json lock — the
+ * window two rapid clicks would otherwise race through. Cleared when the child
+ * exits. (The .sleep.json lock itself is the cross-process backstop for
+ * session-driven / CLI sleeps.)
+ */
+const sleepJobsInFlight = new Map<string, string>();
 
 /**
  * GET /api/launcher/discover?root=<absPath> — find every dreamcontext project
@@ -726,6 +738,42 @@ export async function handleLauncherCapture(
     }
   }
 
+  // (1.5) Sleep is mutually exclusive per vault. Reject a new Sleep when either
+  // (a) this server already has a Sleep child in flight for this vault (catches
+  // two rapid desktop clicks, before either agent has stamped the lock), or
+  // (b) the vault's .sleep.json already holds a non-stale consolidation lock (a
+  // session-driven or CLI sleep is mid-cycle). A stale lock is ignored — the
+  // spawned agent's `sleep start` will reclaim it.
+  if (mode === 'sleep') {
+    const inFlightId = sleepJobsInFlight.get(cwd);
+    if (inFlightId && captureRuns.get(inFlightId)?.state === 'running') {
+      sendError(
+        res,
+        409,
+        'sleep_in_progress',
+        'A Sleep consolidation is already running for this vault. Wait for it to finish.',
+      );
+      return;
+    }
+    try {
+      const lock = inspectSleepLock(readSleepState(cwd), Date.now());
+      if (lock.locked && !lock.stale) {
+        sendError(
+          res,
+          409,
+          'sleep_in_progress',
+          `A consolidation is already in progress for this vault (started ${lock.startedAt}). ` +
+            'Wait for it to finish before starting another.',
+        );
+        return;
+      }
+    } catch (err) {
+      // Unreadable/absent sleep state must not hard-block a user-requested sleep;
+      // the agent's own `sleep start` remains the cross-process backstop.
+      console.error('[launcher] could not read sleep lock state:', err);
+    }
+  }
+
   // (2) Best-effort enrichment via a headless claude run, TRACKED so the capture
   // bar can show a live spinner + Claude's response. The prompt is passed as the
   // positional `$0` (double-quoted in the script) so the note is never
@@ -741,6 +789,14 @@ export async function handleLauncherCapture(
   const captureId = randomUUID();
   const run: CaptureRun = { state: 'running', output: '', stderr: '', startedAt: Date.now() };
   captureRuns.set(captureId, run);
+  // Claim the per-vault Sleep slot so a concurrent desktop click is rejected by
+  // guard (1.5) until this child exits. Released in every terminal path below.
+  if (mode === 'sleep') sleepJobsInFlight.set(cwd, captureId);
+  const releaseSleepSlot = () => {
+    if (mode === 'sleep' && sleepJobsInFlight.get(cwd) === captureId) {
+      sleepJobsInFlight.delete(cwd);
+    }
+  };
   try {
     const shell = process.env.SHELL || '/bin/zsh';
     let sleepDepth: ConsolidationDepth = 'deep';
@@ -781,8 +837,10 @@ export async function handleLauncherCapture(
       run.state = 'error';
       run.output = `Couldn't start claude: ${err.message}`;
       run.endedAt = Date.now();
+      releaseSleepSlot();
     });
     child.on('close', (code) => {
+      releaseSleepSlot();
       if (run.state !== 'running') return;
       if (code === 0) {
         run.state = 'done';
@@ -798,6 +856,7 @@ export async function handleLauncherCapture(
     run.state = 'error';
     run.output = `Couldn't start claude: ${err instanceof Error ? err.message : 'spawn failed'}`;
     run.endedAt = Date.now();
+    releaseSleepSlot();
   }
 
   sendJson(res, 200, { ok: true, captureId });

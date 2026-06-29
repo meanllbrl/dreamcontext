@@ -84,11 +84,13 @@ describe('sleep (integration)', () => {
   });
 
   it('sleep status shows sessions after adds', () => {
+    // Debt 8 lands in the (rescaled) Drowsy band 8–13.
     run('sleep add 2 Bug fix', tmpDir);
     run('sleep add 3 Arch change', tmpDir);
+    run('sleep add 3 Refactor pass', tmpDir);
 
     const output = run('sleep status', tmpDir);
-    expect(output).toContain('5');
+    expect(output).toContain('8');
     expect(output).toContain('Drowsy');
     expect(output).toContain('Bug fix');
     expect(output).toContain('Arch change');
@@ -184,11 +186,64 @@ describe('sleep (integration)', () => {
     expect(new Date(state.sleep_started_at).getTime()).not.toBeNaN();
   });
 
-  it('sleep start warns when epoch already set', () => {
+  it('sleep start REFUSES a second sleep while a live lock is held (no overwrite)', () => {
+    const first = run('sleep start', tmpDir);
+    expect(first).toContain('Consolidation epoch set');
+
+    const sleepFile = join(ctx, 'state', '.sleep.json');
+    const firstEpoch = JSON.parse(readFileSync(sleepFile, 'utf-8')).sleep_started_at;
+
+    const second = run('sleep start', tmpDir);
+    expect(second).toContain('already in progress');
+    expect(second).toContain('--force');
+    // Refusal must NOT stamp a new epoch — the original lock is preserved intact.
+    expect(second).not.toContain('Consolidation epoch set');
+    const afterEpoch = JSON.parse(readFileSync(sleepFile, 'utf-8')).sleep_started_at;
+    expect(afterEpoch).toBe(firstEpoch);
+  });
+
+  it('sleep start --force takes over a live lock', () => {
     run('sleep start', tmpDir);
-    const output = run('sleep start', tmpDir);
-    expect(output).toContain('already in progress');
+    const output = run('sleep start --force', tmpDir);
+    expect(output).toContain('taking over');
     expect(output).toContain('Consolidation epoch set');
+  });
+
+  it('sleep start auto-reclaims a STALE lock without --force', () => {
+    run('sleep start', tmpDir);
+    // Backdate the lock past the 30m TTL to simulate a crashed sleep.
+    const sleepFile = join(ctx, 'state', '.sleep.json');
+    const state = JSON.parse(readFileSync(sleepFile, 'utf-8'));
+    state.sleep_started_at = new Date(Date.now() - 31 * 60 * 1000).toISOString();
+    writeFileSync(sleepFile, JSON.stringify(state, null, 2));
+
+    const output = run('sleep start', tmpDir);
+    expect(output).toContain('Reclaiming a stale consolidation lock');
+    expect(output).toContain('Consolidation epoch set');
+  });
+
+  it('sleep start REFUSES while another start holds a FRESH stamp lock (closes the TOCTOU race)', () => {
+    // Simulate a concurrent `sleep start` mid-stamp by planting a fresh stamp lock.
+    const stampLock = join(ctx, 'state', '.sleep.start.lock');
+    writeFileSync(stampLock, JSON.stringify({ pid: 999999, at: Date.now() }) + '\n');
+
+    const output = run('sleep start', tmpDir);
+    expect(output).toContain('another `sleep start` is stamping');
+    // No epoch may be stamped while another start owns the stamp mutex.
+    const sleepFile = join(ctx, 'state', '.sleep.json');
+    const epoch = existsSync(sleepFile) ? JSON.parse(readFileSync(sleepFile, 'utf-8')).sleep_started_at : null;
+    expect(epoch).toBeNull();
+  });
+
+  it('sleep start reclaims a STALE stamp lock (a crashed prior stamp) and cleans it up', () => {
+    const stampLock = join(ctx, 'state', '.sleep.start.lock');
+    // Backdate past the 60s stamp-lock TTL to simulate a `sleep start` that died mid-stamp.
+    writeFileSync(stampLock, JSON.stringify({ pid: 999999, at: Date.now() - 120_000 }) + '\n');
+
+    const output = run('sleep start', tmpDir);
+    expect(output).toContain('Consolidation epoch set');
+    // The stamp lock is released on exit — never left behind to wedge the next start.
+    expect(existsSync(stampLock)).toBe(false);
   });
 
   it('sleep done with epoch preserves post-epoch sessions', () => {

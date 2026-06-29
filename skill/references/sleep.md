@@ -8,21 +8,21 @@ Sleep debt accumulates automatically via hooks (per Write/Edit tool use). Hooks 
 
 | Debt | Level | Per-change score | Required behavior |
 |------|-------|------------------|-------------------|
-| 0–3 | Alert | 1–3 changes → +1 | No action |
-| 4–6 | Drowsy | 4–8 changes → +2 | After completing a task: **inform user + offer** consolidation |
-| 7–9 | Sleepy | 9+ changes → +3 | At session start: **inform user + recommend** consolidation before new work |
-| 10+ | Must sleep | — | **Consolidate immediately**, before or right after the current task |
+| 0–7 | Alert | 1–3 changes → +1 | No action |
+| 8–13 | Drowsy | 4–8 changes → +2 | After completing a task: **inform user + offer** consolidation |
+| 14–19 | Sleepy | 9+ changes → +3 | At session start: **inform user + recommend** consolidation before new work |
+| 20+ | Must sleep | — | **Consolidate immediately**, before or right after the current task |
 
-Also triggers an advisory: a **★★★ bookmark** exists (regardless of debt), or **3+ sessions** since last sleep.
+Also triggers an advisory: a **★★★ bookmark** exists (regardless of debt), or **5+ sessions** since last sleep.
 
-Injected directives (SessionStart + every user message via UserPromptSubmit when debt ≥4):
-- Debt ≥10 → "CONSOLIDATION REQUIRED"
-- Debt ≥7 → "CONSOLIDATION RECOMMENDED"
-- Debt ≥4 → offer after the current task
+Injected directives (SessionStart + every user message via UserPromptSubmit when debt ≥8):
+- Debt ≥20 → "CONSOLIDATION REQUIRED"
+- Debt ≥14 → "CONSOLIDATION RECOMMENDED"
+- Debt ≥8 → offer after the current task
 
-**MANDATORY post-task check:** after any task/major implementation, if debt ≥4 tell the user: *"Sleep debt is [N]. I can consolidate now to preserve this work. Want me to run it?"* Never silently finish.
-**Auto-sleep (act without asking):** task completed with debt ≥7; major implementation finished with debt ≥4.
-**Ask first:** debt 4–6 after a task; accumulated small changes; user wrapping up.
+**MANDATORY post-task check:** after any task/major implementation, if debt ≥8 tell the user: *"Sleep debt is [N]. I can consolidate now to preserve this work. Want me to run it?"* Never silently finish.
+**Auto-sleep (act without asking):** task completed with debt ≥14; major implementation finished with debt ≥8.
+**Ask first:** debt 8–13 after a task; accumulated small changes; user wrapping up.
 
 For non-file-change work (architecture discussion, a decision with no edits): `dreamcontext sleep add <score> "<reason>"`.
 

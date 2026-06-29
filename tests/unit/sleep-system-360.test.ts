@@ -293,26 +293,27 @@ describe('sleep 360° — debt scoring & double-count (WS2)', () => {
 });
 
 describe('sleep 360° — debt levels & directive injection (WS2)', () => {
+  // ×2 scale (2026-06-29): Alert 0–7 · Drowsy 8–13 · Sleepy 14–19 · Must Sleep 20+.
   it.each([
-    [3, 'Alert'],
-    [4, 'Drowsy'],
-    [6, 'Drowsy'],
-    [7, 'Sleepy'],
-    [9, 'Sleepy'],
-    [10, 'Must Sleep'],
+    [7, 'Alert'],
+    [8, 'Drowsy'],
+    [13, 'Drowsy'],
+    [14, 'Sleepy'],
+    [19, 'Sleepy'],
+    [20, 'Must Sleep'],
   ] as const)('sleepinessLevel: debt %i → %s (boundary-exact)', (debt, level) => {
     expect(sleepinessLevel(debt)).toBe(level);
   });
 
-  it('session-start prepends a CRITICAL consolidation directive when debt >= 10', () => {
-    const d = getConsolidationDirective(baseState({ debt: 10 }));
+  it('session-start prepends a CRITICAL consolidation directive when debt >= 20', () => {
+    const d = getConsolidationDirective(baseState({ debt: 20 }));
     expect(d).not.toBeNull();
     expect(d).toContain('CONSOLIDATION REQUIRED');
     expect(d).toContain('You MUST inform the user and consolidate NOW.');
   });
 
-  it('session-start prepends a softer advisory when debt >= 7', () => {
-    const d = getConsolidationDirective(baseState({ debt: 7 }));
+  it('session-start prepends a softer advisory when debt >= 14', () => {
+    const d = getConsolidationDirective(baseState({ debt: 14 }));
     expect(d).not.toBeNull();
     expect(d).toContain('CONSOLIDATION RECOMMENDED');
     expect(d).not.toContain('CONSOLIDATION REQUIRED');
@@ -324,12 +325,43 @@ describe('sleep 360° — debt levels & directive injection (WS2)', () => {
     expect(d).toContain('CRITICAL BOOKMARKS NEED CONSOLIDATION');
   });
 
-  it('user-prompt-submit emits a one-line reminder when debt >= 4, silent below 4', () => {
-    expect(userPromptReminder(baseState({ debt: 4 }))).not.toBeNull();
-    expect(userPromptReminder(baseState({ debt: 7 }))).not.toBeNull();
-    expect(userPromptReminder(baseState({ debt: 10 }))).not.toBeNull();
-    expect(userPromptReminder(baseState({ debt: 3 }))).toBeNull();
+  it('user-prompt-submit emits a one-line reminder when debt >= 8, silent below 8', () => {
+    expect(userPromptReminder(baseState({ debt: 8 }))).not.toBeNull();
+    expect(userPromptReminder(baseState({ debt: 14 }))).not.toBeNull();
+    expect(userPromptReminder(baseState({ debt: 20 }))).not.toBeNull();
+    expect(userPromptReminder(baseState({ debt: 7 }))).toBeNull();
     expect(userPromptReminder(baseState({ debt: 0 }))).toBeNull();
+  });
+});
+
+describe('sleep 360° — directive suppression respects the consolidation lock', () => {
+  const FRESH = () => new Date().toISOString(); // locked now → not stale
+  const STALE = () => new Date(Date.now() - 31 * 60 * 1000).toISOString(); // past 30m TTL
+
+  it('a FRESH lock suppresses the consolidation directive (says "already in progress")', () => {
+    const d = getConsolidationDirective(baseState({ debt: 20, sleep_started_at: FRESH() }));
+    expect(d).not.toBeNull();
+    expect(d).toContain('already in progress');
+    expect(d).not.toContain('CONSOLIDATION REQUIRED');
+  });
+
+  it('a FRESH lock silences the user-prompt reminder below the suppression threshold', () => {
+    // debt 8 → reminder is the "in progress" line; debt 7 (< DEBT_DROWSY) → fully silent under a live lock.
+    expect(userPromptReminder(baseState({ debt: 8, sleep_started_at: FRESH() }))).toContain('already in progress');
+    expect(userPromptReminder(baseState({ debt: 7, sleep_started_at: FRESH() }))).toBeNull();
+  });
+
+  it('a STALE lock does NOT suppress — the directive fires through so a crashed sleep cannot wedge the brain', () => {
+    const d = getConsolidationDirective(baseState({ debt: 20, sleep_started_at: STALE() }));
+    expect(d).not.toBeNull();
+    expect(d).toContain('CONSOLIDATION REQUIRED');
+    expect(d).not.toContain('already in progress');
+  });
+
+  it('a STALE lock lets the normal debt reminder fire through', () => {
+    const r = userPromptReminder(baseState({ debt: 14, sleep_started_at: STALE() }));
+    expect(r).not.toBeNull();
+    expect(r).not.toContain('already in progress');
   });
 });
 

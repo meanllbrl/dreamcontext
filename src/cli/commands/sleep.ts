@@ -11,6 +11,7 @@ import { getTaskBackend } from '../../lib/task-backend/index.js';
 import { runMigrations } from '../../lib/migration-runner.js';
 import { readSetupConfig } from '../../lib/setup-config.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
+import { acquireFileLock, releaseFileLock } from '../../lib/file-lock.js';
 import {
   sleepinessLevel,
   sleepinessRange,
@@ -19,6 +20,11 @@ import {
   finalizeSleepState,
   validateSleepAdd,
   consolidationDepth,
+  inspectSleepLock,
+  SLEEP_LOCK_STALE_MS,
+  SLEEP_START_LOCK_STALE_MS,
+  DEBT_SLEEPY,
+  DEBT_MUST_SLEEP,
 } from '../../lib/sleep-consolidation.js';
 
 // ─── Types ─────────────────────────────────────────────────────────────────
@@ -67,6 +73,11 @@ function getSleepPath(root: string): string {
 
 function getSleepHistoryPath(root: string): string {
   return join(root, 'state', '.sleep-history.json');
+}
+
+/** Path to the cross-process `sleep start` STAMP lock (see SLEEP_START_LOCK_STALE_MS). */
+function getSleepStartLockPath(root: string): string {
+  return join(root, 'state', '.sleep.start.lock');
 }
 
 /** Create a fresh default state with no shared references */
@@ -257,9 +268,9 @@ export function registerSleepCommand(program: Command): void {
       const level = sleepinessLevel(state.debt);
       success(`Sleep debt: ${state.debt} (${level})`);
 
-      if (state.debt >= 10) {
-        warn('Must sleep! Debt is 10+. Consolidation needed.');
-      } else if (state.debt >= 7) {
+      if (state.debt >= DEBT_MUST_SLEEP) {
+        warn(`Must sleep! Debt is ${DEBT_MUST_SLEEP}+. Consolidation needed.`);
+      } else if (state.debt >= DEBT_SLEEPY) {
         info('Getting sleepy. Consider consolidating soon.');
       }
     });
@@ -269,57 +280,110 @@ export function registerSleepCommand(program: Command): void {
     .command('start')
     .description('Mark beginning of consolidation (sets epoch for safe clearing)')
     .option('--deep', 'Force a deep consolidation (authorizes destructive knowledge ops)')
-    .action((opts: { deep?: boolean }) => {
+    .option('--force', 'Take over an in-progress consolidation lock (a stuck or parallel sleep)')
+    .action((opts: { deep?: boolean; force?: boolean }) => {
       const root = ensureContextRoot();
-      const state = readSleepState(root);
 
-      if (state.sleep_started_at) {
-        warn(`Consolidation already in progress (started ${state.sleep_started_at}). Overwriting epoch.`);
-      }
-
-      // ALWAYS compute + persist the consolidation depth so it never holds a
-      // stale prior value. With no --deep flag this stores the debt-base depth;
-      // --deep forces it to 'deep' (user-requested). Reset to null by sleep done.
-      const decision = consolidationDepth(state.debt, { userRequestedDeep: !!opts.deep });
-      state.consolidation_depth = decision.depth;
-
-      // Clear any pending migration notices from the previous cycle so the
-      // snapshot note is surfaced exactly once per sleep cycle.
-      state.pendingMigrationNotices = [];
-
-      // Run all pending structural migrations via the versioned registry.
-      const projectRoot = dirname(root);
-      const config = readSetupConfig(projectRoot);
-      const fromVersion = config?.setupVersion ?? '0.0.0';
-      const migResult = runMigrations(root, fromVersion, dreamcontextVersion());
-
-      // Surface 'code' applied summaries to the user and store in state for
-      // the snapshot note (read by generateSnapshot READ-ONLY).
-      const codeNotices: string[] = [];
-      for (const entry of migResult.applied) {
-        if (entry.executor === 'code') {
-          success(`Migration ${entry.version}/${entry.step}: ${entry.summary}`);
-          codeNotices.push(`${entry.version} ${entry.step}: ${entry.summary}`);
-        }
-      }
-      if (codeNotices.length > 0) {
-        state.pendingMigrationNotices = codeNotices;
-      }
-
-      // Surface pending agent task instructions
-      for (const pat of migResult.pendingAgentTasks) {
-        info(
-          `Migration ${pat.version} has a pending agent task (${pat.agentTask.id}). ` +
-          `Run \`dreamcontext migrations pending\` for instructions.`,
+      // STAMP MUTEX: `sleep start` reads state, runs migrations, then stamps the
+      // epoch — a check-then-write that two simultaneous starts could both pass,
+      // each winning the epoch (a proven cross-process race; `writeJsonObject`
+      // is a plain non-atomic write). An atomic O_EXCL lock held only for this
+      // short stamp serializes them: at most one process is inside the body at a
+      // time, so a loser that gets in next sees the winner's epoch and refuses
+      // below. The lock self-heals via SLEEP_START_LOCK_STALE_MS if a stamp ever
+      // crashes. (The persisted `sleep_started_at` epoch — NOT this lock file —
+      // guards the rest of the multi-process, minutes-long consolidation; the
+      // stamp lock is released the instant `sleep start` exits.)
+      const startLockPath = getSleepStartLockPath(root);
+      if (!acquireFileLock(startLockPath, Date.now(), SLEEP_START_LOCK_STALE_MS)) {
+        error(
+          'Consolidation already in progress (another `sleep start` is stamping the epoch right now).',
+          'Wait a moment and retry. To take over a genuinely stuck cycle, run `dreamcontext sleep start --force`.',
         );
+        process.exitCode = 1;
+        return;
       }
 
-      state.sleep_started_at = new Date().toISOString();
-      writeSleepState(root, state);
-      success(`Consolidation epoch set: ${state.sleep_started_at}`);
-      info(`Consolidation depth: ${decision.depth} (source: ${decision.source}) — ${decision.reason}`);
-      if (decision.depth !== 'deep') {
-        info('Light/standard consolidation: do NOT merge/summarize-replace/delete knowledge — flag candidates in the report instead.');
+      try {
+        const state = readSleepState(root);
+
+        // Mutual exclusion: a consolidation rewrites the shared state/.sleep.json
+        // and core files. Two at once corrupt the epoch boundary (`sleep done`
+        // clears only post-epoch sessions) and stomp each other's edits. The epoch
+        // IS the lock — refuse to start a second sleep while one is live. A stale
+        // lock (owning session crashed before `sleep done`) is auto-reclaimed so a
+        // crash never wedges the brain; `--force` overrides a live lock on purpose.
+        const lock = inspectSleepLock(state, Date.now());
+        if (lock.locked && !lock.stale && !opts.force) {
+          const ageMin = Math.max(1, Math.round(lock.ageMs / 60000));
+          error(
+            `Consolidation already in progress (started ${lock.startedAt}, ~${ageMin}m ago).`,
+            'Another session or the desktop Sleep button is consolidating this brain. ' +
+              'Wait for it to finish before starting a new sleep — do NOT dispatch sleep ' +
+              'agents now. To take over a stuck cycle, run `dreamcontext sleep start --force`.',
+          );
+          process.exitCode = 1;
+          return;
+        }
+        if (lock.locked && lock.stale) {
+          const ageMin = Math.round(lock.ageMs / 60000);
+          warn(
+            `Reclaiming a stale consolidation lock (started ${lock.startedAt}, ~${ageMin}m ago — ` +
+              `exceeds the ${SLEEP_LOCK_STALE_MS / 60000}m TTL). The previous sleep likely crashed ` +
+              `without \`sleep done\`. Taking over.`,
+          );
+        } else if (lock.locked && opts.force) {
+          warn(`--force: taking over an in-progress consolidation lock (started ${lock.startedAt}).`);
+        }
+
+        // ALWAYS compute + persist the consolidation depth so it never holds a
+        // stale prior value. With no --deep flag this stores the debt-base depth;
+        // --deep forces it to 'deep' (user-requested). Reset to null by sleep done.
+        const decision = consolidationDepth(state.debt, { userRequestedDeep: !!opts.deep });
+        state.consolidation_depth = decision.depth;
+
+        // Clear any pending migration notices from the previous cycle so the
+        // snapshot note is surfaced exactly once per sleep cycle.
+        state.pendingMigrationNotices = [];
+
+        // Run all pending structural migrations via the versioned registry.
+        const projectRoot = dirname(root);
+        const config = readSetupConfig(projectRoot);
+        const fromVersion = config?.setupVersion ?? '0.0.0';
+        const migResult = runMigrations(root, fromVersion, dreamcontextVersion());
+
+        // Surface 'code' applied summaries to the user and store in state for
+        // the snapshot note (read by generateSnapshot READ-ONLY).
+        const codeNotices: string[] = [];
+        for (const entry of migResult.applied) {
+          if (entry.executor === 'code') {
+            success(`Migration ${entry.version}/${entry.step}: ${entry.summary}`);
+            codeNotices.push(`${entry.version} ${entry.step}: ${entry.summary}`);
+          }
+        }
+        if (codeNotices.length > 0) {
+          state.pendingMigrationNotices = codeNotices;
+        }
+
+        // Surface pending agent task instructions
+        for (const pat of migResult.pendingAgentTasks) {
+          info(
+            `Migration ${pat.version} has a pending agent task (${pat.agentTask.id}). ` +
+            `Run \`dreamcontext migrations pending\` for instructions.`,
+          );
+        }
+
+        state.sleep_started_at = new Date().toISOString();
+        writeSleepState(root, state);
+        success(`Consolidation epoch set: ${state.sleep_started_at}`);
+        info(`Consolidation depth: ${decision.depth} (source: ${decision.source}) — ${decision.reason}`);
+        if (decision.depth !== 'deep') {
+          info('Light/standard consolidation: do NOT merge/summarize-replace/delete knowledge — flag candidates in the report instead.');
+        }
+      } finally {
+        // Release the stamp mutex the moment the stamp completes (success, refuse,
+        // or throw). The durable epoch — not this file — carries the lock onward.
+        releaseFileLock(startLockPath);
       }
     });
 

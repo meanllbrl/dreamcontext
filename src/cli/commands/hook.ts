@@ -9,6 +9,11 @@ import { readSleepState, writeSleepState, bumpKnowledgeAccess } from './sleep.js
 import {
   upsertSessionOnStop,
   appendCompactionRecord,
+  inspectSleepLock,
+  DEBT_DROWSY,
+  DEBT_SLEEPY,
+  DEBT_MUST_SLEEP,
+  RHYTHM_SESSIONS,
   type StopUpsertInput,
 } from '../../lib/sleep-consolidation.js';
 import { DECISION_RE, CORRECTION_RE } from '../../lib/salience.js';
@@ -190,7 +195,8 @@ function sumAssistantTextChars(rec: object): number {
  * a chatty user (≥6 turns), dense assistant output (≥6000 chars), ≥1 decision/
  * correction marker, and ≥2 distinct task slugs touched. Capped at 3.
  *
- * rationale: per-session ceiling stays 3 (levels unchanged at ≤3/≤6/≤9/10+);
+ * rationale: per-session ceiling stays 3 (level thresholds live in
+ * sleep-consolidation.ts: Alert 0–7 / Drowsy 8–13 / Sleepy 14–19 / Must Sleep 20+);
  * this only raises the FLOOR for edit-free-but-dense sessions that the
  * change/tool scorers under-count. Thresholds are first-guess and safe to
  * mis-calibrate because the call site composes them via max() (never lowers an
@@ -398,13 +404,17 @@ function runTscCheckWithConfig(filePath: string, tsconfigPath: string): string |
 // ─── Consolidation Directives ───────────────────────────────────────────────
 
 export function getConsolidationDirective(state: SleepState): string | null {
-  const { debt, bookmarks, sessions_since_last_sleep, sleep_started_at } = state;
+  const { debt, bookmarks, sessions_since_last_sleep } = state;
 
-  // If consolidation is already in progress, suppress all directives to prevent duplicate sleeps
-  if (sleep_started_at) {
-    if (debt >= 4) {
+  // If a consolidation is already in progress, suppress all directives to prevent
+  // duplicate sleeps. A STALE lock (the owning sleep crashed before `sleep done`)
+  // falls through so the brain still gets told to consolidate instead of being
+  // silently wedged forever.
+  const lock = inspectSleepLock(state, Date.now());
+  if (lock.locked && !lock.stale) {
+    if (debt >= DEBT_DROWSY) {
       return [
-        `> Consolidation already in progress (started: ${sleep_started_at}). Do NOT dispatch another sleep agent.`,
+        `> Consolidation already in progress (started: ${lock.startedAt}). Do NOT dispatch another sleep agent.`,
         '',
       ].join('\n');
     }
@@ -414,11 +424,11 @@ export function getConsolidationDirective(state: SleepState): string | null {
   // Check for critical (★★★) bookmarks that need immediate consolidation
   const criticalBookmarks = bookmarks.filter(b => b.salience === 3);
 
-  if (debt >= 10) {
+  if (debt >= DEBT_MUST_SLEEP) {
     return [
       '>>> CONSOLIDATION REQUIRED <<<',
       '',
-      `Sleep debt is ${debt} (threshold: 10). Context files are stale and bloated.`,
+      `Sleep debt is ${debt} (threshold: ${DEBT_MUST_SLEEP}). Context files are stale and bloated.`,
       ...(criticalBookmarks.length > 0
         ? [`${criticalBookmarks.length} critical bookmark(s) awaiting consolidation.`]
         : []),
@@ -439,23 +449,23 @@ export function getConsolidationDirective(state: SleepState): string | null {
       '',
     ].join('\n');
   }
-  if (debt >= 7) {
+  if (debt >= DEBT_SLEEPY) {
     return [
       '>> CONSOLIDATION RECOMMENDED <<',
       '',
-      `Sleep debt is ${debt}/10. Context files are growing stale.`,
+      `Sleep debt is ${debt}/${DEBT_MUST_SLEEP}. Context files are growing stale.`,
       'You MUST inform the user and recommend consolidation before starting new work.',
       'Run sleep consolidation: follow SKILL.md "Sleep" flow — main agent does `sleep start`, then dispatches sleep-tasks/sleep-state (and sleep-product when signals warrant) in parallel, then `sleep done`.',
       '',
     ].join('\n');
   }
-  if (debt >= 4) {
+  if (debt >= DEBT_DROWSY) {
     return [
       `> Sleep debt is ${debt}. After completing the current task, you MUST offer to consolidate.`,
       '',
     ].join('\n');
   }
-  if (sessions_since_last_sleep >= 3) {
+  if (sessions_since_last_sleep >= RHYTHM_SESSIONS) {
     return [
       `> ${sessions_since_last_sleep} sessions since last consolidation. After completing the current task, offer to consolidate.`,
       '',
@@ -470,34 +480,35 @@ export function getConsolidationDirective(state: SleepState): string | null {
  * recall injection, marketing nudge, version check, etc.) so the debt-threshold
  * behavior is unit-testable in isolation.
  *
- * - consolidation in progress: suppress unless debt >= 4 (then a "do not
- *   dispatch another sleep" note).
- * - debt >= 10: CONSOLIDATION REQUIRED.
+ * - consolidation in progress: suppress unless debt >= DEBT_DROWSY (then a "do
+ *   not dispatch another sleep" note).
+ * - debt >= DEBT_MUST_SLEEP: CONSOLIDATION REQUIRED.
  * - critical (★★★) bookmark present: advisory regardless of debt.
- * - debt >= 7: recommended. debt >= 4: offer after current task.
+ * - debt >= DEBT_SLEEPY: recommended. debt >= DEBT_DROWSY: offer after current task.
  * - else: null (silent).
  */
 export function userPromptReminder(state: SleepState): string | null {
-  const { debt, bookmarks, sleep_started_at } = state;
+  const { debt, bookmarks } = state;
 
-  if (sleep_started_at) {
-    if (debt >= 4) {
-      return `Consolidation already in progress (started: ${sleep_started_at}). Do NOT dispatch another sleep agent.`;
+  const lock = inspectSleepLock(state, Date.now());
+  if (lock.locked && !lock.stale) {
+    if (debt >= DEBT_DROWSY) {
+      return `Consolidation already in progress (started: ${lock.startedAt}). Do NOT dispatch another sleep agent.`;
     }
     return null;
   }
 
   const criticalBookmarks = bookmarks.filter(b => b.salience === 3);
-  if (debt >= 10) {
+  if (debt >= DEBT_MUST_SLEEP) {
     return `Sleep debt is ${debt}. CONSOLIDATION REQUIRED. Run sleep flow per SKILL.md (parallel specialist fan-out) NOW.`;
   }
   if (criticalBookmarks.length > 0) {
     return `${criticalBookmarks.length} critical bookmark(s) need consolidation. Run sleep flow per SKILL.md.`;
   }
-  if (debt >= 7) {
+  if (debt >= DEBT_SLEEPY) {
     return `Sleep debt is ${debt}. Consolidation recommended before starting new work.`;
   }
-  if (debt >= 4) {
+  if (debt >= DEBT_DROWSY) {
     return `Sleep debt is ${debt}. After completing the current task, offer to consolidate.`;
   }
   return null;
@@ -888,7 +899,11 @@ export function registerHookCommand(program: Command): void {
       // "consolidation in progress" early-return must still short-circuit the
       // rest of this handler, so re-check that condition here.
       const reminder = userPromptReminder(state);
-      if (state.sleep_started_at) {
+      // A non-stale lock means a sleep is genuinely mid-cycle — short-circuit the
+      // rest of the handler (initializer/recall gates) just like the reminder does.
+      // A stale lock (crashed sleep) must NOT keep suppressing these forever.
+      const lock = inspectSleepLock(state, Date.now());
+      if (lock.locked && !lock.stale) {
         if (reminder) console.log(reminder);
         return;
       }

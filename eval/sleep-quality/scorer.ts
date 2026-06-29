@@ -226,7 +226,8 @@ export function destructiveAllowedForProfile(depth: ConsolidationDepth, profile:
 }
 
 // Debt values that resolve to each depth via consolidationDepth(debt).
-const DEBT_BY_DEPTH: Record<ConsolidationDepth, number> = { light: 0, standard: 5, deep: 12 };
+// (×2 scale, 2026-06-29: light 0–7 · standard 8–19 · deep 20+.)
+const DEBT_BY_DEPTH: Record<ConsolidationDepth, number> = { light: 0, standard: 10, deep: 20 };
 
 function scoreDepthGating(_input: ScorerInput, gold: Gold, profile: Profile): number {
   const depths: ConsolidationDepth[] = ['light', 'standard', 'deep'];

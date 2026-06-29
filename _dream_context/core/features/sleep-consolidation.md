@@ -35,22 +35,23 @@ Agents accumulate knowledge and make decisions across many sessions, but that kn
 - `hook stop` reads session_id, transcript_path, and last_assistant_message from stdin JSON; analyzes transcript for Write/Edit tool uses; stores session record in `state/.sleep.json`.
 - `hook session-start` finds all sessions with `score: null` and analyzes their transcripts; adds computed scores to debt total.
 - Debt scoring: session score = `Math.max(scoreFromChangeCount, scoreFromToolCount)`. `scoreFromChangeCount`: 0=0, 1-3=+1, 4-8=+2, 9+=+3. `scoreFromToolCount`: 0=0, 1-15=+1, 16-40=+2, 41+=+3.
-- Debt levels: 0-3 = Alert, 4-6 = Drowsy, 7-9 = Sleepy, 10+ = Must Sleep.
-- `hook session-start` prepends a CRITICAL consolidation directive to the snapshot output when debt >= 10.
-- `hook session-start` prepends a softer advisory note when debt >= 7.
+- Debt levels: 0-7 = Alert, 8-13 = Drowsy, 14-19 = Sleepy, 20+ = Must Sleep. Thresholds are named constants (`DEBT_DROWSY`/`DEBT_SLEEPY`/`DEBT_MUST_SLEEP`) in `sleep-consolidation.ts` — the single source of truth every directive/level derives from.
+- `hook session-start` prepends a CRITICAL consolidation directive to the snapshot output when debt >= 20 (DEBT_MUST_SLEEP).
+- `hook session-start` prepends a softer advisory note when debt >= 14 (DEBT_SLEEPY).
 - `sleep status` shows current debt, level, last sleep date, and per-session history.
 - `sleep add <score> <description>` manually records a debt entry (scores 1-3 only).
 - `sleep done <summary>` resets debt to 0, records last_sleep date, clears sessions array.
 - `sleep debt` outputs the raw debt number for programmatic use.
 - If the same session_id stops twice, the old score is subtracted before the new score is added (no double-counting).
 - Transcripts over 50MB are skipped (safety cap).
-- `hook user-prompt-submit` fires on every user message, outputs a one-line reminder when debt >= 4 or critical bookmarks exist. Silent when debt < 4. Read-only (no state writes).
+- `hook user-prompt-submit` fires on every user message, outputs a one-line reminder when debt >= 8 (DEBT_DROWSY) or critical bookmarks exist. Silent when debt < 8. Read-only (no state writes).
 - `hook session-start` catch-up path runs `detectSalience()` on any undigested sessions and writes auto-bookmarks to `.sleep.json`; then runs `session-digest.ts` to index bounded (≤8KB) transcript digests into the recall corpus.
 - Auto-salience detectors fire on: user-correction (`no/actually/wrong/instead/hayır/yanlış/değil`, salience 2), error→fix (any error + any code change present, salience 1), decision keyword (`decided/chose/switched to/will use/karar/seçtik`, salience 2). Max 5 moments per session.
 - Auto-captured digests and bookmarks indexed with `capture: true`; `CAPTURE_RANK_PENALTY = 0.5` applied in `rankScore` only (never raw `score`) so captures never crowd out curated knowledge.
 
 ## Constraints & Decisions
 
+- **[2026-06-29]** Debt scale rescaled ×2 and centralized. Levels are now Alert 0–7 · Drowsy 8–13 · Sleepy 14–19 · **Must Sleep 20+** (was 10+); directives fire at debt ≥8 (offer) / ≥14 (recommended) / ≥20 (required), and the rhythm reminder at **5** sessions-since-last-sleep (was 3). Per-session scoring is unchanged (max +3), so the consolidation cadence roughly doubles. All thresholds now live as named constants (`DEBT_DROWSY=8`, `DEBT_SLEEPY=14`, `DEBT_MUST_SLEEP=20`, `RHYTHM_SESSIONS=5`) in `sleep-consolidation.ts` — `sleepinessLevel`/`sleepinessRange`/`depthFromDebt` and every hook directive derive from them, so the scale can't drift across files again. Supersedes the 2026-03-01 tightening below.
 - **[2026-06-15]** Task-status lifecycle refined: `sleep-tasks` now marks `completed` for tasks that are demonstrably done, low-risk, and already validated (chores, docs, mechanical fixes, well-covered tests) instead of reflexively bumping everything to `in_review`. `in_review` is reserved for tasks where a human must genuinely verify something (user-facing behaviour changes, design/architecture decisions, risky changes) or for handing the user a close decision on superseded/abandoned/obsoleted tasks. Backlog grooming formalized as a mandatory per-cycle step: pivot-relevance propagation, version re-attachment, tag normalization to taxonomy vocab. Old "max `in_review`" rule retired — it buried finished work and left rotting tasks half-closed.
 - **[2026-06-04]** Dedup hardening shipped in specialist agent prompts. The top consolidation failure mode was fragmented near-duplicate tasks and knowledge files. `sleep-tasks` Step 2 now mandates recall-before-create + fold-in for smaller slices. `sleep-product` B2 adds a "sharp vs soft distinction" rubric — same family/vertical → extend existing file; genuinely separate topical concern → new file. See `sleep-fanout-architecture` PRD for specifics.
 - **[2026-06-02]** Continuous capture (auto-digest + auto-salience) shipped in `memory-uplift` PR. SessionStart catch-up path now produces auto-bookmarks via `detectSalience()` (structural pattern matching, no AI) and auto-digest corpus docs via `session-digest.ts`. Captures are rank-penalized (`CAPTURE_RANK_PENALTY = 0.5` on `rankScore` only) and capped (K=50 most-recent digests) to prevent corpus pollution. Previously 30/32 consolidations had zero bookmarks — this closes the awake-ripple tagging gap without requiring manual bookmark discipline.
@@ -197,6 +198,11 @@ Agents accumulate knowledge and make decisions across many sessions, but that kn
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-06-29 - Debt scale rescaled ×2 (Must Sleep = 20) + centralized into constants
+- Levels: Alert 0–7 · Drowsy 8–13 · Sleepy 14–19 · Must Sleep 20+ (was 0-3/4-6/7-9/10+). Directives at ≥8/≥14/≥20; rhythm reminder at 5 sessions (was 3). Per-session scoring unchanged (max +3).
+- New named constants `DEBT_DROWSY`/`DEBT_SLEEPY`/`DEBT_MUST_SLEEP`/`RHYTHM_SESSIONS` in `sleep-consolidation.ts`; `sleepinessLevel`/`sleepinessRange`/`depthFromDebt` + hook directives/reminders + `sleep status` all derive from them (single source of truth). `sleepinessRange` now returns a computed `string`.
+- Tests updated to the new boundaries (sleep-consolidation, sleep-system-360, hook + sleep integration) and the eval scorer's depth fixtures. Verified end-to-end via the CLI: debt 19 → Sleepy, debt 20 → Must Sleep/REQUIRED.
 
 ### 2026-06-15 - Task-status lifecycle updated; sleep-tasks backlog grooming formalized
 - sleep-tasks "max `in_review`" rule replaced with judgement-based lifecycle: `completed` for done+low-risk+validated; `in_review` for genuine user verification or close decisions on superseded/obsoleted work.

@@ -124,22 +124,38 @@ export interface SleepState {
   pendingMigrationNotices: string[];
 }
 
-// ─── Sleepiness levels (verbatim from former private helpers) ────────────────
+// ─── Sleepiness thresholds ───────────────────────────────────────────────────
+
+/**
+ * Debt thresholds (the ENTRY point of each level), and the rhythm reminder.
+ *
+ * **[2026-06-29]** Rescaled ×2 from the original 4/7/10 scale so "Must Sleep" is
+ * now 20 (was 10). Per-session scoring is unchanged (a session still adds at most
+ * +3 debt), so this roughly doubles the consolidation cadence. These are the
+ * SINGLE SOURCE OF TRUTH — `sleepinessLevel`, `sleepinessRange`, `depthFromDebt`,
+ * and every hook directive/reminder derive from them, so the scale never drifts
+ * across files again. Levels: Alert 0–7 · Drowsy 8–13 · Sleepy 14–19 · Must Sleep 20+.
+ */
+export const DEBT_DROWSY = 8;       // ≥ this: offer to consolidate after the current task
+export const DEBT_SLEEPY = 14;      // ≥ this: consolidation recommended
+export const DEBT_MUST_SLEEP = 20;  // ≥ this: consolidation required (Must Sleep)
+/** Sessions-since-last-sleep that trips the rhythm reminder (independent of debt points). */
+export const RHYTHM_SESSIONS = 5;
 
 /** Human-readable sleepiness label for a debt value. */
 export function sleepinessLevel(debt: number): 'Alert' | 'Drowsy' | 'Sleepy' | 'Must Sleep' {
-  if (debt <= 3) return 'Alert';
-  if (debt <= 6) return 'Drowsy';
-  if (debt <= 9) return 'Sleepy';
+  if (debt < DEBT_DROWSY) return 'Alert';
+  if (debt < DEBT_SLEEPY) return 'Drowsy';
+  if (debt < DEBT_MUST_SLEEP) return 'Sleepy';
   return 'Must Sleep';
 }
 
-/** Debt-range bucket label for a debt value. */
-export function sleepinessRange(debt: number): '0-3' | '4-6' | '7-9' | '10+' {
-  if (debt <= 3) return '0-3';
-  if (debt <= 6) return '4-6';
-  if (debt <= 9) return '7-9';
-  return '10+';
+/** Debt-range bucket label for a debt value (e.g. "8-13", "20+"). */
+export function sleepinessRange(debt: number): string {
+  if (debt < DEBT_DROWSY) return `0-${DEBT_DROWSY - 1}`;
+  if (debt < DEBT_SLEEPY) return `${DEBT_DROWSY}-${DEBT_SLEEPY - 1}`;
+  if (debt < DEBT_MUST_SLEEP) return `${DEBT_SLEEPY}-${DEBT_MUST_SLEEP - 1}`;
+  return `${DEBT_MUST_SLEEP}+`;
 }
 
 /** Recompute total debt as the sum of session scores. */
@@ -151,10 +167,11 @@ export function recomputeDebt(sessions: SessionRecord[]): number {
 
 const DEPTH_ORDER: ConsolidationDepth[] = ['light', 'standard', 'deep'];
 
-/** Debt → base consolidation depth. Aligned to existing sleepiness thresholds. */
+/** Debt → base consolidation depth. Aligned to the sleepiness thresholds:
+ *  Alert → light, Drowsy+Sleepy → standard, Must Sleep → deep. */
 function depthFromDebt(debt: number): ConsolidationDepth {
-  if (debt <= 3) return 'light';
-  if (debt <= 9) return 'standard';
+  if (debt < DEBT_DROWSY) return 'light';
+  if (debt < DEBT_MUST_SLEEP) return 'standard';
   return 'deep';
 }
 
@@ -372,6 +389,49 @@ export function markSleepStarted(state: SleepState, nowISO: string): SleepState 
   const next = cloneState(state);
   next.sleep_started_at = nowISO;
   return next;
+}
+
+/**
+ * After this long, an in-progress consolidation lock is treated as STALE — the
+ * owning session almost certainly crashed or was killed before reaching
+ * `sleep done` (which clears the epoch). A stale lock may be reclaimed by a new
+ * `sleep start` without `--force`, so a single crashed sleep can never wedge the
+ * brain permanently. Real consolidations finish in well under this window.
+ */
+export const SLEEP_LOCK_STALE_MS = 30 * 60 * 1000; // 30 minutes
+
+/**
+ * Stale TTL for the short-lived `sleep start` STAMP lock — the cross-process
+ * mutex held only while one `sleep start` reads state, runs migrations, and
+ * stamps the epoch (normally well under a second; released on exit). It exists
+ * solely to close the check-then-stamp race between two simultaneous starts, so
+ * its TTL is small: if a `sleep start` crashes mid-stamp, the next one reclaims
+ * the stamp lock after this window rather than the 30m consolidation window.
+ */
+export const SLEEP_START_LOCK_STALE_MS = 60 * 1000; // 60 seconds
+
+export interface SleepLockStatus {
+  /** A consolidation epoch is pinned — a sleep is (or claims to be) in progress. */
+  locked: boolean;
+  /** ISO timestamp the lock was taken, or null when not locked. */
+  startedAt: string | null;
+  /** Age of the lock in ms (0 when not locked; Infinity when the stamp is unparseable). */
+  ageMs: number;
+  /** Locked but older than SLEEP_LOCK_STALE_MS — safe to reclaim. */
+  stale: boolean;
+}
+
+/**
+ * Inspect the consolidation lock held in a SleepState. `sleep_started_at` IS the
+ * lock: `sleep start` stamps it, `sleep done` clears it back to null. Pure;
+ * `nowMs` is injected so callers (CLI, server) and tests stay deterministic.
+ */
+export function inspectSleepLock(state: SleepState, nowMs: number): SleepLockStatus {
+  const startedAt = state.sleep_started_at;
+  if (!startedAt) return { locked: false, startedAt: null, ageMs: 0, stale: false };
+  const startedMs = Date.parse(startedAt);
+  const ageMs = Number.isFinite(startedMs) ? Math.max(0, nowMs - startedMs) : Infinity;
+  return { locked: true, startedAt, ageMs, stale: ageMs >= SLEEP_LOCK_STALE_MS };
 }
 
 /** Build a sleep-history entry from the consolidation result and summary. */
