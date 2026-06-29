@@ -6,7 +6,7 @@ import { useBoardState } from '../../hooks/useBoard';
 import {
   type Dim, type SaveScope,
   PRIO_ORDER, STATUS_META, STATUS_ORDER,
-  dimGet, dimGroups, dueInfo, filterTasks, levelLabel, prioColor, sortTasks, taskAssignee,
+  dimGet, dimGroups, dueInfo, filterTasks, levelLabel, prioColor, sortTasks, taskAssignees,
 } from './boardModel';
 import { BoardViewTabs } from './BoardViewTabs';
 import { BoardToolbar, type MenuKey } from './BoardToolbar';
@@ -57,7 +57,7 @@ export function KanbanBoard() {
   // ── derived option data ──────────────────────────────────────────────────────
   const memberMap = useMemo(() => new Map(members.map((m) => [m.slug, m.name])), [members]);
   const assignees = useMemo(() => {
-    const present = distinct(tasks.map(taskAssignee)).filter((a) => a !== 'none');
+    const present = distinct(tasks.flatMap(taskAssignees));
     const values = distinct([...members.map((m) => m.slug), ...present]);
     const list = values.map((v, i) => ({ value: v, label: memberMap.get(v) || v.replace(/[-_]/g, ' '), color: AVATAR_PALETTE[i % AVATAR_PALETTE.length] }));
     return [...list, { value: 'none', label: 'Unassigned', color: 'var(--color-text-tertiary)' }];
