@@ -249,8 +249,35 @@ function createSession(bypass: boolean, onStatus: () => void): Session {
   ws.onclose = () => setStatus('closed');
   ws.onerror = () => setStatus('closed');
 
-  const dataSub = term.onData((data) => {
+  // Write raw input bytes to the PTY — the same control frame xterm's keystrokes use.
+  const sendInput = (data: string) => {
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data }));
+  };
+
+  const dataSub = term.onData(sendInput);
+
+  // macOS line-editing gestures → the control bytes Claude Code's prompt already
+  // honors. xterm doesn't emit these on its own (⌘ combos are swallowed, and a bare
+  // ⇧↵ would just submit), so we intercept the keydown and write the equivalent
+  // sequence ourselves. Everything else falls through to xterm unchanged.
+  //   ⇧↵   newline without submitting → "\\\r": Claude's universal newline (the
+  //          backslash+Enter continuation it consumes — works without relying on the
+  //          terminal advertising the kitty/CSI-u keyboard protocol over xterm.js).
+  //   ⌥⌫   delete the previous word    → \x17  (Ctrl+W)
+  //   ⌘⌫   delete to the line start    → \x15  (Ctrl+U)
+  // (Ctrl+A/E/K/W/U and the arrow/word-nav keys already work natively — no remap.)
+  term.attachCustomKeyEventHandler((e) => {
+    if (e.type !== 'keydown') return true;
+    if (e.key === 'Enter' && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      e.preventDefault(); sendInput('\\\r'); return false;
+    }
+    if (e.key === 'Backspace' && e.altKey && !e.metaKey && !e.ctrlKey) {
+      e.preventDefault(); sendInput('\x17'); return false;
+    }
+    if (e.key === 'Backspace' && e.metaKey && !e.ctrlKey && !e.altKey) {
+      e.preventDefault(); sendInput('\x15'); return false;
+    }
+    return true;
   });
 
   // Open only once the container is in the DOM (it starts detached) AND the mono
