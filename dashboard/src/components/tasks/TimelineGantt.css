@@ -210,7 +210,7 @@
 .gantt-row {
   display: flex;
   align-items: stretch;
-  height: 34px;
+  height: 48px;
   border-bottom: 1px solid var(--color-border);
   animation: gantt-row-in 260ms ease both;
 }
@@ -273,8 +273,8 @@
 
 .gantt-bar {
   position: absolute;
-  top: 7px;
-  height: 20px;
+  top: 11px;
+  height: 26px;
   border: none;
   border-radius: var(--radius-sm);
   cursor: grab;
@@ -307,8 +307,8 @@
 }
 
 .gantt-bar-label {
-  font-size: 11px;
-  font-weight: var(--font-weight-medium);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
   color: var(--color-text-on-brand);
   padding: 0 var(--space-1);
   white-space: nowrap;
@@ -348,13 +348,13 @@
 /* Always-visible date range printed just past the bar. */
 .gantt-bar-meta {
   position: absolute;
-  top: 9px;
-  height: 16px;
+  top: 15px;
+  height: 18px;
   display: flex;
   align-items: center;
-  font-size: 10px;
+  font-size: var(--font-size-xs);
   font-weight: var(--font-weight-medium);
-  color: var(--color-text-tertiary);
+  color: var(--color-text-secondary);
   white-space: nowrap;
   pointer-events: none;
   font-variant-numeric: tabular-nums;

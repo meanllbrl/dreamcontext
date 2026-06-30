@@ -35,19 +35,19 @@ interface DragState {
 }
 
 /** Pixels-per-day ladder for the zoom control (zoom out → see everything, zoom in → read detail). */
-const ZOOM_LADDER = [6, 9, 14, 20, 28, 40, 56];
+const ZOOM_LADDER = [10, 16, 24, 36, 52, 72, 100];
 
 /** Pick a sensible starting zoom so the initial plan is legible without manual zooming. */
 function defaultZoomIndex(totalDays: number): number {
-  if (totalDays <= 21) return 5; // 40px
-  if (totalDays <= 40) return 4; // 28px
-  if (totalDays <= 70) return 3; // 20px
-  if (totalDays <= 140) return 2; // 14px
-  if (totalDays <= 280) return 1; // 9px
-  return 0; // 6px
+  if (totalDays <= 21) return 6; // 100px
+  if (totalDays <= 40) return 5; // 72px
+  if (totalDays <= 70) return 4; // 52px
+  if (totalDays <= 140) return 3; // 36px
+  if (totalDays <= 280) return 1; // 16px
+  return 0; // 10px
 }
 
-const LABEL_W = 220;
+const LABEL_W = 240;
 
 const clampIdx = (i: number) => Math.max(0, Math.min(ZOOM_LADDER.length - 1, i));
 const addISO = (iso: string, days: number) => formatISO(addDays(parseISO(iso), days));
@@ -62,6 +62,26 @@ export function TimelineGantt({ tasks, onTaskClick }: TimelineGanttProps) {
   const [unscheduledOpen, setUnscheduledOpen] = useState(false);
   const [zoom, setZoom] = useState<number | null>(null);
   const updateTask = useUpdateTask();
+  // Held in a ref so the drag callbacks can stay referentially stable — react-query
+  // recreates the mutation object every render, and a changing dep would tear down
+  // the window listeners mid-drag (leaving the cursor stuck in the grab state).
+  const updateTaskRef = useRef(updateTask);
+  updateTaskRef.current = updateTask;
+
+  // Measure the scroll viewport so days can stretch to fill the available width
+  // (no dead space on wide screens) while still allowing zoom-in to overflow.
+  const [containerW, setContainerW] = useState(0);
+  const roRef = useRef<ResizeObserver | null>(null);
+  const setScrollEl = useCallback((el: HTMLDivElement | null) => {
+    roRef.current?.disconnect();
+    if (!el) return;
+    setContainerW(el.clientWidth);
+    const ro = new ResizeObserver((entries) => {
+      for (const e of entries) setContainerW(e.contentRect.width);
+    });
+    ro.observe(el);
+    roRef.current = ro;
+  }, []);
 
   // Optimistic date overrides so a dragged bar stays put until the refetch lands.
   const [optim, setOptim] = useState<Record<string, { start: string; end: string }>>({});
@@ -119,13 +139,24 @@ export function TimelineGantt({ tasks, onTaskClick }: TimelineGanttProps) {
     // Always keep "today" in view so the marker has somewhere to land.
     if (today < min) min = today;
     if (today > max) max = today;
-    // Generous breathing room — also the headroom available to drag a bar outward.
-    const start = addISO(min, -7);
-    const end = addISO(max, 14);
+    // Modest breathing room — enough to drag a bar outward a few days without a
+    // wall of empty columns. The range re-expands after a drag commits.
+    const start = addISO(min, -2);
+    const end = addISO(max, 6);
     return { start, end, totalDays: diffDays(start, end) + 1 };
   }, [scheduled]);
 
-  const dayW = range ? ZOOM_LADDER[clampIdx(zoom ?? defaultZoomIndex(range.totalDays))] : ZOOM_LADDER[3];
+  // Day width. Auto mode (default): stretch days to fill the viewport exactly so
+  // there's no dead space on a wide screen, falling back to a readable minimum
+  // when the plan is too long to fit (then it scrolls). Manual zoom: honour the
+  // chosen step exactly.
+  const MIN_AUTO_DAY_W = 28;
+  const dayW = (() => {
+    if (!range) return ZOOM_LADDER[3];
+    if (zoom !== null) return ZOOM_LADDER[clampIdx(zoom)];
+    if (containerW <= 0) return ZOOM_LADDER[defaultZoomIndex(range.totalDays)];
+    return Math.max(MIN_AUTO_DAY_W, (containerW - LABEL_W) / range.totalDays);
+  })();
 
   const ticks = useMemo(() => {
     if (!range) return [];
@@ -185,12 +216,12 @@ export function TimelineGantt({ tasks, onTaskClick }: TimelineGanttProps) {
             ? { start_date: p.start }
             : { due_date: p.end };
       setOptim((o) => ({ ...o, [d.slug]: { start: p.start, end: p.end } }));
-      updateTask.mutate({ slug: d.slug, updates });
+      updateTaskRef.current.mutate({ slug: d.slug, updates });
     }
     dragRef.current = null;
     previewRef.current = null;
     setDragPreview(null);
-  }, [onPointerMove, updateTask]);
+  }, [onPointerMove]);
 
   const beginDrag = useCallback(
     (e: React.PointerEvent, row: ScheduledRow, mode: DragMode) => {
@@ -215,10 +246,13 @@ export function TimelineGantt({ tasks, onTaskClick }: TimelineGanttProps) {
     [range, dayW, onPointerMove, endDrag],
   );
 
+  // Tear down listeners only on unmount. onPointerMove/endDrag are referentially
+  // stable, so this effect must NOT re-run mid-drag (that was the stuck-cursor bug).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => () => {
     window.removeEventListener('pointermove', onPointerMove);
     window.removeEventListener('pointerup', endDrag);
-  }, [onPointerMove, endDrag]);
+  }, []);
 
   if (scheduled.length === 0) {
     return (
@@ -238,7 +272,11 @@ export function TimelineGantt({ tasks, onTaskClick }: TimelineGanttProps) {
   }
 
   const trackW = range!.totalDays * dayW;
-  const zoomIdx = clampIdx(zoom ?? defaultZoomIndex(range!.totalDays));
+  // In auto mode the zoom buttons start from the ladder step nearest the current
+  // (fill-driven) day width, so the first +/- click feels continuous.
+  const zoomIdx = zoom !== null
+    ? clampIdx(zoom)
+    : (() => { const i = ZOOM_LADDER.findIndex((w) => w >= dayW); return i === -1 ? ZOOM_LADDER.length - 1 : i; })();
   const todayOffset = (() => {
     const t = todayISO();
     if (t < range!.start || t > range!.end) return null;
@@ -280,7 +318,7 @@ export function TimelineGantt({ tasks, onTaskClick }: TimelineGanttProps) {
         <span className="gantt-legend-count">{scheduled.length} scheduled · drag a bar to reschedule</span>
       </div>
 
-      <div className="gantt-scroll">
+      <div className="gantt-scroll" ref={setScrollEl}>
         <div className="gantt-inner" style={{ width: LABEL_W + trackW }}>
           {/* Header: month / day ticks */}
           <div className="gantt-header" style={{ height: 30 }}>
