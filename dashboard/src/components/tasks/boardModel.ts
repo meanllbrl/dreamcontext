@@ -303,6 +303,17 @@ export function assigneeInitials(slug: string, name?: string): string {
   return src.slice(0, 2).toUpperCase();
 }
 
+/**
+ * Deterministic avatar hue (0..359) for a person slug, so co-assignees on the
+ * same card are told apart by colour rather than initials alone. Same idiom as
+ * {@link tagHue} / council `modelHue`.
+ */
+export function assigneeHue(slug: string): number {
+  let h = 0;
+  for (let i = 0; i < slug.length; i++) h = (h * 31 + slug.charCodeAt(i)) % 360;
+  return h;
+}
+
 // Deterministic tag hue (0..9) → maps to .task-tag[data-hue] in CSS.
 export function tagHue(tag: string): number {
   let h = 0;

@@ -2,7 +2,7 @@ import type { CSSProperties } from 'react';
 import type { Task } from '../../hooks/useTasks';
 import {
   type CardProps,
-  assigneeInitials, dueInfo, fmtUpdated, levelLabel, prioColor, tagHue, taskAssignee,
+  assigneeHue, assigneeInitials, dueInfo, fmtUpdated, levelLabel, prioColor, tagHue, taskAssignees,
   taskName, taskRice, taskVersion, urgColor,
 } from './boardModel';
 
@@ -21,26 +21,70 @@ interface BoardCardProps {
 const dot = (color: string): CSSProperties => ({ width: 8, height: 8, borderRadius: '50%', background: color, flex: '0 0 auto' });
 const bar = (color: string): CSSProperties => ({ width: 3, height: 13, borderRadius: 2, background: color, flex: '0 0 auto' });
 
+const AVATAR_BASE: CSSProperties = {
+  flex: '0 0 auto', width: 20, height: 20, borderRadius: '50%', display: 'inline-flex',
+  alignItems: 'center', justifyContent: 'center', fontSize: 9.5, fontWeight: 700,
+  color: '#fff', fontFamily: 'var(--font-family-text)', boxSizing: 'border-box',
+};
+const MAX_AVATARS = 3;
+
+/**
+ * Overlapping avatar stack for a task's assignees. Renders one badge per
+ * assignee (up to {@link MAX_AVATARS}) plus a `+N` overflow chip — fixes the
+ * card showing only the primary assignee on multi-assignee tasks. `ring` is the
+ * surface the stack sits on, so overlapping badges read with a clean gap.
+ */
+function AvatarStack({ slugs, ring, nameOf }: { slugs: string[]; ring: string; nameOf: (s: string) => string }) {
+  const shown = slugs.slice(0, MAX_AVATARS);
+  const extra = slugs.length - shown.length;
+  return (
+    <div style={{ display: 'inline-flex', alignItems: 'center', flex: '0 0 auto' }}>
+      {shown.map((slug, i) => {
+        const nm = nameOf(slug);
+        return (
+          <span
+            key={slug}
+            title={nm}
+            style={{
+              ...AVATAR_BASE,
+              background: `hsl(${assigneeHue(slug)} 52% 45%)`,
+              marginLeft: i === 0 ? 0 : -6,
+              boxShadow: `0 0 0 2px ${ring}`,
+            }}
+          >
+            {assigneeInitials(slug, nm)}
+          </span>
+        );
+      })}
+      {extra > 0 && (
+        <span
+          title={slugs.slice(MAX_AVATARS).map(nameOf).join(', ')}
+          style={{
+            ...AVATAR_BASE, width: 22, fontSize: 9, color: 'var(--color-text-secondary)',
+            background: 'var(--color-bg-tertiary)', marginLeft: -6, boxShadow: `0 0 0 2px ${ring}`,
+          }}
+        >
+          +{extra}
+        </span>
+      )}
+    </div>
+  );
+}
+
 export function BoardCard({ task, cardProps: cp, dragging, variant = 'board', assigneeName, onClick, onContextMenu, onDragStart, onDragEnd }: BoardCardProps) {
   const di = dueInfo(task);
   const rice = taskRice(task);
   const ver = task.version;
-  const asg = taskAssignee(task);
+  const assignees = taskAssignees(task);
   const name = taskName(task);
-  const aName = assigneeName ? assigneeName(asg) : asg;
+  const nameOf = (slug: string) => (assigneeName ? assigneeName(slug) : slug);
 
   const showDue = cp.due && !!di;
   const showRice = cp.rice && rice != null;
   const showVersion = cp.version && !!ver;
-  const showAssignee = cp.assignee && asg !== 'none';
+  const showAssignee = cp.assignee && assignees.length > 0;
   const showMeta = showDue || showRice || showVersion;
   const tags = (task.tags || []).slice(0, 4);
-
-  const avatar: CSSProperties = {
-    flex: '0 0 auto', width: 20, height: 20, borderRadius: '50%', display: 'flex',
-    alignItems: 'center', justifyContent: 'center', fontSize: 9.5, fontWeight: 700,
-    color: '#fff', background: 'var(--color-accent)', fontFamily: 'var(--font-family-text)',
-  };
 
   if (variant === 'list') {
     return (
@@ -64,7 +108,7 @@ export function BoardCard({ task, cardProps: cp, dragging, variant = 'board', as
         {showDue && di && (
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10.5, fontWeight: 600, padding: '2px 8px', borderRadius: 6, color: di.color, background: di.bg, whiteSpace: 'nowrap', flex: '0 0 auto' }}>{di.label}</span>
         )}
-        {showAssignee && <span style={avatar} title={aName}>{assigneeInitials(asg, aName)}</span>}
+        {showAssignee && <AvatarStack slugs={assignees} ring="var(--color-bg-elevated)" nameOf={nameOf} />}
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--color-text-tertiary)', whiteSpace: 'nowrap', width: 74, textAlign: 'right' }}>{fmtUpdated(task.updated_at)}</span>
       </div>
     );
@@ -117,7 +161,7 @@ export function BoardCard({ task, cardProps: cp, dragging, variant = 'board', as
           </div>
         )}
         <div style={{ flex: 1, minWidth: 4 }} />
-        {showAssignee && <span style={avatar} title={aName}>{assigneeInitials(asg, aName)}</span>}
+        {showAssignee && <AvatarStack slugs={assignees} ring="var(--color-bg-elevated)" nameOf={nameOf} />}
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--color-text-tertiary)', whiteSpace: 'nowrap', flex: '0 0 auto' }}>{fmtUpdated(task.updated_at)}</span>
       </div>
 
