@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useKnowledgeList, useKnowledge, useToggleKnowledgePin, useKnowledgeLiveRefresh } from '../hooks/useKnowledge';
+import { useFocusTarget, type FocusTarget } from '../hooks/useFocusTarget';
 import { useI18n } from '../context/I18nContext';
 import { FullscreenOverlay } from '../components/layout/FullscreenOverlay';
 import { MarkdownPreview } from '../components/core/MarkdownPreview';
@@ -134,7 +135,19 @@ export function buildKnowledgeTree(
   return { roots, folders: top.folders };
 }
 
-export function KnowledgePage() {
+/** Folder paths to expand so a card at `slug` is visible: `arch/deep/bar` → ['arch','arch/deep']. */
+function ancestorFolders(slug: string): string[] {
+  const segs = slug.split('/');
+  const out: string[] = [];
+  for (let i = 1; i < segs.length; i++) out.push(segs.slice(0, i).join('/'));
+  return out;
+}
+
+interface KnowledgePageProps {
+  focus?: FocusTarget;
+}
+
+export function KnowledgePage({ focus }: KnowledgePageProps = {}) {
   const { t } = useI18n();
   const { data: entries, isLoading, isError, error } = useKnowledgeList();
   const togglePin = useToggleKnowledgePin();
@@ -142,6 +155,18 @@ export function KnowledgePage() {
   const [viewTab, setViewTab] = useState<'file' | 'preview'>('preview');
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [fullscreen, setFullscreen] = useState(false);
+
+  // Open the doc the ⌘K palette / Brain map navigated to, and expand its folders
+  // so the matching card is revealed in the tree.
+  useFocusTarget(focus, (slug) => {
+    setSelected(slug);
+    setViewTab('preview');
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      for (const f of ancestorFolders(slug)) next.add(f);
+      return next;
+    });
+  });
 
   const { data: detail } = useKnowledge(selected ?? '');
 

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
+import { useFocusTarget, type FocusTarget } from '../hooks/useFocusTarget';
 import { useI18n } from '../context/I18nContext';
 import { SqlPreview } from '../components/core/SqlPreview';
 import { JsonPreview } from '../components/core/JsonPreview';
@@ -29,15 +30,21 @@ function hasPreview(filename: string): boolean {
 
 interface CorePageProps {
   onNavigateTaxonomy?: () => void;
+  focus?: FocusTarget;
 }
 
-export function CorePage({ onNavigateTaxonomy }: CorePageProps = {}) {
+export function CorePage({ onNavigateTaxonomy, focus }: CorePageProps = {}) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
   const [selected, setSelected] = useState<string | null>(null);
   const [editContent, setEditContent] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [viewTab, setViewTab] = useState<'file' | 'preview'>('preview');
+
+  // Open the core file the ⌘K palette / Brain map navigated to (e.g. a memory or
+  // changelog hit resolves to `2.memory.md` / `CHANGELOG.json`). An empty id is
+  // ignored by useFocusTarget, so Core keeps its default first-file selection.
+  useFocusTarget(focus, (filename) => { setSelected(filename); setIsEditing(false); setViewTab('preview'); });
 
   const { data: filesData, isLoading, isError, error } = useQuery({
     queryKey: ['core'],

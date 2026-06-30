@@ -3,34 +3,36 @@
    readXtermTheme); this file owns the chrome around it + the inner padding the
    canvas can't express. */
 
-/* The persistent host. Mounted once at the app shell and positioned (fixed) over
-   SleepyPage's Agent-tab slot by AgentSurface, so the PTY session survives page
-   navigation. Visibility + rect are driven imperatively; this just clips + paints
-   the backdrop so there's never a flash of page behind a sub-pixel gap. */
+/* The persistent host. Mounted once at the app shell (App.tsx), outside the page
+   router, so the PTY session survives navigation. It is a fullscreen overlay toggled
+   by a pure CSS class — collapsed = display:none (sessions park in the detached-DOM
+   garage), expanded = the fullscreen terminal. Nothing reparents on toggle, so xterm /
+   WebSocket / node-pty never remount. */
 .agent-surface {
   position: fixed;
-  top: 0; left: 0;
-  /* Hidden until the positioning effect snaps it over the slot (display + rect are
-     driven imperatively), so there's never a first-frame flash at 0,0. */
+  inset: 0;
+  /* Hidden until expanded — visibility is a pure CSS toggle (no imperative rect-snap),
+     so collapsing/expanding never reparents the detached session containers. */
   display: none;
   flex-direction: column;
   z-index: 20;
   overflow: hidden;
   background: var(--color-bg);
   contain: layout paint;
+  /* Slide with the sidebar when it collapses/expands (left edge tracks the content area). */
+  transition: left var(--transition-normal);
+}
+/* Expanded = fill ONLY the page content area: below the title bar (--header-height)
+   and right of the sidebar (--app-content-left, collapse-aware). right/bottom stay 0
+   from the base `inset`, so it never covers the header or the nav rail. */
+.agent-surface.expanded {
+  display: flex;
+  top: var(--header-height);
+  left: var(--app-content-left);
 }
 .agent-surface > * {
   flex: 1 1 auto;
   min-height: 0;
-  width: 100%;
-}
-
-/* The in-page anchor SleepyPage renders while the Agent tab is active. Pure
-   layout — the real terminal paints over it from the fixed surface. `.sleepy-body`
-   is a plain block with a resolved height (flex child of the view column), so the
-   anchor fills it with height:100% (NOT flex:1, which would collapse to 0 here). */
-.agent-slot {
-  height: 100%;
   width: 100%;
 }
 
@@ -41,31 +43,72 @@
   background: var(--color-bg);
 }
 
-/* ── Session control cluster ──────────────────────────────────────────────────
-   The cross-cutting controls — the bypass default for new sessions, and +. These
-   live in SleepyPage's top bar (across from the Search/Ask/Agent tabs), portaled
-   into `.agent-controls-slot` by the persistent surface. */
-.agent-controls-bar {
+/* ── Fullscreen overlay header ─────────────────────────────────────────────────
+   The top bar of the expanded overlay: collapse `[—]`, the "Agent" title, and (once a
+   terminal is live) the cross-cutting controls — the bypass default for new sessions
+   and the new-session +. Replaces the controls that used to portal into SleepyPage. */
+.agent-overlay-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 44px;
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--color-accent) 6%, var(--color-bg)), var(--color-bg));
+}
+.agent-overlay-collapse {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: 0 0 auto;
+  width: 28px; height: 28px;
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+.agent-overlay-collapse:hover { background: var(--color-bg-tertiary); color: var(--color-text); border-color: var(--color-border-hover); }
+.agent-overlay-collapse:focus-visible { outline: none; border-color: var(--color-accent); box-shadow: 0 0 0 2px var(--color-accent-soft); }
+.agent-overlay-title {
+  font-family: var(--font-family-display, var(--font-mono));
+  font-weight: 700;
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+}
+.agent-overlay-controls {
+  margin-left: auto;
   display: flex;
   align-items: center;
   gap: 6px;
 }
+/* The prominent "add an agent" action — labeled + accent-filled so it's obviously the
+   way to start another agent (CHANGE 5). The list footer "New agent" row matches it. */
 .agent-add-btn {
-  display: inline-flex; align-items: center; justify-content: center;
+  display: inline-flex; align-items: center; gap: 6px;
   flex: 0 0 auto;
-  width: 26px; height: 26px;
-  border-radius: 8px;
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--color-border);
-  color: var(--color-text-secondary);
-  font-size: 16px;
+  height: 28px;
+  padding: 0 12px 0 10px;
+  border-radius: var(--radius-full);
+  background: linear-gradient(150deg,
+    color-mix(in srgb, var(--color-accent) 92%, white),
+    var(--color-accent));
+  border: 1px solid color-mix(in srgb, var(--color-accent) 60%, transparent);
+  color: var(--color-accent-text, #fff);
+  font-family: var(--font-family-text, inherit);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
   line-height: 1;
   cursor: pointer;
-  transition: all var(--transition-fast);
+  box-shadow: 0 4px 14px -6px color-mix(in srgb, var(--color-accent) 80%, transparent);
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast), filter var(--transition-fast);
 }
-.agent-add-btn:hover { background: var(--color-bg-tertiary); color: var(--color-text); border-color: var(--color-border-hover); }
-.agent-add-btn:active { transform: translateY(0.5px); }
-.agent-add-btn:focus-visible { outline: none; border-color: var(--color-accent); box-shadow: 0 0 0 2px var(--color-accent-soft); }
+.agent-add-btn:hover { transform: translateY(-1px); filter: brightness(1.05); box-shadow: 0 7px 18px -6px color-mix(in srgb, var(--color-accent) 90%, transparent); }
+.agent-add-btn:active { transform: translateY(0); }
+.agent-add-btn:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--color-accent-soft); }
+.agent-add-btn-icon { font-size: 15px; line-height: 0; margin-top: -1px; }
 
 /* Bypass pill (in the control cluster). */
 .agent-term-pill {
@@ -90,31 +133,183 @@
 .agent-term-pill input { accent-color: var(--color-error); width: 13px; height: 13px; }
 .agent-term-pill:focus-within { outline: none; box-shadow: 0 0 0 2px var(--color-accent-soft); }
 
-/* ── Split panes ────────────────────────────────────────────────────────────── */
-.agent-panes {
+/* ── Per-state colour map (single source) ──────────────────────────────────────
+   The five-state taxonomy (agentStatus.ts) drives `data-kind`; each element exposes a
+   `--kind-color` its dot / aura / caption read from. Tokens only — no hardcoded hues.
+   The chip's state pill / handle dot carry their OWN `data-kind` (they're not always a
+   child of the `--kind-color` owner), so they're listed here too. */
+:is(.agent-rail-row, .agent-rail-state, .agent-dock-chip, .agent-dock-chip-state, .agent-dock-anchor, .agent-dock-anchor-dot, .agent-pane-status)[data-kind="saved"]    { --kind-color: var(--mood-sleeping); }
+:is(.agent-rail-row, .agent-rail-state, .agent-dock-chip, .agent-dock-chip-state, .agent-dock-anchor, .agent-dock-anchor-dot, .agent-pane-status)[data-kind="starting"] { --kind-color: var(--color-warning); }
+:is(.agent-rail-row, .agent-rail-state, .agent-dock-chip, .agent-dock-chip-state, .agent-dock-anchor, .agent-dock-anchor-dot, .agent-pane-status)[data-kind="working"]  { --kind-color: var(--color-success); }
+:is(.agent-rail-row, .agent-rail-state, .agent-dock-chip, .agent-dock-chip-state, .agent-dock-anchor, .agent-dock-anchor-dot, .agent-pane-status)[data-kind="ready"]    { --kind-color: var(--color-accent); }
+:is(.agent-rail-row, .agent-rail-state, .agent-dock-chip, .agent-dock-chip-state, .agent-dock-anchor, .agent-dock-anchor-dot, .agent-pane-status)[data-kind="ended"]    { --kind-color: var(--color-error); }
+
+/* ── Workspace: session-list rail + single active view ──────────────────────────
+   The rail lives INSIDE the content-bounded overlay (header + sidebar stay visible). */
+.agent-workspace {
   flex: 1;
   min-height: 0;
   display: flex;
   align-items: stretch;
+}
+
+.agent-rail {
+  flex: 0 0 auto;
+  width: 240px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--color-border);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--color-accent) 4%, var(--color-bg)), var(--color-bg));
+}
+.agent-rail-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  list-style: none;
+  margin: 0;
+  padding: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-hover) transparent;
+}
+.agent-rail-list li { display: block; }
+
+/* One session row: dot · mascot · title · one-word state · close. */
+.agent-rail-row {
   position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+.agent-rail-row:hover { background: var(--color-bg-tertiary); }
+.agent-rail-row.active {
+  background: var(--color-accent-soft);
+  border-color: color-mix(in srgb, var(--color-accent) 55%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-accent) 30%, transparent);
+}
+.agent-rail-row:focus-visible { outline: none; border-color: var(--color-accent); box-shadow: 0 0 0 2px var(--color-accent-soft); }
+
+.agent-rail-dot {
+  flex: 0 0 auto;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--kind-color, var(--color-text-tertiary));
+  box-shadow: 0 0 7px color-mix(in srgb, var(--kind-color, transparent) 75%, transparent);
+}
+.agent-rail-dot[data-kind="working"],
+.agent-rail-dot[data-kind="starting"] { animation: agentDotPulse 1.2s ease-in-out infinite; }
+
+.agent-rail-mascot {
+  flex: 0 0 auto;
+  width: 26px; height: 26px;
+  display: flex; align-items: center; justify-content: center;
+}
+.agent-rail-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-rail-row.active .agent-rail-title { color: var(--color-text); }
+.agent-rail-state {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: var(--radius-full);
+  color: var(--kind-color, var(--color-text-tertiary));
+  background: color-mix(in srgb, var(--kind-color, transparent) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--kind-color, transparent) 40%, transparent);
+}
+/* "Waiting for you" dot — a backgrounded session finished while you weren't on it. */
+.agent-rail-badge {
+  flex: 0 0 auto;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--mood-waiting);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--mood-waiting) 85%, transparent);
+  animation: agentBadgePulse 1.5s ease-in-out infinite;
+}
+.agent-rail-close {
+  flex: 0 0 auto;
+  width: 22px; height: 22px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--transition-fast), background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+.agent-rail-row:hover .agent-rail-close,
+.agent-rail-row.active .agent-rail-close,
+.agent-rail-close:focus-visible { opacity: 1; }
+.agent-rail-close:hover { background: color-mix(in srgb, var(--color-error) 18%, transparent); border-color: color-mix(in srgb, var(--color-error) 42%, transparent); color: var(--color-error); }
+.agent-rail-close:focus-visible { outline: none; opacity: 1; border-color: var(--color-accent); box-shadow: 0 0 0 2px var(--color-accent-soft); }
+
+/* The "＋ New agent" footer row — matches the overlay header's accent button. */
+.agent-rail-new {
+  flex: 0 0 auto;
+  margin: var(--space-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: 36px;
+  border-radius: var(--radius-md);
+  background: linear-gradient(150deg,
+    color-mix(in srgb, var(--color-accent) 92%, white),
+    var(--color-accent));
+  border: 1px solid color-mix(in srgb, var(--color-accent) 60%, transparent);
+  color: var(--color-accent-text, #fff);
+  font-family: var(--font-family-text, inherit);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 6px 16px -8px color-mix(in srgb, var(--color-accent) 85%, transparent);
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast), filter var(--transition-fast);
+}
+.agent-rail-new:hover { transform: translateY(-1px); filter: brightness(1.05); box-shadow: 0 9px 20px -8px color-mix(in srgb, var(--color-accent) 92%, transparent); }
+.agent-rail-new:active { transform: translateY(0); }
+.agent-rail-new:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--color-accent-soft); }
+.agent-rail-new-icon { font-size: 16px; line-height: 0; margin-top: -1px; }
+
+/* Single active view — the focused session's terminal (or its Resume card). */
+.agent-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+  display: flex;
 }
 
 .agent-pane {
+  flex: 1 1 auto;
   position: relative;
   min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-}
-/* A faint inner ring marks the focused pane in a split (not shown for a lone pane). */
-.agent-pane.focused::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border: 1px solid color-mix(in srgb, var(--color-accent) 38%, transparent);
-  pointer-events: none;
-  z-index: 3;
 }
 
 /* ── Per-session header — "each tab, directly above its agent" ──────────────────
@@ -132,11 +327,6 @@
   border-bottom: 1px solid var(--color-border);
   background: linear-gradient(180deg, color-mix(in srgb, var(--color-accent) 6%, var(--color-bg)), var(--color-bg));
 }
-.agent-pane.focused .agent-pane-head {
-  background: linear-gradient(180deg, color-mix(in srgb, var(--color-accent) 13%, var(--color-bg)), var(--color-bg));
-}
-/* The rightmost header yields space so its controls clear the top-right overlay. */
-
 .agent-pane-title {
   font-family: var(--font-mono);
   font-size: 11.5px;
@@ -151,7 +341,6 @@
   transition: background var(--transition-fast), color var(--transition-fast);
 }
 .agent-pane-title:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
-.agent-pane.focused .agent-pane-title { color: var(--color-text); }
 
 .agent-pane-rename {
   width: 160px;
@@ -183,19 +372,11 @@
 .agent-pane-status .dot {
   flex: 0 0 auto;
   width: 7px; height: 7px; border-radius: 50%;
-  background: var(--color-warning);
-  box-shadow: 0 0 7px currentColor;
+  background: var(--kind-color, var(--color-text-tertiary));
+  box-shadow: 0 0 7px color-mix(in srgb, var(--kind-color, transparent) 75%, transparent);
 }
-.agent-pane-status[data-status="open"] .dot { background: var(--color-success); color: var(--color-success); }
-.agent-pane-status[data-status="closed"] .dot { background: var(--color-error); color: var(--color-error); }
-.agent-pane-status[data-status="connecting"] .dot {
-  background: var(--color-warning); color: var(--color-warning);
-  animation: agentDotPulse 1.3s ease-in-out infinite;
-}
-.agent-pane-status[data-status="working"] .dot {
-  background: var(--color-success); color: var(--color-success);
-  animation: agentDotPulse 1.1s ease-in-out infinite;
-}
+.agent-pane-status[data-kind="working"] .dot,
+.agent-pane-status[data-kind="starting"] .dot { animation: agentDotPulse 1.2s ease-in-out infinite; }
 
 /* Each action reads as a real button: a visible resting chip (surface + border) so
    it's obviously clickable, a 28px target, and a legible glyph. */
@@ -229,7 +410,8 @@
   box-shadow: 0 0 0 2px var(--color-accent-soft);
 }
 
-/* Ended session → a centered, unmissable Reconnect surface over the dead pane. */
+/* Dormant restored tab → a centered "Session saved → Resume" card over the empty slot.
+   (A LIVE session that ENDS shows NO overlay — its final output stays frozen; CHANGE 4.) */
 .agent-pane-ended {
   position: absolute;
   inset: 0;
@@ -336,203 +518,473 @@
   background-clip: content-box;
 }
 
-/* Draggable split divider. */
-.agent-pane-divider {
-  flex: 0 0 auto;
-  width: 7px;
-  cursor: col-resize;
+/* ════════════════════════════════════════════════════════════════════════════════
+   TOP-BAR TABS + SIDE-BY-SIDE PANES (top-bar-tabs redesign)
+   The expanded overlay's session navigator moved from a left rail to a top-bar tab
+   strip, and the single active view became a row of tiling panes. These rules are
+   additive and dock-agnostic (they reference no `.agent-dock*` class), so they coexist
+   with the collapsed-dock styles below. Tokens only — no hardcoded hues.
+   (The legacy `.agent-rail*` / `.agent-workspace` / `.agent-main` / `.agent-pane-head*`
+   rules above this block are now dead markup — kept inert pending cleanup.)
+   ════════════════════════════════════════════════════════════════════════════════ */
+
+/* Per-state colour for a tab + its dot (the collapsed dock owns its own map below). */
+:is(.agent-tab, .agent-tab-dot)[data-kind="saved"]    { --kind-color: var(--mood-sleeping); }
+:is(.agent-tab, .agent-tab-dot)[data-kind="starting"] { --kind-color: var(--color-warning); }
+:is(.agent-tab, .agent-tab-dot)[data-kind="working"]  { --kind-color: var(--color-success); }
+:is(.agent-tab, .agent-tab-dot)[data-kind="ready"]    { --kind-color: var(--color-accent); }
+:is(.agent-tab, .agent-tab-dot)[data-kind="ended"]    { --kind-color: var(--color-error); }
+
+/* Per-pane tab bar — sits at the TOP of each pane (not in a shared header) so a session's
+   tab is directly above the terminal it controls. Horizontally scrollable; the active
+   pane's bar carries a faint accent fill + a bottom border that reads as the active edge.
+   z-index 7 keeps the tabs clickable/droppable ABOVE the split drop overlay (z-index 6). */
+.agent-pane-tabbar {
   position: relative;
-  background: transparent;
-  touch-action: none;
-}
-.agent-pane-divider::after {
-  content: '';
-  position: absolute;
-  top: 0; bottom: 0; left: 50%;
-  width: 1px;
-  transform: translateX(-50%);
-  background: var(--color-border);
-  transition: background var(--transition-fast), width var(--transition-fast);
-}
-.agent-pane-divider:hover::after { background: var(--color-accent); width: 2px; }
-
-/* All-sessions-minimized hint (the visible row is empty). */
-.agent-allmin {
-  flex: 1;
+  z-index: 7;
+  flex: 0 0 auto;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 7px;
-  text-align: center;
-  padding: 40px;
-}
-.agent-allmin-text {
-  font-family: var(--font-family-display, var(--font-mono));
-  font-weight: 700;
-  font-size: 16px;
-  color: var(--color-text);
-}
-.agent-allmin-sub { font-size: 13px; color: var(--color-text-secondary); }
-.agent-allmin-btn {
-  margin-top: 6px;
-  padding: 8px 16px;
-  border-radius: 10px;
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--color-border);
-  color: var(--color-text-secondary);
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: color var(--transition-fast), border-color var(--transition-fast);
-}
-.agent-allmin-btn:hover { color: var(--color-text); border-color: var(--color-border-hover); }
-
-/* ── Minimized dock — vertical bubbles, bottom-right ───────────────────────────
-   A minimized session keeps running; its bubble shows Sleepy heads-down (working)
-   or waving (finished) + a badge, with the session title beneath. Click to restore. */
-.agent-dock {
-  position: absolute;
-  right: 14px; bottom: 14px;
-  z-index: 12;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 13px;
-  max-height: calc(100% - 28px);
-  overflow-y: auto;
-  padding: 4px;
+  gap: 4px;
+  height: 38px;
+  padding: 0 var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg);
+  overflow-x: auto;
+  overflow-y: hidden;
   scrollbar-width: none;
 }
-.agent-dock::-webkit-scrollbar { display: none; }
-.agent-dock-item {
+.agent-pane-tabbar::-webkit-scrollbar { display: none; }
+.agent-pane-tabbar.active {
+  background: color-mix(in srgb, var(--color-accent) 7%, var(--color-bg));
+  border-bottom-color: color-mix(in srgb, var(--color-accent) 45%, var(--color-border));
+}
+
+.agent-tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   flex: 0 0 auto;
+  max-width: 190px;
+  height: 28px;
+  padding: 0 5px 0 9px;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  user-select: none;
+  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+.agent-tab:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
+.agent-tab.active {
+  background: var(--color-accent-soft);
+  border-color: color-mix(in srgb, var(--color-accent) 50%, transparent);
+  color: var(--color-text);
+}
+.agent-tab:focus-visible { outline: none; border-color: var(--color-accent); box-shadow: 0 0 0 2px var(--color-accent-soft); }
+
+.agent-tab-dot {
+  flex: 0 0 auto;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--kind-color, var(--color-text-tertiary));
+  box-shadow: 0 0 7px color-mix(in srgb, var(--kind-color, transparent) 75%, transparent);
+}
+.agent-tab-dot[data-kind="working"],
+.agent-tab-dot[data-kind="starting"] { animation: agentDotPulse 1.2s ease-in-out infinite; }
+
+.agent-tab-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-tab-rename {
+  width: 120px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 5px;
+  border: 1px solid var(--color-accent);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  outline: none;
+  box-shadow: 0 0 0 2px var(--color-accent-soft);
+}
+.agent-tab-bypass {
+  flex: 0 0 auto;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--color-error);
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--color-error) 50%, transparent));
+}
+.agent-tab-badge {
+  flex: 0 0 auto;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--mood-waiting);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--mood-waiting) 85%, transparent);
+  animation: agentBadgePulse 1.5s ease-in-out infinite;
+}
+/* Per-tab minimize + close — each is a clearly-bordered icon button (not a bare glyph)
+   so the two actions read distinctly. Revealed on hover/active so resting tabs stay clean. */
+.agent-tab-btn {
+  flex: 0 0 auto;
+  width: 21px; height: 21px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--transition-fast), background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+.agent-tab-btn svg { display: block; }
+.agent-tab:hover .agent-tab-btn,
+.agent-tab.active .agent-tab-btn,
+.agent-tab-btn:focus-visible { opacity: 1; }
+.agent-tab-btn:hover { background: var(--color-bg-tertiary); color: var(--color-text); border-color: var(--color-border-hover); }
+.agent-tab-btn.minimize:hover { background: var(--color-accent-soft); color: var(--color-accent); border-color: color-mix(in srgb, var(--color-accent) 40%, transparent); }
+.agent-tab-btn.close:hover { background: color-mix(in srgb, var(--color-error) 18%, transparent); border-color: color-mix(in srgb, var(--color-error) 42%, transparent); color: var(--color-error); }
+.agent-tab-btn:focus-visible { outline: none; opacity: 1; border-color: var(--color-accent); box-shadow: 0 0 0 2px var(--color-accent-soft); }
+
+/* Panes — each renders its active session's terminal; they tile equally left→right.
+   Fully specified here (not relying on the legacy `.agent-pane` block above). */
+.agent-panes {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+}
+.agent-panes > .agent-pane {
+  flex: 1 1 0;
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.agent-panes > .agent-pane + .agent-pane { border-left: 1px solid var(--color-border); }
+/* Shown when EVERY pane was minimized to the corner — keeps the expanded view from
+   reading as a blank void. */
+.agent-allmin-hint {
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 3px;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-6);
+  text-align: center;
 }
-.agent-bubble {
-  position: relative;
-  width: 52px; height: 52px;
+.agent-allmin-title {
+  font-family: var(--font-family-display, var(--font-mono));
+  font-weight: 700;
+  font-size: var(--font-size-md);
+  color: var(--color-text-secondary);
+}
+.agent-allmin-sub {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+  max-width: 380px;
+  line-height: 1.5;
+}
+/* When split (≥2 panes), make the action-focused pane unmistakable — a full accent
+   ring + top bar — and gently recede the inactive panes, so "the session I'm in" reads
+   at a glance (⌘D/⌘T/＋ and drops act on it). A lone pane needs no such marker. */
+.agent-panes.split > .agent-pane.active {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--color-accent) 55%, transparent);
+}
+.agent-panes.split > .agent-pane.active::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: var(--color-accent);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--color-accent) 60%, transparent);
+  z-index: 3;
+}
+.agent-panes.split > .agent-pane:not(.active) { opacity: 0.82; }
+.agent-panes.split > .agent-pane:not(.active)::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--color-bg) 22%, transparent);
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* Split / combine drop overlay — only mounted while a tab is being dragged. Three EQUAL
+   zones over each pane (so the split edges are as easy to hit as combine): LEFT/RIGHT
+   edge splits the dragged session into a new pane that side; CENTRE combines it into this
+   pane as another tab. Each zone names its action so the gesture is discoverable. */
+.agent-pane-droplayer {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: flex;
+}
+.agent-pane-zone {
+  flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 16px;
-  background: color-mix(in srgb, var(--color-accent) 10%, var(--color-bg-elevated));
-  border: 1px solid color-mix(in srgb, var(--color-accent) 30%, var(--color-border));
-  box-shadow: 0 10px 26px -12px rgba(0, 0, 0, 0.7);
+  border: 1px dashed color-mix(in srgb, var(--color-accent) 22%, transparent);
+}
+.agent-pane-zone-label {
+  padding: 4px 10px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-bg-elevated) 88%, transparent);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+  pointer-events: none;
+}
+.agent-pane-zone[data-over="true"] {
+  background: color-mix(in srgb, var(--color-accent) 16%, transparent);
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--color-accent) 55%, transparent);
+}
+.agent-pane-zone[data-over="true"] .agent-pane-zone-label {
+  opacity: 1;
+  border-color: var(--color-accent);
+  color: var(--color-text);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-tab-dot,
+  .agent-tab-badge { animation: none !important; }
+}
+
+/* ── Session dock — a bare bottom-right stack of chip TILES (NOT a panel) ─────────
+   Shown when the overlay is closed and ≥1 session exists. Each session is its OWN solid,
+   shadowed pill TILE — [dot · mascot · name · state · ✕] — so the names stay readable
+   over WHATEVER page/terminal content sits behind the fixed dock (the legibility fix: a
+   solid backing per name, not floating text). The stack grows UPWARD from the corner and
+   collapses into one combined anchor chip (`.agent-dock-anchor`) that re-expands it.
+   Default is expanded; the choice is remembered. Click a tile to open + focus its session.
+
+   `pointer-events` is OFF on the container and ON for the interactive pills, so the empty
+   gaps in this corner column never swallow clicks meant for the page behind. */
+.agent-dock {
+  position: fixed;
+  right: var(--space-5);
+  bottom: var(--space-5);
+  z-index: 18;
+}
+/* The minimized-sessions dock floats ABOVE the expanded overlay (z-index 20). */
+.agent-dock.agent-dock--floating { z-index: 25; }
+.agent-dock {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-2);
+  pointer-events: none;
+  /* Reset white-space so a `pre`/`pre-wrap` ancestor (e.g. a terminal surface) can never
+     leak collapsible whitespace into the stack and space the tiles apart. */
+  white-space: normal;
+  /* No card, no overflow clip, no definite height: fixed + bottom-anchored + content
+     height ⇒ the stack hugs its content and grows upward as sessions are added. */
+}
+.agent-dock-tiles {
+  flex: 0 0 auto;
+  width: 248px;
+  max-width: calc(100vw - 2 * var(--space-5));
+  max-height: calc(100vh - 4 * var(--space-5));
+  overflow-y: auto;
+  padding: 2px;            /* keep tile shadows / focus rings off the scroll edge */
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-hover) transparent;
+  animation: agentDockIn var(--transition-normal);
+}
+.agent-dock-tiles::-webkit-scrollbar { width: 8px; }
+.agent-dock-tiles::-webkit-scrollbar-thumb {
+  background: var(--color-border-hover);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+@keyframes agentDockIn {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* One session TILE — its own solid, shadowed pill (readable over any background). */
+.agent-dock-chip {
+  position: relative;
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 7px var(--space-2);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-lg);
   cursor: pointer;
-  overflow: visible;
-  transition: transform var(--transition-fast), box-shadow var(--transition-fast), border-color var(--transition-fast);
+  transition: transform var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
-.agent-bubble:hover { transform: translateY(-2px); box-shadow: 0 14px 30px -12px rgba(0, 0, 0, 0.82); border-color: var(--color-accent); }
-.agent-bubble:active { transform: translateY(0); }
-.agent-bubble:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--color-accent-soft); }
-.agent-bubble[data-status="closed"] { border-color: color-mix(in srgb, var(--color-error) 42%, var(--color-border)); }
+.agent-dock-chip + .agent-dock-chip { margin-top: var(--space-2); }
+.agent-dock-chip:hover { transform: translateY(-1px); border-color: var(--color-border-hover); }
+.agent-dock-chip.focused {
+  border-color: color-mix(in srgb, var(--color-accent) 60%, transparent);
+  box-shadow: var(--shadow-lg), 0 0 0 1px color-mix(in srgb, var(--color-accent) 45%, transparent);
+}
+.agent-dock-chip:focus-visible { outline: none; border-color: var(--color-accent); box-shadow: var(--shadow-lg), 0 0 0 2px var(--color-accent-soft); }
 
-/* Per-state aura — the whole bubble glows its status colour, so a collapsed
-   agent's state is obvious from across the screen (before reading the caption).
-   Placed after the closed-status rule so a sleeping bubble reads calm, not alarmed. */
-.agent-bubble[data-mood="sleeps"] {
-  border-color: color-mix(in srgb, var(--mood-sleeping) 42%, var(--color-border));
-  box-shadow: 0 10px 26px -12px rgba(0, 0, 0, 0.7), 0 0 16px -6px color-mix(in srgb, var(--mood-sleeping) 55%, transparent);
+.agent-dock-chip-dot {
+  flex: 0 0 auto;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--kind-color, var(--color-text-tertiary));
+  box-shadow: 0 0 7px color-mix(in srgb, var(--kind-color, transparent) 75%, transparent);
 }
-.agent-bubble[data-mood="thinking"] {
-  border-color: color-mix(in srgb, var(--color-warning) 60%, var(--color-border));
-  box-shadow: 0 10px 26px -12px rgba(0, 0, 0, 0.7), 0 0 18px -4px color-mix(in srgb, var(--color-warning) 70%, transparent);
-}
-.agent-bubble[data-mood="working"] {
-  border-color: color-mix(in srgb, var(--color-success) 60%, var(--color-border));
-  box-shadow: 0 10px 26px -12px rgba(0, 0, 0, 0.7), 0 0 18px -4px color-mix(in srgb, var(--color-success) 70%, transparent);
-}
-.agent-bubble[data-mood="waving"] {
-  border-color: color-mix(in srgb, var(--mood-waiting) 60%, var(--color-border));
-  box-shadow: 0 10px 26px -12px rgba(0, 0, 0, 0.7), 0 0 18px -4px color-mix(in srgb, var(--mood-waiting) 72%, transparent);
-}
-/* Keep the keyboard focus ring winning over the per-state box-shadow above. */
-.agent-bubble[data-mood]:focus-visible { box-shadow: 0 0 0 2px var(--color-accent-soft); }
+.agent-dock-chip-dot[data-kind="working"],
+.agent-dock-chip-dot[data-kind="starting"] { animation: agentDotPulse 1.2s ease-in-out infinite; }
 
-/* Sleeping is the only mood shared with the big debt mascot — recolour the eyes to
-   a calm indigo ONLY inside the dock bubble, leaving the large mascot untouched. */
-.agent-bubble .smascot-sleeps .smascot-eye {
+.agent-dock-chip-mascot {
+  flex: 0 0 auto;
+  width: 24px; height: 24px;
+  display: flex; align-items: center; justify-content: center;
+  /* The mascot's inner 92×76 design box is only TRANSFORM-scaled (its layout box stays
+     76px tall). Contain it so that untransformed box never inflates the tile's height. */
+  overflow: hidden;
+}
+/* Recolour the shared "sleeps" face's eyes to a calm indigo inside the dock only. */
+.agent-dock-chip-mascot .smascot-sleeps .smascot-eye,
+.agent-dock-anchor-mascot .smascot-sleeps .smascot-eye {
   --eye-top: #aeb9ff;
   --eye-bot: #6e7bff;
   --eye-glow: rgba(110, 123, 255, 0.6);
 }
-
-/* Colour-coded state caption under the bubble (sleeping / thinking / working /
-   waiting) — the status spelled out, tinted to the same hue as the eyes + aura. */
-.agent-bubble-state {
+.agent-dock-chip-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.agent-dock-chip-state {
   flex: 0 0 auto;
   font-family: var(--font-mono);
-  font-size: 8px;
+  font-size: 8.5px;
   font-weight: 700;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
   line-height: 1;
-  padding: 2px 6px;
-  border-radius: 999px;
-  color: var(--color-text-tertiary);
-  background: color-mix(in srgb, currentColor 14%, transparent);
-  border: 1px solid color-mix(in srgb, currentColor 42%, transparent);
+  padding: 3px 6px;
+  border-radius: var(--radius-full);
+  color: var(--kind-color, var(--color-text-tertiary));
+  background: color-mix(in srgb, var(--kind-color, transparent) 16%, var(--color-bg-elevated));
+  border: 1px solid color-mix(in srgb, var(--kind-color, transparent) 42%, transparent);
 }
-.agent-bubble-state[data-mood="sleeps"]   { color: var(--mood-sleeping); }
-.agent-bubble-state[data-mood="thinking"] { color: var(--color-warning); }
-.agent-bubble-state[data-mood="working"]  { color: var(--color-success); }
-.agent-bubble-state[data-mood="waving"]   { color: var(--mood-waiting); }
-
-/* "Waiting for you" chip — appears when a docked agent went quiet / rang the bell
-   (i.e. it's finished and waiting). Magenta to match the waiting mascot. */
-.agent-bubble-badge {
-  position: absolute;
-  top: -4px; right: -4px;
-  width: 15px; height: 15px;
+/* "Waiting for you" dot — a backgrounded session finished while you weren't on it. */
+.agent-dock-chip-badge {
+  flex: 0 0 auto;
+  width: 8px; height: 8px;
   border-radius: 50%;
   background: var(--mood-waiting);
-  border: 2px solid var(--color-bg);
-  box-shadow: 0 0 10px color-mix(in srgb, var(--mood-waiting) 90%, transparent);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--mood-waiting) 85%, transparent);
   animation: agentBadgePulse 1.5s ease-in-out infinite;
 }
 @keyframes agentBadgePulse {
   0%, 100% { transform: scale(1); opacity: 1; }
   50% { transform: scale(1.25); opacity: 0.7; }
 }
-
-.agent-bubble-close {
-  position: absolute;
-  top: -6px; left: -6px;
-  width: 20px; height: 20px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  background: var(--color-bg-elevated);
-  border: 1px solid var(--color-border);
+.agent-dock-chip-close {
+  flex: 0 0 auto;
+  width: 22px; height: 22px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px solid transparent;
   color: var(--color-text-tertiary);
-  font-size: 10px;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
   opacity: 0;
-  transition: opacity var(--transition-fast), color var(--transition-fast), background var(--transition-fast), box-shadow var(--transition-fast);
+  transition: opacity var(--transition-fast), background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
 }
-/* Pad the clickable/focusable area out to the 24px pointer-target minimum without
-   enlarging the visible disc (20px + 2px ring on each side = 24px). */
-.agent-bubble-close::before { content: ''; position: absolute; inset: -2px; border-radius: 50%; }
-/* Reveal on bubble hover OR when the (now keyboard-focusable) close itself is focused. */
-.agent-bubble:hover .agent-bubble-close,
-.agent-bubble-close:focus-visible { opacity: 1; }
-.agent-bubble-close:hover { background: color-mix(in srgb, var(--color-error) 22%, var(--color-bg-elevated)); color: var(--color-error); }
-.agent-bubble-close:focus-visible { outline: none; border-color: var(--color-accent); box-shadow: 0 0 0 2px var(--color-accent-soft); }
+.agent-dock-chip:hover .agent-dock-chip-close,
+.agent-dock-chip.focused .agent-dock-chip-close,
+.agent-dock-chip-close:focus-visible { opacity: 1; }
+.agent-dock-chip-close:hover { background: color-mix(in srgb, var(--color-error) 18%, transparent); border-color: color-mix(in srgb, var(--color-error) 42%, transparent); color: var(--color-error); }
+.agent-dock-chip-close:focus-visible { outline: none; opacity: 1; border-color: var(--color-accent); box-shadow: 0 0 0 2px var(--color-accent-soft); }
 
-.agent-bubble-title {
-  max-width: 74px;
-  font-family: var(--font-mono);
-  font-size: 9.5px;
-  line-height: 1.2;
-  color: var(--color-text-secondary);
-  text-align: center;
+/* Anchor chip — the corner-most element. Collapses the tile stack into this one combined
+   chip (mascot · count · chevron) and re-expands it; same footprint in both states. Its
+   border + glow read the worst-of state colour so a glance still tells you something. */
+.agent-dock-anchor {
+  pointer-events: auto;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px 12px 6px 8px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-elevated);
+  border: 1px solid color-mix(in srgb, var(--kind-color, var(--color-accent)) 45%, var(--color-border));
+  box-shadow: var(--shadow-lg), 0 0 16px -6px color-mix(in srgb, var(--kind-color, transparent) 60%, transparent);
+  cursor: pointer;
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast), border-color var(--transition-fast);
+}
+.agent-dock-anchor:hover { transform: translateY(-2px); }
+.agent-dock-anchor:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--color-accent-soft); }
+.agent-dock-anchor-mascot {
+  position: relative;
+  flex: 0 0 auto;
+  width: 24px; height: 24px;
+}
+/* Inner clip — contains the mascot's untransformed 76px layout box WITHOUT clipping the
+   status dot, which sits just outside as a wrapper sibling. */
+.agent-dock-anchor-mascot-clip {
+  width: 24px; height: 24px;
+  display: flex; align-items: center; justify-content: center;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+}
+.agent-dock-anchor-dot {
+  position: absolute;
+  right: -2px; bottom: -2px;
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  background: var(--kind-color, var(--color-text-tertiary));
+  border: 2px solid var(--color-bg-elevated);
+  box-shadow: 0 0 7px color-mix(in srgb, var(--kind-color, transparent) 75%, transparent);
+}
+.agent-dock-anchor-dot[data-kind="working"],
+.agent-dock-anchor-dot[data-kind="starting"] { animation: agentDotPulse 1.2s ease-in-out infinite; }
+.agent-dock-anchor-count {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  color: var(--color-text);
+  line-height: 1;
+}
+.agent-dock-anchor-badge {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--mood-waiting);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--mood-waiting) 85%, transparent);
+  animation: agentBadgePulse 1.5s ease-in-out infinite;
+}
+.agent-dock-anchor-chevron {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  line-height: 1;
 }
 
 /* Garage — keeps backgrounded session terminals mounted (alive) but unseen. */
@@ -667,7 +1119,12 @@
 /* Respect reduced-motion: kill the decorative pulses + entrance animations. */
 @media (prefers-reduced-motion: reduce) {
   .agent-pane-status .dot,
-  .agent-bubble-badge { animation: none !important; }
+  .agent-rail-dot,
+  .agent-rail-badge,
+  .agent-dock-chip-dot,
+  .agent-dock-chip-badge,
+  .agent-dock-anchor-dot,
+  .agent-dock-anchor-badge { animation: none !important; }
   .agent-confirm,
   .agent-confirm-scrim,
   .agent-pane-ended { animation: none !important; }

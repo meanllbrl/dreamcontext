@@ -54,6 +54,8 @@ import {
   handleAgentInstallStatus,
   attachAgentTerminal,
 } from './routes/agent-terminal.js';
+import { handleAgentDrop } from './routes/agent-drop.js';
+import { handleAgentSessionsGet, handleAgentSessionsPut } from './routes/agent-sessions.js';
 import { handleConnectionsList, handleConnectionsCreate, handleConnectionsDelete } from './routes/connections.js';
 import { handleFederationInboxGet, handleFederationSyncPost } from './routes/federation.js';
 import { handlePacksGet } from './routes/packs.js';
@@ -185,6 +187,13 @@ function buildRouter(): Router {
   // In-app prerequisite installer (Claude CLI / node-pty) — vault-agnostic.
   router.post('/api/agent/install', handleAgentInstall);
   router.get('/api/agent/install/status', handleAgentInstallStatus);
+  // Image drop → write under the active vault's temp dir (desktop-gated, vault-scoped:
+  // NOT vault-agnostic, so it resolves contextRoot from the X-Dreamcontext-Vault header).
+  router.post('/api/agent/drop', handleAgentDrop);
+  // Per-vault session roster (titles + layout) so renamed tabs survive a reload
+  // (desktop-gated, vault-scoped — same posture as /drop above).
+  router.get('/api/agent/sessions', handleAgentSessionsGet);
+  router.put('/api/agent/sessions', handleAgentSessionsPut);
 
   // Vaults + federation connections (issue #25 P2)
   router.get('/api/vaults', handleVaultsGet);

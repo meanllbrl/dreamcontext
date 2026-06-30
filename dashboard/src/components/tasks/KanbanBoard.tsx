@@ -1,6 +1,7 @@
 import { useMemo, useState, useCallback, useEffect, type CSSProperties } from 'react';
 import type { Task } from '../../hooks/useTasks';
 import { useTasks, useUpdateTask, useDeleteTask, useTaskMembers } from '../../hooks/useTasks';
+import { useFocusTarget, type FocusTarget } from '../../hooks/useFocusTarget';
 import { useVersions, useActiveVersion } from '../../hooks/useVersions';
 import { useBoardState } from '../../hooks/useBoard';
 import {
@@ -28,7 +29,7 @@ const distinct = (xs: string[]): string[] => Array.from(new Set(xs));
 
 type PendingSave = { mode: 'save' | 'create'; name?: string } | null;
 
-export function KanbanBoard() {
+export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
   const s = useBoardState();
   const { data: tasks = [], isLoading } = useTasks();
   const { data: members = [] } = useTaskMembers();
@@ -52,6 +53,9 @@ export function KanbanBoard() {
 
   const flash = useCallback((msg: string) => { setToast(msg); }, []);
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(null), 1900); return () => clearTimeout(t); }, [toast]);
+
+  // Open the task the ⌘K palette / Brain map navigated to in the TaskDetailPanel.
+  useFocusTarget(focus, (slug) => setSelectedSlug(slug));
 
   const closeAllMenus = useCallback(() => { setOpenMenu(null); setViewMenuId(null); }, []);
 

@@ -120,7 +120,7 @@
 }
 
 .sidebar--collapsed {
-  width: 56px;
+  width: var(--sidebar-width-collapsed);
 }
 
 /* ─── Collapse toggle ─────────────────────────────────────────────────────── */

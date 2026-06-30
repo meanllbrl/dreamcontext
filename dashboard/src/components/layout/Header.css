@@ -50,6 +50,52 @@
   color: var(--color-text);
 }
 
+/* Persistent global search pill — opens the ⌘K command palette. */
+.header-search-pill {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 28px;
+  padding: 0 var(--space-2) 0 var(--space-3);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+.header-search-pill:hover {
+  background: var(--color-bg);
+  color: var(--color-text-secondary);
+  border-color: var(--color-border-hover);
+}
+.header-search-pill:focus-visible {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px var(--color-accent-soft);
+}
+.header-search-pill-icon { display: flex; flex: 0 0 auto; }
+.header-search-pill-text {
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+}
+.header-search-pill-kbd {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-tertiary);
+}
+
+/* The pill collapses to just its icon when the title bar gets tight. */
+@media (max-width: 640px) {
+  .header-search-pill-text,
+  .header-search-pill-kbd { display: none; }
+}
+
 /* Active vault name — absolutely centered so it stays put regardless of the
    left/right cluster widths. */
 .header-vault {

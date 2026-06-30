@@ -1,9 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Task } from '../../hooks/useTasks';
+import { useUpdateTask } from '../../hooks/useTasks';
 import { TaskCard } from './TaskCard';
-import { taskAssignee } from './boardModel';
+import { taskAssignee, STATUS_META, STATUS_ORDER } from './boardModel';
 import {
-  STATUS_COLOR_VAR, MONTH_SHORT,
+  MONTH_SHORT,
   formatISO, todayISO, parseISO, addDays, diffDays, taskSpan,
 } from './calendar-utils';
 import './TimelineGantt.css';
@@ -20,32 +21,91 @@ interface ScheduledRow {
   overdue: boolean;
 }
 
-/** Pixels per day, chosen so a typical plan fits without horizontal scroll. */
-function dayWidthFor(totalDays: number): number {
-  if (totalDays <= 21) return 34;
-  if (totalDays <= 45) return 22;
-  if (totalDays <= 90) return 12;
-  if (totalDays <= 180) return 7;
-  return 4;
+type DragMode = 'move' | 'start' | 'end';
+
+interface DragState {
+  slug: string;
+  mode: DragMode;
+  startX: number;
+  dayW: number;
+  origStart: string;
+  origEnd: string;
+  rangeStart: string;
+  rangeEnd: string;
+}
+
+/** Pixels-per-day ladder for the zoom control (zoom out → see everything, zoom in → read detail). */
+const ZOOM_LADDER = [6, 9, 14, 20, 28, 40, 56];
+
+/** Pick a sensible starting zoom so the initial plan is legible without manual zooming. */
+function defaultZoomIndex(totalDays: number): number {
+  if (totalDays <= 21) return 5; // 40px
+  if (totalDays <= 40) return 4; // 28px
+  if (totalDays <= 70) return 3; // 20px
+  if (totalDays <= 140) return 2; // 14px
+  if (totalDays <= 280) return 1; // 9px
+  return 0; // 6px
 }
 
 const LABEL_W = 220;
 
+const clampIdx = (i: number) => Math.max(0, Math.min(ZOOM_LADDER.length - 1, i));
+const addISO = (iso: string, days: number) => formatISO(addDays(parseISO(iso), days));
+const fmtShort = (iso: string) => {
+  const d = parseISO(iso);
+  return `${MONTH_SHORT[d.getMonth()]} ${d.getDate()}`;
+};
+const rangeLabel = (start: string, end: string) =>
+  start === end ? fmtShort(start) : `${fmtShort(start)} → ${fmtShort(end)}`;
+
 export function TimelineGantt({ tasks, onTaskClick }: TimelineGanttProps) {
   const [unscheduledOpen, setUnscheduledOpen] = useState(false);
+  const [zoom, setZoom] = useState<number | null>(null);
+  const updateTask = useUpdateTask();
+
+  // Optimistic date overrides so a dragged bar stays put until the refetch lands.
+  const [optim, setOptim] = useState<Record<string, { start: string; end: string }>>({});
+
+  // Live drag preview (drives the dragged bar's position before commit).
+  const [dragPreview, setDragPreview] = useState<{ slug: string; start: string; end: string } | null>(null);
+  const dragRef = useRef<DragState | null>(null);
+  const previewRef = useRef<{ start: string; end: string } | null>(null);
+  const movedRef = useRef(false);
+
+  // Drop an optimistic override once the real task data agrees with it.
+  useEffect(() => {
+    setOptim((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const t of tasks) {
+        const o = prev[t.slug];
+        if (!o) continue;
+        const span = taskSpan(t);
+        if (span && span.start === o.start && span.end === o.end) {
+          delete next[t.slug];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [tasks]);
 
   const { scheduled, unscheduled } = useMemo(() => {
     const sched: ScheduledRow[] = [];
     const unsched: Task[] = [];
     for (const task of tasks) {
       const span = taskSpan(task);
-      if (span) sched.push({ task, ...span });
-      else unsched.push(task);
+      if (!span) {
+        unsched.push(task);
+        continue;
+      }
+      const o = optim[task.slug];
+      sched.push({ task, start: o?.start ?? span.start, end: o?.end ?? span.end, overdue: span.overdue });
     }
     // Earliest start first; ties broken by the due date so bars cascade.
     sched.sort((a, b) => (a.start === b.start ? a.end.localeCompare(b.end) : a.start.localeCompare(b.start)));
     return { scheduled: sched, unscheduled: unsched };
-  }, [tasks]);
+  }, [tasks, optim]);
 
   const range = useMemo(() => {
     if (scheduled.length === 0) return null;
@@ -59,16 +119,17 @@ export function TimelineGantt({ tasks, onTaskClick }: TimelineGanttProps) {
     // Always keep "today" in view so the marker has somewhere to land.
     if (today < min) min = today;
     if (today > max) max = today;
-    // Breathing room on both ends.
-    const start = formatISO(addDays(parseISO(min), -2));
-    const end = formatISO(addDays(parseISO(max), 3));
+    // Generous breathing room — also the headroom available to drag a bar outward.
+    const start = addISO(min, -7);
+    const end = addISO(max, 14);
     return { start, end, totalDays: diffDays(start, end) + 1 };
   }, [scheduled]);
 
+  const dayW = range ? ZOOM_LADDER[clampIdx(zoom ?? defaultZoomIndex(range.totalDays))] : ZOOM_LADDER[3];
+
   const ticks = useMemo(() => {
     if (!range) return [];
-    const dayW = dayWidthFor(range.totalDays);
-    const labelEvery = dayW >= 22 ? 1 : dayW >= 12 ? 2 : dayW >= 7 ? 7 : 14;
+    const labelEvery = dayW >= 20 ? 1 : dayW >= 14 ? 2 : dayW >= 9 ? 7 : 14;
     const out: { offset: number; label: string | null; major: boolean; weekStart: boolean }[] = [];
     for (let i = 0; i < range.totalDays; i++) {
       const d = addDays(parseISO(range.start), i);
@@ -81,7 +142,83 @@ export function TimelineGantt({ tasks, onTaskClick }: TimelineGanttProps) {
       out.push({ offset: i, label, major: isMonthStart, weekStart: isWeekStart });
     }
     return out;
-  }, [range]);
+  }, [range, dayW]);
+
+  const onPointerMove = useCallback((e: PointerEvent) => {
+    const d = dragRef.current;
+    if (!d) return;
+    let dayDelta = Math.round((e.clientX - d.startX) / d.dayW);
+    if (dayDelta !== 0) movedRef.current = true;
+    let start = d.origStart;
+    let end = d.origEnd;
+    if (d.mode === 'move') {
+      const minDelta = diffDays(d.origStart, d.rangeStart); // ≤ 0
+      const maxDelta = diffDays(d.origEnd, d.rangeEnd); // ≥ 0
+      dayDelta = Math.max(minDelta, Math.min(maxDelta, dayDelta));
+      start = addISO(d.origStart, dayDelta);
+      end = addISO(d.origEnd, dayDelta);
+    } else if (d.mode === 'start') {
+      let ns = addISO(d.origStart, dayDelta);
+      if (ns < d.rangeStart) ns = d.rangeStart;
+      if (ns > d.origEnd) ns = d.origEnd; // never start after due
+      start = ns;
+    } else {
+      let ne = addISO(d.origEnd, dayDelta);
+      if (ne > d.rangeEnd) ne = d.rangeEnd;
+      if (ne < d.origStart) ne = d.origStart; // never end before start
+      end = ne;
+    }
+    previewRef.current = { start, end };
+    setDragPreview({ slug: d.slug, start, end });
+  }, []);
+
+  const endDrag = useCallback(() => {
+    window.removeEventListener('pointermove', onPointerMove);
+    window.removeEventListener('pointerup', endDrag);
+    const d = dragRef.current;
+    const p = previewRef.current;
+    if (d && p && movedRef.current && (p.start !== d.origStart || p.end !== d.origEnd)) {
+      const updates =
+        d.mode === 'move'
+          ? { start_date: p.start, due_date: p.end }
+          : d.mode === 'start'
+            ? { start_date: p.start }
+            : { due_date: p.end };
+      setOptim((o) => ({ ...o, [d.slug]: { start: p.start, end: p.end } }));
+      updateTask.mutate({ slug: d.slug, updates });
+    }
+    dragRef.current = null;
+    previewRef.current = null;
+    setDragPreview(null);
+  }, [onPointerMove, updateTask]);
+
+  const beginDrag = useCallback(
+    (e: React.PointerEvent, row: ScheduledRow, mode: DragMode) => {
+      if (e.button !== 0 || !range) return;
+      e.preventDefault();
+      e.stopPropagation();
+      movedRef.current = false;
+      dragRef.current = {
+        slug: row.task.slug,
+        mode,
+        startX: e.clientX,
+        dayW,
+        origStart: row.start,
+        origEnd: row.end,
+        rangeStart: range.start,
+        rangeEnd: range.end,
+      };
+      previewRef.current = { start: row.start, end: row.end };
+      window.addEventListener('pointermove', onPointerMove);
+      window.addEventListener('pointerup', endDrag);
+    },
+    [range, dayW, onPointerMove, endDrag],
+  );
+
+  useEffect(() => () => {
+    window.removeEventListener('pointermove', onPointerMove);
+    window.removeEventListener('pointerup', endDrag);
+  }, [onPointerMove, endDrag]);
 
   if (scheduled.length === 0) {
     return (
@@ -100,8 +237,8 @@ export function TimelineGantt({ tasks, onTaskClick }: TimelineGanttProps) {
     );
   }
 
-  const dayW = dayWidthFor(range!.totalDays);
   const trackW = range!.totalDays * dayW;
+  const zoomIdx = clampIdx(zoom ?? defaultZoomIndex(range!.totalDays));
   const todayOffset = (() => {
     const t = todayISO();
     if (t < range!.start || t > range!.end) return null;
@@ -109,16 +246,38 @@ export function TimelineGantt({ tasks, onTaskClick }: TimelineGanttProps) {
   })();
 
   return (
-    <div className="gantt">
+    <div className={`gantt ${dragPreview ? 'gantt--dragging' : ''}`}>
       <div className="gantt-legend">
-        {(['todo', 'in_progress', 'in_review', 'completed'] as Task['status'][]).map(s => (
+        {STATUS_ORDER.map(s => (
           <span key={s} className="gantt-legend-item">
-            <span className="gantt-legend-swatch" style={{ background: `var(${STATUS_COLOR_VAR[s]})` }} />
-            {s.replace('_', ' ')}
+            <span className="gantt-legend-swatch" style={{ background: STATUS_META[s].color }} />
+            {STATUS_META[s].label}
           </span>
         ))}
         <span className="gantt-legend-spacer" />
-        <span className="gantt-legend-count">{scheduled.length} scheduled</span>
+        <div className="gantt-zoom" role="group" aria-label="Zoom timeline">
+          <button
+            type="button"
+            className="gantt-zoom-btn"
+            onClick={() => setZoom(clampIdx(zoomIdx - 1))}
+            disabled={zoomIdx === 0}
+            aria-label="Zoom out"
+            title="Zoom out"
+          >
+            −
+          </button>
+          <button
+            type="button"
+            className="gantt-zoom-btn"
+            onClick={() => setZoom(clampIdx(zoomIdx + 1))}
+            disabled={zoomIdx === ZOOM_LADDER.length - 1}
+            aria-label="Zoom in"
+            title="Zoom in"
+          >
+            +
+          </button>
+        </div>
+        <span className="gantt-legend-count">{scheduled.length} scheduled · drag a bar to reschedule</span>
       </div>
 
       <div className="gantt-scroll">
@@ -152,9 +311,15 @@ export function TimelineGantt({ tasks, onTaskClick }: TimelineGanttProps) {
                 style={{ left: LABEL_W + todayOffset * dayW + dayW / 2 }}
               />
             )}
-            {scheduled.map(({ task, start, end, overdue }, i) => {
+            {scheduled.map((row, i) => {
+              const { task, overdue } = row;
+              const isDragging = dragPreview?.slug === task.slug;
+              const start = isDragging ? dragPreview!.start : row.start;
+              const end = isDragging ? dragPreview!.end : row.end;
               const offset = diffDays(range!.start, start);
               const span = diffDays(start, end) + 1;
+              const barW = Math.max(span * dayW - 2, 6);
+              const assignee = taskAssignee(task);
               return (
                 <div className="gantt-row" key={task.slug} style={{ animationDelay: `${Math.min(i, 16) * 18}ms` }}>
                   <button
@@ -165,21 +330,42 @@ export function TimelineGantt({ tasks, onTaskClick }: TimelineGanttProps) {
                   >
                     <span className={`priority-dot priority-dot--${task.priority}`} />
                     <span className="gantt-row-name">{task.name}</span>
-                    {taskAssignee(task) !== 'none' && <span className="gantt-row-assignee">{taskAssignee(task)}</span>}
+                    {assignee !== 'none' && <span className="gantt-row-assignee">{assignee}</span>}
                   </button>
                   <div className="gantt-row-track" style={{ width: trackW }}>
-                    <button
-                      className={`gantt-bar ${overdue ? 'gantt-bar--overdue' : ''} ${task.status === 'completed' ? 'gantt-bar--done' : ''}`}
+                    <div
+                      className={`gantt-bar ${overdue ? 'gantt-bar--overdue' : ''} ${task.status === 'completed' ? 'gantt-bar--done' : ''} ${isDragging ? 'gantt-bar--active' : ''}`}
+                      role="button"
+                      tabIndex={0}
                       style={{
                         left: offset * dayW,
-                        width: Math.max(span * dayW - 2, 6),
-                        background: `var(${STATUS_COLOR_VAR[task.status]})`,
+                        width: barW,
+                        background: STATUS_META[task.status].color,
                       }}
-                      onClick={() => onTaskClick(task)}
-                      title={`${task.name}\n${start}${end !== start ? ` → ${end}` : ''}${overdue ? ' · overdue' : ''}`}
+                      onPointerDown={(e) => beginDrag(e, row, 'move')}
+                      onClick={() => { if (!movedRef.current) onTaskClick(task); }}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onTaskClick(task); } }}
+                      title={`${task.name}\n${rangeLabel(start, end)}${overdue ? ' · overdue' : ''}\nDrag to reschedule · drag an edge to resize`}
+                      aria-label={`${task.name}, ${rangeLabel(start, end)}`}
                     >
-                      {span * dayW > 56 && <span className="gantt-bar-label">{task.name}</span>}
-                    </button>
+                      <span
+                        className="gantt-handle gantt-handle--start"
+                        onPointerDown={(e) => beginDrag(e, row, 'start')}
+                        title="Drag to set start date"
+                      />
+                      {barW > 56 && <span className="gantt-bar-label">{task.name}</span>}
+                      <span
+                        className="gantt-handle gantt-handle--end"
+                        onPointerDown={(e) => beginDrag(e, row, 'end')}
+                        title="Drag to set due date"
+                      />
+                    </div>
+                    <span
+                      className="gantt-bar-meta"
+                      style={{ left: offset * dayW + barW + 6 }}
+                    >
+                      {rangeLabel(start, end)}
+                    </span>
                   </div>
                 </div>
               );

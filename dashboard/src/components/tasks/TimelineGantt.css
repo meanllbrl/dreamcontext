@@ -2,6 +2,14 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
+  flex: 1;
+  min-height: 0;
+}
+
+.gantt--dragging,
+.gantt--dragging * {
+  user-select: none;
+  cursor: grabbing !important;
 }
 
 /* ─── Legend ─── */
@@ -38,9 +46,46 @@
   color: var(--color-text-tertiary);
 }
 
+/* ─── Zoom control ─── */
+.gantt-zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.gantt-zoom-btn {
+  width: 26px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-base);
+  line-height: 1;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.gantt-zoom-btn:hover:not(:disabled) {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
+
+.gantt-zoom-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 /* ─── Scroll frame ─── */
 .gantt-scroll {
-  overflow-x: auto;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   background: var(--color-bg-elevated);
@@ -232,21 +277,28 @@
   height: 20px;
   border: none;
   border-radius: var(--radius-sm);
-  cursor: pointer;
+  cursor: grab;
   display: flex;
   align-items: center;
   overflow: hidden;
   box-shadow: var(--shadow-sm);
-  transition: filter var(--transition-fast), transform var(--transition-fast);
+  transition: filter var(--transition-fast), box-shadow var(--transition-fast);
+  touch-action: none;
 }
 
 .gantt-bar:hover {
   filter: brightness(1.06);
-  transform: translateY(-1px);
+}
+
+.gantt-bar--active {
+  cursor: grabbing;
+  box-shadow: var(--shadow-md);
+  filter: brightness(1.08);
+  z-index: 3;
 }
 
 .gantt-bar--done {
-  opacity: 0.65;
+  opacity: 0.9;
 }
 
 .gantt-bar--overdue {
@@ -258,10 +310,54 @@
   font-size: 11px;
   font-weight: var(--font-weight-medium);
   color: var(--color-text-on-brand);
-  padding: 0 var(--space-2);
+  padding: 0 var(--space-1);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  flex: 1;
+  pointer-events: none;
+}
+
+/* Resize handles at each end of a bar — grab to change start / due. */
+.gantt-handle {
+  flex: 0 0 auto;
+  width: 7px;
+  align-self: stretch;
+  cursor: ew-resize;
+  opacity: 0;
+  background: var(--color-text-on-brand);
+  transition: opacity var(--transition-fast);
+}
+
+.gantt-handle--start {
+  border-top-left-radius: var(--radius-sm);
+  border-bottom-left-radius: var(--radius-sm);
+}
+
+.gantt-handle--end {
+  border-top-right-radius: var(--radius-sm);
+  border-bottom-right-radius: var(--radius-sm);
+  margin-left: auto;
+}
+
+.gantt-bar:hover .gantt-handle,
+.gantt-bar--active .gantt-handle {
+  opacity: 0.45;
+}
+
+/* Always-visible date range printed just past the bar. */
+.gantt-bar-meta {
+  position: absolute;
+  top: 9px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  font-size: 10px;
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
 }
 
 /* ─── Empty state ─── */

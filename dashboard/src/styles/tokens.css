@@ -210,9 +210,21 @@
 
   /* ─── Layout (compact density) ─── */
   --sidebar-width: 220px;
+  --sidebar-width-collapsed: 56px;
   --header-height: 42px;
   --page-max-width: 1200px;
   --card-padding: 12px;
+  /* Left edge of the page content area (= current sidebar width). Flipped to the
+     collapsed width by `:root[data-sidebar="collapsed"]` below so a surface mounted
+     OUTSIDE the Shell (the expanded Agent overlay) can bound itself to the content
+     area, below the header and right of the sidebar. */
+  --app-content-left: var(--sidebar-width);
+}
+
+/* Shell.tsx publishes the sidebar collapse state on <html> so surfaces outside the
+   Shell tree can react to it (the Agent overlay is mounted at the app root). */
+:root[data-sidebar="collapsed"] {
+  --app-content-left: var(--sidebar-width-collapsed);
 }
 
 /* ─── Dark Mode — ClickUp doesn't ship a canonical dark, so we derive:

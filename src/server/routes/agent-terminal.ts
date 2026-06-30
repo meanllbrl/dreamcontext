@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { existsSync, readdirSync, statSync, chmodSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { sendJson, sendError } from '../middleware.js';
 import { listVaults } from '../../lib/vaults.js';
 
@@ -393,6 +394,12 @@ export function attachAgentTerminal(server: Server): void {
     if (!projectRoot) { rejectUpgrade(socket, 400); return; }
     const bypass = url.searchParams.get('bypass') === '1';
     const theme: 'light' | 'dark' = url.searchParams.get('theme') === 'light' ? 'light' : 'dark';
+    // Conversation continuity across an app reopen: `sessionId` pins a NEW conversation to
+    // a client-generated UUID (`claude --session-id`); `resume` reopens that exact prior
+    // conversation (`claude --resume`). Both are STRICT-UUID-validated before they ever
+    // touch the shell command string, so a non-UUID is dropped and neither can inject.
+    const sessionId = sanitizeUuid(url.searchParams.get('sessionId'));
+    const resumeId = sanitizeUuid(url.searchParams.get('resume'));
 
     void (async () => {
       let pty: typeof import('node-pty');
@@ -405,7 +412,7 @@ export function attachAgentTerminal(server: Server): void {
 
       const wss = new WebSocketServer({ noServer: true });
       wss.handleUpgrade(req, socket, head, (ws) => {
-        startPtySession(ws, pty, projectRoot, bypass, theme);
+        startPtySession(ws, pty, projectRoot, bypass, theme, sessionId, resumeId);
       });
     })();
   });
@@ -417,22 +424,63 @@ function rejectUpgrade(socket: Duplex, code: number): void {
   socket.destroy();
 }
 
+/** Strict UUID gate. Returns the value only when it is a canonical UUID (hex + hyphens,
+ *  no shell metacharacters), else '' — so a resume/session id can be interpolated into the
+ *  `claude` shell command with zero injection risk. */
+function sanitizeUuid(v: string | null): string {
+  return v && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(v) ? v : '';
+}
+
+/**
+ * Does `claude` actually have a stored transcript for this conversation id? Claude Code
+ * persists each conversation at `~/.claude/projects/<cwd-slug>/<session-uuid>.jsonl`, but
+ * ONLY after the first turn — a tab that was opened and never used has NO transcript. So
+ * `claude --resume <id>` on such an id fails with "No conversation found with session ID".
+ * We scan the project dirs for `<id>.jsonl` (the uuid is globally unique, so we needn't
+ * reproduce claude's exact cwd-slug encoding) and only `--resume` when it truly exists;
+ * otherwise we start fresh PINNED to that id so the tab stays resumable going forward.
+ * `id` is a pre-validated UUID (sanitizeUuid), so the filename can't escape the dir.
+ */
+function claudeConversationExists(id: string): boolean {
+  if (!id) return false;
+  try {
+    const base = join(homedir(), '.claude', 'projects');
+    if (!existsSync(base)) return false;
+    for (const dir of readdirSync(base)) {
+      if (existsSync(join(base, dir, `${id}.jsonl`))) return true;
+    }
+    return false;
+  } catch { return false; }
+}
+
 function startPtySession(
   ws: import('ws').WebSocket,
   pty: typeof import('node-pty'),
   projectRoot: string,
   bypass: boolean,
   theme: 'light' | 'dark',
+  sessionId: string,
+  resumeId: string,
 ): void {
   const shell = process.env.SHELL || '/bin/zsh';
   const flag = bypass ? ' --permission-mode bypassPermissions' : '';
+  // Conversation continuity (both ids are pre-validated UUIDs → shell-safe):
+  //  • resume requested AND a transcript exists → `--resume <id>` (reopen the real chat).
+  //  • resume requested but NO transcript (tab was never used, or claude state was lost)
+  //    → fall back to `--session-id <id>`: start FRESH but pinned to the same id, so the
+  //    tab keeps working and becomes resumable once used — instead of `--resume` erroring
+  //    with "No conversation found with session ID".
+  //  • fresh tab → `--session-id <sessionId>` pins it for a future resume.
+  const resumable = resumeId && claudeConversationExists(resumeId);
+  const pinId = resumeId || sessionId; // prefer the resume id so a fresh-fallback keeps it
+  const idArg = resumable ? ` --resume ${resumeId}` : pinId ? ` --session-id ${pinId}` : '';
   // COLORFGBG hints the terminal's light/dark to TUI apps that read it: the trailing
   // field is the background (0 = dark, 15 = light). Combined with the webview's OSC
   // 10/11 colour replies, this lets Claude Code theme to our surface at spawn.
   const colorfgbg = theme === 'light' ? '0;15' : '15;0';
   // Interactive login shell (`-ilc`) so a Finder-launched app inherits the user's
   // PATH (where `claude` usually lives) — same reason the capture/chat pipelines use it.
-  const term = pty.spawn(shell, ['-ilc', `exec claude${flag}`], {
+  const term = pty.spawn(shell, ['-ilc', `exec claude${idArg}${flag}`], {
     name: 'xterm-color',
     cols: 80,
     rows: 24,

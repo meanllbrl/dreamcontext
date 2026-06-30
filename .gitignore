@@ -22,6 +22,8 @@ dashboard/dist/
 _dream_context/marketing/
 _dream_context/state/
 _dream_context/council/
+# Ephemeral runtime scratch — images dropped into the in-app agent, etc. Never tracked.
+_dream_context/tmp/
 # Secrets are never tracked, regardless of the above
 _dream_context/**/.env
 # design-sync: staged converter scripts, build output, machine state (durable
@@ -54,3 +56,6 @@ _dream_context/state/.tasks-sync.json
 _dream_context/state/.tasks-queue.json
 _dream_context/state/.conflicts/
 _dream_context/state/.secrets.json
+
+# dreamcontext: machine-local agent session roster (Claude resume ids)
+_dream_context/state/.agent-sessions.json

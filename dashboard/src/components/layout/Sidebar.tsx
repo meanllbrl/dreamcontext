@@ -14,7 +14,7 @@ function readVaultLabel(): string {
   }
 }
 
-export type Page = 'sleepy' | 'tasks' | 'core' | 'knowledge' | 'features' | 'sleep' | 'brain' | 'council' | 'settings' | 'packs' | 'about' | 'taxonomy';
+export type Page = 'tasks' | 'core' | 'knowledge' | 'features' | 'sleep' | 'brain' | 'council' | 'settings' | 'packs' | 'about' | 'taxonomy';
 
 interface SidebarProps {
   activePage: Page;
@@ -25,21 +25,6 @@ interface SidebarProps {
 
 interface NavItem { page: Page; labelKey: string; lab?: boolean }
 interface NavGroup { labelKey: string; items: NavItem[] }
-
-/**
- * The Sleepy mascot's two-eyes avatar — the same mark that fronts Sleepy's
- * answer bubbles — scaled down to sit in the nav rail in place of a glyph. The
- * badge box around it is supplied by `.sidebar-icon`, the shared container every
- * rail icon shares, so Sleepy reads as one of the family rather than a one-off.
- */
-function SleepyEyes() {
-  return (
-    <>
-      <span className="sidebar-sleepy-eye" />
-      <span className="sidebar-sleepy-eye" />
-    </>
-  );
-}
 
 // Grouped by job-to-be-done so the rail reads as a scannable hierarchy rather
 // than one flat list of 9+ items:
@@ -54,7 +39,6 @@ const NAV_GROUPS: NavGroup[] = [
   {
     labelKey: 'nav.group.workspace',
     items: [
-      { page: 'sleepy', labelKey: 'nav.sleepy' },
       { page: 'tasks', labelKey: 'nav.tasks' },
       { page: 'council', labelKey: 'nav.council', lab: true },
     ],
@@ -150,7 +134,7 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
                     title={lab ? `${label} — ${t('nav.lab')}` : label}
                     aria-current={activePage === page ? 'page' : undefined}
                   >
-                    <span className="sidebar-icon">{page === 'sleepy' ? <SleepyEyes /> : <NavIcon page={page} />}</span>
+                    <span className="sidebar-icon"><NavIcon page={page} /></span>
                     <span className="sidebar-label">{label}</span>
                     {lab && <span className="sidebar-lab-tag">{t('nav.lab')}</span>}
                   </button>

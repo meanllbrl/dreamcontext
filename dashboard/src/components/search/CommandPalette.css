@@ -1,0 +1,321 @@
+/* ⌘K command palette — centered modal over a dim scrim. Tokens only. Sits above the
+   expanded agent overlay (z 20) so it can be summoned from on top of the agent. */
+.cmdk-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 12vh var(--space-5) var(--space-5);
+  background: color-mix(in srgb, var(--color-bg) 45%, rgba(0, 0, 0, 0.55));
+  backdrop-filter: blur(4px);
+  animation: cmdkFade var(--transition-fast) ease;
+}
+
+.command-palette {
+  width: 100%;
+  max-width: 720px;
+  max-height: 72vh;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius-xl);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  box-shadow: 0 28px 70px -22px rgba(0, 0, 0, 0.78), 0 0 0 1px rgba(0, 0, 0, 0.16);
+  overflow: hidden;
+  animation: cmdkIn var(--transition-normal) cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* Input row: a padded field box + an esc hint. */
+.cmdk-input-row {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+}
+/* The field — a real text box with internal padding and a focus ring, so the
+   query text breathes instead of sitting flush against the edge. */
+.cmdk-field {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: 46px;
+  padding: 0 var(--space-2) 0 var(--space-4);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+.cmdk-field:focus-within {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-accent-soft);
+}
+.cmdk-field--intel { border-color: color-mix(in srgb, var(--color-accent) 45%, var(--color-border)); }
+.cmdk-input-icon { flex: 0 0 auto; display: flex; color: var(--color-accent); }
+.cmdk-input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--color-text);
+  font-size: var(--font-size-base);
+  font-family: var(--font-family-text);
+}
+/* The wrapping .cmdk-field already shows the focus ring, so suppress the global
+   :focus-visible outline that would otherwise draw a second box around the input. */
+.cmdk-input:focus-visible { outline: none; }
+.cmdk-input::placeholder { color: var(--color-text-tertiary); }
+.cmdk-kbd {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-tertiary);
+}
+
+/* BM25 in-flight spinner (Normal mode only). */
+.cmdk-spin {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  animation: cmdkSpin 0.7s linear infinite;
+}
+@keyframes cmdkSpin { to { transform: rotate(360deg); } }
+
+/* Intelligent toggle (Normal BM25 ↔ Haiku), pinned to the right of the field. */
+.cmdk-intel {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-tertiary);
+  font-family: var(--font-family-display);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+.cmdk-intel:hover {
+  color: var(--color-text-secondary);
+  border-color: color-mix(in srgb, var(--color-accent) 40%, var(--color-border));
+}
+.cmdk-intel-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-text-tertiary);
+  transition: background var(--transition-fast), box-shadow var(--transition-fast);
+}
+.cmdk-intel--on {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-accent-text);
+}
+.cmdk-intel--on:hover { color: var(--color-accent-text); }
+.cmdk-intel--on .cmdk-intel-dot {
+  background: #fff;
+  box-shadow: 0 0 6px rgba(255, 255, 255, 0.9);
+}
+.cmdk-intel-label { white-space: nowrap; }
+
+/* Body: results list + preview */
+.cmdk-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.cmdk-list {
+  flex: 0 0 46%;
+  min-width: 0;
+  overflow-y: auto;
+  padding: var(--space-2);
+  border-right: 1px solid var(--color-border);
+}
+.cmdk-empty {
+  padding: var(--space-5) var(--space-4);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
+  text-align: center;
+}
+
+.cmdk-row {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+.cmdk-row--focused {
+  background: var(--color-accent-soft);
+  border-color: color-mix(in srgb, var(--color-accent) 30%, transparent);
+}
+.cmdk-row-icon { flex: 0 0 auto; display: flex; margin-top: 2px; color: var(--color-accent); }
+.cmdk-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.cmdk-row-title {
+  font-family: var(--font-family-display);
+  font-weight: 600;
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cmdk-row-snippet {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.cmdk-row-type {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-tertiary);
+  padding-top: 3px;
+}
+.cmdk-hl {
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
+  border-radius: 3px;
+  padding: 0 2px;
+  font-weight: 600;
+}
+
+/* Intelligent CTA (armed but not yet run) + the reasoning skeleton. */
+.cmdk-cta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  margin: var(--space-2) 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-accent);
+  background: var(--color-accent);
+  color: var(--color-accent-text);
+  font-family: var(--font-family-display);
+  font-weight: 600;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition: filter var(--transition-fast);
+}
+.cmdk-cta:hover { filter: brightness(1.06); }
+.cmdk-cta-kbd {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.22);
+  color: #fff;
+}
+.cmdk-thinking {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+.cmdk-thinking-spark { display: inline-flex; vertical-align: -2px; color: var(--color-accent); margin-right: 6px; }
+.cmdk-skel { display: flex; flex-direction: column; gap: var(--space-2); }
+.cmdk-skel i {
+  height: 12px;
+  border-radius: 6px;
+  background: linear-gradient(90deg, var(--color-bg-tertiary) 25%, var(--color-bg-secondary) 50%, var(--color-bg-tertiary) 75%);
+  background-size: 200% 100%;
+  animation: cmdkShimmer 1.2s ease-in-out infinite;
+}
+.cmdk-skel i:nth-child(2) { width: 86%; }
+.cmdk-skel i:nth-child(3) { width: 68%; }
+@keyframes cmdkShimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+
+/* Preview pane */
+.cmdk-preview {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-4);
+  overflow-y: auto;
+}
+.cmdk-preview-head { display: flex; align-items: center; gap: var(--space-2); margin-bottom: 4px; }
+.cmdk-preview-icon { display: flex; color: var(--color-accent); }
+.cmdk-preview-title {
+  font-family: var(--font-family-display);
+  font-weight: 700;
+  font-size: var(--font-size-base);
+  color: var(--color-text);
+}
+.cmdk-preview-path {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  margin-bottom: var(--space-3);
+  word-break: break-all;
+}
+.cmdk-preview-body { flex: 1; min-height: 0; font-size: var(--font-size-sm); color: var(--color-text-secondary); }
+
+/* Footer hints */
+.cmdk-foot {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-4);
+  border-top: 1px solid var(--color-border);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--color-text-tertiary);
+}
+.cmdk-foot kbd {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  padding: 1px 4px;
+  margin-right: 3px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+}
+.cmdk-foot-mode { margin-left: auto; color: var(--color-success); }
+.cmdk-foot-mode--intel { color: var(--color-accent); }
+
+@keyframes cmdkFade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes cmdkIn {
+  from { opacity: 0; transform: translateY(-8px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cmdk-scrim, .command-palette { animation: none !important; }
+  .cmdk-spin, .cmdk-skel i { animation: none !important; }
+}

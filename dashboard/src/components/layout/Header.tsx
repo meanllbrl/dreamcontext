@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useTheme } from '../../context/ThemeContext';
 import { startWindowDrag, toggleMaximizeWindow } from '../../lib/desktop';
+import { SearchIcon } from '../sleepy/TypeIcons';
 import { UpdateBadge } from './UpdateBadge';
 import type { Page } from './Sidebar';
 import './Header.css';
@@ -45,6 +46,8 @@ interface HeaderProps {
   sidebarCollapsed: boolean;
   /** Collapse/expand the rail — the title-bar owns this control. */
   onToggleSidebar: () => void;
+  /** Open the global ⌘K command palette (the persistent search pill). */
+  onOpenSearch?: () => void;
 }
 
 /**
@@ -52,7 +55,7 @@ interface HeaderProps {
  * name centered, and utility controls on the right. The brand wordmark lives
  * ONLY in the sidebar lockup now — the header no longer repeats it.
  */
-export function Header({ onNavigate, sidebarCollapsed, onToggleSidebar }: HeaderProps) {
+export function Header({ onNavigate, sidebarCollapsed, onToggleSidebar, onOpenSearch }: HeaderProps) {
   const { theme, setTheme, resolved } = useTheme();
   const queryClient = useQueryClient();
   const [zoom, setZoom] = useState(getStoredZoom);
@@ -142,6 +145,20 @@ export function Header({ onNavigate, sidebarCollapsed, onToggleSidebar }: Header
             <rect x="1.4" y="2.4" width="13.2" height="11.2" rx="2.2" stroke="currentColor" strokeWidth="1.4" />
             <line x1="6.1" y1="2.8" x2="6.1" y2="13.2" stroke="currentColor" strokeWidth="1.4" />
           </svg>
+        </button>
+
+        {/* Persistent global search pill → ⌘K command palette. A real <button> with
+            data-no-drag so clicking it never starts the title-bar window drag. */}
+        <button
+          className="header-search-pill"
+          data-no-drag
+          onClick={onOpenSearch}
+          title="Search the brain (⌘K)"
+          aria-label="Search the brain"
+        >
+          <span className="header-search-pill-icon" aria-hidden="true"><SearchIcon size={14} /></span>
+          <span className="header-search-pill-text">Search the brain…</span>
+          <kbd className="header-search-pill-kbd">⌘K</kbd>
         </button>
       </div>
 

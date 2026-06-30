@@ -126,6 +126,9 @@ function currentTermTheme(): 'light' | 'dark' {
 export interface Session {
   id: string;
   bypass: boolean;
+  /** The Claude conversation UUID — passed as `--session-id` on a new session, persisted
+   *  in the roster, and used to `--resume` this exact conversation after an app reopen. */
+  claudeId: string;
   container: HTMLDivElement;
   term: Terminal;
   fit: FitAddon;
@@ -139,6 +142,8 @@ export interface Session {
   ensureOpen: () => void;
   fitAndResize: () => void;
   applyZoom: (zoom: number) => void;
+  /** Write arbitrary text to the PTY (used to inject a dropped image's path). */
+  sendText: (data: string) => void;
   dispose: () => void;
 }
 
@@ -146,7 +151,7 @@ let sessionSeq = 0;
 // Output must go quiet for this long before we call a session "finished".
 const IDLE_MS = 800;
 
-export function createSession(bypass: boolean, notify: () => void): Session {
+export function createSession(bypass: boolean, notify: () => void, claudeId: string, resume = false): Session {
   const id = `agent-${++sessionSeq}`;
   const container = document.createElement('div');
   container.className = 'agent-pane-term';
@@ -182,14 +187,17 @@ export function createSession(bypass: boolean, notify: () => void): Session {
   const vault = getActiveVault();
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const theme = currentTermTheme();
-  const url = `${proto}://${location.host}/api/agent/terminal?vault=${encodeURIComponent(vault ?? '')}&bypass=${bypass ? '1' : '0'}&theme=${theme}`;
+  // Pin a NEW conversation to claudeId (`--session-id`) so the next launch can resume it;
+  // on restore, ask the server to `--resume` that exact conversation instead.
+  const idParam = resume ? `&resume=${encodeURIComponent(claudeId)}` : `&sessionId=${encodeURIComponent(claudeId)}`;
+  const url = `${proto}://${location.host}/api/agent/terminal?vault=${encodeURIComponent(vault ?? '')}&bypass=${bypass ? '1' : '0'}&theme=${theme}${idParam}`;
   const ws = new WebSocket(url);
 
   const session: Session = {
-    id, bypass, container, term, fit, ws,
+    id, bypass, claudeId, container, term, fit, ws,
     status: 'connecting', opened: false,
     busy: false, attention: false, minimized: false,
-    ensureOpen, fitAndResize, applyZoom, dispose,
+    ensureOpen, fitAndResize, applyZoom, sendText, dispose,
   };
 
   function setStatus(s: TermStatus) { session.status = s; notify(); }
@@ -263,6 +271,11 @@ export function createSession(bypass: boolean, notify: () => void): Session {
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data }));
   };
 
+  // Public injection point (e.g. a dropped image's absolute path). A HOISTED function
+  // declaration so the session object literal above can reference it before this line
+  // without a TDZ; `sendInput` is only dereferenced at call time (long after init).
+  function sendText(data: string) { sendInput(data); }
+
   const dataSub = term.onData(sendInput);
 
   // macOS line-editing gestures → the control bytes Claude Code's prompt already
@@ -335,14 +348,18 @@ export function createSession(bypass: boolean, notify: () => void): Session {
     if (disposed) return;
     disposed = true;
     if (idleTimer) { clearTimeout(idleTimer); idleTimer = undefined; }
-    themeObserver.disconnect();
-    dataSub.dispose();
-    bellSub.dispose();
-    oscFg.dispose();
-    oscBg.dispose();
+    // Each teardown step is isolated. Disposing a JUST-opened xterm — its WebGL glyph
+    // atlas still initialising — can throw `_isDisposed` deep in addon teardown; an
+    // un-caught throw here would abort the caller (closeSessionById) before it removes
+    // the row, leaving a zombie "ended" tab. Swallow per-step so cleanup always finishes.
+    try { themeObserver.disconnect(); } catch { /* gone */ }
+    try { dataSub.dispose(); } catch { /* gone */ }
+    try { bellSub.dispose(); } catch { /* gone */ }
+    try { oscFg.dispose(); } catch { /* gone */ }
+    try { oscBg.dispose(); } catch { /* gone */ }
     try { ws.close(); } catch { /* already closing */ }
-    term.dispose();
-    container.remove();
+    try { term.dispose(); } catch { /* webgl atlas mid-init */ }
+    try { container.remove(); } catch { /* already detached */ }
   }
 
   return session;

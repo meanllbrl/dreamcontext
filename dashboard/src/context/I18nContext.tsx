@@ -2,7 +2,6 @@ import { createContext, useContext, useState, type ReactNode } from 'react';
 
 const translations: Record<string, Record<string, string>> = {
   en: {
-    'nav.sleepy': 'Sleepy',
     'nav.brain': 'Map',
     'nav.tasks': 'Tasks',
     'nav.core': 'Core',

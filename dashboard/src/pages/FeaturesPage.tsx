@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
+import { useFocusTarget, type FocusTarget } from '../hooks/useFocusTarget';
 import { useI18n } from '../context/I18nContext';
 import { MarkdownPreview } from '../components/core/MarkdownPreview';
 import { tagHue } from '../lib/tagColor';
@@ -30,10 +31,17 @@ interface FeatureDetail extends Feature {
   sectionContents: Record<string, string>;
 }
 
-export function FeaturesPage() {
+interface FeaturesPageProps {
+  focus?: FocusTarget;
+}
+
+export function FeaturesPage({ focus }: FeaturesPageProps = {}) {
   const { t } = useI18n();
   const [selected, setSelected] = useState<string | null>(null);
   const [viewTab, setViewTab] = useState<'file' | 'preview'>('preview');
+
+  // Open the PRD the ⌘K palette / Brain map navigated to.
+  useFocusTarget(focus, (slug) => { setSelected(slug); setViewTab('preview'); });
 
   const { data: featuresData, isLoading, isError, error } = useQuery({
     queryKey: ['features'],

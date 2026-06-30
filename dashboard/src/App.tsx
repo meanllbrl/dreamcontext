@@ -10,7 +10,6 @@ import { I18nProvider } from './context/I18nContext';
 import { ProjectProvider } from './context/ProjectContext';
 import { Shell, type ShellNavigation } from './components/layout/Shell';
 import { AgentSurface } from './components/sleepy/AgentSurface';
-import { SleepyPage } from './pages/SleepyPage';
 import { TasksPage } from './pages/TasksPage';
 import { SleepPage } from './pages/SleepPage';
 import { CorePage } from './pages/CorePage';
@@ -78,21 +77,25 @@ function PageRouter({ nav }: { nav: ShellNavigation }) {
     nav.navigate(pageMap[target], nodeId);
   };
 
+  // A navigation focus target (set by the ⌘K palette and the Brain map). The
+  // `nonce` bumps on every navigate() so destination pages re-open the item even
+  // when it's the same page or the same id. Without this, pages render their
+  // default state and the navigated-to doc never opens.
+  const focus = { id: nav.focusId, nonce: nav.nonce };
+
   switch (nav.page) {
-    case 'sleepy':
-      return <SleepyPage onOpenDoc={(page, slug) => nav.navigate(page, slug)} />;
     case 'brain':
       return <BrainPage onNavigate={handleBrainNavigate} />;
     case 'tasks':
-      return <TasksPage />;
+      return <TasksPage focus={focus} />;
     case 'sleep':
       return <SleepPage />;
     case 'core':
-      return <CorePage onNavigateTaxonomy={() => nav.navigate('taxonomy', null)} />;
+      return <CorePage onNavigateTaxonomy={() => nav.navigate('taxonomy', null)} focus={focus} />;
     case 'knowledge':
-      return <KnowledgePage />;
+      return <KnowledgePage focus={focus} />;
     case 'features':
-      return <FeaturesPage />;
+      return <FeaturesPage focus={focus} />;
     case 'council':
       return <CouncilPage />;
     case 'settings':
@@ -209,9 +212,9 @@ export function App() {
               <Shell>
                 {(nav) => <PageRouter nav={nav} />}
               </Shell>
-              {/* Mounted ONCE, outside the page switch: the embedded Claude Code
-                  terminal positions itself over SleepyPage's Agent tab and keeps
-                  its PTY/scrollback alive across navigation. */}
+              {/* Mounted ONCE, outside the page switch: the global Agent floater (a
+                  bottom-right FAB that expands to a fullscreen overlay) keeps its
+                  PTY/scrollback alive across navigation and collapse/expand. */}
               <AgentSurface />
             </I18nProvider>
           </ThemeProvider>
