@@ -2,7 +2,7 @@
 id: feat_O7LODr7O
 status: active
 created: '2026-02-25'
-updated: '2026-06-29'
+updated: '2026-06-30'
 released_version: 0.1.0
 tags:
   - frontend
@@ -110,6 +110,8 @@ Users need a visual interface to manage agent context without using the terminal
 - [x] Detail panel slides in from right on task click: shows all fields, status/priority/urgency/version dropdowns, changelog with add entry form
 - [x] Eisenhower Matrix view: 2×2 priority×urgency grid, excludes completed tasks; tasks draggable between quadrants (updates priority+urgency on drop)
 - [x] Timeline (Gantt) view: status-colored bars from created→due (prefers `start_date` when the model gains it), sticky task labels with priority dot + assignee, today marker, overdue outline, adaptive day/week/month ticks, collapsible Unscheduled tray
+- [x] Timeline Gantt bars are pointer-draggable to reschedule: `onPointerDown` starts drag, `pointermove`/`pointerup` window listeners translate pointer offset to date delta, `dragPreview` state provides optimistic bar position; `updateTask` is held in `updateTaskRef` so the window listeners stay referentially stable across re-renders — fixes the cursor getting stuck in the grab state when a react-query mutation re-render tore listeners down mid-drag.
+- [x] Timeline Gantt UX polish (v0.11.0 cycle): row height 34→48px with larger bar/label typography for readability; zoom ladder rescaled 10→100px/day; a `ResizeObserver` stretches the default day-column count to fill the scroll viewport (no dead horizontal space); label column 220→240px; tighter default date range that re-expands after each drag commits.
 - [x] Calendar view: Monday-first month grid with tasks as chips on their due date, overdue + today highlighting, month nav, due/unscheduled counts
 - [x] Activity heatmap view: GitHub-style 53-week grid with Created/Updated/Completed/Due metric toggle, intensity buckets, SR-only daily summary, peak/active-day stats
 - [x] Shared time-axis date logic in `calendar-utils.ts` (local-time helpers + `taskSpan()`, forward-compatible with the in-flight `start_date` feature via a typed cast)
@@ -124,6 +126,7 @@ Users need a visual interface to manage agent context without using the terminal
 - [x] Dashboard assignee picker (`TaskDetailPanel`) only offers real roster members on a remote backend (`allowCustom` disabled); already-assigned non-member chips flagged with a "won't sync" warning chip (red dashed) (PR #69).
 - [x] `GET /api/tasks/members` drops `id:''` stubs when a real member roster is available, so the picker is never polluted with unresolvable free-text slugs (PR #69).
 - [x] `boardModel.taskAssignees(task)` derives all assignees from `person:<slug>` tags (multi-aware, with legacy scalar `assignee` fallback); `taskAssignee()` returns the primary assignee. All board views — filter counts, group-by, card display, and Gantt labels — derive from this unified `person:` tag read. Group-by places a task under each of its assignees. Fixes assignees appearing as Unassigned in the board when set via person-tags (fix/dashboard-assignee-person-tags).
+- [x] `BoardCard` renders multi-assignee tasks as an overlapping `AvatarStack` (up to 3 circular initials badges, `marginLeft: -6` overlap, ring border matching the card surface) plus a `+N` overflow chip; each badge uses a deterministic per-slug HSL hue (`assigneeHue()`) and per-person `title` tooltip showing the full display name; the overflow chip's tooltip lists all remaining names. Fixes cards previously showing only the primary assignee on multi-assignee tasks.
 - [x] Sprint-aware `VersionFilter` component replaces the generic `MultiSelectFilter` for the version facet: status icons (star=current, dot=planning, hollow=unregistered, check=released), "current" badge, release date on completed rows, per-row Set-current (star) + Complete (check) actions, "Current" quick-pick chip, collapsible Completed section, status-aware sort (current→planning→unregistered→backlog→released, completed sink to bottom).
 - [x] `GET /api/releases/active` returns `{ active: string | null }` (registered before `:version` route to prevent segment capture); `PUT /api/releases/active` accepts `{ version: string | null }` — null/empty clears; a planning entry is lazily created for an unregistered version name; 409 on an already-released version; records a dashboard change.
 - [x] `useActiveVersion`, `useSetActiveVersion`, `useCompleteVersion` hooks; `VersionFilter.tsx/.css` wired through `TaskFilters` + `KanbanBoard` (versionItems join of task version strings + RELEASES + active).
@@ -499,6 +502,11 @@ All mutating endpoints call recordDashboardChange() except `PATCH /api/config` (
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-06-30 - Timeline Gantt stable drag + polish; multi-assignee AvatarStack on board cards
+- **Gantt stable drag-to-reschedule** (`TimelineGantt.tsx`): `updateTask` held in `updateTaskRef` so `pointermove`/`pointerup` window listeners stay referentially stable across react-query re-renders — fixes cursor stuck in grab state when a re-render tore listeners down mid-drag. Pointer events API (not HTML5 DnD). `dragPreview` state provides optimistic bar position during the drag.
+- **Gantt UX polish** (`TimelineGantt.tsx/.css`): row height 34→48px, larger bar typography; zoom ladder 10→100px/day; `ResizeObserver` stretches day columns to fill scroll viewport; label column 220→240px; tighter default date range (re-expands after drag commits); legend text "drag a bar to reschedule".
+- **Multi-assignee AvatarStack** (`BoardCard.tsx`, part of v0.10.0): `AvatarStack` component renders up to 3 overlapping avatar circles with deterministic per-slug HSL hue (`assigneeHue()`), initials (`assigneeInitials()`), per-badge tooltip, and a `+N` overflow chip (tooltip lists remaining names). Fixes prior single-avatar display on multi-assignee tasks.
 
 ### 2026-06-29 - Assignee reading from person:<slug> tags (board filter, group-by, properties, gantt)
 - `boardModel`: `taskAssignees()` derives assignees from `person:` tags + legacy scalar fallback; `taskAssignee()` returns primary. `matchAssignee` multi-aware.

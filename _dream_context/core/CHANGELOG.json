@@ -1,6 +1,32 @@
 [
   {
     "date": "2026-06-30",
+    "type": "fix",
+    "scope": "dashboard",
+    "description": "Fix a drag-cursor-stuck regression in the Timeline Gantt and ship accompanying visual polish. Root cause: window pointermove and pointerup listeners were registered inside the drag-start handler and removed by a cleanup effect that re-ran on every render. The first setState from a pointermove call triggered a React re-render; the cleanup effect fired and removed the listeners mid-drag; pointerup was never received, leaving the cursor permanently in the grabbing state. Fix: hold the updateTask mutation callback in a ref (updateTaskRef) and write a stable endDrag closure that reads the ref; gate the listener-teardown cleanup to component unmount only (empty dependency array). Drag commits now fire reliably and the cursor resets to auto on release. Visual polish shipped in the same commit: row height raised from 34 to 48 px, bar labels use larger type, zoom ladder rescaled to 10–100 px/day, a ResizeObserver stretches days to fill the scroll viewport on wide screens, and the label column widens from 220 to 240 px.",
+    "breaking": false,
+    "summary": "Fix Timeline Gantt grabbing-cursor stuck mid-drag (ref-stabilize callbacks); polish: taller bars (34→48px), viewport-fill zoom, wider label column",
+    "references": [
+      "commit:f37c871",
+      "file:dashboard/src/components/tasks/TimelineGantt.tsx",
+      "file:dashboard/src/components/tasks/TimelineGantt.css",
+      "task:task-management-views-timeline-gantt-calendar-and-activity-heatmap"
+    ]
+  },
+  {
+    "date": "2026-06-30",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "Add multi-assignee rendering to the board task card and list row. BoardCard.tsx previously called the singular taskAssignee() — returning only the first person: tag — so tasks with multiple co-assignees showed a single badge. Switch to taskAssignees() and render an AvatarStack: up to 3 overlapping initials badges plus a +N overflow chip whose tooltip lists the remaining names; per-person name tooltips on each badge. Add assigneeHue(slug) to boardModel.ts — a deterministic per-person hue using the same modular-arithmetic idiom as tagHue and council modelHue — so co-assignees are colour-distinguishable at a glance. The avatar ring uses --color-bg-elevated for clean overlap gaps. Work is uncommitted (session 573e0ec4).",
+    "breaking": false,
+    "summary": "Add AvatarStack to Kanban/list card: all person: assignees rendered (up to 3 + +N overflow), deterministic per-person hue via assigneeHue()",
+    "references": [
+      "file:dashboard/src/components/tasks/BoardCard.tsx",
+      "file:dashboard/src/components/tasks/boardModel.ts"
+    ]
+  },
+  {
+    "date": "2026-06-30",
     "type": "feat",
     "scope": "server",
     "description": "Two new desktop-gated, loopback-only server routes support the multi-session agent surface. POST /api/agent/drop accepts image drops from within the agent terminal, validates via magic-byte detection and per-chunk size cap, writes the image to a vault temp file, and injects the file path into the active PTY. GET /api/agent/sessions returns the per-vault session roster (session ids, start times, status), used by the surface to rebuild the tab list after navigation or app restart. The roster file (state/.agent-sessions.json) is gitignored as machine-local. Accompanying unit test suites added for both routes (agent-drop.test.ts, agent-sessions.test.ts).",
