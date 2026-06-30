@@ -1,5 +1,96 @@
 [
   {
+    "date": "2026-06-30",
+    "type": "feat",
+    "scope": "server",
+    "description": "Two new desktop-gated, loopback-only server routes support the multi-session agent surface. POST /api/agent/drop accepts image drops from within the agent terminal, validates via magic-byte detection and per-chunk size cap, writes the image to a vault temp file, and injects the file path into the active PTY. GET /api/agent/sessions returns the per-vault session roster (session ids, start times, status), used by the surface to rebuild the tab list after navigation or app restart. The roster file (state/.agent-sessions.json) is gitignored as machine-local. Accompanying unit test suites added for both routes (agent-drop.test.ts, agent-sessions.test.ts).",
+    "breaking": false,
+    "summary": "Add /api/agent/drop (image-drop vault injection) and /api/agent/sessions (per-vault roster) server routes",
+    "references": [
+      "commit:e0b7eca",
+      "file:src/server/routes/agent-drop.ts",
+      "file:src/server/routes/agent-sessions.ts",
+      "file:src/server/index.ts",
+      "file:tests/unit/agent-drop.test.ts",
+      "file:tests/unit/agent-sessions.test.ts",
+      "task:feat-sleepy-agent-surface-ux-redesign"
+    ]
+  },
+  {
+    "date": "2026-06-30",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "Add a ⌘K command palette (CommandPalette.tsx + CommandPalette.css) that queries /api/recall with live BM25 results and an optional 'intelligent' Haiku toggle for intent-aware ranking. Each hit shows type, title, and a description excerpt. Clicking a result navigates the app to the correct page AND opens the document directly: a recallNav.ts lookup maps every corpus type (knowledge, feature, task, data-structure, changelog) to the destination page, and a useFocusTarget.ts hook threads focus signals from the top-level PageRouter down into each page component so clicking a knowledge hit both navigates to KnowledgePage and expands the matching doc. Focus wiring propagated through FeaturesPage, KnowledgePage, CorePage, and TasksPage. Palette opens on ⌘K, closes on Escape or outside click, and is positioned as a centered sheet over the app content.",
+    "breaking": false,
+    "summary": "Add ⌘K command palette: live BM25 + Haiku intelligent toggle; clicking a hit navigates to and opens the doc",
+    "references": [
+      "commit:e0b7eca",
+      "file:dashboard/src/components/search/CommandPalette.tsx",
+      "file:dashboard/src/lib/recallNav.ts",
+      "file:dashboard/src/hooks/useFocusTarget.ts",
+      "task:feat-sleepy-agent-surface-ux-redesign"
+    ]
+  },
+  {
+    "date": "2026-06-30",
+    "type": "fix",
+    "scope": "server",
+    "description": "claude --resume <id> returned 'No conversation found' for any session tab that had never been used (no transcript yet at ~/.claude/projects/*/<id>.jsonl). The server-side agent spawn now globs for the transcript file before choosing the resume strategy: when the jsonl exists, run claude --resume <id>; when it does not, start a fresh session pinned to the same id via claude --session-id <id>. The fresh session becomes resumable once the user sends a first message. This prevents a tab that was opened but never typed in from erroring on its first explicit start.",
+    "breaking": false,
+    "summary": "Fix auto-resume when no transcript exists: check jsonl file presence before --resume; fall back to --session-id",
+    "references": [
+      "commit:e0b7eca",
+      "file:src/server/routes/agent-terminal.ts",
+      "task:feat-sleepy-agent-surface-ux-redesign"
+    ]
+  },
+  {
+    "date": "2026-06-30",
+    "type": "fix",
+    "scope": "sleepy",
+    "description": "Root-cause fix for drag-to-split failing in the Tauri WKWebView. Two platform constraints required the workaround: (1) WKWebView does NOT deliver the HTML5 drop event to drop targets that are conditionally rendered (mounted mid-drag), even though dragover fires on them fine. (2) WKWebView strips custom-MIME dataTransfer.getData() values on the drop event — only text/plain survives. The fix: store the dragged session id in a React ref (set on dragstart, cleared on dragend); run the split/combine action on the reliable dragend event of the source element instead of on drop. Note: board drag-and-drop works only because it uses text/plain and always-mounted targets — neither property holds for the dynamically-mounted pane split zones. This pattern must be followed for any future drag-to-action that targets conditionally-rendered elements in WKWebView.",
+    "breaking": false,
+    "summary": "Fix drag-to-split on WKWebView: carry session id in ref; action executes on dragend not drop",
+    "references": [
+      "commit:e0b7eca",
+      "file:dashboard/src/components/sleepy/AgentSurface.tsx",
+      "task:feat-sleepy-agent-surface-ux-redesign"
+    ]
+  },
+  {
+    "date": "2026-06-30",
+    "type": "feat",
+    "scope": "sleepy",
+    "description": "Extend the agent surface to support multiple simultaneous Claude sessions side-by-side. Per-pane tab bars sit directly above the terminal they drive, providing clear tab↔pane correspondence. ⌘D splits into side-by-side panes; ⌘T opens a new tab; ⌘W closes the active tab. A session can be minimized out of the panes into a live-progress chip in a corner dock floating above the overlay (sibling of .agent-surface, not a child — see the contain:layout-paint gotcha in 2.memory.md). Clicking the chip restores the session as a pane. Active-pane accent makes the focused pane visually prominent; clicking any terminal anywhere activates its pane. The overlay auto-collapses on sidebar or palette navigation (via a dreamcontext-navigate window event). Crisp bordered SVG icon buttons for minimize and close; the per-tab restart button and its confirm/ConfirmDialog code were removed. PTY/xterm/WebSocket instances survive tab-switch, pane-move, collapse/expand, and navigation via a detached-DOM garage.",
+    "breaking": false,
+    "summary": "Add multi-session split-pane agent surface: per-pane tab bars, minimize-to-corner dock, active-pane accent, ⌘D/T/W shortcuts",
+    "references": [
+      "commit:e0b7eca",
+      "file:dashboard/src/components/sleepy/AgentSurface.tsx",
+      "file:dashboard/src/components/sleepy/AgentTabs.tsx",
+      "file:dashboard/src/components/sleepy/PaneFragment.tsx",
+      "file:dashboard/src/components/sleepy/SessionRail.tsx",
+      "task:feat-sleepy-agent-surface-ux-redesign",
+      "task:agent-overlay-bounded-to-content-area",
+      "task:agent-session-list-and-close-ux"
+    ]
+  },
+  {
+    "date": "2026-06-30",
+    "type": "feat",
+    "scope": "sleepy",
+    "description": "Replace the single-file AgentSurface.tsx (1166 lines) with a five-module split: AgentSurface, AgentTabs, AgentFab, AgentDock, PaneFragment. Add a top-bar bypass button and + (new tab) shortcut via React portal so controls sit outside the scrollable terminal region. Introduce the four-state dock mascot (sleeping/thinking/working/waiting) with per-state animated eyes, aura gradient, caption chip, and mood-color tokens. Enlarge pane-header buttons and add a11y + hit-target fixes throughout (restart-orphan guard, idle-timer-on-close, dock-close a11y, slot mount guards). Shipped as the foundation pass for the multi-session surface.",
+    "breaking": false,
+    "summary": "Redesign agent surface: four-state mascot dock, top-bar bypass/+ controls, 5-module split of AgentSurface.tsx (1166→477 lines)",
+    "references": [
+      "commit:fd1072e",
+      "file:dashboard/src/components/sleepy/AgentSurface.tsx",
+      "file:dashboard/src/components/sleepy/AgentFab.tsx",
+      "file:dashboard/src/components/sleepy/AgentDock.tsx",
+      "task:feat-sleepy-agent-surface-ux-redesign"
+    ]
+  },
+  {
     "date": "2026-06-29",
     "type": "fix",
     "scope": "server",

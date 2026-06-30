@@ -2,7 +2,7 @@
 id: "feat_nM4EnT8k"
 status: "in_review"
 created: "2026-06-28"
-updated: "2026-06-29"
+updated: "2026-06-30"
 released_version: null
 tags:
   - topic:desktop
@@ -12,6 +12,7 @@ tags:
 related_tasks:
   - feat-desktop-in-app-conversational-agent-surface-bm25-search-claude-chat-embedded-terminal
   - agent-terminal-readability-and-prereq-installer
+  - feat-sleepy-agent-surface-ux-redesign
 ---
 
 ## Why
@@ -26,6 +27,11 @@ Developers using the dreamcontext desktop app need to run Claude Code interactiv
 - [x] As a developer, I can split the view into side-by-side agent sessions to run parallel tasks.
 - [x] As a developer, I can read Claude Code's output clearly in both light and dark themes without eyestrain or same-luminance-on-same-luminance blocks.
 - [x] As a developer, I can install missing prerequisites (Claude CLI, node-pty) from within the app with one click so I never need to open a terminal just to unblock the Agent screen.
+- [x] As a developer, I can access the agent terminal from any page via a global bottom-right FAB so I never need to navigate to a dedicated Sleepy page.
+- [x] As a developer, I can see per-pane tab bars so it is always unambiguous which tab controls which pane.
+- [x] As a developer, I can minimize an agent session to a corner dock chip and restore it as a new pane by clicking the chip, without losing state.
+- [x] As a developer, I can use ⌘K to search the project brain (knowledge, features, tasks) from anywhere and navigate directly to a result.
+- [x] As a developer, sessions I reopen correctly receive `--resume` only when a prior transcript exists, avoiding "No conversation found" errors on freshly created tabs.
 - [ ] As a developer, I can use a read-only plan mode that shows Claude's intent without allowing file writes.
 
 ## Acceptance Criteria
@@ -44,11 +50,20 @@ Developers using the dreamcontext desktop app need to run Claude Code interactiv
 - [x] `Prereqs` component in `AgentSurface.tsx` lists missing prerequisites with one-click Install + live log tail + auto re-check on completion.
 - [x] Start-agent button gated on BOTH `embeddedTerminal` (node-pty present) AND `claudeCli` (claude on PATH); npm-absent shows guidance instead of failing silently.
 - [x] Install routes: desktop-gated, loopback-only, bad target → 400; registered in `src/server/index.ts` in `VAULT_AGNOSTIC_PREFIXES`.
+- [x] Global `AgentFab` (bottom-right) launches the fullscreen overlay from any page; `SleepyPage.tsx` deleted; overlay `display:none`-hoisted above `App.tsx` page switch (same persistence invariant as before).
+- [x] Per-pane tab bars render at z-index 7 (above split drop overlay at z-index 6); each pane is independently controlled.
+- [x] Active-pane blue accent ring; clicking anywhere in a pane activates it; `dreamcontext-navigate` custom window event auto-collapses the overlay on page navigation.
+- [x] `AgentDock` rendered as a sibling of `.agent-surface` in `App.tsx` at z-index 25 — NOT a child (avoids `contain:layout paint` containing-block trap and `.agent-surface > *` forced-width rule).
+- [x] Auto-resume: before spawning, server checks `~/.claude/projects/<cwd-dashes>/<uuid>.jsonl` exists → `--resume <uuid>`; absent → `--session-id <uuid>`.
+- [x] ⌘K opens `CommandPalette` (BM25 + optional Haiku intelligent toggle); clicking a result navigates via `recallNav` + `useFocusTarget` wired `PageRouter → pages`.
 - [ ] Read-only plan mode (`--permission-mode plan`) available in the UI.
 
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
 
+- **[2026-06-30] WKWebView DnD: execute on `dragend`, never on `drop`.** WKWebView does not deliver the HTML5 `drop` event to targets that are mounted mid-drag (even though `dragover` fires on them). WKWebView also strips custom-MIME `getData()` on `drop` (value is empty; type appears in `dataTransfer.types` during `dragover`). Fix pattern: carry session id in a React ref on `dragstart`; record hovered target on every `dragover`; execute split/combine on the source's `dragend`. **This rule applies to ALL future WKWebView drag-and-drop features.** Standard `text/plain` on always-mounted targets (Kanban/Eisenhower) is unaffected.
+- **[2026-06-30] `AgentDock` must be a DOM sibling of `.agent-surface`, not a child.** `.agent-surface` has `contain: layout paint` (new containing block for `position:fixed` children) and a `> *` rule forcing `width:100%` on direct children. A child dock is deformed by both. Sibling render + z-index 25 is required.
+- **[2026-06-30] Auto-resume requires transcript existence check.** `claude --resume <uuid>` errors "No conversation found" when no JSONL file exists (tab created but never used). Always check `~/.claude/projects/<cwd-dashes>/<uuid>.jsonl` before choosing `--resume` vs `--session-id`.
 - **[2026-06-29] minimumContrastRatio 4.5 over palette fidelity.** Embedding someone else's TUI (Claude Code) requires yielding colour control to xterm's contrast engine. Setting `minimumContrastRatio: 1` "to keep the exact palette" causes unreadable block fills in both themes. Conventional grayscale ANSI ramp (0=darkest, 15=lightest) is the correct baseline; brand tokens belong in the non-ANSI theme colours only.
 - **[2026-06-29] Prerequisite installer targets are a CLOSED whitelist.** `claude` and `pty` only; any other value → 400. Desktop-gated AND loopback-only. Package names are internal literals, never user input (no injection).
 - **[2026-06-29] node-pty installed into CLI package root.** Walking up from `process.argv[1]` to find the nearest `package.json` ensures `import('node-pty')` resolves correctly from the bundled dist. Installing globally would not be visible to the server's module resolution.
@@ -59,13 +74,25 @@ Developers using the dreamcontext desktop app need to run Claude Code interactiv
 
 ## Technical Details
 
-Architecture, key files, and dev-workflow notes (including the npm-linked dev footgun with node-pty) are in `_dream_context/knowledge/desktop-beta-tauri-multivault.md` §"In-app Agent Terminal". Summary of key files:
+Architecture, key files, and dev-workflow notes are in `_dream_context/knowledge/desktop-beta-tauri-multivault.md`:
+- §"In-app Agent Terminal" — original PTY bridge, WebGL, bypassPermissions, readability fix, prereq installer.
+- §"WKWebView DnD" (inside Key decisions) — dragend-not-drop rule, ref-carried payload, custom-MIME stripped on drop.
+- §"Multi-session pane redesign" — FAB+overlay, per-pane tabs, new/deleted components list.
+- §"Minimize-to-corner (AgentDock)" — contain:layout paint gotcha, sibling render fix.
+- §"Auto-resume reliability" — transcript path format, --resume vs --session-id decision.
+- §"⌘K command palette" — recallNav + useFocusTarget wiring.
 
-- `src/server/routes/agent-terminal.ts` — all agent routes: WS bridge + node-pty spawn, `GET /api/agent/capabilities`, `POST /api/agent/install`, `GET /api/agent/install/status`, `POST /api/agent/open-terminal` (osascript fallback).
-- `src/server/index.ts` — `attachAgentTerminal(server)` wired at bottom; install routes in `VAULT_AGNOSTIC_PREFIXES`.
-- `dashboard/src/components/sleepy/AgentSurface.tsx` — xterm.js, WebGL addon, font load, `readXtermTheme()`, `Prereqs` component, drag-to-split logic.
-- `dashboard/src/components/sleepy/AgentTerminal.css` — stylesheet (filename retained).
-- `dashboard/src/pages/SleepyPage.tsx` — Agent tab; `<AgentSurface />` hoisted above `App.tsx` page switch.
+Key files summary (post-redesign):
+- `src/server/routes/agent-terminal.ts` — WS bridge + node-pty spawn, capabilities, prereq installer, osascript fallback.
+- `src/server/routes/agent-sessions.ts` — session management (added 2026-06-30).
+- `src/server/routes/agent-drop.ts` — image/file DnD drop (added 2026-06-30).
+- `src/server/index.ts` — orchestration, VAULT_AGNOSTIC_PREFIXES.
+- `dashboard/src/components/sleepy/AgentSurface.tsx` — xterm.js, WebGL, font load, readXtermTheme, Prereqs, multi-pane, dragend split pattern.
+- `dashboard/src/components/sleepy/AgentDock.tsx` — minimize-to-corner chip (sibling of .agent-surface).
+- `dashboard/src/components/sleepy/AgentTabs.tsx` — per-pane tab bars.
+- `dashboard/src/components/sleepy/AgentFab.tsx` — global FAB.
+- `dashboard/src/components/search/CommandPalette.tsx` — ⌘K palette.
+- `dashboard/src/hooks/useFocusTarget.ts`, `dashboard/src/lib/recallNav.ts` — recall navigation wiring.
 
 ## Notes
 
@@ -75,6 +102,17 @@ Architecture, key files, and dev-workflow notes (including the npm-linked dev fo
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-06-30 — Multi-session pane redesign shipped (feat/sleepy-agent-surface-ux-redesign)
+- SleepyPage deleted; agent surface now a global FAB + fullscreen overlay accessible from any page.
+- Per-pane tab bars, active-pane accent ring, click-to-activate.
+- Minimize-to-corner: `AgentDock` chip (sibling of `.agent-surface`; `contain:layout paint` gotcha resolved).
+- Drag-to-split fully fixed for WKWebView: `dragend` pattern (ref-carried session id, dragover hover recording, execute on source's `dragend` not `drop`; mid-drag-mounted targets never receive `drop` in WKWebView; custom-MIME `getData()` stripped on drop).
+- Auto-resume: transcript existence check (`~/.claude/projects/<cwd-dashes>/<uuid>.jsonl`) before `--resume` vs `--session-id`.
+- ⌘K command palette: BM25 + Haiku intelligent toggle; `recallNav` + `useFocusTarget` wiring through `PageRouter → pages`; `dreamcontext-navigate` event for cross-tree overlay collapse.
+- New: `AgentDock`, `AgentFab`, `AgentTabs`, `SessionRail`, `agentStatus.ts`, `CommandPalette`, `useFocusTarget`, `recallNav`, `agent-sessions.ts`, `agent-drop.ts`.
+- Deleted: `DockBubble.tsx`, `agentSlots.tsx`, `SleepyPage.tsx`, `SleepyPage.css`.
+- Status: in_review (unchanged — plan mode AC still open).
 
 ### 2026-06-29 - Readability fix + prerequisite installer shipped (commit 351d14e)
 - `readXtermTheme()` rewritten: `minimumContrastRatio: 4.5` + per-theme ANSI grayscale ramp — readable in both light and dark mode.

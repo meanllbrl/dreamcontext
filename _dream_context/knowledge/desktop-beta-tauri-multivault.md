@@ -27,8 +27,17 @@ description: >-
   content-scoped drift nag, the ensure-dashboard app-installed auto-open suppression,
   the interactive federation graph (react-force-graph-2d, read-only violet edges,
   drag-to-connect, active-edge particles), brain-settings server persistence
-  (vault-scoped .brain-settings.json), and the Federation Settings panel redesign
-  (plain-language explainers, direction labels).
+  (vault-scoped .brain-settings.json), the Federation Settings panel redesign
+  (plain-language explainers, direction labels), and the 2026-06-30 agent-surface
+  UX redesign: global FAB+overlay replacing SleepyPage, per-pane tab bars,
+  minimize-to-corner AgentDock (MUST be DOM sibling of .agent-surface — contain:layout
+  paint creates a new containing block for fixed children; .agent-surface > * forces
+  width:100%; sibling + z-index 25 is the fix), WKWebView DnD dragend-not-drop rule
+  (drop event NOT delivered to mid-drag-mounted targets even though dragover fires;
+  custom-MIME getData() empty on drop; carry session id in React ref on dragstart;
+  record hovered target on dragover; execute on source dragend), auto-resume transcript
+  check (--resume errors if JSONL absent; fall back to --session-id), ⌘K command
+  palette (BM25 + Haiku toggle; recallNav + useFocusTarget wired PageRouter→pages).
 type: knowledge
 tags:
   - architecture
@@ -37,7 +46,7 @@ tags:
   - topic:federation
 pinned: true
 created: '2026-06-13'
-updated: '2026-06-29'
+updated: '2026-06-30'
 released_version: v0.8.6
 ---
 
@@ -663,15 +672,81 @@ WS /api/agent/terminal?vault=<name>&bypass=<bool>
 
 **In-app prerequisite installer:** `GET /api/agent/capabilities` now reports `claudeCli`, `nodePty`, and `npm`, each probed via `$SHELL -ilc` matching the PTY spawn's PATH (`claude` commonly lives in `~/.local/bin` sourced only by `~/.zshrc`; a non-interactive `-lc` shell won't source it). `POST /api/agent/install { target: 'claude'|'pty' }` + `GET /api/agent/install/status?id=` mirror the Sleepy capture-run pattern: in-memory `installRuns` Map, 10-min TTL prune, 5-min watchdog, login-shell spawn. Targets: `claude` → `npm install -g @anthropic-ai/claude-code`; `pty` → `npm install node-pty@^1.1.0 --no-save` into the CLI's own package root (nearest ancestor `package.json` walking up from `process.argv[1]`, so node-pty resolves from the bundled dist exactly as `import('node-pty')` does), then `ensurePtyHelperExecutable()` (`chmod +x` all prebuilt spawn-helpers) and bust the memoized `ptyAvailable` cache so the next capabilities check reports ready without a relaunch. `AgentSurface.tsx` `Prereqs` component lists missing prerequisites with one-click Install + live log tail + auto re-check; Start-agent gated on BOTH `embeddedTerminal` AND `claudeCli`. Routes in `src/server/routes/agent-terminal.ts`, registered in `src/server/index.ts` and added to `VAULT_AGNOSTIC_PREFIXES`. Desktop-gated, loopback-only, closed target whitelist (bad target → 400).
 
-**Drag-to-split:** Dragging one agent tab onto another (or onto the terminal body) creates a side-by-side split layout. The drag-over handler gates `preventDefault()` on `dataTransfer.types` (available during dragover), not on React state (not settled on first hover). `⌘D` and the `⊟` button also split.
+**Drag-to-split (WKWebView DnD — CRITICAL for all future WKWebView drag-and-drop):** In WKWebView (Tauri webview), the HTML5 `drop` event is **NOT delivered** to drop targets that are mounted mid-drag (e.g., split drop-zones that are conditionally rendered only while a drag is active). `dragover` fires on those targets normally — the hover highlight works — but `drop` never fires. WKWebView also **strips custom-MIME `getData()` on `drop`**: the MIME type IS listed in `dataTransfer.types` during `dragover` but `getData()` returns an empty string on `drop`. Standard `text/plain` on always-mounted targets (as used by the Kanban/Eisenhower boards) is unaffected by either restriction. **Fix pattern:** (1) carry the dragged session id in a React **ref** set on `dragstart`; (2) gate `preventDefault()` via `dataTransfer.types.includes(...)` on `dragover` (not React state, which is not settled on the first hover tick); (3) record the currently-hovered target on every `dragover`; (4) **execute the split/combine/reorder on the source tab's `dragend`** — which fires reliably on the always-present source element — **NEVER on `drop`**. `⌘D` and the `⊟` button also split (keyboard/click path unaffected by WKWebView restrictions).
+
+### Multi-session pane redesign (2026-06-30, feat/sleepy-agent-surface-ux-redesign)
+
+The agent surface was redesigned: the Sleepy page (`SleepyPage.tsx`, `SleepyPage.css`) is **deleted**; the embedded terminal is now a global bottom-right FAB (`AgentFab.tsx`) that expands to a fullscreen overlay (`AgentSurface.tsx`) accessible from any page. Sessions persist across collapse/expand/navigation (the existing `display:none` hoist above `App.tsx` page switch remains the mechanism). Key new behaviours:
+
+**Per-pane tab bars:** Each pane renders its own tab strip at z-index 7 (above the split drop overlay at z-index 6), so it is unambiguous which tab controls which pane. The single shared header strip was removed.
+
+**Active-pane accent ring + click-to-activate:** Clicking anywhere in a pane makes it active (blue accent ring). The overlay auto-collapses on page navigation via a `dreamcontext-navigate` custom window event (cross-tree signalling pattern — the same event the ⌘K palette uses to confirm a navigation completed).
+
+**Per-tab actions:** Each tab carries minimize + close only. Restart was removed.
+
+**Search relocated to ⌘K:** The in-app search/Ask modes were removed from the agent surface; a persistent top-bar pill + ⌘K command palette (see §"⌘K command palette") replaces them.
+
+**New component files:**
+- `dashboard/src/components/sleepy/AgentTabs.tsx` — per-pane tab bars
+- `dashboard/src/components/sleepy/AgentFab.tsx` + `AgentFab.css` — global floating action button
+- `dashboard/src/components/sleepy/SessionRail.tsx` — session rail
+- `dashboard/src/components/sleepy/agentStatus.ts` — status computation
+- `dashboard/src/components/search/CommandPalette.tsx` + `CommandPalette.css` — ⌘K palette
+- `dashboard/src/hooks/useFocusTarget.ts` — focus-target wiring (recall→page open)
+- `dashboard/src/lib/recallNav.ts` — navigate-and-open from recall hits
+- `src/server/routes/agent-sessions.ts` — session listing/management
+- `src/server/routes/agent-drop.ts` — image/file DnD drop endpoint
+
+**Deleted:** `DockBubble.tsx`, `agentSlots.tsx`, `SleepyPage.tsx`, `SleepyPage.css`.
+
+### Minimize-to-corner (AgentDock) — contain:layout paint gotcha
+
+A session can be minimized out of the side-by-side panes into a live progress chip in a corner `AgentDock` that floats ABOVE the expanded overlay. Clicking the chip restores the session as a new pane without losing state.
+
+**Critical gotcha (load-bearing):** The floating dock MUST be rendered as a **sibling** of `.agent-surface` in the DOM tree, NOT as a child. Two independent reasons:
+
+1. `.agent-surface` has `contain: layout paint`. This creates a new **containing block** for `position: fixed` descendants — so a child `AgentDock` with `position: fixed` is anchored to the surface element, not the viewport.
+2. A `.agent-surface > *` CSS rule forces `width: 100%` on every direct child — a child dock is stretched to full surface width regardless of its own sizing.
+
+Fix: render `<AgentDock />` as a sibling in `App.tsx` with a modifier class setting `z-index: 25` (above the overlay's `z-index: 20`). File: `dashboard/src/components/sleepy/AgentDock.tsx`.
+
+### Auto-resume reliability
+
+`claude --resume <uuid>` throws "No conversation found" when a tab was created but the user never sent a message — Claude only writes the JSONL transcript file after the first turn completes.
+
+**Fix:** Before spawning, the server checks whether the transcript file exists:
+- **Exists** → `--resume <uuid>` (restores the prior conversation)
+- **Absent** → `--session-id <uuid>` (starts fresh but pins the id, making the session resumable after the first turn is recorded)
+
+**Transcript path format (confirmed empirically):**
+`~/.claude/projects/<working-directory-with-/-replaced-by-->/<session-uuid>.jsonl`
+
+### ⌘K command palette (BM25 + Haiku intelligent toggle)
+
+A unified search palette (⌘K, also reachable via a persistent top-bar "Search the brain" pill) backed by `/api/recall` (BM25). An optional "intelligent" Haiku model toggle sends the same query through a Claude-ranked recall path. Clicking a result navigates to its page AND opens the document in-app via:
+- `recallNav.ts` — maps a recall hit's `type`+`slug` to the correct page + focus signal
+- `useFocusTarget.ts` — a hook wired into each page component, consumed by the target page to open the correct document when it receives a focus signal
+- `PageRouter → pages` — the two ends of the wiring chain
+
+Cross-tree collapse uses the `dreamcontext-navigate` custom window event so the overlay folds away as the page transitions. Files: `dashboard/src/components/search/CommandPalette.tsx`, `CommandPalette.css`, `dashboard/src/hooks/useFocusTarget.ts`, `dashboard/src/lib/recallNav.ts`.
 
 ### Key files
 
-- `src/server/routes/agent-terminal.ts` — `attachAgentTerminal(server)`: WS upgrade + node-pty spawn; `GET /api/agent/capabilities` (now includes `claudeCli`/`nodePty`/`npm`); `POST /api/agent/install` / `GET /api/agent/install/status` (in-app prereq installer); `POST /api/agent/open-terminal` (osascript fallback for external terminal).
-- `src/server/index.ts` — `attachAgentTerminal(server)` wired at bottom; install routes registered in `VAULT_AGNOSTIC_PREFIXES`.
-- `dashboard/src/components/sleepy/AgentSurface.tsx` — xterm.js + `@xterm/addon-webgl` + `@xterm/addon-fit`; `readXtermTheme()` with `minimumContrastRatio: 4.5` + per-theme ANSI grayscale ramp; `Prereqs` component (Setup panel); dynamic Sometype Mono font load before `term.open()`; drag-to-split logic.
-- `dashboard/src/components/sleepy/AgentTerminal.css` (stylesheet; filename retained as-is).
-- `dashboard/src/pages/SleepyPage.tsx` — `mode: 'search' | 'ask' | 'agent'` tabs; `<AgentSurface />` rendered in agent mode. **AgentSurface hoisted above `App.tsx` page switch.**
+- `src/server/routes/agent-terminal.ts` — `attachAgentTerminal(server)`: WS upgrade + node-pty spawn; `GET /api/agent/capabilities`; `POST /api/agent/install` / `GET /api/agent/install/status` (prereq installer); `POST /api/agent/open-terminal` (osascript fallback).
+- `src/server/routes/agent-sessions.ts` — session listing and management (added 2026-06-30).
+- `src/server/routes/agent-drop.ts` — image/file DnD drop endpoint (added 2026-06-30).
+- `src/server/index.ts` — `attachAgentTerminal(server)` wired at bottom; install + session routes in `VAULT_AGNOSTIC_PREFIXES`.
+- `dashboard/src/components/sleepy/AgentSurface.tsx` — xterm.js + `@xterm/addon-webgl` + `@xterm/addon-fit`; `readXtermTheme()` with `minimumContrastRatio: 4.5`; `Prereqs` component; Sometype Mono font-load-before-open; multi-pane layout; drag-to-split via `dragend` pattern.
+- `dashboard/src/components/sleepy/AgentTerminal.css` — stylesheet (filename retained).
+- `dashboard/src/components/sleepy/AgentDock.tsx` — minimize-to-corner dock chip; sibling of `.agent-surface` (see §"Minimize-to-corner" gotcha above).
+- `dashboard/src/components/sleepy/AgentTabs.tsx` — per-pane tab bars.
+- `dashboard/src/components/sleepy/AgentFab.tsx` + `AgentFab.css` — global floating action button.
+- `dashboard/src/components/sleepy/SessionRail.tsx` — session rail.
+- `dashboard/src/components/search/CommandPalette.tsx` + `CommandPalette.css` — ⌘K palette.
+- `dashboard/src/hooks/useFocusTarget.ts` — focus-target wiring hook.
+- `dashboard/src/lib/recallNav.ts` — navigation from recall hits.
+- `App.tsx` — hosts the `<AgentSurface />` hoist (display:none) and sibling `<AgentDock />`; `<AgentFab />` wired to open the overlay.
+- ~~`dashboard/src/pages/SleepyPage.tsx`~~ — **deleted** 2026-06-30 (agent surface is now FAB-driven from any page).
 
 ### Desktop dev workflow note
 
