@@ -6,16 +6,18 @@ import { sendJson, sendError } from '../middleware.js';
 import { sniffImageType as sniffImage, EXT_BY_IMAGE_TYPE, type ImageMimeType } from '../../lib/image-sniff.js';
 
 /**
- * POST /api/agent/drop — receive an image dropped onto the embedded agent terminal,
+ * POST /api/agent/drop — receive ANY file dropped onto the embedded agent terminal,
  * write it under the vault's `_dream_context/tmp/agent-drops/`, and return its absolute
- * path so the client can inject that path into the focused Claude Code session.
+ * path so the client can inject that path into the Claude Code session under the cursor.
+ * Images are magic-byte-verified (to give them a canonical extension); other files
+ * (code, text, PDF, CSV, …) are saved verbatim so their PATH can be handed to Claude.
  *
  * Desktop-only (an interactive shell receives the path) and hardened end-to-end:
  *  - PER-CHUNK 25 MB cap during streaming — never buffers more than the limit (a naive
  *    buffer-then-check would let a hostile/huge upload OOM the Node process).
- *  - magic-byte content-type check (header content-type is advisory; bytes decide).
  *  - basename-only filename sanitize (no `../`, no separators, no leading dots) with a
- *    UUID fallback for an empty/fully-stripped name.
+ *    UUID fallback for an empty/fully-stripped name — so an arbitrary type only ever
+ *    lands inside the gitignored vault temp dir, never outside the project.
  *  - TTL prune of old drops so the temp dir doesn't grow unbounded.
  *
  * The injected path is single-quoted + control-char-stripped CLIENT-SIDE before it
@@ -138,14 +140,13 @@ export async function handleAgentDrop(
     return;
   }
 
+  // Any file type is accepted. An image is verified by magic bytes so we can give it a
+  // canonical extension; a NON-image is saved verbatim and its PATH handed to Claude
+  // (Claude reads code/text/PDF/… by path). The 25 MB cap, basename sanitize, and
+  // gitignored temp dir all still apply, so accepting arbitrary types is not new surface.
   const sniffed = sniffImageType(buf);
-  if (!sniffed) {
-    sendError(res, 415, 'unsupported_type', 'Only PNG, JPEG, GIF or WebP images can be dropped onto the agent.');
-    return;
-  }
-
   const rawName = decodeFilenameHeader(req.headers['x-dreamcontext-filename']);
-  const safeName = sanitizeDropFilename(rawName, EXT_BY_TYPE[sniffed]);
+  const safeName = sanitizeDropFilename(rawName, sniffed ? EXT_BY_TYPE[sniffed] : '');
 
   // contextRoot is ALREADY <vault>/_dream_context — write to its tmp dir, no re-nest.
   const dropDir = join(contextRoot, 'tmp', 'agent-drops');

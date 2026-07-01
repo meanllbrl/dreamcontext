@@ -1,6 +1,5 @@
 import { Terminal, type ITheme } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import { WebglAddon } from '@xterm/addon-webgl';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import '@xterm/xterm/css/xterm.css';
 import { getActiveVault } from '../../api/client';
@@ -29,7 +28,7 @@ export const ACCENT = '#8b7bff';
 
 // Base xterm font size at 100% zoom. Multiplied by the app's `--zoom` so terminal
 // text tracks the window zoom control (which otherwise only scales CSS font tokens).
-const BASE_FONT = 13.5;
+const BASE_FONT = 14.5;
 export function currentZoom(): number {
   const v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--zoom'));
   return Number.isFinite(v) && v > 0 ? v : 1;
@@ -53,7 +52,6 @@ function readXtermTheme(): ITheme {
   const cs = getComputedStyle(document.body);
   const g = (name: string, fallback: string) => cs.getPropertyValue(name).trim() || fallback;
   const bg = g('--color-bg', '#14171f');
-  const text = g('--color-text', '#f5f6fa');
   const accent = g('--color-accent', '#9d8cff');
   // The 16 ANSI slots must keep conventional luminance ordering (0 = darkest →
   // 15 = lightest) REGARDLESS of theme. The old mapping wired black/white/brightBlack
@@ -67,13 +65,26 @@ function readXtermTheme(): ITheme {
   const ramp = isLight
     ? { black: '#292d34', brightBlack: '#646464', white: '#e9ebf0', brightWhite: '#ffffff' }
     : { black: '#20242e', brightBlack: '#3b4151', white: '#c8ccd9', brightWhite: '#f5f6fa' };
+  // Deliberately SOFTER than --color-text: pure #f5f6fa on #14171f is ~17:1, which is
+  // harsh/eye-tiring for long sessions. A calm off-white (dark) / lifted ink (light)
+  // keeps text clearly present while dropping the glare. Dim text stays dim because
+  // minimumContrastRatio is only 3 (not 4.5), so the hierarchy isn't flattened bright.
+  const softFg = isLight ? '#33383f' : '#cdd3de';
   return {
     background: bg,
-    foreground: text,
+    foreground: softFg,
     cursor: accent,
     cursorAccent: bg,
-    selectionBackground: g('--color-accent-soft', 'rgba(157,140,255,0.30)'),
-    selectionForeground: text,
+    // Selection must be UNMISTAKABLE in both themes AND whether or not the terminal is the
+    // focused element. A pale semi-transparent violet was invisible on the white light-mode
+    // background; worse, while the selection is drawn UNFOCUSED xterm uses its faint default
+    // `selectionInactiveBackground` (a light gray — visible on dark, invisible on white),
+    // which is exactly what the light-mode bug was. So pin a SOLID deep brand-violet with
+    // white text for BOTH the active and inactive selection: ~5.3:1 white-on-violet, clearly
+    // visible on white AND on the dark canvas, regardless of focus.
+    selectionBackground: '#6a57d6',
+    selectionInactiveBackground: '#6a57d6',
+    selectionForeground: '#ffffff',
     black: ramp.black,
     red: g('--color-error', '#ff5a5f'),
     green: g('--color-success', '#4ade80'),
@@ -151,30 +162,61 @@ let sessionSeq = 0;
 // Output must go quiet for this long before we call a session "finished".
 const IDLE_MS = 800;
 
+/**
+ * Copy text to the clipboard PRESERVING Unicode (Turkish ç/ğ/ı/İ/Ü, → — …). In this
+ * WKWebView, `navigator.clipboard.writeText` mangles non-ASCII — UTF-8 bytes get
+ * re-decoded as Mac Roman (ç → "√ß", ğ → "ƒü", — → "‚Äî"). The legacy hidden-textarea +
+ * `execCommand('copy')` path routes through the OS's native text-copy pipeline (the same
+ * one xterm used before we intercepted ⌘C to stop the beep), which round-trips UTF-8
+ * correctly. Must run inside a user gesture (it is — called from the keydown handler).
+ */
+function copyPreservingUnicode(text: string): void {
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none;';
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, text.length);
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch { ok = false; }
+    ta.remove();
+    if (ok) return;
+  } catch { /* fall through to the API path */ }
+  // Fallback only if execCommand is unavailable (may mangle non-ASCII in WKWebView).
+  try { void navigator.clipboard?.writeText(text).catch(() => { /* blocked */ }); } catch { /* none */ }
+}
+
 export function createSession(bypass: boolean, notify: () => void, claudeId: string, resume = false): Session {
   const id = `agent-${++sessionSeq}`;
   const container = document.createElement('div');
   container.className = 'agent-pane-term';
 
   const fontFamily = getComputedStyle(document.body).getPropertyValue('--font-mono').trim()
-    || "'Sometype Mono', 'JetBrains Mono', ui-monospace, Menlo, monospace";
+    || "'JetBrains Mono', ui-monospace, Menlo, monospace";
+  // The first family in the stack — the actual webfont we must wait for (both weights)
+  // before xterm measures the cell width, or glyphs render thin inside an over-wide cell.
+  const primaryMono = (fontFamily.split(',')[0] || 'JetBrains Mono').replace(/['"]/g, '').trim();
 
   const term = new Terminal({
     fontFamily,
     fontSize: BASE_FONT * currentZoom(),
-    lineHeight: 1.4,
+    lineHeight: 1.65,
     letterSpacing: 0,
     cursorBlink: true,
     cursorStyle: 'bar',
-    fontWeightBold: '600',
+    fontWeightBold: '700',
     theme: readXtermTheme(),
     allowProposedApi: true,
     scrollback: 5000,
     // AA contrast floor: xterm auto-lifts any foreground that falls too close to its
-    // actual cell background. Without this (was 1 = off), Claude's TUI blocks that pair
-    // a default foreground with an ANSI 7/8 background fill rendered as unreadable
-    // same-on-same text in BOTH themes. Readability beats exact brand-colour fidelity.
-    minimumContrastRatio: 4.5,
+    // actual cell background — the safety net for Claude's TUI blocks that pair a default
+    // foreground with an ANSI 7/8 background fill (else unreadable same-on-same text).
+    // Kept at 3 (not the old 4.5): high enough to rescue those block fills, low enough
+    // that genuinely dim/secondary text STAYS dim instead of being force-brightened —
+    // preserving visual hierarchy and the calmer, less-harsh feel.
+    minimumContrastRatio: 3,
   });
   const fit = new FitAddon();
   term.loadAddon(fit);
@@ -290,6 +332,22 @@ export function createSession(bypass: boolean, notify: () => void, claudeId: str
   // (Ctrl+A/E/K/W/U and the arrow/word-nav keys already work natively — no remap.)
   term.attachCustomKeyEventHandler((e) => {
     if (e.type !== 'keydown') return true;
+    // ⌘C / ⌘X — copy the selection OURSELVES (encoding-safe, see copyPreservingUnicode)
+    // and swallow the event so WKWebView doesn't ring the macOS system beep (the "tık"
+    // sound) on an otherwise-unhandled ⌘-key. A terminal's on-screen text is read-only,
+    // so ⌘X can't truly "cut" — it copies, same as ⌘C. ⌘V is deliberately NOT intercepted:
+    // xterm's native paste keeps bracketed-paste mode intact (else a multi-line paste would
+    // auto-submit each line). Ctrl+C (SIGINT) has ctrlKey set, so it falls through to xterm.
+    if (e.metaKey && !e.ctrlKey && !e.altKey && (e.key === 'c' || e.key === 'x')) {
+      e.preventDefault();
+      const sel = term.getSelection();
+      if (sel) { copyPreservingUnicode(sel); term.focus(); }
+      return false;
+    }
+    // ⌘A — select the whole buffer (swallow so it doesn't beep either).
+    if (e.metaKey && !e.ctrlKey && !e.altKey && e.key === 'a') {
+      e.preventDefault(); term.selectAll(); return false;
+    }
     if (e.key === 'Enter' && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
       e.preventDefault(); sendInput('\\\r'); return false;
     }
@@ -303,8 +361,10 @@ export function createSession(bypass: boolean, notify: () => void, claudeId: str
   });
 
   // Open only once the container is in the DOM (it starts detached) AND the mono
-  // webfont is ready, so the GPU canvas measures the real glyph width. WebGL is
-  // attached after open; on context loss we revert to xterm's DOM renderer.
+  // webfont is ready, so xterm's DOM renderer measures the real glyph width. We use
+  // the DOM renderer (NOT WebGL) on purpose: it renders real text nodes that get
+  // macOS-native anti-aliasing, so glyph edges are soft — not the WebGL atlas's hard,
+  // "sharp" rasterisation the user found eye-tiring.
   function ensureOpen() {
     if (session.opened || !container.isConnected) return;
     const doOpen = () => {
@@ -313,16 +373,11 @@ export function createSession(bypass: boolean, notify: () => void, claudeId: str
       // hidden now, a later ensureOpen (when the pane is shown) will open it.
       if (session.opened || !container.isConnected || container.offsetParent === null) return;
       term.open(container);
-      try {
-        const webgl = new WebglAddon();
-        webgl.onContextLoss(() => { try { webgl.dispose(); } catch { /* gone */ } });
-        term.loadAddon(webgl);
-      } catch { /* WebGL unavailable — keep DOM renderer */ }
       session.opened = true;
       fitAndResize();
-      // One more recompute next frame: the WebGL glyph atlas can latch a stale
-      // (fallback-font) cell width on first paint, making text look thin/stretched.
-      // Re-applying the font + refit forces it to rebuild with the real metrics.
+      // One more recompute next frame: the first paint can latch a stale (fallback-font)
+      // cell width, making text look thin/stretched. Re-applying the font + refit forces
+      // a rebuild with the real metrics.
       requestAnimationFrame(() => {
         if (session.opened) {
           term.options.fontFamily = fontFamily;
@@ -337,8 +392,8 @@ export function createSession(bypass: boolean, notify: () => void, claudeId: str
     const fonts = document.fonts;
     if (fonts?.load) {
       Promise.all([
-        fonts.load(`${BASE_FONT}px "Sometype Mono"`),
-        fonts.load(`600 ${BASE_FONT}px "Sometype Mono"`),
+        fonts.load(`${BASE_FONT}px "${primaryMono}"`),
+        fonts.load(`700 ${BASE_FONT}px "${primaryMono}"`),
       ]).then(() => fonts.ready).then(doOpen).catch(doOpen);
     } else doOpen();
   }

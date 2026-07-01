@@ -618,11 +618,12 @@ export function AgentSurface() {
     catch (e) { alert(e instanceof Error ? e.message : 'Could not open Terminal.'); }
   };
 
-  // ── Image drag-drop → live Claude session ────────────────────────────────────
+  // ── File drag-drop → live Claude session ─────────────────────────────────────
   // An HTML5 file drop hands us a File whose BYTES are readable even though WKWebView
   // hides the OS path. Read the bytes → POST to the loopback server (writes a real file
-  // under the vault temp dir) → inject that absolute path into the focused PTY so Claude
-  // can read the image. Binary can't go through `api.post` (JSON-only), so use raw fetch.
+  // under the vault temp dir) → inject that absolute path into the target PTY so Claude
+  // can read the file (image, code, text, PDF, …). Binary can't go through `api.post`
+  // (JSON-only), so use raw fetch.
   const deliverDrops = useCallback(async (files: File[], sid: string) => {
     const vault = getActiveVault();
     for (const file of files) {
@@ -651,15 +652,24 @@ export function AgentSurface() {
     }
   };
   // `files.length === 0` is the collision guard: internal tab DnD (and board Kanban/
-  // Eisenhower DnD) carry no OS files, so we leave those drops untouched. A dropped image
-  // goes to the action-focused pane's session.
+  // Eisenhower DnD) carry no OS files, so we leave those drops untouched. A dropped file
+  // goes to the pane UNDER THE CURSOR (not the last-focused one), resolved from the pane
+  // slot's `data-pane` at the drop point; any file type is accepted.
   const onTermDrop = (e: React.DragEvent) => {
     const files = Array.from(e.dataTransfer.files);
     if (files.length === 0) return;
     e.preventDefault();
     e.stopPropagation();
     if (!(caps?.embeddedTerminal && started)) return;
-    if (focusedSessionId) void deliverDrops(files, focusedSessionId);
+    // Route by cursor position: the pane slot the drop landed in owns the target session;
+    // fall back to the action-focused session if the point isn't over any pane.
+    const at = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
+    const slot = (at?.closest('.agent-pane-slot[data-pane]') ?? null) as HTMLElement | null;
+    const targetPane = panes.find((p) => p.id === slot?.dataset.pane);
+    const targetSid = targetPane?.active || focusedSessionId;
+    if (!targetSid) return;
+    if (targetPane && targetPane.id !== activePaneId) setActivePaneId(targetPane.id);
+    void deliverDrops(files, targetSid);
   };
 
   // ── Per-session view-models (recomputed every render; bumpStatus re-renders on a

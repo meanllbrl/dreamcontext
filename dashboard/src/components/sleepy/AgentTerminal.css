@@ -499,6 +499,12 @@
 .agent-pane-slot .xterm {
   height: 100%;
   padding: 14px 20px;
+  /* The app reset forces `-webkit-font-smoothing: antialiased` (the THINNEST macOS
+     grayscale AA). The terminal reads better with fuller strokes, so let WebKit use its
+     default (subpixel where it can) — softer than WebGL, without the thin/harsh look. */
+  -webkit-font-smoothing: auto;
+  -moz-osx-font-smoothing: auto;
+  text-rendering: optimizeLegibility;
 }
 .agent-pane-slot .xterm-viewport {
   background-color: transparent !important;
@@ -713,15 +719,10 @@
   box-shadow: 0 0 10px color-mix(in srgb, var(--color-accent) 60%, transparent);
   z-index: 3;
 }
-.agent-panes.split > .agent-pane:not(.active) { opacity: 0.82; }
-.agent-panes.split > .agent-pane:not(.active)::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: color-mix(in srgb, var(--color-bg) 22%, transparent);
-  pointer-events: none;
-  z-index: 2;
-}
+/* Inactive panes are NOT dimmed — you read both terminals at once, so the other pane
+   stays fully legible. Only the active pane's accent ring + top bar (above) mark focus.
+   (Previously opacity:0.82 + a --color-bg overlay greyed the other pane, which read as
+   "blurring it out".) */
 
 /* Split / combine drop overlay — only mounted while a tab is being dragged. Three EQUAL
    zones over each pane (so the split edges are as easy to hit as combine): LEFT/RIGHT
