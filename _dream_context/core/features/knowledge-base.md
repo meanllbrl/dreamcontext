@@ -2,7 +2,7 @@
 id: feat_jI0huqeH
 status: active
 created: '2026-02-25'
-updated: '2026-06-17'
+updated: '2026-07-01'
 released_version: 0.1.0
 tags:
   - architecture
@@ -11,6 +11,7 @@ tags:
 related_tasks:
   - data-structures-to-knowledge
   - issue-20-excalidraw-knowledge
+  - desktop-co-located-board-folder-renders-wrong-tree-splits-the-folder-excalidraw-embedded-images-don-t-load
 ---
 
 ## Why
@@ -53,9 +54,13 @@ Core context files have a ~200 line limit to stay lightweight. When deep researc
 - [x] Live flat `knowledge/diagrams/*.excalidraw.md` boards keep indexing/recalling/rendering with extraction applied — no forced migration.
 - [x] Migration `0.7.2` registered as the first consumer of the #23 registry: code step is safe-detection only (records `detected`, moves nothing); the opt-in `agentTask` (`diagrams-folder-convention`) organizes boards into `knowledge/diagrams/<title>/` via `dreamcontext migrations apply-diagrams` with atomic inbound-wikilink rewrite.
 - [x] Folder convention documented in `skill/SKILL.md` + `skill-packs/excalidraw/SKILL.md`: `knowledge/diagrams/<title>/<title>.excalidraw.md` (flat still works), scripts-are-dark contract, do-not-hand-edit/spec-is-source-of-truth, REQUIRED `name`+`description` frontmatter on every board (zero-text boards → description is the only recall surface).
+- [x] Self-contained board folders (a board + its `.board.cjs` generator + a companion teardown `.md` + an `assets/` image subfolder, all co-located) render as ONE grouped node in the dashboard knowledge tree — the folder is never split with the board hoisted to the parent level while a sibling card stays behind (fixed 2026-06-30, desktop bug report; see Constraints & Decisions).
+- [x] Embedded board images stored in a sibling `assets/` subfolder (not just the board's own directory or an `Attachments/` folder) resolve and render via `GET /api/knowledge-assets/:slug` — a bare `[[image.png]]` wikilink now matches `boardDir/assets/<basename>` in addition to the pre-existing candidates.
+- [x] The board builder (`build_excalidraw.js`) refuses to write a board with ANY dangling embedded-image reference — a pre-flight collects every missing asset across the whole spec and fails once with the complete list, rather than throwing on the first missing image mid-build (which could leave a partially-written board with silent gaps).
 
 ## Constraints & Decisions
 
+- **[2026-06-30]** Co-located board-folder tree/asset bugs (desktop feedback, session `65a69348`): (1) **Tree split** — `buildKnowledgeTree`'s "board self-wrapper collapse" heuristic (built for the legacy convention: a board alone in a folder named after itself) unconditionally hoisted the board out of ANY self-named folder, including the newer self-contained convention where a teardown `.md` lives alongside it — splitting the board from its own folder. Fix: the collapse now only fires when the board is the folder's SOLE occupant, counted over the WHOLE subtree (every ancestor prefix, not just direct children — a first-pass fix that only counted direct children was caught by two independent multi-reviewers as still splitting a board co-located with a *nested* notes subfolder). (2) **Blank embedded images** — `handleKnowledgeAssets` resolved wikilinks against vault-root/context-root/the board folder/`Attachments/`, but not the sibling `assets/` subfolder the self-contained convention uses; added `boardDir/<path>` and `boardDir/assets/<basename>` candidates, still `safeChildPath`-contained (multi-review security PASS — the new candidates are STRICTLY tighter than pre-existing ones, cannot widen traversal). (3) **Silent dangling embeds** — the builder's pre-flight now collects every missing asset across a spec and fails once with the full list (was: throw on the first missing image, and a directory-valued path silently skipped the guard entirely before raising a raw `EISDIR` later — also fixed via `statSync().isFile()`). 31 regression tests (`tests/unit/excalidraw-knowledge.test.ts`).
 - **[2026-06-17]** Companion-knowledge indexing (PR #35, commit e110d9f): `isDarkDiagramSibling()` was previously a blanket exclusion of ALL non-board `.md` files co-located with a board. It is now role-based: a `.md` with `name:` frontmatter beside a board (`isIndexableKnowledge=true`) is NOT dark — it is indexed as first-class knowledge. Generator scripts (`.board.cjs`), spec JSON, and frontmatter-less helper notes remain dark. This resolves the prior tradeoff where keeping a board + its teardown `.md` in one folder forced a choice between good co-location and recall. The predicate stays O(1) (caller supplies the flag from already-read frontmatter; no extra fs calls). The old "all files beside a board are dark siblings" documentation in `skill/SKILL.md` and `skill-packs/excalidraw/SKILL.md` is NOW STALE and should be updated to reflect the role-based rule.
 - **[2026-06-12]** Excalidraw memory/render invariant (#20): detail = raw, memory = extracted. The dashboard knowledge detail route returns the RAW body (the renderer needs the scene JSON); all memory surfaces (index content, BM25 corpus, snapshot) get only extracted text via `extractExcalidrawText()`. Extraction never returns the raw body (try/catch → `''`, frontmatter-only fallback). `src/` must not import `dashboard/src/` (separate builds) — the drawing-block regex is replicated with a cross-ref comment. Maintainer decisions (do not relitigate): migration version key = 0.7.2; snapshot relies on extraction (Option A — no new pinned-inline feature); migration code step never auto-moves flat boards (avoids silent slug/wikilink/access-record breakage) — moves are opt-in via the agentTask.
 - **[2026-06-09]** Data-structures migration (issue #12): `buildKnowledgeIndex()` was changed from `glob('knowledge/*.md')` to `glob('knowledge/**/*.md')` to recurse into subdirectories. The `data-structures/` subdir keeps multi-product grouping without fragmenting the tag space. Old `core/data-structures/` dir is left in place for user confirmation before deletion; `doctor` emits a migration hint. Ownership: `sleep-state` drops the "schema/table/model change → core/data-structures/" routing; `sleep-product` now owns it (schema changes = B6 in the sleep-product protocol, single-observation gate).
@@ -118,6 +123,12 @@ Full content of the knowledge file here...```
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-06-30 - Co-located board-folder tree/asset bugs fixed (desktop feedback)
+- Tree grouping: board self-wrapper collapse now gated on "sole occupant of the whole subtree" instead of unconditional — a board is never split from a co-located teardown note or nested notes subfolder.
+- Asset resolution: `boardDir/assets/<basename>` and `boardDir/<path>` added as resolver candidates for embedded images (still `safeChildPath`-contained; security-reviewed PASS).
+- Builder pre-flight: collects every missing referenced image across a spec and fails once with the full list; directory/broken-symlink paths now caught too.
+- Multi-reviewed (security/frontend/edge-cases): one Major caught and fixed pre-merge (subtree-vs-direct-children occupant count), 31/31 tests green.
 
 ### 2026-06-17 - Companion-knowledge indexing (PR #35, commit e110d9f)
 - `isDarkDiagramSibling()` refactored from blanket exclusion to role-based: `.md` with `name:` frontmatter beside a board is now indexed as first-class knowledge. Generator scripts, spec JSON, frontmatter-less helpers remain dark. Backward-safe: callers without the new flag default to original behavior.

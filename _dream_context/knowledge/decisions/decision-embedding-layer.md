@@ -9,7 +9,7 @@ description: >-
   (BEIR/RRF/Chroma/Continue.dev) + experimental rollout plan, flag-gated and
   A/B-gated.
 tags:
-  - 'kind:decision'
+  - 'kind:decisions'
   - 'kind:architecture'
   - 'domain:knowledge'
   - 'topic:recall'

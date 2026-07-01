@@ -2,7 +2,7 @@
 id: feat_LDQn2Bi8
 status: in_review
 created: '2026-02-25'
-updated: '2026-06-24'
+updated: '2026-07-01'
 released_version: 0.1.0
 tags:
   - backend
@@ -19,6 +19,7 @@ related_tasks:
   - per-project-format-rule-overrides-for-specialist-agents-task-feature-knowledge
   - feat-dashboard-sprint-aware-version-filter-current-completed-actions-status-sort
   - fix-77-rename-sync-dcid
+  - github-sync-upload-local-task-images-so-they-resolve-in-issues
 ---
 
 ## Why
@@ -57,6 +58,7 @@ Work spans multiple sessions, and agents need a structured way to track what is 
 - [x] As an agent/user, setting any date on a task auto-removes the `backlog` tag so the task graduates from the backlog.
 - [x] As an agent/user, creating a task with `--person <name>` resolves the name against the real member roster (fuzzy match by display name / first name), so the resulting `person:<slug>` tag maps to a real member and survives a backend sync round-trip.
 - [x] As a developer, unmapped `person:<slug>` tags never silently drop an assignee — the sync surface (push to ClickUp or GitHub) emits a `SyncReport.warnings[]` entry and skips the assignment, so failures are visible, not silent.
+- [x] As a developer, local images embedded in a task's markdown body (agent-drop screenshots, etc.) are uploaded to a hosted, content-addressed location and rewritten to a resolvable URL when the task pushes to GitHub Issues, so images render inline on the issue instead of appearing as broken links to a path that only exists on my machine.
 
 - [x] As a project maintainer, I can drop `_dream_context/overrides/task.md` into my brain to declare custom fields (name, key, type, options, sync targets, prompt) that attach extra project-specific data to every task, so tasks carry domain-specific attributes without forking the CLI.
 - [x] As a project maintainer, I can mark a custom field as `required: true` so that the CLI refuses to create or complete a task (or transition it to `completed`/`in_review`) while that field is unset, preventing stale or incomplete task records from entering the done pipeline.
@@ -96,6 +98,7 @@ Work spans multiple sessions, and agents need a structured way to track what is 
 - [x] Member resolution (PR #69): new pure matcher `src/lib/task-backend/member-match.ts` (`matchMember`): ASCII/Turkish-folded fuzzy match against the live member roster (display name and first name); returns `{ kind: 'exact'|'fuzzy'|'ambiguous'|'no-match', member?, candidates? }`. `tasks create --person <name>` and `tasks tag person:<slug>` resolve through the matcher on a remote backend — canonical slug on match, abort with candidates on ambiguous, loud warning on no-match (records intent but states it won't sync). Local backend unchanged (free-text is harmless with no remote). Covered by `tests/unit/member-match.test.ts`.
 - [x] Push-path safety net (PR #69): `pushTask` in `clickup.ts` and `github.ts` splits resolved/unmapped `person:<slug>` sets and appends a `SyncReport.warnings[]` entry per unmapped slug. The task still pushes; the assignment gap is surfaced loudly in `sleep done` and `tasks sync`, not silently dropped. New structural field on `SyncReport` (`warnings: string[]`) parallel to `failedPushes`.
 - [x] Dashboard picker enforcement (PR #69): `TaskDetailPanel` picker sets `allowCustom = false` on a remote backend; non-member chips already on a task flagged ⚠ "won't sync" (red dashed). `GET /api/tasks/members` route drops `id:''` stub entries when a real roster exists. Loading-window safe: `remoteBacked` defaults to `true` while `syncStatus` is `undefined` (prevents transient free-text re-enable during roster fetch).
+- [x] GitHub task-image bridge (v0.10.5): push uploads embedded local images to a dedicated `dreamcontext-assets` branch via the Contents API (branched off default-branch HEAD; never touches the working tree) and rewrites each reference to its hosted `/raw/` URL **wire-only** — the local mirror keeps the original local path, so pull never causes the reference to churn. Paths are content-addressed (SHA-derived), making re-pushes idempotent (a 422-on-existing-blob is swallowed). Non-image files referenced with image syntax are sniffed-and-skipped (magic-byte check, never path/extension alone); `https://`/`data:` refs are left untouched. New pure modules: `src/lib/image-sniff.ts` (shared magic-byte sniff), `src/lib/task-backend/github-assets.ts` (codec). Pull maps the hosted URL back to the local path before the 3-way body merge.
 
 - [x] Custom field override system (`src/lib/overrides.ts`): `loadTaskOverride(contextRoot)` parses `_dream_context/overrides/task.md` frontmatter `custom_fields:` list; absent file → null (zero-regression). Each def must have `name`, optional `key` (defaults to snake_case of name), `type` (text|number|select|date), `options` (select only), `sync` (clickup|github, defaults to both), `prompt`. Malformed entries are dropped with `warnings[]` — never thrown, never fatal to task creation.
 - [x] ClickUp custom-field bridge (`src/lib/task-backend/clickup-fields.ts`): `buildSpecs(userDefs)` merges user-defined field defs into the built-in KEY_SPECS (built-in key collision → built-in wins). `matchCustomFields(defs, specs)` binds list custom fields to specs by folded name. `localFieldValue(fm, key)` reads built-in fields from their dedicated frontmatter paths; reads user fields from `fm.custom_fields[key]`. `encodeFieldValue`/`decodeFieldValue` handle drop_down option ID resolution. `userProvisionDefs(userDefs)` maps custom field types to ClickUp API types for `tasks provision`.
@@ -117,6 +120,7 @@ Work spans multiple sessions, and agents need a structured way to track what is 
 
 ## Constraints & Decisions
 
+- **[2026-06-30]** GitHub task-image bridge — security hardening (multi-review round 1 FAIL → fix → PASS, session `6c2e2ded`): the local-image resolver initially honored **any** path a remote issue body could contain, including out-of-root absolute paths and `../` traversal (a malicious/compromised remote issue body reaching `applyRemoteIssue` could make the mirror read arbitrary files off disk) and buffered the full file into memory **before** checking the size cap (a large reference could exhaust memory prior to rejection). Fixed with two load-bearing patterns, reusable anywhere this shape recurs: (1) **allow-listed root containment** (`isInsideRoot` — lexical, `safeChildPath`-style: rejects out-of-root absolute paths, `../` segments, and null bytes) applied to every path derived from external/remote content before any filesystem read; (2) **stat-gate before read** (`resolveImageBytes`) — check the size cap via `fs.stat` and reject oversized files *before* buffering bytes, never after. General lesson: any code path that turns externally-sourced text (a remote issue body, a task changelog, a pulled sync payload) into a local filesystem path needs BOTH of these gates, not just a path-join. See also `[[dashboard-server-security]]` for the sibling instance of the same containment pattern in the dashboard HTTP server. 3 new tests (containment unit, out-of-root-rejection integration, wiped-asset/base pull-recovery); 122/122 task-backend tests green.
 - **[2026-06-24]** Sync reconciliation identity is the stable `dcId` (not the name-slug). The slug is the join key ONLY for a task never yet synced (no `remoteId`). Once a `remoteId` is established, `dcId` is the sole reconciliation key — rename-proof. `reconcileRenamedTasks()` runs as a provider-agnostic pre-pass before every `sync()` in both backends. Agents MUST use `tasks rename` (not hand-edit + file rename) to avoid bypassing the ledger migration. Full rationale: `[[decisions/decision-sync-identity-and-reconciliation]]`.
 - **[2026-06-24]** Assignee pull-back already works via the watermarked delta pull; the gap was below-watermark drift (pre-sync UI assignments). `--reconcile` is the opt-in heal path; `tasks doctor` stays local-only by design. The `planAssigneeHeal()` decision function is pure and in `merge.ts` so it is provider-agnostic and unit-testable without network I/O. Full rationale: `[[decisions/decision-sync-identity-and-reconciliation]]`.
 - **[2026-06-23]** `ask: true` fields — ask-before-create for human-judgment fields: a field marked `ask` has a behavioral rule injected into the override briefing ("`[ASK THE USER]`" annotation + `ASK-FIRST:` block). The agent asks the user for the value at interactive task creation and leaves it unset (with a note) in no-user contexts (sleep/autonomous). This prevents the agent from satisfying a `required` gate by inventing a number. `ask` and `required` are orthogonal flags and may coexist on the same field. Full design: `[[decisions/decision-task-format-override-and-custom-fields]]`.
@@ -243,6 +247,13 @@ custom_fields:          # populated by `tasks field` or dashboard; synced to Cli
 - `sleep done` flow: if `failedPushes.length > 0` after first sync, auto-retries ONCE (full sync, not partial). If failures persist after retry, calls `error()` (red, loud) listing all failed slugs — not `warn()`.
 - Local backend (`src/lib/task-backend/local.ts`): `taskAssigneeMembers` wraps list+get in a single try/catch returning `[]` on any error (failure-isolated); `tasks-members` route folds task-derived entries (id='') to fill gaps without clobbering real IDs.
 
+**GitHub task-image bridge (v0.10.5)** (`src/lib/task-backend/github-assets.ts`, `src/lib/image-sniff.ts`, `github.ts`):
+- Push path: scans the task body for local image references, sniffs each candidate by magic bytes (never trusts extension/path alone) via `image-sniff.ts`, uploads genuine images to the `dreamcontext-assets` branch (created off default-branch HEAD, contents API, content-addressed path) and rewrites the reference to the hosted `/raw/` URL in the pushed body ONLY — the local mirror file keeps the original local path untouched.
+- Pull path: reverses the mapping (hosted URL → local path) before the existing 3-way body merge, so pulling a remote-edited body never causes the image reference to churn.
+- Safety gates (both load-bearing, added after the round-1 review FAIL): `isInsideRoot()` containment check on any path derived from remote content (rejects absolute/`../`/null-byte); `resolveImageBytes()` stat-gates the size cap before reading bytes (never buffers first). See Constraints & Decisions above for the full incident writeup.
+- Idempotent: re-pushing identical bytes reuses the same content-addressed path; a 422 "already exists" response from the Contents API is swallowed as success.
+- 14 new tests + extended fake GitHub API (contents/git-refs endpoints); full GitHub task-backend suite (98 tests) green.
+
 ## Notes
 
 - The task `## Changelog` section is the agent's "breadcrumb trail" — the most critical piece for cross-session continuity. Agents should log every meaningful action, not just session summaries.
@@ -252,6 +263,10 @@ custom_fields:          # populated by `tasks field` or dashboard; synced to Cli
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-06-30 - GitHub task-image bridge shipped (v0.10.5)
+- Local task images (agent-drops, screenshots) now upload to a content-addressed `dreamcontext-assets` branch and resolve inline on the synced GitHub issue; local mirror path never churns (wire-only rewrite). New `image-sniff.ts` + `github-assets.ts`.
+- Multi-review round 1 FAIL caught a path-traversal gap (arbitrary absolute paths honored from remote content) and an unbuffered size-cap check; both fixed (`isInsideRoot` containment + stat-gate-before-read). Round 2 PASS. 122/122 tests green.
 
 ### 2026-06-23 - Task format override + custom fields + active sprint version (v0.10.0)
 - `src/lib/overrides.ts`: project-local `overrides/task.md` declares custom fields (name/key/type/options/sync/prompt); `loadTaskOverride` parses + validates; malformed entries drop with warnings, never fatal. `upsertCustomField`/`removeCustomField` for atomic CRUD. `renderOverrideBriefing` injected into snapshot + sub-agent briefing.

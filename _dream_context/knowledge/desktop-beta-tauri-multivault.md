@@ -37,7 +37,13 @@ description: >-
   custom-MIME getData() empty on drop; carry session id in React ref on dragstart;
   record hovered target on dragover; execute on source dragend), auto-resume transcript
   check (--resume errors if JSONL absent; fall back to --session-id), ⌘K command
-  palette (BM25 + Haiku toggle; recallNav + useFocusTarget wired PageRouter→pages).
+  palette (BM25 + Haiku toggle; recallNav + useFocusTarget wired PageRouter→pages),
+  and the 2026-06-30 orphaned-dashboard-server root-cause fix (server-side
+  parent-death watchdog in src/server/lifecycle.ts — the Rust RunEvent::ExitRequested
+  handler alone missed force-quit/crash/dev-rebuild teardown paths, leaking ~25
+  launcher servers reparented to PID 1; fixed via a parent-liveness poll inside
+  the Node server itself, a PTY child-reaping registry, and Rust SIGTERM->SIGKILL
+  process-group hardening).
 type: knowledge
 tags:
   - architecture
@@ -46,7 +52,7 @@ tags:
   - topic:federation
 pinned: true
 created: '2026-06-13'
-updated: '2026-06-30'
+updated: '2026-07-01'
 released_version: v0.8.6
 ---
 
@@ -68,7 +74,9 @@ installed `/Applications/dreamcontext-beta.app` (ad-hoc signed) + a `.dmg`.
   → find_node() (login shell `command -v node`, else /opt/homebrew etc.)
   → spawn: node <bundled dist/index.js> dashboard --port N --no-open --launcher
   → poll GET /api/health, then open window "main" at http://127.0.0.1:N/
-  → kill node child on RunEvent::ExitRequested (no orphan)```- **Launcher mode**: `dashboard --launcher` boots the server with `contextRoot = null`
+  → graceful SIGTERM→1.5s→SIGKILL on the whole process group on ExitRequested/Exit
+    (was: bare kill() on RunEvent::ExitRequested only — see "Orphaned dashboard-server
+    fix" below, this line was the STALE claim; that path alone leaked ~25 servers)```- **Launcher mode**: `dashboard --launcher` boots the server with `contextRoot = null`
   (no default vault). Vault-agnostic routes work (`/api/health`, `/api/vaults`,
   `/api/launcher/*`); every other `/api/*` route needs a vault.
 - **Per-window vault pinning**: the Launcher (`/`) lists vaults; clicking one opens
@@ -302,6 +310,20 @@ fires on `v*` tags. Pipeline steps:
 ### App icon
 
 Brand diamond logo (white squircle) fitted to the Tauri icon set via `tauri icon` from `desktop/public/image/dreamcontext.png`. Source kept at `desktop/src-tauri/icon-source.png`. Re-run `tauri icon <source>` to regenerate all platform sizes if the logo changes.
+
+### Orphaned dashboard-server processes — root-cause fix (v0.10.5, session `96d934d7`)
+
+**The bug the earlier architecture line was wrong about:** the Rust shell spawns exactly ONE `node dist/index.js dashboard --launcher` per app launch and (previously) only killed it from `RunEvent::ExitRequested`. That handler does **not** run on every way the app can die — force-quit, a crash, a `tauri dev` Ctrl+C, or a dev rebuild swapping the binary all terminate the app without it firing. Confirmed empirically: **11 orphaned `--launcher` servers**, all reparented to `PPID 1` (launchd), spanning ~2 days of launches — not grandchildren, the launcher servers *themselves*, each still holding its loopback port. A secondary leak: even when the handler DID fire, `child.kill()` sent SIGKILL (uncatchable), so the server never got to reap its own `claude` PTY grandchildren (the agent-terminal spawns) either.
+
+**The fix is layered, and the primary layer lives in the SERVER, not the Rust shell:**
+
+1. **Server-side parent-death watchdog (the real fix)** — `src/server/lifecycle.ts`, `startParentDeathWatch()`. When desktop-spawned (`DREAMCONTEXT_DESKTOP=1`), the server records its parent PID (`DREAMCONTEXT_PARENT_PID` env var from the shell, falling back to `process.ppid` for an older app bundle that doesn't set it) and probes liveness every 2s via `process.kill(pid, 0)` (existence probe, no signal sent — throws `ESRCH` once the parent is gone, for ANY reason). The moment the parent is gone, the server self-shuts-down. This runs inside Node, so it covers every parent-death path Tauri's Rust exit events miss — and it ships via the normal CLI/`dist` bundle, **no Tauri rebuild required** for this half of the fix.
+2. **Child reaping on shutdown** — a small `trackChild()`/`killTrackedChildren()` registry in `lifecycle.ts`; the agent-terminal's `claude` PTY processes register on spawn and get killed when the server shuts down (either via the watchdog or a normal signal), closing the secondary grandchild-leak.
+3. **Rust shell hardening** (`lib.rs`) — passes `DREAMCONTEXT_PARENT_PID` explicitly to the spawned child; on BOTH `RunEvent::ExitRequested` AND `RunEvent::Exit`, does graceful **SIGTERM → wait 1.5s → SIGKILL on the whole process group** (`reap_server` helper, needs `libc` as a direct dep) instead of a bare uncatchable `kill()` — this lets the server run its own cleanup (including the child registry) instead of being hard-killed before it can reap anything.
+
+**Verification:** `tests/unit/lifecycle.test.ts` (8/8, including a REAL-process integration test — spawns an actual child, SIGKILLs the parent, asserts the watchdog fires in ~2s); reaped the 11 live orphans found on the investigating machine (preserved the running app's own server + an unrelated manually-started dashboard). `cargo check` / `tsc --noEmit` clean.
+
+**Load-bearing takeaway for any future desktop process-lifecycle work:** don't trust the Rust exit-event handler alone to be the single point of cleanup — Tauri's `RunEvent` variants don't cover every OS-level way a process tree can be torn down. A server-side watchdog that verifies its OWN parent is alive is the only mechanism that's correct regardless of how the parent died.
 
 ## Sleepy — notch quick-capture companion
 

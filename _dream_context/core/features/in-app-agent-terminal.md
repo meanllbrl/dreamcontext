@@ -2,7 +2,7 @@
 id: "feat_nM4EnT8k"
 status: "in_review"
 created: "2026-06-28"
-updated: "2026-06-30"
+updated: "2026-07-01"
 released_version: null
 tags:
   - topic:desktop
@@ -97,6 +97,7 @@ Key files summary (post-redesign):
 ## Notes
 
 - Desktop-only feature; never ships in the npm package. Gated on `DREAMCONTEXT_DESKTOP=1` (injected by the Rust shell).
+- The `claude` PTY grandchildren this feature spawns are now reaped on server shutdown (a tracked-child registry added as part of the 2026-06-30 orphaned-dashboard-server fix) — see `[[desktop-beta-tauri-multivault]]` § orphaned-server root-cause fix. This is an infra-level lifecycle fix, not a terminal-feature change; documented there, not duplicated here.
 - `ensurePtyHelperExecutable()` runs at startup to restore `+x` on the prebuilt spawn-helper (tarball strips execute bit → `posix_spawnp failed`); idempotent.
 - Plan mode (`--permission-mode plan`) is always available via the external-terminal fallback (`POST /api/agent/open-terminal`); the in-app embedded plan mode is the remaining open AC.
 

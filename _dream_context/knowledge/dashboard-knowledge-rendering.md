@@ -19,7 +19,7 @@ tags:
   - topic:recall
 pinned: false
 created: '2026-06-17'
-updated: '2026-06-28'
+updated: '2026-07-01'
 ---
 
 ## Why this exists
@@ -56,6 +56,8 @@ The dashboard Knowledge page renders three distinct file types (Markdown, SQL/ER
 3. Resolves each path under the vault root (containment-guarded via `safeChildPath()`; image extensions only: png/jpg/jpeg/gif/webp/svg).
 4. Reads the image file, down-scales to WebP via `sharp` (tier-aware compression: small board ≤5 images = lossless; large boards use lossy quality 80).
 5. Returns `{ files: { [sha1]: { mimeType: 'image/webp', dataURL: 'data:image/webp;base64,...' } } }`.
+
+**Fix (2026-06-30, desktop bug report):** the resolver tried vault-root, context-root, the board's own folder, and an `Attachments/` subfolder — but NOT the sibling `assets/` subfolder that the self-contained board convention (a board + its `.board.cjs` generator + a teardown `.md` + its images, all co-located) uses to store embedded images. A bare `[[image.png]]` wikilink with the PNG sitting in `<boardDir>/assets/` matched none of the existing candidates and rendered blank. Added two more candidates: `boardDir/<path>` (for `[[assets/x.png]]`-style relative links) and `boardDir/assets/<basename>` (for a bare `[[x.png]]` link beside an `assets/` dir). Both new candidates pass through the same `safeChildPath()` containment guard and are, if anything, STRICTLY TIGHTER than the pre-existing vault/context-root candidates (multi-review security verdict: PASS — cannot widen traversal). Paired fix in the board builder (`build_excalidraw.js`, both the `skill-packs/` and `scripts/diagrams/` copies): a pre-flight now collects EVERY missing referenced asset across a spec and fails once with the complete list before writing anything, instead of throwing on the first missing image mid-build (which could leave a board written with some dangling embeds already baked in). See `[[knowledge-base]]` feature PRD (Constraints & Decisions) for the sibling tree-grouping bug fixed in the same session.
 
 The React component merges these resolved files into the scene before mounting the `Excalidraw` canvas: `setScene({ ...parsed, files: { ...resolved } })`.
 
@@ -131,4 +133,4 @@ Feature hits continue using `hit.slug` directly (feature slugs are not foldered)
 
 ## Last verified
 
-2026-06-28 (knowledge subfolder slug derivation fix in `BrainSearch` + `DocContent`; `DocContent` + full-record fetch pattern shipped 2026-06-27)
+2026-07-01 (`assets/` subfolder resolver candidates + builder dangling-embed pre-flight shipped 2026-06-30; knowledge subfolder slug derivation fix in `BrainSearch` + `DocContent`; `DocContent` + full-record fetch pattern shipped 2026-06-27)

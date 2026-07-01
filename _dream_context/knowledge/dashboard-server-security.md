@@ -75,6 +75,12 @@ export function safeChildPath(baseDir: string, child: string): string | null {
 - Any new mutating route must call `isCrossSiteWrite` (it's enforced at the server level in `createServer`, so new routes inherit this automatically — but this must stay at the server level, not be moved per-route).
 - Any new route that constructs a filesystem path from request input MUST use `safeChildPath`.
 
+## Related occurrences of this containment pattern elsewhere in the codebase
+
+This threat model is specific to the dashboard HTTP server, but the SAME lexical-containment pattern (resolve → compare against a fixed base dir → reject anything that escapes it) recurs in other subsystems that turn externally-influenced input into a filesystem path. Each is documented in its own home (do not duplicate detail here — this is a pointer only):
+- `GET /api/knowledge-assets/:slug` (board embedded-image resolution) — see `[[dashboard-knowledge-rendering]]`.
+- GitHub task-image bridge (`isInsideRoot`, resolving image paths referenced from a REMOTE issue body) — see the Constraints & Decisions section of `core/features/task-management.md`. This one additionally needed a stat-gate-before-read for the size cap, since the input here is attacker-influenced (a synced GitHub issue), not just a URL param.
+
 ## Sources
 
 - Session `f007d91a-b861-47c2-8154-033cf8899871` — security review + DECISION to pull hardening into v0.5.0
@@ -83,4 +89,4 @@ export function safeChildPath(baseDir: string, child: string): string | null {
 
 ## Last Verified
 
-2026-05-31 — code shipped in commit `0f3965f` as part of v0.5.0.
+2026-05-31 — code shipped in commit `0f3965f` as part of v0.5.0. (2026-07-01 — reviewed for drift; core threat model unchanged, added pointers to sibling containment-pattern instances above.)

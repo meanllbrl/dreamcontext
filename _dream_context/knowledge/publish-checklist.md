@@ -6,7 +6,7 @@ tags:
   - devops
   - decisions
 pinned: false
-date: '2026-06-15'
+date: '2026-07-01'
 ---
 
 # Publish / Release Checklist
@@ -34,7 +34,9 @@ and the README/DEEP-DIVE figures update in place (same filenames). **Do not publ
 stale docs or diagrams.**
 
 ## 1. Build and test```bash
-npm run build && npm test```Both must exit 0 with no failing tests. Do not proceed if either fails.
+npm run build && npm test -- run```Both must exit 0 with no failing tests. **Note:** bare `npm test` is vitest watch-mode — always pass `-- run` for a one-shot, CI-equivalent exit code. Do not proceed if either fails.
+
+**As of 2026-06-30 this is also enforced in CI** (`.github/workflows/ci.yml` — the project's first real test gate, runs `npm test -- run` on every push to `main` and every PR). Before this, the only workflow was `desktop-release.yml` (build+sign+publish the desktop `.app` on a version tag), which never ran `vitest`; `npm publish`'s `prepublishOnly` only runs `build`. That gap is exactly how the `CAPTURE_RANK_PENALTY` recall regression (see `[[recall-engine-v2]]`) shipped silently across v0.10.1/v0.10.2 before being caught here. CI passing is a strong signal but does not replace running this step locally first.
 
 ## 2. Dry-run pack review```bash
 npm pack --dry-run```Confirm the following are present in the file listing:
@@ -55,9 +57,13 @@ ready.
 
 ## 4. Publish```bash
 npm publish --access public```This pushes the current version. Confirm the version in `package.json` matches the
-intended release before running. As of 2026-06, current shipped version is v0.8.6;
-the active planning version is v0.9.0. Always bump `package.json` to the new version
-before publishing (the CI pipeline does NOT bump automatically).
+intended release before running. As of 2026-06-30, shipped version is v0.10.5 (npm +
+tag). Always bump `package.json` to the new version before publishing (the CI pipeline
+does NOT bump automatically) — bump ALL FIVE version surfaces if desktop is part of the
+release: `package.json`, `desktop/package.json`, `desktop/src-tauri/tauri.conf.json`,
+`desktop/src-tauri/Cargo.toml`, and `Cargo.lock`'s `dreamcontext-desktop` entry. These
+have drifted out of sync before (desktop left at an old version while the CLI bumped
+ahead) — verify all five read the same version before publishing.
 
 ## 5. Merge install.sh + README to main and make the repo public
 
@@ -81,3 +87,4 @@ resolves from the GitHub Release (the binary is published separately from npm).
 - The seeded `.version-check.json` fixture tests are offline-only and pass before
   publish; the live nudge path is exercised in production.
 - As of v0.6.0 the package ships Apache-2.0. Ensure `package.json` `license` field reads `Apache-2.0` and `NOTICE` is in the `files` array.
+- **Don't "quick bump" without running this workflow.** v0.10.0/v0.10.1/v0.10.2 were each published to npm as a bare version-bump-and-publish (no diagram rebuild, no README/DEEP-DIVE refresh, no `RELEASES.json` entry) — discovered 3 versions later (2026-06-30) as an undocumented gap that had to be backfilled by reconstructing `git log v0.9.2..HEAD` and auditing README/DEEP-DIVE against the actual shipped code. Every version bump that reaches npm should run this full checklist, even a "trivial" patch — the alternative is a multi-version documentation debt that's much more expensive to reconstruct later than to write down at the time.

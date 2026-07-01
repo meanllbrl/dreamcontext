@@ -127,9 +127,9 @@ A stress test (`tests/unit/recall-capture-stress.test.ts`) with 200 auto-digest 
 - recall@1 degraded −8.3 pts
 - Mediocre auto-captures were crowding out curated knowledge
 
-### Fix: CAPTURE_RANK_PENALTY = 0.5
+### Fix: CAPTURE_RANK_PENALTY = 0.4 (tuned down from 0.5 on 2026-06-30 — see "Update" below)
 
-`rankScore` of all `capture: true` docs is multiplied by 0.5. The raw `score` is untouched (decoupling invariant preserved). Effect: on an equal content match, a curated doc beats a capture doc. But a capture doc whose match is clearly the strongest wins (`0.5 × big_number` still tops `1.0 × small_number`).
+`rankScore` of all `capture: true` docs is multiplied by `CAPTURE_RANK_PENALTY`. The raw `score` is untouched (decoupling invariant preserved). Effect: on an equal content match, a curated doc beats a capture doc. But a capture doc whose match is clearly the strongest wins (`penalty × big_number` still tops `1.0 × small_number`).
 
 ### K=50 Digest Cap
 
@@ -222,6 +222,18 @@ The BM25 recall engine is now exposed over HTTP for dashboard consumers, making 
 
 **Consumer:** the Sleepy Search/Ask view (`dashboard/src/pages/SleepyPage.tsx`). See `features/sleepy-search-ask.md` for the full product description.
 
+## Update (2026-06-30) — Capture Guard Retune (0.5 → 0.4) + First CI Gate
+
+**Regression:** `recall-capture-stress.test.ts` GUARD PROOF failed — `q030` (a Turkish query, `"projenin ürün konumlandırması ve sloganı"`) was displaced at a 200-capture flood. Root cause was genuine crowding, not a flaky tie-break: q030's gold target (`knowledge/positioning`) is an **English** doc with **zero raw-BM25 overlap** on this Turkish query — it held only a fragile rank-3 via derived signals alone. The stress harness deliberately stuffs synthetic capture bodies with gold-query vocabulary, so at the old `0.5×` penalty a capture's direct token match out-scored the real doc on this one thin-margin case.
+
+**Fix:** a displacement sweep across candidate penalty values showed the guard holds at every `p ≤ 0.45`; `CAPTURE_RANK_PENALTY` was tuned to **0.4** — just below that cliff with a ~16% margin to absorb the natural IDF wobble from `buildCorpus()` reading the live dogfooded tree run to run. Lowering the penalty is monotonically safe (only scales captures down, never up), so no e2e "a genuine strong capture still surfaces" test could regress. Result: GUARD PROOF passes with **0 displacements at every N** (50/100/200); recall@3 degradation improved **3.3pts → 0.0pts** on the stress benchmark.
+
+**This regression shipped unnoticed at v0.10.1/v0.10.2 and was only caught during v0.10.5 pre-publish review** — because the test suite was not gating anything: the only GitHub Actions workflow was `desktop-release.yml` (build+sign+publish the desktop `.app`), and `npm publish`'s `prepublishOnly` only runs `build`, never `test`. **`.github/workflows/ci.yml` was added in the same session** — the project's first real CI gate, running `npm test -- run` (note: bare `npm test` is vitest watch-mode; CI needs the explicit `run`) on every push to `main` and every PR. This closes the exact gap that let the CAPTURE_RANK_PENALTY regression ship silently across two releases.
+
+**A second, unrelated flake surfaced and was fixed while shipping this CI gate:** `recall-capture-stress.test.ts`'s heaviest `it()` (n=200 flood, ~42s fully synchronous BM25 computation) blocked the vitest worker's event loop long enough to miss its reporter heartbeat (`onTaskUpdate` RPC), causing `vitest run` to exit 1 **even when every assertion passed** — a false-negative CI gate is arguably worse than no gate. Fixed with a faithful `evaluateAsync` twin of the harness's `evaluate()` that yields to the event loop periodically inside the gold-query loop (identical scoring, no semantic change) — the sync-blocking stress test and the GUARD PROOF test both now use the async form. Verified: 0 RPC-timeout errors, clean `exit 0`, 2463/2463 tests passing.
+
+Regression lock: `tests/unit/recall-capture-stress.test.ts` (values updated to reflect `0.4`); CI config: `.github/workflows/ci.yml`.
+
 ## Last Verified
 
-2026-06-27.
+2026-07-01 (CAPTURE_RANK_PENALTY retuned 0.5→0.4 + first CI gate added 2026-06-30; prior verification 2026-06-27).

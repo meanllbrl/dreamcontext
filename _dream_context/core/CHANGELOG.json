@@ -1,5 +1,140 @@
 [
   {
+    "date": "2026-07-01",
+    "type": "chore",
+    "scope": "release",
+    "description": "v0.10.2 bumped the version across the full monorepo surface (package.json, desktop/package.json, tauri.conf.json, Cargo.toml/Cargo.lock), realigning desktop/package.json which had drifted to 0.9.2 during the 0.10.x desktop-only bumps. No code delta over v0.10.1 — this release exists purely to get npm and the desktop bundle back on the same version number, and was the first npm publish since v0.10.0.",
+    "breaking": false,
+    "summary": "v0.10.2 shipped: version-sync only — desktop surfaces realigned to 0.10.2, first npm publish since v0.10.0",
+    "references": [
+      "commit:af9c784",
+      "url:https://github.com/meanllbrl/dreamcontext/releases/tag/v0.10.2"
+    ]
+  },
+  {
+    "date": "2026-07-01",
+    "type": "chore",
+    "scope": "release",
+    "description": "v0.10.1 tagged and published as a desktop-app release (GitHub Release with the aarch64 .app.tar.gz + .sha256 asset, built by desktop-release.yml). Ships: the in-app Agent surface that superseded the Sleepy dashboard page (multi-session split-pane terminals, Cmd-D drag-to-split, Cmd-T/Cmd-W, minimize-to-corner dock, detached-DOM persistence), a Cmd-K command palette over live recall (BM25 + Haiku toggle), image-drop-to-vault injection, an in-app prerequisite installer for the Claude CLI/node-pty, a readable ANSI ramp (contrast 4.5), and macOS line-editing keybindings in the Agent terminal. Also carries the board version smart-buckets (Current/Backlog/Completed), the multi-assignee AvatarStack, the atomic sleep-consolidation mutex with rescaled debt thresholds, timeline-gantt polish, and the 404-on-missing-static-asset fix.",
+    "breaking": false,
+    "summary": "v0.10.1 shipped: desktop app release train — in-app Agent surface, ⌘K palette, smart-bucket board filter, AvatarStack, sleep mutex",
+    "references": [
+      "commit:e0364ab",
+      "url:https://github.com/meanllbrl/dreamcontext/releases/tag/v0.10.1"
+    ]
+  },
+  {
+    "date": "2026-07-01",
+    "type": "docs",
+    "scope": "release",
+    "description": "Ran the full pre-publish workflow (last run at v0.9.2; v0.10.0/0.10.1/0.10.2 had shipped as quick version bumps without it, letting docs/diagrams/RELEASES.json drift and letting the q030 capture-guard regression ship unnoticed). Refreshed README.md and DEEP-DIVE.md against everything the release actually ships (in-app Agent surface, curator skill/agents, version rename/delete, GitHub image bridge, board smart-buckets/AvatarStack, CI); rebuilt all 8 Excalidraw diagram figures (architecture, council, federation, how-it-works, neuroscience, problem, recall, sleep) via the excalidraw build pipeline, clearing the content-drift flag carried on the council and federation boards from prior sleep cycles; rewrote docs/PRE-PUBLISH-TEST-PLAN.md end to end. RELEASES.json backfilled summaries for v0.10.1 and v0.10.2 (published to npm but previously undocumented).",
+    "breaking": false,
+    "summary": "Refresh README/DEEP-DIVE and rebuild all 8 Excalidraw diagram figures + PRE-PUBLISH-TEST-PLAN for the v0.10.5 pre-publish workflow",
+    "references": [
+      "commit:0d64ca9",
+      "file:README.md",
+      "file:DEEP-DIVE.md",
+      "file:docs/PRE-PUBLISH-TEST-PLAN.md",
+      "task:pre-publish-workflow-v0.10.5"
+    ]
+  },
+  {
+    "date": "2026-07-01",
+    "type": "fix",
+    "scope": "cli",
+    "description": "ensureClaudeHooks() deduped managed hooks by (command, matcher) and only added a hook when absent, so it never updated the timeout of an already-installed one — a project whose settings.json was written by a pre-120 installer (back when recall's UserPromptSubmit hook was pinned at 5s) kept timing out forever, even after upgrading dreamcontext and re-running install, because Haiku-backed recall needs more than 5s. Fixed by reconciling an existing managed hook's timeout to the canonical spec value on every install/upgrade run (Codex's installer already self-healed this way since it rewrites its whole managed block each run); the install summary now surfaces which hook timeouts were healed. Regression test added alongside the existing 'migrates old snapshot hook' coverage.",
+    "breaking": false,
+    "summary": "Fix install-skill: reconcile an existing hook's stale timeout to the current spec instead of leaving it forever",
+    "references": [
+      "commit:0d64ca9",
+      "file:src/cli/commands/install-skill.ts"
+    ]
+  },
+  {
+    "date": "2026-07-01",
+    "type": "fix",
+    "scope": "skill",
+    "description": "Upstreamed a fix (previously applied in another vault) to the canonical skill-packs/excalidraw/ generator: card() now calls a new fitText helper (glyph-metric wrap + shrink-to-fit) so a label can never overflow its box, and connector() gains via waypoints with elbow right-angle routing plus arc-length label placement so an arrow no longer cuts through an intervening box. The glyph-metric sizing helper was mirrored into build_excalidraw.js's sizeText(), and all copies (skill-packs/excalidraw, the git-tracked scripts/diagrams/excalidraw duplicate, and the gitignored .claude/.agents/dist runtime mirrors) were re-synced to stay byte-identical. SKILL.md documents the new auto-fit and routing behavior for future board generators.",
+    "breaking": false,
+    "summary": "Excalidraw skill: auto-fit card text so it can't overflow the box, and route connectors around intervening boxes",
+    "references": [
+      "commit:0d64ca9",
+      "file:skill-packs/excalidraw/scripts/lib/style.js",
+      "file:skill-packs/excalidraw/SKILL.md",
+      "task:excalidraw-skill-card-text-overflows-the-box-and-connector-arrows-cross-intervening-boxes"
+    ]
+  },
+  {
+    "date": "2026-07-01",
+    "type": "fix",
+    "scope": "dashboard",
+    "description": "Three related defects in the self-contained board-folder convention (a board plus a sibling .teardown.md/notes, with images under an assets/ subfolder). Bug A: buildKnowledgeTree's board-self-wrapper-collapse heuristic unconditionally hoisted a board out of its folder, which was correct only for a lone board but split the folder when a sibling card (or a nested notes subfolder) shared it; fixed by gating the collapse on a subtree-wide occupant count (every ancestor prefix), not just direct children. Bug B1: the /api/knowledge-assets/:slug embedded-image resolver tried the board folder and an Attachments/ subfolder but not the assets/ subfolder the self-contained convention actually uses, so every embed rendered blank; added boardDir/<path> and boardDir/assets/<basename> candidates, both still passing the existing safeChildPath containment guard (verified tighter, not looser, than the pre-existing candidates). Bug B2: the Excalidraw build script threw on the first missing referenced image; added a pre-flight in both identical copies (skill-packs/ and scripts/diagrams/) that collects every missing or dangling asset (including a directory or broken symlink masquerading as a file) and fails once with the full list before ever writing a board with dangling embeds. 31 regression tests added, security-reviewed clean.",
+    "breaking": false,
+    "summary": "Fix co-located Excalidraw board folders splitting in the knowledge tree, blank embedded images, and dangling-embed builds",
+    "references": [
+      "commit:0d64ca9",
+      "file:dashboard/src/pages/KnowledgePage.tsx",
+      "file:src/server/routes/knowledge.ts",
+      "file:scripts/diagrams/excalidraw/build_excalidraw.js",
+      "knowledge:dashboard-server-security"
+    ]
+  },
+  {
+    "date": "2026-07-01",
+    "type": "chore",
+    "scope": "ci",
+    "description": "Add .github/workflows/ci.yml running npm test on every push to main and every PR, Node 20 runner, npm ci install — closing the gap that let the capture-guard q030 recall regression ship unnoticed at v0.10.1/v0.10.2 (only desktop-release.yml existed before, and it never ran vitest). Separately bumped all four GitHub Actions pinned in desktop-release.yml off their Node-20-runtime majors onto Node-24-native versions (actions/checkout@v4->v7, actions/setup-node@v4->v6, actions/cache@v4->v6, softprops/action-gh-release@v2->v3) ahead of GitHub's Node 20 deprecation; each bump verified to declare using: node24 before applying. The setup-node build-target node-version:'20' is unrelated (build Node, not action runtime) and was left as-is.",
+    "breaking": false,
+    "summary": "Add the project's first CI workflow (vitest on push/PR to main) and bump desktop-release.yml actions off Node 20",
+    "references": [
+      "commit:0d64ca9",
+      "file:.github/workflows/ci.yml",
+      "file:.github/workflows/desktop-release.yml",
+      "task:ci-bump-desktop-release-workflow-action-versions-node20-deprecation"
+    ]
+  },
+  {
+    "date": "2026-07-01",
+    "type": "fix",
+    "scope": "recall",
+    "description": "A 200-capture stress test displaced gold query q030 (a Turkish query with zero raw-BM25 overlap with its English target, resting entirely on derived signals) below a flood of synthetic capture entries. Root cause was genuine crowding, not test flakiness, so the fix tunes CAPTURE_RANK_PENALTY down from 0.5 to 0.4 in src/lib/recall.ts rather than loosening the assertion — a displacement sweep showed the guard holds at every penalty <=0.45, with 0.4 sitting below the cliff (~16% margin) while a strongly-matching capture can still surface. The change only scales down the derived rankScore for capture docs (digest#/bookmark#), never the raw hit.score the memory-recall hook gates on, so it is monotonically safe: measured recall@3 degradation from capture flood dropped 3.3pts to 0.0pts.",
+    "breaking": false,
+    "summary": "Recall: tune CAPTURE_RANK_PENALTY 0.5→0.4 to stop capture-flood from displacing a genuine top-3 result (q030)",
+    "references": [
+      "commit:0d64ca9",
+      "file:src/lib/recall.ts",
+      "task:capture-guard-q030-displaced-under-200-capture-flood"
+    ]
+  },
+  {
+    "date": "2026-07-01",
+    "type": "fix",
+    "scope": "desktop",
+    "description": "Root-cause fix for dashboard-server processes leaking (~25 observed) after repeated vault window open/close: the Tauri shell only killed the server on RunEvent::ExitRequested, which never fires on force-quit, crash, tauri dev Ctrl+C, or a dev-rebuild, so the server got reparented to launchd and lived forever holding its loopback port. New src/server/lifecycle.ts startParentDeathWatch() polls the recorded parent PID (via kill(pid,0), ESRCH=gone) and self-exits the server on any parent-death path; trackChild()/killTrackedChildren() reaps the server's own PTY children (node-pty claude sessions setsid into their own session so the Rust process-group kill can't reach them). Rust side hardened as belt-and-suspenders: spawns the child in its own process group and reap_server() sends SIGTERM then SIGKILL after 1.5s to the whole group on ExitRequested/Exit, replacing the old uncatchable SIGKILL that prevented the server from ever running its own cleanup. Gated on DREAMCONTEXT_DESKTOP=1 so a terminal-run dashboard stays user-managed.",
+    "breaking": false,
+    "summary": "Fix orphaned dashboard-server processes: parent-death watchdog + PTY reaper + graceful process-group SIGTERM from the Tauri shell",
+    "references": [
+      "commit:0d64ca9",
+      "file:src/server/lifecycle.ts",
+      "file:desktop/src-tauri/src/lib.rs",
+      "task:fix-desktop-orphaned-dashboard-server-processes-leak-on-window-close"
+    ]
+  },
+  {
+    "date": "2026-07-01",
+    "type": "feat",
+    "scope": "tasks",
+    "description": "Add a local-image-to-hosted-asset bridge for GitHub task sync. Push uploads embedded local images (agent-drop screenshots) via the Contents API to a dedicated dreamcontext-assets branch (created off default-branch HEAD, never touching the working tree), rewriting each markdown reference to its hosted /raw/ URL wire-only so the local mirror keeps its canonical path. Pull maps the hosted URL back to the local path before the 3-way merge so images never churn. Paths are content-addressed so identical bytes dedupe and re-pushes are idempotent (422-on-existing swallowed); non-image references are sniffed-and-skipped, https/data refs left untouched. New shared src/lib/image-sniff.ts and src/lib/task-backend/github-assets.ts codec. An adversarial review round caught a Critical: resolveLocalImagePath honored arbitrary absolute paths and buffered the file before the size cap; fixed with an allow-listed root-containment guard (isInsideRoot) and a resolveImageBytes choke point that stat-gates size before read. 14+3 new tests, github suite green.",
+    "breaking": false,
+    "summary": "GitHub task sync: local task images upload to a dreamcontext-assets branch and render inline on the synced issue",
+    "references": [
+      "commit:0d64ca9",
+      "file:src/lib/task-backend/github-assets.ts",
+      "file:src/lib/image-sniff.ts",
+      "task:github-sync-upload-local-task-images-so-they-resolve-in-issues"
+    ]
+  },
+  {
     "date": "2026-06-30",
     "type": "fix",
     "scope": "dashboard",
