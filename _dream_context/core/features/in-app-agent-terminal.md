@@ -13,6 +13,7 @@ related_tasks:
   - feat-desktop-in-app-conversational-agent-surface-bm25-search-claude-chat-embedded-terminal
   - agent-terminal-readability-and-prereq-installer
   - feat-sleepy-agent-surface-ux-redesign
+  - agent-terminal-rendering-readability-polish
 ---
 
 ## Why
@@ -32,17 +33,24 @@ Developers using the dreamcontext desktop app need to run Claude Code interactiv
 - [x] As a developer, I can minimize an agent session to a corner dock chip and restore it as a new pane by clicking the chip, without losing state.
 - [x] As a developer, I can use ⌘K to search the project brain (knowledge, features, tasks) from anywhere and navigate directly to a result.
 - [x] As a developer, sessions I reopen correctly receive `--resume` only when a prior transcript exists, avoiding "No conversation found" errors on freshly created tabs.
+- [x] As a developer, I can copy text out of the terminal — including non-ASCII characters — without a mangled clipboard or a jarring macOS beep.
+- [x] As a developer, I can drop any file (not just images) onto the pane under my cursor and have its path handed to that session.
 - [ ] As a developer, I can use a read-only plan mode that shows Claude's intent without allowing file writes.
 
 ## Acceptance Criteria
 
 - [x] WS bridge (`/api/agent/terminal`) spawns `$SHELL -ilc 'exec claude [--dangerously-skip-permissions]'` via node-pty; desktop-only (`DREAMCONTEXT_DESKTOP=1` gate) and loopback-only (strict `remoteAddress` check).
 - [x] Session persists via `display:none` hoist of `AgentSurface` above `App.tsx` page switch; torn down only on explicit Close/Restart or app quit.
-- [x] `AgentSurface.tsx` renders xterm.js with WebGL addon (`@xterm/addon-webgl`); automatic fallback to canvas on context-loss.
-- [x] Sometype Mono font loaded via `FontFaceSet.load()` and fully committed before `term.open()` and WebGL addon attachment (prevents glyph-atlas wrong-width on font-load-after-open).
+- [x] `agentSession.ts` renders xterm.js with the DOM renderer (WebGL addon REMOVED 2026-07-01 for native macOS anti-aliasing, since the WebGL atlas produced hard "sharp" edges users found eye-tiring); `.xterm { -webkit-font-smoothing: auto }` overrides the app-wide CSS reset's forced `antialiased`.
+- [x] JetBrains Mono — the actually-loaded `--font-mono` primary, real 400/500/700 weights — loaded via `FontFaceSet.load()` and fully committed before `term.open()` (prevents wrong-cell-width glyphs on font-load-after-open); the originally-intended Sometype Mono was never actually loaded (no `@font-face`), so text had silently been JetBrains Mono @400 with a faux-synthesized bold.
 - [x] `bypassPermissions` default OFF; orange warning chip shown in the UI while armed.
 - [x] Drag-to-split: tab drag onto another tab or terminal body creates side-by-side layout; `⌘D` and `⊟` button also split.
-- [x] `readXtermTheme()` uses `minimumContrastRatio: 4.5` + per-theme conventional grayscale ANSI ramp (slot 0=darkest, slot 15=lightest); readable in both light and dark mode regardless of Claude's ANSI block-fill choices.
+- [x] `readXtermTheme()` uses `minimumContrastRatio: 3` (calmed down 2026-07-01 from an initial 4.5 that force-brightened dim/secondary text) + a softened default foreground (`#cdd3de` dark / `#33383f` light) + per-theme conventional grayscale ANSI ramp (slot 0=darkest, slot 15=lightest); readable in both light and dark mode without flattening text hierarchy.
+- [x] Comfort defaults: 14.5px font size (was 13.5), 1.65 line-height (was 1.4).
+- [x] Copy (⌘C) and cut (⌘X) copy the current selection via a hidden-textarea `execCommand('copy')` path (UTF-8-safe — WKWebView's `navigator.clipboard.writeText` mangles non-ASCII) and `preventDefault()` so no macOS system beep fires; ⌘V remains native (bracketed paste intact); ⌘A selects all.
+- [x] Text selection is visible in both light and dark themes regardless of terminal focus: `selectionBackground` and `selectionInactiveBackground` both pinned to a solid `#6a57d6` with white `selectionForeground`.
+- [x] Inactive split panes are no longer dimmed (the `opacity: 0.82` + overlay were removed) — both panes stay fully legible; only the active pane's accent ring + top bar marks focus.
+- [x] File drag-drop targets the pane UNDER THE CURSOR (`elementFromPoint` → `.agent-pane-slot[data-pane]`), not the last-focused pane, and drop also activates that pane; any file type is accepted (not just images) — non-images are saved verbatim server-side and their path is injected into the target session.
 - [x] `GET /api/agent/capabilities` returns `{ desktop, embeddedTerminal, openTerminal, nodePty, claudeCli, npm }`; `nodePty`/`claudeCli`/`npm` probed via `$SHELL -ilc` (interactive login shell, matching PTY spawn PATH).
 - [x] `POST /api/agent/install { target: 'claude'|'pty' }` starts a background install tracked in `installRuns` Map; `GET /api/agent/install/status?id=` polls `{ state, output }`.
 - [x] `pty` install target: `npm install node-pty@^1.1.0 --no-save` into CLI package root (walk up from `process.argv[1]`) + `ensurePtyHelperExecutable()` + bust memoized `ptyAvailable` cache.
@@ -61,6 +69,11 @@ Developers using the dreamcontext desktop app need to run Claude Code interactiv
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
 
+- **[2026-07-01] DOM renderer over WebGL, and JetBrains Mono is the real primary font.** WebGL's glyph atlas gave crisp text but hard "sharp" edges that read as eye-tiring; the DOM renderer's real text nodes get native macOS anti-aliasing (requires `.xterm { -webkit-font-smoothing: auto }` to override the app-wide reset's forced `antialiased`). Separately discovered: Sometype Mono was never actually loaded (no `@font-face`/Google-Fonts link), so `--font-mono` silently fell through to JetBrains Mono @400 the whole time — JetBrains Mono is now loaded for real (400/500/700) and listed first, and the font-load-before-open gate reads the primary family off `--font-mono` dynamically instead of a hardcoded name.
+- **[2026-07-01] minimumContrastRatio 4.5 was too aggressive — lowered to 3, foreground softened.** 4.5 force-brightened dim/secondary text along with the raw near-white default foreground (`#f5f6fa` on `#14171f`, ~17:1), reading as harsh over long sessions. Softened the default foreground to `#cdd3de` dark / `#33383f` light and lowered the floor to 3 — still enough to rescue ANSI-on-ANSI block fills, low enough to preserve dim-text hierarchy.
+- **[2026-07-01] Selection must pin BOTH `selectionBackground` and `selectionInactiveBackground`.** xterm draws `selectionInactiveBackground` (a much fainter default) whenever the terminal isn't the focused element — a selection made unfocused was invisible in light mode until both were pinned to the same solid `#6a57d6`.
+- **[2026-07-01] WKWebView clipboard mangles UTF-8 — copy via hidden textarea + `execCommand`, not `navigator.clipboard`.** `navigator.clipboard.writeText()` re-decodes UTF-8 as Mac Roman in this WKWebView (ç→"√ß", —→"‚Äî"). The `execCommand('copy')` path routes through the OS's native copy pipeline and round-trips correctly; `navigator.clipboard` is kept only as a last-resort fallback. `⌘V` is left untouched so xterm's native bracketed paste stays intact.
+- **[2026-07-01] Any file type may now be dropped, routed by cursor position.** The prior 415 rejection of non-images was removed (images still magic-byte-verified for extension; non-images saved verbatim); drop routing changed from last-focused-pane to the pane under the cursor (`elementFromPoint`) so a drop always lands where the user pointed.
 - **[2026-06-30] WKWebView DnD: execute on `dragend`, never on `drop`.** WKWebView does not deliver the HTML5 `drop` event to targets that are mounted mid-drag (even though `dragover` fires on them). WKWebView also strips custom-MIME `getData()` on `drop` (value is empty; type appears in `dataTransfer.types` during `dragover`). Fix pattern: carry session id in a React ref on `dragstart`; record hovered target on every `dragover`; execute split/combine on the source's `dragend`. **This rule applies to ALL future WKWebView drag-and-drop features.** Standard `text/plain` on always-mounted targets (Kanban/Eisenhower) is unaffected.
 - **[2026-06-30] `AgentDock` must be a DOM sibling of `.agent-surface`, not a child.** `.agent-surface` has `contain: layout paint` (new containing block for `position:fixed` children) and a `> *` rule forcing `width:100%` on direct children. A child dock is deformed by both. Sibling render + z-index 25 is required.
 - **[2026-06-30] Auto-resume requires transcript existence check.** `claude --resume <uuid>` errors "No conversation found" when no JSONL file exists (tab created but never used). Always check `~/.claude/projects/<cwd-dashes>/<uuid>.jsonl` before choosing `--resume` vs `--session-id`.
@@ -75,19 +88,22 @@ Developers using the dreamcontext desktop app need to run Claude Code interactiv
 ## Technical Details
 
 Architecture, key files, and dev-workflow notes are in `_dream_context/knowledge/desktop-beta-tauri-multivault.md`:
-- §"In-app Agent Terminal" — original PTY bridge, WebGL, bypassPermissions, readability fix, prereq installer.
+- §"In-app Agent Terminal" — PTY bridge, bypassPermissions, prereq installer, and the 2026-07-01 readability polish (DOM renderer replacing WebGL, real JetBrains Mono load, calmed contrast, clipboard/selection/pane-dimming fixes) which supersedes the original WebGL-era design.
 - §"WKWebView DnD" (inside Key decisions) — dragend-not-drop rule, ref-carried payload, custom-MIME stripped on drop.
 - §"Multi-session pane redesign" — FAB+overlay, per-pane tabs, new/deleted components list.
 - §"Minimize-to-corner (AgentDock)" — contain:layout paint gotcha, sibling render fix.
 - §"Auto-resume reliability" — transcript path format, --resume vs --session-id decision.
 - §"⌘K command palette" — recallNav + useFocusTarget wiring.
 
-Key files summary (post-redesign):
+Key files summary (post-2026-07-01 readability polish):
 - `src/server/routes/agent-terminal.ts` — WS bridge + node-pty spawn, capabilities, prereq installer, osascript fallback.
 - `src/server/routes/agent-sessions.ts` — session management (added 2026-06-30).
-- `src/server/routes/agent-drop.ts` — image/file DnD drop (added 2026-06-30).
+- `src/server/routes/agent-drop.ts` — any-file DnD drop endpoint; routes to the pane under the cursor (opened up from image-only + last-focused-pane on 2026-07-01).
 - `src/server/index.ts` — orchestration, VAULT_AGNOSTIC_PREFIXES.
-- `dashboard/src/components/sleepy/AgentSurface.tsx` — xterm.js, WebGL, font load, readXtermTheme, Prereqs, multi-pane, dragend split pattern.
+- `dashboard/src/components/sleepy/AgentSurface.tsx` — `Prereqs`, multi-pane layout, dragend split pattern, cursor-targeted drop routing (`onTermDrop` → `elementFromPoint`).
+- `dashboard/src/components/sleepy/agentSession.ts` — `createSession()` (xterm DOM renderer, `@xterm/addon-fit`, WebGL removed), `readXtermTheme()` (`minimumContrastRatio: 3`, softened foreground, solid `#6a57d6` selection for both active/inactive), JetBrains-Mono-aware font-load-before-open, `copyPreservingUnicode()` + beep-free ⌘C/⌘X/⌘A handler.
+- `dashboard/src/components/sleepy/AgentTerminal.css` — inactive-pane dimming removed; `.xterm` font-smoothing override (`-webkit-font-smoothing: auto`).
+- `dashboard/src/styles/tokens.css` + `dashboard/index.html` — `--font-mono` primary is JetBrains Mono (loaded 400/500/700); Sometype Mono removed (was never loaded).
 - `dashboard/src/components/sleepy/AgentDock.tsx` — minimize-to-corner chip (sibling of .agent-surface).
 - `dashboard/src/components/sleepy/AgentTabs.tsx` — per-pane tab bars.
 - `dashboard/src/components/sleepy/AgentFab.tsx` — global FAB.
@@ -103,6 +119,17 @@ Key files summary (post-redesign):
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-07-01 — Readability polish shipped (task agent-terminal-rendering-readability-polish, v0.10.5)
+- WebGL addon removed; xterm now uses the DOM renderer for native macOS anti-aliasing (kills the "sharp"/eye-tiring glyph edges); `.xterm { -webkit-font-smoothing: auto }` overrides the app-wide `antialiased` reset.
+- Sometype Mono was never actually loaded (no `@font-face`; JetBrains Mono @400 was the silent fallback the whole time). JetBrains Mono is now the real `--font-mono` primary with loaded 400/500/700 weights; font-load-before-open reads the primary family off `--font-mono` dynamically.
+- Contrast calmed: `minimumContrastRatio` 4.5 → 3, default foreground softened to `#cdd3de` dark / `#33383f` light (dim text stays dim).
+- Comfort defaults: 14.5px font size (was 13.5), 1.65 line-height (was 1.4).
+- Copy/cut (⌘C/⌘X) now UTF-8-safe (hidden-textarea `execCommand`, not `navigator.clipboard`) and beep-free; ⌘A selects all; ⌘V untouched.
+- Selection visible in both themes and regardless of focus: `selectionBackground` + `selectionInactiveBackground` both pinned to solid `#6a57d6`.
+- Inactive split-pane dimming removed — both panes stay fully legible.
+- Drag-drop now targets the pane under the cursor (not last-focused) and accepts any file type (not just images).
+- Status: in_review (unchanged — plan mode AC still open).
 
 ### 2026-06-30 — Multi-session pane redesign shipped (feat/sleepy-agent-surface-ux-redesign)
 - SleepyPage deleted; agent surface now a global FAB + fullscreen overlay accessible from any page.

@@ -1,6 +1,70 @@
 [
   {
     "date": "2026-07-01",
+    "type": "feat",
+    "scope": "sleepy",
+    "description": "Dropping a file onto a split Agent terminal now routes to the pane the cursor is actually over (resolved via document.elementFromPoint into the .agent-pane-slot[data-pane] under the drop point), falling back to the action-focused pane if the point isn't over any pane — previously every drop always went to the last-focused pane regardless of where you dropped. The server route (agent-drop.ts) no longer rejects non-image uploads with a 415: any file type is accepted, magic-byte-sniffed for a canonical extension when it is an image, saved verbatim under the vault's gitignored temp dir otherwise, and its path is injected into the target session so Claude can read code, text, PDFs, and more by path. The existing 25MB per-chunk cap, basename sanitize, and TTL prune are unchanged.",
+    "breaking": false,
+    "summary": "Agent terminal drag-drop now targets the pane under the cursor and accepts any file type, not just images",
+    "references": [
+      "file:dashboard/src/components/sleepy/AgentSurface.tsx",
+      "file:src/server/routes/agent-drop.ts",
+      "task:agent-terminal-rendering-readability-polish"
+    ]
+  },
+  {
+    "date": "2026-07-01",
+    "type": "fix",
+    "scope": "sleepy",
+    "description": "Selection in the embedded Agent terminal is now unmistakable regardless of theme or terminal focus state. The prior selectionBackground was a pale, semi-transparent violet that was nearly invisible on the light-theme white background; worse, xterm draws selection via its separate selectionInactiveBackground (a faint default) whenever the terminal isn't the focused DOM element, which is exactly when the light-mode bug appeared. Fix: pin both selectionBackground and selectionInactiveBackground to a solid #6a57d6 with white selectionForeground (readXtermTheme() in agentSession.ts) — roughly 5.3:1 white-on-violet, clearly visible on white and dark backgrounds whether or not the pane is focused.",
+    "breaking": false,
+    "summary": "Fix Agent terminal text selection: solid brand-violet + white text for both focused and unfocused selection, in both themes",
+    "references": [
+      "file:dashboard/src/components/sleepy/agentSession.ts",
+      "task:agent-terminal-rendering-readability-polish"
+    ]
+  },
+  {
+    "date": "2026-07-01",
+    "type": "fix",
+    "scope": "sleepy",
+    "description": "Removed the opacity:0.82 + --color-bg overlay that dimmed the non-active pane in a split Agent terminal view (AgentTerminal.css). Users read both terminals at once in a split, so greying out the other pane read as 'blurring it out' rather than useful focus signaling. The active pane's accent ring and top bar are sufficient to mark which pane has focus; both panes now render at full legibility regardless of which is active.",
+    "breaking": false,
+    "summary": "Remove Agent terminal inactive-split-pane dimming — both panes stay fully legible, accent ring alone marks focus",
+    "references": [
+      "file:dashboard/src/components/sleepy/AgentTerminal.css",
+      "task:agent-terminal-rendering-readability-polish"
+    ]
+  },
+  {
+    "date": "2026-07-01",
+    "type": "fix",
+    "scope": "sleepy",
+    "description": "Cmd+C and Cmd+X in the embedded Agent terminal now copy the current selection themselves via a hidden-textarea + document.execCommand('copy') (copyPreservingUnicode() in agentSession.ts), and preventDefault the keydown so WKWebView no longer rings the macOS system beep on an otherwise-unhandled Cmd-key. The hidden-textarea path also fixes an encoding bug: navigator.clipboard.writeText() in this WKWebView re-decodes UTF-8 bytes as Mac Roman, mangling any non-ASCII character copied out of the terminal (e.g. c-cedilla, g-breve, arrows); execCommand routes through the OS's native copy pipeline and round-trips correctly. Cmd+A now selects the whole buffer (also swallowed to avoid the beep). Cmd+V is deliberately left untouched — xterm's native bracketed paste must stay intact or a multi-line paste would auto-submit each line early.",
+    "breaking": false,
+    "summary": "Fix Agent terminal copy/cut: encoding-safe clipboard copy via hidden-textarea+execCommand, and stop the macOS system beep",
+    "references": [
+      "file:dashboard/src/components/sleepy/agentSession.ts",
+      "task:agent-terminal-rendering-readability-polish"
+    ]
+  },
+  {
+    "date": "2026-07-01",
+    "type": "fix",
+    "scope": "sleepy",
+    "description": "Switch the embedded Agent terminal (agentSession.ts) from xterm's WebGL renderer to its DOM renderer: WebGL rasterizes its own glyph atlas and ignores -webkit-font-smoothing, producing hard/'sharp' edges that the user found eye-tiring; the DOM renderer draws real text nodes and gets native macOS anti-aliasing. Soften the foreground from a stark #f5f6fa (~17:1 contrast) to #cdd3de (dark) / #33383f (light), and lower minimumContrastRatio 4.5->3 so xterm's contrast floor still rescues unreadable ANSI block-fills without flattening dim/secondary text bright. Bump fontSize 13.5->14.5 and lineHeight 1.4->1.65 for a calmer, fuller feel, and add '.xterm { -webkit-font-smoothing: auto }' to override the app-wide CSS reset that force-thinned every terminal glyph to the antialiased (thinnest) mode. Along the way, found and fixed a bonus bug: the intended 'Sometype Mono' font was never actually loaded (no @font-face; index.html only pulled JetBrains Mono@400), so terminal text had silently been rendering as JetBrains Mono 400 with faux-synthesized bold the whole time. JetBrains Mono is now the loaded --font-mono primary with real 400/500/700 weights via Google Fonts.",
+    "breaking": false,
+    "summary": "Agent terminal readability overhaul: DOM renderer (native AA) replaces WebGL, softened fg + minContrast 4.5->3, size/line-height tuned, and JetBrains Mono now actually loads with real weights",
+    "references": [
+      "file:dashboard/src/components/sleepy/agentSession.ts",
+      "file:dashboard/src/components/sleepy/AgentTerminal.css",
+      "file:dashboard/src/styles/tokens.css",
+      "file:dashboard/index.html",
+      "task:agent-terminal-rendering-readability-polish"
+    ]
+  },
+  {
+    "date": "2026-07-01",
     "type": "chore",
     "scope": "release",
     "description": "v0.10.2 bumped the version across the full monorepo surface (package.json, desktop/package.json, tauri.conf.json, Cargo.toml/Cargo.lock), realigning desktop/package.json which had drifted to 0.9.2 during the 0.10.x desktop-only bumps. No code delta over v0.10.1 — this release exists purely to get npm and the desktop bundle back on the same version number, and was the first npm publish since v0.10.0.",

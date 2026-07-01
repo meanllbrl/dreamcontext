@@ -15,9 +15,14 @@ description: >-
   PanelEnabled opt-in default false; Learn/Ask/Sleep mode toggle; Sonnet enrichment
   with Markdown rendering; interactive-login-shell claude PATH fix; tracked
   enrichment status UI; dead-vault filtering; focus/blur UX), the in-app Agent
-  terminal — AgentSurface.tsx (xterm.js + @xterm/addon-webgl + node-pty WS bridge;
+  terminal — AgentSurface.tsx/agentSession.ts (xterm.js DOM renderer — the WebGL
+  addon was REMOVED 2026-07-01 for native macOS anti-aliasing — + node-pty WS bridge;
   session persistence via display:none hoist; bypassPermissions opt-in; drag-to-split;
-  readability fix: minimumContrastRatio 4.5 + per-theme ANSI ramp; in-app prereq
+  2026-07-01 readability polish: minimumContrastRatio 4.5→3 + softened foreground,
+  JetBrains Mono as the actually-loaded --font-mono primary with real 400/500/700
+  weights (the intended Sometype Mono was NEVER loaded), 14.5px/1.65 line-height,
+  encoding-safe beep-free copy/cut, always-visible selection, no inactive-pane
+  dimming, cursor-targeted any-file drag-drop; in-app prereq
   installer: GET /api/agent/capabilities + POST /api/agent/install; dev-workflow: only
   Rust/lib.rs changes need tauri build, dashboard changes just need npm run build +
   app relaunch), find_global_cli -ilc fix SHIPPED v0.10.0 (note: global was a
@@ -662,7 +667,7 @@ surface — opening a browser tab would be redundant and confusing. The hook now
 exits silently when `readAppManifest() !== null` (i.e. `~/.dreamcontext/app.json`
 exists). The check is synchronous and cheap; no-op on non-app machines.
 
-## In-app Agent Terminal (2026-06-28)
+## In-app Agent Terminal (2026-06-28, latest readability polish 2026-07-01)
 
 A full interactive Claude Code terminal embedded in the Sleepy page of the dashboard. Desktop-only; never ships in the npm package.
 
@@ -679,18 +684,24 @@ WS /api/agent/terminal?vault=<name>&bypass=<bool>
   ← loopback-only (strict remoteAddress check)
   → node-pty: $SHELL -ilc 'exec claude [--dangerously-skip-permissions]'
        cwd = vault project root
-  ← AgentSurface.tsx (xterm.js + @xterm/addon-webgl + @xterm/addon-fit)
+  ← agentSession.ts createSession() (xterm.js DOM renderer + @xterm/addon-fit)
 ```
 
 ### Key decisions
 
 **Session persistence (display:none hoist):** `App.tsx` uses `switch (nav.page)` returning one mounted page, so navigating away unmounts `SleepyPage` → kills `AgentTerminal` → closes WebSocket + PTY. Fix: `AgentTerminal` is instantiated ABOVE the `switch` as a single long-lived owner, toggled via `display:none` (never unmounted) when Sleepy is not active. The xterm DOM node is re-shown and re-fit (`fitAddon.fit()`) on reveal. Tear-down only on explicit Close/Restart or app quit.
 
-**WebGL renderer + Sometype Mono font metrics:** `@xterm/addon-webgl` gives GPU-composited, crisp-at-any-DPR text (comparable to Zed's terminal). Automatic fallback to the default canvas renderer on WebGL context-loss. The Sometype Mono font (regular + 600 weight) must be fully loaded and committed to `term.open()` before the WebGL addon is initialized — loading the font after `open()` results in thin/stretched glyphs because the glyph atlas is already committed to the wrong cell width. Fix: load via `FontFaceSet.load()`, await, then call `term.open()`, then attach the WebGL addon.
+**DOM renderer + real mono font (updated 2026-07-01 — supersedes the original WebGL design):** `@xterm/addon-webgl` was REMOVED. It gave GPU-composited, crisp-at-any-DPR text, but the atlas's rasterisation produced hard "sharp" glyph edges users found eye-tiring over long sessions. The DOM renderer's real text nodes pick up native macOS anti-aliasing instead — `.xterm { -webkit-font-smoothing: auto; -moz-osx-font-smoothing: auto; text-rendering: optimizeLegibility }` overrides the app-wide CSS reset's forced `-webkit-font-smoothing: antialiased` (the thinnest grayscale AA), which was otherwise thinning the DOM-rendered glyphs. Separately, the originally-intended **Sometype Mono font was never actually loaded** — no `@font-face`/Google-Fonts link ever pulled it in, so `--font-mono`'s first-listed family silently fell through to JetBrains Mono @400 with a faux-synthesized bold the whole time. Fix: `index.html` now loads JetBrains Mono weights 400/500/700 from Google Fonts, `--font-mono` lists JetBrains Mono FIRST (the actually-loaded family), and the font-load-before-open gate reads the primary family off `--font-mono` dynamically (`fontFamily.split(',')[0]`) instead of a hardcoded font name — so `FontFaceSet.load()` awaits the REAL webfont (both regular + `fontWeightBold: '700'`) before `term.open()` measures cell width. The DOM renderer needs no separate glyph-atlas-attach step.
 
 **bypassPermissions (default OFF):** The terminal runs real `claude` with full file-write capability. The bypass flag is opt-in; when armed, a standing orange warning chip is shown and the WS query param `bypass=true` passes `--dangerously-skip-permissions` to the claude spawn. Read-only Chat (Phase 3, `--permission-mode plan`) is always available and unaffected.
 
-**Readability fix — minimumContrastRatio 4.5 + per-theme ANSI ramp:** `readXtermTheme()` originally mapped the 16 ANSI slots straight to design tokens, which inverted luminance in light mode (ANSI black→light background colour, ANSI white→dark foreground colour) and made dim grays too light in dark mode. Combined with `minimumContrastRatio: 1` (contrast net deliberately OFF "to keep the palette exact"), Claude's TUI blocks that pair a default foreground with an ANSI 7/8 background fill collapsed to same-luminance-on-same-luminance → unreadable in both themes. Fix: `minimumContrastRatio: 4.5` (xterm auto-lifts any too-low-contrast foreground — mechanism-independent guarantee) + a conventional per-theme grayscale ANSI ramp (slot 0=darkest…slot 15=lightest, tuned per theme so block fills blend). Lesson: in an embedded TUI, readability > exact brand-colour fidelity; never set `minimumContrastRatio` to 1 when hosting ANSI output you don't control.
+**Readability fix — per-theme ANSI ramp, then calmed to minimumContrastRatio 3 (2026-07-01):** `readXtermTheme()` originally mapped the 16 ANSI slots straight to design tokens, which inverted luminance in light mode (ANSI black→light background colour, ANSI white→dark foreground colour) and made dim grays too light in dark mode. Combined with `minimumContrastRatio: 1` (contrast net deliberately OFF "to keep the palette exact"), Claude's TUI blocks that pair a default foreground with an ANSI 7/8 background fill collapsed to same-luminance-on-same-luminance → unreadable in both themes. First fix (2026-06-29): `minimumContrastRatio: 4.5` (xterm auto-lifts any too-low-contrast foreground) + the conventional per-theme grayscale ANSI ramp (slot 0=darkest…slot 15=lightest). **Follow-up (2026-07-01):** 4.5 flattened hierarchy — it force-brightened dim/secondary text along with the raw near-white default foreground (`#f5f6fa` on `#14171f`, ~17:1), which read as harsh over long sessions. Fix: softened the default foreground to a calmer off-white (`#cdd3de` dark / `#33383f` light) instead of the raw `--color-text` token, and lowered `minimumContrastRatio` to `3` — still high enough to rescue the ANSI-on-ANSI block-fill case, low enough that dim/secondary text stays visibly dim. Lesson: in an embedded TUI, readability > exact brand-colour fidelity, but the contrast floor is itself a hierarchy control — tune it, don't max it.
+
+**Readability polish — clipboard, selection, pane dimming (2026-07-01, task `agent-terminal-rendering-readability-polish`):**
+- **WKWebView mangles UTF-8 on clipboard write.** `navigator.clipboard.writeText()` in this WKWebView re-decodes UTF-8 bytes as Mac Roman (ç→"√ß", ğ→"ƒü", —→"‚Äî"). Fix: `copyPreservingUnicode()` copies via a hidden `<textarea>` + `document.execCommand('copy')` (routes through the OS's native text-copy pipeline, round-trips UTF-8 correctly); `navigator.clipboard` is kept only as a last-resort fallback. `⌘C`/`⌘X` call this and `preventDefault()` so WKWebView never rings the macOS system beep on an otherwise-unhandled ⌘-key (the terminal is read-only, so `⌘X` just copies, same as `⌘C`); `⌘A` selects all and is swallowed the same way. `⌘V` is deliberately left untouched so xterm's native bracketed paste stays intact (else a multi-line paste would auto-submit each line).
+- **`selectionInactiveBackground` fires whenever the terminal isn't the focused element** — a much fainter xterm default than `selectionBackground`, and the actual value rendered while unfocused (e.g. right after clicking elsewhere). It was invisible on a white light-mode background. Fix: pin BOTH `selectionBackground` and `selectionInactiveBackground` to a solid `#6a57d6` with white `selectionForeground` — visible in light and dark, focused or not.
+- **Inactive split-pane dimming removed.** The non-active pane previously got `opacity: 0.82` + a `--color-bg` overlay to signal focus; users read this as "blurring out" a pane they were still reading. Both panes now stay fully legible; only the active pane's accent ring + top bar mark focus.
+- Comfort defaults also tuned: font size 13.5→14.5, line-height 1.4→1.65.
 
 **In-app prerequisite installer:** `GET /api/agent/capabilities` now reports `claudeCli`, `nodePty`, and `npm`, each probed via `$SHELL -ilc` matching the PTY spawn's PATH (`claude` commonly lives in `~/.local/bin` sourced only by `~/.zshrc`; a non-interactive `-lc` shell won't source it). `POST /api/agent/install { target: 'claude'|'pty' }` + `GET /api/agent/install/status?id=` mirror the Sleepy capture-run pattern: in-memory `installRuns` Map, 10-min TTL prune, 5-min watchdog, login-shell spawn. Targets: `claude` → `npm install -g @anthropic-ai/claude-code`; `pty` → `npm install node-pty@^1.1.0 --no-save` into the CLI's own package root (nearest ancestor `package.json` walking up from `process.argv[1]`, so node-pty resolves from the bundled dist exactly as `import('node-pty')` does), then `ensurePtyHelperExecutable()` (`chmod +x` all prebuilt spawn-helpers) and bust the memoized `ptyAvailable` cache so the next capabilities check reports ready without a relaunch. `AgentSurface.tsx` `Prereqs` component lists missing prerequisites with one-click Install + live log tail + auto re-check; Start-agent gated on BOTH `embeddedTerminal` AND `claudeCli`. Routes in `src/server/routes/agent-terminal.ts`, registered in `src/server/index.ts` and added to `VAULT_AGNOSTIC_PREFIXES`. Desktop-gated, loopback-only, closed target whitelist (bad target → 400).
 
@@ -717,7 +728,7 @@ The agent surface was redesigned: the Sleepy page (`SleepyPage.tsx`, `SleepyPage
 - `dashboard/src/hooks/useFocusTarget.ts` — focus-target wiring (recall→page open)
 - `dashboard/src/lib/recallNav.ts` — navigate-and-open from recall hits
 - `src/server/routes/agent-sessions.ts` — session listing/management
-- `src/server/routes/agent-drop.ts` — image/file DnD drop endpoint
+- `src/server/routes/agent-drop.ts` — file DnD drop endpoint (any file type since 2026-07-01, was image-only)
 
 **Deleted:** `DockBubble.tsx`, `agentSlots.tsx`, `SleepyPage.tsx`, `SleepyPage.css`.
 
@@ -756,10 +767,11 @@ Cross-tree collapse uses the `dreamcontext-navigate` custom window event so the 
 
 - `src/server/routes/agent-terminal.ts` — `attachAgentTerminal(server)`: WS upgrade + node-pty spawn; `GET /api/agent/capabilities`; `POST /api/agent/install` / `GET /api/agent/install/status` (prereq installer); `POST /api/agent/open-terminal` (osascript fallback).
 - `src/server/routes/agent-sessions.ts` — session listing and management (added 2026-06-30).
-- `src/server/routes/agent-drop.ts` — image/file DnD drop endpoint (added 2026-06-30).
+- `src/server/routes/agent-drop.ts` — any-file DnD drop endpoint (added 2026-06-30; opened to any file type + cursor-targeted pane routing 2026-07-01, was image-only + last-focused-pane).
 - `src/server/index.ts` — `attachAgentTerminal(server)` wired at bottom; install + session routes in `VAULT_AGNOSTIC_PREFIXES`.
-- `dashboard/src/components/sleepy/AgentSurface.tsx` — xterm.js + `@xterm/addon-webgl` + `@xterm/addon-fit`; `readXtermTheme()` with `minimumContrastRatio: 4.5`; `Prereqs` component; Sometype Mono font-load-before-open; multi-pane layout; drag-to-split via `dragend` pattern.
-- `dashboard/src/components/sleepy/AgentTerminal.css` — stylesheet (filename retained).
+- `dashboard/src/components/sleepy/AgentSurface.tsx` — `Prereqs` component; multi-pane layout; drag-to-split via `dragend` pattern; cursor-targeted any-file drop routing (`onTermDrop` → `elementFromPoint` → `.agent-pane-slot[data-pane]`, 2026-07-01).
+- `dashboard/src/components/sleepy/agentSession.ts` — `createSession()`: xterm Terminal + DOM renderer + `@xterm/addon-fit` (WebGL removed 2026-07-01); `readXtermTheme()` (`minimumContrastRatio: 3`, softened foreground, solid selection); JetBrains-Mono-aware font-load-before-open; `copyPreservingUnicode()` + beep-free ⌘C/⌘X/⌘A key handler.
+- `dashboard/src/components/sleepy/AgentTerminal.css` — stylesheet (filename retained); inactive-pane dimming removed, `.xterm` font-smoothing override (2026-07-01).
 - `dashboard/src/components/sleepy/AgentDock.tsx` — minimize-to-corner dock chip; sibling of `.agent-surface` (see §"Minimize-to-corner" gotcha above).
 - `dashboard/src/components/sleepy/AgentTabs.tsx` — per-pane tab bars.
 - `dashboard/src/components/sleepy/AgentFab.tsx` + `AgentFab.css` — global floating action button.
@@ -767,6 +779,7 @@ Cross-tree collapse uses the `dreamcontext-navigate` custom window event so the 
 - `dashboard/src/components/search/CommandPalette.tsx` + `CommandPalette.css` — ⌘K palette.
 - `dashboard/src/hooks/useFocusTarget.ts` — focus-target wiring hook.
 - `dashboard/src/lib/recallNav.ts` — navigation from recall hits.
+- `dashboard/src/styles/tokens.css` — `--font-mono` primary is JetBrains Mono (the actually-loaded webfont; Sometype Mono was removed, was never loaded); `dashboard/index.html` loads JetBrains Mono 400/500/700 (2026-07-01).
 - `App.tsx` — hosts the `<AgentSurface />` hoist (display:none) and sibling `<AgentDock />`; `<AgentFab />` wired to open the overlay.
 - ~~`dashboard/src/pages/SleepyPage.tsx`~~ — **deleted** 2026-06-30 (agent surface is now FAB-driven from any page).
 
