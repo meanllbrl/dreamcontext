@@ -622,6 +622,28 @@ parent_task: null
       expect(settings.hooks.Stop).toHaveLength(1);
     });
 
+    it('reconciles a stale UserPromptSubmit timeout to the current spec', () => {
+      // A project written by an older installer pinned the recall hook at 5s,
+      // before the Haiku recall path (which can take ~15s) required the larger
+      // 120s timeout. Re-running install must heal the drift, not skip it.
+      mkdirSync(join(tmpDir, '.claude'), { recursive: true });
+      writeFileSync(join(tmpDir, '.claude', 'settings.json'), JSON.stringify({
+        hooks: {
+          UserPromptSubmit: [{
+            hooks: [{ type: 'command', command: 'npx dreamcontext hook user-prompt-submit', timeout: 5 }],
+          }],
+        },
+      }, null, 2), 'utf-8');
+
+      run('install-skill', tmpDir);
+      const settings = JSON.parse(readFileSync(join(tmpDir, '.claude', 'settings.json'), 'utf-8'));
+
+      // Same single hook (no duplicate), timeout bumped to the canonical value.
+      expect(settings.hooks.UserPromptSubmit).toHaveLength(1);
+      expect(settings.hooks.UserPromptSubmit[0].hooks[0].command).toBe('npx dreamcontext hook user-prompt-submit');
+      expect(settings.hooks.UserPromptSubmit[0].hooks[0].timeout).toBe(120);
+    });
+
     it('does not duplicate hooks on repeated install', () => {
       run('install-skill', tmpDir);
       run('install-skill', tmpDir);

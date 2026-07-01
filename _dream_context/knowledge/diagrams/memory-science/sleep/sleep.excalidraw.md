@@ -1,7 +1,8 @@
 ---
+
 excalidraw-plugin: parsed
-tags:
-  - 'topic:excalidraw'
+tags: [excalidraw]
+
 ---
 ==⚠  Switch to EXCALIDRAW VIEW in the MORE OPTIONS menu of this document. ⚠== You can decompress Drawing data with the command palette: 'Decompress current Excalidraw file'. For more info check in plugin settings under 'Saving'
 
@@ -21,7 +22,8 @@ sleep-tasks
 task files ^8YvLxyS1
 
 sleep-state
-core · changelog · releases ^sm3RQBFJ
+core · changelog ·
+releases ^sm3RQBFJ
 
 sleep-product
 knowledge · features ^eIpcETfQ
@@ -333,9 +335,9 @@ in parallel ^Dw1zpRIn
 			"id": "sm3RQBFJ",
 			"type": "text",
 			"x": 395,
-			"y": 437.5,
+			"y": 426.25,
 			"width": 270,
-			"height": 45,
+			"height": 68,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
 			"backgroundColor": "transparent",
@@ -358,9 +360,9 @@ in parallel ^Dw1zpRIn
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
-			"text": "sleep-state\ncore · changelog · releases",
-			"rawText": "sleep-state\ncore · changelog · releases",
-			"originalText": "sleep-state\ncore · changelog · releases",
+			"text": "sleep-state\ncore · changelog ·\nreleases",
+			"rawText": "sleep-state\ncore · changelog ·\nreleases",
+			"originalText": "sleep-state\ncore · changelog ·\nreleases",
 			"fontSize": 18,
 			"fontFamily": 5,
 			"textAlign": "center",
@@ -674,9 +676,9 @@ in parallel ^Dw1zpRIn
 		{
 			"id": "Dw1zpRIn",
 			"type": "text",
-			"x": 320.44,
+			"x": 315.96,
 			"y": 345,
-			"width": 109.12,
+			"width": 118.08,
 			"height": 20,
 			"angle": 0,
 			"strokeColor": "#495057",

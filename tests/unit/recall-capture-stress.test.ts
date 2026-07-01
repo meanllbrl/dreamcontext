@@ -10,7 +10,11 @@ import {
   type CorpusDoc,
   type CorpusType,
 } from '../../src/lib/recall.js';
-import { loadGold, evaluate, type GoldQuery } from '../../eval/harness.js';
+import { loadGold, evaluateAsync, type GoldQuery } from '../../eval/harness.js';
+
+// Yield a macrotask so a long synchronous BM25 sweep can't starve the vitest
+// worker's reporter heartbeat (the "Timeout calling onTaskUpdate" RPC guard).
+const tick = (): Promise<void> => new Promise((r) => setImmediate(r));
 
 // ── Locate the worktree's real committed corpus + gold set (same resolution as
 //    recall-eval.test.ts so we stress against the EXACT shipping corpus). ──
@@ -142,7 +146,7 @@ describe('continuous-capture precision stress (STEP 1 measurement)', () => {
     expect(baselineCorpus.filter(isCapture)).toEqual([]);
   });
 
-  it('measures recall@1/@3 as the capture flood grows (N ∈ {0, 50, 200})', () => {
+  it('measures recall@1/@3 as the capture flood grows (N ∈ {0, 50, 200})', async () => {
     const Ns = [0, 50, 200];
     const rows: Array<{ n: number; recall1: number; recall3: number }> = [];
 
@@ -151,7 +155,7 @@ describe('continuous-capture precision stress (STEP 1 measurement)', () => {
         ...makeSyntheticCaptures(vocab, n, 'digest'),
         ...makeSyntheticCaptures(vocab, n, 'bookmark'),
       ];
-      const report = evaluate([...baselineCorpus, ...synthetic], gold);
+      const report = await evaluateAsync([...baselineCorpus, ...synthetic], gold);
       rows.push({
         n,
         recall1: report.overall.recall1,
@@ -201,7 +205,7 @@ describe('continuous-capture precision stress (STEP 1 measurement)', () => {
     expect(dropR3).toBeLessThanOrEqual(3.5);
   }, 90_000);
 
-  it('GUARD PROOF: a capture flood never knocks a real gold target out of the top-3', () => {
+  it('GUARD PROOF: a capture flood never knocks a real gold target out of the top-3', async () => {
     // The named precision-decay risk is "mediocre auto-captures crowd real
     // knowledge OUT of recall". The honest measure of that is a TRUE displacement:
     // a gold target that ranked in the top-3 on the capture-free corpus, but that
@@ -219,16 +223,19 @@ describe('continuous-capture precision stress (STEP 1 measurement)', () => {
     };
     const cleanRank = new Map(gold.map((q) => [q.id, goldRankIn(baselineCorpus, q)]));
 
-    const trueDisplacementsAt = (n: number): string[] => {
+    const trueDisplacementsAt = async (n: number): Promise<string[]> => {
       const synthetic = [
         ...makeSyntheticCaptures(vocab, n, 'digest'),
         ...makeSyntheticCaptures(vocab, n, 'bookmark'),
       ];
       const corpus = [...baselineCorpus, ...synthetic];
       const disp: string[] = [];
+      let scanned = 0;
       for (const q of gold) {
         const wasTop3 = (cleanRank.get(q.id) ?? 99) <= 3;
         if (!wasTop3) continue; // never in top-3 clean → cannot be "crowded out"
+        // Yield every few heavy searches so the worker keeps its reporter heartbeat.
+        if (scanned++ % 8 === 0) await tick();
         const targets = new Set([...q.expected, ...(q.alt ?? [])]);
         const hits = bm25Search(q.query, corpus, 10);
         let rank: number | null = null;
@@ -246,9 +253,9 @@ describe('continuous-capture precision stress (STEP 1 measurement)', () => {
     };
     // Informational: q031 (Turkish paraphrase vs English doc) misses @3 even on
     // the clean corpus, so it is excluded from TRUE displacement by construction.
-    for (const n of [50, 100, 200]) trueDisplacementsAt(n);
+    for (const n of [50, 100, 200]) await trueDisplacementsAt(n);
     // Load-bearing guarantee: at the worst-case flood, zero real top-3 knowledge
     // is crowded out by captures.
-    expect(trueDisplacementsAt(200)).toEqual([]);
+    expect(await trueDisplacementsAt(200)).toEqual([]);
   }, 90_000);
 });

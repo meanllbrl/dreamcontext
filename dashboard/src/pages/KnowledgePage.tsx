@@ -73,10 +73,21 @@ export function leafName(entry: KnowledgeListEntry, folder: string | null): stri
 // every diagram collapsed into one flat "Diagrams" folder. We build a recursive
 // tree instead, so category subfolders (e.g. Competitors) nest under Diagrams.
 //
-// Board self-wrapper collapse: by convention a board lives in a folder named
+// Board self-wrapper collapse: by convention a LONE board lives in a folder named
 // after itself (`<title>/<title>.excalidraw`). That wrapper segment is noise in
 // the tree, so we drop it — the board renders as a card directly under its
 // category, labeled `<title>.excalidraw` (via leafName).
+//
+// EXCEPTION (co-located board folder): the newer convention puts a board in a
+// SELF-CONTAINED folder alongside other first-class knowledge cards — a
+// `.teardown.md` or notes (possibly nested in a subfolder). Collapsing the board
+// out of such a folder split it from its siblings (the `.excalidraw` got hoisted
+// to the parent while the teardown stayed behind, so the board read as
+// detached/duplicated). So we only collapse the wrapper when the board is its
+// SOLE occupant (no other knowledge entry anywhere under it); otherwise the
+// folder stays intact and every artifact groups under it. (Note: an `assets/`
+// image subdir never appears here — the tree is built from `.md` entries only,
+// so only sibling knowledge cards drive this gate.)
 
 export interface KnowledgeTreeNode {
   name: string;   // last path segment, e.g. "competitors"
@@ -101,6 +112,21 @@ export function buildKnowledgeTree(
   const roots: KnowledgeListEntry[] = [];
   const top: KnowledgeTreeNode = { name: '', path: '', label: '', folders: [], cards: [] };
 
+  // How many entries live ANYWHERE under each folder — every ancestor prefix of
+  // every entry, not just its direct parent. A board's self-named wrapper is
+  // collapsed below only when it has a single occupant (the board itself); a
+  // co-located board folder that also holds a teardown/notes — even nested in a
+  // SUBFOLDER (`<board>/research/notes.md`) — stays intact. Direct-child-only
+  // counting missed the subfolder case and re-split the board (Bug A).
+  const folderOccupants = new Map<string, number>();
+  for (const e of entries) {
+    const segs = e.slug.split('/');
+    for (let i = 1; i < segs.length; i++) {
+      const ancestor = segs.slice(0, i).join('/');
+      folderOccupants.set(ancestor, (folderOccupants.get(ancestor) ?? 0) + 1);
+    }
+  }
+
   const childFolder = (parent: KnowledgeTreeNode, seg: string): KnowledgeTreeNode => {
     let child = parent.folders.find(f => f.name === seg);
     if (!child) {
@@ -115,10 +141,15 @@ export function buildKnowledgeTree(
     const segments = e.slug.split('/');
     const leaf = segments[segments.length - 1];
     let chain = segments.slice(0, -1);
-    // Collapse the board's self-named wrapper folder (`<title>/<title>.excalidraw`).
+    // Collapse the board's self-named wrapper folder (`<title>/<title>.excalidraw`)
+    // ONLY when the board is its sole occupant. If the folder also holds a
+    // teardown/notes/etc., keep it so every artifact groups together (Bug A).
     if (isExcalidrawSlug(e.slug) && chain.length > 0) {
       const base = leaf.replace(/\.excalidraw$/, '');
-      if (chain[chain.length - 1] === base) chain = chain.slice(0, -1);
+      const wrapper = chain.join('/');
+      if (chain[chain.length - 1] === base && (folderOccupants.get(wrapper) ?? 0) <= 1) {
+        chain = chain.slice(0, -1);
+      }
     }
     if (chain.length === 0) { roots.push(e); continue; }
     let node = top;

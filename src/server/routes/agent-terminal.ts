@@ -9,6 +9,7 @@ import { existsSync, readdirSync, statSync, chmodSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { sendJson, sendError } from '../middleware.js';
 import { listVaults } from '../../lib/vaults.js';
+import { trackChild } from '../lifecycle.js';
 
 /**
  * Agent terminal — the in-app surface that runs the REAL, interactive Claude Code
@@ -489,9 +490,13 @@ function startPtySession(
   }) as unknown as PtyLike;
 
   let alive = true;
+  // Reap this PTY's `claude` process if the whole server shuts down (parent-death
+  // watchdog / SIGTERM) — otherwise it would orphan to launchd. Untracked on exit.
+  const untrack = trackChild(() => { try { term.kill(); } catch { /* gone */ } });
   term.onData((data) => { if (ws.readyState === ws.OPEN) ws.send(data); });
   term.onExit(({ exitCode }) => {
     alive = false;
+    untrack();
     if (ws.readyState === ws.OPEN) {
       try { ws.send(`\r\n\x1b[2m[claude exited with code ${exitCode}]\x1b[0m\r\n`); } catch { /* closing */ }
       ws.close();

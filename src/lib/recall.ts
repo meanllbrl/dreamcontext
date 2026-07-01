@@ -624,10 +624,10 @@ const IDENTITY_BOOST = 1.5;
 // of 200 each degraded recall@3 by ~3.3pts and recall@1 by ~8.3pts vs a
 // capture-free corpus — mediocre auto-captures were crowding out real knowledge.
 //
-// This 0.5× multiplier applies to capture docs in the DERIVED `rankScore` ONLY
+// This 0.4× multiplier applies to capture docs in the DERIVED `rankScore` ONLY
 // (NEVER the raw `score` the hook thresholds against — the decoupling is sacred).
 // Effect: on an equal content match a curated doc beats a capture doc, but a
-// capture doc whose match is clearly the strongest/only one still wins (0.5× of a
+// capture doc whose match is clearly the strongest/only one still wins (0.4× of a
 // big number still tops 1× of a small one — the e2e loop test proves a genuine
 // captured decision still surfaces in the top-3). The GUARD PROOF
 // (recall-capture-stress.test.ts) verifies that under a worst-case capture flood,
@@ -635,7 +635,17 @@ const IDENTITY_BOOST = 1.5;
 // knocked out of it by a capture. (A weak-match gold doc that already missed the
 // top-3 without any captures is not "displaced" — that is a recall limit of the
 // query itself, not capture crowding.)
-export const CAPTURE_RANK_PENALTY = 0.5;
+//
+// Tuned 0.5 → 0.4 (task capture-guard-q030): at 0.5× a 400-doc flood whose bodies
+// are stuffed with the Turkish gold-query vocabulary out-ranked knowledge/positioning
+// for q030 ("projenin ürün konumlandırması ve sloganı") — an English doc that scores
+// raw-BM25 0 on that query and therefore holds a fragile rank-3 on derived signals
+// alone. A displacement sweep showed the guard holds at every p ≤ 0.45; 0.4 sits
+// just below that cliff with a ~16% margin so the proof stays green across the IDF
+// wobble from buildCorpus reading a live, dogfooded working tree. Lowering the
+// penalty is monotonically safe for the guard and for the recall@3 degradation
+// bound (it only pushes captures down, toward the capture-free baseline).
+export const CAPTURE_RANK_PENALTY = 0.4;
 
 // ── B3: recency + status ranking multipliers ────────────────────────────────
 // Down-rank completed/archived docs (still findable, just not top of the pile).

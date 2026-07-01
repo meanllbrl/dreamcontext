@@ -1,0 +1,141 @@
+{
+  "schema": 1,
+  "views": [
+    {
+      "id": "all",
+      "name": "All Tasks",
+      "removable": false,
+      "config": {
+        "filters": {
+          "status": {
+            "inc": [],
+            "exc": []
+          },
+          "priority": {
+            "inc": [],
+            "exc": []
+          },
+          "urgency": {
+            "inc": [],
+            "exc": []
+          },
+          "tags": {
+            "inc": [],
+            "exc": []
+          },
+          "version": {
+            "inc": [],
+            "exc": []
+          },
+          "assignee": {
+            "inc": [],
+            "exc": []
+          },
+          "due": "all",
+          "minRice": 0
+        },
+        "groupBy": "status",
+        "subGroupBy": "none",
+        "layout": "board",
+        "sortBy": "manual",
+        "sortDir": "desc",
+        "search": ""
+      }
+    },
+    {
+      "id": "atrisk",
+      "name": "At Risk",
+      "removable": true,
+      "config": {
+        "filters": {
+          "status": {
+            "inc": [],
+            "exc": []
+          },
+          "priority": {
+            "inc": [],
+            "exc": []
+          },
+          "urgency": {
+            "inc": [],
+            "exc": []
+          },
+          "tags": {
+            "inc": [],
+            "exc": []
+          },
+          "version": {
+            "inc": [],
+            "exc": []
+          },
+          "assignee": {
+            "inc": [],
+            "exc": []
+          },
+          "due": "risk",
+          "minRice": 0
+        },
+        "groupBy": "priority",
+        "subGroupBy": "none",
+        "layout": "board",
+        "sortBy": "due",
+        "sortDir": "asc",
+        "search": ""
+      }
+    },
+    {
+      "id": "vmr16l2qa3rx",
+      "name": "Current Version",
+      "removable": true,
+      "config": {
+        "filters": {
+          "status": {
+            "inc": [],
+            "exc": []
+          },
+          "priority": {
+            "inc": [],
+            "exc": []
+          },
+          "urgency": {
+            "inc": [],
+            "exc": []
+          },
+          "tags": {
+            "inc": [],
+            "exc": []
+          },
+          "version": {
+            "inc": [
+              "@current"
+            ],
+            "exc": []
+          },
+          "assignee": {
+            "inc": [],
+            "exc": []
+          },
+          "due": "all",
+          "minRice": 0
+        },
+        "groupBy": "status",
+        "subGroupBy": "none",
+        "layout": "board",
+        "sortBy": "manual",
+        "sortDir": "desc",
+        "search": ""
+      }
+    }
+  ],
+  "versions": [],
+  "cardProps": {
+    "description": true,
+    "tags": true,
+    "priority": true,
+    "urgency": true,
+    "due": true,
+    "rice": false,
+    "assignee": true,
+    "version": false
+  }
+}

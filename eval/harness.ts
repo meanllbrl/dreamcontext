@@ -123,6 +123,74 @@ export function evaluate(
 }
 
 /**
+ * Event-loop-friendly twin of {@link evaluate}: byte-identical computation and
+ * result, but it `await`s a macrotask every `yieldEvery` queries. A heavy stress
+ * run (a 200-doc capture flood × the full gold set is tens of seconds of purely
+ * synchronous BM25) would otherwise block its vitest worker's event loop long
+ * enough to starve the reporter heartbeat and trip vitest's "Timeout calling
+ * onTaskUpdate" RPC guard — failing the run even though every assertion passed.
+ * The yields change nothing about the numbers; they only let the worker breathe.
+ */
+export async function evaluateAsync(
+  corpus: CorpusDoc[],
+  gold: GoldQuery[],
+  searchOpts: Parameters<typeof bm25Search>[3] = {},
+  yieldEvery = 4,
+): Promise<EvalReport> {
+  const perQuery: EvalReport['perQuery'] = [];
+  const acc = new Map<string, { hit1: number; hit3: number; rr: number; n: number }>();
+  const bump = (key: string, hit1: boolean, hit3: boolean, rr: number): void => {
+    const cur = acc.get(key) ?? { hit1: 0, hit3: 0, rr: 0, n: 0 };
+    cur.hit1 += hit1 ? 1 : 0;
+    cur.hit3 += hit3 ? 1 : 0;
+    cur.rr += rr;
+    cur.n += 1;
+    acc.set(key, cur);
+  };
+
+  let i = 0;
+  for (const q of gold) {
+    if (i++ % yieldEvery === 0) await new Promise<void>((r) => setImmediate(r));
+    const hits = bm25Search(q.query, corpus, 10, searchOpts);
+    const targets = new Set([...q.expected, ...(q.alt ?? [])]);
+
+    let rank: number | null = null;
+    for (let k = 0; k < hits.length; k++) {
+      if (targets.has(docKey(hitDoc(hits[k])))) {
+        rank = k + 1;
+        break;
+      }
+    }
+
+    const hit1 = rank === 1;
+    const hit3 = rank !== null && rank <= 3;
+    const rr = rank ? 1 / rank : 0;
+
+    perQuery.push({ id: q.id, category: q.category, rank, hit1, hit3 });
+    bump('__overall__', hit1, hit3, rr);
+    bump(q.category, hit1, hit3, rr);
+  }
+
+  const toMetrics = (a: { hit1: number; hit3: number; rr: number; n: number }): Metrics => ({
+    recall1: a.n ? (a.hit1 / a.n) * 100 : 0,
+    recall3: a.n ? (a.hit3 / a.n) * 100 : 0,
+    mrr: a.n ? a.rr / a.n : 0,
+    n: a.n,
+  });
+
+  const overallAcc = acc.get('__overall__') ?? { hit1: 0, hit3: 0, rr: 0, n: 0 };
+  const overall = toMetrics(overallAcc);
+
+  const byCategory: EvalReport['byCategory'] = {};
+  for (const [key, a] of acc) {
+    if (key === '__overall__') continue;
+    byCategory[key] = toMetrics(a);
+  }
+
+  return { overall, byCategory, perQuery };
+}
+
+/**
  * Render an EvalReport as a clean fixed-width ASCII table: an overall row plus
  * one row per category. recall@1 / recall@3 are %, MRR is 0–1, all rounded to
  * 1 decimal. Categories are listed alphabetically for stable output.

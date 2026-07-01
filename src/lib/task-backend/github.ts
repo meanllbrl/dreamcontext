@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import matter from 'gray-matter';
 import { generateId, slugify } from '../id.js';
@@ -28,6 +28,17 @@ import {
   type GitHubIssue,
 } from './github-map.js';
 import { RECOMMENDED_LABELS } from './github-fields.js';
+import {
+  ASSETS_BRANCH,
+  assetRemotePath,
+  assetRemoteUrl,
+  extractImageRefs,
+  isLocalImageRef,
+  resolveLocalImagePath,
+  rewriteImageRefs,
+} from './github-assets.js';
+import { sniffImageType } from '../image-sniff.js';
+import { createHash } from 'node:crypto';
 import { customFieldsFor, loadTaskOverride, type CustomFieldDef } from '../overrides.js';
 import { recordDashboardChange, type FieldChange } from '../change-tracker.js';
 import { resolveActor } from './identity.js';
@@ -705,7 +716,11 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     const isBacklog = task.tags.some((t) => t.toLowerCase() === BACKLOG_TAG);
     const startLocal = isBacklog ? null : ((task.raw.start_date as string | null | undefined) ?? null);
     const dueLocal = isBacklog ? null : ((task.raw.due_date as string | null | undefined) ?? null);
-    const body = composeIssueBody(bodyToIssueBody(task.body), startLocal, dueLocal, fieldsBlock);
+    // Local images embedded in the body (agent-drops, screenshots) can't render
+    // on GitHub — upload them to the assets branch and rewrite each reference to
+    // its hosted URL, WIRE-ONLY (the mirror keeps the canonical local path).
+    const prose = await this.uploadAndRewriteImages(bodyToIssueBody(task.body), adapter, owner, repo, report);
+    const body = composeIssueBody(prose, startLocal, dueLocal, fieldsBlock);
 
     let remoteId = this.ledger.remoteIdFor(slug);
     if (!remoteId) {
@@ -796,6 +811,192 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     });
     this.ledger.advanceWatermark(serverTime);
     this.ledger.dequeueFor(slug, enqueueCutoff);
+  }
+
+  // ── Image assets (local task images → hosted GitHub URLs) ─────────────────
+
+  /** Max bytes for an uploaded task image (matches the agent-drop cap). */
+  private static readonly MAX_ASSET_BYTES = 25 * 1024 * 1024;
+
+  /**
+   * Resolve every LOCAL image reference in `prose` to a hosted GitHub URL,
+   * uploading new bytes to the assets branch and rewriting the WIRE body. The
+   * mirror is never touched; a failed/unresolvable image keeps its reference
+   * as-is and surfaces a warning — a broken image must never abort a task push.
+   * Byte-stable (zero network) when the body embeds no local image.
+   */
+  protected async uploadAndRewriteImages(
+    prose: string,
+    adapter: ApiAdapter,
+    owner: string,
+    repo: string,
+    report: SyncReport,
+  ): Promise<string> {
+    const dests = [...new Set(extractImageRefs(prose).map((r) => r.dest))].filter(isLocalImageRef);
+    if (dests.length === 0) return prose;
+
+    const map = new Map<string, string>();
+    for (const dest of dests) {
+      try {
+        const url = await this.uploadLocalImage(dest, adapter, owner, repo);
+        if (url) map.set(dest, url);
+        else report.warnings.push(`image "${dest}" did not resolve to a local image file — left as-is (it will not render on GitHub).`);
+      } catch (err) {
+        report.warnings.push(`image "${dest}" upload failed: ${(err as Error).message ?? err} — left as-is.`);
+      }
+    }
+    if (map.size === 0) return prose;
+    return rewriteImageRefs(prose, (d) => map.get(d) ?? null);
+  }
+
+  /**
+   * Resolve a local image destination to its bytes — CONTAINED to the project
+   * root, SIZE-GATED before the read, and confirmed to be a real image by magic
+   * bytes. Returns null (never throws, never reads out-of-root or oversized
+   * files) for anything that isn't a contained, in-range, genuine image, so a
+   * remotely-pulled body can't drive an arbitrary-file read or an OOM.
+   */
+  private resolveImageBytes(
+    localUrl: string,
+  ): { bytes: Buffer; type: ReturnType<typeof sniffImageType>; contentSha: string } | null {
+    // Hard boundary: only files inside the project root are eligible (blocks an
+    // absolute path or `../` traversal injected via a pulled issue body).
+    const abs = resolveLocalImagePath(localUrl, [this.projectRoot, this.contextRoot], this.projectRoot);
+    if (!abs) return null;
+    let size: number;
+    try { size = statSync(abs).size; } catch { return null; }
+    // Reject by size BEFORE buffering the file (a naive read-then-check would let
+    // a huge file OOM the process — the same discipline agent-drop.ts enforces).
+    if (size === 0 || size > GitHubTaskBackend.MAX_ASSET_BYTES) return null;
+    let bytes: Buffer;
+    try { bytes = readFileSync(abs); } catch { return null; }
+    const type = sniffImageType(bytes);
+    if (!type) return null; // referenced as an image but isn't one — never upload arbitrary bytes
+    const contentSha = createHash('sha1').update(bytes).digest('hex');
+    return { bytes, type, contentSha };
+  }
+
+  /**
+   * Upload one local image to the assets branch and return its hosted URL (or
+   * null when the path doesn't resolve to a contained, real image). Idempotent:
+   * the same authored path reuses its bridge entry without touching the network
+   * or disk; identical bytes under a different path reuse the prior upload.
+   */
+  private async uploadLocalImage(
+    localUrl: string,
+    adapter: ApiAdapter,
+    owner: string,
+    repo: string,
+  ): Promise<string | null> {
+    const cached = this.ledger.assetForLocalUrl(localUrl);
+    if (cached) return cached.remoteUrl;
+
+    const resolved = this.resolveImageBytes(localUrl);
+    if (!resolved || !resolved.type) return null;
+    const { bytes, type, contentSha } = resolved;
+
+    const byContent = this.ledger.assetForContentSha(contentSha);
+    if (byContent) {
+      this.ledger.recordAsset({ ...byContent, localUrl });
+      return byContent.remoteUrl;
+    }
+
+    const remotePath = assetRemotePath(contentSha, type);
+    await this.ensureAssetsBranch(adapter, owner, repo);
+    await this.putAssetContent(adapter, owner, repo, remotePath, bytes, contentSha);
+    const remoteUrl = assetRemoteUrl(owner, repo, remotePath);
+    this.ledger.recordAsset({ localUrl, contentSha, remotePath, remoteUrl });
+    return remoteUrl;
+  }
+
+  /**
+   * Pull-side bridge recovery (mirror of push's content-addressed 422 dedup):
+   * when the gitignored `assets` cache was lost (a fresh checkout / reset) the
+   * reverse-map can't turn a hosted asset URL back into its local path, which
+   * would spuriously churn the image line and flag a `missing_base` conflict.
+   *
+   * Re-derive the bridge from the EXISTING local mirror: for each contained
+   * local image whose content-addressed hosted URL actually appears in the
+   * remote body, re-record the mapping. Content-addressing makes this safe — an
+   * entry is only re-created when the local bytes genuinely correspond to the
+   * URL the remote already serves, so a not-yet-pushed local image is never
+   * falsely marked uploaded.
+   */
+  private rebuildAssetBridgeFromLocal(owner: string, repo: string, localBody: string, remoteStripped: string): void {
+    if (!remoteStripped.includes(`/raw/${ASSETS_BRANCH}/`)) return;
+    const dests = [...new Set(extractImageRefs(localBody).map((r) => r.dest))].filter(isLocalImageRef);
+    for (const dest of dests) {
+      if (this.ledger.assetForLocalUrl(dest)) continue;
+      const resolved = this.resolveImageBytes(dest);
+      if (!resolved || !resolved.type) continue;
+      const remotePath = assetRemotePath(resolved.contentSha, resolved.type);
+      const remoteUrl = assetRemoteUrl(owner, repo, remotePath);
+      if (!remoteStripped.includes(remoteUrl)) continue; // only bridge images actually present remotely
+      this.ledger.recordAsset({ localUrl: dest, contentSha: resolved.contentSha, remotePath, remoteUrl });
+    }
+  }
+
+  /** Commit the bytes to the assets branch (Contents API). A 422 == already present. */
+  private async putAssetContent(
+    adapter: ApiAdapter,
+    owner: string,
+    repo: string,
+    remotePath: string,
+    bytes: Buffer,
+    contentSha: string,
+  ): Promise<void> {
+    try {
+      await adapter.request('PUT', `/repos/${owner}/${repo}/contents/${remotePath}`, {
+        body: {
+          message: `chore(dreamcontext): task image ${contentSha.slice(0, 12)}`,
+          content: bytes.toString('base64'),
+          branch: ASSETS_BRANCH,
+        },
+      });
+    } catch (err) {
+      // 422 == the content-addressed path already exists (a prior run committed
+      // it; the local ledger may have been wiped). The bytes are identical by
+      // construction, so reuse the existing blob rather than fail the push.
+      if ((err as { status?: number }).status !== 422) throw err;
+    }
+  }
+
+  /**
+   * Ensure the dedicated assets branch exists — created off the default branch's
+   * HEAD so the default branch's tree and history stay untouched. Confirmed once
+   * then cached in the ledger; a concurrent-create 422 is benign.
+   */
+  private async ensureAssetsBranch(adapter: ApiAdapter, owner: string, repo: string): Promise<void> {
+    if (this.ledger.assetsBranchReady()) return;
+    try {
+      await adapter.request('GET', `/repos/${owner}/${repo}/git/ref/heads/${ASSETS_BRANCH}`);
+      this.ledger.markAssetsBranchReady();
+      return;
+    } catch (err) {
+      if ((err as { kind?: string }).kind !== 'not_found') throw err;
+    }
+    const repoInfo = await adapter.request<{ default_branch?: string }>('GET', `/repos/${owner}/${repo}`);
+    const defaultBranch = repoInfo.default_branch || 'main';
+    const baseRef = await adapter.request<{ object?: { sha?: string } }>(
+      'GET',
+      `/repos/${owner}/${repo}/git/ref/heads/${defaultBranch}`,
+    );
+    const sha = baseRef.object?.sha;
+    if (!sha) throw new Error(`could not resolve ${defaultBranch} HEAD to create the asset branch`);
+    try {
+      await adapter.request('POST', `/repos/${owner}/${repo}/git/refs`, {
+        body: { ref: `refs/heads/${ASSETS_BRANCH}`, sha },
+      });
+    } catch (err) {
+      if ((err as { status?: number }).status !== 422) throw err; // 422 == created concurrently
+    }
+    this.ledger.markAssetsBranchReady();
+  }
+
+  /** Reverse the wire transform on pull: map any hosted asset URL back to its local path. */
+  protected mapRemoteImagesToLocal(body: string): string {
+    if (!body.includes(`/raw/${ASSETS_BRANCH}/`)) return body;
+    return rewriteImageRefs(body, (dest) => this.ledger.localUrlForRemoteUrl(dest));
   }
 
   // ── PULL (GitHub → local) ────────────────────────────────────────────────
@@ -977,7 +1178,12 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     const remoteBacklog = remoteTags.some((t) => t.toLowerCase() === BACKLOG_TAG);
     const remoteStart = remoteBacklog ? null : remoteStartRaw;
     const remoteDue = remoteBacklog ? null : remoteDueRaw;
-    const remoteBody = stripFieldsBlock(stripDatesBlock(normalizedIssueBody)).trim();
+    // Map any hosted asset URL we uploaded back to its canonical local path, so
+    // an image reference reads identically on both sides and never churns merge.
+    // (For an EXISTING mirror the bridge is first re-derived from local — see the
+    // re-map below — so a wiped `assets` cache can't manufacture a false conflict.)
+    const remoteStripped = stripFieldsBlock(stripDatesBlock(normalizedIssueBody)).trim();
+    let remoteBody = this.mapRemoteImagesToLocal(remoteStripped);
     // Every assignee login maps back to a person:<slug> tag. Guard the resolve
     // path so a non-collaborator / unknown login is skipped, not a crash.
     const remoteAssignees: string[] = [
@@ -1045,6 +1251,11 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     const entry = this.ledger.taskSync(slug);
     const localRaw = readFileSync(path, 'utf-8');
     const local = (await this.getLocal(slug))!;
+    // Re-derive the image bridge from the local mirror before the merge sees the
+    // remote body, so a lost `assets` cache doesn't leave hosted URLs unmapped
+    // (which would churn the image line and raise a spurious missing_base).
+    this.rebuildAssetBridgeFromLocal(owner, repo, local.body, remoteStripped);
+    remoteBody = this.mapRemoteImagesToLocal(remoteStripped);
     const localChanged = entry?.localHash ? hashContent(localRaw) !== entry.localHash : true;
     const localChangedAt = entry?.lastLocalChangeAt ?? null;
 

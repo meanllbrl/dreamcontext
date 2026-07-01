@@ -36,15 +36,23 @@ function writeCacheFile(tmpDir: string, cache: VersionCache): void {
 // contextRoot = <tmpDir>/_dream_context
 let tmpDir: string;
 let contextRoot: string;
+let prevDesktopEnv: string | undefined;
 
 beforeEach(() => {
   tmpDir = join(tmpdir(), `vc-rt-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   contextRoot = join(tmpDir, '_dream_context');
   mkdirSync(join(contextRoot, 'state'), { recursive: true });
+  // Neutralize an ambient DREAMCONTEXT_DESKTOP (a desktop dev may have it exported,
+  // and the app sets it at runtime) so the not-desktop nudge tests are hermetic.
+  // The "suppresses when DESKTOP=1" test sets and restores it explicitly.
+  prevDesktopEnv = process.env.DREAMCONTEXT_DESKTOP;
+  delete process.env.DREAMCONTEXT_DESKTOP;
 });
 
 afterEach(() => {
   rmSync(tmpDir, { recursive: true, force: true });
+  if (prevDesktopEnv === undefined) delete process.env.DREAMCONTEXT_DESKTOP;
+  else process.env.DREAMCONTEXT_DESKTOP = prevDesktopEnv;
 });
 
 // ─── Tests ────────────────────────────────────────────────────────────────────

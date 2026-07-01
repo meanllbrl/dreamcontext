@@ -161,9 +161,17 @@ Match the team's look by default. The builder now defaults text to **Excalifont 
   Each is `{ fill, stroke }`. `INK` = `#1e1e1e` (the default 2px card outline). Fills are **solid**,
   rects are **always rounded**.
 - **`card({x,y,w,h,text,color,fontSize})`** → rounded filled rect + centered label, grouped (move as one).
+  The label **cannot overflow**: it is hard-wrapped to the card width and the font auto-shrinks (down to
+  `minFont`, default 9px) until it also fits the height. Optional `{ minFont, padX, padY }`. If even the
+  floor font won't fit, it still draws but logs a `[excalidraw]` warning — that's your cue to enlarge the
+  card or shorten the text.
 - **`node(...)`** → smaller card for flow steps.
 - **`sectionTitle({x,y,text,fontSize})`** → big plain header (no box), like "Configuration" / "Flow".
-- **`connector({from,to,label,double,dashed})`** → labeled arrow between two points.
+- **`connector({from,to,label,double,dashed,via,elbow})`** → labeled arrow between two points. Route it
+  AROUND intervening boxes instead of through them: `elbow:'hv'` (horizontal then vertical) / `elbow:'vh'`
+  (vertical then horizontal) bends it once at a right angle, or `via:[[x,y],…]` threads explicit waypoints.
+- **`fitText({text,w,h,fontSize,minFont})`** → the wrap+shrink primitive `card()` uses; call it directly to
+  pre-size a box to its label (returns `{ text, fontSize, lineCount, fits }`).
 - **`annotate({from,to,text})`** → short arrow to a side-spec note (the "90sec / deepseek…" pattern).
 - **`column({x,y,items,color})`** → vertical stack of cards (benefit/risk lists). `items` may be
   strings or `{text,color}`.
@@ -174,6 +182,16 @@ Match the team's look by default. The builder now defaults text to **Excalifont 
 Compose these into a `buildExcalidraw({ out, elements })` call. Runnable example: `examples/style_board.js`.
 Conventions: color nodes by ROLE, label every arrow, put specs in side-annotations, use big plain
 section titles to break the board into "slides", keep one idea per card.
+
+### Layout rules that keep boards clean
+- **Size boxes for their text.** A card guarantees the label stays *inside*, but it does so by shrinking
+  the font — a long label in a small box ends up tiny. Give wide/long labels a wider `w` (or more `h`),
+  or split the idea across two cards. Watch for `[excalidraw]` fit warnings on the console.
+- **Fan out through a margin bus, never as a diagonal star.** A hub wired straight to a vertical stack of
+  boxes draws diagonals that cut across the boxes in between. Instead, route the trunk into an empty
+  margin beside the stack, run one vertical "bus" line down that margin, then a short horizontal stub from
+  the bus into each box. With `connector()`: send the trunk `elbow:'hv'` into the bus x, then one
+  `elbow:'hv'` stub per branch (or `via:[[busX, branchY]]`). No arrow crosses a box it isn't pointing at.
 
 ## Rules & gotchas
 - **Unique image filenames.** Obsidian resolves `[[name.png]]` by basename; if two different files

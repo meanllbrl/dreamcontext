@@ -228,15 +228,21 @@ your-project/
 │
 ├── .claude/
 │   ├── skills/dreamcontext/
-│   │   └── SKILL.md            # Teaches the agent the system
+│   │   ├── SKILL.md            # Teaches the agent the system
+│   │   └── references/         # Deep-dive refs loaded on demand (cli, tasks, sleep, recall, integrations)
 │   ├── skills/initializer/
 │   │   └── SKILL.md            # Interactive brain bootstrap (drives the initializer-* agents)
+│   ├── skills/curator/
+│   │   └── SKILL.md            # Interactive brain refactor (drives the curator-* agents)
 │   ├── skills/dreamcontext-deep-research/
 │   │   └── SKILL.md            # Iterative corpus synthesis (fans out dreamcontext-explore searchers)
 │   ├── agents/
 │   │   ├── initializer-scout.md     # bootstrap: intake → ingestion manifest
 │   │   ├── initializer-ingestor.md  # bootstrap: fan-out write into the hierarchy
 │   │   ├── initializer-verifier.md  # bootstrap: PASS/FAIL gate
+│   │   ├── curator-auditor.md       # refactor: one-per-domain audit → reorg plan
+│   │   ├── curator-worker.md        # refactor: applies a confirmed reorg batch
+│   │   ├── curator-verifier.md      # refactor: PASS/FAIL gate
 │   │   ├── dreamcontext-explore.md
 │   │   ├── sleep-tasks.md       # RemSleep specialists —
 │   │   ├── sleep-state.md       #   the agent fans out to
@@ -354,12 +360,12 @@ It also ships a built-in **“What is this?”** explainer page — a full landi
 <tr>
 <td width="50%">
 
-**Tasks board** — a drag-and-drop Kanban with **saved views** (each carrying its own persisted filter, sort, and grouping), a two-pane **include/exclude filter** menu (status, priority, tags, version, assignee) with type-ahead search, a **Versions popover** to scope to one or more planning versions, toggleable card **Properties** badges (due date, RICE score, assignees), and an **At-Risk alert** surfacing past-due or blocked tasks. View preferences persist two ways — shared and team-versioned in `overrides/board.json`, or private to your machine in `state/board.local.json` — so they survive the desktop app's per-launch port change. A **sprint-aware version filter** distinguishes current, planning, and released sprints, with set-current / mark-complete actions inline. The same tasks also render along the time axis: a **Timeline (Gantt)** of start→due ranges, a **Calendar**, an **Activity heatmap** of completion cadence, an **Eisenhower matrix** for priority-urgency quadrant planning, and a **RICE** prioritization view. Create tasks, update status, edit start/due dates and custom fields, and add changelog entries from a Notion-style detail panel.
+**Tasks board** — a drag-and-drop Kanban with **saved views** (each carrying its own persisted filter, sort, and grouping), a two-pane **include/exclude filter** menu (status, priority, tags, version, assignee) with type-ahead search, a **Versions popover** (with **Current / Backlog / Completed** smart buckets) to scope to one or more planning versions, toggleable card **Properties** badges (due date, RICE score, and a per-person-hued multi-assignee **AvatarStack**), and an **At-Risk alert** surfacing past-due or blocked tasks. View preferences persist two ways — shared and team-versioned in `overrides/board.json`, or private to your machine in `state/board.local.json` — so they survive the desktop app's per-launch port change. A **sprint-aware version filter** distinguishes current, planning, and released sprints, with set-current / mark-complete actions inline. The same tasks also render along the time axis: a **Timeline (Gantt)** of start→due ranges, a **Calendar**, an **Activity heatmap** of completion cadence, an **Eisenhower matrix** for priority-urgency quadrant planning, and a **RICE** prioritization view. Create tasks, update status, edit start/due dates and custom fields, and add changelog entries from a Notion-style detail panel.
 
 </td>
 <td width="50%">
 
-**Core editor** with split-pane markdown editing and live preview. Knowledge manager with search and pin/unpin. Feature PRD viewer. SQL ER diagram preview. **Version manager** for planning and releasing versions. **Settings** for cloud-task config — enter the ClickUp/GitHub token (stored gitignored, masked, never echoed), preview-then-provision custom fields, and edit the project's task-format override and custom-field schema.
+**Core editor** with split-pane markdown editing and live preview. Knowledge manager with search and pin/unpin. Feature PRD viewer. SQL ER diagram preview. **Version manager** for planning, releasing, **renaming, and deleting** versions — a rename re-points every task on that version and moves the active-sprint pointer; a delete warns and clears references first. **Settings** for cloud-task config — enter the ClickUp/GitHub token (stored gitignored, masked, never echoed), preview-then-provision custom fields, and edit the project's task-format override and custom-field schema.
 
 </td>
 </tr>
@@ -404,6 +410,7 @@ dreamcontext app status       # Show installed app version and state
 - **Multi-vault launcher.** The app lists every registered [vault](#federation) and opens each project in its **own window** — multi-vault is multi-window over one shared Node server, with each window pinned to its vault via a request header. A per-project status dot (green up-to-date / yellow needs-update / red folder-gone) lets you run `update` from the UI.
 - **Federation network view.** The launcher also renders your projects as an interactive board (Excalidraw-style cards) where you wire a **reads** relationship by clicking source → target: a violet wire means one project reads another's canonical memory **live** during recall (a reference, never a copy), gated by the target being Readable. A node panel and an always-on "Connections" list spell out in plain language who reads whom, each removable with one click. (Copy-based "sync" is parked on the roadmap — federation only reads, live.)
 - **In-app onboarding, no terminal.** A quiz-style wizard creates a brand-new project (native folder picker) or initializes an existing folder, scaffolds `_dream_context/`, runs `setup`, and best-effort installs the global CLI. It's deterministic and LLM-free; the success screen hands you a prompt to paste into Claude Code for the rich enrichment pass.
+- **In-app Agent terminal & command palette _(beta)_.** Drive a real Claude Code session inside any vault from a split-pane, multi-session terminal surface — per-pane tab bars, ⌘D drag-to-split, ⌘T/⌘W, and a minimize-to-corner dock; sessions live in a detached DOM so the PTY never remounts. Drop an image to inject it straight into the vault, and jump anywhere with a **⌘K command palette** (live BM25 recall + intelligent toggle). A first-run prerequisite installer reports and one-click-installs the Claude CLI / node-pty.
 - **Sleepy — notch quick-capture _(beta)_.** Off by default — enable it in dashboard Settings → Sleepy. A global-hotkey companion that drops a transparent notch panel over whatever you're doing, with an animated mascot whose mood follows your sleep debt. Pick a vault, type a thought, and choose a mode:
   - **Learn** — saves the note to project memory, then enriches it.
   - **Ask** — one-shot Q&A about the project; nothing is saved.
@@ -587,6 +594,12 @@ dreamcontext tasks sync-hooks install               # best-effort post-commit/pr
   labels. Only `completed` closes the issue, and a delete soft-closes it as
   `not_planned` (the REST API can't hard-delete). It reuses the same pluggable
   adapter and sync engine as ClickUp ([issue #11](https://github.com/meanllbrl/dreamcontext/issues/11)).
+- **Local task images render on GitHub**: an image embedded by a local path
+  (e.g. an agent-drop screenshot) is uploaded to a dedicated
+  `dreamcontext-assets` branch — content-sniffed by magic bytes (never a trusted
+  extension), size-gated, and content-addressed so re-pushes dedupe — then linked
+  by its hosted URL on the wire, while the local task keeps its canonical path so
+  the reference never churns on pull.
 - Sync is watermark-based on ClickUp **server time**: one field-level `PUT`
   per task under the ~100 req/min rate limit, changelog entries become
   comments (union-merged), prose merges 3-way against the last synced base.
@@ -810,10 +823,10 @@ dreamcontext install-claude-md           # Legacy alias: CLAUDE.md only
 
 ## Works With
 
-- **Claude Code**: full support via skill, core sub-agents (initializer, explore, the iterative `dreamcontext-deep-research` synthesis skill, the three primary RemSleep specialists — sleep-tasks, sleep-state, sleep-product — plus conditional sleep-federation and sleep-migration specialists), 7 hooks, plus optional pack sub-agents (council persona/synthesizer, multi-review specialists, goal-skill orchestrators)
+- **Claude Code**: full support via skill, core sub-agents (the **initializer** and **curator** skill families, explore, the iterative `dreamcontext-deep-research` synthesis skill, the three primary RemSleep specialists — sleep-tasks, sleep-state, sleep-product — plus conditional sleep-federation and sleep-migration specialists), 7 hooks, plus optional pack sub-agents (council persona/synthesizer, multi-review specialists, goal-skill orchestrators)
 - **Codex**: project-level skills (`.agents/skills`), managed `AGENTS.md`, native `.codex/agents/*.toml`, and managed `.codex/config.toml` hooks (best-effort parity where event semantics differ)
 - **Desktop app (macOS beta)**: native Tauri 2 multi-vault launcher with in-app onboarding and the Sleepy notch quick-capture companion — wraps the same dashboard server (`dreamcontext app install`)
-- **Web Dashboard**: local UI with Sleepy search/ask/chat, Tasks board, Core editor, Knowledge, Features, Brain graph, Sleep tracker, and Council Hall (ships in the package)
+- **Web Dashboard**: local UI with an in-app **Agent surface** (multi-session terminals + ⌘K command palette), a Tasks board with time-axis views (Timeline/Calendar/Activity heatmap), Core editor, Knowledge, Features, Brain graph, Sleep tracker, and Council Hall (ships in the package)
 - **Obsidian**: `_dream_context/` can be opened as an Obsidian vault; the directory is scaffolded with curated vault settings at `dreamcontext init` time
 
 More agents coming soon.

@@ -1,9 +1,53 @@
 [
   {
-    "id": "rel_8l0E-2u9",
-    "version": "v0.11.0",
+    "id": "rel_sWfRg9EI",
+    "version": "0.10.8",
     "date": "",
-    "summary": "Next milestone after v0.10.0: desktop stale-dist (-ilc) fix, task-derived roadmap, excalidraw card-overflow fix, web read-only public surface",
+    "summary": "",
+    "breaking": false,
+    "status": "planning",
+    "features": [],
+    "tasks": [],
+    "changelog": []
+  },
+  {
+    "id": "rel_8Nfm7LEN",
+    "version": "0.11.0",
+    "date": "",
+    "summary": "",
+    "breaking": false,
+    "status": "planning",
+    "features": [],
+    "tasks": [],
+    "changelog": []
+  },
+  {
+    "id": "rel_8g2aIF-p",
+    "version": "0.10.7",
+    "date": "",
+    "summary": "",
+    "breaking": false,
+    "status": "planning",
+    "features": [],
+    "tasks": [],
+    "changelog": []
+  },
+  {
+    "id": "rel_LRJQshhO",
+    "version": "0.10.6",
+    "date": "",
+    "summary": "",
+    "breaking": false,
+    "status": "planning",
+    "features": [],
+    "tasks": [],
+    "changelog": []
+  },
+  {
+    "id": "rel_8l0E-2u9",
+    "version": "v0.10.5",
+    "date": "",
+    "summary": "v0.10.5 — the GitHub task-image bridge (a locally-pathed task image uploads to a dedicated dreamcontext-assets branch, content-sniffed by magic bytes and content-addressed so re-pushes dedupe, and renders inline on the synced issue while the local task keeps its canonical path); the root-cause orphaned-dashboard-server fix (a parent-death watchdog that reaps the Node server on every app-exit path the Rust handler misses, plus a tracked-child PTY reaper); the project's first CI workflow (ci.yml runs vitest on every push-to-main and PR — closing the gap that let a recall regression ship at v0.10.1); a recall capture-guard fix (CAPTURE_RANK_PENALTY 0.5→0.4 for q030); overflow-proof Excalidraw card rendering with a dangling-embed pre-flight guard; a knowledge board-folder grouping + embedded-asset (assets/) resolution fix; and an installer hook-timeout reconciliation.",
     "breaking": false,
     "status": "planning",
     "features": [],
@@ -17,6 +61,28 @@
     "summary": "",
     "breaking": false,
     "status": "planning",
+    "features": [],
+    "tasks": [],
+    "changelog": []
+  },
+  {
+    "id": "rel_EahjLC1Q",
+    "version": "v0.10.2",
+    "date": "2026-06-30",
+    "summary": "v0.10.2 — release/version-sync only. Bumped the version across the full monorepo surface (package.json, desktop/package.json, tauri.conf.json, Cargo.toml/lock) which had drifted to 0.9.2 during the 0.10.x desktop bumps; first npm publish since 0.10.0. No code delta over v0.10.1.",
+    "breaking": false,
+    "status": "released",
+    "features": [],
+    "tasks": [],
+    "changelog": []
+  },
+  {
+    "id": "rel_tiQ4FfJl",
+    "version": "v0.10.1",
+    "date": "2026-06-30",
+    "summary": "v0.10.1 — desktop-app release train. The in-app Agent surface that superseded the Sleepy dashboard page: multi-session split-pane terminals (per-pane tab bars, ⌘D drag-to-split, ⌘T/⌘W, minimize-to-corner dock, detached-DOM persistence so the PTY never remounts), a ⌘K command palette over live recall (BM25 + Haiku toggle), image-drop → in-vault injection, an in-app prerequisite installer for the Claude CLI / node-pty, a readable ANSI ramp (contrast 4.5) and macOS line-editing keybindings. Plus board version smart-buckets (Current/Backlog/Completed), the multi-assignee AvatarStack (per-person hue), an atomic sleep consolidation mutex with debt thresholds rescaled ×2, timeline-gantt polish, and a 404-on-missing-static-asset fix that ends the stale-chunk MIME error.",
+    "breaking": false,
+    "status": "released",
     "features": [],
     "tasks": [],
     "changelog": []

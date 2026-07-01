@@ -1,7 +1,8 @@
 ---
+
 excalidraw-plugin: parsed
-tags:
-  - 'topic:excalidraw'
+tags: [excalidraw]
+
 ---
 ==⚠  Switch to EXCALIDRAW VIEW in the MORE OPTIONS menu of this document. ⚠== You can decompress Drawing data with the command palette: 'Decompress current Excalidraw file'. For more info check in plugin settings under 'Saving'
 
@@ -15,11 +16,13 @@ Your prompt
 any language ^tPKLhs4f
 
 BM25F keyword match
-field-weighted · stemming ^uNUS4SHV
+field-weighted ·
+stemming ^uNUS4SHV
 
 Haiku recall
 smallest cloud agent
-0-3 docs · BM25 fallback ^EgbHB4SA
+0-3 docs · BM25
+fallback ^EgbHB4SA
 
 SessionStart snapshot
 warm + cold · features
@@ -186,9 +189,9 @@ assemble ^hiCSoka1
 			"id": "uNUS4SHV",
 			"type": "text",
 			"x": 388,
-			"y": 237.5,
+			"y": 226.25,
 			"width": 250,
-			"height": 45,
+			"height": 68,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
 			"backgroundColor": "transparent",
@@ -211,9 +214,9 @@ assemble ^hiCSoka1
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
-			"text": "BM25F keyword match\nfield-weighted · stemming",
-			"rawText": "BM25F keyword match\nfield-weighted · stemming",
-			"originalText": "BM25F keyword match\nfield-weighted · stemming",
+			"text": "BM25F keyword match\nfield-weighted ·\nstemming",
+			"rawText": "BM25F keyword match\nfield-weighted ·\nstemming",
+			"originalText": "BM25F keyword match\nfield-weighted ·\nstemming",
 			"fontSize": 18,
 			"fontFamily": 5,
 			"textAlign": "center",
@@ -258,9 +261,9 @@ assemble ^hiCSoka1
 			"id": "EgbHB4SA",
 			"type": "text",
 			"x": 716,
-			"y": 226.25,
+			"y": 215,
 			"width": 250,
-			"height": 68,
+			"height": 90,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
 			"backgroundColor": "transparent",
@@ -283,9 +286,9 @@ assemble ^hiCSoka1
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
-			"text": "Haiku recall\nsmallest cloud agent\n0-3 docs · BM25 fallback",
-			"rawText": "Haiku recall\nsmallest cloud agent\n0-3 docs · BM25 fallback",
-			"originalText": "Haiku recall\nsmallest cloud agent\n0-3 docs · BM25 fallback",
+			"text": "Haiku recall\nsmallest cloud agent\n0-3 docs · BM25\nfallback",
+			"rawText": "Haiku recall\nsmallest cloud agent\n0-3 docs · BM25\nfallback",
+			"originalText": "Haiku recall\nsmallest cloud agent\n0-3 docs · BM25\nfallback",
 			"fontSize": 18,
 			"fontFamily": 5,
 			"textAlign": "center",
@@ -412,9 +415,9 @@ assemble ^hiCSoka1
 		{
 			"id": "Bd1cSZE7",
 			"type": "text",
-			"x": 324.2,
+			"x": 317.8,
 			"y": 240,
-			"width": 49.6,
+			"width": 62.4,
 			"height": 20,
 			"angle": 0,
 			"strokeColor": "#495057",
@@ -493,9 +496,9 @@ assemble ^hiCSoka1
 		{
 			"id": "YUy8ySvL",
 			"type": "text",
-			"x": 642.28,
+			"x": 636.52,
 			"y": 240,
-			"width": 69.44,
+			"width": 80.96,
 			"height": 20,
 			"angle": 0,
 			"strokeColor": "#495057",
@@ -574,9 +577,9 @@ assemble ^hiCSoka1
 		{
 			"id": "hiCSoka1",
 			"type": "text",
-			"x": 965.32,
+			"x": 959.88,
 			"y": 240,
-			"width": 79.36,
+			"width": 90.24,
 			"height": 20,
 			"angle": 0,
 			"strokeColor": "#495057",

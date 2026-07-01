@@ -208,8 +208,12 @@ export async function handleKnowledgeAssets(
 
   // Wikilinks are vault-root-relative (the vault root is the parent of the
   // context root, e.g. `<project>/` for `<project>/_dream_context`). Try that
-  // first, then context-root-relative, then the board's own folder / Attachments
-  // by basename — covering how different Obsidian path settings store the link.
+  // first, then context-root-relative, then the board's own folder — both the
+  // bare path and an `assets/` or `Attachments/` subfolder — covering how
+  // different Obsidian path settings store the link. The `assets/` case is the
+  // self-contained board-folder convention (`<board>/assets/<img>.png`) where a
+  // bare `[[img.png]]` wikilink only resolves via Obsidian's vault-wide index;
+  // without it every embed in a co-located board folder renders blank (Bug B).
   const vaultRoot = dirname(contextRoot);
   const boardDir = dirname(filePath);
 
@@ -225,7 +229,9 @@ export async function handleKnowledgeAssets(
     const candidates = [
       safeChildPath(vaultRoot, path),
       safeChildPath(contextRoot, path),
+      safeChildPath(boardDir, path), // path relative to the board (handles `assets/x.png` wikilinks)
       safeChildPath(boardDir, basename(path)),
+      safeChildPath(boardDir, join('assets', basename(path))), // co-located self-contained board folder
       safeChildPath(boardDir, join('Attachments', basename(path))),
     ];
     const abs = candidates.find((c): c is string => c !== null && existsSync(c));

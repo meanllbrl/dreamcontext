@@ -333,9 +333,9 @@ async function resolvePlatforms(projectRoot: string, raw?: string): Promise<Plat
  * Ensure all dreamcontext hooks are installed.
  * Migrates old `npx dreamcontext snapshot` hook if present.
  */
-function ensureClaudeHooks(projectRoot: string): { added: string[]; migrated: boolean } {
+function ensureClaudeHooks(projectRoot: string): { added: string[]; updated: string[]; migrated: boolean } {
   const settingsPath = join(projectRoot, '.claude', 'settings.json');
-  const result = { added: [] as string[], migrated: false };
+  const result = { added: [] as string[], updated: [] as string[], migrated: false };
 
   let settings: SettingsJson = {};
   if (existsSync(settingsPath)) {
@@ -369,17 +369,31 @@ function ensureClaudeHooks(projectRoot: string): { added: string[]; migrated: bo
     if (!settings.hooks[spec.event]) {
       settings.hooks[spec.event] = [];
     }
-    const exists = settings.hooks[spec.event].some((group) =>
-      (group.matcher ?? '') === (spec.matcher ?? '') &&
-      group.hooks?.some((h) => h.command === spec.command),
-    );
-    if (!exists) {
+    // Find the existing managed handler (matched on command + matcher) so we can
+    // both detect presence AND reconcile its timeout. Without reconciliation a
+    // project written by an older installer keeps its stale timeout forever —
+    // e.g. UserPromptSubmit installed at 5s before the Haiku recall path (which
+    // can take ~15s) made the larger 120s timeout necessary, so the hook keeps
+    // timing out after upgrade. Re-running install now heals the drift.
+    let existingHandler: HookHandler | undefined;
+    for (const group of settings.hooks[spec.event]) {
+      if ((group.matcher ?? '') !== (spec.matcher ?? '')) continue;
+      const handler = group.hooks?.find((h) => h.command === spec.command);
+      if (handler) {
+        existingHandler = handler;
+        break;
+      }
+    }
+    if (!existingHandler) {
       const group: MatcherGroup = {
         hooks: [{ type: 'command', command: spec.command, timeout: spec.timeout }],
       };
       if (spec.matcher) group.matcher = spec.matcher;
       settings.hooks[spec.event].push(group);
       result.added.push(spec.event);
+    } else if (existingHandler.timeout !== spec.timeout) {
+      existingHandler.timeout = spec.timeout;
+      result.updated.push(spec.event);
     }
   }
 
@@ -873,10 +887,14 @@ export async function installCoreForPlatform(
     if (hookResult.added.length > 0) {
       installed.push(platformPrefixed(platform, `.claude/settings.json ${chalk.dim(`(${hookResult.added.join(' + ')} hooks)`)}`));
     }
+    if (hookResult.updated.length > 0) {
+      const updatedEvents = [...new Set(hookResult.updated)].join(' + ');
+      notes.push(platformPrefixed(platform, `${chalk.yellow('↑')} ${chalk.dim(`Reconciled hook timeouts (${updatedEvents})`)}`));
+    }
     if (hookResult.migrated) {
       notes.push(platformPrefixed(platform, `${chalk.yellow('↑')} ${chalk.dim('Migrated old snapshot hook -> session-start hook')}`));
     }
-    if (hookResult.added.length === 0 && !hookResult.migrated) {
+    if (hookResult.added.length === 0 && hookResult.updated.length === 0 && !hookResult.migrated) {
       notes.push(platformPrefixed(platform, chalk.dim('Hooks already present — skipped')));
     }
 

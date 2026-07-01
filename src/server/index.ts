@@ -64,6 +64,7 @@ import { handleVersionCheckGet } from './routes/version-check.js';
 import { handleTaxonomyGet } from './routes/taxonomy.js';
 import { handleRecallGet, handleRecallHaikuGet } from './routes/recall.js';
 import { listVaults } from '../lib/vaults.js';
+import { startParentDeathWatch, killTrackedChildren } from './lifecycle.js';
 
 export interface ServerOptions {
   port: number;
@@ -371,13 +372,23 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
         openBrowser(url);
       }
 
+      let shuttingDown = false;
       const shutdown = () => {
+        if (shuttingDown) return; // SIGTERM + watchdog can both fire; reap once
+        shuttingDown = true;
         console.log('\n  Shutting down...');
+        // Reap spawned children (agent-terminal PTYs, etc.) so they don't orphan
+        // when this server exits — SIGKILL from the parent would skip this, but a
+        // graceful SIGTERM or the parent-death watchdog both route through here.
+        killTrackedChildren();
         server.close(() => process.exit(0));
         setTimeout(() => process.exit(1), 5000);
       };
       process.on('SIGINT', shutdown);
       process.on('SIGTERM', shutdown);
+      // Desktop only: don't outlive the Tauri shell. Covers the force-quit / crash
+      // / dev-rebuild paths where the shell's Rust exit handler never runs.
+      startParentDeathWatch(shutdown);
     });
   });
 }

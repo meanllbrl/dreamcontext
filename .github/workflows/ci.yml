@@ -1,0 +1,37 @@
+name: CI
+
+# Gate every push to main and every PR on the unit/integration suite. Before this
+# workflow the only CI was desktop-release.yml (a build-on-tag job that never ran
+# vitest), so the test suite never gated a release despite the publish-checklist's
+# "tests must be green" rule — exactly how the capture-guard q030 regression shipped
+# unnoticed at v0.10.1/v0.10.2.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A newer push to the same ref cancels the older in-flight run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # `npm test` is bare `vitest` (watch mode), so pass `run` for a single
+      # non-interactive pass. vitest is scoped to tests/**/*.test.ts; the
+      # Playwright e2e specs under e2e/ are NOT run here.
+      - name: Run unit + integration tests
+        run: npm test -- run

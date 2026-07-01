@@ -1,7 +1,8 @@
 ---
+
 excalidraw-plugin: parsed
-tags:
-  - 'topic:excalidraw'
+tags: [excalidraw]
+
 ---
 ==⚠  Switch to EXCALIDRAW VIEW in the MORE OPTIONS menu of this document. ⚠== You can decompress Drawing data with the command palette: 'Decompress current Excalidraw file'. For more info check in plugin settings under 'Saving'
 
@@ -12,7 +13,8 @@ tags:
 dreamcontext — how it works ^sK4pLSJO
 
 SessionStart hook fires
-preloads context · 0 tool calls ^fgf0U058
+preloads context · 0 tool
+calls ^fgf0U058
 
 soul
 Identity ^JM25xVwA
@@ -126,9 +128,9 @@ feeds back ^Tn7O5Zpb
 			"id": "fgf0U058",
 			"type": "text",
 			"x": 380,
-			"y": 89,
+			"y": 78.375,
 			"width": 360,
-			"height": 50,
+			"height": 71,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
 			"backgroundColor": "transparent",
@@ -151,10 +153,10 @@ feeds back ^Tn7O5Zpb
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
-			"text": "SessionStart hook fires\npreloads context · 0 tool calls",
-			"rawText": "SessionStart hook fires\npreloads context · 0 tool calls",
-			"originalText": "SessionStart hook fires\npreloads context · 0 tool calls",
-			"fontSize": 20,
+			"text": "SessionStart hook fires\npreloads context · 0 tool\ncalls",
+			"rawText": "SessionStart hook fires\npreloads context · 0 tool\ncalls",
+			"originalText": "SessionStart hook fires\npreloads context · 0 tool\ncalls",
+			"fontSize": 19,
 			"fontFamily": 5,
 			"textAlign": "center",
 			"verticalAlign": "top",
@@ -712,9 +714,9 @@ feeds back ^Tn7O5Zpb
 		{
 			"id": "7QUU3gRV",
 			"type": "text",
-			"x": 315.28,
+			"x": 309.52,
 			"y": 184,
-			"width": 69.44,
+			"width": 80.96,
 			"height": 20,
 			"angle": 0,
 			"strokeColor": "#495057",
@@ -1051,9 +1053,9 @@ feeds back ^Tn7O5Zpb
 		{
 			"id": "vonqFjUU",
 			"type": "text",
-			"x": 500.48,
+			"x": 496.32,
 			"y": 388,
-			"width": 119.03999999999999,
+			"width": 127.36,
 			"height": 20,
 			"angle": 0,
 			"strokeColor": "#495057",
@@ -1218,9 +1220,9 @@ feeds back ^Tn7O5Zpb
 		{
 			"id": "KKnopP1I",
 			"type": "text",
-			"x": 500.48,
+			"x": 496.32,
 			"y": 584,
-			"width": 119.03999999999999,
+			"width": 127.36,
 			"height": 20,
 			"angle": 0,
 			"strokeColor": "#495057",
@@ -1299,9 +1301,9 @@ feeds back ^Tn7O5Zpb
 		{
 			"id": "Tn7O5Zpb",
 			"type": "text",
-			"x": 820.4,
+			"x": 815.6,
 			"y": 500,
-			"width": 99.2,
+			"width": 108.8,
 			"height": 20,
 			"angle": 0,
 			"strokeColor": "#495057",

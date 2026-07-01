@@ -53,6 +53,25 @@ export interface SyncStateFile {
   lastMetaRefreshAt?: number;
   lastReconcileAt?: number;
   lastLabelProvisionAt?: number;
+  /**
+   * Local-image → hosted-asset bridge (GitHub task images). Push uploads a local
+   * image once and rewrites the wire reference to the hosted URL; pull maps that
+   * URL back to the canonical local path so the reference never churns the merge.
+   */
+  assets?: AssetBridgeEntry[];
+  /** True once the dedicated assets branch is known to exist (avoids re-checking). */
+  assetsBranchReady?: boolean;
+}
+
+export interface AssetBridgeEntry {
+  /** The exact LOCAL destination as authored in the task body (round-trip key). */
+  localUrl: string;
+  /** sha1 hex of the file bytes — the content address + upload-dedup key. */
+  contentSha: string;
+  /** Repo-relative path the bytes were committed to on the assets branch. */
+  remotePath: string;
+  /** The hosted URL that renders in a GitHub issue. */
+  remoteUrl: string;
 }
 
 export interface CachedMember {
@@ -246,6 +265,46 @@ export class SyncLedger {
   writeThrottle(key: 'lastMetaRefreshAt' | 'lastReconcileAt' | 'lastLabelProvisionAt', at: number): void {
     const state = this.readSyncState();
     state[key] = at;
+    this.writeSyncState(state);
+  }
+
+  // ── Image-asset bridge (GitHub task images) ──
+  readAssets(): AssetBridgeEntry[] {
+    return this.readSyncState().assets ?? [];
+  }
+
+  /** Bridge entry for a local image destination as authored in a body. */
+  assetForLocalUrl(localUrl: string): AssetBridgeEntry | null {
+    return this.readAssets().find((a) => a.localUrl === localUrl) ?? null;
+  }
+
+  /** Bridge entry for already-uploaded bytes (content hash) — the upload-dedup key. */
+  assetForContentSha(contentSha: string): AssetBridgeEntry | null {
+    return this.readAssets().find((a) => a.contentSha === contentSha) ?? null;
+  }
+
+  /** Canonical local destination for a hosted asset URL — pull's reverse map. */
+  localUrlForRemoteUrl(remoteUrl: string): string | null {
+    return this.readAssets().find((a) => a.remoteUrl === remoteUrl)?.localUrl ?? null;
+  }
+
+  /** Upsert a bridge entry, keyed by the authored local destination. */
+  recordAsset(entry: AssetBridgeEntry): void {
+    const state = this.readSyncState();
+    const assets = (state.assets ?? []).filter((a) => a.localUrl !== entry.localUrl);
+    assets.push(entry);
+    assets.sort((a, b) => a.localUrl.localeCompare(b.localUrl));
+    state.assets = assets;
+    this.writeSyncState(state);
+  }
+
+  assetsBranchReady(): boolean {
+    return this.readSyncState().assetsBranchReady === true;
+  }
+
+  markAssetsBranchReady(): void {
+    const state = this.readSyncState();
+    state.assetsBranchReady = true;
     this.writeSyncState(state);
   }
 

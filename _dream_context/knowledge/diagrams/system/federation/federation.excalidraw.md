@@ -1,7 +1,8 @@
 ---
+
 excalidraw-plugin: parsed
-tags:
-  - 'topic:excalidraw'
+tags: [excalidraw]
+
 ---
 ==⚠  Switch to EXCALIDRAW VIEW in the MORE OPTIONS menu of this document. ⚠== You can decompress Drawing data with the command palette: 'Decompress current Excalidraw file'. For more info check in plugin settings under 'Saving'
 
@@ -46,7 +47,8 @@ federation drain ^xDW52PNu
 
 knowledge/<slug>--from-A.md
 federated:true + provenance
-(origin vault · entryId · timestamp) ^lWngCJJ8
+(origin vault · entryId ·
+timestamp) ^lWngCJJ8
 
 normal recall surfaces it
 like any local doc ^qCwRv0NU
@@ -65,7 +67,8 @@ dreamcontext memory recall
 
 crossVaultRecall
 search A + consenting peers LIVE
-federated docs excluded (no re-serve) ^l6wcezVe
+federated docs excluded (no
+re-serve) ^l6wcezVe
 
 merged hits, tagged by vault
 <vault>::<type>/<slug> ^AcmJT1OK
@@ -276,9 +279,9 @@ The only knobs ^Om0niCOn
 			"id": "agY9AOMY",
 			"type": "text",
 			"x": 60,
-			"y": 236.125,
+			"y": 238,
 			"width": 220,
-			"height": 64,
+			"height": 60,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
 			"backgroundColor": "transparent",
@@ -304,7 +307,7 @@ The only knobs ^Om0niCOn
 			"text": "Vault A — sleep cycle\nsleep-federation\nspecialist",
 			"rawText": "Vault A — sleep cycle\nsleep-federation\nspecialist",
 			"originalText": "Vault A — sleep cycle\nsleep-federation\nspecialist",
-			"fontSize": 17,
+			"fontSize": 16,
 			"fontFamily": 5,
 			"textAlign": "center",
 			"verticalAlign": "top",
@@ -574,9 +577,9 @@ The only knobs ^Om0niCOn
 		{
 			"id": "rTcF5e27",
 			"type": "text",
-			"x": 235.6,
+			"x": 232.4,
 			"y": 248,
-			"width": 148.8,
+			"width": 155.2,
 			"height": 20,
 			"angle": 0,
 			"strokeColor": "#495057",
@@ -655,9 +658,9 @@ The only knobs ^Om0niCOn
 		{
 			"id": "FvQvJxR6",
 			"type": "text",
-			"x": 531.12,
+			"x": 532.08,
 			"y": 248,
-			"width": 277.76,
+			"width": 275.84,
 			"height": 40,
 			"angle": 0,
 			"strokeColor": "#495057",
@@ -736,9 +739,9 @@ The only knobs ^Om0niCOn
 		{
 			"id": "aUaeOEqw",
 			"type": "text",
-			"x": 910.4,
+			"x": 905.6,
 			"y": 248,
-			"width": 99.2,
+			"width": 108.8,
 			"height": 20,
 			"angle": 0,
 			"strokeColor": "#495057",
@@ -960,9 +963,9 @@ The only knobs ^Om0niCOn
 			"id": "lWngCJJ8",
 			"type": "text",
 			"x": 620,
-			"y": 391.875,
+			"y": 382.5,
 			"width": 320,
-			"height": 56,
+			"height": 75,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
 			"backgroundColor": "transparent",
@@ -985,9 +988,9 @@ The only knobs ^Om0niCOn
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
-			"text": "knowledge/<slug>--from-A.md\nfederated:true + provenance\n(origin vault · entryId · timestamp)",
-			"rawText": "knowledge/<slug>--from-A.md\nfederated:true + provenance\n(origin vault · entryId · timestamp)",
-			"originalText": "knowledge/<slug>--from-A.md\nfederated:true + provenance\n(origin vault · entryId · timestamp)",
+			"text": "knowledge/<slug>--from-A.md\nfederated:true + provenance\n(origin vault · entryId ·\ntimestamp)",
+			"rawText": "knowledge/<slug>--from-A.md\nfederated:true + provenance\n(origin vault · entryId ·\ntimestamp)",
+			"originalText": "knowledge/<slug>--from-A.md\nfederated:true + provenance\n(origin vault · entryId ·\ntimestamp)",
 			"fontSize": 15,
 			"fontFamily": 5,
 			"textAlign": "center",
@@ -1157,9 +1160,9 @@ The only knobs ^Om0niCOn
 		{
 			"id": "Rxsci5h7",
 			"type": "text",
-			"x": 860.84,
+			"x": 859.56,
 			"y": 400,
-			"width": 208.32,
+			"width": 210.88,
 			"height": 20,
 			"angle": 0,
 			"strokeColor": "#495057",
@@ -1238,9 +1241,9 @@ The only knobs ^Om0niCOn
 		{
 			"id": "nHOcz38e",
 			"type": "text",
-			"x": 550.36,
+			"x": 545.24,
 			"y": 400,
-			"width": 89.28,
+			"width": 99.52,
 			"height": 20,
 			"angle": 0,
 			"strokeColor": "#495057",
@@ -1500,9 +1503,9 @@ The only knobs ^Om0niCOn
 			"id": "l6wcezVe",
 			"type": "text",
 			"x": 440,
-			"y": 631.875,
+			"y": 622.5,
 			"width": 340,
-			"height": 56,
+			"height": 75,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
 			"backgroundColor": "transparent",
@@ -1525,9 +1528,9 @@ The only knobs ^Om0niCOn
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
-			"text": "crossVaultRecall\nsearch A + consenting peers LIVE\nfederated docs excluded (no re-serve)",
-			"rawText": "crossVaultRecall\nsearch A + consenting peers LIVE\nfederated docs excluded (no re-serve)",
-			"originalText": "crossVaultRecall\nsearch A + consenting peers LIVE\nfederated docs excluded (no re-serve)",
+			"text": "crossVaultRecall\nsearch A + consenting peers LIVE\nfederated docs excluded (no\nre-serve)",
+			"rawText": "crossVaultRecall\nsearch A + consenting peers LIVE\nfederated docs excluded (no\nre-serve)",
+			"originalText": "crossVaultRecall\nsearch A + consenting peers LIVE\nfederated docs excluded (no\nre-serve)",
 			"fontSize": 15,
 			"fontFamily": 5,
 			"textAlign": "center",
@@ -1697,9 +1700,9 @@ The only knobs ^Om0niCOn
 		{
 			"id": "V6mQqcTZ",
 			"type": "text",
-			"x": 750.56,
+			"x": 747.04,
 			"y": 640,
-			"width": 138.88,
+			"width": 145.92,
 			"height": 20,
 			"angle": 0,
 			"strokeColor": "#495057",
@@ -1814,7 +1817,7 @@ The only knobs ^Om0niCOn
 			"x": 60,
 			"y": 760,
 			"width": 740,
-			"height": 60,
+			"height": 80,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
 			"backgroundColor": "transparent",

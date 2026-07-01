@@ -1,7 +1,8 @@
 ---
+
 excalidraw-plugin: parsed
-tags:
-  - 'topic:excalidraw'
+tags: [excalidraw]
+
 ---
 ==⚠  Switch to EXCALIDRAW VIEW in the MORE OPTIONS menu of this document. ⚠== You can decompress Drawing data with the command palette: 'Decompress current Excalidraw file'. For more info check in plugin settings under 'Saving'
 
@@ -11,9 +12,11 @@ tags:
 ## Text Elements
 Without dreamcontext ^bQXXRbjz
 
-New session — agent knows nothing ^9l2jdCz0
+New session — agent knows
+nothing ^9l2jdCz0
 
-grep for a decision made yesterday ^ERzGeu3O
+grep for a decision made
+yesterday ^ERzGeu3O
 
 read a few files ^eX6ckSgv
 
@@ -31,7 +34,8 @@ New session ^S9FJ41RC
 
 SessionStart hook fires ^Y7pxTpll
 
-full context pre-loaded · 0 tool calls ^DwJ4oYcm
+full context pre-loaded · 0 tool
+calls ^DwJ4oYcm
 
 straight to work ^esY5GVrR
 
@@ -118,9 +122,9 @@ straight to work ^esY5GVrR
 			"id": "9l2jdCz0",
 			"type": "text",
 			"x": 80,
-			"y": 132.625,
+			"y": 123.25,
 			"width": 300,
-			"height": 19,
+			"height": 38,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
 			"backgroundColor": "transparent",
@@ -143,9 +147,9 @@ straight to work ^esY5GVrR
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
-			"text": "New session — agent knows nothing",
-			"rawText": "New session — agent knows nothing",
-			"originalText": "New session — agent knows nothing",
+			"text": "New session — agent knows\nnothing",
+			"rawText": "New session — agent knows\nnothing",
+			"originalText": "New session — agent knows\nnothing",
 			"fontSize": 15,
 			"fontFamily": 5,
 			"textAlign": "center",
@@ -190,9 +194,9 @@ straight to work ^esY5GVrR
 			"id": "ERzGeu3O",
 			"type": "text",
 			"x": 80,
-			"y": 242.625,
+			"y": 233.25,
 			"width": 300,
-			"height": 19,
+			"height": 38,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
 			"backgroundColor": "transparent",
@@ -215,9 +219,9 @@ straight to work ^esY5GVrR
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
-			"text": "grep for a decision made yesterday",
-			"rawText": "grep for a decision made yesterday",
-			"originalText": "grep for a decision made yesterday",
+			"text": "grep for a decision made\nyesterday",
+			"rawText": "grep for a decision made\nyesterday",
+			"originalText": "grep for a decision made\nyesterday",
 			"fontSize": 15,
 			"fontFamily": 5,
 			"textAlign": "center",
@@ -775,9 +779,9 @@ straight to work ^esY5GVrR
 		{
 			"id": "jPoSvinB",
 			"type": "text",
-			"x": 305.6,
+			"x": 298.64,
 			"y": 397,
-			"width": 148.8,
+			"width": 162.72,
 			"height": 20,
 			"angle": 0,
 			"strokeColor": "#495057",
@@ -1028,9 +1032,9 @@ straight to work ^esY5GVrR
 			"id": "DwJ4oYcm",
 			"type": "text",
 			"x": 560,
-			"y": 400,
+			"y": 390,
 			"width": 320,
-			"height": 20,
+			"height": 40,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
 			"backgroundColor": "transparent",
@@ -1053,9 +1057,9 @@ straight to work ^esY5GVrR
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
-			"text": "full context pre-loaded · 0 tool calls",
-			"rawText": "full context pre-loaded · 0 tool calls",
-			"originalText": "full context pre-loaded · 0 tool calls",
+			"text": "full context pre-loaded · 0 tool\ncalls",
+			"rawText": "full context pre-loaded · 0 tool\ncalls",
+			"originalText": "full context pre-loaded · 0 tool\ncalls",
 			"fontSize": 16,
 			"fontFamily": 5,
 			"textAlign": "center",

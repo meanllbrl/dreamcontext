@@ -16,6 +16,9 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { createRequire } from 'node:module';
+import type { ServerResponse } from 'node:http';
+import { handleKnowledgeAssets } from '../../src/server/routes/knowledge.js';
 
 import {
   extractExcalidrawText,
@@ -63,6 +66,88 @@ function leafName(entry: KnowledgeListEntry, folder: string | null): string {
   }
   if (entry.name.startsWith(`${folder}/`)) return entry.name.slice(folder.length + 1);
   return entry.name;
+}
+
+// ─── Mirror of buildKnowledgeTree / countTreeCards from KnowledgePage.tsx ──────
+//
+// Same rationale as leafName above: the production function is pure but lives in
+// a React file vitest can't import. Kept in lock-step with
+// dashboard/src/pages/KnowledgePage.tsx. Drives the Bug A regression below.
+
+interface KnowledgeTreeNode {
+  name: string;
+  path: string;
+  label: string;
+  folders: KnowledgeTreeNode[];
+  cards: KnowledgeListEntry[];
+}
+
+function prettyFolder(folder: string): string {
+  return folder
+    .split(/[-_]/)
+    .map(w => (w ? w[0].toUpperCase() + w.slice(1) : w))
+    .join(' ');
+}
+
+function countTreeCards(node: KnowledgeTreeNode): number {
+  return node.cards.length + node.folders.reduce((sum, f) => sum + countTreeCards(f), 0);
+}
+
+function buildKnowledgeTree(
+  entries: KnowledgeListEntry[],
+): { roots: KnowledgeListEntry[]; folders: KnowledgeTreeNode[] } {
+  const roots: KnowledgeListEntry[] = [];
+  const top: KnowledgeTreeNode = { name: '', path: '', label: '', folders: [], cards: [] };
+
+  const folderOccupants = new Map<string, number>();
+  for (const e of entries) {
+    const segs = e.slug.split('/');
+    for (let i = 1; i < segs.length; i++) {
+      const ancestor = segs.slice(0, i).join('/');
+      folderOccupants.set(ancestor, (folderOccupants.get(ancestor) ?? 0) + 1);
+    }
+  }
+
+  const childFolder = (parent: KnowledgeTreeNode, seg: string): KnowledgeTreeNode => {
+    let child = parent.folders.find(f => f.name === seg);
+    if (!child) {
+      const path = parent.path ? `${parent.path}/${seg}` : seg;
+      child = { name: seg, path, label: prettyFolder(seg), folders: [], cards: [] };
+      parent.folders.push(child);
+    }
+    return child;
+  };
+
+  for (const e of entries) {
+    const segments = e.slug.split('/');
+    const leaf = segments[segments.length - 1];
+    let chain = segments.slice(0, -1);
+    if (isExcalidrawSlug(e.slug) && chain.length > 0) {
+      const base = leaf.replace(/\.excalidraw$/, '');
+      const wrapper = chain.join('/');
+      if (chain[chain.length - 1] === base && (folderOccupants.get(wrapper) ?? 0) <= 1) {
+        chain = chain.slice(0, -1);
+      }
+    }
+    if (chain.length === 0) { roots.push(e); continue; }
+    let node = top;
+    for (const seg of chain) node = childFolder(node, seg);
+    node.cards.push(e);
+  }
+  return { roots, folders: top.folders };
+}
+
+function findNode(folders: KnowledgeTreeNode[], path: string): KnowledgeTreeNode | undefined {
+  for (const f of folders) {
+    if (f.path === path) return f;
+    const hit = findNode(f.folders, path);
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
+function mkEntry(slug: string, name?: string): KnowledgeListEntry {
+  return { slug, name: name ?? slug, description: '', tags: [], pinned: false };
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -840,5 +925,205 @@ describe('apply-diagrams-behavior', () => {
     expect(existsSync(join(diagramsDir, '...excalidraw.md'))).toBe(true);
     expect(fsReadFileSync(join(diagramsDir, '...excalidraw.md'), 'utf-8')).toBe(before);
     expect(existsSync(join(tmpDir, 'knowledge', '...excalidraw.md'))).toBe(false);
+  });
+});
+
+// ─── Bug A: co-located board folder is NOT split in the knowledge tree ─────────
+
+describe('dashboard board-folder grouping (Bug A)', () => {
+  it('keeps the .excalidraw inside a co-located folder that also holds a teardown', () => {
+    // The reported layout: a self-contained board folder holding both the board
+    // and its teardown. Previously the board's self-named wrapper was always
+    // collapsed, hoisting the .excalidraw to `competitors/ads` while the teardown
+    // stayed in the folder — a split. Both must now group under the folder.
+    const { roots, folders } = buildKnowledgeTree([
+      mkEntry('competitors/ads/ad-creative-transcripts', 'Ad Creative Transcripts'),
+      mkEntry('competitors/ads/fitness-ad-creative-teardown', 'Fitness Ad Teardown'),
+      mkEntry('competitors/ads/dietpal-creative-board/dietpal-creative-board.teardown', 'Dietpal Teardown'),
+      mkEntry('competitors/ads/dietpal-creative-board/dietpal-creative-board.excalidraw'),
+    ]);
+
+    expect(roots).toHaveLength(0);
+
+    const boardFolder = findNode(folders, 'competitors/ads/dietpal-creative-board');
+    expect(boardFolder).toBeDefined();
+    // Both the board AND the teardown live under the folder — count is 2, not 1.
+    expect(countTreeCards(boardFolder!)).toBe(2);
+    const slugs = boardFolder!.cards.map(c => c.slug).sort();
+    expect(slugs).toContain('competitors/ads/dietpal-creative-board/dietpal-creative-board.excalidraw');
+    expect(slugs).toContain('competitors/ads/dietpal-creative-board/dietpal-creative-board.teardown');
+
+    // The .excalidraw must NOT be hoisted as a sibling at the `Ads` level.
+    const adsFolder = findNode(folders, 'competitors/ads');
+    expect(adsFolder!.cards.some(c => isExcalidrawSlug(c.slug))).toBe(false);
+  });
+
+  it('still collapses a LONE board wrapper (legacy `<title>/<title>.excalidraw`)', () => {
+    // Regression guard: when the board is the only artifact in its self-named
+    // folder, the redundant wrapper is still dropped (board renders directly
+    // under its category as `<title>.excalidraw`).
+    const { folders } = buildKnowledgeTree([
+      mkEntry('diagrams/recall/recall.excalidraw'),
+    ]);
+    const diagrams = findNode(folders, 'diagrams');
+    expect(diagrams).toBeDefined();
+    // No `diagrams/recall` wrapper node — the board collapsed up into `diagrams`.
+    expect(findNode(folders, 'diagrams/recall')).toBeUndefined();
+    expect(diagrams!.cards.map(c => c.slug)).toEqual(['diagrams/recall/recall.excalidraw']);
+  });
+
+  it('keeps the board when its only co-located sibling lives in a NESTED subfolder', () => {
+    // Multi-reviewer finding: occupancy must count the whole subtree, not just
+    // direct children. A board folder whose other content sits in a subfolder
+    // (`<board>/research/notes.md`) must still keep its wrapper — otherwise the
+    // board re-splits exactly as Bug A described.
+    const { roots, folders } = buildKnowledgeTree([
+      mkEntry('competitors/ads/dietpal-creative-board/dietpal-creative-board.excalidraw'),
+      mkEntry('competitors/ads/dietpal-creative-board/research/competitor-notes', 'Competitor Notes'),
+    ]);
+
+    expect(roots).toHaveLength(0);
+
+    const boardFolder = findNode(folders, 'competitors/ads/dietpal-creative-board');
+    expect(boardFolder).toBeDefined();
+    // The board stays as a card directly under its wrapper (not hoisted).
+    expect(
+      boardFolder!.cards.some(c => c.slug.endsWith('dietpal-creative-board.excalidraw')),
+    ).toBe(true);
+    // The nested note still nests under research/, and the whole subtree counts as 2.
+    expect(findNode(folders, 'competitors/ads/dietpal-creative-board/research')).toBeDefined();
+    expect(countTreeCards(boardFolder!)).toBe(2);
+    // The .excalidraw must NOT be hoisted as a sibling at the `Ads` level.
+    const ads = findNode(folders, 'competitors/ads');
+    expect(ads!.cards.some(c => isExcalidrawSlug(c.slug))).toBe(false);
+  });
+});
+
+// ─── Bug B(1): embedded images resolve against the co-located `assets/` dir ────
+
+// A valid 1×1 transparent PNG so the resolver (and optionally sharp) has real bytes.
+const PNG_1x1 = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+  'base64',
+);
+
+function fakeRes(): ServerResponse & { _status: number; _body: string } {
+  const res = {
+    _status: 0,
+    _body: '',
+    writeHead(status: number) { (res as { _status: number })._status = status; return res; },
+    end(body?: string) { (res as { _body: string })._body = body ?? ''; return res; },
+    setHeader() { /* noop */ },
+  };
+  return res as unknown as ServerResponse & { _status: number; _body: string };
+}
+
+describe('knowledge-assets co-located assets/ resolution (Bug B1)', () => {
+  let tmpDir: string;
+  let contextRoot: string;
+  let boardDir: string;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+    contextRoot = join(tmpDir, '_dream_context');
+    boardDir = join(contextRoot, 'knowledge', 'competitors', 'ads', 'dietpal-creative-board');
+    mkdirSync(join(boardDir, 'assets'), { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('resolves a bare wikilink to the sibling assets/ folder; skips a dangling ref', async () => {
+    // Embedded image lives in the board's own `assets/` subfolder (the
+    // self-contained convention). A bare `[[calai-01.png]]` link previously
+    // resolved only via Obsidian's vault-wide index → blank in-app.
+    writeFileSync(join(boardDir, 'assets', 'calai-01.png'), PNG_1x1);
+
+    const presentId = '4cfdf315aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const danglingId = 'dab9506dbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+    writeFileSync(
+      join(boardDir, 'dietpal-creative-board.excalidraw.md'),
+      '---\nname: Dietpal Creative Board\ndescription: board\ntags: [excalidraw]\nexcalidraw-plugin: parsed\n---\n\n' +
+        '# Excalidraw Data\n\n## Embedded Files\n' +
+        `${presentId}: [[calai-01.png]]\n` +
+        `${danglingId}: [[ctwa-04.png]]\n`,
+    );
+
+    const res = fakeRes();
+    await handleKnowledgeAssets(
+      {} as never,
+      res,
+      { slug: 'competitors/ads/dietpal-creative-board/dietpal-creative-board.excalidraw' },
+      contextRoot,
+    );
+
+    expect(res._status).toBe(200);
+    const json = JSON.parse(res._body) as { files: Record<string, { dataURL: string }> };
+    // The asset under assets/ now resolves.
+    expect(json.files[presentId]).toBeDefined();
+    expect(json.files[presentId].dataURL).toMatch(/^data:image\//);
+    // The dangling reference (no file on disk) is simply absent — never invented.
+    expect(json.files[danglingId]).toBeUndefined();
+  });
+});
+
+// ─── Bug B(2): the board builder refuses to write dangling embeds ─────────────
+
+describe('build_excalidraw dangling-asset guard (Bug B2)', () => {
+  const require = createRequire(import.meta.url);
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { buildExcalidraw } = require('../../skill-packs/excalidraw/scripts/build_excalidraw.js');
+
+  let tmpDir: string;
+
+  beforeEach(() => { tmpDir = makeTmpDir(); });
+  afterEach(() => { rmSync(tmpDir, { recursive: true, force: true }); });
+
+  it('fails (and writes no board) when a referenced image is missing, naming every gap', () => {
+    const ok = join(tmpDir, 'ok.png');
+    writeFileSync(ok, PNG_1x1);
+    const out = join(tmpDir, 'board.excalidraw.md');
+
+    let err: Error | undefined;
+    try {
+      buildExcalidraw({
+        out,
+        vaultRoot: tmpDir,
+        elements: [
+          { type: 'image', x: 0, y: 0, width: 100, path: ok },
+          { type: 'image', x: 200, y: 0, width: 100, path: join(tmpDir, 'ctwa-04.png') },
+          { type: 'image', x: 400, y: 0, width: 100, path: join(tmpDir, 'ctwa-05.png') },
+        ],
+      });
+    } catch (e) {
+      err = e as Error;
+    }
+
+    expect(err).toBeDefined();
+    expect(err!.message).toMatch(/missing or not a file/);
+    // Lists ALL missing assets, not just the first.
+    expect(err!.message).toContain('ctwa-04.png');
+    expect(err!.message).toContain('ctwa-05.png');
+    // No board with dangling embeds is ever written.
+    expect(existsSync(out)).toBe(false);
+  });
+
+  it('writes the board when every referenced image exists', () => {
+    const img = join(tmpDir, 'real.png');
+    writeFileSync(img, PNG_1x1);
+    const out = join(tmpDir, 'good.excalidraw.md');
+
+    const res = buildExcalidraw({
+      out,
+      vaultRoot: tmpDir,
+      elements: [{ type: 'image', x: 0, y: 0, width: 100, path: img }],
+    });
+
+    expect(res.images).toBe(1);
+    expect(existsSync(out)).toBe(true);
+    const md = fsReadFileSync(out, 'utf-8');
+    expect(md).toContain('## Embedded Files');
+    expect(md).toMatch(/\[\[real\.png\]\]/);
   });
 });

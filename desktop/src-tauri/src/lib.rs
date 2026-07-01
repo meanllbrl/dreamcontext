@@ -154,17 +154,67 @@ pub fn run() {
         .expect("dreamcontext desktop failed to start");
 
     app.run(|app_handle, event| {
-        // Kill the Node child on app exit so no orphan process survives.
-        if let RunEvent::ExitRequested { .. } = event {
+        // Reap the dashboard server (and its whole process group) on app exit so no
+        // orphan node process survives. ExitRequested fires on a normal quit;
+        // Exit is the final backstop. reap_server is idempotent (the child is taken
+        // out of the shared handle), so firing on both is safe.
+        //
+        // NOTE: this only covers exits Tauri actually observes. A force-quit / crash
+        // / dev-rebuild can terminate the app WITHOUT either event firing — that path
+        // is covered server-side by the parent-death watchdog (src/server/lifecycle.ts),
+        // for which we pass DREAMCONTEXT_PARENT_PID at spawn.
+        if matches!(event, RunEvent::ExitRequested { .. } | RunEvent::Exit) {
             if let Some(handle) = app_handle.try_state::<ChildHandle>() {
-                if let Ok(mut guard) = handle.lock() {
-                    if let Some(mut child) = guard.take() {
-                        let _ = child.kill();
-                    }
-                }
+                reap_server(handle.inner());
             }
         }
     });
+}
+
+/// Gracefully tear down the dashboard-server child: SIGTERM the whole process group
+/// (so the node server runs its own shutdown — closing the HTTP server and killing
+/// the PTYs it spawned — rather than being hard-killed mid-flight), wait briefly for
+/// a clean exit, then SIGKILL the group as a fallback so a hung server can't linger.
+/// Idempotent: takes the child out of the shared handle, so a second call is a no-op.
+fn reap_server(handle: &ChildHandle) {
+    let mut child = match handle.lock() {
+        Ok(mut guard) => match guard.take() {
+            Some(c) => c,
+            None => return, // already reaped
+        },
+        Err(_) => return,
+    };
+
+    #[cfg(unix)]
+    {
+        // The child is its own process-group leader (process_group(0) at spawn), so
+        // pgid == its pid; the negative pid signals the whole group.
+        let pgid = child.id() as i32;
+        unsafe {
+            libc::kill(-pgid, libc::SIGTERM);
+        }
+        let deadline = Instant::now() + Duration::from_millis(1500);
+        loop {
+            match child.try_wait() {
+                Ok(Some(_)) => return, // exited cleanly on SIGTERM
+                Ok(None) => {}
+                Err(_) => break,
+            }
+            if Instant::now() >= deadline {
+                break;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+        unsafe {
+            libc::kill(-pgid, libc::SIGKILL);
+        }
+        let _ = child.wait(); // reap the zombie
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = child.kill();
+    }
 }
 
 // ─── Resolution helpers ────────────────────────────────────────────────────
@@ -304,20 +354,25 @@ fn host_dashboard(app: AppHandle) -> Result<(), String> {
 
     // Boot the server in LAUNCHER mode — vault-agnostic. Each window pins its
     // own vault via ?vault=<name> → X-Dreamcontext-Vault header.
-    let child: Child = Command::new(&node)
-        .args([
-            cli.as_str(),
-            "dashboard",
-            "--port",
-            &port.to_string(),
-            "--no-open",
-            "--launcher",
-        ])
+    let mut cmd = Command::new(&node);
+    cmd.args([
+        cli.as_str(),
+        "dashboard",
+        "--port",
+        &port.to_string(),
+        "--no-open",
+        "--launcher",
+    ])
         // App-context guard: lets server-side code know it runs INSIDE the
         // desktop app (not a terminal). The dashboard uses this to suppress the
         // "run dreamcontext upgrade" nudge — in-app, updates are the app's job
         // (self-update), not a CLI instruction.
         .env("DREAMCONTEXT_DESKTOP", "1")
+        // Our PID so the server can watch our liveness and exit if we die without
+        // running the exit handler below (force-quit / crash / dev-rebuild). This
+        // is the orphaned-dashboard-server safety net; see `startParentDeathWatch`
+        // in src/server/lifecycle.ts.
+        .env("DREAMCONTEXT_PARENT_PID", std::process::id().to_string())
         // Where the bundled Sleepy mascot clips live (Resources/sleepy/*.mp4),
         // so the dashboard can serve them for the notch capture bar. Desktop-only
         // (never shipped to npm). Absent → the capture bar simply shows no mascot.
@@ -326,7 +381,17 @@ fn host_dashboard(app: AppHandle) -> Result<(), String> {
                 .resource_dir()
                 .ok()
                 .map(|d| ("DREAMCONTEXT_SLEEPY_DIR".to_string(), d.join("sleepy").to_string_lossy().into_owned())),
-        )
+        );
+    // Put the server in its OWN process group (it becomes the group leader, so
+    // pgid == its pid). On exit we signal the whole group (`kill(-pgid, …)`) so any
+    // helper the server itself spawned in-group dies with it, not just the node
+    // process. See `reap_server` for the SIGTERM→SIGKILL teardown.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
+    let child: Child = cmd
         .spawn()
         .map_err(|e| format!("Failed to start the dashboard server with node:\n  {node}\n\n{e}"))?;
 

@@ -1,7 +1,8 @@
 ---
+
 excalidraw-plugin: parsed
-tags:
-  - 'topic:excalidraw'
+tags: [excalidraw]
+
 ---
 ==⚠  Switch to EXCALIDRAW VIEW in the MORE OPTIONS menu of this document. ⚠== You can decompress Drawing data with the command palette: 'Decompress current Excalidraw file'. For more info check in plugin settings under 'Saving'
 
@@ -28,7 +29,8 @@ lens C ^BpMlWyly
 cross-context ^5ZUDVG07
 
 synthesizer
-decision report + citations ^eQAMb4Lq
+decision report +
+citations ^eQAMb4Lq
 
 promote → knowledge/ ^3ArPgFMs
 
@@ -544,9 +546,9 @@ optional ^ZMebuzyo
 		{
 			"id": "hTRqVByq",
 			"type": "text",
-			"x": 320.32,
+			"x": 314.88,
 			"y": 276,
-			"width": 79.36,
+			"width": 90.24,
 			"height": 20,
 			"angle": 0,
 			"strokeColor": "#495057",
@@ -625,9 +627,9 @@ optional ^ZMebuzyo
 		{
 			"id": "5ZUDVG07",
 			"type": "text",
-			"x": 595.52,
+			"x": 591.6800000000001,
 			"y": 276,
-			"width": 128.96,
+			"width": 136.64,
 			"height": 20,
 			"angle": 0,
 			"strokeColor": "#495057",
@@ -696,9 +698,9 @@ optional ^ZMebuzyo
 			"id": "eQAMb4Lq",
 			"type": "text",
 			"x": 360,
-			"y": 448.25,
+			"y": 438.25,
 			"width": 300,
-			"height": 48,
+			"height": 68,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
 			"backgroundColor": "transparent",
@@ -721,10 +723,10 @@ optional ^ZMebuzyo
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
-			"text": "synthesizer\ndecision report + citations",
-			"rawText": "synthesizer\ndecision report + citations",
-			"originalText": "synthesizer\ndecision report + citations",
-			"fontSize": 19,
+			"text": "synthesizer\ndecision report +\ncitations",
+			"rawText": "synthesizer\ndecision report +\ncitations",
+			"originalText": "synthesizer\ndecision report +\ncitations",
+			"fontSize": 18,
 			"fontFamily": 5,
 			"textAlign": "center",
 			"verticalAlign": "top",
@@ -979,9 +981,9 @@ optional ^ZMebuzyo
 		{
 			"id": "ZMebuzyo",
 			"type": "text",
-			"x": 470.32,
+			"x": 464.88,
 			"y": 527,
-			"width": 79.36,
+			"width": 90.24,
 			"height": 20,
 			"angle": 0,
 			"strokeColor": "#495057",

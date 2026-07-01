@@ -1,7 +1,8 @@
 ---
+
 excalidraw-plugin: parsed
-tags:
-  - 'topic:excalidraw'
+tags: [excalidraw]
+
 ---
 ==⚠  Switch to EXCALIDRAW VIEW in the MORE OPTIONS menu of this document. ⚠== You can decompress Drawing data with the command palette: 'Decompress current Excalidraw file'. For more info check in plugin settings under 'Saving'
 
@@ -19,7 +20,8 @@ Awake sharp-wave ripples
 tag salient moments as they happen ^jReHp6eR
 
 Bookmarks
-salience ★ ★★ ★★★ during the session ^kWs80iMj
+salience ★ ★★ ★★★ during the
+session ^kWs80iMj
 
 maps to ^SYXCCSD0
 
@@ -264,9 +266,9 @@ debt builds → sleep ^gPCQ44Az
 			"id": "kWs80iMj",
 			"type": "text",
 			"x": 620,
-			"y": 146.75,
+			"y": 136.125,
 			"width": 380,
-			"height": 43,
+			"height": 64,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
 			"backgroundColor": "transparent",
@@ -289,9 +291,9 @@ debt builds → sleep ^gPCQ44Az
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
-			"text": "Bookmarks\nsalience ★ ★★ ★★★ during the session",
-			"rawText": "Bookmarks\nsalience ★ ★★ ★★★ during the session",
-			"originalText": "Bookmarks\nsalience ★ ★★ ★★★ during the session",
+			"text": "Bookmarks\nsalience ★ ★★ ★★★ during the\nsession",
+			"rawText": "Bookmarks\nsalience ★ ★★ ★★★ during the\nsession",
+			"originalText": "Bookmarks\nsalience ★ ★★ ★★★ during the\nsession",
 			"fontSize": 17,
 			"fontFamily": 5,
 			"textAlign": "center",
@@ -346,9 +348,9 @@ debt builds → sleep ^gPCQ44Az
 		{
 			"id": "SYXCCSD0",
 			"type": "text",
-			"x": 505.28,
+			"x": 499.52,
 			"y": 148,
-			"width": 69.44,
+			"width": 80.96,
 			"height": 20,
 			"angle": 0,
 			"strokeColor": "#495057",
@@ -571,9 +573,9 @@ debt builds → sleep ^gPCQ44Az
 		{
 			"id": "SvXYkaTV",
 			"type": "text",
-			"x": 505.28,
+			"x": 499.52,
 			"y": 348,
-			"width": 69.44,
+			"width": 80.96,
 			"height": 20,
 			"angle": 0,
 			"strokeColor": "#495057",
@@ -652,9 +654,9 @@ debt builds → sleep ^gPCQ44Az
 		{
 			"id": "gPCQ44Az",
 			"type": "text",
-			"x": 715.76,
+			"x": 710.08,
 			"y": 248,
-			"width": 188.48,
+			"width": 199.84,
 			"height": 20,
 			"angle": 0,
 			"strokeColor": "#495057",

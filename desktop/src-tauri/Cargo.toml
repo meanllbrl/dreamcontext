@@ -1,6 +1,6 @@
 [package]
 name = "dreamcontext-desktop"
-version = "0.10.2"
+version = "0.10.5"
 edition = "2021"
 
 [lib]
@@ -26,6 +26,11 @@ tauri-plugin-global-shortcut = "2"
 tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Group-signal the dashboard-server child (SIGTERM→SIGKILL) on app exit so the
+# whole process group is reaped, not just the direct node process. Already present
+# transitively via tauri; pinned here so the direct use is explicit.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [profile.release]
 codegen-units = 1

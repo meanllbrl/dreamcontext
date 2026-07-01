@@ -55,30 +55,44 @@ function findVaultRoot(startDir) {
 }
 
 // ---------- text sizing ----------
+// Excalifont glyph advance (multiples of fontSize): latin ~0.58, emoji/arrows/CJK/combining ~1.05.
+// A flat factor under-counted wide glyphs, so emoji labels measured narrow and overflowed their box.
+// This mirrors glyphW() in scripts/lib/style.js so card() pre-wrapping and on-board height agree.
+function isWideGlyph(code) {
+  return (
+    (code >= 0x1100 && code <= 0x115f) || (code >= 0x2190 && code <= 0x21ff) ||
+    (code >= 0x2300 && code <= 0x23ff) || (code >= 0x25a0 && code <= 0x27bf) ||
+    (code >= 0x2b00 && code <= 0x2bff) || (code >= 0x2e80 && code <= 0x9fff) ||
+    (code >= 0xac00 && code <= 0xd7a3) || (code >= 0xf900 && code <= 0xfaff) ||
+    (code >= 0xfe30 && code <= 0xfe4f) || (code >= 0xff00 && code <= 0xff60) ||
+    (code >= 0x1f000 && code <= 0x1faff) || (code >= 0x1f1e6 && code <= 0x1f1ff)
+  );
+}
+function glyphW(ch, fontSize) { return fontSize * (isWideGlyph(ch.codePointAt(0)) ? 1.05 : 0.58); }
+function measureText(s, fontSize) { let w = 0; for (const ch of String(s)) w += glyphW(ch, fontSize); return w; }
+
 // When a fixedWidth is given the text element is treated as WRAPPING (autoResize off downstream),
 // so height must reflect word-wrapped line count — otherwise long captions render as one wide line
 // and overlap their neighbours. Honors explicit \n and greedily wraps each logical line to width.
 function sizeText(text, fontSize, fixedWidth) {
   const rawLines = String(text).split('\n');
   if (fixedWidth != null) {
-    const charW = fontSize * 0.52;                       // approx Excalifont glyph advance
-    const perLine = Math.max(1, Math.floor(fixedWidth / charW));
     let totalLines = 0;
     for (const ln of rawLines) {
       const words = ln.split(/\s+/).filter(Boolean);
       if (!words.length) { totalLines += 1; continue; }
-      let cur = 0, lc = 1;
+      let cur = '', lc = 1;
       for (const w of words) {
-        const add = (cur ? 1 : 0) + w.length;
-        if (cur + add > perLine && cur > 0) { lc++; cur = w.length; }
-        else cur += add;
+        if (!cur) { cur = w; continue; }
+        if (measureText(cur + ' ' + w, fontSize) > fixedWidth) { lc++; cur = w; }
+        else cur += ' ' + w;
       }
       totalLines += lc;
     }
     return { width: fixedWidth, height: Math.max(Math.round(fontSize * 1.25), Math.round(totalLines * fontSize * 1.25)) };
   }
-  const maxLen = rawLines.reduce((m, l) => Math.max(m, l.length), 0);
-  return { width: Math.max(10, Math.round(maxLen * fontSize * 0.6)), height: Math.round(rawLines.length * fontSize * 1.25) };
+  const maxW = rawLines.reduce((m, l) => Math.max(m, measureText(l, fontSize)), 0);
+  return { width: Math.max(10, Math.round(maxW)), height: Math.round(rawLines.length * fontSize * 1.25) };
 }
 
 // ---------- element factory ----------
@@ -118,6 +132,31 @@ function buildExcalidraw(spec) {
   const attachDir = spec.attachDir || 'Attachments';
   const wikilinkMode = spec.wikilinkMode || 'basename';
   const background = spec.background || '#ffffff';
+
+  // Pre-flight: every referenced image MUST exist on disk before we write the
+  // board. A missing asset would otherwise be emitted as a dangling `## Embedded
+  // Files` wikilink (`<sha1>: [[missing.png]]`) that can never resolve in any
+  // renderer — the board ships with blank images. Collect ALL missing paths and
+  // fail once with the full list (and the board path), so the author fixes every
+  // gap in a single pass instead of discovering them one throw at a time.
+  const missingImages = [];
+  for (const e of (spec.elements || [])) {
+    if (e && e.type === 'image' && e.path) {
+      // A missing file OR a non-file (directory / broken symlink) is unusable —
+      // statSync throws for a broken link / absent path, so default to missing.
+      let isFile = false;
+      try { isFile = fs.statSync(path.resolve(e.path)).isFile(); } catch { isFile = false; }
+      if (!isFile) missingImages.push(e.path);
+    }
+  }
+  if (missingImages.length) {
+    throw new Error(
+      `build_excalidraw: ${missingImages.length} referenced image(s) missing or not a file — ` +
+      `refusing to write a board with dangling embeds:\n  ` +
+      missingImages.join('\n  ') +
+      `\n(board: ${outPath})`,
+    );
+  }
 
   const rng = mulberry32(strHash(path.resolve(outPath)));
   const elements = [];

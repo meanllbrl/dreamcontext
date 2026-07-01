@@ -1,7 +1,8 @@
 ---
+
 excalidraw-plugin: parsed
-tags:
-  - 'topic:excalidraw'
+tags: [excalidraw]
+
 ---
 ==⚠  Switch to EXCALIDRAW VIEW in the MORE OPTIONS menu of this document. ⚠== You can decompress Drawing data with the command palette: 'Decompress current Excalidraw file'. For more info check in plugin settings under 'Saving'
 
@@ -565,9 +566,9 @@ Agent starts with full context ^ktDBFGMY
 			"id": "7Wwyn5Lu",
 			"type": "text",
 			"x": 470,
-			"y": 159.25,
+			"y": 161.75,
 			"width": 300,
-			"height": 38,
+			"height": 33,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
 			"backgroundColor": "transparent",
@@ -593,7 +594,7 @@ Agent starts with full context ^ktDBFGMY
 			"text": "core/ — soul · user · memory\nstyle · tech · features · changelog",
 			"rawText": "core/ — soul · user · memory\nstyle · tech · features · changelog",
 			"originalText": "core/ — soul · user · memory\nstyle · tech · features · changelog",
-			"fontSize": 15,
+			"fontSize": 13,
 			"fontFamily": 5,
 			"textAlign": "center",
 			"verticalAlign": "top",
