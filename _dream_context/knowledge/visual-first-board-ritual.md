@@ -32,5 +32,8 @@ Build with the `/excalidraw` skill. Reference implementation + regenerable gener
 ## Apply here
 Owner: **Mehmet**. Bring this product's roadmap board (and user/work-flow boards) to every review, and keep the roadmap current at each sprint boundary.
 
+## Update — native roadmap board shipped (2026-07-02)
+dreamcontext now ships its own PO-authored OKR roadmap natively — `dreamcontext roadmap` renders the objective board and writes the auto-generated `knowledge/roadmap/board.md`. See `core/features/okr-roadmap.md` for the full capability doc (objectives store, task↔objective many-to-many, dependency-cascade forecasting, target vs. forecast slip detection). This ritual's board-first *principle* still applies; the *mechanism* for this project's own roadmap board no longer requires hand-building it in Excalidraw — the CLI/dashboard board is the current source.
+
 ## Last verified
-2026-06-25
+2026-07-02

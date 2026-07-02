@@ -1,5 +1,31 @@
 [
   {
+    "date": "2026-07-02",
+    "type": "fix",
+    "scope": "sleepy",
+    "description": "Fix Agent terminal rows overflowing past the viewport and clipping mid-word at the right edge. The .xterm rule's text-rendering: optimizeLegibility enabled kerning and ligatures, which breaks the FitAddon contract on a monospace grid: column count is computed from a single glyph's advance, but the DOM renderer then draws each row wider than cols×cellWidth once kerning is applied. Replaced with text-rendering: optimizeSpeed plus explicit font-kerning: none, font-variant-ligatures: none, and font-feature-settings 'liga' 0/'calt' 0, forcing a uniform per-glyph advance while keeping the softer font smoothing from the prior readability polish.",
+    "breaking": false,
+    "summary": "Fix Agent terminal text clipping at the right edge caused by kerning/ligatures breaking the monospace grid",
+    "references": [
+      "commit:05a2a4a",
+      "file:dashboard/src/components/sleepy/AgentTerminal.css"
+    ]
+  },
+  {
+    "date": "2026-07-02",
+    "type": "feat",
+    "scope": "roadmap",
+    "description": "Implemented task_uO60nZRt MVP + owner-promoted scope. New: core/objectives/<slug>.md store (CRUD via 'roadmap objective', write-time circular-dep guard, delete self-healing), pure buildRoadmapModel (topo-sorted full-DAG cascade, null-forecast rule, rollups from real status enum, computed reverse edges), 'dreamcontext roadmap' (text board + auto-generated knowledge/roadmap/board.md) and 'roadmap --json' (typed query surface — markdown stays the store, JSON is the query layer per owner decision). Tasks carry local-only 'objectives: [a,b]' (create --objectives, tasks objectives verb, list --objective filter, PATCH allowedFields). Objectives are a first-class recall type (buildCorpus defaults + --types objective), render in the SessionStart snapshot (budget-aware, active + recently-finished + per-task inline) and the SubagentStart briefing. Sleep: sleep-tasks proposes links for EMPTY objectives lists only (PO override never overwritten); flow regenerates the board deterministically. Doctor validates the whole graph. Prompt layer updated end-to-end: SKILL.md + 4 references, sleep/explore/initializer/curator agents + codex mirrors, goal-skill Phase 3, taxonomy aliases, README. 25 new unit tests; full suite green.",
+    "breaking": false,
+    "summary": "OKR roadmap shipped: PO-authored objectives, many-to-many task links, full-DAG forecast cascade, target-vs-forecast slip detection, snapshot/recall/sleep integration",
+    "references": [
+      "task:feat-roadmap-live-po-authored-roadmap-items-dependencies-forecast-vs-target",
+      "file:src/lib/objectives-store.ts",
+      "file:src/lib/roadmap-model.ts",
+      "file:src/cli/commands/roadmap.ts"
+    ]
+  },
+  {
     "date": "2026-07-01",
     "type": "feat",
     "scope": "sleepy",

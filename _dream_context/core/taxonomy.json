@@ -83,6 +83,9 @@
     "orchestration": "architecture",
     "hook": "architecture",
     "planning": "topic:pm",
-    "roadmap": "topic:roadmap"
+    "roadmap": "topic:roadmap",
+    "okr": "topic:roadmap",
+    "objectives": "topic:roadmap",
+    "objective": "topic:roadmap"
   }
 }
