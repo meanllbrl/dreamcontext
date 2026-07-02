@@ -29,7 +29,11 @@ always beats blind exploration.
 4. If recall returns "No hits", fall back to Glob/Grep below.
 5. When chaining recall into a script or programmatic step, use
    `--json` instead of `--plain` for a machine-readable payload, and
-   `--types knowledge,feature,task,memory,changelog` to scope by corpus type.
+   `--types knowledge,feature,task,memory,changelog,objective` to scope by corpus type.
+6. For "what are we trying to achieve / what's the roadmap / is X on track" questions:
+   objectives live in `core/objectives/*.md` (recall `--types objective`), and
+   `dreamcontext roadmap --json` returns the computed model — rollup progress,
+   dependency cascade, target-vs-forecast slip flags — without reading any file.
 
 Recall is appropriate for Track A (Documented Knowledge) and for Track B when
 the query is about a documented concept. It is NOT a substitute for Glob/Grep

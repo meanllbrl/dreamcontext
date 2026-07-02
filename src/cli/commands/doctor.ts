@@ -6,6 +6,8 @@ import { resolveContextRoot } from '../../lib/context-path.js';
 import { header } from '../../lib/format.js';
 import { listUnfencedDataStructures } from '../../lib/data-structures-migration.js';
 import { hasTaskOverride, loadTaskOverride } from '../../lib/overrides.js';
+import { listObjectives, isSafeObjectiveSlug, isCalendarDate, OBJECTIVE_STATUSES } from '../../lib/objectives-store.js';
+import { buildRoadmapModel } from '../../lib/roadmap-model.js';
 
 /**
  * Remove content that represents documented mentions of placeholder syntax
@@ -225,6 +227,61 @@ function checkOverrides(root: string): CheckResult[] {
   return results;
 }
 
+/**
+ * Validate the OPTIONAL objectives store (core/objectives/ — roadmap feature).
+ * Silent when absent; when present, checks slugs, target dates, status
+ * overrides, dependency resolution + acyclicity, and that task `objectives:`
+ * references resolve (surfaced via the roadmap builder's own warnings).
+ */
+function checkObjectives(root: string): CheckResult[] {
+  const results: CheckResult[] = [];
+  const objectives = listObjectives(root);
+  let model: ReturnType<typeof buildRoadmapModel>;
+  try {
+    model = buildRoadmapModel(root);
+  } catch (err) {
+    return [{
+      name: 'Objectives',
+      status: 'error',
+      message: `Roadmap model failed to build: ${err instanceof Error ? err.message : String(err)}`,
+    }];
+  }
+  // Builder warnings cover: unknown objective refs on tasks, unknown deps, cycles.
+  for (const w of model.warnings) {
+    results.push({ name: 'Objectives', status: 'warn', message: w });
+  }
+  if (objectives.length === 0) return results;
+
+  for (const o of objectives) {
+    if (!isSafeObjectiveSlug(o.slug)) {
+      results.push({ name: 'Objectives', status: 'warn', message: `Objective slug not kebab-case: ${o.slug}` });
+    }
+    if (o.target_date !== null && !isCalendarDate(o.target_date)) {
+      results.push({ name: 'Objectives', status: 'warn', message: `Objective ${o.slug}: invalid target_date "${o.target_date}"` });
+    }
+    // A raw status string outside the enum reads back as null; catch hand-edits.
+    const raw = readFileSync(o.path, 'utf-8');
+    const m = /^status:\s*(\S+)\s*$/m.exec(raw);
+    if (m && m[1] !== 'null' && !(OBJECTIVE_STATUSES as readonly string[]).includes(m[1].replace(/['"]/g, ''))) {
+      results.push({
+        name: 'Objectives',
+        status: 'warn',
+        message: `Objective ${o.slug}: status "${m[1]}" is not one of ${OBJECTIVE_STATUSES.join('|')} — treated as computed`,
+      });
+    }
+  }
+
+  if (results.length === 0) {
+    const slipping = model.objectives.filter((x) => x.slipping === true).length;
+    results.push({
+      name: 'Objectives',
+      status: 'ok',
+      message: `core/objectives/ (${objectives.length} objective(s)${slipping > 0 ? `, ${slipping} slipping` : ''})`,
+    });
+  }
+  return results;
+}
+
 export function registerDoctorCommand(program: Command): void {
   program
     .command('doctor')
@@ -259,6 +316,7 @@ export function registerDoctorCommand(program: Command): void {
         checkFile(root, 'core/4.tech_stack.md', 'Tech stack', false),
         ...checkDataStructures(root),
         ...checkOverrides(root),
+        ...checkObjectives(root),
 
         // Taxonomy vocabulary (non-fatal: absent means DEFAULT_VOCABULARY used)
         ...(!existsSync(join(root, 'core', 'taxonomy.json'))

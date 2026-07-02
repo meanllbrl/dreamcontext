@@ -23,7 +23,7 @@ You own `_dream_context/state/*.md` and the task lifecycle. The orchestrator gav
 | You touch | You don't touch |
 |---|---|
 | `_dream_context/state/<slug>.md` (task files) | `core/CHANGELOG.json`, `core/RELEASES.json` |
-| `dreamcontext tasks {create,status,log,insert}` | `core/0-6.*` files |
+| `dreamcontext tasks {create,status,log,insert,objectives}` | `core/0-6.*` files |
 | Workflow Mermaid node classes inside task bodies | `knowledge/*.md` |
 |  | `core/features/*.md` |
 
@@ -181,6 +181,10 @@ For each task whose `updated` is **21+ days old** and that no session in this cy
 
 Never silently delete a task and never auto-complete — `in_review` with an explicit reason hands the close decision to the user. List every staleness action in your report.
 
+### 7. Objective linking (only when `core/objectives/` is non-empty)
+
+Objectives are the PO's OKR roadmap items; tasks link to them many-to-many via the `objectives:` frontmatter list. For each task you touched (or created) whose `objectives:` is **absent or empty**, judge which objective(s) the work genuinely serves — check `dreamcontext roadmap objective list` for the live set — and set them: `dreamcontext tasks objectives <slug> <a,b>` (multiple slugs when one task lifts several outcomes — expected, not double-counting). **HARD RULE: a non-empty `objectives:` list is a PO decision — NEVER change or extend it.** If no objective fits, leave the field empty. `core/objectives/*.md` files are PO-authored and off-limits.
+
 ## Return — short report
 
 ```
@@ -206,3 +210,4 @@ Never silently delete a task and never auto-complete — `in_review` with an exp
 6. **CLI first** for status/log/insert; **Edit** for surgical body reconciliation (including broadening `description:` / `## Why` when scope grows).
 7. **Person attribution is multi-person only.** Read `.config.json` `people` first. If 0 or 1 entry, step 2.5 is a complete NO-OP — never inject `person:` tags on solo projects. Derived multi-person status comes from `people.length > 1`; there is no `multiPerson` key to check.
 8. **Normalize tags via taxonomy vocab.** When writing or updating task frontmatter tags, check `dreamcontext taxonomy vocab` and use canonical forms (faceted or bare standard tags); non-canonical tags degrade recall.
+9. **Objectives: propose for empty, never overwrite non-empty.** An existing `objectives:` value is a PO decision that sticks. You fill blanks with judgment; you never revise the PO's linking. Objective files themselves (`core/objectives/`) are outside your domain entirely.

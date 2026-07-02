@@ -262,6 +262,7 @@ export function readTaskFile(filePath: string): TaskData {
     rice: normalizeRice(data.rice),
     start_date: (data.start_date as string) ?? null,
     due_date: (data.due_date as string) ?? null,
+    objectives: Array.isArray(data.objectives) ? (data.objectives as unknown[]).map(String) : [],
     assignee: (data.assignee as string) ?? null,
     custom_fields:
       data.custom_fields && typeof data.custom_fields === 'object' && !Array.isArray(data.custom_fields)
@@ -472,6 +473,12 @@ ${input.why || '(To be defined)'}
       if (input.due_date) {
         updateFrontmatterFields(filePath, { due_date: input.due_date });
       }
+    }
+
+    // Objectives are additive like start/due dates: written only when provided,
+    // so tasks created without them keep the exact template bytes (golden-pinned).
+    if (input.objectives && input.objectives.length > 0) {
+      updateFrontmatterFields(filePath, { objectives: input.objectives });
     }
 
     // Seed override-declared custom fields (additive — only when the project

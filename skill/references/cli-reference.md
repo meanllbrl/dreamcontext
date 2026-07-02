@@ -34,12 +34,13 @@ Every command and flag, grouped. All commands are prefixed with `dreamcontext`. 
 
 | Command | Description |
 |---|---|
-| `tasks list` | List/filter/group tasks (excludes completed by default). Flags: `-s/--status`, `-a/--all`, `--tag <t>` (repeatable, AND), `--any-tag <t>` (repeatable, OR), `--version <id>`, `--priority <level>`, `--feature <slug>`, `-g/--group-by tag\|version\|priority\|status`, `--long`, `--tags`, `--json`. Filters compose (AND), case-insensitive. |
+| `tasks list` | List/filter/group tasks (excludes completed by default). Flags: `-s/--status`, `-a/--all`, `--tag <t>` (repeatable, AND), `--any-tag <t>` (repeatable, OR), `--version <id>`, `--priority <level>`, `--feature <slug>`, `--objective <slug>`, `-g/--group-by tag\|version\|priority\|status`, `--long`, `--tags`, `--json`. Filters compose (AND), case-insensitive. |
 | `tasks tags` | Distinct task tags with counts. `-a/--all`, `--json`. |
-| `tasks create <name>` | Create a task. Flags: `-d/--description`, `-p/--priority critical\|high\|medium\|low`, `-u/--urgency …`, `-s/--status`, `-t/--tags <csv>`, `-w/--why`, `-v/--version`, `--person <name>`, `--reach <1-10>`, `--impact <1-5>`, `--confidence 25\|50\|75\|100`, `--effort <weeks>`, `--start YYYY-MM-DD`, `--due YYYY-MM-DD`, `--field <key=value>` (repeatable; sets declared custom fields), `--allow-missing-required` (create a draft even when a required custom field is unset). **Fails** if a required custom field is unset and `--allow-missing-required` is not given. |
+| `tasks create <name>` | Create a task. Flags: `-d/--description`, `-p/--priority critical\|high\|medium\|low`, `-u/--urgency …`, `-s/--status`, `-t/--tags <csv>`, `-w/--why`, `-v/--version`, `--person <name>`, `--reach <1-10>`, `--impact <1-5>`, `--confidence 25\|50\|75\|100`, `--effort <weeks>`, `--start YYYY-MM-DD`, `--due YYYY-MM-DD`, `--objectives <csv>` (roadmap objective slugs this task serves; slugs must exist), `--field <key=value>` (repeatable; sets declared custom fields), `--allow-missing-required` (create a draft even when a required custom field is unset). **Fails** if a required custom field is unset and `--allow-missing-required` is not given. |
 | `tasks rice <name>` | Print or update RICE values. `--reach`/`--impact`/`--confidence`/`--effort`, `--clear`. |
 | `tasks start <name> <YYYY-MM-DD\|clear>` | Set or clear a planned start date (range start). Must be ≤ the due date; setting it removes the `backlog` tag. |
 | `tasks due <name> <YYYY-MM-DD\|clear>` | Set or clear a due/end date (range end). |
+| `tasks objectives <name> [slugs\|clear]` | Print, set (comma-separated, validated against `core/objectives/`), or clear the roadmap objectives a task serves. LOCAL-ONLY — never synced to a cloud backend. |
 | `tasks tag <name> <tags...>` | Add (or `--remove`) tags. `person:<slug>` assigns a person. |
 | `tasks field <name> <key> [value\|clear]` | Set or clear a user-defined custom field declared in `overrides/task.md` (synced to ClickUp/GitHub). Validates select options + number types. |
 | `tasks insert <name> <section> <content...>` | Insert into a section: `why`, `user_stories`, `acceptance_criteria`, `constraints`, `technical_details`, `notes`, `changelog`. |
@@ -55,6 +56,23 @@ Every command and flag, grouped. All commands are prefixed with `dreamcontext`. 
 | `tasks sync-hooks install\|uninstall` | Manage best-effort git sync triggers (post-commit, pre-push). |
 
 Sections for `tasks insert`: `why`, `user_stories`, `acceptance_criteria`, `constraints`, `technical_details`, `notes`, `changelog`. See [tasks-and-features.md](tasks-and-features.md) for the full protocol.
+
+---
+
+## Roadmap (objectives — the OKR board)
+
+| Command | Description |
+|---|---|
+| `roadmap` | Render the objective board (rollups, target vs forecast, slip flags) and regenerate `knowledge/roadmap/board.md`. `--json` emits the typed RoadmapModel instead (no writes). |
+| `roadmap objective create <slug>` | Create `core/objectives/<slug>.md`. `--title <str>` (required), `--target YYYY-MM-DD`, `--depends-on <csv>`, `--feature <prd-slug>`, `--why <text>`. |
+| `roadmap objective list` | All objectives with progress %, status, forecast. `--json`. |
+| `roadmap objective show <slug>` | One objective: member tasks, direct dependents, and the transitive "if this slips, so do" set. `--json`. |
+| `roadmap objective edit <slug>` | `--title`, `--target <date\|clear>`, `--feature <slug\|clear>`, `--status not_started\|active\|review\|done\|clear` (manual PO override; `clear` returns to computed). |
+| `roadmap objective delete <slug>` | Delete; other objectives' `depends_on` are healed automatically. `--yes`. |
+| `roadmap objective depend <A> <B>` | A depends on B — **rejected at write time** if it would create a circular dependency. |
+| `roadmap objective undepend <A> <B>` | Remove the dependency edge. |
+
+Task-side linkage: `tasks create --objectives a,b` · `tasks objectives <task> a,b|clear` · `tasks list --objective <slug>`. Objectives are recallable: `memory recall "<query>" --types objective`.
 
 ---
 

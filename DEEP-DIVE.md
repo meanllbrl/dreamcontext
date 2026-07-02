@@ -167,7 +167,8 @@ Fires before the agent sees your first message. Compiles and injects a full cont
 
 1. **Soul + User + Memory** loaded in full (the agent's identity, your preferences, accumulated decisions). `2.memory.md` now contains only Decisions + Known Issues — the LIFO section was removed 2026-05-23; quick captures route through CHANGELOG via `memory remember`.
 2. **Extended core files** surfaced as summaries with paths (style guide, tech stack, data structures, system flow)
-3. **Active tasks** with status, priority, last update timestamp, and `why:` excerpt (capped at 250 chars, HTML template comments stripped)
+3. **Active tasks** with status, priority, last update timestamp, `why:` excerpt (capped at 250 chars, HTML template comments stripped), and the roadmap objectives each task serves (inline, from the `objectives:` frontmatter)
+3b. **Objectives (roadmap)** — when `core/objectives/` is non-empty: active objectives plus ones finished in the last 14 days, each with rollup progress, target vs computed forecast, and a 🔴 SLIPPING flag when the forecast lands past the PO's target. Budget-aware (demotes to active-only, then to a count line). This is how every session knows WHAT the project is driving toward, not just what tasks exist.
 4. **Bookmarks** sorted by salience (critical first), showing tagged moments from previous sessions
 5. **Contextual reminders** from triggers matching active task names, tags, or bookmark text
 6. **Recent CHANGELOG (tiered)** — top 3 entries detailed (summary + first ~300 chars of description), next 10 entries titles-only under an `### Older` subheading. Tier sizes configurable via constants at the top of `src/cli/commands/snapshot.ts`. Older entries remain searchable through `memory recall --types changelog`.
@@ -184,7 +185,7 @@ Consolidation directives fire based on multiple signals: debt 4-6 (offers consol
 
 ### SubagentStart Hook
 
-Fires when any sub-agent launches (Explore, Plan, or custom agents). Injects a lightweight briefing: project summary (capped at 120 characters), directory structure, active tasks, knowledge index, and pinned knowledge.
+Fires when any sub-agent launches (Explore, Plan, or custom agents). Injects a lightweight briefing: project summary (capped at 120 characters), roadmap objectives (active first, capped at 10 — so even sub-agents weigh decisions against the project's goals), directory structure, active tasks, knowledge index, and pinned knowledge.
 
 This is intentionally lighter than the full snapshot. Sub-agents are task-focused and short-lived. They need enough context to check existing knowledge and avoid duplicating work, not the full project state. The briefing fires for all sub-agents, including dreamcontext's own (the initializer and the RemSleep specialists). The extra context does not conflict with their dedicated prompts.
 

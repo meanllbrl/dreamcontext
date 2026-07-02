@@ -57,6 +57,11 @@ Produce an **ingestion manifest** an ingestor could execute without guessing.
 - **Propose a `knowledge/` folder hierarchy** — group related docs into context subfolders;
   name them in the project's own vocabulary.
 - **Rank candidate features** by centrality (entry points, surface area, references).
+- **Flag candidate objectives** when the source material contains roadmap/OKR items — epics,
+  quarterly goals, "increase X by Y%" outcomes, milestone boards (Jira epics, Notion goal DBs,
+  roadmap slides). Map each to target type `objective` → `core/objectives/<slug>.md` (title,
+  target date if stated, dependencies if linkable). Outcomes ≠ features: a capability the code
+  ships → feature; an outcome the team is driving toward → objective.
 - **Dedup** against anything already in `_dream_context/` (recall first) — mark as
   "extend existing" vs "create new".
 

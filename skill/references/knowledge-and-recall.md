@@ -67,6 +67,7 @@ dreamcontext memory recall "how did we decide on the sleep fan-out"
 dreamcontext memory recall "auth flow" --types knowledge,feature
 dreamcontext memory recall "deprecated" --types changelog        # ship history
 dreamcontext memory recall "rate limit" --types task             # in-flight work
+dreamcontext memory recall "retention goal" --types objective    # roadmap objectives (OKR outcomes)
 
 # Tune result count / machine-readable output
 dreamcontext memory recall "rice prioritization" --top 3 --json

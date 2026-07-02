@@ -6,6 +6,7 @@ import { registerCoreCommand } from './commands/core.js';
 import { registerFeaturesCommand } from './commands/features.js';
 import { registerKnowledgeCommand } from './commands/knowledge.js';
 import { registerTasksCommand } from './commands/tasks.js';
+import { registerRoadmapCommand } from './commands/roadmap.js';
 import { registerInstallSkillCommand } from './commands/install-skill.js';
 import { registerInstallClaudeMdCommand, registerInstallInstructionsCommand } from './commands/install-claude-md.js';
 import { registerUpdateCommand } from './commands/update.js';
@@ -70,6 +71,7 @@ ${chalk.bold('Content')}
   ${chalk.magentaBright('taxonomy')}          Inspect and maintain the project tag vocabulary
   ${chalk.magentaBright('memory')}            Recall facts via BM25 search over the project corpus
   ${chalk.magentaBright('tasks')}             Create tasks, log progress, and mark complete
+  ${chalk.magentaBright('roadmap')}           PO-authored objective board (rollups, dependencies, target vs forecast)
   ${chalk.magentaBright('bookmark')}          Tag important moments for consolidation
   ${chalk.magentaBright('trigger')}           Manage contextual reminders (prospective memory)
   ${chalk.magentaBright('council')}           Run structured multi-agent debates on decisions
@@ -118,6 +120,7 @@ export function createProgram(): Command {
   registerFeaturesCommand(program);
   registerKnowledgeCommand(program);
   registerTasksCommand(program);
+  registerRoadmapCommand(program);
   registerInstallSkillCommand(program);
   registerInstallInstructionsCommand(program);
   registerInstallClaudeMdCommand(program);

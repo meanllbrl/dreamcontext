@@ -32,6 +32,13 @@ export interface TaskFrontmatter {
   start_date?: string | null;
   /** Optional due/END date (YYYY-MM-DD). Absent on tasks that never set one. */
   due_date?: string | null;
+  /**
+   * Objective slugs this task serves (many-to-many; see src/lib/objectives-store.ts).
+   * LOCAL-ONLY: deliberately NOT mapped by any remote sync backend — a string[]
+   * would be mangled into a single remote label. It survives sync round-trips
+   * untouched because updateFields merges frontmatter.
+   */
+  objectives?: string[] | null;
   /** Remote identity — present only for synced tasks on a remote backend. */
   assignee?: string | null;
   created_by?: string | null;
@@ -65,6 +72,8 @@ export interface TaskData {
   rice: RiceFields | null;
   start_date: string | null;
   due_date: string | null;
+  /** Objective slugs this task serves (many-to-many, local-only). Empty when none. */
+  objectives: string[];
   assignee: string | null;
   /** User-defined custom-field values (override-declared). Empty when none. */
   custom_fields: Record<string, string | number | null>;
@@ -110,6 +119,8 @@ export interface CreateTaskInput {
   rice?: RiceFields | null;
   start_date?: string | null;
   due_date?: string | null;
+  /** Objective slugs this task serves (many-to-many, local-only). */
+  objectives?: string[];
   /** Seed user-defined custom-field values at creation (override-declared). */
   custom_fields?: Record<string, string | number | null>;
   /**

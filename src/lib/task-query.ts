@@ -16,6 +16,8 @@ export interface TaskRecord {
   version: string | null;
   related_feature: string | null;
   parent_task: string | null;
+  /** Objective slugs this task serves (many-to-many, local-only). */
+  objectives: string[];
   rice: RiceFields | null;
   /** Project-declared custom field values (overrides/task.md); {} when none. */
   custom_fields: Record<string, string | number | null>;
@@ -42,6 +44,8 @@ export interface TaskFilter {
   priority?: string;
   /** Exact related_feature match. */
   feature?: string;
+  /** Task must serve this objective (its `objectives` list contains the slug). */
+  objective?: string;
 }
 
 export interface TaskGroup {
@@ -109,6 +113,9 @@ export function toTaskRecord(
     version: strOrNull(data.version),
     related_feature: strOrNull(data.related_feature),
     parent_task: strOrNull(data.parent_task),
+    objectives: Array.isArray(data.objectives)
+      ? (data.objectives as unknown[]).map((s) => String(s).trim()).filter(Boolean)
+      : [],
     rice: normalizeRice(data.rice),
     custom_fields:
       data.custom_fields && typeof data.custom_fields === 'object' && !Array.isArray(data.custom_fields)
@@ -147,6 +154,9 @@ export function filterTasks(tasks: TaskRecord[], filter: TaskFilter = {}): TaskR
     }
     if (filter.feature) {
       if (!t.related_feature || !ieq(t.related_feature, filter.feature)) return false;
+    }
+    if (filter.objective) {
+      if (!t.objectives.some((o) => ieq(o, filter.objective!))) return false;
     }
     return true;
   });

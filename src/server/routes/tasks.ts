@@ -719,7 +719,9 @@ export async function handleTasksUpdate(
     }
   }
 
-  const allowedFields = ['status', 'priority', 'urgency', 'description', 'tags', 'name', 'related_feature', 'version', 'start_date', 'due_date', 'assignee'];
+  // `objectives` (roadmap many-to-many, local-only) is PATCHable so the dashboard
+  // can link tasks to objectives; the sync mappers never read it, so it stays local.
+  const allowedFields = ['status', 'priority', 'urgency', 'description', 'tags', 'name', 'related_feature', 'version', 'start_date', 'due_date', 'objectives', 'assignee'];
   for (const field of allowedFields) {
     if (body[field] !== undefined) {
       const oldVal = (oldData[field] ?? null) as FieldChange['from'];

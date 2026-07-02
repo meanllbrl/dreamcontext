@@ -14,7 +14,7 @@ import {
 
 // 'skill' docs are produced ONLY by loadSkillDocs (called directly by the hook);
 // intentionally excluded from buildCorpus defaults to avoid polluting haikuRecall.
-export type CorpusType = 'knowledge' | 'feature' | 'task' | 'memory' | 'changelog' | 'skill';
+export type CorpusType = 'knowledge' | 'feature' | 'task' | 'memory' | 'changelog' | 'skill' | 'objective';
 
 export interface CorpusDoc {
   type: CorpusType;
@@ -579,13 +579,18 @@ export function buildCorpus(
   contextRoot: string,
   opts: BuildCorpusOptions = {},
 ): CorpusDoc[] {
-  const types = new Set(opts.types ?? ['knowledge', 'feature', 'task', 'memory', 'changelog']);
+  const types = new Set(opts.types ?? ['knowledge', 'feature', 'task', 'memory', 'changelog', 'objective']);
   const docs: CorpusDoc[] = [];
   if (types.has('knowledge')) {
     docs.push(...loadMarkdownDocs(join(contextRoot, 'knowledge'), 'knowledge', contextRoot));
   }
   if (types.has('feature')) {
     docs.push(...loadMarkdownDocs(join(contextRoot, 'core', 'features'), 'feature', contextRoot));
+  }
+  if (types.has('objective')) {
+    // PO-authored roadmap objectives (core/objectives/*.md) — first-class recall
+    // docs so "what are we driving toward" surfaces in per-prompt recall too.
+    docs.push(...loadMarkdownDocs(join(contextRoot, 'core', 'objectives'), 'objective', contextRoot));
   }
   if (types.has('task')) {
     docs.push(...loadMarkdownDocs(join(contextRoot, 'state'), 'task', contextRoot));

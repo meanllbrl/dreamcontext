@@ -55,6 +55,7 @@ Ingest exactly the batch the orchestrator assigned — into the **confirmed hier
   - `dreamcontext knowledge create "<title>" --description "<one-line>" --tags "<area>" --content "<distilled>"`
   - `dreamcontext features create "<name>" --why "<purpose from code>" --tags "<area>" --status planning`
   - `dreamcontext tasks create <slug> -p <pri> -w "<why>"` for genuinely open/in-flight work
+  - `dreamcontext roadmap objective create <slug> --title "<outcome>" [--target YYYY-MM-DD] [--depends-on a,b] --why "<from source>"` for manifest items typed `objective` (roadmap/OKR outcomes); link ingested tasks that serve one via `--objectives a,b` on create
   - `dreamcontext taxonomy add domain:<concept>` · `dreamcontext config people "A" "B"`
 - **Capture real schemas** into `knowledge/data-structures/<product>.md` — actual tables/fields
   from Prisma/SQL/ORM, not "we use Postgres".

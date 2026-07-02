@@ -11,6 +11,7 @@ import { success, error, header, warn } from '../../lib/format.js';
 import { matchMember } from '../../lib/task-backend/member-match.js';
 import { readSetupConfig, isMultiPerson } from '../../lib/setup-config.js';
 import { getActivePlanningVersion } from '../../lib/active-version.js';
+import { listObjectives } from '../../lib/objectives-store.js';
 import { loadTaskOverride, fieldKey, type CustomFieldDef } from '../../lib/overrides.js';
 import { mergeRice, validateRiceInput, type RiceFields, type RiceInput } from '../../lib/rice.js';
 import {
@@ -42,6 +43,29 @@ function collectOption(value: string, previous: string[]): string[] {
 /** True for a real calendar date in YYYY-MM-DD form (rejects e.g. 2026-13-40). */
 function isCalendarDate(value: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`));
+}
+
+/**
+ * Parse + validate a comma-separated objective-slug list against the objectives
+ * store (write-time integrity: a task can only reference objectives that exist).
+ * Returns null after printing an error when any slug is unknown.
+ */
+function parseObjectiveSlugs(raw: string): string[] | null {
+  const slugs = Array.from(new Set(raw.split(',').map((s) => s.trim()).filter(Boolean)));
+  if (slugs.length === 0) return [];
+  const known = new Set(listObjectives(ensureContextRoot()).map((o) => o.slug));
+  const unknown = slugs.filter((s) => !known.has(s));
+  if (unknown.length > 0) {
+    error(
+      `Unknown objective(s): ${unknown.join(', ')}. `
+      + (known.size > 0
+        ? `Existing: ${[...known].join(', ')}. `
+        : 'No objectives exist yet. ')
+      + 'Create one first: dreamcontext roadmap objective create <slug> --title "..."',
+    );
+    return null;
+  }
+  return slugs;
 }
 
 /**
@@ -305,13 +329,14 @@ export function registerTasksCommand(program: Command): void {
     .option('--version <id>', 'Filter by version/milestone (e.g. S5, BACKLOG, memoryos-v2)')
     .option('--priority <level>', 'Filter by priority (critical, high, medium, low)')
     .option('--feature <slug>', 'Filter by related_feature')
+    .option('--objective <slug>', 'Filter by objective (task serves the given roadmap objective)')
     .option('-g, --group-by <field>', `Group output by ${GROUP_BY_FIELDS.join('|')}`)
     .option('--long', 'Show tags + version inline in human output')
     .option('--tags', 'List distinct tags with counts (respects -s/--all; ignores other filters)')
     .option('--json', 'Emit the filtered tasks as JSON (flat array)')
     .action(async (opts: {
       status?: string; all?: boolean; tag?: string[]; anyTag?: string[];
-      version?: string; priority?: string; feature?: string;
+      version?: string; priority?: string; feature?: string; objective?: string;
       groupBy?: string; long?: boolean; tags?: boolean; json?: boolean;
     }) => {
       const backend = getTaskBackend();
@@ -353,6 +378,7 @@ export function registerTasksCommand(program: Command): void {
         version: opts.version,
         priority: opts.priority,
         feature: opts.feature,
+        objective: opts.objective,
       };
       const matched = await backend.list(filter);
 
@@ -364,7 +390,7 @@ export function registerTasksCommand(program: Command): void {
       if (matched.length === 0) {
         const total = (await backend.list({ all: true })).length;
         const narrowed = (opts.tag && opts.tag.length > 0) || (opts.anyTag && opts.anyTag.length > 0)
-          || opts.version || opts.priority || opts.feature;
+          || opts.version || opts.priority || opts.feature || opts.objective;
         const msg = total === 0 ? 'No tasks.'
           : opts.status ? `No tasks with status "${opts.status}".`
           : narrowed ? 'No tasks match the given filters.'
@@ -421,9 +447,10 @@ export function registerTasksCommand(program: Command): void {
     .option('--effort <n>', 'RICE effort in weeks (> 0, ≤ 52)')
     .option('--start <date>', 'Planned start date (YYYY-MM-DD)')
     .option('--due <date>', 'Due/end date (YYYY-MM-DD)')
+    .option('--objectives <slugs>', 'Comma-separated roadmap objective slugs this task serves (many-to-many)')
     .option('--field <key=value...>', 'Set a declared custom field (repeatable): --field team=platform --field story_points=8')
     .option('--allow-missing-required', 'Create even when required custom fields are unset (intentional draft)')
-    .action(async (name: string, opts: { description?: string; priority?: string; urgency?: string; status?: string; tags?: string; why?: string; version?: string; person?: string; reach?: string; impact?: string; confidence?: string; effort?: string; start?: string; due?: string; field?: string[]; allowMissingRequired?: boolean }) => {
+    .action(async (name: string, opts: { description?: string; priority?: string; urgency?: string; status?: string; tags?: string; why?: string; version?: string; person?: string; reach?: string; impact?: string; confidence?: string; effort?: string; start?: string; due?: string; objectives?: string; field?: string[]; allowMissingRequired?: boolean }) => {
       const backend = getTaskBackend();
       const slug = slugify(name);
 
@@ -499,6 +526,13 @@ export function registerTasksCommand(program: Command): void {
         return;
       }
 
+      let objectives: string[] | undefined;
+      if (opts.objectives !== undefined) {
+        const parsed = parseObjectiveSlugs(opts.objectives);
+        if (parsed === null) return;
+        if (parsed.length > 0) objectives = parsed;
+      }
+
       // --field key=value pairs → custom_fields, validated against the override.
       let customFields: Record<string, string | number> | undefined;
       if (opts.field && opts.field.length > 0) {
@@ -538,6 +572,7 @@ export function registerTasksCommand(program: Command): void {
           rice: riceBlock,
           start_date: opts.start ?? null,
           due_date: opts.due ?? null,
+          ...(objectives ? { objectives } : {}),
           ...(customFields ? { custom_fields: customFields } : {}),
           variant: 'cli',
         });
@@ -718,6 +753,47 @@ export function registerTasksCommand(program: Command): void {
       const slug = await resolveTaskSlug(backend, name);
       if (!slug) return;
       await setCustomField(backend, slug, key, value);
+    });
+
+  // Objectives on existing tasks (many-to-many link to roadmap objectives; local-only)
+  tasks
+    .command('objectives')
+    .argument('<name>', 'Task slug or name')
+    .argument('[slugs]', 'Comma-separated objective slugs to SET, or "clear" / omit to print')
+    .description('Print, set, or clear the roadmap objectives a task serves (local-only field)')
+    .action(async (name: string, slugs: string | undefined) => {
+      const backend = getTaskBackend();
+      const slug = await resolveTaskSlug(backend, name);
+      if (!slug) return;
+      const task = await backend.get(slug);
+      if (!task) {
+        error(`Task not found: ${name}`);
+        return;
+      }
+
+      if (slugs === undefined) {
+        if (task.objectives.length === 0) {
+          console.log(chalk.dim(`No objectives on ${slug}. Set: dreamcontext tasks objectives ${slug} <a,b>`));
+        } else {
+          console.log(`${slug} serves: ${task.objectives.join(', ')}`);
+        }
+        return;
+      }
+
+      if (slugs.trim().toLowerCase() === 'clear') {
+        await backend.updateFields(slug, { objectives: [], updated_at: today() });
+        success(`Cleared objectives on ${slug}`);
+        return;
+      }
+
+      const parsed = parseObjectiveSlugs(slugs);
+      if (parsed === null) return;
+      if (parsed.length === 0) {
+        error('No objective slugs given — pass a comma-separated list, or "clear".');
+        return;
+      }
+      await backend.updateFields(slug, { objectives: parsed, updated_at: today() });
+      success(`${slug} now serves: ${parsed.join(', ')} (rollups update on next \`dreamcontext roadmap\`)`);
     });
 
   // Tag management on existing tasks (person:<slug> tags drive remote assignees)

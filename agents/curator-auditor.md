@@ -78,6 +78,11 @@ Produce **reorg findings** a worker could execute without guessing. Your domain 
   RE-TYPE / fold the other (capability → feature; rationale/research → knowledge that *references*
   the feature). Name both paths.
 - Duplicate knowledge across folders; overlapping features. Propose the single home + redirects.
+- **Objectives are a first-class type** (`core/objectives/*.md` — PO-authored OKR outcomes): an
+  outcome being driven → objective; a shipped capability → feature; rationale → knowledge. Never
+  propose re-typing an objective into a feature/knowledge file (or vice versa) without flagging it
+  as a PO decision. `knowledge/roadmap/board.md` is AUTO-GENERATED (`dreamcontext roadmap`) —
+  never a MERGE/COMPRESS target; exclude it from findings.
 
 **`features`** — reconcile `status` against reality (shipped work still `in_progress`?),
 RENAME to current vocabulary, dedup vs knowledge, flag stale/abandoned. Status vocab is read

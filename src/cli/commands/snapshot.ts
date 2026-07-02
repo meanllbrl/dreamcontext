@@ -21,6 +21,7 @@ import { buildDriftDirective, resolveDriftState } from '../../lib/setup-drift.js
 import { readAssetDriftCache, cacheConfidentlyClean } from '../../lib/asset-drift-cache.js';
 import { computeFeatureFreshness, freshnessSnapshotNote } from '../../lib/feature-freshness.js';
 import { pendingInboxCount } from '../../lib/federation-inbox.js';
+import { buildRoadmapModel, type RoadmapObjective } from '../../lib/roadmap-model.js';
 import { readPeerSummaryCache } from '../../lib/federation-peer-summary.js';
 import {
   applyBudget, resolveBudget, demoteMemoryBlock, demoteTaskList,
@@ -167,6 +168,12 @@ function getActiveTaskEntries(root: string): ActiveTaskEntry[] {
           }
         }
       } catch { /* skip */ }
+
+      // Objectives (roadmap many-to-many): the goals this task serves, inline —
+      // the agent sees the WHY next to the work without opening the file.
+      if (Array.isArray(data.objectives) && data.objectives.length > 0) {
+        line += `\n  Objectives: ${data.objectives.map(String).join(', ')}`;
+      }
 
       // Custom fields (project task-format override): show each declared field's
       // value inline so the agent never misses them; flag required ones still empty.
@@ -440,6 +447,87 @@ function getDriftDirective(root: string): string {
     return buildDriftDirective(driftInput) ?? '';
   } catch {
     return '';
+  }
+}
+
+/** Days a completed objective stays visible in the snapshot ("recently finished"). */
+const OBJECTIVES_RECENT_DONE_DAYS = 14;
+
+/** One plain-text line per objective (shared by snapshot + subagent briefing). */
+function objectiveSnapshotLine(o: RoadmapObjective): string {
+  const icon = { done: '🟢', active: '🔵', review: '🟡', not_started: '⚪' }[o.status];
+  const pct = o.progress.pct === null ? 'no tasks yet' : `${o.progress.done}/${o.progress.total} done (${o.progress.pct}%)`;
+  const dates: string[] = [];
+  if (o.target_date) dates.push(`target ${o.target_date}`);
+  if (o.forecast_end) dates.push(`forecast ${o.forecast_end}${o.slipping ? ' 🔴 SLIPPING' : ''}`);
+  const deps = o.depends_on.length > 0 ? ` · deps: ${o.depends_on.join(', ')}` : '';
+  return `- ${icon} ${o.slug} — ${o.title} · ${pct}${dates.length > 0 ? ' · ' + dates.join(' · ') : ''}${deps}`;
+}
+
+/**
+ * Objectives (roadmap) section: active objectives + ones completed in the last
+ * OBJECTIVES_RECENT_DONE_DAYS days — so every session knows WHAT the project is
+ * driving toward and what just landed. Returns null when no objectives exist.
+ * Demotions: full → active-only one-liners → single count line.
+ */
+function renderObjectivesSection(root: string): { full: string; demotions: string[] } | null {
+  try {
+    const model = buildRoadmapModel(root);
+    if (model.objectives.length === 0) return null;
+
+    const cutoff = new Date(Date.now() - OBJECTIVES_RECENT_DONE_DAYS * 86_400_000);
+    const isRecentDone = (o: RoadmapObjective): boolean => {
+      const latest = o.tasks
+        .map((t) => t.updated_at)
+        .filter((d): d is string => d !== null)
+        .sort()
+        .pop();
+      if (!latest) return false;
+      const t = Date.parse(latest);
+      return !Number.isNaN(t) && t >= cutoff.getTime();
+    };
+
+    const active = model.objectives.filter((o) => o.status !== 'done');
+    const recentDone = model.objectives.filter((o) => o.status === 'done' && isRecentDone(o));
+    if (active.length === 0 && recentDone.length === 0) return null;
+
+    const slippingCount = model.objectives.filter((o) => o.slipping === true).length;
+    const headerLines = [
+      '## Objectives (Roadmap — what we are driving toward)\n',
+      'Weigh decisions against these outcomes. Tasks link to them via `objectives:` frontmatter.',
+      '',
+    ];
+    const footer = [
+      '',
+      'Board: `knowledge/roadmap/board.md` · refresh: `dreamcontext roadmap` · typed model: `dreamcontext roadmap --json`',
+      '',
+    ];
+
+    const fullBody: string[] = [...headerLines];
+    for (const o of active) fullBody.push(objectiveSnapshotLine(o));
+    if (recentDone.length > 0) {
+      fullBody.push('');
+      fullBody.push('Recently finished:');
+      for (const o of recentDone) fullBody.push(objectiveSnapshotLine(o));
+    }
+    fullBody.push(...footer);
+
+    const level1: string[] = [...headerLines];
+    for (const o of active) level1.push(objectiveSnapshotLine(o));
+    level1.push('');
+
+    const level2 = [
+      '## Objectives (Roadmap)\n',
+      `- ${model.objectives.length} objective(s)${slippingCount > 0 ? ` — ${slippingCount} SLIPPING` : ''} — \`dreamcontext roadmap\` for the board`,
+      '',
+    ];
+
+    return {
+      full: fullBody.join('\n'),
+      demotions: [level1.join('\n'), level2.join('\n')],
+    };
+  } catch {
+    return null; // the snapshot must never crash on a malformed objective
   }
 }
 
@@ -772,6 +860,17 @@ export function generateSnapshot(rootOverride?: string): string {
     }
   }
   flush('releases', { neverEvict: true });
+
+  // 7.6 Objectives (roadmap) — active goals + recently-finished, so every
+  // session's decisions are weighed against the outcomes the PO is driving.
+  const objectivesSection = renderObjectivesSection(root);
+  if (objectivesSection) {
+    sections.push({
+      id: 'objectives',
+      text: objectivesSection.full,
+      demotions: objectivesSection.demotions,
+    });
+  }
 
   // 8. Features summary (with Why, related tasks, and latest changelog).
   // Demotion: active + recently-updated features keep their detail block; the
@@ -1129,6 +1228,23 @@ export function generateSubagentBriefing(): string {
       parts.push(`Project: ${summary}\n`);
     }
   }
+
+  // 2c. Objectives — the project's goals, so every sub-agent decision knows the
+  // WHY. Lean: one line per objective, capped, active first.
+  try {
+    const model = buildRoadmapModel(root);
+    if (model.objectives.length > 0) {
+      const active = model.objectives.filter((o) => o.status !== 'done');
+      const rest = model.objectives.filter((o) => o.status === 'done');
+      const lines = [...active, ...rest].slice(0, 10).map(objectiveSnapshotLine);
+      if (lines.length > 0) {
+        parts.push('## Objectives (project goals — the WHY behind the work)\n');
+        parts.push(lines.join('\n'));
+        parts.push('Tasks declare the objectives they serve via `objectives:` frontmatter (many-to-many).');
+        parts.push('');
+      }
+    }
+  } catch { /* never block the briefing on a malformed objective */ }
 
   // 3. Features summary (name, status, tags, why, related tasks)
   // Features come FIRST because they're the most actionable context for sub-agents.

@@ -560,8 +560,27 @@ dreamcontext tasks complete <name>        # Mark completed
 
 All flags (`--description`, `--priority`, `--status`, `--tags`, `--why`, `--urgency`, `--version`, `--start`, `--due`, `--field key=value`) are optional. Defaults to medium priority/urgency and todo status, so the command works non-interactively for agent use.
 
+- **Roadmap objectives.** Link tasks to PO-authored roadmap objectives with `--objectives a,b` on create or `tasks objectives <name> a,b|clear`, and filter with `tasks list --objective <slug>`. The field is many-to-many and **local-only** (never synced to a remote backend). See the Roadmap section below.
 - **Date ranges.** A task has an optional planned `start` and a `due`/end — set or clear either end independently (`tasks start`/`tasks due` accept a `clear` sentinel). Start must be on or before due; an inverted range is rejected. Setting any date removes the `backlog` tag, and the first move to `in_progress` auto-stamps `start_date` with today if it is still unset (a planned start is never overwritten). Both dates render in the dashboard Timeline (Gantt) and Calendar views, and sync to ClickUp (native start/due fields) and GitHub (a `<!-- dc:dates -->` issue-body block).
 - **User-declared custom fields.** Drop an optional `_dream_context/overrides/task.md` to declare your own task fields (`text` / `number` / `select` / `date`) and override the scaffolded task template. Set values with `--field key=value` on create or `tasks field <name> <key> [value|clear]`; values are validated against the schema and sync to both backends — `select` as a ClickUp drop-down / GitHub `key:value` label, the rest as a ClickUp custom field / GitHub `<!-- dc:fields -->` body block. `tasks provision` creates any missing remote fields and reuses ones that already exist by name. Absent the override file, tasks behave exactly as the defaults (zero regression). Full schema → [skill reference](skill/references/tasks-and-features.md).
+
+### Roadmap (objectives — the OKR board)
+
+A product-owner-authored board of **objectives** (outcomes like "increase retention 20%" or "ship v0.2.3") — not a derived shadow of tasks, not a list of releases. Objectives live one file each in `core/objectives/<slug>.md`; tasks link to them **many-to-many** via `objectives:` frontmatter; the computed assist layer does the math: progress rollups, a **full-DAG dependency forecast cascade** (a slip upstream moves every transitive dependent), and **target vs forecast** slip detection. Active objectives are injected into every session snapshot and are recallable (`memory recall --types objective`), so agents always know what the project is driving toward.
+
+```bash
+dreamcontext roadmap                                  # text board + regenerate knowledge/roadmap/board.md
+dreamcontext roadmap --json                           # the typed RoadmapModel (queryable, no writes)
+dreamcontext roadmap objective create increase-retention-20 --title "Increase retention by 20%" --target 2026-09-30
+dreamcontext roadmap objective depend launch-mobile increase-retention-20   # write-time circular-dep guard
+dreamcontext roadmap objective show increase-retention-20                   # members + "if this slips, so do: …"
+dreamcontext tasks create "Retention email drip" --objectives increase-retention-20
+```
+
+- 🟢 done · 🔵 active · 🟡 review · ⚪ not started — rolled up from the real member-task statuses; a manual `--status` override (the PO's call) wins.
+- 🔴 **SLIPPING** = computed forecast lands after the PO's target date — surfaced on the board, in `objective show`, and in the session snapshot before the deadline.
+- An objective with no dated member tasks is **unforecastable** (null) and never constrains its dependents; circular dependencies are rejected at write time.
+- During sleep consolidation, agents propose `objectives:` links for unlabeled tasks (never overwriting a non-empty list) and the board is regenerated automatically.
 
 #### Remote Task Backends — ClickUp or GitHub Issues
 

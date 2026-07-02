@@ -76,6 +76,7 @@ dreamcontext is **more than memory files**. Every capability below is real and s
 |---|---|---|
 | **Structured memory** | soul/user/memory + knowledge + tasks, auto-loaded each session | this file |
 | **Tasks** | Working documents with changelog, RICE, status lifecycle, start/due date ranges, resolved assignees, and project-declared custom fields (`overrides/task.md`) | [tasks-and-features.md](references/tasks-and-features.md) |
+| **Roadmap / Objectives** | PO-authored OKR board: objectives in `core/objectives/`, many-to-many task links (`objectives:` frontmatter), dependency DAG with full forecast cascade, target vs forecast slip detection, `dreamcontext roadmap` (+ `--json`) | [tasks-and-features.md](references/tasks-and-features.md) |
 | **Features (PRDs)** | Retrospective product docs, updated only during sleep | [tasks-and-features.md](references/tasks-and-features.md) |
 | **Knowledge** | Tagged deep docs, pinning, staleness, Excalidraw diagrams | [knowledge-and-recall.md](references/knowledge-and-recall.md) |
 | **Memory recall** | Haiku/BM25 search over the whole corpus; auto-injected on prompts | [knowledge-and-recall.md](references/knowledge-and-recall.md) |
@@ -105,7 +106,8 @@ The SessionStart hook injects this automatically every session — answer from i
 
 - **Soul, User, Memory** — full content (`core/0.soul.md`, `1.user.md`, `2.memory.md`)
 - **Extended core files index** — names/types of style guide, tech stack, system flow
-- **Active tasks** — status, priority, last updated (answer "which tasks are active?" from this)
+- **Active tasks** — status, priority, last updated, and the objectives each serves (answer "which tasks are active?" from this)
+- **Objectives (roadmap)** — active + recently-finished objectives with progress %, target vs forecast, and slip flags. **Weigh decisions against these outcomes** — they are WHAT the project is driving toward
 - **Bookmarks** — tagged important moments from prior sessions, by salience
 - **Contextual reminders** — triggers matching active tasks (prospective memory)
 - **Sleep state** — current debt level, sessions since last sleep, history
@@ -256,8 +258,9 @@ A ★★★ bookmark or 5+ sessions since last sleep also triggers an advisory.
 3. Build a brief inline (cheap CLI): read `state/.sleep.json`, `git status --short`, `git log` since last sleep, `dreamcontext core releases active`.
 4. Dispatch specialists **in parallel** (one message, multiple Agent calls): always `sleep-tasks` + `sleep-state`; fire `sleep-product` when knowledge/features/research signals warrant (over-fire — it no-ops cheaply); fire `sleep-migration` only if `dreamcontext migrations pending` has output.
 5. Wait for reports, then `dreamcontext reflect` (promote only genuinely load-bearing terms).
-6. `dreamcontext sleep done "<one-paragraph summary>"` — clears pre-epoch state, resets debt.
-7. Report the consolidated summary to the user.
+6. If `_dream_context/core/objectives/` is non-empty, run `dreamcontext roadmap` — a cheap deterministic call that refreshes the auto-generated board (`knowledge/roadmap/board.md`) from the reconciled tasks. Surface any 🔴 SLIPPING objectives in your summary.
+7. `dreamcontext sleep done "<one-paragraph summary>"` — clears pre-epoch state, resets debt.
+8. Report the consolidated summary to the user.
 
 For non-file-change work (decisions, architecture talk): `dreamcontext sleep add <score> "<reason>"`.
 
@@ -281,6 +284,8 @@ dreamcontext tasks complete <name> "summary"                             # done
 Status: `todo → in_progress → in_review → completed`. Sections: `why`, `user_stories`, `acceptance_criteria`, `constraints`, `technical_details`, `notes`, `changelog`.
 
 **Custom fields (if this project declares them).** When `_dream_context/overrides/task.md` exists, every task carries project-defined custom fields. Their **values are surfaced to you inline** — in the snapshot's Active Tasks block and in `dreamcontext tasks list --long` — so you can see them without opening the file; unset **required** fields show as `⚠ UNSET (required)`. When you create or reconcile a task, **set every declared field** (`dreamcontext tasks field <slug> <key> <value>` or `tasks create --field key=value`). **REQUIRED fields are mandatory — never create or complete a task with a required field left empty.** Fields marked **[ASK THE USER]** (`ask: true`) capture a human judgment (e.g. a time estimate) — **ask the user for the value when creating the task instead of guessing it.** The full schema + sync behavior → [tasks-and-features.md](references/tasks-and-features.md).
+
+**Objectives (roadmap links).** When the project has objectives (`core/objectives/` non-empty — they're in your snapshot), every task should declare which it serves: `objectives: [slug-a, slug-b]` in frontmatter (many-to-many — one task often lifts several outcomes). Set at creation (`tasks create --objectives a,b`) or later (`dreamcontext tasks objectives <task> a,b`). **Propose objective links for tasks you create; never overwrite a non-empty `objectives:` list — an existing value is a PO decision that sticks.** The field is local-only (never synced to a cloud backend). Rollups, forecasts, and slip detection are computed — `dreamcontext roadmap` / `--json`. Full model → [tasks-and-features.md](references/tasks-and-features.md).
 
 **RICE, due dates, tags/people, the Workflow flowchart, versioning, and multi-product** → [tasks-and-features.md](references/tasks-and-features.md).
 **Syncing tasks to a cloud backend (ClickUp _or_ GitHub — one at a time)** → [integrations.md](references/integrations.md).

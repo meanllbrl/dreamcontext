@@ -122,6 +122,12 @@ dreamcontext tasks status <slug> in_progress "plan validated; implementing"
 
 If `<slug>` already exists, de-collide (append a short suffix) rather than clobbering.
 
+If the project has **roadmap objectives** (`_dream_context/core/objectives/` non-empty — they appear
+in your snapshot), link the task to the objective(s) this goal serves: `tasks create --objectives a,b`
+(or `dreamcontext tasks objectives <slug> a,b` after). One goal often serves several objectives —
+that's expected. If unsure which, ask the user in Phase 0; never leave an obviously-serving task
+unlinked, and never overwrite an existing non-empty `objectives:` list.
+
 If the project declares **custom task fields** (`_dream_context/overrides/task.md`), `tasks create`
 hard-fails (exit 1) on an unset `required` field — set each with `--field key=value` on create. For
 any field marked `ask: true`, ask the user for the value back in Phase 0 (it's a human judgment) rather

@@ -100,6 +100,42 @@ dreamcontext tasks tag <name> person:ada --remove  # unassign
 
 ---
 
+## Objectives — the OKR roadmap (task ↔ objective, many-to-many)
+
+Objectives are **PO-authored outcomes** ("increase retention 20%", "ship v0.2.3", "launch mobile") stored one file each in `_dream_context/core/objectives/<slug>.md` — first-class, durable, recallable (`memory recall --types objective`), independent of any task. The roadmap is NOT a derived shadow of tasks and NOT a list of releases: the PO owns the structure; computation is the assist layer (rollups, forecast, slip detection).
+
+**The load-bearing relationship:** a task declares the objectives it serves via `objectives: [a, b]` frontmatter — **many-to-many** (one shipped task often lifts revenue AND retention). The reverse direction (objective → member tasks, objective → dependents) is always **computed**, never stored — so the two sides cannot drift.
+
+```bash
+dreamcontext roadmap                                  # text board + regenerate knowledge/roadmap/board.md
+dreamcontext roadmap --json                           # the typed RoadmapModel (query surface; no writes)
+dreamcontext roadmap objective create <slug> --title "..." [--target YYYY-MM-DD] [--depends-on a,b] [--feature <prd-slug>] [--why "..."]
+dreamcontext roadmap objective list|show <slug>       # show = members + dependents + "if this slips, so do: …"
+dreamcontext roadmap objective edit <slug> [--title] [--target <date>|clear] [--status not_started|active|review|done|clear] [--feature <slug>|clear]
+dreamcontext roadmap objective depend <A> <B>         # A depends on B — REJECTED at write time if it would create a cycle
+dreamcontext roadmap objective undepend <A> <B>
+dreamcontext roadmap objective delete <slug> --yes    # also heals other objectives' depends_on
+dreamcontext tasks create <name> --objectives a,b     # link at creation (slugs must exist)
+dreamcontext tasks objectives <task> a,b|clear        # set/clear on an existing task
+dreamcontext tasks list --objective <slug>            # all tasks serving an objective
+```
+
+**The computed model** (per objective, from `roadmap --json`):
+- **Progress** = completed ÷ total member tasks (each objective counts over its OWN member set — a shared task contributes to each independently).
+- **Rollup status** (real enum): all `completed`→`done` 🟢 · any `in_progress`→`active` 🔵 · any `in_review`→`review` 🟡 · else `not_started` ⚪. A manual `--status` override wins (`status_source: override`).
+- **Forecast cascade — full transitive DAG:** `forecast_start = max(earliest member start, max(forecast_end of dependencies))`; `forecast_end = max(latest member due, forecast_start)`. A slip anywhere propagates to ALL transitive dependents (diamond shapes included).
+- **Null rule:** no dated member tasks → `forecast = null` ("unforecastable") and it imposes NO constraint on dependents.
+- **Slipping** 🔴 = `forecast_end > target_date` (the PO's committed date). This is the live on-track signal — surfaced in the snapshot and the board.
+
+**Rules for agents:**
+1. **Propose, never overwrite.** Suggest `objectives:` for tasks you create or find unlabeled; an existing non-empty list is a PO decision — never change it unless the user asks.
+2. **Local-only field.** `objectives` is never pushed/pulled by cloud sync backends. Do not try to map it to remote labels.
+3. **Objectives are orthogonal to versions/cycles.** `version` = WHEN (the time-box); `objectives` = WHAT outcomes it serves. Both live on the task independently.
+4. **`knowledge/roadmap/board.md` is auto-generated** — regenerate with `dreamcontext roadmap`, never hand-edit it. Objective files themselves are PO-authored prose — edit `## Why`/`## Notes` freely, but rollups/members are computed and don't belong in them.
+5. A feature PRD *may* back an objective via the objective's `feature:` field — a convenience link, not a requirement.
+
+---
+
 ## The Workflow flowchart (keep it in sync)
 
 Every task file has a `## Workflow` mermaid block near the top: one node per acceptance criterion, grouped under milestone subgraphs, with status classes `done` / `active` / `todo` / `blocked`. It is the load-bearing summary of the task — drift makes future sessions misread progress.
@@ -130,6 +166,7 @@ related_feature: null     # feature slug for cross-link
 product: null             # multi-product scoping (optional)
 start_date: null          # YYYY-MM-DD or null — planned start (range start)
 due_date: null            # YYYY-MM-DD or null — due / planned end (range end)
+objectives: []            # roadmap objective slugs this task serves (many-to-many, LOCAL-ONLY — never synced)
 rice: { reach: 5, impact: 3, confidence: 75, effort: 2, score: 5.625 }
 custom_fields: {}         # project-declared fields (only when overrides/task.md exists)
 ---

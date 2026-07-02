@@ -52,10 +52,11 @@ For non-file-change work (architecture discussion, a decision with no edits): `d
    - Pass each specialist a small text brief: epoch, session IDs, active task slugs, planning version, the signals relevant to it, optional user hint. Do **not** paste transcript content — specialists call `dreamcontext transcript distill <id>` themselves.
 5. **Wait for all reports** (each returns a short structured report).
 6. **`dreamcontext reflect`** — each candidate is a term seen across multiple sessions not yet in soul/user/memory/knowledge. Promote into `2.memory.md` or a knowledge file ONLY if genuinely load-bearing; most are noise — discard. Never auto-promote.
-7. **Marketing pass** if `_dream_context/marketing/` exists: `dreamcontext mk rem-sleep`.
-8. **Council promote check:** `dreamcontext council list --unpromoted` — promote if the user engaged positively.
-9. **`dreamcontext sleep done "<one-paragraph summary stitched from specialist reports>"`** — clears pre-epoch state, resets debt, writes a history entry. (If a remote backend — ClickUp or GitHub — is active and any task pushes failed, this auto-retries once, then errors loudly with the failed slugs.)
-10. **Report** the consolidated summary to the user.
+7. **Roadmap refresh** if `_dream_context/core/objectives/` is non-empty: run `dreamcontext roadmap` — a cheap deterministic call that recomputes rollups/forecasts from the reconciled tasks and rewrites the auto-generated `knowledge/roadmap/board.md`. Surface any 🔴 SLIPPING objectives (and objectives whose member tasks are now all complete — suggest the PO confirm them done) in your summary. Sleep never edits objective files themselves — they are PO-authored.
+8. **Marketing pass** if `_dream_context/marketing/` exists: `dreamcontext mk rem-sleep`.
+9. **Council promote check:** `dreamcontext council list --unpromoted` — promote if the user engaged positively.
+10. **`dreamcontext sleep done "<one-paragraph summary stitched from specialist reports>"`** — clears pre-epoch state, resets debt, writes a history entry. (If a remote backend — ClickUp or GitHub — is active and any task pushes failed, this auto-retries once, then errors loudly with the failed slugs.)
+11. **Report** the consolidated summary to the user.
 
 ---
 
@@ -63,7 +64,7 @@ For non-file-change work (architecture discussion, a decision with no edits): `d
 
 | Specialist | Owns | Notes |
 |---|---|---|
-| `sleep-tasks` | Task files (`state/*.md`) | Reconciles task bodies to truth, bumps statuses, creates tasks for untracked work, attaches to the planning version, sets the start/due range, and keeps declared custom fields current (never fabricating `ask` fields in the no-user sleep context). |
+| `sleep-tasks` | Task files (`state/*.md`) | Reconciles task bodies to truth, bumps statuses, creates tasks for untracked work, attaches to the planning version, sets the start/due range, and keeps declared custom fields current (never fabricating `ask` fields in the no-user sleep context). When objectives exist, proposes `objectives:` links for tasks with an EMPTY/absent list (multiple slugs when a task serves several outcomes) — **never overwrites a non-empty list** (that's a PO decision). |
 | `sleep-state` | Core identity (soul, user, memory, core 3–6), CHANGELOG, RELEASES | Records patterns/decisions/preferences, writes a changelog entry per meaningful change since the epoch, surfaces release readiness, enforces anti-bloat ceilings, flags stale knowledge for `sleep-product`. |
 | `sleep-product` | Knowledge files + feature PRDs | Creates/reconciles `knowledge/*.md` and `core/features/*.md`, processes staleness flags, maintains the knowledge index + taxonomy. |
 | `sleep-migration` | Structure only | Moves/renames folders, normalizes frontmatter, wraps fences. Never alters body prose. |
