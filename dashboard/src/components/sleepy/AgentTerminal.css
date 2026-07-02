@@ -504,7 +504,15 @@
      default (subpixel where it can) — softer than WebGL, without the thin/harsh look. */
   -webkit-font-smoothing: auto;
   -moz-osx-font-smoothing: auto;
-  text-rendering: optimizeLegibility;
+  /* MUST NOT enable kerning/ligatures on a monospace terminal grid. `optimizeLegibility`
+     turns both ON, so the DOM renderer draws each row of text WIDER than the FitAddon's
+     per-glyph cell measurement — the row overflows to the right and Claude's TUI gets
+     clipped mid-word at the viewport edge (the "text kesiliyor" bug). Force a uniform
+     advance: no kerning, no ligatures. `optimizeSpeed` also disables both as a backstop. */
+  text-rendering: optimizeSpeed;
+  font-kerning: none;
+  font-variant-ligatures: none;
+  font-feature-settings: 'liga' 0, 'calt' 0;
 }
 .agent-pane-slot .xterm-viewport {
   background-color: transparent !important;
