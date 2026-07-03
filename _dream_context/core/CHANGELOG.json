@@ -1,5 +1,22 @@
 [
   {
+    "date": "2026-07-03",
+    "type": "feat",
+    "scope": "roadmap",
+    "description": "Shipped the interactive dashboard surface for the OKR objective board (a94b1e8): a Roadmap page with a forecast timeline (month-gridded axis, gradient status bars, dotted target diamonds, red slip-overshoot hatching, bezier dependency connectors that redden on cascade slip), a live forecast cascade computed client-side (frontend topo/finish-to-start) so dragging a bar to reschedule slides and reddens every dependent's forecast live while only the dragged objective's dates actually persist, drag-from-node to link a dependency with hover-X to unlink, a status-column board view, and a slide-over ObjectiveDetailPanel that is fully inline-editable (title, status with clear-override, committed start/target via a new DateRangePicker, Impact x Effort, dependencies via a new DependencyPicker) with immediate persistence. Backend: GET /api/roadmap (buildRoadmapModel), PATCH /api/objectives/:slug, and cycle-guarded POST/DELETE /api/objectives/:slug/dependencies (src/server/routes/objectives.ts). objectives-store.ts hardened for hand-edited YAML: date coercion on read plus delete self-heal with unhealed-reference reporting. Tasks board gained a task-to-objective assignment control (TaskDetailPanel). Docs: README Roadmap section and DEEP-DIVE version history/what's-next updated; RELEASES.json v0.10.5 summary extended to cover both the OKR board and this dashboard.",
+    "breaking": false,
+    "summary": "Interactive dashboard Roadmap page: forecast timeline with live drag-to-reschedule cascade, drag-to-link dependencies, board view, and a fully inline-editable detail panel",
+    "references": [
+      "commit:032ed24",
+      "file:dashboard/src/components/roadmap/RoadmapTimeline.tsx",
+      "file:dashboard/src/components/roadmap/RoadmapBoard.tsx",
+      "file:src/server/routes/objectives.ts",
+      "file:src/lib/objectives-store.ts",
+      "task:interactive-roadmap-dashboard-forecast-timeline-cascade-editable-detail-panel",
+      "feature:roadmap"
+    ]
+  },
+  {
     "date": "2026-07-02",
     "type": "fix",
     "scope": "sleepy",

@@ -2,7 +2,7 @@
 id: "feat_WBfWsxgS"
 status: "in_review"
 created: "2026-07-02"
-updated: "2026-07-02"
+updated: "2026-07-03"
 released_version: null
 tags:
   - "topic:roadmap"
@@ -10,6 +10,7 @@ tags:
   - architecture
 related_tasks:
   - feat-roadmap-live-po-authored-roadmap-items-dependencies-forecast-vs-target
+  - interactive-roadmap-dashboard-forecast-timeline-cascade-editable-detail-panel
 ---
 
 ## Why
@@ -27,6 +28,11 @@ The roadmap is therefore a **PO-authored board of Objectives** (OKR-style outcom
 - [x] As an agent, I propose which objective(s) an unlabeled task serves, but I never overwrite a PO's existing choice, so automation assists without silently overriding a human decision.
 - [x] As any session agent, I see active (and recently finished) objectives in my session snapshot and sub-agent briefing, so I weigh my work against the outcomes the project is actually driving toward, not just the task queue.
 - [x] As a developer or script, I can query the roadmap model as JSON (`roadmap --json`, `objective list/show --json`) for tooling or future dashboard rendering, without needing to scrape the text board.
+- [x] As a PO reviewing the roadmap live, I see a forecast timeline (month-gridded axis, gradient status bars at the computed forecast window, dotted target diamonds, red slip-overshoot hatching, bezier dependency connectors that redden on cascade slip) instead of a static text board.
+- [x] As a PO, I can drag an objective's bar to reschedule it and immediately see the forecast cascade ripple through its dependents (sliding + reddening live), with only the dragged objective's own dates actually persisted.
+- [x] As a PO, I can draw a dependency by dragging from one bar to another, and remove one with a hover-✕, without leaving the timeline.
+- [x] As a PO, I can switch to a status-column board view of the same objectives when I want a Kanban-style read instead of a timeline.
+- [x] As a PO, I can open an objective's slide-over detail panel and edit everything inline — title, status (with a clear-override), committed start/target via a date-range picker, Impact × Effort, and add/remove dependencies — with every edit persisting immediately.
 
 ## Acceptance Criteria
 
@@ -43,10 +49,23 @@ The roadmap is therefore a **PO-authored board of Objectives** (OKR-style outcom
 - [x] `sleep-tasks` proposes `objectives:` links only for tasks with an empty list (never overwrites a PO's choice); the sleep flow regenerates the board via a deterministic `dreamcontext roadmap` call; sleep never hand-edits `core/objectives/*.md` (PO-authored only).
 - [x] `dreamcontext doctor` validates objective slugs, target dates, status overrides, dependency resolution/acyclicity, and task→objective reference integrity — silent when the feature is unused (no objectives defined).
 - [x] 25 unit tests cover the store (CRUD, write-time cycle guard, delete self-healing) and the model builder (topo sort, full-DAG cascade including diamond shape, null-forecast rule, rollups, transitive dependents); full suite green (2512+ tests) and the CLI surface was exercised end-to-end in a sandbox (every verb, cascade, snapshot section, briefing, recall, doctor, delete-healing, status override).
+- [x] `GET /api/roadmap` exposes `buildRoadmapModel` verbatim as JSON; the dashboard Roadmap page renders it as a timeline (default) or a status-column board, both filterable by status/signal/search and sortable.
+- [x] Dragging a timeline bar computes a live frontend forecast cascade (`roadmap-forecast.ts`: topo order, finish-to-start over committed dates) and re-renders dependent bars (position + slip-red) without a round-trip; releasing the drag persists only the dragged objective's `start_date`/`target_date` via `PATCH /api/objectives/:slug`.
+- [x] Dragging from one bar's connector node to another calls `POST /api/objectives/:slug/dependencies`; the store's write-time DFS cycle guard rejects a cycle-closing edge as a 400 the UI toasts. Hovering a connector and clicking its ✕ calls `DELETE /api/objectives/:slug/dependencies/:to`.
+- [x] The slide-over detail panel is fully inline-editable — title, status (+ explicit clear-override), start/target via a `DateRangePicker`, Impact × Effort segmented control, and add/remove dependencies via a `DependencyPicker` — every field persists immediately through the PATCH/dependency endpoints, no separate save step.
+- [x] Deleting an objective from the panel self-heals both directions (strips the slug from every other objective's `depends_on` and every task's `objectives:`) and the response surfaces `unhealedTasks[]` so an incomplete heal is visible, not silent.
+- [x] Tasks can be assigned to objectives directly from the Tasks board (`TaskDetailPanel` "Roadmap" chips field), writing `objectives:` via the existing task PATCH path; assigning invalidates the roadmap query so the objective's rollup updates live.
+- [x] The Roadmap page respects the dashboard's global zoom control (CSS `zoom`, not `transform`) and all pointer-drag geometry (bar-drag delta, connector cursor) stays accurate at any zoom level.
+- [x] Hand-edited or malformed objective dates degrade gracefully instead of poisoning the cascade: `readObjectiveFile` coerces unquoted-YAML `Date` objects to a UTC calendar string and nulls non-calendar strings (falls back to unforecastable); the frontend forecast builder has matching `validISO()` defense-in-depth.
 
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
 
+- **2026-07-03 — The forecast cascade is computed client-side, not re-fetched from the server on every drag.** `roadmap-forecast.ts` re-runs the topo/finish-to-start cascade in the browser as the pointer moves so dependents slide/redden with zero latency; only the drag's *final* result is persisted (one `PATCH /api/objectives/:slug`) for the dragged objective. The server-side `buildRoadmapModel` remains the source of truth on load/refresh — the frontend cascade is a live preview of the same math, not a second implementation of record.
+- **2026-07-03 — Dependency edges always go through the dedicated endpoints, never through the general PATCH.** `POST/DELETE /api/objectives/:slug/dependencies` are the only way to add/remove a `depends_on` edge, so the store's write-time DFS cycle guard runs on every edge change; `PATCH /api/objectives/:slug` intentionally has no `depends_on` field.
+- **2026-07-03 — Delete self-heal failures are surfaced, never swallowed.** `deleteObjective` returns `unhealedTasks[]` instead of catching silently; the DELETE route, `useDeleteObjective`, and the detail panel all propagate that count so a partial heal is visible to the PO, not a silent data-integrity gap.
+- **2026-07-03 — Malformed dates degrade to "unforecastable," never NaN.** A hand-edited objective file with an unquoted YAML date (parsed as a JS `Date`) or a garbage date string is coerced/nulled at read time (`readObjectiveFile`) rather than propagating a `NaN` into the cascade; the frontend forecast builder has matching `validISO()` defense-in-depth so a bad value degrades the same way on both sides.
+- **2026-07-03 — The roadmap canvas respects the dashboard's global zoom via CSS `zoom`, not `transform: scale`.** The timeline is a literal-px pixel-geometry canvas, immune to the font-token-based global zoom; `zoom` reflows crisply in Chromium where `transform` would blur/misalign hit-targets, and pointer handlers divide physical `clientX` by the captured zoom factor so drag/resize/link stay accurate at any zoom.
 - **2026-07-02 — Storage stays markdown; JSON is a query layer, not the store.** `core/objectives/<slug>.md` remains the canonical, PO-editable, recallable, wikilinkable store (mirrors features/tasks). `roadmap --json` / `objective list --json` / `objective show --json` emit the typed model on demand — a JSON store would have lost recall indexing, wikilinks, and sleep-editability, and broken consistency with how tasks and features are stored.
 - **2026-07-02 — Relations are stored one-way; the reverse is always computed.** Tasks store `objectives: [slug…]`; objectives store `depends_on: [slug…]`. The reverse directions (which tasks serve an objective; which objectives depend on this one) are computed by `buildRoadmapModel`, never dual-written — this eliminates a whole class of drift bugs.
 - **2026-07-02 — PO-override persistence rule.** Enforced as: agents only ever populate an EMPTY `objectives:` list on a task. A non-empty list is a PO decision and is never overwritten by an agent (including `sleep-tasks`).
@@ -68,19 +87,32 @@ The roadmap is therefore a **PO-authored board of Objectives** (OKR-style outcom
 - **Snapshot + briefing:** the SessionStart snapshot renders a budget-aware Objectives section (active objectives in full, recently-finished ≤14 days summarized, demoting to active-only then a count line under context pressure) and appends `objectives:` inline to each active task line; the SubagentStart briefing injects a lean, active-first objectives list capped at 10.
 - **Doctor:** `checkObjectives()` in `src/cli/commands/doctor.ts` validates slugs, target date formats, status overrides, `depends_on` resolution and acyclicity, and task→objective reference integrity; no-ops silently when `core/objectives/` is empty.
 - **Sleep integration:** `sleep-tasks` proposes `objectives:` values only for tasks whose list is empty (never overwrites); the main sleep flow calls `dreamcontext roadmap` as a deterministic, non-agentic step to regenerate `knowledge/roadmap/board.md` from the reconciled task set; no sleep specialist writes to `core/objectives/*.md`.
-- **v2 (not yet built):** `GET /api/roadmap` in `buildRouter()` (`src/server/index.ts`) returning the model as JSON for the dashboard; an Excalidraw/Mermaid render of the board; RemSleep auto-regen triggers beyond the deterministic sleep-flow call; slip-diff ("what slipped since last review").
-- **v3 (not yet built):** velocity-based forecasting/capacity hints; federation roll-up of objectives across peer vaults; an explicit Key Results layer if the implicit tasks-roll-straight-up model proves insufficient.
+- **Dashboard Roadmap page** (`dashboard/src/pages/RoadmapPage.tsx`) — the interactive surface, styled to the `Roadmap.dc.html` design, built on top of the model builder above:
+  - `components/roadmap/RoadmapTimeline.{tsx,css}` — the timeline body: month-gridded date axis, gradient status bars drawn at the *forecast* window (`roadmap-forecast.ts`: `buildForecasts`, topo order + finish-to-start over committed dates), a dotted ◆ target marker, red slip-overshoot hatching when forecast > target, and bezier dependency connectors that redden on cascade slip. Pointer handlers use `setPointerCapture` + `pointercancel` (fixes stuck drags leaving the window) and referentially-stable callbacks via refs (fixes a stale-closure listener leak on unmount).
+  - `components/roadmap/RoadmapBoardView.{tsx,css}` — the alternate status-column (Kanban-style) read of the same filtered item set.
+  - `components/roadmap/ObjectiveDetailPanel.{tsx,css}` — the slide-over, fully inline-editable: title, status + clear-override, start/target via `DateRangePicker.{tsx,css}`, Impact × Effort segmented control, dependencies via `DependencyPicker.{tsx,css}`; a Delete button (confirm) surfaces `unhealedTasks` from the delete response.
+  - `components/roadmap/ObjectiveCreateModal.{tsx,css}`, `RoadmapToolbar.tsx` (status/signal/search filters + view-type + visible-property toggles, shared by both views), `chrome.ts` (status/signal color tokens, sort/layout types).
+  - `hooks/useObjectives.ts` — `useObjectivesList`, `useCreateObjective`, `useUpdateObjective`, `useDeleteObjective`, `useAddDependency`, `useRemoveDependency` (React Query mutations over the objectives HTTP API, invalidating `['roadmap']`/`['objectives']` on write).
+  - `hooks/useRoadmapItems.ts` — merges `GET /api/roadmap` (computed model: progress, rollup status, member tasks, dependents, forecast) with the flat objective list (which carries `start_date`/`impact`/`effort`) by slug into the `RoadmapItem` shape the views render.
+  - `hooks/useRoadmapPrefs.ts` — toolbar prefs (filters/sort/layout/visible card props/search), persisted the same way as `useGraphSettings`: localStorage mirror + write-through to `state/.roadmap-prefs.json` via a server route, because the desktop app's loopback port (and therefore origin) changes every launch.
+  - `hooks/useAppZoom.ts` — reads the `--zoom` CSS var + `dreamcontext-zoom` event; the Roadmap card applies `zoom: var(--zoom)` (not `transform: scale`) since it's a pixel-geometry canvas immune to the font-token-based global zoom, and pointer handlers divide `clientX` by the captured zoom so drag/link stay accurate.
+  - Task↔objective assignment now also happens from the Tasks board: a "Roadmap" chips field in `TaskDetailPanel.tsx` writes `objectives:` via the existing task PATCH, invalidating `['roadmap']` so the objective rollup updates live.
+- **Backend HTTP surface** (`src/server/routes/objectives.ts`, wired into `buildRouter()` in `src/server/index.ts`): `GET /api/roadmap` (returns `buildRoadmapModel(contextRoot)` verbatim), `GET/POST /api/objectives`, `PATCH /api/objectives/:slug` (title/dates/impact/effort/status/feature — NOT `depends_on`), `POST /api/objectives/:slug/dependencies` and `DELETE /api/objectives/:slug/dependencies/:to` (both run the store's write-time cycle guard), `DELETE /api/objectives/:slug` (self-healing, returns `unhealedTasks[]`). All store-level `ObjectiveError`s surface as 400/404s, not 500s.
+- **v2 (remaining):** velocity-based forecasting/capacity hints; federation roll-up of objectives across peer vaults; an explicit Key Results layer if the implicit tasks-roll-straight-up model proves insufficient; slip-diff ("what slipped since last review").
 - **Companion, orthogonal task:** `version → cycle` presentation rename (`task_Gjb49LnG`) — cosmetic only, does not touch this data model.
 
 ## Notes
 
 - **Open question — Key Results layer:** should objectives get an explicit Objective → KRs → tasks layer, or stay implicit (tasks roll straight up)? Current lean is implicit for MVP, explicit KRs deferred to v3 if needed.
 - **Open question — objective/feature namespace:** should an objective and a backing feature PRD share a slug namespace, or should the objective carry an explicit `feature:` link? Current lean is a `feature:` link on the objective (objective stays the outcome; feature stays the capability doc).
-- As of this writing `core/objectives/` is empty — no objectives have been PO-authored yet. The MVP is implemented and validated (25 unit tests, full suite green, e2e sandbox pass) but not yet published to npm (publish checklist requires owner login/2FA), and the PO has not yet reviewed the board UX. `status` stays `in_review` until that review lands; do not set `released_version` until the user releases it.
+- The PO has since authored the first three objectives (`increase-retention-20`, `launch-mobile-app`, `ship-v0-2-3`) in `core/objectives/`, and the interactive dashboard Roadmap page is built and merged (`032ed24`, folded into the v0.10.5 payload — RELEASES.json still shows `v0.10.5` status `planning`, not yet published to npm). `status` stays `in_review` until the PO has reviewed the live dashboard UX end-to-end; do not set `released_version` until the user releases it.
 - 3 reference GitHub issues track adjacent rendering/refresh gaps that could affect a future v2 dashboard render of this board: #81 (excalidraw card overflow + connector routing), #82 (dashboard doesn't live-refresh excalidraw boards).
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-07-03 - Interactive dashboard Roadmap page shipped
+- The read-only text/JSON board gained a full interactive surface (`032ed24`, task `interactive-roadmap-dashboard-forecast-timeline-cascade-editable-detail-panel`): a forecast timeline (month-gridded axis, gradient status bars at the forecast window, dotted target diamonds, red slip-overshoot hatching, bezier dependency connectors that redden on cascade slip) with live drag-to-reschedule (frontend cascade, only the dragged objective persists) and drag-to-link/hover-✕-unlink dependencies; a status-column board view; a fully inline-editable slide-over detail panel (title, status+clear, date-range picker, Impact×Effort, dependencies). Backend: `GET /api/roadmap`, `PATCH /api/objectives/:slug`, `POST/DELETE /api/objectives/:slug/dependencies` (cycle-guarded). Hardening from multi-reviewer pass: date coercion for hand-edited YAML dates, delete self-heal with `unhealedTasks[]` reporting, pointer-capture/referential-stability gesture fixes, app-wide zoom awareness. Task↔objective assignment added to the Tasks board detail panel. `status` held at `in_review` — PO has not yet reviewed the live dashboard.
 
 ### 2026-07-02 - MVP implemented and validated
 - Full PO-authored OKR roadmap shipped in the working tree: objectives store + CRUD + write-time cycle guard, pure roadmap model builder with full-DAG cascade and null-forecast rule, `dreamcontext roadmap` CLI surface (text board + `board.md` + `--json` + objective CRUD/depend verbs), `objectives` task field wired across 6 TypeScript surfaces (local-only, not synced), `objective` recall corpus type, budget-aware snapshot section + sub-agent briefing injection, `doctor` validation, and sleep-cycle integration (propose-into-empty + deterministic board regen). 25 new unit tests; full suite (2512+ tests) green; CLI surface e2e-validated in a sandbox. Not yet published to npm; PO has not yet reviewed the board UX — status held at `in_review`.
