@@ -35,8 +35,8 @@
   {
     "id": "rel_LRJQshhO",
     "version": "0.10.6",
-    "date": "",
-    "summary": "",
+    "date": "2026-07-03",
+    "summary": "v0.10.6 — cache-busting republish of the v0.10.5 payload under a clean version. v0.10.5 shipped the interactive OKR Roadmap dashboard (forecast timeline, live cascade, editable detail panel) in its npm tarball and desktop .app, but stale installs on other machines (npx cache, an unchanged desktop app manifest that skips re-download when the version matches) kept resolving a roadmap-less build. Bumping to 0.10.6 across all five version surfaces forces every install path to pull fresh. No source changes vs 0.10.5 — identical dashboard bundle (index-DalMBSek.js), 2492 tests green, pack dry-run correct.",
     "breaking": false,
     "status": "planning",
     "features": [],
