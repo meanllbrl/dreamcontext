@@ -316,6 +316,15 @@
   display: none;
 }
 
+/* Beta variant of the chip — a warm amber, distinct from Lab's accent-violet, so
+   a "not-final" surface (Roadmap) reads apart from an "experimental" one (Council)
+   even though they share the same chip shape. */
+.sidebar-beta-tag {
+  color: var(--color-warning, #d98324);
+  background: color-mix(in srgb, var(--color-warning, #d98324) 14%, transparent);
+  border-color: color-mix(in srgb, var(--color-warning, #d98324) 35%, transparent);
+}
+
 /* Sleepy rail mascot — the two eyes blink, mirroring the Ask-idle face. */
 @keyframes sidebarSleepyBlink {
   0%, 90%, 100% { transform: scaleY(1); }

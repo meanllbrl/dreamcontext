@@ -1,0 +1,38 @@
+/* Warnings banner (roadmap model warnings — unknown refs, cycles). */
+.rm-warn {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 24px;
+  background: rgba(227, 179, 65, 0.10);
+  border-bottom: 1px solid rgba(227, 179, 65, 0.24);
+}
+.rm-warn-icon {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  background: rgba(227, 179, 65, 0.18);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #e3b341;
+  font-size: 12px;
+}
+.rm-warn-list { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 5px 16px; }
+.rm-warn-item { font-size: 12.5px; color: var(--color-text-secondary); line-height: 1.4; }
+.rm-warn-x {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  cursor: pointer;
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+  transition: all var(--transition-fast);
+}
+.rm-warn-x:hover { background: rgba(227, 179, 65, 0.16); color: var(--color-text); }

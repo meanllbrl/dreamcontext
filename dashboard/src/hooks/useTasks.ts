@@ -24,6 +24,8 @@ export interface Task {
   tags: string[];
   parent_task: string | null;
   related_feature: string | null;
+  /** Roadmap objectives this task serves (many-to-many, local-only — never synced). */
+  objectives?: string[];
   version: string | null;
   start_date?: string | null;
   due_date?: string | null;
@@ -62,7 +64,7 @@ interface CreateTaskInput {
 
 interface UpdateTaskInput {
   slug: string;
-  updates: Partial<Pick<Task, 'status' | 'priority' | 'urgency' | 'description' | 'tags' | 'name' | 'related_feature' | 'version' | 'due_date' | 'start_date' | 'assignee' | 'body'>> & {
+  updates: Partial<Pick<Task, 'status' | 'priority' | 'urgency' | 'description' | 'tags' | 'name' | 'related_feature' | 'version' | 'due_date' | 'start_date' | 'assignee' | 'objectives' | 'body'>> & {
     rice?: RiceInput | null;
     custom_fields?: Record<string, string | number | null>;
   };
@@ -135,6 +137,11 @@ export function useUpdateTask() {
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
       queryClient.invalidateQueries({ queryKey: ['tasks', variables.slug] });
+      // A task's `objectives` link feeds the roadmap rollup (progress, member tasks,
+      // forecast) — refresh it so the roadmap reflects the change immediately.
+      if (variables.updates.objectives !== undefined) {
+        queryClient.invalidateQueries({ queryKey: ['roadmap'] });
+      }
     },
   });
 }
@@ -145,6 +152,8 @@ export function useDeleteTask() {
     mutationFn: (slug: string) => api.del<{ success: boolean }>(`/tasks/${slug}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tasks'] });
+      // A deleted task drops out of any objective's rollup — refresh the roadmap.
+      queryClient.invalidateQueries({ queryKey: ['roadmap'] });
     },
   });
 }

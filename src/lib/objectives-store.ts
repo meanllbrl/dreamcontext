@@ -23,12 +23,17 @@ export type ObjectiveStatus = (typeof OBJECTIVE_STATUSES)[number];
 export interface Objective {
   slug: string;
   title: string;
-  /** PO-committed target date (YYYY-MM-DD) or null. */
+  /** PO-committed start of the objective window (YYYY-MM-DD) or null. */
+  start_date: string | null;
+  /** PO-committed target/end date (YYYY-MM-DD) or null. Compared vs forecast for slip. */
   target_date: string | null;
   /** Slugs of objectives this one depends on (DAG edges, cycle-guarded on write). */
   depends_on: string[];
   /** Optional link to a backing feature PRD slug. */
   feature: string | null;
+  /** Prioritization (value/effort 2×2). Impact 1–5; effort in weeks (>0, ≤52). */
+  impact: number | null;
+  effort: number | null;
   /** Optional manual PO override; null = status is computed from member tasks. */
   status: ObjectiveStatus | null;
   created_at: string | null;
@@ -42,17 +47,25 @@ export interface Objective {
 export interface CreateObjectiveInput {
   slug: string;
   title: string;
+  start_date?: string | null;
   target_date?: string | null;
   depends_on?: string[];
   feature?: string | null;
+  impact?: number | null;
+  effort?: number | null;
   why?: string;
 }
 
 export interface UpdateObjectiveInput {
   title?: string;
+  /** `null` clears the start. */
+  start_date?: string | null;
   /** `null` clears the target. */
   target_date?: string | null;
   feature?: string | null;
+  /** `null` clears the prioritization value. */
+  impact?: number | null;
+  effort?: number | null;
   /** `null` clears the manual override (back to computed). */
   status?: ObjectiveStatus | null;
 }
@@ -88,6 +101,26 @@ function toObjectiveStatus(v: unknown): ObjectiveStatus | null {
   return (OBJECTIVE_STATUSES as readonly string[]).includes(s) ? (s as ObjectiveStatus) : null;
 }
 
+function numOrNull(v: unknown): number | null {
+  if (v === null || v === undefined || v === '') return null;
+  const n = typeof v === 'number' ? v : Number(String(v).trim());
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Validate the value/effort 2×2 inputs against the same scales the task RICE uses
+ * (`rice.ts`): impact is an integer 1–5, effort a number of weeks in (0, 52].
+ * `null`/`undefined` clears the field and is always allowed.
+ */
+function validateImpactEffort(impact: number | null | undefined, effort: number | null | undefined): void {
+  if (impact !== null && impact !== undefined && (!Number.isInteger(impact) || impact < 1 || impact > 5)) {
+    throw new ObjectiveError(`Impact must be an integer 1–5, got "${impact}".`);
+  }
+  if (effort !== null && effort !== undefined && (!Number.isFinite(effort) || effort <= 0 || effort > 52)) {
+    throw new ObjectiveError(`Effort must be a number of weeks in (0, 52], got "${effort}".`);
+  }
+}
+
 function readObjectiveFile(filePath: string): Objective {
   const { data, content } = readFrontmatter<Record<string, unknown>>(filePath);
   const slug = basename(filePath, '.md');
@@ -96,15 +129,36 @@ function readObjectiveFile(filePath: string): Objective {
     const s = String(v).trim();
     return s === '' || s === 'null' ? null : s;
   };
+  // Date fields must be read defensively. A hand-edited UNQUOTED YAML date
+  // (`start_date: 2026-07-03`) is parsed by js-yaml as a `Date` OBJECT, not a
+  // string; naively stringifying it yields "Fri Jul 03 2026 …", which is not a
+  // calendar date and would poison the forecast cascade (NaN → "NaN-NaN-NaN"
+  // winning string comparisons and corrupting every dependent). Coerce a Date to
+  // its UTC calendar day (js-yaml parses date-only as UTC midnight), and null out
+  // any string that isn't a valid YYYY-MM-DD so a bad value degrades to
+  // "unforecastable" instead of silently corrupting the board.
+  const dateOrNull = (v: unknown): string | null => {
+    if (v === undefined || v === null) return null;
+    if (v instanceof Date) {
+      if (Number.isNaN(v.getTime())) return null;
+      return `${v.getUTCFullYear()}-${String(v.getUTCMonth() + 1).padStart(2, '0')}-${String(v.getUTCDate()).padStart(2, '0')}`;
+    }
+    const s = String(v).trim();
+    if (s === '' || s === 'null') return null;
+    return isCalendarDate(s) ? s : null;
+  };
   return {
     slug,
     title: typeof data.title === 'string' && data.title.trim() ? data.title : slug,
-    target_date: strOrNull(data.target_date),
+    start_date: dateOrNull(data.start_date),
+    target_date: dateOrNull(data.target_date),
     depends_on: toStringArray(data.depends_on),
     feature: strOrNull(data.feature),
+    impact: numOrNull(data.impact),
+    effort: numOrNull(data.effort),
     status: toObjectiveStatus(data.status),
-    created_at: strOrNull(data.created_at),
-    updated_at: strOrNull(data.updated_at),
+    created_at: dateOrNull(data.created_at),
+    updated_at: dateOrNull(data.updated_at),
     path: filePath,
     body: content.trim(),
   };
@@ -162,6 +216,20 @@ function validateTargetDate(target: string | null | undefined): void {
   }
 }
 
+/**
+ * Validate the committed window: each of start/target (when present) is a real
+ * calendar date, and start is not after target. Either may be null (open-ended).
+ */
+function validateDateRange(start: string | null | undefined, target: string | null | undefined): void {
+  if (start !== null && start !== undefined && !isCalendarDate(start)) {
+    throw new ObjectiveError(`Start date must be a valid YYYY-MM-DD, got "${start}".`);
+  }
+  validateTargetDate(target);
+  if (start && target && start > target) {
+    throw new ObjectiveError(`Start date (${start}) cannot be after the target date (${target}).`);
+  }
+}
+
 export function createObjective(contextRoot: string, input: CreateObjectiveInput): Objective {
   const slug = input.slug.trim();
   if (!isSafeObjectiveSlug(slug)) {
@@ -173,7 +241,8 @@ export function createObjective(contextRoot: string, input: CreateObjectiveInput
   if (existsSync(path)) {
     throw new ObjectiveError(`Objective already exists: ${slug}`);
   }
-  validateTargetDate(input.target_date);
+  validateDateRange(input.start_date, input.target_date);
+  validateImpactEffort(input.impact, input.effort);
 
   const existing = listObjectives(contextRoot);
   const depends = Array.from(new Set((input.depends_on ?? []).map((s) => s.trim()).filter(Boolean)));
@@ -190,9 +259,12 @@ export function createObjective(contextRoot: string, input: CreateObjectiveInput
   const date = today();
   const frontmatter: Record<string, unknown> = {
     title: input.title,
+    start_date: input.start_date ?? null,
     target_date: input.target_date ?? null,
     depends_on: depends,
     feature: input.feature ?? null,
+    impact: input.impact ?? null,
+    effort: input.effort ?? null,
     status: null,
     created_at: date,
     updated_at: date,
@@ -219,13 +291,27 @@ export function updateObjective(
 ): Objective {
   const existing = getObjective(contextRoot, slug);
   if (!existing) throw new ObjectiveError(`Objective not found: ${slug}`);
-  if ('target_date' in patch) validateTargetDate(patch.target_date);
+  if ('start_date' in patch || 'target_date' in patch) {
+    validateDateRange(
+      'start_date' in patch ? patch.start_date : existing.start_date,
+      'target_date' in patch ? patch.target_date : existing.target_date,
+    );
+  }
+  if ('impact' in patch || 'effort' in patch) {
+    validateImpactEffort(
+      'impact' in patch ? patch.impact : existing.impact,
+      'effort' in patch ? patch.effort : existing.effort,
+    );
+  }
   if ('status' in patch && patch.status !== null && patch.status !== undefined
       && !(OBJECTIVE_STATUSES as readonly string[]).includes(patch.status)) {
     throw new ObjectiveError(`Status must be one of: ${OBJECTIVE_STATUSES.join(', ')} (or cleared).`);
   }
   const updates: Record<string, unknown> = { updated_at: today() };
   if (patch.title !== undefined) updates.title = patch.title;
+  if ('start_date' in patch) updates.start_date = patch.start_date ?? null;
+  if ('impact' in patch) updates.impact = patch.impact ?? null;
+  if ('effort' in patch) updates.effort = patch.effort ?? null;
   if ('target_date' in patch) updates.target_date = patch.target_date ?? null;
   if ('feature' in patch) updates.feature = patch.feature ?? null;
   if ('status' in patch) updates.status = patch.status ?? null;
@@ -234,14 +320,21 @@ export function updateObjective(
 }
 
 /**
- * Delete an objective. Self-healing: the slug is also removed from every other
- * objective's `depends_on`, so no dangling dependency edges survive. Task
- * `objectives:` references to the deleted slug are tolerated by the builder
- * (surfaced as warnings), never a hard failure.
+ * Delete an objective. Fully self-healing: the slug is removed from every other
+ * objective's `depends_on` AND from every task's `objectives:` list, so no dangling
+ * dependency edge or membership reference survives (no orphan warnings after a
+ * delete). Task edits touch only the local-only `objectives` field — updated_at is
+ * left untouched so the change never masquerades as a syncable task edit.
+ *
+ * Returns the basenames of any task files that reference this objective but could
+ * NOT be healed (unparseable frontmatter). This is normally empty; a non-empty list
+ * means those tasks keep a dangling reference and the caller should surface a warning
+ * rather than silently claim a clean delete.
  */
-export function deleteObjective(contextRoot: string, slug: string): void {
+export function deleteObjective(contextRoot: string, slug: string): { unhealedTasks: string[] } {
   const existing = getObjective(contextRoot, slug);
   if (!existing) throw new ObjectiveError(`Objective not found: ${slug}`);
+  // Heal other objectives' depends_on edges.
   for (const other of listObjectives(contextRoot)) {
     if (other.slug !== slug && other.depends_on.includes(slug)) {
       updateFrontmatterFields(other.path, {
@@ -250,7 +343,37 @@ export function deleteObjective(contextRoot: string, slug: string): void {
       });
     }
   }
+  // Heal task membership: strip the slug from any task's `objectives:` list.
+  const unhealedTasks: string[] = [];
+  const stateDir = join(contextRoot, 'state');
+  if (existsSync(stateDir)) {
+    for (const file of fg.sync('*.md', { cwd: stateDir, absolute: true })) {
+      let objectives: string[];
+      try {
+        const { data } = readFrontmatter<Record<string, unknown>>(file);
+        objectives = Array.isArray(data.objectives)
+          ? data.objectives.map((s) => String(s).trim()).filter(Boolean)
+          : [];
+      } catch (err) {
+        // A file that won't parse MIGHT reference this objective — we can't tell,
+        // so we can't heal it. Record + log instead of silently dropping it, so a
+        // dangling reference never hides behind a "clean delete".
+        unhealedTasks.push(basename(file));
+        console.error(`[objectives] delete "${slug}": could not read task ${basename(file)} to heal its objectives list:`, err);
+        continue;
+      }
+      if (objectives.includes(slug)) {
+        try {
+          updateFrontmatterFields(file, { objectives: objectives.filter((o) => o !== slug) });
+        } catch (err) {
+          unhealedTasks.push(basename(file));
+          console.error(`[objectives] delete "${slug}": could not rewrite task ${basename(file)} to drop the reference:`, err);
+        }
+      }
+    }
+  }
   unlinkSync(existing.path);
+  return { unhealedTasks };
 }
 
 /**

@@ -4,6 +4,7 @@ import mermaid from 'mermaid';
 import panzoom from 'panzoom';
 import type { Task, RiceFields, RiceInput } from '../../hooks/useTasks';
 import { useUpdateTask, useAddTaskChangelog, useDeleteTask, useTaskMembers, useFeatureOptions, useSyncStatus, useTaskOverrides } from '../../hooks/useTasks';
+import { useObjectives } from '../../hooks/useObjectives';
 import { SearchableSelect } from './SearchableSelect';
 import { TaskCustomFields } from './TaskCustomFields';
 import { AddCustomFieldForm } from './AddCustomFieldForm';
@@ -377,6 +378,7 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
   const { data: featureOptions } = useFeatureOptions();
   const { data: customFieldDefs } = useTaskOverrides();
   const { data: versions } = usePlanningVersions();
+  const { data: objectives = [] } = useObjectives();
   const [changelogEntry, setChangelogEntry] = useState('');
   const [newTag, setNewTag] = useState('');
   const [mutationError, setMutationError] = useState<string | null>(null);
@@ -477,6 +479,20 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
   const removeAssignee = (person: string) => {
     setAssignees(effectiveAssignees.filter(p => p !== person));
   };
+
+  // Roadmap objectives this task serves (many-to-many, local-only). Assigning here
+  // links the task into an objective's rollup (progress, member tasks, forecast).
+  const taskObjectives = task.objectives ?? [];
+  const setTaskObjectives = (slugs: string[]) => {
+    updateTask.mutate(
+      { slug: task.slug, updates: { objectives: slugs } },
+      { onError: onMutationError },
+    );
+  };
+  const addObjective = (slug: string) => {
+    if (slug && !taskObjectives.includes(slug)) setTaskObjectives([...taskObjectives, slug]);
+  };
+  const removeObjective = (slug: string) => setTaskObjectives(taskObjectives.filter(s => s !== slug));
 
   const handleDelete = () => {
     if (!window.confirm(`Delete task "${task.name}"? This propagates to the remote backend on sync.`)) return;
@@ -1011,6 +1027,49 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
                 allowCustom
                 onChange={v => handleTextField('related_feature', v ?? '')}
               />
+            </PropertyRow>
+
+            <PropertyRow label="Roadmap">
+              <div className="assignee-multi">
+                {taskObjectives.length > 0 && (
+                  <div className="assignee-chips">
+                    {taskObjectives.map(slug => {
+                      const o = objectives.find(x => x.slug === slug);
+                      // A slug with no matching objective was orphaned (objective
+                      // deleted / renamed) — flag it so it can be cleaned up.
+                      const missing = objectives.length > 0 && !o;
+                      return (
+                        <span
+                          key={slug}
+                          className={`assignee-chip${missing ? ' assignee-chip--unmapped' : ''}`}
+                          title={missing ? `"${slug}" is not a known objective — remove it or recreate the objective.` : slug}
+                        >
+                          {o?.title ?? slug}
+                          {missing && <span className="assignee-chip__warn" aria-hidden="true">⚠</span>}
+                          <button
+                            type="button"
+                            className="assignee-chip__remove"
+                            aria-label={`Remove ${o?.title ?? slug}`}
+                            onClick={() => removeObjective(slug)}
+                          >
+                            ×
+                          </button>
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
+                <SearchableSelect
+                  value={null}
+                  options={objectives
+                    .filter(o => !taskObjectives.includes(o.slug))
+                    .map(o => ({ value: o.slug, label: o.title, hint: o.slug }))}
+                  placeholder={taskObjectives.length > 0 ? 'Add objective…' : 'Not on the roadmap'}
+                  searchPlaceholder="Search objectives…"
+                  clearLabel="None"
+                  onChange={v => { if (v) addObjective(v); }}
+                />
+              </div>
             </PropertyRow>
 
             <PropertyRow label="Start">

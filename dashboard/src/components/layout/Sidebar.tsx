@@ -14,7 +14,7 @@ function readVaultLabel(): string {
   }
 }
 
-export type Page = 'tasks' | 'core' | 'knowledge' | 'features' | 'sleep' | 'brain' | 'council' | 'settings' | 'packs' | 'about' | 'taxonomy';
+export type Page = 'tasks' | 'roadmap' | 'core' | 'knowledge' | 'features' | 'sleep' | 'brain' | 'council' | 'settings' | 'packs' | 'about' | 'taxonomy';
 
 interface SidebarProps {
   activePage: Page;
@@ -23,7 +23,7 @@ interface SidebarProps {
   collapsed: boolean;
 }
 
-interface NavItem { page: Page; labelKey: string; lab?: boolean }
+interface NavItem { page: Page; labelKey: string; lab?: boolean; beta?: boolean }
 interface NavGroup { labelKey: string; items: NavItem[] }
 
 // Grouped by job-to-be-done so the rail reads as a scannable hierarchy rather
@@ -40,6 +40,7 @@ const NAV_GROUPS: NavGroup[] = [
     labelKey: 'nav.group.workspace',
     items: [
       { page: 'tasks', labelKey: 'nav.tasks' },
+      { page: 'roadmap', labelKey: 'nav.roadmap', beta: true },
       { page: 'council', labelKey: 'nav.council', lab: true },
     ],
   },
@@ -123,20 +124,22 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
         <div key={group.labelKey} className="sidebar-group">
           <span className="sidebar-group-label">{t(group.labelKey)}</span>
           <ul className="sidebar-nav">
-            {group.items.map(({ page, labelKey, lab }) => {
+            {group.items.map(({ page, labelKey, lab, beta }) => {
               staggerIndex += 1;
               const label = t(labelKey);
+              const tag = lab ? t('nav.lab') : beta ? t('nav.beta') : null;
               return (
                 <li key={page} className={`animate-stagger animate-stagger-${staggerIndex}`}>
                   <button
                     className={`sidebar-item ${activePage === page ? 'sidebar-item--active' : ''}`}
                     onClick={() => onNavigate(page)}
-                    title={lab ? `${label} — ${t('nav.lab')}` : label}
+                    title={tag ? `${label} — ${tag}` : label}
                     aria-current={activePage === page ? 'page' : undefined}
                   >
                     <span className="sidebar-icon"><NavIcon page={page} /></span>
                     <span className="sidebar-label">{label}</span>
                     {lab && <span className="sidebar-lab-tag">{t('nav.lab')}</span>}
+                    {beta && <span className="sidebar-lab-tag sidebar-beta-tag">{t('nav.beta')}</span>}
                   </button>
                 </li>
               );

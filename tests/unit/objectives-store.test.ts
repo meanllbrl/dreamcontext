@@ -150,3 +150,44 @@ describe('objective slug validation', () => {
     expect(isSafeObjectiveSlug('')).toBe(false);
   });
 });
+
+describe('hardening — review fixes', () => {
+  const objDir = () => join(root, 'core', 'objectives');
+
+  it('coerces an UNQUOTED YAML date (parsed as a Date object) to a calendar string on read', () => {
+    mkdirSync(objDir(), { recursive: true });
+    // Hand-authored frontmatter with an unquoted date — js-yaml parses this as a Date.
+    writeFileSync(join(objDir(), 'x.md'), '---\ntitle: X\nstart_date: 2026-07-03\ntarget_date: 2026-08-01\n---\nbody\n');
+    const o = getObjective(root, 'x');
+    expect(o?.start_date).toBe('2026-07-03');
+    expect(o?.target_date).toBe('2026-08-01');
+  });
+
+  it('nulls a non-calendar date string on read instead of propagating garbage', () => {
+    mkdirSync(objDir(), { recursive: true });
+    writeFileSync(join(objDir(), 'y.md'), '---\ntitle: Y\nstart_date: "not-a-date"\ntarget_date: "2026-13-40"\n---\nbody\n');
+    const o = getObjective(root, 'y');
+    expect(o?.start_date).toBeNull();
+    expect(o?.target_date).toBeNull();
+  });
+
+  it('deleteObjective strips the slug from a task\'s objectives list and reports no unhealed tasks', () => {
+    createObjective(root, { slug: 'obj', title: 'Obj' });
+    mkdirSync(join(root, 'state'), { recursive: true });
+    writeFileSync(join(root, 'state', 't.md'), '---\nname: T\nstatus: todo\nobjectives:\n  - obj\n  - other\n---\nbody\n');
+    const res = deleteObjective(root, 'obj');
+    expect(res.unhealedTasks).toEqual([]);
+    const healed = readFileSync(join(root, 'state', 't.md'), 'utf8');
+    expect(healed).not.toMatch(/- obj\b/);
+    expect(healed).toMatch(/other/); // unrelated slug preserved
+  });
+
+  it('deleteObjective reports a task it could not heal (unparseable frontmatter)', () => {
+    createObjective(root, { slug: 'obj', title: 'Obj' });
+    mkdirSync(join(root, 'state'), { recursive: true });
+    // Broken YAML — cannot be parsed to check/heal its objectives list.
+    writeFileSync(join(root, 'state', 'bad.md'), '---\nname: [unterminated\nobjectives: : :\n---\nbody\n');
+    const res = deleteObjective(root, 'obj');
+    expect(res.unhealedTasks).toContain('bad.md');
+  });
+});

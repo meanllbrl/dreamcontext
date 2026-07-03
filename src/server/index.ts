@@ -39,7 +39,16 @@ import {
   handleSleepyConfigGet,
   handleSleepyConfigSet,
 } from './routes/launcher.js';
-import { handleBrainSettingsGet, handleBrainSettingsPut } from './routes/ui-settings.js';
+import { handleBrainSettingsGet, handleBrainSettingsPut, handleRoadmapPrefsGet, handleRoadmapPrefsPut } from './routes/ui-settings.js';
+import {
+  handleObjectivesList,
+  handleObjectivesCreate,
+  handleObjectivesUpdate,
+  handleObjectivesDelete,
+  handleObjectivesAddDependency,
+  handleObjectivesRemoveDependency,
+  handleRoadmapModel,
+} from './routes/objectives.js';
 import { handleBoardGet, handleBoardSharedPut, handleBoardLocalPut } from './routes/board.js';
 import {
   handleSleepyChatSend,
@@ -215,6 +224,22 @@ function buildRouter(): Router {
   // desktop app's per-launch loopback port change (which wipes localStorage).
   router.get('/api/brain-settings', handleBrainSettingsGet);
   router.put('/api/brain-settings', handleBrainSettingsPut);
+
+  // Roadmap toolbar preferences (filters/sort/view-type/properties/search) —
+  // per-machine, persisted so they survive the same loopback-port localStorage wipe.
+  router.get('/api/roadmap-prefs', handleRoadmapPrefsGet);
+  router.put('/api/roadmap-prefs', handleRoadmapPrefsPut);
+
+  // Roadmap computed model (progress, forecast, member tasks, warnings).
+  router.get('/api/roadmap', handleRoadmapModel);
+
+  // Objectives — the PO-authored OKR roadmap write path (list + create + edit).
+  router.get('/api/objectives', handleObjectivesList);
+  router.post('/api/objectives', handleObjectivesCreate);
+  router.patch('/api/objectives/:slug', handleObjectivesUpdate);
+  router.delete('/api/objectives/:slug', handleObjectivesDelete);
+  router.post('/api/objectives/:slug/dependencies', handleObjectivesAddDependency);
+  router.delete('/api/objectives/:slug/dependencies/:to', handleObjectivesRemoveDependency);
 
   // Tasks-board preferences (saved views) — split persistence:
   //   shared → overrides/board.json (version-controlled, "save for all")

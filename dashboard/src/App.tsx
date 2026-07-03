@@ -11,6 +11,7 @@ import { ProjectProvider } from './context/ProjectContext';
 import { Shell, type ShellNavigation } from './components/layout/Shell';
 import { AgentSurface } from './components/sleepy/AgentSurface';
 import { TasksPage } from './pages/TasksPage';
+import { RoadmapPage } from './pages/RoadmapPage';
 import { SleepPage } from './pages/SleepPage';
 import { CorePage } from './pages/CorePage';
 import { KnowledgePage } from './pages/KnowledgePage';
@@ -88,6 +89,8 @@ function PageRouter({ nav }: { nav: ShellNavigation }) {
       return <BrainPage onNavigate={handleBrainNavigate} />;
     case 'tasks':
       return <TasksPage focus={focus} />;
+    case 'roadmap':
+      return <RoadmapPage />;
     case 'sleep':
       return <SleepPage />;
     case 'core':

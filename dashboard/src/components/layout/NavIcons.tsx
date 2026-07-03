@@ -39,6 +39,20 @@ function TasksIcon() {
   );
 }
 
+/** Roadmap — a horizontal timeline of objective bars stacked left→right, with a
+   dashed "today" marker: the PO board reduced to its silhouette. */
+function RoadmapIcon() {
+  return (
+    <Svg>
+      <line x1="3" y1="4.5" x2="21" y2="4.5" />
+      <rect x="3" y="7.4" width="11" height="3.2" rx="1.2" />
+      <rect x="8" y="13.2" width="13" height="3.2" rx="1.2" />
+      <rect x="3" y="19" width="8" height="3.2" rx="1.2" />
+      <line x1="10" y1="3" x2="10" y2="21" strokeDasharray="1.6 2" opacity="0.55" />
+    </Svg>
+  );
+}
+
 /** Council — two speech bubbles facing off: a debate. */
 function CouncilIcon() {
   return (
@@ -153,6 +167,7 @@ function AboutIcon() {
 /** Page → icon. Sleepy is handled separately (its animated eyes mark). */
 const ICONS: Partial<Record<Page, () => React.ReactElement>> = {
   tasks: TasksIcon,
+  roadmap: RoadmapIcon,
   council: CouncilIcon,
   core: CoreIcon,
   knowledge: KnowledgeIcon,

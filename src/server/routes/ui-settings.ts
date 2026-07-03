@@ -89,3 +89,70 @@ export async function handleBrainSettingsPut(
     sendError(res, 500, 'write_failed', 'Failed to persist brain settings.');
   }
 }
+
+// ─── Generic per-machine settings blob (factory) ─────────────────────────────
+//
+// Same shape as the brain-settings pair above, parameterized by the target file.
+// Used for surfaces whose preferences are PURELY personal (no team-sharing need),
+// so they get one gitignored per-machine file instead of the shared/local split.
+// The blob stays opaque to the server: the client owns its shape.
+
+type SettingsHandler = (
+  req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+) => Promise<void>;
+
+function makeSettingsHandlers(relPath: string, logTag: string): { get: SettingsHandler; put: SettingsHandler } {
+  const pathFor = (contextRoot: string) => join(contextRoot, relPath);
+  const get: SettingsHandler = async (_req, res, _params, contextRoot) => {
+    const path = pathFor(contextRoot);
+    if (!existsSync(path)) {
+      sendJson(res, 200, { settings: {} });
+      return;
+    }
+    try {
+      const raw = JSON.parse(readFileSync(path, 'utf-8'));
+      const settings = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+      sendJson(res, 200, { settings });
+    } catch {
+      sendJson(res, 200, { settings: {} });
+    }
+  };
+  const put: SettingsHandler = async (req, res, _params, contextRoot) => {
+    const body = await parseJsonBody(req);
+    if (!body) {
+      sendError(res, 400, 'invalid_body', 'Request body must be valid JSON.');
+      return;
+    }
+    const settings = body.settings;
+    if (settings === null || typeof settings !== 'object' || Array.isArray(settings)) {
+      sendError(res, 400, 'invalid_settings', 'settings must be a JSON object.');
+      return;
+    }
+    const serialized = JSON.stringify(settings, null, 2);
+    if (Buffer.byteLength(serialized, 'utf-8') > MAX_BYTES) {
+      sendError(res, 400, 'too_large', 'settings payload is too large.');
+      return;
+    }
+    try {
+      const path = pathFor(contextRoot);
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, serialized + '\n', 'utf-8');
+      sendJson(res, 200, { ok: true });
+    } catch (err) {
+      console.error(`[ui-settings] ${logTag} write failed:`, err);
+      sendError(res, 500, 'write_failed', `Failed to persist ${logTag}.`);
+    }
+  };
+  return { get, put };
+}
+
+// ─── Roadmap toolbar preferences (per-machine) ───────────────────────────────
+// The Roadmap board's toolbar state (filters, sort, view-type, properties,
+// search) is personal to this machine — mirror it to a gitignored file so it
+// survives the desktop app's per-launch loopback-port change (localStorage reset).
+const roadmapPrefsHandlers = makeSettingsHandlers('state/.roadmap-prefs.json', 'roadmap-prefs');
+export const handleRoadmapPrefsGet = roadmapPrefsHandlers.get;
+export const handleRoadmapPrefsPut = roadmapPrefsHandlers.put;

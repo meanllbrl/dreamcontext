@@ -582,6 +582,8 @@ dreamcontext tasks create "Retention email drip" --objectives increase-retention
 - An objective with no dated member tasks is **unforecastable** (null) and never constrains its dependents; circular dependencies are rejected at write time.
 - During sleep consolidation, agents propose `objectives:` links for unlabeled tasks (never overwriting a non-empty list) and the board is regenerated automatically.
 
+The dashboard turns this board into a live, editable **Roadmap page**. A **forecast timeline** lays objectives on a month-gridded axis — gradient status bars span each computed forecast window, dotted diamonds mark the PO's target, and red hatching flags a target overshoot; bezier connectors trace dependencies and redden when a slip cascades through them. **Drag a bar** to reschedule and every dependent's forecast bar slides and reddens live (only the dragged objective's dates persist); **drag from a node** to link a dependency, hover-✕ to unlink. A **Board view** groups objectives into status columns, and a slide-over **detail panel** edits everything inline — title, status (with clear-override), committed start/target via a date-range picker, Impact × Effort, and dependencies — persisting each change immediately. Backed by `GET /api/roadmap`, `PATCH /api/objectives/:slug`, and `POST`/`DELETE /api/objectives/:slug/dependencies` (cycle-guarded).
+
 #### Remote Task Backends — ClickUp or GitHub Issues
 
 Tasks default to local markdown files. Optionally they can live in a remote

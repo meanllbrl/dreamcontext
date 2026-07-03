@@ -1,0 +1,143 @@
+.drp { position: relative; }
+
+.drp-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 38px;
+  padding: 0 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: 13.5px;
+  font-family: var(--font-family-text);
+  cursor: pointer;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+.drp-trigger:hover { border-color: var(--color-border-hover); }
+.drp-trigger--open { border-color: var(--color-accent); box-shadow: var(--shadow-glow); }
+.drp-trigger svg { color: var(--color-text-tertiary); flex: 0 0 auto; }
+
+.drp-label { flex: 1; text-align: left; }
+.drp-placeholder { flex: 1; text-align: left; color: var(--color-text-tertiary); }
+
+.drp-clear {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  font-size: 15px;
+  color: var(--color-text-tertiary);
+}
+.drp-clear:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
+
+/* Popover */
+.drp-pop {
+  position: absolute;
+  top: 44px;
+  left: 0;
+  z-index: 50;
+  width: 268px;
+  padding: 10px;
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+}
+
+.drp-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.drp-nav-title {
+  font-family: var(--font-family-display);
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--color-text);
+}
+.drp-nav-btn {
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  font-size: 17px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+.drp-nav-btn:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
+
+.drp-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  margin-bottom: 3px;
+}
+.drp-weekdays span {
+  text-align: center;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--color-text-tertiary);
+}
+
+.drp-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 1px 0;
+}
+
+.drp-day {
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-text);
+  cursor: pointer;
+  border-radius: 7px;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.drp-day:hover { background: var(--color-bg-tertiary); }
+.drp-day--dim { color: var(--color-text-tertiary); opacity: 0.55; }
+.drp-day--today { box-shadow: inset 0 0 0 1px var(--color-border-hover); }
+
+/* In-range fill uses square edges so consecutive days read as one bar; the two
+   edges (start/end) are the rounded accent pills. */
+.drp-day--range {
+  background: var(--color-accent-soft);
+  border-radius: 0;
+  color: var(--color-text);
+}
+.drp-day--edge {
+  background: var(--color-accent);
+  color: var(--color-accent-text);
+  font-weight: 700;
+}
+.drp-day--edge:hover { background: var(--color-accent); }
+
+.drp-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-border);
+}
+.drp-hint { font-size: 11px; color: var(--color-text-tertiary); }
+.drp-foot-clear {
+  font-size: 11.5px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+.drp-foot-clear:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
