@@ -1,7 +1,7 @@
 ---
 name: roadmap-board
 description: >-
-  AUTO-GENERATED objective board (6 objective(s), none slipping).
+  AUTO-GENERATED objective board (7 objective(s), none slipping).
   Regenerate with `dreamcontext roadmap` — do not edit by hand.
 tags:
   - 'topic:roadmap'
@@ -13,6 +13,8 @@ date: '2026-07-04'
 # Roadmap Board
 
 > Auto-generated 2026-07-04 by `dreamcontext roadmap`. Objectives live in `core/objectives/`; task links live in each task's `objectives:` frontmatter.
+
+### 🔵 **demo-mrr2** — 2000 USD MRR · USD 850/2000 MRR (43%) · forecast — (unforecastable: no dated member tasks)
 
 ### ⚪ **improve-recall-mechanism** — Improve Recall Mechanism · no tasks yet · target 2026-08-16 · forecast — (unforecastable: no dated member tasks)
   Unblocks: hello-world-pr

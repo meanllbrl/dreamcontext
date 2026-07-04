@@ -38,7 +38,7 @@ Users need a visual interface to manage agent context without using the terminal
 - [x] As a user, I want time-axis views (timeline/calendar/heatmap) so that I can plan when work lands and see load/completions over time
 - [x] As a user, I want to create new tasks from the dashboard with name, description, priority, urgency, version, and tags so that I can add work without the CLI
 - [x] As a user, I want to update task fields (status, priority, description) and add changelog entries from a detail panel so that I can keep tasks current
-- [ ] As a user, I want to see the agent character in the top-left corner showing sleep state (alert, drowsy, sleepy, must sleep) so that I know when consolidation is needed
+- [x] As a user, I want to see the agent character in the top-left corner showing sleep state (alert, drowsy, sleepy, must sleep) so that I know when consolidation is needed
 - [ ] As a user, I want a dedicated sleep page showing debt level, session history, and dashboard changes so that I can track sleep cycles in a beautiful UI
 - [ ] As a user, I want to read and edit core files (soul, user, memory, style guide, tech stack) with a markdown editor and live preview so that I can update project identity
 - [ ] As a user, I want to browse, search, and view knowledge files so that I can find stored knowledge quickly
@@ -520,6 +520,9 @@ All mutating endpoints call recordDashboardChange() except `PATCH /api/config` (
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-07-04 - Live sleep-debt tracker in header (commit 7af88ff)
+- **SleepDebtTracker component** (`dashboard/src/components/layout/SleepDebtTracker.tsx/.css`): live animated Sleepy mascot in header showing debt level (alert/drowsy/sleepy/must-sleep) with color-coded bar (green→violet→red), animated eyes (drowsier as debt rises), and localized level label. Mounted in `Header.tsx`. `useSleep.ts` updated with threshold realignment + `SLEEP_DEBT_MAX` constant.
 
 ### 2026-07-04 - One-click full-machine upgrade (in progress, sleep-product consolidation)
 - `UpdateBadge` now performs the upgrade instead of just nudging: singleton `POST /api/launcher/upgrade` (runs `dreamcontext upgrade --yes` in an interactive login shell) + `GET /api/launcher/upgrade/status` polling + `POST /api/launcher/relaunch` (detached-process relaunch escaping the app's own teardown).

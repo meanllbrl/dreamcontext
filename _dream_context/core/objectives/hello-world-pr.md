@@ -1,12 +1,13 @@
 ---
 title: Hello World PR
-start_date: '2026-08-23'
-target_date: '2026-09-19'
+start_date: '2026-09-05'
+target_date: '2026-10-02'
 depends_on:
   - improve-recall-mechanism
   - improve-sleep-quality
   - simplified-ux
   - include-codex-opencode-support
+  - make-it-a-business
 feature: null
 impact: 4
 effort: 4

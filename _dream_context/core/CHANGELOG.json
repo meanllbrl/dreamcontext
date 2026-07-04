@@ -1,6 +1,75 @@
 [
   {
     "date": "2026-07-04",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "Cluster of dashboard UX improvements: UpdateBadge gains animated state transitions (pulse, slide-in, fade-out) with reduced-motion support. LauncherPage CSS refinements for project list layout. AgentSurface/AgentTabs/AgentTerminal readability improvements (font rendering, selection colors, CSS tweaks). Settings page gains brain-sync settings section. ObjectiveDetailPanel adds inline metric editing. RoadmapTimeline 2-line bar titles for readability at narrow widths, progress bars visible in names column. New shared ProjectSwitcher.tsx and agentSettings.ts lib modules laid groundwork for future features. I18nContext extended with new translation keys.",
+    "breaking": false,
+    "summary": "Dashboard UI polish — UpdateBadge animations, launcher project switcher prep, agent terminal improvements",
+    "references": [
+      "file:dashboard/src/components/layout/UpdateBadge.tsx",
+      "file:dashboard/src/components/layout/Header.tsx",
+      "file:dashboard/src/components/sleepy/AgentSurface.tsx",
+      "file:dashboard/src/pages/SettingsPage.tsx",
+      "file:dashboard/src/components/roadmap/"
+    ]
+  },
+  {
+    "date": "2026-07-04",
+    "type": "feat",
+    "scope": "roadmap",
+    "description": "Objectives can now track progress via a key-result metric (e.g., $2000 MRR) instead of task-completion rollup. New optional 'metric:' frontmatter block with label/unit/baseline/target/current. Dashboard renders metric values in board view, timeline, detail panel, and snapshot. CLI roadmap board shows metric progress bars. Doctor validates metric blocks. Sleep never writes 'current' — the in-session agent updates it on user instruction. This closes the gap where outcome-based OKRs (revenue, users, etc.) had no way to show real progress. Feature PRD updated with validated architecture, acceptance criteria, decisions, technical details, changelog. Task created and linked to make-dreamcontext-team-ready objective.",
+    "breaking": false,
+    "summary": "Key-result metric tracking for objectives — progress from MRR/revenue, not just task count",
+    "references": [
+      "file:_dream_context/core/features/okr-roadmap.md",
+      "file:src/lib/objectives-store.ts",
+      "file:src/lib/roadmap-model.ts",
+      "file:dashboard/src/components/roadmap/",
+      "task:feat-okr-key-result-metric-"
+    ]
+  },
+  {
+    "date": "2026-07-04",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "Adds a SleepDebtTracker widget to the right side of the header: a linear progress bar climbing toward the 'Must Sleep' ceiling (debt/20), paired with the coded, mood-animated SleepyMascot face. Both are driven by the same live /api/sleep debt (polls every 15s via useSleep), so rest state tracks in near real time. Level colours the fill (green→violet→amber→red+pulse) and the face mood (awake→drowsy→asleep). Click opens the full Sleep page. Also realigns the frontend debt thresholds in useSleep.ts to the canonical source (src/lib/sleep-consolidation.ts): the backend rescaled x2 to 8/14/20 on 2026-06-29 but the frontend was left on the old 4/7/10 scale. This corrects getSleepLevel / getSleepLevelKey / getSleepMood (also consumed by SleepPage) and exports SLEEP_DEBT_MAX.",
+    "breaking": false,
+    "summary": "Live sleep-debt tracker + animated Sleepy face in header, real-time debt monitoring",
+    "references": [
+      "commit:7af88ff",
+      "file:dashboard/src/components/layout/SleepDebtTracker.tsx",
+      "file:dashboard/src/hooks/useSleep.ts"
+    ]
+  },
+  {
+    "date": "2026-07-04",
+    "type": "docs",
+    "scope": "okr",
+    "description": "Resolves the monetization open question on the make-it-a-business objective: open-source free CLI as the distribution channel, closed-source paid desktop app as the product ($9.99/mo, 14-day trial). Key positioning is zero data custody — team collaboration runs over the customer's own GitHub, so context never touches our servers and we carry no data liability. Adds an MRR key result (target $2000) so the outcome is tracked, not just described. This is a significant product-direction decision by the PO.",
+    "breaking": false,
+    "summary": "Define 'Make it a Business' — free CLI + paid closed-source app, zero data custody",
+    "references": [
+      "commit:3b704fc",
+      "file:_dream_context/core/objectives/make-it-a-business.md"
+    ]
+  },
+  {
+    "date": "2026-07-04",
+    "type": "feat",
+    "scope": "brain-sync",
+    "description": "Brain lives in its own GitHub repo; git-illiterate teammates stay in sync automatically. Validated plan v3.2+v3.3 (3 reviewers, 5 iterations, 21 findings) + 3-round code review (PASS) + validation (PASS). New lib/git-sync/ module family: git wrapper (GitSyncError, --no-commit merges), scrub gate (BLOCK/WARN, redacted excerpts), GIT_ASKPASS credential supply (token never in URL/argv/env; 0600 tmp file), deterministic semantic merge (changelog/releases/config/task union rules; prose defers to agent), conflict-report handoff, sync engine (5-clause reentrancy guard, auto/pull-only/push-only, --resume/--continue, post-merge re-scrub, PID-liveness brain lock, C4 non-FF retry). CLI commands: dreamcontext brain {status,enable,disable,init,attach,discover,scrub,sync} (private-by-default init, trust-gated attach, master switch with GitHub-connected derived default). Sleep done auto-sync (best-effort-but-loud) + session-start detached pull-only spawn (PATH-safe, DREAMCONTEXT_BRAIN_SYNC=0 kill switch). Includes /dream-sync skill (skill-sync/) with merge-rules reference, installed as core skill. file-lock: opt-in verifyPidLiveness (existing callers unchanged). 96 new tests incl. 8-scenario real-git E2E; suite 2604 green, build clean.",
+    "breaking": false,
+    "summary": "M1 — GitHub brain-repo cloud sync CLI core: git-illiterate teammates auto-sync via sleep",
+    "references": [
+      "commit:d351cc8",
+      "file:src/lib/git-sync/",
+      "file:skill-sync/",
+      "task:github-cloud-collaboration-brain-repo-sync"
+    ]
+  },
+  {
+    "date": "2026-07-04",
     "type": "docs",
     "scope": "roadmap",
     "description": "Product Owner replaced the three placeholder objectives (increase-retention-20, launch-mobile-app, ship-v0-2-3) with six real strategic outcomes in core/objectives/: improve-recall-mechanism (target 2026-08-16), improve-sleep-quality (2026-08-02), include-codex-opencode-support (2026-08-23), make-dreamcontext-team-ready (2026-07-12, one task in progress), simplified-ux (2026-07-31), and hello-world-pr (2026-09-19, depends on the first four). This is the roadmap foundation for the next 2-3 months of work. Objectives are PO-authored markdown files; agents propose task linkage but never edit the objectives themselves.",

@@ -1,9 +1,8 @@
 ---
 id: "feat_Sx4EmLgP"
-status: "planning"
+status: "in_progress"
 created: "2026-07-04"
 updated: "2026-07-04"
-status: "planning"
 released_version: null
 tags:
   - topic:github
@@ -34,34 +33,34 @@ existing local dashboard. The two could coexist later but ship independently.
 
 ## User Stories
 
-- [ ] As a user, I can point my project's brain at a dedicated GitHub repo (separate
+- [x] As a user, I can point my project's brain at a dedicated GitHub repo (separate
   from my code repo), so my team can collaborate on tasks/knowledge/features the
-  way they already collaborate on code.
-- [ ] As a user, every `dreamcontext sleep done` automatically fetches, merges (via
+  way they already collaborate on code. *(M1 shipped: `dreamcontext brain init`)*
+- [x] As a user, every `dreamcontext sleep done` automatically fetches, merges (via
   a semantic merge agent on conflict), commits, and pushes the brain repo, so my
   teammates' consolidated context reaches me (and mine reaches them) without a
-  manual step.
-- [ ] As a user, I can run a manual sync skill (`/dream-sync`-style) at any time to
-  pull/push the brain repo outside of a sleep cycle.
+  manual step. *(M1 shipped: autoSync integration)*
+- [x] As a user, I can run a manual sync skill (`/dream-sync`-style) at any time to
+  pull/push the brain repo outside of a sleep cycle. *(M1 shipped: `/dream-sync` skill + `brain sync` CLI)*
 - [ ] As a user, I can log into GitHub from the desktop Launcher (OAuth device flow,
   or a PAT as fallback) and see which of my accessible repos are brain repos (via a
-  topic/marker), so connecting a project doesn't require hand-typing a repo URL.
+  topic/marker), so connecting a project doesn't require hand-typing a repo URL. *(M2 pending)*
 - [ ] As a user, on a new machine, the Launcher guides me to clone or locate the
   brain repo for a project (the brain repo stores a pointer back to its code repo),
   so setting up a second machine doesn't mean re-deriving which repo goes with
-  which.
-- [ ] As a user, every machine builds its OWN local index/cache over the shared
+  which. *(M2 pending)*
+- [x] As a user, every machine builds its OWN local index/cache over the shared
   brain (recall index, embeddings, etc.) that is NEVER pushed, so per-machine
-  derived state never pollutes the shared repo or causes merge noise.
-- [ ] As a user, my personal notes/attributions ride the existing multi-people
+  derived state never pollutes the shared repo or causes merge noise. *(M1 shipped: `.brain-local.json` gitignored)*
+- [x] As a user, my personal notes/attributions ride the existing multi-people
   awareness (`user.md` `## People`, `person:<slug>` tags, changelog authors) rather
   than a new per-person file namespace, so the brain doesn't fragment into
-  per-person copies.
-- [ ] As a user, nothing containing secrets or absolute local paths is ever
-  auto-pushed — a scrub gate runs before every push and blocks/redacts violations.
+  per-person copies. *(M1 shipped: reuses existing multi-people model)*
+- [x] As a user, nothing containing secrets or absolute local paths is ever
+  auto-pushed — a scrub gate runs before every push and blocks/redacts violations. *(M1 shipped: scrub gate + GIT_ASKPASS)*
 - [ ] As a user, issue-linked tasks (GitHub Issues task backend) keep working when
   the brain also lives in its own repo — issue mapping is reused, not
-  reimplemented.
+  reimplemented. *(M3 pending)*
 
 ## Acceptance Criteria
 
@@ -120,9 +119,11 @@ existing local dashboard. The two could coexist later but ship independently.
 
 ## Technical Details
 
+**M1 SHIPPED (commit d351cc8, 2026-07-04).** CLI core is live: brain init/sync/enable/disable, GIT_ASKPASS credential supply, scrub gate, semantic merge, pull-only content delivery, `/dream-sync` skill, sleep-done autoSync integration, session-start background pull, master switch (GitHub-connected default-on). Authoritative merge semantics live in **`skill-sync/references/merge-rules.md`** (shipped reference) — the full state machine, tracked-vs-local table, deterministic merge rules, credential supply, scrub gate, pull-only handoff loop. M2/M3 pending.
+
 **Validated design (plan v3.2, 2026-07-04) — 3 reviewers SOLID over 5 iterations, 21 findings resolved.** The task (`github-cloud-collaboration-brain-repo-sync`) is the authoritative implementation spec with 30 acceptance criteria across M1/M2/M3 milestones. This PRD carries product intent + validated architecture summary.
 
-**Architecture (compact form — full detail in the task):**
+**Architecture (compact form — full detail in the task + shipped skill reference):**
 
 **Modes:** `separate` (brain in its own GitHub repo + remote; full auto-sync) vs `in-tree` (brain nested in code repo; commit-only, NEVER auto-pushes; the safe default). Scrub gate applies to both.
 
@@ -164,6 +165,9 @@ existing local dashboard. The two could coexist later but ship independently.
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-07-04 - M1 shipped (commit d351cc8)
+- **M1 CLI core SHIPPED.** Brain-repo sync CLI (`dreamcontext brain init|sync|enable|disable|status`), GIT_ASKPASS credential supply (0600 tmp token file, never in URL/env/argv), scrub gate (BLOCK on secrets, WARN on paths, effective-strict in headless), semantic merge (task changelog set-union, knowledge conflict discard-then-defer to agent), pull-only content delivery (merge into working tree, headless auto-checkpoint), `/dream-sync` skill loop (defer → resume → resolve → continue), sleep-done autoSync integration (sync failure never fails sleep), session-start background pull (non-blocking PATH-safe), master switch (GitHub-connected default-on, `brainRepo.enabled` explicit/derived). 41 files, 4924 additions. Merge semantics documented in **`skill-sync/references/merge-rules.md`** (shipped reference). M2/M3 pending. Status `planning` → `in_progress`.
 
 ### 2026-07-04 - Created (design-only)
 - Feature PRD created from a 2026-07-04 product design discussion. Captures the
