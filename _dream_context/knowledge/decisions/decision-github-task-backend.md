@@ -13,6 +13,13 @@ dreamcontext shipped a pluggable task backend in issue #11, but only the **Click
 
 **STATUS: SHIPPED.** PR #38 merged to `main` 2026-06-21. 129 tests green. Feature captured in `core/features/task-management.md` (extended with GitHub backend user stories + ACs). This doc is the durable *why* + mapping table; do not duplicate rationale in the feature file.
 
+**2026-07-04 forward pointer:** the new `core/features/brain-repo-sync.md` PRD
+(design-only, brain lives in its own GitHub repo separate from the code repo,
+auto post-sleep sync) plans to reuse the GitHub OAuth/token plumbing documented
+here (`ApiAdapter`, auth handling) for its login step, and its P3 issue-sync
+onboarding builds on the mapping in this file. Do not re-derive the auth/mapping
+design there — this file stays the source of truth for it.
+
 ## The Architecture It Plugs Into (already built, issue #11)
 
 - `TaskBackend` interface — `src/lib/task-backend/types.ts`. Provider-agnostic; nothing provider-specific may appear in it (boundary test).

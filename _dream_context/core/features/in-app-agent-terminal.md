@@ -2,7 +2,7 @@
 id: "feat_nM4EnT8k"
 status: "in_review"
 created: "2026-06-28"
-updated: "2026-07-01"
+updated: "2026-07-04"
 released_version: null
 tags:
   - topic:desktop
@@ -14,6 +14,7 @@ related_tasks:
   - agent-terminal-readability-and-prereq-installer
   - feat-sleepy-agent-surface-ux-redesign
   - agent-terminal-rendering-readability-polish
+  - feat-desktop-basic-terminal-mode-in-agent-surface
 ---
 
 ## Why
@@ -36,6 +37,9 @@ Developers using the dreamcontext desktop app need to run Claude Code interactiv
 - [x] As a developer, I can copy text out of the terminal — including non-ASCII characters — without a mangled clipboard or a jarring macOS beep.
 - [x] As a developer, I can drop any file (not just images) onto the pane under my cursor and have its path handed to that session.
 - [ ] As a developer, I can use a read-only plan mode that shows Claude's intent without allowing file writes.
+- [x] As a developer, I can open a plain terminal tab (no Claude agent) scoped to the vault root alongside my agent tabs, so I can run shell commands without leaving the Agent surface.
+- [x] As a developer, a new session's tab is auto-titled from my first message (via a cheap one-shot Haiku call), so I don't have to manually rename "Agent 1"/"Agent 2" tabs to tell them apart.
+- [x] As a developer, I can toggle the whole Agents (beta) surface on/off, toggle tab-restore-on-launch, toggle auto-title, and set a custom in-app hotkey to open/close the Agents overlay, from Settings → Agents, so the surface fits how I actually work.
 
 ## Acceptance Criteria
 
@@ -65,10 +69,21 @@ Developers using the dreamcontext desktop app need to run Claude Code interactiv
 - [x] Auto-resume: before spawning, server checks `~/.claude/projects/<cwd-dashes>/<uuid>.jsonl` exists → `--resume <uuid>`; absent → `--session-id <uuid>`.
 - [x] ⌘K opens `CommandPalette` (BM25 + optional Haiku intelligent toggle); clicking a result navigates via `recallNav` + `useFocusTarget` wired `PageRouter → pages`.
 - [ ] Read-only plan mode (`--permission-mode plan`) available in the UI.
+- [x] WS `/api/agent/terminal` accepts `?kind=agent|shell`; `kind=shell` spawns `$SHELL -il` (plain interactive login shell in the vault root — no `exec claude`, no bypass/resume/session-id machinery) with a generic exit message; `kind=agent` (or absent) is unchanged.
+- [x] `agentSession.ts` `createSession(...)` takes a `SessionKind` (`'agent' | 'shell'`) and sends `&kind=shell` (dropping claude-only params) for shells; `AgentSurface.tsx` threads `kind` through spawn/`addSession`/`addSplitSession`/`resumeSession`/roster persistence/hydration — shells restore dormant and resume as a fresh shell (no conversation to resume); agents unchanged.
+- [x] Header gains a split `＋ New ▾` button (Agent/Terminal dropdown) plus `⌃\`` as a direct new-terminal shortcut; the empty-state gains a `>_ Start terminal` button gated on `node-pty` only (not the `claude` CLI — a shell tab needs no agent). Tabs show a `◇` (agent) / `>_` (shell) glyph.
+- [x] `POST /api/agent/title { claudeId }` (desktop-gated): finds the session's transcript via `findTranscriptPath` (extracted from the existing resume-check helper, now shared), reads the first genuine user message (skips tool-result/`<...>`-wrapped reminder lines), and returns a Haiku-generated title (`claude --model haiku -p`, run in `homedir()` so it never fires the project's SessionStart brain-preload; 30s timeout; sanitized to ≤6 words / 40 chars, Title Case, no quotes/punctuation).
+- [x] `AgentSurface.tsx` calls `/agent/title` once per session (`autoTitledRef` dedup) on the session's busy→idle edge (first turn complete), ONLY when `agentSettings.enabled && agentSettings.autoTitle` and the tab still holds its default `Agent N` name (a manual rename always wins, even mid-flight); `kind !== 'agent'` (shells) are skipped.
+- [x] `GET`/`POST /api/launcher/agent-settings` (`~/.dreamcontext/agent-ui.json`, app-global not vault-scoped) persists `{ enabled, restoreTabs, defaultAgent, autoTitle, hotkey }`; `dashboard/src/lib/agentSettings.ts` mirrors `lib/sleepy.ts`'s pattern (localStorage + server write-through + `dreamcontext-agent-settings` window event so the always-mounted `AgentSurface` picks up a Settings-page change live, no reload).
+- [x] Settings → Agents (BETA, desktop-only) section: enable toggle, restore-tabs toggle, default-agent select (Claude Code only today), auto-title toggle, and a captured-hotkey field (`accelFromKeyEvent`/`matchesAccel` shared builder — same accelerator format as the existing Sleepy hotkey capture; Backspace/Delete clears the binding).
 
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
 
+- **[2026-07-04] Auto-title reads the transcript file, never the raw PTY stream.** Every agent tab is pinned to a known conversation UUID and Claude Code already writes that conversation to `~/.claude/projects/<slug>/<uuid>.jsonl` (used for the existing resume check) — reading the first user message from there is far simpler and more reliable than parsing PTY output. `findTranscriptPath()` is now the shared primitive behind both auto-resume and auto-title.
+- **[2026-07-04] Auto-title runs in `homedir()`, not the vault.** A titling call is a plain `claude -p` invocation; running it inside the vault would trigger that project's SessionStart brain-preload for a throwaway one-shot call — wasteful and pointless for a 6-word title.
+- **[2026-07-04] A manual rename always wins over auto-title, even mid-flight.** The dedup guard (`autoTitledRef`) fires at most once per session, but the apply step itself re-checks that the tab still holds its default `Agent N` name before overwriting — so a user who renames a tab while Haiku is still "thinking" never gets clobbered.
+- **[2026-07-04] Shell tabs (`kind=shell`) deliberately skip the whole claude-specific machinery** (bypass permission mode, `--resume`/`--session-id`, auto-title) — a plain login shell has no conversation and no permission model, so threading those through would be dead code paths, not future-proofing.
 - **[2026-07-01] DOM renderer over WebGL, and JetBrains Mono is the real primary font.** WebGL's glyph atlas gave crisp text but hard "sharp" edges that read as eye-tiring; the DOM renderer's real text nodes get native macOS anti-aliasing (requires `.xterm { -webkit-font-smoothing: auto }` to override the app-wide reset's forced `antialiased`). Separately discovered: Sometype Mono was never actually loaded (no `@font-face`/Google-Fonts link), so `--font-mono` silently fell through to JetBrains Mono @400 the whole time — JetBrains Mono is now loaded for real (400/500/700) and listed first, and the font-load-before-open gate reads the primary family off `--font-mono` dynamically instead of a hardcoded name.
 - **[2026-07-01] minimumContrastRatio 4.5 was too aggressive — lowered to 3, foreground softened.** 4.5 force-brightened dim/secondary text along with the raw near-white default foreground (`#f5f6fa` on `#14171f`, ~17:1), reading as harsh over long sessions. Softened the default foreground to `#cdd3de` dark / `#33383f` light and lowered the floor to 3 — still enough to rescue ANSI-on-ANSI block fills, low enough to preserve dim-text hierarchy.
 - **[2026-07-01] Selection must pin BOTH `selectionBackground` and `selectionInactiveBackground`.** xterm draws `selectionInactiveBackground` (a much fainter default) whenever the terminal isn't the focused element — a selection made unfocused was invisible in light mode until both were pinned to the same solid `#6a57d6`.
@@ -95,19 +110,22 @@ Architecture, key files, and dev-workflow notes are in `_dream_context/knowledge
 - §"Auto-resume reliability" — transcript path format, --resume vs --session-id decision.
 - §"⌘K command palette" — recallNav + useFocusTarget wiring.
 
-Key files summary (post-2026-07-01 readability polish):
-- `src/server/routes/agent-terminal.ts` — WS bridge + node-pty spawn, capabilities, prereq installer, osascript fallback.
+Key files summary (post-2026-07-01 readability polish; 2026-07-04 basic-terminal-mode + auto-title + agent-settings additions):
+- `src/server/routes/agent-terminal.ts` — WS bridge + node-pty spawn, capabilities, prereq installer, osascript fallback, `?kind=agent|shell` branch, `findTranscriptPath`/`firstUserMessage`/`generateTitle`/`handleAgentTitle` (auto-title).
 - `src/server/routes/agent-sessions.ts` — session management (added 2026-06-30).
 - `src/server/routes/agent-drop.ts` — any-file DnD drop endpoint; routes to the pane under the cursor (opened up from image-only + last-focused-pane on 2026-07-01).
+- `src/server/routes/launcher.ts` — `handleAgentSettingsGet`/`handleAgentSettingsSet` (`GET`/`POST /api/launcher/agent-settings`, `~/.dreamcontext/agent-ui.json`).
 - `src/server/index.ts` — orchestration, VAULT_AGNOSTIC_PREFIXES.
-- `dashboard/src/components/sleepy/AgentSurface.tsx` — `Prereqs`, multi-pane layout, dragend split pattern, cursor-targeted drop routing (`onTermDrop` → `elementFromPoint`).
-- `dashboard/src/components/sleepy/agentSession.ts` — `createSession()` (xterm DOM renderer, `@xterm/addon-fit`, WebGL removed), `readXtermTheme()` (`minimumContrastRatio: 3`, softened foreground, solid `#6a57d6` selection for both active/inactive), JetBrains-Mono-aware font-load-before-open, `copyPreservingUnicode()` + beep-free ⌘C/⌘X/⌘A handler.
+- `dashboard/src/components/sleepy/AgentSurface.tsx` — `Prereqs`, multi-pane layout, dragend split pattern, cursor-targeted drop routing (`onTermDrop` → `elementFromPoint`), `kind` threaded through spawn/split/resume/hydration, auto-title effect (`autoTitledRef` dedup on busy→idle edge), split `＋ New ▾` Agent/Terminal control + `⌃\`` shortcut, `>_ Start terminal` empty-state button.
+- `dashboard/src/components/sleepy/agentSession.ts` — `createSession()` (xterm DOM renderer, `@xterm/addon-fit`, WebGL removed, `SessionKind` param), `readXtermTheme()` (`minimumContrastRatio: 3`, softened foreground, solid `#6a57d6` selection for both active/inactive), JetBrains-Mono-aware font-load-before-open, `copyPreservingUnicode()` + beep-free ⌘C/⌘X/⌘A handler.
 - `dashboard/src/components/sleepy/AgentTerminal.css` — inactive-pane dimming removed; `.xterm` font-smoothing override (`-webkit-font-smoothing: auto`).
+- `dashboard/src/components/sleepy/AgentTabs.tsx` — per-pane tab bars; `◇`/`>_` session-kind glyph.
 - `dashboard/src/styles/tokens.css` + `dashboard/index.html` — `--font-mono` primary is JetBrains Mono (loaded 400/500/700); Sometype Mono removed (was never loaded).
 - `dashboard/src/components/sleepy/AgentDock.tsx` — minimize-to-corner chip (sibling of .agent-surface).
-- `dashboard/src/components/sleepy/AgentTabs.tsx` — per-pane tab bars.
 - `dashboard/src/components/sleepy/AgentFab.tsx` — global FAB.
-- `dashboard/src/components/search/CommandPalette.tsx` — ⌘K palette.
+- `dashboard/src/lib/agentSettings.ts` — `AgentSettings` type, `readAgentSettings`/`writeAgentSettings`/`initAgentSettingsFromServer`, `accelFromKeyEvent`/`matchesAccel` (shared hotkey-capture format with `lib/sleepy.ts`).
+- `dashboard/src/pages/SettingsPage.tsx` — Settings → Agents (BETA, desktop-only) section wired to `agentSettings.ts`.
+- `dashboard/src/components/search/CommandPalette.tsx` — ⌘K palette; now shares `lib/overlayStack.ts` with the `⌘P` `ProjectSwitcher` (see `core/features/launcher-project-switcher.md`) for correct Esc-closes-topmost behavior when both are open.
 - `dashboard/src/hooks/useFocusTarget.ts`, `dashboard/src/lib/recallNav.ts` — recall navigation wiring.
 
 ## Notes
@@ -119,6 +137,13 @@ Key files summary (post-2026-07-01 readability polish):
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-07-04 — Basic-terminal mode + auto-title + Agents settings (task feat-desktop-basic-terminal-mode-in-agent-surface, working tree)
+- Basic-terminal mode: `kind=agent|shell` on the WS bridge; shell tabs run a plain vault-scoped login shell alongside agent tabs (split `＋ New ▾` control, `⌃\`` shortcut, `>_ Start terminal` empty-state button gated on node-pty only); tabs show a `◇`/`>_` glyph. Verified end-to-end in the packaged Tauri app (real zsh prompt scoped to the vault, side-by-side agent+shell).
+- Auto-title: `POST /api/agent/title` reads the session's transcript (not the raw PTY stream) and returns a one-shot Haiku-generated tab title; applied once per session on the busy→idle edge, skipped if the user already renamed the tab or auto-title is disabled. Verified live (bad-UUID→400, no-transcript case, and a real crafted-transcript→Haiku title).
+- Settings → Agents (BETA, desktop-only): enable/restore-tabs/default-agent/auto-title toggles + a captured in-app hotkey to open/close the Agents overlay; persisted server-side (`~/.dreamcontext/agent-ui.json`, app-global) via `lib/agentSettings.ts`, mirroring the existing Sleepy-hotkey persistence pattern.
+- `⌘K` `CommandPalette` now shares `lib/overlayStack.ts` with the new `⌘P` `ProjectSwitcher` (see `core/features/launcher-project-switcher.md`) so Esc always closes the topmost overlay regardless of which opened first.
+- Status: in progress (working tree changes, not yet committed); Tauri arm64 build installed locally and smoke-tested (session aac95f46).
 
 ### 2026-07-01 — Readability polish shipped (task agent-terminal-rendering-readability-polish, v0.10.5)
 - WebGL addon removed; xterm now uses the DOM renderer for native macOS anti-aliasing (kills the "sharp"/eye-tiring glyph edges); `.xterm { -webkit-font-smoothing: auto }` overrides the app-wide `antialiased` reset.

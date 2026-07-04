@@ -2,7 +2,7 @@
 id: feat_O7LODr7O
 status: active
 created: '2026-02-25'
-updated: '2026-06-30'
+updated: '2026-07-04'
 released_version: 0.1.0
 tags:
   - frontend
@@ -54,7 +54,8 @@ Users need a visual interface to manage agent context without using the terminal
 - [x] As a user, I want to toggle the Brain graph to a 3D rendering mode so that I can perceive relationship depth and cluster density that 2D layouts obscure when nodes overlap
 - [x] As a user, I want a Settings page to view and edit my project's platforms and packs so that I can configure dreamcontext without using the CLI.
 - [x] As a user, I want a Packs page to browse available skill packs and see which are installed.
-- [x] As a user, I want an in-app update badge that tells me when a newer dreamcontext version is available so I know to run `dreamcontext upgrade`.
+- [x] As a user, I want an in-app update badge that tells me when a newer dreamcontext version is available, and lets me run the full upgrade (CLI + desktop app + every registered project) with one click from the badge itself, so I never have to open a terminal to run `dreamcontext upgrade`.
+- [x] As a user, after a one-click upgrade finishes I can relaunch the app directly from the badge so the new version takes effect without me manually quitting and reopening.
 - [x] As a user, I can see registered vaults (read-only) from the Settings page so that I know which projects are tracked.
 - [x] As a user, I see a "What is this?" section at the bottom of the sidebar that opens a full-page marketing/explainer landing page with a real system diagram, sleep walkthrough, recall flow, cinematic architecture view, live skill-packs marquee, and collapsible features showcase.
 - [x] As a user, the landing page hero shows the logo+wordmark and a looping brain-graph video so I immediately understand what dreamcontext is.
@@ -198,6 +199,15 @@ Users need a visual interface to manage agent context without using the terminal
 - [x] Taxonomy page (`dashboard/src/pages/TaxonomyPage.tsx/.css`, `useTaxonomy.ts` hook): facet chip clusters with alias-resolved usage tallies, alias arrows, drift/audit panel; linked from nav + CorePage.
 - [x] Backed by read-only `GET /api/taxonomy` (vocabulary + usage tallies + audit buckets); all mutations stay CLI-only.
 
+### One-Click Full-Machine Upgrade (v0.11.0 cycle, in progress)
+- [x] `UpdateBadge` shows whenever there's genuinely something to upgrade: an outdated CLI (`cliOutdated`), new packs, or a prose nudge — not just the prose nudge as before (matters most in the desktop app, where the prose CLI line is suppressed but the badge can still act).
+- [x] `POST /api/launcher/upgrade` spawns the SAME `dreamcontext upgrade --yes` the CLI exposes, inside an interactive login shell (`$SHELL -ilc`) so `npm`/`npx` resolve even when the app was launched from Finder/Spotlight; singleton in-memory `upgradeRun` (only one machine-wide upgrade at a time — it mutates the shared npm install AND the shared `.app` bundle).
+- [x] `GET /api/launcher/upgrade/status` polls `{ state: 'idle'|'running'|'done'|'error', output }`; output is capped to an 8000-char tail so a chatty run can't grow memory unbounded; a 12-minute safety-ceiling timeout force-kills a stuck run.
+- [x] `UpdateBadge.tsx` state machine: idle → running (spinner + live log) → done (relaunch button) / error (retry button); on mount it restores an in-flight OR just-finished-but-unrelaunched run from `/upgrade/status` (not just `running`) so a finished upgrade doesn't reappear as a fresh "Upgrade everything" button and re-trigger a redundant run.
+- [x] `POST /api/launcher/relaunch` detaches a `sleep 2 && open <app>` into its own process group (`detached` + `unref`) so it escapes the parent-death watchdog/reap when the current window closes to quit the app — re-opens the swapped bundle after the old process releases it; reports `{ ok: false, reason: 'app_not_installed' }` outside an installed app (frontend keeps the window open with a manual-reopen hint instead of quitting into a dead end).
+- [x] Escape does not dismiss the popover while an upgrade is `running` (the affordance would vanish while the job keeps running unattended).
+- [ ] **Known open bug (code review, not yet fixed):** `UpdateBadge.tsx`'s `applyStatus()` has no branch for `state: 'idle'` — if the server's in-memory `upgradeRun` is lost (server restart/crash mid-upgrade) while a window is still polling with `phase: 'running'`, the badge never learns the job is gone and the poll interval runs forever. The server-side sibling bug (`POST /upgrade` unconditionally reporting `state: 'running'` even on a synchronous spawn failure) WAS fixed — the response now reflects `run.state` honestly.
+
 ### Settings — Cloud Provider / Token Entry (v0.10.0)
 - [x] Settings page has a cloud provider panel for the active backend (ClickUp or GitHub); shows current token masked status (`GET /api/tasks/token-status`).
 - [x] Token entry field: writes to gitignored `.secrets.json` via `POST /api/tasks/token`; token never echoed in response; visible feedback (set / cleared).
@@ -291,6 +301,8 @@ Users need a visual interface to manage agent context without using the terminal
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
 
+- **[2026-07-04]** **One-click upgrade is a singleton background job, not a request/response call.** `dreamcontext upgrade --yes` can take minutes (npm install + app download + refreshing every registered project), so `POST /api/launcher/upgrade` starts it and returns immediately; the badge polls `GET /api/launcher/upgrade/status` on a 1.2s interval. In-memory `upgradeRun` is intentionally a single module-level variable (not per-session) — a second concurrent upgrade would race the same global npm install and the same shared `.app` bundle, so any window's poll sees the one true state. State is lost on server restart by design; the on-disk result is what matters, and a restart-then-repoll simply reports `idle`.
+- **[2026-07-04]** **Relaunch escapes the reap via a detached process, not an in-process restart.** Closing the last window quits the app, which tears down the very server handling the relaunch request — so the relauncher can't just `exec` the new bundle from inside itself. `POST /api/launcher/relaunch` spawns `sleep 2 && open <app>` `detached` + `unref`'d into its own process group, which survives the parent app's death (would otherwise be caught by the existing parent-death watchdog / Rust process-group reap documented in `desktop-beta-tauri-multivault.md`). The frontend calls relaunch, THEN closes its own window — never the reverse, or the detached process races the still-alive window's teardown.
 - **[2026-06-29]** **Assignee reading from `person:` tags (board model unification).** The board model previously read only the legacy scalar `assignee` field; tasks whose assignee was stored exclusively as `person:<slug>` tags appeared as Unassigned in filter/group-by/properties/gantt (though the detail panel showed them correctly, since it reads tags directly). Fix: `boardModel.taskAssignees(task)` derives all assignees from `person:` tags with legacy scalar fallback; `taskAssignee()` returns the primary. All board views (filter counts, group-by, card avatars, Gantt labels) now flow through this derivation. Multi-assign is modeled: group-by places a task under each of its assignees. `KanbanBoard` builds the assignee option list from every referenced person in the task set.
 
 - **[2026-06-29]** **Version filter smart buckets: virtual filter token design.** `@current`, `@backlog`, `@completed` are `@`-prefixed sentinel constants (in `boardModel.ts`) that resolve at *filter time* against live `versionMeta` (active sprint + released-version set) rather than equalling a stored field value. A saved view referencing `@current` always tracks the live sprint without storing its name. `versionTokenMatches(token, version, versionMeta)` encapsulates resolution; `matchVersionField` and `filterTasks` receive the `versionMeta` param. `normFilters()` includes a migration pass: persisted literal `'backlog'` in the version array → `'@backlog'`, preventing old saved-view state from becoming an un-dismissable ghost row when the literal backlog row is folded into the bucket. `BoardToolbar.tsx` gates each chip on applicability (presence of active sprint, unversioned tasks, released sprints). See `knowledge/patterns/virtual-filter-tokens.md` for the reusable pattern.
@@ -359,6 +371,12 @@ Users need a visual interface to manage agent context without using the terminal
 
 ### API Endpoints
 ~36 endpoints covering: tasks (5 + 3 new: members, provision, token-status, token), sleep (2), core (3), knowledge (3), features (2), changelog (1), releases (4 — list/show/add + active GET/PUT), health (1), config (2 — GET+PATCH), packs (1), version-check (1), vaults (1), council (3), taxonomy (1 — read-only GET), task-overrides (5 — schema, doc GET/PUT, field upsert/remove).
+
+New in v0.11.0 cycle (one-click upgrade, in progress — see launcher route file below):
+- `POST /api/launcher/upgrade` — start (or no-op re-attach to) the singleton full-machine upgrade job.
+- `GET /api/launcher/upgrade/status` — poll `{ state, output }` for the running/last upgrade.
+- `POST /api/launcher/relaunch` — detached-process app relaunch after an upgrade completes.
+- `GET`/`POST /api/launcher/agent-settings` — persisted Agents-surface prefs (`~/.dreamcontext/agent-ui.json`); see `in-app-agent-terminal.md`.
 
 New in v0.10.0 (version rename + delete):
 - `PATCH /api/releases/:version` — extended to accept `{ newVersion }`: renames the entry in RELEASES.json, re-points all tasks, moves active-version pointer; 409 on collision; works on ghosts (task re-point only).
@@ -502,6 +520,13 @@ All mutating endpoints call recordDashboardChange() except `PATCH /api/config` (
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-07-04 - One-click full-machine upgrade (in progress, sleep-product consolidation)
+- `UpdateBadge` now performs the upgrade instead of just nudging: singleton `POST /api/launcher/upgrade` (runs `dreamcontext upgrade --yes` in an interactive login shell) + `GET /api/launcher/upgrade/status` polling + `POST /api/launcher/relaunch` (detached-process relaunch escaping the app's own teardown).
+- Badge now shows on `cliOutdated` alone (not just a prose nudge) — matters in the desktop app where the prose CLI line is suppressed.
+- Restores an in-flight OR just-finished run on mount so a completed-but-unrelaunched upgrade doesn't reappear as a fresh button and re-trigger.
+- Code review (session 236e8894) found and the server-side fix landed: `POST /upgrade`'s response now reflects the real `run.state` instead of hardcoding `running` on a synchronous spawn failure. NOT yet fixed: `UpdateBadge.tsx`'s `applyStatus()` still has no `idle` branch, so a lost server-side run state (restart/crash mid-upgrade) leaves a polling window stuck showing "Upgrading…" forever — tracked as an open AC above.
+- Status: in progress (working tree, not yet committed) — no dedicated task tracks this; consider creating one if more upgrade-flow work is planned.
 
 ### 2026-06-30 - Timeline Gantt stable drag + polish; multi-assignee AvatarStack on board cards
 - **Gantt stable drag-to-reschedule** (`TimelineGantt.tsx`): `updateTask` held in `updateTaskRef` so `pointermove`/`pointerup` window listeners stay referentially stable across react-query re-renders — fixes cursor stuck in grab state when a re-render tore listeners down mid-drag. Pointer events API (not HTML5 DnD). `dragPreview` state provides optimistic bar position during the drag.

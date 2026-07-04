@@ -1,5 +1,81 @@
 [
   {
+    "date": "2026-07-04",
+    "type": "docs",
+    "scope": "architecture",
+    "description": "Worked through the cross-machine/multi-person brain-collaboration design with the user (Turkish-language session). Confirmed architecture: the dreamcontext brain (_dream_context/) lives in its OWN GitHub repo, separate from the code repo it documents — for authorization separation (share the brain without the code or vice versa), noise separation (automatic sleep commits shouldn't pollute the code repo's PR diffs/history), and pointer clarity (the brain repo records the code repo's URL + expected layout; the launcher guides a new machine through cloning the code repo and then building a LOCAL-ONLY index — indexes are machine-derived and are never pushed, restored via .gitignore + rebuild-on-clone). D0 (first shippable) scope is READ-ONLY: GitHub login via device-flow OAuth (PAT as fallback, token in macOS keychain), list-and-clone accessible dreamcontext-brain repos (marked via a GitHub topic or a root marker file), point at the paired code repo, local indexing — zero push risk. A manual '/dream-sync'-style skill and true automatic post-sleep git sync (fetch, then an AGENT — not a git client — performs a semantic merge: union changelogs, content-merge knowledge files, keep the more-advanced task status, then commit+push) are later phases, explicitly sequenced after the read-only phase because agent-driven semantic merge is the hardest and most valuable part of the plan. A secrets/absolute-local-path scrub gate must run before any automatic push (env vars, API keys, and local paths can leak into brain files during a session). Personal-layer question (user.md / episodic preferences are person-specific, must not be pushed shared or must be namespaced per person) reuses the existing multi-person people[] roster rather than inventing new per-person namespacing — left as the open design question to resolve before Phase 2 (opt for never-pushed-personal vs namespaced-and-portable). task-backend/github.ts (already shipped for issue sync) is reused for future issue-mapping rather than building a new integration. Decision and reasoning captured for continuity; no code shipped this session.",
+    "breaking": false,
+    "summary": "Design decision: brain lives in its own GitHub repo (separate from code), with post-sleep git sync gated behind a manual sync skill, agent-driven semantic merge, and a local-only personal layer",
+    "references": [
+      "session:9516bd8c-891e-4122-9948-c09c45f78041",
+      "file:src/lib/task-backend/github.ts",
+      "task:feat-web-hosted-dreamcontext-com-github-oauth-collaboration-layer-over-the-brain",
+      "knowledge:federation-cross-vault"
+    ]
+  },
+  {
+    "date": "2026-07-04",
+    "type": "feat",
+    "scope": "sleepy",
+    "description": "New POST /api/agent/title {claudeId} reads the session's transcript file (~/.claude/projects/<slug>/<uuid>.jsonl — resumable sessions are already tracked this way), extracts the first real user message (skipping tool-result/reminder lines), and asks 'claude --model haiku -p' for a Title Case, punctuation-free label of at most 6 words, run from the home directory so the project's SessionStart brain-preload never fires. AgentSurface fires this exactly once per session, on the busy-to-idle edge after the first turn completes, and only renames a tab that still holds its default 'Agent N' name — a manual rename always wins even mid-flight. New GET/POST /api/launcher/agent-settings persists the Agents-surface preferences (enabled, restoreTabs, defaultAgent, the new autoTitle, hotkey) to ~/.dreamcontext/agent-ui.json since the app's per-launch loopback port resets localStorage; SettingsPage gained an 'Auto-name tabs from your first message' toggle (default on) alongside the existing Agents section. AgentTabs and agentSession.ts also picked up incidental keybinding/rendering polish from the same pass. Verified end-to-end live (bad-UUID 400, no-transcript null, and a crafted transcript producing a correct 3-word title).",
+    "breaking": false,
+    "summary": "Agent terminal tabs auto-name themselves from your first message via a single Haiku call, plus a persisted Agents-settings toggle and terminal keybinding polish",
+    "references": [
+      "file:src/server/routes/agent-terminal.ts",
+      "file:src/server/routes/launcher.ts",
+      "file:dashboard/src/lib/agentSettings.ts",
+      "file:dashboard/src/components/sleepy/AgentSurface.tsx",
+      "file:dashboard/src/pages/SettingsPage.tsx",
+      "task:agent-terminal-rendering-readability-polish"
+    ]
+  },
+  {
+    "date": "2026-07-04",
+    "type": "fix",
+    "scope": "launcher",
+    "description": "Root-caused and fixed six issues surfaced while validating the new Cmd+P ProjectSwitcher against the mature Cmd+K CommandPalette it reuses. New dashboard/src/lib/overlayStack.ts is a tiny LIFO registry (push/pop/isTopOverlay) so each modal's Escape handler only fires when it is the topmost open overlay — previously Cmd+K open then Cmd+P then Esc closed the wrong palette because both handlers listened on window in capture phase with no ordering contract. Also fixed: every vault window polled /api/launcher/status every 15s regardless of whether its window was open (useLauncherStatus now gates on an enabled flag, mirroring the existing useRecall(open?) pattern); Escape only closed a palette while an input had focus, now a window-level capture-phase handler closes regardless of focus; Cmd+P could fire while typing inside the embedded agent terminal, now guarded by isTerminalTarget excluding .xterm/.agent-surface; copy-to-clipboard dropped its prefers-reduced-motion guard. Extracted a shared <VaultDot> component (launcher + switcher previously had three near-duplicate status-dot implementations) and a single DRAG_EXEMPT_SELECTOR + isDragExempt helper in desktop.ts replacing three inline copies. Deferred as debt: a shared <CommandModal> shell to de-duplicate ~180 lines of near-identical CSS/keyboard-list logic between Cmd+K and Cmd+P — flagged for its own review-scoped refactor rather than folding into this bug-fix pass.",
+    "breaking": false,
+    "summary": "Cmd+P Project Switcher hardened: overlayStack LIFO fixes Esc-closes-wrong-palette, plus 5 more findings from a root-cause review (polling leak, terminal key-leak, Esc-not-window-level, shared VaultDot/drag-exempt helpers)",
+    "references": [
+      "file:dashboard/src/lib/overlayStack.ts",
+      "file:dashboard/src/components/layout/VaultDot.tsx",
+      "file:dashboard/src/components/search/ProjectSwitcher.tsx",
+      "file:dashboard/src/lib/desktop.ts",
+      "file:dashboard/src/hooks/useLauncher.ts",
+      "file:dashboard/src/components/search/CommandPalette.tsx"
+    ]
+  },
+  {
+    "date": "2026-07-04",
+    "type": "feat",
+    "scope": "launcher",
+    "description": "The header Update badge now performs the upgrade instead of just describing it. POST /api/launcher/upgrade spawns the same 'dreamcontext upgrade --yes' cascade the CLI exposes inside an interactive login shell ($SHELL -ilc, so npm/npx resolve even when the app was launched from Finder) as a singleton background job; GET /api/launcher/upgrade/status polls state (idle/running/done/error) plus a tailed stdout+stderr log capped at 8000 chars. A new POST /api/launcher/relaunch detaches a 'sleep 2 && open <app>' into its own process group (escaping the parent-death reaper) so the app can quit and reopen itself with the freshly installed bundle. UpdateBadge.tsx restores in-flight or just-finished runs on remount so a closed-and-reopened popover never re-POSTs a redundant upgrade. version-check.ts now reports currentCli/latestCli/cliOutdated independent of the prose-nudge suppression, so the desktop app can always offer the one-click action even when the CLI-only text nudge is hidden. Code review (session 236e8894) caught two correctness gaps, both fixed in this pass: applyStatus lacked a branch to stop polling on a lost/idle server-side job, and the upgrade POST route reported state:'running' even when the child spawn failed synchronously — both addressed before landing.",
+    "breaking": false,
+    "summary": "In-app one-click 'Upgrade everything': header badge now runs dreamcontext upgrade --yes end-to-end (CLI + desktop app + every registered project) with live log + relaunch",
+    "references": [
+      "file:dashboard/src/components/layout/UpdateBadge.tsx",
+      "file:src/server/routes/launcher.ts",
+      "file:src/server/routes/version-check.ts",
+      "file:dashboard/src/hooks/useVersionCheck.ts",
+      "task:pre-publish-workflow-v0-10-5"
+    ]
+  },
+  {
+    "date": "2026-07-04",
+    "type": "chore",
+    "scope": "release",
+    "description": "Shipped dreamcontext@0.10.6 to npm (OTP-gated publish) and as a GitHub desktop .app release, closing out the v0.10.5 publish workflow. Root-cause investigation confirmed the v0.10.5 npm tarball already contained the OKR roadmap dashboard live (identical dashboard bundle hash index-DalMBSek.js, 24 roadmap references) — the failure on a second machine was stale-install caching, not a missing build: npx cache plus the desktop app's manifest-based skip-redownload-when-version-matches logic (src/cli/commands/app.ts) both short-circuit on an unchanged version string. Bumping all five version surfaces (package.json, desktop/package.json, tauri.conf.json, Cargo.toml, Cargo.lock) to 0.10.6 forces every install path to fetch fresh with no source delta. 2492 tests green, pack dry-run correct, v0.10.6 tag pushed triggering desktop-release CI (build, ad-hoc sign, package, verify, publish). The v0.10.5 GitHub desktop release (aarch64 .app.tar.gz + .sha256) was published separately as Latest before the 0.10.6 bump.",
+    "breaking": false,
+    "summary": "Publish dreamcontext@0.10.6 to npm + GitHub desktop release — cache-busting republish that forces stale installs to pull the v0.10.5 roadmap payload",
+    "references": [
+      "commit:2283eda",
+      "commit:d93388d",
+      "task:pre-publish-workflow-v0-10-5",
+      "url:https://github.com/meanllbrl/dreamcontext/releases/tag/v0.10.5",
+      "knowledge:publish-checklist"
+    ]
+  },
+  {
     "date": "2026-07-03",
     "type": "feat",
     "scope": "roadmap",

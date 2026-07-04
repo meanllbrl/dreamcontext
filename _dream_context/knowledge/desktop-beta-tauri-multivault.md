@@ -754,6 +754,51 @@ Fix: render `<AgentDock />` as a sibling in `App.tsx` with a modifier class sett
 **Transcript path format (confirmed empirically):**
 `~/.claude/projects/<working-directory-with-/-replaced-by-->/<session-uuid>.jsonl`
 
+### ⌘P "Go to Project" switcher + shared overlayStack (2026-07-04)
+
+A second global overlay, `⌘P`, sits alongside `⌘K`: a fast tab-like project
+switcher available in every window (Launcher or vault) with `⌘1`-`⌘9` quick-jumps
+to the Nth open-able project. Full feature detail (user stories, ACs, files) lives
+in `core/features/launcher-project-switcher.md` — this entry captures the reusable
+architectural pattern it introduced:
+
+- **`lib/overlayStack.ts`** — a shared LIFO stack (`pushOverlay(id)` /
+  `popOverlay(id)` / `isTopOverlay(id)`) that both `CommandPalette` (⌘K) and
+  `ProjectSwitcher` (⌘P) push/pop on open/close. A window-level capture-phase
+  `Escape` listener closes only the topmost overlay. **This is now the standing
+  pattern for any future in-app overlay** — adopt the same push/pop pair rather
+  than hand-rolling Esc/focus logic per-component; it gets correct behavior for
+  free regardless of what other overlay is open underneath it.
+- **`isTerminalTarget(el)`** (`.xterm`, `.agent-surface`) — the pattern for
+  "this hotkey must not fire while the embedded PTY has focus", since xterm
+  actively forwards unhandled chords (like `⌘P`) into the running Claude Code
+  session. Narrower than the existing `isEditableTarget` (which also excludes
+  plain inputs/textareas/selects) — reuse whichever matches the actual risk.
+- **`<VaultDot>`** (`components/layout/VaultDot.tsx`) — the canonical status-dot
+  component (exists / needs-update / missing); both the Launcher vault list and
+  the switcher consume it now instead of three inline copies.
+- Status-poll gating: an always-mounted overlay component must gate its data
+  fetch on its own `open` state (`useLauncherStatus(open)`), or it silently
+  inherits the app-wide background refetch interval forever — the same gotcha
+  `⌘K`'s `useRecall(open?…)` already solved; a code-review pass caught a real
+  regression of this in the ⌘P build (comment claimed the gate existed; it didn't).
+
+### One-click full-machine upgrade — relaunch escapes the app's own teardown (2026-07-04)
+
+The header `UpdateBadge` runs `dreamcontext upgrade --yes` as a singleton
+background job (`POST /api/launcher/upgrade`, polled via `/upgrade/status`) and,
+on completion, offers to relaunch the app. Relaunching is the hard part: closing
+the app's last window quits the whole process, which tears down the very Node
+server handling the relaunch request. `POST /api/launcher/relaunch` solves this
+the same way sibling desktop gotchas do — **detach a process that survives the
+parent's death**: `spawn('/bin/sh', ['-c', 'sleep 2; open "$0"', appPath], {
+detached: true, stdio: 'ignore' })` + `child.unref()` puts the relauncher in its
+own process group, which escapes the parent-death watchdog / Rust
+`RunEvent::ExitRequested` reap described above (§"orphaned-dashboard-server root
+cause fix") instead of being caught by it. The frontend calls `/relaunch` FIRST,
+then closes its own window — never the reverse. Full feature detail:
+`core/features/web-dashboard.md` § One-Click Full-Machine Upgrade.
+
 ### ⌘K command palette (BM25 + Haiku intelligent toggle)
 
 A unified search palette (⌘K, also reachable via a persistent top-bar "Search the brain" pill) backed by `/api/recall` (BM25). An optional "intelligent" Haiku model toggle sends the same query through a Claude-ranked recall path. Clicking a result navigates to its page AND opens the document in-app via:
@@ -769,7 +814,7 @@ Cross-tree collapse uses the `dreamcontext-navigate` custom window event so the 
 - `src/server/routes/agent-sessions.ts` — session listing and management (added 2026-06-30).
 - `src/server/routes/agent-drop.ts` — any-file DnD drop endpoint (added 2026-06-30; opened to any file type + cursor-targeted pane routing 2026-07-01, was image-only + last-focused-pane).
 - `src/server/index.ts` — `attachAgentTerminal(server)` wired at bottom; install + session routes in `VAULT_AGNOSTIC_PREFIXES`.
-- `dashboard/src/components/sleepy/AgentSurface.tsx` — `Prereqs` component; multi-pane layout; drag-to-split via `dragend` pattern; cursor-targeted any-file drop routing (`onTermDrop` → `elementFromPoint` → `.agent-pane-slot[data-pane]`, 2026-07-01).
+- `dashboard/src/components/sleepy/AgentSurface.tsx` — `Prereqs` component; multi-pane layout; drag-to-split via `dragend` pattern; cursor-targeted any-file drop routing (`onTermDrop` → `elementFromPoint` → `.agent-pane-slot[data-pane]`, 2026-07-01); `kind` (`'agent'|'shell'`) threaded through spawn/split/resume/hydration for basic-terminal mode, and the auto-title effect (2026-07-04, see feature PRD for detail).
 - `dashboard/src/components/sleepy/agentSession.ts` — `createSession()`: xterm Terminal + DOM renderer + `@xterm/addon-fit` (WebGL removed 2026-07-01); `readXtermTheme()` (`minimumContrastRatio: 3`, softened foreground, solid selection); JetBrains-Mono-aware font-load-before-open; `copyPreservingUnicode()` + beep-free ⌘C/⌘X/⌘A key handler.
 - `dashboard/src/components/sleepy/AgentTerminal.css` — stylesheet (filename retained); inactive-pane dimming removed, `.xterm` font-smoothing override (2026-07-01).
 - `dashboard/src/components/sleepy/AgentDock.tsx` — minimize-to-corner dock chip; sibling of `.agent-surface` (see §"Minimize-to-corner" gotcha above).
