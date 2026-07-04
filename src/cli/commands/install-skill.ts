@@ -850,6 +850,33 @@ export async function installCoreForPlatform(
     installed.push(platformPrefixed(platform, curatorSkillRel));
   }
 
+  // Copy the `dream-sync` core skill (the manual brain-repo sync loop:
+  // defer/resume/resolve/continue) — github-cloud-collaboration-brain-repo-sync.
+  // Foundational, not an optional pack: any project with a `separate` brain
+  // repo needs it to reconcile agent-class conflicts. Shipped at repo root in
+  // `skill-sync/` (package.json `files`), mirroring the curator/initializer
+  // pattern. Recorded 'core' so `update` refreshes it. Non-fatal if absent
+  // (older/partial packages still install the rest).
+  const dreamSyncSkillSource = findPackageFile('skill-sync', 'SKILL.md');
+  if (dreamSyncSkillSource) {
+    const dreamSyncDestDir = join(skillRoot, 'dream-sync');
+    mkdirSync(dreamSyncDestDir, { recursive: true });
+    writeFileSync(join(dreamSyncDestDir, 'SKILL.md'), readFileSync(dreamSyncSkillSource, 'utf-8'), 'utf-8');
+    const dreamSyncSkillRel = `${skillRootRel}/dream-sync/SKILL.md`;
+    recordIfManifest(manifest, dreamSyncSkillRel, 'core');
+    installed.push(platformPrefixed(platform, dreamSyncSkillRel));
+
+    const dreamSyncRefsSourceDir = join(dirname(dreamSyncSkillSource), 'references');
+    if (existsSync(dreamSyncRefsSourceDir)) {
+      const dreamSyncRefsDestDir = join(dreamSyncDestDir, 'references');
+      cpSync(dreamSyncRefsSourceDir, dreamSyncRefsDestDir, { recursive: true });
+      const dreamSyncRefFiles = readdirSync(dreamSyncRefsSourceDir).filter((f) => f.endsWith('.md'));
+      for (const rf of dreamSyncRefFiles) {
+        recordIfManifest(manifest, `${skillRootRel}/dream-sync/references/${rf}`, 'core');
+      }
+    }
+  }
+
   // Copy the `dreamcontext-deep-research` core skill (the iterative, sub-agent-driven
   // corpus-synthesis orchestrator — the heavy counterpart to dreamcontext-explore).
   // Like the initializer and curator it is foundational, not an optional pack: any

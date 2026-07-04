@@ -5,11 +5,13 @@ import { tmpdir } from 'node:os';
 import {
   createObjective,
   updateObjective,
+  updateObjectiveMetric,
   deleteObjective,
   addDependency,
   removeDependency,
   getObjective,
   listObjectives,
+  parseMetric,
   wouldCreateCycle,
   isSafeObjectiveSlug,
   ObjectiveError,
@@ -24,6 +26,46 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(root, { recursive: true, force: true });
+});
+
+describe('objectives store — Key Result metric', () => {
+  const mrr = { label: 'MRR', unit: 'USD', baseline: 0, target: 2000, current: 850 };
+
+  it('creates an objective with a metric and round-trips it through frontmatter', () => {
+    createObjective(root, { slug: 'mrr', title: '2000 USD MRR', metric: mrr });
+    expect(getObjective(root, 'mrr')!.metric).toEqual(mrr);
+  });
+
+  it('merges a partial metric patch (the common --current nudge)', () => {
+    createObjective(root, { slug: 'mrr', title: 'MRR', metric: mrr });
+    const o = updateObjectiveMetric(root, 'mrr', { current: 1200 });
+    expect(o.metric).toEqual({ ...mrr, current: 1200 });
+  });
+
+  it('seeds a fresh metric when none exists, defaulting current to baseline', () => {
+    createObjective(root, { slug: 'x', title: 'X' });
+    const o = updateObjectiveMetric(root, 'x', { label: 'Users', target: 100, baseline: 10 });
+    expect(o.metric).toEqual({ label: 'Users', unit: null, baseline: 10, target: 100, current: 10 });
+  });
+
+  it('rejects a metric whose target equals its baseline', () => {
+    createObjective(root, { slug: 'x', title: 'X' });
+    expect(() => updateObjectiveMetric(root, 'x', { label: 'M', baseline: 5, target: 5 })).toThrow(ObjectiveError);
+  });
+
+  it('clears the metric via updateObjective(metric: null)', () => {
+    createObjective(root, { slug: 'mrr', title: 'MRR', metric: mrr });
+    const o = updateObjective(root, 'mrr', { metric: null });
+    expect(o.metric).toBeNull();
+  });
+
+  it('parseMetric degrades malformed / incomplete metrics to null', () => {
+    expect(parseMetric({ label: 'M', target: 100, baseline: 0, current: 5 })).not.toBeNull();
+    expect(parseMetric({ label: '', target: 100 })).toBeNull();       // no label
+    expect(parseMetric({ label: 'M' })).toBeNull();                    // no target
+    expect(parseMetric({ label: 'M', target: 5, baseline: 5 })).toBeNull(); // div-by-zero
+    expect(parseMetric('nonsense')).toBeNull();
+  });
 });
 
 describe('objectives store — CRUD', () => {

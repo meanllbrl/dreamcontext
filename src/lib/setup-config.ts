@@ -51,6 +51,51 @@ export interface SetupConfig {
    * owner opts in. Gates READS only — never required to read a shareable peer.
    */
   shareable?: boolean;
+  /** Cloud collaboration for the brain repo (github-cloud-collaboration-brain-repo-sync). */
+  brainRepo?: BrainRepoConfig;
+}
+
+export interface BrainRepoConfig {
+  /**
+   * `separate` — the brain lives in its own git repo + remote; full auto-sync
+   * (commit → fetch → merge → push). `in-tree` — the brain is nested inside
+   * the code repo; commit-only, NEVER auto-pushes. Absent ⇒ `in-tree` (the
+   * safe default for every project that hasn't opted into `separate`).
+   */
+  mode: 'separate' | 'in-tree';
+  /**
+   * v3.3 MASTER SWITCH — cloud sync is COMPLETELY OPTIONAL. Explicit value
+   * always wins. When ABSENT, the default is DERIVED: ON iff the project is
+   * already GitHub-connected (code repo's `origin` remote is a github.com URL,
+   * OR `taskBackend==='github'`, OR a `brainRepo.remote` is configured); OFF
+   * otherwise (new/unconnected projects — stays off until the user configures
+   * it via Settings or `dreamcontext brain enable`). See `resolveBrainSyncEnabled`.
+   */
+  enabled?: boolean;
+  /** Brain repo remote — CLEAN https URL, never contains a token (S1). Absent in in-tree mode. */
+  remote?: string;
+  /** Pointer BACK to the paired code repo (shared, so teammates resolve it). */
+  codeRepoUrl?: string;
+  /** Marker: how this repo is identified as a brain (topic name). Default 'dreamcontext-brain'. */
+  marker?: string;
+  /** Auto-sync on `sleep done`. Default true for `separate`, false for `in-tree`. Gated by `enabled`. */
+  autoSync?: boolean;
+}
+
+/**
+ * Machine-local pointer for the brain-repo sync engine — NEVER tracked in
+ * `.config.json` (which rides to teammates); lives at
+ * `_dream_context/state/.brain-local.json`, gitignored.
+ */
+export interface BrainLocalState {
+  /** Absolute path to the paired code repo on THIS machine — must never be pushed. */
+  codeRepoPath?: string;
+  lastSyncedSha?: string;
+  lastFetchAt?: number;
+  /** Commits actually merged in on the last pull (P2 rename). */
+  pulledUpdates?: number;
+  /** A pull deferred an agent-class conflict to /dream-sync (P2). */
+  pendingAgentMerge?: boolean;
 }
 
 export interface ClickUpConfig {
@@ -98,6 +143,19 @@ function sanitizeGitHub(raw: unknown): GitHubConfig | undefined {
   if (typeof o.repo === 'string') out.repo = o.repo;
   if (o.changelogTarget === 'comments') out.changelogTarget = o.changelogTarget;
   return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function sanitizeBrainRepo(raw: unknown): BrainRepoConfig | undefined {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const o = raw as Record<string, unknown>;
+  const mode: BrainRepoConfig['mode'] = o.mode === 'separate' ? 'separate' : 'in-tree';
+  const out: BrainRepoConfig = { mode };
+  if (typeof o.enabled === 'boolean') out.enabled = o.enabled;
+  if (typeof o.remote === 'string') out.remote = o.remote;
+  if (typeof o.codeRepoUrl === 'string') out.codeRepoUrl = o.codeRepoUrl;
+  if (typeof o.marker === 'string') out.marker = o.marker;
+  if (typeof o.autoSync === 'boolean') out.autoSync = o.autoSync;
+  return out;
 }
 
 function sanitizePeopleIdentity(raw: unknown): Record<string, PersonIdentity> | undefined {
@@ -152,6 +210,7 @@ export function readSetupConfig(projectRoot: string): SetupConfig | null {
       // Federation read gate (issue #25). Absent / non-boolean ⇒ undefined,
       // which `isShareable` treats as private (the default-false invariant).
       shareable: typeof parsed.shareable === 'boolean' ? parsed.shareable : undefined,
+      brainRepo: sanitizeBrainRepo(parsed.brainRepo),
     };
   } catch {
     return null;
@@ -192,8 +251,45 @@ export function updateSetupConfig(
     github: patch.github ?? existing.github,
     peopleIdentity: patch.peopleIdentity ?? existing.peopleIdentity,
     shareable: patch.shareable ?? existing.shareable,
+    brainRepo: patch.brainRepo ?? existing.brainRepo,
   };
   writeSetupConfig(projectRoot, next);
+  return next;
+}
+
+// ─── Brain-local state (machine-local, gitignored — never tracked) ──────────
+
+const BRAIN_LOCAL_REL_PATH = '_dream_context/state/.brain-local.json';
+
+function brainLocalPath(projectRoot: string): string {
+  return join(projectRoot, BRAIN_LOCAL_REL_PATH);
+}
+
+/** Read `.brain-local.json`. Missing / corrupt ⇒ `{}` (never throws). */
+export function readBrainLocal(projectRoot: string): BrainLocalState {
+  const path = brainLocalPath(projectRoot);
+  if (!existsSync(path)) return {};
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf-8')) as Partial<BrainLocalState>;
+    const out: BrainLocalState = {};
+    if (typeof parsed.codeRepoPath === 'string') out.codeRepoPath = parsed.codeRepoPath;
+    if (typeof parsed.lastSyncedSha === 'string') out.lastSyncedSha = parsed.lastSyncedSha;
+    if (typeof parsed.lastFetchAt === 'number') out.lastFetchAt = parsed.lastFetchAt;
+    if (typeof parsed.pulledUpdates === 'number') out.pulledUpdates = parsed.pulledUpdates;
+    if (typeof parsed.pendingAgentMerge === 'boolean') out.pendingAgentMerge = parsed.pendingAgentMerge;
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+/** Merge-write `.brain-local.json` (0644 — not a secret, but never tracked: brain-repo `.gitignore` covers it). */
+export function writeBrainLocal(projectRoot: string, patch: Partial<BrainLocalState>): BrainLocalState {
+  const existing = readBrainLocal(projectRoot);
+  const next: BrainLocalState = { ...existing, ...patch };
+  const path = brainLocalPath(projectRoot);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(next, null, 2) + '\n', 'utf-8');
   return next;
 }
 

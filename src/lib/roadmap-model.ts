@@ -6,6 +6,7 @@ import { today } from './id.js';
 import {
   listObjectives,
   type Objective,
+  type ObjectiveMetric,
   type ObjectiveStatus,
 } from './objectives-store.js';
 
@@ -44,10 +45,21 @@ export interface RoadmapObjective {
   /** Computed reverse edges: objectives that depend on THIS one. */
   dependents: string[];
   feature: string | null;
-  /** Effective status: manual override if set, else computed from member tasks. */
+  /** Effective status: manual override if set, else computed from metric/tasks. */
   status: ObjectiveStatus;
   status_source: 'computed' | 'override';
-  progress: { done: number; total: number; pct: number | null };
+  /**
+   * Progress. `done`/`total` are always the member-task counts (for reference).
+   * `source` says which drives `pct`: 'metric' (Key Result value vs target) or
+   * 'tasks' (completed/total). `metric` echoes the KR when source is 'metric'.
+   */
+  progress: {
+    done: number;
+    total: number;
+    pct: number | null;
+    source: 'tasks' | 'metric';
+    metric: ObjectiveMetric | null;
+  };
   forecast_start: string | null;
   forecast_end: string | null;
   /** true = forecast_end > target_date. null when either side is missing. */
@@ -153,6 +165,27 @@ export function computeRollupStatus(tasks: RoadmapTaskRef[]): ObjectiveStatus {
   return 'not_started';
 }
 
+/**
+ * Progress % of a Key Result metric — `current` along the `baseline → target` span,
+ * clamped to [0, 100]. Works in either direction (growth or reduce goals) because it
+ * divides by the signed span. `parseMetric` guarantees target ≠ baseline, so the
+ * denominator is never zero for a real metric; the `=== 0` guard is belt-and-braces.
+ */
+export function metricProgressPct(m: ObjectiveMetric): number {
+  const span = m.target - m.baseline;
+  if (span === 0) return 0;
+  const raw = ((m.current - m.baseline) / span) * 100;
+  return Math.max(0, Math.min(100, Math.round(raw)));
+}
+
+/** Status derived from a metric: done at/over target, active once off the baseline. */
+export function computeMetricStatus(m: ObjectiveMetric): ObjectiveStatus {
+  const pct = metricProgressPct(m);
+  if (pct >= 100) return 'done';
+  if (pct > 0) return 'active';
+  return 'not_started';
+}
+
 function maxDate(dates: Array<string | null>): string | null {
   const real = dates.filter((d): d is string => d !== null);
   return real.length === 0 ? null : real.reduce((a, b) => (a > b ? a : b));
@@ -217,9 +250,13 @@ export function buildRoadmapModel(contextRoot: string): RoadmapModel {
     const tasks = (membersOf.get(o.slug) ?? []).sort((a, b) => a.slug.localeCompare(b.slug));
     const done = tasks.filter((t) => t.status === 'completed').length;
     const total = tasks.length;
-    const pct = total === 0 ? null : Math.round((done / total) * 100);
+    // A Key Result metric, when present, is the progress source — task counts are still
+    // surfaced (done/total) but no longer drive pct or the computed status.
+    const metric = o.metric;
+    const taskPct = total === 0 ? null : Math.round((done / total) * 100);
+    const pct = metric ? metricProgressPct(metric) : taskPct;
 
-    const computed = computeRollupStatus(tasks);
+    const computed = metric ? computeMetricStatus(metric) : computeRollupStatus(tasks);
     const status = o.status ?? computed;
 
     // Null rule: no dated member tasks → unforecastable, non-constraining.
@@ -251,7 +288,7 @@ export function buildRoadmapModel(contextRoot: string): RoadmapModel {
       feature: o.feature,
       status,
       status_source: o.status !== null ? 'override' : 'computed',
-      progress: { done, total, pct },
+      progress: { done, total, pct, source: metric ? 'metric' : 'tasks', metric },
       forecast_start: forecastStart,
       forecast_end: forecastEnd,
       slipping,

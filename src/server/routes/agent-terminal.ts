@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
-import { existsSync, readdirSync, statSync, chmodSync } from 'node:fs';
+import { existsSync, readdirSync, statSync, chmodSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { sendJson, sendError } from '../middleware.js';
 import { listVaults } from '../../lib/vaults.js';
@@ -366,6 +366,9 @@ export async function handleAgentInstallStatus(
 
 // ─── Embedded terminal (WebSocket ↔ node-pty) ─────────────────────────────────
 
+/** What the PTY runs: the real Claude Code agent, or a plain vault-scoped login shell. */
+type PtyKind = 'agent' | 'shell';
+
 interface PtyLike {
   onData(cb: (data: string) => void): void;
   onExit(cb: (e: { exitCode: number }) => void): void;
@@ -395,6 +398,11 @@ export function attachAgentTerminal(server: Server): void {
     if (!projectRoot) { rejectUpgrade(socket, 400); return; }
     const bypass = url.searchParams.get('bypass') === '1';
     const theme: 'light' | 'dark' = url.searchParams.get('theme') === 'light' ? 'light' : 'dark';
+    // `kind=shell` runs a plain interactive login shell (the same terminal the user
+    // would open anyway, scoped to the vault) instead of `exec claude`. Any other value
+    // — including absent — is the default Claude agent. Shell sessions ignore the
+    // bypass/resume/session-id machinery (a shell has no permission model or conversation).
+    const kind: PtyKind = url.searchParams.get('kind') === 'shell' ? 'shell' : 'agent';
     // Conversation continuity across an app reopen: `sessionId` pins a NEW conversation to
     // a client-generated UUID (`claude --session-id`); `resume` reopens that exact prior
     // conversation (`claude --resume`). Both are STRICT-UUID-validated before they ever
@@ -413,7 +421,7 @@ export function attachAgentTerminal(server: Server): void {
 
       const wss = new WebSocketServer({ noServer: true });
       wss.handleUpgrade(req, socket, head, (ws) => {
-        startPtySession(ws, pty, projectRoot, bypass, theme, sessionId, resumeId);
+        startPtySession(ws, pty, projectRoot, bypass, theme, sessionId, resumeId, kind);
       });
     })();
   });
@@ -442,16 +450,141 @@ function sanitizeUuid(v: string | null): string {
  * otherwise we start fresh PINNED to that id so the tab stays resumable going forward.
  * `id` is a pre-validated UUID (sanitizeUuid), so the filename can't escape the dir.
  */
-function claudeConversationExists(id: string): boolean {
-  if (!id) return false;
+function findTranscriptPath(id: string): string | null {
+  if (!id) return null;
   try {
     const base = join(homedir(), '.claude', 'projects');
-    if (!existsSync(base)) return false;
+    if (!existsSync(base)) return null;
     for (const dir of readdirSync(base)) {
-      if (existsSync(join(base, dir, `${id}.jsonl`))) return true;
+      const p = join(base, dir, `${id}.jsonl`);
+      if (existsSync(p)) return p;
     }
-    return false;
-  } catch { return false; }
+  } catch { /* ignore */ }
+  return null;
+}
+
+function claudeConversationExists(id: string): boolean {
+  return findTranscriptPath(id) !== null;
+}
+
+// ─── Auto-title (Haiku names a tab from the session's first user message) ──────
+//
+// Every agent tab is pinned to a known conversation UUID, and Claude Code writes
+// that conversation's transcript to `~/.claude/projects/<slug>/<uuid>.jsonl` — so
+// we never touch the raw PTY byte-stream to learn what the user asked. We read the
+// FIRST real user message from the transcript and let Haiku turn it into a short
+// tab title. Cheap (one Haiku `-p` call), and isolated: run in the home dir, NOT
+// the vault, so the project's SessionStart hook / brain preload never fires.
+
+/**
+ * Pull the first genuine user message out of a Claude Code transcript JSONL. Skips
+ * tool results and the `<...>`-wrapped system-reminder / command-stub lines so the
+ * title reflects what the human actually typed. Returns null if none is found yet.
+ */
+function firstUserMessage(jsonlPath: string): string | null {
+  let raw: string;
+  try { raw = readFileSync(jsonlPath, 'utf-8'); } catch { return null; }
+  for (const line of raw.split('\n')) {
+    const s = line.trim();
+    if (!s) continue;
+    let obj: { type?: unknown; role?: unknown; message?: { role?: unknown; content?: unknown } };
+    try { obj = JSON.parse(s); } catch { continue; }
+    const role = obj?.message?.role ?? obj?.role;
+    if (obj?.type !== 'user' && role !== 'user') continue;
+    const content = obj?.message?.content ?? (obj as { content?: unknown }).content;
+    let text = '';
+    if (typeof content === 'string') text = content;
+    else if (Array.isArray(content)) {
+      text = content
+        .filter((c): c is { text: string } => !!c && typeof (c as { text?: unknown }).text === 'string')
+        .map((c) => c.text)
+        .join(' ');
+    }
+    text = text.trim();
+    if (!text) continue;
+    // Skip tool-result echoes and reminder/command wrappers — not the user's ask.
+    if (text.startsWith('<')) continue;
+    return text.slice(0, 800);
+  }
+  return null;
+}
+
+/** Trim Haiku's reply to a clean tab title: one line, no wrapping quotes/markdown,
+ *  no trailing punctuation, ≤6 words / 40 chars. Returns null if nothing usable. */
+function sanitizeTitle(raw: string): string | null {
+  let t = raw.replace(/[\r\n]+/g, ' ').trim();
+  t = t.replace(/^["'`*]+/, '').replace(/["'`*.]+$/, '').trim();
+  t = t.split(/\s+/).slice(0, 6).join(' ');
+  if (t.length > 40) t = t.slice(0, 40).trim();
+  return t.length >= 2 ? t : null;
+}
+
+/** One-shot Haiku call that returns a short tab title for `message`, or null. Runs
+ *  headless (`claude --model haiku -p`) in `cwd`; `$0` is a positional (no injection). */
+function generateTitle(message: string, cwd: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    const shell = process.env.SHELL || '/bin/zsh';
+    const prompt =
+      'You name terminal tabs. Read the user\'s first request to a coding agent and reply with ONLY a 2-4 word tab title in Title Case. No quotes, no punctuation, no trailing period, max 32 characters.\n\nRequest:\n' +
+      message;
+    let out = '';
+    let settled = false;
+    const child = spawn(shell, ['-ilc', 'exec claude --model haiku -p "$0"', prompt], {
+      cwd,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const done = (v: string | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { child.kill(); } catch { /* gone */ }
+      resolve(v);
+    };
+    const timer = setTimeout(() => done(null), 30_000);
+    child.stdout?.on('data', (c: Buffer) => { out = (out + c.toString('utf-8')).slice(0, 500); });
+    child.on('error', () => done(null));
+    child.on('close', (code) => done(code === 0 ? sanitizeTitle(out) : null));
+  });
+}
+
+/**
+ * POST /api/agent/title  { claudeId }
+ * Returns `{ title }` — a Haiku-generated tab title from the session's first user
+ * message — or `{ title: null }` if there's no transcript/message yet or Haiku
+ * failed. Desktop-gated + vault-scoped (same posture as /agent/drop). Idempotent
+ * and side-effect-free: the client decides whether to apply the rename.
+ */
+export async function handleAgentTitle(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  _contextRoot: string,
+): Promise<void> {
+  if (!isDesktop()) {
+    sendError(res, 403, 'desktop_only', 'Auto-title is only available in the desktop app.');
+    return;
+  }
+  let claudeId = '';
+  try {
+    const chunks: Buffer[] = [];
+    for await (const c of req) chunks.push(c as Buffer);
+    if (chunks.length) {
+      const body = JSON.parse(Buffer.concat(chunks).toString('utf-8')) as { claudeId?: unknown };
+      claudeId = sanitizeUuid(typeof body.claudeId === 'string' ? body.claudeId : null);
+    }
+  } catch { /* invalid body → 400 below */ }
+  if (!claudeId) {
+    sendError(res, 400, 'bad_id', 'Body must be { claudeId: <uuid> }.');
+    return;
+  }
+  const path = findTranscriptPath(claudeId);
+  if (!path) { sendJson(res, 200, { title: null, reason: 'no_transcript' }); return; }
+  const message = firstUserMessage(path);
+  if (!message) { sendJson(res, 200, { title: null, reason: 'no_message' }); return; }
+  // Home dir, not the vault: a titling call must not fire the project's SessionStart
+  // brain preload — keep it lean.
+  const title = await generateTitle(message, homedir());
+  sendJson(res, 200, { title });
 }
 
 function startPtySession(
@@ -462,6 +595,7 @@ function startPtySession(
   theme: 'light' | 'dark',
   sessionId: string,
   resumeId: string,
+  kind: PtyKind = 'agent',
 ): void {
   const shell = process.env.SHELL || '/bin/zsh';
   const flag = bypass ? ' --permission-mode bypassPermissions' : '';
@@ -479,9 +613,13 @@ function startPtySession(
   // field is the background (0 = dark, 15 = light). Combined with the webview's OSC
   // 10/11 colour replies, this lets Claude Code theme to our surface at spawn.
   const colorfgbg = theme === 'light' ? '0;15' : '15;0';
-  // Interactive login shell (`-ilc`) so a Finder-launched app inherits the user's
-  // PATH (where `claude` usually lives) — same reason the capture/chat pipelines use it.
-  const term = pty.spawn(shell, ['-ilc', `exec claude${idArg}${flag}`], {
+  // Interactive login shell (`-ilc`) so a Finder-launched app inherits the user's PATH
+  // (where `claude` usually lives) — same reason the capture/chat pipelines use it.
+  //  • agent → `-ilc 'exec claude …'`: replace the shell with Claude Code.
+  //  • shell → `-il`: a plain interactive login shell (the vault-scoped terminal the user
+  //    would open anyway) — no `-c`, no claude, no bypass/resume flags.
+  const shellArgs = kind === 'shell' ? ['-il'] : ['-ilc', `exec claude${idArg}${flag}`];
+  const term = pty.spawn(shell, shellArgs, {
     name: 'xterm-color',
     cols: 80,
     rows: 24,
@@ -498,7 +636,8 @@ function startPtySession(
     alive = false;
     untrack();
     if (ws.readyState === ws.OPEN) {
-      try { ws.send(`\r\n\x1b[2m[claude exited with code ${exitCode}]\x1b[0m\r\n`); } catch { /* closing */ }
+      const what = kind === 'shell' ? 'shell' : 'claude';
+      try { ws.send(`\r\n\x1b[2m[${what} exited with code ${exitCode}]\x1b[0m\r\n`); } catch { /* closing */ }
       ws.close();
     }
   });

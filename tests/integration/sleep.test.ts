@@ -354,4 +354,42 @@ describe('sleep (integration)', () => {
     // .sleep.json should NOT appear as a task
     expect(output).not.toContain('.sleep');
   });
+
+  // --- Post-sleep brain-repo sync wiring (github-cloud-collaboration-brain-repo-sync, M1) ---
+
+  it('sleep done runs the post-sleep brain-repo sync when brainRepo.autoSync is enabled (regression: config must resolve from the PROJECT root, not the _dream_context root)', () => {
+    // In-tree mode commits into the CODE repo (the project root) and never
+    // pushes, so a real local git repo (no remote) is enough to exercise it.
+    execSync('git init', { cwd: tmpDir });
+    execSync('git config user.email "test@example.com"', { cwd: tmpDir });
+    execSync('git config user.name "Test"', { cwd: tmpDir });
+
+    writeFileSync(
+      join(ctx, 'state', '.config.json'),
+      JSON.stringify(
+        {
+          platforms: [],
+          packs: [],
+          multiProduct: false,
+          setupVersion: '0.0.0',
+          disableNativeMemory: true,
+          brainRepo: { mode: 'in-tree', enabled: true, autoSync: true },
+        },
+        null,
+        2,
+      ),
+    );
+
+    run('sleep add 2 Some work', tmpDir);
+    const output = run('sleep done Consolidated with brain sync', tmpDir);
+
+    // Old (buggy) code silently skipped the whole block — `cfg` was always
+    // null because readSetupConfig() was handed the `_dream_context` path
+    // instead of the project root. On the fix, the gate resolves true and
+    // the in-tree commit actually happens.
+    expect(output).toContain('Brain sync: committed');
+
+    const log = execSync('git log --oneline', { cwd: tmpDir, encoding: 'utf-8' });
+    expect(log).toContain('chore(brain): sync (in-tree)');
+  });
 });

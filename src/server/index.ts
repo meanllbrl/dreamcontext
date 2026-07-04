@@ -28,6 +28,9 @@ import {
   handleLauncherStatus,
   handleLauncherUnregister,
   handleLauncherUpdate,
+  handleLauncherUpgrade,
+  handleLauncherUpgradeStatus,
+  handleLauncherRelaunch,
   handleLauncherFederationGraph,
   handleLauncherConnectionCreate,
   handleLauncherConnectionRemove,
@@ -38,6 +41,8 @@ import {
   handleSleepyAnim,
   handleSleepyConfigGet,
   handleSleepyConfigSet,
+  handleAgentSettingsGet,
+  handleAgentSettingsSet,
 } from './routes/launcher.js';
 import { handleBrainSettingsGet, handleBrainSettingsPut, handleRoadmapPrefsGet, handleRoadmapPrefsPut } from './routes/ui-settings.js';
 import {
@@ -61,6 +66,7 @@ import {
   handleOpenTerminal,
   handleAgentInstall,
   handleAgentInstallStatus,
+  handleAgentTitle,
   attachAgentTerminal,
 } from './routes/agent-terminal.js';
 import { handleAgentDrop } from './routes/agent-drop.js';
@@ -166,11 +172,16 @@ function buildRouter(): Router {
   router.get('/api/launcher/capture/status', handleLauncherCaptureStatus);
   router.get('/api/launcher/sleepy-config', handleSleepyConfigGet);
   router.post('/api/launcher/sleepy-config', handleSleepyConfigSet);
+  router.get('/api/launcher/agent-settings', handleAgentSettingsGet);
+  router.post('/api/launcher/agent-settings', handleAgentSettingsSet);
   // Launcher project status (green/yellow/red) + per-project update + the
   // cross-vault federation "reads" graph (nodes, edges, connect/disconnect).
   router.get('/api/launcher/status', handleLauncherStatus);
   router.post('/api/launcher/unregister', handleLauncherUnregister);
   router.post('/api/launcher/update', handleLauncherUpdate);
+  router.post('/api/launcher/upgrade', handleLauncherUpgrade);
+  router.get('/api/launcher/upgrade/status', handleLauncherUpgradeStatus);
+  router.post('/api/launcher/relaunch', handleLauncherRelaunch);
   router.get('/api/launcher/federation-graph', handleLauncherFederationGraph);
   router.post('/api/launcher/connection', handleLauncherConnectionCreate);
   router.post('/api/launcher/connection/remove', handleLauncherConnectionRemove);
@@ -200,6 +211,8 @@ function buildRouter(): Router {
   // Image drop → write under the active vault's temp dir (desktop-gated, vault-scoped:
   // NOT vault-agnostic, so it resolves contextRoot from the X-Dreamcontext-Vault header).
   router.post('/api/agent/drop', handleAgentDrop);
+  // Auto-title a session from its first user message (Haiku) — vault-scoped, desktop-only.
+  router.post('/api/agent/title', handleAgentTitle);
   // Per-vault session roster (titles + layout) so renamed tabs survive a reload
   // (desktop-gated, vault-scoped — same posture as /drop above).
   router.get('/api/agent/sessions', handleAgentSessionsGet);

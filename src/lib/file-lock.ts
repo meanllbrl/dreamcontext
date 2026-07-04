@@ -15,8 +15,25 @@ import { dirname } from 'node:path';
  *
  * @returns true if the lock is now held by THIS process; false if a live holder
  *   owns it. `nowMs` is injected so callers and tests stay deterministic.
+ *
+ * `opts.verifyPidLiveness` (amendment 3, git-sync brain lock) is OPT-IN and
+ * additive: when unset, every existing caller keeps today's timestamp-only
+ * staleness semantics byte-for-byte. When set, a lock past `staleMs` is only
+ * reclaimed after probing the recorded holder PID with `process.kill(pid, 0)`:
+ * a slow-but-ALIVE holder (a long real fetch/merge) must never have its lock
+ * stolen just because a timer elapsed.
+ *   - `ESRCH` (no such process) → holder is dead → proceed to reclaim.
+ *   - no throw, or `EPERM` (exists, not ours to signal) → holder is alive →
+ *     return false (do NOT reclaim), regardless of age.
+ *   - `pid` missing/non-numeric (garbage/mtime-fallback lock) → fall back to
+ *     the timestamp-only reclaim so a garbage lock still can't wedge forever.
  */
-export function acquireFileLock(lockPath: string, nowMs: number, staleMs: number): boolean {
+export function acquireFileLock(
+  lockPath: string,
+  nowMs: number,
+  staleMs: number,
+  opts?: { verifyPidLiveness?: boolean },
+): boolean {
   mkdirSync(dirname(lockPath), { recursive: true });
   const tryCreate = (): boolean => {
     try {
@@ -30,9 +47,11 @@ export function acquireFileLock(lockPath: string, nowMs: number, staleMs: number
 
   // Lock exists — genuinely held, or left behind by a dead process?
   let heldSince: number | null = null;
+  let heldPid: number | null = null;
   try {
     const info = JSON.parse(readFileSync(lockPath, 'utf-8'));
     if (typeof info.at === 'number') heldSince = info.at;
+    if (typeof info.pid === 'number' && Number.isFinite(info.pid)) heldPid = info.pid;
   } catch { /* unreadable → fall back to mtime below */ }
   if (heldSince === null) {
     try {
@@ -42,6 +61,18 @@ export function acquireFileLock(lockPath: string, nowMs: number, staleMs: number
     }
   }
   if (nowMs - heldSince <= staleMs) return false; // genuinely held
+
+  // Stale by age. With verifyPidLiveness + a real PID, don't reclaim out from
+  // under a live-but-slow holder — probe it first.
+  if (opts?.verifyPidLiveness && heldPid !== null) {
+    try {
+      process.kill(heldPid, 0); // no throw, or EPERM → process exists → alive
+      return false;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code !== 'ESRCH') return false; // EPERM etc → alive → don't reclaim
+      // ESRCH → dead → fall through to reclaim below.
+    }
+  }
 
   // Stale: break it, then re-race atomically.
   try { rmSync(lockPath, { force: true }); } catch { /* best-effort */ }

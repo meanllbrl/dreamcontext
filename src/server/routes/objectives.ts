@@ -8,6 +8,7 @@ import {
   addDependency,
   removeDependency,
   isSafeObjectiveSlug,
+  parseMetric,
   ObjectiveError,
   type CreateObjectiveInput,
   type UpdateObjectiveInput,
@@ -47,9 +48,27 @@ function toPublicObjective(o: Objective) {
     impact: o.impact,
     effort: o.effort,
     status: o.status,
+    metric: o.metric,
     created_at: o.created_at,
     updated_at: o.updated_at,
   };
+}
+
+/**
+ * Read a metric object off a request body for create/update. Returns:
+ *   { present:false }                          — key absent (leave unchanged)
+ *   { present:true, value:null }               — explicit null (clear the metric)
+ *   { present:true, value:ObjectiveMetric }    — a parsed metric (store validates it)
+ *   { present:true, invalid:true }             — malformed (handler 400s)
+ * A present-but-unparseable object is `invalid` so a bad payload is rejected loudly
+ * rather than silently clearing the KR the objective is tracked by.
+ */
+function readMetric(body: Record<string, unknown>): { present: boolean; value?: Objective['metric']; invalid?: boolean } {
+  if (!('metric' in body)) return { present: false };
+  const raw = body.metric;
+  if (raw === null) return { present: true, value: null };
+  const parsed = parseMetric(raw);
+  return parsed ? { present: true, value: parsed } : { present: true, invalid: true };
 }
 
 /** `''`/absent → skip; explicit `null` → clear; string → trimmed value. */
@@ -134,6 +153,12 @@ export async function handleObjectivesCreate(
 
   // Impact/effort (value/effort 2×2) — coerced to number|null; the store validates
   // the scales (impact 1–5, effort weeks in (0,52]) and rejects bad values as 400s.
+  const metric = readMetric(body);
+  if (metric.invalid) {
+    sendError(res, 400, 'invalid_metric', 'metric must be null or { label, target, baseline?, current?, unit? } with a numeric target ≠ baseline.');
+    return;
+  }
+
   const input: CreateObjectiveInput = {
     slug: rawSlug,
     title,
@@ -143,6 +168,7 @@ export async function handleObjectivesCreate(
     feature: typeof body.feature === 'string' && body.feature.trim() ? body.feature.trim() : null,
     impact: numOrNull(body.impact),
     effort: numOrNull(body.effort),
+    metric: metric.present ? (metric.value ?? null) : null,
     why: typeof body.why === 'string' ? body.why : undefined,
   };
 
@@ -195,6 +221,12 @@ export async function handleObjectivesUpdate(
   if ('effort' in body) patch.effort = numOrNull(body.effort);
   if ('feature' in body) patch.feature = typeof body.feature === 'string' && body.feature.trim() ? body.feature.trim() : null;
   if ('status' in body) patch.status = body.status === null ? null : (String(body.status) as UpdateObjectiveInput['status']);
+  const metric = readMetric(body);
+  if (metric.invalid) {
+    sendError(res, 400, 'invalid_metric', 'metric must be null or { label, target, baseline?, current?, unit? } with a numeric target ≠ baseline.');
+    return;
+  }
+  if (metric.present) patch.metric = metric.value ?? null;
 
   try {
     const objective = updateObjective(contextRoot, slug, patch);

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync, existsSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -58,5 +58,63 @@ describe('acquireFileLock / releaseFileLock', () => {
     releaseFileLock(lock); // already gone — must not throw
     // released → a new holder can acquire
     expect(acquireFileLock(lock, 2000, STALE)).toBe(true);
+  });
+
+  // ── verifyPidLiveness (amendment 3, git-sync brain lock) — opt-in, additive ──
+  describe('verifyPidLiveness (opt-in)', () => {
+    it('reclaims a stale lock whose PID is DEAD (process.kill throws ESRCH)', () => {
+      expect(acquireFileLock(lock, 1000, STALE)).toBe(true);
+      const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => {
+        const err = new Error('ESRCH') as NodeJS.ErrnoException;
+        err.code = 'ESRCH';
+        throw err;
+      });
+      try {
+        expect(acquireFileLock(lock, 1000 + STALE + 1, STALE, { verifyPidLiveness: true })).toBe(true);
+      } finally {
+        killSpy.mockRestore();
+      }
+    });
+
+    it('does NOT reclaim a stale lock whose PID is ALIVE (process.kill does not throw)', () => {
+      expect(acquireFileLock(lock, 1000, STALE)).toBe(true);
+      const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true as unknown as boolean);
+      try {
+        expect(acquireFileLock(lock, 1000 + STALE + 1, STALE, { verifyPidLiveness: true })).toBe(false);
+      } finally {
+        killSpy.mockRestore();
+      }
+    });
+
+    it('does NOT reclaim a stale lock whose PID is alive-but-not-ours (EPERM)', () => {
+      expect(acquireFileLock(lock, 1000, STALE)).toBe(true);
+      const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => {
+        const err = new Error('EPERM') as NodeJS.ErrnoException;
+        err.code = 'EPERM';
+        throw err;
+      });
+      try {
+        expect(acquireFileLock(lock, 1000 + STALE + 1, STALE, { verifyPidLiveness: true })).toBe(false);
+      } finally {
+        killSpy.mockRestore();
+      }
+    });
+
+    it('existing callers (no opts) keep timestamp-only reclaim behavior unchanged', () => {
+      expect(acquireFileLock(lock, 1000, STALE)).toBe(true);
+      expect(acquireFileLock(lock, 1000 + STALE + 1, STALE)).toBe(true);
+    });
+
+    it('falls back to timestamp-only reclaim when the lock has no parseable pid', () => {
+      acquireFileLock(lock, 1, STALE);
+      writeFileSync(lock, JSON.stringify({ at: 1 }) + '\n'); // no pid field
+      const killSpy = vi.spyOn(process, 'kill');
+      try {
+        expect(acquireFileLock(lock, 1 + STALE + 1, STALE, { verifyPidLiveness: true })).toBe(true);
+        expect(killSpy).not.toHaveBeenCalled();
+      } finally {
+        killSpy.mockRestore();
+      }
+    });
   });
 });

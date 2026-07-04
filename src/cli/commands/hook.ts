@@ -39,6 +39,8 @@ import { maybeTriggerAppUpdate, readAppManifest } from './app.js';
 import { runAssetDriftRefresh } from './asset-drift.js';
 import { loadCatalog } from './install-skill.js';
 import { detectSessionStartTrigger, detectPromptTrigger, renderOffer } from '../../lib/initializer-detect.js';
+import { readSetupConfig, readBrainLocal } from '../../lib/setup-config.js';
+import { resolveBrainSyncEnabled } from '../../lib/git-sync/brain-repo.js';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -590,6 +592,23 @@ function spawnAssetDriftRefresh(): void {
   child.unref();
 }
 
+/**
+ * Launch a non-blocking, PATH-safe `brain sync --pull-only` (C2), mirroring
+ * `spawnDashboard`/`spawnAssetDriftRefresh` above exactly — same guard, same
+ * detached/unref discipline. Content lands on the NEXT session (the one-
+ * session lag is the documented tradeoff of staying non-blocking here).
+ */
+function spawnBrainPull(root: string): void {
+  const cliEntry = process.argv[1];
+  if (!cliEntry) return;
+  const child = spawn(process.execPath, [cliEntry, 'brain', 'sync', '--pull-only'], {
+    detached: true,
+    stdio: 'ignore',
+    cwd: root,
+  });
+  child.unref();
+}
+
 // ─── Command Registration ───────────────────────────────────────────────────
 
 export function registerHookCommand(program: Command): void {
@@ -791,6 +810,32 @@ export function registerHookCommand(program: Command): void {
         }
       } catch (initErr) {
         if (process.env.DREAMCONTEXT_DEBUG) console.error('[initializer] error:', (initErr as Error).message ?? initErr);
+      }
+
+      // Session-start background brain pull (github-cloud-collaboration-brain-repo-sync,
+      // M1, corrects C2): non-blocking, PATH-safe detached spawn — never a bare
+      // `dreamcontext` (Finder-launched apps inherit only a minimal PATH). Own
+      // try/catch so this can never break the snapshot. Surfaces the PREVIOUS
+      // pull's results (this run's pull lands on the NEXT session — the
+      // documented non-blocking tradeoff).
+      try {
+        if (process.env.DREAMCONTEXT_BRAIN_SYNC !== '0') {
+          const projectRoot = dirname(root);
+          const cfg = readSetupConfig(projectRoot);
+          const enabledResolution = resolveBrainSyncEnabled(projectRoot, cfg);
+          if (enabledResolution.enabled && cfg?.brainRepo?.mode === 'separate' && cfg?.brainRepo?.autoSync) {
+            spawnBrainPull(root);
+          }
+          const local = readBrainLocal(projectRoot);
+          if (local.pulledUpdates && local.pulledUpdates > 0) {
+            console.log(`ℹ ${local.pulledUpdates} update(s) from your team were merged in.`);
+          }
+          if (local.pendingAgentMerge) {
+            console.log('⚠ Some brain updates need /dream-sync to reconcile.');
+          }
+        }
+      } catch (brainErr) {
+        if (process.env.DREAMCONTEXT_DEBUG) console.error('[brain-sync] error:', (brainErr as Error).message ?? brainErr);
       }
 
       console.log(snapshot);

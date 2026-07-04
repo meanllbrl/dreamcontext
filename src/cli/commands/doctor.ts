@@ -269,6 +269,16 @@ function checkObjectives(root: string): CheckResult[] {
         message: `Objective ${o.slug}: status "${m[1]}" is not one of ${OBJECTIVE_STATUSES.join('|')} — treated as computed`,
       });
     }
+    // A `metric:` block that parses to null (missing label, non-numeric target, or
+    // target === baseline) is silently ignored at read time — surface it here so a
+    // hand-edited KR that stopped driving progress doesn't fail invisibly.
+    if (/^metric:\s*$/m.test(raw) && o.metric === null) {
+      results.push({
+        name: 'Objectives',
+        status: 'warn',
+        message: `Objective ${o.slug}: metric block is malformed (needs a label + numeric target ≠ baseline) — ignored, progress falls back to tasks`,
+      });
+    }
   }
 
   if (results.length === 0) {

@@ -40,6 +40,11 @@ export default defineConfig({
     cpSync('src/templates', 'dist/templates', { recursive: true });
     cpSync('agents', 'dist/agents', { recursive: true });
     cpSync('skill-packs', 'dist/skill-packs', { recursive: true });
+    // askpass.cjs must ship as a real standalone file (git execs it directly as
+    // the GIT_ASKPASS helper) — it can't be bundled into dist/index.js. Copied
+    // to dist/git-sync/ so credentials.ts's runtime path resolution (relative to
+    // its own bundled import.meta.url, i.e. dist/) finds it — see credentials.ts.
+    cpSync('src/lib/git-sync/askpass.cjs', 'dist/git-sync/askpass.cjs');
     if (existsSync('hooks')) {
       cpSync('hooks', 'dist/hooks', { recursive: true });
     }

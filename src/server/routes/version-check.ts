@@ -1,7 +1,7 @@
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname } from 'node:path';
 import { sendJson } from '../middleware.js';
-import { readVersionCache, isCacheFresh, buildNudge, readAutoUpgradeMarker, shouldSuppressCliNudge } from '../../lib/version-check.js';
+import { readVersionCache, isCacheFresh, buildNudge, readAutoUpgradeMarker, shouldSuppressCliNudge, compareVersions } from '../../lib/version-check.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
 import { isSkillInstalled } from '../../lib/catalog.js';
 
@@ -41,7 +41,15 @@ export async function handleVersionCheckGet(
     const nudge = buildNudge(installedCli, fresh ? cache : null, installedPacks, catalogPackNames, {
       suppressCliNudge,
     });
-    sendJson(res, 200, { cache, fresh, nudge, newPacks });
+    // Structured upgrade signal — independent of the manual-nudge suppression.
+    // In the desktop app the "run dreamcontext upgrade" TEXT line is suppressed
+    // (a terminal instruction is the wrong surface there), but the app itself CAN
+    // perform the upgrade in-place. So we always report whether a newer CLI is
+    // published; the header badge uses this to show the one-click "Upgrade
+    // everything" action even when the prose nudge is empty.
+    const latestCli = fresh ? cache?.latestCli ?? null : null;
+    const cliOutdated = latestCli !== null && compareVersions(installedCli, latestCli) < 0;
+    sendJson(res, 200, { cache, fresh, nudge, newPacks, currentCli: installedCli, latestCli, cliOutdated });
   } catch {
     sendJson(res, 200, { cache: null, fresh: false, nudge: null });
   }

@@ -6,6 +6,8 @@ import { createObjective, addDependency } from '../../src/lib/objectives-store.j
 import {
   buildRoadmapModel,
   computeRollupStatus,
+  computeMetricStatus,
+  metricProgressPct,
   transitiveDependents,
   type RoadmapTaskRef,
 } from '../../src/lib/roadmap-model.js';
@@ -48,6 +50,47 @@ const ref = (status: string): RoadmapTaskRef => ({
   slug: 'x', status, start_date: null, due_date: null, version: null, updated_at: null,
 });
 
+describe('metric-driven progress (Key Result objectives)', () => {
+  const m = (baseline: number, target: number, current: number) => ({ label: 'MRR', unit: 'USD', baseline, target, current });
+
+  it('computes pct along the baseline→target span, clamped to [0,100]', () => {
+    expect(metricProgressPct(m(0, 2000, 0))).toBe(0);
+    expect(metricProgressPct(m(0, 2000, 850))).toBe(43);
+    expect(metricProgressPct(m(0, 2000, 2000))).toBe(100);
+    expect(metricProgressPct(m(0, 2000, 3000))).toBe(100); // overshoot clamps
+    expect(metricProgressPct(m(0, 2000, -100))).toBe(0);   // below baseline clamps
+  });
+
+  it('handles reduce goals (target < baseline)', () => {
+    expect(metricProgressPct(m(10, 2, 6))).toBe(50); // churn 10→2, at 6 = halfway
+    expect(metricProgressPct(m(10, 2, 10))).toBe(0);
+    expect(metricProgressPct(m(10, 2, 2))).toBe(100);
+  });
+
+  it('derives status: done at/over target, active once off baseline', () => {
+    expect(computeMetricStatus(m(0, 2000, 0))).toBe('not_started');
+    expect(computeMetricStatus(m(0, 2000, 850))).toBe('active');
+    expect(computeMetricStatus(m(0, 2000, 2000))).toBe('done');
+  });
+
+  it('a metric objective drives progress/status without any tasks', () => {
+    createObjective(root, { slug: 'mrr', title: '2000 USD MRR', metric: m(0, 2000, 850) });
+    const [o] = buildRoadmapModel(root).objectives;
+    expect(o.progress.source).toBe('metric');
+    expect(o.progress.pct).toBe(43);
+    expect(o.progress.metric).toEqual(m(0, 2000, 850));
+    expect(o.status).toBe('active');
+  });
+
+  it('a manual status override still wins over the metric-derived status', () => {
+    createObjective(root, { slug: 'mrr', title: 'MRR', metric: m(0, 2000, 2000) });
+    // (override is set via updateObjective in the store tests; here confirm metric alone → done)
+    const [o] = buildRoadmapModel(root).objectives;
+    expect(o.status).toBe('done');
+    expect(o.status_source).toBe('computed');
+  });
+});
+
 describe('computeRollupStatus (real status enum)', () => {
   it('follows the spec table', () => {
     expect(computeRollupStatus([])).toBe('not_started');
@@ -72,8 +115,8 @@ describe('buildRoadmapModel — join + rollups', () => {
     expect(revenue.tasks.map((t) => t.slug)).toEqual(['shared']);
     expect(retention.tasks.map((t) => t.slug)).toEqual(['only-retention', 'shared']);
     // Each objective's % is over ITS OWN member set (not double-counting).
-    expect(revenue.progress).toEqual({ done: 1, total: 1, pct: 100 });
-    expect(retention.progress).toEqual({ done: 1, total: 2, pct: 50 });
+    expect(revenue.progress).toEqual({ done: 1, total: 1, pct: 100, source: 'tasks', metric: null });
+    expect(retention.progress).toEqual({ done: 1, total: 2, pct: 50, source: 'tasks', metric: null });
   });
 
   it('manual PO status override wins over the computed rollup', () => {
@@ -166,7 +209,7 @@ describe('buildRoadmapModel — forecast cascade (full DAG)', () => {
   it('an objective with no tasks at all forecasts null and has pct null', () => {
     createObjective(root, { slug: 'a', title: 'A', target_date: '2026-09-01' });
     const [a] = buildRoadmapModel(root).objectives;
-    expect(a.progress).toEqual({ done: 0, total: 0, pct: null });
+    expect(a.progress).toEqual({ done: 0, total: 0, pct: null, source: 'tasks', metric: null });
     expect(a.forecast_end).toBeNull();
     expect(a.slipping).toBeNull();
     expect(a.status).toBe('not_started');

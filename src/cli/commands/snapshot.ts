@@ -456,7 +456,15 @@ const OBJECTIVES_RECENT_DONE_DAYS = 14;
 /** One plain-text line per objective (shared by snapshot + subagent briefing). */
 function objectiveSnapshotLine(o: RoadmapObjective): string {
   const icon = { done: '🟢', active: '🔵', review: '🟡', not_started: '⚪' }[o.status];
-  const pct = o.progress.pct === null ? 'no tasks yet' : `${o.progress.done}/${o.progress.total} done (${o.progress.pct}%)`;
+  const num = (n: number) => (Number.isInteger(n) ? String(n) : String(Number(n.toFixed(2))));
+  let pct: string;
+  if (o.progress.source === 'metric' && o.progress.metric) {
+    // Outcome objective (Key Result): show the tracked value against its target.
+    const m = o.progress.metric;
+    pct = `${m.unit ? `${m.unit} ` : ''}${num(m.current)}/${num(m.target)} ${m.label} (${o.progress.pct}%)`;
+  } else {
+    pct = o.progress.pct === null ? 'no tasks yet' : `${o.progress.done}/${o.progress.total} done (${o.progress.pct}%)`;
+  }
   const dates: string[] = [];
   if (o.target_date) dates.push(`target ${o.target_date}`);
   if (o.forecast_end) dates.push(`forecast ${o.forecast_end}${o.slipping ? ' 🔴 SLIPPING' : ''}`);

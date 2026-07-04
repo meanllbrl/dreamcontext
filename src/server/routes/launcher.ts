@@ -37,6 +37,7 @@ import { insertToJsonArray } from '../../lib/json-file.js';
 import { today } from '../../lib/id.js';
 import { randomUUID } from 'node:crypto';
 import { readSleepState } from '../../cli/commands/sleep.js';
+import { readAppManifest } from '../../cli/commands/app.js';
 import {
   consolidationDepth,
   inspectSleepLock,
@@ -501,6 +502,89 @@ export async function handleSleepyConfigSet(
   } catch (err) {
     console.error('[launcher] sleepy-config write failed:', err);
     sendError(res, 500, 'write_failed', 'Failed to persist Sleepy config.');
+  }
+}
+
+// ─── Agent-surface UI settings persistence (~/.dreamcontext/agent-ui.json) ─────
+//
+// Same rationale as sleepy.json: the app's per-launch loopback port resets
+// localStorage, so the Agents (beta) preferences — feature on/off, restore-past-
+// tabs, default agent, and the in-app open/close hotkey — are persisted here so
+// they survive restarts. App-global (not vault-scoped): these are surface
+// preferences, so every project window shares them. Vault-agnostic route.
+
+type AgentUiDefaultAgent = 'claude';
+interface AgentUiSettings {
+  enabled: boolean;
+  restoreTabs: boolean;
+  defaultAgent: AgentUiDefaultAgent;
+  autoTitle: boolean;
+  hotkey: string;
+}
+const AGENT_UI_DEFAULTS: AgentUiSettings = {
+  enabled: true,
+  restoreTabs: true,
+  defaultAgent: 'claude',
+  autoTitle: true,
+  hotkey: 'Ctrl+A',
+};
+
+function agentSettingsPath(): string {
+  return join(homedir(), '.dreamcontext', 'agent-ui.json');
+}
+
+/** Coerce an arbitrary parsed blob to a valid AgentUiSettings, filling defaults. */
+function coerceAgentSettings(raw: Record<string, unknown>): AgentUiSettings {
+  return {
+    // Default-TRUE flags: only an explicit `false` turns them off (an absent key
+    // must not silently disable the surface for someone upgrading).
+    enabled: raw.enabled !== false,
+    restoreTabs: raw.restoreTabs !== false,
+    defaultAgent: raw.defaultAgent === 'claude' ? 'claude' : AGENT_UI_DEFAULTS.defaultAgent,
+    autoTitle: raw.autoTitle !== false,
+    hotkey: typeof raw.hotkey === 'string' && raw.hotkey.trim() ? raw.hotkey.trim() : AGENT_UI_DEFAULTS.hotkey,
+  };
+}
+
+/** GET /api/launcher/agent-settings — persisted Agents-surface prefs (defaults if absent). */
+export async function handleAgentSettingsGet(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  _contextRoot: string | null,
+): Promise<void> {
+  let settings = { ...AGENT_UI_DEFAULTS };
+  try {
+    const p = agentSettingsPath();
+    if (existsSync(p)) {
+      settings = coerceAgentSettings(JSON.parse(readFileSync(p, 'utf-8')) as Record<string, unknown>);
+    }
+  } catch {
+    /* fall back to defaults */
+  }
+  sendJson(res, 200, settings);
+}
+
+/** POST /api/launcher/agent-settings — persist Agents-surface prefs. STRICT-PICK. */
+export async function handleAgentSettingsSet(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  _contextRoot: string | null,
+): Promise<void> {
+  const body = await parseJsonBody(req);
+  if (!body) {
+    sendError(res, 400, 'invalid_body', 'Request body must be valid JSON.');
+    return;
+  }
+  const settings = coerceAgentSettings(body as Record<string, unknown>);
+  try {
+    mkdirSync(join(homedir(), '.dreamcontext'), { recursive: true });
+    writeFileSync(agentSettingsPath(), JSON.stringify(settings, null, 2) + '\n', 'utf-8');
+    sendJson(res, 200, settings);
+  } catch (err) {
+    console.error('[launcher] agent-settings write failed:', err);
+    sendError(res, 500, 'write_failed', 'Failed to persist Agent settings.');
   }
 }
 
@@ -1029,6 +1113,164 @@ export async function handleLauncherUpdate(
     console.error('[launcher] update failed:', err);
     const detail = err instanceof Error ? err.message : 'unknown error';
     sendError(res, 500, 'update_failed', `Update failed: ${detail}`);
+  }
+}
+
+// ─── Full-machine upgrade (CLI + desktop app + every project, in one job) ────────
+//
+// The header "Update available" badge triggers this. It runs the SAME
+// `dreamcontext upgrade --yes` the CLI exposes — npm-installs the latest CLI,
+// updates the installed desktop app, then refreshes every registered project —
+// as ONE background job the badge polls. Singleton: only one upgrade runs
+// machine-wide at a time (it mutates the global npm install AND the shared .app
+// bundle, so a second concurrent run would race). State is lost on server
+// restart, which is fine — the on-disk result is what matters, and a re-poll
+// after restart simply reports `idle`.
+
+interface UpgradeRun {
+  state: 'running' | 'done' | 'error';
+  /** Combined stdout+stderr tail — a live log for the badge popover. */
+  output: string;
+  startedAt: number;
+  endedAt?: number;
+}
+let upgradeRun: UpgradeRun | null = null;
+/** Safety ceiling: npm install + app download + N project refreshes. */
+const UPGRADE_MAX_MS = 12 * 60 * 1000;
+
+/**
+ * POST /api/launcher/upgrade — start (or no-op re-attach to) the one-shot full
+ * upgrade. Mutation; behind the CSRF guard. Vault-agnostic. Returns immediately
+ * with `{ ok, state: 'running' }`; progress is polled via `/upgrade/status`.
+ *
+ * The CLI is spawned inside an INTERACTIVE LOGIN shell (`$SHELL -ilc`) so `npm`
+ * and `npx` resolve even when the desktop app was launched from Finder/Spotlight
+ * (which do NOT inherit the user's interactive-shell PATH) — the same PATH fix
+ * used by the agent-terminal and Sleepy capture. `$0`/`$1` are argv positionals,
+ * never interpolated into the command string (no shell injection).
+ */
+export async function handleLauncherUpgrade(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  _contextRoot: string | null,
+): Promise<void> {
+  if (upgradeRun?.state === 'running') {
+    sendJson(res, 200, { ok: true, state: 'running' });
+    return;
+  }
+  const cliEntry = process.env.DREAMCONTEXT_CLI || process.argv[1];
+  if (!cliEntry) {
+    sendError(res, 500, 'no_cli', 'Could not locate the dreamcontext CLI entry to upgrade.');
+    return;
+  }
+
+  const run: UpgradeRun = { state: 'running', output: '', startedAt: Date.now() };
+  upgradeRun = run;
+
+  try {
+    const shell = process.env.SHELL || '/bin/zsh';
+    const child = spawn(
+      shell,
+      ['-ilc', 'exec "$0" "$1" upgrade --yes', process.execPath, cliEntry],
+      { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env } },
+    );
+    // Keep only the tail so a chatty npm/update run can't grow memory unbounded.
+    const append = (chunk: Buffer) => {
+      run.output = (run.output + chunk.toString('utf-8')).slice(-8000);
+    };
+    child.stdout?.on('data', append);
+    child.stderr?.on('data', append);
+
+    const guard = setTimeout(() => {
+      if (run.state !== 'running') return;
+      run.state = 'error';
+      run.output = (run.output + '\n\nUpgrade timed out.').slice(-8000);
+      run.endedAt = Date.now();
+      try { child.kill('SIGKILL'); } catch { /* already gone */ }
+    }, UPGRADE_MAX_MS);
+
+    child.on('error', (err) => {
+      clearTimeout(guard);
+      if (run.state !== 'running') return;
+      run.state = 'error';
+      run.output = `Couldn't start the upgrade: ${err.message}`;
+      run.endedAt = Date.now();
+    });
+    child.on('close', (code) => {
+      clearTimeout(guard);
+      if (run.state !== 'running') return;
+      run.state = code === 0 ? 'done' : 'error';
+      if (code !== 0 && !run.output.trim()) run.output = `Upgrade exited with code ${code}`;
+      run.endedAt = Date.now();
+    });
+  } catch (err) {
+    run.state = 'error';
+    run.output = `Couldn't start the upgrade: ${err instanceof Error ? err.message : 'spawn failed'}`;
+    run.endedAt = Date.now();
+  }
+
+  // Reflect the ACTUAL state: a synchronous spawn failure above already flipped run.state to
+  // 'error', so don't hardcode 'running' (that made the badge show a spinner for one poll
+  // cycle before /upgrade/status corrected it).
+  sendJson(res, 200, { ok: run.state !== 'error', state: run.state });
+}
+
+/**
+ * GET /api/launcher/upgrade/status — poll the background upgrade job. Returns
+ * `idle` when none has run this server lifetime, else its live state + log tail.
+ * Read-only, vault-agnostic.
+ */
+export async function handleLauncherUpgradeStatus(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  _contextRoot: string | null,
+): Promise<void> {
+  if (!upgradeRun) {
+    sendJson(res, 200, { state: 'idle', output: '' });
+    return;
+  }
+  sendJson(res, 200, { state: upgradeRun.state, output: upgradeRun.output.trim() });
+}
+
+/**
+ * POST /api/launcher/relaunch — relaunch the installed desktop app so a freshly
+ * upgraded CLI/app bundle takes effect. Mutation; behind the CSRF guard.
+ *
+ * The frontend calls this, then closes its own window; closing the last window
+ * quits the app, which tears down THIS server (via the parent-death watchdog +
+ * Rust process-group reap). So we detach a `sleep 2 && open <app>` into its OWN
+ * session (`detached` + `unref`) — a new process group that ESCAPES the reap —
+ * which re-opens the swapped bundle after the old process has quit and released
+ * it. No-op (reports `app_not_installed`) outside an installed app.
+ */
+export async function handleLauncherRelaunch(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  _contextRoot: string | null,
+): Promise<void> {
+  const manifest = readAppManifest();
+  const appPath = manifest?.path;
+  if (!appPath || !existsSync(appPath)) {
+    sendJson(res, 200, { ok: false, reason: 'app_not_installed' });
+    return;
+  }
+  try {
+    // `$0` is the bundle path positional — never interpolated into the string.
+    const child = spawn('/bin/sh', ['-c', 'sleep 2; open "$0"', appPath], {
+      detached: true,
+      stdio: 'ignore',
+    });
+    // Detached + unref'd: a LATE (async) spawn 'error' has no listener otherwise and would
+    // crash this long-lived server as an uncaughtException. Best-effort relaunch — there's
+    // nothing to recover once detached, so just swallow it (matches the upgrade child above).
+    child.on('error', () => { /* relaunch failed; the user reopens the app manually */ });
+    child.unref();
+    sendJson(res, 200, { ok: true });
+  } catch (err) {
+    sendJson(res, 200, { ok: false, reason: err instanceof Error ? err.message : 'spawn failed' });
   }
 }
 

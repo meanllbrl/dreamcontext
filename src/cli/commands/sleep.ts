@@ -12,6 +12,8 @@ import { runMigrations } from '../../lib/migration-runner.js';
 import { readSetupConfig } from '../../lib/setup-config.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
 import { acquireFileLock, releaseFileLock } from '../../lib/file-lock.js';
+import { runBrainSync } from '../../lib/git-sync/sync-engine.js';
+import { renderBrainSyncResult } from './brain.js';
 import {
   sleepinessLevel,
   sleepinessRange,
@@ -474,6 +476,28 @@ export function registerSleepCommand(program: Command): void {
         // The sync engine itself threw (auth/lock/transport) — best-effort by
         // contract, but visible: a swallowed failure is what hid the last bug.
         warn(`Task sync: skipped — ${(err as Error).message ?? err}`);
+      }
+
+      // Post-sleep brain-repo sync (github-cloud-collaboration-brain-repo-sync,
+      // M1): fetch/merge/commit/push the brain to its own remote when the
+      // project has opted into `separate` mode + autoSync. Best-effort by the
+      // same discipline as task sync above — a sync failure must never fail
+      // `sleep done`, but it must never fail SILENTLY either.
+      try {
+        const cfg = readSetupConfig(dirname(root));
+        if (cfg?.brainRepo?.autoSync) {
+          const result = await runBrainSync({ cwd: root, mode: 'auto' });
+          renderBrainSyncResult(result);
+          if (result.action === 'awaiting-agent' || result.action === 'already-awaiting-agent') {
+            warn('Brain sync paused on a team merge — run /dream-sync to reconcile (it will resume or continue as needed).');
+          }
+          if (result.needsTaskSync) {
+            const backend = getTaskBackend(root);
+            if (backend.name !== 'local') await backend.sync('both');
+          }
+        }
+      } catch (err) {
+        warn(`Brain sync: skipped — ${(err as Error).message ?? err}`);
       }
     });
 

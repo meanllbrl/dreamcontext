@@ -196,6 +196,29 @@ export function resolveGitHubToken(
   return null;
 }
 
+/**
+ * Read a GitHub token from the per-project secrets file ONLY — no env fallback.
+ * Used by `resolveBrainSyncToken` (git-sync/brain-repo.ts), which is
+ * intentionally secrets-first/env-last (the reverse of `resolveGitHubToken`'s
+ * env-first order) — a non-technical collaborator's logged-in/stored credential
+ * must win over a stray `GITHUB_TOKEN` in some inherited shell. Do NOT widen
+ * this into an env-aware resolver; that is exactly what `resolveGitHubToken`
+ * already is, and the two must stay distinct.
+ */
+export function readGitHubTokenSecretsOnly(
+  projectRoot: string,
+  opts?: { user?: string },
+): ResolvedToken | null {
+  const secrets = readSecretsFile(projectRoot);
+  if (opts?.user) {
+    const v = secrets.github?.users?.[opts.user];
+    if (v && v.trim()) return { token: v.trim(), source: 'secrets', via: `users.${opts.user}` };
+  }
+  const v = secrets.github?.token;
+  if (v && v.trim()) return { token: v.trim(), source: 'secrets', via: 'token' };
+  return null;
+}
+
 /** True when a secrets file exists for this project. */
 export function hasSecretsFile(projectRoot: string): boolean {
   return existsSync(secretsPath(projectRoot));

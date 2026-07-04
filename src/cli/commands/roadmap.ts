@@ -8,6 +8,7 @@ import { today } from '../../lib/id.js';
 import {
   createObjective,
   updateObjective,
+  updateObjectiveMetric,
   deleteObjective,
   addDependency,
   removeDependency,
@@ -51,8 +52,23 @@ function fmtDates(o: RoadmapObjective): string {
   return parts.join(' · ');
 }
 
+/** Compact number: drop trailing zeros so 2000 → "2000", 43.5 → "43.5". */
+function fmtNum(n: number): string {
+  return Number.isInteger(n) ? String(n) : String(Number(n.toFixed(2)));
+}
+
+function progressLabel(o: RoadmapObjective): string {
+  const p = o.progress;
+  if (p.source === 'metric' && p.metric) {
+    const m = p.metric;
+    const unit = m.unit ? `${m.unit} ` : '';
+    return `${unit}${fmtNum(m.current)}/${fmtNum(m.target)} ${m.label} (${p.pct}%)`;
+  }
+  return p.pct === null ? 'no tasks yet' : `${p.done}/${p.total} done (${p.pct}%)`;
+}
+
 function objectiveLine(o: RoadmapObjective): string {
-  const pct = o.progress.pct === null ? 'no tasks yet' : `${o.progress.done}/${o.progress.total} done (${o.progress.pct}%)`;
+  const pct = progressLabel(o);
   const deps = o.depends_on.length > 0 ? ` · deps: ${o.depends_on.join(', ')}` : '';
   const override = o.status_source === 'override' ? ' [status set by PO]' : '';
   return `${STATUS_ICON[o.status]} **${o.slug}** — ${o.title} · ${pct} · ${fmtDates(o)}${deps}${override}`;
@@ -135,6 +151,33 @@ function printBoard(model: RoadmapModel): void {
   }
 }
 
+/** Parse a required numeric CLI flag; throws a clean ObjectiveError on garbage. */
+function parseNum(value: string, flag: string): number {
+  const n = Number(value.trim());
+  if (!Number.isFinite(n)) throw new ObjectiveError(`${flag} must be a number, got "${value}".`);
+  return n;
+}
+
+/** Assemble a metric from `objective create` flags, or null when --metric is absent. */
+function buildMetricFromCreateOpts(opts: {
+  metric?: string; metricTarget?: string; metricBaseline?: string; metricCurrent?: string; metricUnit?: string;
+}) {
+  if (opts.metric === undefined) return null;
+  if (opts.metricTarget === undefined) {
+    throw new ObjectiveError('--metric requires --metric-target (the value that means 100% done).');
+  }
+  const baseline = opts.metricBaseline !== undefined ? parseNum(opts.metricBaseline, '--metric-baseline') : 0;
+  const target = parseNum(opts.metricTarget, '--metric-target');
+  const current = opts.metricCurrent !== undefined ? parseNum(opts.metricCurrent, '--metric-current') : baseline;
+  return {
+    label: opts.metric,
+    unit: opts.metricUnit && opts.metricUnit.trim() ? opts.metricUnit.trim() : null,
+    baseline,
+    target,
+    current,
+  };
+}
+
 function handleObjectiveError(err: unknown): never | void {
   if (err instanceof ObjectiveError) {
     error(err.message);
@@ -174,15 +217,25 @@ export function registerRoadmapCommand(program: Command): void {
     .option('--target <date>', 'Target date the PO commits to (YYYY-MM-DD)')
     .option('--depends-on <slugs>', 'Comma-separated slugs this objective depends on')
     .option('--feature <slug>', 'Backing feature PRD slug (optional)')
+    .option('--metric <label>', 'Track by a Key Result metric instead of tasks (e.g. "MRR")')
+    .option('--metric-target <n>', 'The metric value that means 100% done (required with --metric)')
+    .option('--metric-baseline <n>', 'Where the metric started (default 0)')
+    .option('--metric-current <n>', 'Current metric value (default = baseline)')
+    .option('--metric-unit <unit>', 'Metric display unit (e.g. "USD")')
     .option('--why <text>', 'Why this outcome matters (seeds the ## Why section)')
-    .action((slug: string, opts: { title: string; target?: string; dependsOn?: string; feature?: string; why?: string }) => {
+    .action((slug: string, opts: {
+      title: string; target?: string; dependsOn?: string; feature?: string; why?: string;
+      metric?: string; metricTarget?: string; metricBaseline?: string; metricCurrent?: string; metricUnit?: string;
+    }) => {
       try {
+        const metric = buildMetricFromCreateOpts(opts);
         const o = createObjective(ensureContextRoot(), {
           slug,
           title: opts.title,
           target_date: opts.target ?? null,
           depends_on: opts.dependsOn ? opts.dependsOn.split(',').map((s) => s.trim()).filter(Boolean) : [],
           feature: opts.feature ?? null,
+          metric,
           why: opts.why,
         });
         success(`Objective created: core/objectives/${o.slug}.md`);
@@ -257,6 +310,48 @@ export function registerRoadmapCommand(program: Command): void {
         if (opts.status !== undefined) patch.status = opts.status === 'clear' ? null : (opts.status as ObjectiveStatus);
         updateObjective(ensureContextRoot(), slug, patch);
         success(`Objective updated: ${slug}`);
+      } catch (err) {
+        handleObjectiveError(err);
+      }
+    });
+
+  objective
+    .command('metric')
+    .argument('<slug>', 'Objective slug')
+    .description('Set/update the Key Result metric that drives progress (e.g. MRR). --current is the common nudge.')
+    .option('--current <n>', 'Latest observed value (the number that moves over time)')
+    .option('--target <n>', 'The value that means 100% done')
+    .option('--baseline <n>', 'Where the metric started (progress is measured from here)')
+    .option('--label <label>', 'What the number measures (e.g. "MRR")')
+    .option('--unit <unit>', 'Display unit (e.g. "USD"), or "clear" to drop it')
+    .option('--clear', 'Remove the metric entirely — objective goes back to task-based progress')
+    .action((slug: string, opts: {
+      current?: string; target?: string; baseline?: string; label?: string; unit?: string; clear?: boolean;
+    }) => {
+      try {
+        const root = ensureContextRoot();
+        if (opts.clear) {
+          updateObjective(root, slug, { metric: null });
+          success(`Metric cleared on ${slug} — progress is task-based again.`);
+          return;
+        }
+        if (opts.current === undefined && opts.target === undefined && opts.baseline === undefined
+            && opts.label === undefined && opts.unit === undefined) {
+          error('Nothing to change — pass --current, --target, --baseline, --label, --unit, or --clear.');
+          process.exitCode = 1;
+          return;
+        }
+        const patch: Parameters<typeof updateObjectiveMetric>[2] = {};
+        if (opts.current !== undefined) patch.current = parseNum(opts.current, '--current');
+        if (opts.target !== undefined) patch.target = parseNum(opts.target, '--target');
+        if (opts.baseline !== undefined) patch.baseline = parseNum(opts.baseline, '--baseline');
+        if (opts.label !== undefined) patch.label = opts.label;
+        if (opts.unit !== undefined) patch.unit = opts.unit === 'clear' ? null : opts.unit;
+        const o = updateObjectiveMetric(root, slug, patch);
+        const m = o.metric!;
+        const model = buildRoadmapModel(root);
+        const pct = model.objectives.find((x) => x.slug === slug)?.progress.pct ?? 0;
+        success(`${slug} · ${m.label}: ${m.current}/${m.target}${m.unit ? ` ${m.unit}` : ''} (${pct}%)`);
       } catch (err) {
         handleObjectiveError(err);
       }

@@ -31,6 +31,7 @@ import { registerFederationCommand } from './commands/federation.js';
 import { registerConfigCommand } from './commands/config.js';
 import { registerFeedbackCommand } from './commands/feedback.js';
 import { registerMigrationsCommand } from './commands/migrations.js';
+import { registerBrainCommand } from './commands/brain.js';
 import { startInteractive } from './interactive.js';
 import { renderBanner } from '../lib/pixel-banner.js';
 import { dreamcontextVersion } from '../lib/manifest.js';
@@ -86,6 +87,9 @@ ${chalk.bold('System')}
 
 ${chalk.bold('Dashboard')}
   ${chalk.magentaBright('dashboard')}         Open the web dashboard in your browser
+
+${chalk.bold('Cloud Collaboration')}
+  ${chalk.magentaBright('brain')}             Sync the brain to its own GitHub repo (init/attach/sync/enable/disable)
 
 ${chalk.bold('Vaults')}
   ${chalk.magentaBright('vaults')}            Manage the global vault registry (multi-project)
@@ -147,6 +151,7 @@ export function createProgram(): Command {
   registerConfigCommand(program);
   registerFeedbackCommand(program);
   registerMigrationsCommand(program);
+  registerBrainCommand(program);
 
   return program;
 }

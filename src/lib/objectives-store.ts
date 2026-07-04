@@ -20,6 +20,36 @@ import { today } from './id.js';
 export const OBJECTIVE_STATUSES = ['not_started', 'active', 'review', 'done'] as const;
 export type ObjectiveStatus = (typeof OBJECTIVE_STATUSES)[number];
 
+/**
+ * A Key Result metric — the "outcome" progress source for objectives that can't be
+ * rolled up from checkbox tasks (e.g. "$2000 MRR", "5 enterprise customers"). When an
+ * objective carries a metric, progress is computed from `current` against the
+ * `baseline → target` span instead of from member-task completion (see roadmap-model).
+ * `baseline` and `target` may run in either direction (target > baseline for a growth
+ * goal, target < baseline for a reduce-churn goal); they must differ.
+ */
+export interface ObjectiveMetric {
+  /** What the number measures (e.g. "MRR"). */
+  label: string;
+  /** Display unit (e.g. "USD", "customers"), or null. */
+  unit: string | null;
+  /** Starting value progress is measured from. */
+  baseline: number;
+  /** The value that means 100% done. Must differ from baseline. */
+  target: number;
+  /** The latest observed value — the field the agent / PO updates over time. */
+  current: number;
+}
+
+/** Partial metric edit (merged onto the existing metric, or seeds a new one). */
+export interface MetricPatch {
+  label?: string;
+  unit?: string | null;
+  baseline?: number;
+  target?: number;
+  current?: number;
+}
+
 export interface Objective {
   slug: string;
   title: string;
@@ -36,6 +66,8 @@ export interface Objective {
   effort: number | null;
   /** Optional manual PO override; null = status is computed from member tasks. */
   status: ObjectiveStatus | null;
+  /** Optional Key Result metric; when set, it drives progress instead of tasks. */
+  metric: ObjectiveMetric | null;
   created_at: string | null;
   updated_at: string | null;
   /** Absolute path of the objective file. */
@@ -53,6 +85,7 @@ export interface CreateObjectiveInput {
   feature?: string | null;
   impact?: number | null;
   effort?: number | null;
+  metric?: ObjectiveMetric | null;
   why?: string;
 }
 
@@ -68,6 +101,8 @@ export interface UpdateObjectiveInput {
   effort?: number | null;
   /** `null` clears the manual override (back to computed). */
   status?: ObjectiveStatus | null;
+  /** Full Key Result metric object, or `null` to remove it (back to task-based). */
+  metric?: ObjectiveMetric | null;
 }
 
 export class ObjectiveError extends Error {}
@@ -121,6 +156,42 @@ function validateImpactEffort(impact: number | null | undefined, effort: number 
   }
 }
 
+/**
+ * Parse a metric object read from frontmatter, defensively. A hand-edited or
+ * incomplete metric degrades to `null` (objective falls back to task-based progress)
+ * rather than poisoning the roadmap — same philosophy as the date coercion above.
+ * Requires a non-empty label and a numeric target that differs from the baseline
+ * (equal baseline/target would divide by zero when computing progress).
+ */
+export function parseMetric(v: unknown): ObjectiveMetric | null {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  const raw = v as Record<string, unknown>;
+  const label = typeof raw.label === 'string' ? raw.label.trim() : '';
+  if (!label) return null;
+  const target = numOrNull(raw.target);
+  if (target === null) return null;
+  const baseline = numOrNull(raw.baseline) ?? 0;
+  if (target === baseline) return null;
+  const current = numOrNull(raw.current) ?? baseline;
+  const unit = typeof raw.unit === 'string' && raw.unit.trim() ? raw.unit.trim() : null;
+  return { label, unit, baseline, target, current };
+}
+
+/** Validate a metric for WRITES (throws). Reads use the lenient `parseMetric`. */
+export function validateMetric(m: ObjectiveMetric): void {
+  if (!m.label || !m.label.trim()) {
+    throw new ObjectiveError('Metric label is required (e.g. "MRR").');
+  }
+  for (const [field, val] of [['baseline', m.baseline], ['target', m.target], ['current', m.current]] as const) {
+    if (!Number.isFinite(val)) {
+      throw new ObjectiveError(`Metric ${field} must be a finite number, got "${val}".`);
+    }
+  }
+  if (m.target === m.baseline) {
+    throw new ObjectiveError('Metric target must differ from the baseline (otherwise progress is undefined).');
+  }
+}
+
 function readObjectiveFile(filePath: string): Objective {
   const { data, content } = readFrontmatter<Record<string, unknown>>(filePath);
   const slug = basename(filePath, '.md');
@@ -157,6 +228,7 @@ function readObjectiveFile(filePath: string): Objective {
     impact: numOrNull(data.impact),
     effort: numOrNull(data.effort),
     status: toObjectiveStatus(data.status),
+    metric: parseMetric(data.metric),
     created_at: dateOrNull(data.created_at),
     updated_at: dateOrNull(data.updated_at),
     path: filePath,
@@ -243,6 +315,7 @@ export function createObjective(contextRoot: string, input: CreateObjectiveInput
   }
   validateDateRange(input.start_date, input.target_date);
   validateImpactEffort(input.impact, input.effort);
+  if (input.metric) validateMetric(input.metric);
 
   const existing = listObjectives(contextRoot);
   const depends = Array.from(new Set((input.depends_on ?? []).map((s) => s.trim()).filter(Boolean)));
@@ -266,6 +339,7 @@ export function createObjective(contextRoot: string, input: CreateObjectiveInput
     impact: input.impact ?? null,
     effort: input.effort ?? null,
     status: null,
+    metric: input.metric ?? null,
     created_at: date,
     updated_at: date,
   };
@@ -307,6 +381,9 @@ export function updateObjective(
       && !(OBJECTIVE_STATUSES as readonly string[]).includes(patch.status)) {
     throw new ObjectiveError(`Status must be one of: ${OBJECTIVE_STATUSES.join(', ')} (or cleared).`);
   }
+  if ('metric' in patch && patch.metric !== null && patch.metric !== undefined) {
+    validateMetric(patch.metric);
+  }
   const updates: Record<string, unknown> = { updated_at: today() };
   if (patch.title !== undefined) updates.title = patch.title;
   if ('start_date' in patch) updates.start_date = patch.start_date ?? null;
@@ -315,7 +392,38 @@ export function updateObjective(
   if ('target_date' in patch) updates.target_date = patch.target_date ?? null;
   if ('feature' in patch) updates.feature = patch.feature ?? null;
   if ('status' in patch) updates.status = patch.status ?? null;
+  if ('metric' in patch) updates.metric = patch.metric ?? null;
   updateFrontmatterFields(existing.path, updates);
+  return readObjectiveFile(existing.path);
+}
+
+/**
+ * Update the Key Result metric by MERGING a partial patch onto the existing metric
+ * (or seeding a fresh one). This is the ergonomic path for the common case — an agent
+ * or the PO nudging just `current` as the real number moves — without having to resend
+ * the whole object. A brand-new metric defaults `current` to its `baseline` when the
+ * caller doesn't set it. Pass a `metric: null` through `updateObjective` to REMOVE it.
+ */
+export function updateObjectiveMetric(
+  contextRoot: string,
+  slug: string,
+  patch: MetricPatch,
+): Objective {
+  const existing = getObjective(contextRoot, slug);
+  if (!existing) throw new ObjectiveError(`Objective not found: ${slug}`);
+  const base = existing.metric;
+  const label = patch.label !== undefined ? patch.label.trim() : (base?.label ?? '');
+  const unit = patch.unit !== undefined
+    ? (patch.unit && patch.unit.trim() ? patch.unit.trim() : null)
+    : (base?.unit ?? null);
+  const baseline = patch.baseline !== undefined ? patch.baseline : (base?.baseline ?? 0);
+  const target = patch.target !== undefined ? patch.target : (base?.target ?? NaN);
+  const current = patch.current !== undefined
+    ? patch.current
+    : (base ? base.current : baseline);
+  const merged: ObjectiveMetric = { label, unit, baseline, target, current };
+  validateMetric(merged);
+  updateFrontmatterFields(existing.path, { metric: merged, updated_at: today() });
   return readObjectiveFile(existing.path);
 }
 
