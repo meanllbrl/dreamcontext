@@ -7,7 +7,7 @@ description: >
   staleness flags from sleep-state are present. Creates and reconciles knowledge/*.md and
   core/features/*.md, processes staleness flags, and maintains the knowledge index.
 tools: Read, Write, Edit, Bash, Glob, Grep
-model: sonnet
+model: claude-sonnet-4-5-20250929
 skills:
   - dreamcontext
 ---

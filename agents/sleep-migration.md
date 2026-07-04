@@ -7,7 +7,7 @@ description: >
   alters body prose. Writes the ledger on completion via
   `dreamcontext migrations record`.
 tools: Read, Write, Edit, Bash, Glob, Grep
-model: sonnet
+model: claude-sonnet-4-5-20250929
 skills:
   - dreamcontext
 ---

@@ -8,7 +8,7 @@ description: >
   entries. Owns ONLY federation state — never touches native local knowledge,
   tasks, or product files. Order is ALWAYS drain-then-distribute.
 tools: Read, Write, Edit, Bash, Glob, Grep
-model: sonnet
+model: claude-sonnet-4-5-20250929
 skills:
   - dreamcontext
 ---

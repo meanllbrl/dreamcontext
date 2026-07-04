@@ -141,6 +141,8 @@ A fresh session opening this task file should see the *current plan*.
 
 ### 4. Status — never auto-complete
 
+**Think hard before you set each task's status here.** The `completed` vs `in_review` call is the one genuinely judgment-heavy decision in this cycle — reason through the specific task's risk, reviewability, and whether any criterion is mechanically unproven before you bump it, rather than pattern-matching on surface cues.
+
 Default rule: if work meaningfully advanced the task, bump to `in_review`:
 
 ```bash

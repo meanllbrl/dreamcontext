@@ -8,7 +8,7 @@ description: >
   change since the sleep epoch; surfaces release readiness; enforces anti-bloat ceilings;
   flags stale knowledge files for sleep-product to handle.
 tools: Read, Write, Edit, Bash, Glob, Grep
-model: sonnet
+model: claude-sonnet-4-5-20250929
 skills:
   - dreamcontext
 ---

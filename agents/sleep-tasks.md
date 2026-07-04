@@ -6,7 +6,7 @@ description: >
   bumps statuses, creates new tasks for untracked work, attaches everything to the active
   planning version.
 tools: Read, Write, Edit, Bash, Glob, Grep
-model: sonnet
+model: claude-sonnet-4-5-20250929
 skills:
   - dreamcontext
 ---
@@ -153,6 +153,8 @@ A fresh session opening this task file should see the *current plan*.
 **Tip — recall before reconciling.** If you're unsure whether a decision observed this session was already captured elsewhere (memory entry, sibling task, knowledge file), run `dreamcontext memory recall "<topic>"` to surface the top hits across the corpus before you edit. Cheaper than grep, deterministic, and helps you avoid duplicating a decision that already lives in `2.memory.md` (which `sleep-state` owns).
 
 ### 4. Status — review only when genuinely needed
+
+**Think hard before you set each task's status here.** The `completed` vs `in_review` call is the one genuinely judgment-heavy decision in this cycle — reason through the specific task's risk, reviewability, and whether any criterion is mechanically unproven before you bump it, rather than pattern-matching on surface cues.
 
 Pick the status that matches reality. **Do NOT reflexively bump everything to `in_review`** — that buries the few tasks that actually need the user's eyes under a pile that didn't, and leaves finished work rotting half-closed.
 
