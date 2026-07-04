@@ -4,6 +4,7 @@ import { useTheme } from '../../context/ThemeContext';
 import { startWindowDrag, toggleMaximizeWindow } from '../../lib/desktop';
 import { SearchIcon } from '../sleepy/TypeIcons';
 import { UpdateBadge } from './UpdateBadge';
+import { SleepDebtTracker } from './SleepDebtTracker';
 import type { Page } from './Sidebar';
 import './Header.css';
 
@@ -165,6 +166,7 @@ export function Header({ onNavigate, sidebarCollapsed, onToggleSidebar, onOpenSe
       {vaultLabel && <div className="header-vault" title={vaultLabel}>{vaultLabel}</div>}
 
       <div className="header-right">
+        <SleepDebtTracker onOpen={onNavigate ? () => onNavigate('sleep') : undefined} />
         <button
           className={`header-refresh ${refreshing ? 'header-refresh--spinning' : ''}`}
           onClick={refreshAll}

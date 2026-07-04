@@ -1,0 +1,113 @@
+/* Sleep-debt tracker — a live header readout: the animated Sleepy face next to a
+   linear progress bar climbing toward "Must Sleep". Level drives both the fill
+   colour and the face mood, so a glance tells you how rested the brain is. */
+
+.sleep-tracker {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-right: var(--space-2);
+  padding: 3px 8px 3px 4px;
+  border-radius: var(--radius-md);
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+button.sleep-tracker:hover {
+  background: var(--color-bg);
+  border-color: var(--color-border-strong, var(--color-border));
+}
+
+.sleep-tracker-face {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 30px;
+  height: 26px;
+  overflow: visible;
+}
+
+.sleep-tracker-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 84px;
+}
+
+.sleep-tracker-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  line-height: 1;
+}
+
+.sleep-tracker-level {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+  white-space: nowrap;
+}
+
+.sleep-tracker-count {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.sleep-tracker-count-max {
+  opacity: 0.6;
+}
+
+.sleep-tracker-bar {
+  position: relative;
+  display: block;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--color-border);
+  overflow: hidden;
+}
+
+.sleep-tracker-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--fill, var(--color-accent));
+  box-shadow: 0 0 8px color-mix(in srgb, var(--fill, var(--color-accent)) 55%, transparent);
+  transition: width 0.6s cubic-bezier(0.22, 1, 0.36, 1), background var(--transition-base);
+}
+
+/* Level → fill colour, aligned to the mascot mood + the app's status hues. */
+.sleep-tracker--alert      { --fill: var(--color-success, #34d399); }
+.sleep-tracker--drowsy     { --fill: var(--color-accent, #7b68ee); }
+.sleep-tracker--sleepy     { --fill: var(--color-warning, #fbbf24); }
+.sleep-tracker--must_sleep { --fill: var(--color-danger, var(--color-error, #f87171)); }
+
+/* "Must sleep" earns a gentle pulse so an overdue consolidation nags the eye. */
+.sleep-tracker--must_sleep .sleep-tracker-fill {
+  animation: sleep-tracker-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes sleep-tracker-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+/* Zoom is a desktop affordance and gets hidden at narrow widths; the tracker is
+   status the user always wants, so it stays — but drop the bar/labels first if
+   space is truly tight, keeping just the expressive face. */
+@media (max-width: 640px) {
+  .sleep-tracker-body { display: none; }
+  .sleep-tracker { margin-right: var(--space-1); padding: 3px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sleep-tracker-fill { animation: none !important; }
+}

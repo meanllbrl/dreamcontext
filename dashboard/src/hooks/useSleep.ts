@@ -48,17 +48,28 @@ export interface SleepState {
 
 export type { Bookmark, SessionRecord, DashboardChange };
 
+// Debt thresholds — MUST mirror the canonical source of truth in
+// src/lib/sleep-consolidation.ts (DEBT_DROWSY / DEBT_SLEEPY / DEBT_MUST_SLEEP).
+// The backend rescaled ×2 on 2026-06-29 (Alert 0–7 · Drowsy 8–13 · Sleepy 14–19 ·
+// Must Sleep 20+); these were left on the old 4/7/10 scale and are now realigned.
+export const DEBT_DROWSY = 8;
+export const DEBT_SLEEPY = 14;
+export const DEBT_MUST_SLEEP = 20;
+
+/** Debt value at which the bar reads "full" — a consolidation is required. */
+export const SLEEP_DEBT_MAX = DEBT_MUST_SLEEP;
+
 export function getSleepLevel(debt: number): string {
-  if (debt <= 3) return 'Alert';
-  if (debt <= 6) return 'Drowsy';
-  if (debt <= 9) return 'Sleepy';
+  if (debt < DEBT_DROWSY) return 'Alert';
+  if (debt < DEBT_SLEEPY) return 'Drowsy';
+  if (debt < DEBT_MUST_SLEEP) return 'Sleepy';
   return 'Must Sleep';
 }
 
 export function getSleepLevelKey(debt: number): string {
-  if (debt <= 3) return 'alert';
-  if (debt <= 6) return 'drowsy';
-  if (debt <= 9) return 'sleepy';
+  if (debt < DEBT_DROWSY) return 'alert';
+  if (debt < DEBT_SLEEPY) return 'drowsy';
+  if (debt < DEBT_MUST_SLEEP) return 'sleepy';
   return 'must_sleep';
 }
 
@@ -68,8 +79,8 @@ export function getSleepLevelKey(debt: number): string {
  * dropping as it climbs, fully asleep once a consolidation is overdue.
  */
 export function getSleepMood(debt: number): 'idle' | 'sleepy' | 'sleeps' {
-  if (debt <= 6) return 'idle';
-  if (debt <= 9) return 'sleepy';
+  if (debt < DEBT_SLEEPY) return 'idle';
+  if (debt < DEBT_MUST_SLEEP) return 'sleepy';
   return 'sleeps';
 }
 
