@@ -2,6 +2,54 @@
   {
     "date": "2026-07-04",
     "type": "docs",
+    "scope": "roadmap",
+    "description": "Product Owner replaced the three placeholder objectives (increase-retention-20, launch-mobile-app, ship-v0-2-3) with six real strategic outcomes in core/objectives/: improve-recall-mechanism (target 2026-08-16), improve-sleep-quality (2026-08-02), include-codex-opencode-support (2026-08-23), make-dreamcontext-team-ready (2026-07-12, one task in progress), simplified-ux (2026-07-31), and hello-world-pr (2026-09-19, depends on the first four). This is the roadmap foundation for the next 2-3 months of work. Objectives are PO-authored markdown files; agents propose task linkage but never edit the objectives themselves.",
+    "breaking": false,
+    "summary": "PO repopulated objectives/ with 6 real outcomes, replacing 3 placeholder objectives",
+    "references": [
+      "file:_dream_context/core/objectives/improve-recall-mechanism.md",
+      "file:_dream_context/core/objectives/improve-sleep-quality.md",
+      "file:_dream_context/core/objectives/include-codex-opencode-support.md",
+      "file:_dream_context/core/objectives/make-dreamcontext-team-ready.md",
+      "file:_dream_context/core/objectives/simplified-ux.md",
+      "file:_dream_context/core/objectives/hello-world-pr.md"
+    ]
+  },
+  {
+    "date": "2026-07-04",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "Adds a ⌘P \"Go to Project\" switcher available in every window (in-place vault hop / launcher-focus, ⌘1-9 quick jumps) and extracts the scrim/dialog/keyboard chrome it shares with the ⌘K palette into a reusable <CommandModal> + useListKeyboardNav hook, backed by a LIFO overlay stack so Esc always closes the front-most overlay. CommandModal(.tsx/.css) provides shared scrim + centered dialog with entrance animation + reduced-motion support, overlay-stack registration, and topmost-aware Esc handling (capture-phase, stopImmediatePropagation). CommandPalette refactored onto the shell with zero behavior/visual change; retains .command-palette class for the AgentSurface Esc guard. overlayStack.ts is a push/pop/isTop LIFO registry. Shell memoizes palette onClose so it can't re-assert itself topmost on every re-render. desktop.ts adds goToProject/openLauncherHome/switchVaultInPlace; launcher status poll now gated to when the switcher is open.",
+    "breaking": false,
+    "summary": "⌘P project switcher + shared CommandModal shell for ⌘K and ⌘P, backed by LIFO overlay stack for correct Esc behavior",
+    "references": [
+      "commit:05556ad",
+      "file:dashboard/src/components/search/CommandModal.tsx",
+      "file:dashboard/src/components/search/ProjectSwitcher.tsx",
+      "file:dashboard/src/lib/overlayStack.ts",
+      "file:dashboard/src/hooks/useListKeyboardNav.ts",
+      "file:dashboard/src/lib/desktop.ts"
+    ]
+  },
+  {
+    "date": "2026-07-04",
+    "type": "chore",
+    "scope": "sleep",
+    "description": "The `model: sonnet` alias now resolves to Sonnet 5, whose heavy default adaptive thinking slowed RemSleep consolidation. Pinned all five sleep specialists (tasks/state/product/federation/migration) to claude-sonnet-4-5-20250929 for consistent, faster execution. Per-subagent effort/thinking isn't configurable in Claude Code, and Sonnet 4.5 doesn't support the `effort` API param, so instead of raising sleep-tasks to Opus we added a targeted \"think hard\" instruction to its completed-vs-in_review judgment step. Ships to users on next `dreamcontext update` (core refresh overwrites .claude/agents unconditionally).",
+    "breaking": false,
+    "summary": "Pin all five sleep specialists to Sonnet 4.5 (claude-sonnet-4-5-20250929) + think-hard nudge on sleep-tasks",
+    "references": [
+      "commit:2e4caca",
+      "file:agents/sleep-tasks.md",
+      "file:agents/sleep-state.md",
+      "file:agents/sleep-product.md",
+      "file:agents/sleep-federation.md",
+      "file:agents/sleep-migration.md"
+    ]
+  },
+  {
+    "date": "2026-07-04",
+    "type": "docs",
     "scope": "architecture",
     "description": "Worked through the cross-machine/multi-person brain-collaboration design with the user (Turkish-language session). Confirmed architecture: the dreamcontext brain (_dream_context/) lives in its OWN GitHub repo, separate from the code repo it documents — for authorization separation (share the brain without the code or vice versa), noise separation (automatic sleep commits shouldn't pollute the code repo's PR diffs/history), and pointer clarity (the brain repo records the code repo's URL + expected layout; the launcher guides a new machine through cloning the code repo and then building a LOCAL-ONLY index — indexes are machine-derived and are never pushed, restored via .gitignore + rebuild-on-clone). D0 (first shippable) scope is READ-ONLY: GitHub login via device-flow OAuth (PAT as fallback, token in macOS keychain), list-and-clone accessible dreamcontext-brain repos (marked via a GitHub topic or a root marker file), point at the paired code repo, local indexing — zero push risk. A manual '/dream-sync'-style skill and true automatic post-sleep git sync (fetch, then an AGENT — not a git client — performs a semantic merge: union changelogs, content-merge knowledge files, keep the more-advanced task status, then commit+push) are later phases, explicitly sequenced after the read-only phase because agent-driven semantic merge is the hardest and most valuable part of the plan. A secrets/absolute-local-path scrub gate must run before any automatic push (env vars, API keys, and local paths can leak into brain files during a session). Personal-layer question (user.md / episodic preferences are person-specific, must not be pushed shared or must be namespaced per person) reuses the existing multi-person people[] roster rather than inventing new per-person namespacing — left as the open design question to resolve before Phase 2 (opt for never-pushed-personal vs namespaced-and-portable). task-backend/github.ts (already shipped for issue sync) is reused for future issue-mapping rather than building a new integration. Decision and reasoning captured for continuity; no code shipped this session.",
     "breaking": false,

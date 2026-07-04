@@ -3,6 +3,7 @@ id: "feat_Sx4EmLgP"
 status: "planning"
 created: "2026-07-04"
 updated: "2026-07-04"
+status: "planning"
 released_version: null
 tags:
   - topic:github
@@ -10,7 +11,8 @@ tags:
   - topic:desktop
   - architecture
   - backend
-related_tasks: []
+related_tasks:
+  - github-cloud-collaboration-brain-repo-sync
 ---
 
 ## Why
@@ -118,33 +120,27 @@ existing local dashboard. The two could coexist later but ship independently.
 
 ## Technical Details
 
-**Status: design-only as of 2026-07-04.** No code has shipped yet; this session
-converged on the phased design below during a product discussion. The scaffolding
-this design will connect to (where `sleep done` runs, existing GitHub auth/token
-handling, current skill distribution mechanism, the hook pipeline) is being mapped
-by a discovery pass immediately following this sleep cycle — update this section
-once that mapping lands and P1 implementation starts.
+**Validated design (plan v3.2, 2026-07-04) — 3 reviewers SOLID over 5 iterations, 21 findings resolved.** The task (`github-cloud-collaboration-brain-repo-sync`) is the authoritative implementation spec with 30 acceptance criteria across M1/M2/M3 milestones. This PRD carries product intent + validated architecture summary.
 
-**Reusable as-is (already built, per design discussion):**
-- GitHub OAuth/token plumbing from the GitHub Issues task backend
-  (`src/lib/task-backend/github.ts`, `ApiAdapter`) — device flow or PAT, least new
-  surface for P1 login.
-- Multi-people awareness (`1.user.md` `## People`, `person:<slug>` tags, changelog
-  authors) — the personal-layer mechanism this feature rides rather than
-  reinventing.
-- `dreamcontext sleep done` as the natural hook point for the automatic post-sleep
-  sync step.
+**Architecture (compact form — full detail in the task):**
 
-**Genuinely new subsystems (the real work, by phase):**
-1. **P1** — GitHub login surfaced in the Launcher; repo discovery by
-   topic/marker; guided clone/locate flow for a new machine; local-only index
-   build step.
-2. **P2** — the push step itself (git plumbing from Node/CLI), the
-   secrets/absolute-path scrub gate, and conflict detection that stops and
-   surfaces rather than force-pushing.
-3. **P3** — the semantic merge agent (fetch → detect conflict → agent-driven
-   reconcile → commit → push) and GitHub Issues onboarding for teams that also use
-   the issue task backend.
+**Modes:** `separate` (brain in its own GitHub repo + remote; full auto-sync) vs `in-tree` (brain nested in code repo; commit-only, NEVER auto-pushes; the safe default). Scrub gate applies to both.
+
+**Credential supply:** Token NEVER embedded in remote URL (S1 — would persist in `.git/config` plaintext). Every git network call runs via `GIT_ASKPASS` + 0600-at-create tmp token file (path in env, token never in env/argv); `-c credential.helper=` disables persisted helpers; tmp file unlinked in `finally`. Resolves per-project `.secrets.json` → global `~/.dreamcontext/.secrets.json` (0600) → env (M1 is secrets-first; M2 inserts global tier). The reversed priority from `resolveGitHubToken` (env-first) is intentional — a distinct resolver, never reused.
+
+**Scrub gate:** Runs before EVERY brain commit (in-tree S2, `brain init` first push S3, `brain detach` S4, post-merge results). WARN-tier hits block ONLY in headless pull-only (effective-`--strict` — no human eye on the auto-commit); foreground modes keep WARN non-blocking. BLOCK-tier hits abort loudly everywhere. A staged file containing `ghp_`+36 chars → BLOCK.
+
+**Pull-only content delivery:** With clone A ahead by a knowledge edit, clone B's `brain sync --pull-only` on a clean tree merges the edit into B's working tree (`pulled`, `pulledUpdates>0`) — not just counted — and pushes nothing. Dirty tracked tree → auto-commit first (scrubbed, message `chore(brain): auto-checkpoint local edits before team merge`, M1 author tiering) under effective-`--strict` scrub (any hit refuses the headless auto-commit); clean merge delivers content. Agent-class conflict → write report + base/ours/theirs snapshots, `abortMerge` back to a clean committed tree, set `pendingAgentMerge:true`.
+
+**Handoff loop (`--resume` / `--continue`):** Pull-only agent-class conflict writes the report, aborts to clean committed tree, sets `pendingAgentMerge:true`. Plain `brain sync` then returns `already-awaiting-agent`. `brain sync --resume` (ATTENDED only — unattended callers never resume) re-fetches/re-merges into a FRESH `awaiting-agent` with real `MERGE_HEAD`; re-defer leaves real `MERGE_HEAD` + FRESH report; clean resolve completes alone. Agent resolves. `brain sync --continue` commits the in-progress merge, re-scrubs, pushes → report + snapshots gone, `pendingAgentMerge:false`. If remote moved on, `--resume` alone completes with no agent step. Flag misuse (e.g., `--continue` w/o `MERGE_HEAD`) returns `invalid-flag` + guiding `note`.
+
+**Concurrency + liveness:** PID-liveness lock via `verifyPidLiveness` opt-in on `acquireFileLock` — a second `runBrainSync` while a live holder owns the lock returns `locked`; a lock left by a dead PID past the staleness window is reclaimed; lock held by alive PID is NOT reclaimed even past window.
+
+**Private-by-default + attach trust gate:** Brain repos default PRIVATE (S5 — public requires `--public` flag/toggle + loud interactive confirm). `brain attach` / dashboard attach is a TRUST decision (S6 — a brain repo is a prompt-injection channel); prints loud trust warning + incoming diff preview and refuses without confirmation.
+
+**M1/M2/M3 milestones:** M1 (CLI core, no launcher required) = brain init, git wrapper + GIT_ASKPASS credentials, resolveBrainSyncToken tiering, brain sync CLI, scrub gate BLOCKS on both commit paths, commit author tiering (git identity or `dreamcontext-sync <noreply@dreamcontext.local>` fallback), semantic merge (task changelog set-union + furthest status wins; knowledge conflict discard remote-wins + awaiting-agent), conflict-report lifecycle, pull-only content delivery + dirty-tree auto-checkpoint + headless effective-strict scrub, dream-sync skill loop (defer/resume/resolve/continue), reentrancy guard, brain lock, sleep done autoSync integration (sync failure never fails sleep), in-tree mode (commit-only, still scrubbed), session-start background pull (non-blocking PATH-safe detached spawn). M2 (Launcher/Dashboard/Desktop) = device-flow login, scope disclosure + fine-grained PAT recommendation, discover `dreamcontext-brain` topic repos, create from UI (one-click private + scrubbed first push), attach (trust warning + diff preview + refuses w/o confirm), team-updates badge (cache-only endpoint + background fetch). M3 (Polish) = `taskBackend=github` task md gitignored + issues source of truth + doctor check, post-pull task-mirror refresh via `getTaskBackend sync`, GitHub login maps to person slug commit author, brain detach (private, scrubbed, showcase-safe `--keep-tracked` default).
+
+**Phase 3 semantic merge agent is wanted from D0** (user-explicit) — not deferred to a "later phase". Phase boundaries (1 read-only → 2 one-way push + scrub + stop-on-conflict → 3 full semantic-merge sync + issue-sync onboarding) are M1 validation gates, not deferral of the merge-agent design work. The agent is being designed for from the start.
 
 ## Notes
 

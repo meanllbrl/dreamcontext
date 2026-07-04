@@ -1,15 +1,18 @@
 ---
-title: Increase retention 20%
-target_date: null
+title: Improve Recall Mechanism
+start_date: '2026-07-13'
+target_date: '2026-08-16'
 depends_on: []
 feature: null
+impact: 4
+effort: 2
 status: null
-created_at: '2026-07-02'
-updated_at: '2026-07-02'
+created_at: '2026-07-04'
+updated_at: '2026-07-04'
 ---
 ## Why
 
-(What outcome is this objective driving, and why does it matter?)
+Better Recall, better dreamcontext
 
 ## Notes
 
