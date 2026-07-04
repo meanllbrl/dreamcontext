@@ -1,12 +1,14 @@
-import { Suspense, lazy, useMemo } from 'react';
+import { Suspense, useMemo } from 'react';
 import { useTheme } from '../../context/ThemeContext';
 import { extractExcalidrawScene } from '../../lib/excalidraw';
 import { useKnowledgeAssets } from '../../hooks/useKnowledge';
+import { lazyWithReload } from '../../lib/lazyWithReload';
 import './ExcalidrawPreview.css';
 
 // The real Excalidraw editor (canvas) + its CSS are heavy — load them only when a
-// board is actually opened.
-const ExcalidrawCanvas = lazy(() => import('./ExcalidrawCanvas'));
+// board is actually opened. `lazyWithReload` self-heals a stale-chunk 404 after a
+// republish by forcing a one-time reload instead of showing the error page.
+const ExcalidrawCanvas = lazyWithReload('ExcalidrawCanvas', () => import('./ExcalidrawCanvas'));
 
 interface Props {
   content: string;

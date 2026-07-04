@@ -1,8 +1,11 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
+import { lazyWithReload } from '../lib/lazyWithReload';
 
 // Lazy-load the 3D renderer — pulls in three.js (~600KB) only on demand.
-const BrainCanvas3D = lazy(() =>
+// `lazyWithReload` self-heals a stale-chunk 404 (old tab across a republish) by
+// forcing a one-time full reload instead of dumping the user into the error page.
+const BrainCanvas3D = lazyWithReload('BrainCanvas3D', () =>
   import('../components/brain/BrainCanvas3D').then((m) => ({ default: m.BrainCanvas3D })),
 );
 // d3-force-3d ships the same API as d3-force (forceCollide, forceX, forceY, …)
