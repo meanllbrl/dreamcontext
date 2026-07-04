@@ -16,6 +16,16 @@ export interface VersionCheck {
   nudge: string | null;
   /** Catalog packs not installed on disk — actionable via the Packs page. */
   newPacks?: string[];
+  /** Currently installed CLI version (for the "vX → vY" badge message). */
+  currentCli?: string;
+  /** Latest published CLI version, or null when unknown/stale. */
+  latestCli?: string | null;
+  /**
+   * True when a newer CLI is published. Reported independently of the prose
+   * nudge suppression so the desktop badge can offer a one-click upgrade even
+   * when the manual "run dreamcontext upgrade" text line is hidden.
+   */
+  cliOutdated?: boolean;
 }
 
 // ─── Hook ─────────────────────────────────────────────────────────────────────

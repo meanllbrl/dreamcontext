@@ -15,6 +15,14 @@
   gap: var(--space-4);
   flex-wrap: wrap;
   margin-bottom: var(--space-4);
+  /* Doubles as the window's title bar (drag handle). A generous height and the
+     left inset (clearing the floating traffic lights) give a big, obvious grab
+     zone — the controls sit right-aligned, leaving the whole left side draggable. */
+  min-height: 34px;
+  padding-left: 72px;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
 }
 
 .launcher-title {
@@ -119,26 +127,7 @@
   gap: var(--space-2);
 }
 
-.launcher-card-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #4ade80;
-  flex: 0 0 auto;
-}
-
-.launcher-card-dot--ok {
-  background: #34d399;
-}
-
-.launcher-card-dot--stale {
-  background: #fbbf24;
-  box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.18);
-}
-
-.launcher-card-dot--gone {
-  background: #f87171;
-}
+/* The status dot moved to the shared <VaultDot> (.vault-dot) component. */
 
 .launcher-card--gone {
   opacity: 0.7;

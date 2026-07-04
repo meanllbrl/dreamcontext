@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { RM_STATUS, RM_RED, RM_ACCENT, softColor } from './chrome';
+import { RM_STATUS, RM_RED, RM_ACCENT, softColor, fmtMetricValue } from './chrome';
 import type { RoadmapCardProps } from './RoadmapToolbar';
 import type { RoadmapItem } from '../../hooks/useRoadmapItems';
 import { useUpdateObjective, useAddDependency, useRemoveDependency } from '../../hooks/useObjectives';
@@ -35,9 +35,18 @@ const LABEL_OPEN = 268;
 const LABEL_COLLAPSED = 46;
 const HEADER_H = 40;
 const ROW_H = 66;
-const BAR_H = 26;
+const BAR_H = 40;
 const PPD_LADDER = [3, 4, 5, 6, 8, 11, 15, 22];
 const clampIdx = (i: number) => Math.max(0, Math.min(PPD_LADDER.length - 1, i));
+
+/** Short progress caption under the row title: metric value/target, or task counts. */
+function progressText(it: RoadmapItem): string {
+  const p = it.progress;
+  if (p.source === 'metric' && p.metric) {
+    return `${fmtMetricValue(p.metric.current, p.metric.unit)}/${fmtMetricValue(p.metric.target, p.metric.unit)}`;
+  }
+  return p.total > 0 ? `${p.done}/${p.total}` : 'no tasks';
+}
 
 type DragMode = 'move' | 'start' | 'end';
 interface DragState {
@@ -431,7 +440,7 @@ export function RoadmapTimeline({ items, allItems, cardProps, onOpen, onToast }:
                       {cardProps.progress !== false && (
                         <div className="rtl-label-prog">
                           <div className="rtl-label-track"><div className="rtl-label-fill" style={{ width: `${pct ?? 0}%`, background: meta.color }} /></div>
-                          <span className="rtl-label-proglabel">{it.progress.total > 0 ? `${it.progress.done}/${it.progress.total}` : 'no tasks'}</span>
+                          <span className="rtl-label-proglabel">{progressText(it)}</span>
                         </div>
                       )}
                     </div>

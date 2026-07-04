@@ -110,6 +110,80 @@
 .agent-add-btn:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--color-accent-soft); }
 .agent-add-btn-icon { font-size: 15px; line-height: 0; margin-top: -1px; }
 
+/* Split "＋ New ▾" — the accent face opens an agent; the caret opens the kind menu.
+   The two share one pill silhouette (face = flat right edge, caret = flat left edge). */
+.agent-new-split { position: relative; display: inline-flex; flex: 0 0 auto; }
+.agent-new-split .agent-add-btn {
+  border-top-right-radius: 0; border-bottom-right-radius: 0;
+  padding-right: 9px;
+}
+.agent-add-caret {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: 0 0 auto;
+  height: 28px; width: 22px;
+  margin-left: 1px;
+  border-radius: 0 var(--radius-full) var(--radius-full) 0;
+  background: linear-gradient(150deg,
+    color-mix(in srgb, var(--color-accent) 92%, white),
+    var(--color-accent));
+  border: 1px solid color-mix(in srgb, var(--color-accent) 60%, transparent);
+  color: var(--color-accent-text, #fff);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  transition: filter var(--transition-fast);
+}
+.agent-add-caret:hover { filter: brightness(1.08); }
+.agent-add-caret:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--color-accent-soft); }
+
+.agent-new-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  min-width: 190px;
+  padding: 5px;
+  border-radius: var(--radius-lg, 12px);
+  background: var(--color-bg-elevated, var(--color-bg-secondary));
+  border: 1px solid var(--color-border);
+  box-shadow: 0 12px 32px -10px rgba(0, 0, 0, 0.45);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.agent-new-menu-item {
+  display: flex; align-items: center; gap: 9px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text);
+  font-family: var(--font-family-text, inherit);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--transition-fast);
+}
+.agent-new-menu-item:hover,
+.agent-new-menu-item:focus-visible { background: var(--color-accent-soft); outline: none; }
+.agent-new-menu-glyph {
+  flex: 0 0 auto;
+  width: 18px; text-align: center;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--color-accent);
+}
+.agent-new-menu-label { flex: 1 1 auto; }
+.agent-new-menu-kbd {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  padding: 1px 5px;
+}
+
 /* Bypass pill (in the control cluster). */
 .agent-term-pill {
   display: inline-flex;
@@ -513,6 +587,18 @@
   font-kerning: none;
   font-variant-ligatures: none;
   font-feature-settings: 'liga' 0, 'calt' 0;
+  /* THE actual cause of the right-edge clipping: the app-wide `html, body { letter-spacing:
+     -0.26px }` (--letter-spacing-body) inherits into xterm's HIDDEN measurement spans
+     (.xterm-width-cache-measure-element / .xterm-char-measure-element), which never reset
+     it. So xterm measures every glyph ~0.26px NARROWER than it truly renders, then its DOM
+     renderer over-compensates with a per-row letter-spacing correction — laying out each
+     cell ~0.26px WIDER than FitAddon's column math assumes. Over ~150 cols that's ~40px of
+     overshoot (past the 20px right padding), so the last few chars clip. It scales with
+     line length, which is why long lines cut and short ones don't. Reset to `normal` (0) so
+     xterm's measurement and rendering agree and the grid is exact. Terminal text is a
+     monospace grid — it must never carry the body's tracking anyway. */
+  letter-spacing: normal;
+  word-spacing: normal;
 }
 .agent-pane-slot .xterm-viewport {
   background-color: transparent !important;
@@ -610,6 +696,19 @@
 }
 .agent-tab-dot[data-kind="working"],
 .agent-tab-dot[data-kind="starting"] { animation: agentDotPulse 1.2s ease-in-out infinite; }
+
+/* Session-type glyph: ◇ = Claude agent, >_ = plain shell. A quiet monospace mark so a
+   pane holding both a terminal and an agent is legible at a glance. */
+.agent-tab-kind {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1;
+  color: var(--color-text-tertiary);
+  letter-spacing: -0.5px;
+}
+.agent-tab.active .agent-tab-kind { color: var(--color-text-secondary); }
+.agent-tab-kind[data-session-kind="shell"] { color: var(--color-accent); opacity: 0.85; }
 
 .agent-tab-title {
   flex: 1 1 auto;

@@ -1,6 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 
+/**
+ * A Key Result metric — outcome-based progress source (e.g. MRR, customers). When set
+ * on an objective, progress is `current` along `baseline → target` instead of tasks.
+ */
+export interface ObjectiveMetric {
+  label: string;
+  unit: string | null;
+  baseline: number;
+  target: number;
+  current: number;
+}
+
 /** Roadmap objective — mirrors the server list shape (objectives-store `Objective`). */
 export interface Objective {
   slug: string;
@@ -13,6 +25,8 @@ export interface Objective {
   impact: number | null;
   effort: number | null;
   status: 'not_started' | 'active' | 'review' | 'done' | null;
+  /** Optional Key Result metric; when set, drives progress instead of tasks. */
+  metric: ObjectiveMetric | null;
   created_at: string | null;
   updated_at: string | null;
 }
@@ -49,7 +63,13 @@ export interface RoadmapModelObjective {
   feature: string | null;
   status: 'not_started' | 'active' | 'review' | 'done';
   status_source: 'computed' | 'override';
-  progress: { done: number; total: number; pct: number | null };
+  progress: {
+    done: number;
+    total: number;
+    pct: number | null;
+    source: 'tasks' | 'metric';
+    metric: ObjectiveMetric | null;
+  };
   forecast_start: string | null;
   forecast_end: string | null;
   slipping: boolean | null;
@@ -105,6 +125,8 @@ export interface UpdateObjectivePatch {
   effort?: number | null;
   status?: Objective['status'];
   feature?: string | null;
+  /** Full metric object, or null to clear it (back to task-based progress). */
+  metric?: ObjectiveMetric | null;
 }
 
 /** PATCH one objective — persists timeline drag-to-reschedule and inline edits. */

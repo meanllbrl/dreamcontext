@@ -24,6 +24,8 @@ export interface Capabilities {
 }
 
 export type TermStatus = 'connecting' | 'open' | 'closed';
+/** What a session runs: the real Claude Code agent, or a plain vault-scoped login shell. */
+export type SessionKind = 'agent' | 'shell';
 export const ACCENT = '#8b7bff';
 
 // Base xterm font size at 100% zoom. Multiplied by the app's `--zoom` so terminal
@@ -137,8 +139,11 @@ function currentTermTheme(): 'light' | 'dark' {
 export interface Session {
   id: string;
   bypass: boolean;
+  /** Claude agent, or a plain vault-scoped login shell. */
+  kind: SessionKind;
   /** The Claude conversation UUID — passed as `--session-id` on a new session, persisted
-   *  in the roster, and used to `--resume` this exact conversation after an app reopen. */
+   *  in the roster, and used to `--resume` this exact conversation after an app reopen.
+   *  Unused for shell sessions (a shell has no conversation to resume). */
   claudeId: string;
   container: HTMLDivElement;
   term: Terminal;
@@ -188,7 +193,7 @@ function copyPreservingUnicode(text: string): void {
   try { void navigator.clipboard?.writeText(text).catch(() => { /* blocked */ }); } catch { /* none */ }
 }
 
-export function createSession(bypass: boolean, notify: () => void, claudeId: string, resume = false): Session {
+export function createSession(bypass: boolean, notify: () => void, claudeId: string, resume = false, kind: SessionKind = 'agent'): Session {
   const id = `agent-${++sessionSeq}`;
   const container = document.createElement('div');
   container.className = 'agent-pane-term';
@@ -229,14 +234,19 @@ export function createSession(bypass: boolean, notify: () => void, claudeId: str
   const vault = getActiveVault();
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const theme = currentTermTheme();
-  // Pin a NEW conversation to claudeId (`--session-id`) so the next launch can resume it;
-  // on restore, ask the server to `--resume` that exact conversation instead.
-  const idParam = resume ? `&resume=${encodeURIComponent(claudeId)}` : `&sessionId=${encodeURIComponent(claudeId)}`;
-  const url = `${proto}://${location.host}/api/agent/terminal?vault=${encodeURIComponent(vault ?? '')}&bypass=${bypass ? '1' : '0'}&theme=${theme}${idParam}`;
+  // A shell has no conversation and no permission model, so it carries neither the
+  // resume/session-id continuity params nor bypass — just `&kind=shell`. An agent pins a
+  // NEW conversation to claudeId (`--session-id`) so the next launch can resume it; on
+  // restore, it asks the server to `--resume` that exact conversation instead.
+  const isShell = kind === 'shell';
+  const idParam = isShell ? '' : (resume ? `&resume=${encodeURIComponent(claudeId)}` : `&sessionId=${encodeURIComponent(claudeId)}`);
+  const kindParam = isShell ? '&kind=shell' : '';
+  const bypassParam = isShell ? '0' : (bypass ? '1' : '0');
+  const url = `${proto}://${location.host}/api/agent/terminal?vault=${encodeURIComponent(vault ?? '')}&bypass=${bypassParam}&theme=${theme}${idParam}${kindParam}`;
   const ws = new WebSocket(url);
 
   const session: Session = {
-    id, bypass, claudeId, container, term, fit, ws,
+    id, bypass, kind, claudeId, container, term, fit, ws,
     status: 'connecting', opened: false,
     busy: false, attention: false, minimized: false,
     ensureOpen, fitAndResize, applyZoom, sendText, dispose,

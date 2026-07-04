@@ -1,4 +1,5 @@
 import type { SessionStatusInfo } from './agentStatus';
+import type { SessionKind } from './agentSession';
 
 /**
  * The expanded overlay's TOP-BAR tab strip — the agent surface's primary session
@@ -38,6 +39,8 @@ export interface TabVM {
   id: string;
   title: string;
   info: SessionStatusInfo;
+  /** Claude agent (◇) or a plain login shell (>_) — shown as a glyph before the title. */
+  sessionKind: SessionKind;
   /** Bypass-permissions armed for this session (shows a ⚡). */
   bypass: boolean;
   /** A backgrounded session finished / rang the bell since you last looked at it. */
@@ -136,6 +139,12 @@ export function AgentTabs({
                 }}
               >
                 <span className="agent-tab-dot" data-kind={tab.info.kind} aria-hidden />
+                <span
+                  className="agent-tab-kind"
+                  data-session-kind={tab.sessionKind}
+                  title={tab.sessionKind === 'shell' ? 'Terminal (login shell)' : 'Claude Code agent'}
+                  aria-hidden
+                >{tab.sessionKind === 'shell' ? '>_' : '◇'}</span>
                 {renaming ? (
                   <input
                     className="agent-tab-rename"

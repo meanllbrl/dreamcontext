@@ -13,6 +13,12 @@ import {
   applySleepyHotkey,
   type SleepyConfig,
 } from '../lib/sleepy';
+import {
+  initAgentSettingsFromServer,
+  writeAgentSettings,
+  accelFromKeyEvent as accelFromAgentKey,
+  type AgentSettings,
+} from '../lib/agentSettings';
 import './SettingsPage.css';
 
 /** Build a Tauri accelerator (e.g. "Alt+Cmd+S") from a keydown; null if incomplete. */
@@ -93,7 +99,7 @@ const DEFAULT_CONFIG: Pick<SetupConfig, 'platforms' | 'disableNativeMemory'> = {
 
 // ─── Section navigation (in-page menu) ────────────────────────────────────────
 
-type SettingsSectionId = 'platforms' | 'tasks' | 'format' | 'memory' | 'connections' | 'sleepy';
+type SettingsSectionId = 'platforms' | 'tasks' | 'format' | 'memory' | 'connections' | 'agents' | 'sleepy';
 
 interface SettingsNavItem {
   id: SettingsSectionId;
@@ -111,6 +117,7 @@ const SETTINGS_NAV: SettingsNavItem[] = [
   { id: 'memory', icon: '❖', labelKey: 'settings.nav.memory' },
   { id: 'connections', icon: '⊕', labelKey: 'settings.nav.connections' },
   { id: 'format', icon: '▤', labelKey: 'settings.nav.format', beta: true },
+  { id: 'agents', icon: '◈', labelKey: 'settings.nav.agents', desktopOnly: true, beta: true },
   { id: 'sleepy', icon: '☾', labelKey: 'settings.nav.sleepy', desktopOnly: true },
 ];
 
@@ -158,6 +165,22 @@ export function SettingsPage() {
     setSleepy(next);
     writeSleepyConfig(next);
     void applySleepyHotkey(next);
+  };
+
+  // Agents (beta) surface prefs (desktop-only). Seeded from the server so the toggles
+  // reflect the persisted truth; each change writes through (localStorage + server +
+  // a window event the mounted AgentSurface listens for → applies live, no reload).
+  const [agentCfg, setAgentCfg] = useState<AgentSettings | null>(null);
+  const [capturingAgentHotkey, setCapturingAgentHotkey] = useState(false);
+  useEffect(() => {
+    if (!isDesktop()) return;
+    let cancelled = false;
+    void initAgentSettingsFromServer().then((s) => { if (!cancelled) setAgentCfg(s); });
+    return () => { cancelled = true; };
+  }, []);
+  const updateAgentCfg = (next: AgentSettings) => {
+    setAgentCfg(next);
+    writeAgentSettings(next);
   };
 
   const { data: syncStatus } = useQuery({
@@ -670,6 +693,102 @@ export function SettingsPage() {
         onToggleShareable={handleToggleShareable}
         shareablePending={updateConfig.isPending}
       />
+      )}
+
+      {activeSection === 'agents' && isDesktop() && (
+        <section className="settings-section">
+          <h2 className="settings-section-title">
+            {t('settings.agents.title')}
+            <span className="settings-beta-badge">BETA</span>
+          </h2>
+          {!agentCfg ? (
+            <p className="settings-field-hint">{t('common.loading')}</p>
+          ) : (
+            <div className="settings-checkboxes">
+              {/* Master on/off — hides the FAB/dock and collapses any open overlay. */}
+              <label className="settings-checkbox-label">
+                <input
+                  type="checkbox"
+                  className="settings-checkbox"
+                  checked={agentCfg.enabled}
+                  onChange={() => updateAgentCfg({ ...agentCfg, enabled: !agentCfg.enabled })}
+                />
+                <span>{t('settings.agents.enable')}</span>
+              </label>
+              <p className="settings-field-hint">{t('settings.agents.enable_hint')}</p>
+
+              {agentCfg.enabled && (
+                <>
+                  {/* Reopen past tabs on launch. */}
+                  <label className="settings-checkbox-label">
+                    <input
+                      type="checkbox"
+                      className="settings-checkbox"
+                      checked={agentCfg.restoreTabs}
+                      onChange={() => updateAgentCfg({ ...agentCfg, restoreTabs: !agentCfg.restoreTabs })}
+                    />
+                    <span>{t('settings.agents.restore_tabs')}</span>
+                  </label>
+                  <p className="settings-field-hint">{t('settings.agents.restore_tabs_hint')}</p>
+
+                  {/* Default agent — Claude Code is the only option today. */}
+                  <div className="settings-field-row">
+                    <label>{t('settings.agents.default_agent')}</label>
+                    <select
+                      className="settings-text-input"
+                      value={agentCfg.defaultAgent}
+                      onChange={(e) => updateAgentCfg({ ...agentCfg, defaultAgent: e.target.value as AgentSettings['defaultAgent'] })}
+                    >
+                      <option value="claude">{t('settings.agents.agent.claude')}</option>
+                    </select>
+                  </div>
+                  <p className="settings-field-hint">{t('settings.agents.default_agent_hint')}</p>
+
+                  {/* Auto-title: Haiku names the tab from the first message. */}
+                  <label className="settings-checkbox-label">
+                    <input
+                      type="checkbox"
+                      className="settings-checkbox"
+                      checked={agentCfg.autoTitle}
+                      onChange={() => updateAgentCfg({ ...agentCfg, autoTitle: !agentCfg.autoTitle })}
+                    />
+                    <span>{t('settings.agents.auto_title')}</span>
+                  </label>
+                  <p className="settings-field-hint">{t('settings.agents.auto_title_hint')}</p>
+
+                  {/* Quick open/close hotkey (in-app; default Ctrl+A). */}
+                  <div className="settings-field-row">
+                    <label>{t('settings.agents.hotkey')}</label>
+                    <input
+                      className="settings-text-input"
+                      readOnly
+                      value={capturingAgentHotkey ? t('settings.agents.hotkey_capturing') : agentCfg.hotkey}
+                      onFocus={() => setCapturingAgentHotkey(true)}
+                      onBlur={() => setCapturingAgentHotkey(false)}
+                      onKeyDown={(e) => {
+                        e.preventDefault();
+                        // Backspace/Delete clears the binding (no quick-toggle key).
+                        if (e.key === 'Backspace' || e.key === 'Delete') {
+                          updateAgentCfg({ ...agentCfg, hotkey: '' });
+                          setCapturingAgentHotkey(false);
+                          e.currentTarget.blur();
+                          return;
+                        }
+                        const accel = accelFromAgentKey(e);
+                        if (accel) {
+                          updateAgentCfg({ ...agentCfg, hotkey: accel });
+                          setCapturingAgentHotkey(false);
+                          e.currentTarget.blur();
+                        }
+                      }}
+                    />
+                  </div>
+                  <p className="settings-field-hint">{t('settings.agents.hotkey_hint')}</p>
+                </>
+              )}
+            </div>
+          )}
+        </section>
       )}
 
       {activeSection === 'sleepy' && isDesktop() && (

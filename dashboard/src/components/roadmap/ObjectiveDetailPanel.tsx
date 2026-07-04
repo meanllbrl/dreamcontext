@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { RM_STATUS, RM_RED, RM_TASK, softColor } from './chrome';
+import { RM_STATUS, RM_RED, RM_TASK, softColor, fmtMetricValue } from './chrome';
 import type { RoadmapItem } from '../../hooks/useRoadmapItems';
 import type { Forecast } from './roadmap-forecast';
 import { fmtShort } from './roadmap-forecast';
-import { useUpdateObjective, useAddDependency, useRemoveDependency, useDeleteObjective, type UpdateObjectivePatch } from '../../hooks/useObjectives';
+import { useUpdateObjective, useAddDependency, useRemoveDependency, useDeleteObjective, type ObjectiveMetric, type UpdateObjectivePatch } from '../../hooks/useObjectives';
 import { DateRangePicker } from './DateRangePicker';
 import { DependencyPicker } from './DependencyPicker';
 import './ObjectiveDetailPanel.css';
@@ -40,8 +40,10 @@ export function ObjectiveDetailPanel({ item, forecast, itemsBySlug, forecasts, o
   const [title, setTitle] = useState(item.title);
   const [editingTitle, setEditingTitle] = useState(false);
   const [statusOpen, setStatusOpen] = useState(false);
+  const [metricDraft, setMetricDraft] = useState<ObjectiveMetric | null>(item.metric);
   const titleRef = useRef<HTMLInputElement>(null);
 
+  useEffect(() => { setMetricDraft(item.metric); }, [item.slug, item.metric]);
   useEffect(() => { setTitle(item.title); setEditingTitle(false); setStatusOpen(false); }, [item.slug, item.title]);
   useEffect(() => { if (editingTitle) titleRef.current?.select(); }, [editingTitle]);
   useEffect(() => {
@@ -76,6 +78,35 @@ export function ObjectiveDetailPanel({ item, forecast, itemsBySlug, forecasts, o
     });
   };
   const setDates = (s: string | null, e: string | null) => patch({ start_date: s, target_date: e });
+  // Metric editing — draft state commits on blur/Enter. A draft that would be invalid
+  // (blank label, non-finite number, or target === baseline) is reverted to the saved
+  // value instead of persisting garbage; the store also rejects it as a backstop.
+  const commitMetric = () => {
+    const d = metricDraft;
+    if (!d) return;
+    const label = d.label.trim();
+    const clean: ObjectiveMetric = {
+      label: label || 'Metric',
+      unit: d.unit && d.unit.trim() ? d.unit.trim() : null,
+      baseline: Number.isFinite(d.baseline) ? d.baseline : 0,
+      target: d.target,
+      current: Number.isFinite(d.current) ? d.current : 0,
+    };
+    if (!label || !Number.isFinite(clean.target) || clean.target === clean.baseline) {
+      setMetricDraft(item.metric);
+      onToast('Metric needs a label and a target that differs from the baseline.');
+      return;
+    }
+    // No-op if nothing actually changed (avoids a redundant PATCH on every blur).
+    const cur = item.metric;
+    if (cur && cur.label === clean.label && cur.unit === clean.unit
+        && cur.baseline === clean.baseline && cur.target === clean.target && cur.current === clean.current) {
+      return;
+    }
+    patch({ metric: clean }, 'Could not update metric.');
+  };
+  const addMetric = () => patch({ metric: { label: 'MRR', unit: null, baseline: 0, target: 100, current: 0 } });
+  const clearMetric = () => patch({ metric: null });
   const setImpact = (n: number) => patch({ impact: item.impact === n ? null : n });
   const setEffort = (w: number) => patch({ effort: item.effort === w ? null : w });
   const setDeps = (next: string[]) => {
@@ -181,15 +212,54 @@ export function ObjectiveDetailPanel({ item, forecast, itemsBySlug, forecasts, o
             {forecast.forecastable && <span className="odp-forecast-note">{forecast.slipping ? `slipping ${forecast.slipDays}d` : `${Math.abs(forecast.slipDays)}d buffer`}</span>}
           </div>
 
-          {/* progress */}
-          <div className="odp-section-label">Progress</div>
-          {item.progress.total > 0 ? (
-            <div className="odp-prog">
-              <div className="odp-prog-track"><div className="odp-prog-fill" style={{ width: `${pct ?? 0}%`, background: `linear-gradient(90deg, ${meta.lite}, ${meta.color})` }} /></div>
-              <span className="odp-prog-label">{item.progress.done} / {item.progress.total} · {pct}%</span>
-            </div>
+          {/* progress — metric-driven (Key Result) or task rollup */}
+          {item.metric ? (
+            <>
+              <div className="odp-section-label">
+                Key Result <span className="odp-hint">editable</span>
+                <button className="odp-metric-clear" onClick={clearMetric} title="Remove the metric — track by tasks instead">track by tasks</button>
+              </div>
+              <div className="odp-metric">
+                <div className="odp-metric-row">
+                  <input className="odp-metric-label" value={metricDraft?.label ?? ''} placeholder="Metric"
+                    onChange={(e) => setMetricDraft((m) => m && { ...m, label: e.target.value })}
+                    onBlur={() => commitMetric()} onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />
+                  <input className="odp-metric-unit" value={metricDraft?.unit ?? ''} placeholder="unit"
+                    onChange={(e) => setMetricDraft((m) => m && { ...m, unit: e.target.value || null })}
+                    onBlur={() => commitMetric()} onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />
+                </div>
+                <div className="odp-prog">
+                  <div className="odp-prog-track"><div className="odp-prog-fill" style={{ width: `${pct ?? 0}%`, background: `linear-gradient(90deg, ${meta.lite}, ${meta.color})` }} /></div>
+                  <span className="odp-prog-label">{fmtMetricValue(item.metric.current, item.metric.unit)} / {fmtMetricValue(item.metric.target, item.metric.unit)} · {pct}%</span>
+                </div>
+                <div className="odp-metric-grid">
+                  <label className="odp-metric-field"><span>Current</span>
+                    <input type="number" value={metricDraft?.current ?? 0}
+                      onChange={(e) => setMetricDraft((m) => m && { ...m, current: e.target.valueAsNumber })}
+                      onBlur={() => commitMetric()} onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} /></label>
+                  <label className="odp-metric-field"><span>Baseline</span>
+                    <input type="number" value={metricDraft?.baseline ?? 0}
+                      onChange={(e) => setMetricDraft((m) => m && { ...m, baseline: e.target.valueAsNumber })}
+                      onBlur={() => commitMetric()} onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} /></label>
+                  <label className="odp-metric-field"><span>Target</span>
+                    <input type="number" value={metricDraft?.target ?? 0}
+                      onChange={(e) => setMetricDraft((m) => m && { ...m, target: e.target.valueAsNumber })}
+                      onBlur={() => commitMetric()} onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} /></label>
+                </div>
+              </div>
+            </>
           ) : (
-            <div className="odp-prog-empty">No tasks yet — assign tasks to track progress.</div>
+            <>
+              <div className="odp-section-label">Progress</div>
+              {item.progress.total > 0 ? (
+                <div className="odp-prog">
+                  <div className="odp-prog-track"><div className="odp-prog-fill" style={{ width: `${pct ?? 0}%`, background: `linear-gradient(90deg, ${meta.lite}, ${meta.color})` }} /></div>
+                  <span className="odp-prog-label">{item.progress.done} / {item.progress.total} · {pct}%</span>
+                </div>
+              ) : (
+                <div className="odp-prog-empty">No tasks yet — assign tasks, or <button className="odp-metric-add" onClick={addMetric}>track by a metric</button> (e.g. MRR).</div>
+              )}
+            </>
           )}
 
           {/* priority — editable */}

@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { useObjectives, useRoadmap, type RoadmapTaskRef } from './useObjectives';
+import { useObjectives, useRoadmap, type ObjectiveMetric, type RoadmapTaskRef } from './useObjectives';
 
 /**
  * One roadmap row, merged from the two sources of truth:
@@ -19,10 +19,17 @@ export interface RoadmapItem {
   depends_on: string[];
   status: 'not_started' | 'active' | 'review' | 'done';
   statusOverride: boolean;
-  progress: { done: number; total: number; pct: number | null };
+  progress: {
+    done: number;
+    total: number;
+    pct: number | null;
+    source: 'tasks' | 'metric';
+    metric: ObjectiveMetric | null;
+  };
   tasks: RoadmapTaskRef[];
   impact: number | null;
   effort: number | null;
+  metric: ObjectiveMetric | null;
 }
 
 export function useRoadmapItems(): {
@@ -45,10 +52,14 @@ export function useRoadmapItems(): {
         depends_on: o.depends_on,
         status: o.status ?? m?.status ?? 'not_started',
         statusOverride: o.status != null,
-        progress: m?.progress ?? { done: 0, total: 0, pct: null },
+        progress: m?.progress ?? {
+          done: 0, total: 0, pct: o.metric ? 0 : null,
+          source: o.metric ? 'metric' : 'tasks', metric: o.metric,
+        },
         tasks: m?.tasks ?? [],
         impact: o.impact,
         effort: o.effort,
+        metric: o.metric,
       };
     });
   }, [objectives, model]);

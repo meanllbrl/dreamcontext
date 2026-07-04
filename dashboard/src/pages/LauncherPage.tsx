@@ -5,7 +5,8 @@ import {
   useUnregisterVault,
   type VaultStatus,
 } from '../hooks/useLauncher';
-import { openVaultWindow } from '../lib/desktop';
+import { openVaultWindow, startTitleBarDrag, toggleMaximizeWindow } from '../lib/desktop';
+import { VaultDot } from '../components/layout/VaultDot';
 import { OnboardingWizard } from './OnboardingWizard';
 import { LauncherGraph } from './LauncherGraph';
 import './LauncherPage.css';
@@ -68,7 +69,15 @@ export function LauncherPage() {
 
   return (
     <div className="launcher">
-      <header className="launcher-bar">
+      <header
+        className="launcher-bar"
+        // The Launcher window uses TitleBarStyle::Overlay (traffic lights float
+        // over the content) and has no native title bar, so without this the
+        // window is only draggable from the tiny native strip. Make the whole
+        // top bar a drag handle — same threshold gesture as the vault Header.
+        onMouseDown={startTitleBarDrag}
+        onDoubleClick={(e) => void toggleMaximizeWindow(e.target)}
+      >
         <div className="launcher-actions">
           {vaults.length >= 2 && (
             <div className="launcher-viewtoggle" role="group" aria-label="View">
@@ -131,19 +140,15 @@ export function LauncherPage() {
 
           <div className="launcher-grid">
             {filtered.map((vault) => {
-              const dotClass = !vault.exists
-                ? 'launcher-card-dot--gone'
-                : vault.needsUpdate
-                  ? 'launcher-card-dot--stale'
-                  : 'launcher-card-dot--ok';
               return (
                 <div
                   key={vault.name}
                   className={`launcher-card${vault.exists ? '' : ' launcher-card--gone'}`}
                 >
                   <div className="launcher-card-head">
-                    <span
-                      className={`launcher-card-dot ${dotClass}`}
+                    <VaultDot
+                      exists={vault.exists}
+                      needsUpdate={vault.needsUpdate}
                       title={
                         !vault.exists
                           ? 'Folder is gone'
@@ -151,7 +156,6 @@ export function LauncherPage() {
                             ? `Update available: v${vault.setupVersion} → v${vault.latestVersion}`
                             : 'Up to date'
                       }
-                      aria-hidden
                     />
                     <span className="launcher-card-name">{vault.name}</span>
                   </div>

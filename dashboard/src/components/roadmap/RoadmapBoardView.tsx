@@ -1,4 +1,4 @@
-import { RM_STATUS, RM_RED } from './chrome';
+import { RM_STATUS, RM_RED, fmtMetricValue } from './chrome';
 import type { RoadmapItem } from '../../hooks/useRoadmapItems';
 import { fmtShort, type Forecast } from './roadmap-forecast';
 import './RoadmapBoardView.css';
@@ -48,7 +48,9 @@ export function RoadmapBoardView({ items, forecasts, onOpen }: Props) {
                       <div className="rbd-card-slug">{o.slug}</div>
                       <div className="rbd-card-prog">
                         <div className="rbd-card-track"><div className="rbd-card-fill" style={{ width: `${pct ?? 0}%`, background: meta.color }} /></div>
-                        <span className="rbd-card-proglabel">{o.progress.total > 0 ? `${o.progress.done}/${o.progress.total}` : '—'}</span>
+                        <span className="rbd-card-proglabel">{o.progress.source === 'metric' && o.progress.metric
+                          ? `${fmtMetricValue(o.progress.metric.current, o.progress.metric.unit)}/${fmtMetricValue(o.progress.metric.target, o.progress.metric.unit)}`
+                          : o.progress.total > 0 ? `${o.progress.done}/${o.progress.total}` : '—'}</span>
                       </div>
                       <div className="rbd-card-dates">
                         <div className="rbd-card-date">

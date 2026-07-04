@@ -46,6 +46,19 @@ export const RM_TASK: Record<string, { label: string; color: string }> = {
   todo: { label: 'todo', color: '#7c8396' },
 };
 
+/** Compact number: 2000 → "2,000", 43.5 → "43.5" (thousands separators, no trailing zeros). */
+export function fmtMetricNum(n: number): string {
+  return Number.isInteger(n) ? n.toLocaleString() : Number(n.toFixed(2)).toLocaleString();
+}
+
+/** A metric value with its unit: unit-first for currency-ish, else value + unit suffix. */
+export function fmtMetricValue(value: number, unit: string | null): string {
+  if (!unit) return fmtMetricNum(value);
+  const sym: Record<string, string> = { USD: '$', EUR: '€', GBP: '£', TRY: '₺' };
+  const prefix = sym[unit.toUpperCase()];
+  return prefix ? `${prefix}${fmtMetricNum(value)}` : `${fmtMetricNum(value)} ${unit}`;
+}
+
 /** hex → rgba with alpha, for soft status tints (mirrors the design's softColor). */
 export function softColor(hex: string, a = 0.13): string {
   const h = hex.replace('#', '');

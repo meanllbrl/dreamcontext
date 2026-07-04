@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useTheme } from '../../context/ThemeContext';
-import { startWindowDrag, toggleMaximizeWindow } from '../../lib/desktop';
+import { startTitleBarDrag, toggleMaximizeWindow } from '../../lib/desktop';
 import { SearchIcon } from '../sleepy/TypeIcons';
 import { UpdateBadge } from './UpdateBadge';
 import { SleepDebtTracker } from './SleepDebtTracker';
@@ -112,25 +112,7 @@ export function Header({ onNavigate, sidebarCollapsed, onToggleSidebar, onOpenSe
       // clicks and double-clicks are NOT forwarded to the native window (which
       // would trigger native zoom on top of ours). Maximize is our single,
       // deterministic onDoubleClick below.
-      onMouseDown={(e) => {
-        if (e.button !== 0) return;
-        const target = e.target;
-        if (target instanceof Element &&
-            target.closest('button, input, a, select, textarea, [role="button"], [data-no-drag]')) return;
-        const sx = e.clientX, sy = e.clientY;
-        const onMove = (me: MouseEvent) => {
-          if (Math.abs(me.clientX - sx) > 4 || Math.abs(me.clientY - sy) > 4) {
-            cleanup();
-            void startWindowDrag(target);
-          }
-        };
-        const cleanup = () => {
-          window.removeEventListener('mousemove', onMove);
-          window.removeEventListener('mouseup', cleanup);
-        };
-        window.addEventListener('mousemove', onMove);
-        window.addEventListener('mouseup', cleanup);
-      }}
+      onMouseDown={startTitleBarDrag}
       onDoubleClick={(e) => void toggleMaximizeWindow(e.target)}
     >
       <div className="header-left">

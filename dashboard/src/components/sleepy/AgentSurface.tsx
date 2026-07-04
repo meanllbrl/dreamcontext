@@ -5,8 +5,12 @@ import './AgentTerminal.css';
 import { api, getActiveVault } from '../../api/client';
 import {
   createSession, currentZoom,
-  type Capabilities, type Session,
+  type Capabilities, type Session, type SessionKind,
 } from './agentSession';
+import {
+  initAgentSettingsFromServer, readAgentSettings, matchesAccel,
+  AGENT_SETTINGS_EVENT, type AgentSettings,
+} from '../../lib/agentSettings';
 import { deriveSessionStatus, type SessionRow } from './agentStatus';
 import { PaneFragment } from './PaneFragment';
 import { AgentTabs, type PaneVM } from './AgentTabs';
@@ -53,7 +57,8 @@ import {
 
 interface SessionMeta {
   id: string;          // matches Session.id (or a synthetic `restored-N` while dormant)
-  title: string;       // renameable; default "Agent N"
+  title: string;       // renameable; default "Agent N" / "Terminal N"
+  kind: SessionKind;   // Claude agent, or a plain vault-scoped login shell
   bypass: boolean;
   claudeId: string;    // the Claude conversation UUID (persisted → `claude --resume` on reopen)
   dormant?: boolean;   // a restored roster entry with NO live Session yet (Resume to spawn)
@@ -80,6 +85,13 @@ interface PaneState {
 let paneSeq = 0;
 const nextPaneId = () => `pane-${++paneSeq}`;
 
+/** Default title for a fresh session: "Terminal N" for a shell, "Agent N" for an agent
+ *  (N is the global session counter baked into the session id). */
+function titleFor(s: Session): string {
+  const num = s.id.replace('agent-', '');
+  return s.kind === 'shell' ? `Terminal ${num}` : `Agent ${num}`;
+}
+
 /** Where a tab will land when the drag ends, recorded during dragover (the `drop` event
  *  is unreliable in WKWebView, so we act on the source tab's reliable `dragend`). */
 type DropTarget =
@@ -100,6 +112,8 @@ interface SavedMeta {
   minimized: boolean;
   size: number;
   sessionId?: string;
+  /** Absent on legacy rosters → treated as an agent (back-compat). */
+  kind?: SessionKind;
 }
 
 /**
@@ -140,9 +154,20 @@ export function AgentSurface() {
   const [minimizedIds, setMinimizedIds] = useState<string[]>([]);
   // A tab drag is in flight → render the per-pane split/combine drop overlays.
   const [draggingTab, setDraggingTab] = useState(false);
-  const [, bumpStatus] = useReducer((x: number) => x + 1, 0);
+  const [statusTick, bumpStatus] = useReducer((x: number) => x + 1, 0);
   // The session whose title is being edited inline (double-click on its tab), or ''.
   const [renamingId, setRenamingId] = useState('');
+  // The header "＋ New ▾" split-button's dropdown (pick Agent vs Terminal) is open.
+  const [newMenuOpen, setNewMenuOpen] = useState(false);
+  // Agents (beta) surface preferences (Settings → Agents): feature on/off, restore
+  // past tabs, default agent, in-app toggle hotkey. Seeded synchronously from
+  // localStorage, then reconciled with the server file on mount, and kept live via
+  // the AGENT_SETTINGS_EVENT the Settings page dispatches on save.
+  const [agentSettings, setAgentSettings] = useState<AgentSettings>(() => readAgentSettings());
+  // Gates hydration: the restore-past-tabs decision must wait for the server's real
+  // value, or a launch could restore tabs the user turned OFF (or skip a restore
+  // they left ON) based on a stale localStorage seed.
+  const [settingsReady, setSettingsReady] = useState(false);
 
   const sessions = useRef<Map<string, Session>>(new Map());
   const garageRef = useRef<HTMLDivElement | null>(null);
@@ -158,6 +183,11 @@ export function AgentSurface() {
   // True once the saved roster has been fetched (or the fetch failed/was empty). Gates
   // the persist effect so a pre-hydrate render can't PUT [] and clobber the saved names.
   const hydratedRef = useRef(false);
+  // Auto-title bookkeeping: session ids we've already handled (titled or deliberately
+  // skipped) so Haiku is asked at most ONCE per session, and the prior busy state per
+  // session so we can fire on the first busy→idle edge (the first turn completing).
+  const autoTitledRef = useRef<Set<string>>(new Set());
+  const busyPrevRef = useRef<Map<string, boolean>>(new Map());
 
   const started = sessionList.length > 0;
   // The action-focused pane (falls back to the first pane when the stored id is stale).
@@ -172,14 +202,35 @@ export function AgentSurface() {
   }, []);
   useEffect(() => { void refreshCaps(); }, [refreshCaps]);
 
+  // ── Agent-surface settings: load the server-persisted prefs once, then track
+  //    live changes the Settings page broadcasts (no reload needed). ──
+  useEffect(() => {
+    let cancelled = false;
+    void initAgentSettingsFromServer().then((s) => {
+      if (cancelled) return;
+      setAgentSettings(s);
+      setSettingsReady(true);
+    });
+    const onChange = (e: Event) => {
+      const detail = (e as CustomEvent<AgentSettings>).detail;
+      if (detail) setAgentSettings(detail);
+    };
+    window.addEventListener(AGENT_SETTINGS_EVENT, onChange);
+    return () => { cancelled = true; window.removeEventListener(AGENT_SETTINGS_EVENT, onChange); };
+  }, []);
+
   // ── Roster persistence (per-vault, server-side) ──────────────────────────────
   // Hydrate ONCE after caps: pull the saved roster and, if the live list is still
   // empty, restore its entries as DORMANT tabs (names only, NO PTY) in a single pane.
   // Spawning a real session is deferred to an explicit Resume click — we never auto-spawn
   // claude on launch. hydratedRef flips true on success, empty, OR failure so the persist
   // effect below can start (and never runs before this completes → never clobbers []).
+  // Gated on `settingsReady` so the restore-past-tabs preference is the real server value:
+  // if the user turned "Reopen past tabs" OFF, we mark hydrated and skip the restore
+  // entirely (a clean start), while still enabling the persist effect below.
   useEffect(() => {
-    if (hydratedRef.current || !caps?.embeddedTerminal) return;
+    if (hydratedRef.current || !caps?.embeddedTerminal || !settingsReady) return;
+    if (!agentSettings.restoreTabs) { hydratedRef.current = true; return; }
     let cancelled = false;
     (async () => {
       try {
@@ -190,11 +241,16 @@ export function AgentSurface() {
           // tab without one restores DORMANT (manual Resume). Spawn happens here, once —
           // and only on the non-cancelled invocation, so StrictMode can't double-spawn.
           const restored: SessionMeta[] = res.sessions.map((m, i) => {
-            if (m.sessionId) {
-              const s = spawn(m.bypass, m.sessionId, true);
-              return { id: s.id, title: m.title, bypass: m.bypass, claudeId: m.sessionId };
+            const kind: SessionKind = m.kind === 'shell' ? 'shell' : 'agent';
+            // An agent tab with a pinned conversation auto-RESUMES its real Claude session on
+            // launch. A shell has nothing to resume, and auto-spawning shells on launch is
+            // surprising — so shells (and legacy agent tabs without a conversation id) restore
+            // DORMANT, spawning a fresh session only on an explicit Resume click.
+            if (kind === 'agent' && m.sessionId) {
+              const s = spawn(m.bypass, m.sessionId, true, 'agent');
+              return { id: s.id, title: m.title, kind, bypass: m.bypass, claudeId: m.sessionId };
             }
-            return { id: `restored-${i}`, title: m.title, bypass: m.bypass, claudeId: newClaudeId(), dormant: true };
+            return { id: `restored-${i}`, title: m.title, kind, bypass: m.bypass, claudeId: newClaudeId(), dormant: true };
           });
           setSessionList((prev) => (prev.length > 0 ? prev : restored));
           setPanes((prev) => (prev.length > 0 ? prev : [{
@@ -205,7 +261,7 @@ export function AgentSurface() {
       finally { if (!cancelled) hydratedRef.current = true; }
     })();
     return () => { cancelled = true; };
-  }, [caps]);
+  }, [caps, settingsReady, agentSettings.restoreTabs]);
 
   // Persist on every roster change (post-hydrate), debounced. Saves BOTH dormant and
   // live metas so a renamed live session is captured too. `minimized`/`size` are written
@@ -216,7 +272,7 @@ export function AgentSurface() {
     const handle = setTimeout(() => {
       const payload = {
         sessions: sessionList.map((m) => ({
-          title: m.title, bypass: m.bypass, minimized: false, size: 1, sessionId: m.claudeId,
+          title: m.title, kind: m.kind, bypass: m.bypass, minimized: false, size: 1, sessionId: m.claudeId,
         })),
       };
       void api.put('/agent/sessions', payload).catch(() => { /* best-effort mirror */ });
@@ -227,18 +283,27 @@ export function AgentSurface() {
   // ── Session actions ────────────────────────────────────────────────────────
   // claudeId omitted → a fresh conversation (new UUID via `--session-id`); provided with
   // resume=true → reopen that exact conversation (`--resume`) after an app relaunch.
-  const spawn = useCallback((bp: boolean, claudeId?: string, resume = false) => {
-    const s = createSession(bp, bumpStatus, claudeId ?? newClaudeId(), resume);
+  const spawn = useCallback((bp: boolean, claudeId?: string, resume = false, kind: SessionKind = 'agent') => {
+    // A shell has no permission model, so bypass is meaningless for it — force it off.
+    const s = createSession(kind === 'shell' ? false : bp, bumpStatus, claudeId ?? newClaudeId(), resume, kind);
     s.applyZoom(currentZoom());
     sessions.current.set(s.id, s);
     return s;
   }, []);
 
-  // Add a session as a TAB of the action-focused pane (⌘T / ＋), or as the first pane.
-  const addSession = useCallback(() => {
-    const s = spawn(bypass);
-    const num = s.id.replace('agent-', '');
-    setSessionList((prev) => [...prev, { id: s.id, title: `Agent ${num}`, bypass: s.bypass, claudeId: s.claudeId }]);
+  // Spawn a fresh session AND append its roster entry — the two steps every "new session"
+  // path shares. Callers keep only their pane placement, so the roster-entry shape lives in
+  // ONE place (adding a field like `kind` can't drift between add-tab and add-split).
+  const spawnAndRegister = useCallback((kind: SessionKind) => {
+    const s = spawn(bypass, undefined, false, kind);
+    setSessionList((prev) => [...prev, { id: s.id, title: titleFor(s), kind: s.kind, bypass: s.bypass, claudeId: s.claudeId }]);
+    return s;
+  }, [spawn, bypass]);
+
+  // Add a session as a TAB of the action-focused pane (⌘T / ＋ for an agent, ⌃` / menu for
+  // a shell), or as the first pane.
+  const addSession = useCallback((kind: SessionKind = 'agent') => {
+    const s = spawnAndRegister(kind);
     if (panes.length === 0) {
       const pid = nextPaneId();
       setPanes([{ id: pid, tabs: [s.id], active: s.id }]);
@@ -248,13 +313,11 @@ export function AgentSurface() {
       setPanes((prev) => prev.map((p) => (p.id === apid ? { ...p, tabs: [...p.tabs, s.id], active: s.id } : p)));
       setActivePaneId(apid);
     }
-  }, [spawn, bypass, panes, activePaneId]);
+  }, [spawnAndRegister, panes, activePaneId]);
 
-  // Spawn a fresh agent into a NEW pane beside the focused one (⌘D) → side-by-side.
-  const addSplitSession = useCallback(() => {
-    const s = spawn(bypass);
-    const num = s.id.replace('agent-', '');
-    setSessionList((prev) => [...prev, { id: s.id, title: `Agent ${num}`, bypass: s.bypass, claudeId: s.claudeId }]);
+  // Spawn a fresh session into a NEW pane beside the focused one (⌘D) → side-by-side.
+  const addSplitSession = useCallback((kind: SessionKind = 'agent') => {
+    const s = spawnAndRegister(kind);
     const pid = nextPaneId();
     if (panes.length === 0) {
       setPanes([{ id: pid, tabs: [s.id], active: s.id }]);
@@ -268,7 +331,7 @@ export function AgentSurface() {
       });
     }
     setActivePaneId(pid);
-  }, [spawn, bypass, panes, activePaneId]);
+  }, [spawnAndRegister, panes, activePaneId]);
 
   // All mutations are FUNCTIONAL (read `prev`, never a captured list) and read live
   // sessions from the ref — so a stale snapshot can never act on the wrong session.
@@ -288,8 +351,11 @@ export function AgentSurface() {
   const resumeSession = useCallback((sid: string) => {
     const meta = sessionList.find((m) => m.id === sid);
     if (!meta?.dormant) return;
-    // Resume the EXACT prior Claude conversation (`--resume <claudeId>`), not a fresh one.
-    const s = spawn(meta.bypass, meta.claudeId, true);
+    // Agent → resume the EXACT prior Claude conversation (`--resume <claudeId>`). Shell →
+    // there is no conversation to resume, so just open a fresh vault-scoped login shell.
+    const s = meta.kind === 'shell'
+      ? spawn(meta.bypass, undefined, false, 'shell')
+      : spawn(meta.bypass, meta.claudeId, true, 'agent');
     setSessionList((prev) => prev.map((m) => (m.id === sid ? { ...m, id: s.id, bypass: s.bypass, claudeId: s.claudeId, dormant: false } : m)));
     setPanes((prev) => prev.map((p) => ({
       ...p,
@@ -552,6 +618,70 @@ export function AgentSurface() {
     return () => window.removeEventListener('keydown', onKey, true);
   }, [expanded]);
 
+  // ── Quick-toggle hotkey (Settings → Agents; default ⌃A) ──────────────────────────
+  // Opens the Agents overlay from anywhere in the app, and closes it again. Like the
+  // Esc handler, it YIELDS when focus is inside a terminal — the default ⌃A is also
+  // readline's "line start", so while you're typing in a session that keystroke must
+  // reach the PTY, not the toggle. So: collapsed → the hotkey always opens; expanded →
+  // it closes only when focus is outside the terminal (a tab, the header, or another
+  // page). Disabled surface → no binding at all. Rebind or clear it in Settings.
+  useEffect(() => {
+    if (!caps?.desktop || !agentSettings.enabled || !agentSettings.hotkey.trim()) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!matchesAccel(e, agentSettings.hotkey)) return;
+      const ae = document.activeElement as Element | null;
+      // While a terminal is focused, only let the chord through to TOGGLE if it wouldn't
+      // otherwise be a terminal keystroke — i.e. never when expanded (the PTY owns it).
+      if (expanded && ae?.closest('.agent-pane-slot')) return;
+      if (ae?.closest('.command-palette')) return; // the palette owns its own keys
+      e.preventDefault();
+      e.stopPropagation();
+      setExpanded((cur) => !cur);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [caps, agentSettings.enabled, agentSettings.hotkey, expanded]);
+
+  // Turning the surface OFF in Settings must also collapse an open overlay — otherwise
+  // a fullscreen agent view would linger with no entry point to dismiss it.
+  useEffect(() => {
+    if (!agentSettings.enabled && expanded) setExpanded(false);
+  }, [agentSettings.enabled, expanded]);
+
+  // ── Auto-title: name a tab from its first user message (Settings → Agents) ────────
+  // Fires when a live AGENT session completes its FIRST turn (a busy→idle edge), which
+  // is exactly when Claude Code has written the opening user message to its transcript.
+  // The server reads that message and returns a Haiku-generated title; we apply it ONLY
+  // if the tab still carries its default "Agent N" name (a tab you renamed is never
+  // overwritten). Guarded to run once per session, so it costs one Haiku call per tab.
+  useEffect(() => {
+    if (!agentSettings.enabled || !agentSettings.autoTitle) return;
+    sessions.current.forEach((s, id) => {
+      const wasBusy = busyPrevRef.current.get(id) ?? false;
+      busyPrevRef.current.set(id, s.busy);
+      if (!(wasBusy && !s.busy)) return;          // only on the first-turn-complete edge
+      if (s.kind !== 'agent' || autoTitledRef.current.has(id)) return;
+      const meta = sessionList.find((m) => m.id === id);
+      // Skip (permanently) if the tab was renamed by the user or is a dormant restore.
+      if (!meta || meta.dormant || !/^Agent \d+$/.test(meta.title)) {
+        autoTitledRef.current.add(id);
+        return;
+      }
+      autoTitledRef.current.add(id);              // once per session, even if it fails
+      void api.post<{ title: string | null }>('/agent/title', { claudeId: s.claudeId })
+        .then((r) => {
+          const title = r?.title?.trim();
+          if (!title) return;
+          // Re-check the default guard inside the updater: the user may have renamed the
+          // tab while Haiku was thinking — their choice wins.
+          setSessionList((prev) => prev.map((m) => (
+            m.id === id && /^Agent \d+$/.test(m.title) ? { ...m, title } : m
+          )));
+        })
+        .catch(() => { /* best-effort: a failed title just leaves the default name */ });
+    });
+  }, [statusTick, agentSettings.enabled, agentSettings.autoTitle, sessionList]);
+
   // ── Drop-overlay leak guard (the "terminal unreachable after a split" fix) ───────
   // While a tab is dragged, each pane mounts a full-bleed `.agent-pane-droplayer`
   // (z-index 6) for the split/combine zones. It's normally torn down by the tab's
@@ -600,10 +730,16 @@ export function AgentSurface() {
     const host = hostRef.current;
     if (!host || !started) return;
     const onKey = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+      if (e.altKey) return;
+      // ⌃` → new TERMINAL tab (standard "toggle terminal" chord). This is the ONLY Ctrl combo
+      // we claim: every OTHER Ctrl chord (⌃C SIGINT, ⌃D EOF, ⌃W delete-word) MUST reach the
+      // PTY, or a shell session is unusable — so the ⌘D/⌘T/⌘W app chords below are gated on
+      // metaKey WITHOUT ctrlKey (previously `metaKey || ctrlKey` swallowed ⌃D/⌃W/⌃T too).
+      if (e.ctrlKey && !e.metaKey && e.key === '`') { e.preventDefault(); e.stopPropagation(); addSession('shell'); return; }
+      if (!e.metaKey || e.ctrlKey) return;
       const k = e.key.toLowerCase();
-      if (k === 'd') { e.preventDefault(); e.stopPropagation(); addSplitSession(); }
-      else if (k === 't') { e.preventDefault(); e.stopPropagation(); addSession(); }
+      if (k === 'd') { e.preventDefault(); e.stopPropagation(); addSplitSession('agent'); }
+      else if (k === 't') { e.preventDefault(); e.stopPropagation(); addSession('agent'); }
       else if (k === 'w') {
         e.preventDefault(); e.stopPropagation();
         if (focusedSessionId) closeSessionById(focusedSessionId);
@@ -685,6 +821,7 @@ export function AgentSurface() {
         id,
         title: meta?.title ?? id,
         info: deriveSessionStatus({ dormant: meta?.dormant, status: s?.status, busy: s?.busy }),
+        sessionKind: meta?.kind ?? 'agent',
         bypass: !!meta?.bypass,
         attention: !meta?.dormant && !!s?.attention,
       };
@@ -780,28 +917,32 @@ export function AgentSurface() {
         <BotMark />
         <h2 style={titleStyle}>Agent — real Claude Code</h2>
         <p style={subStyle}>
-          A full interactive Claude Code session running right here, scoped to this project.
-          Open as many as you need — each gets its own <strong>renameable</strong> tab in the
-          top bar, and you can put them <strong>side by side</strong> (⌘D) to watch several
-          agents work at once.
+          A full interactive Claude Code session running right here, scoped to this project —
+          or a <strong>plain terminal</strong> in the same window when you just need a shell.
+          Open as many as you need — each gets its own <strong>renameable</strong> tab, and you
+          can put them <strong>side by side</strong> (⌘D) to watch several at once.
         </p>
         <BypassToggle bypass={bypass} setBypass={setBypass} />
         {(() => {
-          // The embedded terminal is usable only when BOTH its renderer (node-pty)
-          // and the `claude` binary it spawns are present. Missing either → show the
-          // in-app Setup panel rather than silently spawning a shell that 404s claude.
-          const ready = caps.embeddedTerminal && caps.claudeCli;
+          // The AGENT needs BOTH its renderer (node-pty) AND the `claude` binary it spawns.
+          // A plain TERMINAL needs only the renderer — no `claude` — so it can start even
+          // when the CLI is missing. Missing the renderer → show the in-app Setup panel.
+          const agentReady = caps.embeddedTerminal && caps.claudeCli;
+          const terminalReady = caps.embeddedTerminal;
           return (
             <>
               <div style={{ display: 'flex', gap: '12px', marginTop: '22px', flexWrap: 'wrap', justifyContent: 'center' }}>
-                {ready && (
-                  <button onClick={addSession} style={primaryBtn}>▸ Start agent in app</button>
+                {agentReady && (
+                  <button onClick={() => addSession('agent')} style={primaryBtn}>▸ Start agent in app</button>
+                )}
+                {terminalReady && (
+                  <button onClick={() => addSession('shell')} style={agentReady ? secondaryBtn : primaryBtn}>&gt;_ Start terminal</button>
                 )}
                 {caps.openTerminal && (
-                  <button onClick={openExternal} style={ready ? secondaryBtn : primaryBtn}>↗ Open in Terminal</button>
+                  <button onClick={openExternal} style={secondaryBtn}>↗ Open in Terminal</button>
                 )}
               </div>
-              {!ready && <Prereqs caps={caps} onRefresh={refreshCaps} />}
+              {!terminalReady && <Prereqs caps={caps} onRefresh={refreshCaps} />}
             </>
           );
         })()}
@@ -826,10 +967,49 @@ export function AgentSurface() {
             {started && caps?.embeddedTerminal && (
               <>
                 <BypassPill bypass={bypass} setBypass={setBypass} />
-                <button className="agent-add-btn" title="New agent (⌘T) · ⌘D for side-by-side" aria-label="New agent" onClick={addSession}>
-                  <span className="agent-add-btn-icon" aria-hidden>＋</span>
-                  <span>New agent</span>
-                </button>
+                {/* Split button: the main face opens a Claude agent (the common case); the
+                    caret opens a menu to pick Agent vs Terminal. ⌘T / ⌃` shortcut the two. */}
+                <div className="agent-new-split" onMouseLeave={() => setNewMenuOpen(false)}>
+                  <button
+                    className="agent-add-btn"
+                    title="New agent (⌘T) · ⌘D for side-by-side"
+                    aria-label="New agent"
+                    onClick={() => { setNewMenuOpen(false); addSession('agent'); }}
+                  >
+                    <span className="agent-add-btn-icon" aria-hidden>＋</span>
+                    <span>New</span>
+                  </button>
+                  <button
+                    className="agent-add-caret"
+                    title="Choose agent or terminal"
+                    aria-label="Choose new session type"
+                    aria-haspopup="menu"
+                    aria-expanded={newMenuOpen}
+                    onClick={() => setNewMenuOpen((v) => !v)}
+                  >▾</button>
+                  {newMenuOpen && (
+                    <div className="agent-new-menu" role="menu">
+                      <button
+                        className="agent-new-menu-item"
+                        role="menuitem"
+                        onClick={() => { setNewMenuOpen(false); addSession('agent'); }}
+                      >
+                        <span className="agent-new-menu-glyph" aria-hidden>◇</span>
+                        <span className="agent-new-menu-label">New agent</span>
+                        <kbd className="agent-new-menu-kbd">⌘T</kbd>
+                      </button>
+                      <button
+                        className="agent-new-menu-item"
+                        role="menuitem"
+                        onClick={() => { setNewMenuOpen(false); addSession('shell'); }}
+                      >
+                        <span className="agent-new-menu-glyph" aria-hidden>&gt;_</span>
+                        <span className="agent-new-menu-label">New terminal</span>
+                        <kbd className="agent-new-menu-kbd">⌃`</kbd>
+                      </button>
+                    </div>
+                  )}
+                </div>
               </>
             )}
           </div>
@@ -849,11 +1029,13 @@ export function AgentSurface() {
           className="agent-dock--floating"
         />
       )}
-      {/* Collapsed entry point — desktop only, hidden while the overlay is open. With
+      {/* Collapsed entry point — desktop only, hidden while the overlay is open, and hidden
+          entirely when the Agents surface is disabled in Settings (no FAB, no dock; live
+          sessions keep running in the garage but the surface is out of the way). With
           sessions: the bottom-right chip dock (one chip per session, each coloured by its
           OWN state; collapsible to a handle), click a chip to open + focus. With zero
           sessions: a single "Agent" FAB. */}
-      {caps?.desktop && !expanded && (
+      {caps?.desktop && agentSettings.enabled && !expanded && (
         sessionList.length === 0 ? (
           <AgentFab
             status="idle"
