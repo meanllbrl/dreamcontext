@@ -1,0 +1,12 @@
+/* Shared launcher status dot — ok / stale / gone. The hex values match the
+   established launcher-dot convention (deliberately NOT the semantic
+   success/warning/error tokens, which hold different shades). */
+.vault-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+.vault-dot--ok { background: #34d399; }
+.vault-dot--stale { background: #fbbf24; box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.18); }
+.vault-dot--gone { background: #f87171; }

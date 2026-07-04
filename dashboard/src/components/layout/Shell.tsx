@@ -94,6 +94,11 @@ export function Shell({ children }: ShellProps) {
 
   const clearFocus = useCallback(() => setFocusId(null), []);
 
+  // Stable so <CommandModal>'s topmost-Esc effect doesn't re-register (and re-assert
+  // the palette as top of the overlay stack) on every Shell re-render — which would
+  // otherwise let Esc close the palette out from under a ⌘P switcher opened on top.
+  const closePalette = useCallback(() => setPaletteOpen(false), []);
+
   return (
     <div className="shell">
       <Header
@@ -110,7 +115,7 @@ export function Shell({ children }: ShellProps) {
       </div>
       <CommandPalette
         open={paletteOpen}
-        onClose={() => setPaletteOpen(false)}
+        onClose={closePalette}
         onNavigate={navigate}
       />
     </div>

@@ -1,0 +1,147 @@
+/* ⌘P project switcher — the scrim + centered dialog + entrance animation live in the
+   shared <CommandModal> shell (CommandModal.css). This variant only tunes the shell
+   via CSS custom properties (tuned for a short list); everything below is the
+   switcher's own content chrome. Tokens only. */
+.psw-modal {
+  --cmd-modal-top: 14vh;
+  --cmd-modal-width: 560px;
+  --cmd-modal-height: 66vh;
+  --cmd-modal-rise: -6px;
+  --cmd-modal-scale: 0.985;
+}
+
+.psw-input-row {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+}
+.psw-input {
+  flex: 1;
+  min-width: 0;
+  height: 34px;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--color-text);
+  font-size: var(--font-size-base);
+  font-family: var(--font-family-text);
+}
+.psw-input:focus-visible { outline: none; }
+.psw-input::placeholder { color: var(--color-text-tertiary); }
+.psw-kbd {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-tertiary);
+}
+
+.psw-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.psw-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+.psw-row:disabled { cursor: default; opacity: 0.55; }
+.psw-row--focused:not(:disabled) { background: var(--color-bg-secondary); }
+.psw-row--current { opacity: 0.7; }
+
+.psw-row--home { color: var(--color-text-secondary); }
+.psw-home-glyph {
+  flex: 0 0 auto;
+  width: 10px;
+  text-align: center;
+  color: var(--color-text-tertiary);
+}
+
+.psw-row-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.psw-row-name {
+  font-size: var(--font-size-sm);
+  font-weight: 550;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.psw-row-path {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.psw-row-num {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-tertiary);
+}
+.psw-row-hint {
+  flex: 0 0 auto;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-tertiary);
+}
+.psw-row-hint--current { color: var(--color-accent); }
+
+.psw-empty {
+  padding: var(--space-4);
+  text-align: center;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
+}
+
+.psw-foot {
+  flex: 0 0 auto;
+  display: flex;
+  gap: var(--space-4);
+  padding: var(--space-2) var(--space-4);
+  border-top: 1px solid var(--color-border);
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+}
+.psw-foot kbd {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  margin-right: 3px;
+}
+
+/* Scrim/dialog entrance + reduced-motion opt-out live in CommandModal.css. */

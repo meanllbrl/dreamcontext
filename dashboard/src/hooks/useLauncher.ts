@@ -199,11 +199,20 @@ interface StatusResponse {
   latestVersion: string;
 }
 
-/** Per-project launcher status (exists / needs-update / shareable). */
-export function useLauncherStatus() {
+/**
+ * Per-project launcher status (exists / needs-update / shareable).
+ *
+ * `enabled` lets always-mounted consumers (the ⌘P switcher, present in every
+ * window) opt OUT of the background poll until they're actually shown — without
+ * it the query inherits the app-wide 15s refetch interval and hammers
+ * `/api/launcher/status` in every vault window forever. The Launcher page passes
+ * nothing (defaults to enabled) since it renders the list directly.
+ */
+export function useLauncherStatus(enabled = true) {
   return useQuery({
     queryKey: ['launcher-status'],
     queryFn: () => api.get<StatusResponse>('/launcher/status'),
+    enabled,
   });
 }
 

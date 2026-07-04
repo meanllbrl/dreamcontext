@@ -1,0 +1,41 @@
+/* Shared shell for the app's centered command surfaces (⌘K palette, ⌘P switcher):
+   the dim scrim + centered dialog box, entrance animation, reduced-motion opt-out.
+   Tokens only. Per-surface tuning comes in via CSS custom properties set by the
+   caller's variant class (defaults below match the ⌘K palette). Sits above the
+   expanded agent overlay (z 20) so it can be summoned from on top of the agent. */
+.cmd-modal-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: var(--cmd-modal-top, 12vh) var(--space-5) var(--space-5);
+  background: color-mix(in srgb, var(--color-bg) 45%, rgba(0, 0, 0, 0.55));
+  backdrop-filter: blur(4px);
+  animation: cmdModalFade var(--transition-fast) ease;
+}
+
+.cmd-modal {
+  width: 100%;
+  max-width: var(--cmd-modal-width, 720px);
+  max-height: var(--cmd-modal-height, 72vh);
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius-xl);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  box-shadow: 0 28px 70px -22px rgba(0, 0, 0, 0.78), 0 0 0 1px rgba(0, 0, 0, 0.16);
+  overflow: hidden;
+  animation: cmdModalIn var(--transition-normal) cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes cmdModalFade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes cmdModalIn {
+  from { opacity: 0; transform: translateY(var(--cmd-modal-rise, -8px)) scale(var(--cmd-modal-scale, 0.98)); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cmd-modal-scrim, .cmd-modal { animation: none !important; }
+}

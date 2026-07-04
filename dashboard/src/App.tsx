@@ -9,6 +9,7 @@ import { ThemeProvider } from './context/ThemeContext';
 import { I18nProvider } from './context/I18nContext';
 import { ProjectProvider } from './context/ProjectContext';
 import { Shell, type ShellNavigation } from './components/layout/Shell';
+import { ProjectSwitcher } from './components/search/ProjectSwitcher';
 import { AgentSurface } from './components/sleepy/AgentSurface';
 import { TasksPage } from './pages/TasksPage';
 import { RoadmapPage } from './pages/RoadmapPage';
@@ -199,6 +200,7 @@ export function App() {
           <ThemeProvider>
             <SleepyHotkeyRegistrar />
             <LauncherPage />
+            <ProjectSwitcher />
           </ThemeProvider>
         </QueryClientProvider>
       </ErrorBoundary>
@@ -219,6 +221,7 @@ export function App() {
                   bottom-right FAB that expands to a fullscreen overlay) keeps its
                   PTY/scrollback alive across navigation and collapse/expand. */}
               <AgentSurface />
+              <ProjectSwitcher />
             </I18nProvider>
           </ThemeProvider>
         </ProjectProvider>

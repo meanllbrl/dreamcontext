@@ -10,6 +10,18 @@ export function isDesktop(): boolean {
 }
 
 /**
+ * Interactive controls that a title-bar gesture must never hijack — a mousedown
+ * on any of these starts neither a window drag nor a double-click maximize.
+ * Single-sourced so the exempt set stays in lock-step across the three gestures.
+ */
+const DRAG_EXEMPT_SELECTOR = 'button, input, a, select, textarea, [role="button"], [data-no-drag]';
+
+/** True when `target` is (or is inside) a control that title-bar gestures must ignore. */
+function isDragExempt(target: EventTarget | null): boolean {
+  return target instanceof Element && target.closest(DRAG_EXEMPT_SELECTOR) !== null;
+}
+
+/**
  * Start dragging the current window from a title-bar mousedown.
  *
  * Why this exists instead of `data-tauri-drag-region`: our windows are created
@@ -24,21 +36,71 @@ export function isDesktop(): boolean {
 export async function startWindowDrag(target: EventTarget | null): Promise<void> {
   if (!isDesktop()) return;
   // Never hijack a click meant for a control (buttons, inputs, links, etc.).
-  if (target instanceof Element && target.closest('button, input, a, select, textarea, [role="button"], [data-no-drag]')) {
-    return;
-  }
+  if (isDragExempt(target)) return;
   try {
     const { getCurrentWindow } = await import('@tauri-apps/api/window');
     await getCurrentWindow().startDragging();
   } catch { /* ACL / non-desktop — ignore */ }
 }
 
+/**
+ * Close the current window. Used by the relaunch flow: after the server has
+ * detached the `open <app>` relauncher, closing this window quits the app so the
+ * freshly-swapped bundle is what re-opens. `core:window:allow-close` is already
+ * granted in the capability. No-op (and harmless) outside the desktop shell.
+ */
+export async function closeCurrentWindow(): Promise<void> {
+  if (!isDesktop()) return;
+  try {
+    const { getCurrentWindow } = await import('@tauri-apps/api/window');
+    await getCurrentWindow().close();
+  } catch { /* ACL / non-desktop — ignore */ }
+}
+
+/**
+ * Minimal structural shape of a mousedown event — satisfied by BOTH the DOM
+ * `MouseEvent` and React's synthetic `MouseEvent`, so this module stays free of
+ * React types while still being callable straight from a JSX `onMouseDown`.
+ */
+interface DragMouseEvent {
+  button: number;
+  target: EventTarget | null;
+  clientX: number;
+  clientY: number;
+}
+
+/**
+ * Title-bar drag gesture, shared by the vault Header and the Launcher top bar.
+ *
+ * Drag starts ONLY after the pointer moves past a 4px threshold, so plain clicks
+ * and double-clicks are NOT forwarded to the native window (which would trigger
+ * native zoom on top of our own double-click-maximize). Interactive controls
+ * (and anything marked `[data-no-drag]`) never start a drag. No-op off-desktop.
+ */
+export function startTitleBarDrag(e: DragMouseEvent): void {
+  if (e.button !== 0) return;
+  const target = e.target;
+  if (isDragExempt(target)) return;
+  const sx = e.clientX;
+  const sy = e.clientY;
+  const onMove = (me: MouseEvent) => {
+    if (Math.abs(me.clientX - sx) > 4 || Math.abs(me.clientY - sy) > 4) {
+      cleanup();
+      void startWindowDrag(target);
+    }
+  };
+  const cleanup = () => {
+    window.removeEventListener('mousemove', onMove);
+    window.removeEventListener('mouseup', cleanup);
+  };
+  window.addEventListener('mousemove', onMove);
+  window.addEventListener('mouseup', cleanup);
+}
+
 /** Toggle maximize on a title-bar double-click (standard macOS behaviour). */
 export async function toggleMaximizeWindow(target: EventTarget | null): Promise<void> {
   if (!isDesktop()) return;
-  if (target instanceof Element && target.closest('button, input, a, select, textarea, [role="button"], [data-no-drag]')) {
-    return;
-  }
+  if (isDragExempt(target)) return;
   try {
     const { getCurrentWindow } = await import('@tauri-apps/api/window');
     await getCurrentWindow().toggleMaximize();
@@ -107,4 +169,44 @@ export async function openVaultWindow(name: string): Promise<void> {
     return;
   }
   window.open(`/?vault=${encodeURIComponent(name)}`, '_blank');
+}
+
+/** The vault this window is pinned to (`?vault=`), or null in the launcher window. */
+function currentVaultName(): string | null {
+  try {
+    return new URLSearchParams(window.location.search).get('vault');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Switch THIS window to another vault in place — a fast, tab-like hop that reuses
+ * the current OS window instead of spawning/hunting a new one. Reloading to the
+ * new `?vault=` re-initializes every module-level vault assumption cleanly (the
+ * active vault, react-query caches, the agent WS), which an in-memory swap could
+ * not do safely. Works identically in the browser dev build.
+ */
+export function switchVaultInPlace(name: string): void {
+  window.location.assign(`${window.location.origin}/?vault=${encodeURIComponent(name)}`);
+}
+
+/** Return THIS window to the Launcher (home) — used by the ⌘P switcher. */
+export function openLauncherHome(): void {
+  window.location.assign(`${window.location.origin}/`);
+}
+
+/**
+ * Go to a project from the ⌘P switcher. Context-aware so the launcher stays a
+ * persistent home:
+ *   - In a VAULT window → hop in place (reuse this window, no new one).
+ *   - In the LAUNCHER window → open/focus the project's own window (preserving
+ *     the launcher behind it), matching what clicking a launcher card does.
+ */
+export async function goToProject(name: string): Promise<void> {
+  if (currentVaultName()) {
+    switchVaultInPlace(name);
+  } else {
+    await openVaultWindow(name);
+  }
 }

@@ -1,30 +1,13 @@
-/* ⌘K command palette — centered modal over a dim scrim. Tokens only. Sits above the
-   expanded agent overlay (z 20) so it can be summoned from on top of the agent. */
-.cmdk-scrim {
-  position: fixed;
-  inset: 0;
-  z-index: 60;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding: 12vh var(--space-5) var(--space-5);
-  background: color-mix(in srgb, var(--color-bg) 45%, rgba(0, 0, 0, 0.55));
-  backdrop-filter: blur(4px);
-  animation: cmdkFade var(--transition-fast) ease;
-}
-
+/* ⌘K command palette — the scrim + centered dialog + entrance animation live in the
+   shared <CommandModal> shell (CommandModal.css). This variant only tunes the shell
+   via CSS custom properties; everything below is the palette's own content chrome.
+   Tokens only. Sits above the expanded agent overlay (z 20). */
 .command-palette {
-  width: 100%;
-  max-width: 720px;
-  max-height: 72vh;
-  display: flex;
-  flex-direction: column;
-  border-radius: var(--radius-xl);
-  background: var(--color-bg-elevated);
-  border: 1px solid var(--color-border);
-  box-shadow: 0 28px 70px -22px rgba(0, 0, 0, 0.78), 0 0 0 1px rgba(0, 0, 0, 0.16);
-  overflow: hidden;
-  animation: cmdkIn var(--transition-normal) cubic-bezier(0.2, 0.8, 0.2, 1);
+  --cmd-modal-top: 12vh;
+  --cmd-modal-width: 720px;
+  --cmd-modal-height: 72vh;
+  --cmd-modal-rise: -8px;
+  --cmd-modal-scale: 0.98;
 }
 
 /* Input row: a padded field box + an esc hint. */
@@ -310,12 +293,8 @@
 .cmdk-foot-mode { margin-left: auto; color: var(--color-success); }
 .cmdk-foot-mode--intel { color: var(--color-accent); }
 
-@keyframes cmdkFade { from { opacity: 0; } to { opacity: 1; } }
-@keyframes cmdkIn {
-  from { opacity: 0; transform: translateY(-8px) scale(0.98); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
-}
+/* Scrim/dialog entrance + reduced-motion for those live in CommandModal.css. Here we
+   only silence the palette's own in-content animations (BM25 spinner, reasoning skel). */
 @media (prefers-reduced-motion: reduce) {
-  .cmdk-scrim, .command-palette { animation: none !important; }
   .cmdk-spin, .cmdk-skel i { animation: none !important; }
 }
