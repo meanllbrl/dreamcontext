@@ -2,7 +2,7 @@
 id: feat_lab_insights
 status: in_review
 created: '2026-07-05'
-updated: '2026-07-05'
+updated: '2026-07-06'
 released_version: '0.11.0'
 tags:
   - feature
@@ -28,6 +28,8 @@ Agents need to stay current on business/product analytics without re-fetching ra
 Lab solves this by introducing **insights** — curated analytics metrics (NEVER raw data dumps) backed by external sources. A user or agent defines a named insight (e.g., "Weekly Active Users") with a data source (any HTTP JSON API or a custom script), declares display preferences (number/line/pie chart), and sets a refresh TTL. One CLI sync refreshes all or one insight; cached snapshots live in the brain so every session sees them (SessionStart snapshot + recall). A bound roadmap Key Result metric updates automatically on sync — upgrading the roadmap from PO-asserted numbers to measured numbers that agents can reason about.
 
 This is NOT a BI tool. Lab is a **metrics delivery** subsystem: it captures WHAT to fetch and HOW to display it, fetches on demand, caches the result, and surfaces it to agents + the dashboard. The source adapters (generic HTTP + custom script) make Lab pluggable — ready-made PostHog/Sheets adapters are v2; the generic layer is expressive enough that most sources fit without bespoke code.
+
+**Naming note:** The user-facing dashboard page is labeled "Insights" (flask icon); "Lab" is the internal/CLI/technical name. This PRD uses "Lab" to match the codebase and CLI surface.
 
 ## User Stories
 
