@@ -27,6 +27,19 @@ jobs:
           node-version: '20'
           cache: npm
 
+      # A bare CI runner has no git identity or init.defaultBranch, but a normal
+      # dev box does. The brain-sync e2e (tests/integration/brain-sync.e2e.test.ts)
+      # spins up a local `git init --bare` repo as a GitHub stand-in — and GitHub
+      # repos always default to `main`. Without init.defaultBranch=main the bare
+      # repo's HEAD points at `master`, so the second clone checks out nothing and
+      # the sync reports 'noop' with missing files. Configure git to mirror a real
+      # dev environment (identity is also a fallback for any commit path).
+      - name: Configure git for tests
+        run: |
+          git config --global init.defaultBranch main
+          git config --global user.email "ci@dreamcontext.local"
+          git config --global user.name "dreamcontext CI"
+
       - name: Install dependencies
         run: npm ci
 

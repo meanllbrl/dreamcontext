@@ -1,10 +1,36 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, rmSync, readFileSync, writeFileSync, existsSync, realpathSync, statSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  realpathSync,
+  statSync,
+  chmodSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execSync, execFileSync } from 'node:child_process';
 
 const CLI = join(__dirname, '..', '..', 'dist', 'index.js');
+
+/**
+ * The installed pre-commit hook resolves the GLOBAL `dreamcontext` binary and
+ * fails OPEN (exit 0) when it isn't on PATH. A dev's dogfooding machine has it
+ * installed globally, but a clean CI runner does not — so without a shim the hook
+ * silently skips and the "commit is blocked" assertion fails only on CI. Put a
+ * `dreamcontext` shim that points at the built CLI on PATH so the end-to-end guard
+ * is exercised hermetically on any machine.
+ */
+function makeCliShim(): string {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'mk-cli-shim-')));
+  const shim = join(dir, 'dreamcontext');
+  writeFileSync(shim, `#!/bin/sh\nexec node ${JSON.stringify(CLI)} "$@"\n`, { mode: 0o755 });
+  chmodSync(shim, 0o755);
+  return dir;
+}
 
 function makeRepo(): string {
   const raw = join(tmpdir(), `mk-hooks-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -123,14 +149,20 @@ describe('mk hooks (integration)', () => {
       writeFileSync(join(repo, '_dream_context', 'marketing', 'competitors', '_assets', 'big.mp4'), 'x');
       execFileSync('git', ['add', '-f', '_dream_context/marketing/competitors/_assets/big.mp4'], { cwd: repo });
 
+      // The hook needs a resolvable `dreamcontext` on PATH (it fails open without
+      // one) — supply a shim pointing at the built CLI so this works on CI too.
+      const shimDir = makeCliShim();
       let failed = false;
       try {
         execFileSync('git', ['commit', '-m', 'should-fail'], {
           cwd: repo,
           stdio: ['ignore', 'pipe', 'pipe'],
+          env: { ...process.env, PATH: `${shimDir}:${process.env.PATH ?? ''}` },
         });
       } catch {
         failed = true;
+      } finally {
+        rmSync(shimDir, { recursive: true, force: true });
       }
       expect(failed).toBe(true);
     });
