@@ -1,5 +1,17 @@
 [
   {
+    "date": "2026-07-06",
+    "type": "chore",
+    "scope": "release",
+    "description": "Release v0.11.0 shipped on both channels. npm: dreamcontext@0.11.0 live on the registry (verified via npm view). GitHub Release: dreamcontext-beta 0.11.0, non-draft + marked Latest (so the in-app auto-updater's /releases/latest lookup resolves it), with assets dreamcontext-beta_0.11.0_aarch64.app.tar.gz (29 MB) + matching .sha256, built by desktop-release.yml (run 28754522826, success in 4m47s) triggered by the v0.11.0 tag push on main (35b386a). Bundles everything since v0.10.6: the Lab (Insights) curated-metrics subsystem, Brain Cloud Sync M1+M2 (brain-repo GitHub collaboration), roadmap objective agent-reach, the knowledge↔features migration (0.10.7), and dashboard/desktop polish. All five version surfaces bumped 0.10.6→0.11.0; README + DEEP-DIVE gained Lab + Brain-Cloud-Sync sections; RELEASES.json 0.11.0 entry recorded. Build clean, 2812 tests green locally. NOTE: ci.yml on main has failed on the last few pushes despite local green — likely a CI-environment issue, flagged for a follow-up fix (does not affect the shipped artifacts).",
+    "breaking": false,
+    "summary": "v0.11.0 shipped on npm + GitHub desktop release (aarch64 .app.tar.gz, marked Latest) — Lab insights + brain cloud sync + roadmap agent-reach + knowledge↔features migration",
+    "references": [
+      "commit:35b386a",
+      "url:https://github.com/meanllbrl/dreamcontext/releases/tag/v0.11.0"
+    ]
+  },
+  {
     "date": "2026-07-05",
     "type": "feat",
     "scope": "desktop",
