@@ -200,6 +200,37 @@ function checkDataStructures(root: string): CheckResult[] {
 }
 
 /**
+ * Features are typed knowledge under knowledge/features/ (migration 0.10.7).
+ * Non-fatal: PASS when core/features/ is absent or empty (fully migrated, or
+ * a brain that never had features). WARN — never error — when *.md files
+ * remain, since a partial migration failure must not fail `doctor` outright;
+ * it points at `dreamcontext update` to retry the pending migration.
+ */
+function checkFeaturesMigrated(root: string): CheckResult {
+  const oldRel = 'core/features';
+  const oldAbs = join(root, oldRel);
+  if (!existsSync(oldAbs)) {
+    return { name: 'Features (migration)', status: 'ok', message: 'knowledge/features/' };
+  }
+  let mdFiles: string[] = [];
+  try {
+    mdFiles = readdirSync(oldAbs).filter((f) => f.endsWith('.md'));
+  } catch {
+    return { name: 'Features (migration)', status: 'ok', message: 'knowledge/features/' };
+  }
+  if (mdFiles.length === 0) {
+    return { name: 'Features (migration)', status: 'ok', message: 'knowledge/features/' };
+  }
+  return {
+    name: 'Features (migration)',
+    status: 'warn',
+    message:
+      `${mdFiles.length} feature file(s) remain in ${oldRel}/ — migration incomplete. `
+      + 'Run `dreamcontext update` to retry.',
+  };
+}
+
+/**
  * Validate an optional `_dream_context/overrides/task.md` (task_dlhc0fFQ).
  * Silent when absent (it's opt-in); warns — never silently ignores — on a
  * malformed override (bad frontmatter, unknown field type, duplicate keys).
@@ -308,7 +339,7 @@ export function registerDoctorCommand(program: Command): void {
       const results: CheckResult[] = [
         // Directories
         checkDirectory(root, 'core', 'Core directory'),
-        checkDirectory(root, 'core/features', 'Features directory'),
+        checkFeaturesMigrated(root),
         checkDirectory(root, 'knowledge', 'Knowledge directory'),
         checkDirectory(root, 'state', 'State directory'),
 

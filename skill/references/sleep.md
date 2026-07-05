@@ -43,7 +43,7 @@ For non-file-change work (architecture discussion, a decision with no edits): `d
      - a `knowledge_access` entry is 30+ days untouched
      - a research bookmark exists
      - a task slug matches an existing feature PRD filename
-     - `git status` shows changes under `_dream_context/core/features/`
+     - `git status` shows changes under `_dream_context/knowledge/features/`
      - a session advanced ≥1 acceptance criterion, OR introduced a feature concept with ≥2 criteria, OR the user named something "a feature" / "we should add X", OR a task has `feature:` frontmatter pointing to a non-existent PRD
      - the user hint mentions knowledge or a feature
      - When unsure, **over-fire** `sleep-product` — it no-ops cheaply.
@@ -66,7 +66,7 @@ For non-file-change work (architecture discussion, a decision with no edits): `d
 |---|---|---|
 | `sleep-tasks` | Task files (`state/*.md`) | Reconciles task bodies to truth, bumps statuses, creates tasks for untracked work, attaches to the planning version, sets the start/due range, and keeps declared custom fields current (never fabricating `ask` fields in the no-user sleep context). When objectives exist, proposes `objectives:` links for tasks with an EMPTY/absent list (multiple slugs when a task serves several outcomes) — **never overwrites a non-empty list** (that's a PO decision). |
 | `sleep-state` | Core identity (soul, user, memory, core 3–6), CHANGELOG, RELEASES | Records patterns/decisions/preferences, writes a changelog entry per meaningful change since the epoch, surfaces release readiness, enforces anti-bloat ceilings, flags stale knowledge for `sleep-product`. |
-| `sleep-product` | Knowledge files + feature PRDs | Creates/reconciles `knowledge/*.md` and `core/features/*.md`, processes staleness flags, maintains the knowledge index + taxonomy. |
+| `sleep-product` | Knowledge files + feature PRDs | Creates/reconciles `knowledge/*.md` and `knowledge/features/*.md` (typed knowledge, `type: feature`), processes staleness flags, maintains the knowledge index + taxonomy. |
 | `sleep-migration` | Structure only | Moves/renames folders, normalizes frontmatter, wraps fences. Never alters body prose. |
 
 **Consolidation discipline (remind specialists in the brief):** prefer *updating/extending* an existing entity over creating a new one. `sleep-tasks` folds a smaller slice into the task that already covers it (broaden its title + insert sub-items) rather than forking a duplicate. `sleep-product` keeps similar verticals/topics in the fewest knowledge files, splitting only on a sharp topical boundary. Duplicate tasks and fragmented near-duplicate knowledge are the top failure modes — but genuinely separate concerns still get their own task/file.

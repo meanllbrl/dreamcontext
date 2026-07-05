@@ -33,7 +33,9 @@ export interface PeerSummary {
   lastActivity: string[];
   /** Title of an in_progress/active task in the peer, if any. May be ''. */
   activeTask: string;
-  /** A few top tags across the peer's knowledge/features. May be empty. */
+  /** A few top tags across the peer's knowledge (features live under
+   *  knowledge/features/ now; `core/features/` is scanned too for back-compat
+   *  with un-migrated peers). May be empty. */
   topTags: string[];
 }
 

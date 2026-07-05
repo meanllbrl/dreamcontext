@@ -213,8 +213,8 @@ export function registerInitCommand(program: Command): void {
       };
 
       // Create directory structure
-      mkdirSync(join(contextDir, 'core', 'features'), { recursive: true });
-      mkdirSync(join(contextDir, 'knowledge'), { recursive: true });
+      mkdirSync(join(contextDir, 'core'), { recursive: true });
+      mkdirSync(join(contextDir, 'knowledge', 'features'), { recursive: true });
       mkdirSync(join(contextDir, 'knowledge', 'data-structures'), { recursive: true });
       mkdirSync(join(contextDir, 'knowledge', 'products'), { recursive: true });
       mkdirSync(join(contextDir, 'state'), { recursive: true });
@@ -318,7 +318,6 @@ export function registerInitCommand(program: Command): void {
       console.log(`  ${chalk.bold('Created structure:')}`);
       console.log(`  ${chalk.magentaBright.bold('_dream_context/')}`);
       console.log(`  ├── ${chalk.magentaBright.bold('core/')}`);
-      console.log(`  │   ├── ${chalk.magentaBright.bold('features/')}`);
       console.log(`  │   ├── ${chalk.magentaBright.bold('data-structures/')}`);
       for (const product of productList) {
         console.log(`  │   │   ├── ${chalk.green(product + '.md')}`);
@@ -331,6 +330,7 @@ export function registerInitCommand(program: Command): void {
       console.log(`  │   ├── ${chalk.yellow('CHANGELOG.json')}`);
       console.log(`  │   └── ${chalk.yellow('RELEASES.json')}`);
       console.log(`  ├── ${chalk.magentaBright.bold('knowledge/')}`);
+      console.log(`  │   ├── ${chalk.magentaBright.bold('features/')}`);
       if (multiProduct !== false) {
         console.log(`  │   └── ${chalk.magentaBright.bold('products/')}`);
         for (const product of multiProduct) {

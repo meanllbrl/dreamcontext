@@ -26,7 +26,7 @@ You own `_dream_context/state/*.md` and the task lifecycle. The orchestrator gav
 | `_dream_context/state/<slug>.md` (task files) | `core/CHANGELOG.json`, `core/RELEASES.json` |
 | `dreamcontext tasks {create,status,log,insert,objectives}` | `core/0-6.*` files |
 | Workflow Mermaid node classes inside task bodies | `knowledge/*.md` |
-| Task `objectives:` links (propose-only — see grooming (d)) | `core/features/*.md` |
+| Task `objectives:` links (propose-only — see grooming (d)) | `knowledge/features/*.md` |
 |  | `core/objectives/*.md` (PO-authored — never hand-edit; the ONE exception is refreshing a Key Result's `current` via `dreamcontext roadmap objective metric <slug> --current <n>`) |
 
 If a session's work belongs in a different domain (e.g., an architectural decision worth keeping in `2.memory.md`), **mention it in your report** so the orchestrator can confirm the right specialist handled it. Do not edit it yourself.

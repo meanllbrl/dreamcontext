@@ -17,7 +17,9 @@ export interface CoreFileEntry {
 
 /**
  * Scan core/ for extra files (3+) not already loaded in full by the snapshot.
- * Excludes 0.soul, 1.user, 2.memory, CHANGELOG.json, RELEASES.json, features/.
+ * Excludes 0.soul, 1.user, 2.memory, CHANGELOG.json, RELEASES.json. (Features
+ * now live under knowledge/features/, not core/ — the `[3-9]*` glob already
+ * excludes core/features/ on any brain, migrated or not.)
  * Returns [] if none exist.
  */
 export function buildCoreIndex(contextRoot: string): CoreFileEntry[] {

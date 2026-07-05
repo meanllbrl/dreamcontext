@@ -252,7 +252,7 @@ dreamcontext brain status             # mode (separate/in-tree), remote, sync st
 
 ### From the desktop app? — M2, PENDING (not yet shipped)
 
-The one-click UX — **GitHub device-flow login from the Launcher, a repo picker over your `dreamcontext-brain`-topic repos, UI "create"/"attach" with the trust preview, and a team-updates badge** — is **M2, still pending**. Today the shared-brain setup is **CLI-only** (a technical user runs `brain init` / `brain attach`). Be honest about this: a non-technical teammate can't yet do the *setup* from the app; once attached, the normal dashboard/app reads the shared brain like any other. (Full status: `core/features/brain-repo-sync.md`; merge internals: `skill-sync/references/merge-rules.md`.)
+The one-click UX — **GitHub device-flow login from the Launcher, a repo picker over your `dreamcontext-brain`-topic repos, UI "create"/"attach" with the trust preview, and a team-updates badge** — is **M2, still pending**. Today the shared-brain setup is **CLI-only** (a technical user runs `brain init` / `brain attach`). Be honest about this: a non-technical teammate can't yet do the *setup* from the app; once attached, the normal dashboard/app reads the shared brain like any other. (Full status: `knowledge/features/brain-repo-sync.md`; merge internals: `skill-sync/references/merge-rules.md`.)
 
 ---
 

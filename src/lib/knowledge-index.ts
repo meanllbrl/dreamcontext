@@ -83,6 +83,10 @@ export function buildKnowledgeIndex(contextRoot: string): KnowledgeEntry[] {
       if (isDarkDiagramSibling(file, boardDirs, isIndexableKnowledge)) continue;
 
       const slug = relative(knowledgeDir, file).replace(/\\/g, '/').replace(/\.md$/, '');
+      // Exclude knowledge/features/** — features are a distinct surface (snapshot
+      // Features section, dashboard Features tab, `--types feature` recall). They
+      // physically live under knowledge/ but must not double-list here.
+      if (slug === 'features' || slug.startsWith('features/')) continue;
       // For Excalidraw boards: store only extracted text (frontmatter + Text
       // Elements labels) — never scene JSON/base64. This keeps entry.content
       // clean for list route, snapshot warm path, and pinned preview.

@@ -48,7 +48,8 @@ const STUB_MEMORY = [
 /** A `_dream_context/` that is the untouched init shell. Returns the ctx path. */
 function buildSparseBrain(root: string): string {
   const ctx = join(root, '_dream_context');
-  mkdirSync(join(ctx, 'core', 'features'), { recursive: true });
+  mkdirSync(join(ctx, 'core'), { recursive: true });
+  mkdirSync(join(ctx, 'knowledge', 'features'), { recursive: true });
   mkdirSync(join(ctx, 'knowledge', 'data-structures'), { recursive: true });
   mkdirSync(join(ctx, 'state'), { recursive: true });
   writeFileSync(join(ctx, 'core', '0.soul.md'), STUB_SOUL);
@@ -65,14 +66,14 @@ function buildSparseBrain(root: string): string {
 /** A genuinely-started brain (real soul + a feature + a knowledge file). */
 function buildHealthyBrain(root: string): string {
   const ctx = join(root, '_dream_context');
-  mkdirSync(join(ctx, 'core', 'features'), { recursive: true });
-  mkdirSync(join(ctx, 'knowledge'), { recursive: true });
+  mkdirSync(join(ctx, 'core'), { recursive: true });
+  mkdirSync(join(ctx, 'knowledge', 'features'), { recursive: true });
   mkdirSync(join(ctx, 'state'), { recursive: true });
   writeFileSync(
     join(ctx, 'core', '0.soul.md'),
     '---\nname: myproj\ntype: soul\n---\n## Project Identity\nA real shipped project.\n## Core Principles\n- Ship small.',
   );
-  writeFileSync(join(ctx, 'core', 'features', 'login.md'), '---\nstatus: active\n---\n## Why\nUsers log in.');
+  writeFileSync(join(ctx, 'knowledge', 'features', 'login.md'), '---\nstatus: active\n---\n## Why\nUsers log in.');
   writeFileSync(join(ctx, 'knowledge', 'architecture.md'), '---\nname: arch\ndescription: arch\n---\n# Arch\nReal.');
   return ctx;
 }
@@ -113,7 +114,7 @@ describe('classifyBrain', () => {
 
   it('a single feature flips sparse → healthy', () => {
     const ctx = buildSparseBrain(tmp);
-    writeFileSync(join(ctx, 'core', 'features', 'f.md'), '---\nstatus: planning\n---\n## Why\nReal.');
+    writeFileSync(join(ctx, 'knowledge', 'features', 'f.md'), '---\nstatus: planning\n---\n## Why\nReal.');
     expect(classifyBrain(ctx)).toBe('healthy');
   });
 });
@@ -209,7 +210,7 @@ describe('featuresAreZero', () => {
 
   it('false when a feature file exists', () => {
     const ctx = buildSparseBrain(tmp);
-    writeFileSync(join(ctx, 'core', 'features', 'f.md'), '---\nstatus: active\n---\nWhy');
+    writeFileSync(join(ctx, 'knowledge', 'features', 'f.md'), '---\nstatus: active\n---\nWhy');
     expect(featuresAreZero(ctx)).toBe(false);
   });
 });

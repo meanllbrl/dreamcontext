@@ -15,7 +15,8 @@ function makeTmpContext(): string {
   mkdirSync(raw, { recursive: true });
   const root = realpathSync(raw);
   mkdirSync(join(root, 'state'), { recursive: true });
-  mkdirSync(join(root, 'core', 'features'), { recursive: true });
+  mkdirSync(join(root, 'core'), { recursive: true });
+  mkdirSync(join(root, 'knowledge', 'features'), { recursive: true });
   writeFileSync(join(root, 'core', 'RELEASES.json'), '[]', 'utf-8');
   writeFileSync(join(root, 'core', 'CHANGELOG.json'), '[]', 'utf-8');
   return root;
@@ -84,7 +85,7 @@ describe('release-discovery', () => {
 
   describe('findUnreleasedFeatures', () => {
     it('finds features with released_version: null', () => {
-      writeFileSync(join(root, 'core', 'features', 'auth.md'), '---\nid: "feat_abc"\nstatus: "active"\nreleased_version: null\n---\n', 'utf-8');
+      writeFileSync(join(root, 'knowledge', 'features', 'auth.md'), '---\nid: "feat_abc"\nstatus: "active"\nreleased_version: null\n---\n', 'utf-8');
       const features = findUnreleasedFeatures(root);
       expect(features).toHaveLength(1);
       expect(features[0].id).toBe('feat_abc');
@@ -92,13 +93,13 @@ describe('release-discovery', () => {
     });
 
     it('excludes features with released_version set', () => {
-      writeFileSync(join(root, 'core', 'features', 'old.md'), '---\nid: "feat_def"\nstatus: "active"\nreleased_version: "0.9.0"\n---\n', 'utf-8');
+      writeFileSync(join(root, 'knowledge', 'features', 'old.md'), '---\nid: "feat_def"\nstatus: "active"\nreleased_version: "0.9.0"\n---\n', 'utf-8');
       const features = findUnreleasedFeatures(root);
       expect(features).toHaveLength(0);
     });
 
     it('returns empty when no features directory', () => {
-      rmSync(join(root, 'core', 'features'), { recursive: true, force: true });
+      rmSync(join(root, 'knowledge', 'features'), { recursive: true, force: true });
       expect(findUnreleasedFeatures(root)).toEqual([]);
     });
   });

@@ -16,7 +16,7 @@ import matter from 'gray-matter';
 import { analyzeFeatures, type FeatureRef, type TaskRef } from '../src/lib/feature-freshness.js';
 
 const ROOT = process.cwd();
-const FEATURES_DIR = join(ROOT, '_dream_context', 'core', 'features');
+const FEATURES_DIR = join(ROOT, '_dream_context', 'knowledge', 'features');
 const STATE_DIR = join(ROOT, '_dream_context', 'state');
 
 function loadFeatures(): FeatureRef[] {
@@ -79,7 +79,7 @@ function main(): void {
   const freshPct = total === 0 ? 100 : Math.round(((total - stale) / total) * 100);
   const stalePct = total === 0 ? 0 : Math.round((stale / total) * 100);
 
-  const featureDocCommits = commitsTouching('_dream_context/core/features');
+  const featureDocCommits = commitsTouching('_dream_context/knowledge/features');
   const srcCommits = commitsTouching('src');
   const churnRatio =
     srcCommits === 0 ? 0 : Number((featureDocCommits / srcCommits).toFixed(3));

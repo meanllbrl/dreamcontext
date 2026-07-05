@@ -67,7 +67,7 @@ ${chalk.bold('Setup')}
 
 ${chalk.bold('Content')}
   ${chalk.magentaBright('core')}              Add changelog and release entries
-  ${chalk.magentaBright('features')}          Create features and insert into sections
+  ${chalk.magentaBright('features')}          ${chalk.dim('(deprecated)')} Create features (now typed knowledge under knowledge/features/)
   ${chalk.magentaBright('knowledge')}         Create and index knowledge files
   ${chalk.magentaBright('taxonomy')}          Inspect and maintain the project tag vocabulary
   ${chalk.magentaBright('memory')}            Recall facts via BM25 search over the project corpus

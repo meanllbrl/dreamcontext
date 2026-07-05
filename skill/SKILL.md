@@ -132,7 +132,7 @@ The SessionStart hook injects this automatically every session — answer from i
 
 | File | Load When |
 |------|-----------|
-| `core/features/<name>.md` | Feature scoping, sprint work, planning, "what's next" |
+| `knowledge/features/<name>.md` | Feature scoping, sprint work, planning, "what's next" |
 | `core/3.style_guide_and_branding.md` | UI/UX, frontend, branding, copy, design |
 | `core/4.tech_stack.md` | Architecture, integrations, dependencies, infra |
 | `knowledge/data-structures/<product>.md` (or `default.md`) | Database, API design, schema, data modeling |
@@ -183,7 +183,7 @@ When in doubt about a command or flag, open [cli-reference.md](references/cli-re
 3. **Recall before grep.** Before grepping `_dream_context/` for prior decisions or "did we already do X?", run `dreamcontext memory recall "<query>"`. It ranks across knowledge, features, tasks, memory, and changelog in one shot — cheaper and more on-target than blind Grep.
 
 4. **Single source of truth — check before creating, update over duplicate.** Every fact lives in exactly ONE place. Before creating any task/feature/knowledge, `dreamcontext memory recall` for it; if it exists, UPDATE it instead of forking a copy.
-   - **Know feature vs knowledge.** A **feature** (`core/features/<name>.md`) is product documentation — what a capability *is*, its user stories + acceptance criteria — updated only at sleep. **Knowledge** (`knowledge/…`) is other durable material: research, decisions, rationale, domain/technical context. In-progress work lives in a **task**, never in a feature or knowledge file.
+   - **Know feature vs knowledge.** A **feature** (`knowledge/features/<name>.md` — typed knowledge, `type: feature`; the `dreamcontext features` CLI is a deprecated compat alias) is product documentation — what a capability *is*, its user stories + acceptance criteria — updated only at sleep. **Knowledge** (`knowledge/…`) is other durable material: research, decisions, rationale, domain/technical context. In-progress work lives in a **task**, never in a feature or knowledge file.
    - **Never create a knowledge file for something that is a feature**, and never keep a knowledge copy of content that already lives in a feature (or vice-versa). If a topic is a feature, the feature is its home — knowledge may *reference* it, not duplicate it. Don't have both a feature and a knowledge doc covering the same thing.
    - **Never duplicate knowledge.** If two docs overlap, merge into one and point the other at it. Fragmented near-duplicate knowledge and duplicate tasks are the top failure modes — `sleep-product` dedupes, but don't create the mess.
 
@@ -342,7 +342,6 @@ When dreamcontext gets in your way — a recall gap, a missing command, a confus
 ```
 _dream_context/
 ├── core/
-│   ├── features/<feature>.md         ← Feature PRDs (may include product:)
 │   ├── 0.soul.md  1.user.md  2.memory.md
 │   ├── 3.style_guide_and_branding.md  4.tech_stack.md  6.system_flow.md
 │   ├── CHANGELOG.json  RELEASES.json  taxonomy.json
@@ -351,6 +350,7 @@ _dream_context/
 │   ├── <context>/                    ←   PROMOTED: group related docs into a context folder
 │   │   ├── <doc>.md                  ←     the context's knowledge
 │   │   └── <title>/<title>.excalidraw.md  ← diagrams live INSIDE their context folder
+│   ├── features/<feature>.md         ← Feature PRDs, typed knowledge (type: feature; may include product:)
 │   ├── data-structures/{default,<product>}.md   ← schemas (recall-indexed; ```sql body)
 │   └── products/<product>.md         ← per-product knowledge (multi-product)
 ├── overrides/

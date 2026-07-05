@@ -19,6 +19,12 @@ export interface MigrationStepResult {
    * false when work was actually done (code path ran and wrote/moved files).
    */
   detected: boolean;
+  /**
+   * Count of files that could NOT be migrated this run (write/verify/unlink
+   * failure, or a torn/divergent pre-existing dest). 0 or absent = clean.
+   * Presence signals a partial run: the caller MUST NOT advance setupVersion.
+   */
+  failedCount?: number;
 }
 
 /**

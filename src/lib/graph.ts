@@ -3,6 +3,7 @@ import { join, basename } from 'node:path';
 import fg from 'fast-glob';
 import { readFrontmatter } from './frontmatter.js';
 import { buildKnowledgeIndex } from './knowledge-index.js';
+import { featuresDir } from './features-path.js';
 
 export type GraphGroup =
   | 'soul'
@@ -136,10 +137,10 @@ export function buildGraph(contextRoot: string): Graph {
     }
   }
 
-  // ─── Features ─────────────────────────────────────────────────────────
-  const featuresDir = join(coreDir, 'features');
-  if (existsSync(featuresDir)) {
-    const files = fg.sync('*.md', { cwd: featuresDir, absolute: true });
+  // ─── Features (typed knowledge under knowledge/features/) ─────────────
+  const featuresPath = featuresDir(contextRoot);
+  if (existsSync(featuresPath)) {
+    const files = fg.sync('*.md', { cwd: featuresPath, absolute: true });
     for (const file of files) {
       const fileSlug = basename(file, '.md');
       try {
@@ -150,7 +151,7 @@ export function buildGraph(contextRoot: string): Graph {
             id,
             label: fileSlug,
             group: 'feature',
-            path: `core/features/${fileSlug}.md`,
+            path: `knowledge/features/${fileSlug}.md`,
             meta: {
               status: data.status ? String(data.status) : undefined,
               tags: Array.isArray(data.tags) ? (data.tags as unknown[]).map(String) : undefined,

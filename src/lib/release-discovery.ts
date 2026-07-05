@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import fg from 'fast-glob';
 import { readFrontmatter } from './frontmatter.js';
 import { readJsonArray } from './json-file.js';
+import { featuresDir } from './features-path.js';
 
 export interface ChangelogEntry {
   date: string;
@@ -123,10 +124,10 @@ export function findUnreleasedTasks(root: string): UnreleasedTask[] {
 }
 
 export function findUnreleasedFeatures(root: string): UnreleasedFeature[] {
-  const featuresDir = join(root, 'core', 'features');
-  if (!existsSync(featuresDir)) return [];
+  const dir = featuresDir(root);
+  if (!existsSync(dir)) return [];
 
-  const files = fg.sync('*.md', { cwd: featuresDir, absolute: true });
+  const files = fg.sync('*.md', { cwd: dir, absolute: true });
   const result: UnreleasedFeature[] = [];
 
   for (const file of files) {

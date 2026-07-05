@@ -1,6 +1,7 @@
 import { existsSync, statSync, readdirSync, readFileSync } from 'node:fs';
 import { join, dirname, basename, extname, isAbsolute, resolve, sep } from 'node:path';
 import { homedir } from 'node:os';
+import { featuresDir } from './features-path.js';
 
 /**
  * Initializer auto-detection.
@@ -137,10 +138,10 @@ export function knowledgeIsEmpty(root: string): boolean {
   }
 }
 
-/** True when `core/features/` holds no feature `.md` file. */
+/** True when `knowledge/features/` holds no feature `.md` file. */
 export function featuresAreZero(root: string): boolean {
   try {
-    const fdir = join(root, 'core', 'features');
+    const fdir = featuresDir(root);
     if (!existsSync(fdir)) return true;
     const entries = readdirSync(fdir, { withFileTypes: true });
     return !entries.some(

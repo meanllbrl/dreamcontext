@@ -189,8 +189,8 @@ const CATEGORIES: MenuCategory[] = [
   {
     id: 'features',
     emoji: '\u{1F9E9}',
-    label: 'Features',
-    description: 'Create features and add content to sections',
+    label: 'Features (deprecated)',
+    description: 'Create features and add content to sections — now typed knowledge under knowledge/features/',
     color: chalk.yellow,
     colorBright: chalk.yellowBright,
     commands: [

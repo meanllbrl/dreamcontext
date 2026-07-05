@@ -8,7 +8,7 @@
   "collapse-color-groups": false,
   "colorGroups": [
     {
-      "query": "path:core/features",
+      "query": "path:knowledge/features",
       "color": {
         "a": 1,
         "rgb": 1096577

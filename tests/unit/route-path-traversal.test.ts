@@ -107,7 +107,7 @@ beforeEach(() => {
   // Create required directories
   mkdirSync(join(contextRoot, 'state'), { recursive: true });
   mkdirSync(join(contextRoot, 'knowledge'), { recursive: true });
-  mkdirSync(join(contextRoot, 'core', 'features'), { recursive: true });
+  mkdirSync(join(contextRoot, 'knowledge', 'features'), { recursive: true });
 
   // Seed a sentinel OUTSIDE the _dream_context/ base — verifies the guard fires
   // before any filesystem read outside the base.
@@ -117,7 +117,7 @@ beforeEach(() => {
   // Seed a legitimate task, knowledge, and feature file
   writeFileSync(join(contextRoot, 'state', 'my-task.md'), VALID_TASK_FRONTMATTER);
   writeFileSync(join(contextRoot, 'knowledge', 'my-knowledge.md'), VALID_KNOWLEDGE_FRONTMATTER);
-  writeFileSync(join(contextRoot, 'core', 'features', 'my-feature.md'), VALID_FEATURE_FRONTMATTER);
+  writeFileSync(join(contextRoot, 'knowledge', 'features', 'my-feature.md'), VALID_FEATURE_FRONTMATTER);
 });
 
 afterEach(() => {
@@ -216,7 +216,7 @@ describe('handleFeaturesGet — path-traversal guard', () => {
 
   it('returns 400 invalid_path for ../sentinel (escapes features dir)', async () => {
     const { res, status, body } = makeRes();
-    // From core/features/ up 4 levels reaches tmpDir; sentinel is at tmpDir/sentinel
+    // From knowledge/features/ up 4 levels reaches tmpDir; sentinel is at tmpDir/sentinel
     await handleFeaturesGet(makeGetReq(), res, { slug: '../../../../sentinel' }, contextRoot);
     expect(status()).toBe(400);
     expect((body() as { error: string }).error).toBe('invalid_path');

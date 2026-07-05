@@ -336,19 +336,19 @@ parent_task: null
     it('creates a feature', () => {
       const output = run('features create auth --why "Users need to log in"', tmpDir);
       expect(output).toContain('created');
-      expect(existsSync(join(tmpDir, '_dream_context', 'core', 'features', 'auth.md'))).toBe(true);
+      expect(existsSync(join(tmpDir, '_dream_context', 'knowledge', 'features', 'auth.md'))).toBe(true);
     });
 
     it('inserts into feature changelog', () => {
       run('features create auth --why "Login"', tmpDir);
       run('features insert auth changelog "Added JWT middleware"', tmpDir);
-      const content = readFileSync(join(tmpDir, '_dream_context', 'core', 'features', 'auth.md'), 'utf-8');
+      const content = readFileSync(join(tmpDir, '_dream_context', 'knowledge', 'features', 'auth.md'), 'utf-8');
       expect(content).toContain('Added JWT middleware');
     });
 
     it('creates a feature with --tags / --status / --related-tasks', () => {
       run('features create auth --why "Login" --tags security,backend --status in_progress --related-tasks login,signup', tmpDir);
-      const content = readFileSync(join(tmpDir, '_dream_context', 'core', 'features', 'auth.md'), 'utf-8');
+      const content = readFileSync(join(tmpDir, '_dream_context', 'knowledge', 'features', 'auth.md'), 'utf-8');
       expect(content).toMatch(/status:\s*in_progress/);
       expect(content).toContain('security');
       expect(content).toContain('backend');
@@ -365,7 +365,7 @@ parent_task: null
       run('features create auth --why "Login"', tmpDir);
       run('features set auth status in_review', tmpDir);
       run('features set auth tags alpha,beta', tmpDir);
-      const content = readFileSync(join(tmpDir, '_dream_context', 'core', 'features', 'auth.md'), 'utf-8');
+      const content = readFileSync(join(tmpDir, '_dream_context', 'knowledge', 'features', 'auth.md'), 'utf-8');
       expect(content).toMatch(/status:\s*in_review/);
       expect(content).toContain('alpha');
       expect(content).toContain('beta');
@@ -374,7 +374,7 @@ parent_task: null
     it('insert replaces the user_stories placeholder and formats as a checkbox', () => {
       run('features create auth --why "Login"', tmpDir);
       run('features insert auth user_stories "As a user, I can sign in"', tmpDir);
-      const content = readFileSync(join(tmpDir, '_dream_context', 'core', 'features', 'auth.md'), 'utf-8');
+      const content = readFileSync(join(tmpDir, '_dream_context', 'knowledge', 'features', 'auth.md'), 'utf-8');
       expect(content).toContain('- [ ] As a user, I can sign in');
       // skeleton placeholder is gone
       expect(content).not.toContain('[action]');
@@ -384,7 +384,7 @@ parent_task: null
     it('insert does not glue content to the next section header', () => {
       run('features create auth --why "Login"', tmpDir);
       run('features insert auth notes "An edge case"', tmpDir);
-      const content = readFileSync(join(tmpDir, '_dream_context', 'core', 'features', 'auth.md'), 'utf-8');
+      const content = readFileSync(join(tmpDir, '_dream_context', 'knowledge', 'features', 'auth.md'), 'utf-8');
       expect(content).not.toMatch(/An edge case\n## /);
     });
   });
@@ -1095,7 +1095,7 @@ parent_task: null
       const releases = JSON.parse(readFileSync(join(tmpDir, '_dream_context', 'core', 'RELEASES.json'), 'utf-8'));
       expect(releases[0].features).toHaveLength(1);
       // Verify back-population
-      const feature = readFileSync(join(tmpDir, '_dream_context', 'core', 'features', 'auth.md'), 'utf-8');
+      const feature = readFileSync(join(tmpDir, '_dream_context', 'knowledge', 'features', 'auth.md'), 'utf-8');
       expect(feature).toContain('released_version');
       expect(feature).toContain('1.0.0');
     });

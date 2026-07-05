@@ -1,17 +1,17 @@
-import { join } from 'node:path';
 import { existsSync } from 'node:fs';
 import fg from 'fast-glob';
 import { readFrontmatter, updateFrontmatterFields } from './frontmatter.js';
 import { today } from './id.js';
+import { featuresDir } from './features-path.js';
 
 /**
  * Set released_version on selected features.
  */
 export function backPopulateFeatures(root: string, featureIds: string[], version: string): void {
-  const featuresDir = join(root, 'core', 'features');
-  if (!existsSync(featuresDir)) return;
+  const dir = featuresDir(root);
+  if (!existsSync(dir)) return;
 
-  const files = fg.sync('*.md', { cwd: featuresDir, absolute: true });
+  const files = fg.sync('*.md', { cwd: dir, absolute: true });
   const idSet = new Set(featureIds);
 
   for (const file of files) {

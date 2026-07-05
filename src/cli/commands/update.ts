@@ -309,10 +309,12 @@ export function registerUpdateCommand(program: Command): void {
         let newSetupVersion: string | null = null;
         if (!opts.packsOnly) {
           const ver = dreamcontextVersion();
-          updateSetupConfig(projectRoot, { setupVersion: ver });
-          newSetupVersion = ver;
 
-          // Run pending structural migrations for the (fromVersion, ver] range.
+          // Run pending structural migrations for the (fromVersion, ver] range
+          // BEFORE persisting setupVersion. setupVersion gates which migrations
+          // are considered "pending" (migration-runner.ts pendingMigrations) —
+          // bumping it first would make a mid-run failure invisible to the next
+          // `update`, silently orphaning un-migrated source files.
           const ctxRoot = join(projectRoot, '_dream_context');
           const migResult = runMigrations(ctxRoot, fromVersion, ver);
           if (migResult.applied.length > 0) {
@@ -335,6 +337,22 @@ export function registerUpdateCommand(program: Command): void {
               ];
               writeSleepState(ctxRoot, sleepState);
             }
+          }
+
+          // Persist setupVersion ONLY on a fully-clean migration run. A partial
+          // failure pins setupVersion at fromVersion so the next `update` retries
+          // the pending migration (idempotent) instead of silently skipping it.
+          // Dual-purpose caveat: setupVersion also drives setup-drift.ts's
+          // asset-freshness check — a persistently-failing migration keeps the
+          // brain flagged "stale" (a perpetual update nag). Accepted tradeoff: a
+          // nag is strictly safer than silently orphaning migrated-away sources.
+          if (migResult.failedSteps === 0) {
+            updateSetupConfig(projectRoot, { setupVersion: ver });
+            newSetupVersion = ver;
+          } else {
+            warn(
+              `Migration partially failed (${migResult.failedSteps} file(s)) — setupVersion left at ${fromVersion}. The next \`dreamcontext update\` will retry.`,
+            );
           }
         }
 

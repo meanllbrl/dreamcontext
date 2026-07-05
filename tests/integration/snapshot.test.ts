@@ -13,7 +13,8 @@ function makeTmpDir(): string {
 
 function scaffold(root: string) {
   const ctx = join(root, '_dream_context');
-  mkdirSync(join(ctx, 'core', 'features'), { recursive: true });
+  mkdirSync(join(ctx, 'core'), { recursive: true });
+  mkdirSync(join(ctx, 'knowledge', 'features'), { recursive: true });
   mkdirSync(join(ctx, 'state'), { recursive: true });
   return ctx;
 }
@@ -134,7 +135,7 @@ describe('snapshot (integration)', () => {
   it('outputs features summary with why, tasks, and changelog', () => {
     const ctx = scaffold(tmpDir);
     writeFileSync(
-      join(ctx, 'core', 'features', 'auth.md'),
+      join(ctx, 'knowledge', 'features', 'auth.md'),
       [
         '---',
         'name: Authentication',
@@ -172,7 +173,7 @@ describe('snapshot (integration)', () => {
   it('outputs features summary without details when minimal', () => {
     const ctx = scaffold(tmpDir);
     writeFileSync(
-      join(ctx, 'core', 'features', 'dashboard.md'),
+      join(ctx, 'knowledge', 'features', 'dashboard.md'),
       [
         '---',
         'status: planning',

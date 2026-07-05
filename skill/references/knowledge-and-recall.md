@@ -43,7 +43,7 @@ It moves the file **and** rewrites every inbound `[[wikilink]]` in one atomic st
 
 ## Memory functions — what they are and how to use them
 
-The `memory` command group is your interface to the curated corpus: `knowledge/*`, `core/features/*`, `state/*.md`, `core/2.memory.md` (Technical Decisions + Known Issues), and every `core/CHANGELOG.json` entry. No setup, no index file, no external service — rebuilt in memory each call (<100ms on ~130 docs).
+The `memory` command group is your interface to the curated corpus: `knowledge/*` (`knowledge/features/*` loads as its own `feature` channel — `--types feature` vs `--types knowledge` — never double-counted), `state/*.md`, `core/2.memory.md` (Technical Decisions + Known Issues), and every `core/CHANGELOG.json` entry. No setup, no index file, no external service — rebuilt in memory each call (<100ms on ~130 docs).
 
 | Function | Use it to… | Command |
 |---|---|---|

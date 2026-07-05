@@ -52,9 +52,9 @@ Run the **real checks** and return a verdict with evidence. Do not reason about 
    description + tags; no orphaned/empty entries; moved files round-trip (no dangling slugs).
 3. **Zero duplicate-topic knowledge.** No two knowledge files cover the same subject. Spot-check
    by clustering titles/tags and reading the suspected pairs — a survived near-duplicate is a FAIL.
-4. **Zero topic-as-both.** No topic exists as BOTH a `core/features/<x>.md` and a
-   `knowledge/**/<x>.md`. Cross-list feature names against knowledge slugs/titles; any collision
-   that isn't a deliberate feature→knowledge *reference* is a FAIL.
+4. **Zero topic-as-both.** No topic exists as BOTH a `knowledge/features/<x>.md` (typed knowledge,
+   `type: feature`) and a non-feature `knowledge/**/<x>.md`. Cross-list feature names against other
+   knowledge slugs/titles; any collision that isn't a deliberate feature→knowledge *reference* is a FAIL.
 5. **Statuses reflect reality.** No task in `todo`/`in_progress` that is demonstrably finished
    (cross-check the changelog / releases / code). Feature + version/release statuses are internally
    consistent. Cite the evidence for any status you assert is wrong.

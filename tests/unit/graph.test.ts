@@ -16,9 +16,9 @@ function writeFile(path: string, content: string): void {
 }
 
 function scaffold(root: string) {
-  mkdirSync(join(root, 'core', 'features'), { recursive: true });
+  mkdirSync(join(root, 'core'), { recursive: true });
+  mkdirSync(join(root, 'knowledge', 'features'), { recursive: true });
   mkdirSync(join(root, 'state'), { recursive: true });
-  mkdirSync(join(root, 'knowledge'), { recursive: true });
   mkdirSync(join(root, 'inbox'), { recursive: true });
 }
 
@@ -55,7 +55,7 @@ describe('buildGraph', () => {
 
   it('creates feature and task nodes and resolves related_feature by ID', () => {
     writeFile(
-      join(tmpDir, 'core', 'features', 'web-dashboard.md'),
+      join(tmpDir, 'knowledge', 'features', 'web-dashboard.md'),
       '---\nid: feat_ABC\nname: Web Dashboard\nstatus: active\nrelated_tasks: []\n---\n\nbody',
     );
     writeFile(
@@ -75,7 +75,7 @@ describe('buildGraph', () => {
 
   it('resolves related_tasks by slug (feature -> task direction)', () => {
     writeFile(
-      join(tmpDir, 'core', 'features', 'auth.md'),
+      join(tmpDir, 'knowledge', 'features', 'auth.md'),
       '---\nid: feat_AUTH\nname: Auth\nstatus: active\nrelated_tasks:\n  - login-flow\n---\n\nbody',
     );
     writeFile(
@@ -91,7 +91,7 @@ describe('buildGraph', () => {
 
   it('does not duplicate feature↔task edges when both directions declared', () => {
     writeFile(
-      join(tmpDir, 'core', 'features', 'billing.md'),
+      join(tmpDir, 'knowledge', 'features', 'billing.md'),
       '---\nid: feat_BILL\nname: Billing\nstatus: active\nrelated_tasks:\n  - stripe-integration\n---\n\nbody',
     );
     writeFile(
@@ -124,7 +124,7 @@ describe('buildGraph', () => {
 
   it('creates release nodes and release_includes edges', () => {
     writeFile(
-      join(tmpDir, 'core', 'features', 'auth.md'),
+      join(tmpDir, 'knowledge', 'features', 'auth.md'),
       '---\nid: feat_AUTH\nname: Auth\nstatus: active\n---\n\nbody',
     );
     writeFile(

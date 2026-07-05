@@ -9,8 +9,9 @@ import { insertToSection } from '../../lib/markdown.js';
 import { prepareSectionInsert, SECTION_MAP } from '../../lib/section-insert.js';
 import { promptInput } from '../../lib/prompt.js';
 import { generateId, slugify, today } from '../../lib/id.js';
-import { success, error, header } from '../../lib/format.js';
+import { success, error, header, warn } from '../../lib/format.js';
 import { analyzeFeatures, type FeatureRef, type TaskRef } from '../../lib/feature-freshness.js';
+import { featuresDir, FEATURES_TYPE } from '../../lib/features-path.js';
 
 const VALID_FEATURE_STATUSES = ['planning', 'in_progress', 'in_review', 'active', 'shipped', 'deprecated'];
 
@@ -20,7 +21,19 @@ function parseCsv(value: string): string[] {
 
 function getFeaturesDir(): string {
   const root = ensureContextRoot();
-  return join(root, 'core', 'features');
+  return featuresDir(root);
+}
+
+// Features are typed knowledge now (migration 0.10.7) — `dreamcontext features`
+// remains a compat alias. Print the notice once per process invocation (a
+// single CLI call never spams it twice even if multiple actions run).
+let deprecationPrinted = false;
+function printDeprecation(): void {
+  if (deprecationPrinted) return;
+  deprecationPrinted = true;
+  warn(
+    'dreamcontext features is deprecated — features are now typed knowledge under knowledge/features/. This alias will be removed in a future release.',
+  );
 }
 
 function findFeatureFile(name: string): string | null {
@@ -70,6 +83,11 @@ function getFeatureTemplate(): string {
   // Inline fallback
   return `---
 id: "{{ID}}"
+type: "${FEATURES_TYPE}"
+name: "{{NAME}}"
+description: "{{DESCRIPTION}}"
+pinned: false
+date: "{{DATE}}"
 status: "planning"
 created: "{{DATE}}"
 updated: "{{DATE}}"
@@ -119,11 +137,13 @@ export function registerFeaturesCommand(program: Command): void {
     .command('create')
     .argument('<name>')
     .option('-w, --why <why>', 'Why are we building this?')
+    .option('-d, --description <description>', 'One-line description (knowledge-index display)')
     .option('-t, --tags <tags>', 'Comma-separated tags')
     .option('-s, --status <status>', `Status (${VALID_FEATURE_STATUSES.join(', ')})`)
     .option('--related-tasks <slugs>', 'Comma-separated related task slugs')
-    .description('Create a new feature document')
-    .action(async (name: string, opts: { why?: string; tags?: string; status?: string; relatedTasks?: string }) => {
+    .description('Create a new feature document (typed knowledge under knowledge/features/)')
+    .action(async (name: string, opts: { why?: string; description?: string; tags?: string; status?: string; relatedTasks?: string }) => {
+      printDeprecation();
       const dir = getFeaturesDir();
       const slug = slugify(name);
       const filePath = join(dir, `${slug}.md`);
@@ -139,11 +159,14 @@ export function registerFeaturesCommand(program: Command): void {
       }
 
       const why = opts.why || await promptInput({ message: 'Why are we building this?' });
+      const date = today();
 
       const template = getFeatureTemplate();
       const content = template
         .replaceAll('{{ID}}', generateId('feat'))
-        .replaceAll('{{DATE}}', today())
+        .replaceAll('{{DATE}}', date)
+        .replaceAll('{{NAME}}', name)
+        .replaceAll('{{DESCRIPTION}}', opts.description ?? '')
         .replaceAll('{{WHY}}', why || '(To be defined)');
 
       writeFileSync(filePath, content, 'utf-8');
@@ -167,6 +190,7 @@ export function registerFeaturesCommand(program: Command): void {
     .argument('<value...>', 'Value (comma-separated for tags / related_tasks)')
     .description('Set a feature frontmatter field without hand-editing')
     .action((name: string, field: string, valueParts: string[]) => {
+      printDeprecation();
       const file = findFeatureFile(name);
       if (!file) {
         error(`Feature not found: ${name}`);
@@ -206,6 +230,7 @@ export function registerFeaturesCommand(program: Command): void {
     .argument('[content...]', 'Content to insert')
     .description('Insert content into a feature section')
     .action(async (name: string, section: string, contentParts: string[]) => {
+      printDeprecation();
       const file = findFeatureFile(name);
       if (!file) {
         error(`Feature not found: ${name}`);
@@ -243,13 +268,14 @@ export function registerFeaturesCommand(program: Command): void {
     .command('doctor')
     .description('Check feature PRDs for staleness, orphans, and dangling task references (read-only)')
     .action(() => {
+      printDeprecation();
       const root = ensureContextRoot();
-      const featuresDir = getFeaturesDir();
+      const dir = getFeaturesDir();
       const stateDir = join(root, 'state');
 
       // Read all feature PRDs
-      const featureFiles = existsSync(featuresDir)
-        ? fg.sync('*.md', { cwd: featuresDir, absolute: true })
+      const featureFiles = existsSync(dir)
+        ? fg.sync('*.md', { cwd: dir, absolute: true })
         : [];
 
       const featureRefs: FeatureRef[] = [];

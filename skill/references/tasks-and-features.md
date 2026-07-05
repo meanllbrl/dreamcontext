@@ -236,16 +236,22 @@ When an override is active its briefing (the field list, each field's `required`
 
 ## Features (PRDs)
 
-Retrospective product documentation, **created and updated exclusively by the sleep agent**. During active work, everything goes in the task; sleep consolidates task content into the matching feature.
+Features are **typed knowledge** — a feature PRD is a `knowledge/features/<name>.md` file with
+frontmatter `type: feature` (plus `name`/`description`/`pinned:false`/`date` for knowledge-index
+display). Retrospective product documentation, **created and updated exclusively by the sleep
+agent**. During active work, everything goes in the task; sleep consolidates task content into
+the matching feature. `dreamcontext features …` is a **deprecated compat alias** (prints a
+deprecation notice on every call) that reads/writes `knowledge/features/` — it is not a separate
+entity from knowledge.
 
 ```bash
-dreamcontext features create <name> -w "Why" -t backend,api -s planning --related-tasks a,b
+dreamcontext features create <name> -w "Why" -d "One-line description" -t backend,api -s planning --related-tasks a,b
 dreamcontext features set <name> status active
 dreamcontext features set <name> tags backend,api,topic:recall
 dreamcontext features insert <name> acceptance_criteria "..."   # auto-formats as - [ ]
 dreamcontext features doctor                                    # staleness / orphans / dangling refs
 ```
-Status values: `planning | in_progress | in_review | active | shipped | deprecated`. Sections: `changelog`, `notes`, `technical_details`, `constraints`, `user_stories`, `acceptance_criteria`, `why`. PRDs live in `core/features/<name>.md` (flat directory; may carry `product:`).
+Status values: `planning | in_progress | in_review | active | shipped | deprecated`. Sections: `changelog`, `notes`, `technical_details`, `constraints`, `user_stories`, `acceptance_criteria`, `why`. PRDs live in `knowledge/features/<name>.md` (flat directory under `knowledge/`; may carry `product:`); the generic knowledge index/recall channel excludes `knowledge/features/**` to avoid double-listing — features stay a distinct surface (snapshot Features section, dashboard Features tab, `--types feature` recall).
 
 ---
 
@@ -272,7 +278,7 @@ New tasks without `--version` auto-attach to the active planning version, so wor
 - **Per-product data structures**: `knowledge/data-structures/<product>.md` (single-product → `default.md`). Body format is a single ` ```sql ` fenced block with `-- ...` comments (the dashboard highlights it). Recall-indexed, owned by `sleep-product`.
 - **Per-product knowledge**: `knowledge/products/<product>.md`. Cross-cutting knowledge stays at top-level `knowledge/`.
 - **Tasks** may carry `product: <name>` in frontmatter; CLI/dashboard surface a product filter.
-- **Feature PRDs** may carry `product: <name>` (still in the flat `core/features/` directory).
+- **Feature PRDs** may carry `product: <name>` (still in the flat `knowledge/features/` directory).
 - **Auto-injection**: the SessionStart hook resolves the active task (override `state/.active-task`, else most-recently-modified `in_progress` task). If its `product:` is in `multiProduct`, the hook injects `knowledge/products/<name>.md` into the snapshot under `## Active Product Knowledge: <name>` (capped ~200 lines). You don't load it manually — it's already in context.
 
 If `multiProduct` is `false`/absent, treat the project as single-product and use `data-structures/default.md`.

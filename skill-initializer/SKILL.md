@@ -80,7 +80,7 @@ flowchart TD
 ### Phase 0 — RECOGNIZE & OFFER (interactive — ask, then wait)
 
 1. Confirm the brain is missing/sparse (`ls _dream_context/`; if present, check for empty
-   `knowledge/`, zero `core/features/`, untouched template stubs).
+   `knowledge/`, zero `knowledge/features/`, untouched template stubs).
 2. Make the **offer** above. Then ask **only what you can't detect** (3–6 questions max):
    - **Where is your material?** Absolute paths to folders/files to ingest (docs, exports,
      wiki, ADRs, specs, notes). "None — codebase only" is a valid answer.
@@ -116,7 +116,7 @@ mapped to a target:
 |---|---|
 | `knowledge/<context>/<slug>.md` | research, decisions, rationale, domain/technical deep context |
 | `knowledge/data-structures/<product>.md` | real schemas (Prisma/SQL/ORM) — actual tables/fields |
-| `core/features/<name>.md` | product capabilities (what a feature *is*) — candidate PRDs |
+| `knowledge/features/<name>.md` | product capabilities (what a feature *is*, typed knowledge `type: feature`) — candidate PRDs |
 | `state/<task>.md` | open/in-flight work, TODOs, roadmap items |
 | people roster | distinct git authors (`git shortlog -sne`) |
 | taxonomy `domain:<x>` | recurring project nouns |

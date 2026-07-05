@@ -82,7 +82,7 @@ detach`, and after every merge (a merge can reintroduce a secret).
 | `state/*.md` (tasks) | **Furthest status wins** (`todo < in_progress < in_review < completed`) + **changelog LIFO union** (dedup by normalized text) + everything else via `merge3Bodies`. |
 | `state/.config.json` | `people[]`/`packs[]`/`platforms[]` union; `peopleIdentity` key-union; other scalars — "ours" (local) wins on conflict. |
 | `core/taxonomy.json` | Union tag entries per facet. |
-| `knowledge/**`, `core/features/**` | **Clean union via `merge3Bodies` ONLY when no section was touched differently by both sides.** Otherwise (see §8) the CLI discards its own remote-wins attempt and defers to an agent. |
+| `knowledge/**` (incl. `knowledge/features/**` — features are typed knowledge) | **Clean union via `merge3Bodies` ONLY when no section was touched differently by both sides.** Otherwise (see §8) the CLI discards its own remote-wins attempt and defers to an agent. |
 | anything else | Same rule as knowledge/features: clean union or defer. |
 
 **CLI does:** every JSON class, task status/changelog, clean markdown unions — fully automatic,

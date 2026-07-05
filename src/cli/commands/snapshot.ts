@@ -20,6 +20,7 @@ import { dreamcontextVersion } from '../../lib/manifest.js';
 import { buildDriftDirective, resolveDriftState } from '../../lib/setup-drift.js';
 import { readAssetDriftCache, cacheConfidentlyClean } from '../../lib/asset-drift-cache.js';
 import { computeFeatureFreshness, freshnessSnapshotNote } from '../../lib/feature-freshness.js';
+import { featuresDir } from '../../lib/features-path.js';
 import { pendingInboxCount } from '../../lib/federation-inbox.js';
 import { buildRoadmapModel, type RoadmapObjective } from '../../lib/roadmap-model.js';
 import { readPeerSummaryCache } from '../../lib/federation-peer-summary.js';
@@ -931,9 +932,9 @@ export function generateSnapshot(rootOverride?: string): string {
   // 8. Features summary (with Why, related tasks, and latest changelog).
   // Demotion: active + recently-updated features keep their detail block; the
   // rest collapse to a name+status+path line (PRD is one Read away).
-  const featuresDir = join(root, 'core', 'features');
-  if (existsSync(featuresDir)) {
-    const featureFiles = fg.sync('*.md', { cwd: featuresDir, absolute: true });
+  const featuresPath = featuresDir(root);
+  if (existsSync(featuresPath)) {
+    const featureFiles = fg.sync('*.md', { cwd: featuresPath, absolute: true });
     const features: string[] = [];
     const featureMeta: Array<{ detail: string; nameLine: string; status: string; updated: string }> = [];
 
@@ -1001,7 +1002,7 @@ export function generateSnapshot(rootOverride?: string): string {
         features.push(featureLine);
         featureMeta.push({
           detail: featureLine,
-          nameLine: `- **${name}** (status: ${status}) -> _dream_context/core/features/${name}.md`,
+          nameLine: `- **${name}** (status: ${status}) -> _dream_context/knowledge/features/${name}.md`,
           status,
           updated: String(data.updated ?? data.created ?? ''),
         });
@@ -1304,9 +1305,9 @@ export function generateSubagentBriefing(): string {
 
   // 3. Features summary (name, status, tags, why, related tasks)
   // Features come FIRST because they're the most actionable context for sub-agents.
-  const featuresDir = join(root, 'core', 'features');
-  if (existsSync(featuresDir)) {
-    const featureFiles = fg.sync('*.md', { cwd: featuresDir, absolute: true });
+  const featuresPath = featuresDir(root);
+  if (existsSync(featuresPath)) {
+    const featureFiles = fg.sync('*.md', { cwd: featuresPath, absolute: true });
     const features: string[] = [];
 
     for (const file of featureFiles) {
@@ -1331,7 +1332,7 @@ export function generateSubagentBriefing(): string {
           ? data.related_tasks.join(', ')
           : '';
 
-        let featureLine = `- **${name}** --> Read: _dream_context/core/features/${name}.md`;
+        let featureLine = `- **${name}** --> Read: _dream_context/knowledge/features/${name}.md`;
         const details: string[] = [];
         if (tags) details.push(`  Tags: ${tags}`);
         if (why) details.push(`  Why: ${why}`);
@@ -1440,8 +1441,8 @@ export function generateSubagentBriefing(): string {
 
   // 8. Context directory reference
   parts.push('## Context Directory\n');
-  parts.push('`_dream_context/core/` -- Core files: soul (0), user (1), memory (2), extended (3+), features/');
-  parts.push('`_dream_context/knowledge/` -- Deep research documents on specific topics');
+  parts.push('`_dream_context/core/` -- Core files: soul (0), user (1), memory (2), extended (3+)');
+  parts.push('`_dream_context/knowledge/` -- Deep research documents on specific topics (includes features/ — feature PRDs as typed knowledge)');
   parts.push('`_dream_context/state/` -- Active task files with progress logs');
   parts.push('');
 

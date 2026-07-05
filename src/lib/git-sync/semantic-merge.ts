@@ -35,7 +35,7 @@ export function classifyPath(relPath: string): MergeClass {
   if (norm === 'state/.config.json') return 'config-json';
   if (norm === 'core/taxonomy.json') return 'taxonomy-json';
   if (/^state\/[^/]+\.md$/.test(norm)) return 'task-md';
-  if (/^core\/features\//.test(norm)) return 'feature-md';
+  if (/^knowledge\/features\//.test(norm)) return 'feature-md';
   if (/^knowledge\//.test(norm)) return 'knowledge-md';
   return 'other';
 }
@@ -227,7 +227,7 @@ export function mergeTaskMd(base: string, ours: string, theirs: string): { merge
   return { merged };
 }
 
-// ─── knowledge/**, core/features/** (and anything unclassified) ────────────
+// ─── knowledge/** (incl. knowledge/features/**) and anything unclassified ──
 
 /**
  * `merge3Bodies` (merge.ts:68) is remote-always-wins and never fails: on an

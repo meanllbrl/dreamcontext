@@ -22,6 +22,12 @@ export interface PendingAgentTask {
 export interface RunMigrationsResult {
   applied: LedgerEntry[];
   pendingAgentTasks: PendingAgentTask[];
+  /**
+   * Total files that failed to migrate across all steps this run (sum of each
+   * step's `failedCount`). > 0 means a partial run — callers (update.ts) MUST
+   * NOT advance setupVersion so the next `update` retries the pending migration.
+   */
+  failedSteps: number;
 }
 
 // ─── Runner ───────────────────────────────────────────────────────────────────
@@ -47,16 +53,17 @@ export function runMigrations(
 ): RunMigrationsResult {
   // Downgrade guard: if to < from, nothing to run
   if (compareVersions(toVersion, fromVersion) < 0) {
-    return { applied: [], pendingAgentTasks: [] };
+    return { applied: [], pendingAgentTasks: [], failedSteps: 0 };
   }
 
   const pending = pendingMigrations(fromVersion, toVersion);
   if (pending.length === 0) {
-    return { applied: [], pendingAgentTasks: [] };
+    return { applied: [], pendingAgentTasks: [], failedSteps: 0 };
   }
 
   const ledger = readLedger(contextRoot);
   const applied: LedgerEntry[] = [];
+  let failedTotal = 0;
 
   for (const migration of pending) {
     for (const stepFn of migration.steps) {
@@ -82,7 +89,16 @@ export function runMigrations(
 
       const result = stepFn(contextRoot);
 
-      // Check if this step is already recorded in the ledger we read at start
+      // Accumulate failures BEFORE the isApplied short-circuit: a ledger-recorded
+      // step that re-fails on a retry must still report its failures upward so
+      // update.ts keeps setupVersion pinned until the migration completes cleanly.
+      failedTotal += result.failedCount ?? 0;
+
+      // Check if this step is already recorded in the ledger we read at start.
+      // NOTE (ledger staleness): a step first ledgered as a partial failure keeps
+      // its original 'summary' forever — a later clean retry is gated out here and
+      // never rewrites the entry. The setupVersion gate uses the live failedSteps
+      // value (never the ledger text), so this is cosmetic/audit-only.
       if (isApplied(ledger, migration.version, result.step)) {
         continue;
       }
@@ -157,5 +173,5 @@ export function runMigrations(
     }
   }
 
-  return { applied, pendingAgentTasks };
+  return { applied, pendingAgentTasks, failedSteps: failedTotal };
 }

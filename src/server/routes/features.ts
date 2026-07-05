@@ -1,15 +1,16 @@
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { existsSync } from 'node:fs';
-import { join, basename } from 'node:path';
+import { basename } from 'node:path';
 import fg from 'fast-glob';
 import { readFrontmatter } from '../../lib/frontmatter.js';
 import { listSections, readSection } from '../../lib/markdown.js';
 import { sendJson, sendError } from '../middleware.js';
 import { safeChildPath } from '../safe-path.js';
 import { computeFeatureFreshness } from '../../lib/feature-freshness.js';
+import { featuresDir } from '../../lib/features-path.js';
 
 function getFeaturesDir(contextRoot: string): string {
-  return join(contextRoot, 'core', 'features');
+  return featuresDir(contextRoot);
 }
 
 /**

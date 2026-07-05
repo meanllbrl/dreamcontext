@@ -29,14 +29,14 @@ describe('haikuRecall', () => {
   beforeEach(() => {
     tmpDir = join(tmpdir(), `ac-haiku-recall-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     mkdirSync(join(tmpDir, 'knowledge'), { recursive: true });
-    mkdirSync(join(tmpDir, 'core', 'features'), { recursive: true });
+    mkdirSync(join(tmpDir, 'knowledge', 'features'), { recursive: true });
     mkdirSync(join(tmpDir, 'state'), { recursive: true });
 
     writeFileSync(join(tmpDir, 'knowledge', 'auth-tokens.md'),
       mdFile('Auth Tokens', 'JWT refresh token rotation', ['security', 'backend'], 'Token rotation details'));
     writeFileSync(join(tmpDir, 'knowledge', 'database-schema.md'),
       mdFile('Database Schema', 'PostgreSQL schema design', ['database'], 'Schema details'));
-    writeFileSync(join(tmpDir, 'core', 'features', 'user-dashboard.md'),
+    writeFileSync(join(tmpDir, 'knowledge', 'features', 'user-dashboard.md'),
       mdFile('User Dashboard', 'Dashboard analytics feature', ['frontend'], 'Dashboard details'));
     writeFileSync(join(tmpDir, 'state', 'fix-auth-bug.md'),
       mdFile('Fix Auth Bug', 'Fix token refresh bug', ['security'], 'Bug fix progress'));

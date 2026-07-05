@@ -5,6 +5,7 @@ import { readFrontmatter } from './frontmatter.js';
 import { expandQueryTerms } from './recall-synonyms.js';
 import { loadDigestDocs } from './session-digest.js';
 import { tagIndexValue } from './taxonomy.js';
+import { featuresDir } from './features-path.js';
 import {
   isExcalidrawPath,
   extractExcalidrawText,
@@ -311,10 +312,13 @@ function loadMarkdownDocs(
   dir: string,
   type: CorpusType,
   contextRoot: string,
+  ignore?: string[],
 ): CorpusDoc[] {
   if (!existsSync(dir)) return [];
   // B1: recurse into nested dirs (e.g. knowledge/products/<name>/…).
-  const files = fg.sync('**/*.md', { cwd: dir, absolute: true });
+  // `ignore` (e.g. ['features/**']) excludes typed subtrees that are loaded as
+  // their own corpus type, so they are never double-counted (feature vs knowledge).
+  const files = fg.sync('**/*.md', { cwd: dir, absolute: true, ignore });
   // Compute dark-sibling set once for the whole directory scan.
   // Dark siblings: non-board .md files inside a diagram folder that should
   // not enter the BM25 corpus (generator scripts, spec notes, etc.).
@@ -582,10 +586,12 @@ export function buildCorpus(
   const types = new Set(opts.types ?? ['knowledge', 'feature', 'task', 'memory', 'changelog', 'objective']);
   const docs: CorpusDoc[] = [];
   if (types.has('knowledge')) {
-    docs.push(...loadMarkdownDocs(join(contextRoot, 'knowledge'), 'knowledge', contextRoot));
+    // Exclude knowledge/features/** — features are their own corpus type and are
+    // loaded below, so a migrated feature is never double-counted as knowledge.
+    docs.push(...loadMarkdownDocs(join(contextRoot, 'knowledge'), 'knowledge', contextRoot, ['features/**']));
   }
   if (types.has('feature')) {
-    docs.push(...loadMarkdownDocs(join(contextRoot, 'core', 'features'), 'feature', contextRoot));
+    docs.push(...loadMarkdownDocs(featuresDir(contextRoot), 'feature', contextRoot));
   }
   if (types.has('objective')) {
     // PO-authored roadmap objectives (core/objectives/*.md) — first-class recall

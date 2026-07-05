@@ -17,9 +17,13 @@ describe('git-sync/semantic-merge — classifyPath', () => {
     expect(classifyPath('state/.config.json')).toBe('config-json');
     expect(classifyPath('core/taxonomy.json')).toBe('taxonomy-json');
     expect(classifyPath('state/my-task.md')).toBe('task-md');
-    expect(classifyPath('core/features/thing.md')).toBe('feature-md');
+    expect(classifyPath('knowledge/features/thing.md')).toBe('feature-md');
     expect(classifyPath('knowledge/topic.md')).toBe('knowledge-md');
     expect(classifyPath('README.md')).toBe('other');
+  });
+
+  it('a legacy un-migrated core/features/ path falls back to knowledge-md classification (other) — the "other" fallback still merges it via mergeMarkdownDoc (federation back-compat)', () => {
+    expect(classifyPath('core/features/thing.md')).toBe('other');
   });
 });
 

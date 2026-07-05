@@ -1,5 +1,95 @@
 [
   {
+    "date": "2026-07-05",
+    "type": "change",
+    "scope": "migration",
+    "description": "Migration 0.10.7 applied: move-features-to-knowledge",
+    "breaking": false,
+    "summary": "Moved features: agent-feedback, brain-curator, brain-repo-sync, calendar-integration, context-gate-and-goal-skill, context-snapshot, control-panel, council-skill, dreamcontext-deep-research, dreamcontext-skill-folder, feature-prds, in-app-agent-terminal, knowledge-base, launcher-federation-graph, launcher-project-switcher, launcher-quiz-onboarding, manifest-based-install-update, memory-recall-bm25, migration-system, multi-product-support, multi-review-skill, okr-roadmap, optional-skill-packs, project-initialization, reflection-engine, rice-prioritization, sleep-consolidation, sleep-fanout-architecture, sleepy-notch-capture, sleepy-search-ask, tag-taxonomy, task-management, web-dashboard",
+    "references": [
+      "file:state/.migrations.json"
+    ]
+  },
+  {
+    "date": "2026-07-05",
+    "type": "feat",
+    "scope": "desktop",
+    "description": "The desktop app's AgentComposerBar (the strip pinned to the bottom of the expanded Agent overlay) no longer has its own text field or Send button — the terminal's OWN input line is now the text field. The strip's Files (📎) and Dreamcontext Skills (✦) controls now drop paths and skill triggers directly into the focused terminal's input line, not into a separate composer field. Model and effort pickers switched from shared 'prefs for the NEXT session' (localStorage) to per-agent live state: the pickers show the FOCUSED agent's current model alias (read from its Claude CLI transcript via new /api/agent/session-model endpoint) and effort level (tracked per session after /effort slash commands), and changing either fires the real /model or /effort slash command at that agent in place. Models + efforts are sourced from the Claude CLI itself (base aliases + additionalModelOptionsCache → Opus/Sonnet/Haiku/Fable; claude --help → low/medium/high/xhigh/max). The pickers disable when the focused tab is a shell or dormant (no live agent to target). New modules: hooks/useAgentCapabilities.ts (capability checks), lib/agentSettings.ts refactored. New server endpoints (desktop-gated): GET /api/agent/model-config, GET /api/agent/session-model. Verified end-to-end by booting the server and reading opus back from a real transcript.",
+    "breaking": false,
+    "summary": "Agent composer bar redesigned — no separate text field, model/effort from CLI, per-agent live state",
+    "references": [
+      "file:dashboard/src/components/sleepy/AgentComposerBar.tsx",
+      "file:dashboard/src/components/sleepy/AgentSurface.tsx",
+      "file:dashboard/src/lib/agentComposer.ts",
+      "file:src/server/routes/agent-terminal.ts",
+      "file:dashboard/src/hooks/useAgentCapabilities.ts"
+    ]
+  },
+  {
+    "date": "2026-07-05",
+    "type": "fix",
+    "scope": "desktop",
+    "description": "The desktop app's Launcher route (full-screen FederationBoard) was rendered outside the I18nProvider wrapper in App.tsx, so any component using the useI18n hook would crash with 'useI18n must be used within I18nContext.Provider'. Fixed by ensuring every route, including the Launcher, is wrapped in I18nProvider. The FederationBoard's ~50 new i18n keys now resolve correctly in the Launcher window.",
+    "breaking": false,
+    "summary": "Launcher window missing I18nProvider — anything using useI18n crashed",
+    "references": [
+      "file:dashboard/src/App.tsx",
+      "file:dashboard/src/components/federation/FederationBoard.tsx"
+    ]
+  },
+  {
+    "date": "2026-07-05",
+    "type": "fix",
+    "scope": "desktop",
+    "description": "d3-zoom's pan gesture binds to 'mousedown', not 'pointerdown'. When the FederationBoard's custom card-drag gesture cancelled the 'pointerdown' event but let the browser emit the compatibility 'mousedown', d3-zoom interpreted the mouse event as a pan-start and moved the canvas underneath the user's card drag. Fixed by also cancelling/swallowing the compatibility mousedown event in the card's onMouseDown handler (stopPropagation + preventDefault). This is the load-bearing pattern for any custom drag atop d3-zoom: you must cancel both the pointer event you claim AND the compat mouse event the browser emits afterward, because d3-zoom pans on the mouse event.",
+    "breaking": false,
+    "summary": "d3-zoom pan-gesture interaction — cancel compat mousedown when claiming pointer event",
+    "references": [
+      "file:dashboard/src/components/federation/FederationBoard.tsx"
+    ]
+  },
+  {
+    "date": "2026-07-05",
+    "type": "fix",
+    "scope": "desktop",
+    "description": "When a FederationBoard had no wires between cards (unconnected vaults), the strong repulsion force (charge -900) scattered them toward the canvas corners, and auto-fit zoom pulled back until they were tiny specks. Fixed by softening the charge to -350, adding forceX/forceY(0) center-pull + forceCollide(85) based on card footprint, and clamping auto-fit zoom to [0.9, 1.4] so cards always stay readable. Minimal d3-force-3d type definitions added (dashboard/src/types/d3-force-3d.d.ts) for the subset of the API the board uses. Verified with a fresh screenshot: five unconnected cards now sit in a compact, legible cluster mid-canvas.",
+    "breaking": false,
+    "summary": "Unlinked federation graph cards no longer scatter to unreadable specks",
+    "references": [
+      "file:dashboard/src/components/federation/FederationBoard.tsx",
+      "file:dashboard/src/types/d3-force-3d.d.ts"
+    ]
+  },
+  {
+    "date": "2026-07-05",
+    "type": "feat",
+    "scope": "desktop",
+    "description": "The desktop app's FederationBoard (Launcher full-screen graph + Settings→Connections embedded view) evolved from a modal/confirm-based flow to a modeless direct-manipulation canvas. Drag a card onto another to wire them (visual connector appears). Click a card to open the detail inspector panel (project name, path, vault count, created date, Remove button). Click an existing wire to open an in-place popover editor with per-direction Remove actions and a one-click Make-Readable button (replaces the old window.confirm). Armed click-to-connect mode: the detail panel's 'Connect to' button arms the cursor for a target-select click. Success/warn toast notes with inline actions guide the user (e.g., 'Vault not readable—fix it' deep-links to the vault's settings). On-canvas legend explains the gestures (drag=wire, click=inspect). Designed empty state when no vaults are connected. Full i18n via ~50 new federation.map.* translation keys. Hover affordances (wire highlight, card glow, cursor hints) signal interactivity. Verified E2E with Playwright against a live launcher server.",
+    "breaking": false,
+    "summary": "FederationBoard redesigned to modeless direct-manipulation — drag to wire, click to inspect, in-place editor",
+    "references": [
+      "file:dashboard/src/components/federation/FederationBoard.tsx",
+      "file:dashboard/src/context/I18nContext.tsx",
+      "feature:launcher-project-switcher"
+    ]
+  },
+  {
+    "date": "2026-07-05",
+    "type": "feat",
+    "scope": "roadmap",
+    "description": "Roadmap objectives now surface deeper context in every agent briefing: a distilled description (first prose line from the body), impact/effort scores, start_date, and auto-derived slip attribution (slip_days numeric + slip_upstream pointing to the responsible dependency, else own tasks). Milestone-only objectives (no dated tasks of their own) inherit forecast from max(dependency forecast_end) so pure coordination milestones slip when upstream slips. Snapshot and SubagentStart briefings now order active objectives by time-box relevance (this month → this quarter → later; overdue first) and render impact/effort + slip cause ('Nd late · upstream: dep-slug' / 'own tasks'). sleep-tasks may now refresh an objective's metric.current via 'roadmap objective metric <slug> --current' (reverses the 2026-07-04 sleep-write ban for that one field; all other objective fields stay PO-owned). dreamcontext-deep-research recall sweeps now include --types objective. New 'Proactive objective capture' protocol: on a stated or implied outcome, the in-session agent dedups via recall, OFFERS an objective, ASKS dates, OFFERS a Key Result metric, and DETECTS+PROPOSES dependencies — every write gated on a yes (objectives stay PO-authored; ask-first, never silent). Dashboard roadmap components (board/detail panel) thread description, slip_days, slip_upstream through the model and render them inline. 6 new roadmap-model unit tests; full suite 2610 green.",
+    "breaking": false,
+    "summary": "Objectives gain richer snapshot presence — description, impact/effort, slip attribution, milestone forecast",
+    "references": [
+      "commit:6193793",
+      "file:src/lib/roadmap-model.ts",
+      "file:src/cli/commands/snapshot.ts",
+      "file:dashboard/src/components/roadmap/",
+      "feature:okr-roadmap",
+      "knowledge:board"
+    ]
+  },
+  {
     "date": "2026-07-04",
     "type": "chore",
     "scope": "docs",

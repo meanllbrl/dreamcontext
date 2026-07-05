@@ -1,5 +1,10 @@
 ---
 id: "{{ID}}"
+type: "feature"
+name: "{{NAME}}"
+description: "{{DESCRIPTION}}"
+pinned: false
+date: "{{DATE}}"
 status: "planning"
 created: "{{DATE}}"
 updated: "{{DATE}}"

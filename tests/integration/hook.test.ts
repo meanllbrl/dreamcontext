@@ -14,7 +14,8 @@ function makeTmpDir(): string {
 
 function scaffold(root: string): string {
   const ctx = join(root, '_dream_context');
-  mkdirSync(join(ctx, 'core', 'features'), { recursive: true });
+  mkdirSync(join(ctx, 'core'), { recursive: true });
+  mkdirSync(join(ctx, 'knowledge', 'features'), { recursive: true });
   mkdirSync(join(ctx, 'state'), { recursive: true });
   // Minimal soul file so snapshot has content
   writeFileSync(join(ctx, 'core', '0.soul.md'), '---\nname: test\n---\nTest soul.');
@@ -939,8 +940,8 @@ describe('hook subagent-start (integration)', () => {
   });
 
   it('includes features in briefing with name, status, and why', () => {
-    mkdirSync(join(ctx, 'core', 'features'), { recursive: true });
-    writeFileSync(join(ctx, 'core', 'features', 'web-dashboard.md'), [
+    mkdirSync(join(ctx, 'knowledge', 'features'), { recursive: true });
+    writeFileSync(join(ctx, 'knowledge', 'features', 'web-dashboard.md'), [
       '---',
       'status: active',
       'tags: [frontend, architecture]',
@@ -965,7 +966,7 @@ describe('hook subagent-start (integration)', () => {
     expect(ctx_text).toContain('visual interface');
     expect(ctx_text).toContain('Tasks: web-dashboard');
     // Each feature includes a direct read path
-    expect(ctx_text).toContain('--> Read: _dream_context/core/features/web-dashboard.md');
+    expect(ctx_text).toContain('--> Read: _dream_context/knowledge/features/web-dashboard.md');
   });
 
   it('includes top-priority directive to check context before searching', () => {
@@ -1637,7 +1638,8 @@ describe('hook initializer detection (integration)', () => {
   // A `_dream_context/` that is the untouched init shell.
   function scaffoldSparse(root: string): string {
     const ctx = join(root, '_dream_context');
-    mkdirSync(join(ctx, 'core', 'features'), { recursive: true });
+    mkdirSync(join(ctx, 'core'), { recursive: true });
+    mkdirSync(join(ctx, 'knowledge', 'features'), { recursive: true });
     mkdirSync(join(ctx, 'knowledge', 'data-structures'), { recursive: true });
     mkdirSync(join(ctx, 'state'), { recursive: true });
     writeFileSync(join(ctx, 'core', '0.soul.md'), [
@@ -1663,14 +1665,14 @@ describe('hook initializer detection (integration)', () => {
   // A genuinely-started brain (real soul + a feature + a knowledge file).
   function scaffoldHealthy(root: string): string {
     const ctx = join(root, '_dream_context');
-    mkdirSync(join(ctx, 'core', 'features'), { recursive: true });
-    mkdirSync(join(ctx, 'knowledge'), { recursive: true });
+    mkdirSync(join(ctx, 'core'), { recursive: true });
+    mkdirSync(join(ctx, 'knowledge', 'features'), { recursive: true });
     mkdirSync(join(ctx, 'state'), { recursive: true });
     writeFileSync(
       join(ctx, 'core', '0.soul.md'),
       '---\nname: myproj\ntype: soul\n---\n## Project Identity\nA real shipped project.\n## Core Principles\n- Ship small.',
     );
-    writeFileSync(join(ctx, 'core', 'features', 'login.md'), '---\nstatus: active\n---\n## Why\nUsers log in.');
+    writeFileSync(join(ctx, 'knowledge', 'features', 'login.md'), '---\nstatus: active\n---\n## Why\nUsers log in.');
     writeFileSync(join(ctx, 'knowledge', 'architecture.md'), '---\nname: arch\ndescription: arch\n---\n# Arch\nReal.');
     return ctx;
   }

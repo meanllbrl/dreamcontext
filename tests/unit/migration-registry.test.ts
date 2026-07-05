@@ -52,4 +52,24 @@ describe('migration-registry', () => {
     // the filter itself returns empty since no migration satisfies (>0.9.0 && <=0.7.0)
     expect(pending).toHaveLength(0);
   });
+
+  it('registry has the 0.10.7 collapse-features-into-typed-knowledge entry', () => {
+    const entry = REGISTRY.find((m) => m.version === '0.10.7');
+    expect(entry).toBeDefined();
+    expect(entry!.steps.length).toBe(1);
+    // No agentTask on 0.10.7 (fully deterministic move)
+    expect(entry!.agentTask).toBeUndefined();
+  });
+
+  it('pendingMigrations 0.10.6->0.10.7 includes the features migration', () => {
+    const pending = pendingMigrations('0.10.6', '0.10.7');
+    const versions = pending.map((m) => m.version);
+    expect(versions).toContain('0.10.7');
+  });
+
+  it('pendingMigrations 0.10.7->0.10.7 is empty (already at that version)', () => {
+    const pending = pendingMigrations('0.10.7', '0.10.7');
+    const versions = pending.map((m) => m.version);
+    expect(versions).not.toContain('0.10.7');
+  });
 });
