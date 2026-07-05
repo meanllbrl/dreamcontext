@@ -9,7 +9,7 @@ import { promptInput } from '../../lib/prompt.js';
 import { slugify, today } from '../../lib/id.js';
 import { success, error, header, warn } from '../../lib/format.js';
 import { matchMember } from '../../lib/task-backend/member-match.js';
-import { readSetupConfig, isMultiPerson } from '../../lib/setup-config.js';
+import { readSetupConfig, isMultiPerson, writeBrainLocal } from '../../lib/setup-config.js';
 import { getActivePlanningVersion } from '../../lib/active-version.js';
 import { listObjectives } from '../../lib/objectives-store.js';
 import { loadTaskOverride, fieldKey, type CustomFieldDef } from '../../lib/overrides.js';
@@ -1033,7 +1033,8 @@ export function registerTasksCommand(program: Command): void {
       }
       const syncOpts = { reconcile: !!opts.reconcile };
       try {
-        const backend = getTaskBackend();
+        const root = ensureContextRoot();
+        const backend = getTaskBackend(root);
         const report = opts.hook
           ? await Promise.race([
               backend.sync(dir, syncOpts),
@@ -1047,6 +1048,14 @@ export function registerTasksCommand(program: Command): void {
           // Hook-mode timeout: report and exit clean — git must never block.
           console.log(chalk.dim('tasks sync: timed out (hook mode) — skipped.'));
           return;
+        }
+        // C2 (github-cloud-collaboration-brain-repo-sync M3): this command IS
+        // the documented remedy for the "task mirrors are out of date" brain
+        // session-start advisory — a sync that actually RAN (not lock-skipped)
+        // clears the persisted flag so running exactly what the advisory says
+        // resolves the nag instead of re-surfacing it every session.
+        if (report.skipped !== 'locked') {
+          writeBrainLocal(dirname(root), { needsTaskSync: false });
         }
         if (opts.json) {
           console.log(JSON.stringify(report, null, 2));

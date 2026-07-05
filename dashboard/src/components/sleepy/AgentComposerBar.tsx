@@ -1,21 +1,21 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  MODEL_OPTIONS, THINKING_EFFORTS, SKILL_GROUPS,
-  modelById, type ComposerPrefs, type AgentProvider, type ThinkingEffortId,
+  SKILL_GROUPS, effortLabel, fmtTokens, fmtCost,
+  type ModelOption, type SessionStats,
 } from '../../lib/agentComposer';
 
 /**
- * The thin composer strip pinned to the bottom of the expanded Agent overlay. Three jobs,
- * one row:
- *   • 📎 Files  — native multi-select picker; the chosen absolute paths are appended to
- *                 the field (real OS paths in the desktop app).
- *   • ✦ Skills  — a popover of our signature capabilities (Multi-review · Goal · Excalidraw
- *                 · Council); picking one appends its trigger to the field.
- *   • model ▾ / effort ▾ / ➤ — pick the model + thinking effort for the NEXT session, then
- *                 send the composed field to the focused session (or a fresh one).
+ * The thin strip pinned to the bottom of the expanded Agent overlay. It has NO text field of
+ * its own — the terminal's OWN input line is the text field. The strip only:
+ *   • 📎 Files            — native multi-select picker; the chosen paths drop into the
+ *                           focused terminal's input line.
+ *   • ✦ Dreamcontext Skills — a popover of our signature capabilities; picking one types its
+ *                           trigger into the terminal's input line.
+ *   • model ▾ / effort ▾  — the FOCUSED agent's live model + effort (from the Claude CLI);
+ *                           changing either fires `/model` or `/effort` at that agent.
  *
- * Purely presentational + a self-contained popover: all state and the actual PTY
- * injection live in {@link AgentSurface}, handed in as callbacks.
+ * Purely presentational + a self-contained popover; all injection/switching lives in
+ * {@link AgentSurface}.
  */
 
 // ── A tiny popover: a trigger button + a menu that closes on outside-click / Esc ──────
@@ -52,33 +52,34 @@ function Popover({
 }
 
 export function AgentComposerBar({
-  value, onChange, onInsert, onPickFiles, onSend, prefs, onPrefsChange, canSend,
+  onInsert, onPickFiles, models, efforts, model, effort, onModelChange, onEffortChange, disabled, skillsDisabled = false, stats,
 }: {
-  value: string;
-  onChange: (v: string) => void;
-  /** Append a snippet (a skill trigger) to the field. */
+  /** Type a skill trigger into the focused terminal's input line. */
   onInsert: (snippet: string) => void;
-  /** Open the native multi-file picker and append the chosen paths. */
+  /** Open the native multi-file picker and drop the chosen paths into the terminal. */
   onPickFiles: () => void;
-  /** Submit the composed field to the focused/new session. */
-  onSend: () => void;
-  prefs: ComposerPrefs;
-  onPrefsChange: (p: ComposerPrefs) => void;
-  /** There's something to send (non-empty field) AND a session can receive it. */
-  canSend: boolean;
+  /** Model options the CLI offers, and effort levels from `claude --help`. */
+  models: ModelOption[];
+  efforts: string[];
+  /** The focused agent's current model alias + effort level. */
+  model: string;
+  effort: string;
+  onModelChange: (id: string) => void;
+  onEffortChange: (level: string) => void;
+  /** No live agent focused → the model/effort pickers can't target anything. */
+  disabled: boolean;
+  /** This pane is a plain SHELL, not a Claude agent → our skill triggers (slash commands)
+   *  don't apply, so the Skills picker is disabled (Files still works for a shell). */
+  skillsDisabled?: boolean;
+  /** This agent's live context-window footprint + API-rate cost estimate (null until the
+   *  first turn writes usage, or omitted entirely for a shell). */
+  stats?: SessionStats | null;
 }) {
-  const model = modelById(prefs.modelId);
-  const effort = THINKING_EFFORTS.find((e) => e.id === prefs.effort) ?? THINKING_EFFORTS[0];
-  const providers: AgentProvider[] = ['claude', 'codex'];
-
-  const setModel = (id: string, provider: AgentProvider) => onPrefsChange({ ...prefs, modelId: id, provider });
-  const setEffort = (id: ThinkingEffortId) => onPrefsChange({ ...prefs, effort: id });
-
-  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    // Enter sends; Shift+Enter is a no-op here (the field is one line — a real multi-line
-    // prompt belongs in the terminal itself, so we keep the strip a single line).
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); onSend(); }
-  };
+  const modelLabel = models.find((m) => m.id === model)?.label ?? (model || '—');
+  const ctx = stats?.contextTokens != null && stats.contextLimit
+    ? { used: stats.contextTokens, limit: stats.contextLimit, pct: Math.min(100, Math.round((stats.contextTokens / stats.contextLimit) * 100)) }
+    : null;
+  const showStats = !!ctx || (stats?.costUsd != null && stats.costUsd > 0);
 
   return (
     <div className="agent-composer">
@@ -86,7 +87,7 @@ export function AgentComposerBar({
       <button
         type="button"
         className="agent-composer-btn"
-        title="Attach files (multi-select)"
+        title="Attach files (multi-select) — drops into the terminal input"
         aria-label="Attach files"
         onClick={onPickFiles}
       >
@@ -94,20 +95,21 @@ export function AgentComposerBar({
         <span className="agent-composer-btn-label">Files</span>
       </button>
 
-      {/* Skills */}
+      {/* Dreamcontext Skills */}
       <Popover
         align="left"
         trigger={(open, toggle) => (
           <button
             type="button"
             className={`agent-composer-btn${open ? ' open' : ''}`}
-            title="Insert one of our skills"
+            title={skillsDisabled ? 'Skills apply to Claude agents, not a plain terminal' : 'Insert one of our skills into the terminal input'}
             aria-haspopup="menu"
             aria-expanded={open}
+            disabled={skillsDisabled}
             onClick={toggle}
           >
             <span aria-hidden>✦</span>
-            <span className="agent-composer-btn-label">Skills</span>
+            <span className="agent-composer-btn-label">Dreamcontext Skills</span>
             <span className="agent-composer-caret" aria-hidden>▾</span>
           </button>
         )}
@@ -134,107 +136,103 @@ export function AgentComposerBar({
         )}
       </Popover>
 
-      {/* The field — the "text field" our skills/files write into. */}
-      <input
-        className="agent-composer-input"
-        type="text"
-        value={value}
-        placeholder="Message the agent — or add files / skills, then ↵"
-        onChange={(e) => onChange(e.target.value)}
-        onKeyDown={onKeyDown}
-        aria-label="Agent message"
-      />
+      {/* Spacer pushes the live readout + model/effort pickers to the right edge */}
+      <div className="agent-composer-spacer" />
 
-      {/* Model */}
+      {/* Live context-window footprint + API-rate cost estimate (this agent's own). */}
+      {showStats && (
+        <div
+          className="agent-composer-stats"
+          title={
+            `${ctx ? `Context window: ${fmtTokens(ctx.used)} of ${fmtTokens(ctx.limit)} used (${ctx.pct}%)\n` : ''}` +
+            `${stats?.costUsd != null ? `Estimated cost at public API rates: ${fmtCost(stats.costUsd)} (a Max/Pro plan is flat-rate — this is a what-if)` : ''}`
+          }
+        >
+          {ctx && (
+            <span className="agent-composer-stat" data-hot={ctx.pct >= 85}>
+              <span className="agent-composer-stat-glyph" aria-hidden>◔</span>
+              <span className="agent-composer-stat-val">{fmtTokens(ctx.used)}<span className="agent-composer-stat-dim">/{fmtTokens(ctx.limit)}</span></span>
+            </span>
+          )}
+          {stats?.costUsd != null && (
+            <span className="agent-composer-stat">
+              <span className="agent-composer-stat-val">{fmtCost(stats.costUsd)}</span>
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Model — the focused agent's live model */}
       <Popover
         trigger={(open, toggle) => (
           <button
             type="button"
             className={`agent-composer-select${open ? ' open' : ''}`}
-            title="Model for the next session"
+            title={disabled ? 'Focus an agent to change its model' : 'Model of the focused agent'}
             aria-haspopup="menu"
             aria-expanded={open}
+            disabled={disabled}
             onClick={toggle}
           >
             <span aria-hidden>◆</span>
-            <span className="agent-composer-select-label">{model.label}</span>
+            <span className="agent-composer-select-label">{modelLabel}</span>
             <span className="agent-composer-caret" aria-hidden>▾</span>
           </button>
         )}
       >
         {(close) => (
           <div className="agent-model-list">
-            {providers.map((provider) => {
-              const rows = MODEL_OPTIONS.filter((m) => m.provider === provider);
-              if (!rows.length) return null;
-              return (
-                <div className="agent-model-provider" key={provider}>
-                  <span className="agent-model-provider-label">{provider === 'claude' ? 'Claude' : 'Codex'}</span>
-                  {rows.map((m) => (
-                    <button
-                      key={m.provider + m.id}
-                      type="button"
-                      className={`agent-model-row${m.id === prefs.modelId && m.provider === prefs.provider ? ' on' : ''}`}
-                      role="menuitemradio"
-                      aria-checked={m.id === prefs.modelId && m.provider === prefs.provider}
-                      disabled={!m.available}
-                      onClick={() => { if (m.available) { setModel(m.id, m.provider); close(); } }}
-                    >
-                      <span className="agent-model-row-label">{m.label}</span>
-                      {m.tag && <span className="agent-model-row-tag">{m.tag}</span>}
-                    </button>
-                  ))}
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </Popover>
-
-      {/* Thinking effort */}
-      <Popover
-        trigger={(open, toggle) => (
-          <button
-            type="button"
-            className={`agent-composer-select${open ? ' open' : ''}`}
-            title="Thinking effort for the next prompt"
-            aria-haspopup="menu"
-            aria-expanded={open}
-            onClick={toggle}
-          >
-            <span aria-hidden>◈</span>
-            <span className="agent-composer-select-label">{effort.id === 'off' ? 'Effort' : effort.label}</span>
-            <span className="agent-composer-caret" aria-hidden>▾</span>
-          </button>
-        )}
-      >
-        {(close) => (
-          <div className="agent-model-list">
-            {THINKING_EFFORTS.map((e) => (
+            {models.map((m) => (
               <button
-                key={e.id}
+                key={m.id}
                 type="button"
-                className={`agent-model-row${e.id === prefs.effort ? ' on' : ''}`}
+                className={`agent-model-row${m.id === model ? ' on' : ''}`}
                 role="menuitemradio"
-                aria-checked={e.id === prefs.effort}
-                onClick={() => { setEffort(e.id); close(); }}
+                aria-checked={m.id === model}
+                onClick={() => { onModelChange(m.id); close(); }}
               >
-                <span className="agent-model-row-label">{e.id === 'off' ? 'Off' : e.label}</span>
+                <span className="agent-model-row-label">{m.label}</span>
               </button>
             ))}
           </div>
         )}
       </Popover>
 
-      {/* Send */}
-      <button
-        type="button"
-        className="agent-composer-send"
-        title="Send to the agent (↵)"
-        aria-label="Send"
-        disabled={!canSend}
-        onClick={onSend}
-      >➤</button>
+      {/* Effort — the focused agent's live reasoning effort */}
+      <Popover
+        trigger={(open, toggle) => (
+          <button
+            type="button"
+            className={`agent-composer-select${open ? ' open' : ''}`}
+            title={disabled ? 'Focus an agent to change its effort' : 'Reasoning effort of the focused agent'}
+            aria-haspopup="menu"
+            aria-expanded={open}
+            disabled={disabled}
+            onClick={toggle}
+          >
+            <span aria-hidden>◈</span>
+            <span className="agent-composer-select-label">{effort ? effortLabel(effort) : '—'}</span>
+            <span className="agent-composer-caret" aria-hidden>▾</span>
+          </button>
+        )}
+      >
+        {(close) => (
+          <div className="agent-model-list">
+            {efforts.map((lvl) => (
+              <button
+                key={lvl}
+                type="button"
+                className={`agent-model-row${lvl === effort ? ' on' : ''}`}
+                role="menuitemradio"
+                aria-checked={lvl === effort}
+                onClick={() => { onEffortChange(lvl); close(); }}
+              >
+                <span className="agent-model-row-label">{effortLabel(lvl)}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </Popover>
     </div>
   );
 }

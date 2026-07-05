@@ -1,6 +1,100 @@
 [
   {
     "date": "2026-07-05",
+    "type": "feat",
+    "scope": "desktop",
+    "description": "Agent-surface UX polish pass across the desktop app. AgentDock now conditionally renders the Sleepy mascot on Claude-agent chips only — plain terminal (shell) chips show the bare status dot, no face, because a shell has no agent behind it. The anchor chip's mascot follows the focused session, falling back to the worst-of row. Mascot's calm indigo eyes in the dock (distinct from the default mood). AgentTabs input field now stopPropagation on all keydown events so Space can type a space (previously bubbled to parent tab's handler which preventDefaulted it). AgentTerminal.css gains container queries (pane is a size-query container on inline-size axis) so per-pane composer strips adapt to the PANE's width, not the viewport — with 3–4 side-by-side panes each strip must stay legible and never clip. Composer bar overflow: visible (upward popovers must paint over the terminal, not clip), z-index 2, flexible buttons (flex 0 1 auto, min-width 0) so the strip shrinks gracefully. Navigation integration: Sidebar.tsx adds 'lab' to the Page union, NavIcons.tsx adds LabIcon (flask), nav groups insert Lab between Roadmap (beta) and Council (lab). Dashboard routing wired for LabPage. Incremental polish toward the full Lab dashboard integration; in-progress work.",
+    "breaking": false,
+    "summary": "Agent-surface UI polish — mascot in dock (agent-only), container queries, keyboard fixes, Lab nav integration",
+    "references": [
+      "file:dashboard/src/components/sleepy/AgentDock.tsx",
+      "file:dashboard/src/components/sleepy/AgentTabs.tsx",
+      "file:dashboard/src/components/sleepy/AgentTerminal.css",
+      "file:dashboard/src/components/layout/NavIcons.tsx",
+      "file:dashboard/src/components/layout/Sidebar.tsx"
+    ]
+  },
+  {
+    "date": "2026-07-05",
+    "type": "chore",
+    "scope": "knowledge",
+    "description": "Moved vault-registry-multivault.md to knowledge/.archive/vault-registry-multivault-20260705.md as part of routine knowledge staleness maintenance. The live desktop-beta-tauri-multivault.md knowledge file (94 accesses, last accessed 2026-07-05) superseded the registry-specific details; the archived copy preserves the historical context for reference. The .archive/ directory holds knowledge files that are no longer actively referenced but worth keeping for historical context. Gitignored .archive/ may be added if it becomes a recurring pattern.",
+    "breaking": false,
+    "summary": "Archive stale vault-registry-multivault knowledge to .archive/ (routine maintenance)",
+    "references": [
+      "file:_dream_context/knowledge/.archive/vault-registry-multivault-20260705.md",
+      "knowledge:desktop-beta-tauri-multivault"
+    ]
+  },
+  {
+    "date": "2026-07-05",
+    "type": "feat",
+    "scope": "brain-sync",
+    "description": "Polish pass across the brain-sync (shared brain repo) CLI surface. doctor gains checkLab validation (WARN on credentials_used key absent from lab/credentials.json, FAIL on credentials.json exists but gitignore doesn't cover it — self-healing net; silent when lab/insights/ is empty). memory recall now includes insight as a default corpus type and surfaces Lab insights in results. snapshot gains brain-sync status indicators (prints brain-repo state: enabled/disabled, in-tree vs separate mode, sync status). brain-repo auto-sync guard: resolveBrainSyncToken tiering (per-project secrets first, env last), scrub gate blocks on both separate and in-tree commit paths. CLI index.ts imports updated to expose lab commands. Incremental polish toward M2 (Desktop one-click attach/login UI); M1 CLI core complete and in_progress. Uncommitted work.",
+    "breaking": false,
+    "summary": "Brain-sync CLI polish — doctor checkLab, memory/snapshot cloud-sync indicators, recall insight type, brain-repo auto-sync guard",
+    "references": [
+      "task:github-cloud-collaboration-brain-repo-sync",
+      "file:src/cli/commands/doctor.ts",
+      "file:src/cli/commands/memory.ts",
+      "file:src/cli/commands/snapshot.ts",
+      "file:src/lib/git-sync/brain-repo.ts",
+      "file:src/lib/recall.ts",
+      "file:src/cli/index.ts",
+      "objective:make-dreamcontext-team-ready"
+    ]
+  },
+  {
+    "date": "2026-07-05",
+    "type": "feat",
+    "scope": "desktop",
+    "description": "The desktop app's AgentComposerBar (the strip pinned to the bottom of the expanded Agent overlay) no longer has its own text field or Send button — the terminal's OWN input line is now the text field. The strip's Files (📎) and Dreamcontext Skills (✦) controls now drop paths and skill triggers directly into the focused terminal's input line, not into a separate composer field. Model and effort pickers switched from shared 'prefs for the NEXT session' (localStorage) to per-agent live state: the pickers show the FOCUSED agent's current model alias (read from its Claude CLI transcript via new GET /api/agent/session-model endpoint) and effort level (tracked per session after /effort slash commands), and changing either fires the real /model or /effort slash command at that agent in place. Models + efforts are sourced from the Claude CLI itself (base aliases + additionalModelOptionsCache → Opus/Sonnet/Haiku/Fable; claude --help → low/medium/high/xhigh/max). The pickers disable when the focused tab is a shell or dormant (no live agent to target). New modules: hooks/useAgentCapabilities.ts (capability checks), lib/agentSettings.ts refactored. New server endpoints (desktop-gated): GET /api/agent/model-config, GET /api/agent/session-model. Live context-window footprint + API-rate cost estimate displayed in the composer strip (this agent's own stats, null until first turn writes usage, omitted for shells). Verified end-to-end by booting the server and reading the model alias back from a real transcript. Uncommitted work.",
+    "breaking": false,
+    "summary": "Agent composer bar redesigned — no separate text field, model/effort from CLI, per-agent live state",
+    "references": [
+      "file:dashboard/src/components/sleepy/AgentComposerBar.tsx",
+      "file:dashboard/src/components/sleepy/AgentSurface.tsx",
+      "file:dashboard/src/lib/agentComposer.ts",
+      "file:src/server/routes/agent-terminal.ts",
+      "file:dashboard/src/hooks/useAgentCapabilities.ts"
+    ]
+  },
+  {
+    "date": "2026-07-05",
+    "type": "feat",
+    "scope": "desktop",
+    "description": "Redesigned the desktop app's FederationBoard (Launcher full-screen graph + Settings→Connections embedded view) from a modal/confirm-based flow to a modeless direct-manipulation canvas. Drag a card onto another to wire them (visual connector appears). Click a card to open the detail inspector panel (project name, path, vault count, created date, Remove button). Click an existing wire to open an in-place popover editor with per-direction Remove actions and a one-click Make-Readable button (replaces window.confirm). Armed click-to-connect mode: the detail panel's 'Connect to' button arms the cursor for a target-select click. Success/warn toast notes with inline actions guide the user (e.g., 'Vault not readable—fix it' deep-links to the vault's settings). On-canvas legend explains the gestures (drag=wire, click=inspect). Designed empty state when no vaults are connected. Full i18n via ~50 new federation.map.* translation keys. Hover affordances (wire highlight, card glow, cursor hints) signal interactivity. Bug fixes included: launcher window has I18nProvider (App.tsx missing wrapper for Launcher route caused any useI18n hook to crash); d3-zoom mousedown compat event cancelled when card press is claimed (prevents pan-gesture hijacking custom drag); unlinked-graph layout fix (charge -350 + forceX/Y center pull + forceCollide(85) + zoom floor 0.9 so unconnected cards stay readable mid-canvas, not scattered to specks). Minimal d3-force-3d type definitions added (dashboard/src/types/d3-force-3d.d.ts). Verified E2E with Playwright against live launcher server. In_review status; awaiting human verification before close.",
+    "breaking": false,
+    "summary": "FederationBoard modeless direct-manipulation UX — drag=wire, click=inspect, in-place editor, armed connect, feedback",
+    "references": [
+      "task:launcher-federation-board-modeless-direct-manipulation-ux",
+      "file:dashboard/src/components/federation/FederationBoard.tsx",
+      "file:dashboard/src/App.tsx",
+      "file:dashboard/src/types/d3-force-3d.d.ts",
+      "file:dashboard/src/context/I18nContext.tsx",
+      "objective:simplified-ux"
+    ]
+  },
+  {
+    "date": "2026-07-05",
+    "type": "feat",
+    "scope": "lab",
+    "description": "Add a comprehensive analytics-insights subsystem that lets agents stay current on metrics without manual syncing. Users define named INSIGHTS (curated metrics, never raw data dumps) backed by external sources: any HTTP JSON API (generic adapter with GET/POST, URL fidelity guarded, credential redaction, POST body single-encoded) or a custom script (.mjs async fn). One CLI sync refreshes all or one; cached snapshots live in lab/cache/ so every session sees them (SessionStart snapshot + recall type 'insight'). A bound roadmap Key Result metric updates automatically on sync — upgrading the roadmap from PO-asserted numbers to measured numbers. Core files: src/lib/lab/store.ts (manifest read/write, isSafeInsightSlug), credentials.ts (gitignore-first 0600 write, secret redaction, readCredentials), sync.ts (syncInsight skips fresh, --force, failed[], KR auto-write via updateObjectiveMetric), rollup.ts (deriveGranularity monthly@365/weekly@120/daily@30, MAX_POINTS rollup), tweaks.ts (resolveTweaks: enum last_1_year → ~365d window + from/to date override), adapters/http.ts (ApiAdapter buildUrl trailing-slash/query-corruption fix, fetchImpl injection, seriesPath split), adapters/script.ts (loadScript default async fn). CLI: dreamcontext lab create/list/show/sync/tweak/credentials (set/list). Dashboard: Lab page (LabPage.tsx, useLab.ts), server routes (GET /api/lab list summaries, GET /api/lab/:slug full series, POST /api/lab/sync {all:true}, PATCH /api/lab/:slug/tweaks), no route ever returns a credential value. doctor checkLab: WARN on credentials_used key absent, FAIL on credentials.json exists but gitignoreCovers() false (self-healing net), STUB-REGRESSION GUARD on writeCredential (produces FULL canonical brain gitignore, not a 2-line stub). Script-hash tripwire: loud notice on changed script before executing. Gitignored: lab/cache/, lab/credentials.json. 9 unit tests (lab-adapter-http, lab-adapter-script, lab-credentials, lab-doctor, lab-recall, lab-rollup, lab-store, lab-sync, lab-tweaks, server-lab-routes); all acceptance criteria in task frontmatter. In-progress work (uncommitted, not all criteria green yet).",
+    "breaking": false,
+    "summary": "Lab analytics-insights subsystem — insight store, adapters (HTTP/script), CLI sync, dashboard Lab page, roadmap KR auto-binding (in-progress)",
+    "references": [
+      "task:feat-lab-analytics-insights-subsystem",
+      "file:src/lib/lab/store.ts",
+      "file:src/lib/lab/credentials.ts",
+      "file:src/lib/lab/sync.ts",
+      "file:src/lib/lab/adapters/http.ts",
+      "file:src/cli/commands/lab.ts",
+      "file:dashboard/src/pages/LabPage.tsx",
+      "file:src/server/routes/lab.ts"
+    ]
+  },
+  {
+    "date": "2026-07-05",
     "type": "change",
     "scope": "migration",
     "description": "Migration 0.10.7 applied: move-features-to-knowledge",

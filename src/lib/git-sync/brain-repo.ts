@@ -121,6 +121,11 @@ export function buildBrainGitignore(taskBackend?: SetupConfig['taskBackend']): s
     '.obsidian/',
     'tmp/',
     '**/.env',
+    // Lab (analytics insights) credentials — insights + cache DO sync (deny-list
+    // gitignore); only the credential file is excluded. lab/scripts/*.env is
+    // already covered by the **/.env entry above.
+    'lab/credentials.json',
+    'lab/credentials.*',
   ];
   if (taskBackend && taskBackend !== 'local') {
     lines.push(

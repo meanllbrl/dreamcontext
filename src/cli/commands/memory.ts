@@ -24,6 +24,7 @@ const TYPE_LABELS: Record<CorpusType, string> = {
   memory: 'memory',
   changelog: 'changelog',
   objective: 'objective',
+  insight: 'insight',
   skill: 'skill', // never produced by buildCorpus; present only to satisfy the Record type
 };
 
@@ -34,7 +35,7 @@ function collectVault(value: string, previous: string[]): string[] {
 
 function parseTypes(value: string | undefined): CorpusType[] | undefined {
   if (!value) return undefined;
-  const valid: CorpusType[] = ['knowledge', 'feature', 'task', 'memory', 'changelog', 'objective'];
+  const valid: CorpusType[] = ['knowledge', 'feature', 'task', 'memory', 'changelog', 'objective', 'insight'];
   const parts = value
     .split(',')
     .map((s) => s.trim().toLowerCase())
@@ -446,11 +447,12 @@ export function registerMemoryCommand(program: Command): void {
         memory: [],
         changelog: [],
         objective: [],
+        insight: [],
         skill: [], // never produced by buildCorpus; present only to satisfy the Record type
       };
       for (const doc of corpus) byType[doc.type].push(doc);
       console.log(header(`Memory Corpus (${corpus.length} docs)`));
-      for (const t of ['knowledge', 'feature', 'task', 'memory', 'changelog', 'objective'] as CorpusType[]) {
+      for (const t of ['knowledge', 'feature', 'task', 'memory', 'changelog', 'objective', 'insight'] as CorpusType[]) {
         if (byType[t].length === 0) continue;
         console.log(`\n  ${chalk.cyan(TYPE_LABELS[t])} (${byType[t].length}):`);
         for (const doc of byType[t]) {
@@ -474,6 +476,7 @@ export function registerMemoryCommand(program: Command): void {
         memory: 0,
         changelog: 0,
         objective: 0,
+        insight: 0,
         skill: 0, // never produced by buildCorpus; present only to satisfy the Record type
       };
       let totalTokens = 0;
@@ -488,6 +491,7 @@ export function registerMemoryCommand(program: Command): void {
       console.log(`  ${chalk.magentaBright('memory')}     ${counts.memory} LIFO entries`);
       console.log(`  ${chalk.magentaBright('changelog')}  ${counts.changelog} entries`);
       console.log(`  ${chalk.magentaBright('objective')}  ${counts.objective} objectives`);
+      console.log(`  ${chalk.magentaBright('insight')}    ${counts.insight} insights`);
       console.log('');
       console.log(`  ${chalk.dim(`${corpus.length} docs · ${totalTokens.toLocaleString()} tokens indexed (in-memory, ephemeral)`)}`);
     });

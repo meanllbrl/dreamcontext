@@ -21,12 +21,16 @@ import { AGENT_TAB_MIME } from './AgentTabs';
 type Zone = 'left' | 'center' | 'right';
 
 export function PaneFragment({
-  paneId, active, dormant, dragging, tabbar, onZoneTarget, onResume, onClose, onActivate,
+  paneId, active, dormant, dragging, tabbar, composer, onZoneTarget, onResume, onClose, onActivate,
 }: {
   paneId: string;
   /** This pane's own tab bar (rendered at the top of the pane so tabs sit directly above
    *  the terminal they drive). Built by AgentSurface and passed in. */
   tabbar?: React.ReactNode;
+  /** This pane's OWN composer strip (files + skills + this agent's live model/effort),
+   *  pinned to the bottom of the pane so every agent gets its own bar. Built by
+   *  AgentSurface and passed in; omitted for a dormant pane. */
+  composer?: React.ReactNode;
   /** This is the action-focused pane (drives a subtle accent rail). */
   active: boolean;
   /** The pane's active session is a restored roster entry with NO live session yet. */
@@ -79,6 +83,8 @@ export function PaneFragment({
     >
       {tabbar}
       <div className="agent-pane-slot" data-pane={paneId} />
+      {/* This pane's own bottom strip — files/skills + THIS agent's live model & effort. */}
+      {composer}
 
       {/* Dormant restored tab → its name is remembered; resume spawns a real session
           here. (A LIVE ended session shows NO overlay — its output stays frozen.) */}

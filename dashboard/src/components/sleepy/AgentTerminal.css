@@ -384,6 +384,11 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  /* Each pane is a size-query container so its OWN composer strip can adapt to the pane's
+     width (not the viewport) — with 3–4 side-by-side panes each strip must stay legible and
+     never clip. `inline-size` contains only the width axis, so the flex column height (and
+     the xterm fit inside the slot) is untouched. */
+  container: agentpane / inline-size;
 }
 
 /* ── Per-session header — "each tab, directly above its agent" ──────────────────
@@ -965,6 +970,22 @@
 .agent-dock-chip-dot[data-kind="working"],
 .agent-dock-chip-dot[data-kind="starting"] { animation: agentDotPulse 1.2s ease-in-out infinite; }
 
+/* The Sleepy face — rendered on Claude-agent chips only (a terminal chip has no mascot). */
+.agent-dock-chip-mascot {
+  flex: 0 0 auto;
+  width: 24px; height: 24px;
+  display: flex; align-items: center; justify-content: center;
+  /* The mascot's inner 92×76 design box is only TRANSFORM-scaled (its layout box stays
+     76px tall). Contain it so that untransformed box never inflates the tile's height. */
+  overflow: hidden;
+}
+/* Recolour the shared "sleeps" face's eyes to a calm indigo inside the dock only. */
+.agent-dock-chip-mascot .smascot-sleeps .smascot-eye,
+.agent-dock-anchor-mascot .smascot-sleeps .smascot-eye {
+  --eye-top: #aeb9ff;
+  --eye-bot: #6e7bff;
+  --eye-glow: rgba(110, 123, 255, 0.6);
+}
 .agent-dock-chip-title {
   flex: 1 1 auto;
   min-width: 0;
@@ -1041,12 +1062,33 @@
 }
 .agent-dock-anchor:hover { transform: translateY(-2px); }
 .agent-dock-anchor:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--color-accent-soft); }
+/* Anchor mascot — present only when the anchor's row is a Claude agent; otherwise the
+   anchor shows the bare inline dot below. */
+.agent-dock-anchor-mascot {
+  position: relative;
+  flex: 0 0 auto;
+  width: 24px; height: 24px;
+}
+/* Inner clip — contains the mascot's untransformed 76px layout box WITHOUT clipping the
+   status dot, which sits just outside as a wrapper sibling. */
+.agent-dock-anchor-mascot-clip {
+  width: 24px; height: 24px;
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden;
+}
 .agent-dock-anchor-dot {
   flex: 0 0 auto;
   width: 8px; height: 8px;
   border-radius: 50%;
   background: var(--kind-color, var(--color-text-tertiary));
   box-shadow: 0 0 7px color-mix(in srgb, var(--kind-color, transparent) 75%, transparent);
+}
+/* When the dot rides on the mascot, tuck it into the corner as an overlay badge. */
+.agent-dock-anchor-mascot .agent-dock-anchor-dot {
+  position: absolute;
+  right: -2px; bottom: -2px;
+  width: 9px; height: 9px;
+  border: 2px solid var(--color-bg-elevated);
 }
 .agent-dock-anchor-dot[data-kind="working"],
 .agent-dock-anchor-dot[data-kind="starting"] { animation: agentDotPulse 1.2s ease-in-out infinite; }
@@ -1221,6 +1263,7 @@
 .agent-composer {
   flex: 0 0 auto;
   width: 100%;
+  min-width: 0;
   min-height: 0;
   display: flex;
   align-items: center;
@@ -1229,11 +1272,19 @@
   padding: 0 var(--space-2);
   border-top: 1px solid var(--color-border);
   background: linear-gradient(0deg, color-mix(in srgb, var(--color-accent) 5%, var(--color-bg)), var(--color-bg));
+  /* MUST stay `overflow: visible`: the model/effort/skills popovers are descendants and
+     open UPWARD (above this 40px bar), so clipping here would hide them entirely. Horizontal
+     spill is instead handled by the flex min-width/shrink + the container queries below, and
+     the pane's own `overflow: hidden` clips anything past its edge. Lift it above the
+     terminal slot so the upward popovers paint over the xterm, not behind it. */
+  position: relative;
+  z-index: 2;
 }
 
 /* Files / Skills trigger buttons */
 .agent-composer-btn {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -1245,34 +1296,53 @@
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   cursor: pointer;
+  white-space: nowrap;
   transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
 }
-.agent-composer-btn:hover { color: var(--color-text); background: var(--color-bg-tertiary); border-color: var(--color-border-hover); }
+.agent-composer-btn:hover:not(:disabled) { color: var(--color-text); background: var(--color-bg-tertiary); border-color: var(--color-border-hover); }
 .agent-composer-btn.open { color: var(--color-accent); border-color: color-mix(in srgb, var(--color-accent) 45%, transparent); background: var(--color-accent-soft); }
+.agent-composer-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .agent-composer-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--color-accent-soft); }
-.agent-composer-btn-label { font-weight: 500; }
-.agent-composer-caret { font-size: 9px; opacity: 0.7; }
+.agent-composer-btn-label { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.agent-composer-caret { font-size: 9px; opacity: 0.7; flex: 0 0 auto; }
 
-/* The shared text field */
-.agent-composer-input {
-  flex: 1 1 auto;
+/* Pushes the model/effort pickers to the right edge (no text field lives here — the
+   terminal's own input line is the text field). */
+.agent-composer-spacer { flex: 1 1 auto; min-width: 4px; }
+
+/* Live context-window + cost readout (this agent's own, polled from its transcript). */
+.agent-composer-stats {
+  flex: 0 1 auto;
   min-width: 0;
-  height: 28px;
-  padding: 0 12px;
-  font-family: inherit;
-  font-size: 13px;
-  color: var(--color-text);
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-full);
-  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 2px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: default;
 }
-.agent-composer-input::placeholder { color: var(--color-text-tertiary); }
-.agent-composer-input:focus { outline: none; border-color: color-mix(in srgb, var(--color-accent) 55%, transparent); box-shadow: 0 0 0 2px var(--color-accent-soft); }
+.agent-composer-stat { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
+/* A thin dot between the context and cost figures. */
+.agent-composer-stat + .agent-composer-stat::before {
+  content: '·';
+  margin-right: 4px;
+  color: var(--color-text-tertiary);
+}
+.agent-composer-stat-glyph { font-size: 12px; opacity: 0.7; }
+.agent-composer-stat-val { overflow: hidden; text-overflow: ellipsis; }
+.agent-composer-stat-dim { color: var(--color-text-tertiary); }
+/* Context nearly full → warn. */
+.agent-composer-stat[data-hot="true"] { color: var(--color-warning); }
+.agent-composer-stat[data-hot="true"] .agent-composer-stat-dim { color: color-mix(in srgb, var(--color-warning) 60%, transparent); }
 
 /* Model / effort selects */
 .agent-composer-select {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -1287,33 +1357,15 @@
   cursor: pointer;
   transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
 }
-.agent-composer-select:hover { color: var(--color-text); background: var(--color-bg-tertiary); border-color: var(--color-border-hover); }
+.agent-composer-select:hover:not(:disabled) { color: var(--color-text); background: var(--color-bg-tertiary); border-color: var(--color-border-hover); }
 .agent-composer-select.open { color: var(--color-accent); border-color: color-mix(in srgb, var(--color-accent) 45%, transparent); }
+.agent-composer-select:disabled { opacity: 0.4; cursor: not-allowed; }
 .agent-composer-select:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--color-accent-soft); }
-.agent-composer-select-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-composer-select-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 
-/* Send */
-.agent-composer-send {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  font-size: 13px;
-  color: var(--color-accent-text, #fff);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--color-accent) 92%, white), var(--color-accent));
-  border: 1px solid color-mix(in srgb, var(--color-accent) 60%, transparent);
-  border-radius: var(--radius-full);
-  cursor: pointer;
-  transition: filter var(--transition-fast), transform var(--transition-fast), opacity var(--transition-fast);
-}
-.agent-composer-send:hover:not(:disabled) { filter: brightness(1.06); transform: translateY(-1px); }
-.agent-composer-send:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--color-accent-soft); }
-.agent-composer-send:disabled { opacity: 0.4; cursor: default; }
-
-/* Popover shell (shared by Skills / Model / Effort) */
-.agent-composer-pop { position: relative; flex: 0 0 auto; display: inline-flex; }
+/* Popover shell (shared by Skills / Model / Effort) — shrinkable so the strip degrades
+   instead of clipping when the pane is narrow. */
+.agent-composer-pop { position: relative; flex: 0 1 auto; min-width: 0; display: inline-flex; }
 .agent-composer-menu {
   position: absolute;
   bottom: calc(100% + 6px);
@@ -1327,6 +1379,30 @@
 }
 .agent-composer-menu.align-left { left: 0; }
 .agent-composer-menu.align-right { right: 0; }
+
+/* ── Composer responsiveness (per-pane, via the `.agent-pane` size container) ──────────
+   As a pane narrows we degrade the strip in stages so it always fits and never clips:
+   1. tighten gaps/padding, and drop the Files/Skills TEXT to icon-only (the button `title`
+      still names them on hover);
+   2. tighten the model/effort selects — the two pieces of live state we always keep. */
+@container agentpane (max-width: 560px) {
+  /* Tight: drop the context "/limit" denominator, keep the used-tokens + cost figures. */
+  .agent-composer-stat-dim { display: none; }
+}
+@container agentpane (max-width: 500px) {
+  .agent-composer { gap: 6px; padding: 0 8px; }
+  .agent-composer-btn { padding: 0 8px; }
+  .agent-composer-btn-label { display: none; }
+}
+@container agentpane (max-width: 420px) {
+  /* Very tight (3–4 splits): the model/effort selects are the priority — hide the readout. */
+  .agent-composer-stats { display: none; }
+}
+@container agentpane (max-width: 360px) {
+  .agent-composer { gap: 5px; padding: 0 6px; }
+  .agent-composer-select { max-width: 96px; padding: 0 7px; gap: 4px; }
+  .agent-composer-select .agent-composer-caret { display: none; }
+}
 
 /* Skills popover contents */
 .agent-skill-list { display: flex; flex-direction: column; gap: 8px; }

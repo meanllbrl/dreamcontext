@@ -8,6 +8,7 @@ import { dirname, join } from 'node:path';
 import { existsSync, readdirSync, statSync, chmodSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { sendJson, sendError } from '../middleware.js';
+import { isDesktop } from '../desktop.js';
 import { listVaults } from '../../lib/vaults.js';
 import { trackChild } from '../lifecycle.js';
 
@@ -32,11 +33,6 @@ import { trackChild } from '../lifecycle.js';
  */
 
 // ─── Gating ─────────────────────────────────────────────────────────────────
-
-/** The interactive-shell features only exist inside the desktop app. */
-function isDesktop(): boolean {
-  return process.env.DREAMCONTEXT_DESKTOP === '1';
-}
 
 /**
  * node-pty 1.x ships prebuilt binaries, but npm's tarball extraction drops the
@@ -413,6 +409,8 @@ export function attachAgentTerminal(server: Server): void {
     // whitelist charset before it can touch the shell command, so a hostile value is
     // dropped rather than injected. Empty → no flag (Claude Code's own default).
     const model = sanitizeModel(url.searchParams.get('model'));
+    // Reasoning effort (`claude --effort <level>`) — whitelist-gated to the documented set.
+    const effort = sanitizeEffort(url.searchParams.get('effort'));
 
     void (async () => {
       let pty: typeof import('node-pty');
@@ -425,7 +423,7 @@ export function attachAgentTerminal(server: Server): void {
 
       const wss = new WebSocketServer({ noServer: true });
       wss.handleUpgrade(req, socket, head, (ws) => {
-        startPtySession(ws, pty, projectRoot, bypass, theme, sessionId, resumeId, kind, model);
+        startPtySession(ws, pty, projectRoot, bypass, theme, sessionId, resumeId, kind, model, effort);
       });
     })();
   });
@@ -450,6 +448,13 @@ function sanitizeUuid(v: string | null): string {
  *  safe to interpolate into the `claude` shell command. Never trusts the client. */
 function sanitizeModel(v: string | null): string {
   return v && v.length <= 64 && /^[A-Za-z0-9._-]+$/.test(v) ? v : '';
+}
+
+/** Effort-level gate. `claude --effort` accepts exactly this documented set; anything else
+ *  (including empty) → '' (no flag), so the value is safe to interpolate unquoted. */
+const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
+function sanitizeEffort(v: string | null): string {
+  return v && EFFORT_LEVELS.includes(v) ? v : '';
 }
 
 /**
@@ -599,6 +604,182 @@ export async function handleAgentTitle(
   sendJson(res, 200, { title });
 }
 
+// ─── Model + effort config (sourced from the Claude CLI's own state) ───────────
+//
+// The composer's model/effort pickers reflect what the CLI actually offers and what a
+// session is actually running — never a hardcoded guess:
+//   • available models   → the base aliases (opus/sonnet/haiku) UNION the CLI's own
+//                           `additionalModelOptionsCache` in `~/.claude.json` (e.g. Fable).
+//   • available efforts   → parsed from `claude --help` (`--effort <level> (low, …, max)`).
+//   • the user's defaults → `~/.claude/settings.json` (`model`, `effortLevel`).
+//   • a session's CURRENT model → the latest `message.model` in its transcript.
+
+/** Map any full model id / alias to our short alias bucket (opus/sonnet/haiku/fable). */
+function modelAlias(full: string): string {
+  const s = (full || '').toLowerCase();
+  if (s.includes('opus')) return 'opus';
+  if (s.includes('sonnet')) return 'sonnet';
+  if (s.includes('haiku')) return 'haiku';
+  if (s.includes('fable')) return 'fable';
+  return full || '';
+}
+
+function readJsonSafe(path: string): Record<string, unknown> | null {
+  try { return JSON.parse(readFileSync(path, 'utf-8')) as Record<string, unknown>; } catch { return null; }
+}
+
+/** Effort levels straight from `claude --help` (the source of truth), with the documented
+ *  set as a fallback if the help text ever can't be read/parsed. */
+function parseEffortsFromCli(): Promise<string[]> {
+  return new Promise((resolve) => {
+    const shell = process.env.SHELL || '/bin/zsh';
+    let out = '';
+    let settled = false;
+    const done = (v: string[]) => { if (!settled) { settled = true; clearTimeout(timer); resolve(v); } };
+    const child = spawn(shell, ['-ilc', 'claude --help'], { stdio: ['ignore', 'pipe', 'ignore'] });
+    const timer = setTimeout(() => { try { child.kill(); } catch { /* gone */ } done([...EFFORT_LEVELS]); }, 8000);
+    child.stdout?.on('data', (c: Buffer) => { out += c.toString('utf-8'); });
+    child.on('error', () => done([...EFFORT_LEVELS]));
+    child.on('close', () => {
+      const m = /--effort\s+<level>[\s\S]{0,160}?\(([^)]+)\)/.exec(out);
+      const list = m ? m[1].split(',').map((s) => s.trim()).filter(Boolean) : [];
+      done(list.length ? list : [...EFFORT_LEVELS]);
+    });
+  });
+}
+
+interface ModelOpt { id: string; label: string; }
+interface ModelConfig { models: ModelOpt[]; efforts: string[]; defaultModel: string; defaultEffort: string; }
+let modelConfigCache: ModelConfig | null = null;
+
+async function buildModelConfig(): Promise<ModelConfig> {
+  if (modelConfigCache) return modelConfigCache;
+  const settings = readJsonSafe(join(homedir(), '.claude', 'settings.json')) ?? {};
+  const globalJson = readJsonSafe(join(homedir(), '.claude.json')) ?? {};
+  const base: ModelOpt[] = [
+    { id: 'opus', label: 'Opus' },
+    { id: 'sonnet', label: 'Sonnet' },
+    { id: 'haiku', label: 'Haiku' },
+    { id: 'fable', label: 'Fable' },
+  ];
+  // Extra models the CLI itself has cached as available (e.g. Fable), deduped by alias.
+  const cache = globalJson.additionalModelOptionsCache;
+  const extras: ModelOpt[] = Array.isArray(cache)
+    ? cache
+        .map((m) => { const v = String((m as { value?: unknown })?.value ?? ''); const id = modelAlias(v); return { id, label: String((m as { label?: unknown })?.label ?? id) }; })
+        .filter((m) => m.id)
+    : [];
+  const seen = new Set(base.map((m) => m.id));
+  const models = [...base];
+  for (const e of extras) if (!seen.has(e.id)) { seen.add(e.id); models.push(e); }
+  const efforts = await parseEffortsFromCli();
+  const defaultEffort = typeof settings.effortLevel === 'string' && efforts.includes(settings.effortLevel)
+    ? settings.effortLevel
+    : (efforts.includes('high') ? 'high' : efforts[0] ?? 'high');
+  const defaultModel = modelAlias(String(settings.model ?? 'opus')) || 'opus';
+  modelConfigCache = { models, efforts, defaultModel, defaultEffort };
+  return modelConfigCache;
+}
+
+/** GET /api/agent/model-config — the model/effort options + the user's CLI defaults. */
+export async function handleAgentModelConfig(_req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!isDesktop()) { sendError(res, 403, 'desktop_only', 'Agent model config is desktop-only.'); return; }
+  sendJson(res, 200, await buildModelConfig());
+}
+
+/** The most recent `message.model` recorded in a transcript, as an alias, or null. */
+function latestTranscriptModel(jsonlPath: string): string | null {
+  let raw: string;
+  try { raw = readFileSync(jsonlPath, 'utf-8'); } catch { return null; }
+  const lines = raw.split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const s = lines[i].trim();
+    if (!s) continue;
+    let obj: { message?: { model?: unknown } };
+    try { obj = JSON.parse(s); } catch { continue; }
+    const model = obj?.message?.model;
+    if (typeof model === 'string' && model) return modelAlias(model);
+  }
+  return null;
+}
+
+/** GET /api/agent/session-model?claudeId=<uuid> — the model a session is CURRENTLY running,
+ *  read from its transcript (so a mid-session `/model` switch is reflected). null if unknown. */
+export async function handleAgentSessionModel(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!isDesktop()) { sendJson(res, 200, { model: null }); return; }
+  const url = new URL(req.url || '/', `http://${req.headers.host}`);
+  const id = sanitizeUuid(url.searchParams.get('claudeId'));
+  const path = id ? findTranscriptPath(id) : null;
+  sendJson(res, 200, { model: path ? latestTranscriptModel(path) : null });
+}
+
+// ─── Per-session context-window + cost (read from the transcript's token usage) ───────
+//
+// Claude Code records `message.usage` (input / output / cache-write / cache-read tokens)
+// on every assistant turn. From that we derive two live numbers for the composer strip:
+//   • context tokens → the LAST turn's total footprint (input + both cache buckets + output)
+//     ≈ how full the context window currently is.
+//   • cost (USD)     → the CUMULATIVE spend priced AT PUBLIC API RATES, per the model each
+//     turn actually ran on. This is an ESTIMATE "if you paid per token" — a Max/Pro
+//     subscription is flat-rate, so it's a what-if, not a bill.
+
+interface TokenPrice { in: number; out: number; cacheWrite: number; cacheRead: number }
+/** Public API list prices, USD per MILLION tokens (best-effort; Fable priced at Opus tier as
+ *  a placeholder until its public rate is wired in). Cache-write is the 5-minute rate. */
+const MODEL_PRICING: Record<string, TokenPrice> = {
+  opus:   { in: 15,   out: 75, cacheWrite: 18.75, cacheRead: 1.5 },
+  sonnet: { in: 3,    out: 15, cacheWrite: 3.75,  cacheRead: 0.3 },
+  haiku:  { in: 1,    out: 5,  cacheWrite: 1.25,  cacheRead: 0.1 },
+  fable:  { in: 15,   out: 75, cacheWrite: 18.75, cacheRead: 1.5 },
+};
+
+interface SessionStats { contextTokens: number | null; contextLimit: number | null; costUsd: number | null }
+const EMPTY_STATS: SessionStats = { contextTokens: null, contextLimit: null, costUsd: null };
+
+function num(v: unknown): number { return typeof v === 'number' && Number.isFinite(v) ? v : 0; }
+
+/** Parse a transcript's per-turn `usage` into { contextTokens, contextLimit, costUsd }. */
+function computeSessionStats(jsonlPath: string): SessionStats {
+  let raw: string;
+  try { raw = readFileSync(jsonlPath, 'utf-8'); } catch { return EMPTY_STATS; }
+  let costUsd = 0;
+  let contextTokens: number | null = null;
+  let lastModel = '';
+  for (const line of raw.split('\n')) {
+    const s = line.trim();
+    if (!s) continue;
+    let obj: { message?: { usage?: Record<string, unknown>; model?: unknown } };
+    try { obj = JSON.parse(s); } catch { continue; }
+    const u = obj?.message?.usage;
+    if (!u || typeof u !== 'object') continue;
+    const model = typeof obj.message?.model === 'string' && obj.message.model ? obj.message.model : lastModel;
+    lastModel = model || lastModel;
+    const inp = num(u.input_tokens);
+    const out = num(u.output_tokens);
+    const cw = num(u.cache_creation_input_tokens);
+    const cr = num(u.cache_read_input_tokens);
+    const p = MODEL_PRICING[modelAlias(model)] ?? MODEL_PRICING.opus;
+    costUsd += (inp * p.in + cw * p.cacheWrite + cr * p.cacheRead + out * p.out) / 1_000_000;
+    // The context window is what the MOST RECENT turn carried — not a running sum.
+    contextTokens = inp + cw + cr + out;
+  }
+  if (contextTokens === null) return EMPTY_STATS;
+  // Claude Code's model ids carry a `[1m]` suffix for the 1M-context variants; fall back to
+  // the standard 200K, and bump to 1M if the observed footprint already exceeds 200K.
+  const contextLimit = /1m/i.test(lastModel) || contextTokens > 200_000 ? 1_000_000 : 200_000;
+  return { contextTokens, contextLimit, costUsd };
+}
+
+/** GET /api/agent/session-stats?claudeId=<uuid> — the session's live context-window
+ *  footprint + cumulative API-rate cost estimate, from its transcript. Nulls if unknown. */
+export async function handleAgentSessionStats(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  if (!isDesktop()) { sendJson(res, 200, EMPTY_STATS); return; }
+  const url = new URL(req.url || '/', `http://${req.headers.host}`);
+  const id = sanitizeUuid(url.searchParams.get('claudeId'));
+  const path = id ? findTranscriptPath(id) : null;
+  sendJson(res, 200, path ? computeSessionStats(path) : EMPTY_STATS);
+}
+
 function startPtySession(
   ws: import('ws').WebSocket,
   pty: typeof import('node-pty'),
@@ -609,12 +790,14 @@ function startPtySession(
   resumeId: string,
   kind: PtyKind = 'agent',
   model = '',
+  effort = '',
 ): void {
   const shell = process.env.SHELL || '/bin/zsh';
   const flag = bypass ? ' --permission-mode bypassPermissions' : '';
-  // `--model <id>` when the composer picked a non-default model (already whitelist-
-  // sanitized upstream, so shell-safe). Agent-only — a shell has no model.
+  // `--model <id>` / `--effort <level>` when picked (both whitelist-sanitized upstream, so
+  // shell-safe). Agent-only — a shell has neither a model nor an effort.
   const modelFlag = model ? ` --model ${model}` : '';
+  const effortFlag = effort ? ` --effort ${effort}` : '';
   // Conversation continuity (both ids are pre-validated UUIDs → shell-safe):
   //  • resume requested AND a transcript exists → `--resume <id>` (reopen the real chat).
   //  • resume requested but NO transcript (tab was never used, or claude state was lost)
@@ -634,7 +817,7 @@ function startPtySession(
   //  • agent → `-ilc 'exec claude …'`: replace the shell with Claude Code.
   //  • shell → `-il`: a plain interactive login shell (the vault-scoped terminal the user
   //    would open anyway) — no `-c`, no claude, no bypass/resume flags.
-  const shellArgs = kind === 'shell' ? ['-il'] : ['-ilc', `exec claude${idArg}${modelFlag}${flag}`];
+  const shellArgs = kind === 'shell' ? ['-il'] : ['-ilc', `exec claude${idArg}${modelFlag}${effortFlag}${flag}`];
   const term = pty.spawn(shell, shellArgs, {
     name: 'xterm-color',
     cols: 80,

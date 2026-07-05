@@ -170,9 +170,10 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--color-border);
-  background: color-mix(in srgb, var(--color-bg-secondary) 92%, #000);
-  color: var(--color-text);
+  /* On-canvas: fixed dark chrome so the buttons read the same in both themes. */
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(24, 24, 34, 0.9);
+  color: #e8e8f0;
   border-radius: var(--radius-sm);
   font-size: 18px;
   line-height: 1;
@@ -184,7 +185,7 @@
 
 .lgraph-zoom-btn:hover {
   border-color: var(--color-accent);
-  background: color-mix(in srgb, var(--color-accent) 18%, var(--color-bg-secondary));
+  background: color-mix(in srgb, var(--color-accent) 24%, rgb(24, 24, 34));
 }
 
 .lgraph-zoom-btn:active {
@@ -201,7 +202,10 @@
   margin-top: 2px;
 }
 
-/* Always-visible key to the board's colors, bottom-right on the canvas. */
+/* Always-visible key to the board's colors, bottom-right on the canvas.
+   The canvas is ALWAYS dark regardless of app theme, so everything drawn on it
+   uses fixed light-on-dark colors — theme tokens would go dark-on-dark in
+   light mode. */
 .lgraph-canvaslegend {
   position: absolute;
   right: var(--space-4);
@@ -211,10 +215,10 @@
   flex-direction: column;
   gap: var(--space-1);
   padding: var(--space-2) var(--space-3);
-  background: color-mix(in srgb, #0e0e12 78%, transparent);
-  border: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
+  background: rgba(10, 10, 16, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: var(--radius-sm);
-  color: var(--color-text-tertiary);
+  color: rgba(228, 228, 240, 0.85);
   font-size: var(--font-size-xs);
   pointer-events: none; /* never intercepts wiring/panning */
   backdrop-filter: blur(4px);
@@ -278,7 +282,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--color-text-secondary);
+  color: rgba(200, 200, 215, 0.9); /* on-canvas: fixed light-on-dark */
   font-size: var(--font-size-sm);
   text-align: center;
   padding: var(--space-4);
@@ -309,13 +313,13 @@
 }
 
 .lgraph-empty strong {
-  color: var(--color-text);
+  color: #f2f2f7; /* on-canvas: fixed light-on-dark */
   font-size: var(--font-size-sm);
 }
 
 .lgraph-empty p {
   margin: 0;
-  color: var(--color-text-secondary);
+  color: rgba(200, 200, 215, 0.88); /* on-canvas: fixed light-on-dark */
   font-size: var(--font-size-xs);
   line-height: 1.5;
   max-width: 340px;
@@ -711,7 +715,7 @@
   margin: var(--space-2) 0 0;
   font-size: 11px;
   line-height: 1.5;
-  color: var(--color-text-tertiary);
+  color: rgba(200, 200, 215, 0.85); /* inside the fixed-dark demo box */
 }
 
 .lgraph-guide-steps {

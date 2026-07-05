@@ -3,7 +3,13 @@ import { useI18n } from '../../context/I18nContext';
 import { useSleep, getSleepLevelKey, getSleepMood, SLEEP_DEBT_MAX } from '../../hooks/useSleep';
 import { useAgentCapabilities, isSleepAgentReady } from '../../hooks/useAgentCapabilities';
 import { readAgentSettings, AGENT_SETTINGS_EVENT, type AgentSettings } from '../../lib/agentSettings';
-import { requestSleepAgent } from '../../lib/sleepAgent';
+import {
+  requestSleepAgent,
+  markSleepPending,
+  clearSleepPending,
+  sleepPendingSince,
+  SLEEP_PENDING_EVENT,
+} from '../../lib/sleepAgent';
 import { SleepyMascot } from '../sleepy/SleepyMascot';
 import './SleepDebtTracker.css';
 
@@ -32,7 +38,18 @@ export function SleepDebtTracker({ onOpen }: SleepDebtTrackerProps) {
   const { data: caps } = useAgentCapabilities();
   const [menuOpen, setMenuOpen] = useState(false);
   const [agentSettings, setAgentSettings] = useState<AgentSettings>(() => readAgentSettings());
+  const [pendingAt, setPendingAt] = useState<number | null>(() => sleepPendingSince());
   const wrapRef = useRef<HTMLDivElement | null>(null);
+
+  // Mirror the persisted "waiting to sleep" marker (set on click, cleared once a real sleep
+  // starts). Broadcast keeps us in sync instantly; the interval re-evaluates so the marker's
+  // TTL self-clears the shim if the spawned agent never reaches `sleep start`.
+  useEffect(() => {
+    const sync = () => setPendingAt(sleepPendingSince());
+    window.addEventListener(SLEEP_PENDING_EVENT, sync);
+    const iv = window.setInterval(sync, 4_000);
+    return () => { window.removeEventListener(SLEEP_PENDING_EVENT, sync); window.clearInterval(iv); };
+  }, []);
 
   // Track the Agents-surface enable toggle live (Settings broadcasts on save) — a
   // disabled surface renders no dock, so "Run sleep agent" must be disabled too or a
@@ -45,6 +62,12 @@ export function SleepDebtTracker({ onOpen }: SleepDebtTrackerProps) {
     window.addEventListener(AGENT_SETTINGS_EVENT, onChange);
     return () => window.removeEventListener(AGENT_SETTINGS_EVENT, onChange);
   }, []);
+
+  // Once a real sleep actually begins (epoch stamped), retire the "waiting" shim — the
+  // tracker hands off to its authoritative "Sleeping 💤" state.
+  useEffect(() => {
+    if (sleep?.sleep_started_at && sleepPendingSince() != null) clearSleepPending();
+  }, [sleep?.sleep_started_at]);
 
   // Close the menu on any outside click or Esc — a lightweight popover, no backdrop.
   useEffect(() => {
@@ -68,8 +91,11 @@ export function SleepDebtTracker({ onOpen }: SleepDebtTrackerProps) {
   // A consolidation is live when the epoch is stamped (`sleep start`, cleared by
   // `sleep done`). That's the authoritative "sleep is active" signal.
   const sleeping = !!sleep.sleep_started_at;
+  // The bridge between click and real sleep: a request is in flight but the agent hasn't
+  // stamped the epoch yet. Suppressed once the real sleep begins.
+  const waiting = !sleeping && pendingAt != null;
   const levelKey = sleeping ? 'must_sleep' : getSleepLevelKey(debt);
-  const mood = sleeping ? 'sleeps' : getSleepMood(debt);
+  const mood = sleeping ? 'sleeps' : waiting ? 'sleepy' : getSleepMood(debt);
   const pct = sleeping ? 100 : Math.min(100, (debt / SLEEP_DEBT_MAX) * 100);
   const level = t(`sleep.${levelKey}`);
 
@@ -77,6 +103,7 @@ export function SleepDebtTracker({ onOpen }: SleepDebtTrackerProps) {
 
   const runAgent = () => {
     setMenuOpen(false);
+    markSleepPending();
     requestSleepAgent();
   };
   const showDetails = () => {
@@ -86,13 +113,14 @@ export function SleepDebtTracker({ onOpen }: SleepDebtTrackerProps) {
 
   const summary = sleeping
     ? t('sleep.active')
+    : waiting ? t('sleep.waiting')
     : `${level} · ${debt}/${SLEEP_DEBT_MAX} ${t('sleep.debt')}`;
 
   return (
     <div className="sleep-tracker-wrap" ref={wrapRef}>
       <button
         type="button"
-        className={`sleep-tracker sleep-tracker--${levelKey}${sleeping ? ' sleep-tracker--sleeping' : ''}`}
+        className={`sleep-tracker sleep-tracker--${levelKey}${sleeping ? ' sleep-tracker--sleeping' : ''}${waiting ? ' sleep-tracker--waiting' : ''}`}
         data-no-drag
         onClick={() => setMenuOpen((v) => !v)}
         title={summary}
@@ -100,6 +128,7 @@ export function SleepDebtTracker({ onOpen }: SleepDebtTrackerProps) {
         aria-expanded={menuOpen}
         aria-label={sleeping
           ? t('sleep.active')
+          : waiting ? t('sleep.waiting')
           : `${t('sleep.level')}: ${level}. ${t('sleep.debt')} ${debt} / ${SLEEP_DEBT_MAX}.`}
       >
         <span className="sleep-tracker-face" aria-hidden>
@@ -109,11 +138,15 @@ export function SleepDebtTracker({ onOpen }: SleepDebtTrackerProps) {
         <span className="sleep-tracker-body">
           <span className="sleep-tracker-top">
             <span className="sleep-tracker-level">
-              {sleeping ? t('sleep.active') : level}
+              {sleeping ? t('sleep.active') : waiting ? t('sleep.waiting') : level}
             </span>
             {sleeping ? (
               <span className="sleep-tracker-zzz" aria-hidden>
                 <span>z</span><span>z</span><span>z</span>
+              </span>
+            ) : waiting ? (
+              <span className="sleep-tracker-wait-dots" aria-hidden>
+                <span>·</span><span>·</span><span>·</span>
               </span>
             ) : (
               <span className="sleep-tracker-count">
@@ -144,9 +177,10 @@ export function SleepDebtTracker({ onOpen }: SleepDebtTrackerProps) {
             className="sleep-tracker-menu-item"
             role="menuitem"
             onClick={runAgent}
-            disabled={!agentReady || sleeping}
+            disabled={!agentReady || sleeping || waiting}
             title={
               sleeping ? t('sleep.menu.run.active')
+                : waiting ? t('sleep.menu.run.waiting')
                 : agentReady ? undefined
                 : t('sleep.menu.run.disabled')
             }
@@ -154,6 +188,7 @@ export function SleepDebtTracker({ onOpen }: SleepDebtTrackerProps) {
             <span className="sleep-tracker-menu-glyph" aria-hidden>▸</span>
             <span className="sleep-tracker-menu-label">{t('sleep.menu.run')}</span>
             {sleeping && <span className="sleep-tracker-menu-hint">{t('sleep.active')}</span>}
+            {waiting && <span className="sleep-tracker-menu-hint">{t('sleep.waiting')}</span>}
           </button>
         </div>
       )}

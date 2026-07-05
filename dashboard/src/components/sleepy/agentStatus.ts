@@ -1,5 +1,5 @@
 import type { SleepyMood } from './SleepyMascot';
-import type { TermStatus } from './agentSession';
+import type { TermStatus, SessionKind } from './agentSession';
 
 /**
  * The single source of truth for "what state is this agent session in?" — the user's
@@ -33,6 +33,10 @@ export interface SessionStatusInfo {
 export interface SessionRow {
   id: string;
   title: string;
+  /** agent (a Claude session) vs shell (a plain terminal) — decides whether the Sleepy
+   *  mascot rides on the chip. The figure is Claude's face; a terminal has no agent, so
+   *  it gets the bare status dot only. */
+  kind: SessionKind;
   info: SessionStatusInfo;
   /** A backgrounded session finished / rang the bell since you last looked at it. */
   attention: boolean;

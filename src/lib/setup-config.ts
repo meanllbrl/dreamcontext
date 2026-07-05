@@ -96,6 +96,16 @@ export interface BrainLocalState {
   pulledUpdates?: number;
   /** A pull deferred an agent-class conflict to /dream-sync (P2). */
   pendingAgentMerge?: boolean;
+  /**
+   * C2 (github-cloud-collaboration-brain-repo-sync M3): a pull-only merge
+   * touched task-referencing files under a remote task backend. The
+   * BACKGROUND path (session-start detached pull) cannot auto-run the task
+   * backend sync itself (best-effort, non-blocking) — it surfaces this flag so
+   * the NEXT session-start instructs the user to run `dreamcontext tasks sync`.
+   * The foreground path (`sleep done`) auto-runs the sync instead and never
+   * needs this flag to persist.
+   */
+  needsTaskSync?: boolean;
 }
 
 export interface ClickUpConfig {
@@ -122,6 +132,12 @@ export interface PersonIdentity {
   clickupMemberId?: string;
   /** Env var holding this person's API token (per-user rate limits). */
   tokenEnv?: string;
+  /**
+   * GitHub login this person signs into dreamcontext with (github-cloud-
+   * collaboration-brain-repo-sync C3). Drives `mapLoginToPerson` — the brain
+   * commit author tier layered ON TOP of the M1 git-identity tiering.
+   */
+  githubLogin?: string;
 }
 
 function sanitizeClickUp(raw: unknown): ClickUpConfig | undefined {
@@ -168,6 +184,7 @@ function sanitizePeopleIdentity(raw: unknown): Record<string, PersonIdentity> | 
     if (typeof v.role === 'string') id.role = v.role;
     if (typeof v.clickupMemberId === 'string') id.clickupMemberId = v.clickupMemberId;
     if (typeof v.tokenEnv === 'string') id.tokenEnv = v.tokenEnv;
+    if (typeof v.githubLogin === 'string') id.githubLogin = v.githubLogin;
     out[slug] = id;
   }
   return Object.keys(out).length > 0 ? out : undefined;
@@ -277,6 +294,7 @@ export function readBrainLocal(projectRoot: string): BrainLocalState {
     if (typeof parsed.lastFetchAt === 'number') out.lastFetchAt = parsed.lastFetchAt;
     if (typeof parsed.pulledUpdates === 'number') out.pulledUpdates = parsed.pulledUpdates;
     if (typeof parsed.pendingAgentMerge === 'boolean') out.pendingAgentMerge = parsed.pendingAgentMerge;
+    if (typeof parsed.needsTaskSync === 'boolean') out.needsTaskSync = parsed.needsTaskSync;
     return out;
   } catch {
     return {};

@@ -193,7 +193,7 @@ function copyPreservingUnicode(text: string): void {
   try { void navigator.clipboard?.writeText(text).catch(() => { /* blocked */ }); } catch { /* none */ }
 }
 
-export function createSession(bypass: boolean, notify: () => void, claudeId: string, resume = false, kind: SessionKind = 'agent', initialPrompt = '', model = ''): Session {
+export function createSession(bypass: boolean, notify: () => void, claudeId: string, resume = false, kind: SessionKind = 'agent', initialPrompt = '', model = '', submitInitial = true): Session {
   const id = `agent-${++sessionSeq}`;
   const container = document.createElement('div');
   container.className = 'agent-pane-term';
@@ -346,7 +346,9 @@ export function createSession(bypass: boolean, notify: () => void, claudeId: str
       if (promptSent || ws.readyState !== WebSocket.OPEN) return;
       promptSent = true;
       sendInput(initialPrompt);
-      setTimeout(() => sendInput('\r'), 160);
+      // Auto-submit only when asked (the autonomous Sleep run). A composer skill/file insert
+      // types the text but leaves the line unsubmitted so the user can finish it themselves.
+      if (submitInitial) setTimeout(() => sendInput('\r'), 160);
     }, 1600);
   }
 

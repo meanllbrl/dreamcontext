@@ -104,6 +104,24 @@ export function resolveActor(config: SetupConfig | null): string | null {
 }
 
 /**
+ * github-cloud-collaboration-brain-repo-sync (M3, C3): map a signed-in GitHub
+ * login to the person slug it identifies via `peopleIdentity[<slug>].githubLogin`.
+ * Case-insensitive (GitHub logins are case-insensitive). Returns null on a
+ * blank login, no config, or no match — callers (sync-engine's `authorFor`)
+ * fall through to the EXISTING M1 author tiering unchanged; this tier is
+ * layered ON TOP, never a prerequisite for M1 to keep working.
+ */
+export function mapLoginToPerson(login: string | null | undefined, config: SetupConfig | null): string | null {
+  if (!login || !login.trim()) return null;
+  const target = login.trim().toLowerCase();
+  const identity = config?.peopleIdentity ?? {};
+  for (const [slug, id] of Object.entries(identity)) {
+    if (id.githubLogin && id.githubLogin.trim().toLowerCase() === target) return slug;
+  }
+  return null;
+}
+
+/**
  * Resolve the acting person's ClickUp token: their `tokenEnv` env var first,
  * then the shared env vars, then the secrets file (per-user slot, then
  * default). Pure delegation to the secrets resolution order (env → secrets).

@@ -54,6 +54,12 @@ import {
   handleObjectivesRemoveDependency,
   handleRoadmapModel,
 } from './routes/objectives.js';
+import {
+  handleLabList,
+  handleLabShow,
+  handleLabSync,
+  handleLabTweaks,
+} from './routes/lab.js';
 import { handleBoardGet, handleBoardSharedPut, handleBoardLocalPut } from './routes/board.js';
 import {
   handleSleepyChatSend,
@@ -67,6 +73,9 @@ import {
   handleAgentInstall,
   handleAgentInstallStatus,
   handleAgentTitle,
+  handleAgentModelConfig,
+  handleAgentSessionModel,
+  handleAgentSessionStats,
   attachAgentTerminal,
 } from './routes/agent-terminal.js';
 import { handleAgentDrop } from './routes/agent-drop.js';
@@ -243,7 +252,11 @@ function buildRouter(): Router {
   // The embedded terminal itself is a WebSocket upgrade (see attachAgentTerminal),
   // not a router route.
   router.get('/api/agent/capabilities', handleAgentCapabilities);
+  // Model/effort options + the user's CLI defaults, and a session's current model (from its
   // transcript). Vault-agnostic — they read the Claude CLI's own state, not the vault.
+  router.get('/api/agent/model-config', handleAgentModelConfig);
+  router.get('/api/agent/session-model', handleAgentSessionModel);
+  router.get('/api/agent/session-stats', handleAgentSessionStats);
   router.post('/api/agent/open-terminal', handleOpenTerminal);
   // In-app prerequisite installer (Claude CLI / node-pty) — vault-agnostic.
   router.post('/api/agent/install', handleAgentInstall);
@@ -294,6 +307,15 @@ function buildRouter(): Router {
   router.post('/api/objectives/:slug/dependencies', handleObjectivesAddDependency);
   router.delete('/api/objectives/:slug/dependencies/:to', handleObjectivesRemoveDependency);
 
+  // Lab (analytics insights) — same sync engine the CLI uses. Router.match
+  // filters by HTTP METHOD first, so POST /api/lab/sync can never be captured by
+  // GET /api/lab/:slug — ordering below is for readability only. No route ever
+  // returns a credential value.
+  router.get('/api/lab', handleLabList);
+  router.post('/api/lab/sync', handleLabSync);
+  router.get('/api/lab/:slug', handleLabShow);
+  router.patch('/api/lab/:slug/tweaks', handleLabTweaks);
+
   // Tasks-board preferences (saved views) — split persistence:
   //   shared → overrides/board.json (version-controlled, "save for all")
   //   local  → state/board.local.json (git-ignored, "save for yourself")
@@ -324,7 +346,7 @@ function buildRouter(): Router {
 }
 
 /** API path prefixes that do NOT need a vault — they work in launcher mode. */
-const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/agent/capabilities', '/api/agent/install', '/api/brain/auth', '/api/brain/team'];
+const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/agent/capabilities', '/api/agent/install', '/api/agent/model-config', '/api/agent/session-model', '/api/agent/session-stats', '/api/brain/auth', '/api/brain/team'];
 
 function isVaultAgnostic(pathname: string): boolean {
   return VAULT_AGNOSTIC_PREFIXES.some(

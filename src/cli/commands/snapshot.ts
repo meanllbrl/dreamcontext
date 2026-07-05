@@ -23,6 +23,7 @@ import { computeFeatureFreshness, freshnessSnapshotNote } from '../../lib/featur
 import { featuresDir } from '../../lib/features-path.js';
 import { pendingInboxCount } from '../../lib/federation-inbox.js';
 import { buildRoadmapModel, type RoadmapObjective } from '../../lib/roadmap-model.js';
+import { listInsights, readCache } from '../../lib/lab/store.js';
 import { readPeerSummaryCache } from '../../lib/federation-peer-summary.js';
 import {
   applyBudget, resolveBudget, demoteMemoryBlock, demoteTaskList,
@@ -588,6 +589,47 @@ function renderObjectivesSection(root: string): { full: string; demotions: strin
   }
 }
 
+/** One insight's snapshot line: title / latest+unit / staleness (vs ttl) / group. */
+function insightSnapshotLine(root: string, slug: string, title: string, group: string | null, unit: string | null, ttlMinutes: number): string {
+  const cache = readCache(root, slug);
+  const latest = cache?.latest !== null && cache?.latest !== undefined ? String(cache.latest) : 'no data yet';
+  const unitStr = unit ? ` ${unit}` : '';
+  let staleness = 'never synced';
+  if (cache?.fetchedAt) {
+    const ageMin = (Date.now() - Date.parse(cache.fetchedAt)) / 60_000;
+    if (Number.isFinite(ageMin)) {
+      staleness = ageMin >= ttlMinutes ? `stale (${Math.round(ageMin / 60)}h old)` : 'fresh';
+    }
+  }
+  const errBadge = cache?.error ? ' — ⚠ last sync failed' : '';
+  const groupStr = group ? ` [${group}]` : '';
+  return `- ${title}${groupStr}: ${latest}${unitStr} · ${staleness}${errBadge}`;
+}
+
+/**
+ * Lab (analytics insights) section: budget-demotable full → one-liners → count
+ * line. Cache-only (never triggers a fetch). Must NEVER crash the snapshot on a
+ * malformed manifest — every failure degrades to `null` (section omitted).
+ */
+function renderLabSection(root: string): { full: string; demotions: string[] } | null {
+  try {
+    const insights = listInsights(root);
+    if (insights.length === 0) return null;
+
+    const headerLines = ['## Lab (Analytics Insights)\n', ''];
+    const lines = insights.map((m) =>
+      insightSnapshotLine(root, m.slug, m.title, m.group, m.unit, m.refresh.ttl_minutes));
+
+    const fullBody = [...headerLines, ...lines, '', 'Sync: `dreamcontext lab sync <slug>` or `--all`.', ''];
+    const level1 = [...headerLines, ...lines, ''];
+    const level2 = [`## Lab (Analytics Insights)\n`, `- ${insights.length} insight(s) — \`dreamcontext lab list\` for details`, ''];
+
+    return { full: fullBody.join('\n'), demotions: [level1.join('\n'), level2.join('\n')] };
+  } catch {
+    return null; // the snapshot must never crash on a malformed manifest
+  }
+}
+
 /**
  * Output a plain-text context snapshot to stdout.
  * Designed for SessionStart hook consumption — no chalk, no interactivity.
@@ -926,6 +968,17 @@ export function generateSnapshot(rootOverride?: string): string {
       id: 'objectives',
       text: objectivesSection.full,
       demotions: objectivesSection.demotions,
+    });
+  }
+
+  // 7.7 Lab (analytics insights) — curated metrics synced from HTTP/scripts.
+  // Cache-only; budget-demotable full → one-liners → count line.
+  const labSection = renderLabSection(root);
+  if (labSection) {
+    sections.push({
+      id: 'lab',
+      text: labSection.full,
+      demotions: labSection.demotions,
     });
   }
 

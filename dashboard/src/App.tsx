@@ -13,6 +13,7 @@ import { ProjectSwitcher } from './components/search/ProjectSwitcher';
 import { AgentSurface } from './components/sleepy/AgentSurface';
 import { TasksPage } from './pages/TasksPage';
 import { RoadmapPage } from './pages/RoadmapPage';
+import { LabPage } from './pages/LabPage';
 import { SleepPage } from './pages/SleepPage';
 import { CorePage } from './pages/CorePage';
 import { KnowledgePage } from './pages/KnowledgePage';
@@ -92,6 +93,8 @@ function PageRouter({ nav }: { nav: ShellNavigation }) {
       return <TasksPage focus={focus} />;
     case 'roadmap':
       return <RoadmapPage />;
+    case 'lab':
+      return <LabPage />;
     case 'sleep':
       return <SleepPage />;
     case 'core':

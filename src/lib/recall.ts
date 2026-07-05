@@ -15,7 +15,7 @@ import {
 
 // 'skill' docs are produced ONLY by loadSkillDocs (called directly by the hook);
 // intentionally excluded from buildCorpus defaults to avoid polluting haikuRecall.
-export type CorpusType = 'knowledge' | 'feature' | 'task' | 'memory' | 'changelog' | 'skill' | 'objective';
+export type CorpusType = 'knowledge' | 'feature' | 'task' | 'memory' | 'changelog' | 'skill' | 'objective' | 'insight';
 
 export interface CorpusDoc {
   type: CorpusType;
@@ -583,7 +583,7 @@ export function buildCorpus(
   contextRoot: string,
   opts: BuildCorpusOptions = {},
 ): CorpusDoc[] {
-  const types = new Set(opts.types ?? ['knowledge', 'feature', 'task', 'memory', 'changelog', 'objective']);
+  const types = new Set(opts.types ?? ['knowledge', 'feature', 'task', 'memory', 'changelog', 'objective', 'insight']);
   const docs: CorpusDoc[] = [];
   if (types.has('knowledge')) {
     // Exclude knowledge/features/** — features are their own corpus type and are
@@ -597,6 +597,12 @@ export function buildCorpus(
     // PO-authored roadmap objectives (core/objectives/*.md) — first-class recall
     // docs so "what are we driving toward" surfaces in per-prompt recall too.
     docs.push(...loadMarkdownDocs(join(contextRoot, 'core', 'objectives'), 'objective', contextRoot));
+  }
+  if (types.has('insight')) {
+    // Lab insight manifests (lab/insights/*.md) — the `## Meaning` prose is
+    // first-class recall so "what do we measure / what does <metric> mean"
+    // surfaces the curated insight, not raw numbers.
+    docs.push(...loadMarkdownDocs(join(contextRoot, 'lab', 'insights'), 'insight', contextRoot));
   }
   if (types.has('task')) {
     docs.push(...loadMarkdownDocs(join(contextRoot, 'state'), 'task', contextRoot));

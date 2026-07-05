@@ -157,6 +157,11 @@ export function AgentTabs({
                     onFocus={(e) => e.currentTarget.select()}
                     onBlur={(e) => onCommitRename(tab.id, e.currentTarget.value)}
                     onKeyDown={(e) => {
+                      // Keep every key inside the input — otherwise it bubbles to the
+                      // parent tab's onKeyDown, whose Space/Enter handler preventDefaults
+                      // (so you couldn't type a space) and re-selects the tab. Commit is
+                      // Enter-only; Space just types a space like any normal input.
+                      e.stopPropagation();
                       if (e.key === 'Enter') { e.preventDefault(); onCommitRename(tab.id, e.currentTarget.value); }
                       else if (e.key === 'Escape') { e.preventDefault(); onCancelRename(); }
                     }}

@@ -392,4 +392,50 @@ describe('sleep (integration)', () => {
     const log = execSync('git log --oneline', { cwd: tmpDir, encoding: 'utf-8' });
     expect(log).toContain('chore(brain): sync (in-tree)');
   });
+
+  // --- C2 needsTaskSync flag clearing (github-cloud-collaboration-brain-repo-sync, M3, review fix 1) ---
+
+  it('sleep done clears a STALE needsTaskSync flag left by an earlier background pull, even when this run\'s own merge found nothing new', () => {
+    // In-tree mode, real git, no remote — mirrors the test above. taskBackend
+    // is 'github' with NO owner/repo configured, so the task backend's own
+    // sync() records an internal error and returns normally (never throws) —
+    // exactly the "ran to completion" case the flag-clear must react to.
+    execSync('git init', { cwd: tmpDir });
+    execSync('git config user.email "test@example.com"', { cwd: tmpDir });
+    execSync('git config user.name "Test"', { cwd: tmpDir });
+
+    writeFileSync(
+      join(ctx, 'state', '.config.json'),
+      JSON.stringify(
+        {
+          platforms: [], packs: [], multiProduct: false, setupVersion: '0.0.0', disableNativeMemory: true,
+          taskBackend: 'github',
+          brainRepo: { mode: 'in-tree', enabled: true, autoSync: true },
+        },
+        null, 2,
+      ),
+    );
+    // Simulate a PRIOR background pull (session-start's detached spawn) that
+    // found task-referencing changes and set the persisted flag, then the
+    // remote went quiet — this run's OWN in-tree commit never touches
+    // `needsTaskSync` itself (it's an auto/separate-mode-only concept).
+    writeFileSync(join(ctx, 'state', '.brain-local.json'), JSON.stringify({ needsTaskSync: true }, null, 2));
+
+    run('sleep add 2 Some work', tmpDir);
+    run('sleep done Consolidated, clearing the stale task-sync flag', tmpDir);
+
+    const brainLocal = JSON.parse(readFileSync(join(ctx, 'state', '.brain-local.json'), 'utf-8'));
+    expect(brainLocal.needsTaskSync).toBe(false);
+  });
+
+  it('dreamcontext tasks sync clears a STALE needsTaskSync flag — the literal documented remedy resolves the nag', () => {
+    // Default (local) task backend — sync() is a genuine no-op, no config needed.
+    writeFileSync(join(ctx, 'state', '.brain-local.json'), JSON.stringify({ needsTaskSync: true }, null, 2));
+
+    const output = run('tasks sync', tmpDir);
+    expect(output).not.toMatch(/error|fail/i);
+
+    const brainLocal = JSON.parse(readFileSync(join(ctx, 'state', '.brain-local.json'), 'utf-8'));
+    expect(brainLocal.needsTaskSync).toBe(false);
+  });
 });

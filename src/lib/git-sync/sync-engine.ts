@@ -14,6 +14,9 @@ import {
   FALLBACK_AUTHOR,
 } from './brain-repo.js';
 import { withGitCredentials } from './credentials.js';
+import { readGlobalGitHubLogin } from './auth-store.js';
+import { mapLoginToPerson } from '../task-backend/identity.js';
+import { slugify } from '../id.js';
 
 /**
  * The sync-engine orchestrator — single entry point (`runBrainSync`) for
@@ -90,6 +93,8 @@ export interface SyncEngineDeps {
   withGitCredentials: typeof withGitCredentials;
   acquireBrainLock: typeof acquireBrainLock;
   releaseBrainLock: typeof releaseBrainLock;
+  /** C3 (M3): who is signed into dreamcontext right now (global auth-store), if anyone. */
+  readGlobalGitHubLogin: typeof readGlobalGitHubLogin;
 }
 
 const defaultDeps: SyncEngineDeps = {
@@ -100,6 +105,7 @@ const defaultDeps: SyncEngineDeps = {
   withGitCredentials,
   acquireBrainLock,
   releaseBrainLock,
+  readGlobalGitHubLogin,
 };
 
 interface Ctx {
@@ -120,8 +126,24 @@ function computeNeedsTaskSync(config: SetupConfig | null, paths: string[]): bool
   });
 }
 
+/**
+ * C3 (M3): if the signed-in GitHub login maps to a roster person, the commit
+ * reflects THEM — regardless of the local git identity. Layered ON TOP of the
+ * M1 tiering (never a prerequisite): no login, no mapping, or no config simply
+ * falls through to `undefined` here and `authorFor` proceeds exactly as M1
+ * always has.
+ */
+function personAuthorFor(ctx: Ctx): { name: string; email: string } | undefined {
+  const login = ctx.d.readGlobalGitHubLogin();
+  if (!login) return undefined;
+  const slug = mapLoginToPerson(login, ctx.config);
+  if (!slug) return undefined;
+  const displayName = (ctx.config?.people ?? []).find((p) => slugify(p) === slug) ?? slug;
+  return { name: displayName, email: `${login}@users.noreply.github.com` };
+}
+
 function authorFor(ctx: Ctx): { name: string; email: string } | undefined {
-  return ctx.d.git.hasGitIdentity(ctx.gitCwd) ? undefined : FALLBACK_AUTHOR;
+  return personAuthorFor(ctx) ?? (ctx.d.git.hasGitIdentity(ctx.gitCwd) ? undefined : FALLBACK_AUTHOR);
 }
 
 /** Single entry point. Never throws for operational outcomes — a persistent push failure is the one true programmer-facing GitSyncError. */
@@ -429,7 +451,16 @@ async function pullOnlySync(ctx: Ctx): Promise<SyncResult> {
 
   const afterSha = d.git.currentSha(gitCwd);
   const pulledUpdates = beforeSha && afterSha ? d.git.revListCount(gitCwd, `${beforeSha}..${afterSha}`) : aheadCount;
-  writeBrainLocal(projectRoot, { lastFetchAt: Date.now(), pulledUpdates, pendingAgentMerge: false });
+  // C2 (M3): pull-only is the BACKGROUND path (session-start's detached spawn)
+  // — it must never auto-run the task backend sync itself (best-effort,
+  // non-blocking, no stdio). Persist the signal so the NEXT session-start can
+  // surface the "refresh your task mirrors" instruction instead.
+  writeBrainLocal(projectRoot, {
+    lastFetchAt: Date.now(),
+    pulledUpdates,
+    pendingAgentMerge: false,
+    needsTaskSync: outcome.needsTaskSync,
+  });
 
   return { action: 'pulled', scrub, pulledUpdates, needsTaskSync: outcome.needsTaskSync };
 }
