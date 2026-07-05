@@ -30,6 +30,19 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # The integration suite spawns the COMPILED CLI at dist/index.js
+      # (tests/integration/*.test.ts and a few unit tests do
+      # `const CLI = join(__dirname, '..', '..', 'dist', 'index.js')`), so the CLI
+      # must be built BEFORE tests run. Locally the publish checklist always runs
+      # `npm run build && npm test`; without this step CI has no dist/ and the whole
+      # CLI-integration suite fails ENOENT — which is exactly why main went red while
+      # local stayed green. `build:cli` (tsup) is sufficient: it emits a
+      # self-contained dist/index.js and copies templates/agents/skill-packs/hooks.
+      # The heavier dashboard build is skipped — no test reads dist/dashboard, and it
+      # would need the dashboard's own deps installed.
+      - name: Build the CLI
+        run: npm run build:cli
+
       # `npm test` is bare `vitest` (watch mode), so pass `run` for a single
       # non-interactive pass. vitest is scoped to tests/**/*.test.ts; the
       # Playwright e2e specs under e2e/ are NOT run here.

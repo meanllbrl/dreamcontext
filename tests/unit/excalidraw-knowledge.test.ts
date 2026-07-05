@@ -649,7 +649,7 @@ describe('dashboard excalidraw-grouping', () => {
 describe('excalidraw-flat-regression', () => {
   it('live flat knowledge/diagrams/*.excalidraw.md still indexes+recalls with extraction; index content JSON-free', () => {
     // Use dreamcontext's own architecture.excalidraw.md as the regression fixture.
-    const CONTEXT_ROOT = '/Users/mehmetnuraydin/projects/dreamcontext/_dream_context';
+    const CONTEXT_ROOT = join(__dirname, '..', '..', '_dream_context');
     // Diagrams are foldered per-title and grouped under a category subfolder
     // (diagrams/<category>/<title>/<title>.excalidraw.md), so the index slug
     // carries the full containing path. architecture lives under the `system` category.
@@ -686,7 +686,7 @@ describe('excalidraw-flat-regression', () => {
 
 describe('excalidraw-docs', () => {
   it('skill surfaces the context-folder convention and documents board rules in the reference', () => {
-    const ROOT = '/Users/mehmetnuraydin/projects/dreamcontext';
+    const ROOT = join(__dirname, '..', '..');
     const skillContent = readFileSync(join(ROOT, 'skill', 'SKILL.md'), 'utf-8');
     const refContent = readFileSync(
       join(ROOT, 'skill', 'references', 'knowledge-and-recall.md'),
@@ -709,7 +709,7 @@ describe('excalidraw-docs', () => {
 
   it('skill-packs/excalidraw/SKILL.md documents dreamcontext knowledge conventions', () => {
     const packContent = readFileSync(
-      '/Users/mehmetnuraydin/projects/dreamcontext/skill-packs/excalidraw/SKILL.md',
+      join(__dirname, '..', '..', 'skill-packs', 'excalidraw', 'SKILL.md'),
       'utf-8',
     );
 
