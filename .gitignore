@@ -26,6 +26,9 @@ _dream_context/council/
 _dream_context/tmp/
 # Secrets are never tracked, regardless of the above
 _dream_context/**/.env
+# Lab (analytics insights) credentials — insights + cache DO sync, only this doesn't
+_dream_context/lab/credentials.json
+_dream_context/lab/credentials.*
 # design-sync: staged converter scripts, build output, machine state (durable
 # inputs — config.json, NOTES.md, conventions.md, previews/, overrides/ — stay tracked)
 .ds-sync/

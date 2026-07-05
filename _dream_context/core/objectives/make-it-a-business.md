@@ -13,7 +13,7 @@ impact: 5
 effort: 4
 status: null
 created_at: '2026-07-04'
-updated_at: '2026-07-04'
+updated_at: '2026-07-05'
 metric:
   label: MRR
   unit: $

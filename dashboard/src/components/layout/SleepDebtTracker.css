@@ -153,6 +153,47 @@ button.sleep-tracker--sleeping[aria-expanded='true'] {
   50% { opacity: 1; }
 }
 
+/* ── Waiting-to-sleep state: the sleep agent was requested and is booting toward
+   `sleep start`, but the epoch isn't stamped yet. A calmer cousin of the sleeping
+   chip — an accent tint and a soft breathing bar, with drifting dots instead of the
+   z z z, so the user knows a sleep is inbound (and doesn't re-click). ── */
+.sleep-tracker--waiting {
+  background: color-mix(in srgb, var(--color-accent, #7b68ee) 10%, var(--color-bg-tertiary));
+  border-color: color-mix(in srgb, var(--color-accent, #7b68ee) 30%, var(--color-border));
+}
+button.sleep-tracker--waiting:hover,
+button.sleep-tracker--waiting[aria-expanded='true'] {
+  background: color-mix(in srgb, var(--color-accent, #7b68ee) 16%, var(--color-bg-tertiary));
+}
+.sleep-tracker--waiting .sleep-tracker-level {
+  color: var(--color-accent, #7b68ee);
+}
+.sleep-tracker--waiting .sleep-tracker-fill {
+  --fill: var(--color-accent, #7b68ee);
+  width: 100% !important;
+  animation: sleep-tracker-breathe 2s ease-in-out infinite;
+}
+
+/* The drifting "· · ·" — a low-key "working on it" pulse while sleep boots. */
+.sleep-tracker-wait-dots {
+  display: inline-flex;
+  gap: 1px;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-bold, 700);
+  line-height: 1;
+  color: var(--color-accent, #7b68ee);
+}
+.sleep-tracker-wait-dots span {
+  animation: sleep-tracker-wait-dots 1.4s ease-in-out infinite;
+}
+.sleep-tracker-wait-dots span:nth-child(2) { animation-delay: 0.2s; }
+.sleep-tracker-wait-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes sleep-tracker-wait-dots {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+
 /* ── The click-to-open menu (Show details · Run sleep agent). ── */
 .sleep-tracker-menu {
   position: absolute;
@@ -223,5 +264,6 @@ button.sleep-tracker--sleeping[aria-expanded='true'] {
 
 @media (prefers-reduced-motion: reduce) {
   .sleep-tracker-fill,
-  .sleep-tracker-zzz span { animation: none !important; }
+  .sleep-tracker-zzz span,
+  .sleep-tracker-wait-dots span { animation: none !important; }
 }

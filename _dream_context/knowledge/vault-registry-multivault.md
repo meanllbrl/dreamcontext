@@ -11,8 +11,11 @@ tags:
   - architecture
   - domain
 pinned: false
+archived: true
 created: '2026-06-01'
 updated: '2026-06-15'
+archived_date: '2026-07-05'
+archived_reason: 'Superseded by desktop-beta-tauri-multivault.md which documents the v0.8+ launcher mode architecture. The v0.6 one-server-per-vault model is historical.'
 ---
 
 ## Why this exists

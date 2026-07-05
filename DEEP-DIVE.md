@@ -634,6 +634,28 @@ Memory recall mirrors the pattern the rest of dreamcontext uses: **deterministic
 
 The sleep-product specialist (`agents/sleep-product.md`) needs no changes — it already maintains knowledge files, feature PRDs, and the tag set. Recall reads what sleep-product already maintains. Same pattern as the snapshot: the deterministic tier curates, the on-demand tier queries.
 
+## Lab (Insights)
+
+The snapshot and recall deliver everything the *brain* knows. **Lab** extends that to what the outside world knows — the live product and business metrics that sit in analytics APIs, billing systems, and spreadsheets — without turning dreamcontext into a BI tool. The unit is an **insight**: a curated metric with a data source, a render type, and a refresh policy. Lab captures *what* to fetch and *how* to show it, fetches on demand, caches the rolled-up result in the brain, and surfaces it to agents and the dashboard. It deliberately mirrors the objectives subsystem — markdown-first storage, a pure store, a sync engine, CLI and HTTP routes over one engine — because that pattern is already load-bearing.
+
+### Storage
+
+Each insight is a manifest at `_dream_context/lab/insights/<slug>.md`: frontmatter config (`title`, `render`, `source`, `refresh.ttl_minutes`, typed `tweaks[]`, an optional `binding`, `credentials_used`) plus a `## Meaning` prose block that is recall-indexed — so an insight is discoverable by meaning as an `insight` corpus type, not by slug. The fetched result is cached separately at `_dream_context/lab/cache/<slug>.json` — the post-rollup `series`, `latest`, `fetchedAt`, `granularity`, `error`/`errorAt`, and a `scriptHash`. Both the manifest and the cache sync in the brain repo; only `_dream_context/lab/credentials.json` (mode `0600`, written exclusively through the gitignore-first CLI) is excluded. Manifest parsers are lenient — a malformed insight reads as `null` rather than throwing — so a bad file never crashes the snapshot.
+
+### Sync, rollup, and binding
+
+`syncInsight` resolves the manifest's tweaks into a concrete window, runs the adapter, caps and rolls up the series, writes the cache, and optionally writes a bound objective's Key Result. Two adapters ship: a **generic HTTP** adapter (endpoint / headers / body templates that expand `{{tweak:…}}` and `{{cred:…}}`, a JSON-path `extract`, GET or POST) and a **custom script** adapter (a `.mjs` default async function under `lab/scripts/`). Ready-made PostHog/Sheets adapters are a v2 item — the generic layer is expressive enough that most sources fit without bespoke code.
+
+Rollup is what keeps Lab "insights, not raw dumps": `MAX_POINTS = 62`, and `capSeries` coarsens daily → weekly → monthly until a series is under the cap, with granularity derived from the resolved span (over 180 days monthly, 45–180 weekly, 45 or fewer daily). A TTL guard skips a fresh insight unless `--force`, and the skip is reported rather than silent. On adapter failure the cache keeps its prior series, records the (redacted) error, and `syncAll` aggregates a non-empty `failed[]` so the CLI exits non-zero — there is never a silent half-sync.
+
+**Binding is how a metric becomes measured progress.** When an insight declares `binding.objective` with `value: latest | series:<name>`, a successful sync writes the objective's `metric.current` through the same `updateObjectiveMetric` the roadmap uses — but only when the latest value is finite and the metric exists; an empty series leaves the number untouched and warns. The roadmap forecast cascade then reflects a number that was *measured*, not asserted. Sleep deliberately does **not** run lab sync (credential exposure, latency, non-determinism); a bound insight feeds its Key Result through its own sync instead.
+
+### Three security nets
+
+Credentials are handled structurally, not by convention. `writeCredential` ensures the canonical brain `.gitignore` exists *first* (writing the full template if missing, never a two-line stub), layers the lab credential entries, aborts without writing on any gitignore failure, and chmods the file to `0600`; `doctor` fails loudly if `credentials.json` ever exists uncovered by gitignore. Every error, log line, and cache string is built from a redacted resolution (`{{cred:…}}` → `***`) with a final `redactSecrets` net, so a non-2xx body or a thrown script error can never echo a real credential. And because a `.mjs` script is the first executable artifact the brain repo carries — it runs in-process with your credentials, the same trust level as the repo — Lab records a `scriptHash` on each successful run and prints a loud change tripwire *before* executing a script that changed since last time.
+
+The CLI (`lab sync | list | show | create | tweak | credentials`) and the `/api/lab*` routes call the same engine, and no route ever returns a credential value. The dashboard's Lab page renders insights grouped by category with hand-rolled SVG (number / line / pie / raw — no chart library), per-insight and sync-all refresh with a loud `failed[]` summary, and generic tweak editing driven by the manifest's `TweakDecl[]`.
+
 ## Federation
 
 <p align="center">
@@ -693,6 +715,34 @@ Earlier builds had a *push* half: during sleep, a `sleep-federation` specialist 
 ### Read-only by construction
 
 The security model mirrors the dashboard's loopback-and-CSRF posture. The browser-reachable route (`POST /api/federation/sync`) is **dry-run by construction** — it returns deltas with a constant `dryRun: true`, and no file under `src/server/routes/` may import a federation write function, so a crafted loopback request *cannot* write into a peer vault. The destructive `federation purge` is CLI-only and guarded: it requires an explicit `--all`/`--vault` flag and, before any `unlinkSync`, resolves symlinks and rejects anything that escapes the vault's `knowledge/` directory. `.connections.json` writes are atomic (temp-file + rename with a per-write nonce) so concurrent CLI/launcher writers never clobber a direction. Dead or unreachable peers are skipped (warned once), so a deleted sibling never stalls recall.
+
+## Brain Cloud Sync
+
+Federation makes *separate* brains readable across projects. Brain Cloud Sync makes *one* brain collaborative across a team. The move is deliberately minimal: `_dream_context/` becomes its own git repository — its own remote, its own history, a stored pointer back to the code repo it documents — and git becomes the sync transport. Nothing else changes: the brain is still plain markdown and JSON, edited by the same CLI and dashboard, read by the same snapshot. Git is a transport, not a new database. (This is a distinct concept from the parked hosted-website idea, which would read a code repo's `_dream_context/` over the GitHub API with no local git repo for the brain — the opposite direction.)
+
+### Two modes
+
+`separate` puts the brain in its own GitHub repo with full auto-sync. `in-tree` nests the brain inside the code repo, commits on sleep, and **never auto-pushes** — it is the safe default, because committing local checkpoints is harmless where pushing to a shared remote is a decision. The scrub gate (below) runs in both.
+
+### Sync is a standing post-sleep step
+
+Every `dreamcontext sleep done` runs fetch → merge → commit → push against the brain repo, and a session-start background pull (non-blocking, detached) keeps you current on the way in. A sync failure never fails the sleep — consolidation is the primary job and the push is best-effort on top of it. A manual `dreamcontext brain sync` does the same cycle on demand, and the `/dream-sync` skill drives the agent half of a conflicted merge.
+
+### Deterministic merge, then a semantic agent
+
+A plain git merge is wrong for markdown-plus-frontmatter task and knowledge files — two people editing the same task's changelog is a routine, resolvable event, not a conflict to abort on. So the merge is split. **Deterministic files resolve themselves**: JSON (changelog, releases, config, taxonomy) and task status/changelog merge by rule (changelog entries union, the furthest status along the lifecycle wins). **Prose conflicts defer to an agent**: when two people edit the same section of a knowledge or feature file, the sync writes base/ours/theirs snapshots plus a conflict report, aborts back to a clean committed tree, and sets `pendingAgentMerge`. The `/dream-sync` skill (or the SessionStart snapshot) surfaces the pending merge; the agent reads the three snapshots, writes the real semantic merge, and hands back through a `--resume`/`--continue` loop that re-scrubs and pushes. This agent-on-conflict design was wanted from day zero so the full-sync phase was never a rewrite.
+
+### Credentials and the scrub gate
+
+Two security invariants are non-negotiable. First, the token is **never embedded in the remote URL** — that would persist it in `.git/config` in plaintext. Every git network call runs through `GIT_ASKPASS` pointed at a `0600`-at-create temp file (the path travels in the environment, the token never does, and the file is unlinked in a `finally`), with `-c credential.helper=` disabling any persisted helper. Second, a **scrub gate runs before every commit and push** — in-tree commits, the `brain init` first push, and post-merge results alike. BLOCK-tier hits (a staged `ghp_`-plus-36-chars token) abort loudly everywhere; WARN-tier hits (absolute local paths) block only in headless pull-only mode, where no human is watching the auto-commit, and stay non-blocking in foreground use.
+
+### What is never pushed, and who can attach
+
+Every machine builds its own recall index, embeddings, and caches over the shared brain, all gitignored (`.brain-local.json`) and rebuilt after each pull, so per-machine derived state never pollutes the repo or breeds merge noise. Personal attribution rides the existing multi-people awareness (`1.user.md` `## People`, `person:<slug>` tags, changelog authors) rather than a per-person file namespace, so the brain stays one shared set of files instead of `task-alice.md` / `task-bob.md` forks. Brain repos default **private**; making one public needs an explicit flag and an interactive confirm. And because a shared brain is a prompt-injection channel, `brain attach` is treated as a **trust decision** — it prints a loud warning and an incoming-diff preview and refuses without confirmation.
+
+### Desktop integration
+
+The launcher wraps all of this without a terminal: a device-flow GitHub login (with a PAT fallback), discovery of the repos tagged with the `dreamcontext-brain` topic, one-click creation of a scrubbed private brain repo, the trust-gated attach flow for a second machine, a team-updates badge fed by a cache-only endpoint, and a Settings "Cloud sync" toggle as the master switch. The server routes call the same in-process sync functions the CLI uses — not a shell-out to the CLI — so the desktop and terminal paths share one implementation.
 
 ## Obsidian Integration
 

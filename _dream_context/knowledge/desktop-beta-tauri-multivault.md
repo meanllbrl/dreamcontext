@@ -57,7 +57,7 @@ tags:
   - topic:federation
 pinned: true
 created: '2026-06-13'
-updated: '2026-07-01'
+updated: '2026-07-05'
 released_version: v0.8.6
 ---
 
@@ -574,14 +574,27 @@ the updated `VaultStatus`. The user never opens a terminal.
 (folder-agnostic; files are NOT deleted). Intended for red-status (deleted-folder)
 cleanup. Idempotent.
 
-## Interactive federation graph (v0.8.3)
+## Interactive federation board (v0.8.3, modeless redesign 2026-07-05)
 
 ### Purpose and location
 
-A `react-force-graph-2d` canvas (`dashboard/src/pages/LauncherGraph.tsx`, CSS:
-`LauncherGraph.css`) lives in the Launcher (not a per-project page) because
+A `react-force-graph-2d` canvas (`dashboard/src/components/federation/FederationBoard.tsx`, CSS:
+`FederationBoard.css`) — a reusable widget with two variants: `<FederationBoard variant="full" />` 
+(Launcher window) and `variant="embedded"` (Settings → Connections). Lives in the Launcher because
 federation is a cross-project concern. Per-project Settings retains the text-form
 `ConnectionsManager` for users who prefer a list.
+
+### Modeless direct-manipulation model (2026-07-05 redesign)
+
+**One interaction model, no mode toggle.** The old Connect/View switch is gone. Everything is direct:
+- **Drag from one card onto another** to wire a read — animated dashed preview + drop-target highlight, success/warn feedback notes.
+- **Click a card** to inspect it (detail panel with Connect-to… arming click-to-connect, Readable toggle, version/update controls).
+- **Click a wire** to edit it (in-place popover showing both directions with per-direction Remove + one-click "Make Readable" for inert wires).
+- **Drag empty canvas** to pan, wheel/buttons to zoom — card press is claimed at capture phase so the library only sees empty-canvas presses.
+
+**Feedback is designed, not silent.** Wiring shows a success banner ("A now reads B — live") or warning banner with inline action ("Turn on Readable") when target isn't shareable. Hovering a card rings it violet, hovering a wire thickens it. Auto-fit viewport happens only on first layout (not after every mutation) to keep the viewport stable.
+
+**Clarity extras:** always-visible on-canvas legend (wire meanings + card statuses), designed empty state, rewritten 3-step "How it works" guide, ~50 i18n keys added (`federation.map.*`).
 
 ### Node and edge semantics
 
@@ -606,17 +619,27 @@ AND B's `shareable` flag is `true`.
 
 The graph surfaces BOTH: the edge (connection direction) and the shareable gate.
 
-### Drag-to-connect
+### Wire creation and removal
 
-In **Connect mode** (toggle in graph toolbar), dragging from node A onto node B
-calls `POST /api/launcher/connection { from: A.name, to: B.name }`. This stores an
+Dragging from card A onto card B calls `POST /api/launcher/connection { from: A.name, to: B.name }`. This stores an
 `out` edge on A's side only. Two separate drags (A→B then B→A) create two
 independent `out` edges — the graph renders them as a two-way arrow. There is no
 `both` shortcut: two-way federation requires two explicit drags.
 
-`POST /api/launcher/connection/remove { from, to }` removes the edge.  
+`POST /api/launcher/connection/remove { from, to }` removes the edge (via in-place wire popover).
 `POST /api/launcher/shareable { vault, shareable }` toggles the shareable flag
-directly from a node panel in the graph.
+directly from the card detail panel or wire popover "Make Readable" action.
+
+### Layout tuning (2026-07-05 fix)
+
+With no wires between cards, strong repulsion pushed unlinked cards to corners (specks). Fixed:
+- Softened charge repulsion (`-350`), added gentle center pull (`forceX/forceY`), collision radius sized to card footprint (`forceCollide(85)`).
+- Auto-fit zoom clamped `[0.9, 1.4]` — never zooms below 0.9, so cards stay readable even when sparse.
+
+### Load-bearing technical gotchas (2026-07-05)
+
+1. **d3-zoom pans on `mousedown`, not `pointerdown`** — a custom card-drag gesture must cancel the compatibility mouse event (`preventDefault` on pointerdown + swallow mousedown at capture), else the library pans through the wire gesture.
+2. **d3-force-3d ships untyped** — minimal `.d.ts` added at `dashboard/src/types/d3-force-3d.d.ts` (any-typed node callbacks to stay compatible with BrainCanvas3D/BrainPage).
 
 ### Frontend hooks
 

@@ -2,8 +2,8 @@
 id: feat_Sx4EmLgP
 status: in_progress
 created: '2026-07-04'
-updated: '2026-07-04'
-released_version: null
+updated: '2026-07-05'
+released_version: '0.11.0'
 tags:
   - 'topic:github'
   - 'topic:cli'
@@ -47,13 +47,13 @@ existing local dashboard. The two could coexist later but ship independently.
   manual step. *(M1 shipped: autoSync integration)*
 - [x] As a user, I can run a manual sync skill (`/dream-sync`-style) at any time to
   pull/push the brain repo outside of a sleep cycle. *(M1 shipped: `/dream-sync` skill + `brain sync` CLI)*
-- [ ] As a user, I can log into GitHub from the desktop Launcher (OAuth device flow,
+- [x] As a user, I can log into GitHub from the desktop Launcher (OAuth device flow,
   or a PAT as fallback) and see which of my accessible repos are brain repos (via a
-  topic/marker), so connecting a project doesn't require hand-typing a repo URL. *(M2 pending)*
-- [ ] As a user, on a new machine, the Launcher guides me to clone or locate the
+  topic/marker), so connecting a project doesn't require hand-typing a repo URL. *(M2 shipped: device-flow login + discover endpoint; manual validation pending)*
+- [x] As a user, on a new machine, the Launcher guides me to clone or locate the
   brain repo for a project (the brain repo stores a pointer back to its code repo),
   so setting up a second machine doesn't mean re-deriving which repo goes with
-  which. *(M2 pending)*
+  which. *(M2 shipped: attach flow + create from UI; manual validation pending)*
 - [x] As a user, every machine builds its OWN local index/cache over the shared
   brain (recall index, embeddings, etc.) that is NEVER pushed, so per-machine
   derived state never pollutes the shared repo or causes merge noise. *(M1 shipped: `.brain-local.json` gitignored)*
@@ -124,7 +124,9 @@ existing local dashboard. The two could coexist later but ship independently.
 
 ## Technical Details
 
-**M1 SHIPPED (commit d351cc8, 2026-07-04).** CLI core is live: brain init/sync/enable/disable, GIT_ASKPASS credential supply, scrub gate, semantic merge, pull-only content delivery, `/dream-sync` skill, sleep-done autoSync integration, session-start background pull, master switch (GitHub-connected default-on). Authoritative merge semantics live in **`skill-sync/references/merge-rules.md`** (shipped reference) — the full state machine, tracked-vs-local table, deterministic merge rules, credential supply, scrub gate, pull-only handoff loop. M2/M3 pending.
+**M1 SHIPPED (commit d351cc8, 2026-07-04).** CLI core is live: brain init/sync/enable/disable, GIT_ASKPASS credential supply, scrub gate, semantic merge, pull-only content delivery, `/dream-sync` skill, sleep-done autoSync integration, session-start background pull, master switch (GitHub-connected default-on). Authoritative merge semantics live in **`skill-sync/references/merge-rules.md`** (shipped reference) — the full state machine, tracked-vs-local table, deterministic merge rules, credential supply, scrub gate, pull-only handoff loop.
+
+**M2 SHIPPED (commit 7498307, 2026-07-05).** Launcher/Dashboard/Desktop integration: device-flow OAuth login (POST device-poll with `sessionId` UUID, `slow_down` honored, token lands in `~/.dreamcontext/.secrets.json` 0600), discover endpoint (lists `dreamcontext-brain` topic repos), create-from-UI (one-click private repo + scrubbed first push), attach flow (S6 trust warning + diff preview + confirmed refusal), team-updates badge (cache-only endpoint + background fetch), Settings Cloud sync toggle (master switch M2 tier). 36 M2-only files (+3403/-48). **Manual UI walkthrough pending** (automated validation PASS: 57/57 backend tests green, dashboard builds clean, 77 i18n keys). Remaining before M2 fully complete: human walkthrough in packaged app + OQ-1 (register GitHub OAuth App `client_id` — PAT fallback works now). M3 pending.
 
 **Validated design (plan v3.2, 2026-07-04) — 3 reviewers SOLID over 5 iterations, 21 findings resolved.** The task (`github-cloud-collaboration-brain-repo-sync`) is the authoritative implementation spec with 30 acceptance criteria across M1/M2/M3 milestones. This PRD carries product intent + validated architecture summary.
 
@@ -144,7 +146,7 @@ existing local dashboard. The two could coexist later but ship independently.
 
 **Private-by-default + attach trust gate:** Brain repos default PRIVATE (S5 — public requires `--public` flag/toggle + loud interactive confirm). `brain attach` / dashboard attach is a TRUST decision (S6 — a brain repo is a prompt-injection channel); prints loud trust warning + incoming diff preview and refuses without confirmation.
 
-**M1/M2/M3 milestones:** M1 (CLI core, no launcher required) = brain init, git wrapper + GIT_ASKPASS credentials, resolveBrainSyncToken tiering, brain sync CLI, scrub gate BLOCKS on both commit paths, commit author tiering (git identity or `dreamcontext-sync <noreply@dreamcontext.local>` fallback), semantic merge (task changelog set-union + furthest status wins; knowledge conflict discard remote-wins + awaiting-agent), conflict-report lifecycle, pull-only content delivery + dirty-tree auto-checkpoint + headless effective-strict scrub, dream-sync skill loop (defer/resume/resolve/continue), reentrancy guard, brain lock, sleep done autoSync integration (sync failure never fails sleep), in-tree mode (commit-only, still scrubbed), session-start background pull (non-blocking PATH-safe detached spawn). M2 (Launcher/Dashboard/Desktop) = device-flow login, scope disclosure + fine-grained PAT recommendation, discover `dreamcontext-brain` topic repos, create from UI (one-click private + scrubbed first push), attach (trust warning + diff preview + refuses w/o confirm), team-updates badge (cache-only endpoint + background fetch). M3 (Polish) = `taskBackend=github` task md gitignored + issues source of truth + doctor check, post-pull task-mirror refresh via `getTaskBackend sync`, GitHub login maps to person slug commit author, brain detach (private, scrubbed, showcase-safe `--keep-tracked` default).
+**M1/M2/M3 milestones:** M1 (CLI core, no launcher required) SHIPPED = brain init, git wrapper + GIT_ASKPASS credentials, resolveBrainSyncToken tiering, brain sync CLI, scrub gate BLOCKS on both commit paths, commit author tiering (git identity or `dreamcontext-sync <noreply@dreamcontext.local>` fallback), semantic merge (task changelog set-union + furthest status wins; knowledge conflict discard remote-wins + awaiting-agent), conflict-report lifecycle, pull-only content delivery + dirty-tree auto-checkpoint + headless effective-strict scrub, dream-sync skill loop (defer/resume/resolve/continue), reentrancy guard, brain lock, sleep done autoSync integration (sync failure never fails sleep), in-tree mode (commit-only, still scrubbed), session-start background pull (non-blocking PATH-safe detached spawn). M2 (Launcher/Dashboard/Desktop) SHIPPED = device-flow login (POST device-poll, `sessionId` UUID, token to global `~/.dreamcontext/.secrets.json` 0600), scope disclosure + fine-grained PAT recommendation, discover `dreamcontext-brain` topic repos, create from UI (one-click private + scrubbed first push, defense-in-depth confirmed gate), attach (S6 trust warning + read-only `previewAttach` diff + confirmed refusal, server-enforced), team-updates badge (cache-only endpoint + background fetch skips disabled vaults), Settings Cloud sync toggle (master switch M2 tier, spreads `brainRepo` config). 15 server routes (brain-auth.ts + brain.ts calling M1 in-process fns directly, NOT shell-to-CLI), 3 lib modules (oauth.ts device flow with injectable fetch + no `client_secret`, auth-store.ts global token tier, team-fetch.ts), 4 dashboard components (GitHubLogin/BrainRepoSetup/TeamUpdatesBadge/SettingsPage wiring), shared `src/server/desktop.ts` `isDesktop()`. M3 (Polish) PENDING = `taskBackend=github` task md gitignored + issues source of truth + doctor check, post-pull task-mirror refresh via `getTaskBackend sync`, GitHub login maps to person slug commit author, brain detach (private, scrubbed, showcase-safe `--keep-tracked` default).
 
 **Phase 3 semantic merge agent is wanted from D0** (user-explicit) — not deferred to a "later phase". Phase boundaries (1 read-only → 2 one-way push + scrub + stop-on-conflict → 3 full semantic-merge sync + issue-sync onboarding) are M1 validation gates, not deferral of the merge-agent design work. The agent is being designed for from the start.
 
@@ -170,6 +172,9 @@ existing local dashboard. The two could coexist later but ship independently.
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-07-05 - M2 shipped (commit 7498307), manual validation pending
+- **M2 Launcher/Dashboard/Desktop SHIPPED.** Device-flow OAuth (sessionId UUID, slow_down, global ~/.dreamcontext/.secrets.json 0600 token tier, injectable fetch), discover endpoint (dreamcontext-brain topic filter), create-from-UI (private default + S5 defense-in-depth confirmed gate at library level), attach flow (S6 trust gate server-enforced + read-only previewAttach diff), team-updates badge (cache-only endpoint, background fetch skips disabled), Settings toggle (Cloud sync master switch M2 tier, spreads brainRepo config). 15 server routes (brain-auth.ts + brain.ts call M1 fns in-process, NOT shell-to-CLI per validated M2 architecture), 3 lib modules (oauth.ts/auth-store.ts/team-fetch.ts), 4 dashboard components, shared src/server/desktop.ts isDesktop(). 36 M2-only files (+3403/-48). Automated validation PASS (57/57 backend tests green, dashboard builds clean, 77 i18n keys). **REMAINING:** manual UI walkthrough in packaged Tauri app (human step) + OQ-1 (register GitHub device-flow OAuth App, embed public client_id; PAT-paste fallback is code-complete + unit-tested and works without OQ-1). M3 still out of scope.
 
 ### 2026-07-04 - M1 shipped (commit d351cc8)
 - **M1 CLI core SHIPPED.** Brain-repo sync CLI (`dreamcontext brain init|sync|enable|disable|status`), GIT_ASKPASS credential supply (0600 tmp token file, never in URL/env/argv), scrub gate (BLOCK on secrets, WARN on paths, effective-strict in headless), semantic merge (task changelog set-union, knowledge conflict discard-then-defer to agent), pull-only content delivery (merge into working tree, headless auto-checkpoint), `/dream-sync` skill loop (defer → resume → resolve → continue), sleep-done autoSync integration (sync failure never fails sleep), session-start background pull (non-blocking PATH-safe), master switch (GitHub-connected default-on, `brainRepo.enabled` explicit/derived). 41 files, 4924 additions. Merge semantics documented in **`skill-sync/references/merge-rules.md`** (shipped reference). M2/M3 pending. Status `planning` → `in_progress`.

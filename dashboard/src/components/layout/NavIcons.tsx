@@ -153,6 +153,17 @@ function SettingsIcon() {
   );
 }
 
+/** Lab — a flask: analytics insights are measured, curated metrics. */
+function LabIcon() {
+  return (
+    <Svg>
+      <path d="M9.5 3.5h5" />
+      <path d="M10 4v5.2l-4.6 8a2 2 0 0 0 1.7 3h9.8a2 2 0 0 0 1.7-3l-4.6-8V4" />
+      <line x1="7.2" y1="14.5" x2="16.8" y2="14.5" />
+    </Svg>
+  );
+}
+
 /** About — "What is this?": a question mark in a circle. */
 function AboutIcon() {
   return (
@@ -168,6 +179,7 @@ function AboutIcon() {
 const ICONS: Partial<Record<Page, () => React.ReactElement>> = {
   tasks: TasksIcon,
   roadmap: RoadmapIcon,
+  lab: LabIcon,
   council: CouncilIcon,
   core: CoreIcon,
   knowledge: KnowledgeIcon,

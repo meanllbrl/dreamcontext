@@ -7,6 +7,7 @@ import { updateSetupConfig, readBrainLocal } from '../../src/lib/setup-config.js
 import { readConflictReport } from '../../src/lib/git-sync/conflict-report.js';
 import { bootstrapBrainRepo } from '../../src/lib/git-sync/brain-repo.js';
 import { runBrainSync } from '../../src/lib/git-sync/sync-engine.js';
+import { detachBrain } from '../../src/lib/git-sync/detach.js';
 
 /**
  * Scripted, no-network E2E for the brain-repo sync engine
@@ -289,5 +290,119 @@ describe('e2e: brain-sync (local bare repo as remote, no network)', () => {
     const retryResult = await runBrainSync({ cwd: contextRootB, mode: 'auto' });
     expect(retryResult.action).toBe('blocked-scrub');
     expect(existsSync(join(contextRootB, '.git', 'MERGE_HEAD'))).toBe(false);
+  });
+});
+
+/**
+ * e2e: `brain detach`'s "fresh single commit by default" contract (M3 review
+ * fix 2). Real git throughout — no fakes. `scrubStagedFiles` only ever scans
+ * `git diff --cached` (index vs HEAD); the bug this closes was that an
+ * already-separate brain being re-targeted at a DIFFERENT remote with NO
+ * `--preserve-history` skipped re-init entirely, so a pre-existing secret
+ * sitting UNCHANGED in HEAD's tree never showed up as "staged" and shipped —
+ * to the new remote — completely unscanned. Real git proves both halves:
+ * the squash actually happens, and the full tree (not just this run's diff)
+ * gets scrub-scanned.
+ */
+describe('e2e: brain detach — fresh single-commit squash + full-tree scrub (M3 review fix 2)', () => {
+  const ORIGINAL_GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+  let dirs: string[];
+
+  beforeAll(() => {
+    process.env.GITHUB_TOKEN = 'e2e-dummy-token'; // local-path remotes never actually use it
+    dirs = [];
+  });
+  afterAll(() => {
+    if (ORIGINAL_GITHUB_TOKEN === undefined) delete process.env.GITHUB_TOKEN;
+    else process.env.GITHUB_TOKEN = ORIGINAL_GITHUB_TOKEN;
+    for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+  });
+
+  function makeBrainRepo(): { projectRoot: string; contextRoot: string } {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'dc-e2e-detach-'));
+    const contextRoot = join(projectRoot, '_dream_context');
+    mkdirSync(contextRoot, { recursive: true });
+    dirs.push(projectRoot);
+    return { projectRoot, contextRoot };
+  }
+
+  function makeBareRemote(): string {
+    const bareDir = mkdtempSync(join(tmpdir(), 'dc-e2e-detach-bare-'));
+    execFileSync('git', ['init', '--bare', bareDir]);
+    dirs.push(bareDir);
+    return bareDir;
+  }
+
+  it('re-detaching an ALREADY-separate brain to a DIFFERENT remote (no --preserve-history) squashes to a single fresh commit', async () => {
+    const { projectRoot, contextRoot } = makeBrainRepo();
+    git(contextRoot, ['init']);
+    setLocalIdentity(contextRoot);
+
+    mkdirSync(join(contextRoot, 'knowledge'), { recursive: true });
+    writeFileSync(join(contextRoot, 'knowledge', 'a.md'), 'first\n');
+    git(contextRoot, ['add', '-A']);
+    git(contextRoot, ['commit', '-m', 'first commit']);
+    writeFileSync(join(contextRoot, 'knowledge', 'b.md'), 'second\n');
+    git(contextRoot, ['add', '-A']);
+    git(contextRoot, ['commit', '-m', 'second commit']);
+    expect(git(contextRoot, ['log', '--oneline']).trim().split('\n')).toHaveLength(2);
+
+    const oldRemote = makeBareRemote();
+    git(contextRoot, ['remote', 'add', 'origin', oldRemote]);
+    const newRemote = makeBareRemote();
+
+    const result = await detachBrain({ contextRoot, projectRoot, remote: newRemote, keepTracked: true });
+
+    expect(result.action).toBe('detached');
+    expect(git(contextRoot, ['log', '--oneline']).trim().split('\n')).toHaveLength(1);
+    expect(bareHead(newRemote)).not.toBeNull();
+    expect(git(newRemote, ['log', '--oneline']).trim().split('\n')).toHaveLength(1);
+  });
+
+  it('a secret sitting UNCHANGED in the pre-existing committed tree is caught by the full-tree scrub and BLOCKS the detach', async () => {
+    const { projectRoot, contextRoot } = makeBrainRepo();
+    git(contextRoot, ['init']);
+    setLocalIdentity(contextRoot);
+
+    mkdirSync(join(contextRoot, 'knowledge'), { recursive: true });
+    writeFileSync(join(contextRoot, 'knowledge', 'a.md'), 'clean\n');
+    git(contextRoot, ['add', '-A']);
+    git(contextRoot, ['commit', '-m', 'clean commit']);
+    // The secret lands in an OLD commit and is NEVER removed — it's still
+    // sitting in HEAD's current tree, unchanged, when detach runs.
+    writeFileSync(join(contextRoot, 'knowledge', 'leak.md'), `oops ghp_${'a'.repeat(36)}\n`);
+    git(contextRoot, ['add', '-A']);
+    git(contextRoot, ['commit', '-m', 'oops, committed a token']);
+
+    const oldRemote = makeBareRemote();
+    git(contextRoot, ['remote', 'add', 'origin', oldRemote]);
+    const newRemote = makeBareRemote();
+
+    const result = await detachBrain({ contextRoot, projectRoot, remote: newRemote, keepTracked: true });
+
+    expect(result.action).toBe('blocked-scrub');
+    expect(result.scrub.blocks.some((b) => b.file === 'knowledge/leak.md')).toBe(true);
+    expect(bareHead(newRemote)).toBeNull(); // nothing reached the new remote
+  });
+
+  it('re-detaching to the SAME remote it is already on is idempotent — no destructive re-init, no needless re-push', async () => {
+    const { projectRoot, contextRoot } = makeBrainRepo();
+    git(contextRoot, ['init']);
+    setLocalIdentity(contextRoot);
+    mkdirSync(join(contextRoot, 'knowledge'), { recursive: true });
+    writeFileSync(join(contextRoot, 'knowledge', 'a.md'), 'clean\n');
+    git(contextRoot, ['add', '-A']);
+    git(contextRoot, ['commit', '-m', 'first commit']);
+
+    const remote = makeBareRemote();
+    const first = await detachBrain({ contextRoot, projectRoot, remote, keepTracked: true });
+    expect(first.action).toBe('detached');
+    expect(git(contextRoot, ['log', '--oneline']).trim().split('\n')).toHaveLength(1);
+    const shaAfterFirst = git(contextRoot, ['rev-parse', 'HEAD']).trim();
+
+    const second = await detachBrain({ contextRoot, projectRoot, remote, keepTracked: true });
+    expect(second.action).toBe('already-detached');
+    // Same remote, nothing changed — the commit is untouched (no destructive re-init happened).
+    expect(git(contextRoot, ['rev-parse', 'HEAD']).trim()).toBe(shaAfterFirst);
   });
 });

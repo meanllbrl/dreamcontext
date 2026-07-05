@@ -12,10 +12,13 @@ import {
   createBrainRepo,
   discoverBrainRepos,
   attachBrainRepo,
+  BRAIN_MARKER_TOPIC,
 } from '../../lib/git-sync/brain-repo.js';
+import { detachBrain, type DetachResult } from '../../lib/git-sync/detach.js';
 import { scrubStagedFiles, summarizeScrub } from '../../lib/git-sync/scrub.js';
 import * as git from '../../lib/git-sync/git.js';
 import { GitSyncError } from '../../lib/git-sync/git.js';
+import { ApiAdapter } from '../../lib/task-backend/api-adapter.js';
 
 /** `dreamcontext brain …` — see `skill-sync/references/merge-rules.md` for the full contract. */
 export function registerBrainCommand(program: Command): void {
@@ -228,6 +231,136 @@ export function registerBrainCommand(program: Command): void {
         process.exitCode = 1;
       }
     });
+
+  brain
+    .command('detach')
+    .description('Detach the brain into its own PRIVATE separate repo (scrubbed first push) — showcase-safe by default (C4/C5)')
+    .option('--owner <owner>', 'GitHub owner for a NEW brain repo (mutually exclusive with --remote)')
+    .option('--name <name>', 'Repository name for a NEW brain repo')
+    .option('--remote <url>', 'Attach to an EXISTING (empty) brain repo instead of creating one')
+    .option('--public', 'Create the NEW repo PUBLIC (default: private). Requires interactive confirmation.')
+    .option('--code-repo <url>', 'URL of the paired code repo (stored in the brain marker)')
+    .option('--preserve-history', 'Carry over full git history instead of a fresh single commit (separate-mode source only)')
+    .option('--keep-tracked', 'Never touch the code repo .gitignore (showcase default)')
+    .option('--gitignore-in-tree', 'Add _dream_context/ to the code repo .gitignore after detaching (ordinary-project default)')
+    .action(async (opts: {
+      owner?: string; name?: string; remote?: string; public?: boolean; codeRepo?: string;
+      preserveHistory?: boolean; keepTracked?: boolean; gitignoreInTree?: boolean;
+    }) => {
+      if (opts.keepTracked && opts.gitignoreInTree) {
+        error('--keep-tracked and --gitignore-in-tree are mutually exclusive.');
+        process.exitCode = 1;
+        return;
+      }
+      if ((opts.owner || opts.name) && opts.remote) {
+        error('Provide either --owner/--name (create a new repo) or --remote <url> (use an existing one), not both.');
+        process.exitCode = 1;
+        return;
+      }
+      if ((opts.owner && !opts.name) || (!opts.owner && opts.name)) {
+        error('--owner and --name must be given together.');
+        process.exitCode = 1;
+        return;
+      }
+      if (!opts.owner && !opts.remote) {
+        error('Provide either --owner/--name (create a new repo) or --remote <url> (use an existing one).');
+        process.exitCode = 1;
+        return;
+      }
+
+      const contextRoot = ensureContextRoot();
+      const projectRoot = dirname(contextRoot);
+
+      let remote = opts.remote;
+      try {
+        if (opts.owner && opts.name) {
+          let makePublic = false;
+          if (opts.public) {
+            warn('You are about to create a PUBLIC brain repo. It aggregates project knowledge, local paths, and team activity — anyone can read it.');
+            makePublic = await confirm({ message: 'Really make this brain repo PUBLIC?', default: false });
+            if (!makePublic) info('Creating a PRIVATE repo instead (use --public + confirm to override).');
+          }
+          remote = await createDetachRemote({ projectRoot, owner: opts.owner, name: opts.name, private: !makePublic, confirmed: makePublic });
+        }
+
+        const result = await detachBrain({
+          contextRoot,
+          projectRoot,
+          remote: remote as string,
+          codeRepoUrl: opts.codeRepo,
+          taskBackend: readSetupConfig(projectRoot)?.taskBackend,
+          preserveHistory: opts.preserveHistory,
+          keepTracked: opts.keepTracked,
+          gitignoreInTree: opts.gitignoreInTree,
+        });
+        renderDetachResult(result);
+
+        if (result.action === 'detached' || result.action === 'already-detached') {
+          updateSetupConfig(projectRoot, {
+            brainRepo: { mode: 'separate', remote: result.remote, codeRepoUrl: opts.codeRepo, autoSync: true },
+          });
+        } else {
+          process.exitCode = 1;
+        }
+      } catch (err) {
+        if (err instanceof GitSyncError) {
+          error(err.message);
+        } else {
+          error(`Brain detach failed: ${(err as Error).message}`);
+        }
+        process.exitCode = 1;
+      }
+    });
+}
+
+/**
+ * Create a NEW GitHub repo + set the discovery topic — the thin network-facing
+ * half of `brain detach`'s "create a new remote" path. Deliberately duplicated
+ * from `createBrainRepo` (rather than importing a shared helper) to avoid
+ * touching `brain-repo.ts`'s existing M1/M2-reviewed surface.
+ */
+export async function createDetachRemote(opts: {
+  projectRoot: string; owner: string; name: string; private: boolean; confirmed: boolean; adapter?: ApiAdapter;
+}): Promise<string> {
+  if (!opts.private && !opts.confirmed) {
+    throw new GitSyncError('Refusing to create a PUBLIC brain repo without explicit confirmation (S5).');
+  }
+  const adapter = opts.adapter ?? new ApiAdapter({
+    baseUrl: 'https://api.github.com',
+    authHeaders: () => {
+      const t = resolveBrainSyncToken(opts.projectRoot);
+      if (!t) throw new GitSyncError('No GitHub token found (per-project secrets or GITHUB_TOKEN/GH_TOKEN env).');
+      return { Authorization: `token ${t.token}` };
+    },
+  });
+  const created = await adapter.request<{ full_name: string }>('POST', '/user/repos', { body: { name: opts.name, private: opts.private } });
+  await adapter.request('PUT', `/repos/${created.full_name}/topics`, { body: { names: [BRAIN_MARKER_TOPIC] } });
+  return `https://github.com/${created.full_name}.git`;
+}
+
+/** Shared renderer for `brain detach` results. */
+export function renderDetachResult(result: DetachResult): void {
+  switch (result.action) {
+    case 'detached':
+      success(`Brain detached: ${result.remote}`);
+      if (result.showcase) warn('Showcase pattern detected — the code repo\'s .gitignore was left untouched (--keep-tracked).');
+      if (result.gitignoreAdded.length > 0) info(`Code repo .gitignore updated: ${result.gitignoreAdded.join(', ')}`);
+      break;
+    case 'already-detached':
+      info(`Brain already detached: ${result.remote} (no changes).`);
+      break;
+    case 'blocked-scrub':
+      error('Brain detach BLOCKED: staged content contains something that looks like a secret.');
+      for (const b of result.scrub.blocks) warn(`  ${b.excerpt}`);
+      break;
+    case 'refused-preserve-history':
+      error(result.note ?? 'Brain detach refused: --preserve-history could not be honored.');
+      for (const b of result.scrub.blocks) warn(`  ${b.excerpt}`);
+      for (const w of result.scrub.warns) warn(`  ${w.excerpt}`);
+      break;
+    default:
+      info(`Brain detach: ${result.action}.`);
+  }
 }
 
 /** Shared renderer — also used by `sleep done`'s brain-sync integration. */

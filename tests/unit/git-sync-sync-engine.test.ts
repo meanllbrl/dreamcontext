@@ -493,4 +493,31 @@ describe('git-sync/sync-engine — runBrainSync', () => {
     const result = await runBrainSync({ cwd: contextRoot, mode: 'auto' }, deps);
     expect(result.needsTaskSync).toBe(true);
   });
+
+  // ── C2 (M3): post-pull task-mirror refresh signal ──────────────────────
+  // The BACKGROUND path (session-start's detached `brain sync --pull-only`)
+  // cannot auto-run the task backend sync itself (best-effort, non-blocking,
+  // stdio:'ignore') — it persists the signal to `.brain-local.json` so the
+  // NEXT session-start's hook can surface the "refresh your task mirrors"
+  // instruction instead. The FOREGROUND path (`sleep done`) reads
+  // `result.needsTaskSync` directly off the `SyncResult` and auto-runs
+  // `getTaskBackend(root).sync('both')` (src/cli/commands/sleep.ts) — already
+  // covered by the C7 assertion above returning `needsTaskSync` on the result.
+  it('C2: pull-only persists needsTaskSync to brain-local when the merge touches task-referencing files under taskBackend=github', async () => {
+    updateSetupConfig(projectRoot, { taskBackend: 'github', brainRepo: { mode: 'separate', enabled: true, autoSync: true } });
+    const state = makeState({ aheadCount: 1, mergeConflicts: ['state/foo.md'] });
+    const deps = baseDeps(state, { resolved: ['state/foo.md'], deferredToAgent: [] });
+    const result = await runBrainSync({ cwd: contextRoot, mode: 'pull-only' }, deps);
+    expect(result.needsTaskSync).toBe(true);
+    expect(readBrainLocal(projectRoot).needsTaskSync).toBe(true);
+  });
+
+  it('C2: pull-only persists needsTaskSync:false when the merge touches no task-referencing files (nothing to surface)', async () => {
+    updateSetupConfig(projectRoot, { taskBackend: 'github', brainRepo: { mode: 'separate', enabled: true, autoSync: true } });
+    const state = makeState({ aheadCount: 1, mergeConflicts: ['knowledge/x.md'] });
+    const deps = baseDeps(state, { resolved: ['knowledge/x.md'], deferredToAgent: [] });
+    const result = await runBrainSync({ cwd: contextRoot, mode: 'pull-only' }, deps);
+    expect(result.needsTaskSync).toBeFalsy();
+    expect(readBrainLocal(projectRoot).needsTaskSync).toBe(false);
+  });
 });

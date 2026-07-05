@@ -1,74 +1,22 @@
 /**
- * Agent composer bar — model / thinking-effort selection, the built-in skill triggers,
- * and the small persisted preference blob behind the strip at the bottom of the Agent
- * overlay ({@link AgentComposerBar}).
+ * Support for the thin strip at the bottom of the Agent overlay ({@link AgentComposerBar}):
+ * our signature skill triggers, path quoting, and the model/effort config the strip reads
+ * from the Claude CLI (never a hardcoded list).
  *
- * ── Provider abstraction (Codex-ready) ───────────────────────────────────────────
- * Today the only agent backend is Claude Code, but the whole model/effort layer is
- * keyed on a `provider` so adding Codex later is a data change, not a refactor. A model
- * carries the exact `--model` token to pass at spawn; an effort carries BOTH a Claude
- * thinking keyword (realized by prefixing the prompt) AND a generic reasoning level a
- * future Codex path can map to its own `-c model_reasoning_effort` flag. The UI groups
- * options by provider and greys out any provider that isn't wired yet.
+ * ── Model + effort are sourced from the CLI, per agent ────────────────────────────
+ * `GET /api/agent/model-config` returns the models the CLI actually offers (its cached
+ * option list + aliases), the effort levels from `claude --help`, and the user's own
+ * defaults from `~/.claude/settings.json`. A session's CURRENT model comes from its
+ * transcript (`GET /api/agent/session-model`). Switching either fires the live `/model`
+ * or `/effort` slash command into that agent. Provider-neutral so a Codex backend can
+ * later populate the same shapes.
  */
 
-/** Which agent backend a session runs. Only 'claude' is wired today. */
-export type AgentProvider = 'claude' | 'codex';
-
-export interface ModelOption {
-  provider: AgentProvider;
-  /** The token passed to the backend's model flag (`claude --model <id>`). Empty = let
-   *  the backend use its own configured default (no flag added). */
-  id: string;
-  label: string;
-  /** Short tag shown after the label (e.g. "fast", "soon"). */
-  tag?: string;
-  /** False → shown but disabled (backend not wired yet, e.g. every Codex model today). */
-  available: boolean;
-}
-
-/**
- * The model menu. Claude aliases (`opus`/`sonnet`/`haiku`) always resolve to the current
- * generation, so we don't pin dated ids here. Codex rows are placeholders — visible so
- * the product direction is clear, disabled until the backend lands.
- */
-export const MODEL_OPTIONS: ModelOption[] = [
-  { provider: 'claude', id: '',       label: 'Default',    tag: 'auto', available: true },
-  { provider: 'claude', id: 'opus',   label: 'Opus 4.8',   available: true },
-  { provider: 'claude', id: 'sonnet', label: 'Sonnet 5',   available: true },
-  { provider: 'claude', id: 'haiku',  label: 'Haiku 4.5',  tag: 'fast', available: true },
-  { provider: 'codex',  id: 'gpt-5-codex', label: 'GPT-5 Codex', tag: 'soon', available: false },
-  { provider: 'codex',  id: 'codex-mini',  label: 'Codex mini',  tag: 'soon', available: false },
-];
-
-export type ThinkingEffortId = 'off' | 'think' | 'think-hard' | 'ultra';
-
-export interface ThinkingEffort {
-  id: ThinkingEffortId;
-  label: string;
-  /** Claude realizes reasoning depth from prompt keywords — prefixed to the sent prompt.
-   *  Empty = no keyword (the model's default effort). */
-  claudeKeyword: string;
-  /** Generic level a future Codex path maps to `model_reasoning_effort`. */
-  codexReasoning: 'minimal' | 'low' | 'medium' | 'high';
-}
-
-export const THINKING_EFFORTS: ThinkingEffort[] = [
-  { id: 'off',        label: 'Effort: off', claudeKeyword: '',            codexReasoning: 'minimal' },
-  { id: 'think',      label: 'Think',       claudeKeyword: 'Think.',      codexReasoning: 'low' },
-  { id: 'think-hard', label: 'Think hard',  claudeKeyword: 'Think hard.', codexReasoning: 'medium' },
-  { id: 'ultra',      label: 'Ultrathink',  claudeKeyword: 'Ultrathink.', codexReasoning: 'high' },
-];
-
-// ── Built-in skill triggers (our three signature capabilities) ─────────────────────
-// Clicking one appends its trigger to the composer text field (never fires it directly)
-// — the user reviews/edits, then sends. A skill is a slash command Claude Code runs; the
-// "Goal" capability offers TWO side-by-side inserts (a plain goal statement, and the
-// orchestrated `/goal-skill`) per the product spec.
+// ── Built-in skill triggers (our signature capabilities) ───────────────────────────
+// Clicking one types its trigger into the terminal's OWN input line; the user finishes it.
+// The "Goal" capability offers two side-by-side inserts per the product spec.
 
 export interface SkillTrigger {
-  /** Text appended to the composer. Slash commands run the skill; a bare scaffold ("Goal:")
-   *  just seeds a prompt the user finishes typing. */
   insert: string;
   label: string;
   hint: string;
@@ -91,14 +39,6 @@ export const SKILL_GROUPS: SkillGroup[] = [
     }],
   },
   {
-    id: 'goal',
-    label: 'Goal',
-    triggers: [
-      { insert: 'Goal: ', label: 'goal', hint: 'Seed a plain goal statement for the agent to pursue.' },
-      { insert: '/goal-skill ', label: 'goal-skill', hint: 'Drive the goal end-to-end: plan → review → implement → validate.' },
-    ],
-  },
-  {
     id: 'excalidraw',
     label: 'Excalidraw',
     triggers: [{
@@ -118,62 +58,69 @@ export const SKILL_GROUPS: SkillGroup[] = [
   },
 ];
 
-// ── Persisted preferences (model + effort) ─────────────────────────────────────────
-// Kept in localStorage only: the desktop app gets a fresh loopback origin each launch, so
-// these reset to sane defaults per launch (a model picker doesn't need cross-launch
-// durability the way the roster does). Versioned key so a shape change invalidates clean.
+// ── Model / effort config (fetched from the CLI via the server) ─────────────────────
 
-export interface ComposerPrefs {
-  provider: AgentProvider;
-  modelId: string;
-  effort: ThinkingEffortId;
+export interface ModelOption { id: string; label: string; }
+
+export interface ModelConfig {
+  /** Models the CLI offers (aliases + its own cached extras). */
+  models: ModelOption[];
+  /** Effort levels from `claude --help` (e.g. low, medium, high, xhigh, max). */
+  efforts: string[];
+  /** The user's default model alias + effort level from `~/.claude/settings.json`. */
+  defaultModel: string;
+  defaultEffort: string;
 }
 
-const PREFS_KEY = 'agent:composer:v1';
-
-export const DEFAULT_COMPOSER_PREFS: ComposerPrefs = {
-  provider: 'claude',
-  modelId: '',
-  effort: 'off',
+/** Used only until the real config arrives (or if the CLI can't be read) — deliberately
+ *  minimal, and carries NO synthetic "default" model entry. */
+export const FALLBACK_MODEL_CONFIG: ModelConfig = {
+  models: [
+    { id: 'opus', label: 'Opus' },
+    { id: 'sonnet', label: 'Sonnet' },
+    { id: 'haiku', label: 'Haiku' },
+    { id: 'fable', label: 'Fable' },
+  ],
+  efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+  defaultModel: 'opus',
+  defaultEffort: 'high',
 };
 
-/** Resolve a stored blob to a valid prefs object, dropping anything that no longer maps
- *  to an available option (e.g. a removed model id → back to Default). */
-export function coerceComposerPrefs(raw: Partial<ComposerPrefs> | null | undefined): ComposerPrefs {
-  const r = raw ?? {};
-  const model = MODEL_OPTIONS.find((m) => m.id === r.modelId && m.available);
-  const effort = THINKING_EFFORTS.find((e) => e.id === r.effort);
-  return {
-    provider: model?.provider ?? DEFAULT_COMPOSER_PREFS.provider,
-    modelId: model?.id ?? DEFAULT_COMPOSER_PREFS.modelId,
-    effort: effort?.id ?? DEFAULT_COMPOSER_PREFS.effort,
-  };
+/** Title-case an effort level for display ("high" → "High"). */
+export function effortLabel(level: string): string {
+  return level ? level.charAt(0).toUpperCase() + level.slice(1) : level;
 }
 
-export function readComposerPrefs(): ComposerPrefs {
-  try {
-    const raw = localStorage.getItem(PREFS_KEY);
-    if (raw) return coerceComposerPrefs(JSON.parse(raw) as Partial<ComposerPrefs>);
-  } catch { /* fall through to defaults */ }
-  return { ...DEFAULT_COMPOSER_PREFS };
+// ── Per-session context-window + cost readout ───────────────────────────────────────
+
+/** The focused agent's live token footprint + API-rate cost estimate (from its transcript,
+ *  `GET /api/agent/session-stats`). All null until the first turn writes usage. */
+export interface SessionStats {
+  /** How full the context window currently is (last turn's total token footprint). */
+  contextTokens: number | null;
+  /** The model's context window (200K, or 1M for `[1m]` variants). */
+  contextLimit: number | null;
+  /** Cumulative spend priced at public API rates — a what-if for flat-rate plans. */
+  costUsd: number | null;
 }
 
-export function writeComposerPrefs(prefs: ComposerPrefs): void {
-  try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch { /* best-effort */ }
+/** Compact token count: 850 · 48.2k · 1.2M. */
+export function fmtTokens(n: number): string {
+  if (n < 1000) return String(Math.round(n));
+  if (n < 1_000_000) { const k = n / 1000; return `${k < 10 ? k.toFixed(1) : Math.round(k)}k`; }
+  return `${(n / 1_000_000).toFixed(1)}M`;
 }
 
-/** The effort's Claude thinking keyword, or '' when off / unknown. */
-export function effortKeyword(id: ThinkingEffortId): string {
-  return THINKING_EFFORTS.find((e) => e.id === id)?.claudeKeyword ?? '';
-}
-
-/** Look up a model option by id (falls back to Default). */
-export function modelById(id: string): ModelOption {
-  return MODEL_OPTIONS.find((m) => m.id === id) ?? MODEL_OPTIONS[0];
+/** Cost in USD, kept readable at small magnitudes: <$1 shows cents-precision, else 2dp. */
+export function fmtCost(usd: number): string {
+  if (usd <= 0) return '$0.00';
+  if (usd < 0.01) return '<$0.01';
+  if (usd < 100) return `$${usd.toFixed(2)}`;
+  return `$${Math.round(usd)}`;
 }
 
 /**
- * POSIX-safe rendering of a file path for injection into a prompt / PTY: strip control
+ * POSIX-safe rendering of a file path for injection into the terminal input: strip control
  * chars (a newline would submit early), leave a simple path bare, single-quote-escape one
  * with spaces/special chars. Mirrors the drag-drop path quoting in AgentSurface.
  */
@@ -181,16 +128,4 @@ export function quotePath(p: string): string {
   const clean = [...p].filter((ch) => { const c = ch.codePointAt(0) ?? 0; return c >= 0x20 && c !== 0x7f; }).join('');
   if (/^[\w@%+=:,./-]+$/.test(clean)) return clean;
   return `'${clean.replace(/'/g, "'\\''")}'`;
-}
-
-/**
- * Compose the final prompt sent to a session: prefix the effort keyword UNLESS the text is
- * a slash command (a skill must lead its line). Single line — callers guarantee no newline.
- */
-export function composePrompt(text: string, effort: ThinkingEffortId): string {
-  const body = text.trim();
-  if (!body) return '';
-  const kw = effortKeyword(effort);
-  if (!kw || body.startsWith('/')) return body;
-  return `${kw} ${body}`;
 }

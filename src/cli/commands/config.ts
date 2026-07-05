@@ -530,6 +530,25 @@ export function registerConfigCommand(program: Command): void {
     });
 
   config
+    .command('github-login <person> <login>')
+    .description('[Advanced] Map a person from the roster to their GitHub login (brain-repo commit-author attribution — C3)')
+    .action((person: string, login: string) => {
+      const projectRoot = requireProjectRoot();
+      if (!projectRoot) return;
+
+      const slug = slugify(person);
+      const cfg = readSetupConfig(projectRoot);
+      const identity = { ...(cfg?.peopleIdentity ?? {}) };
+      identity[slug] = { ...(identity[slug] ?? {}), githubLogin: login };
+      updateSetupConfig(projectRoot, { peopleIdentity: identity });
+      success(`Mapped ${slug} → GitHub login ${login}.`);
+      const roster = (cfg?.people ?? []).map((p) => slugify(p));
+      if (roster.length > 0 && !roster.includes(slug)) {
+        info(chalk.dim(`Note: '${slug}' is not in the people roster of .config.json — add them there for full multi-person support.`));
+      }
+    });
+
+  config
     .command('clickup-list <teamId> <spaceId> <listId>')
     .description('Set the ClickUp team/space/list the tasks sync against')
     .option('--migrate', 'When changing lists: reset the sync ledger so the next sync recreates every local task in the NEW list')

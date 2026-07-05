@@ -28,7 +28,9 @@
   <a href="#desktop-app">Desktop App</a> &nbsp;&middot;&nbsp;
   <a href="#council">Council</a> &nbsp;&middot;&nbsp;
   <a href="#memory-recall">Memory Recall</a> &nbsp;&middot;&nbsp;
+  <a href="#lab-insights">Lab</a> &nbsp;&middot;&nbsp;
   <a href="#federation">Federation</a> &nbsp;&middot;&nbsp;
+  <a href="#brain-cloud-sync">Brain Sync</a> &nbsp;&middot;&nbsp;
   <a href="#commands">Commands</a> &nbsp;&middot;&nbsp;
   <a href="DEEP-DIVE.md">Deep Dive</a>
 </p>
@@ -488,6 +490,29 @@ Hook injection is **ON by default**: top hits are auto-surfaced to the agent on 
 
 **Recent CHANGELOG in the snapshot is tiered**: top 3 entries detailed (summary + ~300 char body), next 10 titles-only under an "Older" subheading. Everything older still lives in `CHANGELOG.json` and is reachable through `memory recall --types changelog`.
 
+## Lab (Insights)
+
+The numbers that tell you whether the project is working — weekly active users, conversion, revenue, error rate — live in external systems: a product-analytics API, Stripe, a database, a Google Sheet. Getting them into your brain used to mean pasting a figure into a task note, where it went stale the moment you typed it. **Lab** closes that loop. You (or an agent) define a named **insight** — a *curated* metric, never a raw data dump — backed by any HTTP JSON API or a local script, and dreamcontext fetches it, rolls it up, caches the result **in the brain**, and surfaces it to every session.
+
+An insight declares what to fetch (a generic **HTTP** adapter or a custom **script**), how to render it (`number` / `line` / `pie` / `raw`), a refresh **TTL**, and optional **tweaks** such as a time range. One command refreshes the cached snapshots:
+
+```bash
+dreamcontext lab create weekly-active-users --title "Weekly Active Users" \
+  --render line --adapter http --group growth
+dreamcontext lab credentials set analytics_token        # gitignored, 0600, never printed
+dreamcontext lab sync --all                              # refresh every insight (skips fresh unless --force)
+dreamcontext lab show weekly-active-users --json         # cached series only — never re-fetches
+```
+
+- **Insights, not raw dumps.** A hard cap of **62 points per series** is structural — a year of daily data rolls up to monthly buckets, a month may stay daily. Lab delivers curated metrics to agents and dashboards; it is not a BI tool.
+- **Every session sees the latest value.** Cached snapshots live in the brain, so an insight's latest value and staleness ride the SessionStart snapshot and are recallable by meaning — `dreamcontext memory recall "weekly active users" --types insight` — without knowing the slug.
+- **Measured roadmap progress.** Bind an insight to a roadmap objective's Key Result and `lab sync` writes `metric.current` for you, so the [forecast cascade](#roadmap-objectives--the-okr-board) reflects *measured* progress instead of PO-asserted numbers.
+- **Credentials are gitignore-first.** API keys and tokens are written only through `lab credentials set`, stored gitignored at mode `0600`, and structurally redacted — never logged, never returned by a route, and never printed by `credentials list` (names only).
+- **Custom scripts run locally, with a tripwire.** A `.mjs` script insight executes on your machine with your credentials — the same trust level as the repo itself — so if the script changes, Lab prints a loud change notice *before* it runs again.
+- **No silent half-sync.** When a fetch fails the prior cached series is kept intact, the error is surfaced loudly, and the sync exits non-zero. **Sleep does not run lab sync** (credential exposure, latency, non-determinism) — a bound insight feeds a Key Result through its own `lab sync` instead.
+
+The dashboard turns this into a **Lab page**: insights grouped by category, a **number / line / pie / raw** render per insight (hand-rolled SVG, no chart library), per-insight and **sync-all** refresh with live success/error feedback, and inline **tweak editing** to change an insight's range and watch it re-fetch and coarsen granularity. An insight bound to an objective shows a "feeds &lt;objective&gt;" provenance chip.
+
 ## Federation
 
 Most people end up with more than one dreamcontext project. **Federation** lets those projects discover each other and recall across each other **live** — each vault stays the single source of truth for its own knowledge, and sees its peers' canonical knowledge by reference at query time. All opt-in, all local, no server in the middle, and **nothing is ever copied between vaults**.
@@ -525,6 +550,26 @@ dreamcontext federation purge --all       # Remove leftover federated:true copie
 A peer is readable when your connection to it is `out`/`both`, it isn't stale, **and** it has opted in with `config shareable on`. Reads happen live at recall time; the transitive-leak guard keeps a third vault from seeing what merely passed through this one.
 
 > **Note — copy-based sync is parked on the roadmap.** Earlier builds pushed a lossy, truncated *digest* into peers at sleep (`federation sync`) and ingested it as `federated: true` copies (`federation drain`). That broke single-source-of-truth: copies went stale the moment the source changed and re-edits bred duplicates. Those verbs are now **inert no-ops** and the `sleep-federation` specialist is no longer dispatched. If a vault still holds old copies, clear them with `federation purge`. A redesigned opt-in offline-mirror mode may return later — its one genuine advantage is surviving a peer going offline, which live read can't.
+
+## Brain Cloud Sync
+
+Federation lets separate projects read each other. **Brain Cloud Sync** is the other half of team collaboration: it lets a whole team work on the *same* brain. Your `_dream_context/` can become **its own git repository** — separate from the code repo — so tasks, knowledge, and features are pushed, pulled, merged, and reviewed the way you already collaborate on code. It stays local-first the entire time: the brain is still plain markdown and JSON on disk, and git is only the sync transport, not a new database.
+
+```bash
+dreamcontext brain init      # Turn _dream_context/ into its own synced repo (separate or in-tree)
+dreamcontext brain status    # Mode, remote, and current sync state
+dreamcontext brain sync      # Manual fetch → merge → commit → push, outside a sleep cycle
+dreamcontext brain enable    # Turn cloud sync on for this vault
+dreamcontext brain disable   # Turn it off (the brain stays local)
+```
+
+- **Sync rides sleep.** Every `dreamcontext sleep done` automatically runs fetch → merge → commit → push against the brain repo, so your teammates' consolidated context reaches you and yours reaches them with no extra step. A sync failure never fails the sleep.
+- **Deterministic files merge themselves; prose defers to an agent.** JSON (changelog, releases, config) and task status/changelog merge automatically (task changelogs union, the furthest status wins). When two people edit the same *prose* section of a knowledge or feature file, the conflict is handed to a semantic **merge agent** — the `/dream-sync` skill — which reads base/ours/theirs and writes the real merge, then hands back to commit and push.
+- **Two modes.** `separate` is a dedicated brain repo with full auto-sync; **`in-tree`** nests the brain inside the code repo, commits on sleep but **never auto-pushes**, and is the safe default. The scrub gate applies to both.
+- **Nothing secret or machine-local is ever pushed.** A **scrub gate** runs before every commit and push and blocks secrets and absolute local paths. The auth token is never written into the remote URL — git network calls use `GIT_ASKPASS` with a `0600` temp file, so the token never lands in `.git/config`, the environment, or a process argument. Per-machine indexes, caches, and embeddings are gitignored and rebuilt locally, so derived state never causes merge noise.
+- **Private by default, attach is a trust decision.** New brain repos are created **private**. Because a shared brain is a prompt-injection channel, attaching to one prints a loud trust warning and an incoming-diff preview and refuses without an explicit confirmation. Personal attribution rides the existing multi-people awareness (`person:<slug>` tags, changelog authors) rather than per-person file forks.
+
+From the desktop **Launcher** the whole flow is terminal-free: **GitHub device-flow login** (with a personal-access-token fallback), **brain-repo discovery** (repos tagged with the `dreamcontext-brain` topic), **one-click create** of a scrubbed private brain repo, the trust-gated **attach** flow for a second machine, a **team-updates badge** that tells you when teammates have pushed, and a Settings **"Cloud sync"** toggle.
 
 ## Commands
 
@@ -656,6 +701,25 @@ dreamcontext tasks sync-hooks install               # best-effort post-commit/pr
   remote fields by name instead of duplicating them.
 - **Docs**: illustrated user guide → [docs/clickup.md](docs/clickup.md);
   technical reference → [docs/remote-task-setup.md](docs/remote-task-setup.md).
+
+### Lab (insights)
+
+```bash
+dreamcontext lab list [--json]                        # List insights with latest value + staleness
+dreamcontext lab show <slug> [--json]                 # Show one insight's cached series (never re-fetches)
+dreamcontext lab sync [slug] [--all] [--force]        # Refresh cached snapshots (skips fresh unless --force)
+dreamcontext lab create <slug> --title "..." --render number|line|pie|raw --adapter http|script [--group <g>] [--ttl <min>]
+dreamcontext lab tweak <slug> <key> <value>           # Adjust a declared tweak (e.g. a time range)
+dreamcontext lab credentials set <key>                # Store a source credential (hidden prompt or --value)
+dreamcontext lab credentials list                     # List credential names only — values are never printed
+```
+
+- Insights are **curated metrics, not raw data** — a structural cap of 62 points per series rolls a year of daily data up to monthly buckets. Granularity derives from the resolved range: over 180 days is monthly, 45–180 days weekly, 45 or fewer daily.
+- A source is either the generic **HTTP** adapter (any JSON API — endpoint, method, headers, and body may reference `{{tweak:…}}` and `{{cred:…}}` placeholders, with a JSON-path `extract`) or a **custom `.mjs` script** under `lab/scripts/`. Ready-made PostHog / Sheets adapters are not shipped; the generic HTTP adapter and scripts cover the same ground.
+- `lab sync` caches to the brain, writes a bound objective's `metric.current` when the insight declares a binding, keeps the prior series on failure, and exits non-zero if any insight failed. **Sleep never runs lab sync.**
+- Credentials live in a gitignored `lab/credentials.json` (mode `0600`) written only through `lab credentials set`; `doctor` warns when a manifest names a credential you haven't set and fails if the file exists but isn't gitignored.
+
+See the [Lab (Insights)](#lab-insights) section above for the full workflow.
 
 ### Features
 
@@ -793,6 +857,22 @@ dreamcontext federation purge --all      # Remove leftover federated:true copies
 ```
 
 See the [Federation](#federation) section above for the full workflow.
+
+### Brain (cloud sync)
+
+```bash
+dreamcontext brain init                  # Make _dream_context/ its own synced git repo
+dreamcontext brain status                # Show mode (separate | in-tree), remote, and sync state
+dreamcontext brain sync                  # Manual fetch → merge → commit → push outside a sleep cycle
+dreamcontext brain enable                # Turn cloud sync on for this vault
+dreamcontext brain disable               # Turn cloud sync off (the brain stays local)
+```
+
+- `separate` mode is a dedicated brain repo with full post-`sleep done` auto-sync; **`in-tree`** (the safe default) nests the brain in the code repo, commits on sleep, and never auto-pushes.
+- Every `sleep done` runs fetch → merge → commit → push; a scrub gate blocks secrets and absolute paths before every push, and the token is supplied via `GIT_ASKPASS` (never in the remote URL). Prose conflicts defer to the `/dream-sync` merge agent; JSON and task status merge automatically.
+- Device-flow GitHub login, brain-repo discovery, one-click create, the trust-gated attach flow, and a Settings "Cloud sync" toggle are all available from the desktop Launcher.
+
+See the [Brain Cloud Sync](#brain-cloud-sync) section above for the full workflow.
 
 ### Desktop App (macOS)
 

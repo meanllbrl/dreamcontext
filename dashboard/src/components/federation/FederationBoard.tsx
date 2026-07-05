@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ForceGraph2D from 'react-force-graph-2d';
+// Transitive dep of react-force-graph-2d (via force-graph) — same instance the
+// simulation itself uses, so the forces compose correctly.
+import { forceCollide, forceX, forceY } from 'd3-force-3d';
 import { useI18n } from '../../context/I18nContext';
 import {
   useFederationGraph,
@@ -289,8 +292,16 @@ export function FederationBoard({ variant = 'full' }: FederationBoardProps = {})
   useEffect(() => {
     const fg = fgRef.current;
     if (!fg) return;
-    fg.d3Force('charge')?.strength(-900);
-    fg.d3Force('link')?.distance(230);
+    // A mostly-unlinked graph has nothing holding it together: charge repulsion
+    // alone blasts the cards to the corners until they render as far-apart
+    // specks. Keep repulsion moderate, pull everything gently toward the
+    // center, and let a collision radius (≈ card footprint) do the actual
+    // spacing — the cluster stays compact whether there are 0 wires or 20.
+    fg.d3Force('charge')?.strength(-350);
+    fg.d3Force('link')?.distance(200);
+    fg.d3Force('x', forceX(0).strength(0.08));
+    fg.d3Force('y', forceY(0).strength(0.1));
+    fg.d3Force('collide', forceCollide(85));
     fg.d3ReheatSimulation?.();
   }, [graphData]);
 
@@ -300,7 +311,12 @@ export function FederationBoard({ variant = 'full' }: FederationBoardProps = {})
     fg.zoomToFit(500, 140);
     window.setTimeout(() => {
       try {
-        if (fg.zoom() > 1.4) fg.zoom(1.4, 350);
+        // Clamp the fit: never closer than 1.4 (a two-card graph shouldn't
+        // fill the screen) and never further than 0.9 (cards must stay
+        // readable — better to pan than to render specks).
+        const z = fg.zoom() as number;
+        if (z > 1.4) fg.zoom(1.4, 350);
+        else if (z < 0.9) fg.zoom(0.9, 350);
       } catch {
         /* not ready before first paint */
       }
@@ -408,7 +424,6 @@ export function FederationBoard({ variant = 'full' }: FederationBoardProps = {})
         {
           onSuccess: () => {
             setNote({ kind: 'success', text: fmt(t('federation.map.note.readable'), { name }) });
-            setSelected((s) => (s && s.id === id ? { ...s, shareable: true } : s));
           },
           onError: (err) =>
             setNote({
@@ -615,6 +630,12 @@ export function FederationBoard({ variant = 'full' }: FederationBoardProps = {})
   const vaults = data?.nodes ?? [];
   const hasLinks = graphData.links.length > 0;
 
+  // The detail panel renders LIVE graph data — `selected` only remembers WHICH
+  // card is open. Rendering the click-time snapshot went stale the moment the
+  // 15s polling refetched or Readable was toggled elsewhere (e.g. the Settings
+  // Sharing card), showing a wrong checkbox against the card's live pip.
+  const sel = selected ? (nodeById.get(selected.id) ?? selected) : null;
+
   // Plain-language label + direct (no-confirm) removal for the always-on list.
   function linkLabel(l: GLink): string {
     const from = nameOf(endId(l.source));
@@ -650,19 +671,19 @@ export function FederationBoard({ variant = 'full' }: FederationBoardProps = {})
 
   // Plain-language relationships for the selected card (the clarity anchor).
   const selectedRels = useMemo(() => {
-    if (!selected) return [];
+    if (!sel) return [];
     const out: { text: string; onRemove: () => void }[] = [];
     for (const r of rels) {
-      if (r.from !== selected.id && r.to !== selected.id) continue;
+      if (r.from !== sel.id && r.to !== sel.id) continue;
       const text =
-        r.from === selected.id
+        r.from === sel.id
           ? fmt(t('federation.map.detail.youRead'), { name: nameOf(r.to) }) +
             (r.active ? '' : t('federation.map.detail.notLive'))
           : fmt(t('federation.map.detail.readsYou'), { name: nameOf(r.from) });
       out.push({ text, onRemove: () => removeConn.mutate({ from: r.from, to: r.to }) });
     }
     return out;
-  }, [selected, rels, removeConn, nameOf, t]);
+  }, [sel, rels, removeConn, nameOf, t]);
 
   const hint = pendingSource
     ? fmt(t('federation.map.hint.armed'), { name: pendingSource.name })
@@ -793,6 +814,9 @@ export function FederationBoard({ variant = 'full' }: FederationBoardProps = {})
             backgroundColor="#0b0b12"
             nodeId="id"
             nodeRelSize={6}
+            // The card already shows its name; the library's default hover
+            // tooltip would render it a second time next to the cursor.
+            nodeLabel={() => ''}
             // Pan/zoom are always live: a press ON a card is swallowed at
             // capture phase (drag-to-connect owns it), so the library only ever
             // sees empty-canvas presses — no gesture conflict, no mode toggle.
@@ -1062,17 +1086,17 @@ export function FederationBoard({ variant = 'full' }: FederationBoardProps = {})
         )}
       </div>
 
-      {selected && (
+      {sel && (
         <div className="lgraph-detail">
           <div className="lgraph-detail-head">
             <span
               className="lgchip"
               style={{
-                background: cardStyle(selected).fill,
-                borderColor: cardStyle(selected).stroke,
+                background: cardStyle(sel).fill,
+                borderColor: cardStyle(sel).stroke,
               }}
             />
-            <strong>{selected.name}</strong>
+            <strong>{sel.name}</strong>
             <button
               className="lgraph-x"
               onClick={() => setSelected(null)}
@@ -1081,23 +1105,23 @@ export function FederationBoard({ variant = 'full' }: FederationBoardProps = {})
               ✕
             </button>
           </div>
-          <div className="lgraph-detail-path">{selected.path}</div>
+          <div className="lgraph-detail-path">{sel.path}</div>
           <div className="lgraph-detail-row">
             <span>
-              {!selected.exists
+              {!sel.exists
                 ? t('federation.map.detail.gone')
-                : selected.needsUpdate
+                : sel.needsUpdate
                   ? fmt(t('federation.map.detail.behind'), {
-                      from: selected.setupVersion,
-                      to: selected.latestVersion,
+                      from: sel.setupVersion,
+                      to: sel.latestVersion,
                     })
-                  : fmt(t('federation.map.detail.current'), { v: selected.setupVersion })}
+                  : fmt(t('federation.map.detail.current'), { v: sel.setupVersion })}
             </span>
-            {selected.exists && selected.needsUpdate && (
+            {sel.exists && sel.needsUpdate && (
               <button
                 className="lgraph-btn"
                 disabled={updateProject.isPending}
-                onClick={() => updateProject.mutate(selected.name)}
+                onClick={() => updateProject.mutate(sel.name)}
               >
                 {updateProject.isPending
                   ? t('federation.map.detail.updating')
@@ -1108,25 +1132,34 @@ export function FederationBoard({ variant = 'full' }: FederationBoardProps = {})
           <label className="lgraph-detail-row lgraph-share">
             <input
               type="checkbox"
-              checked={selected.shareable}
-              disabled={!selected.exists || toggleShareable.isPending}
+              checked={sel.shareable}
+              disabled={!sel.exists || toggleShareable.isPending}
               onChange={(e) =>
+                // No local patch needed: the mutation invalidates the graph
+                // query and the panel re-derives from live data.
                 toggleShareable.mutate(
-                  { name: selected.name, shareable: e.target.checked },
-                  { onSuccess: () => setSelected({ ...selected, shareable: e.target.checked }) },
+                  { name: sel.name, shareable: e.target.checked },
+                  {
+                    onError: (err) =>
+                      setNote({
+                        kind: 'error',
+                        text:
+                          err instanceof Error ? err.message : t('federation.map.note.failed'),
+                      }),
+                  },
                 )
               }
             />
             <span>{t('federation.map.detail.readable')}</span>
           </label>
 
-          {selected.exists && vaults.length >= 2 && (
+          {sel.exists && vaults.length >= 2 && (
             <button
               className="lgraph-btn lgraph-connectbtn"
               onClick={() => {
                 // Arm click-to-connect: the panel closes so the board (and the
                 // pulsing armed card + hint bar) takes over the guidance.
-                setPendingSource(selected);
+                setPendingSource(sel);
                 setSelected(null);
                 setWireMenu(null);
               }}

@@ -833,6 +833,12 @@ export function registerHookCommand(program: Command): void {
           if (local.pendingAgentMerge) {
             console.log('⚠ Some brain updates need /dream-sync to reconcile.');
           }
+          // C2 (github-cloud-collaboration-brain-repo-sync M3): the background
+          // pull never auto-runs the task backend sync itself (best-effort,
+          // non-blocking) — surface the instruction instead of doing it silently.
+          if (local.needsTaskSync) {
+            console.log('ℹ Task mirrors are out of date after a team merge — run `dreamcontext tasks sync` to refresh them.');
+          }
         }
       } catch (brainErr) {
         if (process.env.DREAMCONTEXT_DEBUG) console.error('[brain-sync] error:', (brainErr as Error).message ?? brainErr);

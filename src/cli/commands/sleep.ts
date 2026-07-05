@@ -9,7 +9,7 @@ import { header, success, error, warn, info } from '../../lib/format.js';
 import { migrateDataStructures, fenceExistingDataStructures } from '../../lib/data-structures-migration.js';
 import { getTaskBackend } from '../../lib/task-backend/index.js';
 import { runMigrations } from '../../lib/migration-runner.js';
-import { readSetupConfig } from '../../lib/setup-config.js';
+import { readSetupConfig, readBrainLocal, writeBrainLocal } from '../../lib/setup-config.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
 import { acquireFileLock, releaseFileLock } from '../../lib/file-lock.js';
 import { runBrainSync } from '../../lib/git-sync/sync-engine.js';
@@ -491,9 +491,19 @@ export function registerSleepCommand(program: Command): void {
           if (result.action === 'awaiting-agent' || result.action === 'already-awaiting-agent') {
             warn('Brain sync paused on a team merge — run /dream-sync to reconcile (it will resume or continue as needed).');
           }
-          if (result.needsTaskSync) {
+          // C2 (M3): react to EITHER signal — this run's OWN merge result, or a
+          // PERSISTED flag a prior BACKGROUND pull (session-start's detached
+          // spawn, a wholly separate process) already set and never got to
+          // resolve. Without the OR, a quiet remote (nothing new to merge THIS
+          // run) would leave an earlier background pull's flag stuck `true`
+          // forever, even though `sleep done` is exactly the kind of
+          // "task-backend sync actually ran" event that should clear it.
+          if (result.needsTaskSync || readBrainLocal(dirname(root)).needsTaskSync) {
             const backend = getTaskBackend(root);
-            if (backend.name !== 'local') await backend.sync('both');
+            if (backend.name !== 'local') {
+              await backend.sync('both');
+              writeBrainLocal(dirname(root), { needsTaskSync: false });
+            }
           }
         }
       } catch (err) {

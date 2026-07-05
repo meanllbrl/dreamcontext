@@ -22,11 +22,9 @@ import {
   titleStyle, subStyle, primaryBtn, secondaryBtn,
 } from './AgentSetup';
 import { RUN_SLEEP_AGENT_EVENT, SLEEP_AGENT_TITLE, SLEEP_AGENT_PROMPT } from '../../lib/sleepAgent';
-import { AgentComposerBar } from './AgentComposerBar';
-import {
-  readComposerPrefs, writeComposerPrefs, composePrompt, quotePath,
-  type ComposerPrefs,
-} from '../../lib/agentComposer';
+import { PaneComposer } from './PaneComposer';
+import { quotePath, FALLBACK_MODEL_CONFIG } from '../../lib/agentComposer';
+import { useAgentModelConfig } from '../../hooks/useAgentCapabilities';
 import { pickFiles } from '../../lib/desktop';
 
 /**
@@ -180,11 +178,15 @@ export function AgentSurface() {
   // value, or a launch could restore tabs the user turned OFF (or skip a restore
   // they left ON) based on a stale localStorage seed.
   const [settingsReady, setSettingsReady] = useState(false);
-  // Bottom composer strip: the shared text field the Files / Skills controls write into,
-  // plus the model + thinking-effort picks for the NEXT session (localStorage-persisted —
-  // see agentComposer.ts for why it needn't survive the per-launch origin reset).
-  const [composerValue, setComposerValue] = useState('');
-  const [composerPrefs, setComposerPrefs] = useState<ComposerPrefs>(() => readComposerPrefs());
+  // Bottom strip state. Model/effort are PER AGENT and sourced from the Claude CLI:
+  //  • modelConfig  — the models the CLI offers + effort levels + the user's defaults.
+  //  • sessionModel — a session's CURRENT model alias (read from its transcript, keyed by
+  //    session id), so the picker shows what each agent is really running.
+  //  • sessionEffort — the effort we last set on a session (the CLI doesn't record it in the
+  //    transcript, so we track our own `/effort` changes; defaults to the CLI default).
+  const modelConfig = useAgentModelConfig().data ?? FALLBACK_MODEL_CONFIG;
+  const [sessionModel, setSessionModel] = useState<Record<string, string>>({});
+  const [sessionEffort, setSessionEffort] = useState<Record<string, string>>({});
 
   const sessions = useRef<Map<string, Session>>(new Map());
   const garageRef = useRef<HTMLDivElement | null>(null);
@@ -252,12 +254,19 @@ export function AgentSurface() {
     (async () => {
       try {
         const res = await api.get<{ sessions: SavedMeta[] }>('/agent/sessions');
-        if (!cancelled && Array.isArray(res.sessions) && res.sessions.length > 0) {
+        // Terminals are never remembered — drop any shell entry, plus any legacy roster
+        // row still named "Terminal N" (a stale shell saved before we stopped persisting
+        // them; auto-title only ever renames AGENTS, so that default name is a reliable
+        // shell marker). What's left is agents only.
+        const saved = Array.isArray(res.sessions)
+          ? res.sessions.filter((m) => m.kind !== 'shell' && !/^Terminal \d+$/.test((m.title ?? '').trim()))
+          : [];
+        if (!cancelled && saved.length > 0) {
           // A saved tab WITH a pinned conversation id auto-RESUMES its real Claude session
           // on launch (reopening the app reopens the work via `claude --resume`); a legacy
           // tab without one restores DORMANT (manual Resume). Spawn happens here, once —
           // and only on the non-cancelled invocation, so StrictMode can't double-spawn.
-          const restored: SessionMeta[] = res.sessions.map((m, i) => {
+          const restored: SessionMeta[] = saved.map((m, i) => {
             const kind: SessionKind = m.kind === 'shell' ? 'shell' : 'agent';
             // An agent tab with a pinned conversation auto-RESUMES its real Claude session on
             // launch. A shell has nothing to resume, and auto-spawning shells on launch is
@@ -280,17 +289,21 @@ export function AgentSurface() {
     return () => { cancelled = true; };
   }, [caps, settingsReady, agentSettings.restoreTabs]);
 
-  // Persist on every roster change (post-hydrate), debounced. Saves BOTH dormant and
-  // live metas so a renamed live session is captured too. `minimized`/`size` are written
-  // as inert defaults — kept only for the persisted-format compatibility the server
-  // schema still expects. Best-effort: a failed PUT just means this change isn't mirrored.
+  // Persist on every roster change (post-hydrate), debounced. Only AGENTS are remembered —
+  // plain TERMINALS are session-local and never reopened on launch (the server also can't
+  // resume a shell, and a stale `claude --resume` on a shell's id would wrongly reopen it as
+  // an agent). Saves both dormant and live agent metas so a renamed live agent is captured
+  // too. `minimized`/`size` are inert defaults kept only for persisted-format compatibility.
+  // Best-effort: a failed PUT just means this change isn't mirrored.
   useEffect(() => {
     if (!hydratedRef.current) return;
     const handle = setTimeout(() => {
       const payload = {
-        sessions: sessionList.map((m) => ({
-          title: m.title, kind: m.kind, bypass: m.bypass, minimized: false, size: 1, sessionId: m.claudeId,
-        })),
+        sessions: sessionList
+          .filter((m) => m.kind === 'agent')
+          .map((m) => ({
+            title: m.title, kind: m.kind, bypass: m.bypass, minimized: false, size: 1, sessionId: m.claudeId,
+          })),
       };
       void api.put('/agent/sessions', payload).catch(() => { /* best-effort mirror */ });
     }, 400);
@@ -300,9 +313,9 @@ export function AgentSurface() {
   // ── Session actions ────────────────────────────────────────────────────────
   // claudeId omitted → a fresh conversation (new UUID via `--session-id`); provided with
   // resume=true → reopen that exact conversation (`--resume`) after an app relaunch.
-  const spawn = useCallback((bp: boolean, claudeId?: string, resume = false, kind: SessionKind = 'agent', initialPrompt = '', model = '') => {
+  const spawn = useCallback((bp: boolean, claudeId?: string, resume = false, kind: SessionKind = 'agent', initialPrompt = '', model = '', submitInitial = true) => {
     // A shell has no permission model, so bypass is meaningless for it — force it off.
-    const s = createSession(kind === 'shell' ? false : bp, bumpStatus, claudeId ?? newClaudeId(), resume, kind, initialPrompt, model);
+    const s = createSession(kind === 'shell' ? false : bp, bumpStatus, claudeId ?? newClaudeId(), resume, kind, initialPrompt, model, submitInitial);
     s.applyZoom(currentZoom());
     sessions.current.set(s.id, s);
     return s;
@@ -312,6 +325,8 @@ export function AgentSurface() {
   // path shares. Callers keep only their pane placement, so the roster-entry shape lives in
   // ONE place (adding a field like `kind` can't drift between add-tab and add-split).
   const spawnAndRegister = useCallback((kind: SessionKind) => {
+    // A new agent inherits the user's CLI defaults (model/effort from ~/.claude/settings.json);
+    // the picker then reflects and can change them per agent. Nothing is forced at launch.
     const s = spawn(bypass, undefined, false, kind);
     setSessionList((prev) => [...prev, { id: s.id, title: titleFor(s), kind: s.kind, bypass: s.bypass, claudeId: s.claudeId }]);
     return s;
@@ -441,7 +456,25 @@ export function AgentSurface() {
   const runSleepAgent = useCallback(() => {
     if (!(caps?.desktop && caps.embeddedTerminal && caps.claudeCli) || !agentSettings.enabled) return;
     const existing = sessionList.find((m) => !m.dormant && m.title === SLEEP_AGENT_TITLE);
-    if (existing) { setExpanded(true); focusSession(existing.id); return; }
+    if (existing) {
+      setExpanded(true);
+      focusSession(existing.id);
+      // The Sleep session is still open from a prior run. If it's idle (a previous
+      // consolidation finished and it's sitting at the prompt), re-issue the sleep flow so
+      // a fresh "Run sleep agent" actually starts a NEW sleep instead of silently focusing a
+      // done session. If it's still busy mid-run, just surface it — injecting text would
+      // corrupt the active turn. (During an in-flight sleep the header button is disabled, so
+      // this idle re-issue is the realistic path back in.)
+      const live = sessions.current.get(existing.id);
+      if (live && live.status !== 'closed' && !live.busy) {
+        live.sendText(SLEEP_AGENT_PROMPT);
+        setTimeout(() => {
+          const s2 = sessions.current.get(existing.id);
+          if (s2 && s2.status !== 'closed') s2.sendText('\r');
+        }, 200);
+      }
+      return;
+    }
     const s = spawn(bypass, undefined, false, 'agent', SLEEP_AGENT_PROMPT);
     setSessionList((prev) => [...prev, { id: s.id, title: SLEEP_AGENT_TITLE, kind: 'agent', bypass: s.bypass, claudeId: s.claudeId }]);
     const pid = nextPaneId();
@@ -455,52 +488,103 @@ export function AgentSurface() {
     return () => window.removeEventListener(RUN_SLEEP_AGENT_EVENT, onRun);
   }, [runSleepAgent]);
 
-  // ── Bottom composer strip ────────────────────────────────────────────────────────
-  const updateComposerPrefs = useCallback((p: ComposerPrefs) => {
-    setComposerPrefs(p);
-    writeComposerPrefs(p);
-  }, []);
+  // ── Bottom strip ─────────────────────────────────────────────────────────────────
+  // There is NO separate text field: a skill/file goes straight into the terminal's OWN
+  // input line (Claude Code's readline). Model/effort target the FOCUSED agent via the live
+  // `/model` and `/effort` slash commands.
 
-  // Append a skill trigger / snippet to the field, keeping exactly one space between it and
-  // whatever's already there (so "…foo" + "/council " reads cleanly).
-  const insertToComposer = useCallback((snippet: string) => {
-    setComposerValue((v) => (!v ? snippet : /\s$/.test(v) ? v + snippet : `${v} ${snippet}`));
-  }, []);
+  // The live (non-closed) session behind a roster id, if any.
+  const liveSession = useCallback((sid: string): Session | undefined => {
+    const meta = sessionList.find((m) => m.id === sid);
+    if (!meta || meta.dormant) return undefined;
+    const s = sessions.current.get(sid);
+    return s && s.status !== 'closed' ? s : undefined;
+  }, [sessionList]);
 
-  // Native multi-file picker → append the chosen absolute paths (quoted) to the field.
-  const handlePickFiles = useCallback(async () => {
+  // A live CLAUDE AGENT (not a shell) — model/effort only apply to agents, so `/model`
+  // /`/effort` are never injected into a plain shell.
+  const liveAgent = useCallback((sid: string): Session | undefined => {
+    const meta = sessionList.find((m) => m.id === sid);
+    return meta?.kind === 'agent' ? liveSession(sid) : undefined;
+  }, [sessionList, liveSession]);
+
+  // Type `text` into a terminal's readline WITHOUT submitting — the user finishes the line
+  // (e.g. types the topic after `/council `). Target: the focused live session, else any live
+  // session, else spawn a fresh agent (CLI defaults) with the text pre-typed.
+  const injectToTerminal = useCallback((text: string) => {
+    if (!text) return;
+    setExpanded(true);
+    let target = liveSession(focusedSessionId);
+    if (!target) {
+      const liveMeta = sessionList.find((m) => liveSession(m.id));
+      if (liveMeta) { target = liveSession(liveMeta.id); focusSession(liveMeta.id); }
+    }
+    if (target) { target.sendText(text); target.term.focus(); return; }
+    if (!(caps?.embeddedTerminal && caps.claudeCli)) return;
+    const s = spawn(bypass, undefined, false, 'agent', text, '', false);
+    setSessionList((prev) => [...prev, { id: s.id, title: titleFor(s), kind: 'agent', bypass: s.bypass, claudeId: s.claudeId }]);
+    const pid = nextPaneId();
+    setPanes((prev) => [...prev, { id: pid, tabs: [s.id], active: s.id }]);
+    setActivePaneId(pid);
+  }, [focusedSessionId, sessionList, liveSession, focusSession, caps, spawn, bypass]);
+
+  // Inject into a SPECIFIC session (the pane whose composer fired) so each agent's bar
+  // targets its OWN terminal — not the globally-focused one. Falls back to the generic
+  // focused/any/spawn path only if that pane's session isn't live (e.g. dormant).
+  const injectToSession = useCallback((sid: string, text: string) => {
+    if (!text) return;
+    const target = liveSession(sid);
+    if (target) { setExpanded(true); target.sendText(text); target.term.focus(); return; }
+    injectToTerminal(text);
+  }, [liveSession, injectToTerminal]);
+
+  // A skill trigger goes straight into that pane's terminal input.
+  const insertSkillInto = useCallback((sid: string, snippet: string) => injectToSession(sid, snippet), [injectToSession]);
+
+  // ── Per-agent model / effort ─────────────────────────────────────────────────────
+  // Switch a SPECIFIC agent's model/effort with the live slash command Claude Code exposes
+  // (`/model <alias>`, `/effort <level>`), and reflect it immediately. No-op without a live
+  // agent behind that pane (the pickers are disabled then).
+  const changeModelFor = useCallback((sid: string, id: string) => {
+    const target = liveAgent(sid);
+    if (!target || !id) return;
+    target.sendText(`/model ${id}\r`);
+    target.term.focus();
+    setSessionModel((prev) => ({ ...prev, [sid]: id }));
+  }, [liveAgent]);
+
+  const changeEffortFor = useCallback((sid: string, level: string) => {
+    const target = liveAgent(sid);
+    if (!target || !level) return;
+    target.sendText(`/effort ${level}\r`);
+    target.term.focus();
+    setSessionEffort((prev) => ({ ...prev, [sid]: level }));
+  }, [liveAgent]);
+
+  // Read each visible pane's agent CURRENT model from its transcript when the layout or
+  // roster changes (a mid-session `/model` switch — ours or the user's own — is reflected
+  // on the next layout change). Every pane's bar shows its OWN agent's real model. Fresh
+  // sessions have no transcript yet, so a picker falls back to the CLI default until a turn.
+  useEffect(() => {
+    if (!caps?.desktop) return;
+    let cancelled = false;
+    const activeSids = Array.from(new Set(panes.map((p) => p.active)));
+    activeSids.forEach((sid) => {
+      const meta = sessionList.find((m) => m.id === sid);
+      if (!meta || meta.dormant || !meta.claudeId) return;
+      void api.get<{ model: string | null }>(`/agent/session-model?claudeId=${encodeURIComponent(meta.claudeId)}`)
+        .then((r) => { if (!cancelled && r?.model) setSessionModel((prev) => ({ ...prev, [meta.id]: r.model as string })); })
+        .catch(() => { /* best-effort: keep the fallback */ });
+    });
+    return () => { cancelled = true; };
+  }, [panes, sessionList, caps]);
+
+  // Native multi-file picker → drop the chosen absolute paths (quoted) into a pane's terminal.
+  const handlePickFilesFor = useCallback(async (sid: string) => {
     const paths = await pickFiles();
     if (!paths.length) return;
-    const joined = paths.map(quotePath).join(' ');
-    setComposerValue((v) => {
-      const base = v.trim() ? (/\s$/.test(v) ? v : `${v} `) : '';
-      return `${base}${joined} `;
-    });
-  }, []);
-
-  // Send the composed field: prefer the focused LIVE session (type it in + submit); with no
-  // live target, spawn a fresh agent using the picked model, delivering the prompt via the
-  // session's initial-prompt boot mechanism. Effort is folded in by composePrompt.
-  const sendComposer = useCallback(() => {
-    const composed = composePrompt(composerValue, composerPrefs.effort);
-    if (!composed) return;
-    const meta = sessionList.find((m) => m.id === focusedSessionId);
-    const live = meta && !meta.dormant ? sessions.current.get(focusedSessionId) : undefined;
-    if (live) {
-      live.sendText(composed);
-      // Submit a beat later so the readline registers the whole line before Enter.
-      setTimeout(() => live.sendText('\r'), 40);
-      live.term.focus();
-    } else {
-      if (!(caps?.embeddedTerminal && caps.claudeCli)) return;
-      const s = spawn(bypass, undefined, false, 'agent', composed, composerPrefs.modelId);
-      setSessionList((prev) => [...prev, { id: s.id, title: titleFor(s), kind: 'agent', bypass: s.bypass, claudeId: s.claudeId }]);
-      const pid = nextPaneId();
-      setPanes((prev) => [...prev, { id: pid, tabs: [s.id], active: s.id }]);
-      setActivePaneId(pid);
-    }
-    setComposerValue('');
-  }, [composerValue, composerPrefs, sessionList, focusedSessionId, caps, spawn, bypass]);
+    injectToSession(sid, `${paths.map(quotePath).join(' ')} `);
+  }, [injectToSession]);
 
   // Drag a tab ONTO another tab → move it into that tab's pane, inserted before it.
   const moveTab = useCallback((sid: string, targetPaneId: string, beforeSid: string) => {
@@ -700,6 +784,7 @@ export function AgentSurface() {
       const ae = document.activeElement as Element | null;
       if (ae?.closest('.agent-pane-slot')) return;   // Claude's TUI owns Esc
       if (ae?.closest('.command-palette')) return;    // the palette owns Esc
+      if (ae?.closest('.agent-composer')) return;     // the composer field owns Esc (don't discard a draft)
       e.preventDefault();
       setExpanded(false);
     };
@@ -728,6 +813,9 @@ export function AgentSurface() {
       // Only a chord defers to the terminal (it may be a real PTY keystroke); a
       // double-tap modifier is safe to toggle even while a terminal owns focus.
       if (!dt && expanded && ae?.closest('.agent-pane-slot')) return;
+      // A chord defers to the composer text field too (⌃A there is select-all, not a toggle);
+      // a double-tap modifier is still safe to fire from anywhere, including the field.
+      if (!dt && ae?.closest('.agent-composer')) return;
       if (ae?.closest('.command-palette')) return; // the palette owns its own keys
       e.preventDefault();
       e.stopPropagation();
@@ -844,6 +932,9 @@ export function AgentSurface() {
     if (!host || !started) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.altKey) return;
+      // Typing in the composer field must never trigger the ⌘D/⌘T/⌘W/⌃` session chords
+      // (⌘W would close the focused session mid-compose).
+      if ((document.activeElement as Element | null)?.closest('.agent-composer')) return;
       // ⌃` → new TERMINAL tab (standard "toggle terminal" chord). This is the ONLY Ctrl combo
       // we claim: every OTHER Ctrl chord (⌃C SIGINT, ⌃D EOF, ⌃W delete-word) MUST reach the
       // PTY, or a shell session is unusable — so the ⌘D/⌘T/⌘W app chords below are gated on
@@ -889,7 +980,11 @@ export function AgentSurface() {
         });
         if (!res.ok) continue;
         const { path } = await res.json() as { path?: string };
-        if (path) sessions.current.get(sid)?.sendText(quoteIfNeeded(path) + ' ');
+        // Inject the path AND land keyboard focus on this session — a drop is async
+        // (read bytes → POST), so the user may start typing before it resolves; grabbing
+        // focus here guarantees the follow-up prompt goes to the session that got the file.
+        const s = sessions.current.get(sid);
+        if (path && s) { s.sendText(quoteIfNeeded(path) + ' '); s.term.focus(); }
       } catch { /* best-effort: a failed drop just doesn't inject */ }
     }
   }, []);
@@ -918,6 +1013,11 @@ export function AgentSurface() {
     const targetSid = targetPane?.active || focusedSessionId;
     if (!targetSid) return;
     if (targetPane && targetPane.id !== activePaneId) setActivePaneId(targetPane.id);
+    // Move keyboard focus to the drop target NOW (its container is already in its slot —
+    // it's the pane's active tab — so focus lands synchronously). Without this, the path is
+    // injected into the right session but the user's keystrokes still go to whatever
+    // terminal held focus before the drop — the "I dropped on A but typed into B" bug.
+    focusTerm(targetSid);
     void deliverDrops(files, targetSid);
   };
 
@@ -946,6 +1046,7 @@ export function AgentSurface() {
     return {
       id: meta.id,
       title: meta.title,
+      kind: meta.kind,
       info: deriveSessionStatus({ dormant: meta.dormant, status: s?.status, busy: s?.busy }),
       attention: !meta.dormant && !!s?.attention,
     };
@@ -1009,6 +1110,20 @@ export function AgentSurface() {
                     onTabDragEnd={handleTabDragEnd}
                     onReorderHover={setReorderTarget}
                     onGroupHover={setGroupTarget}
+                  />
+                )}
+                composer={!activeMeta?.dormant && (
+                  <PaneComposer
+                    claudeId={activeMeta?.claudeId}
+                    isAgent={activeMeta?.kind === 'agent'}
+                    isLiveAgent={!!liveAgent(pane.active)}
+                    modelConfig={modelConfig}
+                    model={sessionModel[pane.active] ?? modelConfig.defaultModel}
+                    effort={sessionEffort[pane.active] ?? modelConfig.defaultEffort}
+                    onInsert={(snippet) => insertSkillInto(pane.active, snippet)}
+                    onPickFiles={() => handlePickFilesFor(pane.active)}
+                    onModelChange={(id) => changeModelFor(pane.active, id)}
+                    onEffortChange={(level) => changeEffortFor(pane.active, level)}
                   />
                 )}
                 onZoneTarget={(zone) => setZoneTarget(pane.id, zone)}
@@ -1128,21 +1243,8 @@ export function AgentSurface() {
           </div>
         </div>
         {body}
-        {/* Thin composer strip: attach files, insert one of our skills, pick the model +
-            thinking effort, and send to the focused (or a fresh) session. Shown once a
-            terminal is live so it always has something to target. */}
-        {started && caps?.embeddedTerminal && (
-          <AgentComposerBar
-            value={composerValue}
-            onChange={setComposerValue}
-            onInsert={insertToComposer}
-            onPickFiles={handlePickFiles}
-            onSend={sendComposer}
-            prefs={composerPrefs}
-            onPrefsChange={updateComposerPrefs}
-            canSend={!!composerValue.trim()}
-          />
-        )}
+        {/* Each pane renders its OWN composer strip (files + skills + that agent's live
+            model & effort) pinned to its bottom — see the `composer` prop above. */}
       </div>
       {/* Minimized sessions — a live progress dock floating ABOVE the expanded overlay, so
           you can free terminal space yet still watch them. Click a chip to restore it to a

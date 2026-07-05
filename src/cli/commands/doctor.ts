@@ -6,8 +6,14 @@ import { resolveContextRoot } from '../../lib/context-path.js';
 import { header } from '../../lib/format.js';
 import { listUnfencedDataStructures } from '../../lib/data-structures-migration.js';
 import { hasTaskOverride, loadTaskOverride } from '../../lib/overrides.js';
-import { listObjectives, isSafeObjectiveSlug, isCalendarDate, OBJECTIVE_STATUSES } from '../../lib/objectives-store.js';
+import { listObjectives, getObjective, isSafeObjectiveSlug, isCalendarDate, OBJECTIVE_STATUSES } from '../../lib/objectives-store.js';
 import { buildRoadmapModel } from '../../lib/roadmap-model.js';
+import { dirname } from 'node:path';
+import { listInsights, isSafeInsightSlug } from '../../lib/lab/store.js';
+import { RENDERS } from '../../lib/lab/types.js';
+import { gitignoreCovers } from '../../lib/gitignore.js';
+import { resolveMode } from '../../lib/git-sync/brain-repo.js';
+import { readSetupConfig } from '../../lib/setup-config.js';
 
 /**
  * Remove content that represents documented mentions of placeholder syntax
@@ -29,7 +35,7 @@ function stripDocumentedMentions(content: string): string {
   return result;
 }
 
-interface CheckResult {
+export interface CheckResult {
   name: string;
   status: 'ok' | 'warn' | 'error';
   message: string;
@@ -323,6 +329,112 @@ function checkObjectives(root: string): CheckResult[] {
   return results;
 }
 
+/**
+ * Validate the OPTIONAL lab (analytics insights) store. Silent when
+ * `lab/insights/` is empty. FAILS (self-healing net) when
+ * `lab/credentials.json` exists but no governing gitignore covers it — this
+ * catches a brain repo bootstrapped before Lab shipped (its gitignore predates
+ * the lab entries) and points the user at the fix (`lab credentials set`
+ * re-runs the gitignore-first ordering).
+ */
+export function checkLab(root: string): CheckResult[] {
+  const results: CheckResult[] = [];
+  const insights = listInsights(root);
+
+  // The credentials-coverage check runs regardless of whether any insight
+  // exists yet — a stale/uncovered credentials.json is a real exposure even
+  // with zero manifests.
+  const credentialsPath = join(root, 'lab', 'credentials.json');
+  if (existsSync(credentialsPath)) {
+    const projectRoot = dirname(root);
+    const config = readSetupConfig(projectRoot);
+    const mode = resolveMode(config);
+    const covered = mode === 'separate'
+      ? gitignoreCovers(root, ['lab/credentials.json'])
+      : gitignoreCovers(projectRoot, ['_dream_context/lab/credentials.json']);
+    if (!covered) {
+      results.push({
+        name: 'Lab credentials',
+        status: 'error',
+        message: `lab/credentials.json exists but is not covered by the ${mode === 'separate' ? '_dream_context/.gitignore' : 'root .gitignore'} — run \`dreamcontext lab credentials set <key>\` to self-heal the gitignore before this can be trusted.`,
+      });
+    }
+  }
+
+  if (insights.length === 0) return results;
+
+  for (const m of insights) {
+    if (!isSafeInsightSlug(m.slug)) {
+      results.push({ name: 'Lab', status: 'warn', message: `Insight slug not kebab-case: ${m.slug}` });
+    }
+    if (!(RENDERS as readonly string[]).includes(m.render)) {
+      results.push({ name: 'Lab', status: 'warn', message: `Insight ${m.slug}: render "${m.render}" is not one of ${RENDERS.join('|')}` });
+    }
+    if (!m.source) {
+      results.push({ name: 'Lab', status: 'warn', message: `Insight ${m.slug}: source block is malformed or missing (adapter must be http|script)` });
+    }
+    for (const t of m.tweaks) {
+      if (t.type === 'enum' && (!t.options || t.options.length === 0)) {
+        results.push({ name: 'Lab', status: 'warn', message: `Insight ${m.slug}: enum tweak "${t.key}" declares no options` });
+      }
+    }
+    if (m.binding) {
+      const objective = getObjective(root, m.binding.objective);
+      if (!objective) {
+        results.push({ name: 'Lab', status: 'warn', message: `Insight ${m.slug}: binding.objective "${m.binding.objective}" does not resolve` });
+      }
+    }
+    // A manifest that declares credentials_used but whose key is absent from
+    // credentials.json can't sync — warn (not fail: not every insight has
+    // synced yet, and this is fixable without touching gitignore state).
+    if (m.credentials_used.length > 0) {
+      const creds = existsSync(credentialsPath)
+        ? (() => { try { return JSON.parse(readFileSync(credentialsPath, 'utf-8')); } catch { return {}; } })()
+        : {};
+      for (const key of m.credentials_used) {
+        if (!(key in creds)) {
+          results.push({ name: 'Lab', status: 'warn', message: `Insight ${m.slug}: credentials_used key "${key}" is absent from lab/credentials.json — run \`dreamcontext lab credentials set ${key}\`` });
+        }
+      }
+    }
+  }
+
+  if (results.length === 0) {
+    results.push({ name: 'Lab', status: 'ok', message: `lab/insights/ (${insights.length} insight(s))` });
+  }
+  return results;
+}
+
+/**
+ * C1 (github-cloud-collaboration-brain-repo-sync M3): under `taskBackend:
+ * 'github'`, issues are the source of truth for tasks — `state/*.md` mirrors
+ * must never sync into the shared brain repo. `buildBrainGitignore` already
+ * writes that entry on bootstrap; this flags the DRIFT case — a brain repo
+ * that was bootstrapped BEFORE `taskBackend` switched to `github` (or whose
+ * `.gitignore` was hand-edited) and never picked up the entry.
+ */
+export function checkBrainRepo(root: string): CheckResult[] {
+  const results: CheckResult[] = [];
+  const projectRoot = dirname(root);
+  const config = readSetupConfig(projectRoot);
+  if (config?.taskBackend !== 'github') return results;
+  if (resolveMode(config) !== 'separate') return results; // in-tree's root .gitignore is covered by ensureRemoteBackendGitignore
+
+  const gitignorePath = join(root, '.gitignore');
+  if (!existsSync(gitignorePath)) return results; // brain repo not bootstrapped yet — nothing to flag
+
+  if (!gitignoreCovers(root, ['state/*.md'])) {
+    results.push({
+      name: 'Brain repo',
+      status: 'error',
+      message: 'taskBackend=github but the brain repo .gitignore does not exclude state/*.md — task-mirror markdown would leak into the shared brain repo (GitHub issues are the source of truth). Regenerate _dream_context/.gitignore to include "state/*.md".',
+    });
+  } else {
+    results.push({ name: 'Brain repo', status: 'ok', message: 'Brain repo correctly excludes task-mirror markdown under taskBackend=github.' });
+  }
+  return results;
+}
+
 export function registerDoctorCommand(program: Command): void {
   program
     .command('doctor')
@@ -358,6 +470,8 @@ export function registerDoctorCommand(program: Command): void {
         ...checkDataStructures(root),
         ...checkOverrides(root),
         ...checkObjectives(root),
+        ...checkLab(root),
+        ...checkBrainRepo(root),
 
         // Taxonomy vocabulary (non-fatal: absent means DEFAULT_VOCABULARY used)
         ...(!existsSync(join(root, 'core', 'taxonomy.json'))
