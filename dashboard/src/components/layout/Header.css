@@ -8,7 +8,12 @@
   background: var(--color-bg-secondary);
   position: sticky;
   top: 0;
-  z-index: 10;
+  /* Above the agent surface (fixed, z-index 20) and its floating dock (25): the
+     header owns a stacking context, so header-anchored popovers (e.g. the sleep
+     tracker dropdown) that open down into the content region would otherwise be
+     buried under the agent overlay. Stays below modals (CommandModal 60,
+     FullscreenOverlay 1100), which are meant to cover the header. */
+  z-index: 30;
   /* It's a title bar — nothing in it is selectable. Without this, double-clicking
      the centre (the vault name) SELECTS the text instead of behaving like the
      empty corners, which broke the drag/double-click gestures there. */

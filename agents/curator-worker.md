@@ -35,7 +35,7 @@ skills:
 
 - **dreamcontext** — the CLI surface that keeps the brain coherent: `knowledge move`,
   `knowledge merge`, `knowledge create`, `features create`/`features set`, `tasks status`,
-  `tasks create`, `taxonomy add`, `core releases`. Structural ops go through the CLI so
+  `tasks create`, `taxonomy add`, `core releases`, `roadmap objective edit`/`depend`/`undepend` (objectives are PO-authored — only status/dependency/link hygiene, never rewrite their prose). Structural ops go through the CLI so
   frontmatter, LIFO ordering, the knowledge index, and `[[wikilinks]]` are all kept consistent.
   The feature-vs-knowledge boundary and folder conventions come from here too.
 

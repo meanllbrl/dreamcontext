@@ -11,10 +11,10 @@ import './ProjectSwitcher.css';
  * hunting for another project's window, and having no quick way back to the
  * launcher.
  *
- * Action is context-aware (see `goToProject`): in a vault window it hops THIS
- * window to the chosen project in place (no new window); in the launcher window
- * it opens/focuses the project's own window. ⌘1…⌘9 jump straight to the Nth
- * project without opening the palette.
+ * Every project keeps its OWN window: picking one opens it, or FOCUSES it if it's
+ * already open (see `goToProject`) — the window you're in is never closed. The
+ * "Launcher" row (shown in vault windows) focuses or reopens the home window the
+ * same way. ⌘1…⌘9 jump straight to the Nth project without opening the palette.
  */
 
 /** The vault this window is pinned to (`?vault=`), or null in the launcher. */
@@ -78,17 +78,46 @@ export function ProjectSwitcher() {
 
   const goHome = useCallback(() => {
     setOpen(false);
-    openLauncherHome();
+    void openLauncherHome();
   }, []);
 
   // Stable close for the shell (so its topmost-Esc effect doesn't re-register per render).
   const close = useCallback(() => setOpen(false), []);
 
+  // One flat, keyboard-navigable list. Row 0 is the "Launcher" home action (only
+  // shown in a vault window); the rest are the filtered projects. Building a
+  // single array is what lets ↑/↓ traverse EVERYTHING (home included) and Enter
+  // fire the right action per row.
+  type Row =
+    | { kind: 'home' }
+    | { kind: 'vault'; vault: VaultStatus; quickIdx: number };
+  const rows = useMemo<Row[]>(() => {
+    const list: Row[] = [];
+    if (!inLauncher) list.push({ kind: 'home' });
+    for (const v of filtered) list.push({ kind: 'vault', vault: v, quickIdx: openable.indexOf(v) });
+    return list;
+  }, [inLauncher, filtered, openable]);
+
+  const activate = useCallback((i: number) => {
+    const row = rows[i];
+    if (!row) return;
+    if (row.kind === 'home') goHome();
+    else pick(row.vault);
+  }, [rows, goHome, pick]);
+
   // Shared ↑/↓/Enter list nav (+ length clamp). Esc is owned by <CommandModal>.
   const { focused, setFocused, onKeyDown } = useListKeyboardNav({
-    length: filtered.length,
-    onEnter: (i) => { if (filtered[i]) pick(filtered[i]); },
+    length: rows.length,
+    onEnter: activate,
   });
+
+  // Keep the keyboard-focused row scrolled into view as ↑/↓ move past the fold.
+  const listRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    listRef.current
+      ?.querySelector<HTMLElement>(`[data-row-index="${focused}"]`)
+      ?.scrollIntoView({ block: 'nearest' });
+  }, [focused]);
 
   // Global keys: ⌘P toggles the palette; ⌘1-9 jump to the Nth openable project.
   useEffect(() => {
@@ -137,32 +166,38 @@ export function ProjectSwitcher() {
         <kbd className="psw-kbd">esc</kbd>
       </div>
 
-      <div className="psw-list" role="listbox" aria-label="Projects">
-        {!inLauncher && (
-          <button type="button" className="psw-row psw-row--home" onClick={goHome}>
-            <span className="psw-home-glyph" aria-hidden="true">←</span>
-            <span className="psw-row-main"><span className="psw-row-name">Launcher</span></span>
-            <span className="psw-row-hint">home</span>
-          </button>
-        )}
-
-        {filtered.length === 0 && (
-          <div className="psw-empty">
-            {vaults.length === 0 ? 'No projects registered yet.' : `No projects match “${q.trim()}”.`}
-          </div>
-        )}
-
-        {filtered.map((v, i) => {
+      <div className="psw-list" role="listbox" aria-label="Projects" ref={listRef}>
+        {rows.map((row, i) => {
+          const isFocused = i === focused;
+          if (row.kind === 'home') {
+            return (
+              <button
+                key="__home__"
+                type="button"
+                role="option"
+                aria-selected={isFocused}
+                data-row-index={i}
+                className={`psw-row psw-row--home${isFocused ? ' psw-row--focused' : ''}`}
+                onClick={goHome}
+                onMouseEnter={() => setFocused(i)}
+              >
+                <span className="psw-home-glyph" aria-hidden="true">←</span>
+                <span className="psw-row-main"><span className="psw-row-name">Launcher</span></span>
+                <span className="psw-row-hint">home</span>
+              </button>
+            );
+          }
+          const { vault: v, quickIdx } = row;
           const isCurrent = v.name === active;
-          const quickIdx = openable.indexOf(v);
           return (
             <button
               key={v.name}
               type="button"
               role="option"
-              aria-selected={i === focused}
+              aria-selected={isFocused}
+              data-row-index={i}
               disabled={!v.exists}
-              className={`psw-row${i === focused ? ' psw-row--focused' : ''}${isCurrent ? ' psw-row--current' : ''}`}
+              className={`psw-row${isFocused ? ' psw-row--focused' : ''}${isCurrent ? ' psw-row--current' : ''}`}
               onClick={() => pick(v)}
               onMouseEnter={() => setFocused(i)}
             >
@@ -179,11 +214,17 @@ export function ProjectSwitcher() {
             </button>
           );
         })}
+
+        {rows.length === 0 && (
+          <div className="psw-empty">
+            {vaults.length === 0 ? 'No projects registered yet.' : `No projects match “${q.trim()}”.`}
+          </div>
+        )}
       </div>
 
       <div className="psw-foot">
         <span><kbd>↑</kbd><kbd>↓</kbd> move</span>
-        <span><kbd>↵</kbd> {inLauncher ? 'open' : 'switch'}</span>
+        <span><kbd>↵</kbd> open</span>
         <span><kbd>⌘</kbd><kbd>1-9</kbd> jump</span>
         <span><kbd>esc</kbd> close</span>
       </div>

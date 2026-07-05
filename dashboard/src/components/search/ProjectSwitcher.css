@@ -67,7 +67,9 @@
   transition: background var(--transition-fast);
 }
 .psw-row:disabled { cursor: default; opacity: 0.55; }
-.psw-row--focused:not(:disabled) { background: var(--color-bg-secondary); }
+/* Keyboard focus must be unmistakable — a filled row + an accent bar down the
+   left edge — so ↑/↓ navigation reads as movement, not a no-op. */
+.psw-row--focused { background: var(--color-bg-secondary); box-shadow: inset 2px 0 0 var(--color-accent); }
 .psw-row--current { opacity: 0.7; }
 
 .psw-row--home { color: var(--color-text-secondary); }

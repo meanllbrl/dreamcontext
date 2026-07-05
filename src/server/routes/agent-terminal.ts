@@ -409,6 +409,10 @@ export function attachAgentTerminal(server: Server): void {
     // touch the shell command string, so a non-UUID is dropped and neither can inject.
     const sessionId = sanitizeUuid(url.searchParams.get('sessionId'));
     const resumeId = sanitizeUuid(url.searchParams.get('resume'));
+    // Model chosen in the composer bar (`claude --model <id>`). Strictly sanitized to a
+    // whitelist charset before it can touch the shell command, so a hostile value is
+    // dropped rather than injected. Empty → no flag (Claude Code's own default).
+    const model = sanitizeModel(url.searchParams.get('model'));
 
     void (async () => {
       let pty: typeof import('node-pty');
@@ -421,7 +425,7 @@ export function attachAgentTerminal(server: Server): void {
 
       const wss = new WebSocketServer({ noServer: true });
       wss.handleUpgrade(req, socket, head, (ws) => {
-        startPtySession(ws, pty, projectRoot, bypass, theme, sessionId, resumeId, kind);
+        startPtySession(ws, pty, projectRoot, bypass, theme, sessionId, resumeId, kind, model);
       });
     })();
   });
@@ -438,6 +442,14 @@ function rejectUpgrade(socket: Duplex, code: number): void {
  *  `claude` shell command with zero injection risk. */
 function sanitizeUuid(v: string | null): string {
   return v && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(v) ? v : '';
+}
+
+/** Strict model-token gate. Claude Code's `--model` takes an alias (`opus`/`sonnet`/
+ *  `haiku`) or a full model id — all of which are `[A-Za-z0-9._-]`. Anything with a shell
+ *  metacharacter, whitespace, or over 64 chars is rejected to '' (no flag), so the value is
+ *  safe to interpolate into the `claude` shell command. Never trusts the client. */
+function sanitizeModel(v: string | null): string {
+  return v && v.length <= 64 && /^[A-Za-z0-9._-]+$/.test(v) ? v : '';
 }
 
 /**
@@ -596,9 +608,13 @@ function startPtySession(
   sessionId: string,
   resumeId: string,
   kind: PtyKind = 'agent',
+  model = '',
 ): void {
   const shell = process.env.SHELL || '/bin/zsh';
   const flag = bypass ? ' --permission-mode bypassPermissions' : '';
+  // `--model <id>` when the composer picked a non-default model (already whitelist-
+  // sanitized upstream, so shell-safe). Agent-only — a shell has no model.
+  const modelFlag = model ? ` --model ${model}` : '';
   // Conversation continuity (both ids are pre-validated UUIDs → shell-safe):
   //  • resume requested AND a transcript exists → `--resume <id>` (reopen the real chat).
   //  • resume requested but NO transcript (tab was never used, or claude state was lost)
@@ -618,7 +634,7 @@ function startPtySession(
   //  • agent → `-ilc 'exec claude …'`: replace the shell with Claude Code.
   //  • shell → `-il`: a plain interactive login shell (the vault-scoped terminal the user
   //    would open anyway) — no `-c`, no claude, no bypass/resume flags.
-  const shellArgs = kind === 'shell' ? ['-il'] : ['-ilc', `exec claude${idArg}${flag}`];
+  const shellArgs = kind === 'shell' ? ['-il'] : ['-ilc', `exec claude${idArg}${modelFlag}${flag}`];
   const term = pty.spawn(shell, shellArgs, {
     name: 'xterm-color',
     cols: 80,

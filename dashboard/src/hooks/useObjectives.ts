@@ -41,6 +41,8 @@ export interface CreateObjectiveInput {
   effort?: number | null;
   why?: string;
   feature?: string | null;
+  /** Optional Key Result metric — seeds outcome-based progress at creation time. */
+  metric?: ObjectiveMetric | null;
 }
 
 /** A member task of an objective (from the computed roadmap model). */
@@ -57,7 +59,12 @@ export interface RoadmapTaskRef {
 export interface RoadmapModelObjective {
   slug: string;
   title: string;
+  /** One-line outcome summary distilled from the objective body. */
+  description: string | null;
+  start_date: string | null;
   target_date: string | null;
+  impact: number | null;
+  effort: number | null;
   depends_on: string[];
   dependents: string[];
   feature: string | null;
@@ -73,6 +80,10 @@ export interface RoadmapModelObjective {
   forecast_start: string | null;
   forecast_end: string | null;
   slipping: boolean | null;
+  /** Days forecast_end runs past target (server task-date rollup); null unless slipping. */
+  slip_days: number | null;
+  /** Auto-derived slip cause: dependency slug(s) responsible, else [] = own tasks. */
+  slip_upstream: string[];
   tasks: RoadmapTaskRef[];
 }
 

@@ -1,6 +1,74 @@
 [
   {
     "date": "2026-07-04",
+    "type": "chore",
+    "scope": "docs",
+    "description": "MANUAL-TEST-CHECKLIST.md removed (81 lines) — the manual test pass referenced in the previous sleep summary is complete.",
+    "breaking": false,
+    "summary": "Removed MANUAL-TEST-CHECKLIST.md after 7-day manual test pass"
+  },
+  {
+    "date": "2026-07-04",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "Settings page UX polish: Sleepy settings section now uses the app's 'Lab' chip (not a generic BETA badge). Agents open/close hotkey can bind to double-tapping a single modifier (⌃⌃/⌥⌥/⌘⌘/⇧⇧, shown as 'Ctrl ×2', 400ms window) and toggles the terminal from anywhere including inside a focused PTY.",
+    "breaking": false,
+    "summary": "Settings: Sleepy section uses 'Lab' chip; Agents hotkey can bind to double-tap modifiers (⌃⌃/⌥⌥/⌘⌘/⇧⇧)",
+    "references": [
+      "file:dashboard/src/pages/SettingsPage.tsx",
+      "file:dashboard/src/lib/agentSettings.ts"
+    ]
+  },
+  {
+    "date": "2026-07-04",
+    "type": "feat",
+    "scope": "desktop",
+    "description": "Desktop app's ProjectSwitcher (⌘P) now offers full ↑/↓ keyboard navigation over a flat rows array (including the Launcher/home row), accent focus bar, and scrollIntoView to keep the focused row visible. goToProject/openLauncherHome now focus-or-open windows via getByLabel instead of overwriting the current window (fixed the bug where the current project window closed on switch). Removed switchVaultInPlace/currentVaultName — every project keeps its own window.",
+    "breaking": false,
+    "summary": "ProjectSwitcher (⌘P) gains full keyboard navigation — ↑/↓ over flat rows, focus bar, scrollIntoView",
+    "references": [
+      "file:dashboard/src/components/search/ProjectSwitcher.tsx",
+      "file:dashboard/src/lib/desktop.ts"
+    ]
+  },
+  {
+    "date": "2026-07-04",
+    "type": "fix",
+    "scope": "dashboard",
+    "description": "The AgentSurface header's '＋ New ▾' split-button dropdown was hover-based and closed on mouse-leave, making it unreachable (the menu closed the instant the cursor crossed the gap between caret and menu). Now click-driven with outside-click + Esc dismissal (Esc deconflicted with the overlay collapse handler via a querySelector check).",
+    "breaking": false,
+    "summary": "AgentSurface '＋ New ▾' dropdown now click-driven (was hover-closed and unreachable)",
+    "references": [
+      "file:dashboard/src/components/sleepy/AgentSurface.tsx"
+    ]
+  },
+  {
+    "date": "2026-07-04",
+    "type": "feat",
+    "scope": "roadmap",
+    "description": "Fixed the UI gap where ObjectiveDetailPanel hid the 'track by a metric' button whenever an objective already had tasks — the actual bug that prevented adding metrics to task-linked objectives. ObjectiveCreateModal also gained the optional Key Result section (label/unit + baseline/target/current, metricValid gate). The backend already supported metric create+update; this closes the frontend gap. Verified E2E (create 201, PATCH 200, roadmap source:'metric').",
+    "breaking": false,
+    "summary": "ObjectiveDetailPanel now always exposes 'track by a metric' button (was hidden when objective had tasks)",
+    "references": [
+      "file:dashboard/src/components/roadmap/ObjectiveDetailPanel.tsx",
+      "file:dashboard/src/components/roadmap/ObjectiveCreateModal.tsx"
+    ]
+  },
+  {
+    "date": "2026-07-04",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "The header's SleepDebtTracker widget evolved from a passive click-to-details bar into an interactive launcher with a dropdown menu. Click opens a menu: 'Show sleep details' (→ Sleep page) and 'Run sleep agent' (→ spawns a real 'Sleep' Claude Code session in the AgentSurface dock that auto-types+submits the consolidation prompt once, gated on desktop+node-pty+Claude CLI + Agents surface enabled). When a consolidation is active (sleep_started_at is stamped), the tracker shows a violet 'Sleeping 💤 z z z' chip with breathing bar and disables the Run item (mirrors the backend one-consolidation lock). New modules: lib/sleepAgent.ts (requestSleepAgent, constants), hooks/useAgentCapabilities.ts (capability checks).",
+    "breaking": false,
+    "summary": "Sleep-debt tracker becomes interactive launcher — dropdown menu with 'Show sleep details' and 'Run sleep agent'",
+    "references": [
+      "file:dashboard/src/components/layout/SleepDebtTracker.tsx",
+      "file:dashboard/src/lib/sleepAgent.ts",
+      "file:dashboard/src/hooks/useAgentCapabilities.ts"
+    ]
+  },
+  {
+    "date": "2026-07-04",
     "type": "feat",
     "scope": "dashboard",
     "description": "Cluster of dashboard UX improvements: UpdateBadge gains animated state transitions (pulse, slide-in, fade-out) with reduced-motion support. LauncherPage CSS refinements for project list layout. AgentSurface/AgentTabs/AgentTerminal readability improvements (font rendering, selection colors, CSS tweaks). Settings page gains brain-sync settings section. ObjectiveDetailPanel adds inline metric editing. RoadmapTimeline 2-line bar titles for readability at narrow widths, progress bars visible in names column. New shared ProjectSwitcher.tsx and agentSettings.ts lib modules laid groundwork for future features. I18nContext extended with new translation keys.",

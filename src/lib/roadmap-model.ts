@@ -40,7 +40,14 @@ export interface RoadmapTaskRef {
 export interface RoadmapObjective {
   slug: string;
   title: string;
+  /** One-line outcome summary distilled from the objective body (first prose line). */
+  description: string | null;
+  /** PO-committed start of the objective window (YYYY-MM-DD) or null. */
+  start_date: string | null;
   target_date: string | null;
+  /** Prioritization 2×2 (echoed from the objective): impact 1–5, effort in weeks. */
+  impact: number | null;
+  effort: number | null;
   depends_on: string[];
   /** Computed reverse edges: objectives that depend on THIS one. */
   dependents: string[];
@@ -64,6 +71,15 @@ export interface RoadmapObjective {
   forecast_end: string | null;
   /** true = forecast_end > target_date. null when either side is missing. */
   slipping: boolean | null;
+  /** How many days forecast_end runs past target_date (positive). null unless slipping. */
+  slip_days: number | null;
+  /**
+   * Auto-derived cause of a slip: the direct dependency slug(s) whose own
+   * (already-cascaded) forecast_end runs past THIS objective's target — i.e. the
+   * upstream reason it slips. Empty array = own member tasks overrun the target
+   * (no upstream to blame). Always empty when not slipping.
+   */
+  slip_upstream: string[];
   /** Member tasks (every task whose `objectives` list contains this slug). */
   tasks: RoadmapTaskRef[];
 }
@@ -196,6 +212,40 @@ function minDate(dates: Array<string | null>): string | null {
   return real.length === 0 ? null : real.reduce((a, b) => (a < b ? a : b));
 }
 
+/** Whole days from `fromISO` to `toISO` (both YYYY-MM-DD, UTC). Negative if to < from. */
+function daysBetween(fromISO: string, toISO: string): number {
+  const a = Date.parse(`${fromISO}T00:00:00Z`);
+  const b = Date.parse(`${toISO}T00:00:00Z`);
+  if (Number.isNaN(a) || Number.isNaN(b)) return 0;
+  return Math.round((b - a) / 86_400_000);
+}
+
+/**
+ * A one-line outcome summary for the snapshot: the first real prose line of the
+ * objective body. Skips headings, HTML comments, and the parenthesised scaffold
+ * placeholder that `createObjective` seeds, strips markdown links, and caps length.
+ */
+function firstBodyLine(body: string): string | null {
+  const candidates: string[] = [];
+  for (const raw of body.split('\n')) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#') || line.startsWith('<!--')) continue;
+    if (line.startsWith('(') && line.endsWith(')')) continue; // scaffold placeholder
+    candidates.push(line);
+  }
+  if (candidates.length === 0) return null;
+  // Prefer the first real outcome sentence over a fully-bold annotation line
+  // (e.g. "**Decision (2026-07-04): …**" that often heads a Why section), falling
+  // back to the first candidate if every line is bold.
+  const pick = candidates.find((l) => !/^\*\*.*\*\*$/.test(l)) ?? candidates[0];
+  const clean = pick
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // strip markdown links → link text
+    .replace(/[*`]/g, '')                    // strip bold/italic-star + code emphasis
+    .trim();
+  if (!clean) return null;
+  return clean.length > 100 ? clean.slice(0, 97) + '...' : clean;
+}
+
 export function buildRoadmapModel(contextRoot: string): RoadmapModel {
   const warnings: string[] = [];
   const objectives = listObjectives(contextRoot);
@@ -259,19 +309,27 @@ export function buildRoadmapModel(contextRoot: string): RoadmapModel {
     const computed = metric ? computeMetricStatus(metric) : computeRollupStatus(tasks);
     const status = o.status ?? computed;
 
-    // Null rule: no dated member tasks → unforecastable, non-constraining.
+    // Forecast. Dependencies contribute their (already-cascaded) forecast_end;
+    // a dependency that is itself unforecastable (null) imposes no constraint.
+    const maxDepEnd = maxDate(
+      o.depends_on.filter((d) => knownSlugs.has(d)).map((d) => forecastEndOf.get(d) ?? null),
+    );
     const hasDates = tasks.some((t) => t.start_date !== null || t.due_date !== null);
     let forecastStart: string | null = null;
     let forecastEnd: string | null = null;
     if (hasDates) {
       const earliestStart = minDate(tasks.map((t) => t.start_date));
       const latestDue = maxDate(tasks.map((t) => t.due_date));
-      // Null-forecast dependencies impose no constraint (treated as non-blocking).
-      const depEnds = o.depends_on
-        .filter((d) => knownSlugs.has(d))
-        .map((d) => forecastEndOf.get(d) ?? null);
-      forecastStart = maxDate([earliestStart, maxDate(depEnds)]);
+      forecastStart = maxDate([earliestStart, maxDepEnd]);
       forecastEnd = maxDate([latestDue, forecastStart]);
+    } else if (maxDepEnd !== null) {
+      // Pure MILESTONE objective (no dated tasks of its own, but depends on others):
+      // it finishes when its latest dependency does (finish-to-start, zero own
+      // duration), so an upstream slip cascades into it. Only when NO dependency is
+      // forecastable does it stay null ("unforecastable") — preserving the rule that
+      // a null-forecast objective never drags its dependents to "now".
+      forecastStart = maxDepEnd;
+      forecastEnd = maxDepEnd;
     }
     forecastEndOf.set(o.slug, forecastEnd);
 
@@ -279,10 +337,32 @@ export function buildRoadmapModel(contextRoot: string): RoadmapModel {
       ? forecastEnd > o.target_date
       : null;
 
+    // Slip attribution (auto-derived, no manual field): how many days late, and
+    // which direct dependency(ies) caused it. A dep whose own already-cascaded
+    // forecast_end runs past THIS target alone forces this objective past target,
+    // so it is a sufficient upstream cause; an empty list means the objective's
+    // own member tasks overrun the target with no upstream to blame.
+    let slipDays: number | null = null;
+    let slipUpstream: string[] = [];
+    if (slipping === true && o.target_date !== null && forecastEnd !== null) {
+      slipDays = daysBetween(o.target_date, forecastEnd);
+      slipUpstream = o.depends_on
+        .filter((d) => knownSlugs.has(d))
+        .filter((d) => {
+          const de = forecastEndOf.get(d) ?? null;
+          return de !== null && de > o.target_date!;
+        })
+        .sort();
+    }
+
     out.push({
       slug: o.slug,
       title: o.title,
+      description: firstBodyLine(o.body),
+      start_date: o.start_date,
       target_date: o.target_date,
+      impact: o.impact,
+      effort: o.effort,
       depends_on: [...o.depends_on],
       dependents: (dependentsOf.get(o.slug) ?? []).sort(),
       feature: o.feature,
@@ -292,6 +372,8 @@ export function buildRoadmapModel(contextRoot: string): RoadmapModel {
       forecast_start: forecastStart,
       forecast_end: forecastEnd,
       slipping,
+      slip_days: slipDays,
+      slip_upstream: slipUpstream,
       tasks,
     });
   }

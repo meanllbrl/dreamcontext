@@ -63,7 +63,7 @@ Sections for `tasks insert`: `why`, `user_stories`, `acceptance_criteria`, `cons
 
 | Command | Description |
 |---|---|
-| `roadmap` | Render the objective board (rollups, target vs forecast, slip flags) and regenerate `knowledge/roadmap/board.md`. `--json` emits the typed RoadmapModel instead (no writes). |
+| `roadmap` | Render the objective board (rollups, target vs forecast, slip flags) and regenerate `knowledge/roadmap/board.md`. `--json` emits the typed RoadmapModel instead (no writes). A slipping objective reports the numeric days late (`slip_days`) and the auto-derived cause (`slip_upstream`: the direct dependency slug(s) whose forecast runs past this target, else own member tasks). The SessionStart snapshot renders these (`Nd late (upstream: …)` or `(own tasks)`) plus each objective's impact/effort and a one-line description, and orders active objectives by time-box relevance (this month → this quarter → later). |
 | `roadmap objective create <slug>` | Create `core/objectives/<slug>.md`. `--title <str>` (required), `--target YYYY-MM-DD`, `--depends-on <csv>`, `--feature <prd-slug>`, `--why <text>`. |
 | `roadmap objective list` | All objectives with progress %, status, forecast. `--json`. |
 | `roadmap objective show <slug>` | One objective: member tasks, direct dependents, and the transitive "if this slips, so do" set. `--json`. |
@@ -71,6 +71,7 @@ Sections for `tasks insert`: `why`, `user_stories`, `acceptance_criteria`, `cons
 | `roadmap objective delete <slug>` | Delete; other objectives' `depends_on` are healed automatically. `--yes`. |
 | `roadmap objective depend <A> <B>` | A depends on B — **rejected at write time** if it would create a circular dependency. |
 | `roadmap objective undepend <A> <B>` | Remove the dependency edge. |
+| `roadmap objective metric <slug>` | Set/update the objective's Key Result metric (outcome-based progress instead of task rollup). `--current <n>` (the common nudge — latest observed value), `--target <n>`, `--baseline <n>`, `--label <text>`, `--unit <text>`, `--clear` (remove the metric, back to task-based progress). Sleep may update `--current` when it observes a new real value; all other objective fields stay PO-owned. |
 
 Task-side linkage: `tasks create --objectives a,b` · `tasks objectives <task> a,b|clear` · `tasks list --objective <slug>`. Objectives are recallable: `memory recall "<query>" --types objective`.
 
@@ -183,6 +184,24 @@ Never hand-edit `core/taxonomy.json` — mutate via these commands.
 | `federation status` | Connections + leftover federated copies. |
 | `federation purge` | Remove leftover `federated:true` copies. `--vault`, `--all`, `--dry-run`. |
 | `federation sync` / `federation drain` | **Disabled no-ops** (copy-based sync is parked). |
+
+---
+
+## Brain — team collaboration / shared brain repo (see [integrations.md](integrations.md))
+
+Sync the WHOLE brain (`_dream_context/`) — tasks, knowledge, features, sleep state — to its own git remote so a **team collaborates on the same brain** the way they collaborate on code. Distinct from federation (which is read-only cross-*project* recall) and from cloud task sync (which mirrors only *tasks* to ClickUp/GitHub Issues). Brain repos default **private**; attaching one is a **trust decision** (a brain repo loads into every future session). Local indexes/caches are per-machine and never pushed. **M1 CLI is shipped; the one-click desktop/Launcher flow (device-flow GitHub login, repo picker, UI attach) is M2 — pending.**
+
+| Command | Description |
+|---|---|
+| `brain status` | Show brain-repo mode (`separate`/`in-tree`), remote, sync state, and whether cloud sync is ON. Reports `mergeInProgress` / `pendingAgentMerge` (the `/dream-sync` handoff signals). |
+| `brain init` | Create a NEW brain repo on GitHub (**private by default**) and push a scrubbed first commit. `--public` (requires interactive confirm), `--code-repo <url>` (store a pointer to the paired code repo). |
+| `brain attach <url>` | Attach an EXISTING team brain repo — a **TRUST decision** (S6): prints a trust warning + incoming-diff preview and refuses without confirmation. `-y/--yes` to skip the prompt. |
+| `brain discover` | List `dreamcontext-brain`-topic repos you can access on GitHub. |
+| `brain sync` | Fetch → semantic-merge-on-conflict → commit → push (or, in `in-tree` mode, commit-only — never auto-pushes). `--pull-only` (take team content in, never push), `--push-only`, `--strict` (WARN scrub hits block too), `--resume` / `--continue` (the attended `/dream-sync` handoff — see below). |
+| `brain enable` / `brain disable` | Explicit master switch for cloud sync on this project (v3.3). |
+| `brain scrub` | Dry-run the secrets/absolute-path scrub gate against the current staged tree. |
+
+**Automatic sync:** every `dreamcontext sleep done` runs a brain sync (fetch/merge/commit/push); failure never fails sleep. Session-start does a non-blocking background pull. **On an agent-class merge conflict** (two people edited the same prose section) the CLI stops at `already-awaiting-agent` and defers to the **`/dream-sync` skill** — the agent half that reads base/ours/theirs and writes the semantic merge, then `brain sync --continue`. Never drive `--resume`/`--continue` unattended.
 
 ---
 

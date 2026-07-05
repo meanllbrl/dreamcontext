@@ -126,9 +126,52 @@ export async function openFolderPicker(): Promise<string | null> {
 }
 
 /**
- * Open a vault in its OWN window. In the desktop app this invokes the Rust
- * `open_vault` command (which builds / focuses a dedicated WebviewWindow); in a
- * browser it opens a new tab pinned to that vault via the `?vault=` param.
+ * Pick one or more FILES via the native macOS file picker (multi-select), returning
+ * their absolute paths. In the desktop app these are real on-disk paths — so callers
+ * can hand them straight to a Claude session (no byte upload needed, unlike a webview
+ * drag-drop which hides the OS path). In a browser (dev) it falls back to a prompt so
+ * the flow stays exercisable. Returns [] if the user cancelled or picked nothing.
+ */
+export async function pickFiles(): Promise<string[]> {
+  if (isDesktop()) {
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog');
+      const selected = await open({ directory: false, multiple: true });
+      if (Array.isArray(selected)) return selected.filter((p): p is string => typeof p === 'string');
+      if (typeof selected === 'string') return [selected];
+      return [];
+    } catch {
+      return [];
+    }
+  }
+  const entered = window.prompt('Enter absolute file path(s), comma-separated:');
+  return entered ? entered.split(',').map((s) => s.trim()).filter(Boolean) : [];
+}
+
+/**
+ * Structural shape of a freshly-built `WebviewWindow` — just the `once` we await.
+ * Avoids a value import of the Tauri type into the plain browser build.
+ */
+interface CreatableWindow {
+  once(event: string, cb: (e: { payload: unknown }) => void): Promise<unknown>;
+}
+
+/** Resolve once a new `WebviewWindow` reports created; reject on its error event. */
+function awaitWindowCreated(win: CreatableWindow, what: string): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    void win.once('tauri://created', () => resolve());
+    void win.once('tauri://error', (e) =>
+      reject(new Error(`${what} window create failed: ${String(e.payload)}`)),
+    );
+  });
+}
+
+/**
+ * Open a vault in its OWN window. Each project keeps a single persistent window:
+ * if it's already open we FOCUS it (never spawn a duplicate), otherwise we build
+ * it. Either way the caller's current window is left untouched — switching to
+ * project A from project B must not close B. In a browser it opens a new tab
+ * pinned to that vault via the `?vault=` param.
  */
 export async function openVaultWindow(name: string): Promise<void> {
   if (isDesktop()) {
@@ -140,6 +183,7 @@ export async function openVaultWindow(name: string): Promise<void> {
     const label = `vault-${name.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
     const existing = await WebviewWindow.getByLabel(label);
     if (existing) {
+      // Already open — surface the existing window instead of opening another.
       await existing.setFocus();
       return;
     }
@@ -160,53 +204,51 @@ export async function openVaultWindow(name: string): Promise<void> {
       // Kanban / Eisenhower task drag-and-drop. Disable it so DnD works.
       dragDropEnabled: false,
     });
-    await new Promise<void>((resolve, reject) => {
-      win.once('tauri://created', () => resolve());
-      win.once('tauri://error', (e) =>
-        reject(new Error(`window create failed: ${String(e.payload)}`)),
-      );
-    });
+    await awaitWindowCreated(win, `vault "${name}"`);
     return;
   }
   window.open(`/?vault=${encodeURIComponent(name)}`, '_blank');
 }
 
-/** The vault this window is pinned to (`?vault=`), or null in the launcher window. */
-function currentVaultName(): string | null {
-  try {
-    return new URLSearchParams(window.location.search).get('vault');
-  } catch {
-    return null;
-  }
-}
-
 /**
- * Switch THIS window to another vault in place — a fast, tab-like hop that reuses
- * the current OS window instead of spawning/hunting a new one. Reloading to the
- * new `?vault=` re-initializes every module-level vault assumption cleanly (the
- * active vault, react-query caches, the agent WS), which an in-memory swap could
- * not do safely. Works identically in the browser dev build.
+ * Return to the Launcher (home) window — used by the ⌘P switcher's "Launcher" row.
+ *
+ * The Launcher is the persistent `main` window Rust builds at startup. If it's
+ * still open we FOCUS it (never spawn a second launcher); if the user closed it
+ * we rebuild it with the same options as the Rust-built original. Crucially we do
+ * NOT navigate the current window — going home from a vault window must leave that
+ * vault window open. In a browser (dev) there's only one tab, so we navigate it.
  */
-export function switchVaultInPlace(name: string): void {
-  window.location.assign(`${window.location.origin}/?vault=${encodeURIComponent(name)}`);
-}
-
-/** Return THIS window to the Launcher (home) — used by the ⌘P switcher. */
-export function openLauncherHome(): void {
+export async function openLauncherHome(): Promise<void> {
+  if (isDesktop()) {
+    const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
+    const existing = await WebviewWindow.getByLabel('main');
+    if (existing) {
+      await existing.setFocus();
+      return;
+    }
+    // Launcher was closed — rebuild it (mirrors the `main` window in lib.rs).
+    const win = new WebviewWindow('main', {
+      url: `${window.location.origin}/`,
+      title: 'dreamcontext',
+      width: 1280,
+      height: 800,
+      titleBarStyle: 'overlay',
+      hiddenTitle: true,
+      dragDropEnabled: false,
+    });
+    await awaitWindowCreated(win, 'launcher');
+    return;
+  }
   window.location.assign(`${window.location.origin}/`);
 }
 
 /**
- * Go to a project from the ⌘P switcher. Context-aware so the launcher stays a
- * persistent home:
- *   - In a VAULT window → hop in place (reuse this window, no new one).
- *   - In the LAUNCHER window → open/focus the project's own window (preserving
- *     the launcher behind it), matching what clicking a launcher card does.
+ * Go to a project from the ⌘P switcher. Every project keeps its OWN window, so
+ * this always opens/focuses the target's window (see `openVaultWindow`) and never
+ * touches the current window — switching from project B to A leaves B open, and
+ * re-picking an already-open project just surfaces its existing window.
  */
 export async function goToProject(name: string): Promise<void> {
-  if (currentVaultName()) {
-    switchVaultInPlace(name);
-  } else {
-    await openVaultWindow(name);
-  }
+  await openVaultWindow(name);
 }

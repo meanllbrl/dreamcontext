@@ -11,7 +11,7 @@
 }
 
 .settings-nav {
-  flex: 0 0 200px;
+  flex: 0 0 264px;
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
@@ -31,16 +31,14 @@
 
 .settings-nav-item {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-3);
   width: 100%;
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-3);
   border: 1px solid transparent;
   border-radius: var(--radius-md);
   background: transparent;
-  color: var(--color-text-secondary);
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
+  color: var(--color-text);
   text-align: left;
   cursor: pointer;
   transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
@@ -48,7 +46,6 @@
 
 .settings-nav-item:hover {
   background: var(--color-bg-tertiary);
-  color: var(--color-text);
 }
 
 .settings-nav-item:focus-visible {
@@ -57,13 +54,12 @@
 }
 
 .settings-nav-item:active {
-  transform: scale(0.98);
+  transform: scale(0.99);
 }
 
 .settings-nav-item--active {
-  background: color-mix(in srgb, var(--color-accent) 14%, transparent);
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
   border-color: color-mix(in srgb, var(--color-accent) 35%, transparent);
-  color: var(--color-text);
 }
 
 .settings-nav-item--active .settings-nav-icon {
@@ -72,19 +68,71 @@
 
 .settings-nav-icon {
   flex: 0 0 auto;
-  width: var(--space-5);
-  text-align: center;
-  font-size: var(--font-size-base);
-  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--space-6);
+  height: var(--space-6);
   color: var(--color-text-tertiary);
+  transition: color 120ms ease;
 }
 
-.settings-nav-label {
-  flex: 1 1 auto;
+.settings-nav-item:hover .settings-nav-icon {
+  color: var(--color-text-secondary);
+}
+
+.settings-nav-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   min-width: 0;
 }
 
-/* Narrow viewports: the rail becomes a horizontal scroller above the content. */
+.settings-nav-label {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+  line-height: 1.3;
+}
+
+.settings-nav-desc {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-normal);
+  color: var(--color-text-secondary);
+  line-height: 1.4;
+}
+
+/* The label uses flex `gap`, so drop the badge's own left margin to avoid double spacing. */
+.settings-nav-label .settings-beta-badge,
+.settings-nav-label .settings-lab-badge {
+  margin-left: 0;
+}
+
+/* ─── Section header: title + plain-language description ─── */
+.settings-section-head {
+  margin-bottom: var(--space-4);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.settings-section-head .settings-section-title {
+  margin-bottom: var(--space-2);
+}
+
+.settings-section-desc {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  line-height: 1.55;
+  max-width: 68ch;
+}
+
+/* Narrow viewports: the rail stacks full-width above the content. Descriptions
+   are dropped so the menu stays compact when it's not beside the content. */
 @media (max-width: 720px) {
   .settings-body {
     flex-direction: column;
@@ -92,17 +140,14 @@
   }
   .settings-nav {
     flex: 0 0 auto;
-    flex-direction: row;
     position: static;
     width: 100%;
-    gap: var(--space-2);
-    overflow-x: auto;
-    padding-bottom: var(--space-1);
   }
   .settings-nav-item {
-    width: auto;
-    flex: 0 0 auto;
-    white-space: nowrap;
+    align-items: center;
+  }
+  .settings-nav-desc {
+    display: none;
   }
 }
 
@@ -159,8 +204,11 @@
   margin-bottom: var(--space-4);
 }
 
-/* "BETA" tag next to a section title (e.g. Sleepy). */
-.settings-beta-badge {
+/* "BETA" / "Lab" tag next to a section title or nav item (e.g. Sleepy). Both ride
+   the same accent-violet chip — the shared "not-final surface" marker language used
+   in the sidebar (Council's Lab chip). */
+.settings-beta-badge,
+.settings-lab-badge {
   display: inline-block;
   margin-left: var(--space-2);
   padding: 1px 6px;

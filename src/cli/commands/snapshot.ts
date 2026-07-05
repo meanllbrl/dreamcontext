@@ -453,6 +453,33 @@ function getDriftDirective(root: string): string {
 /** Days a completed objective stays visible in the snapshot ("recently finished"). */
 const OBJECTIVES_RECENT_DONE_DAYS = 14;
 
+/**
+ * Time-box relevance rank for ordering objectives in the snapshot: the current
+ * month first, then the current quarter, then undated-active, then farther-out.
+ * Overdue objectives (target already in the past) rank alongside "this month" —
+ * they are the most urgent. Lower = surfaced higher. Prioritises, never drops.
+ */
+function timeboxRank(target: string | null, now: Date): number {
+  if (!target) return 2; // active but undated — middle of the pack
+  const d = new Date(`${target}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return 3;
+  if (d.getTime() < now.getTime()) return 0; // overdue → most relevant
+  const sameYear = d.getFullYear() === now.getFullYear();
+  if (sameYear && d.getMonth() === now.getMonth()) return 0; // this month
+  if (sameYear && Math.floor(d.getMonth() / 3) === Math.floor(now.getMonth() / 3)) return 1; // this quarter
+  return 3; // beyond this quarter
+}
+
+/** Active objectives ordered by time-box relevance, then earliest target. */
+function orderByTimebox(objectives: RoadmapObjective[], now: Date): RoadmapObjective[] {
+  return [...objectives].sort((a, b) => {
+    const ra = timeboxRank(a.target_date, now);
+    const rb = timeboxRank(b.target_date, now);
+    if (ra !== rb) return ra - rb;
+    return String(a.target_date ?? '9999-99-99').localeCompare(String(b.target_date ?? '9999-99-99'));
+  });
+}
+
 /** One plain-text line per objective (shared by snapshot + subagent briefing). */
 function objectiveSnapshotLine(o: RoadmapObjective): string {
   const icon = { done: '🟢', active: '🔵', review: '🟡', not_started: '⚪' }[o.status];
@@ -465,11 +492,30 @@ function objectiveSnapshotLine(o: RoadmapObjective): string {
   } else {
     pct = o.progress.pct === null ? 'no tasks yet' : `${o.progress.done}/${o.progress.total} done (${o.progress.pct}%)`;
   }
+  // Prioritization (value/effort 2×2) — importance + effort, so the agent weighs
+  // outcomes not just by progress but by how much they matter and cost.
+  const prio: string[] = [];
+  if (o.impact !== null) prio.push(`impact ${o.impact}/5`);
+  if (o.effort !== null) prio.push(`effort ${num(o.effort)}w`);
   const dates: string[] = [];
   if (o.target_date) dates.push(`target ${o.target_date}`);
-  if (o.forecast_end) dates.push(`forecast ${o.forecast_end}${o.slipping ? ' 🔴 SLIPPING' : ''}`);
+  if (o.forecast_end) {
+    let f = `forecast ${o.forecast_end}`;
+    if (o.slipping) {
+      // Numeric days late + auto-derived cause (upstream dep slug(s), else own tasks).
+      const late = o.slip_days !== null ? `${o.slip_days}d late` : 'SLIPPING';
+      const cause = o.slip_upstream.length > 0
+        ? `upstream: ${o.slip_upstream.join(', ')}`
+        : 'own tasks';
+      f += ` 🔴 ${late} (${cause})`;
+    }
+    dates.push(f);
+  }
   const deps = o.depends_on.length > 0 ? ` · deps: ${o.depends_on.join(', ')}` : '';
-  return `- ${icon} ${o.slug} — ${o.title} · ${pct}${dates.length > 0 ? ' · ' + dates.join(' · ') : ''}${deps}`;
+  const segs = [pct, ...prio, ...dates].join(' · ');
+  const main = `- ${icon} ${o.slug} — ${o.title} · ${segs}${deps}`;
+  // Description as an indented sub-line (mirrors how active tasks render their Why).
+  return o.description ? `${main}\n    ↳ ${o.description}` : main;
 }
 
 /**
@@ -495,7 +541,9 @@ function renderObjectivesSection(root: string): { full: string; demotions: strin
       return !Number.isNaN(t) && t >= cutoff.getTime();
     };
 
-    const active = model.objectives.filter((o) => o.status !== 'done');
+    // Active objectives, current-month/quarter targets surfaced first (prioritise,
+    // never drop — every active objective still renders, just in relevance order).
+    const active = orderByTimebox(model.objectives.filter((o) => o.status !== 'done'), new Date());
     const recentDone = model.objectives.filter((o) => o.status === 'done' && isRecentDone(o));
     if (active.length === 0 && recentDone.length === 0) return null;
 
@@ -1242,7 +1290,7 @@ export function generateSubagentBriefing(): string {
   try {
     const model = buildRoadmapModel(root);
     if (model.objectives.length > 0) {
-      const active = model.objectives.filter((o) => o.status !== 'done');
+      const active = orderByTimebox(model.objectives.filter((o) => o.status !== 'done'), new Date());
       const rest = model.objectives.filter((o) => o.status === 'done');
       const lines = [...active, ...rest].slice(0, 10).map(objectiveSnapshotLine);
       if (lines.length > 0) {

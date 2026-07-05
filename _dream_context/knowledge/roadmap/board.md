@@ -7,29 +7,36 @@ tags:
   - 'topic:roadmap'
   - 'topic:pm'
 pinned: false
-date: '2026-07-04'
+date: '2026-07-05'
 ---
 
 # Roadmap Board
 
-> Auto-generated 2026-07-04 by `dreamcontext roadmap`. Objectives live in `core/objectives/`; task links live in each task's `objectives:` frontmatter.
-
-### 🔵 **demo-mrr2** — 2000 USD MRR · USD 850/2000 MRR (43%) · forecast — (unforecastable: no dated member tasks)
+> Auto-generated 2026-07-05 by `dreamcontext roadmap`. Objectives live in `core/objectives/`; task links live in each task's `objectives:` frontmatter.
 
 ### ⚪ **improve-recall-mechanism** — Improve Recall Mechanism · no tasks yet · target 2026-08-16 · forecast — (unforecastable: no dated member tasks)
-  Unblocks: hello-world-pr
+  Unblocks: hello-world-pr, make-it-a-business
 
 ### ⚪ **improve-sleep-quality** — Improve sleep quality · no tasks yet · target 2026-08-02 · forecast — (unforecastable: no dated member tasks)
-  Unblocks: hello-world-pr
+  Unblocks: hello-world-pr, make-it-a-business
 
 ### ⚪ **include-codex-opencode-support** — Include Codex&OpenCode Support · no tasks yet · target 2026-08-23 · forecast — (unforecastable: no dated member tasks)
-  Unblocks: hello-world-pr
+  Unblocks: hello-world-pr, make-it-a-business
 
-### 🔵 **make-dreamcontext-team-ready** — Make Dreamcontext, Team Ready · 0/1 done (0%) · target 2026-07-12 · forecast 2026-07-04 ✓ on track
+### 🔵 **make-dreamcontext-team-ready** — Make Dreamcontext, Team Ready · 3/4 done (75%) · target 2026-07-12 · forecast 2026-07-04 ✓ on track
+  Unblocks: make-it-a-business
+  - feat-dashboard-live-sleep-debt-tracker-header-widget (completed) · 0.10.7 · 2026-07-04 → …
+  - feat-okr-key-result-metric-outcome-based-progress (completed) · 0.10.7
   - github-cloud-collaboration-brain-repo-sync (in_progress) · 0.10.7 · 2026-07-04 → …
+  - interactive-roadmap-dashboard-forecast-timeline-cascade-editable-detail-panel (completed) · v0.10.5
 
-### 🟡 **simplified-ux** — Simplified UX · 0/1 done (0%) · target 2026-07-31 · forecast 2026-07-04 ✓ on track
+### 🟢 **simplified-ux** — Simplified UX · 3/3 done (100%) · target 2026-07-31 · forecast 2026-07-04 ✓ on track
+  Unblocks: hello-world-pr, make-it-a-business
+  - desktop-launcher-ux-drag-fix-cmd-p-project-switcher (completed) · 0.10.7 · 2026-07-04 → …
+  - desktop-settings-agents-panel-hotkey-reopen-tabs-auto-title (completed) · 0.10.7 · 2026-07-04 → …
+  - feat-sleepy-agent-surface-ux-redesign (completed) · v0.10.5
+
+### ⚪ **make-it-a-business** — Make it a Business · $ 0/2000 MRR (0%) · target 2026-09-05 · forecast — (unforecastable: no dated member tasks) · deps: improve-recall-mechanism, improve-sleep-quality, simplified-ux, make-dreamcontext-team-ready, include-codex-opencode-support
   Unblocks: hello-world-pr
-  - desktop-launcher-ux-drag-fix-cmd-p-project-switcher (in_review) · 0.10.7 · 2026-07-04 → …
 
-### ⚪ **hello-world-pr** — Hello World PR · no tasks yet · target 2026-09-19 · forecast — (unforecastable: no dated member tasks) · deps: improve-recall-mechanism, improve-sleep-quality, simplified-ux, include-codex-opencode-support
+### ⚪ **hello-world-pr** — Hello World PR · no tasks yet · target 2026-10-02 · forecast — (unforecastable: no dated member tasks) · deps: improve-recall-mechanism, improve-sleep-quality, simplified-ux, include-codex-opencode-support, make-it-a-business

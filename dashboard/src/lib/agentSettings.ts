@@ -125,3 +125,72 @@ export function matchesAccel(e: KeyboardEvent, accel: string): boolean {
   const norm = (s: string) => s.split('+').map((p) => p.trim().toLowerCase()).sort().join('+');
   return norm(built) === norm(accel);
 }
+
+// ─── Double-tap-a-single-modifier bindings ──────────────────────────────────────
+// A second flavour of hotkey: instead of a chord, press ONE modifier twice quickly
+// (⌃⌃, ⌥⌥, ⌘⌘, ⇧⇧, or Fn Fn where the platform reports it). Stored as "Ctrl+Ctrl"
+// etc. — a form no real chord can ever produce, so it never collides with the chord
+// matcher above. Fn is best-effort: many browsers/webviews don't emit a keydown for
+// it, in which case the binding simply never fires (Ctrl/Option/⌘/Shift are reliable).
+
+/** How close together the two taps must land, in ms. */
+export const DOUBLE_TAP_MS = 400;
+
+/** KeyboardEvent.key for a bare modifier → its accelerator token (else no entry). */
+const LONE_MOD_TO_TOKEN: Record<string, string> = {
+  Control: 'Ctrl',
+  Alt: 'Alt',
+  Meta: 'Cmd',
+  Shift: 'Shift',
+  Fn: 'Fn',
+  FnLock: 'Fn',
+};
+
+/** If a keydown is a *lone* modifier press (the modifier key itself, nothing else),
+ *  return its token (Ctrl/Alt/Cmd/Shift/Fn); otherwise null. */
+export function loneModifierToken(e: Pick<KeyboardEvent, 'key'>): string | null {
+  return LONE_MOD_TO_TOKEN[e.key] ?? null;
+}
+
+/** If a stored accelerator is a double-tap binding ("Ctrl+Ctrl"), return the token;
+ *  otherwise null. */
+export function doubleTapToken(accel: string): string | null {
+  const parts = accel.split('+').map((p) => p.trim());
+  if (parts.length === 2 && parts[0] && parts[0] === parts[1] &&
+      Object.values(LONE_MOD_TO_TOKEN).includes(parts[0])) {
+    return parts[0];
+  }
+  return null;
+}
+
+/** Human-readable rendering of a stored accelerator — double-taps become e.g.
+ *  "Ctrl ×2"; ordinary chords are shown as-is. */
+export function formatHotkey(accel: string): string {
+  const dt = doubleTapToken(accel);
+  return dt ? `${dt} ×2` : accel;
+}
+
+/**
+ * Build a stateful matcher for a double-tap binding. Returns a function to feed every
+ * keydown; it returns true exactly on the second qualifying tap of `token` within the
+ * window. Auto-repeat (holding the key) is ignored, and any intervening different key
+ * resets the pending tap so only two *deliberate* presses in a row count.
+ */
+export function createDoubleTapMatcher(token: string, windowMs = DOUBLE_TAP_MS): (e: KeyboardEvent) => boolean {
+  let lastTs = 0;
+  return (e: KeyboardEvent): boolean => {
+    if (loneModifierToken(e) !== token) {
+      // A different key breaks the sequence (ignore auto-repeat noise of a held key).
+      if (!e.repeat) lastTs = 0;
+      return false;
+    }
+    if (e.repeat) return false; // holding the modifier isn't a second tap
+    const now = Date.now();
+    if (lastTs !== 0 && now - lastTs <= windowMs) {
+      lastTs = 0;
+      return true;
+    }
+    lastTs = now;
+    return false;
+  };
+}

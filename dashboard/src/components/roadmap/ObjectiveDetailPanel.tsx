@@ -124,7 +124,10 @@ export function ObjectiveDetailPanel({ item, forecast, itemsBySlug, forecasts, o
   if (forecast.slipping) {
     riskKind = 'slip'; riskGlyph = '🔴'; riskInk = RM_RED;
     riskTitle = `Slipping — ${forecast.slipDays} day${forecast.slipDays === 1 ? '' : 's'} past target`;
-    riskSub = `Forecast end (${fmtShort(forecast.forecast_end!)}) overshoots the committed target (${fmtShort(forecast.target!)}). The slip cascades to everything this blocks.`;
+    const cause = item.slipUpstream.length > 0
+      ? ` Likely cause: upstream ${item.slipUpstream.join(', ')} running late.`
+      : ' Cause: this objective’s own tasks overrun the target.';
+    riskSub = `Forecast end (${fmtShort(forecast.forecast_end!)}) overshoots the committed target (${fmtShort(forecast.target!)}). The slip cascades to everything this blocks.${cause}`;
   } else if (!forecast.forecastable) {
     riskKind = 'unforecastable'; riskGlyph = '◔'; riskInk = 'var(--color-text-secondary)';
     riskTitle = 'Unforecastable';
@@ -189,6 +192,7 @@ export function ObjectiveDetailPanel({ item, forecast, itemsBySlug, forecasts, o
             <div className="odp-title" onClick={() => setEditingTitle(true)} title="Click to rename">{item.title}<span className="odp-title-edit">✎</span></div>
           )}
           <div className="odp-slug">{item.slug}</div>
+          {item.description && <div className="odp-desc">{item.description}</div>}
         </div>
 
         <div className="odp-body bd-scroll">
@@ -257,8 +261,16 @@ export function ObjectiveDetailPanel({ item, forecast, itemsBySlug, forecasts, o
                   <span className="odp-prog-label">{item.progress.done} / {item.progress.total} · {pct}%</span>
                 </div>
               ) : (
-                <div className="odp-prog-empty">No tasks yet — assign tasks, or <button className="odp-metric-add" onClick={addMetric}>track by a metric</button> (e.g. MRR).</div>
+                <div className="odp-prog-empty">No tasks yet — assign tasks to roll up progress.</div>
               )}
+              {/* Clear, obvious call-to-action to switch to an outcome metric (a "goal"). */}
+              <button className="odp-goal-add" onClick={addMetric} title="Track this objective by an outcome number (e.g. MRR) instead of task completion">
+                <span className="odp-goal-add-plus" aria-hidden="true">+</span>
+                <span className="odp-goal-add-text">
+                  <strong>Track by a metric</strong>
+                  <span>Set a goal number — e.g. MRR, customers, %</span>
+                </span>
+              </button>
             </>
           )}
 

@@ -114,6 +114,7 @@ dreamcontext roadmap objective list|show <slug>       # show = members + depende
 dreamcontext roadmap objective edit <slug> [--title] [--target <date>|clear] [--status not_started|active|review|done|clear] [--feature <slug>|clear]
 dreamcontext roadmap objective depend <A> <B>         # A depends on B — REJECTED at write time if it would create a cycle
 dreamcontext roadmap objective undepend <A> <B>
+dreamcontext roadmap objective metric <slug> [--current <n>] [--target <n>] [--baseline <n>] [--label ..] [--unit ..] [--clear]   # Key Result: --current is the common nudge
 dreamcontext roadmap objective delete <slug> --yes    # also heals other objectives' depends_on
 dreamcontext tasks create <name> --objectives a,b     # link at creation (slugs must exist)
 dreamcontext tasks objectives <task> a,b|clear        # set/clear on an existing task
@@ -124,8 +125,9 @@ dreamcontext tasks list --objective <slug>            # all tasks serving an obj
 - **Progress** = completed ÷ total member tasks (each objective counts over its OWN member set — a shared task contributes to each independently).
 - **Rollup status** (real enum): all `completed`→`done` 🟢 · any `in_progress`→`active` 🔵 · any `in_review`→`review` 🟡 · else `not_started` ⚪. A manual `--status` override wins (`status_source: override`).
 - **Forecast cascade — full transitive DAG:** `forecast_start = max(earliest member start, max(forecast_end of dependencies))`; `forecast_end = max(latest member due, forecast_start)`. A slip anywhere propagates to ALL transitive dependents (diamond shapes included).
-- **Null rule:** no dated member tasks → `forecast = null` ("unforecastable") and it imposes NO constraint on dependents.
-- **Slipping** 🔴 = `forecast_end > target_date` (the PO's committed date). This is the live on-track signal — surfaced in the snapshot and the board.
+- **Milestone forecast:** an objective with NO dated tasks of its own but WITH dependencies inherits its forecast from its latest dependency (finish-to-start) — so a pure milestone ("launch", which only depends on others) slips when an upstream slips. Only an objective with neither dated tasks nor a forecastable dependency stays `null` ("unforecastable") — and a null-forecast objective still never drags its dependents to "now".
+- **Slipping** 🔴 = `forecast_end > target_date` (the PO's committed date). The model also exposes `slip_days` (how many days late) and `slip_upstream` (the auto-derived cause — the dependency slug(s) responsible, else empty = the objective's own tasks overrun). Surfaced in the snapshot and the board.
+- **Prioritization + description:** each objective also carries `impact` (1–5), `effort` (weeks) and a one-line `description` (first body line) — rendered in the snapshot, which now surfaces current-month/quarter targets first.
 
 **Rules for agents:**
 1. **Propose, never overwrite.** Suggest `objectives:` for tasks you create or find unlabeled; an existing non-empty list is a PO decision — never change it unless the user asks.
@@ -133,6 +135,19 @@ dreamcontext tasks list --objective <slug>            # all tasks serving an obj
 3. **Objectives are orthogonal to versions/cycles.** `version` = WHEN (the time-box); `objectives` = WHAT outcomes it serves. Both live on the task independently.
 4. **`knowledge/roadmap/board.md` is auto-generated** — regenerate with `dreamcontext roadmap`, never hand-edit it. Objective files themselves are PO-authored prose — edit `## Why`/`## Notes` freely, but rollups/members are computed and don't belong in them.
 5. A feature PRD *may* back an objective via the objective's `feature:` field — a convenience link, not a requirement.
+
+### Proactive objective capture (in-session — ASK, never auto-create)
+
+Objectives are PO-authored, so this is an **offer-and-confirm** flow, never a silent write. When, during a session, the user **states or clearly implies an outcome/goal** — an explicit target ("hedefimiz $2000 MRR", "we want to launch mobile by Q4") OR an inferred one from how they talk about direction ("we really need to grow this", "the whole point is to make it a business") — do this:
+
+1. **Dedup first.** Run `dreamcontext roadmap objective list` and `dreamcontext memory recall "<the outcome>" --types objective`. If an objective already covers it, DON'T propose a new one — offer to update the existing one instead (or just link the current work to it).
+2. **Offer it.** If it's genuinely new, ask: *"This sounds like a roadmap objective — want me to add it?"* Never create without a yes.
+3. **Ask the dates.** On yes, ask for the committed window — start and target date (`--target`, and set start via `objective edit`/dashboard). Don't invent dates.
+4. **Offer a Key Result.** Ask whether to track it by a number rather than member tasks: *"Track this by a metric (e.g. MRR 0→2000) or by its tasks?"* If a metric, capture `label` + `baseline`/`target` (`--metric*` flags on create, or `objective metric` after).
+5. **Detect + propose dependencies.** From the existing objective list, infer likely `depends_on` edges ("make-it-a-business can't happen before simplified-ux and team-ready ship") and **propose them for confirmation**; on yes, apply with `objective depend <A> <B>` (the write-time cycle guard protects you). Never write a dependency edge silently.
+6. **Keep the Key Result current.** When the session later surfaces a real observed value for a tracked objective ("MRR just hit $1,250", "we're at 400 active users"), offer to update it: `dreamcontext roadmap objective metric <slug> --current <n>`. Use a value you actually observed — never estimate. (Sleep may also refresh `--current` autonomously from observed values.)
+
+The through-line: **you detect and propose; the PO confirms.** Every create, date, dependency, and metric write waits for a yes — matching the "objectives are PO-authored" invariant and the board-first ritual (`knowledge/visual-first-board-ritual.md`).
 
 ---
 

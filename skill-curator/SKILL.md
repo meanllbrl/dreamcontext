@@ -10,7 +10,7 @@ description: >
   stale task statuses, off-vocabulary tags, a flat knowledge dump that should be foldered).
   This is the interactive, sub-agent-driven brain REFACTOR — the pass that sleep won't do. It is
   allowed to MOVE, MERGE, SPLIT, RENAME, RE-TYPE, and RETIRE content to reach the right
-  knowledge / feature / task / version shape.
+  knowledge / feature / task / version / objective shape.
 user-invocable: true
 alwaysApply: false
 tags: [curator, refactor, reorganize, cleanup, dedup, single-source-of-truth, orchestration, sub-agents, dreamcontext]
@@ -87,7 +87,7 @@ flowchart TD
 2. **Read the current conventions** so the whole run targets *today's* shape: the installed
    `dreamcontext` skill + references, `dreamcontext taxonomy vocab`, `core/0.soul.md`, `1.user.md`.
 3. **Announce** (per the ritual) and ask **only what you can't determine** (keep it short):
-   - **Scope**: the whole brain, or one domain (knowledge / features / tasks / versions)?
+   - **Scope**: the whole brain, or one domain (knowledge / features / tasks / versions / objectives)?
    - **Anything off-limits** — files/areas you should not touch this pass?
    - Confirm they want a **real run** (it mutates the corpus) — the plan is shown before execution.
    On a clean git tree, note it; if there are uncommitted changes, recommend committing first so the
@@ -106,6 +106,7 @@ findings:
 | `features` | reconcile status to reality, rename to current vocabulary, dedup vs knowledge, flag stale |
 | `tasks` | finished tasks still open (STATUS-BUMP), duplicate/stale tasks (MERGE/RETIRE), orphans → attach to a planning version |
 | `versions` | reconcile release/version statuses so they're tidy and consistent |
+| `objectives` | PO-authored roadmap objectives (`core/objectives/*.md`): dangling `depends_on`/task links, stale status overrides, malformed dates/metrics, target dates long past with no progress — flag; never rewrite PO prose (STATUS-BUMP/RETAG only, PO owns the file) |
 
 Give each auditor its domain + the conventions you read in Phase 0. Each returns a **source → action
 → target** findings table. A finding that says "clean up knowledge" without naming each file and the

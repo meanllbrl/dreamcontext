@@ -14,6 +14,7 @@ import {
   type DigestEntry,
   type PeerDelta,
 } from '../../hooks/useFederation';
+import { FederationBoard } from '../federation/FederationBoard';
 import './ConnectionsManager.css';
 
 const DIRECTIONS: ConnectionDirection[] = ['out', 'in', 'both'];
@@ -99,23 +100,11 @@ export function ConnectionsManager({
 
   return (
     <section className="settings-section">
-      <h2 className="settings-section-title">{t('settings.federation')}</h2>
-
-      {/* Plain-language explainer — what this whole panel does. */}
-      <div className="fed-intro">
-        <h3 className="fed-intro-title">{t('federation.intro.title')}</h3>
-        <p className="fed-intro-body">{t('federation.intro.body')}</p>
-        <ol className="fed-intro-steps">
-          <li>{t('federation.intro.step1')}</li>
-          <li>{t('federation.intro.step2')}</li>
-          <li>{t('federation.intro.step3')}</li>
-        </ol>
-      </div>
-
-      {/* Sharing read gate */}
-      <div className="fed-card">
-        <h3 className="fed-subtitle">{t('federation.sharing')}</h3>
-        <label className="settings-checkbox-label">
+      {/* Lean header: title + the one key control (this project's read gate) on
+          a single row, so the map can lead immediately below. */}
+      <div className="fed-head">
+        <h2 className="settings-section-title">{t('settings.federation')}</h2>
+        <label className="fed-sharing-toggle settings-checkbox-label" title={t('federation.shareable.hint')}>
           <input
             type="checkbox"
             className="settings-checkbox"
@@ -125,12 +114,23 @@ export function ConnectionsManager({
           />
           <span>{t('federation.shareable.label')}</span>
         </label>
-        <p className="settings-field-hint">{t('federation.shareable.hint')}</p>
       </div>
 
+      {/* Interactive connection map — the panel's primary surface (same board as
+          the Launcher). Everything text-heavy lives in the "More" disclosure below. */}
+      <FederationBoard variant="embedded" />
+
+      {/* Everything else — list view, topic filters, inbox, sync preview — folded
+          away so the map stays the focus. */}
+      <details className="fed-advanced">
+      <summary className="fed-advanced-summary">{t('federation.advanced')}</summary>
+
       {/* Registered vaults */}
-      <div className="fed-vaults">
-        <h3 className="fed-subtitle">{t('federation.vaults')}</h3>
+      <div className="fed-card">
+        <div className="fed-card-head">
+          <h3 className="fed-card-title">{t('federation.vaults')}</h3>
+          <p className="fed-card-desc">{t('federation.vaults.desc')}</p>
+        </div>
         {vaults.length === 0 ? (
           <p className="settings-field-hint">{t('federation.vaults.empty')}</p>
         ) : (
@@ -152,8 +152,11 @@ export function ConnectionsManager({
       </div>
 
       {/* Existing connections */}
-      <div className="fed-connections">
-        <h3 className="fed-subtitle">{t('federation.connections')}</h3>
+      <div className="fed-card">
+        <div className="fed-card-head">
+          <h3 className="fed-card-title">{t('federation.connections')}</h3>
+          <p className="fed-card-desc">{t('federation.connections.desc')}</p>
+        </div>
         {conns.length === 0 ? (
           <p className="settings-field-hint">{t('federation.connections.empty')}</p>
         ) : (
@@ -207,8 +210,11 @@ export function ConnectionsManager({
       </div>
 
       {/* Add connection */}
-      <div className="fed-add">
-        <h3 className="fed-subtitle">{t('federation.add')}</h3>
+      <div className="fed-card">
+        <div className="fed-card-head">
+          <h3 className="fed-card-title">{t('federation.add')}</h3>
+          <p className="fed-card-desc">{t('federation.add.desc')}</p>
+        </div>
         {addableVaults.length === 0 ? (
           <p className="settings-field-hint">{t('federation.add.none')}</p>
         ) : (
@@ -252,8 +258,11 @@ export function ConnectionsManager({
       </div>
 
       {/* Digest inbox — pending + consumed entries with origin provenance (P3.8) */}
-      <div className="fed-inbox">
-        <h3 className="fed-subtitle">{t('federation.inbox')}</h3>
+      <div className="fed-card">
+        <div className="fed-card-head">
+          <h3 className="fed-card-title">{t('federation.inbox')}</h3>
+          <p className="fed-card-desc">{t('federation.inbox.desc')}</p>
+        </div>
         {(() => {
           const pending = inbox?.pending ?? [];
           const consumed = inbox?.consumed ?? [];
@@ -312,16 +321,19 @@ export function ConnectionsManager({
       </div>
 
       {/* Preview sync — dry-run preview of the outbound deltas (P3.8) */}
-      <div className="fed-preview">
+      <div className="fed-card">
+        <div className="fed-card-head">
+          <h3 className="fed-card-title">{t('federation.preview.title')}</h3>
+          <p className="fed-card-desc">{t('federation.preview.hint')}</p>
+        </div>
         <div className="fed-preview-head">
           <button
-            className="btn"
+            className="btn btn--secondary"
             onClick={() => syncPreview.mutate()}
             disabled={syncPreview.isPending}
           >
             {syncPreview.isPending ? t('federation.preview.running') : t('federation.preview')}
           </button>
-          <p className="settings-field-hint">{t('federation.preview.hint')}</p>
         </div>
         {syncPreview.isError && (
           <p className="settings-test-err">
@@ -337,6 +349,7 @@ export function ConnectionsManager({
           />
         )}
       </div>
+      </details>
     </section>
   );
 }

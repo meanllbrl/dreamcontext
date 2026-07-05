@@ -193,7 +193,7 @@ function copyPreservingUnicode(text: string): void {
   try { void navigator.clipboard?.writeText(text).catch(() => { /* blocked */ }); } catch { /* none */ }
 }
 
-export function createSession(bypass: boolean, notify: () => void, claudeId: string, resume = false, kind: SessionKind = 'agent'): Session {
+export function createSession(bypass: boolean, notify: () => void, claudeId: string, resume = false, kind: SessionKind = 'agent', initialPrompt = '', model = ''): Session {
   const id = `agent-${++sessionSeq}`;
   const container = document.createElement('div');
   container.className = 'agent-pane-term';
@@ -241,8 +241,12 @@ export function createSession(bypass: boolean, notify: () => void, claudeId: str
   const isShell = kind === 'shell';
   const idParam = isShell ? '' : (resume ? `&resume=${encodeURIComponent(claudeId)}` : `&sessionId=${encodeURIComponent(claudeId)}`);
   const kindParam = isShell ? '&kind=shell' : '';
+  // The model applies ONLY to a Claude agent (`claude --model <id>`); a shell has none, and
+  // an empty id means "let Claude Code use its configured default" (no flag). The server
+  // re-validates the token before it ever reaches the shell command, so this is a hint.
+  const modelParam = !isShell && model ? `&model=${encodeURIComponent(model)}` : '';
   const bypassParam = isShell ? '0' : (bypass ? '1' : '0');
-  const url = `${proto}://${location.host}/api/agent/terminal?vault=${encodeURIComponent(vault ?? '')}&bypass=${bypassParam}&theme=${theme}${idParam}${kindParam}`;
+  const url = `${proto}://${location.host}/api/agent/terminal?vault=${encodeURIComponent(vault ?? '')}&bypass=${bypassParam}&theme=${theme}${idParam}${kindParam}${modelParam}`;
   const ws = new WebSocket(url);
 
   const session: Session = {
@@ -314,7 +318,7 @@ export function createSession(bypass: boolean, notify: () => void, claudeId: str
     setStatus('closed');
   };
   ws.onopen = () => { setStatus('open'); fitAndResize(); };
-  ws.onmessage = (ev) => { const d = typeof ev.data === 'string' ? ev.data : ''; if (d) { term.write(d); markActivity(); } };
+  ws.onmessage = (ev) => { const d = typeof ev.data === 'string' ? ev.data : ''; if (d) { term.write(d); markActivity(); armInitialPrompt(); } };
   ws.onclose = stopOnClose;
   ws.onerror = stopOnClose;
 
@@ -322,6 +326,29 @@ export function createSession(bypass: boolean, notify: () => void, claudeId: str
   const sendInput = (data: string) => {
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data }));
   };
+
+  // ── Auto-run an initial prompt (e.g. the "Run sleep agent" consolidation) ──────────
+  // A spawned session that carries an `initialPrompt` types it in and submits ONCE, the
+  // moment Claude Code's TUI has finished drawing its boot frame and gone quiet. We can't
+  // type into the readline until it exists, and there's no clean "ready" signal — so we
+  // wait for the boot output to SETTLE: every chunk resets a short timer, and when the
+  // stream pauses (the TUI is idle at its prompt) we send the text, then Enter a beat later
+  // so the readline registers the whole line before submit. `initialPrompt` is a single
+  // line (a bare newline would submit early), so this drops it in as one message. Fires at
+  // most once (`promptSent`), so the long autonomous run that follows never re-triggers it.
+  let promptSent = false;
+  let bootTimer: ReturnType<typeof setTimeout> | undefined;
+  function armInitialPrompt() {
+    if (!initialPrompt || promptSent) return;
+    if (bootTimer) clearTimeout(bootTimer);
+    bootTimer = setTimeout(() => {
+      bootTimer = undefined;
+      if (promptSent || ws.readyState !== WebSocket.OPEN) return;
+      promptSent = true;
+      sendInput(initialPrompt);
+      setTimeout(() => sendInput('\r'), 160);
+    }, 1600);
+  }
 
   // Public injection point (e.g. a dropped image's absolute path). A HOISTED function
   // declaration so the session object literal above can reference it before this line
@@ -413,6 +440,7 @@ export function createSession(bypass: boolean, notify: () => void, claudeId: str
     if (disposed) return;
     disposed = true;
     if (idleTimer) { clearTimeout(idleTimer); idleTimer = undefined; }
+    if (bootTimer) { clearTimeout(bootTimer); bootTimer = undefined; }
     // Each teardown step is isolated. Disposing a JUST-opened xterm — its WebGL glyph
     // atlas still initialising — can throw `_isDisposed` deep in addon teardown; an
     // un-caught throw here would abort the caller (closeSessionById) before it removes

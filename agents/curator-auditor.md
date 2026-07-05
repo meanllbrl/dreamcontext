@@ -2,7 +2,7 @@
 name: curator-auditor
 description: >
   Read-only audit specialist for the curator skill. Scans ONE domain of an existing
-  dreamcontext brain (knowledge / single-source-of-truth / features / tasks / versions)
+  dreamcontext brain (knowledge / single-source-of-truth / features / tasks / versions / objectives)
   against the conventions that are CURRENT AT RUN TIME — read from the live `dreamcontext`
   skill, `taxonomy vocab`, and the soul — and returns a structured REORG FINDINGS list:
   every drifted artifact mapped to `source → action → target` (MOVE / MERGE / SPLIT /

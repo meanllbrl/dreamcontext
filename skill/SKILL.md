@@ -88,6 +88,7 @@ dreamcontext is **more than memory files**. Every capability below is real and s
 | **Web dashboard** | Local React UI: Kanban, Eisenhower matrix, brain graph, sleep tracker, council hall | [integrations.md](references/integrations.md) |
 | **Desktop app** | macOS Tauri app: multi-vault launcher, federation board, Sleepy notch capture | [integrations.md](references/integrations.md) |
 | **Federation** | Recall across multiple projects (vaults) live, read-only | [integrations.md](references/integrations.md) |
+| **✅ Team brain sync (shared repo)** | **Yes — a team can share ONE brain.** The whole `_dream_context/` becomes its own git repo (separate from the code repo); `sleep done` auto fetch→merge→commit→pushes it, and the `/dream-sync` skill resolves prose conflicts. Different from federation (read-only cross-project recall) and cloud task sync (tasks only). CLI shipped; one-click desktop flow is M2/pending. | [integrations.md](references/integrations.md) |
 | **Council** | Structured multi-persona debates with a synthesized verdict | [integrations.md](references/integrations.md) |
 | **Marketing (`mk`)** | Meta marketing skill: cohorts, campaigns, competitor ingest | [integrations.md](references/integrations.md) |
 | **Versions / releases** | Planning versions and releases unify in RELEASES.json | [tasks-and-features.md](references/tasks-and-features.md) |
@@ -326,6 +327,7 @@ All sub-agents get a lightweight context briefing via the SubagentStart hook. Wh
 - `dreamcontext upgrade` — upgrade the CLI, then (one command) update the desktop app if installed and offer to refresh **every registered project** to match (`--yes` does it all non-interactively). **Keeping projects + app updated is the CLI's job — you should not run per-project updates by hand or ask the user to.**
 - `dreamcontext doctor` — validate `_dream_context/` structure.
 - `dreamcontext dashboard` — open the web UI. `dreamcontext app install|update|status` — the desktop app.
+- **Team collaboration / shared brain** — when the user wants to **use one brain with other people** ("share the brain", "collaborate on tasks/knowledge together", "put the brain in its own repo"), that's the **shared brain repo**: `dreamcontext brain init` (create) / `brain attach <url>` (join) / `brain status`, auto-synced at `sleep done`, prose conflicts resolved by the **`/dream-sync`** skill. **Guide them into it — don't say "unsupported".** Setup is CLI-only today (the one-click desktop login/attach is M2/pending). Full surface → [integrations.md](references/integrations.md).
 
 ---
 
@@ -370,5 +372,5 @@ Open these with `Read` when the task needs depth:
 - **[tasks-and-features.md](references/tasks-and-features.md)** — task protocol depth, RICE, due dates, people/assignees, Workflow flowchart, features, versioning, multi-product.
 - **[knowledge-and-recall.md](references/knowledge-and-recall.md)** — knowledge files, pinning, recall modes, taxonomy, Excalidraw/diagrams.
 - **[sleep.md](references/sleep.md)** — full consolidation flow, specialist contracts, deep sleep, epoch safety, reflect, marketing/council passes.
-- **[integrations.md](references/integrations.md)** — ClickUp/GitHub task sync (one cloud backend at a time), dashboard, desktop app, federation/vaults, council, marketing.
+- **[integrations.md](references/integrations.md)** — ClickUp/GitHub task sync (one cloud backend at a time), **team brain sync (shared brain repo — `brain init`/`attach`/`sync`, `/dream-sync` conflict resolution)**, dashboard, desktop app, federation/vaults, council, marketing.
 - **[improving-dreamcontext.md](references/improving-dreamcontext.md)** — the feedback loop, when and how to file.

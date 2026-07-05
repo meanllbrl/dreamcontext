@@ -14,6 +14,8 @@ import { useObjectives, useRoadmap, type ObjectiveMetric, type RoadmapTaskRef } 
 export interface RoadmapItem {
   slug: string;
   title: string;
+  /** One-line outcome summary from the computed model (server body distillation). */
+  description: string | null;
   start_date: string | null;
   target_date: string | null;
   depends_on: string[];
@@ -30,6 +32,9 @@ export interface RoadmapItem {
   impact: number | null;
   effort: number | null;
   metric: ObjectiveMetric | null;
+  /** Server reality-based slip signal (task-date rollup): days late + auto-derived cause. */
+  slipDays: number | null;
+  slipUpstream: string[];
 }
 
 export function useRoadmapItems(): {
@@ -47,6 +52,7 @@ export function useRoadmapItems(): {
       return {
         slug: o.slug,
         title: o.title,
+        description: m?.description ?? null,
         start_date: o.start_date,
         target_date: o.target_date,
         depends_on: o.depends_on,
@@ -60,6 +66,8 @@ export function useRoadmapItems(): {
         impact: o.impact,
         effort: o.effort,
         metric: o.metric,
+        slipDays: m?.slip_days ?? null,
+        slipUpstream: m?.slip_upstream ?? [],
       };
     });
   }, [objectives, model]);

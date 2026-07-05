@@ -1,8 +1,20 @@
-.fed-subtitle {
+/* ─── Card header (title + plain-language description) ───────────────────────── */
+.fed-card-head {
+  margin-bottom: var(--space-3);
+}
+
+.fed-card-title {
+  margin: 0;
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+}
+
+.fed-card-desc {
+  margin: var(--space-1) 0 0;
+  font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
-  margin: var(--space-5) 0 var(--space-2);
+  line-height: 1.5;
 }
 
 /* ─── Vault list ──────────────────────────────────────────────────────────── */
@@ -150,11 +162,6 @@
 }
 
 /* ─── Digest inbox + sync preview (P3.8) ───────────────────────────────────── */
-
-.fed-inbox,
-.fed-preview {
-  margin-top: var(--space-5);
-}
 
 .fed-inbox-group {
   margin-top: var(--space-3);
@@ -305,14 +312,89 @@
 }
 
 .fed-card {
+  background: var(--color-bg);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  padding: var(--space-3);
-  margin-bottom: var(--space-3);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+  margin-bottom: var(--space-4);
 }
 
-.fed-card .fed-subtitle {
-  margin-top: 0;
+.fed-card:last-child {
+  margin-bottom: 0;
+}
+
+/* Lean header row: title left, the read-gate toggle right, map leads below. */
+.fed-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.fed-head .settings-section-title {
+  margin: 0;
+}
+
+.fed-sharing-toggle {
+  flex: 0 0 auto;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  font-size: var(--font-size-sm);
+}
+
+/* Space between the map and the "More" disclosure. */
+.fed-advanced {
+  margin-top: var(--space-4);
+}
+
+/* ─── Advanced (collapsed list view + topic filters) ─────────────────────────── */
+.fed-advanced {
+  margin-bottom: var(--space-4);
+}
+
+.fed-advanced-summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-secondary);
+  user-select: none;
+  transition: color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.fed-advanced-summary::-webkit-details-marker {
+  display: none;
+}
+
+.fed-advanced-summary::before {
+  content: '▸';
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  transition: transform var(--transition-fast);
+}
+
+.fed-advanced[open] .fed-advanced-summary::before {
+  transform: rotate(90deg);
+}
+
+.fed-advanced-summary:hover {
+  color: var(--color-text);
+  border-color: var(--color-border-hover);
+}
+
+.fed-advanced[open] .fed-advanced-summary {
+  margin-bottom: var(--space-4);
 }
 
 .fed-dir-hint {

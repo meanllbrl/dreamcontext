@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react';
-import { SleepyMascot } from './SleepyMascot';
 import type { SessionRow, SessionStatusKind } from './agentStatus';
 
 /**
@@ -48,10 +47,6 @@ export function AgentDock({ rows, focusedId, onOpen, onClose, className }: {
   const attention = rows.some(r => r.attention);
   const rollup = rollupKind(rows);
   const plural = rows.length === 1 ? '' : 's';
-  // The anchor chip's face follows the focused session, falling back to the worst-of row.
-  const anchorRow = rows.find(r => r.id === focusedId)
-    ?? rows.find(r => r.info.kind === rollup)
-    ?? rows[0];
 
   return (
     <div className={'agent-dock' + (className ? ' ' + className : '')} data-collapsed={collapsed} role="group" aria-label="Agent sessions">
@@ -73,9 +68,6 @@ export function AgentDock({ rows, focusedId, onOpen, onClose, className }: {
                 onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(row.id); } }}
               >
                 <span className="agent-dock-chip-dot" data-kind={row.info.kind} aria-hidden />
-                <span className="agent-dock-chip-mascot" aria-hidden>
-                  <SleepyMascot mood={row.info.mood} size={24} compact />
-                </span>
                 <span className="agent-dock-chip-title" title={row.title}>{row.title}</span>
                 <span className="agent-dock-chip-state" data-kind={row.info.kind}>{row.info.label}</span>
                 {row.attention && <span className="agent-dock-chip-badge" aria-label="Waiting for you" />}
@@ -104,12 +96,7 @@ export function AgentDock({ rows, focusedId, onOpen, onClose, className }: {
         title={collapsed ? `${rows.length} agent${plural} · click to expand` : 'Collapse'}
         onClick={() => setCollapsed(c => !c)}
       >
-        <span className="agent-dock-anchor-mascot" aria-hidden>
-          <span className="agent-dock-anchor-mascot-clip">
-            <SleepyMascot mood={anchorRow.info.mood} size={24} compact />
-          </span>
-          <span className="agent-dock-anchor-dot" data-kind={rollup} />
-        </span>
+        <span className="agent-dock-anchor-dot" data-kind={rollup} aria-hidden />
         <span className="agent-dock-anchor-count">{rows.length}</span>
         {attention && <span className="agent-dock-anchor-badge" aria-label="Waiting for you" />}
         <span className="agent-dock-anchor-chevron" aria-hidden>{collapsed ? '⌃' : '⌄'}</span>

@@ -1,6 +1,8 @@
 # Integrations — ClickUp / GitHub, Dashboard, Desktop App, Federation, Council, Marketing
 
-This reference covers everything beyond the local markdown brain. **If a user asks whether dreamcontext integrates with ClickUp or GitHub Issues, runs a dashboard, syncs across projects, or runs debates — the answer is yes.** Details below.
+This reference covers everything beyond the local markdown brain. **If a user asks whether dreamcontext integrates with ClickUp or GitHub Issues, runs a dashboard, syncs across projects, lets a *team share one brain*, or runs debates — the answer is yes.** Details below.
+
+> **"I want to use dreamcontext WITH my team / with other people."** That is the **shared brain repo** — see [Team brain sync](#-team-brain-sync-shared-brain-repo-collaborate-on-one-brain) below. Don't confuse it with the three neighbors: **cloud task sync** (ClickUp/GitHub Issues) mirrors only *tasks*; **federation** is read-only cross-*project* recall (no copying); the shared **brain repo** git-syncs the *whole* `_dream_context/` so several people push/pull/merge the same tasks + knowledge + features.
 
 ---
 
@@ -209,6 +211,48 @@ dreamcontext federation purge --all                # remove every federated:true
 dreamcontext federation purge --vault <name>       # remove only copies from one peer
 dreamcontext federation purge --dry-run            # preview
 ```
+
+---
+
+## ✅ Team brain sync (shared brain repo) — collaborate on ONE brain
+
+**Yes, a team can share a single dreamcontext brain.** The whole `_dream_context/` (tasks, knowledge, features, sleep state) becomes **its own git repo** with its own remote — separate from the code repo — and the CLI/desktop app push/pull/merge it the way a team collaborates on code. The brain stays plain markdown/JSON on disk (local-first); git is just the sync transport, not a new database.
+
+**Guide the user here** the moment they say *"I want to use this with my team / with other people," "share the brain," "collaborate on tasks/knowledge together,"* or *"put the brain in its own repo."* Do NOT answer "we don't support that" — this is the feature.
+
+**How it differs from its neighbors** (say this if the user conflates them):
+- **Cloud task sync** (ClickUp/GitHub Issues) — mirrors only *tasks* to a task manager, one backend at a time.
+- **Federation** — read-only recall across your OWN separate projects; nothing is ever copied.
+- **Shared brain repo (this)** — the *whole* brain is one git-synced artifact several people edit together.
+
+### Onboarding a team (M1 — CLI, shipped today)
+
+```bash
+# Person A — create a brand-new shared brain repo (PRIVATE by default) and push a scrubbed first commit
+dreamcontext brain init --code-repo https://github.com/acme/app     # pointer back to the paired code repo
+
+# Person B (and every teammate) — attach the existing brain repo (a TRUST decision: it loads every session)
+dreamcontext brain discover           # list dreamcontext-brain-topic repos you can access
+dreamcontext brain attach https://github.com/acme/app-brain         # trust warning + diff preview, then confirm
+
+dreamcontext brain status             # mode (separate/in-tree), remote, sync state, cloud-sync switch
+```
+
+### Day-to-day (mostly automatic)
+
+- **Every `sleep done`** fetches → semantic-merges on conflict → commits → pushes the brain (sync failure never fails sleep). **Session start** does a non-blocking background pull. So teammates' consolidated context reaches everyone without a manual step.
+- **Manual sync any time:** `dreamcontext brain sync` (or `--pull-only` to just take team content in).
+- **On a prose merge conflict** (two people edited the same `##` section of a knowledge/feature doc), the CLI resolves every deterministic file itself and stops at `already-awaiting-agent`, deferring the rest to the **`/dream-sync` skill** — the agent reads base/ours/theirs snapshots, writes the real semantic merge, and hands back with `brain sync --continue`. (`--resume`/`--continue` are attended-only; never drive them unattended.)
+
+### Editing / reconfiguring
+
+- **Turn cloud sync on/off:** `dreamcontext brain enable` / `brain disable`.
+- **Modes:** `separate` (own remote, full auto-sync) vs `in-tree` (brain nested in the code repo — commit-only, **never** auto-pushes; the safe default). Both always run the scrub gate.
+- **Safety rails (always on):** brain repos default **private** (`--public` needs an explicit confirm); a **scrub gate** blocks secrets / absolute local paths before every commit and push; tokens are supplied via `GIT_ASKPASS` (never embedded in the remote URL); per-machine indexes/caches are gitignored and never pushed.
+
+### From the desktop app? — M2, PENDING (not yet shipped)
+
+The one-click UX — **GitHub device-flow login from the Launcher, a repo picker over your `dreamcontext-brain`-topic repos, UI "create"/"attach" with the trust preview, and a team-updates badge** — is **M2, still pending**. Today the shared-brain setup is **CLI-only** (a technical user runs `brain init` / `brain attach`). Be honest about this: a non-technical teammate can't yet do the *setup* from the app; once attached, the normal dashboard/app reads the shared brain like any other. (Full status: `core/features/brain-repo-sync.md`; merge internals: `skill-sync/references/merge-rules.md`.)
 
 ---
 

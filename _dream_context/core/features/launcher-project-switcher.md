@@ -149,6 +149,12 @@ system.
 ## Changelog
 <!-- LIFO: newest entry at top -->
 
+### 2026-07-04 - Keyboard nav + window management fixes (working tree, feat/sleep-debt-header-tracker)
+- **Full keyboard navigation**: the switcher now builds a single flat `rows` array (Launcher home row + filtered projects) so ↑/↓ traverse EVERYTHING (home row included) and Enter fires the right action per row. The old code excluded the home row from keyboard nav, and the focused-row highlight (`--color-bg-secondary`) was too faint to read — so ↑/↓ felt like a no-op. Fixed: accent-color left-edge bar (`box-shadow: inset 2px 0 0 var(--color-accent)`) on the focused row makes movement unmistakable, and `scrollIntoView({ block: 'nearest' })` auto-scrolls the focused row into the viewport.
+- **Window management changed to focus-or-open** (never overwrites the current window): `goToProject` previously called `switchVaultInPlace` from a vault window — hopping the current window to the new project in place (so switching from project B to A **closed** B's window, overwriting it with A). Fixed: `goToProject` now always calls `openVaultWindow(name)`, which focuses an already-open window or opens a new one, **leaving the current window untouched**. Same for `openLauncherHome` — focuses the existing `main` window (the Launcher) or rebuilds it with the same options as the Rust-built original, without touching the vault window you're in. Deleted the now-unused `switchVaultInPlace` and `currentVaultName` helpers.
+- **Footer label updated**: "switch" → "open" (reflects the new focus-or-open behavior).
+- Touched: `ProjectSwitcher.tsx/.css` (rows array, keyboard nav, accent bar), `desktop.ts` (`openLauncherHome`, `goToProject`, `awaitWindowCreated` helper, deleted `switchVaultInPlace`/`currentVaultName`). Verified in the packaged Tauri app (real multi-window behavior). Not yet committed or merged.
+
 ### 2026-07-04 - Created (sleep-product consolidation)
 - Feature PRD created from working-tree code (`ProjectSwitcher.tsx`/`.css`,
   `overlayStack.ts`, `VaultDot.tsx`/`.css`, `desktop.ts` changes) plus a code-review

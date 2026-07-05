@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useI18n } from '../context/I18nContext';
 import { api } from '../api/client';
@@ -6,6 +6,8 @@ import { useConfig, useUpdateConfig, type PlatformId, type SetupConfig } from '.
 import { SearchableSelect } from '../components/tasks/SearchableSelect';
 import { ConnectionsManager } from '../components/settings/ConnectionsManager';
 import { TaskOverrideEditor } from '../components/settings/TaskOverrideEditor';
+import { SETTINGS_ICONS } from '../components/settings/SettingsIcons';
+import { useAgentCapabilities } from '../hooks/useAgentCapabilities';
 import { isDesktop } from '../lib/desktop';
 import {
   readSleepyConfig,
@@ -17,6 +19,9 @@ import {
   initAgentSettingsFromServer,
   writeAgentSettings,
   accelFromKeyEvent as accelFromAgentKey,
+  loneModifierToken,
+  formatHotkey,
+  DOUBLE_TAP_MS,
   type AgentSettings,
 } from '../lib/agentSettings';
 import './SettingsPage.css';
@@ -103,22 +108,25 @@ type SettingsSectionId = 'platforms' | 'tasks' | 'format' | 'memory' | 'connecti
 
 interface SettingsNavItem {
   id: SettingsSectionId;
-  icon: string;
   labelKey: string;
+  descKey: string;
   desktopOnly?: boolean;
   beta?: boolean;
+  lab?: boolean;
 }
 
-// Monochrome geometric glyphs matching the main Sidebar's icon language.
-// Task Format sits just above Sleepy — both are the newer, beta-tier surfaces.
+// Each item pairs a consistent line icon (SETTINGS_ICONS) with a label and a
+// one-line description, so the menu explains itself instead of relying on
+// look-alike Unicode glyphs. Task Format sits just above Sleepy — both are the
+// newer, beta-tier surfaces.
 const SETTINGS_NAV: SettingsNavItem[] = [
-  { id: 'platforms', icon: '⬡', labelKey: 'settings.nav.platforms' },
-  { id: 'tasks', icon: '⇅', labelKey: 'settings.nav.tasks' },
-  { id: 'memory', icon: '❖', labelKey: 'settings.nav.memory' },
-  { id: 'connections', icon: '⊕', labelKey: 'settings.nav.connections' },
-  { id: 'format', icon: '▤', labelKey: 'settings.nav.format', beta: true },
-  { id: 'agents', icon: '◈', labelKey: 'settings.nav.agents', desktopOnly: true, beta: true },
-  { id: 'sleepy', icon: '☾', labelKey: 'settings.nav.sleepy', desktopOnly: true },
+  { id: 'platforms', labelKey: 'settings.nav.platforms', descKey: 'settings.navdesc.platforms' },
+  { id: 'tasks', labelKey: 'settings.nav.tasks', descKey: 'settings.navdesc.tasks' },
+  { id: 'memory', labelKey: 'settings.nav.memory', descKey: 'settings.navdesc.memory' },
+  { id: 'connections', labelKey: 'settings.nav.connections', descKey: 'settings.navdesc.connections' },
+  { id: 'format', labelKey: 'settings.nav.format', descKey: 'settings.navdesc.format', beta: true },
+  { id: 'agents', labelKey: 'settings.nav.agents', descKey: 'settings.navdesc.agents', desktopOnly: true, beta: true },
+  { id: 'sleepy', labelKey: 'settings.nav.sleepy', descKey: 'settings.navdesc.sleepy', desktopOnly: true, lab: true },
 ];
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -129,10 +137,20 @@ export function SettingsPage() {
   const { data: config, isLoading: configLoading, isError: configError } = useConfig();
   const updateConfig = useUpdateConfig();
 
+  // Whether the desktop-only surfaces (Agents, Sleepy) are available here. The
+  // client-side `isDesktop()` (`window.__TAURI_INTERNALS__`) is unreliable in a
+  // remote-loaded vault window — Tauri v2 doesn't inject its internals into the
+  // http://localhost dashboard origin — so a genuine desktop session reads false
+  // there and these panels would vanish. The server's capability probe
+  // (`DREAMCONTEXT_DESKTOP=1`, the signal the agent dock itself uses) is the
+  // authoritative one; union the two so either positive shows the panels.
+  const { data: agentCaps } = useAgentCapabilities();
+  const desktopSurfaces = (agentCaps?.desktop ?? false) || isDesktop();
+
   // In-page section nav: only one settings group is shown at a time so a
   // specific setting is quick to find instead of buried in one long scroll.
   const [activeSection, setActiveSection] = useState<SettingsSectionId>('platforms');
-  const navItems = SETTINGS_NAV.filter((item) => !item.desktopOnly || isDesktop());
+  const navItems = SETTINGS_NAV.filter((item) => !item.desktopOnly || desktopSurfaces);
 
   const [platforms, setPlatforms] = useState<PlatformId[]>(DEFAULT_CONFIG.platforms);
   const [disableNativeMemory, setDisableNativeMemory] = useState<boolean>(
@@ -172,12 +190,15 @@ export function SettingsPage() {
   // a window event the mounted AgentSurface listens for → applies live, no reload).
   const [agentCfg, setAgentCfg] = useState<AgentSettings | null>(null);
   const [capturingAgentHotkey, setCapturingAgentHotkey] = useState(false);
+  // Tracks the last lone-modifier tap while the hotkey field is capturing, so a
+  // second tap of the SAME modifier within the window binds a double-tap hotkey.
+  const lastModTapRef = useRef<{ token: string; ts: number } | null>(null);
   useEffect(() => {
-    if (!isDesktop()) return;
+    if (!desktopSurfaces) return;
     let cancelled = false;
     void initAgentSettingsFromServer().then((s) => { if (!cancelled) setAgentCfg(s); });
     return () => { cancelled = true; };
-  }, []);
+  }, [desktopSurfaces]);
   const updateAgentCfg = (next: AgentSettings) => {
     setAgentCfg(next);
     writeAgentSettings(next);
@@ -427,25 +448,40 @@ export function SettingsPage() {
 
       <div className="settings-body">
         <nav className="settings-nav" aria-label={t('settings.title')}>
-          {navItems.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className={`settings-nav-item${activeSection === item.id ? ' settings-nav-item--active' : ''}`}
-              aria-current={activeSection === item.id ? 'page' : undefined}
-              onClick={() => setActiveSection(item.id)}
-            >
-              <span className="settings-nav-icon" aria-hidden="true">{item.icon}</span>
-              <span className="settings-nav-label">{t(item.labelKey)}</span>
-              {item.beta && <span className="settings-beta-badge">BETA</span>}
-            </button>
-          ))}
+          {navItems.map((item) => {
+            const NavIcon = SETTINGS_ICONS[item.id];
+            const active = activeSection === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                className={`settings-nav-item${active ? ' settings-nav-item--active' : ''}`}
+                aria-current={active ? 'page' : undefined}
+                onClick={() => setActiveSection(item.id)}
+              >
+                <span className="settings-nav-icon" aria-hidden="true">
+                  {NavIcon ? <NavIcon /> : null}
+                </span>
+                <span className="settings-nav-text">
+                  <span className="settings-nav-label">
+                    {t(item.labelKey)}
+                    {item.lab && <span className="settings-lab-badge">{t('nav.lab')}</span>}
+                    {item.beta && <span className="settings-beta-badge">BETA</span>}
+                  </span>
+                  <span className="settings-nav-desc">{t(item.descKey)}</span>
+                </span>
+              </button>
+            );
+          })}
         </nav>
 
         <div className="settings-content">
       {activeSection === 'platforms' && (
       <section className="settings-section">
-        <h2 className="settings-section-title">{t('settings.platforms')}</h2>
+        <div className="settings-section-head">
+          <h2 className="settings-section-title">{t('settings.platforms')}</h2>
+          <p className="settings-section-desc">{t('settings.desc.platforms')}</p>
+        </div>
         <div className="settings-checkboxes">
           {PLATFORM_OPTIONS.map(({ id, labelKey }) => (
             <label key={id} className="settings-checkbox-label">
@@ -464,7 +500,10 @@ export function SettingsPage() {
 
       {activeSection === 'tasks' && (
       <section className="settings-section">
-        <h2 className="settings-section-title">{t('settings.tasks')}</h2>
+        <div className="settings-section-head">
+          <h2 className="settings-section-title">{t('settings.tasks')}</h2>
+          <p className="settings-section-desc">{t('settings.desc.tasks')}</p>
+        </div>
         <div className="settings-checkboxes">
           <label className="settings-checkbox-label">
             <input
@@ -671,7 +710,10 @@ export function SettingsPage() {
 
       {activeSection === 'memory' && (
       <section className="settings-section">
-        <h2 className="settings-section-title">{t('settings.memory')}</h2>
+        <div className="settings-section-head">
+          <h2 className="settings-section-title">{t('settings.memory')}</h2>
+          <p className="settings-section-desc">{t('settings.desc.memory')}</p>
+        </div>
         <div className="settings-checkboxes">
           <label className="settings-checkbox-label">
             <input
@@ -695,7 +737,7 @@ export function SettingsPage() {
       />
       )}
 
-      {activeSection === 'agents' && isDesktop() && (
+      {activeSection === 'agents' && desktopSurfaces && (
         <section className="settings-section">
           <h2 className="settings-section-title">
             {t('settings.agents.title')}
@@ -762,18 +804,38 @@ export function SettingsPage() {
                     <input
                       className="settings-text-input"
                       readOnly
-                      value={capturingAgentHotkey ? t('settings.agents.hotkey_capturing') : agentCfg.hotkey}
-                      onFocus={() => setCapturingAgentHotkey(true)}
-                      onBlur={() => setCapturingAgentHotkey(false)}
+                      value={capturingAgentHotkey ? t('settings.agents.hotkey_capturing') : formatHotkey(agentCfg.hotkey)}
+                      onFocus={() => { setCapturingAgentHotkey(true); lastModTapRef.current = null; }}
+                      onBlur={() => { setCapturingAgentHotkey(false); lastModTapRef.current = null; }}
                       onKeyDown={(e) => {
                         e.preventDefault();
                         // Backspace/Delete clears the binding (no quick-toggle key).
                         if (e.key === 'Backspace' || e.key === 'Delete') {
                           updateAgentCfg({ ...agentCfg, hotkey: '' });
+                          lastModTapRef.current = null;
                           setCapturingAgentHotkey(false);
                           e.currentTarget.blur();
                           return;
                         }
+                        // A lone modifier: bind it on the *second* tap of the same key
+                        // within the window (⌃⌃, ⌥⌥, ⌘⌘, ⇧⇧). Ignore auto-repeat while held.
+                        const lone = loneModifierToken(e);
+                        if (lone) {
+                          if (e.repeat) return;
+                          const now = Date.now();
+                          const last = lastModTapRef.current;
+                          if (last && last.token === lone && now - last.ts <= DOUBLE_TAP_MS) {
+                            lastModTapRef.current = null;
+                            updateAgentCfg({ ...agentCfg, hotkey: `${lone}+${lone}` });
+                            setCapturingAgentHotkey(false);
+                            e.currentTarget.blur();
+                          } else {
+                            lastModTapRef.current = { token: lone, ts: now };
+                          }
+                          return;
+                        }
+                        // Anything else is a normal chord — a stray modifier tap is cleared.
+                        lastModTapRef.current = null;
                         const accel = accelFromAgentKey(e);
                         if (accel) {
                           updateAgentCfg({ ...agentCfg, hotkey: accel });
@@ -791,11 +853,11 @@ export function SettingsPage() {
         </section>
       )}
 
-      {activeSection === 'sleepy' && isDesktop() && (
+      {activeSection === 'sleepy' && desktopSurfaces && (
         <section className="settings-section">
           <h2 className="settings-section-title">
             Sleepy — notch quick-capture
-            <span className="settings-beta-badge">BETA</span>
+            <span className="settings-lab-badge">{t('nav.lab')}</span>
           </h2>
           <div className="settings-checkboxes">
             <label className="settings-checkbox-label">

@@ -206,6 +206,25 @@ describe('buildRoadmapModel — forecast cascade (full DAG)', () => {
     expect(by.b.slipping).toBe(false);
   });
 
+  it('milestone objective (no own tasks) inherits forecast from its deps and slips with them', () => {
+    createObjective(root, { slug: 'backend', title: 'Backend', target_date: '2026-08-01' });
+    createObjective(root, { slug: 'launch', title: 'Launch', target_date: '2026-09-01', depends_on: ['backend'] });
+    writeTask('t', { objectives: ['backend'], due: '2026-11-15' }); // backend late; launch has NO own task
+    const by = Object.fromEntries(buildRoadmapModel(root).objectives.map((o) => [o.slug, o]));
+    expect(by.launch.tasks).toHaveLength(0);            // pure milestone, no dated tasks of its own
+    expect(by.launch.forecast_end).toBe('2026-11-15');  // inherited from its dependency
+    expect(by.launch.slipping).toBe(true);
+    expect(by.launch.slip_upstream).toEqual(['backend']); // cascaded from the upstream dep
+  });
+
+  it('milestone with only unforecastable dependencies stays null (never dragged to "now")', () => {
+    createObjective(root, { slug: 'up', title: 'Up' }); // no tasks → null forecast
+    createObjective(root, { slug: 'down', title: 'Down', target_date: '2026-09-01', depends_on: ['up'] });
+    const by = Object.fromEntries(buildRoadmapModel(root).objectives.map((o) => [o.slug, o]));
+    expect(by.down.forecast_end).toBeNull();
+    expect(by.down.slipping).toBeNull();
+  });
+
   it('an objective with no tasks at all forecasts null and has pct null', () => {
     createObjective(root, { slug: 'a', title: 'A', target_date: '2026-09-01' });
     const [a] = buildRoadmapModel(root).objectives;
@@ -213,6 +232,58 @@ describe('buildRoadmapModel — forecast cascade (full DAG)', () => {
     expect(a.forecast_end).toBeNull();
     expect(a.slipping).toBeNull();
     expect(a.status).toBe('not_started');
+  });
+});
+
+describe('buildRoadmapModel — slip attribution (days + auto-derived cause)', () => {
+  it('slip_days = whole days forecast runs past target; empty upstream = own tasks', () => {
+    createObjective(root, { slug: 'a', title: 'A', target_date: '2026-08-01' });
+    writeTask('t1', { objectives: ['a'], due: '2026-08-11' }); // 10 days late from own task
+    const [a] = buildRoadmapModel(root).objectives;
+    expect(a.slipping).toBe(true);
+    expect(a.slip_days).toBe(10);
+    expect(a.slip_upstream).toEqual([]); // no dependency to blame → own tasks
+  });
+
+  it('attributes the slip to the upstream dependency whose forecast passes the target', () => {
+    createObjective(root, { slug: 'up', title: 'Up' });
+    createObjective(root, { slug: 'down', title: 'Down', target_date: '2026-09-01', depends_on: ['up'] });
+    writeTask('tu', { objectives: ['up'], due: '2026-12-01' }); // upstream ends very late
+    writeTask('td', { objectives: ['down'], due: '2026-08-01' }); // own task would be fine
+    const by = Object.fromEntries(buildRoadmapModel(root).objectives.map((o) => [o.slug, o]));
+    expect(by.down.slipping).toBe(true);
+    expect(by.down.slip_upstream).toEqual(['up']); // upstream is the cause, not own tasks
+    expect(by.down.slip_days).toBeGreaterThan(0);
+  });
+
+  it('non-slipping objectives carry null slip_days and empty slip_upstream', () => {
+    createObjective(root, { slug: 'a', title: 'A', target_date: '2026-09-01' });
+    writeTask('t1', { objectives: ['a'], due: '2026-08-01' });
+    const [a] = buildRoadmapModel(root).objectives;
+    expect(a.slipping).toBe(false);
+    expect(a.slip_days).toBeNull();
+    expect(a.slip_upstream).toEqual([]);
+  });
+
+  it('echoes description (first body line), start_date, impact and effort into the model', () => {
+    createObjective(root, {
+      slug: 'a', title: 'A', start_date: '2026-07-01', target_date: '2026-09-01',
+      impact: 4, effort: 3, why: 'Drive MRR to $2000 so the CLI funds itself.',
+    });
+    const [a] = buildRoadmapModel(root).objectives;
+    expect(a.description).toBe('Drive MRR to $2000 so the CLI funds itself.');
+    expect(a.start_date).toBe('2026-07-01');
+    expect(a.impact).toBe(4);
+    expect(a.effort).toBe(3);
+  });
+
+  it('description skips a leading fully-bold annotation and strips emphasis markers', () => {
+    createObjective(root, {
+      slug: 'biz', title: 'Biz',
+      why: '**Decision (2026-07-04): pick a model.**\n\nWe turn this into a *business* by splitting it in two.',
+    });
+    const [o] = buildRoadmapModel(root).objectives;
+    expect(o.description).toBe('We turn this into a business by splitting it in two.');
   });
 
   it('survives a hand-edited cycle with a warning instead of hanging/crashing', () => {

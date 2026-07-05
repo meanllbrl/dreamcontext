@@ -9,6 +9,7 @@ import {
 } from './agentSession';
 import {
   initAgentSettingsFromServer, readAgentSettings, matchesAccel,
+  doubleTapToken, createDoubleTapMatcher,
   AGENT_SETTINGS_EVENT, type AgentSettings,
 } from '../../lib/agentSettings';
 import { deriveSessionStatus, type SessionRow } from './agentStatus';
@@ -20,6 +21,13 @@ import {
   BypassToggle, BypassPill, Prereqs, Centered, BotMark,
   titleStyle, subStyle, primaryBtn, secondaryBtn,
 } from './AgentSetup';
+import { RUN_SLEEP_AGENT_EVENT, SLEEP_AGENT_TITLE, SLEEP_AGENT_PROMPT } from '../../lib/sleepAgent';
+import { AgentComposerBar } from './AgentComposerBar';
+import {
+  readComposerPrefs, writeComposerPrefs, composePrompt, quotePath,
+  type ComposerPrefs,
+} from '../../lib/agentComposer';
+import { pickFiles } from '../../lib/desktop';
 
 /**
  * Agent — the REAL interactive Claude Code, in-app, MULTI-SESSION. Each session is
@@ -158,7 +166,11 @@ export function AgentSurface() {
   // The session whose title is being edited inline (double-click on its tab), or ''.
   const [renamingId, setRenamingId] = useState('');
   // The header "＋ New ▾" split-button's dropdown (pick Agent vs Terminal) is open.
+  // Click-driven (NOT hover): opening it via the caret keeps it open until you pick an
+  // item, click outside, or press Esc — the old mouse-leave close fired the instant the
+  // cursor crossed the gap between caret and menu, so the menu was unreachable.
   const [newMenuOpen, setNewMenuOpen] = useState(false);
+  const newSplitRef = useRef<HTMLDivElement>(null);
   // Agents (beta) surface preferences (Settings → Agents): feature on/off, restore
   // past tabs, default agent, in-app toggle hotkey. Seeded synchronously from
   // localStorage, then reconciled with the server file on mount, and kept live via
@@ -168,6 +180,11 @@ export function AgentSurface() {
   // value, or a launch could restore tabs the user turned OFF (or skip a restore
   // they left ON) based on a stale localStorage seed.
   const [settingsReady, setSettingsReady] = useState(false);
+  // Bottom composer strip: the shared text field the Files / Skills controls write into,
+  // plus the model + thinking-effort picks for the NEXT session (localStorage-persisted —
+  // see agentComposer.ts for why it needn't survive the per-launch origin reset).
+  const [composerValue, setComposerValue] = useState('');
+  const [composerPrefs, setComposerPrefs] = useState<ComposerPrefs>(() => readComposerPrefs());
 
   const sessions = useRef<Map<string, Session>>(new Map());
   const garageRef = useRef<HTMLDivElement | null>(null);
@@ -283,9 +300,9 @@ export function AgentSurface() {
   // ── Session actions ────────────────────────────────────────────────────────
   // claudeId omitted → a fresh conversation (new UUID via `--session-id`); provided with
   // resume=true → reopen that exact conversation (`--resume`) after an app relaunch.
-  const spawn = useCallback((bp: boolean, claudeId?: string, resume = false, kind: SessionKind = 'agent') => {
+  const spawn = useCallback((bp: boolean, claudeId?: string, resume = false, kind: SessionKind = 'agent', initialPrompt = '', model = '') => {
     // A shell has no permission model, so bypass is meaningless for it — force it off.
-    const s = createSession(kind === 'shell' ? false : bp, bumpStatus, claudeId ?? newClaudeId(), resume, kind);
+    const s = createSession(kind === 'shell' ? false : bp, bumpStatus, claudeId ?? newClaudeId(), resume, kind, initialPrompt, model);
     s.applyZoom(currentZoom());
     sessions.current.set(s.id, s);
     return s;
@@ -413,6 +430,77 @@ export function AgentSurface() {
     if (owner) setActivePaneId(owner.id);
     focusTerm(sid);
   }, [panes, focusTerm]);
+
+  // ── Run sleep agent (from the header's Sleep-debt tracker) ────────────────────────
+  // Spawn a dedicated "Sleep" agent that auto-runs the project's consolidation flow, and
+  // leave the overlay COLLAPSED so it surfaces as a running chip in the bottom-right dock —
+  // the user watches it there and can click in to follow along. Guarded on the agent
+  // prerequisites (desktop + node-pty + claude CLI) and on the surface being enabled; a
+  // second request while a live Sleep session already exists just brings that one forward
+  // instead of spawning a duplicate consolidation.
+  const runSleepAgent = useCallback(() => {
+    if (!(caps?.desktop && caps.embeddedTerminal && caps.claudeCli) || !agentSettings.enabled) return;
+    const existing = sessionList.find((m) => !m.dormant && m.title === SLEEP_AGENT_TITLE);
+    if (existing) { setExpanded(true); focusSession(existing.id); return; }
+    const s = spawn(bypass, undefined, false, 'agent', SLEEP_AGENT_PROMPT);
+    setSessionList((prev) => [...prev, { id: s.id, title: SLEEP_AGENT_TITLE, kind: 'agent', bypass: s.bypass, claudeId: s.claudeId }]);
+    const pid = nextPaneId();
+    setPanes((prev) => [...prev, { id: pid, tabs: [s.id], active: s.id }]);
+    setActivePaneId(pid);
+  }, [caps, agentSettings.enabled, sessionList, spawn, bypass, focusSession]);
+
+  useEffect(() => {
+    const onRun = () => runSleepAgent();
+    window.addEventListener(RUN_SLEEP_AGENT_EVENT, onRun);
+    return () => window.removeEventListener(RUN_SLEEP_AGENT_EVENT, onRun);
+  }, [runSleepAgent]);
+
+  // ── Bottom composer strip ────────────────────────────────────────────────────────
+  const updateComposerPrefs = useCallback((p: ComposerPrefs) => {
+    setComposerPrefs(p);
+    writeComposerPrefs(p);
+  }, []);
+
+  // Append a skill trigger / snippet to the field, keeping exactly one space between it and
+  // whatever's already there (so "…foo" + "/council " reads cleanly).
+  const insertToComposer = useCallback((snippet: string) => {
+    setComposerValue((v) => (!v ? snippet : /\s$/.test(v) ? v + snippet : `${v} ${snippet}`));
+  }, []);
+
+  // Native multi-file picker → append the chosen absolute paths (quoted) to the field.
+  const handlePickFiles = useCallback(async () => {
+    const paths = await pickFiles();
+    if (!paths.length) return;
+    const joined = paths.map(quotePath).join(' ');
+    setComposerValue((v) => {
+      const base = v.trim() ? (/\s$/.test(v) ? v : `${v} `) : '';
+      return `${base}${joined} `;
+    });
+  }, []);
+
+  // Send the composed field: prefer the focused LIVE session (type it in + submit); with no
+  // live target, spawn a fresh agent using the picked model, delivering the prompt via the
+  // session's initial-prompt boot mechanism. Effort is folded in by composePrompt.
+  const sendComposer = useCallback(() => {
+    const composed = composePrompt(composerValue, composerPrefs.effort);
+    if (!composed) return;
+    const meta = sessionList.find((m) => m.id === focusedSessionId);
+    const live = meta && !meta.dormant ? sessions.current.get(focusedSessionId) : undefined;
+    if (live) {
+      live.sendText(composed);
+      // Submit a beat later so the readline registers the whole line before Enter.
+      setTimeout(() => live.sendText('\r'), 40);
+      live.term.focus();
+    } else {
+      if (!(caps?.embeddedTerminal && caps.claudeCli)) return;
+      const s = spawn(bypass, undefined, false, 'agent', composed, composerPrefs.modelId);
+      setSessionList((prev) => [...prev, { id: s.id, title: titleFor(s), kind: 'agent', bypass: s.bypass, claudeId: s.claudeId }]);
+      const pid = nextPaneId();
+      setPanes((prev) => [...prev, { id: pid, tabs: [s.id], active: s.id }]);
+      setActivePaneId(pid);
+    }
+    setComposerValue('');
+  }, [composerValue, composerPrefs, sessionList, focusedSessionId, caps, spawn, bypass]);
 
   // Drag a tab ONTO another tab → move it into that tab's pane, inserted before it.
   const moveTab = useCallback((sid: string, targetPaneId: string, beforeSid: string) => {
@@ -608,6 +696,7 @@ export function AgentSurface() {
     if (!expanded) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
+      if (document.querySelector('.agent-new-menu')) return;  // the "＋ New" menu owns Esc
       const ae = document.activeElement as Element | null;
       if (ae?.closest('.agent-pane-slot')) return;   // Claude's TUI owns Esc
       if (ae?.closest('.command-palette')) return;    // the palette owns Esc
@@ -619,20 +708,26 @@ export function AgentSurface() {
   }, [expanded]);
 
   // ── Quick-toggle hotkey (Settings → Agents; default ⌃A) ──────────────────────────
-  // Opens the Agents overlay from anywhere in the app, and closes it again. Like the
-  // Esc handler, it YIELDS when focus is inside a terminal — the default ⌃A is also
-  // readline's "line start", so while you're typing in a session that keystroke must
-  // reach the PTY, not the toggle. So: collapsed → the hotkey always opens; expanded →
-  // it closes only when focus is outside the terminal (a tab, the header, or another
-  // page). Disabled surface → no binding at all. Rebind or clear it in Settings.
+  // Opens the Agents overlay from anywhere in the app, and closes it again. Two flavours:
+  //  • a chord (e.g. ⌃A): like the Esc handler it YIELDS when focus is inside a terminal —
+  //    ⌃A is also readline's "line start", so while typing in a session that keystroke must
+  //    reach the PTY, not the toggle (collapsed → always opens; expanded → closes only when
+  //    focus is outside the terminal).
+  //  • a double-tap of a bare modifier (⌃⌃/⌥⌥/⌘⌘/⇧⇧): a lone modifier never reaches the PTY
+  //    as a real keystroke, so this toggles from ANYWHERE — including inside a focused
+  //    terminal — which is exactly what a "double-tap to show/hide the terminal" wants.
+  // Disabled surface → no binding at all. Rebind or clear it in Settings.
   useEffect(() => {
     if (!caps?.desktop || !agentSettings.enabled || !agentSettings.hotkey.trim()) return;
+    const dt = doubleTapToken(agentSettings.hotkey);
+    const matchDouble = dt ? createDoubleTapMatcher(dt) : null;
     const onKey = (e: KeyboardEvent) => {
-      if (!matchesAccel(e, agentSettings.hotkey)) return;
+      const hit = matchDouble ? matchDouble(e) : matchesAccel(e, agentSettings.hotkey);
+      if (!hit) return;
       const ae = document.activeElement as Element | null;
-      // While a terminal is focused, only let the chord through to TOGGLE if it wouldn't
-      // otherwise be a terminal keystroke — i.e. never when expanded (the PTY owns it).
-      if (expanded && ae?.closest('.agent-pane-slot')) return;
+      // Only a chord defers to the terminal (it may be a real PTY keystroke); a
+      // double-tap modifier is safe to toggle even while a terminal owns focus.
+      if (!dt && expanded && ae?.closest('.agent-pane-slot')) return;
       if (ae?.closest('.command-palette')) return; // the palette owns its own keys
       e.preventDefault();
       e.stopPropagation();
@@ -711,6 +806,24 @@ export function AgentSurface() {
     window.addEventListener('dreamcontext-navigate', onNavigate);
     return () => window.removeEventListener('dreamcontext-navigate', onNavigate);
   }, []);
+
+  // ── "＋ New ▾" dropdown: close on outside-click or Esc ────────────────────────
+  // The menu is opened by clicking the caret and stays open (no hover-close). A
+  // pointerdown outside the split wrapper — or Esc — dismisses it, the way a real
+  // menu behaves. Bound only while open so it costs nothing otherwise.
+  useEffect(() => {
+    if (!newMenuOpen) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (!newSplitRef.current?.contains(e.target as Node)) setNewMenuOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setNewMenuOpen(false); };
+    document.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('keydown', onKey, true);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown, true);
+      document.removeEventListener('keydown', onKey, true);
+    };
+  }, [newMenuOpen]);
 
   // ── App zoom → terminal font size. The window's `- 100% +` control sets `--zoom`
   //    (scaling CSS font tokens) and broadcasts `dreamcontext-zoom`; xterm's size is
@@ -969,7 +1082,7 @@ export function AgentSurface() {
                 <BypassPill bypass={bypass} setBypass={setBypass} />
                 {/* Split button: the main face opens a Claude agent (the common case); the
                     caret opens a menu to pick Agent vs Terminal. ⌘T / ⌃` shortcut the two. */}
-                <div className="agent-new-split" onMouseLeave={() => setNewMenuOpen(false)}>
+                <div className="agent-new-split" ref={newSplitRef}>
                   <button
                     className="agent-add-btn"
                     title="New agent (⌘T) · ⌘D for side-by-side"
@@ -1015,6 +1128,21 @@ export function AgentSurface() {
           </div>
         </div>
         {body}
+        {/* Thin composer strip: attach files, insert one of our skills, pick the model +
+            thinking effort, and send to the focused (or a fresh) session. Shown once a
+            terminal is live so it always has something to target. */}
+        {started && caps?.embeddedTerminal && (
+          <AgentComposerBar
+            value={composerValue}
+            onChange={setComposerValue}
+            onInsert={insertToComposer}
+            onPickFiles={handlePickFiles}
+            onSend={sendComposer}
+            prefs={composerPrefs}
+            onPrefsChange={updateComposerPrefs}
+            canSend={!!composerValue.trim()}
+          />
+        )}
       </div>
       {/* Minimized sessions — a live progress dock floating ABOVE the expanded overlay, so
           you can free terminal space yet still watch them. Click a chip to restore it to a

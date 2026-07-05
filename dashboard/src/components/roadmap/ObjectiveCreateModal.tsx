@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useObjectives, useCreateObjective, type Objective } from '../../hooks/useObjectives';
+import { useObjectives, useCreateObjective, type Objective, type ObjectiveMetric } from '../../hooks/useObjectives';
 import { DateRangePicker } from './DateRangePicker';
 import { DependencyPicker } from './DependencyPicker';
 import './ObjectiveCreateModal.css';
@@ -53,6 +53,11 @@ export function ObjectiveCreateModal({ onClose, onCreated }: ObjectiveCreateModa
   const [effort, setEffort] = useState<number | null>(null);
   const [deps, setDeps] = useState<string[]>([]);
   const [why, setWhy] = useState('');
+  // Optional Key Result metric ("custom goal") — outcome-based progress instead of
+  // task rollup. Off by default; when on, its label + a target that differs from the
+  // baseline are required (mirrors the store's validateMetric).
+  const [useMetric, setUseMetric] = useState(false);
+  const [metric, setMetric] = useState<ObjectiveMetric>({ label: '', unit: null, baseline: 0, target: 100, current: 0 });
   const [error, setError] = useState<string | null>(null);
 
   const titleRef = useRef<HTMLInputElement>(null);
@@ -63,7 +68,14 @@ export function ObjectiveCreateModal({ onClose, onCreated }: ObjectiveCreateModa
   const slug = slugTouched ? manualSlug : derivedSlug;
   const slugValid = isSafeSlug(slug);
   const slugCollides = taken.has(slug);
-  const canSubmit = title.trim().length > 0 && slugValid && !slugCollides && !createObjective.isPending;
+  const metricValid = !useMetric || (
+    metric.label.trim().length > 0
+    && Number.isFinite(metric.baseline)
+    && Number.isFinite(metric.target)
+    && Number.isFinite(metric.current)
+    && metric.target !== metric.baseline
+  );
+  const canSubmit = title.trim().length > 0 && slugValid && !slugCollides && metricValid && !createObjective.isPending;
 
   const submit = () => {
     if (!canSubmit) return;
@@ -78,6 +90,15 @@ export function ObjectiveCreateModal({ onClose, onCreated }: ObjectiveCreateModa
         effort,
         depends_on: deps,
         why: why.trim() || undefined,
+        metric: useMetric
+          ? {
+              label: metric.label.trim(),
+              unit: metric.unit && metric.unit.trim() ? metric.unit.trim() : null,
+              baseline: metric.baseline,
+              target: metric.target,
+              current: metric.current,
+            }
+          : undefined,
       },
       {
         onSuccess: (res) => { onCreated?.(res.objective); onClose(); },
@@ -195,6 +216,72 @@ export function ObjectiveCreateModal({ onClose, onCreated }: ObjectiveCreateModa
             </div>
             {impact !== null && effort !== null && (
               <span className="ocm-rice-hint">leverage {(impact / effort).toFixed(2)} — outcome per week</span>
+            )}
+          </div>
+
+          {/* Key Result metric (custom goal) — outcome-based progress. Optional.
+             A segmented toggle (mirrors Impact/Effort above) makes the choice
+             obvious instead of hiding it behind a text link. */}
+          <div className="ocm-field">
+            <label className="ocm-label">
+              Key Result <span className="ocm-optional">optional</span>
+            </label>
+            <div className="ocm-seg ocm-seg--wide" role="group" aria-label="Progress source">
+              <button
+                type="button"
+                className={`ocm-seg-btn ocm-seg-btn--wide${!useMetric ? ' ocm-seg-btn--on' : ''}`}
+                onClick={() => setUseMetric(false)}
+                aria-pressed={!useMetric}
+              >Track by tasks</button>
+              <button
+                type="button"
+                className={`ocm-seg-btn ocm-seg-btn--wide${useMetric ? ' ocm-seg-btn--on' : ''}`}
+                onClick={() => setUseMetric(true)}
+                aria-pressed={useMetric}
+              >Track by a metric</button>
+            </div>
+            {useMetric ? (
+              <div className="ocm-metric">
+                <div className="ocm-metric-row">
+                  <input
+                    className="ocm-input ocm-metric-label"
+                    value={metric.label}
+                    onChange={(e) => setMetric((m) => ({ ...m, label: e.target.value }))}
+                    placeholder="e.g. MRR"
+                    spellCheck={false}
+                    autoFocus
+                  />
+                  <input
+                    className="ocm-input ocm-metric-unit"
+                    value={metric.unit ?? ''}
+                    onChange={(e) => setMetric((m) => ({ ...m, unit: e.target.value || null }))}
+                    placeholder="unit"
+                    spellCheck={false}
+                  />
+                </div>
+                <div className="ocm-metric-grid">
+                  <label className="ocm-metric-field">
+                    <span>Baseline</span>
+                    <input className="ocm-input" type="number" value={Number.isFinite(metric.baseline) ? metric.baseline : ''}
+                      onChange={(e) => setMetric((m) => ({ ...m, baseline: e.target.valueAsNumber }))} />
+                  </label>
+                  <label className="ocm-metric-field">
+                    <span>Target</span>
+                    <input className="ocm-input" type="number" value={Number.isFinite(metric.target) ? metric.target : ''}
+                      onChange={(e) => setMetric((m) => ({ ...m, target: e.target.valueAsNumber }))} />
+                  </label>
+                  <label className="ocm-metric-field">
+                    <span>Current</span>
+                    <input className="ocm-input" type="number" value={Number.isFinite(metric.current) ? metric.current : ''}
+                      onChange={(e) => setMetric((m) => ({ ...m, current: e.target.valueAsNumber }))} />
+                  </label>
+                </div>
+                {!metricValid && (
+                  <span className="ocm-rice-hint">Needs a label and a target that differs from the baseline.</span>
+                )}
+              </div>
+            ) : (
+              <div className="ocm-metric-hint">Progress rolls up from member tasks. Switch to a metric (e.g. MRR, customers) to track an outcome instead.</div>
             )}
           </div>
 

@@ -198,9 +198,11 @@ export function App() {
       <ErrorBoundary>
         <QueryClientProvider client={queryClient}>
           <ThemeProvider>
-            <SleepyHotkeyRegistrar />
-            <LauncherPage />
-            <ProjectSwitcher />
+            <I18nProvider>
+              <SleepyHotkeyRegistrar />
+              <LauncherPage />
+              <ProjectSwitcher />
+            </I18nProvider>
           </ThemeProvider>
         </QueryClientProvider>
       </ErrorBoundary>

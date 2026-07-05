@@ -1,0 +1,780 @@
+/* FederationBoard — Excalidraw-style connection map.
+   The hexes below mirror the canvas house palette in FederationBoard.tsx
+   (canvas 2D can't read CSS custom properties); everything else uses the
+   global design tokens. */
+
+.lgraph {
+  position: relative; /* anchor the absolutely-positioned detail/guide panels to the board */
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  flex: 1 1 auto; /* fill the launcher page below the header — full-screen board */
+  min-height: 0;
+}
+
+/* Embedded variant (Settings → Connections): a bounded, fixed-height card instead
+   of a full-screen flex child, so it lives happily inside the settings panel. */
+.lgraph--embedded {
+  flex: 0 0 auto;
+  height: min(640px, 76vh);
+}
+
+.lgraph--embedded .lgraph-canvas {
+  min-height: 0;
+}
+
+/* Overlays anchor to the board itself in the embedded card (the launcher's
+   full-screen board already fills the viewport, so this is a no-op there). */
+.lgraph--embedded .lgraph-detail {
+  top: 64px;
+}
+
+.lgraph-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.lgraph-help {
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.lgraph-help:hover {
+  color: var(--color-text);
+  border-color: var(--color-accent);
+}
+
+.lgraph-help:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.lgraph-help--on {
+  color: var(--color-text);
+  border-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 16%, transparent);
+}
+
+.lgraph-hint {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  flex: 1 1 240px;
+  line-height: 1.4;
+}
+
+/* Click-to-connect is armed — make the instruction impossible to miss. */
+.lgraph-hint--armed {
+  color: var(--color-text);
+  font-weight: var(--font-weight-medium);
+}
+
+/* ─── Feedback banner (success auto-dismisses; warn carries an inline fix) ── */
+.lgraph-note {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-size-xs);
+}
+
+.lgraph-note--success {
+  background: color-mix(in srgb, #2f9e44 14%, var(--color-bg-secondary));
+  border: 1px solid #2f9e44;
+}
+
+.lgraph-note--warn {
+  background: color-mix(in srgb, var(--color-accent) 12%, var(--color-bg-secondary));
+  border: 1px solid var(--color-accent);
+}
+
+.lgraph-note--error {
+  background: color-mix(in srgb, #e03131 14%, var(--color-bg-secondary));
+  border: 1px solid #e03131;
+}
+
+.lgraph-note span {
+  flex: 1 1 auto;
+  line-height: 1.4;
+}
+
+/* The one-click fix ("Turn on Readable") riding the warn banner. */
+.lgraph-note-action {
+  flex: 0 0 auto;
+  border: 1px solid var(--color-accent);
+  background: var(--color-accent);
+  color: #fff;
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: filter var(--transition-fast);
+}
+
+.lgraph-note-action:hover {
+  filter: brightness(1.1);
+}
+
+.lgraph-note-x {
+  background: none;
+  border: none;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  line-height: 1;
+  flex: 0 0 auto;
+}
+
+.lgraph-note-x:hover {
+  color: var(--color-text);
+}
+
+/* ─── Canvas ──────────────────────────────────────────────────────────────── */
+.lgraph-canvas {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 360px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: #0e0e12;
+  touch-action: none; /* pointer gestures (wire-drag / d3 pan) own the surface */
+}
+
+/* On-canvas zoom controls (+ / − / fit) */
+.lgraph-zoom {
+  position: absolute;
+  left: var(--space-4);
+  top: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  z-index: 6;
+}
+
+.lgraph-zoom-btn {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-border);
+  background: color-mix(in srgb, var(--color-bg-secondary) 92%, #000);
+  color: var(--color-text);
+  border-radius: var(--radius-sm);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+  transition: background var(--transition-fast), border-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.lgraph-zoom-btn:hover {
+  border-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 18%, var(--color-bg-secondary));
+}
+
+.lgraph-zoom-btn:active {
+  transform: scale(0.96);
+}
+
+.lgraph-zoom-btn:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.lgraph-zoom-fit {
+  font-size: 15px;
+  margin-top: 2px;
+}
+
+/* Always-visible key to the board's colors, bottom-right on the canvas. */
+.lgraph-canvaslegend {
+  position: absolute;
+  right: var(--space-4);
+  bottom: var(--space-4);
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  background: color-mix(in srgb, #0e0e12 78%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-border) 70%, transparent);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  pointer-events: none; /* never intercepts wiring/panning */
+  backdrop-filter: blur(4px);
+}
+
+.lgraph-canvaslegend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  line-height: 1.3;
+}
+
+.lgwire {
+  display: inline-block;
+  width: 18px;
+  height: 0;
+  border-top: 2px solid;
+  flex: 0 0 auto;
+}
+
+.lgwire--read {
+  border-top-color: #8b6fe0; /* canvas READ, lightened for dark bg */
+}
+
+.lgwire--inert {
+  border-top-style: dashed;
+  border-top-color: rgba(148, 150, 170, 0.6);
+}
+
+.lgchip {
+  display: inline-block;
+  width: 14px;
+  height: 11px;
+  border-radius: 3px;
+  border: 1.5px solid;
+  flex: 0 0 auto;
+  vertical-align: -1px;
+}
+
+/* Card status chips mirror the canvas CARD palette. */
+.lgchip--ok {
+  background: #b2f2bb;
+  border-color: #2f9e44;
+}
+
+.lgchip--stale {
+  background: #ffec99;
+  border-color: #f08c00;
+  margin-left: 6px;
+}
+
+.lgchip--gone {
+  background: #ffc9c9;
+  border-color: #e03131;
+  margin-left: 6px;
+}
+
+.lgraph-status {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  text-align: center;
+  padding: var(--space-4);
+}
+
+.lgraph-status--err {
+  color: #f87171;
+}
+
+/* Designed empty state (fewer than two projects registered). */
+.lgraph-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  text-align: center;
+  padding: var(--space-4);
+}
+
+.lgraph-empty-svg {
+  width: 220px;
+  max-width: 80%;
+  height: auto;
+  opacity: 0.9;
+}
+
+.lgraph-empty strong {
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+}
+
+.lgraph-empty p {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+  max-width: 340px;
+}
+
+/* ─── Wire editor popover (click a wire) ──────────────────────────────────── */
+.lgraph-wiremenu {
+  position: absolute;
+  z-index: 8;
+  width: 260px;
+  background: color-mix(in srgb, var(--color-bg-secondary) 94%, #000);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.lgraph-wiremenu-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: var(--font-size-xs);
+  color: var(--color-text);
+}
+
+.lgraph-wiremenu-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  border-top: 1px solid color-mix(in srgb, var(--color-border) 60%, transparent);
+  padding-top: var(--space-2);
+}
+
+.lgraph-wiremenu-info {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  line-height: 1.4;
+}
+
+.lgraph-wiremenu-warn {
+  color: #f08c00; /* canvas CARD.stale stroke — "needs attention" */
+  font-size: 11px;
+}
+
+.lgraph-wiremenu-del {
+  flex: 0 0 auto;
+  border: 1px solid var(--color-border);
+  background: none;
+  color: var(--color-text-secondary);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-2);
+  font-size: 11px;
+  cursor: pointer;
+  transition: color var(--transition-fast), border-color var(--transition-fast),
+    background var(--transition-fast);
+}
+
+.lgraph-wiremenu-del:hover {
+  color: #fff;
+  border-color: #e03131;
+  background: #e03131;
+}
+
+.lgraph-wiremenu-fix {
+  border: 1px solid var(--color-accent);
+  background: var(--color-accent);
+  color: #fff;
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: filter var(--transition-fast);
+}
+
+.lgraph-wiremenu-fix:hover {
+  filter: brightness(1.1);
+}
+
+.lgraph-wiremenu-fix:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ─── Always-on "All connections" list ────────────────────────────────────── */
+.lgraph-conns {
+  position: absolute;
+  right: var(--space-4);
+  top: var(--space-4);
+  width: 320px;
+  max-width: calc(100% - 2 * var(--space-4));
+  max-height: calc(100% - 2 * var(--space-4));
+  overflow-y: auto;
+  background: color-mix(in srgb, var(--color-bg-secondary) 94%, #000);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.5);
+  z-index: 7;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.lgraph-conns-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: var(--font-size-sm);
+  margin-bottom: var(--space-1);
+}
+
+.lgraph-conns-empty {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  line-height: 1.5;
+}
+
+.lgraph-conn-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 4px 2px;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  border-top: 1px solid color-mix(in srgb, var(--color-border) 60%, transparent);
+}
+
+.lgraph-conn-label {
+  flex: 1 1 auto;
+  line-height: 1.4;
+}
+
+.lgchip-wire {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 0;
+  border-top: 3px solid #8b6fe0;
+}
+
+.lgchip-wire--inert {
+  border-top-style: dashed;
+  border-top-color: rgba(148, 150, 170, 0.6);
+}
+
+.lgraph-conn-del {
+  flex: 0 0 auto;
+  background: none;
+  border: none;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: var(--radius-sm);
+}
+
+.lgraph-conn-del:hover {
+  color: #fff;
+  background: #e03131;
+}
+
+/* ─── Card detail panel ───────────────────────────────────────────────────── */
+.lgraph-detail {
+  position: absolute;
+  right: var(--space-4);
+  top: 96px;
+  width: 280px;
+  max-width: calc(100vw - 2 * var(--space-4));
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  z-index: 5;
+}
+
+.lgraph-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-size-sm);
+}
+
+.lgraph-detail-head strong {
+  flex: 1 1 auto;
+}
+
+.lgraph-detail-head .lgchip {
+  margin: 0;
+}
+
+.lgraph-x {
+  background: none;
+  border: none;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+}
+
+.lgraph-x:hover {
+  color: var(--color-text);
+}
+
+.lgraph-detail-path {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  word-break: break-all;
+}
+
+.lgraph-detail-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.lgraph-share {
+  cursor: pointer;
+}
+
+.lgraph-share input {
+  margin-right: 6px;
+}
+
+/* Plain-language relationship list in the card panel */
+.lgraph-rels {
+  border-top: 1px solid var(--color-border);
+  padding-top: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.lgraph-rels-title {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+  margin-bottom: 2px;
+}
+
+.lgraph-rels-empty {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.lgraph-rel {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  line-height: 1.45;
+}
+
+.lgraph-rel span {
+  flex: 1 1 auto;
+}
+
+.lgraph-rel-x {
+  background: none;
+  border: none;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+  flex: 0 0 auto;
+}
+
+.lgraph-rel-x:hover {
+  color: #f87171;
+}
+
+.lgraph-btn {
+  border: 1px solid var(--color-accent);
+  background: var(--color-accent);
+  color: #fff;
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: filter var(--transition-fast);
+}
+
+.lgraph-btn:hover {
+  filter: brightness(1.08);
+}
+
+.lgraph-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Arms click-to-connect from the panel — full-width so it reads as the panel's
+   primary action. */
+.lgraph-connectbtn {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+}
+
+/* ─── "How it works" guide overlay ────────────────────────────────────────── */
+.lgraph-guide {
+  position: absolute;
+  left: var(--space-4);
+  bottom: var(--space-4);
+  width: 320px;
+  max-width: calc(100% - 2 * var(--space-4));
+  background: color-mix(in srgb, var(--color-bg-secondary) 92%, #000);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.5);
+  z-index: 6;
+  backdrop-filter: blur(6px);
+}
+
+.lgraph-guide-x {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-3);
+  background: none;
+  border: none;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  line-height: 1;
+}
+
+.lgraph-guide-x:hover {
+  color: var(--color-text);
+}
+
+.lgraph-guide-title {
+  margin: 0 0 var(--space-2);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+}
+
+.lgraph-guide-demo {
+  background: #0b0b12;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3) var(--space-3) var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.lgraph-guide-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.lgraph-guide-flow {
+  stroke-dasharray: 5 6;
+  animation: lgraph-current 0.9s linear infinite;
+}
+
+@keyframes lgraph-current {
+  to {
+    stroke-dashoffset: -22;
+  }
+}
+
+.lgraph-guide-cardlabel {
+  fill: #1f2430;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+.lgraph-guide-wirelabel {
+  fill: #b9a6ff;
+  font-size: 9px;
+  font-weight: 600;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+.lgraph-guide-caption {
+  margin: var(--space-2) 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--color-text-tertiary);
+}
+
+.lgraph-guide-steps {
+  list-style: none;
+  margin: 0 0 var(--space-3);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.lgraph-guide-steps li {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+}
+
+.lgraph-guide-step {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--color-accent) 24%, transparent);
+  color: var(--color-text);
+  font-size: 11px;
+  font-weight: var(--font-weight-semibold);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1px;
+}
+
+.lgraph-guide-foot {
+  margin: 0 0 var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--color-text-tertiary);
+}
+
+.lgraph-guide-cta {
+  width: 100%;
+  border: none;
+  background: var(--color-accent);
+  color: #fff;
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: filter var(--transition-fast);
+}
+
+.lgraph-guide-cta:hover {
+  filter: brightness(1.08);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lgraph-guide-flow {
+    animation: none;
+  }
+}

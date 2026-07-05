@@ -137,6 +137,15 @@ Developers lose quick thoughts, commands, and notes between coding sessions. The
 ## Changelog
 <!-- LIFO: newest entry at top -->
 
+### 2026-07-04 - Sleep-agent launcher integrated into header SleepDebtTracker (working tree, feat/sleep-debt-header-tracker)
+- The header SleepDebtTracker became an **interactive in-app Sleep-agent launcher**: clicking the sleepy-face widget (previously a nav-to-Sleep-page link) now opens a dropdown menu with "Show sleep details" (old behavior) and "Run sleep agent" (new).
+- "Run sleep agent" is capability-gated (desktop + node-pty + Claude CLI via `/agent/capabilities` AND Agents surface enabled in Settings) — disabled with a tooltip when prereqs are missing.
+- When clicked, it dispatches a `dreamcontext-run-sleep-agent` window event; the always-mounted `AgentSurface` spawns a real "Sleep" Claude Code session in the bottom-right dock, kept collapsed to a chip. The session auto-types and submits the consolidation prompt once (after the SessionStart brain-preload goes idle, via `initialPrompt` + busy/idle detection). Duplicate requests bring the existing "Sleep" session forward instead of spawning another.
+- Active-consolidation UI: when `sleep_started_at` is stamped (real sleep in flight), the tracker flips to a violet "Sleeping" chip with the face asleep, the bar breathing, and animated "z z z" — and the "Run sleep agent" dropdown item is disabled (matches the backend's one-consolidation lock).
+- The spawned Sleep session runs with default permission settings (bypass OFF) — respects the project's `.claude` allow-list, not auto-armed to skip permissions.
+- New files: `lib/sleepAgent.ts` (event + prompt), `hooks/useAgentCapabilities.ts` (readiness gate). Touched: `SleepDebtTracker.tsx/.css`, `agentSession.ts`, `AgentSurface.tsx`, `I18nContext.tsx`.
+- Verified in the packaged Tauri app (real agent spawn, auto-type, status chip). Not yet committed or merged.
+
 ### 2026-06-28 - Notch panel redesign: NSPanel, hover-to-open, coded mascot, PanelEnabled
 - Non-activating `NSPanel` via `tauri-nspanel` v2: works from any app without stealing focus. Global hotkey reliable; `Cmd+H` reserved-key fallback to `Alt+Cmd+S`.
 - `SleepyMascot.tsx` coded animated mascot replaces animated WebP (blink/breath/Zzz, zero asset cost).

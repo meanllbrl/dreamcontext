@@ -2,11 +2,17 @@
    linear progress bar climbing toward "Must Sleep". Level drives both the fill
    colour and the face mood, so a glance tells you how rested the brain is. */
 
+/* The tracker is now a menu trigger; the wrap anchors the dropdown below it. */
+.sleep-tracker-wrap {
+  position: relative;
+  display: inline-flex;
+  margin-right: var(--space-2);
+}
+
 .sleep-tracker {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  margin-right: var(--space-2);
   padding: 3px 8px 3px 4px;
   border-radius: var(--radius-md);
   background: var(--color-bg-tertiary);
@@ -18,7 +24,8 @@
   transition: background var(--transition-fast), border-color var(--transition-fast);
 }
 
-button.sleep-tracker:hover {
+button.sleep-tracker:hover,
+button.sleep-tracker[aria-expanded='true'] {
   background: var(--color-bg);
   border-color: var(--color-border-strong, var(--color-border));
 }
@@ -100,14 +107,121 @@ button.sleep-tracker:hover {
   50% { opacity: 0.55; }
 }
 
+/* ── Active-sleep state: a consolidation is in flight (sleep_started_at set). The
+   whole widget reads "asleep" — a violet-tinted chip, a full bar breathing, and an
+   animated "z z z" so it's unmistakable that the brain is mid-sleep. ── */
+.sleep-tracker--sleeping {
+  background: color-mix(in srgb, var(--color-accent, #7b68ee) 16%, var(--color-bg-tertiary));
+  border-color: color-mix(in srgb, var(--color-accent, #7b68ee) 45%, var(--color-border));
+}
+button.sleep-tracker--sleeping:hover,
+button.sleep-tracker--sleeping[aria-expanded='true'] {
+  background: color-mix(in srgb, var(--color-accent, #7b68ee) 22%, var(--color-bg-tertiary));
+}
+.sleep-tracker--sleeping .sleep-tracker-level {
+  color: var(--color-accent, #7b68ee);
+}
+.sleep-tracker--sleeping .sleep-tracker-fill {
+  --fill: var(--color-accent, #7b68ee);
+  animation: sleep-tracker-breathe 2.4s ease-in-out infinite;
+}
+
+/* The drifting "z z z" — each z rises and fades on a stagger, like sleep-comic zees. */
+.sleep-tracker-zzz {
+  display: inline-flex;
+  gap: 1px;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-bold, 700);
+  line-height: 1;
+  color: var(--color-accent, #7b68ee);
+}
+.sleep-tracker-zzz span {
+  animation: sleep-tracker-zzz 1.6s ease-in-out infinite;
+}
+.sleep-tracker-zzz span:nth-child(1) { animation-delay: 0s; font-size: 0.78em; }
+.sleep-tracker-zzz span:nth-child(2) { animation-delay: 0.22s; font-size: 0.9em; }
+.sleep-tracker-zzz span:nth-child(3) { animation-delay: 0.44s; }
+
+@keyframes sleep-tracker-zzz {
+  0%   { opacity: 0.25; transform: translateY(1px); }
+  40%  { opacity: 1;    transform: translateY(-1px); }
+  100% { opacity: 0.25; transform: translateY(1px); }
+}
+
+@keyframes sleep-tracker-breathe {
+  0%, 100% { opacity: 0.7; }
+  50% { opacity: 1; }
+}
+
+/* ── The click-to-open menu (Show details · Run sleep agent). ── */
+.sleep-tracker-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 50;
+  min-width: 190px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated, var(--color-bg));
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-lg, 0 8px 24px rgba(0, 0, 0, 0.28));
+}
+
+.sleep-tracker-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 7px 9px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.sleep-tracker-menu-item:hover:not(:disabled) {
+  background: var(--color-bg-tertiary);
+}
+
+.sleep-tracker-menu-item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.sleep-tracker-menu-glyph {
+  flex: none;
+  width: 16px;
+  text-align: center;
+  color: var(--color-text-secondary);
+}
+
+.sleep-tracker-menu-label { flex: 1; }
+
+.sleep-tracker-menu-hint {
+  font-size: var(--font-size-xs);
+  color: var(--color-accent, #7b68ee);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
 /* Zoom is a desktop affordance and gets hidden at narrow widths; the tracker is
    status the user always wants, so it stays — but drop the bar/labels first if
    space is truly tight, keeping just the expressive face. */
 @media (max-width: 640px) {
   .sleep-tracker-body { display: none; }
-  .sleep-tracker { margin-right: var(--space-1); padding: 3px; }
+  .sleep-tracker-wrap { margin-right: var(--space-1); }
+  .sleep-tracker { padding: 3px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .sleep-tracker-fill { animation: none !important; }
+  .sleep-tracker-fill,
+  .sleep-tracker-zzz span { animation: none !important; }
 }

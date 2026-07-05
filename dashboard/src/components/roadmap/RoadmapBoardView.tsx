@@ -46,6 +46,14 @@ export function RoadmapBoardView({ items, forecasts, onOpen }: Props) {
                         {f.slipping && <span className="rbd-slip"><span className="rbd-slip-dot">●</span>SLIP</span>}
                       </div>
                       <div className="rbd-card-slug">{o.slug}</div>
+                      {o.description && <div className="rbd-card-desc">{o.description}</div>}
+                      {f.slipping && (
+                        <div className="rbd-card-cause">
+                          {o.slipDays != null ? `${o.slipDays}d late` : 'slipping'}
+                          {' · '}
+                          {o.slipUpstream.length > 0 ? `upstream: ${o.slipUpstream.join(', ')}` : 'own tasks'}
+                        </div>
+                      )}
                       <div className="rbd-card-prog">
                         <div className="rbd-card-track"><div className="rbd-card-fill" style={{ width: `${pct ?? 0}%`, background: meta.color }} /></div>
                         <span className="rbd-card-proglabel">{o.progress.source === 'metric' && o.progress.metric

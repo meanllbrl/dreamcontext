@@ -251,6 +251,38 @@
   padding-top: 1px;
 }
 
+/* Key Result metric (custom goal) — full-width segmented toggle */
+.ocm-seg--wide { display: flex; width: 100%; }
+.ocm-seg-btn--wide {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 34px;
+  font-family: var(--font-family-text);
+  font-size: 12.5px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.ocm-metric { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+.ocm-metric-row { display: flex; gap: 8px; }
+.ocm-metric-label { flex: 1 1 auto; font-weight: 500; }
+.ocm-metric-unit { flex: 0 0 84px; width: 84px; }
+.ocm-metric-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.ocm-metric-field { display: flex; flex-direction: column; gap: 4px; }
+.ocm-metric-field span {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--color-text-tertiary);
+}
+.ocm-metric-field .ocm-input { font-family: var(--font-mono); }
+.ocm-metric-hint {
+  font-size: 11.5px;
+  color: var(--color-text-tertiary);
+  line-height: 1.45;
+}
+
 /* Dependency chips */
 .ocm-deps { display: flex; flex-wrap: wrap; gap: 6px; }
 .ocm-dep {

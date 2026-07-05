@@ -666,7 +666,9 @@
   align-items: center;
   gap: 6px;
   flex: 0 0 auto;
-  max-width: 190px;
+  /* Width hugs the session name: short names stay tight, longer names widen the bar
+     instead of truncating early — capped responsively so one long name can't dominate. */
+  max-width: min(320px, 42vw);
   height: 28px;
   padding: 0 5px 0 9px;
   border-radius: var(--radius-md);
@@ -711,7 +713,9 @@
 .agent-tab-kind[data-session-kind="shell"] { color: var(--color-accent); opacity: 0.85; }
 
 .agent-tab-title {
-  flex: 1 1 auto;
+  /* Don't grow to fill — take exactly the name's natural width so the bar tracks the
+     name length; only shrink (with ellipsis) once the tab hits its responsive max-width. */
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -961,21 +965,6 @@
 .agent-dock-chip-dot[data-kind="working"],
 .agent-dock-chip-dot[data-kind="starting"] { animation: agentDotPulse 1.2s ease-in-out infinite; }
 
-.agent-dock-chip-mascot {
-  flex: 0 0 auto;
-  width: 24px; height: 24px;
-  display: flex; align-items: center; justify-content: center;
-  /* The mascot's inner 92×76 design box is only TRANSFORM-scaled (its layout box stays
-     76px tall). Contain it so that untransformed box never inflates the tile's height. */
-  overflow: hidden;
-}
-/* Recolour the shared "sleeps" face's eyes to a calm indigo inside the dock only. */
-.agent-dock-chip-mascot .smascot-sleeps .smascot-eye,
-.agent-dock-anchor-mascot .smascot-sleeps .smascot-eye {
-  --eye-top: #aeb9ff;
-  --eye-bot: #6e7bff;
-  --eye-glow: rgba(110, 123, 255, 0.6);
-}
 .agent-dock-chip-title {
   flex: 1 1 auto;
   min-width: 0;
@@ -1052,25 +1041,11 @@
 }
 .agent-dock-anchor:hover { transform: translateY(-2px); }
 .agent-dock-anchor:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--color-accent-soft); }
-.agent-dock-anchor-mascot {
-  position: relative;
-  flex: 0 0 auto;
-  width: 24px; height: 24px;
-}
-/* Inner clip — contains the mascot's untransformed 76px layout box WITHOUT clipping the
-   status dot, which sits just outside as a wrapper sibling. */
-.agent-dock-anchor-mascot-clip {
-  width: 24px; height: 24px;
-  display: flex; align-items: center; justify-content: center;
-  overflow: hidden;
-}
 .agent-dock-anchor-dot {
-  position: absolute;
-  right: -2px; bottom: -2px;
-  width: 9px; height: 9px;
+  flex: 0 0 auto;
+  width: 8px; height: 8px;
   border-radius: 50%;
   background: var(--kind-color, var(--color-text-tertiary));
-  border: 2px solid var(--color-bg-elevated);
   box-shadow: 0 0 7px color-mix(in srgb, var(--kind-color, transparent) 75%, transparent);
 }
 .agent-dock-anchor-dot[data-kind="working"],
@@ -1237,3 +1212,178 @@
   .agent-confirm-scrim,
   .agent-pane-ended { animation: none !important; }
 }
+
+/* ── Bottom composer strip ──────────────────────────────────────────────────────────
+   A deliberately THIN single-row bar at the foot of the expanded overlay: attach files,
+   insert one of our signature skills, pick the model + thinking effort, and send to the
+   focused (or a fresh) session. `flex: 0 0 auto` overrides the `.agent-surface > *`
+   grow rule so it stays a slim strip, not a growing pane. */
+.agent-composer {
+  flex: 0 0 auto;
+  width: 100%;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 40px;
+  padding: 0 var(--space-2);
+  border-top: 1px solid var(--color-border);
+  background: linear-gradient(0deg, color-mix(in srgb, var(--color-accent) 5%, var(--color-bg)), var(--color-bg));
+}
+
+/* Files / Skills trigger buttons */
+.agent-composer-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 10px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+.agent-composer-btn:hover { color: var(--color-text); background: var(--color-bg-tertiary); border-color: var(--color-border-hover); }
+.agent-composer-btn.open { color: var(--color-accent); border-color: color-mix(in srgb, var(--color-accent) 45%, transparent); background: var(--color-accent-soft); }
+.agent-composer-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--color-accent-soft); }
+.agent-composer-btn-label { font-weight: 500; }
+.agent-composer-caret { font-size: 9px; opacity: 0.7; }
+
+/* The shared text field */
+.agent-composer-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 28px;
+  padding: 0 12px;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--color-text);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+.agent-composer-input::placeholder { color: var(--color-text-tertiary); }
+.agent-composer-input:focus { outline: none; border-color: color-mix(in srgb, var(--color-accent) 55%, transparent); box-shadow: 0 0 0 2px var(--color-accent-soft); }
+
+/* Model / effort selects */
+.agent-composer-select {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  max-width: 150px;
+  padding: 0 9px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+.agent-composer-select:hover { color: var(--color-text); background: var(--color-bg-tertiary); border-color: var(--color-border-hover); }
+.agent-composer-select.open { color: var(--color-accent); border-color: color-mix(in srgb, var(--color-accent) 45%, transparent); }
+.agent-composer-select:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--color-accent-soft); }
+.agent-composer-select-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Send */
+.agent-composer-send {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  font-size: 13px;
+  color: var(--color-accent-text, #fff);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--color-accent) 92%, white), var(--color-accent));
+  border: 1px solid color-mix(in srgb, var(--color-accent) 60%, transparent);
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  transition: filter var(--transition-fast), transform var(--transition-fast), opacity var(--transition-fast);
+}
+.agent-composer-send:hover:not(:disabled) { filter: brightness(1.06); transform: translateY(-1px); }
+.agent-composer-send:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--color-accent-soft); }
+.agent-composer-send:disabled { opacity: 0.4; cursor: default; }
+
+/* Popover shell (shared by Skills / Model / Effort) */
+.agent-composer-pop { position: relative; flex: 0 0 auto; display: inline-flex; }
+.agent-composer-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  z-index: 30;
+  min-width: 180px;
+  padding: 6px;
+  background: var(--color-bg-elevated, var(--color-bg-secondary));
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg, 12px);
+  box-shadow: 0 14px 40px -12px rgba(0, 0, 0, 0.45);
+}
+.agent-composer-menu.align-left { left: 0; }
+.agent-composer-menu.align-right { right: 0; }
+
+/* Skills popover contents */
+.agent-skill-list { display: flex; flex-direction: column; gap: 8px; }
+.agent-skill-group { display: flex; flex-direction: column; gap: 5px; }
+.agent-skill-group-label { font-size: 10px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--color-text-tertiary); padding: 0 2px; }
+.agent-skill-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.agent-skill-chip {
+  height: 26px;
+  padding: 0 11px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+.agent-skill-chip:hover { color: var(--color-accent); background: var(--color-accent-soft); border-color: color-mix(in srgb, var(--color-accent) 45%, transparent); }
+.agent-skill-chip:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--color-accent-soft); }
+
+/* Model / effort popover rows */
+.agent-model-list { display: flex; flex-direction: column; gap: 2px; }
+.agent-model-provider { display: flex; flex-direction: column; gap: 2px; padding-bottom: 4px; }
+.agent-model-provider + .agent-model-provider { border-top: 1px solid var(--color-border); padding-top: 4px; }
+.agent-model-provider-label { font-size: 10px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--color-text-tertiary); padding: 2px 8px; }
+.agent-model-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  font-size: 13px;
+  text-align: left;
+  color: var(--color-text);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+.agent-model-row:hover:not(:disabled) { background: var(--color-bg-tertiary); }
+.agent-model-row:focus-visible { outline: none; background: var(--color-accent-soft); }
+.agent-model-row.on { color: var(--color-accent); font-weight: 600; }
+.agent-model-row.on::after { content: '✓'; margin-left: auto; font-size: 12px; }
+.agent-model-row:disabled { color: var(--color-text-tertiary); cursor: default; }
+.agent-model-row-label { flex: 0 1 auto; }
+.agent-model-row-tag {
+  margin-left: auto;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 6px);
+  padding: 1px 5px;
+}
+.agent-model-row.on .agent-model-row-tag { margin-left: 8px; }

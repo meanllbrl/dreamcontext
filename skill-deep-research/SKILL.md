@@ -9,7 +9,7 @@ description: >
   cite it", "cross-project / cross-corpus question", or any "tons of data, federated/tagged
   vault" question where one explore agent and one answer under-serves. This is the heavy,
   iterative, sub-agent-driven counterpart to `dreamcontext-explore`: it fans out searchers over
-  the whole curated corpus (knowledge + features + tasks + memory + CHANGELOG) AND connected
+  the whole curated corpus (knowledge + features + tasks + memory + CHANGELOG + objectives) AND connected
   peer vaults, adversarially verifies the load-bearing claims, and returns a SYNTHESIZED, CITED
   report — not raw hits.
 user-invocable: true
@@ -91,7 +91,7 @@ the planner and the synthesizer.
   - everything readable → `--connected` (out/both peers) or `--all-vaults`.
 - **Seed with recall, in JSON, scoped by type:**
   ```bash
-  dreamcontext memory recall "<facet>" --json --top 15 --types knowledge,feature,task,memory,changelog --connected
+  dreamcontext memory recall "<facet>" --json --top 15 --types knowledge,feature,task,memory,changelog,objective --connected
   ```
   Run it for **2–4 different phrasings/facets** of the question — recall is cheap (<100ms, zero
   token overhead) and different keywords surface different docs. Collect the union of hits.
