@@ -142,6 +142,27 @@
   color: #d99a1c;
 }
 
+/* Per-project brain cloud-sync chip — reuses <VaultDot>'s ok/gone dot language. */
+.launcher-card-brain {
+  margin-top: var(--space-1);
+}
+
+.launcher-brain-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.launcher-brain-chip--synced {
+  color: var(--color-text-secondary);
+}
+
+.launcher-brain-chip--unconnected {
+  color: var(--color-text-tertiary);
+}
+
 .launcher-card-actions {
   display: flex;
   align-items: center;

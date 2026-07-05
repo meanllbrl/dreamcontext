@@ -80,6 +80,32 @@
   color: var(--color-accent);
 }
 
+/* ─── GitHub cloud-sync CTA (rail footer) ─────────────────────────────────── */
+.sidebar-item--brain-sync,
+.sidebar-item--synced {
+  color: var(--color-text-secondary);
+}
+.sidebar-item--brain-sync .sidebar-icon,
+.sidebar-item--synced .sidebar-icon {
+  color: var(--color-accent);
+}
+.sidebar-item--brain-sync:hover .sidebar-icon,
+.sidebar-item--synced:hover .sidebar-icon {
+  color: var(--color-accent);
+}
+.sidebar-brain-sync {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.sidebar-brain-sync .sidebar-item--synced {
+  flex: 1;
+  min-width: 0;
+}
+.sidebar--collapsed .sidebar-brain-sync {
+  flex-direction: column;
+}
+
 /* ─── First-run nudge ─────────────────────────────────────────────────────── */
 /* Until the user opens "What is this?" once, the entry stands out and gently
    bounces to invite the first click. The prominent styling (accent fill + dot)

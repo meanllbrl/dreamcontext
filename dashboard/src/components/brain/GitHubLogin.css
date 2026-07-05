@@ -1,0 +1,124 @@
+.gh-login {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.gh-login-disclosure {
+  margin: 0;
+  padding: var(--space-3);
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+}
+
+.gh-login-start {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: fit-content;
+}
+
+.gh-login-device {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.gh-login-device-hint {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.gh-login-code {
+  padding: var(--space-2) var(--space-4);
+  font-family: var(--font-mono);
+  font-size: 22px;
+  font-weight: var(--font-weight-bold);
+  letter-spacing: 0.12em;
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-md);
+}
+
+.gh-login-open {
+  display: inline-flex;
+}
+
+.gh-login-waiting {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.gh-login-spinner {
+  width: 12px;
+  height: 12px;
+  border-radius: var(--radius-full);
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-accent);
+  animation: gh-login-spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes gh-login-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gh-login-spinner { animation: none; }
+}
+
+.gh-login-pat-toggle {
+  align-self: flex-start;
+  padding: 0;
+  background: none;
+  border: none;
+  font-size: var(--font-size-xs);
+  color: var(--color-accent);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.gh-login-pat-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.gh-login--connected {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.gh-login-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  background: var(--color-accent-soft);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-accent);
+}
+
+.gh-login-logout {
+  font-size: var(--font-size-xs);
+}

@@ -42,7 +42,7 @@ function readVaultLabel(): string {
 
 interface HeaderProps {
   /** Switch the active page (used by the update badge to open Packs). */
-  onNavigate?: (page: Page) => void;
+  onNavigate?: (page: Page, id?: string) => void;
   /** Whether the rail is collapsed (drives the toggle icon state). */
   sidebarCollapsed: boolean;
   /** Collapse/expand the rail — the title-bar owns this control. */

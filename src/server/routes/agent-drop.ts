@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync, readdirSync, statSync, unlinkSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import { sendJson, sendError } from '../middleware.js';
+import { isDesktop } from '../desktop.js';
 import { sniffImageType as sniffImage, EXT_BY_IMAGE_TYPE, type ImageMimeType } from '../../lib/image-sniff.js';
 
 /**
@@ -24,11 +25,6 @@ import { sniffImageType as sniffImage, EXT_BY_IMAGE_TYPE, type ImageMimeType } f
  * reaches the PTY (see AgentSurface). The path returned here only ever lands inside the
  * vault temp dir, so it can't point outside the project.
  */
-
-/** The interactive-shell features only exist inside the desktop app. */
-function isDesktop(): boolean {
-  return process.env.DREAMCONTEXT_DESKTOP === '1';
-}
 
 export const MAX_DROP_BYTES = 25 * 1024 * 1024; // 25 MB
 const DROP_TTL_MS = 7 * 24 * 60 * 60 * 1000; // prune drops older than ~7 days

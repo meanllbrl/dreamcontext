@@ -96,6 +96,7 @@ export function registerBrainCommand(program: Command): void {
           owner: opts.owner,
           name: opts.name,
           private: !makePublic,
+          confirmed: makePublic,
           codeRepoUrl: opts.codeRepo,
           taskBackend: readSetupConfig(projectRoot)?.taskBackend,
         });

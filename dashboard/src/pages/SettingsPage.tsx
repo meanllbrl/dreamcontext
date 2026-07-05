@@ -8,6 +8,9 @@ import { ConnectionsManager } from '../components/settings/ConnectionsManager';
 import { TaskOverrideEditor } from '../components/settings/TaskOverrideEditor';
 import { SETTINGS_ICONS } from '../components/settings/SettingsIcons';
 import { useAgentCapabilities } from '../hooks/useAgentCapabilities';
+import { useBrainSettings, useUpdateBrainSettings } from '../hooks/useBrainStatus';
+import { GitHubLogin } from '../components/brain/GitHubLogin';
+import { BrainRepoSetup } from '../components/brain/BrainRepoSetup';
 import { isDesktop } from '../lib/desktop';
 import {
   readSleepyConfig,
@@ -104,7 +107,7 @@ const DEFAULT_CONFIG: Pick<SetupConfig, 'platforms' | 'disableNativeMemory'> = {
 
 // ─── Section navigation (in-page menu) ────────────────────────────────────────
 
-type SettingsSectionId = 'platforms' | 'tasks' | 'format' | 'memory' | 'connections' | 'agents' | 'sleepy';
+type SettingsSectionId = 'platforms' | 'tasks' | 'format' | 'memory' | 'connections' | 'brain' | 'agents' | 'sleepy';
 
 interface SettingsNavItem {
   id: SettingsSectionId;
@@ -124,6 +127,7 @@ const SETTINGS_NAV: SettingsNavItem[] = [
   { id: 'tasks', labelKey: 'settings.nav.tasks', descKey: 'settings.navdesc.tasks' },
   { id: 'memory', labelKey: 'settings.nav.memory', descKey: 'settings.navdesc.memory' },
   { id: 'connections', labelKey: 'settings.nav.connections', descKey: 'settings.navdesc.connections' },
+  { id: 'brain', labelKey: 'settings.nav.brain', descKey: 'settings.navdesc.brain' },
   { id: 'format', labelKey: 'settings.nav.format', descKey: 'settings.navdesc.format', beta: true },
   { id: 'agents', labelKey: 'settings.nav.agents', descKey: 'settings.navdesc.agents', desktopOnly: true, beta: true },
   { id: 'sleepy', labelKey: 'settings.nav.sleepy', descKey: 'settings.navdesc.sleepy', desktopOnly: true, lab: true },
@@ -131,7 +135,12 @@ const SETTINGS_NAV: SettingsNavItem[] = [
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export function SettingsPage() {
+interface SettingsPageProps {
+  /** Sidebar deep-link target — `{ id: 'brain', nonce }` opens the Brain Repo section. */
+  focus?: { id: string | null; nonce: number };
+}
+
+export function SettingsPage({ focus }: SettingsPageProps) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
   const { data: config, isLoading: configLoading, isError: configError } = useConfig();
@@ -146,6 +155,10 @@ export function SettingsPage() {
   // authoritative one; union the two so either positive shows the panels.
   const { data: agentCaps } = useAgentCapabilities();
   const desktopSurfaces = (agentCaps?.desktop ?? false) || isDesktop();
+
+  // SW2 — Cloud sync master toggle (Brain Repo & Collaboration section).
+  const { data: brainSettings } = useBrainSettings();
+  const updateBrainSettings = useUpdateBrainSettings();
 
   // In-page section nav: only one settings group is shown at a time so a
   // specific setting is quick to find instead of buried in one long scroll.
@@ -365,6 +378,13 @@ export function SettingsPage() {
     setDirty(false);
     setSaveSuccess(false);
   }, [config]);
+
+  // Sidebar deep-link: opening the "GitHub sync" CTA jumps straight to the
+  // Brain Repo section. `nonce` bumps on every navigate() so re-clicking the
+  // rail item re-opens the section even if it's already active.
+  useEffect(() => {
+    if (focus?.id === 'brain') setActiveSection('brain');
+  }, [focus?.id, focus?.nonce]);
 
   if (configLoading) {
     return <div className="loading">{t('common.loading')}</div>;
@@ -735,6 +755,44 @@ export function SettingsPage() {
         onToggleShareable={handleToggleShareable}
         shareablePending={updateConfig.isPending}
       />
+      )}
+
+      {activeSection === 'brain' && (
+      <section className="settings-section">
+        <div className="fed-head">
+          <div className="settings-section-head">
+            <h2 className="settings-section-title">{t('settings.brain')}</h2>
+            <p className="settings-section-desc">{t('settings.desc.brain')}</p>
+          </div>
+          <label className="fed-sharing-toggle settings-checkbox-label" title={t('brain.cloudSync.hint')}>
+            <input
+              type="checkbox"
+              className="settings-checkbox"
+              checked={brainSettings?.enabled ?? false}
+              disabled={updateBrainSettings.isPending}
+              onChange={(e) => updateBrainSettings.mutate(e.target.checked)}
+            />
+            <span>
+              {t('brain.cloudSync.label')}
+              {brainSettings && (
+                <span className="settings-field-hint brain-cloudsync-source">
+                  {' '}({brainSettings.source === 'explicit' ? t('brain.cloudSync.source.explicit') : t('brain.cloudSync.source.derived')})
+                </span>
+              )}
+            </span>
+          </label>
+        </div>
+
+        <div className="settings-subsection">
+          <h3 className="settings-nav-label">{t('brain.auth.title')}</h3>
+          <GitHubLogin />
+        </div>
+
+        <div className="settings-subsection">
+          <h3 className="settings-nav-label">{t('brain.setup.title')}</h3>
+          <BrainRepoSetup disabled={!(brainSettings?.enabled ?? false)} />
+        </div>
+      </section>
       )}
 
       {activeSection === 'agents' && desktopSurfaces && (

@@ -3,6 +3,7 @@ import { join, dirname } from 'node:path';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { parseJsonBody, sendJson, sendError } from '../middleware.js';
+import { isDesktop } from '../desktop.js';
 import { ensureGitignoreEntries } from '../../lib/gitignore.js';
 
 /**
@@ -21,11 +22,6 @@ import { ensureGitignoreEntries } from '../../lib/gitignore.js';
  * Desktop-only (mirrors agent-drop / agent-terminal): a browser/npm dashboard never
  * reaches it (403). The loopback CSRF guard already fronts the PUT in the server entry.
  */
-
-/** The embedded-agent surface only exists inside the desktop app. */
-function isDesktop(): boolean {
-  return process.env.DREAMCONTEXT_DESKTOP === '1';
-}
 
 /** One persisted session — the renameable title, its layout flags, and the Claude
  *  conversation UUID it's pinned to (so the next launch can `claude --resume` it). */

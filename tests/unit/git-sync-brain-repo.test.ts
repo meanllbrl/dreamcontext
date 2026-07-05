@@ -185,16 +185,30 @@ describe('git-sync/brain-repo — createBrainRepo', () => {
     expect(requests.some((r) => r.path === '/repos/acme/brain/topics' && r.method === 'PUT')).toBe(true);
   });
 
-  it('creates a public repo only when explicitly requested', async () => {
+  it('creates a public repo only when explicitly requested (with confirmation)', async () => {
     const requests: { method: string; path: string; body?: unknown }[] = [];
     const adapter = makeAdapter(requests);
     await createBrainRepo({
-      contextRoot, projectRoot, owner: 'acme', name: 'brain', private: false, adapter,
+      contextRoot, projectRoot, owner: 'acme', name: 'brain', private: false, confirmed: true, adapter,
       gitModule: fakeGit,
       scrubStagedFilesImpl: () => [],
       withGitCredentialsImpl: async (_token, fn) => fn({} as NodeJS.ProcessEnv),
     });
     expect(requests.find((r) => r.path === '/user/repos')?.body).toMatchObject({ private: false });
+  });
+
+  it('refuses to create a PUBLIC repo without confirmation (S5 defense-in-depth) — never hits the API', async () => {
+    const requests: { method: string; path: string; body?: unknown }[] = [];
+    const adapter = makeAdapter(requests);
+    await expect(
+      createBrainRepo({
+        contextRoot, projectRoot, owner: 'acme', name: 'brain', private: false, adapter,
+        gitModule: fakeGit,
+        scrubStagedFilesImpl: () => [],
+        withGitCredentialsImpl: async (_token, fn) => fn({} as NodeJS.ProcessEnv),
+      }),
+    ).rejects.toThrow(/PUBLIC brain repo without explicit confirmation/i);
+    expect(requests.length).toBe(0);
   });
 
   it('blocks the first push when staged content scrubs BLOCK (S3) — never reaches push', async () => {

@@ -1,0 +1,56 @@
+/* Reuses .update-badge / .update-badge-trigger / .update-badge-dot /
+   .update-badge-label / .update-badge-popover from UpdateBadge.css — only the
+   accent color differs (violet nudge, not the amber "update available" one)
+   and a couple of team-specific list rows are added here. */
+
+.team-updates-badge .update-badge-trigger {
+  background: var(--color-accent-soft);
+  border-color: var(--color-accent);
+}
+
+.team-updates-badge .update-badge-trigger:hover {
+  background: var(--color-accent);
+}
+
+.team-updates-badge .update-badge-trigger:hover .update-badge-label {
+  color: var(--color-text-on-brand);
+}
+
+.team-updates-badge .update-badge-dot {
+  background: var(--color-accent);
+}
+
+.team-updates-badge .update-badge-label {
+  color: var(--color-accent);
+}
+
+.team-updates-popover {
+  width: 280px;
+}
+
+.team-updates-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.team-updates-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-1) 0;
+  font-size: var(--font-size-sm);
+}
+
+.team-updates-vault {
+  color: var(--color-text);
+  font-weight: var(--font-weight-medium);
+}
+
+.team-updates-count {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}

@@ -78,6 +78,25 @@ import { handlePackInstall, handlePackUninstall } from './routes/packs-install.j
 import { handleVersionCheckGet } from './routes/version-check.js';
 import { handleTaxonomyGet } from './routes/taxonomy.js';
 import { handleRecallGet, handleRecallHaikuGet } from './routes/recall.js';
+import {
+  handleBrainAuthDeviceStart,
+  handleBrainAuthDevicePoll,
+  handleBrainAuthStatus,
+  handleBrainAuthToken,
+  handleBrainAuthLogout,
+} from './routes/brain-auth.js';
+import {
+  handleBrainStatus,
+  handleBrainDiscover,
+  handleBrainCreate,
+  handleBrainAttachPreview,
+  handleBrainAttach,
+  handleBrainSync,
+  handleBrainSettingsGet as handleBrainSyncSettingsGet,
+  handleBrainSettingsPost as handleBrainSyncSettingsPost,
+  handleBrainTeamUpdates,
+  handleBrainTeamFetch,
+} from './routes/brain.js';
 import { listVaults } from '../lib/vaults.js';
 import { startParentDeathWatch, killTrackedChildren } from './lifecycle.js';
 
@@ -147,6 +166,26 @@ function buildRouter(): Router {
   router.get('/api/recall/haiku', handleRecallHaikuGet);
   router.get('/api/recall', handleRecallGet);
 
+  // Brain cloud-sync — GitHub sign-in (app-global) + per-vault brain repo ops.
+  // The `/auth` and `/team` prefixes are vault-agnostic (see VAULT_AGNOSTIC_PREFIXES);
+  // everything else is header-resolved vault-scoped. Static `device/*` segments are
+  // registered explicitly (no param matcher shadows them). Thin over M1 in-process fns.
+  router.post('/api/brain/auth/device/start', handleBrainAuthDeviceStart);
+  router.post('/api/brain/auth/device/poll', handleBrainAuthDevicePoll);
+  router.get('/api/brain/auth/status', handleBrainAuthStatus);
+  router.post('/api/brain/auth/token', handleBrainAuthToken);
+  router.post('/api/brain/auth/logout', handleBrainAuthLogout);
+  router.get('/api/brain/team/updates', handleBrainTeamUpdates);
+  router.post('/api/brain/team/fetch', handleBrainTeamFetch);
+  router.get('/api/brain/status', handleBrainStatus);
+  router.get('/api/brain/discover', handleBrainDiscover);
+  router.post('/api/brain/create', handleBrainCreate);
+  router.post('/api/brain/attach-preview', handleBrainAttachPreview);
+  router.post('/api/brain/attach', handleBrainAttach);
+  router.post('/api/brain/sync', handleBrainSync);
+  router.get('/api/brain/settings', handleBrainSyncSettingsGet);
+  router.post('/api/brain/settings', handleBrainSyncSettingsPost);
+
   // Graph
   router.get('/api/graph', handleGraphGet);
   router.get('/api/graph/content', handleGraphContentGet);
@@ -204,6 +243,7 @@ function buildRouter(): Router {
   // The embedded terminal itself is a WebSocket upgrade (see attachAgentTerminal),
   // not a router route.
   router.get('/api/agent/capabilities', handleAgentCapabilities);
+  // transcript). Vault-agnostic — they read the Claude CLI's own state, not the vault.
   router.post('/api/agent/open-terminal', handleOpenTerminal);
   // In-app prerequisite installer (Claude CLI / node-pty) — vault-agnostic.
   router.post('/api/agent/install', handleAgentInstall);
@@ -284,7 +324,7 @@ function buildRouter(): Router {
 }
 
 /** API path prefixes that do NOT need a vault — they work in launcher mode. */
-const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/agent/capabilities', '/api/agent/install'];
+const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/agent/capabilities', '/api/agent/install', '/api/brain/auth', '/api/brain/team'];
 
 function isVaultAgnostic(pathname: string): boolean {
   return VAULT_AGNOSTIC_PREFIXES.some(

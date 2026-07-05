@@ -204,6 +204,26 @@
   margin-bottom: var(--space-4);
 }
 
+/* Brain Repo & Collaboration — a distinct sub-block within the section, keeping
+   the sign-in and the create/discover/attach controls visually separate. */
+.settings-subsection {
+  margin-top: var(--space-5);
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--color-border);
+}
+
+.settings-subsection > .settings-nav-label {
+  display: block;
+  margin-bottom: var(--space-3);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-secondary);
+}
+
+.brain-cloudsync-source {
+  font-weight: var(--font-weight-normal);
+}
+
 /* "BETA" / "Lab" tag next to a section title or nav item (e.g. Sleepy). Both ride
    the same accent-violet chip — the shared "not-final surface" marker language used
    in the sidebar (Council's Lab chip). */

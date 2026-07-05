@@ -103,7 +103,7 @@ function PageRouter({ nav }: { nav: ShellNavigation }) {
     case 'council':
       return <CouncilPage />;
     case 'settings':
-      return <SettingsPage />;
+      return <SettingsPage focus={focus} />;
     case 'packs':
       return <PacksPage />;
     case 'taxonomy':

@@ -1,7 +1,8 @@
 import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { ApiAdapter } from '../task-backend/api-adapter.js';
+import { ApiAdapter, ApiError } from '../task-backend/api-adapter.js';
 import { readGitHubTokenSecretsOnly, type ResolvedToken } from '../task-backend/secrets.js';
+import { readGlobalGitHubToken } from './auth-store.js';
 import { readSetupConfig, type SetupConfig } from '../setup-config.js';
 import { acquireFileLock, releaseFileLock } from '../file-lock.js';
 import * as git from './git.js';
@@ -28,13 +29,18 @@ export const FALLBACK_AUTHOR = { name: 'dreamcontext-sync', email: 'noreply@drea
  * (`GITHUB_TOKEN`/`GH_TOKEN`). Secrets-first, env-last — INTENTIONALLY the
  * reverse of `resolveGitHubToken` (secrets.ts, env-first): a stray
  * `GITHUB_TOKEN` in some inherited shell must never silently override the
- * account a non-technical collaborator is actually logged in as. The M2
- * global tier (`~/.dreamcontext/.secrets.json`) is inserted between these two
- * as a one-line edit when `auth-store.ts` lands — do not forward-reference it here.
+ * account a non-technical collaborator is actually logged in as.
+ *
+ * M2 tiering (final): per-project `.secrets.json` → GLOBAL
+ * `~/.dreamcontext/.secrets.json` (the account the user signed into the
+ * launcher/dashboard as) → env. A per-project token still wins over the global
+ * one; the global one still wins over a stray env var.
  */
 export function resolveBrainSyncToken(projectRoot: string): ResolvedToken | null {
   const perProject = readGitHubTokenSecretsOnly(projectRoot);
   if (perProject) return perProject;
+  const global = readGlobalGitHubToken();
+  if (global) return global;
   for (const envVar of ['GITHUB_TOKEN', 'GH_TOKEN']) {
     const v = process.env[envVar];
     if (v && v.trim()) return { token: v.trim(), source: 'env', via: envVar };
@@ -207,6 +213,13 @@ export interface CreateBrainRepoOptions {
   owner: string;
   name: string;
   private?: boolean;
+  /**
+   * DEFENSE-IN-DEPTH (S5): creating a PUBLIC brain repo requires an explicit
+   * `confirmed: true`. Mirrors `attachBrainRepo`'s confirmation refusal so the
+   * library itself refuses even if a caller (or a future endpoint) forgets the
+   * HTTP-layer gate. A private repo does not need it.
+   */
+  confirmed?: boolean;
   codeRepoUrl?: string;
   taskBackend?: SetupConfig['taskBackend'];
   /** Injectable ApiAdapter — tests inject a fake `fetchImpl`. */
@@ -220,6 +233,9 @@ export interface CreateBrainRepoOptions {
 /** `brain init`: create the GitHub repo (default PRIVATE — S5), set the discovery topic, then bootstrap locally. */
 export async function createBrainRepo(opts: CreateBrainRepoOptions): Promise<BootstrapBrainRepoResult> {
   const isPrivate = opts.private ?? true;
+  if (!isPrivate && opts.confirmed !== true) {
+    throw new GitSyncError('Refusing to create a PUBLIC brain repo without explicit confirmation (S5).');
+  }
   const adapter = opts.adapter ?? new ApiAdapter({
     baseUrl: 'https://api.github.com',
     authHeaders: () => {
@@ -311,6 +327,90 @@ export function attachBrainRepo(opts: AttachBrainRepoOptions): AttachBrainRepoRe
   }
   ensureLocalOnlyArtifacts(opts.contextRoot, opts.taskBackend, g);
   return { ok: true };
+}
+
+// ─── Attach preview (READ-ONLY — the S6 trust surface) ──────────────────────
+
+export interface AttachPreviewResult {
+  /** The repo exists and the token can read it. */
+  reachable: boolean;
+  fullName?: string;
+  private?: boolean;
+  /** Carries the discovery topic `dreamcontext-brain` — a genuine brain repo. */
+  isBrainRepo?: boolean;
+  defaultBranch?: string;
+  /**
+   * DEFERRED: a recursive tree fetch would under-report on GitHub's tree
+   * truncation and no AC needs it. Left optional so a later enhancement can
+   * populate it without a signature change.
+   */
+  trackedFileCount?: number;
+  /** Why the preview failed, when `reachable` is false. */
+  reason?: string;
+}
+
+/** Parse `owner/repo` out of an https or `owner/repo` brain-repo URL. */
+export function parseRepoSlug(url: string): { owner: string; repo: string } | null {
+  const trimmed = url.trim().replace(/\.git$/, '').replace(/\/+$/, '');
+  const httpsMatch = trimmed.match(/github\.com[/:]([^/]+)\/([^/]+)$/i);
+  if (httpsMatch) return { owner: httpsMatch[1], repo: httpsMatch[2] };
+  const shortMatch = trimmed.match(/^([^/\s]+)\/([^/\s]+)$/);
+  if (shortMatch) return { owner: shortMatch[1], repo: shortMatch[2] };
+  return null;
+}
+
+export interface PreviewAttachOptions {
+  projectRoot: string;
+  url: string;
+  /** Injectable ApiAdapter — tests inject a fake `fetchImpl`. READ-ONLY (GETs only). */
+  adapter?: ApiAdapter;
+}
+
+/**
+ * The S6 trust surface: given a candidate brain-repo URL, GET its metadata +
+ * topics so the UI can render a diff-preview-style confirmation BEFORE the user
+ * commits to attaching. STRICTLY READ-ONLY — no mutation, no fetch into the
+ * working tree. Never throws for a normal "not reachable" outcome (bad URL,
+ * 404, auth) — it returns `{ reachable: false, reason }` so the UI can explain.
+ */
+export async function previewAttach(opts: PreviewAttachOptions): Promise<AttachPreviewResult> {
+  const slug = parseRepoSlug(opts.url);
+  if (!slug) return { reachable: false, reason: 'That does not look like a GitHub repo URL (expected https://github.com/owner/repo or owner/repo).' };
+
+  const api = opts.adapter ?? new ApiAdapter({
+    baseUrl: 'https://api.github.com',
+    authHeaders: () => {
+      const t = resolveBrainSyncToken(opts.projectRoot);
+      if (!t) throw new GitSyncError('No GitHub token found (per-project secrets or GITHUB_TOKEN/GH_TOKEN env).');
+      return { Authorization: `token ${t.token}` };
+    },
+  });
+
+  try {
+    const repo = await api.request<{ full_name: string; private: boolean; default_branch: string }>(
+      'GET',
+      `/repos/${slug.owner}/${slug.repo}`,
+    );
+    let isBrainRepo = false;
+    try {
+      const topics = await api.request<{ names: string[] }>('GET', `/repos/${slug.owner}/${slug.repo}/topics`);
+      isBrainRepo = (topics.names ?? []).includes(BRAIN_MARKER_TOPIC);
+    } catch {
+      // Topics are best-effort — a token without the preview scope for topics
+      // still yields a valid reachability + metadata preview.
+      isBrainRepo = false;
+    }
+    return {
+      reachable: true,
+      fullName: repo.full_name,
+      private: repo.private,
+      isBrainRepo,
+      defaultBranch: repo.default_branch,
+    };
+  } catch (err) {
+    const message = err instanceof GitSyncError || err instanceof ApiError ? err.message : (err as Error).message;
+    return { reachable: false, reason: message };
+  }
 }
 
 // ─── Local-only artifacts (folded index-guard, P3) ──────────────────────────

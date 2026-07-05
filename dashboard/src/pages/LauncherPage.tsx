@@ -1,17 +1,47 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   useLauncherStatus,
   useUpdateProject,
   useUnregisterVault,
   type VaultStatus,
 } from '../hooks/useLauncher';
+import { useTeamUpdates, useTeamFetch, type TeamVaultUpdate } from '../hooks/useBrainStatus';
 import { openVaultWindow, startTitleBarDrag, toggleMaximizeWindow } from '../lib/desktop';
 import { VaultDot } from '../components/layout/VaultDot';
+import { TeamUpdatesBadge } from '../components/brain/TeamUpdatesBadge';
 import { OnboardingWizard } from './OnboardingWizard';
 import { LauncherGraph } from './LauncherGraph';
 import './LauncherPage.css';
 
 type View = 'cards' | 'graph';
+
+/** How often the launcher checks every project's brain repo for team pushes (background, cache-friendly). */
+const TEAM_FETCH_INTERVAL_MS = 5 * 60 * 1000;
+
+/**
+ * Per-project brain-sync chip: reuses `VaultDot`'s green/yellow/red language
+ * (`ok`/`stale`/`gone` mapped onto synced/updates-pending/not-connected) so the
+ * card reads with the same at-a-glance vocabulary as the freshness dot above it.
+ */
+function LauncherBrainChip({ vault }: { vault?: TeamVaultUpdate }) {
+  if (!vault || !vault.enabled || vault.mode !== 'separate') {
+    return (
+      <span className="launcher-brain-chip launcher-brain-chip--unconnected" title="Cloud sync not set up for this project">
+        <VaultDot exists={false} needsUpdate={false} />
+        Set up team sync
+      </span>
+    );
+  }
+  if (vault.updates > 0 || vault.pendingAgentMerge) {
+    return <TeamUpdatesBadge vaultName={vault.name} />;
+  }
+  return (
+    <span className="launcher-brain-chip launcher-brain-chip--synced" title="Brain repo is up to date">
+      <VaultDot exists={true} needsUpdate={false} />
+      Synced
+    </span>
+  );
+}
 
 export function LauncherPage() {
   const { data, isLoading, isError, error } = useLauncherStatus();
@@ -21,6 +51,24 @@ export function LauncherPage() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [view, setView] = useState<View>('cards');
+
+  const { data: teamVaults } = useTeamUpdates();
+  const teamFetch = useTeamFetch();
+  const brainByVault = useMemo(
+    () => new Map((teamVaults ?? []).map((v) => [v.name, v])),
+    [teamVaults],
+  );
+
+  // Background team-fetch: a real (but cache-friendly) pull-only check across
+  // every registered project's brain repo, so the per-card chip reflects
+  // teammates' pushes without the user opening each vault. Fires once on
+  // mount, then on an interval — never on every render.
+  useEffect(() => {
+    teamFetch.mutate(undefined);
+    const id = setInterval(() => teamFetch.mutate(undefined), TEAM_FETCH_INTERVAL_MS);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const vaults = data?.vaults ?? [];
 
@@ -167,6 +215,12 @@ export function LauncherPage() {
                   {vault.exists && vault.needsUpdate && (
                     <div className="launcher-card-warn launcher-card-warn--stale">
                       Skills out of date — v{vault.setupVersion} → v{vault.latestVersion}.
+                    </div>
+                  )}
+
+                  {vault.exists && (
+                    <div className="launcher-card-brain">
+                      <LauncherBrainChip vault={brainByVault.get(vault.name)} />
                     </div>
                   )}
 

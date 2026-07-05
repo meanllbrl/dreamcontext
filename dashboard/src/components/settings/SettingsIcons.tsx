@@ -103,12 +103,23 @@ export function SleepyIcon(props: IconProps) {
   );
 }
 
+/** Brain Repo & Collaboration — a cloud with a sync arrow. */
+export function BrainRepoIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M6.5 17.5a4 4 0 0 1-.7-7.94 5.25 5.25 0 0 1 10.16-1.9A3.75 3.75 0 0 1 17.5 17.5H6.5Z" />
+      <path d="M9.5 13.5 12 11l2.5 2.5M12 11v6.5" />
+    </Icon>
+  );
+}
+
 export const SETTINGS_ICONS = {
   platforms: PlatformsIcon,
   tasks: CloudTasksIcon,
   memory: MemoryIcon,
   connections: ConnectionsIcon,
   format: FormatIcon,
+  brain: BrainRepoIcon,
   agents: AgentsIcon,
   sleepy: SleepyIcon,
 } as const;

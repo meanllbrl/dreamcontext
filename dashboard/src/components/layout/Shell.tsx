@@ -86,8 +86,8 @@ export function Shell({ children }: ShellProps) {
   }, []);
 
   const handleSidebarNavigate = useCallback(
-    (page: Page) => {
-      navigate(page, null);
+    (page: Page, id?: string) => {
+      navigate(page, id ?? null);
     },
     [navigate],
   );
