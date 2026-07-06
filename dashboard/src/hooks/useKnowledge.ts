@@ -12,6 +12,10 @@ export interface KnowledgeEntry {
   content: string;
   /** File last-modified time (ms epoch). Drives mtime-gated live refresh of the open doc. */
   mtime: number;
+  /** Frontmatter `type` (e.g. 'feature' for PRDs under features/). */
+  type?: string;
+  /** Frontmatter `status` — feature PRDs carry planning/active/…/shipped. */
+  status?: string;
 }
 
 interface KnowledgeListResponse {

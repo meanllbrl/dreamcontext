@@ -138,7 +138,11 @@ export async function handleKnowledgeList(
   _params: Record<string, string>,
   contextRoot: string,
 ): Promise<void> {
-  const entries = buildKnowledgeIndex(contextRoot);
+  // Feature PRDs (knowledge/features/**, type: feature) are first-class typed
+  // knowledge on the dashboard Knowledge page — the standalone Features tab is
+  // gone. Other index consumers (snapshot, graph, recall) keep the default
+  // exclusion because they surface features through their own dedicated paths.
+  const entries = buildKnowledgeIndex(contextRoot, { includeFeatures: true });
   sendJson(res, 200, { entries });
 }
 

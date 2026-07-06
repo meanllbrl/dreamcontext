@@ -1,4 +1,5 @@
 import type { FlowSpec, FlowEdge } from '../about/FlowDiagram';
+import { makeLink, type Box } from '../about/flow-geometry';
 
 /**
  * Council's signature diagram — a richer take on the About-page Council faculty.
@@ -28,43 +29,15 @@ const PERSONAS: { id: string; x: number; y: number; title: string; sub: string; 
   { id: 'p6', x: 56,  y: 113, title: 'Strategist', sub: 'long game', delay: 1.0 },  // upper-left
 ];
 
-type Box = { cx: number; cy: number; w: number; h: number };
 const NODES: Record<string, Box> = {};
 for (const p of PERSONAS) NODES[p.id] = { cx: p.x + P_W / 2, cy: p.y + P_H / 2, w: P_W, h: P_H };
 NODES.syn = { cx: 566, cy: 214, w: 132, h: 96 };
 
-// The point on a node's (padded) rectangle boundary in the direction of another
-// point — so chords start/end exactly at the node edge, never under it or adrift.
-function rectEdge(box: Box, towardX: number, towardY: number, pad: number): [number, number] {
-  const hx = box.w / 2 + pad;
-  const hy = box.h / 2 + pad;
-  const ux = towardX - box.cx;
-  const uy = towardY - box.cy;
-  const sx = ux !== 0 ? hx / Math.abs(ux) : Infinity;
-  const sy = uy !== 0 ? hy / Math.abs(uy) : Infinity;
-  const s = Math.min(sx, sy);
-  return [box.cx + ux * s, box.cy + uy * s];
-}
-
-// A debate chord A→B: leaves A's edge, lands an arrowhead just off B's edge, and
-// bows gently to one side. Every chord shares the same handedness, so the
-// cross-talk reads as a subtle swirl around the central "↻ rounds".
-function chord(a: string, b: string, bow = 0.1): string {
-  const A = NODES[a];
-  const B = NODES[b];
-  const [sx, sy] = rectEdge(A, B.cx, B.cy, 3);
-  const [ex, ey] = rectEdge(B, A.cx, A.cy, 9); // +9 so the arrowhead clears the box
-  const mx = (sx + ex) / 2;
-  const my = (sy + ey) / 2;
-  let dx = ex - sx;
-  let dy = ey - sy;
-  const len = Math.hypot(dx, dy) || 1;
-  dx /= len;
-  dy /= len;
-  const cx = mx + -dy * bow * len;
-  const cy = my + dx * bow * len;
-  return `M ${sx.toFixed(1)} ${sy.toFixed(1)} Q ${cx.toFixed(1)} ${cy.toFixed(1)} ${ex.toFixed(1)} ${ey.toFixed(1)}`;
-}
+// A debate chord A→B (shared edge-to-edge geometry — see flow-geometry.ts).
+// Every chord bows 0.1 with the same handedness, so the cross-talk reads as a
+// subtle swirl around the central "↻ rounds".
+const link = makeLink(NODES);
+const chord = (a: string, b: string, bow = 0.1): string => link(a, b, bow);
 
 // Directed cross-reads — every persona both reads and is read across the table.
 // Includes the diameters (p1↔p4, p2↔p5, p3↔p6) and skip-one chords so each node

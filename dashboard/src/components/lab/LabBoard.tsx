@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLabInsights, useSyncAll } from '../../hooks/useLab';
 import { InsightCard } from './InsightCard';
+import { LabEmptyState } from './LabEmptyState';
 import './LabBoard.css';
 
 const UNGROUPED = 'Ungrouped';
@@ -22,7 +23,7 @@ function groupInsights<T extends { group: string | null }>(insights: T[]): [stri
 }
 
 export function LabBoard() {
-  const { data: insights, isLoading } = useLabInsights();
+  const { data: insights, isLoading, isError, error } = useLabInsights();
   const syncAll = useSyncAll();
   const [toast, setToast] = useState<string | null>(null);
 
@@ -48,35 +49,58 @@ export function LabBoard() {
     });
   };
 
+  // Chrome-free until we know what we have: loading shows no toolbar (so the UI
+  // can't flash a clickable Sync-all and then hard-switch layout to the explainer).
+  if (isLoading) {
+    return (
+      <div className="lab-board">
+        <div className="lab-board-loading">Loading insights…</div>
+      </div>
+    );
+  }
+
+  // A fetch failure is an outage, not onboarding — never show "scaffold your
+  // first insight" over an error (mirrors CouncilPage's explicit isError branch).
+  if (isError) {
+    return (
+      <div className="lab-board">
+        <div className="error-state">Failed to load insights. {(error as Error)?.message}</div>
+      </div>
+    );
+  }
+
+  // Empty state mirrors Council: no "Lab" headline, no Sync-all — just the
+  // "What is Insights?" explainer. Chrome only appears once there's data to act on.
+  if (!insights || insights.length === 0) {
+    return (
+      <div className="lab-board lab-board--empty">
+        <LabEmptyState />
+      </div>
+    );
+  }
+
   return (
     <div className="lab-board">
+      {/* No page title — the sidebar already names the active page. The toolbar
+          keeps only the Sync-all action, aligned right. */}
       <div className="lab-board-toolbar">
-        <h2 className="lab-board-title">Lab</h2>
         <button className="lab-board-sync-all" onClick={handleSyncAll} disabled={syncAll.isPending}>
           {syncAll.isPending ? 'Syncing…' : 'Sync all'}
         </button>
       </div>
 
-      {isLoading ? (
-        <div className="lab-board-empty">Loading insights…</div>
-      ) : !insights || insights.length === 0 ? (
-        <div className="lab-board-empty">
-          No insights yet. Scaffold one with <code>dreamcontext lab create &lt;slug&gt; --title "..." --render number --adapter http</code>.
-        </div>
-      ) : (
-        <div className="lab-board-sections">
-          {grouped.map(([group, items]) => (
-            <section key={group} className="lab-board-section">
-              <h3 className="lab-board-section-title">{group}</h3>
-              <div className="lab-board-grid">
-                {items.map((summary) => (
-                  <InsightCard key={summary.slug} summary={summary} onToast={setToast} />
-                ))}
-              </div>
-            </section>
-          ))}
-        </div>
-      )}
+      <div className="lab-board-sections">
+        {grouped.map(([group, items]) => (
+          <section key={group} className="lab-board-section">
+            <h3 className="lab-board-section-title">{group}</h3>
+            <div className="lab-board-grid">
+              {items.map((summary) => (
+                <InsightCard key={summary.slug} summary={summary} onToast={setToast} />
+              ))}
+            </div>
+          </section>
+        ))}
+      </div>
 
       {toast && <div className="lab-toast">{toast}</div>}
     </div>

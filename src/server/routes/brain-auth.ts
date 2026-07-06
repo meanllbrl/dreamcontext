@@ -6,7 +6,8 @@ import {
   startDeviceFlow,
   pollDeviceFlow,
   fetchAuthenticatedLogin,
-  BRAIN_OAUTH_CLIENT_ID,
+  resolveBrainOAuthClientId,
+  isOAuthAppConfigured,
   type FetchImpl,
 } from '../../lib/git-sync/oauth.js';
 import {
@@ -94,10 +95,24 @@ export async function handleBrainAuthDeviceStart(
   res: ServerResponse,
 ): Promise<void> {
   if (!gate(res)) return;
+
+  // No registered OAuth App ⇒ the device flow can't work (GitHub 404s the
+  // placeholder client_id). Short-circuit with a clear, actionable code so the
+  // UI steers the user to the PAT path instead of firing a doomed request.
+  if (!isOAuthAppConfigured()) {
+    sendError(
+      res,
+      501,
+      'oauth_not_configured',
+      'One-click GitHub sign-in is not available in this build. Connect with a personal access token instead.',
+    );
+    return;
+  }
+
   pruneDeviceSessions();
 
   try {
-    const started = await startDeviceFlow(BRAIN_OAUTH_CLIENT_ID, fetchImpl);
+    const started = await startDeviceFlow(resolveBrainOAuthClientId(), fetchImpl);
     const sessionId = randomUUID();
     deviceSessions.set(sessionId, {
       deviceCode: started.deviceCode,
@@ -154,7 +169,7 @@ export async function handleBrainAuthDevicePoll(
   session.lastPolledAt = now;
 
   try {
-    const result = await pollDeviceFlow(BRAIN_OAUTH_CLIENT_ID, session.deviceCode, fetchImpl);
+    const result = await pollDeviceFlow(resolveBrainOAuthClientId(), session.deviceCode, fetchImpl);
     switch (result.status) {
       case 'authorized': {
         // Persist to the global store (0600) BEFORE evicting — never log the token.
@@ -198,19 +213,28 @@ export async function handleBrainAuthStatus(
 ): Promise<void> {
   if (!gate(res)) return;
 
+  // `oauthConfigured` tells the UI whether to offer the one-click device flow or
+  // steer straight to the PAT path (the placeholder client_id can't reach GitHub).
+  const oauthConfigured = isOAuthAppConfigured();
+
   const global = readGlobalGitHubToken(authHome);
   if (global) {
-    sendJson(res, 200, { connected: true, login: readGlobalGitHubLogin(authHome) ?? undefined, source: 'global' });
+    sendJson(res, 200, {
+      connected: true,
+      login: readGlobalGitHubLogin(authHome) ?? undefined,
+      source: 'global',
+      oauthConfigured,
+    });
     return;
   }
   for (const envVar of ['GITHUB_TOKEN', 'GH_TOKEN']) {
     const v = process.env[envVar];
     if (v && v.trim()) {
-      sendJson(res, 200, { connected: true, source: 'env' });
+      sendJson(res, 200, { connected: true, source: 'env', oauthConfigured });
       return;
     }
   }
-  sendJson(res, 200, { connected: false, source: null });
+  sendJson(res, 200, { connected: false, source: null, oauthConfigured });
 }
 
 // ─── POST /api/brain/auth/token (PAT fallback) ───────────────────────────────

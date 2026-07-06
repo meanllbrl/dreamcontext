@@ -37,14 +37,28 @@ const LINK_KIND_LABEL: Record<string, string> = {
   has_tag: 'tag',
 };
 
-export type BrainNavigatePage = 'tasks' | 'features' | 'knowledge' | 'core';
+export type BrainNavigatePage = 'tasks' | 'knowledge' | 'core';
 
 function groupForNavigate(group: GraphGroup): BrainNavigatePage | null {
   if (group === 'task') return 'tasks';
-  if (group === 'feature') return 'features';
+  // Feature PRDs are typed knowledge (knowledge/features/**) — open them there.
+  if (group === 'feature') return 'knowledge';
   if (group === 'knowledge') return 'knowledge';
   if (group === 'soul' || group === 'user' || group === 'memory' || group === 'core') return 'core';
   return null;
+}
+
+/**
+ * The focus id the destination page keys on. The Knowledge page expects the
+ * folder-qualified slug (`decisions/foo`, `features/<slug>`), which is the
+ * node's path minus the `knowledge/` prefix and `.md` — node ids (`feat_x`,
+ * `knowledge/<slug>`) don't match it. Other pages keep the raw node id.
+ */
+function navigateIdFor(page: BrainNavigatePage, node: GraphNode): string {
+  if (page === 'knowledge' && node.path) {
+    return node.path.replace(/^knowledge\//, '').replace(/\.md$/, '');
+  }
+  return node.id;
 }
 
 interface NodeDrawerProps {
@@ -161,7 +175,7 @@ export function NodeDrawer({
         <div className="brain-drawer-footer">
           <button
             className="brain-btn"
-            onClick={() => onNavigate(navigateTarget, node.id)}
+            onClick={() => onNavigate(navigateTarget, navigateIdFor(navigateTarget, node))}
           >
             Open in {navigateTarget.charAt(0).toUpperCase() + navigateTarget.slice(1)} to edit →
           </button>

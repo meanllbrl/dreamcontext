@@ -3,7 +3,7 @@ import { vCurve } from './flow-specs';
 
 /**
  * The feature showcase catalogue. One entry per dreamcontext capability, grounded
- * in `_dream_context/core/features/*.md` and the CLI surface. Flagship features
+ * in `_dream_context/knowledge/features/*.md` and the CLI surface. Flagship features
  * open by default and carry a small `flow` mini-diagram; minor features stay
  * collapsed and (mostly) render a glyph block instead of a contrived diagram.
  *

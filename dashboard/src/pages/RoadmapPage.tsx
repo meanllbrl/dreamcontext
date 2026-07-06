@@ -6,7 +6,7 @@ import { RoadmapBoard } from '../components/roadmap/RoadmapBoard';
  *
  * Currently ships the top chrome only (view tabs + toolbar), mirroring the Tasks
  * board; the timeline/board renderer lands next against `buildRoadmapModel`
- * (GET /api/roadmap). See `core/features/okr-roadmap.md`.
+ * (GET /api/roadmap). See `knowledge/features/okr-roadmap.md`.
  */
 export function RoadmapPage() {
   // Fill the shell-main content height so the board card is full-height, matching

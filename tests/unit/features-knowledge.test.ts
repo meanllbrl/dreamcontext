@@ -307,6 +307,27 @@ describe('buildKnowledgeIndex excludes knowledge/features/', () => {
     expect(slugs).toContain('top-level');
     expect(slugs).not.toContain('features/my-feature');
   });
+
+  it('includeFeatures: true opts features/ in, carrying frontmatter type/status (dashboard Knowledge page)', () => {
+    const kdir = join(root, 'knowledge');
+    mkdirSync(join(kdir, 'features'), { recursive: true });
+    writeFileSync(join(kdir, 'top-level.md'), '---\nname: Top Level\n---\nbody\n', 'utf-8');
+    writeFileSync(
+      join(kdir, 'features', 'my-feature.md'),
+      '---\nname: My Feature\ntype: feature\nstatus: active\npinned: false\ndate: "2026-01-01"\n---\nPRD body\n',
+      'utf-8',
+    );
+
+    const entries = buildKnowledgeIndex(root, { includeFeatures: true });
+    const feature = entries.find((e) => e.slug === 'features/my-feature');
+    expect(feature).toBeDefined();
+    expect(feature?.type).toBe('feature');
+    expect(feature?.status).toBe('active');
+    // Plain knowledge carries no type/status.
+    const plain = entries.find((e) => e.slug === 'top-level');
+    expect(plain?.type).toBeUndefined();
+    expect(plain?.status).toBeUndefined();
+  });
 });
 
 describe('buildCorpus — feature/knowledge single-counting', () => {

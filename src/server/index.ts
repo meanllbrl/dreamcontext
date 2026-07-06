@@ -10,7 +10,6 @@ import { handleTasksList, handleTasksCreate, handleTasksGet, handleTasksUpdate, 
 import { handleSleepGet, handleSleepUpdate } from './routes/sleep.js';
 import { handleCoreList, handleCoreGet, handleCoreUpdate } from './routes/core.js';
 import { handleKnowledgeList, handleKnowledgeGet, handleKnowledgeUpdate, handleKnowledgeAssets } from './routes/knowledge.js';
-import { handleFeaturesList, handleFeaturesGet } from './routes/features.js';
 import { handleChangelogGet, handleReleasesGet, handleUnreleasedGet, handleReleaseGet, handleReleasesCreate, handleReleasesUpdate, handleReleasesDelete, handleActiveVersionGet, handleActiveVersionSet } from './routes/changelog.js';
 import { handleGraphGet, handleGraphContentGet } from './routes/graph.js';
 import { handleCouncilList, handleCouncilGet, handleCouncilResearchGet } from './routes/council.js';
@@ -165,10 +164,6 @@ function buildRouter(): Router {
   router.get('/api/knowledge-assets/*slug', handleKnowledgeAssets);
   router.get('/api/knowledge/*slug', handleKnowledgeGet);
   router.patch('/api/knowledge/*slug', handleKnowledgeUpdate);
-
-  // Features
-  router.get('/api/features', handleFeaturesList);
-  router.get('/api/features/:slug', handleFeaturesGet);
 
   // Recall — local BM25 search across the brain (powers the Sleepy view).
   // The /haiku variant adds intent-aware, LLM-filtered recall for Ask mode.

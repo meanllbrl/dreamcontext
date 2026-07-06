@@ -27,7 +27,7 @@ const SPECIALISTS: { name: string; domain: string; always: boolean }[] = [
   },
   {
     name: 'sleep-product',
-    domain: 'knowledge/ + core/features/ — writes and refreshes knowledge files and feature PRDs.',
+    domain: 'knowledge/ (incl. features/ PRDs) — writes and refreshes knowledge files and feature PRDs.',
     always: false,
   },
 ];

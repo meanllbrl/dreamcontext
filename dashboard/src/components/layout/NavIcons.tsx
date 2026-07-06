@@ -4,8 +4,8 @@ import type { Page } from './Sidebar';
  * The sidebar's custom icon family. Every glyph is a hand-drawn stroke icon on a
  * 24×24 grid, inheriting `currentColor` so it picks up the rail's idle / hover /
  * active accent states. They're deliberately literal — a checklist for Tasks, a
- * book for Knowledge, a flag for Features — so a first-time user can read the
- * rail without learning what an abstract glyph means. The whole set shares one
+ * book for Knowledge — so a first-time user can read the rail without learning
+ * what an abstract glyph means. The whole set shares one
  * stroke weight and corner rounding so it feels like a single character, kept in
  * the same spirit as Sleepy's two-eyes mark (see {@link SleepyEyes}).
  */
@@ -85,16 +85,6 @@ function KnowledgeIcon() {
   );
 }
 
-/** Features — a planted flag. */
-function FeaturesIcon() {
-  return (
-    <Svg>
-      <line x1="5.5" y1="21" x2="5.5" y2="3.5" />
-      <path d="M5.5 4h12l-2.4 3.4L17.5 11h-12" />
-    </Svg>
-  );
-}
-
 /** Taxonomy — a label/tag with its eyelet. */
 function TaxonomyIcon() {
   return (
@@ -153,13 +143,13 @@ function SettingsIcon() {
   );
 }
 
-/** Lab — a flask: analytics insights are measured, curated metrics. */
+/** Insights (lab) — a lightbulb: the moment an insight lands. */
 function LabIcon() {
   return (
     <Svg>
-      <path d="M9.5 3.5h5" />
-      <path d="M10 4v5.2l-4.6 8a2 2 0 0 0 1.7 3h9.8a2 2 0 0 0 1.7-3l-4.6-8V4" />
-      <line x1="7.2" y1="14.5" x2="16.8" y2="14.5" />
+      <path d="M12 2.8a6 6 0 0 1 3.7 10.7c-.75.6-1.2 1.3-1.2 2.1v.9H9.5v-.9c0-.8-.45-1.5-1.2-2.1A6 6 0 0 1 12 2.8z" />
+      <line x1="9.8" y1="19.4" x2="14.2" y2="19.4" />
+      <line x1="10.6" y1="21.4" x2="13.4" y2="21.4" />
     </Svg>
   );
 }
@@ -183,7 +173,6 @@ const ICONS: Partial<Record<Page, () => React.ReactElement>> = {
   council: CouncilIcon,
   core: CoreIcon,
   knowledge: KnowledgeIcon,
-  features: FeaturesIcon,
   taxonomy: TaxonomyIcon,
   brain: BrainIcon,
   sleep: SleepIcon,

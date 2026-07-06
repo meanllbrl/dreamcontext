@@ -8,8 +8,10 @@ import type { Page } from '../components/layout/Sidebar';
  * The slug a detail page expects is NOT always `hit.slug`. For knowledge the recall
  * corpus stores the basename only (`decision-foo`), while the Knowledge page keys on
  * the folder-qualified slug (`decisions/decision-foo`); we derive that from
- * `hit.path` exactly like {@link DocContent} (`DocContent.tsx:21-23`). Features and
- * tasks key on `hit.slug` directly.
+ * `hit.path` exactly like {@link DocContent} (`DocContent.tsx:21-23`). Feature PRDs
+ * are typed knowledge under `knowledge/features/`, so a feature hit opens the
+ * Knowledge page at the same path-derived slug (`features/<slug>`). Tasks key on
+ * `hit.slug` directly.
  *
  * Changelog/memory hits are synthetic entries inside `core/CHANGELOG.json` /
  * `core/2.memory.md` — there is no per-entry page. They open the Core page on the
@@ -41,7 +43,8 @@ export function recallNavTarget(hit: RecallHit): RecallNavTarget {
     case 'knowledge':
       return { page: 'knowledge', slug: knowledgeSlug(hit.path) };
     case 'feature':
-      return { page: 'features', slug: hit.slug };
+      // PRDs live at knowledge/features/<slug>.md — path-derived like knowledge.
+      return { page: 'knowledge', slug: knowledgeSlug(hit.path) };
     case 'task':
       return { page: 'tasks', slug: hit.slug };
     case 'changelog':

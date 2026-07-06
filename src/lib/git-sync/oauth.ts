@@ -25,11 +25,39 @@ export const BRAIN_OAUTH_SCOPE = 'repo';
  * PLACEHOLDER public client_id. The owner MUST register a GitHub OAuth App with
  * "Device Flow" enabled (github.com/settings/developers) and replace this
  * default (or set `DREAMCONTEXT_GITHUB_CLIENT_ID`). Non-secret, safe to commit.
+ *
+ * While this remains the effective client_id, the device flow is UNAVAILABLE:
+ * GitHub returns 404 for an unregistered client_id, so the callers short-circuit
+ * to the PAT path rather than firing a doomed request (see
+ * {@link isOAuthAppConfigured}).
  */
-const PLACEHOLDER_CLIENT_ID = 'Iv1.dreamcontext-placeholder';
+export const PLACEHOLDER_CLIENT_ID = 'Iv1.dreamcontext-placeholder';
 
-/** The effective device-flow client_id — env override wins over the embedded default. */
-export const BRAIN_OAUTH_CLIENT_ID = (process.env.DREAMCONTEXT_GITHUB_CLIENT_ID || '').trim() || PLACEHOLDER_CLIENT_ID;
+/**
+ * The effective device-flow client_id, resolved LIVE (not frozen at import) so
+ * the desktop main process can set `DREAMCONTEXT_GITHUB_CLIENT_ID` at any point
+ * before the first request. Env override wins over the embedded default.
+ */
+export function resolveBrainOAuthClientId(): string {
+  return (process.env.DREAMCONTEXT_GITHUB_CLIENT_ID || '').trim() || PLACEHOLDER_CLIENT_ID;
+}
+
+/**
+ * True when a REAL GitHub OAuth App is wired up — i.e. a non-empty client_id
+ * that isn't the shipped placeholder. When false, the device flow cannot work
+ * (GitHub 404s the placeholder) and the UI must steer users to the PAT path.
+ */
+export function isOAuthAppConfigured(clientId: string = resolveBrainOAuthClientId()): boolean {
+  const id = clientId.trim();
+  return id.length > 0 && id !== PLACEHOLDER_CLIENT_ID;
+}
+
+/**
+ * @deprecated Frozen-at-import snapshot kept for backward compatibility. Prefer
+ * {@link resolveBrainOAuthClientId} so a client_id set after module load is
+ * honored.
+ */
+export const BRAIN_OAUTH_CLIENT_ID = resolveBrainOAuthClientId();
 
 export type FetchImpl = typeof globalThis.fetch;
 

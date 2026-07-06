@@ -19,7 +19,16 @@ import './BrainSearch.css';
  * column), and reacts to `onOpen`. Drop it on any page by changing `scope`.
  */
 
-export type SearchScope = 'knowledge' | 'feature';
+export type SearchScope = 'knowledge';
+
+/**
+ * Recall corpus types behind each scope. Feature PRDs are typed knowledge on the
+ * page (knowledge/features/**) but their OWN corpus type in the recall engine,
+ * so the knowledge scope queries both.
+ */
+const SCOPE_TYPES: Record<SearchScope, RecallHit['type'][]> = {
+  knowledge: ['knowledge', 'feature'],
+};
 
 export interface BrainSearchHit {
   slug: string;
@@ -43,18 +52,15 @@ interface BrainSearchProps {
 type IntelliState = 'idle' | 'thinking' | 'done';
 
 /**
- * The slug a detail page expects is NOT always `hit.slug`. For knowledge, the
- * recall corpus stores the basename only (`decision-foo`), while the Knowledge
- * page keys on the folder-qualified slug (`decisions/decision-foo`). Derive that
- * from `hit.path` exactly like the Sleepy `DocContent` does, so a subfoldered
- * hit opens instead of 404-ing to a blank pane. Features already key on
- * `hit.slug`, so they pass through unchanged.
+ * The slug a detail page expects is NOT always `hit.slug`. The recall corpus
+ * stores the basename only (`decision-foo`), while the Knowledge page keys on
+ * the folder-qualified slug (`decisions/decision-foo` — or `features/<slug>`
+ * for feature PRDs, which live at knowledge/features/). Derive that from
+ * `hit.path` exactly like the Sleepy `DocContent` does, so a subfoldered hit
+ * opens instead of 404-ing to a blank pane.
  */
-function openSlugFor(scope: SearchScope, hit: RecallHit): string {
-  if (scope === 'knowledge') {
-    return hit.path.replace(/^.*?knowledge\//, '').replace(/\.md$/, '');
-  }
-  return hit.slug;
+function openSlugFor(hit: RecallHit): string {
+  return hit.path.replace(/^.*?knowledge\//, '').replace(/\.md$/, '');
 }
 
 function escapeRegExp(s: string): string {
@@ -91,7 +97,7 @@ export function BrainSearch({
   const [focused, setFocused] = useState(0);
 
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const types = useMemo(() => [scope], [scope]);
+  const types = useMemo(() => SCOPE_TYPES[scope], [scope]);
 
   const trimmedQ = q.trim();
   const hasQuery = trimmedQ.length > 0;
@@ -159,7 +165,7 @@ export function BrainSearch({
 
   const clear = () => { setQ(''); setDebouncedQ(''); setIntelliState('idle'); setIntelliHits([]); setIntelliQuery(''); setFocused(0); focusInput(); };
 
-  const open = (hit: RecallHit) => onOpen({ slug: openSlugFor(scope, hit), title: hit.title, type: hit.type });
+  const open = (hit: RecallHit) => onOpen({ slug: openSlugFor(hit), title: hit.title, type: hit.type });
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Escape') { clear(); return; }
@@ -239,7 +245,7 @@ export function BrainSearch({
               {rows.map((hit, i) => {
                 const pct = Math.round(((hit.rankScore || hit.score || 0) / maxScore) * 100);
                 const snippet = (intelligent ? hit.snippet : hit.snippet || hit.description) ?? '';
-                const openSlug = openSlugFor(scope, hit);
+                const openSlug = openSlugFor(hit);
                 return (
                   <button
                     key={hit.slug}
@@ -273,7 +279,7 @@ export function BrainSearch({
           {showEmpty && (
             <div className="bsearch-empty">
               <SearchIcon size={22} />
-              <p>No {scope === 'feature' ? 'features' : 'knowledge'} match “{trimmedQ}”.</p>
+              <p>No {scope} match “{trimmedQ}”.</p>
               {!intelligent && <span>Try <button className="bsearch-empty-link" onClick={toggleIntelligent}>Intelligent search</button> for intent-aware matches.</span>}
             </div>
           )}

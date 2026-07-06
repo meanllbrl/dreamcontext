@@ -3,6 +3,9 @@ import {
   startDeviceFlow,
   pollDeviceFlow,
   fetchAuthenticatedLogin,
+  isOAuthAppConfigured,
+  resolveBrainOAuthClientId,
+  PLACEHOLDER_CLIENT_ID,
   BRAIN_OAUTH_SCOPE,
 } from '../../src/lib/git-sync/oauth.js';
 
@@ -63,6 +66,29 @@ describe('git-sync/oauth — device flow (injected fetch, zero network)', () => 
     expect(expired.status).toBe('expired');
     const denied = await pollDeviceFlow('Iv1.test', 'DEV123', (async () => jsonRes(200, { error: 'access_denied' })) as unknown as typeof fetch);
     expect(denied.status).toBe('denied');
+  });
+
+  it('isOAuthAppConfigured is false for the placeholder/empty, true for a real client_id', () => {
+    expect(isOAuthAppConfigured(PLACEHOLDER_CLIENT_ID)).toBe(false);
+    expect(isOAuthAppConfigured('')).toBe(false);
+    expect(isOAuthAppConfigured('   ')).toBe(false);
+    expect(isOAuthAppConfigured('Iv1.realclient')).toBe(true);
+    expect(isOAuthAppConfigured('Ov23liAbCd')).toBe(true);
+  });
+
+  it('resolveBrainOAuthClientId reads the env var live, falling back to the placeholder', () => {
+    const prev = process.env.DREAMCONTEXT_GITHUB_CLIENT_ID;
+    try {
+      delete process.env.DREAMCONTEXT_GITHUB_CLIENT_ID;
+      expect(resolveBrainOAuthClientId()).toBe(PLACEHOLDER_CLIENT_ID);
+      expect(isOAuthAppConfigured()).toBe(false);
+      process.env.DREAMCONTEXT_GITHUB_CLIENT_ID = 'Iv1.fromenv';
+      expect(resolveBrainOAuthClientId()).toBe('Iv1.fromenv');
+      expect(isOAuthAppConfigured()).toBe(true);
+    } finally {
+      if (prev === undefined) delete process.env.DREAMCONTEXT_GITHUB_CLIENT_ID;
+      else process.env.DREAMCONTEXT_GITHUB_CLIENT_ID = prev;
+    }
   });
 
   it('fetchAuthenticatedLogin returns the login on 200 and null on 401', async () => {

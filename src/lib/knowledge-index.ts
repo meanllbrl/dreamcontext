@@ -42,6 +42,10 @@ export interface KnowledgeEntry {
   date: string;
   pinned: boolean;
   content: string;
+  /** Frontmatter `type` (e.g. 'feature', 'data-structures'). Absent for plain knowledge. */
+  type?: string;
+  /** Frontmatter `status` (general optional field; feature PRDs use planning/active/…/shipped). */
+  status?: string;
   /**
    * File last-modified time (ms epoch). Rides the polled list response so the
    * dashboard can detect an on-disk change and live-refresh the open document —
@@ -62,7 +66,22 @@ export interface KnowledgeEntry {
  * Sorted: pinned first, then alphabetical by slug.
  * Returns [] if knowledge/ doesn't exist or is empty.
  */
-export function buildKnowledgeIndex(contextRoot: string): KnowledgeEntry[] {
+export interface KnowledgeIndexOptions {
+  /**
+   * Include `knowledge/features/**` (feature PRDs, `type: feature`) in the index.
+   * Default false: the snapshot renders its own Features section, graph.ts emits
+   * feature nodes from its own glob, and recall loads features as their own corpus
+   * type — including them here would double-list on all three surfaces. The
+   * dashboard Knowledge page opts in (features are first-class typed knowledge
+   * there since the standalone Features tab was removed).
+   */
+  includeFeatures?: boolean;
+}
+
+export function buildKnowledgeIndex(
+  contextRoot: string,
+  options: KnowledgeIndexOptions = {},
+): KnowledgeEntry[] {
   const knowledgeDir = join(contextRoot, 'knowledge');
   if (!existsSync(knowledgeDir)) return [];
 
@@ -83,10 +102,10 @@ export function buildKnowledgeIndex(contextRoot: string): KnowledgeEntry[] {
       if (isDarkDiagramSibling(file, boardDirs, isIndexableKnowledge)) continue;
 
       const slug = relative(knowledgeDir, file).replace(/\\/g, '/').replace(/\.md$/, '');
-      // Exclude knowledge/features/** — features are a distinct surface (snapshot
-      // Features section, dashboard Features tab, `--types feature` recall). They
-      // physically live under knowledge/ but must not double-list here.
-      if (slug === 'features' || slug.startsWith('features/')) continue;
+      // knowledge/features/** is excluded by default — the snapshot Features
+      // section and `--types feature` recall already surface PRDs, so listing
+      // them here would double-count (see KnowledgeIndexOptions.includeFeatures).
+      if (!options.includeFeatures && (slug === 'features' || slug.startsWith('features/'))) continue;
       // For Excalidraw boards: store only extracted text (frontmatter + Text
       // Elements labels) — never scene JSON/base64. This keeps entry.content
       // clean for list route, snapshot warm path, and pinned preview.
@@ -104,6 +123,12 @@ export function buildKnowledgeIndex(contextRoot: string): KnowledgeEntry[] {
         content: indexedContent,
         mtime: statSync(file).mtimeMs,
       };
+      if (typeof data.type === 'string' && data.type.trim() !== '') {
+        entry.type = data.type;
+      }
+      if (typeof data.status === 'string' && data.status.trim() !== '') {
+        entry.status = data.status;
+      }
       if (typeof data.pinned_preview_lines === 'number' && data.pinned_preview_lines > 0) {
         entry.pinnedPreviewLines = data.pinned_preview_lines;
       }

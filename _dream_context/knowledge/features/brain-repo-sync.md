@@ -173,6 +173,27 @@ existing local dashboard. The two could coexist later but ship independently.
 ## Changelog
 <!-- LIFO: newest entry at top -->
 
+### 2026-07-06 - Device-flow gracefully gated on OQ-1; PAT-primary fallback shipped
+- **Fixed the "GitHub device-code request failed (404)" dead-end.** Root cause was
+  OQ-1: no OAuth App registered, so the app shipped the placeholder client_id
+  (`Iv1.dreamcontext-placeholder`), which GitHub 404s. Rather than fire that doomed
+  request, the app now **detects the unconfigured state and degrades gracefully**:
+  - `oauth.ts`: added `resolveBrainOAuthClientId()` (live env read, no longer
+    frozen at import) + `isOAuthAppConfigured()` predicate; `PLACEHOLDER_CLIENT_ID`
+    exported. `BRAIN_OAUTH_CLIENT_ID` kept as a deprecated import-time snapshot.
+  - `brain-auth.ts`: `device/start` short-circuits to **501 `oauth_not_configured`**
+    when unconfigured (never calls GitHub); `status` now returns `oauthConfigured`.
+  - `GitHubLogin.tsx`: when `oauthConfigured === false`, the **PAT form is the
+    primary, always-visible path** (no doomed "Continue with GitHub" button); new
+    `brain.auth.oauthUnavailable` i18n string. Device-flow-first UI still renders
+    once a real client_id is wired in (env var or embedded default).
+  - Tests: +2 oauth unit tests (`isOAuthAppConfigured`/live resolver), +2
+    brain-auth route tests (501 short-circuit without network, `oauthConfigured`
+    flag). Full suite green (2816 pass).
+  - **OQ-1 status:** to make one-click sign-in work, register a GitHub OAuth App
+    (Device Flow enabled) and set `DREAMCONTEXT_GITHUB_CLIENT_ID` (or embed the
+    real client_id as the default in `oauth.ts`). Until then PAT is the connect path.
+
 ### 2026-07-05 - M2 shipped (commit 7498307), manual validation pending
 - **M2 Launcher/Dashboard/Desktop SHIPPED.** Device-flow OAuth (sessionId UUID, slow_down, global ~/.dreamcontext/.secrets.json 0600 token tier, injectable fetch), discover endpoint (dreamcontext-brain topic filter), create-from-UI (private default + S5 defense-in-depth confirmed gate at library level), attach flow (S6 trust gate server-enforced + read-only previewAttach diff), team-updates badge (cache-only endpoint, background fetch skips disabled), Settings toggle (Cloud sync master switch M2 tier, spreads brainRepo config). 15 server routes (brain-auth.ts + brain.ts call M1 fns in-process, NOT shell-to-CLI per validated M2 architecture), 3 lib modules (oauth.ts/auth-store.ts/team-fetch.ts), 4 dashboard components, shared src/server/desktop.ts isDesktop(). 36 M2-only files (+3403/-48). Automated validation PASS (57/57 backend tests green, dashboard builds clean, 77 i18n keys). **REMAINING:** manual UI walkthrough in packaged Tauri app (human step) + OQ-1 (register GitHub device-flow OAuth App, embed public client_id; PAT-paste fallback is code-complete + unit-tested and works without OQ-1). M3 still out of scope.
 

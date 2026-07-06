@@ -196,3 +196,63 @@
   background: var(--color-bg-tertiary);
   color: var(--color-text);
 }
+
+/* ── Feature PRD status badge (knowledge/features/**, type: feature) ─────── */
+/* Ported from the retired FeaturesPage: PRDs now list as typed knowledge. */
+.knowledge-card-status {
+  font-size: 10px;
+  padding: 1px 7px;
+  border-radius: var(--radius-full);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border: 1px solid transparent;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.knowledge-card-status--active,
+.knowledge-card-status--planning {
+  background: #dcfce7;
+  color: #15803d;
+  border-color: #bbf7d0;
+}
+
+.knowledge-card-status--in_review {
+  background: #dbeafe;
+  color: #1d4ed8;
+  border-color: #bfdbfe;
+}
+
+.knowledge-card-status--in_progress {
+  background: #ffedd5;
+  color: #c2410c;
+  border-color: #fed7aa;
+}
+
+.knowledge-card-status--shipped,
+.knowledge-card-status--paused,
+.knowledge-card-status--archived {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-tertiary);
+  border-color: var(--color-border);
+}
+
+[data-theme='dark'] .knowledge-card-status--active,
+[data-theme='dark'] .knowledge-card-status--planning {
+  background: rgba(74, 222, 128, 0.14);
+  color: #86efac;
+  border-color: rgba(74, 222, 128, 0.28);
+}
+
+[data-theme='dark'] .knowledge-card-status--in_review {
+  background: rgba(96, 165, 250, 0.16);
+  color: #93c5fd;
+  border-color: rgba(96, 165, 250, 0.28);
+}
+
+[data-theme='dark'] .knowledge-card-status--in_progress {
+  background: rgba(251, 146, 60, 0.16);
+  color: #fdba74;
+  border-color: rgba(251, 146, 60, 0.28);
+}

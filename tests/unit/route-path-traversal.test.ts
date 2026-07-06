@@ -1,6 +1,7 @@
 /**
  * A8 — path-traversal hardening: tests for safeChildPath guards in
- * handleTasksGet, handleKnowledgeGet, handleFeaturesGet.
+ * handleTasksGet and handleKnowledgeGet (feature PRDs are typed knowledge
+ * under knowledge/features/, served by the knowledge route).
  *
  * Each handler must:
  *   - Return 400 invalid_path for traversal slugs before touching the filesystem.
@@ -19,7 +20,6 @@ import { tmpdir } from 'node:os';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { handleTasksGet } from '../../src/server/routes/tasks.js';
 import { handleKnowledgeGet } from '../../src/server/routes/knowledge.js';
-import { handleFeaturesGet } from '../../src/server/routes/features.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -88,6 +88,8 @@ const VALID_KNOWLEDGE_FRONTMATTER = [
 const VALID_FEATURE_FRONTMATTER = [
   '---',
   'id: feat_TEST',
+  'name: my-feature',
+  'type: feature',
   'status: planning',
   'created: "2026-01-01"',
   'updated: "2026-01-01"',
@@ -204,42 +206,29 @@ describe('handleKnowledgeGet — path-traversal guard', () => {
   });
 });
 
-// ─── handleFeaturesGet ────────────────────────────────────────────────────────
+// ─── handleKnowledgeGet — feature PRDs (knowledge/features/**) ────────────────
 
-describe('handleFeaturesGet — path-traversal guard', () => {
-  it('returns 400 invalid_path for ../../etc/passwd', async () => {
+describe('handleKnowledgeGet — feature PRD slugs (features/<slug>)', () => {
+  it('returns 400 invalid_path for a traversal hidden behind the features/ prefix', async () => {
     const { res, status, body } = makeRes();
-    await handleFeaturesGet(makeGetReq(), res, { slug: '../../etc/passwd' }, contextRoot);
+    await handleKnowledgeGet(makeGetReq(), res, { slug: 'features/../../../sentinel' }, contextRoot);
     expect(status()).toBe(400);
     expect((body() as { error: string }).error).toBe('invalid_path');
   });
 
-  it('returns 400 invalid_path for ../sentinel (escapes features dir)', async () => {
+  it('returns 404 for a legitimate-but-absent feature slug', async () => {
     const { res, status, body } = makeRes();
-    // From knowledge/features/ up 4 levels reaches tmpDir; sentinel is at tmpDir/sentinel
-    await handleFeaturesGet(makeGetReq(), res, { slug: '../../../../sentinel' }, contextRoot);
-    expect(status()).toBe(400);
-    expect((body() as { error: string }).error).toBe('invalid_path');
-  });
-
-  it('returns 404 (not 500) for slug="." — resolves to nonexistent ..md dotfile', async () => {
-    const { res, status, body } = makeRes();
-    await handleFeaturesGet(makeGetReq(), res, { slug: '.' }, contextRoot);
+    await handleKnowledgeGet(makeGetReq(), res, { slug: 'features/no-such-feature' }, contextRoot);
     expect(status()).toBe(404);
     expect((body() as { error: string }).error).toBe('not_found');
   });
 
-  it('returns 404 for a legitimate-but-absent slug', async () => {
+  it('returns 200 with the PRD for an existing features/<slug>', async () => {
     const { res, status, body } = makeRes();
-    await handleFeaturesGet(makeGetReq(), res, { slug: 'no-such-feature' }, contextRoot);
-    expect(status()).toBe(404);
-    expect((body() as { error: string }).error).toBe('not_found');
-  });
-
-  it('returns 200 with feature data for a legitimate existing slug', async () => {
-    const { res, status, body } = makeRes();
-    await handleFeaturesGet(makeGetReq(), res, { slug: 'my-feature' }, contextRoot);
+    await handleKnowledgeGet(makeGetReq(), res, { slug: 'features/my-feature' }, contextRoot);
     expect(status()).toBe(200);
-    expect((body() as { feature: { slug: string } }).feature.slug).toBe('my-feature');
+    const entry = (body() as { entry: { slug: string; content: string } }).entry;
+    expect(entry.slug).toBe('features/my-feature');
+    expect(entry.content).toContain('Test feature.');
   });
 });

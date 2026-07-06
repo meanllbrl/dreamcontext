@@ -35,6 +35,12 @@ export interface AuthStatus {
   connected: boolean;
   login?: string;
   source: 'global' | 'env' | null;
+  /**
+   * Whether a real GitHub OAuth App is wired up. When false, the one-click
+   * device flow is unavailable (placeholder client_id) and the UI steers users
+   * to the personal-access-token path.
+   */
+  oauthConfigured?: boolean;
 }
 
 export interface DiscoveredRepo {

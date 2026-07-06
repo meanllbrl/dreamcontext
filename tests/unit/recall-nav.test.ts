@@ -58,9 +58,16 @@ describe('recallNavTarget', () => {
   });
 
   describe('feature', () => {
-    it('feature hit → page=features, slug=hit.slug', () => {
-      const h = hit('feature', 'agent-drop', '/vault/_dream_context/core/features/agent-drop.md');
-      expect(recallNavTarget(h)).toEqual({ page: 'features', slug: 'agent-drop' });
+    // Feature PRDs are typed knowledge (knowledge/features/**) — a feature hit
+    // opens the Knowledge page at the path-derived, folder-qualified slug.
+    it('feature hit → page=knowledge, slug=features/<basename> from hit.path', () => {
+      const h = hit('feature', 'agent-drop', '/vault/_dream_context/knowledge/features/agent-drop.md');
+      expect(recallNavTarget(h)).toEqual({ page: 'knowledge', slug: 'features/agent-drop' });
+    });
+
+    it('feature slug from path ignores hit.slug value', () => {
+      const h = hit('feature', 'wrong-slug', '/vault/_dream_context/knowledge/features/real-name.md');
+      expect(recallNavTarget(h)).toEqual({ page: 'knowledge', slug: 'features/real-name' });
     });
   });
 

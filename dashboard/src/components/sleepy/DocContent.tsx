@@ -9,11 +9,11 @@ import type { RecallHit } from '../../hooks/useRecall';
 
 /**
  * Renders an opened recall hit with the SAME components the dedicated pages use,
- * so a knowledge hit looks like the Knowledge page, a feature like the Features
- * page, a task like a task file, etc. The recall payload carries only *extracted*
- * text for boards, so we fetch the canonical record per type (knowledge / feature
- * / task) to get the raw content; memory & changelog render straight from the
- * recall body.
+ * so a knowledge hit (including feature PRDs — typed knowledge under
+ * knowledge/features/) looks like the Knowledge page, a task like a task file,
+ * etc. The recall payload carries only *extracted* text for boards, so we fetch
+ * the canonical record per type (knowledge / feature / task) to get the raw
+ * content; memory & changelog render straight from the recall body.
  */
 
 const SQL_FENCE = /```sql\s*\n([\s\S]*?)```/gi;
@@ -33,9 +33,10 @@ interface DetailPlan { url: string; pick: (d: unknown) => string }
 function detailPlan(hit: RecallHit): DetailPlan | null {
   switch (hit.type) {
     case 'knowledge':
-      return { url: `/knowledge/${knowledgeSlug(hit.path)}`, pick: (d) => pick(d, ['entry', 'content']) };
     case 'feature':
-      return { url: `/features/${hit.slug}`, pick: (d) => pick(d, ['feature', 'content']) };
+      // Feature PRDs are typed knowledge (knowledge/features/<slug>.md) — same
+      // detail route, path-derived slug.
+      return { url: `/knowledge/${knowledgeSlug(hit.path)}`, pick: (d) => pick(d, ['entry', 'content']) };
     case 'task':
       return { url: `/tasks/${hit.slug}`, pick: (d) => pick(d, ['task', 'body']) };
     default:

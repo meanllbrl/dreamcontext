@@ -42,6 +42,9 @@ beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'dc-authhome-'));
   __setBrainAuthHome(home);
   process.env.DREAMCONTEXT_DESKTOP = '1';
+  // A registered OAuth App is assumed for the device-flow tests; the
+  // "no OAuth App" short-circuit is exercised explicitly in its own block.
+  process.env.DREAMCONTEXT_GITHUB_CLIENT_ID = 'Iv1.testclient';
   delete process.env.GITHUB_TOKEN;
   delete process.env.GH_TOKEN;
 });
@@ -49,6 +52,7 @@ afterEach(() => {
   __setBrainAuthHome(undefined);
   __setBrainAuthFetch(globalThis.fetch);
   delete process.env.DREAMCONTEXT_DESKTOP;
+  delete process.env.DREAMCONTEXT_GITHUB_CLIENT_ID;
   rmSync(home, { recursive: true, force: true });
 });
 
@@ -144,6 +148,31 @@ describe('brain-auth — device flow (B1)', () => {
     const { res, status } = makeRes();
     await handleBrainAuthDevicePoll(makeReq('POST', { sessionId: 'nope' }), res);
     expect(status()).toBe(404);
+  });
+});
+
+describe('brain-auth — no registered OAuth App (placeholder client_id)', () => {
+  it('device/start short-circuits to 501 oauth_not_configured WITHOUT hitting GitHub', async () => {
+    delete process.env.DREAMCONTEXT_GITHUB_CLIENT_ID; // falls back to the placeholder
+    let called = false;
+    __setBrainAuthFetch((async () => { called = true; return jsonRes(200, {}); }) as unknown as typeof fetch);
+    const { res, status, body } = makeRes();
+    await handleBrainAuthDeviceStart(makeReq('POST', {}), res);
+    expect(status()).toBe(501);
+    expect(body().error).toBe('oauth_not_configured');
+    expect(called).toBe(false); // never fired the doomed request
+  });
+
+  it('status reports oauthConfigured:false with the placeholder, true with a real client_id', async () => {
+    delete process.env.DREAMCONTEXT_GITHUB_CLIENT_ID;
+    const off = makeRes();
+    await handleBrainAuthStatus(makeReq('GET'), off.res);
+    expect(off.body().oauthConfigured).toBe(false);
+
+    process.env.DREAMCONTEXT_GITHUB_CLIENT_ID = 'Iv1.realclient';
+    const on = makeRes();
+    await handleBrainAuthStatus(makeReq('GET'), on.res);
+    expect(on.body().oauthConfigured).toBe(true);
   });
 });
 

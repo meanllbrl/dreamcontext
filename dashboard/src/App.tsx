@@ -17,7 +17,6 @@ import { LabPage } from './pages/LabPage';
 import { SleepPage } from './pages/SleepPage';
 import { CorePage } from './pages/CorePage';
 import { KnowledgePage } from './pages/KnowledgePage';
-import { FeaturesPage } from './pages/FeaturesPage';
 import { BrainPage, type BrainNavigatePage } from './pages/BrainPage';
 import { CouncilPage } from './pages/CouncilPage';
 import { SettingsPage } from './pages/SettingsPage';
@@ -73,7 +72,6 @@ function PageRouter({ nav }: { nav: ShellNavigation }) {
   const handleBrainNavigate = (target: BrainNavigatePage, nodeId: string) => {
     const pageMap: Record<BrainNavigatePage, Page> = {
       tasks: 'tasks',
-      features: 'features',
       knowledge: 'knowledge',
       core: 'core',
     };
@@ -101,8 +99,6 @@ function PageRouter({ nav }: { nav: ShellNavigation }) {
       return <CorePage onNavigateTaxonomy={() => nav.navigate('taxonomy', null)} focus={focus} />;
     case 'knowledge':
       return <KnowledgePage focus={focus} />;
-    case 'features':
-      return <FeaturesPage focus={focus} />;
     case 'council':
       return <CouncilPage />;
     case 'settings':

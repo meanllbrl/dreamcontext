@@ -6,7 +6,7 @@ import { useSidebarCollapse } from '../../hooks/useSidebarCollapse';
 import './Shell.css';
 
 const ACTIVE_PAGE_STORAGE_KEY = 'dreamcontext.dashboard.activePage';
-const VALID_PAGES: readonly Page[] = ['tasks', 'roadmap', 'core', 'knowledge', 'features', 'sleep', 'brain', 'council', 'taxonomy', 'settings', 'packs', 'about'];
+const VALID_PAGES: readonly Page[] = ['tasks', 'roadmap', 'lab', 'core', 'knowledge', 'sleep', 'brain', 'council', 'taxonomy', 'settings', 'packs', 'about'];
 
 function readStoredPage(): Page {
   if (typeof window === 'undefined') return 'tasks';

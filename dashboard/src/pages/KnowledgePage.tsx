@@ -27,7 +27,17 @@ function extractSchemaSql(slug: string, content: string): string | null {
   return blocks.length > 0 ? blocks.join('\n\n') : null;
 }
 
-type KnowledgeListEntry = { slug: string; name: string; description: string; tags: string[]; pinned: boolean };
+type KnowledgeListEntry = {
+  slug: string;
+  name: string;
+  description: string;
+  tags: string[];
+  pinned: boolean;
+  /** Frontmatter `type` — 'feature' marks a PRD (knowledge/features/**). */
+  type?: string;
+  /** Frontmatter `status` — feature PRDs carry planning/active/…/shipped. */
+  status?: string;
+};
 
 // "data-structures" -> "Data Structures", "diagrams" -> "Diagrams".
 function prettyFolder(folder: string): string {
@@ -246,6 +256,11 @@ export function KnowledgePage({ focus }: KnowledgePageProps = {}) {
             </span>
           )}
           <span className="knowledge-card-name">{leafName(entry, folder)}</span>
+          {entry.type === 'feature' && entry.status && (
+            <span className={`knowledge-card-status knowledge-card-status--${entry.status}`}>
+              {entry.status}
+            </span>
+          )}
         </span>
         <button
           className={`pin-btn ${entry.pinned ? 'pin-btn--active' : ''}`}

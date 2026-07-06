@@ -223,7 +223,7 @@ export function CommandPalette({ open, onClose, onNavigate }: CommandPaletteProp
             <div className="cmdk-empty">
               {intelligent
                 ? 'Ask anything — Intelligent search reasons over your whole brain.'
-                : 'Search tasks, knowledge, features, core and memory.'}
+                : 'Search tasks, knowledge, core and memory.'}
             </div>
           )}
 

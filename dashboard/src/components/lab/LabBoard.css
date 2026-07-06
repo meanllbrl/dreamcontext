@@ -8,19 +8,13 @@
   position: relative;
 }
 
+/* Sync-all is the toolbar's only child now (the page title is gone), so it
+   right-aligns via flex-end — space-between would park it on the left. */
 .lab-board-toolbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   margin-bottom: var(--space-4);
-}
-
-.lab-board-title {
-  font-family: var(--font-family-display);
-  font-weight: 700;
-  font-size: 22px;
-  color: var(--color-text);
-  margin: 0;
 }
 
 .lab-board-sync-all {
@@ -39,19 +33,11 @@
   opacity: 0.65;
 }
 
-.lab-board-empty {
+.lab-board-loading {
   color: var(--color-text-tertiary);
   font-size: 13.5px;
   padding: 40px 0;
   text-align: center;
-}
-
-.lab-board-empty code {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  background: var(--color-bg-tertiary);
-  padding: 2px 6px;
-  border-radius: 5px;
 }
 
 .lab-board-sections {
@@ -75,6 +61,145 @@
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: var(--space-4);
 }
+
+/* ────────────────────────────────────────
+   Zero-state explainer ("What is Insights?")
+   Mirrors the Council empty state: brand mark · kicker · heading · animated
+   pipeline stage · scaffold command. No page headline — the sidebar names it.
+   ──────────────────────────────────────── */
+
+.lab-board--empty {
+  padding: 0;
+  overflow: hidden;
+}
+
+.lab-intro {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: var(--space-3);
+  max-width: 760px;
+  width: 100%;
+  margin: 0 auto;
+  padding: var(--space-10) var(--space-4) var(--space-8);
+}
+
+/* The intro scrolls as a whole — its children must never be squeezed to fit
+   (the cmd block would otherwise clip mid-line when the viewport is short). */
+.lab-intro > * {
+  flex-shrink: 0;
+}
+
+.lab-intro-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 72px;
+  height: 72px;
+  border-radius: var(--radius-xl);
+  background: var(--color-accent-soft);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 28%, transparent);
+  margin-bottom: var(--space-1);
+}
+
+.lab-intro-kicker {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--color-accent);
+}
+
+.lab-intro-title {
+  margin: 0;
+  font-family: var(--font-family-display);
+  font-size: var(--font-size-2xl);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--line-height-snug);
+  letter-spacing: var(--letter-spacing-heading);
+  color: var(--color-text);
+}
+
+.lab-intro-title span {
+  background: var(--gradient-brand);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.lab-intro-lead {
+  margin: 0;
+  max-width: 580px;
+  font-size: var(--font-size-base);
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+}
+
+.lab-intro-scaffold {
+  margin: var(--space-3) 0 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.lab-intro-cmd {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text);
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  max-width: 100%;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.lab-intro-foot {
+  margin: var(--space-1) 0 0;
+  max-width: 520px;
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+  color: var(--color-text-tertiary);
+}
+
+/* Showcase stage — the animated insight-pipeline diagram, framed like the
+   Council stage (gradient panel + corner tag). */
+.lab-stage {
+  position: relative;
+  width: 100%;
+  margin: var(--space-4) 0 var(--space-1);
+  padding: var(--space-6) var(--space-5) var(--space-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2xl);
+  background:
+    radial-gradient(120% 100% at 50% 0%, var(--color-accent-soft), transparent 60%),
+    var(--color-bg-secondary);
+  box-shadow: var(--shadow-md);
+}
+
+.lab-stage-tag {
+  position: absolute;
+  top: var(--space-4);
+  left: var(--space-5);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: var(--font-weight-bold);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 30%, transparent);
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+}
+
+.lab-stage-flow { max-width: 600px; }
 
 .lab-toast {
   position: absolute;

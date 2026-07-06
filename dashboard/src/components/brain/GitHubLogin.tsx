@@ -165,6 +165,46 @@ export function GitHubLogin() {
     );
   }
 
+  // The PAT paste-in form — the fine-grained-token path. Shared by both the
+  // device-flow layout (revealed on demand) and the PAT-primary layout (always
+  // visible when no OAuth App is registered).
+  const patForm = (
+    <div className="gh-login-pat-form">
+      <p className="settings-field-hint">{t('brain.auth.pat.hint')}</p>
+      <div className="settings-field-row">
+        <input
+          type="password"
+          className="settings-text-input"
+          autoComplete="off"
+          placeholder={t('brain.auth.pat.placeholder')}
+          value={patValue}
+          onChange={(e) => setPatValue(e.target.value)}
+        />
+        <button
+          type="button"
+          className="btn btn--primary"
+          onClick={handleSubmitPat}
+          disabled={submitPat.isPending || !patValue.trim()}
+        >
+          {submitPat.isPending ? t('brain.auth.pat.submitting') : t('brain.auth.pat.submit')}
+        </button>
+      </div>
+      {patError && <p className="settings-test-err">✗ {patError}</p>}
+    </div>
+  );
+
+  // No registered OAuth App ⇒ the one-click device flow can't reach GitHub
+  // (placeholder client_id → 404). Present the PAT path as the primary,
+  // always-visible way to connect instead of a doomed button.
+  if (authStatus?.oauthConfigured === false) {
+    return (
+      <div className="gh-login gh-login--pat-primary">
+        <p className="gh-login-disclosure">{t('brain.auth.oauthUnavailable')}</p>
+        {patForm}
+      </div>
+    );
+  }
+
   return (
     <div className="gh-login">
       <p className="gh-login-disclosure">{t('brain.auth.scopeDisclosure')}</p>
@@ -210,30 +250,7 @@ export function GitHubLogin() {
         {showPatForm ? t('brain.auth.pat.hide') : t('brain.auth.pat.recommend')}
       </button>
 
-      {showPatForm && (
-        <div className="gh-login-pat-form">
-          <p className="settings-field-hint">{t('brain.auth.pat.hint')}</p>
-          <div className="settings-field-row">
-            <input
-              type="password"
-              className="settings-text-input"
-              autoComplete="off"
-              placeholder={t('brain.auth.pat.placeholder')}
-              value={patValue}
-              onChange={(e) => setPatValue(e.target.value)}
-            />
-            <button
-              type="button"
-              className="btn btn--secondary"
-              onClick={handleSubmitPat}
-              disabled={submitPat.isPending || !patValue.trim()}
-            >
-              {submitPat.isPending ? t('brain.auth.pat.submitting') : t('brain.auth.pat.submit')}
-            </button>
-          </div>
-          {patError && <p className="settings-test-err">✗ {patError}</p>}
-        </div>
-      )}
+      {showPatForm && patForm}
     </div>
   );
 }

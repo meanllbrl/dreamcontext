@@ -274,11 +274,23 @@ export function useRemoveCustomFieldDef() {
   });
 }
 
+/**
+ * Feature PRDs for the related-feature picker, sourced from the knowledge index
+ * (PRDs live at knowledge/features/**). `related_feature` stores the BARE
+ * basename slug (never `features/<slug>` — it round-trips to ClickUp/GitHub),
+ * so strip the folder prefix here.
+ */
 export function useFeatureOptions() {
   return useQuery({
-    queryKey: ['features'],
-    queryFn: () => api.get<{ features: Array<{ slug: string; name?: string }> }>('/features'),
-    select: (d) => d.features ?? [],
+    queryKey: ['knowledge'],
+    queryFn: () => api.get<{ entries: Array<{ slug: string; name?: string; type?: string }> }>('/knowledge'),
+    select: (d) =>
+      (d.entries ?? [])
+        .filter((e) => e.slug.startsWith('features/'))
+        .map((e) => {
+          const base = e.slug.split('/').pop() ?? e.slug;
+          return { slug: base, name: e.name === e.slug ? base : e.name };
+        }),
     staleTime: 60_000,
   });
 }
