@@ -59,12 +59,12 @@ const __dirname = fileURLToPath(new URL('.', import.meta.url));
 let cachedVersion: string | null = null;
 
 /**
- * Read the dreamcontext CLI's own package.json version.
- * Searches typical locations relative to this compiled file.
+ * Read the dreamcontext package.json version from disk RIGHT NOW — no cache.
+ * Returns '0.0.0' when no valid package.json is found (e.g. mid-upgrade, when
+ * npm has the directory in a transient state) so callers can treat that as
+ * "unknown" rather than a real version change.
  */
-export function dreamcontextVersion(): string {
-  if (cachedVersion) return cachedVersion;
-
+export function readDreamcontextVersionFromDisk(): string {
   const candidates = [
     join(__dirname, '..', '..', 'package.json'),    // dist/package.json (unlikely)
     join(__dirname, '..', '..', '..', 'package.json'), // repo root from src/lib or dist/lib
@@ -77,7 +77,6 @@ export function dreamcontextVersion(): string {
     try {
       const pkg = JSON.parse(readFileSync(path, 'utf-8'));
       if (typeof pkg.name === 'string' && pkg.name === 'dreamcontext' && typeof pkg.version === 'string') {
-        cachedVersion = pkg.version;
         return pkg.version;
       }
     } catch {
@@ -85,7 +84,16 @@ export function dreamcontextVersion(): string {
     }
   }
 
-  cachedVersion = '0.0.0';
+  return '0.0.0';
+}
+
+/**
+ * Read the dreamcontext CLI's own package.json version.
+ * Searches typical locations relative to this compiled file.
+ */
+export function dreamcontextVersion(): string {
+  if (cachedVersion) return cachedVersion;
+  cachedVersion = readDreamcontextVersionFromDisk();
   return cachedVersion;
 }
 

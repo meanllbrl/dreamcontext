@@ -26,23 +26,30 @@ import { TaxonomyPage } from './pages/TaxonomyPage';
 import type { Page } from './components/layout/Sidebar';
 import './styles/global.css';
 
-/** Required server capabilities for THIS bundle (see server/routes/health.ts). */
-const REQUIRED_CAPABILITIES = ['tasks.members', 'tasks.delete', 'tasks.sync'];
-
+/**
+ * Version handshake against the running server process. This bundle is served
+ * fresh from disk, but a long-lived server keeps its route table in memory —
+ * after an upgrade it serves THIS (new) bundle with an OLD API and newer routes
+ * 404 ("No route: POST /api/tasks/token"). An exact version match is the only
+ * check that can't drift; the old REQUIRED_CAPABILITIES list rotted the moment
+ * a route shipped without an entry. A server with no `version` field predates
+ * the handshake entirely and is stale by definition. Servers ≥ this fix also
+ * self-exit on upgrade (lifecycle.ts), so this banner mainly covers pre-fix
+ * servers and the ≤30s window before the drift watch fires.
+ */
 function StaleServerBanner() {
   const { data } = useQuery({
     queryKey: ['health'],
-    queryFn: () => api.get<{ ok: boolean; capabilities?: string[] }>('/health'),
+    queryFn: () => api.get<{ ok: boolean; version?: string }>('/health'),
     staleTime: 60_000,
     retry: 1,
   });
   if (!data) return null;
-  const caps = data.capabilities ?? [];
-  const missing = REQUIRED_CAPABILITIES.filter(c => !caps.includes(c));
-  if (missing.length === 0) return null;
+  if (data.version === __DC_VERSION__) return null;
   return (
     <div className="stale-server-banner">
-      ⚠ The dashboard server is running an older build — some actions will fail.
+      ⚠ The dashboard server is running an older build (
+      {data.version ?? 'unknown'} vs {__DC_VERSION__}) — some actions will fail.
       Restart it: <code>dreamcontext dashboard</code>
     </div>
   );

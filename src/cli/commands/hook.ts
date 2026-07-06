@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { readFileSync, existsSync, statSync } from 'node:fs';
 import { execFileSync, execSync, spawn } from 'node:child_process';
-import { get as httpGet } from 'node:http';
+import { get as httpGet, request as httpRequest } from 'node:http';
 import { dirname, resolve, join, extname, basename, relative } from 'node:path';
 import { resolveContextRoot } from '../../lib/context-path.js';
 import type { SleepState, Bookmark } from './sleep.js';
@@ -528,6 +528,84 @@ export function resolveDashboardPort(): number {
     if (!Number.isNaN(n) && n > 0 && n < 65536) return n;
   }
   return DEFAULT_DASHBOARD_PORT;
+}
+
+export interface DashboardHealth {
+  up: boolean;
+  /** The running server's version, or null when unknown (pre-handshake server, parse failure). */
+  version: string | null;
+}
+
+/**
+ * Probe the dashboard's /api/health and read the running server's version.
+ * A server that answers without a `version` field predates the version
+ * handshake (< the tasks-token no-route fix) and reports version null.
+ * Resolves { up: false } on connection error or timeout — never throws.
+ */
+export function fetchDashboardHealth(port: number, timeoutMs = 700): Promise<DashboardHealth> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (val: DashboardHealth) => {
+      if (settled) return;
+      settled = true;
+      resolve(val);
+    };
+    try {
+      const req = httpGet({ host: '127.0.0.1', port, path: '/api/health', timeout: timeoutMs }, (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (c: Buffer) => { chunks.push(c); });
+        res.on('end', () => {
+          let version: string | null = null;
+          try {
+            const parsed = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
+            if (typeof parsed?.version === 'string') version = parsed.version;
+          } catch { /* old server or non-JSON — version stays null */ }
+          done({ up: (res.statusCode ?? 0) > 0, version });
+        });
+        res.on('error', () => done({ up: true, version: null }));
+      });
+      req.on('error', () => done({ up: false, version: null }));
+      req.on('timeout', () => {
+        req.destroy();
+        done({ up: false, version: null });
+      });
+    } catch {
+      done({ up: false, version: null });
+    }
+  });
+}
+
+/**
+ * Ask a running dashboard server to exit via POST /api/admin/shutdown.
+ * Resolves true when the server acknowledged (2xx). Servers older than the
+ * version handshake 404 this — resolves false, never throws.
+ */
+export function requestDashboardShutdown(port: number, timeoutMs = 1500): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (val: boolean) => {
+      if (settled) return;
+      settled = true;
+      resolve(val);
+    };
+    try {
+      const req = httpRequest(
+        { host: '127.0.0.1', port, path: '/api/admin/shutdown', method: 'POST', timeout: timeoutMs },
+        (res) => {
+          res.resume();
+          done((res.statusCode ?? 0) >= 200 && (res.statusCode ?? 0) < 300);
+        },
+      );
+      req.on('error', () => done(false));
+      req.on('timeout', () => {
+        req.destroy();
+        done(false);
+      });
+      req.end();
+    } catch {
+      done(false);
+    }
+  });
 }
 
 /**
@@ -1313,10 +1391,16 @@ export function registerHookCommand(program: Command): void {
   // --- hook ensure-dashboard ---
   hook
     .command('ensure-dashboard')
-    .description('Open the web dashboard if it is not already running (called by Claude Code SessionStart hook)')
+    .description('Windows only: open the web dashboard if it is not already running (called by Claude Code SessionStart hook)')
     .action(async () => {
       // Drain any piped hook payload so stdin doesn't block; contents unused.
       readStdin();
+
+      // Windows ONLY. macOS has the desktop app as its dashboard surface, so a
+      // browser auto-open there is redundant at best. Gated at runtime (not at
+      // hook-install time) because .claude settings can be shared across a team
+      // on mixed OSes. Everyone can still run `dreamcontext dashboard` by hand.
+      if (process.platform !== 'win32') process.exit(0);
 
       // Opt-out: DREAMCONTEXT_AUTO_DASHBOARD=0 disables auto-open entirely.
       if (process.env.DREAMCONTEXT_AUTO_DASHBOARD === '0') process.exit(0);
@@ -1332,9 +1416,42 @@ export function registerHookCommand(program: Command): void {
 
       const port = resolveDashboardPort();
 
-      // If a server already answers on the port, leave it open and do nothing.
-      const up = await isDashboardUp(port);
-      if (up) process.exit(0);
+      // A server already on the port is reused ONLY when it runs THIS version.
+      // A long-lived server left over from before an upgrade serves the new
+      // dashboard bundle with an old route table — the "No route: POST
+      // /api/tasks/token" failure. On version mismatch (or a pre-handshake
+      // server with no version at all), ask it to exit and respawn fresh.
+      const health = await fetchDashboardHealth(port);
+      if (health.up) {
+        if (health.version === dreamcontextVersion()) process.exit(0);
+
+        const acknowledged = await requestDashboardShutdown(port);
+        if (acknowledged) {
+          // Server shutdown: 150ms response-flush timer + close (≤5s force-exit).
+          // Poll until the port frees so the respawn can't EADDRINUSE-die.
+          for (let i = 0; i < 8 && (await isDashboardUp(port, 300)); i++) {
+            await new Promise((r) => setTimeout(r, 350));
+          }
+        }
+        if (await isDashboardUp(port, 300)) {
+          // Old server without the shutdown route (or one that won't die) — we
+          // can't kill an unknown PID portably. Tell the agent/user what to do.
+          console.log(
+            `dreamcontext: the dashboard server on port ${port} is running an older version ` +
+            `(${health.version ?? 'unknown (older)'}, current v${dreamcontextVersion()}) — its API is stale. ` +
+            `Stop that process, then run \`dreamcontext dashboard\`.`,
+          );
+          process.exit(0);
+        }
+        try {
+          spawnDashboard(port);
+          console.log(
+            `dreamcontext: restarted the dashboard at http://localhost:${port} ` +
+            `(the previous server was v${health.version ?? 'unknown'}, now v${dreamcontextVersion()}).`,
+          );
+        } catch { /* best-effort */ }
+        process.exit(0);
+      }
 
       try {
         spawnDashboard(port);

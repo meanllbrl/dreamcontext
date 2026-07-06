@@ -55,6 +55,76 @@ export function killTrackedChildren(): void {
  *
  * @returns a stop function (clears the poll), or undefined if no watch was started.
  */
+/**
+ * Exit the server when the installed package is UPGRADED under it — the
+ * root-cause fix for stale-route errors ("No route: POST /api/tasks/token").
+ *
+ * The failure mode: the dashboard server is spawned detached (session-start
+ * hook) and outlives agent sessions. An `npm install -g dreamcontext@latest`
+ * replaces dist/ and the dashboard bundle ON DISK, but this process keeps its
+ * old route table in memory — so it serves the NEW frontend bundle against the
+ * OLD API and every newer route 404s. No manual capability list can keep up
+ * with that; the only reliable fix is for the server to notice the upgrade and
+ * get out of the way (the next session-start spawns a fresh one).
+ *
+ * Mechanism: poll the package.json version on disk and call `onDrift` once it
+ * reads a VALID version different from the one this process started with.
+ * '0.0.0' (unreadable/mid-upgrade/uninstalled) never triggers — we only exit
+ * for a confirmed different version, not a transient read failure.
+ *
+ * Desktop-spawned servers (DREAMCONTEXT_DESKTOP=1) are excluded: the Tauri
+ * shell owns that lifecycle (parent-death watch above), and an app update
+ * relaunches the shell anyway — exiting mid-run would break a live window.
+ */
+export function startVersionDriftWatch(
+  startupVersion: string,
+  readDiskVersion: () => string,
+  onDrift: (diskVersion: string) => void,
+  pollMs = 30_000,
+): (() => void) | undefined {
+  if (process.env.DREAMCONTEXT_DESKTOP === '1') return undefined;
+  if (!startupVersion || startupVersion === '0.0.0') return undefined;
+
+  let fired = false;
+  const timer = setInterval(() => {
+    let disk = '0.0.0';
+    try {
+      disk = readDiskVersion();
+    } catch {
+      return; // read failure = unknown, never a drift signal
+    }
+    if (disk !== '0.0.0' && disk !== startupVersion && !fired) {
+      fired = true;
+      clearInterval(timer);
+      onDrift(disk);
+    }
+  }, pollMs);
+
+  // Same discipline as the parent-death watch: never hold the event loop open.
+  timer.unref?.();
+
+  return () => clearInterval(timer);
+}
+
+/**
+ * Shutdown request hook for `POST /api/admin/shutdown`: the route handler runs
+ * long before the HTTP server (and its shutdown closure) exists, so the server
+ * registers its shutdown here at listen time and the route calls
+ * `requestShutdown()`. A no-op until a handler is registered.
+ */
+let shutdownHandler: (() => void) | null = null;
+
+export function registerShutdownHandler(fn: () => void): void {
+  shutdownHandler = fn;
+}
+
+/** Invoke the registered shutdown. Returns false when none is registered. */
+export function requestShutdown(): boolean {
+  if (!shutdownHandler) return false;
+  shutdownHandler();
+  return true;
+}
+
 export function startParentDeathWatch(onParentGone: () => void): (() => void) | undefined {
   if (process.env.DREAMCONTEXT_DESKTOP !== '1') return undefined;
 

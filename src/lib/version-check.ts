@@ -339,7 +339,10 @@ export function shouldSuppressCliNudge(
 
 /** Default detached spawner: `npm install -g dreamcontext@latest`, fire-and-forget. */
 function defaultSpawner(cmd: string, args: string[]): void {
-  const child = spawn(cmd, args, { detached: true, stdio: 'ignore' });
+  // Windows: npm is npm.cmd, and since the CVE-2024-27980 hardening Node
+  // throws EINVAL on spawning .cmd files without a shell — auto-upgrade
+  // silently never ran there. Args are fixed literals, so shell:true is safe.
+  const child = spawn(cmd, args, { detached: true, stdio: 'ignore', shell: process.platform === 'win32' });
   child.unref();
 }
 

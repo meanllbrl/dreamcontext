@@ -106,7 +106,9 @@ import {
   handleBrainTeamFetch,
 } from './routes/brain.js';
 import { listVaults } from '../lib/vaults.js';
-import { startParentDeathWatch, killTrackedChildren } from './lifecycle.js';
+import { startParentDeathWatch, startVersionDriftWatch, registerShutdownHandler, killTrackedChildren } from './lifecycle.js';
+import { handleAdminShutdown } from './routes/admin.js';
+import { dreamcontextVersion, readDreamcontextVersionFromDisk } from '../lib/manifest.js';
 
 export interface ServerOptions {
   port: number;
@@ -122,6 +124,8 @@ function buildRouter(): Router {
 
   // Health
   router.get('/api/health', handleHealthGet);
+  // Version-skew heal: ensure-dashboard shuts a stale server down through this.
+  router.post('/api/admin/shutdown', handleAdminShutdown);
 
   // Tasks
   router.get('/api/tasks', handleTasksList);
@@ -341,7 +345,7 @@ function buildRouter(): Router {
 }
 
 /** API path prefixes that do NOT need a vault — they work in launcher mode. */
-const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/agent/capabilities', '/api/agent/install', '/api/agent/model-config', '/api/agent/session-model', '/api/agent/session-stats', '/api/brain/auth', '/api/brain/team'];
+const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/agent/capabilities', '/api/agent/install', '/api/agent/model-config', '/api/agent/session-model', '/api/agent/session-stats', '/api/brain/auth', '/api/brain/team'];
 
 function isVaultAgnostic(pathname: string): boolean {
   return VAULT_AGNOSTIC_PREFIXES.some(
@@ -484,6 +488,16 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
       // Desktop only: don't outlive the Tauri shell. Covers the force-quit / crash
       // / dev-rebuild paths where the shell's Rust exit handler never runs.
       startParentDeathWatch(shutdown);
+      // POST /api/admin/shutdown routes here (registered now that shutdown exists).
+      registerShutdownHandler(shutdown);
+      // Exit when an upgrade replaces the package under this process — a
+      // long-lived server must never serve a NEW bundle with an OLD route
+      // table ("No route: POST /api/tasks/token"). The next session-start's
+      // ensure-dashboard spawns the new version.
+      startVersionDriftWatch(dreamcontextVersion(), readDreamcontextVersionFromDisk, (diskVersion) => {
+        console.log(`\n  dreamcontext was updated to v${diskVersion} — restarting the dashboard server is required. Exiting; the next session (or \`dreamcontext dashboard\`) starts the new version.`);
+        shutdown();
+      });
     });
   });
 }
