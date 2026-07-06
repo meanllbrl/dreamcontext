@@ -1,5 +1,16 @@
 [
   {
+    "id": "rel_JTN7dN0E",
+    "version": "0.12.0",
+    "date": "2026-07-06",
+    "summary": "v0.12.0 — dashboard consolidation + brain-sync auth hardening. (1) FEATURES TAB RETIRED: the standalone dashboard Features page and /api/features route are removed; feature PRDs now surface as first-class typed knowledge on the Knowledge page via an includeFeatures opt-in on buildKnowledgeIndex (frontmatter type/status now carried in the index), eliminating the double-listing between snapshot Features section, recall --types feature, and the knowledge index. (2) BRAIN-SYNC OAUTH HARDENING: the GitHub device-flow client_id is resolved LIVE (resolveBrainOAuthClientId) instead of frozen at import so the desktop main process can inject DREAMCONTEXT_GITHUB_CLIENT_ID after module load, and isOAuthAppConfigured short-circuits the device flow to the PAT path with an actionable error when only the shipped placeholder client_id is present (GitHub 404s unregistered client_ids). (3) LAB SHOWCASE: the Lab page gains an animated insight-pipeline stage (LabShowcase/labFlowSpec/LabEmptyState) echoing the Council showcase, with shared flow-geometry extracted for the About/Council/Lab diagrams. (4) CI HARDENING (3 commits): vitest forks pool + capped concurrency to kill spurious 'Timeout calling onTaskUpdate' failures, hermetic marketing-hooks e2e with explicit git defaultBranch/identity, and CLI build before tests.",
+    "breaking": false,
+    "status": "released",
+    "features": [],
+    "tasks": [],
+    "changelog": []
+  },
+  {
     "id": "rel_8Nfm7LEN",
     "version": "0.11.0",
     "date": "2026-07-06",
@@ -30,10 +41,10 @@
   {
     "id": "rel_8l0E-2u9",
     "version": "v0.10.5",
-    "date": "",
+    "date": "2026-07-05",
     "summary": "SUPERSEDED — never independently published to npm; its entire payload shipped under v0.10.6 (a cache-busting republish, see above) because a stale npx cache + desktop-manifest skip-redownload-on-matching-version kept resolving a roadmap-less build under the 0.10.5 tag on a second machine. Kept here for history; do not npm-publish v0.10.5. Original scope — the GitHub task-image bridge (a locally-pathed task image uploads to a dedicated dreamcontext-assets branch, content-sniffed by magic bytes and content-addressed so re-pushes dedupe, and renders inline on the synced issue while the local task keeps its canonical path); the root-cause orphaned-dashboard-server fix (a parent-death watchdog that reaps the Node server on every app-exit path the Rust handler misses, plus a tracked-child PTY reaper); the project's first CI workflow (ci.yml runs vitest on every push-to-main and PR — closing the gap that let a recall regression ship at v0.10.1); a recall capture-guard fix (CAPTURE_RANK_PENALTY 0.5→0.4 for q030); overflow-proof Excalidraw card rendering with a dangling-embed pre-flight guard; a knowledge board-folder grouping + embedded-asset (assets/) resolution fix; and an installer hook-timeout reconciliation. It also lands the PO-authored OKR roadmap — an objective board (core/objectives/ one file each, dreamcontext roadmap objective CLI) with many-to-many task links, a full-DAG forecast cascade (a slip upstream moves every transitive dependent), and target-vs-forecast slip detection — surfaced as an interactive dashboard Roadmap page: a forecast timeline (month-gridded axis, gradient status bars, dotted target diamonds, red slip-overshoot hatching, bezier dependency connectors) with drag-to-reschedule live cascade, drag-to-link/hover-to-unlink dependencies, a status-column board view, and a fully inline-editable slide-over detail panel; backed by GET /api/roadmap, PATCH /api/objectives/:slug, and POST/DELETE /api/objectives/:slug/dependencies (cycle-guarded).",
     "breaking": false,
-    "status": "planning",
+    "status": "released",
     "features": [],
     "tasks": [],
     "changelog": []
