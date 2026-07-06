@@ -38,7 +38,7 @@ date: '2026-07-06'
   - feat-sleepy-agent-surface-ux-redesign (completed) · v0.10.5
   - launcher-federation-board-modeless-direct-manipulation-ux (in_review) · 0.10.7
 
-### ⚪ **make-it-a-business** — Make it a Business · $ 0/2000 MRR (0%) · target 2026-09-05 · forecast 2026-07-04 ✓ on track · deps: improve-recall-mechanism, improve-sleep-quality, simplified-ux, make-dreamcontext-team-ready, include-codex-opencode-support
+### 🔵 **make-it-a-business** — Make it a Business · $ 857/2000 MRR (43%) · target 2026-09-05 · forecast 2026-07-04 ✓ on track · deps: improve-recall-mechanism, improve-sleep-quality, simplified-ux, make-dreamcontext-team-ready, include-codex-opencode-support
   Unblocks: hello-world-pr
 
 ### ⚪ **hello-world-pr** — Hello World PR · no tasks yet · target 2026-10-02 · forecast 2026-07-04 ✓ on track · deps: improve-recall-mechanism, improve-sleep-quality, simplified-ux, include-codex-opencode-support, make-it-a-business

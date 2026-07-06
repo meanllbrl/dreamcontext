@@ -1,6 +1,91 @@
 [
   {
     "date": "2026-07-06",
+    "type": "chore",
+    "scope": "release",
+    "description": "v0.12.0 is now FULLY shipped on both channels, completing the half-shipped state recorded earlier today. The user supplied the 2FA OTP and npm publish succeeded — the registry returns 0.12.0. Before publishing, tag v0.12.0 was MOVED to c3f5414 so the npm tarball, git tag, and desktop assets all include the OAuth App wiring (device-flow sign-in live). The desktop-release workflow re-ran on the moved tag (run 28776285699, success) and rebuilt the release assets; /releases/latest resolves v0.12.0. A curl install smoke test in a clean directory installed CLI 0.12.0 + desktop app 0.12.0. Active planning version advanced to v0.13.0.",
+    "breaking": false,
+    "summary": "v0.12.0 fully shipped: npm publish completed (registry at 0.12.0), tag moved to include OAuth App wiring, desktop re-released, curl smoke test passed",
+    "references": [
+      "commit:c3f5414",
+      "task:complete-v0-12-0-npm-publish"
+    ],
+    "supersedes": "2026-07-06|release"
+  },
+  {
+    "date": "2026-07-06",
+    "type": "docs",
+    "scope": "skill",
+    "description": "Lab (Insights) skill docs shipped FOR REAL this time, plus a new Entity Router. Discovery: the v0.11.0 Lab skill docs were never committed to skill/ — the edits hit only the installed .claude/skills/ copies and were clobbered by the next update, while the task changelog falsely claimed 'skill docs updated'. Consequence: agents misrouted 'create insight' to knowledge create. Fix (class-level, not just patching the gap): (1) Lab/Insights row added to the SKILL.md Capabilities-at-a-Glance table; (2) new 'Entity Router' section in SKILL.md disambiguating all 8 entity types (task/feature/knowledge/insight/objective/memory/bookmark/data-structure) so create-X requests route to the right command; (3) full Lab reference sections written into skill/references/tasks-and-features.md, cli-reference.md, and knowledge-and-recall.md; (4) marker tests (tests/unit/taxonomy-markers.test.ts) now pin the Lab doc content so a future clobber fails CI instead of silently regressing. Rule reinforced: skill docs are edited in skill/ (source of truth) and verified with git — never in installed copies.",
+    "breaking": false,
+    "summary": "Lab skill docs actually committed to skill/ + new 8-entity Entity Router in SKILL.md; marker tests now pin the Lab docs (v0.11.0 docs were silently lost to installed-copy edits)",
+    "references": [
+      "file:skill/SKILL.md",
+      "file:skill/references/tasks-and-features.md",
+      "file:skill/references/cli-reference.md",
+      "file:skill/references/knowledge-and-recall.md",
+      "file:tests/unit/taxonomy-markers.test.ts",
+      "task:feat-lab-analytics-insights-subsystem"
+    ]
+  },
+  {
+    "date": "2026-07-06",
+    "type": "fix",
+    "scope": "lab",
+    "description": "High-effort adversarial review over the Lab working tree (8 finder angles + 12 verifiers, recall-biased per the user-corrected protocol: 3+5 angles × 6 candidates → 1-vote verify → ≤10 findings) produced 10 verified findings, all fixed: (1) InsightDetailPanel — Escape now routes through the overlayStack and an input-focus guard prevents Escape-in-input closing the panel; (2) LineChart — stale hoverIdx clamped where it is READ against the current xKeys (props can shrink between renders), touch-action pan-y, memoization; (3) InsightCard — keyboard access (focus/enter/space); (4) lab sync — tolerates malformed persisted history and truncates stored error strings to 300 chars (a count-capped list of unbounded strings still bloats), with 2 regression tests; (5) PieChart — lone slice renders as a full circle instead of a degenerate arc; (6) SKILL.md rule 3 + cli-reference — stale recall enumerations refreshed. Full suite 2838 green.",
+    "breaking": false,
+    "summary": "Adversarial review of Lab working tree: 10 verified fixes (Escape/overlayStack, hoverIdx clamp, a11y, sync history tolerance + error truncation, PieChart lone slice, stale docs) — 2838 tests green",
+    "references": [
+      "file:dashboard/src/components/lab/InsightDetailPanel.tsx",
+      "file:dashboard/src/components/lab/LineChart.tsx",
+      "file:dashboard/src/components/lab/InsightCard.tsx",
+      "file:src/lib/lab/sync.ts",
+      "file:dashboard/src/components/lab/PieChart.tsx",
+      "task:feat-lab-analytics-insights-subsystem"
+    ]
+  },
+  {
+    "date": "2026-07-06",
+    "type": "feat",
+    "scope": "lab",
+    "description": "Lab (Insights) gains bounded per-insight sync history plus a dashboard slide-over detail panel (parallel session, uncommitted). Sync engine (src/lib/lab/sync.ts): every sync attempt is appended to a per-insight history ring capped at HISTORY_MAX=50 entries (success/failure, timestamp, error), so the dashboard can show sync health without unbounded cache growth. Dashboard: new InsightDetailPanel.tsx/.css — clicking an InsightCard opens a slide-over panel with the insight's full series rendered as interactive charts (LineChart hover/pan, PieChart), sync history, and tweaks. Wired through useLab.ts and LabBoard.tsx.",
+    "breaking": false,
+    "summary": "Lab: bounded per-insight sync history (HISTORY_MAX 50) + dashboard slide-over insight detail panel with interactive charts",
+    "references": [
+      "file:src/lib/lab/sync.ts",
+      "file:dashboard/src/components/lab/InsightDetailPanel.tsx",
+      "file:dashboard/src/hooks/useLab.ts",
+      "task:feat-lab-analytics-insights-subsystem",
+      "feature:lab-analytics-insights"
+    ]
+  },
+  {
+    "date": "2026-07-06",
+    "type": "feat",
+    "scope": "agents",
+    "description": "Tab auto-titling for agent/terminal tabs is now opt-in and DEFAULT OFF (ebbecf7). Previously tabs auto-renamed themselves from session content; now the automatic renaming only runs when the user explicitly enables it, keeping tab labels stable and predictable by default. Sibling commit 3442fb9 (composer model/effort tracks live Claude Code config) was already recorded in the earlier composer-bar redesign entry and is now committed.",
+    "breaking": false,
+    "summary": "Agent tab auto-titling made opt-in, default off (ebbecf7); composer live-config fix committed (3442fb9)",
+    "references": [
+      "commit:ebbecf7",
+      "commit:3442fb9",
+      "feature:in-app-agent-terminal"
+    ]
+  },
+  {
+    "date": "2026-07-06",
+    "type": "change",
+    "scope": "desktop",
+    "description": "Root-caused the 'New terminal opens Claude' launcher complaint to UX, not code: since the 04.07 dropdown change, the ＋ New button FACE spawns a Claude agent session directly; the shell/terminal option is only reachable via the ▾ arrow dropdown next to it. The kind=shell spawn chain was verified correct at every layer — dashboard click handler, WS /api/agent/terminal payload, node-pty spawn args — including the published desktop bundles and the live running server. No code defect; the fix, if any, is a UI affordance decision (make the split-button's two targets more discoverable), not a spawn-chain patch.",
+    "breaking": false,
+    "summary": "Launcher 'New opens Claude' diagnosed as split-button UX, not a spawn bug — kind=shell chain verified at every layer",
+    "references": [
+      "file:dashboard/src/components/sleepy/AgentTabs.tsx",
+      "feature:in-app-agent-terminal"
+    ]
+  },
+  {
+    "date": "2026-07-06",
     "type": "fix",
     "scope": "ci",
     "description": "After v0.11.0 shipped, main went red on three CI-environment issues despite local green. (1) d4e9fee: build the CLI before tests — integration suite spawns the compiled CLI at dist/index.js, but ci.yml ran only npm ci → npm test with no build step; dist/ is produced by prepublishOnly (publish-only), so CI had no CLI → ~20 integration files failed ENOENT. Also dropped hardcoded dev paths in excalidraw-knowledge.test.ts. (2) 205e820: configure git defaultBranch=main + identity fallback, and make marketing-hooks e2e hermetic — a fresh runner has no init.defaultBranch, so brain-sync.e2e's bare repo HEAD pointed at master (not main) → second clone came up empty; the marketing-hooks 'blocks a commit' test resolved the GLOBAL dreamcontext (not the built one) and failed open when absent. (3) f4ee5a3: switch to vitest forks pool + capped concurrency=2 on CI to kill spurious 'Timeout calling onTaskUpdate' — a few CPU-bound files (recall-capture-stress, recall-eval) run tens of seconds; under the default thread pool on a contended runner they starved the worker→main RPC past its timeout. Process IPC (forks) is serviced by libuv, not the blocked event loop. Full suite 224 files / 2801 tests now pass on CI.",

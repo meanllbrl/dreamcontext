@@ -4,7 +4,10 @@ name: "Competitive Analysis: everything-claude-code (ECC)"
 description: "Deep analysis of affaan-m/everything-claude-code (55K stars, Anthropic hackathon winner). Covers architecture differences, their advantages, our advantages, and actionable insights for dreamcontext improvement."
 tags: ["topic:competitive", "architecture", "decisions"]
 date: "2026-03-01"
+updated: "2026-07-06"
 ---
+
+> **Point-in-time snapshot (2026-03-01).** ECC moves fast — treat the specific counts (skills/agents/commands/tests) and feature claims below as historical, not current. Kept for the architectural comparison and the insight backlog, which remain valid. For current ecosystem positioning see [[competitive-landscape]]. Verified intentional on the 2026-07-06 deep cycle — do not re-flag unless a fresh ECC analysis is commissioned.
 
 ## What ECC Is
 

@@ -3,10 +3,9 @@ id: feat_lab_insights
 status: in_review
 created: '2026-07-05'
 updated: '2026-07-06'
-released_version: '0.12.0'
+released_version: 0.12.0
 tags:
-  - feature
-  - analytics
+  - 'topic:lab'
   - 'topic:cli'
   - 'topic:dashboard'
   - backend
@@ -16,7 +15,12 @@ related_tasks:
   - feat-lab-analytics-insights-subsystem
 type: feature
 name: lab-analytics-insights
-description: ''
+description: >-
+  Lab (dashboard: "Insights") — curated analytics metrics synced from external
+  sources (generic HTTP or custom script) into the brain: manifest + bounded
+  cache with sync history, TTL sync, secret-redacting credential layer,
+  roadmap KR binding, SessionStart/recall surfacing, dashboard Lab page with
+  interactive charts and InsightDetailPanel slide-over.
 pinned: false
 date: '2026-07-05'
 ---
@@ -83,6 +87,7 @@ This is NOT a BI tool. Lab is a **metrics delivery** subsystem: it captures WHAT
 ## Constraints & Decisions
 <!-- LIFO: newest at top -->
 
+- **[2026-07-06]** **Bounded sync history — count cap AND size cap.** `cache.history` keeps the cache an insight snapshot, not a log file: HISTORY_MAX=50 events, per-event error truncated at HISTORY_ERROR_MAX=300 chars. Review lesson (bookmarked): a count cap alone is not a size cap — a bounded list of unbounded strings still bloats; cap both. TTL "fresh" skips never append (no run happened). Companion UI lesson: render-time state indexing into derived arrays (crosshair `hoverIdx` into `xKeys`) must be clamped where it is READ — props can shrink between renders.
 - **[2026-07-05]** **Insights, not raw data.** MAX_POINTS=62 per series is a structural cap enforced in `rollup.ts` (`capSeries` coarsens daily→weekly→monthly until under cap). A ~1-year span is monthly-only; a ~1-month span may be daily/weekly. Granularity derives from resolved tweak span: >180d monthly, 45-180d weekly, <=45d daily. Lab is NOT a BI tool — it delivers curated metrics to agents + dashboards, never raw data dumps.
 - **[2026-07-05]** **Security contract (non-negotiable, from adversarial security review).** Credentials written ONLY via `lab credentials set` → `writeCredential`, which calls `ensureLocalOnlyArtifacts` FIRST (never creates a stub `_dream_context/.gitignore` — full canonical template iff missing), layers lab gitignore entries, aborts without writing on any gitignore failure, chmod 0600. Doctor FAILS on existing-but-gitignore-uncovered `credentials.json`. Every error/log/cache string built from the redacted resolution (`{{cred:*}}` → `***`) + `redactSecrets` final net; raw Error objects never logged. Script-hash tripwire prints loud notice before executing a changed script.
 - **[2026-07-05]** **Trust model (accepted).** `lab/scripts/*.mjs` are the first executable artifact brain-repo sync carries; they run in-process with credentials passed in — same trust level as the repo itself. No sandbox in MVP; mitigation = plain-language statement in skill docs + the change tripwire. Anyone with brain-repo push access can change what runs on a peer machine at next lab sync.
@@ -97,7 +102,7 @@ This is NOT a BI tool. Lab is a **metrics delivery** subsystem: it captures WHAT
 
 **Manifest frontmatter schema:** `title` (req), `description`, `group` (string|null → dashboard section), `render: number|line|pie|raw` (req), `source.adapter: http|script`; `source.http`: `endpoint` (may contain `{{tweak:key}}`/`{{cred:key}}`), `method: GET|POST` (default GET), `headers` (values may contain `{{cred:key}}`), `body` (string template, MUST resolve to valid JSON for POST, null for GET), `extract: {seriesPath, seriesKey|null (A/B multi-series split), x, y, agg: last|sum|mean|max}`; `source.script.file` (`scripts/<slug>.mjs` relative to lab/, exports default async fn); `refresh: {ttl_minutes}` (default 1440); `tweaks[]` typed `enum|date|string` ONLY (relative range = enum tweak, explicit range = two date tweaks from/to; there is NO range type); `binding: {objective: <slug>, value: latest|series:<name>}` (optional); `credentials_used: [key...]` (doctor WARNS on missing); `unit` (string|null).
 
-**Cache JSON:** `{slug, fetchedAt, tweaks, granularity, unit, series[{name, points[{t,v}]}], latest, error, errorAt, scriptHash}`. No `sourceHash` (cut — staleness is TTL-only; `scriptHash` exists for the tripwire consumer).
+**Cache JSON:** `{slug, fetchedAt, tweaks, granularity, unit, series[{name, points[{t,v}]}], latest, error, errorAt, scriptHash, history?}`. No `sourceHash` (cut — staleness is TTL-only; `scriptHash` exists for the tripwire consumer). `history` is a bounded sync log, oldest→newest, of `SyncEvent {at, status: 'ok'|'failed', latest: number|null, granularity: Granularity|null, error: string|null}`: real runs only — TTL "fresh" skips do NOT append (nothing changed); capped at HISTORY_MAX=50 events AND per-event `error` truncated at 300 chars (HISTORY_ERROR_MAX) — count cap + size cap, both required. Optional field: absent on caches written pre-history; `appendHistory` tolerates a malformed prior cache (non-array `history`).
 
 **Backend files (all new):**
 - `src/lib/lab/types.ts` — `InsightManifest`, `HttpSource`, `ScriptSource`, `TweakDecl`, `Binding`, `InsightCache`, `SeriesPoint`, `Series`, `RawSeries`, `LabError`; adapter contract `LabAdapter.fetch(ctx)`.
@@ -107,7 +112,7 @@ This is NOT a BI tool. Lab is a **metrics delivery** subsystem: it captures WHAT
 - `src/lib/lab/credentials.ts` — `readCredentials` (missing → {}); `writeCredential` with STRICT ordering: (1) `ensureLocalOnlyArtifacts` FIRST (full canonical template iff missing), (2) layer lab entries, (3) abort on failure; chmod 0600. `resolvePlaceholders` (redact option); `redactSecrets` final net.
 - `src/lib/lab/adapters/generic-http.ts` — resolve endpoint template, SPLIT via `new URL()` into `origin` + `pathname+search` (NEVER full endpoint as baseUrl — trailing-slash/query-corruption hazard). POST: JSON.parse body template before passing (adapter JSON.stringify's — raw string would double-encode). Redaction: every `LabError` built from redacted resolution only.
 - `src/lib/lab/adapters/custom-script.ts` — dynamic import of `source.script.file` under lab/ (path-contained). Trust model in file header. On throw: `LabError` + `redactSecrets(err.message, credentialValues)`.
-- `src/lib/lab/sync.ts` — `syncInsight`/`syncAll`: TTL staleness skip unless `--force`; script-hash tripwire (sha256 before exec, loud notice on change); resolve tweaks → fetch → `capSeries` → latest; on error keep prior + `error`/`errorAt` via `redactSecrets`; binding write: `updateObjectiveMetric` only when finite + metric exists; `syncAll` sequential, aggregates `failed[]` → non-zero exit.
+- `src/lib/lab/sync.ts` — `syncInsight`/`syncAll`: TTL staleness skip unless `--force`; script-hash tripwire (sha256 before exec, loud notice on change); resolve tweaks → fetch → `capSeries` → latest; on error keep prior + `error`/`errorAt` via `redactSecrets`; binding write: `updateObjectiveMetric` only when finite + metric exists; `syncAll` sequential, aggregates `failed[]` → non-zero exit; `appendHistory` records one bounded `SyncEvent` per real run (ok AND failed) into `cache.history` (see Cache JSON above).
 - `src/server/routes/lab.ts` — mirrors `objectives.ts`: `handleLabList` (GET /api/lab), `handleLabShow` (GET /api/lab/:slug), `handleLabSync` (POST /api/lab/sync), `handleLabTweaks` (PATCH /api/lab/:slug/tweaks). No credential value ever returned.
 
 **Backend edits:**
@@ -121,7 +126,7 @@ This is NOT a BI tool. Lab is a **metrics delivery** subsystem: it captures WHAT
 
 **Dashboard (all new, patterned on roadmap; strictly self-contained):**
 - `dashboard/src/hooks/useLab.ts` — mirrors `useObjectives.ts`: `useLabInsights`, `useLabInsight`, `useSyncInsight`, `useSyncAll`, `useUpdateTweaks`.
-- `dashboard/src/pages/LabPage.tsx` + `.css`, `components/lab/LabBoard.tsx` (grouping by `group`, sync-all with loud `failed[]` summary), `InsightCard.tsx` + `.css` (title/unit/staleness/Refresh/provenance chip "feeds <objective>"; `TweakEditor`; body switch on `render`), `NumberCard.tsx` (latest + unit + delta), `LineChart.tsx` (hand-rolled SVG polyline + date axis — NO chart lib), `PieChart.tsx` (SVG arcs + legend), `RawDataView.tsx` (table ⇄ JSON toggle), `TweakEditor.tsx` (generic form from `TweakDecl[]`: enum→select, date→date input, string→text; NO range branch).
+- `dashboard/src/pages/LabPage.tsx` + `.css`, `components/lab/LabBoard.tsx` (grouping by `group`, sync-all with loud `failed[]` summary; holds `openSlug` state and re-derives the open panel's summary from the live insight list so the panel header refreshes after a sync instead of showing a stale snapshot), `InsightCard.tsx` + `.css` (title/unit/staleness/Refresh/provenance chip "feeds <objective>"; `TweakEditor`; body switch on `render`; whole card is clickable → opens the detail panel, with `stopPropagation` islands on actions/tweaks/raw-view so inner controls don't trigger it), `NumberCard.tsx` (latest + unit + delta), `LineChart.tsx` (hand-rolled SVG polyline + date axis — NO chart lib; interactive: vertical crosshair snaps to the nearest data position, one tooltip reads out EVERY series at that x — pointer aims at a date, never a 2px line; hover-independent geometry memoized so pointer-move renders only rebuild the crosshair/tooltip overlay), `PieChart.tsx` (SVG arcs + legend, hover slice highlight + tooltip), `RawDataView.tsx` (table ⇄ JSON toggle), `TweakEditor.tsx` (generic form from `TweakDecl[]`: enum→select, date→date input, string→text; NO range branch), `InsightDetailPanel.tsx` + `.css` (slide-over opened from a card: large interactive chart, `## Meaning` prose from `GET /api/lab/:slug`, tweak editing, per-insight refresh, and a sync-history rail rendering `cache.history` newest-first with ok/failed status, value, and truncated error; Escape closes).
 - `dashboard/src/components/layout/Sidebar.tsx` — add `'lab'` to Page union + nav item + `NavIcon` case (distinct key `nav.labpage`, NOT the existing `lab?:boolean` experimental badge field).
 - `dashboard/src/App.tsx` — case `'lab'` in `PageRouter`.
 - `dashboard/src/context/I18nContext.tsx` — `nav.labpage` (EN + TR).
@@ -137,6 +142,12 @@ This is NOT a BI tool. Lab is a **metrics delivery** subsystem: it captures WHAT
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-07-06 - Bounded sync history + InsightDetailPanel slide-over + interactive charts (working tree, in_review)
+- `cache.history` bounded sync log added (`SyncEvent` in `types.ts`, `appendHistory` in `sync.ts`; HISTORY_MAX 50, per-event error cap 300 chars, fresh-skips don't append) + `tests/unit/lab-sync.test.ts` coverage. A review verifier flagged this PRD's cache-JSON contract as drifted — reconciled above.
+- Dashboard: `InsightDetailPanel` slide-over (large interactive chart, Meaning prose, tweak editing, sync-history rail), clickable cards with stopPropagation islands, `LineChart` crosshair + all-series tooltip (memoized geometry), `PieChart` hover tooltips.
+- Skill docs (see dreamcontext-skill-folder PRD): v0.11.0 had shipped Lab with ZERO skill docs in `skill/` (edits had hit installed copies and were clobbered); Lab capabilities row + Entity Router section + Lab reference sections landed in `skill/` this session, pinned by marker tests in `taxonomy-markers.test.ts`.
+- Status stays `in_review`: the 8-item manual dashboard checklist is still pending user validation.
 
 ### 2026-07-06 - v0.12.0 shipped with Lab showcase
 - Lab page showcase shipped in v0.12.0 (commit 5201cc0): animated `LabShowcase` component with insight pipeline flow, `LabEmptyState` with flow diagram, shared `labFlowSpec` flow geometry extracted for reuse across About/Council/Lab diagrams.

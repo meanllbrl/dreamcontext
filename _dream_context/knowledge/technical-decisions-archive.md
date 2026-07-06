@@ -1,9 +1,15 @@
 ---
 title: Technical Decisions Archive
+name: technical-decisions-archive
+type: knowledge
 description: Archive of granular implementation decisions from dashboard, skill-packs, council, and infrastructure work (2026-03 through 2026-04). Core architecture decisions remain in 2.memory.md.
 tags: [architecture, decisions, frontend, backend]
 created: "2026-04-25"
+updated: "2026-07-06"
 pinned: false
+archived: true
+archived_date: "2026-07-06"
+archived_reason: "Intentional cold archive of 2026-03/04 granular decisions extracted from 2.memory.md. Historical by design — staleness expected; do not re-flag. Archived docs stay recall-findable, just down-ranked."
 ---
 
 # Technical Decisions Archive

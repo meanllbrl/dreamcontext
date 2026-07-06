@@ -42,7 +42,8 @@
       "topic:task-backend",
       "topic:pm",
       "topic:roadmap",
-      "topic:embeddings"
+      "topic:embeddings",
+      "topic:lab"
     ]
   },
   "bareTags": [
@@ -86,6 +87,11 @@
     "roadmap": "topic:roadmap",
     "okr": "topic:roadmap",
     "objectives": "topic:roadmap",
-    "objective": "topic:roadmap"
+    "objective": "topic:roadmap",
+    "lab": "topic:lab",
+    "analytics": "topic:lab",
+    "area:dashboard": "topic:dashboard",
+    "clickup": "topic:clickup",
+    "area:backend": "backend"
   }
 }
