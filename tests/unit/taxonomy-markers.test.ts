@@ -48,6 +48,36 @@ describe('skill/SKILL.md markers', () => {
   it('has a pointer to dreamcontext taxonomy vocab command', () => {
     expect(content).toContain('dreamcontext taxonomy vocab');
   });
+
+  // Lab docs went missing from skill/ once already (v0.11.0 shipped the code with
+  // zero skill docs and agents misrouted "create insight" to knowledge create).
+  // These markers make that failure loud instead of silent.
+  it('has the Entity Router section', () => {
+    expect(content).toContain('## Entity Router');
+  });
+
+  it('has a Lab / Insights capabilities row', () => {
+    expect(content).toContain('**Lab / Insights**');
+  });
+
+  it('names the lab create command for insights', () => {
+    expect(content).toContain('dreamcontext lab create');
+  });
+});
+
+// ── skill/references lab markers ─────────────────────────────────────────────
+
+describe('skill/references lab doc markers', () => {
+  it('cli-reference.md documents the lab verbs', () => {
+    const content = readFileSync(join(ROOT, 'skill', 'references', 'cli-reference.md'), 'utf-8');
+    expect(content).toContain('lab sync');
+    expect(content).toContain('lab credentials set');
+  });
+
+  it('tasks-and-features.md has the insight-capture protocol', () => {
+    const content = readFileSync(join(ROOT, 'skill', 'references', 'tasks-and-features.md'), 'utf-8');
+    expect(content).toContain('Insight capture (in-session — ASK, never auto-create)');
+  });
 });
 
 // ── skill/references/knowledge-and-recall.md markers ─────────────────────────

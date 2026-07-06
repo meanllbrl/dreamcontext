@@ -4,6 +4,8 @@
 
 Deep, durable docs the agent should recall in future sessions (research, design rationale, domain context). The **index is auto-loaded each session** (names, descriptions, tags, staleness) — so you already know what exists.
 
+**Knowledge is prose, not everything.** A metric the user wants tracked ("create an insight", "track MRR") is a **Lab insight** (`dreamcontext lab create` — see [tasks-and-features.md](tasks-and-features.md)); an outcome with a target date is a roadmap **objective**; what a shipped capability is belongs in a **feature PRD**. See the Entity Router in SKILL.md before creating anything.
+
 ```bash
 dreamcontext knowledge create <name> -d "description" -t architecture,api -c "body"
 dreamcontext knowledge index [--tag <tag>] [--plain]
@@ -43,7 +45,7 @@ It moves the file **and** rewrites every inbound `[[wikilink]]` in one atomic st
 
 ## Memory functions — what they are and how to use them
 
-The `memory` command group is your interface to the curated corpus: `knowledge/*` (`knowledge/features/*` loads as its own `feature` channel — `--types feature` vs `--types knowledge` — never double-counted), `state/*.md`, `core/2.memory.md` (Technical Decisions + Known Issues), and every `core/CHANGELOG.json` entry. No setup, no index file, no external service — rebuilt in memory each call (<100ms on ~130 docs).
+The `memory` command group is your interface to the curated corpus: `knowledge/*` (`knowledge/features/*` loads as its own `feature` channel — `--types feature` vs `--types knowledge` — never double-counted), `state/*.md`, `core/2.memory.md` (Technical Decisions + Known Issues), every `core/CHANGELOG.json` entry, `core/objectives/*` (`objective` channel), and `lab/insights/*` (`insight` channel). No setup, no index file, no external service — rebuilt in memory each call (<100ms on ~130 docs).
 
 | Function | Use it to… | Command |
 |---|---|---|
@@ -57,7 +59,7 @@ The `memory` command group is your interface to the curated corpus: `knowledge/*
 
 ### recall — your first-line discovery tool
 
-**Run `memory recall` BEFORE grep or blind file reads** whenever the user asks "where did we decide X?", "have we discussed Y?", "what do we know about Z?", or before duplicating work. It ranks across knowledge + features + tasks + memory + changelog in one shot.
+**Run `memory recall` BEFORE grep or blind file reads** whenever the user asks "where did we decide X?", "have we discussed Y?", "what do we know about Z?", or before duplicating work. It ranks across knowledge + features + tasks + memory + changelog + objectives + insights in one shot.
 
 ```bash
 # Plain discovery — top 10 hits with snippets
@@ -68,6 +70,7 @@ dreamcontext memory recall "auth flow" --types knowledge,feature
 dreamcontext memory recall "deprecated" --types changelog        # ship history
 dreamcontext memory recall "rate limit" --types task             # in-flight work
 dreamcontext memory recall "retention goal" --types objective    # roadmap objectives (OKR outcomes)
+dreamcontext memory recall "weekly active users" --types insight # lab insights (curated analytics metrics)
 
 # Tune result count / machine-readable output
 dreamcontext memory recall "rice prioritization" --top 3 --json

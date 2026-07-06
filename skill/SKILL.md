@@ -77,6 +77,7 @@ dreamcontext is **more than memory files**. Every capability below is real and s
 | **Structured memory** | soul/user/memory + knowledge + tasks, auto-loaded each session | this file |
 | **Tasks** | Working documents with changelog, RICE, status lifecycle, start/due date ranges, resolved assignees, and project-declared custom fields (`overrides/task.md`) | [tasks-and-features.md](references/tasks-and-features.md) |
 | **Roadmap / Objectives** | PO-authored OKR board: objectives in `core/objectives/`, many-to-many task links (`objectives:` frontmatter), dependency DAG with full forecast cascade, target vs forecast slip detection, `dreamcontext roadmap` (+ `--json`) | [tasks-and-features.md](references/tasks-and-features.md) |
+| **Lab / Insights** | Curated analytics **metrics** ("insights") synced from HTTP APIs or local scripts into the brain: manifests in `lab/insights/`, cached series every session, optional roadmap Key-Result auto-binding, dashboard Lab page. **An insight is NOT a knowledge file** — create with `dreamcontext lab create`, never `knowledge create` | [tasks-and-features.md](references/tasks-and-features.md) |
 | **Features (PRDs)** | Retrospective product docs, updated only during sleep | [tasks-and-features.md](references/tasks-and-features.md) |
 | **Knowledge** | Tagged deep docs, pinning, staleness, Excalidraw diagrams | [knowledge-and-recall.md](references/knowledge-and-recall.md) |
 | **Memory recall** | Haiku/BM25 search over the whole corpus; auto-injected on prompts | [knowledge-and-recall.md](references/knowledge-and-recall.md) |
@@ -101,6 +102,31 @@ dreamcontext is **more than memory files**. Every capability below is real and s
 
 ---
 
+## Entity Router — create the RIGHT thing (past sessions got this wrong)
+
+dreamcontext has **eight distinct entity types**, each with ONE home and ONE creation path. When the user says "create/add/track X", route by what X **is** — never by the nearest command you happen to remember. The canonical mistake: user says *"create an insight"* and the agent runs `knowledge create`. An insight is not knowledge.
+
+| User says… | Entity | What it IS | Create with |
+|---|---|---|---|
+| "create an insight", "track MRR / WAU / signups", "add a metric", "I want to see X every session" | **Insight** — `lab/insights/<slug>.md` | A curated analytics **metric backed by an external source** (HTTP API or script) — a number/series that re-syncs. Has a manifest, cache, TTL, adapters, optional KR binding | `dreamcontext lab create <slug> --title "…"` (offer-and-confirm protocol → [tasks-and-features.md](references/tasks-and-features.md)) |
+| "add an objective / goal / OKR", "put it on the roadmap", "we want X by Q4" | **Objective** — `core/objectives/<slug>.md` | A PO-authored **outcome** with target date, dependency DAG, optional Key-Result metric | `dreamcontext roadmap objective create` (ASK first — objectives are PO-owned) |
+| "document this", "write up the research / decision / how X works" | **Knowledge** — `knowledge/…` | Durable **prose**: research, decisions, rationale, domain context. It doesn't refresh itself and it isn't work to do | `dreamcontext knowledge create <name>` |
+| "the X feature", what a shipped capability is | **Feature PRD** — `knowledge/features/` | Retrospective **product doc** (user stories + acceptance criteria) | Sleep agent ONLY — never during active work |
+| any work over ~5 minutes, "let's build / fix X" | **Task** — `state/<slug>.md` | A **working document** with lifecycle, changelog, criteria | `dreamcontext tasks create` (check for an existing one first) |
+| a moment worth remembering, a correction, a decision made | **Bookmark** | A salience-tagged marker for the sleep agent | `dreamcontext bookmark add "…" -s N --task <slug>` |
+| "remind me when / next time X comes up" | **Trigger** | Prospective memory — fires when context matches | `dreamcontext trigger add <when> <remind>` |
+| "version / release / sprint / milestone" | **Release entry** — `RELEASES.json` | A planning version or shipped release | `dreamcontext core releases add` |
+
+**Litmus tests when unsure:**
+- Is it a **number/series that updates from a source**? → insight (`lab`).
+- Is it an **outcome with a committed date**? → objective (`roadmap`).
+- Is it **prose you write once and maintain**? → knowledge.
+- Is it **work to do**? → task.
+
+If the requested entity type is ambiguous ("track this" could be insight, objective, or trigger), **ask one clarifying question instead of guessing** — creating the wrong entity pollutes the brain and the user has to notice and undo it.
+
+---
+
 ## What Is Already In Your Context (do not re-read)
 
 The SessionStart hook injects this automatically every session — answer from it directly, **zero tool calls needed**:
@@ -109,6 +135,7 @@ The SessionStart hook injects this automatically every session — answer from i
 - **Extended core files index** — names/types of style guide, tech stack, system flow
 - **Active tasks** — status, priority, last updated, and the objectives each serves (answer "which tasks are active?" from this)
 - **Objectives (roadmap)** — active + recently-finished objectives with progress %, target vs forecast, and slip flags. **Weigh decisions against these outcomes** — they are WHAT the project is driving toward
+- **Lab insights** — cached analytics metrics (title / latest value / staleness / group) when `lab/insights/` is non-empty. Answer "what's our MRR/WAU?" from it; `dreamcontext lab sync` only when stale
 - **Bookmarks** — tagged important moments from prior sessions, by salience
 - **Contextual reminders** — triggers matching active tasks (prospective memory)
 - **Sleep state** — current debt level, sessions since last sleep, history
@@ -180,7 +207,7 @@ When in doubt about a command or flag, open [cli-reference.md](references/cli-re
 
    Skip triage only when the request is (a) a 1-line factual question, (b) purely about dreamcontext mechanics (this skill), or (c) outside every available skill's domain. When in doubt, load.
 
-3. **Recall before grep.** Before grepping `_dream_context/` for prior decisions or "did we already do X?", run `dreamcontext memory recall "<query>"`. It ranks across knowledge, features, tasks, memory, and changelog in one shot — cheaper and more on-target than blind Grep.
+3. **Recall before grep.** Before grepping `_dream_context/` for prior decisions or "did we already do X?", run `dreamcontext memory recall "<query>"`. It ranks across knowledge, features, tasks, memory, changelog, objectives, and insights in one shot — cheaper and more on-target than blind Grep.
 
 4. **Single source of truth — check before creating, update over duplicate.** Every fact lives in exactly ONE place. Before creating any task/feature/knowledge, `dreamcontext memory recall` for it; if it exists, UPDATE it instead of forking a copy.
    - **Know feature vs knowledge.** A **feature** (`knowledge/features/<name>.md` — typed knowledge, `type: feature`; the `dreamcontext features` CLI is a deprecated compat alias) is product documentation — what a capability *is*, its user stories + acceptance criteria — updated only at sleep. **Knowledge** (`knowledge/…`) is other durable material: research, decisions, rationale, domain/technical context. In-progress work lives in a **task**, never in a feature or knowledge file.
@@ -300,6 +327,7 @@ Status: `todo → in_progress → in_review → completed`. Sections: `why`, `us
 - **Quick capture:** `dreamcontext memory remember "<text>"` writes a `type=note` CHANGELOG entry; sleep reconciles it later. (`2.memory.md` no longer has a LIFO ship-narrative section — ship events live in CHANGELOG.)
 - **Knowledge files:** index auto-loaded; create with `dreamcontext knowledge create <name>`; pin frequently-needed ones (`pinned: true`); read non-pinned on demand and `knowledge touch` after. Group a flat file into a context folder with `dreamcontext knowledge move <slug> <folder>` (atomic move + inbound `[[wikilink]]` rewrite — never `mv` + hand-edit links).
 - **Features are sleep-only** (see rule 9).
+- **Insights are NOT knowledge** — a metric the user wants tracked ("create an insight", "track MRR") is a **Lab insight** (`dreamcontext lab create`), not a knowledge file. See the Entity Router above; full protocol → [tasks-and-features.md](references/tasks-and-features.md).
 
 **Recall modes, taxonomy, Excalidraw boards/diagrams, multi-product knowledge** → [knowledge-and-recall.md](references/knowledge-and-recall.md).
 
@@ -353,6 +381,11 @@ _dream_context/
 │   ├── features/<feature>.md         ← Feature PRDs, typed knowledge (type: feature; may include product:)
 │   ├── data-structures/{default,<product>}.md   ← schemas (recall-indexed; ```sql body)
 │   └── products/<product>.md         ← per-product knowledge (multi-product)
+├── lab/                              ← Analytics insights (curated metrics — NOT knowledge)
+│   ├── insights/<slug>.md            ←   insight manifests (`dreamcontext lab create`)
+│   ├── cache/<slug>.json             ←   synced series snapshots (never hand-edit)
+│   ├── scripts/<slug>.mjs            ←   custom-script adapters (run locally with your credentials)
+│   └── credentials.json              ←   gitignored — write ONLY via `lab credentials set`
 ├── overrides/
 │   └── task.md                       ← OPTIONAL: project task template + custom_fields schema (briefed to agents)
 ├── state/

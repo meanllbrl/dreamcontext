@@ -151,6 +151,54 @@ The through-line: **you detect and propose; the PO confirms.** Every create, dat
 
 ---
 
+## Lab insights — curated analytics metrics
+
+An **insight** is a named, curated **metric backed by an external source** — "Weekly Active Users from our PostHog API", "MRR from a billing script". It is a number/series that **re-syncs on demand**, never a prose document. This is the entity users mean by "create an insight", "track signups", "I want to see MRR every session".
+
+**What an insight is NOT (route correctly):**
+- NOT **knowledge** — knowledge is prose you write and maintain; an insight fetches its value from a source. Never `knowledge create` for a metric.
+- NOT an **objective** — an objective is an outcome with a target date; an insight is the *measurement*. (The two connect: an insight can *feed* an objective's Key Result via binding, below.)
+- NOT a raw data dump — rollup structurally caps every series at 62 points (daily→weekly→monthly coarsening by span). Insights are curated metrics, by design.
+
+**Where it lives:** manifest at `_dream_context/lab/insights/<slug>.md` (frontmatter config + a `## Meaning` prose section that makes it recallable), cached series at `lab/cache/<slug>.json`, custom scripts at `lab/scripts/<slug>.mjs`, secrets in gitignored `lab/credentials.json`. Manifests + caches sync in the brain repo; only credentials stay local.
+
+**How agents see it:** the SessionStart snapshot renders a **Lab** section (title / latest value / staleness / group) — answer "what's our MRR?" from it without tool calls. Deeper: `dreamcontext lab show <slug>` (cache only, no fetch) and `memory recall "<meaning phrase>" --types insight`. The dashboard has a Lab page (number/line/pie/raw cards, per-insight refresh, sync-all, tweak editing).
+
+```bash
+dreamcontext lab create <slug> --title "Weekly Active Users" [--render number|line|pie|raw] [--adapter http|script] [--group <section>] [--unit users] [--ttl 1440]
+dreamcontext lab sync <slug> [--force]      # one insight (TTL-fresh is skipped unless --force)
+dreamcontext lab sync --all [--force]       # every insight; exits non-zero if any fail
+dreamcontext lab list [--json]              # all insights with latest value + staleness
+dreamcontext lab show <slug> [--json]       # manifest + cached series (never fetches)
+dreamcontext lab tweak <slug> <key> <value> # set a declared tweak (e.g. range last_1_year)
+dreamcontext lab credentials set <key>      # hidden prompt; the ONLY way to store a secret
+dreamcontext lab credentials list           # key NAMES only — values are never printed
+```
+
+**Adapters:** `http` — declarative JSON API (endpoint/headers/body templates with `{{tweak:key}}` and `{{cred:key}}` placeholders, JSON-path `extract`, multi-series split via `seriesKey`); `script` — escape hatch, `lab/scripts/<slug>.mjs` exporting a default async function. `lab create` scaffolds the manifest; edit it to set the real endpoint/extract config, then run the first sync.
+
+**Key-Result binding (insight → objective):** a manifest `binding: {objective: <slug>, value: latest}` makes every successful sync write the objective's KR `metric.current` automatically — upgrading the roadmap from PO-asserted numbers to measured ones. Offer this whenever an insight measures an existing objective's outcome.
+
+**Sync semantics:** TTL staleness (default 1440 min) — fresh insights are skipped and reported, `--force` refetches; on failure the prior series is KEPT and the error is loud (never a silent half-sync). **Sleep does NOT run lab sync** — refresh is always an explicit user/agent action.
+
+### Insight capture (in-session — ASK, never auto-create)
+
+Mirrors proactive objective capture. When the user states or implies a recurring metric need ("I keep checking MRR by hand", "we should watch signups", "create an insight for DAU"):
+
+1. **Dedup first.** `dreamcontext memory recall "<metric>" --types insight` and `dreamcontext lab list`. If one covers it, offer to update/re-sync it instead.
+2. **Offer it.** *"Want me to track this as a Lab insight so every session sees the current value?"* Never create without a yes.
+3. **Agree the shape.** Slug, title, render (number/line/pie/raw), group, unit — and write a real `## Meaning` section (it powers recall).
+4. **Pick the source.** HTTP endpoint (+ extract path) or a custom script. Secrets go in via `dreamcontext lab credentials set <key>` — never inline in the manifest.
+5. **Declare tweaks** the user will want to adjust (typed `enum`/`date`/`string`; a relative range is an enum tweak keyed `range`).
+6. **Scaffold + first sync.** `lab create`, edit the manifest, `lab sync <slug>`, confirm the value looks right.
+7. **Offer KR binding** if an existing roadmap objective tracks the same outcome.
+
+Every write waits for a yes.
+
+**Security (plain language, tell the user when relevant):** lab scripts execute **locally, in-process, with your credentials passed in** — anyone who can push to a shared brain repo can change what runs on your machine at the next sync. Review a script before its first sync and heed the loud "script changed since last run" tripwire notice. Credentials are written ONLY via `lab credentials set` (gitignore-first, file mode 0600, never printed back, redacted from every error/log).
+
+---
+
 ## The Workflow flowchart (keep it in sync)
 
 Every task file has a `## Workflow` mermaid block near the top: one node per acceptance criterion, grouped under milestone subgraphs, with status classes `done` / `active` / `todo` / `blocked`. It is the load-bearing summary of the task — drift makes future sessions misread progress.

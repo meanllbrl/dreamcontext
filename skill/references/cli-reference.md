@@ -77,6 +77,24 @@ Task-side linkage: `tasks create --objectives a,b` · `tasks objectives <task> a
 
 ---
 
+## Lab (analytics insights — see [tasks-and-features.md](tasks-and-features.md))
+
+Curated metrics synced from HTTP APIs or local scripts into `_dream_context/lab/`. **This — not `knowledge create` — is what "create an insight" means.** The SessionStart snapshot renders a Lab section; insights are recallable via `memory recall "<query>" --types insight`.
+
+| Command | Description |
+|---|---|
+| `lab create <slug>` | Scaffold `lab/insights/<slug>.md`. `--title <str>` (required), `--group <section>`, `--render number\|line\|pie\|raw` (default number), `--adapter http\|script` (default http), `--unit <str>`, `--ttl <minutes>` (default 1440). Edit the manifest afterwards to set the real endpoint/extract (or script) config, then sync. |
+| `lab sync [slug]` | Sync one insight, or every insight with `--all`. `--force` refetches even when the cache is within TTL (fresh insights are otherwise skipped and reported). On failure the prior series is kept, the error is loud, and the exit code is non-zero — never a silent half-sync. A changed custom script prints a loud tripwire notice before executing. |
+| `lab list` | All insights with latest value, unit, staleness. `--json`. |
+| `lab show <slug>` | Manifest + cached series — **cache only, never fetches**. `--json`. |
+| `lab tweak <slug> <key> <value>` | Set one declared tweak (typed `enum\|date\|string`; a relative range is an enum tweak keyed `range`). |
+| `lab credentials set <key>` | Store a secret for `{{cred:key}}` placeholders — hidden prompt (`--value` works but is shell-history-risky). Gitignore-first, mode 0600. **The only supported way to create `lab/credentials.json`.** |
+| `lab credentials list` | Credential key NAMES only — values are never printed. |
+
+**Trust note:** `lab/scripts/*.mjs` run locally, in-process, with credentials passed in — same trust level as the repo. Review scripts before their first sync. **Sleep does NOT run lab sync** — refreshing is always an explicit action. An insight manifest may carry `binding: {objective: <slug>, value: latest}` to auto-write that objective's Key-Result `metric.current` on every successful sync.
+
+---
+
 ## Features
 
 | Command | Description |
@@ -120,7 +138,7 @@ Sections for `features insert`: `changelog`, `notes`, `technical_details`, `cons
 
 | Command | Description |
 |---|---|
-| `memory recall <query...>` | Search the corpus (knowledge + features + tasks + memory + changelog). `-t/--top <n>`, `--types <csv>`, `--json`, `--plain`, `--vault <name>` (repeatable), `--connected`, `--all-vaults`. |
+| `memory recall <query...>` | Search the corpus (knowledge + features + tasks + memory + changelog + objectives + insights). `-t/--top <n>`, `--types <csv>`, `--json`, `--plain`, `--vault <name>` (repeatable), `--connected`, `--all-vaults`. |
 | `memory remember <text...>` | Quick-append a CHANGELOG entry (`type=note`, `scope=quick`). `--summary`, `--type`, `--scope`, `--references <csv>`, `--person <csv>`. |
 | `memory update <slug>` | Update a knowledge file. `-d/--description`, `-t/--tags`, `-c/--content`, `--append <text>`, `--pin`, `--unpin`. |
 | `memory delete <slug>` | Delete a knowledge file (irreversible; recover via git). `-f/--force`. |
