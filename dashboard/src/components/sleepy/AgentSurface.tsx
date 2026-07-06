@@ -764,13 +764,22 @@ export function AgentSurface() {
     return () => cancelAnimationFrame(raf);
   }, [expanded, fitVisible]);
 
-  // Window/sidebar resize → refit every visible pane (split widths track the window).
+  // Any container width change → refit every visible pane. A ResizeObserver on the host
+  // (not just window `resize`) is required because collapsing/expanding the sidebar is a
+  // pure CSS layout change: the surface widens with no window resize event, so a
+  // window-only listener would leave the xterm on its stale column count and clip text.
+  // Split widths, window resize, and sidebar toggle all funnel through this one observer.
   useEffect(() => {
     if (!expanded) return;
+    const host = hostRef.current;
+    if (!host || typeof ResizeObserver === 'undefined') return;
     let raf = 0;
-    const onResize = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(() => fitVisible()); };
-    window.addEventListener('resize', onResize);
-    return () => { window.removeEventListener('resize', onResize); cancelAnimationFrame(raf); };
+    const ro = new ResizeObserver(() => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => fitVisible());
+    });
+    ro.observe(host);
+    return () => { ro.disconnect(); cancelAnimationFrame(raf); };
   }, [expanded, fitVisible]);
 
   // ── Esc collapses the overlay — but ONLY when focus is outside the terminal, so it
