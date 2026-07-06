@@ -42,6 +42,15 @@ export interface InsightSummary {
 export interface SeriesPoint { t: string; v: number }
 export interface Series { name: string; points: SeriesPoint[] }
 
+/** One entry in the bounded per-insight sync history (real runs only). */
+export interface SyncEvent {
+  at: string;
+  status: 'ok' | 'failed';
+  latest: number | null;
+  granularity: string | null;
+  error: string | null;
+}
+
 export interface InsightCache {
   slug: string;
   fetchedAt: string;
@@ -53,6 +62,8 @@ export interface InsightCache {
   error: string | null;
   errorAt: string | null;
   scriptHash: string | null;
+  /** Oldest→newest, bounded. Absent on caches written before history shipped. */
+  history?: SyncEvent[];
 }
 
 export interface PublicManifest {

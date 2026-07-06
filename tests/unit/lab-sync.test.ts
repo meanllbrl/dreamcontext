@@ -256,3 +256,91 @@ describe('syncInsight — end-to-end secret redaction (AC10)', () => {
     expect(loggedText).not.toContain('sk-another-secret');
   });
 });
+
+describe('syncInsight — bounded sync history', () => {
+  it('appends an ok event per successful run and a failed event per failure; fresh skips append nothing', async () => {
+    createInsight(root, { slug: 'wau', title: 'WAU' });
+    useScriptSource('wau', 'scripts/wau.mjs');
+    writeScript('wau', 'export default async () => [{ name: "d", points: [{ t: "2026-01-01", v: 7 }] }];\n');
+
+    await syncInsight(root, 'wau');
+    let history = readCache(root, 'wau')!.history!;
+    expect(history).toHaveLength(1);
+    expect(history[0]).toMatchObject({ status: 'ok', latest: 7, error: null });
+    expect(history[0].at).toBeTruthy();
+
+    // A TTL "fresh" skip is not a run — nothing appended.
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    await syncInsight(root, 'wau');
+    expect(readCache(root, 'wau')!.history).toHaveLength(1);
+
+    writeScript('wau', 'export default async () => { throw new Error("boom"); };\n');
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await syncInsight(root, 'wau', { force: true });
+    history = readCache(root, 'wau')!.history!;
+    expect(history).toHaveLength(2);
+    expect(history[1].status).toBe('failed');
+    expect(history[1].latest).toBeNull();
+    expect(history[1].error).toContain('boom');
+  });
+
+  it('caps history at 50 entries, keeping the newest', async () => {
+    createInsight(root, { slug: 'wau', title: 'WAU' });
+    useScriptSource('wau', 'scripts/wau.mjs');
+    writeScript('wau', 'export default async () => [{ name: "d", points: [{ t: "2026-01-01", v: 1 }] }];\n');
+    await syncInsight(root, 'wau');
+
+    // Seed an oversized prior history directly in the cache file.
+    const cache = readCache(root, 'wau')!;
+    cache.history = Array.from({ length: 60 }, (_, i) => ({
+      at: `2026-01-01T00:${String(i).padStart(2, '0')}:00.000Z`,
+      status: 'ok' as const,
+      latest: i,
+      granularity: 'daily' as const,
+      error: null,
+    }));
+    writeFileSync(join(root, 'lab', 'cache', 'wau.json'), JSON.stringify(cache), 'utf-8');
+
+    await syncInsight(root, 'wau', { force: true });
+    const history = readCache(root, 'wau')!.history!;
+    expect(history).toHaveLength(50);
+    // Newest survive: the final entry is the fresh run, and the oldest seeds are gone.
+    expect(history[history.length - 1].status).toBe('ok');
+    expect(history[0].latest).toBe(11);
+  });
+
+  it('tolerates a malformed prior history (non-array) — the sync still completes and the cache self-heals', async () => {
+    createInsight(root, { slug: 'wau', title: 'WAU' });
+    useScriptSource('wau', 'scripts/wau.mjs');
+    writeScript('wau', 'export default async () => [{ name: "d", points: [{ t: "2026-01-01", v: 1 }] }];\n');
+    await syncInsight(root, 'wau');
+
+    // Corrupt the cache: history as a truthy non-iterable (hand edit / merge artifact).
+    const cache = readCache(root, 'wau')!;
+    (cache as { history: unknown }).history = { oops: true };
+    writeFileSync(join(root, 'lab', 'cache', 'wau.json'), JSON.stringify(cache), 'utf-8');
+
+    const result = await syncInsight(root, 'wau', { force: true });
+    expect(result.status).toBe('ok');
+    const history = readCache(root, 'wau')!.history!;
+    expect(Array.isArray(history)).toBe(true);
+    expect(history).toHaveLength(1);
+    expect(history[0].status).toBe('ok');
+  });
+
+  it('truncates a payload-sized error message in the history event (count-cap is not a size-cap)', async () => {
+    createInsight(root, { slug: 'wau', title: 'WAU' });
+    useScriptSource('wau', 'scripts/wau.mjs');
+    writeScript('wau', `export default async () => { throw new Error('x'.repeat(10_000)); };\n`);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const result = await syncInsight(root, 'wau');
+    expect(result.status).toBe('failed');
+    const history = readCache(root, 'wau')!.history!;
+    expect(history).toHaveLength(1);
+    expect(history[0].status).toBe('failed');
+    expect(history[0].error!.length).toBeLessThanOrEqual(301); // 300 + ellipsis
+    expect(history[0].error!.endsWith('…')).toBe(true);
+  });
+});

@@ -13,6 +13,7 @@ import {
   type InsightCache,
   type InsightManifest,
   type Series,
+  type SyncEvent,
 } from './types.js';
 
 /**
@@ -42,6 +43,26 @@ export interface SyncOptions {
   force?: boolean;
   fetchImpl?: typeof fetch;
   now?: () => number;
+}
+
+/** Sync history is bounded — the cache stays an insight snapshot, not a log file. */
+const HISTORY_MAX = 50;
+/** Per-event error cap: HISTORY_MAX bounds count, this bounds size — a custom
+ *  script that throws a payload-sized message must not inflate a cache that is
+ *  re-parsed on every sync, snapshot, and API response. */
+const HISTORY_ERROR_MAX = 300;
+
+/** Append one run to the prior cache's history, keeping the newest HISTORY_MAX.
+ *  Tolerates a malformed prior cache (non-array history) — readCache does not
+ *  validate the field, and this also runs from the failure path, so throwing
+ *  here would leave the bad file permanently unsyncable. */
+function appendHistory(prior: InsightCache | null, event: SyncEvent): SyncEvent[] {
+  const bounded: SyncEvent = event.error && event.error.length > HISTORY_ERROR_MAX
+    ? { ...event, error: `${event.error.slice(0, HISTORY_ERROR_MAX)}…` }
+    : event;
+  const priorHistory = Array.isArray(prior?.history) ? prior.history : [];
+  const history = [...priorHistory, bounded];
+  return history.length > HISTORY_MAX ? history.slice(history.length - HISTORY_MAX) : history;
 }
 
 function aggFor(manifest: InsightManifest): Agg {
@@ -156,6 +177,13 @@ export async function syncInsight(
       errorAt: null,
       // Record the hash ONLY on a successful run (so the tripwire fires next change).
       scriptHash: newHash,
+      history: appendHistory(prior, {
+        at: new Date(nowMs).toISOString(),
+        status: 'ok',
+        latest,
+        granularity,
+        error: null,
+      }),
     };
     writeCache(contextRoot, slug, cache);
 
@@ -181,6 +209,13 @@ export async function syncInsight(
       errorAt: new Date(nowMs).toISOString(),
       // Keep the prior hash — this run failed, so the tripwire baseline is unchanged.
       scriptHash: prior?.scriptHash ?? null,
+      history: appendHistory(prior, {
+        at: new Date(nowMs).toISOString(),
+        status: 'failed',
+        latest: null,
+        granularity: null,
+        error: message,
+      }),
     };
     writeCache(contextRoot, slug, failCache);
 

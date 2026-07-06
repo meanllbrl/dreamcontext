@@ -23,7 +23,15 @@ function StalenessBadge({ summary }: { summary: InsightSummary }) {
   return <span className="lab-badge lab-badge--fresh">fresh</span>;
 }
 
-export function InsightCard({ summary, onToast }: { summary: InsightSummary; onToast: (msg: string) => void }) {
+export function InsightCard({
+  summary,
+  onToast,
+  onOpen,
+}: {
+  summary: InsightSummary;
+  onToast: (msg: string) => void;
+  onOpen: (slug: string) => void;
+}) {
   const [showTweaks, setShowTweaks] = useState(false);
   const detail = useLabInsight(summary.slug);
   const sync = useSyncInsight();
@@ -51,7 +59,14 @@ export function InsightCard({ summary, onToast }: { summary: InsightSummary; onT
   };
 
   return (
-    <div className="lab-card">
+    <div
+      className="lab-card lab-card--clickable"
+      onClick={() => onOpen(summary.slug)}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => { if (e.key === 'Enter') onOpen(summary.slug); }}
+      title="Open details, history & interactive chart"
+    >
       <div className="lab-card-header">
         <div className="lab-card-title-row">
           <span className="lab-card-title">{summary.title}</span>
@@ -61,7 +76,7 @@ export function InsightCard({ summary, onToast }: { summary: InsightSummary; onT
             </span>
           )}
         </div>
-        <div className="lab-card-actions">
+        <div className="lab-card-actions" onClick={(e) => e.stopPropagation()}>
           <StalenessBadge summary={summary} />
           <button
             className="lab-card-refresh"
@@ -72,15 +87,21 @@ export function InsightCard({ summary, onToast }: { summary: InsightSummary; onT
         </div>
       </div>
 
+      {/* The card body keeps its own hover layer (chart tooltips) — clicks
+          still bubble to the card and open the panel. */}
       <div className="lab-card-body">
         {summary.render === 'number' && <NumberCard latest={summary.latest} unit={summary.unit} series={series} />}
-        {summary.render === 'line' && <LineChart series={series} />}
-        {summary.render === 'pie' && <PieChart series={series} />}
-        {summary.render === 'raw' && <RawDataView series={series} />}
+        {summary.render === 'line' && <LineChart series={series} unit={summary.unit} />}
+        {summary.render === 'pie' && <PieChart series={series} unit={summary.unit} />}
+        {summary.render === 'raw' && (
+          <div onClick={(e) => e.stopPropagation()}>
+            <RawDataView series={series} />
+          </div>
+        )}
       </div>
 
       {summary.tweaks.length > 0 && (
-        <div className="lab-card-tweaks">
+        <div className="lab-card-tweaks" onClick={(e) => e.stopPropagation()}>
           <button className="lab-card-tweaks-toggle" onClick={() => setShowTweaks((v) => !v)}>
             {showTweaks ? 'Hide tweaks' : 'Edit tweaks'}
           </button>

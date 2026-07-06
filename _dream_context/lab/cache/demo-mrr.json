@@ -1,0 +1,51 @@
+{
+  "slug": "demo-mrr",
+  "fetchedAt": "2026-07-06T11:33:02.949Z",
+  "tweaks": {},
+  "granularity": "daily",
+  "unit": "$",
+  "series": [
+    {
+      "name": "mrr",
+      "points": [
+        {
+          "t": "2026-06-01",
+          "v": 503
+        },
+        {
+          "t": "2026-06-08",
+          "v": 580
+        },
+        {
+          "t": "2026-06-15",
+          "v": 656
+        },
+        {
+          "t": "2026-06-22",
+          "v": 716
+        },
+        {
+          "t": "2026-06-29",
+          "v": 796
+        },
+        {
+          "t": "2026-07-06",
+          "v": 857
+        }
+      ]
+    }
+  ],
+  "latest": 857,
+  "error": null,
+  "errorAt": null,
+  "scriptHash": "ec7504f0ac371e33ff7ed335698e059e57d6592078bf7e89ee4630a18b91a63a",
+  "history": [
+    {
+      "at": "2026-07-06T11:33:02.949Z",
+      "status": "ok",
+      "latest": 857,
+      "granularity": "daily",
+      "error": null
+    }
+  ]
+}

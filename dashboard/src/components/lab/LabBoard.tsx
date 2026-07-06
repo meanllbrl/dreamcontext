@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLabInsights, useSyncAll } from '../../hooks/useLab';
 import { InsightCard } from './InsightCard';
+import { InsightDetailPanel } from './InsightDetailPanel';
 import { LabEmptyState } from './LabEmptyState';
 import './LabBoard.css';
 
@@ -26,6 +27,7 @@ export function LabBoard() {
   const { data: insights, isLoading, isError, error } = useLabInsights();
   const syncAll = useSyncAll();
   const [toast, setToast] = useState<string | null>(null);
+  const [openSlug, setOpenSlug] = useState<string | null>(null);
 
   useEffect(() => {
     if (!toast) return;
@@ -34,6 +36,9 @@ export function LabBoard() {
   }, [toast]);
 
   const grouped = useMemo(() => groupInsights(insights ?? []), [insights]);
+  // Re-derive the open summary from the live list so the panel header (staleness,
+  // latest, error) refreshes after a sync instead of showing a stale snapshot.
+  const openSummary = openSlug ? (insights ?? []).find((s) => s.slug === openSlug) ?? null : null;
 
   const handleSyncAll = () => {
     syncAll.mutate(true, {
@@ -95,12 +100,20 @@ export function LabBoard() {
             <h3 className="lab-board-section-title">{group}</h3>
             <div className="lab-board-grid">
               {items.map((summary) => (
-                <InsightCard key={summary.slug} summary={summary} onToast={setToast} />
+                <InsightCard key={summary.slug} summary={summary} onToast={setToast} onOpen={setOpenSlug} />
               ))}
             </div>
           </section>
         ))}
       </div>
+
+      {openSummary && (
+        <InsightDetailPanel
+          summary={openSummary}
+          onClose={() => setOpenSlug(null)}
+          onToast={setToast}
+        />
+      )}
 
       {toast && <div className="lab-toast">{toast}</div>}
     </div>

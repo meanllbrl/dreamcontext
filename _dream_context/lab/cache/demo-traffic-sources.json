@@ -1,0 +1,67 @@
+{
+  "slug": "demo-traffic-sources",
+  "fetchedAt": "2026-07-06T11:33:02.954Z",
+  "tweaks": {},
+  "granularity": "daily",
+  "unit": null,
+  "series": [
+    {
+      "name": "Organic Search",
+      "points": [
+        {
+          "t": "2026-07-06",
+          "v": 420
+        }
+      ]
+    },
+    {
+      "name": "Paid Ads",
+      "points": [
+        {
+          "t": "2026-07-06",
+          "v": 260
+        }
+      ]
+    },
+    {
+      "name": "Referral",
+      "points": [
+        {
+          "t": "2026-07-06",
+          "v": 140
+        }
+      ]
+    },
+    {
+      "name": "Direct",
+      "points": [
+        {
+          "t": "2026-07-06",
+          "v": 95
+        }
+      ]
+    },
+    {
+      "name": "Social",
+      "points": [
+        {
+          "t": "2026-07-06",
+          "v": 60
+        }
+      ]
+    }
+  ],
+  "latest": 420,
+  "error": null,
+  "errorAt": null,
+  "scriptHash": "56cf28075cb53e1c1439b7a3f18a2855a3e2b2b551214194d5e7ee10ac8f1c07",
+  "history": [
+    {
+      "at": "2026-07-06T11:33:02.954Z",
+      "status": "ok",
+      "latest": 420,
+      "granularity": "daily",
+      "error": null
+    }
+  ]
+}

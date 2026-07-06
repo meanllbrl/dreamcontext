@@ -1,0 +1,59 @@
+{
+  "slug": "demo-raw-events",
+  "fetchedAt": "2026-07-06T11:33:02.952Z",
+  "tweaks": {},
+  "granularity": "daily",
+  "unit": null,
+  "series": [
+    {
+      "name": "events",
+      "points": [
+        {
+          "t": "2026-06-29",
+          "v": 10
+        },
+        {
+          "t": "2026-06-30",
+          "v": 21
+        },
+        {
+          "t": "2026-07-01",
+          "v": 11
+        },
+        {
+          "t": "2026-07-02",
+          "v": 29
+        },
+        {
+          "t": "2026-07-03",
+          "v": 14
+        },
+        {
+          "t": "2026-07-04",
+          "v": 19
+        },
+        {
+          "t": "2026-07-05",
+          "v": 12
+        },
+        {
+          "t": "2026-07-06",
+          "v": 11
+        }
+      ]
+    }
+  ],
+  "latest": 11,
+  "error": null,
+  "errorAt": null,
+  "scriptHash": "1c532389e7eeae32135b32f6368de6b73e8f3477a055a1d7557f361b7d62dc6e",
+  "history": [
+    {
+      "at": "2026-07-06T11:33:02.952Z",
+      "status": "ok",
+      "latest": 11,
+      "granularity": "daily",
+      "error": null
+    }
+  ]
+}

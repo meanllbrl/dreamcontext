@@ -1,0 +1,35 @@
+{
+  "slug": "demo-broken-api",
+  "fetchedAt": "",
+  "tweaks": {},
+  "granularity": "daily",
+  "unit": "requests",
+  "series": [],
+  "latest": null,
+  "error": "HTTP GET http://127.0.0.1:9/nope failed",
+  "errorAt": "2026-07-06T11:36:56.096Z",
+  "scriptHash": null,
+  "history": [
+    {
+      "at": "2026-07-06T11:32:55.927Z",
+      "status": "failed",
+      "latest": null,
+      "granularity": null,
+      "error": "HTTP GET http://127.0.0.1:9/nope failed"
+    },
+    {
+      "at": "2026-07-06T11:33:14.409Z",
+      "status": "failed",
+      "latest": null,
+      "granularity": null,
+      "error": "HTTP GET http://127.0.0.1:9/nope failed"
+    },
+    {
+      "at": "2026-07-06T11:36:56.096Z",
+      "status": "failed",
+      "latest": null,
+      "granularity": null,
+      "error": "HTTP GET http://127.0.0.1:9/nope failed"
+    }
+  ]
+}

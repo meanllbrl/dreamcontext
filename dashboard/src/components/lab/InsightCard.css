@@ -9,6 +9,16 @@
   box-shadow: var(--shadow-sm);
 }
 
+.lab-card--clickable {
+  cursor: pointer;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.lab-card--clickable:hover {
+  border-color: var(--color-border-hover);
+  box-shadow: var(--shadow-md);
+}
+
 .lab-card-header {
   display: flex;
   align-items: flex-start;

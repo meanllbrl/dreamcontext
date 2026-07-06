@@ -118,6 +118,19 @@ export interface InsightManifest {
   body: string;
 }
 
+/** One entry in the bounded per-insight sync history (real runs only — TTL
+ *  "fresh" skips don't append; nothing changed). */
+export interface SyncEvent {
+  /** ISO timestamp of the run. */
+  at: string;
+  status: 'ok' | 'failed';
+  /** The bound value produced by an ok run, null on failure. */
+  latest: number | null;
+  granularity: Granularity | null;
+  /** Redacted error message (failed runs only). */
+  error: string | null;
+}
+
 /** The cached, post-rollup snapshot written after each successful sync. */
 export interface InsightCache {
   slug: string;
@@ -136,6 +149,8 @@ export interface InsightCache {
   errorAt: string | null;
   /** sha256 of the custom-script file at last successful run (tripwire), or null. */
   scriptHash: string | null;
+  /** Bounded sync history, oldest→newest. Absent on caches written pre-history. */
+  history?: SyncEvent[];
 }
 
 /** Resolved-tweak bundle handed to adapters and the rollup. */
