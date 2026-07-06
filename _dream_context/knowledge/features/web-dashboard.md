@@ -2,8 +2,8 @@
 id: feat_O7LODr7O
 status: active
 created: '2026-02-25'
-updated: '2026-07-04'
-released_version: 0.1.0
+updated: '2026-07-06'
+released_version: 0.12.0
 tags:
   - frontend
   - architecture
@@ -23,6 +23,7 @@ related_tasks:
   - dashboard-version-rename-and-delete-controls
   - board-version-filter-smart-buckets
   - multi-assignee-via-person-tags
+  - collapse-the-feature-entity-into-typed-knowledge-knowledge-features-type-feature
 type: feature
 name: web-dashboard
 description: ''
@@ -527,6 +528,9 @@ All mutating endpoints call recordDashboardChange() except `PATCH /api/config` (
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-07-06 - v0.12.0 shipped with Features tab retirement
+- Features tab fully retired into Knowledge page in v0.12.0 (commit 5201cc0). FeaturesPage + /api/features route deleted; `buildKnowledgeIndex` gained `includeFeatures` option (default false — snapshot/graph/CLI keep separate Features surfaces, dashboard opts in); KnowledgeEntry carries `type`/`status` frontmatter; Knowledge page renders "Features (34)" group with status badges; recallNav ⌘K + BrainSearch + DocContent + useFeatureOptions repointed to knowledge corpus.
 
 ### 2026-07-04 - Live sleep-debt tracker in header (commit 7af88ff)
 - **SleepDebtTracker component** (`dashboard/src/components/layout/SleepDebtTracker.tsx/.css`): live animated Sleepy mascot in header showing debt level (alert/drowsy/sleepy/must-sleep) with color-coded bar (green→violet→red), animated eyes (drowsier as debt rises), and localized level label. Mounted in `Header.tsx`. `useSleep.ts` updated with threshold realignment + `SLEEP_DEBT_MAX` constant.

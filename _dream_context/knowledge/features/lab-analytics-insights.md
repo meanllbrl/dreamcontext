@@ -3,7 +3,7 @@ id: feat_lab_insights
 status: in_review
 created: '2026-07-05'
 updated: '2026-07-06'
-released_version: '0.11.0'
+released_version: '0.12.0'
 tags:
   - feature
   - analytics
@@ -137,6 +137,9 @@ This is NOT a BI tool. Lab is a **metrics delivery** subsystem: it captures WHAT
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-07-06 - v0.12.0 shipped with Lab showcase
+- Lab page showcase shipped in v0.12.0 (commit 5201cc0): animated `LabShowcase` component with insight pipeline flow, `LabEmptyState` with flow diagram, shared `labFlowSpec` flow geometry extracted for reuse across About/Council/Lab diagrams.
 
 ### 2026-07-05 - M1 implemented, manual validation in-progress (goal-skill Phase 4-6)
 - Backend complete: `lib/lab/{types,store,tweaks,rollup,credentials,sync,adapters/{generic-http,custom-script,index}}.ts`; `server/routes/lab.ts` + index registration; CLI `lab.ts` + index registration; `recall.ts` insight corpus type; `snapshot.ts` Lab section; `doctor.ts` checkLab; `brain-repo.ts` + root `.gitignore` lab credential entries. Dashboard complete: `useLab.ts` hook, `LabPage`/`LabBoard`/`InsightCard`/`NumberCard`/`LineChart`/`PieChart`/`RawDataView`/`TweakEditor` components + CSS; `Sidebar`/`App`/`NavIcons`/`I18nContext` wired (page `'lab'`, distinct `nav.labpage` key). Skill docs updated: `SKILL.md` capabilities row, `tasks-and-features.md` Lab section + insight-capture protocol + security statement, `cli-reference.md` lab verbs. Dashboard `tsc --noEmit` clean. Automated validation (91 new unit tests + suite green) PASS; manual dashboard checklist (8 items) pending. Status: `planning` → `in_progress` → `in_review`.

@@ -2,8 +2,8 @@
 id: feat_Sx4EmLgP
 status: in_progress
 created: '2026-07-04'
-updated: '2026-07-05'
-released_version: '0.11.0'
+updated: '2026-07-06'
+released_version: '0.12.0'
 tags:
   - 'topic:github'
   - 'topic:cli'

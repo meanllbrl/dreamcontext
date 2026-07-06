@@ -1,6 +1,89 @@
 [
   {
     "date": "2026-07-06",
+    "type": "fix",
+    "scope": "ci",
+    "description": "After v0.11.0 shipped, main went red on three CI-environment issues despite local green. (1) d4e9fee: build the CLI before tests — integration suite spawns the compiled CLI at dist/index.js, but ci.yml ran only npm ci → npm test with no build step; dist/ is produced by prepublishOnly (publish-only), so CI had no CLI → ~20 integration files failed ENOENT. Also dropped hardcoded dev paths in excalidraw-knowledge.test.ts. (2) 205e820: configure git defaultBranch=main + identity fallback, and make marketing-hooks e2e hermetic — a fresh runner has no init.defaultBranch, so brain-sync.e2e's bare repo HEAD pointed at master (not main) → second clone came up empty; the marketing-hooks 'blocks a commit' test resolved the GLOBAL dreamcontext (not the built one) and failed open when absent. (3) f4ee5a3: switch to vitest forks pool + capped concurrency=2 on CI to kill spurious 'Timeout calling onTaskUpdate' — a few CPU-bound files (recall-capture-stress, recall-eval) run tens of seconds; under the default thread pool on a contended runner they starved the worker→main RPC past its timeout. Process IPC (forks) is serviced by libuv, not the blocked event loop. Full suite 224 files / 2801 tests now pass on CI.",
+    "breaking": false,
+    "summary": "Three CI hardening commits: vitest forks pool + git config + hermetic marketing-hooks e2e + CLI build step",
+    "references": [
+      "commit:d4e9fee",
+      "commit:205e820",
+      "commit:f4ee5a3",
+      "file:.github/workflows/ci.yml",
+      "file:vitest.config.ts",
+      "task:ci-on-main-failing-despite-local-green"
+    ]
+  },
+  {
+    "date": "2026-07-06",
+    "type": "fix",
+    "scope": "dashboard",
+    "description": "Change the Insights nav icon from a flask (ErlenMeyer beaker) to a lightbulb in NavIcons.tsx. The flask read as 'lab experiment' and clashed with the 'Insights' label (the user-facing product name for the analytics surface, enforced 2× in sessions). The lightbulb is the universal insight glyph and matches the icon family's literal style (1.75 stroke weight, rounded caps, 24×24 grid).",
+    "breaking": false,
+    "summary": "Insights sidebar icon changed from flask to lightbulb",
+    "references": [
+      "file:dashboard/src/components/layout/NavIcons.tsx"
+    ]
+  },
+  {
+    "date": "2026-07-06",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "Add an animated insight-pipeline showcase to the Lab page (LabShowcase / labFlowSpec / LabEmptyState) matching the Council showcase pattern. Extract shared flow-geometry (arrow paths, stage positions, container dimensions) for the About/Council/Lab diagrams into dashboard/src/components/about/flow-geometry.ts so the three diagram flows stay visually consistent. The Lab surface name remains 'Insights' in all UI labels (enforced user preference 2026-07-06).",
+    "breaking": false,
+    "summary": "Lab showcase animated pipeline diagram + shared flow-geometry extraction",
+    "references": [
+      "commit:5201cc0",
+      "file:dashboard/src/components/lab/LabShowcase.tsx",
+      "file:dashboard/src/components/lab/labFlowSpec.ts",
+      "file:dashboard/src/components/about/flow-geometry.ts"
+    ]
+  },
+  {
+    "date": "2026-07-06",
+    "type": "feat",
+    "scope": "brain-sync",
+    "description": "Resolve the GitHub device-flow client_id LIVE (resolveBrainOAuthClientId) instead of freezing it at module load, so the desktop main process can inject DREAMCONTEXT_GITHUB_CLIENT_ID after module load (the Tauri thin-shell spawns the Node server with env vars the import-time const never sees). isOAuthAppConfigured detects the shipped placeholder client_id ('Iv23xxxxxxxxxxxxxxxx' — GitHub 404s unregistered client_ids) and short-circuits the device flow to the PAT path with a 501 + actionable error, preserving the M2 security posture (desktop gate, server-only device_code, 0600 token, never echoed to client). The placeholder gate ensures production never leaks the real client_id while the OQ-1 registration task is pending. 19/19 touched tests pass, reviewer PASS.",
+    "breaking": false,
+    "summary": "OAuth device-flow hardening: live client_id resolution + placeholder detection + 501 short-circuit",
+    "references": [
+      "commit:5201cc0",
+      "file:src/lib/git-sync/oauth.ts",
+      "file:src/server/routes/brain-auth.ts",
+      "task:github-cloud-collaboration-brain-repo-sync"
+    ]
+  },
+  {
+    "date": "2026-07-06",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "Remove the standalone dashboard Features page and /api/features route. Feature PRDs now surface as first-class typed knowledge on the Knowledge page via an includeFeatures parameter on buildKnowledgeIndex (defaults false to prevent double-listing in snapshot/graph/CLI, only dashboard /api/knowledge opts in). Index entries now carry frontmatter type/status so the Knowledge page renders a Features group with status badges. FeaturesPage.{tsx,css} + /api/features route deleted; recallNav ⌘K feature hits, Brain-map feature-node drawer links, Sleepy DocContent, and useFeatureOptions all repointed to the Knowledge page. The buildKnowledgeIndex parameterization is the load-bearing architectural decision — the exclusion guard added in ddef341 (the collapse commit) prevented double-listing; this parameterizes it per consumer rather than removing it wholesale. 51 files changed, 2816 tests green.",
+    "breaking": false,
+    "summary": "Retire Features tab into Knowledge page — feature PRDs now first-class typed knowledge with includeFeatures opt-in",
+    "references": [
+      "commit:5201cc0",
+      "file:src/lib/knowledge-index.ts",
+      "file:dashboard/src/pages/FeaturesPage.tsx",
+      "file:src/server/routes/features.ts",
+      "task:collapse-the-feature-entity-into-typed-knowledge-knowledge-features-type-feature"
+    ]
+  },
+  {
+    "date": "2026-07-06",
+    "type": "chore",
+    "scope": "release",
+    "description": "v0.12.0 git tag pushed and desktop-release.yml workflow succeeded (dreamcontext-beta_0.12.0_aarch64.app.tar.gz published to GitHub Releases, marked Latest, 29 MB + .sha256), but npm publish was blocked on the user's 2FA OTP and never completed — npm view dreamcontext version still returns 0.11.0. The desktop .app is out; the npm package is not. Reconcile RELEASES.json to note npm-publish-pending reality. Full feature payload (dashboard Features→Knowledge consolidation, OAuth device-flow hardening, Lab showcase, CI hardening) is committed on main (5201cc0 feature, 5007078 chore) and tagged v0.12.0.",
+    "breaking": false,
+    "summary": "v0.12.0 half-shipped: git tag + desktop .app released, npm publish pending on user OTP",
+    "references": [
+      "commit:5007078",
+      "commit:5201cc0",
+      "url:https://github.com/meanllbrl/dreamcontext/releases/tag/v0.12.0"
+    ]
+  },
+  {
+    "date": "2026-07-06",
     "type": "chore",
     "scope": "release",
     "description": "Release v0.11.0 shipped on both channels. npm: dreamcontext@0.11.0 live on the registry (verified via npm view). GitHub Release: dreamcontext-beta 0.11.0, non-draft + marked Latest (so the in-app auto-updater's /releases/latest lookup resolves it), with assets dreamcontext-beta_0.11.0_aarch64.app.tar.gz (29 MB) + matching .sha256, built by desktop-release.yml (run 28754522826, success in 4m47s) triggered by the v0.11.0 tag push on main (35b386a). Bundles everything since v0.10.6: the Lab (Insights) curated-metrics subsystem, Brain Cloud Sync M1+M2 (brain-repo GitHub collaboration), roadmap objective agent-reach, the knowledge↔features migration (0.10.7), and dashboard/desktop polish. All five version surfaces bumped 0.10.6→0.11.0; README + DEEP-DIVE gained Lab + Brain-Cloud-Sync sections; RELEASES.json 0.11.0 entry recorded. Build clean, 2812 tests green locally. NOTE: ci.yml on main has failed on the last few pushes despite local green — likely a CI-environment issue, flagged for a follow-up fix (does not affect the shipped artifacts).",

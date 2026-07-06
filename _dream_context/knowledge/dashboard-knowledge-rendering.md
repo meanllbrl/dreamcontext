@@ -8,7 +8,8 @@ description: >-
   resolving Obsidian board embedded images (SHA1→path→base64 WebP via sharp).
   Also covers the live-refresh header button, SQL fence-concat fallback, and the
   DocContent pattern (search-result rendering reuses the same renderers via
-  full-record fetch per hit type).
+  full-record fetch per hit type). Feature PRDs surface as typed knowledge on
+  the Knowledge page via buildKnowledgeIndex({includeFeatures}).
 type: knowledge
 tags:
   - architecture
@@ -19,7 +20,7 @@ tags:
   - topic:recall
 pinned: false
 created: '2026-06-17'
-updated: '2026-07-01'
+updated: '2026-07-06'
 ---
 
 ## Why this exists
@@ -131,6 +132,28 @@ Feature hits continue using `hit.slug` directly (feature slugs are not foldered)
 - 2026-06-27 — `DocContent` pattern added: `dashboard/src/components/sleepy/DocContent.tsx` (Sleepy Search/Ask view, full-record fetch)
 - Related: `dashboard-server-security.md` (security invariants), `knowledge-base` feature PRD (memory/render invariant), `features/sleepy-search-ask.md`
 
+### Feature PRDs as typed knowledge (v0.12.0 / A7, 2026-07-06)
+
+**Problem:** The standalone Features tab and `/api/features` route created a parallel knowledge surface. Feature PRDs (typed knowledge with `type: feature`) lived physically in `knowledge/features/` but were excluded from the Knowledge page index, forcing them into a separate UI that duplicated the knowledge rendering machinery.
+
+**Solution (commit 5201cc0):** Feature PRDs became first-class citizens of the Knowledge page. The `buildKnowledgeIndex()` function in `src/lib/knowledge-index.ts` gained an `includeFeatures` option (default `false` to preserve existing behavior — the snapshot renders its own Features section, `graph.ts` emits feature nodes from its own glob, and recall loads features as a separate corpus type). Only the dashboard's `GET /api/knowledge` route opts in via `buildKnowledgeIndex(root, { includeFeatures: true })`.
+
+**Index changes:** `KnowledgeEntry` interface now carries frontmatter `type` and `status` fields extracted during indexing. For feature PRDs, `type: 'feature'` marks the entry and `status` (e.g., `planning`, `active`, `in_review`, `shipped`) is surfaced in the index.
+
+**Knowledge page rendering:** `KnowledgePage.tsx` renders feature PRDs in a "Features" folder group with status badges. The `knowledge-card-status` class and `--${status}` modifier style the badge (e.g., `knowledge-card-status--active` → amber, `knowledge-card-status--shipped` → green).
+
+**Repoints:** Every legacy path that routed feature hits to the old `FeaturesPage` was updated:
+- `recallNav.ts` — ⌘K recall hits for `type: 'feature'` now route to the Knowledge page with the feature slug focus.
+- `BrainSearch.tsx` — Brain-map feature node drawer links to Knowledge.
+- `DocContent.tsx` — Sleepy search/ask feature hits fetch via `/api/knowledge` (not the deleted `/api/features`), derive the slug from `hit.path`, and render the PRD via `MarkdownPreview`.
+- `useFeatureOptions.ts` — Still used by ClickUp task-field mapping. Reads the knowledge index (filtered by `type: 'feature'`) and preserves bare-basename slugs (the A9 ClickUp invariant: `related_feature` stored values never include the `features/` prefix).
+
+**Deleted surface:** `FeaturesPage.{tsx,css}`, `src/server/routes/features.ts` + registration, `'features'` from the Page union / `VALID_PAGES` / App routes, `FeaturesIcon`, the `nav.features` + `features.*` i18n keys, and the CommandPalette "features" search copy.
+
+**Invariant:** The index exclusion guard in `buildKnowledgeIndex` (line ~105) defaults to `false` so features are NOT double-listed on snapshot/graph/CLI surfaces that render their own Features sections. Only the dashboard Knowledge page opts in.
+
+**DECISION (2026-07-06):** Feature PRDs are now typed knowledge — one surface, one set of renderers, zero parallel machinery. The standalone Features tab is gone. This closes criterion A7 of the `collapse-the-feature-entity-into-typed-knowledge` task.
+
 ## Last verified
 
-2026-07-01 (`assets/` subfolder resolver candidates + builder dangling-embed pre-flight shipped 2026-06-30; knowledge subfolder slug derivation fix in `BrainSearch` + `DocContent`; `DocContent` + full-record fetch pattern shipped 2026-06-27)
+2026-07-06 (Feature PRDs as typed knowledge shipped in v0.12.0 commit 5201cc0; `assets/` subfolder resolver candidates + builder dangling-embed pre-flight shipped 2026-06-30; knowledge subfolder slug derivation fix in `BrainSearch` + `DocContent`; `DocContent` + full-record fetch pattern shipped 2026-06-27)
