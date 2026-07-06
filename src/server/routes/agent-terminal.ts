@@ -527,12 +527,14 @@ function firstUserMessage(jsonlPath: string): string | null {
 }
 
 /** Trim Haiku's reply to a clean tab title: one line, no wrapping quotes/markdown,
- *  no trailing punctuation, ≤6 words / 40 chars. Returns null if nothing usable. */
+ *  no trailing punctuation, ≤7 words / 52 chars. The cap is generous so the title
+ *  can stay specific and descriptive rather than clipped to a vague label. Returns
+ *  null if nothing usable. */
 function sanitizeTitle(raw: string): string | null {
   let t = raw.replace(/[\r\n]+/g, ' ').trim();
   t = t.replace(/^["'`*]+/, '').replace(/["'`*.]+$/, '').trim();
-  t = t.split(/\s+/).slice(0, 6).join(' ');
-  if (t.length > 40) t = t.slice(0, 40).trim();
+  t = t.split(/\s+/).slice(0, 7).join(' ');
+  if (t.length > 52) t = t.slice(0, 52).trim();
   return t.length >= 2 ? t : null;
 }
 
@@ -542,7 +544,9 @@ function generateTitle(message: string, cwd: string): Promise<string | null> {
   return new Promise((resolve) => {
     const shell = process.env.SHELL || '/bin/zsh';
     const prompt =
-      'You name terminal tabs. Read the user\'s first request to a coding agent and reply with ONLY a 2-4 word tab title in Title Case. No quotes, no punctuation, no trailing period, max 32 characters.\n\nRequest:\n' +
+      'You name terminal tabs so a user can tell many open tabs apart at a glance. ' +
+      'Read the user\'s first request to a coding agent and reply with ONLY a tab title in Title Case that is specific and clearly describes the actual task — name the concrete thing being worked on, not a vague category. ' +
+      '3 to 6 words, no quotes, no punctuation, no trailing period, max 48 characters.\n\nRequest:\n' +
       message;
     let out = '';
     let settled = false;
@@ -650,11 +654,18 @@ function parseEffortsFromCli(): Promise<string[]> {
 
 interface ModelOpt { id: string; label: string; }
 interface ModelConfig { models: ModelOpt[]; efforts: string[]; defaultModel: string; defaultEffort: string; }
-let modelConfigCache: ModelConfig | null = null;
 
-async function buildModelConfig(): Promise<ModelConfig> {
-  if (modelConfigCache) return modelConfigCache;
-  const settings = readJsonSafe(join(homedir(), '.claude', 'settings.json')) ?? {};
+// Only the STATIC parts are cached for the server's lifetime: the model list (from the CLI's
+// `.claude.json` cache) and the effort levels (parsed from `claude --help`, an expensive spawn).
+// These change only across CLI versions. The DEFAULTS (which model/effort the user is currently
+// on) are read LIVE on every request — a `/model` or `/effort` switch persists to
+// `~/.claude/settings.json`, and we must reflect it without a server restart. Caching the
+// defaults was the bug behind the composer being frozen at opus/high.
+interface StaticModelConfig { models: ModelOpt[]; efforts: string[]; }
+let staticModelConfigCache: StaticModelConfig | null = null;
+
+async function buildStaticModelConfig(): Promise<StaticModelConfig> {
+  if (staticModelConfigCache) return staticModelConfigCache;
   const globalJson = readJsonSafe(join(homedir(), '.claude.json')) ?? {};
   const base: ModelOpt[] = [
     { id: 'opus', label: 'Opus' },
@@ -673,12 +684,19 @@ async function buildModelConfig(): Promise<ModelConfig> {
   const models = [...base];
   for (const e of extras) if (!seen.has(e.id)) { seen.add(e.id); models.push(e); }
   const efforts = await parseEffortsFromCli();
+  staticModelConfigCache = { models, efforts };
+  return staticModelConfigCache;
+}
+
+async function buildModelConfig(): Promise<ModelConfig> {
+  const { models, efforts } = await buildStaticModelConfig();
+  // Read the user's CURRENT Claude Code defaults live (never cached).
+  const settings = readJsonSafe(join(homedir(), '.claude', 'settings.json')) ?? {};
   const defaultEffort = typeof settings.effortLevel === 'string' && efforts.includes(settings.effortLevel)
     ? settings.effortLevel
     : (efforts.includes('high') ? 'high' : efforts[0] ?? 'high');
   const defaultModel = modelAlias(String(settings.model ?? 'opus')) || 'opus';
-  modelConfigCache = { models, efforts, defaultModel, defaultEffort };
-  return modelConfigCache;
+  return { models, efforts, defaultModel, defaultEffort };
 }
 
 /** GET /api/agent/model-config — the model/effort options + the user's CLI defaults. */

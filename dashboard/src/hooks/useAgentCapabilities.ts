@@ -25,8 +25,12 @@ export function isSleepAgentReady(caps: Capabilities | undefined): boolean {
 }
 
 /**
- * Model + effort options the Claude CLI actually offers, plus the user's defaults
- * (`GET /api/agent/model-config`). Static per CLI version, so cached hard; falls back to a
+ * Model + effort options the Claude CLI offers, plus the user's CURRENT defaults
+ * (`GET /api/agent/model-config`). The options list is static per CLI version, but the
+ * defaults track the user's live `/model` / `/effort` choices (persisted to
+ * `~/.claude/settings.json`), so we refetch periodically and on window focus rather than
+ * caching forever — otherwise the composer freezes at whatever model/effort the app booted
+ * with (the old `staleTime: Infinity` bug that pinned it to opus/high). Falls back to a
  * minimal known set if the endpoint isn't reachable (e.g. non-desktop). Consumed by the
  * composer strip's model/effort pickers.
  */
@@ -34,7 +38,9 @@ export function useAgentModelConfig() {
   return useQuery({
     queryKey: ['agent-model-config'],
     queryFn: () => api.get<ModelConfig>('/agent/model-config'),
-    staleTime: Infinity,
+    staleTime: 10_000,
+    refetchInterval: 30_000,
+    refetchOnWindowFocus: true,
     retry: false,
     placeholderData: FALLBACK_MODEL_CONFIG,
   });
