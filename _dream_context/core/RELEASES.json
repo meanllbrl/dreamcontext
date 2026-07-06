@@ -1,5 +1,16 @@
 [
   {
+    "id": "rel_pYOnPvIY",
+    "version": "v0.13.0",
+    "date": "",
+    "summary": "Post-v0.12.0 cycle: complete npm publish of 0.12.0, releases auto-discovery scoping fix, next feature work",
+    "breaking": false,
+    "status": "planning",
+    "features": [],
+    "tasks": [],
+    "changelog": []
+  },
+  {
     "id": "rel_JTN7dN0E",
     "version": "0.12.0",
     "date": "2026-07-06",

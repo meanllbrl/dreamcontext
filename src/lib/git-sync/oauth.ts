@@ -5,10 +5,10 @@
  * github.com/login/device and we poll for the token.
  *
  * NO client_secret is ever used or stored (device flow is a public-client
- * grant). The public client_id is non-secret and safe to commit; the owner
- * registers the real OAuth App (Device Flow enabled) and either embeds its
- * client_id as {@link BRAIN_OAUTH_CLIENT_ID} or supplies it via the
- * `DREAMCONTEXT_GITHUB_CLIENT_ID` env var.
+ * grant). The registered OAuth App's public client_id ships embedded as
+ * {@link DEFAULT_BRAIN_OAUTH_CLIENT_ID}; the `DREAMCONTEXT_GITHUB_CLIENT_ID`
+ * env var overrides it (set it to {@link PLACEHOLDER_CLIENT_ID} to force
+ * PAT-only mode).
  *
  * `fetchImpl` is injectable (default `globalThis.fetch`) so the unit tests
  * exercise the full flow with ZERO network.
@@ -22,16 +22,18 @@ const GITHUB_USER_URL = 'https://api.github.com/user';
 export const BRAIN_OAUTH_SCOPE = 'repo';
 
 /**
- * PLACEHOLDER public client_id. The owner MUST register a GitHub OAuth App with
- * "Device Flow" enabled (github.com/settings/developers) and replace this
- * default (or set `DREAMCONTEXT_GITHUB_CLIENT_ID`). Non-secret, safe to commit.
- *
- * While this remains the effective client_id, the device flow is UNAVAILABLE:
- * GitHub returns 404 for an unregistered client_id, so the callers short-circuit
- * to the PAT path rather than firing a doomed request (see
- * {@link isOAuthAppConfigured}).
+ * PLACEHOLDER client_id, kept as the sentinel {@link isOAuthAppConfigured}
+ * recognizes as "no OAuth App". Setting `DREAMCONTEXT_GITHUB_CLIENT_ID` to this
+ * value explicitly disables the device flow (PAT-only mode).
  */
 export const PLACEHOLDER_CLIENT_ID = 'Iv1.dreamcontext-placeholder';
+
+/**
+ * The registered "dreamcontext" GitHub OAuth App's public client_id (Device
+ * Flow enabled, owned by the `meanllbrl` account). Device flow is a public-
+ * client grant: this id is non-secret and safe to commit.
+ */
+export const DEFAULT_BRAIN_OAUTH_CLIENT_ID = 'Ov23lisakBMDeqzsr6Xg';
 
 /**
  * The effective device-flow client_id, resolved LIVE (not frozen at import) so
@@ -39,7 +41,7 @@ export const PLACEHOLDER_CLIENT_ID = 'Iv1.dreamcontext-placeholder';
  * before the first request. Env override wins over the embedded default.
  */
 export function resolveBrainOAuthClientId(): string {
-  return (process.env.DREAMCONTEXT_GITHUB_CLIENT_ID || '').trim() || PLACEHOLDER_CLIENT_ID;
+  return (process.env.DREAMCONTEXT_GITHUB_CLIENT_ID || '').trim() || DEFAULT_BRAIN_OAUTH_CLIENT_ID;
 }
 
 /**

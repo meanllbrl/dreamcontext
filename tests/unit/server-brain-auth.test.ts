@@ -14,6 +14,7 @@ import {
   __setBrainAuthHome,
 } from '../../src/server/routes/brain-auth.js';
 import { globalSecretsPath, writeGlobalGitHubToken } from '../../src/lib/git-sync/auth-store.js';
+import { PLACEHOLDER_CLIENT_ID } from '../../src/lib/git-sync/oauth.js';
 
 function makeRes(): { res: ServerResponse; status: () => number; body: () => any } {
   let statusCode = 0;
@@ -153,7 +154,9 @@ describe('brain-auth — device flow (B1)', () => {
 
 describe('brain-auth — no registered OAuth App (placeholder client_id)', () => {
   it('device/start short-circuits to 501 oauth_not_configured WITHOUT hitting GitHub', async () => {
-    delete process.env.DREAMCONTEXT_GITHUB_CLIENT_ID; // falls back to the placeholder
+    // The embedded default is a real registered client_id now; forcing the
+    // placeholder via env is the supported way to simulate/run PAT-only mode.
+    process.env.DREAMCONTEXT_GITHUB_CLIENT_ID = PLACEHOLDER_CLIENT_ID;
     let called = false;
     __setBrainAuthFetch((async () => { called = true; return jsonRes(200, {}); }) as unknown as typeof fetch);
     const { res, status, body } = makeRes();
@@ -163,13 +166,13 @@ describe('brain-auth — no registered OAuth App (placeholder client_id)', () =>
     expect(called).toBe(false); // never fired the doomed request
   });
 
-  it('status reports oauthConfigured:false with the placeholder, true with a real client_id', async () => {
-    delete process.env.DREAMCONTEXT_GITHUB_CLIENT_ID;
+  it('status reports oauthConfigured:false with the placeholder, true with the embedded default', async () => {
+    process.env.DREAMCONTEXT_GITHUB_CLIENT_ID = PLACEHOLDER_CLIENT_ID;
     const off = makeRes();
     await handleBrainAuthStatus(makeReq('GET'), off.res);
     expect(off.body().oauthConfigured).toBe(false);
 
-    process.env.DREAMCONTEXT_GITHUB_CLIENT_ID = 'Iv1.realclient';
+    delete process.env.DREAMCONTEXT_GITHUB_CLIENT_ID; // embedded registered default
     const on = makeRes();
     await handleBrainAuthStatus(makeReq('GET'), on.res);
     expect(on.body().oauthConfigured).toBe(true);

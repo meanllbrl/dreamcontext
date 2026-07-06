@@ -173,6 +173,21 @@ existing local dashboard. The two could coexist later but ship independently.
 ## Changelog
 <!-- LIFO: newest entry at top -->
 
+### 2026-07-06 - OQ-1 RESOLVED: OAuth App registered, device flow LIVE
+- **Registered the "dreamcontext" GitHub OAuth App** (owner `meanllbrl`, Device
+  Flow enabled) and embedded its public client_id as
+  `DEFAULT_BRAIN_OAUTH_CLIENT_ID = 'Ov23lisakBMDeqzsr6Xg'` in `oauth.ts`.
+  One-click "Continue with GitHub" now works out of the box — the PAT form
+  drops back to being the fallback, not the primary.
+  - `DREAMCONTEXT_GITHUB_CLIENT_ID` env still overrides the embedded default;
+    setting it to `PLACEHOLDER_CLIENT_ID` explicitly forces PAT-only mode.
+  - Verified end-to-end: `startDeviceFlow()` with the embedded default returns
+    a real `user_code` from GitHub.
+  - Homepage/callback URL: https://github.com/meanllbrl/dreamcontext (device
+    flow never uses the callback; the field is just required by the form).
+  - Remaining before M2 fully complete: the manual UI walkthrough in the
+    packaged app (device-flow login should now be testable there one-click).
+
 ### 2026-07-06 - Device-flow gracefully gated on OQ-1; PAT-primary fallback shipped
 - **Fixed the "GitHub device-code request failed (404)" dead-end.** Root cause was
   OQ-1: no OAuth App registered, so the app shipped the placeholder client_id

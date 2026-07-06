@@ -6,6 +6,7 @@ import {
   isOAuthAppConfigured,
   resolveBrainOAuthClientId,
   PLACEHOLDER_CLIENT_ID,
+  DEFAULT_BRAIN_OAUTH_CLIENT_ID,
   BRAIN_OAUTH_SCOPE,
 } from '../../src/lib/git-sync/oauth.js';
 
@@ -76,15 +77,19 @@ describe('git-sync/oauth — device flow (injected fetch, zero network)', () => 
     expect(isOAuthAppConfigured('Ov23liAbCd')).toBe(true);
   });
 
-  it('resolveBrainOAuthClientId reads the env var live, falling back to the placeholder', () => {
+  it('resolveBrainOAuthClientId reads the env var live, falling back to the registered default', () => {
     const prev = process.env.DREAMCONTEXT_GITHUB_CLIENT_ID;
     try {
       delete process.env.DREAMCONTEXT_GITHUB_CLIENT_ID;
-      expect(resolveBrainOAuthClientId()).toBe(PLACEHOLDER_CLIENT_ID);
-      expect(isOAuthAppConfigured()).toBe(false);
+      expect(resolveBrainOAuthClientId()).toBe(DEFAULT_BRAIN_OAUTH_CLIENT_ID);
+      expect(isOAuthAppConfigured()).toBe(true);
       process.env.DREAMCONTEXT_GITHUB_CLIENT_ID = 'Iv1.fromenv';
       expect(resolveBrainOAuthClientId()).toBe('Iv1.fromenv');
       expect(isOAuthAppConfigured()).toBe(true);
+      // Explicitly setting the placeholder forces PAT-only mode.
+      process.env.DREAMCONTEXT_GITHUB_CLIENT_ID = PLACEHOLDER_CLIENT_ID;
+      expect(resolveBrainOAuthClientId()).toBe(PLACEHOLDER_CLIENT_ID);
+      expect(isOAuthAppConfigured()).toBe(false);
     } finally {
       if (prev === undefined) delete process.env.DREAMCONTEXT_GITHUB_CLIENT_ID;
       else process.env.DREAMCONTEXT_GITHUB_CLIENT_ID = prev;
