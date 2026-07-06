@@ -28,7 +28,8 @@ export interface AgentSettings {
   restoreTabs: boolean;
   /** Which agent a new session runs (only Claude Code for now). */
   defaultAgent: DefaultAgent;
-  /** After a session's first turn, let Haiku rename its tab from the first message. */
+  /** After a session's first turn, let Haiku rename its tab from the first message.
+   *  Off by default — an opt-in that costs a (cheap) Haiku call per session. */
   autoTitle: boolean;
   /** In-app accelerator that toggles the Agents overlay, e.g. "Ctrl+A". */
   hotkey: string;
@@ -38,20 +39,21 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   enabled: true,
   restoreTabs: true,
   defaultAgent: 'claude',
-  autoTitle: true,
+  autoTitle: false,
   hotkey: 'Ctrl+A',
 };
 
-/** Coerce an arbitrary blob to a valid AgentSettings (defaults fill gaps). The two
- *  flags default TRUE — only an explicit `false` disables, so a missing key never
- *  silently hides the surface. */
+/** Coerce an arbitrary blob to a valid AgentSettings (defaults fill gaps). `enabled`
+ *  and `restoreTabs` default TRUE (only an explicit `false` disables, so a missing key
+ *  never silently hides the surface); `autoTitle` defaults FALSE (opt-in — only an
+ *  explicit `true` turns tab auto-naming on). */
 export function coerceAgentSettings(raw: Partial<AgentSettings> | null | undefined): AgentSettings {
   const r = raw ?? {};
   return {
     enabled: r.enabled !== false,
     restoreTabs: r.restoreTabs !== false,
     defaultAgent: r.defaultAgent === 'claude' ? 'claude' : DEFAULT_AGENT_SETTINGS.defaultAgent,
-    autoTitle: r.autoTitle !== false,
+    autoTitle: r.autoTitle === true,
     hotkey: typeof r.hotkey === 'string' && r.hotkey.trim() ? r.hotkey.trim() : DEFAULT_AGENT_SETTINGS.hotkey,
   };
 }

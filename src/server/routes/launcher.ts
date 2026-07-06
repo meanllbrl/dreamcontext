@@ -525,7 +525,7 @@ const AGENT_UI_DEFAULTS: AgentUiSettings = {
   enabled: true,
   restoreTabs: true,
   defaultAgent: 'claude',
-  autoTitle: true,
+  autoTitle: false,
   hotkey: 'Ctrl+A',
 };
 
@@ -541,7 +541,8 @@ function coerceAgentSettings(raw: Record<string, unknown>): AgentUiSettings {
     enabled: raw.enabled !== false,
     restoreTabs: raw.restoreTabs !== false,
     defaultAgent: raw.defaultAgent === 'claude' ? 'claude' : AGENT_UI_DEFAULTS.defaultAgent,
-    autoTitle: raw.autoTitle !== false,
+    // Opt-in flag: default FALSE, only an explicit `true` enables tab auto-naming.
+    autoTitle: raw.autoTitle === true,
     hotkey: typeof raw.hotkey === 'string' && raw.hotkey.trim() ? raw.hotkey.trim() : AGENT_UI_DEFAULTS.hotkey,
   };
 }
