@@ -283,6 +283,32 @@ describe('sleep 360° — debt scoring & double-count (WS2)', () => {
     expect(state.sessions_since_last_sleep).toBe(1); // re-stop did not bump
   });
 
+  it('a PENDING stop (score null — transcript not flushed yet) adds no debt, and the finalizing re-stop adds it once', () => {
+    const upsert = (state: SleepState, score: number | null): SleepState => {
+      const input: StopUpsertInput = {
+        session_id: 'sess-A',
+        transcript_path: '/tmp/never-flushed.jsonl',
+        stopped_at: '2026-06-10T10:00:00.000Z',
+        last_assistant_message: null,
+        change_count: score === null ? null : 2,
+        tool_count: score === null ? null : 5,
+        score,
+        task_slugs: [],
+      };
+      return upsertSessionOnStop(state, input);
+    };
+
+    let state = baseState();
+    state = upsert(state, null); // Stop fired while the CLI still buffers the transcript
+    expect(state.debt).toBe(0);
+    expect(state.sessions[0].score).toBeNull(); // pending — SessionStart catch-up finalizes
+    state = upsert(state, null); // every turn re-stops; still pending, still no debt
+    expect(state.debt).toBe(0);
+    state = upsert(state, 3);    // transcript landed — finalized exactly once
+    expect(state.debt).toBe(3);
+    expect(state.sessions).toHaveLength(1);
+  });
+
   it('manual `sleep add` rejects scores outside 1..3 and requires a description', () => {
     expect(validateSleepAdd('0', 'x').ok).toBe(false);
     expect(validateSleepAdd('4', 'x').ok).toBe(false);

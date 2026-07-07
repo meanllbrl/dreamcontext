@@ -53,14 +53,24 @@ describe('git-sync/auth-store — global GitHub token store', () => {
 
 describe('git-sync/brain-repo — resolveBrainSyncToken tiering (per-project → global → env)', () => {
   let projectRoot: string;
+  let fakeHome: string;
+  let originalHome: string | undefined;
 
   beforeEach(() => {
     projectRoot = mkdtempSync(join(tmpdir(), 'dc-proj-'));
     delete process.env.GITHUB_TOKEN;
     delete process.env.GH_TOKEN;
+    // The global tier reads os.homedir() — isolate it, or a developer's real
+    // signed-in global token leaks in and wins over the env tier under test.
+    originalHome = process.env.HOME;
+    fakeHome = mkdtempSync(join(tmpdir(), 'dc-home-'));
+    process.env.HOME = fakeHome;
   });
   afterEach(() => {
     rmSync(projectRoot, { recursive: true, force: true });
+    rmSync(fakeHome, { recursive: true, force: true });
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
   });
 
   it('uses the env token when neither per-project nor global exists', () => {

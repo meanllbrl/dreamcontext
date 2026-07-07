@@ -41,6 +41,9 @@ import { loadCatalog } from './install-skill.js';
 import { detectSessionStartTrigger, detectPromptTrigger, renderOffer } from '../../lib/initializer-detect.js';
 import { readSetupConfig, readBrainLocal } from '../../lib/setup-config.js';
 import { resolveBrainSyncEnabled } from '../../lib/git-sync/brain-repo.js';
+import {
+  recordAgentSession, recordAgentFirstPrompt, readAgentSessionEntry, titleWorthyPrompt, UUID_RE,
+} from '../../lib/agent-session-map.js';
 
 // ─── Constants ──────────────────────────────────────────────────────────────
 
@@ -718,20 +721,37 @@ export function registerHookCommand(program: Command): void {
 
       if (!sessionId) process.exit(0);
 
+      // Keep the embedded-tab session map fresh on every completed turn (see the
+      // session-start handler for the full story). Belt-and-suspenders: a `/clear`
+      // followed by an instant app quit can lose the SessionStart record to the hook
+      // timeout — the next finished turn re-records it.
+      recordTabSessionFromHook(root, sessionId);
+
       const state = readSleepState(root);
       const stoppedAt = new Date().toISOString();
 
-      // Analyze transcript immediately so change_count, tool_count, and score are populated at write time
-      const analysis = transcriptPath ? analyzeTranscript(transcriptPath) : ZERO_ANALYSIS;
+      // Analyze the transcript immediately when it's on disk so change_count,
+      // tool_count, and score are populated at write time. Claude Code ≥2.1.x
+      // buffers a LIVE session's transcript in memory and flushes `<uuid>.jsonl`
+      // only on exit/rotation — so at Stop time the file usually doesn't exist
+      // yet. Scoring a missing file as 0 would permanently zero the session's
+      // sleep debt (the re-stop dedupe overwrites, and the SessionStart catch-up
+      // only touches score === null). Leave the score NULL (pending) instead:
+      // the catch-up finalizes it once the flushed transcript appears, and
+      // zero-finalizes after 7 days if it never does (hard-killed tab).
+      const transcriptOnDisk = !!transcriptPath && existsSync(transcriptPath);
+      const analysis = transcriptOnDisk ? analyzeTranscript(transcriptPath) : ZERO_ANALYSIS;
       const { changeCount, toolCount } = analysis;
       // Substance-weighted debt (WS-DEBT): max() with the substance ladder keeps
       // the score bounded at 3 and only raises the FLOOR for edit-free-but-dense
       // sessions; it never lowers an edit-heavy score.
-      const score = Math.max(
-        scoreFromChangeCount(changeCount),
-        scoreFromToolCount(toolCount),
-        scoreFromSubstance(analysis),
-      );
+      const score = transcriptOnDisk
+        ? Math.max(
+          scoreFromChangeCount(changeCount),
+          scoreFromToolCount(toolCount),
+          scoreFromSubstance(analysis),
+        )
+        : null;
 
       // Link unlinked bookmarks to this session
       for (const bookmark of state.bookmarks) {
@@ -752,8 +772,8 @@ export function registerHookCommand(program: Command): void {
         transcript_path: transcriptPath,
         stopped_at: stoppedAt,
         last_assistant_message: lastAssistantMessage,
-        change_count: changeCount,
-        tool_count: toolCount,
+        change_count: transcriptOnDisk ? changeCount : null,
+        tool_count: transcriptOnDisk ? toolCount : null,
         score,
         task_slugs: taskSlugs,
       };
@@ -761,6 +781,67 @@ export function registerHookCommand(program: Command): void {
 
       writeSleepState(root, nextState);
     });
+
+  // True when THIS hook fires from a claude process NESTED inside the embedded tab's
+  // own claude — e.g. the agent ran `claude -p "…"` via its Bash tool, or the user
+  // dropped to a subshell and launched claude. DREAMCONTEXT_TAB_SESSION is inherited
+  // by every descendant of the tab's PTY, so without this guard the nested one-shot's
+  // SessionStart/Stop would remap the tab to a throwaway conversation (wrong resume,
+  // stats, and title from then on). Detection: walk the process ancestry counting
+  // claude-like commands — the hook's OWN claude is the nearest one; any ADDITIONAL
+  // claude above it means we're nested. The walk STOPS at the dashboard server's pid
+  // (DREAMCONTEXT_SERVER_PID, exported into the PTY env): anything above the server —
+  // e.g. a dev server itself launched from inside a Claude Code session — is OUTSIDE
+  // the tab, and counting it would misclassify every legitimate embedded tab as nested
+  // and silently disable session recording on exactly this repo's dogfooding loop.
+  // ONE `ps` snapshot walked in memory (this runs on every SessionStart AND Stop hook;
+  // one exec per hop cost ~4-8 sequential spawns per hook fire). POSIX-only (`ps`); on
+  // Windows or any error we fail OPEN (record), preserving pre-guard behavior.
+  function isNestedClaudeHook(): boolean {
+    if (process.platform === 'win32') return false;
+    try {
+      const out = execFileSync('ps', ['-axo', 'pid=,ppid=,command='], {
+        encoding: 'utf-8', timeout: 2000, maxBuffer: 8 * 1024 * 1024,
+      });
+      const table = new Map<number, { ppid: number; command: string }>();
+      for (const line of out.split('\n')) {
+        const m = line.match(/^\s*(\d+)\s+(\d+)\s+(.*)$/);
+        if (m) table.set(Number(m[1]), { ppid: Number(m[2]), command: m[3] });
+      }
+      const serverPid = Number(process.env.DREAMCONTEXT_SERVER_PID || 0);
+      let pid = process.ppid;
+      let claudes = 0;
+      for (let hop = 0; hop < 15 && pid > 1; hop++) {
+        // Tab boundary: the server spawned the tab's PTY, so once the walk reaches it
+        // every remaining ancestor is outside the tab. (Absent on older servers → the
+        // walk continues to pid 1, accepting the pre-boundary behavior.)
+        if (serverPid && pid === serverPid) break;
+        const p = table.get(pid);
+        if (!p) break;
+        // Match `claude` as a command word (bare or path-tail), not path fragments
+        // like `~/.claude/…` (preceded by a dot) — the wrapper `sh -c 'claude -p …'`
+        // matching too is fine: that only happens on the nested path we want to skip.
+        if (/(^|[\s/])claude($|\s)/.test(p.command)) claudes++;
+        if (claudes >= 2) return true;
+        pid = p.ppid;
+      }
+    } catch { /* ancestry unreadable → fail open */ }
+    return false;
+  }
+
+  // The one shared gate for recording an embedded tab's session rotation — both hook
+  // handlers (Stop + SessionStart) funnel through here so the contract (env var, UUID
+  // gates, nested-claude guard, swallow-all-errors posture) can never drift between
+  // them. The cheap UUID checks run BEFORE the `ps`-snapshot ancestry walk, so a
+  // non-tab session never pays for it. Wrapped so this can NEVER break a hook.
+  function recordTabSessionFromHook(root: string, sessionId: string): void {
+    try {
+      const tabId = process.env.DREAMCONTEXT_TAB_SESSION;
+      if (!tabId || !UUID_RE.test(tabId) || !UUID_RE.test(sessionId)) return;
+      if (isNestedClaudeHook()) return;
+      recordAgentSession(root, tabId, sessionId);
+    } catch { /* best-effort — resume falls back to the pinned id */ }
+  }
 
   // --- hook session-start ---
   hook
@@ -785,6 +866,17 @@ export function registerHookCommand(program: Command): void {
         process.exit(0);
       }
 
+      // ── Embedded-tab session tracking ────────────────────────────────────
+      // The dashboard's embedded terminal exports DREAMCONTEXT_TAB_SESSION=<the tab's
+      // roster id> into its `claude` process. A tab's LIVE conversation id rotates
+      // underneath it (`/clear` starts a new session file; the in-TUI resume picker
+      // switches conversations), and SessionStart is the only place the new id is
+      // observable (startup|resume|compact|clear all land here). Record
+      // roster id → current id so reopening the tab resumes what was actually on
+      // screen, not the conversation frozen at the last rotation.
+      const sid = input && typeof input.session_id === 'string' ? input.session_id : '';
+      if (sid) recordTabSessionFromHook(root, sid);
+
       // Seed core/taxonomy.json on installs that predate the taxonomy system, so
       // tagging behaviors work from the very first session after an upgrade —
       // no user action, no waiting for a sleep cycle. Never overwrites; wrapped
@@ -802,6 +894,21 @@ export function registerHookCommand(program: Command): void {
       for (const session of state.sessions) {
         if (session.score !== null) continue;
         if (!session.transcript_path) {
+          session.change_count = 0;
+          session.tool_count = 0;
+          session.score = 0;
+          dirty = true;
+          continue;
+        }
+        // Transcript not flushed yet (Claude Code ≥2.1.x writes `<uuid>.jsonl` only on
+        // exit/rotation): the session may still be LIVE in another tab — leave it
+        // pending for a later start instead of zero-finalizing real work. After 7 days
+        // assume the file will never appear (hard-killed tab, hand-cleaned ~/.claude)
+        // and finalize at zero so the debt ledger stops carrying ghosts. A missing or
+        // unparseable stopped_at counts as aged out — finalize rather than pend forever.
+        if (!existsSync(session.transcript_path)) {
+          const stoppedMs = Date.parse(session.stopped_at ?? '') || 0;
+          if (Date.now() - stoppedMs < 7 * 24 * 60 * 60 * 1000) continue;
           session.change_count = 0;
           session.tool_count = 0;
           session.score = 0;
@@ -830,6 +937,10 @@ export function registerHookCommand(program: Command): void {
       // in its own try/catch so a single bad transcript can NEVER break the hook.
       for (const session of state.sessions) {
         if (!session.transcript_path) continue;
+        // Unflushed transcript (live session on CLI ≥2.1.x) — distilling the missing
+        // file would write an EMPTY digest that then permanently blocks the real one
+        // (digestExists gates this loop). Skip; a later start catches it up.
+        if (!existsSync(session.transcript_path)) continue;
         // A PARTIAL digest (written by the PreCompact hook mid-session) does
         // not block the catch-up: the full-transcript digest supersedes it.
         if (digestExists(root, session.session_id) && !digestIsPartial(root, session.session_id)) continue;
@@ -1020,6 +1131,28 @@ export function registerHookCommand(program: Command): void {
 
       const root = resolveContextRoot();
       if (!root) process.exit(0);
+
+      // ── Embedded-tab first-prompt capture (the auto-title source) ────────────
+      // Claude Code ≥2.1.x buffers a live session's transcript in memory and only
+      // flushes `<uuid>.jsonl` on exit/rotation — so the dashboard's auto-title
+      // route can no longer read the first user message from disk while a tab is
+      // LIVE. This hook is the one place that prompt is observable in real time:
+      // record the conversation's first title-worthy prompt into the tab's
+      // session-map entry for /agent/title to fall back to. Runs BEFORE the
+      // consolidation-lock early return below — a mid-sleep tab still deserves a
+      // title. The write-once check runs before the `ps`-ancestry walk, so the
+      // common case (already captured) costs one file read, not a process-table
+      // scan. Wrapped: can NEVER break the reminder/recall path.
+      try {
+        const tabId = process.env.DREAMCONTEXT_TAB_SESSION ?? '';
+        const sid = typeof input.session_id === 'string' ? input.session_id : '';
+        const prompt = titleWorthyPrompt(String((input as Record<string, unknown>).prompt ?? ''));
+        if (prompt && UUID_RE.test(tabId) && UUID_RE.test(sid)) {
+          const entry = readAgentSessionEntry(root, tabId);
+          const captured = entry?.current === sid && !!entry.firstPrompt;
+          if (!captured && !isNestedClaudeHook()) recordAgentFirstPrompt(root, tabId, sid, prompt);
+        }
+      } catch { /* best-effort — auto-title falls back to the transcript when it lands */ }
 
       const state = readSleepState(root);
 

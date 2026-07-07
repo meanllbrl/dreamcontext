@@ -98,10 +98,13 @@ describe('hook stop (integration)', () => {
     expect(sessions[0].transcript_path).toBe('/tmp/transcript-abc.jsonl');
     expect(sessions[0].last_assistant_message).toBe('I refactored the auth module and added tests.');
     expect(sessions[0].stopped_at).toBeTruthy();
-    // Transcript doesn't exist at /tmp/transcript-abc.jsonl, so 0 changes/tools
-    expect(sessions[0].score).toBe(0);
-    expect(sessions[0].change_count).toBe(0);
-    expect(sessions[0].tool_count).toBe(0);
+    // Transcript doesn't exist at /tmp/transcript-abc.jsonl — on CLI ≥2.1.x the
+    // transcript is flushed only on exit/rotation, so a missing file at Stop time
+    // means ANALYSIS PENDING (null), not "no work done" (0). The SessionStart
+    // catch-up finalizes once the file appears (or zero-finalizes after 7 days).
+    expect(sessions[0].score).toBeNull();
+    expect(sessions[0].change_count).toBeNull();
+    expect(sessions[0].tool_count).toBeNull();
   });
 
   it('records stopped_at as ISO 8601 timestamp', () => {

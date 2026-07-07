@@ -1,5 +1,5 @@
 import { defineConfig } from 'tsup';
-import { cpSync, existsSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync } from 'node:fs';
 
 export default defineConfig({
   entry: ['src/cli/index.ts'],
@@ -45,6 +45,10 @@ export default defineConfig({
     // to dist/git-sync/ so credentials.ts's runtime path resolution (relative to
     // its own bundled import.meta.url, i.e. dist/) finds it — see credentials.ts.
     cpSync('src/lib/git-sync/askpass.cjs', 'dist/git-sync/askpass.cjs');
+    // cpSync preserves the SOURCE mode — enforce the executable bit instead of
+    // inheriting it. git execs GIT_ASKPASS directly; a non-executable helper
+    // fails every authenticated fetch/push with a bare "Permission denied".
+    chmodSync('dist/git-sync/askpass.cjs', 0o755);
     if (existsSync('hooks')) {
       cpSync('hooks', 'dist/hooks', { recursive: true });
     }

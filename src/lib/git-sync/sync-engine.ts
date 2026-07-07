@@ -298,10 +298,40 @@ function withMergeOutcome(result: SyncResult, preMergeScrub: { blocks: ScrubHit[
   return result.action === 'blocked-scrub' ? result : { ...result, scrub: preMergeScrub };
 }
 
+/**
+ * Fetch `origin/main` only if it exists on the remote; returns whether it does.
+ * A brand-new attached repo has NO refs at all — a blind `git fetch origin
+ * main` there dies with `couldn't find remote ref main`, killing every sync
+ * before the first commit/push can ever happen. Callers treat `false` as
+ * "nothing to pull/merge" and (in pushing modes) proceed to bootstrap `main`.
+ */
+async function fetchRemoteIfExists(ctx: Ctx, token: string): Promise<boolean> {
+  const { d, gitCwd } = ctx;
+  return d.withGitCredentials(token, async (env) => {
+    const exists = d.git.remoteBranchExists(gitCwd, REMOTE_NAME, REMOTE_BRANCH, env);
+    if (exists) d.git.fetch(gitCwd, REMOTE_NAME, REMOTE_BRANCH, env);
+    return exists;
+  });
+}
+
 /** Attempt `attemptMerge`; on conflict, resolve deterministically and defer the rest to the agent. */
 function mergeAndMaybeDefer(ctx: Ctx, opts: MergeAndMaybeDeferOpts): MergeOutcome {
   const { d, gitCwd, contextRoot, projectRoot, config } = ctx;
-  const mergeResult = d.git.attemptMerge(gitCwd, REMOTE_REF);
+  let mergeResult: { clean: boolean; conflicts: string[] };
+  try {
+    mergeResult = d.git.attemptMerge(gitCwd, REMOTE_REF);
+  } catch (err) {
+    // Surface git's rawest failure mode with an actionable message: a repo
+    // created on GitHub WITH a README/gitignore shares no ancestry with the
+    // local brain. Auto-merging unrelated histories is never safe under the
+    // S6 trust model, so this stays an error — but a human-readable one.
+    if (err instanceof Error && /unrelated histories/i.test(err.message)) {
+      throw new GitSyncError(
+        'The brain and its remote have unrelated histories — the remote already contains content that did not come from this brain (e.g. a README added when the repo was created). Attach an EMPTY repo or an existing brain repo, or reconcile the histories manually.',
+      );
+    }
+    throw err;
+  }
 
   if (mergeResult.clean) {
     // A pure fast-forward already advanced the ref (nothing staged, nothing
@@ -366,10 +396,14 @@ async function pushWithRetry(ctx: Ctx, scrub: { blocks: ScrubHit[]; warns: Scrub
 
   if (await tryPush()) return { action: 'pushed', scrub, pushed: true };
 
-  // Rejected (presumed non-FF): fetch → merge → retry ONCE.
-  await d.withGitCredentials(token.token, async (env) => {
-    d.git.fetch(gitCwd, REMOTE_NAME, REMOTE_BRANCH, env);
-  });
+  // Rejected (presumed non-FF): fetch → merge → retry ONCE. But non-FF only
+  // makes sense when the remote branch exists — a failed push to an EMPTY
+  // remote failed for some other reason (auth, protection, network), and the
+  // fetch would just die with `couldn't find remote ref main` on top of it.
+  const remoteExists = await fetchRemoteIfExists(ctx, token.token);
+  if (!remoteExists) {
+    throw new GitSyncError('Push to the empty brain remote failed — check the token has Contents read/write on that repo and the remote URL is correct.');
+  }
   const outcome = mergeAndMaybeDefer(ctx, { abortOnDefer: false, markPendingOnDefer: false });
   if (outcome.result) return outcome.result;
 
@@ -385,14 +419,18 @@ async function autoSync(ctx: Ctx): Promise<SyncResult> {
   const token = d.resolveBrainSyncToken(projectRoot);
   if (!token) return { action: 'no-remote', scrub: EMPTY_SCRUB, note: 'No GitHub token found for the brain repo (per-project secrets or GITHUB_TOKEN/GH_TOKEN env).' };
 
-  await d.withGitCredentials(token.token, async (env) => {
-    d.git.fetch(gitCwd, REMOTE_NAME, REMOTE_BRANCH, env);
-  });
+  // Empty remote (freshly attached, zero commits): nothing to fetch/merge —
+  // fall through to the commit+push half, which bootstraps `main` (push is
+  // `HEAD:main`, and `commit` on an unborn HEAD creates the root commit).
+  const remoteExists = await fetchRemoteIfExists(ctx, token.token);
 
-  const aheadCount = d.git.revListCount(gitCwd, `HEAD..${REMOTE_REF}`);
+  const aheadCount = remoteExists ? d.git.revListCount(gitCwd, `HEAD..${REMOTE_REF}`) : 0;
   const dirty = d.git.statusPorcelainTracked(gitCwd);
+  // Empty remote + existing local commits (e.g. attach right after a detach):
+  // there's nothing to fetch OR commit, but `main` still has to be born.
+  const needsBootstrapPush = !remoteExists && !!d.git.currentSha(gitCwd);
 
-  if (aheadCount === 0 && dirty.length === 0) return { action: 'noop', scrub: EMPTY_SCRUB };
+  if (aheadCount === 0 && dirty.length === 0 && !needsBootstrapPush) return { action: 'noop', scrub: EMPTY_SCRUB };
 
   let scrub = EMPTY_SCRUB;
   if (dirty.length > 0) {
@@ -421,9 +459,11 @@ async function pullOnlySync(ctx: Ctx): Promise<SyncResult> {
   const token = d.resolveBrainSyncToken(projectRoot);
   if (!token) return { action: 'no-remote', scrub: EMPTY_SCRUB, note: 'No GitHub token found for the brain repo (per-project secrets or GITHUB_TOKEN/GH_TOKEN env).' };
 
-  await d.withGitCredentials(token.token, async (env) => {
-    d.git.fetch(gitCwd, REMOTE_NAME, REMOTE_BRANCH, env);
-  });
+  // Pull-only NEVER pushes — an empty remote simply has nothing to deliver.
+  // The first push happens via auto/push-only (or the attach-time bootstrap).
+  if (!(await fetchRemoteIfExists(ctx, token.token))) {
+    return { action: 'noop', scrub: EMPTY_SCRUB, note: 'Remote brain repo is empty — nothing to pull yet. Run `dreamcontext brain sync` to push the first commit.' };
+  }
 
   const beforeSha = d.git.currentSha(gitCwd);
   const aheadCount = d.git.revListCount(gitCwd, `HEAD..${REMOTE_REF}`);
@@ -507,9 +547,10 @@ async function resumeHandoff(ctx: Ctx): Promise<SyncResult> {
   const token = d.resolveBrainSyncToken(projectRoot);
   if (!token) return { action: 'no-remote', scrub: EMPTY_SCRUB, note: 'No GitHub token found for the brain repo (per-project secrets or GITHUB_TOKEN/GH_TOKEN env).' };
 
-  await d.withGitCredentials(token.token, async (env) => {
-    d.git.fetch(gitCwd, REMOTE_NAME, REMOTE_BRANCH, env);
-  });
+  // A pending handoff implies origin/main was fetched before; guard the
+  // re-fetch anyway (the remote could have been force-emptied since) and
+  // merge against the locally-known ref.
+  await fetchRemoteIfExists(ctx, token.token);
 
   // FOREGROUND flow: WARN stays non-blocking here UNLESS --strict is set
   // (a human/agent is present, so it's not effective-strict like headless pull-only).

@@ -4,11 +4,13 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Readable } from 'node:stream';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { execFileSync } from 'node:child_process';
 import {
   handleBrainStatus,
   handleBrainDiscover,
   handleBrainCreate,
   handleBrainAttach,
+  handleBrainDisconnect,
   handleBrainSync,
   handleBrainSettingsGet,
   handleBrainSettingsPost,
@@ -80,6 +82,10 @@ describe('brain routes — desktop gate', () => {
   });
 });
 
+function sh(cwd: string, args: string[]): string {
+  return execFileSync('git', args, { cwd, encoding: 'utf-8' }).trim();
+}
+
 describe('brain routes — status', () => {
   it('reports resolved enabled/source/mode and hasRemote:false for a fresh vault', async () => {
     const ctx = makeVault('cur');
@@ -90,6 +96,79 @@ describe('brain routes — status', () => {
     expect(body().hasRemote).toBe(false);
     expect(body().source).toBe('derived-unconnected');
     expect(body().enabled).toBe(false);
+  });
+
+  it('NEVER reports the code repo origin as the connected brain repo (in-tree)', async () => {
+    const ctx = makeVault('cur');
+    const projectRoot = join(base, 'cur');
+    sh(projectRoot, ['init']);
+    sh(projectRoot, ['remote', 'add', 'origin', 'https://github.com/meanllbrl/vibe-cto.git']);
+
+    const { res, status, body } = makeRes();
+    await handleBrainStatus(makeReq('GET'), res, {}, ctx);
+    expect(status()).toBe(200);
+    expect(body().mode).toBe('in-tree');
+    // The bug this pins: in-tree used to surface the CODE repo origin as `remote`.
+    expect(body().remote).toBeNull();
+    expect(body().hasRemote).toBe(false);
+    expect(body().codeOrigin).toBe('https://github.com/meanllbrl/vibe-cto.git');
+    // The github origin still derives cloud sync ON — only the connection claim changes.
+    expect(body().enabled).toBe(true);
+  });
+
+  it('separate mode reports the brain repo own origin as remote', async () => {
+    const ctx = makeVault('cur', { mode: 'separate' });
+    sh(ctx, ['init']);
+    sh(ctx, ['remote', 'add', 'origin', 'https://github.com/acme/brain.git']);
+
+    const { res, body } = makeRes();
+    await handleBrainStatus(makeReq('GET'), res, {}, ctx);
+    expect(body().remote).toBe('https://github.com/acme/brain.git');
+    expect(body().hasRemote).toBe(true);
+  });
+
+  it('separate mode falls back to the configured remote when the context is not its own repo yet', async () => {
+    const ctx = makeVault('cur', { mode: 'separate', remote: 'https://github.com/acme/brain.git' });
+    const { res, body } = makeRes();
+    await handleBrainStatus(makeReq('GET'), res, {}, ctx);
+    expect(body().remote).toBe('https://github.com/acme/brain.git');
+    expect(body().hasRemote).toBe(true);
+  });
+});
+
+describe('brain routes — disconnect', () => {
+  it('removes the separate brain repo origin + clears the configured remote, pins enabled:false', async () => {
+    const ctx = makeVault('cur', { mode: 'separate', remote: 'https://github.com/acme/brain.git', autoSync: true });
+    const projectRoot = join(base, 'cur');
+    sh(ctx, ['init']);
+    sh(ctx, ['remote', 'add', 'origin', 'https://github.com/acme/brain.git']);
+
+    const { res, status, body } = makeRes();
+    await handleBrainDisconnect(makeReq('POST', {}), res, {}, ctx);
+    expect(status()).toBe(200);
+    expect(body().ok).toBe(true);
+    expect(() => sh(ctx, ['remote', 'get-url', 'origin'])).toThrow();
+    const config = readSetupConfig(projectRoot);
+    expect(config?.brainRepo).toEqual({ mode: 'separate', enabled: false });
+
+    const after = makeRes();
+    await handleBrainStatus(makeReq('GET'), after.res, {}, ctx);
+    expect(after.body().hasRemote).toBe(false);
+    expect(after.body().enabled).toBe(false);
+  });
+
+  it('in-tree disconnect never touches the code repo remotes', async () => {
+    const ctx = makeVault('cur');
+    const projectRoot = join(base, 'cur');
+    sh(projectRoot, ['init']);
+    sh(projectRoot, ['remote', 'add', 'origin', 'https://github.com/meanllbrl/vibe-cto.git']);
+
+    const { res, status, body } = makeRes();
+    await handleBrainDisconnect(makeReq('POST', {}), res, {}, ctx);
+    expect(status()).toBe(200);
+    expect(body().ok).toBe(true);
+    expect(sh(projectRoot, ['remote', 'get-url', 'origin'])).toBe('https://github.com/meanllbrl/vibe-cto.git');
+    expect(readSetupConfig(projectRoot)?.brainRepo).toEqual({ mode: 'in-tree', enabled: false });
   });
 });
 
@@ -131,6 +210,43 @@ describe('brain routes — attach (B5 trust gate)', () => {
     expect(status()).toBe(200);
     expect(body().ok).toBe(false);
     expect(body().reason).toMatch(/confirmation/i);
+  });
+
+  it('attaching an EMPTY remote bootstraps the scrubbed first commit + push (bootstrap:"pushed")', async () => {
+    const ctx = makeVault('cur');
+    const bare = join(base, 'empty-remote.git');
+    execFileSync('git', ['init', '--bare', bare]);
+    writeFileSync(join(ctx, 'note.md'), '# a note\n', 'utf-8');
+
+    const { res, status, body } = makeRes();
+    await handleBrainAttach(makeReq('POST', { url: bare, confirmed: true }), res, {}, ctx);
+    expect(status()).toBe(200);
+    expect(body().ok).toBe(true);
+    expect(body().bootstrap).toBe('pushed');
+    // main was born on the remote with the brain's initial import.
+    expect(sh(bare, ['log', '-1', '--format=%s', 'main'])).toBe('chore(brain): initial import');
+    expect(sh(bare, ['ls-tree', '--name-only', 'main'])).toContain('note.md');
+  });
+
+  it('attaching a remote that already has main does NOT bootstrap (first sync pulls instead)', async () => {
+    const ctx = makeVault('cur');
+    const bare = join(base, 'existing-remote.git');
+    execFileSync('git', ['init', '--bare', bare]);
+    // Seed the bare with one commit so refs/heads/main exists.
+    const seed = join(base, 'seed');
+    execFileSync('git', ['clone', bare, seed]);
+    writeFileSync(join(seed, 'seeded.md'), 'existing brain content\n', 'utf-8');
+    sh(seed, ['add', '-A']);
+    sh(seed, ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-m', 'seed']);
+    sh(seed, ['push', 'origin', 'HEAD:main']);
+
+    const { res, status, body } = makeRes();
+    await handleBrainAttach(makeReq('POST', { url: bare, confirmed: true }), res, {}, ctx);
+    expect(status()).toBe(200);
+    expect(body().ok).toBe(true);
+    expect(body().bootstrap).toBeUndefined();
+    // The remote's history is untouched — attach never pushes over existing content.
+    expect(sh(bare, ['log', '--format=%s', 'main']).trim()).toBe('seed');
   });
 });
 

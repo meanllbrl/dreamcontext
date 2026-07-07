@@ -62,3 +62,6 @@ _dream_context/state/.secrets.json
 
 # dreamcontext: machine-local agent session roster (Claude resume ids)
 _dream_context/state/.agent-sessions.json
+
+# dreamcontext: machine-local agent tab → live Claude session map (one file per tab)
+_dream_context/state/.agent-session-map/

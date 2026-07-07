@@ -10,11 +10,14 @@ import {
   resolveMode,
   resolveBrainSyncEnabled,
   resolveBrainSyncToken,
+  isOwnRepoRoot,
   createBrainRepo,
   discoverBrainRepos,
   attachBrainRepo,
+  bootstrapBrainRepo,
   previewAttach,
 } from '../../lib/git-sync/brain-repo.js';
+import { withGitCredentials } from '../../lib/git-sync/credentials.js';
 import { runBrainSync } from '../../lib/git-sync/sync-engine.js';
 import { readGlobalGitHubLogin } from '../../lib/git-sync/auth-store.js';
 import { runTeamFetch } from '../../lib/git-sync/team-fetch.js';
@@ -53,11 +56,22 @@ export async function handleBrainStatus(
   const mode = resolveMode(config);
   const enabled = resolveBrainSyncEnabled(projectRoot, config);
   const local = readBrainLocal(projectRoot);
-  const gitCwd = mode === 'separate' ? contextRoot : projectRoot;
+
+  // `remote` is the CONNECTED BRAIN REPO — it only exists in `separate` mode
+  // (the brain repo's own origin, falling back to the configured remote).
+  // `in-tree` is commit-only and never pushes, so it has NO brain remote; the
+  // code repo's origin goes out separately as `codeOrigin` (display context
+  // only) and must never be reported as the connected brain repo.
   let remote: string | null = null;
-  try { remote = git.isGitRepo(gitCwd) ? git.getRemoteUrl(gitCwd, 'origin') : null; } catch { remote = null; }
   let mergeInProgress = false;
-  try { mergeInProgress = git.isGitRepo(gitCwd) && git.hasMergeHead(gitCwd); } catch { mergeInProgress = false; }
+  if (mode === 'separate') {
+    const ownRoot = isOwnRepoRoot(contextRoot);
+    try { remote = ownRoot ? git.getRemoteUrl(contextRoot, 'origin') : null; } catch { remote = null; }
+    remote = remote ?? config?.brainRepo?.remote ?? null;
+    try { mergeInProgress = ownRoot && git.hasMergeHead(contextRoot); } catch { mergeInProgress = false; }
+  }
+  let codeOrigin: string | null = null;
+  try { codeOrigin = git.isGitRepo(projectRoot) ? git.getRemoteUrl(projectRoot, 'origin') : null; } catch { codeOrigin = null; }
 
   sendJson(res, 200, {
     enabled: enabled.enabled,
@@ -65,6 +79,7 @@ export async function handleBrainStatus(
     mode,
     remote,
     hasRemote: !!remote,
+    codeOrigin,
     mergeInProgress,
     pendingAgentMerge: !!local.pendingAgentMerge,
     pulledUpdates: local.pulledUpdates ?? 0,
@@ -212,6 +227,55 @@ export async function handleBrainAttach(
     return;
   }
   updateSetupConfig(projectRoot, { brainRepo: { mode: 'separate', remote: url, autoSync: true, enabled: true } });
+
+  // Empty-remote bootstrap (best-effort — attach itself already succeeded):
+  // a freshly created repo has NO refs, so every later fetch-first sync would
+  // find nothing to pull and the repo would sit empty until an auto/push-only
+  // sync. Give it its scrubbed first commit + push right here, the same
+  // primitive Create uses. An existing brain repo (branch present) is left
+  // for the first `brain sync` to pull/merge — attach never merges (S6).
+  let bootstrap: 'pushed' | 'blocked-scrub' | 'skipped' | undefined;
+  const token = resolveBrainSyncToken(projectRoot);
+  if (token || !/^https?:\/\//i.test(url)) {
+    try {
+      const empty = await withGitCredentials(token?.token ?? '', async (env) =>
+        !git.remoteBranchExists(contextRoot, 'origin', 'main', env));
+      if (empty) {
+        const boot = await bootstrapBrainRepo({ contextRoot, projectRoot, remote: url, taskBackend: config?.taskBackend });
+        bootstrap = boot.blocked ? 'blocked-scrub' : 'pushed';
+      }
+    } catch {
+      bootstrap = 'skipped'; // unreachable remote / push failure — the next brain sync reports it loudly
+    }
+  }
+  sendJson(res, 200, { ok: true, bootstrap });
+}
+
+// ─── POST /api/brain/disconnect ──────────────────────────────────────────────
+
+export async function handleBrainDisconnect(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  if (!gate(res)) return;
+  const projectRoot = dirname(contextRoot);
+  const config = readSetupConfig(projectRoot);
+  const mode = resolveMode(config);
+  // Drop the brain repo's own origin — only when `_dream_context/` is its own
+  // repo root. The enclosing code repo's remotes are NEVER touched.
+  if (mode === 'separate' && isOwnRepoRoot(contextRoot)) {
+    try {
+      if (git.getRemoteUrl(contextRoot, 'origin')) git.removeRemote(contextRoot, 'origin');
+    } catch (err) {
+      sendError(res, 502, 'disconnect_failed', (err as Error).message);
+      return;
+    }
+  }
+  // Replace brainRepo wholesale: keep the mode, drop remote/autoSync, and pin
+  // enabled:false so the derived default can't silently re-enable sync.
+  updateSetupConfig(projectRoot, { brainRepo: { mode, enabled: false } });
   sendJson(res, 200, { ok: true });
 }
 

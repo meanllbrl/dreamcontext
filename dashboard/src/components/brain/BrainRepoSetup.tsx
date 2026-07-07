@@ -7,6 +7,7 @@ import {
   useCreateBrainRepo,
   useAttachPreview,
   useAttachBrainRepo,
+  useDisconnectBrainRepo,
   type ScrubBlock,
 } from '../../hooks/useBrainStatus';
 import './BrainRepoSetup.css';
@@ -39,6 +40,19 @@ export function BrainRepoSetup({ disabled }: { disabled?: boolean }) {
 
   const [tab, setTab] = useState<SetupTab>('create');
 
+  // ─── Disconnect ───────────────────────────────────────────────────────────
+  const disconnect = useDisconnectBrainRepo();
+  const [disconnectError, setDisconnectError] = useState<string | null>(null);
+
+  const handleDisconnect = async () => {
+    setDisconnectError(null);
+    try {
+      await disconnect.mutateAsync();
+    } catch (err) {
+      setDisconnectError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
   // ─── Create ───────────────────────────────────────────────────────────────
   const createRepo = useCreateBrainRepo();
   const [name, setName] = useState('');
@@ -50,6 +64,17 @@ export function BrainRepoSetup({ disabled }: { disabled?: boolean }) {
   const handleCreate = async () => {
     setCreateError(null);
     setCreateBlocked(null);
+    // Validate on click so the button never sits silently disabled — the
+    // placeholder in the name field reads like a value, and a dead button with
+    // no message is exactly the trap this replaces.
+    if (!name.trim()) {
+      setCreateError(t('brain.create.nameRequired'));
+      return;
+    }
+    if (makePublic && !publicConfirmed) {
+      setCreateError(t('brain.create.confirmPublicFirst'));
+      return;
+    }
     try {
       const result = await createRepo.mutateAsync({
         name: name.trim(),
@@ -97,6 +122,11 @@ export function BrainRepoSetup({ disabled }: { disabled?: boolean }) {
         setAttachError(result.reason ?? t('brain.attach.refused'));
         return;
       }
+      // Attach succeeded; surface a blocked first push so the user knows their
+      // memory has NOT reached the cloud yet.
+      if (result.bootstrap === 'blocked-scrub') {
+        setAttachError(t('brain.attach.bootstrapBlocked'));
+      }
       setAttachUrl('');
       setTrustConfirmed(false);
     } catch (err) {
@@ -111,11 +141,29 @@ export function BrainRepoSetup({ disabled }: { disabled?: boolean }) {
       {!signedIn && (
         <p className="settings-field-hint">{t('brain.setup.signInFirst')}</p>
       )}
-      {brainStatus?.hasRemote && (
-        <p className="brain-setup-already">
-          ✓ {t('brain.setup.alreadyConnected')} <code>{brainStatus.remote}</code>
+      {brainStatus?.hasRemote ? (
+        <div className="brain-setup-connected">
+          <p className="brain-setup-already">
+            ✓ {t('brain.setup.alreadyConnected')} <code>{brainStatus.remote}</code>
+          </p>
+          <p className="settings-field-hint">{t('brain.setup.switchHint')}</p>
+          <button
+            type="button"
+            className="btn btn--ghost"
+            onClick={handleDisconnect}
+            disabled={controlsDisabled || disconnect.isPending}
+          >
+            {disconnect.isPending ? t('brain.setup.disconnecting') : t('brain.setup.disconnect')}
+          </button>
+          {disconnectError && <p className="settings-test-err">✗ {disconnectError}</p>}
+        </div>
+      ) : brainStatus ? (
+        <p className="settings-field-hint">
+          {brainStatus.codeOrigin
+            ? t('brain.setup.inTree').replace('{origin}', brainStatus.codeOrigin)
+            : t('brain.setup.notConnected')}
         </p>
-      )}
+      ) : null}
 
       <div className="brain-setup-tabs" role="tablist">
         {(['create', 'discover', 'attach'] as SetupTab[]).map((id) => (
@@ -174,7 +222,7 @@ export function BrainRepoSetup({ disabled }: { disabled?: boolean }) {
             type="button"
             className="btn btn--primary"
             onClick={handleCreate}
-            disabled={controlsDisabled || createRepo.isPending || !name.trim() || (makePublic && !publicConfirmed)}
+            disabled={controlsDisabled || createRepo.isPending}
           >
             {createRepo.isPending ? t('brain.create.creating') : t('brain.create.submit')}
           </button>

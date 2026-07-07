@@ -246,7 +246,16 @@ export function createSession(bypass: boolean, notify: () => void, claudeId: str
   // re-validates the token before it ever reaches the shell command, so this is a hint.
   const modelParam = !isShell && model ? `&model=${encodeURIComponent(model)}` : '';
   const bypassParam = isShell ? '0' : (bypass ? '1' : '0');
-  const url = `${proto}://${location.host}/api/agent/terminal?vault=${encodeURIComponent(vault ?? '')}&bypass=${bypassParam}&theme=${theme}${idParam}${kindParam}${modelParam}`;
+  // An AUTO-SUBMIT initial prompt (the Sleep consolidation) is handed to the SERVER, which
+  // passes it to `claude` as a positional arg so the TUI boots with it already submitted —
+  // race-free. The old path typed it into the readline after a boot-settle heuristic, which
+  // dropped the message when a slow boot (e.g. "MCP servers need authentication") opened a
+  // quiet gap before the prompt was ready. The type-WITHOUT-submit case (a composer skill/file
+  // insert, `submitInitial=false`) still injects client-side below — the server can't leave a
+  // line unsubmitted.
+  const serverSubmitsPrompt = !isShell && submitInitial && !!initialPrompt;
+  const promptParam = serverSubmitsPrompt ? `&prompt=${encodeURIComponent(initialPrompt)}` : '';
+  const url = `${proto}://${location.host}/api/agent/terminal?vault=${encodeURIComponent(vault ?? '')}&bypass=${bypassParam}&theme=${theme}${idParam}${kindParam}${modelParam}${promptParam}`;
   const ws = new WebSocket(url);
 
   const session: Session = {
@@ -327,28 +336,27 @@ export function createSession(bypass: boolean, notify: () => void, claudeId: str
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data }));
   };
 
-  // ── Auto-run an initial prompt (e.g. the "Run sleep agent" consolidation) ──────────
-  // A spawned session that carries an `initialPrompt` types it in and submits ONCE, the
-  // moment Claude Code's TUI has finished drawing its boot frame and gone quiet. We can't
-  // type into the readline until it exists, and there's no clean "ready" signal — so we
-  // wait for the boot output to SETTLE: every chunk resets a short timer, and when the
-  // stream pauses (the TUI is idle at its prompt) we send the text, then Enter a beat later
-  // so the readline registers the whole line before submit. `initialPrompt` is a single
-  // line (a bare newline would submit early), so this drops it in as one message. Fires at
-  // most once (`promptSent`), so the long autonomous run that follows never re-triggers it.
+  // ── Type an initial prompt WITHOUT submitting (composer skill/file insert) ─────────
+  // Only the type-without-submit case runs here now: a spawned session pre-typed with a
+  // composer skill trigger (e.g. `/council `) that the USER finishes. The AUTO-SUBMIT case
+  // (the Sleep consolidation) is handled server-side — `claude` gets the prompt as a
+  // positional arg (see `serverSubmitsPrompt` above), which boots the TUI with it already
+  // submitted, so it never depends on this boot-settle heuristic (which dropped the message
+  // when a slow boot opened a quiet gap before the readline was ready). We still wait for the
+  // boot output to SETTLE — every chunk resets a short timer — then drop the text in as one
+  // line the moment the stream pauses. Fires at most once (`promptSent`).
   let promptSent = false;
   let bootTimer: ReturnType<typeof setTimeout> | undefined;
   function armInitialPrompt() {
-    if (!initialPrompt || promptSent) return;
+    if (!initialPrompt || promptSent || serverSubmitsPrompt) return;
     if (bootTimer) clearTimeout(bootTimer);
     bootTimer = setTimeout(() => {
       bootTimer = undefined;
       if (promptSent || ws.readyState !== WebSocket.OPEN) return;
       promptSent = true;
+      // Type the text but leave the line UNSUBMITTED so the user finishes it (the only case
+      // that reaches here — the auto-submit path is served server-side; see the comment above).
       sendInput(initialPrompt);
-      // Auto-submit only when asked (the autonomous Sleep run). A composer skill/file insert
-      // types the text but leaves the line unsubmitted so the user can finish it themselves.
-      if (submitInitial) setTimeout(() => sendInput('\r'), 160);
     }, 1600);
   }
 

@@ -53,6 +53,7 @@ describe('git-sync/sync-engine — authorFor person tier (C3)', () => {
       ...git,
       isGitRepo: () => true,
       hasMergeHead: () => false,
+      remoteBranchExists: () => false,
       hasGitIdentity: () => identity,
       statusPorcelainTracked: () => ['knowledge/x.md'],
       stageAll: () => {},

@@ -823,7 +823,17 @@
 /* When split (≥2 panes), make the action-focused pane unmistakable — a full accent
    ring + top bar — and gently recede the inactive panes, so "the session I'm in" reads
    at a glance (⌘D/⌘T/＋ and drops act on it). A lone pane needs no such marker. */
-.agent-panes.split > .agent-pane.active {
+.agent-panes.split > .agent-pane.active::after {
+  /* The ring is an OVERLAY (::after above the children), not a box-shadow on the pane:
+     an inset shadow paints under the opaque composer strip and tab bar, so the frame
+     visibly stopped short of the bottom bar — the ring must wrap terminal + status
+     line as ONE surface. z-index 5: above the composer (2) and slot, below the
+     drag droplayer (6) and tab bars (7). */
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
   box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--color-accent) 55%, transparent);
 }
 .agent-panes.split > .agent-pane.active::before {
@@ -1255,11 +1265,13 @@
   .agent-pane-ended { animation: none !important; }
 }
 
-/* ── Bottom composer strip ──────────────────────────────────────────────────────────
-   A deliberately THIN single-row bar at the foot of the expanded overlay: attach files,
-   insert one of our signature skills, pick the model + thinking effort, and send to the
-   focused (or a fresh) session. `flex: 0 0 auto` overrides the `.agent-surface > *`
-   grow rule so it stays a slim strip, not a growing pane. */
+/* ── Bottom composer strip — styled as the terminal's OWN status line ────────────────
+   NOT a toolbar: it must read as one more row of the Claude Code TUI. Same canvas
+   (`--color-bg`, exactly the xterm background — no divider, no tint), same JetBrains
+   Mono at the terminal's 14.5px × --zoom, same 20px left gutter as `.xterm`, dim
+   hint-line ink with `·` separators — mirroring Claude Code's own
+   "⏵⏵ bypass permissions on (shift+tab to cycle)" row, except clickable.
+   `flex: 0 0 auto` overrides the `.agent-surface > *` grow rule so it stays one row. */
 .agent-composer {
   flex: 0 0 auto;
   width: 100%;
@@ -1267,50 +1279,82 @@
   min-height: 0;
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  height: 40px;
-  padding: 0 var(--space-2);
-  border-top: 1px solid var(--color-border);
-  background: linear-gradient(0deg, color-mix(in srgb, var(--color-accent) 5%, var(--color-bg)), var(--color-bg));
+  gap: 2px;
+  height: 38px;
+  padding: 0 14px 4px; /* .xterm gutter is 20px; buttons carry 6px side padding → text lands on the grid column */
+  background: var(--color-bg);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: calc(14.5px * var(--zoom, 1)); /* BASE_FONT × zoom — identical to the xterm cells */
+  letter-spacing: normal;
+  /* Terminal ink, mirroring agentSession's readXtermTheme(): --term-fg is the theme's
+     softened foreground; --term-dim is the hint-line dim derived the same way xterm's
+     dim text reads against the canvas. */
+  --term-fg: #33383f;
+  --term-dim: color-mix(in srgb, var(--term-fg) 58%, var(--color-bg));
   /* MUST stay `overflow: visible`: the model/effort/skills popovers are descendants and
-     open UPWARD (above this 40px bar), so clipping here would hide them entirely. Horizontal
+     open UPWARD (above this bar), so clipping here would hide them entirely. Horizontal
      spill is instead handled by the flex min-width/shrink + the container queries below, and
      the pane's own `overflow: hidden` clips anything past its edge. Lift it above the
      terminal slot so the upward popovers paint over the xterm, not behind it. */
   position: relative;
   z-index: 2;
 }
+[data-theme='dark'] .agent-composer { --term-fg: #cdd3de; }
 
-/* Files / Skills trigger buttons */
+/* While the minimized-sessions dock floats over the overlay (z-25, fixed bottom-right),
+   its anchor chip sits exactly on the corner pane's composer row. Reserve that corner in
+   the LAST pane (the one touching the bottom-right) so the model/effort pickers never
+   hide under the chip: 20px dock offset + ~104px anchor + breathing room. */
+.agent-surface[data-dock-floating] .agent-panes .agent-pane:last-child .agent-composer {
+  padding-right: 132px;
+}
+
+/* Files / Skills trigger buttons — plain terminal words, no widget chrome. */
 .agent-composer-btn {
   flex: 0 1 auto;
   min-width: 0;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 7px;
   height: 26px;
-  padding: 0 10px;
-  font-size: 12px;
-  color: var(--color-text-secondary);
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  padding: 0 6px;
+  font: inherit; /* buttons don't inherit font by default — force the terminal's */
+  letter-spacing: normal;
+  color: var(--term-dim);
+  background: transparent;
+  border: none;
+  border-radius: 5px;
   cursor: pointer;
   white-space: nowrap;
-  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+  transition: background var(--transition-fast), color var(--transition-fast);
 }
-.agent-composer-btn:hover:not(:disabled) { color: var(--color-text); background: var(--color-bg-tertiary); border-color: var(--color-border-hover); }
-.agent-composer-btn.open { color: var(--color-accent); border-color: color-mix(in srgb, var(--color-accent) 45%, transparent); background: var(--color-accent-soft); }
+.agent-composer-btn:hover:not(:disabled) { color: var(--term-fg); background: color-mix(in srgb, var(--term-fg) 8%, transparent); }
+.agent-composer-btn.open { color: var(--color-accent); background: color-mix(in srgb, var(--color-accent) 12%, transparent); }
 .agent-composer-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-.agent-composer-btn:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--color-accent-soft); }
-.agent-composer-btn-label { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.agent-composer-caret { font-size: 9px; opacity: 0.7; flex: 0 0 auto; }
+.agent-composer-btn:focus-visible { outline: none; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 55%, transparent); }
+.agent-composer-btn-label { text-transform: lowercase; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.agent-composer-caret { font-size: 0.62em; opacity: 0.55; flex: 0 0 auto; }
+/* Leading glyphs (@ ✦ ⬡ ▚) in accent — the way Claude Code's own ⏵⏵ prefix is.
+   ⬡ = model (a chip/module unit) · ▚ = reasoning effort (a partial-fill level). */
+.agent-composer-glyph {
+  color: var(--color-accent);
+  flex: 0 0 auto;
+  /* ⬡ (U+2B21) isn't in every mono face — JetBrains Mono here is user-installed, not
+     self-hosted, and Menlo lacks it — so it can arrive from a system-symbol fallback whose
+     metrics differ from the mono grid. Pin a centered 1ch box so @ / ✦ / ⬡ / ▚ stay aligned. */
+  display: inline-flex;
+  justify-content: center;
+  min-width: 1ch;
+}
+/* The `·` between segments, exactly like the TUI hint line's separators. */
+.agent-composer-sep { flex: 0 0 auto; color: var(--term-dim); opacity: 0.65; padding: 0 3px; user-select: none; }
 
 /* Pushes the model/effort pickers to the right edge (no text field lives here — the
    terminal's own input line is the text field). */
 .agent-composer-spacer { flex: 1 1 auto; min-width: 4px; }
 
-/* Live context-window + cost readout (this agent's own, polled from its transcript). */
+/* Live context-window + cost readout (this agent's own, polled from its transcript).
+   Inherits the bar's terminal font/size so it reads as status-line text. */
 .agent-composer-stats {
   flex: 0 1 auto;
   min-width: 0;
@@ -1318,9 +1362,7 @@
   align-items: center;
   gap: 8px;
   padding: 0 2px;
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  color: var(--color-text-secondary);
+  color: var(--term-dim);
   white-space: nowrap;
   overflow: hidden;
   cursor: default;
@@ -1339,46 +1381,54 @@
 .agent-composer-stat[data-hot="true"] { color: var(--color-warning); }
 .agent-composer-stat[data-hot="true"] .agent-composer-stat-dim { color: color-mix(in srgb, var(--color-warning) 60%, transparent); }
 
-/* Model / effort selects */
+/* Model / effort selects — same terminal-word treatment as the trigger buttons. */
 .agent-composer-select {
   flex: 0 1 auto;
   min-width: 0;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   height: 26px;
-  max-width: 150px;
-  padding: 0 9px;
-  font-size: 12px;
-  color: var(--color-text-secondary);
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  max-width: 170px;
+  padding: 0 6px;
+  font: inherit;
+  letter-spacing: normal;
+  color: var(--term-dim);
+  background: transparent;
+  border: none;
+  border-radius: 5px;
   cursor: pointer;
-  transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+  transition: background var(--transition-fast), color var(--transition-fast);
 }
-.agent-composer-select:hover:not(:disabled) { color: var(--color-text); background: var(--color-bg-tertiary); border-color: var(--color-border-hover); }
-.agent-composer-select.open { color: var(--color-accent); border-color: color-mix(in srgb, var(--color-accent) 45%, transparent); }
+.agent-composer-select:hover:not(:disabled) { color: var(--term-fg); background: color-mix(in srgb, var(--term-fg) 8%, transparent); }
+.agent-composer-select.open { color: var(--color-accent); background: color-mix(in srgb, var(--color-accent) 12%, transparent); }
 .agent-composer-select:disabled { opacity: 0.4; cursor: not-allowed; }
-.agent-composer-select:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--color-accent-soft); }
-.agent-composer-select-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.agent-composer-select:focus-visible { outline: none; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 55%, transparent); }
+.agent-composer-select-label { text-transform: lowercase; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 
 /* Popover shell (shared by Skills / Model / Effort) — shrinkable so the strip degrades
    instead of clipping when the pane is narrow. */
 .agent-composer-pop { position: relative; flex: 0 1 auto; min-width: 0; display: inline-flex; }
+/* The menu portals to <body> (panes clip + contain fixed descendants, so it can't live
+   in-pane). left/bottom/max-height are set by the Popover's layout effect, clamped to the
+   viewport — it can never run off-screen, even from the rightmost pane of a 4-split. */
 .agent-composer-menu {
-  position: absolute;
-  bottom: calc(100% + 6px);
-  z-index: 30;
-  min-width: 180px;
-  padding: 6px;
-  background: var(--color-bg-elevated, var(--color-bg-secondary));
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg, 12px);
+  position: fixed;
+  z-index: 60; /* above the overlay (20), floating dock (25) and dialogs (40) */
+  min-width: 200px;
+  padding: 7px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  /* Styled as one of Claude Code's TUI boxes: the terminal canvas with a rounded
+     accent border (the way the CLI draws its /model and permission dialogs). */
+  font-family: var(--font-mono, ui-monospace, monospace);
+  background: var(--color-bg);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 50%, transparent);
+  border-radius: 8px;
   box-shadow: 0 14px 40px -12px rgba(0, 0, 0, 0.45);
 }
-.agent-composer-menu.align-left { left: 0; }
-.agent-composer-menu.align-right { right: 0; }
+/* Buttons never inherit font — force the menu's terminal face onto every row/chip. */
+.agent-composer-menu button { font-family: inherit; letter-spacing: normal; }
 
 /* ── Composer responsiveness (per-pane, via the `.agent-pane` size container) ──────────
    As a pane narrows we degrade the strip in stages so it always fits and never clips:
@@ -1390,22 +1440,35 @@
   .agent-composer-stat-dim { display: none; }
 }
 @container agentpane (max-width: 500px) {
-  .agent-composer { gap: 6px; padding: 0 8px; }
-  .agent-composer-btn { padding: 0 8px; }
+  .agent-composer { padding: 0 8px 4px; }
   .agent-composer-btn-label { display: none; }
 }
 @container agentpane (max-width: 420px) {
-  /* Very tight (3–4 splits): the model/effort selects are the priority — hide the readout. */
-  .agent-composer-stats { display: none; }
+  /* Very tight (3–4 splits): the model/effort selects are the priority — hide the
+     readout AND the `·` that trails it (an orphan dot otherwise). */
+  .agent-composer-stats,
+  .agent-composer-stats + .agent-composer-sep { display: none; }
 }
 @container agentpane (max-width: 360px) {
-  .agent-composer { gap: 5px; padding: 0 6px; }
-  .agent-composer-select { max-width: 96px; padding: 0 7px; gap: 4px; }
+  .agent-composer { padding: 0 5px 4px; }
+  .agent-composer-sep { padding: 0 1px; }
+  .agent-composer-select { max-width: 96px; gap: 4px; }
   .agent-composer-select .agent-composer-caret { display: none; }
 }
 
-/* Skills popover contents */
-.agent-skill-list { display: flex; flex-direction: column; gap: 8px; }
+/* Skills popover contents — a two-pane "skill browser": grouped chips on the left, a live
+   "what it is / how it works" detail card on the right that follows hover/focus. */
+.agent-skill-browser {
+  display: flex;
+  gap: 12px;
+  width: min(500px, calc(100vw - 32px));
+  /* FIXED height, not min-height: the menu is bottom-anchored and grows upward, so any
+     resize moves the chip column under the cursor → the hover target changes → the detail
+     (and height) changes again — a flicker loop. A constant height means hover can never
+     resize the popover; a detail card taller than this scrolls inside itself instead. */
+  height: 470px;
+}
+.agent-skill-list { display: flex; flex-direction: column; gap: 8px; flex: 0 0 132px; overflow-y: auto; }
 .agent-skill-group { display: flex; flex-direction: column; gap: 5px; }
 .agent-skill-group-label { font-size: 10px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--color-text-tertiary); padding: 0 2px; }
 .agent-skill-chips { display: flex; flex-wrap: wrap; gap: 5px; }
@@ -1417,14 +1480,94 @@
   color: var(--color-text-secondary);
   background: var(--color-bg-tertiary);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-full);
+  border-radius: 6px;
   cursor: pointer;
   transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
 }
 .agent-skill-chip:hover { color: var(--color-accent); background: var(--color-accent-soft); border-color: color-mix(in srgb, var(--color-accent) 45%, transparent); }
 .agent-skill-chip:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--color-accent-soft); }
+/* The chip whose detail is currently showing in the right pane. */
+.agent-skill-chip.on { color: var(--color-accent); background: var(--color-accent-soft); border-color: color-mix(in srgb, var(--color-accent) 55%, transparent); }
 
-/* Model / effort popover rows */
+/* Detail card — spells out WHAT the hovered skill is and HOW it works. Scrolls internally
+   when a card outgrows the browser's fixed height (never resizes the popover). */
+.agent-skill-detail {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 10px 12px;
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 10px);
+}
+.agent-skill-detail-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.agent-skill-detail-title { font-size: 13px; font-weight: 700; color: var(--color-text-primary); }
+.agent-skill-detail-trigger {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
+  border-radius: var(--radius-sm, 6px);
+  padding: 1px 6px;
+}
+.agent-skill-detail-what { font-size: 12px; line-height: 1.5; color: var(--color-text-secondary); margin: 0; }
+.agent-skill-detail-h {
+  font-size: 10px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--color-text-tertiary); margin-top: 2px;
+}
+.agent-skill-detail-flow { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+.agent-skill-detail-flow li {
+  display: flex; gap: 8px; align-items: flex-start;
+  font-size: 12px; line-height: 1.45; color: var(--color-text-secondary);
+}
+.agent-skill-detail-step-n {
+  flex: 0 0 auto;
+  width: 16px; height: 16px; margin-top: 1px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 10px; font-weight: 700; font-variant-numeric: tabular-nums;
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
+  border-radius: var(--radius-full);
+}
+.agent-skill-detail-agents { display: flex; flex-wrap: wrap; gap: 4px; }
+.agent-skill-detail-agent {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10.5px;
+  color: var(--color-text-tertiary);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 6px);
+  padding: 1px 6px;
+}
+.agent-skill-detail-foot {
+  font-size: 11px; line-height: 1.45; color: var(--color-text-tertiary);
+  /* margin-top:auto pins the foot to the card's bottom edge when a short card leaves
+     spare room (the card no longer shrinks to fit — the browser height is fixed). */
+  margin: auto 0 0; padding-top: 7px;
+  border-top: 1px solid var(--color-border);
+}
+.agent-skill-detail-foot code {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10.5px; color: var(--color-text-secondary);
+}
+
+/* Narrow WINDOWS: stack the detail under the chips. (The menu portals to <body>, so pane
+   container queries no longer apply to it — only the viewport can make it tight.) */
+@media (max-width: 620px) {
+  /* Same fixed-height rule as the two-pane layout (hover must never resize the menu),
+     just clamped harder since short windows are likelier here. Chips keep their natural
+     height (scrolling if they must); the detail card takes the rest and scrolls inside. */
+  .agent-skill-browser { flex-direction: column; width: min(300px, calc(100vw - 32px)); height: min(470px, calc(100vh - 96px)); }
+  .agent-skill-list { flex: 0 1 auto; }
+  .agent-skill-detail { min-height: 120px; }
+}
+
+/* Model / effort popover rows — the CLI's /model list: a `❯` caret marks the current
+   choice, every row reserves the caret column so labels stay grid-aligned. */
 .agent-model-list { display: flex; flex-direction: column; gap: 2px; }
 .agent-model-provider { display: flex; flex-direction: column; gap: 2px; padding-bottom: 4px; }
 .agent-model-provider + .agent-model-provider { border-top: 1px solid var(--color-border); padding-top: 4px; }
@@ -1437,17 +1580,18 @@
   padding: 6px 8px;
   font-size: 13px;
   text-align: left;
-  color: var(--color-text);
+  color: var(--color-text-secondary);
   background: transparent;
   border: none;
-  border-radius: var(--radius-md);
+  border-radius: 5px;
   cursor: pointer;
-  transition: background var(--transition-fast);
+  transition: background var(--transition-fast), color var(--transition-fast);
 }
-.agent-model-row:hover:not(:disabled) { background: var(--color-bg-tertiary); }
-.agent-model-row:focus-visible { outline: none; background: var(--color-accent-soft); }
-.agent-model-row.on { color: var(--color-accent); font-weight: 600; }
-.agent-model-row.on::after { content: '✓'; margin-left: auto; font-size: 12px; }
+.agent-model-row::before { content: ''; width: 1ch; flex: 0 0 auto; }
+.agent-model-row:hover:not(:disabled) { color: var(--color-text); background: color-mix(in srgb, var(--color-accent) 12%, transparent); }
+.agent-model-row:focus-visible { outline: none; background: color-mix(in srgb, var(--color-accent) 16%, transparent); }
+.agent-model-row.on { color: var(--color-accent); }
+.agent-model-row.on::before { content: '❯'; }
 .agent-model-row:disabled { color: var(--color-text-tertiary); cursor: default; }
 .agent-model-row-label { flex: 0 1 auto; }
 .agent-model-row-tag {

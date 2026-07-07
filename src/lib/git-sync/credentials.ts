@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, unlinkSync, writeFileSync } from 'node:fs';
+import { accessSync, chmodSync, constants, existsSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -27,7 +27,22 @@ export function resolveAskpassPath(): string {
     join(here, 'git-sync', 'askpass.cjs'),
   ];
   for (const c of candidates) {
-    if (existsSync(c)) return c;
+    if (!existsSync(c)) continue;
+    // SELF-HEAL: git execs GIT_ASKPASS directly, so a helper that lost its
+    // executable bit (a build/copy that preserved a 644 source mode, an
+    // extraction that stripped modes) fails every authenticated git call with
+    // a bare "Permission denied". Repair it here rather than error out.
+    try {
+      accessSync(c, constants.X_OK);
+    } catch {
+      try {
+        chmodSync(c, 0o755);
+      } catch {
+        /* read-only install (e.g. a signed .app bundle owned by another user) —
+           leave it; git will surface the permission error as before. */
+      }
+    }
+    return c;
   }
   throw new Error('askpass.cjs not found — the dreamcontext installation may be corrupt or incomplete.');
 }

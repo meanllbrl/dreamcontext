@@ -25,6 +25,7 @@ import { RUN_SLEEP_AGENT_EVENT, SLEEP_AGENT_TITLE, SLEEP_AGENT_PROMPT } from '..
 import { PaneComposer } from './PaneComposer';
 import { quotePath, FALLBACK_MODEL_CONFIG } from '../../lib/agentComposer';
 import { useAgentModelConfig } from '../../hooks/useAgentCapabilities';
+import { useServerHealth } from '../../hooks/useServerHealth';
 import { pickFiles } from '../../lib/desktop';
 
 /**
@@ -202,10 +203,21 @@ export function AgentSurface() {
   // True once the saved roster has been fetched (or the fetch failed/was empty). Gates
   // the persist effect so a pre-hydrate render can't PUT [] and clobber the saved names.
   const hydratedRef = useRef(false);
-  // Auto-title bookkeeping: session ids we've already handled (titled or deliberately
-  // skipped) so Haiku is asked at most ONCE per session, and the prior busy state per
-  // session so we can fire on the first busy→idle edge (the first turn completing).
+  // Auto-title bookkeeping. `autoTitledRef` holds session ids that are DONE — either
+  // successfully named or permanently ineligible (user-renamed / dormant) — so we never
+  // ask again. `titleInFlightRef` holds ids with a Haiku call currently outstanding, so a
+  // second busy→idle edge doesn't fire a duplicate concurrent request. Crucially, a call
+  // that comes back empty (transcript/message not flushed yet, e.g. an INTERRUPTED first
+  // turn) does NOT mark the id done — it stays retryable, so the tab you actually worked on
+  // still gets named on its next completed turn instead of silently losing the race.
+  // `busyPrevRef` is the prior busy state per session, so we fire on the busy→idle edge.
   const autoTitledRef = useRef<Set<string>>(new Set());
+  const titleInFlightRef = useRef<Set<string>>(new Set());
+  // Attempts per session id — the retry BUDGET. "Empty response stays retryable" must
+  // not mean retry FOREVER: a persistently failing title call (unauthenticated CLI,
+  // offline) would otherwise spawn a fresh headless Haiku `claude` on every completed
+  // turn of every default-named tab. After the budget, the default name is final.
+  const titleAttemptsRef = useRef<Map<string, number>>(new Map());
   const busyPrevRef = useRef<Map<string, boolean>>(new Map());
 
   const started = sessionList.length > 0;
@@ -453,6 +465,16 @@ export function AgentSurface() {
   // prerequisites (desktop + node-pty + claude CLI) and on the surface being enabled; a
   // second request while a live Sleep session already exists just brings that one forward
   // instead of spawning a duplicate consolidation.
+  // Version handshake (the same shared query as App's StaleServerBanner). The auto-submit
+  // sleep prompt rides the WS `&prompt=` param, which only THIS server build understands —
+  // against a stale server (pre-drift-watch, or the ≤30s upgrade window) neither side
+  // would submit it and the sleep would silently no-op. Not-current (including health not
+  // loaded yet / errored — the policy lives in useServerHealth) → degrade to the
+  // type-without-submit path: the prompt lands visibly in the readline and the user
+  // presses Enter. Degrading works against ANY server; assuming "current" against a
+  // genuinely stale one drops the prompt with no fallback armed.
+  const { serverCurrent } = useServerHealth();
+
   const runSleepAgent = useCallback(() => {
     if (!(caps?.desktop && caps.embeddedTerminal && caps.claudeCli) || !agentSettings.enabled) return;
     const existing = sessionList.find((m) => !m.dormant && m.title === SLEEP_AGENT_TITLE);
@@ -475,12 +497,12 @@ export function AgentSurface() {
       }
       return;
     }
-    const s = spawn(bypass, undefined, false, 'agent', SLEEP_AGENT_PROMPT);
+    const s = spawn(bypass, undefined, false, 'agent', SLEEP_AGENT_PROMPT, '', serverCurrent);
     setSessionList((prev) => [...prev, { id: s.id, title: SLEEP_AGENT_TITLE, kind: 'agent', bypass: s.bypass, claudeId: s.claudeId }]);
     const pid = nextPaneId();
     setPanes((prev) => [...prev, { id: pid, tabs: [s.id], active: s.id }]);
     setActivePaneId(pid);
-  }, [caps, agentSettings.enabled, sessionList, spawn, bypass, focusSession]);
+  }, [caps, agentSettings.enabled, sessionList, spawn, bypass, focusSession, serverCurrent]);
 
   useEffect(() => {
     const onRun = () => runSleepAgent();
@@ -769,17 +791,23 @@ export function AgentSurface() {
   // pure CSS layout change: the surface widens with no window resize event, so a
   // window-only listener would leave the xterm on its stale column count and clip text.
   // Split widths, window resize, and sidebar toggle all funnel through this one observer.
+  //
+  // Fit only after the size SETTLES, never per event: the sidebar animates width for
+  // 240ms (--transition-normal), so the observer fires every frame and a per-frame
+  // fit reflows every xterm grid mid-animation — the visible frame-by-frame judder.
+  // Each event resets the timer, so a continuous animation (sidebar toggle, window
+  // drag) yields exactly one fit after its final frame.
   useEffect(() => {
     if (!expanded) return;
     const host = hostRef.current;
     if (!host || typeof ResizeObserver === 'undefined') return;
-    let raf = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const ro = new ResizeObserver(() => {
-      cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(() => fitVisible());
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => { timer = undefined; fitVisible(); }, 150);
     });
     ro.observe(host);
-    return () => { ro.disconnect(); cancelAnimationFrame(raf); };
+    return () => { ro.disconnect(); if (timer) clearTimeout(timer); };
   }, [expanded, fitVisible]);
 
   // ── Esc collapses the overlay — but ONLY when focus is outside the terminal, so it
@@ -794,6 +822,9 @@ export function AgentSurface() {
       if (ae?.closest('.agent-pane-slot')) return;   // Claude's TUI owns Esc
       if (ae?.closest('.command-palette')) return;    // the palette owns Esc
       if (ae?.closest('.agent-composer')) return;     // the composer field owns Esc (don't discard a draft)
+      // The composer's popover menus portal to <body> (outside .agent-composer), so a
+      // focused skill chip / model row must also own Esc — close the menu, not the overlay.
+      if (ae?.closest('.agent-composer-menu')) return;
       e.preventDefault();
       setExpanded(false);
     };
@@ -841,36 +872,55 @@ export function AgentSurface() {
   }, [agentSettings.enabled, expanded]);
 
   // ── Auto-title: name a tab from its first user message (Settings → Agents) ────────
-  // Fires when a live AGENT session completes its FIRST turn (a busy→idle edge), which
-  // is exactly when Claude Code has written the opening user message to its transcript.
-  // The server reads that message and returns a Haiku-generated title; we apply it ONLY
-  // if the tab still carries its default "Agent N" name (a tab you renamed is never
-  // overwritten). Guarded to run once per session, so it costs one Haiku call per tab.
+  // Fires when a live AGENT session completes a turn (a busy→idle edge). The server reads
+  // that session's first user message from its transcript and returns a Haiku-generated
+  // title; we apply it ONLY if the tab still carries its default "Agent N" name (a tab you
+  // renamed is never overwritten). It settles to at most ONE successful Haiku call per tab,
+  // but a call that finds nothing yet (an interrupted or not-yet-flushed first turn) leaves
+  // the tab RETRYABLE — so the tab you actually worked on gets named on its next completed
+  // turn, instead of permanently losing its title to a slower, older tab's late rename.
   useEffect(() => {
     if (!agentSettings.enabled || !agentSettings.autoTitle) return;
     sessions.current.forEach((s, id) => {
       const wasBusy = busyPrevRef.current.get(id) ?? false;
       busyPrevRef.current.set(id, s.busy);
-      if (!(wasBusy && !s.busy)) return;          // only on the first-turn-complete edge
-      if (s.kind !== 'agent' || autoTitledRef.current.has(id)) return;
+      if (!(wasBusy && !s.busy)) return;          // fire on every turn-complete edge…
+      // …but skip if already named, ineligible, or a request is already outstanding.
+      if (s.kind !== 'agent' || autoTitledRef.current.has(id) || titleInFlightRef.current.has(id)) return;
       const meta = sessionList.find((m) => m.id === id);
-      // Skip (permanently) if the tab was renamed by the user or is a dormant restore.
+      // Permanently ineligible if the tab was renamed by the user or is a dormant restore.
       if (!meta || meta.dormant || !/^Agent \d+$/.test(meta.title)) {
         autoTitledRef.current.add(id);
         return;
       }
-      autoTitledRef.current.add(id);              // once per session, even if it fails
-      void api.post<{ title: string | null }>('/agent/title', { claudeId: s.claudeId })
+      // Retry budget spent → keep the default name for good (see titleAttemptsRef).
+      const attempts = titleAttemptsRef.current.get(id) ?? 0;
+      if (attempts >= 8) { autoTitledRef.current.add(id); return; }
+      titleAttemptsRef.current.set(id, attempts + 1);
+      titleInFlightRef.current.add(id);           // one outstanding call at a time
+      void api.post<{ title: string | null; reason?: string }>('/agent/title', { claudeId: s.claudeId })
         .then((r) => {
           const title = r?.title?.trim();
-          if (!title) return;
+          // No title yet: leave the id retryable so the NEXT completed turn names this
+          // exact tab. Cost differs by WHY it failed: a miss WITH a reason is a cheap
+          // pre-spawn null (transcript/message not flushed yet — no claude process ran)
+          // and costs 1 of the 8-attempt budget; a miss WITHOUT a reason means a real
+          // Haiku spawn ran and produced nothing (unauthenticated / broken CLI — likely
+          // persistent) and costs 4, so a dead CLI burns at most 2 real spawns per tab
+          // instead of 8.
+          if (!title) {
+            if (!r?.reason) titleAttemptsRef.current.set(id, (titleAttemptsRef.current.get(id) ?? 1) + 3);
+            return;
+          }
+          autoTitledRef.current.add(id);          // got a name — done, never ask again
           // Re-check the default guard inside the updater: the user may have renamed the
           // tab while Haiku was thinking — their choice wins.
           setSessionList((prev) => prev.map((m) => (
             m.id === id && /^Agent \d+$/.test(m.title) ? { ...m, title } : m
           )));
         })
-        .catch(() => { /* best-effort: a failed title just leaves the default name */ });
+        .catch(() => { /* best-effort: a failed title just leaves the default name */ })
+        .finally(() => { titleInFlightRef.current.delete(id); });
     });
   }, [statusTick, agentSettings.enabled, agentSettings.autoTitle, sessionList]);
 
@@ -1189,7 +1239,13 @@ export function AgentSurface() {
 
   return (
     <>
-      <div ref={hostRef} className={`agent-surface${expanded ? ' expanded' : ''}`}>
+      <div
+        ref={hostRef}
+        className={`agent-surface${expanded ? ' expanded' : ''}`}
+        /* The minimized-sessions dock floats over our bottom-right corner — flag it so the
+           corner pane's composer can clear its anchor chip (model/effort stay visible). */
+        data-dock-floating={caps?.desktop && expanded && minimizedRows.length > 0 ? 'true' : undefined}
+      >
         {/* Overlay chrome: collapse + title, the per-pane session TABS, and (once a
             terminal is live) the bypass default + the prominent "New agent" action. */}
         <div className="agent-overlay-head">

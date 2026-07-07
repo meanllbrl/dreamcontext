@@ -18,6 +18,8 @@ export interface BrainStatus {
   mode: BrainMode;
   remote: string | null;
   hasRemote: boolean;
+  /** Code repo `origin` — display context only, NEVER the brain connection. */
+  codeOrigin: string | null;
   mergeInProgress: boolean;
   pendingAgentMerge: boolean;
   pulledUpdates: number;
@@ -76,6 +78,8 @@ export interface AttachPreviewResult {
 export interface AttachResult {
   ok: boolean;
   reason?: string;
+  /** Empty-remote first-commit outcome: pushed / blocked-scrub / skipped (unreachable). Absent when the remote already had content. */
+  bootstrap?: 'pushed' | 'blocked-scrub' | 'skipped';
 }
 
 export interface BrainSyncResult {
@@ -241,6 +245,15 @@ export function useAttachBrainRepo() {
   return useMutation({
     mutationFn: (payload: { url: string; confirmed: boolean }) =>
       api.post<AttachResult>('/brain/attach', payload),
+    onSuccess: () => invalidateBrain(queryClient),
+  });
+}
+
+/** Clears the brain-repo connection (config remote + the separate repo's origin). */
+export function useDisconnectBrainRepo() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post<{ ok: boolean }>('/brain/disconnect', {}),
     onSuccess: () => invalidateBrain(queryClient),
   });
 }

@@ -99,6 +99,7 @@ import {
   handleBrainCreate,
   handleBrainAttachPreview,
   handleBrainAttach,
+  handleBrainDisconnect,
   handleBrainSync,
   handleBrainSettingsGet as handleBrainSyncSettingsGet,
   handleBrainSettingsPost as handleBrainSyncSettingsPost,
@@ -190,6 +191,7 @@ function buildRouter(): Router {
   router.post('/api/brain/create', handleBrainCreate);
   router.post('/api/brain/attach-preview', handleBrainAttachPreview);
   router.post('/api/brain/attach', handleBrainAttach);
+  router.post('/api/brain/disconnect', handleBrainDisconnect);
   router.post('/api/brain/sync', handleBrainSync);
   router.get('/api/brain/settings', handleBrainSyncSettingsGet);
   router.post('/api/brain/settings', handleBrainSyncSettingsPost);

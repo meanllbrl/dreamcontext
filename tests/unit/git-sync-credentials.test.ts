@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { accessSync, chmodSync, constants, existsSync, readFileSync, statSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { withGitCredentials, resolveAskpassPath } from '../../src/lib/git-sync/credentials.js';
 
@@ -7,6 +7,19 @@ describe('git-sync/credentials — withGitCredentials', () => {
   it('resolves a real, existing askpass.cjs path', () => {
     const p = resolveAskpassPath();
     expect(existsSync(p)).toBe(true);
+  });
+
+  it('resolves an EXECUTABLE askpass.cjs — self-heals a 644 helper (git execs GIT_ASKPASS directly)', () => {
+    const p = resolveAskpassPath();
+    const originalMode = statSync(p).mode & 0o777;
+    try {
+      chmodSync(p, 0o644); // simulate a build/copy/extract that stripped the exec bit
+      const resolved = resolveAskpassPath();
+      expect(resolved).toBe(p);
+      expect(() => accessSync(resolved, constants.X_OK)).not.toThrow();
+    } finally {
+      chmodSync(p, originalMode || 0o755);
+    }
   });
 
   it('writes the token to a 0600 tmp file, sets the askpass env, puts no token in env/argv, and unlinks in finally', async () => {

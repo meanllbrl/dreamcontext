@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, rmSync, mkdirSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, existsSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { ApiAdapter } from '../../src/lib/task-backend/api-adapter.js';
@@ -9,12 +10,18 @@ import {
   resolveMode,
   resolveBrainSyncEnabled,
   resolveBrainSyncToken,
+  isOwnRepoRoot,
   buildBrainGitignore,
+  bootstrapBrainRepo,
   createBrainRepo,
   attachBrainRepo,
   acquireBrainLock,
   releaseBrainLock,
 } from '../../src/lib/git-sync/brain-repo.js';
+
+function sh(cwd: string, args: string[]): string {
+  return execFileSync('git', args, { cwd, encoding: 'utf-8' }).trim();
+}
 
 function jsonResponse(status: number, body: unknown): Response {
   return {
@@ -89,6 +96,10 @@ describe('git-sync/brain-repo — resolveBrainSyncToken (M1: secrets-first, env-
 
   beforeEach(() => {
     projectRoot = mkdtempSync(join(tmpdir(), 'dc-brain-token-'));
+    // Isolate HOME: the GLOBAL tier reads ~/.dreamcontext/.secrets.json — on a
+    // dev machine with a real GitHub sign-in these tests would resolve THAT
+    // token instead of exercising the env/none tiers (os.homedir() honors HOME).
+    process.env.HOME = projectRoot;
   });
   afterEach(() => {
     rmSync(projectRoot, { recursive: true, force: true });
@@ -254,6 +265,67 @@ describe('git-sync/brain-repo — attachBrainRepo (S6 trust gate)', () => {
       expect(existsSync(join(contextRoot, '.gitignore'))).toBe(true);
     } finally {
       rmSync(contextRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('git-sync/brain-repo — nested-context guard (real git)', () => {
+  let projectRoot: string;
+  let contextRoot: string;
+
+  beforeEach(() => {
+    projectRoot = mkdtempSync(join(tmpdir(), 'dc-nested-guard-'));
+    contextRoot = join(projectRoot, '_dream_context');
+    mkdirSync(contextRoot, { recursive: true });
+    // The user's layout: the CODE repo owns the whole tree, _dream_context is
+    // just a nested directory inside its work tree.
+    sh(projectRoot, ['init']);
+    sh(projectRoot, ['remote', 'add', 'origin', 'https://github.com/meanllbrl/vibe-cto.git']);
+  });
+  afterEach(() => {
+    rmSync(projectRoot, { recursive: true, force: true });
+  });
+
+  it('isOwnRepoRoot distinguishes a nested dir from its own repo root (isGitRepo cannot)', () => {
+    expect(git.isGitRepo(contextRoot)).toBe(true); // the trap: nested reads as "a repo"
+    expect(isOwnRepoRoot(contextRoot)).toBe(false);
+    sh(contextRoot, ['init']);
+    expect(isOwnRepoRoot(contextRoot)).toBe(true);
+  });
+
+  it('attachBrainRepo git-inits the nested context instead of rewriting the CODE repo origin', () => {
+    const result = attachBrainRepo({
+      contextRoot, projectRoot, url: 'https://github.com/acme/brain.git', confirmed: true,
+    });
+    expect(result.ok).toBe(true);
+    // The code repo's origin is untouched; the brain got its OWN repo + remote.
+    expect(sh(projectRoot, ['remote', 'get-url', 'origin'])).toBe('https://github.com/meanllbrl/vibe-cto.git');
+    expect(isOwnRepoRoot(contextRoot)).toBe(true);
+    expect(sh(contextRoot, ['remote', 'get-url', 'origin'])).toBe('https://github.com/acme/brain.git');
+  });
+
+  it('bootstrapBrainRepo commits/pushes ONLY the brain — never stages or pushes the code repo', async () => {
+    const bareRemote = mkdtempSync(join(tmpdir(), 'dc-nested-bare-'));
+    try {
+      execFileSync('git', ['init', '--bare', bareRemote]);
+      // Uncommitted code-repo file that must NOT get swept into a brain commit.
+      writeFileSync(join(projectRoot, 'app.ts'), 'export const x = 1;\n', 'utf-8');
+      writeFileSync(join(contextRoot, 'note.md'), '# hello brain\n', 'utf-8');
+
+      const result = await bootstrapBrainRepo({ contextRoot, projectRoot, remote: bareRemote });
+
+      expect(result.blocked).toBe(false);
+      expect(result.pushed).toBe(true);
+      // Code repo: origin unchanged, still ZERO commits, app.ts still untracked.
+      expect(sh(projectRoot, ['remote', 'get-url', 'origin'])).toBe('https://github.com/meanllbrl/vibe-cto.git');
+      expect(() => sh(projectRoot, ['rev-parse', 'HEAD'])).toThrow();
+      // Brain repo: its own root, remote wired to the bare, initial import pushed.
+      expect(isOwnRepoRoot(contextRoot)).toBe(true);
+      expect(sh(contextRoot, ['remote', 'get-url', 'origin'])).toBe(bareRemote);
+      expect(sh(bareRemote, ['log', '-1', '--format=%s', 'main'])).toBe('chore(brain): initial import');
+      expect(sh(bareRemote, ['ls-tree', '--name-only', 'main'])).toContain('note.md');
+    } finally {
+      rmSync(bareRemote, { recursive: true, force: true });
     }
   });
 });

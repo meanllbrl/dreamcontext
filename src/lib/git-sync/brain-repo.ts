@@ -1,4 +1,4 @@
-import { existsSync, writeFileSync } from 'node:fs';
+import { existsSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ApiAdapter, ApiError } from '../task-backend/api-adapter.js';
 import { readGitHubTokenSecretsOnly, type ResolvedToken } from '../task-backend/secrets.js';
@@ -46,6 +46,29 @@ export function resolveBrainSyncToken(projectRoot: string): ResolvedToken | null
     if (v && v.trim()) return { token: v.trim(), source: 'env', via: envVar };
   }
   return null;
+}
+
+// ─── Own-repo-root guard ─────────────────────────────────────────────────────
+
+/**
+ * True only when `contextRoot` is ITSELF a git repo root — not merely nested
+ * inside the code repo's work tree. `isGitRepo` cannot tell those two apart
+ * (`rev-parse --is-inside-work-tree` is true for both), and every remote/
+ * stage/commit/push issued against a nested `_dream_context/` resolves to the
+ * ENCLOSING code repo: it would rewrite the code repo's origin, stage the
+ * entire working tree, and push the whole code repo to the brain remote.
+ */
+export function isOwnRepoRoot(
+  contextRoot: string,
+  gitModule: Pick<typeof git, 'repoToplevel'> = git,
+): boolean {
+  const toplevel = gitModule.repoToplevel(contextRoot);
+  if (!toplevel) return false;
+  try {
+    return realpathSync(toplevel) === realpathSync(contextRoot);
+  } catch {
+    return toplevel === contextRoot;
+  }
 }
 
 // ─── A/B. Mode resolution ────────────────────────────────────────────────────
@@ -109,6 +132,7 @@ export function buildBrainGitignore(taskBackend?: SetupConfig['taskBackend']): s
     'state/.sleep.json',
     'state/.sleep-history.json',
     'state/.agent-sessions.json',
+    'state/.agent-session-map/',
     'state/.session-digests/',
     'state/.conflicts/',
     'state/.brain-merge/',
@@ -172,7 +196,7 @@ export async function bootstrapBrainRepo(opts: BootstrapBrainRepoOptions): Promi
   const scrub = opts.scrubStagedFilesImpl ?? scrubStagedFiles;
   const withCreds = opts.withGitCredentialsImpl ?? withGitCredentials;
 
-  if (!g.isGitRepo(opts.contextRoot)) g.initRepo(opts.contextRoot);
+  if (!isOwnRepoRoot(opts.contextRoot, g)) g.initRepo(opts.contextRoot);
 
   writeFileSync(
     join(opts.contextRoot, BRAIN_MARKER_FILE),
@@ -324,7 +348,7 @@ export function attachBrainRepo(opts: AttachBrainRepoOptions): AttachBrainRepoRe
     return { ok: false, reason: 'Attach refused: this repo\'s content loads verbatim into every future AI session — explicit confirmation is required (S6).' };
   }
   const g = opts.gitModule ?? git;
-  if (!g.isGitRepo(opts.contextRoot)) g.initRepo(opts.contextRoot);
+  if (!isOwnRepoRoot(opts.contextRoot, g)) g.initRepo(opts.contextRoot);
   if (g.getRemoteUrl(opts.contextRoot, 'origin')) {
     g.setRemoteUrl(opts.contextRoot, 'origin', opts.url);
   } else {

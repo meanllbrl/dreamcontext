@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { updateSetupConfig, readBrainLocal } from '../../src/lib/setup-config.js';
 import { readConflictReport } from '../../src/lib/git-sync/conflict-report.js';
-import { bootstrapBrainRepo } from '../../src/lib/git-sync/brain-repo.js';
+import { bootstrapBrainRepo, attachBrainRepo } from '../../src/lib/git-sync/brain-repo.js';
 import { runBrainSync } from '../../src/lib/git-sync/sync-engine.js';
 import { detachBrain } from '../../src/lib/git-sync/detach.js';
 
@@ -404,5 +404,51 @@ describe('e2e: brain detach — fresh single-commit squash + full-tree scrub (M3
     expect(second.action).toBe('already-detached');
     // Same remote, nothing changed — the commit is untouched (no destructive re-init happened).
     expect(git(contextRoot, ['rev-parse', 'HEAD']).trim()).toBe(shaAfterFirst);
+  });
+});
+
+describe('e2e: freshly attached EMPTY remote (zero refs) — first sync bootstraps main', () => {
+  let bare: string;
+  let projectRoot: string;
+  let contextRoot: string;
+  const ORIGINAL_GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+
+  beforeAll(() => {
+    process.env.GITHUB_TOKEN = 'e2e-dummy-token';
+    bare = mkdtempSync(join(tmpdir(), 'dc-e2e-empty-bare-'));
+    execFileSync('git', ['init', '--bare', bare]);
+    projectRoot = mkdtempSync(join(tmpdir(), 'dc-e2e-empty-'));
+    contextRoot = join(projectRoot, '_dream_context');
+    mkdirSync(join(contextRoot, 'knowledge'), { recursive: true });
+    writeFileSync(join(contextRoot, 'knowledge', 'note.md'), '# a knowledge note\n');
+  });
+  afterAll(() => {
+    if (ORIGINAL_GITHUB_TOKEN === undefined) delete process.env.GITHUB_TOKEN;
+    else process.env.GITHUB_TOKEN = ORIGINAL_GITHUB_TOKEN;
+    for (const dir of [bare, projectRoot].filter(Boolean)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('attach → pull-only noops (no crash) → auto births main with the first commit → auto again noops', async () => {
+    const att = attachBrainRepo({ contextRoot, projectRoot, url: bare, confirmed: true });
+    expect(att.ok).toBe(true);
+    setLocalIdentity(contextRoot);
+    updateSetupConfig(projectRoot, { brainRepo: { mode: 'separate', enabled: true, remote: bare, autoSync: true } });
+
+    // The background/session-start path fires first in real life — it must
+    // NOT die with `couldn't find remote ref main` on the ref-less remote.
+    const pull = await runBrainSync({ cwd: contextRoot, mode: 'pull-only' });
+    expect(pull.action).toBe('noop');
+    expect(pull.note).toMatch(/empty/i);
+    expect(bareHead(bare)).toBeNull();
+
+    // First real sync: root commit on the unborn HEAD, push births main.
+    const auto = await runBrainSync({ cwd: contextRoot, mode: 'auto' });
+    expect(auto.action).toBe('pushed');
+    expect(bareHead(bare)).not.toBeNull();
+    expect(git(bare, ['ls-tree', '--name-only', 'main']).trim()).toContain('knowledge');
+
+    // Converged: nothing further to do.
+    const again = await runBrainSync({ cwd: contextRoot, mode: 'auto' });
+    expect(again.action).toBe('noop');
   });
 });

@@ -4,13 +4,14 @@ import type { Duplex } from 'node:stream';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { existsSync, readdirSync, statSync, chmodSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { sendJson, sendError } from '../middleware.js';
 import { isDesktop } from '../desktop.js';
 import { listVaults } from '../../lib/vaults.js';
 import { trackChild } from '../lifecycle.js';
+import { resolveAgentSession, readAgentSessionEntry, UUID_RE } from '../../lib/agent-session-map.js';
 
 /**
  * Agent terminal — the in-app surface that runs the REAL, interactive Claude Code
@@ -411,6 +412,12 @@ export function attachAgentTerminal(server: Server): void {
     const model = sanitizeModel(url.searchParams.get('model'));
     // Reasoning effort (`claude --effort <level>`) — whitelist-gated to the documented set.
     const effort = sanitizeEffort(url.searchParams.get('effort'));
+    // An INITIAL prompt to submit automatically (the "Run sleep agent" consolidation). Passed
+    // to `claude` as a positional argument (`claude … "<prompt>"`), which starts the interactive
+    // TUI with that first message already submitted — so it runs autonomously with NO reliance
+    // on typing into the readline after boot (the old client-side inject-on-settle was racy:
+    // an MCP-auth boot pause could fire the send before the prompt was ready, dropping it).
+    const initialPrompt = sanitizePrompt(url.searchParams.get('prompt'));
 
     void (async () => {
       let pty: typeof import('node-pty');
@@ -423,7 +430,7 @@ export function attachAgentTerminal(server: Server): void {
 
       const wss = new WebSocketServer({ noServer: true });
       wss.handleUpgrade(req, socket, head, (ws) => {
-        startPtySession(ws, pty, projectRoot, bypass, theme, sessionId, resumeId, kind, model, effort);
+        startPtySession(ws, pty, projectRoot, bypass, theme, sessionId, resumeId, kind, model, effort, initialPrompt);
       });
     })();
   });
@@ -439,7 +446,7 @@ function rejectUpgrade(socket: Duplex, code: number): void {
  *  no shell metacharacters), else '' — so a resume/session id can be interpolated into the
  *  `claude` shell command with zero injection risk. */
 function sanitizeUuid(v: string | null): string {
-  return v && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(v) ? v : '';
+  return v && UUID_RE.test(v) ? v : '';
 }
 
 /** Strict model-token gate. Claude Code's `--model` takes an alias (`opus`/`sonnet`/
@@ -458,6 +465,25 @@ function sanitizeEffort(v: string | null): string {
 }
 
 /**
+ * Sanitize an auto-submit initial prompt. It is NEVER interpolated into the shell command
+ * string — it is passed as the login shell's `$0` positional and referenced as `"$0"` (see
+ * `startPtySession`), exactly like the headless title/capture spawns, so shell metacharacters
+ * can't inject. We only guard against runaway size and strip control chars (a NUL truncates a
+ * C arg; a CR/LF passed to Claude's readline as one arg would submit a partial line). Kept as a
+ * single logical line: collapse any newlines/tabs to spaces (a bare strip would FUSE the words
+ * around a tab), drop other control bytes, cap length.
+ */
+function sanitizePrompt(v: string | null): string {
+  if (!v) return '';
+  return v
+    .replace(/[\r\n\t]+/g, ' ')
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\x00-\x1f\x7f]/g, '')
+    .slice(0, 8000)
+    .trim();
+}
+
+/**
  * Does `claude` actually have a stored transcript for this conversation id? Claude Code
  * persists each conversation at `~/.claude/projects/<cwd-slug>/<session-uuid>.jsonl`, but
  * ONLY after the first turn — a tab that was opened and never used has NO transcript. So
@@ -468,13 +494,25 @@ function sanitizeEffort(v: string | null): string {
  * `id` is a pre-validated UUID (sanitizeUuid), so the filename can't escape the dir.
  */
 function findTranscriptPath(id: string): string | null {
-  if (!id) return null;
+  return findFirstTranscriptPath([id]);
+}
+
+/** One projects-dir listing serving several candidate ids in priority order — callers
+ *  with a fallback id (mapped → pinned) pay ONE scan instead of one per candidate.
+ *  This sits behind /agent/session-stats (polled every 5s per live tab), so the scan
+ *  count matters. Returns the first candidate that has a transcript, else null. */
+function findFirstTranscriptPath(ids: string[]): string | null {
+  const wanted = ids.filter(Boolean);
+  if (wanted.length === 0) return null;
   try {
     const base = join(homedir(), '.claude', 'projects');
     if (!existsSync(base)) return null;
-    for (const dir of readdirSync(base)) {
-      const p = join(base, dir, `${id}.jsonl`);
-      if (existsSync(p)) return p;
+    const dirs = readdirSync(base);
+    for (const id of wanted) {
+      for (const dir of dirs) {
+        const p = join(base, dir, `${id}.jsonl`);
+        if (existsSync(p)) return p;
+      }
     }
   } catch { /* ignore */ }
   return null;
@@ -482,6 +520,18 @@ function findTranscriptPath(id: string): string | null {
 
 function claudeConversationExists(id: string): boolean {
   return findTranscriptPath(id) !== null;
+}
+
+/**
+ * Resolve a tab's roster id to the transcript of its LIVE conversation: prefer the
+ * tab-session map's current id (the tab `/clear`d or in-TUI-resumed to a different
+ * conversation), fall back to the pinned id's transcript. The single home of the
+ * roster-id → live-transcript invariant — title, session-model and session-stats all
+ * read through here so a rotation can never leave one of them tracking a stale file.
+ */
+function liveTranscriptPath(contextRoot: string | null, id: string): string | null {
+  const liveId = contextRoot ? resolveAgentSession(contextRoot, id) : '';
+  return findFirstTranscriptPath([liveId, id]);
 }
 
 // ─── Auto-title (Haiku names a tab from the session's first user message) ──────
@@ -579,7 +629,7 @@ export async function handleAgentTitle(
   req: IncomingMessage,
   res: ServerResponse,
   _params: Record<string, string>,
-  _contextRoot: string,
+  contextRoot: string,
 ): Promise<void> {
   if (!isDesktop()) {
     sendError(res, 403, 'desktop_only', 'Auto-title is only available in the desktop app.');
@@ -598,10 +648,25 @@ export async function handleAgentTitle(
     sendError(res, 400, 'bad_id', 'Body must be { claudeId: <uuid> }.');
     return;
   }
-  const path = findTranscriptPath(claudeId);
-  if (!path) { sendJson(res, 200, { title: null, reason: 'no_transcript' }); return; }
-  const message = firstUserMessage(path);
-  if (!message) { sendJson(res, 200, { title: null, reason: 'no_message' }); return; }
+  // Resolve through the tab-session map first: after a `/clear` (or in-TUI resume) the
+  // tab's LIVE conversation is a different id, and the title must reflect what's on
+  // screen now — not the first message of a rotated-away conversation. Deliberately
+  // NOT liveTranscriptPath here: its pinned-id fallback is right for model/stats
+  // (stale beats nothing) but for TITLING it would resurrect the stale-title bug —
+  // a `/clear`d tab naming itself from the rotated-away conversation's first message.
+  const liveId = resolveAgentSession(contextRoot, claudeId) || claudeId;
+  const path = findTranscriptPath(liveId);
+  // Claude Code ≥2.1.x buffers a LIVE session's transcript in memory and flushes
+  // `<uuid>.jsonl` only on exit/rotation — so a fresh tab has NO transcript on disk
+  // while the user is talking to it, and title-by-transcript starves. Prefer the
+  // transcript when it exists (it covers tabs the hook never saw), then fall back to
+  // the first prompt the UserPromptSubmit hook captured into the tab's session-map
+  // entry — only when it belongs to the SAME live conversation.
+  const entry = readAgentSessionEntry(contextRoot, claudeId);
+  const message = (path ? firstUserMessage(path) : null)
+    ?? (entry?.current === liveId ? entry.firstPrompt : null)
+    ?? null;
+  if (!message) { sendJson(res, 200, { title: null, reason: path ? 'no_message' : 'no_transcript' }); return; }
   // Home dir, not the vault: a titling call must not fire the project's SessionStart
   // brain preload — keep it lean.
   const title = await generateTitle(message, homedir());
@@ -722,13 +787,27 @@ function latestTranscriptModel(jsonlPath: string): string | null {
 }
 
 /** GET /api/agent/session-model?claudeId=<uuid> — the model a session is CURRENTLY running,
- *  read from its transcript (so a mid-session `/model` switch is reflected). null if unknown. */
-export async function handleAgentSessionModel(req: IncomingMessage, res: ServerResponse): Promise<void> {
+ *  read from its transcript (so a mid-session `/model` switch is reflected). null if unknown.
+ *  The router resolves the X-Dreamcontext-Vault header (400 on invalid, pinned-root fallback
+ *  when absent) and hands us `contextRoot` — vault-agnostic registration means it can still
+ *  be null, which liveTranscriptPath treats as "no map, pinned transcript only". */
+export async function handleAgentSessionModel(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string | null,
+): Promise<void> {
   if (!isDesktop()) { sendJson(res, 200, { model: null }); return; }
   const url = new URL(req.url || '/', `http://${req.headers.host}`);
   const id = sanitizeUuid(url.searchParams.get('claudeId'));
-  const path = id ? findTranscriptPath(id) : null;
-  sendJson(res, 200, { model: path ? latestTranscriptModel(path) : null });
+  if (!id) { sendJson(res, 200, { model: null }); return; }
+  // Live-id resolution: after a `/clear` the tab's current model lives in the ROTATED
+  // conversation's transcript, not the pinned one. A LIVE session usually has no
+  // transcript on disk yet (Claude Code ≥2.1.x flushes only on exit/rotation) — fall
+  // back to the model the PTY was spawned with so an explicit picker choice shows up
+  // immediately instead of reading as the CLI default until the first flush.
+  const path = liveTranscriptPath(contextRoot, id);
+  sendJson(res, 200, { model: (path ? latestTranscriptModel(path) : null) ?? liveSpawnModels.get(id) ?? null });
 }
 
 // ─── Per-session context-window + cost (read from the transcript's token usage) ───────
@@ -789,14 +868,40 @@ function computeSessionStats(jsonlPath: string): SessionStats {
 }
 
 /** GET /api/agent/session-stats?claudeId=<uuid> — the session's live context-window
- *  footprint + cumulative API-rate cost estimate, from its transcript. Nulls if unknown. */
-export async function handleAgentSessionStats(req: IncomingMessage, res: ServerResponse): Promise<void> {
+ *  footprint + cumulative API-rate cost estimate, from its transcript. Nulls if unknown.
+ *  contextRoot comes from the router's vault-header resolution (see session-model).
+ *  KNOWN LIMIT: Claude Code ≥2.1.x flushes a live session's transcript only on
+ *  exit/rotation, so a fresh tab reports nulls until its first flush — token usage has
+ *  no other on-disk source. The client already renders nulls as "no stats yet". */
+export async function handleAgentSessionStats(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string | null,
+): Promise<void> {
   if (!isDesktop()) { sendJson(res, 200, EMPTY_STATS); return; }
   const url = new URL(req.url || '/', `http://${req.headers.host}`);
   const id = sanitizeUuid(url.searchParams.get('claudeId'));
-  const path = id ? findTranscriptPath(id) : null;
+  if (!id) { sendJson(res, 200, EMPTY_STATS); return; }
+  // Live-id resolution: after a `/clear` the header stats must track what's on screen.
+  const path = liveTranscriptPath(contextRoot, id);
   sendJson(res, 200, path ? computeSessionStats(path) : EMPTY_STATS);
 }
+
+/** Conversation ids currently attached to a live agent PTY in THIS server. A Claude
+ *  conversation must have at most one writer: if a map collision (cross-tab in-TUI
+ *  resume) makes two tabs resolve to the same id, only the first attaches — the second
+ *  falls back down its own chain. Node is single-threaded, so check-then-add is atomic
+ *  across concurrently-arriving upgrades. */
+const liveConversations = new Set<string>();
+
+/** Model each live agent PTY was SPAWNED with (picker alias, e.g. 'fable'), keyed by
+ *  its tab/pin id — the /agent/session-model fallback while the CLI hasn't flushed a
+ *  transcript yet (Claude Code ≥2.1.x writes `<uuid>.jsonl` only on exit/rotation).
+ *  Spawn-time truth only: a mid-session `/model` switch becomes visible once the
+ *  transcript lands. Entries are removed when the PTY exits, so the map stays bounded
+ *  by the live-tab count. */
+const liveSpawnModels = new Map<string, string>();
 
 function startPtySession(
   ws: import('ws').WebSocket,
@@ -809,6 +914,7 @@ function startPtySession(
   kind: PtyKind = 'agent',
   model = '',
   effort = '',
+  initialPrompt = '',
 ): void {
   const shell = process.env.SHELL || '/bin/zsh';
   const flag = bypass ? ' --permission-mode bypassPermissions' : '';
@@ -816,16 +922,46 @@ function startPtySession(
   // shell-safe). Agent-only — a shell has neither a model nor an effort.
   const modelFlag = model ? ` --model ${model}` : '';
   const effortFlag = effort ? ` --effort ${effort}` : '';
-  // Conversation continuity (both ids are pre-validated UUIDs → shell-safe):
-  //  • resume requested AND a transcript exists → `--resume <id>` (reopen the real chat).
-  //  • resume requested but NO transcript (tab was never used, or claude state was lost)
-  //    → fall back to `--session-id <id>`: start FRESH but pinned to the same id, so the
-  //    tab keeps working and becomes resumable once used — instead of `--resume` erroring
-  //    with "No conversation found with session ID".
+  // Conversation continuity (all ids are pre-validated UUIDs → shell-safe):
+  //  • resume requested → resolve the pinned id through the tab-session map FIRST: the
+  //    tab's live conversation id rotates underneath it (`/clear` starts a new session
+  //    file; the in-TUI resume picker switches conversations), and the SessionStart/Stop
+  //    hooks record roster id → current id. Resuming the MAPPED id reopens what was
+  //    actually on screen when the app closed, instead of the conversation frozen at the
+  //    last rotation (the "resumed tab is stale" bug). Falls back to the pinned id when
+  //    the map has nothing (older CLI, hand-cleared state) or the mapped transcript is
+  //    gone — and skips any conversation ANOTHER live PTY already holds (a map collision
+  //    would otherwise attach two Claude processes to one transcript: data-loss risk).
+  //  • resume requested but NO resumable transcript (tab was never used, or claude state
+  //    was lost) → fall back to `--session-id <id>`: start FRESH but pinned to the same
+  //    id, so the tab keeps working and becomes resumable once used — instead of
+  //    `--resume` erroring with "No conversation found with session ID". Only an id with
+  //    no transcript can be fresh-pinned (claude rejects `--session-id` reuse); in the
+  //    can't-resume-can't-pin corner the tab opens unpinned rather than failing to boot.
   //  • fresh tab → `--session-id <sessionId>` pins it for a future resume.
-  const resumable = resumeId && claudeConversationExists(resumeId);
+  const contextRoot = join(projectRoot, '_dream_context');
+  const mappedId = kind === 'agent' && resumeId ? resolveAgentSession(contextRoot, resumeId) : '';
+  const resumeTarget = [mappedId, resumeId].find(
+    (c) => c && !liveConversations.has(c) && claudeConversationExists(c),
+  ) ?? '';
   const pinId = resumeId || sessionId; // prefer the resume id so a fresh-fallback keeps it
-  const idArg = resumable ? ` --resume ${resumeId}` : pinId ? ` --session-id ${pinId}` : '';
+  const freshPin = !resumeTarget && pinId && !liveConversations.has(pinId) && !claudeConversationExists(pinId)
+    ? pinId : '';
+  const idArg = resumeTarget ? ` --resume ${resumeTarget}` : freshPin ? ` --session-id ${freshPin}` : '';
+  // Register the conversation this PTY holds so a second tab can't double-attach it;
+  // released when the PTY exits. (Unpinned spawns hold nothing we could collide on.)
+  const heldConversation = kind === 'agent' ? (resumeTarget || freshPin) : '';
+  if (heldConversation) liveConversations.add(heldConversation);
+  // Remember the spawn model under the id the dashboard polls with (the tab/pin id) so
+  // /agent/session-model can answer before the CLI flushes a transcript. Only when a
+  // model was explicitly picked — a default spawn answers null and the client keeps
+  // showing the CLI default, which is exactly what the session runs.
+  if (kind === 'agent' && pinId && model) liveSpawnModels.set(pinId, model);
+  let releaseHeld = () => {
+    releaseHeld = () => { /* once */ };
+    if (heldConversation) liveConversations.delete(heldConversation);
+    if (kind === 'agent' && pinId) liveSpawnModels.delete(pinId);
+  };
   // COLORFGBG hints the terminal's light/dark to TUI apps that read it: the trailing
   // field is the background (0 = dark, 15 = light). Combined with the webview's OSC
   // 10/11 colour replies, this lets Claude Code theme to our surface at spawn.
@@ -835,14 +971,53 @@ function startPtySession(
   //  • agent → `-ilc 'exec claude …'`: replace the shell with Claude Code.
   //  • shell → `-il`: a plain interactive login shell (the vault-scoped terminal the user
   //    would open anyway) — no `-c`, no claude, no bypass/resume flags.
-  const shellArgs = kind === 'shell' ? ['-il'] : ['-ilc', `exec claude${idArg}${modelFlag}${effortFlag}${flag}`];
-  const term = pty.spawn(shell, shellArgs, {
-    name: 'xterm-color',
-    cols: 80,
-    rows: 24,
-    cwd: projectRoot,
-    env: { ...process.env, TERM: 'xterm-256color', COLORFGBG: colorfgbg } as Record<string, string>,
-  }) as unknown as PtyLike;
+  // An initial prompt (auto-submit, e.g. the Sleep consolidation) is passed as the login
+  // shell's extra `-c` operand and referenced after all flags — so `claude … "<prompt>"`
+  // starts the interactive TUI with the first message already submitted, race-free. The
+  // operand is a real execve argument (never re-parsed by the shell), so a prompt with
+  // spaces / quotes / any metacharacter is inert. POSIX shells bind it to `$0`; fish has
+  // no `$0` positional (it would be a parse-time error) and binds `-c` operands to
+  // `$argv` instead. The operand is appended ONLY when a prompt exists: an unconditional
+  // empty third argv would run every promptless tab's rc sourcing with `$0=''`, silently
+  // breaking user rc logic that branches on `$0` (login detection, basename dispatch).
+  const promptRef = basename(shell) === 'fish' ? '"$argv[1]"' : '"$0"';
+  const promptArg = kind === 'agent' && initialPrompt ? ` ${promptRef}` : '';
+  const shellArgs = kind === 'shell'
+    ? ['-il']
+    : ['-ilc', `exec claude${idArg}${modelFlag}${effortFlag}${flag}${promptArg}`, ...(promptArg ? [initialPrompt] : [])];
+  // An agent PTY exports its tab's STABLE roster id so the SessionStart hook (which
+  // inherits this env through `claude`) can record roster id → live conversation id
+  // on every rotation — the other half of the resume-staleness fix above. ONLY when
+  // this spawn is actually pinned/resumed (`idArg`): the can't-resume-can't-pin corner
+  // boots an unbound throwaway conversation, and exporting the roster id there would
+  // let the hook permanently rebind the tab's map entry to that empty throwaway —
+  // losing the real history on the next relaunch. DREAMCONTEXT_SERVER_PID marks the
+  // tab's process boundary for the hook's nested-claude walk: ancestors ABOVE this
+  // server (e.g. a dev server itself launched from a Claude Code session) are outside
+  // the tab and must not count as "nested".
+  const tabEnv = kind === 'agent' && pinId && idArg
+    ? { DREAMCONTEXT_TAB_SESSION: pinId, DREAMCONTEXT_SERVER_PID: String(process.pid) }
+    : {};
+  let term: PtyLike;
+  try {
+    term = pty.spawn(shell, shellArgs, {
+      name: 'xterm-color',
+      cols: 80,
+      rows: 24,
+      cwd: projectRoot,
+      env: { ...process.env, TERM: 'xterm-256color', COLORFGBG: colorfgbg, ...tabEnv } as Record<string, string>,
+    }) as unknown as PtyLike;
+  } catch (err) {
+    // pty.spawn can throw synchronously (documented posix_spawnp failure when the
+    // node-pty helper loses +x, a missing $SHELL binary). Without this catch the
+    // conversation hold above would leak for the server's lifetime (making the tab
+    // permanently un-resumable) and the throw would escape the WS upgrade callback
+    // as an unhandled rejection.
+    releaseHeld();
+    try { ws.send(`\r\n\x1b[31m[failed to start ${kind === 'shell' ? 'shell' : 'claude'}: ${(err as Error)?.message ?? String(err)}]\x1b[0m\r\n`); } catch { /* closing */ }
+    try { ws.close(); } catch { /* already closed */ }
+    return;
+  }
 
   let alive = true;
   // Reap this PTY's `claude` process if the whole server shuts down (parent-death
@@ -852,6 +1027,7 @@ function startPtySession(
   term.onExit(({ exitCode }) => {
     alive = false;
     untrack();
+    releaseHeld();
     if (ws.readyState === ws.OPEN) {
       const what = kind === 'shell' ? 'shell' : 'claude';
       try { ws.send(`\r\n\x1b[2m[${what} exited with code ${exitCode}]\x1b[0m\r\n`); } catch { /* closing */ }
@@ -876,7 +1052,7 @@ function startPtySession(
     term.write(str);
   });
 
-  const teardown = () => { if (alive) { alive = false; try { term.kill(); } catch { /* already dead */ } } };
+  const teardown = () => { if (alive) { alive = false; releaseHeld(); try { term.kill(); } catch { /* already dead */ } } };
   ws.on('close', teardown);
   ws.on('error', teardown);
 }

@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { parseJsonBody, sendJson, sendError } from '../middleware.js';
 import { isDesktop } from '../desktop.js';
 import { ensureGitignoreEntries } from '../../lib/gitignore.js';
+import { UUID_RE } from '../../lib/agent-session-map.js';
 
 /**
  * Per-vault persistence of the embedded-agent session ROSTER (titles + layout) so a
@@ -33,9 +34,6 @@ export interface SavedMeta {
   /** Canonical UUID of this tab's Claude conversation; absent on legacy rosters. */
   sessionId?: string;
 }
-
-/** Canonical UUID matcher — gates what may be persisted as a resumable session id. */
-const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
 /** Hard ceiling on rostered sessions (extras are dropped, not rejected). */
 export const MAX_SESSIONS = 20;

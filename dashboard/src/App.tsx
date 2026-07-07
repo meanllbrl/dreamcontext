@@ -1,6 +1,7 @@
 import { Component, useEffect, type ReactNode } from 'react';
-import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
-import { api, setActiveVault } from './api/client';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { setActiveVault } from './api/client';
+import { useServerHealth } from './hooks/useServerHealth';
 import { LauncherPage } from './pages/LauncherPage';
 import { CaptureBar } from './pages/CaptureBar';
 import { SleepyPerch } from './components/sleepy/SleepyPerch';
@@ -38,18 +39,12 @@ import './styles/global.css';
  * servers and the ≤30s window before the drift watch fires.
  */
 function StaleServerBanner() {
-  const { data } = useQuery({
-    queryKey: ['health'],
-    queryFn: () => api.get<{ ok: boolean; version?: string }>('/health'),
-    staleTime: 60_000,
-    retry: 1,
-  });
-  if (!data) return null;
-  if (data.version === __DC_VERSION__) return null;
+  const { health, serverCurrent } = useServerHealth();
+  if (!health || serverCurrent) return null;
   return (
     <div className="stale-server-banner">
       ⚠ The dashboard server is running an older build (
-      {data.version ?? 'unknown'} vs {__DC_VERSION__}) — some actions will fail.
+      {health.version ?? 'unknown'} vs {__DC_VERSION__}) — some actions will fail.
       Restart it: <code>dreamcontext dashboard</code>
     </div>
   );

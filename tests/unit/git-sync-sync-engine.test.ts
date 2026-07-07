@@ -22,9 +22,13 @@ interface FakeState {
   identity: boolean;
   dirty: string[];
   aheadCount: number;
-  shaSequence: string[];
+  shaSequence: (string | null)[];
   shaIdx: number;
   mergeConflicts: string[] | null; // null => clean; array => conflicted paths
+  /** false = ref-less empty remote (freshly attached repo, zero commits). */
+  remoteExists: boolean;
+  /** non-null => attemptMerge throws with this message (e.g. unrelated histories). */
+  mergeThrows: string | null;
   fetchCalls: number;
   pushCalls: number;
   pushFailFirstN: number;
@@ -60,7 +64,9 @@ function makeFakeGit(state: FakeState): typeof git {
         throw new Error('push rejected (non-fast-forward)');
       }
     },
+    remoteBranchExists: () => state.remoteExists,
     attemptMerge: () => {
+      if (state.mergeThrows) throw new Error(state.mergeThrows);
       if (state.mergeConflicts === null) return { clean: true, conflicts: [] };
       return { clean: false, conflicts: state.mergeConflicts };
     },
@@ -81,6 +87,8 @@ function makeState(overrides: Partial<FakeState> = {}): FakeState {
     shaSequence: ['sha1', 'sha2'],
     shaIdx: 0,
     mergeConflicts: null,
+    remoteExists: true,
+    mergeThrows: null,
     fetchCalls: 0,
     pushCalls: 0,
     pushFailFirstN: 0,
@@ -141,6 +149,52 @@ describe('git-sync/sync-engine — runBrainSync', () => {
     expect(result.action).toBe('blocked-scrub');
     expect(state.commitCalls).toHaveLength(0);
     expect(state.pushCalls).toBe(0);
+  });
+
+  // ── empty remote (freshly attached, zero commits) ─────────────────────
+  it('auto: empty remote + local edits → bootstraps first commit + push, never fetches', async () => {
+    const state = makeState({ remoteExists: false, dirty: ['knowledge/x.md'] });
+    const result = await runBrainSync({ cwd: contextRoot, mode: 'auto' }, baseDeps(state));
+    expect(result.action).toBe('pushed');
+    expect(state.fetchCalls).toBe(0);
+    expect(state.commitCalls).toHaveLength(1);
+    expect(state.pushCalls).toBe(1);
+  });
+
+  it('auto: empty remote + clean tree with existing local commits → bootstrap push (main must be born)', async () => {
+    const state = makeState({ remoteExists: false, shaSequence: ['localsha'] });
+    const result = await runBrainSync({ cwd: contextRoot, mode: 'auto' }, baseDeps(state));
+    expect(result.action).toBe('pushed');
+    expect(state.commitCalls).toHaveLength(0);
+    expect(state.pushCalls).toBe(1);
+  });
+
+  it('auto: empty remote + truly nothing local (unborn HEAD, clean) → noop', async () => {
+    const state = makeState({ remoteExists: false, shaSequence: [null] });
+    const result = await runBrainSync({ cwd: contextRoot, mode: 'auto' }, baseDeps(state));
+    expect(result.action).toBe('noop');
+    expect(state.pushCalls).toBe(0);
+  });
+
+  it('pull-only: empty remote → noop with guidance, never fetches or pushes', async () => {
+    const state = makeState({ remoteExists: false, dirty: ['knowledge/x.md'] });
+    const result = await runBrainSync({ cwd: contextRoot, mode: 'pull-only' }, baseDeps(state));
+    expect(result.action).toBe('noop');
+    expect(result.note).toMatch(/empty/i);
+    expect(state.fetchCalls).toBe(0);
+    expect(state.pushCalls).toBe(0);
+    expect(state.commitCalls).toHaveLength(0);
+  });
+
+  it('push failure against an empty remote → clean token/permissions error, not a fetch crash', async () => {
+    const state = makeState({ remoteExists: false, dirty: ['x.md'], pushFailFirstN: 99 });
+    await expect(runBrainSync({ cwd: contextRoot, mode: 'auto' }, baseDeps(state))).rejects.toThrow(/empty brain remote/i);
+    expect(state.fetchCalls).toBe(0);
+  });
+
+  it('unrelated histories merge failure → actionable GitSyncError, not raw git output', async () => {
+    const state = makeState({ aheadCount: 1, mergeThrows: 'git merge failed: fatal: refusing to merge unrelated histories' });
+    await expect(runBrainSync({ cwd: contextRoot, mode: 'auto' }, baseDeps(state))).rejects.toThrow(/unrelated histories.*attach an empty repo/is);
   });
 
   // ── in-tree mode ─────────────────────────────────────────────────────

@@ -100,6 +100,24 @@ export function getRemoteUrl(cwd: string, name: string): string | null {
   }
 }
 
+/**
+ * Absolute path of the work-tree root enclosing `cwd`, or null when not in a
+ * repo. `isGitRepo` can't distinguish "is its own repo" from "is nested inside
+ * some other repo's work tree" — callers that are about to mutate remotes or
+ * the index need this to know WHICH repo they'd be touching.
+ */
+export function repoToplevel(cwd: string): string | null {
+  try {
+    return run(cwd, ['rev-parse', '--show-toplevel']).trim();
+  } catch {
+    return null;
+  }
+}
+
+export function removeRemote(cwd: string, name: string): void {
+  run(cwd, ['remote', 'remove', name]);
+}
+
 /** True when `user.name`/`user.email` resolve (local or global config). */
 export function hasGitIdentity(cwd: string): boolean {
   try {
@@ -114,6 +132,17 @@ export function hasGitIdentity(cwd: string): boolean {
 /** Networked. Must be called with the env from `withGitCredentials`. */
 export function fetch(cwd: string, remote: string, branch: string, env: NodeJS.ProcessEnv): void {
   run(cwd, [...CREDENTIAL_HELPER_DISABLE_ARGS, 'fetch', remote, branch], { env });
+}
+
+/**
+ * Networked (ls-remote). True iff `branch` exists on `remote` — false for a
+ * freshly created, ref-less repo. Must be called with the env from
+ * `withGitCredentials` for private https remotes. Throws on network/auth
+ * failure (an unreachable remote is NOT "empty").
+ */
+export function remoteBranchExists(cwd: string, remote: string, branch: string, env: NodeJS.ProcessEnv): boolean {
+  const out = run(cwd, [...CREDENTIAL_HELPER_DISABLE_ARGS, 'ls-remote', '--heads', remote, branch], { env });
+  return out.trim().length > 0;
 }
 
 /** Networked. Must be called with the env from `withGitCredentials`. */

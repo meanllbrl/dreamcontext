@@ -298,9 +298,11 @@ export interface StopUpsertInput {
   transcript_path: string | null;
   stopped_at: string;
   last_assistant_message: string | null;
-  change_count: number;
-  tool_count: number;
-  score: number;
+  /** null = analysis pending: the transcript wasn't on disk at Stop time (Claude Code
+   *  ≥2.1.x flushes it only on exit/rotation). The SessionStart catch-up finalizes. */
+  change_count: number | null;
+  tool_count: number | null;
+  score: number | null;
   task_slugs: string[];
 }
 
@@ -333,7 +335,7 @@ export function upsertSessionOnStop(state: SleepState, input: StopUpsertInput): 
       score: input.score,
       task_slugs: [...new Set([...existingSlugs, ...input.task_slugs])],
     };
-    next.debt += input.score;
+    next.debt += input.score ?? 0;
   } else {
     next.sessions.unshift({
       session_id: input.session_id,
@@ -345,7 +347,7 @@ export function upsertSessionOnStop(state: SleepState, input: StopUpsertInput): 
       score: input.score,
       task_slugs: input.task_slugs,
     });
-    next.debt += input.score;
+    next.debt += input.score ?? 0;
     next.sessions_since_last_sleep = (next.sessions_since_last_sleep || 0) + 1;
   }
 
