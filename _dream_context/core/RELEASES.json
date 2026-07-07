@@ -1,13 +1,29 @@
 [
   {
-    "id": "rel_pYOnPvIY",
-    "version": "v0.13.0",
+    "id": "rel_I4EvNe26",
+    "version": "v0.14.0",
     "date": "",
-    "summary": "Post-v0.12.0 cycle: complete npm publish of 0.12.0, releases auto-discovery scoping fix, next feature work",
+    "summary": "Next cycle planning: releases add auto-discovery scoping fix, agent-surface new-button UX, backlog pulls.",
     "breaking": false,
     "status": "planning",
     "features": [],
     "tasks": [],
+    "changelog": []
+  },
+  {
+    "id": "rel_pYOnPvIY",
+    "version": "v0.13.0",
+    "date": "2026-07-07",
+    "summary": "Brain repo sync hardening (global auth store tiering, person-tier commit author, first-push bootstrap via fetchRemoteIfExists, credential redaction), Lab bounded sync history + insight detail panel, sleepy composer auto-submit race fix, Tauri shell allow-open ACL, dashboard version-skew fixes (health handshake, stale-server self-exit), agent tab auto-titling opt-in, skill Entity Router hardening (language-independent entity nouns, don't-rebuild rule).",
+    "breaking": false,
+    "status": "released",
+    "features": [],
+    "tasks": [
+      "fix-sleepy-agent-auto-submit-timing-race-plus-composer-skill-browser-ux",
+      "fix-tauri-acl-shell-allow-open-for-external-links",
+      "github-cloud-collaboration-brain-repo-sync",
+      "feat-lab-analytics-insights-subsystem"
+    ],
     "changelog": []
   },
   {

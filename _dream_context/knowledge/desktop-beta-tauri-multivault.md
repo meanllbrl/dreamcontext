@@ -4,8 +4,9 @@ name: desktop-beta-tauri-multivault
 description: >-
   How dreamcontext-beta (the Tauri 2 macOS app) wraps the existing React+Node
   dashboard for multi-vault / multi-window use: multi-window architecture, five
-  non-obvious gotchas (CLI bundling, Tauri ACL, relative URLs, build/sign, v0.8.6
-  DnD handler must be disabled via drag_drop_enabled(false) for HTML5 DnD to work),
+  non-obvious gotchas (CLI bundling, Tauri ACL + shell:allow-open for external links,
+  relative URLs, build/sign, v0.8.6 DnD handler must be disabled via
+  drag_drop_enabled(false) for HTML5 DnD to work),
   the in-app quiz-style project onboarding (scaffold endpoints, child-spawn
   pattern, auto-CLI-install, hasContext skip-quiz for pre-initialized folders),
   the Faz 1 GitHub Actions release pipeline (E2E verified v0.8.3+), the
@@ -57,7 +58,7 @@ tags:
   - topic:federation
 pinned: true
 created: '2026-06-13'
-updated: '2026-07-05'
+updated: '2026-07-06T19:30:00.000Z'
 released_version: v0.8.6
 ---
 
@@ -94,7 +95,7 @@ installed `/Applications/dreamcontext-beta.app` (ad-hoc signed) + a `.dmg`.
 - So multi-vault == multi-window, one shared Node server. No in-window switcher,
   no React-Query cache thrash.
 
-## The four gotchas (expensive to find; remember these)
+## The five gotchas (expensive to find; remember these)
 
 > **v0.8.6 addition — gotcha #5:** Tauri's native OS-level drag-and-drop handler swallows `dragover`/`drop` events in the webview. If you ship HTML5 drag-and-drop features (Kanban task cards, Eisenhower matrix), you MUST disable the native handler in `lib.rs` via `.drag_drop_enabled(false)` on the `WebviewWindowBuilder`. Without this the webview never receives the HTML5 DnD events and cards cannot be dragged. File: `desktop/src-tauri/src/lib.rs`. Shipped v0.8.6.
 
@@ -108,7 +109,7 @@ installed `/Applications/dreamcontext-beta.app` (ad-hoc signed) + a `.dmg`.
 2. **Tauri v2 ACL blocks CUSTOM commands on remote-loaded pages.** The frontend is
    served from `http://127.0.0.1:PORT` — a REMOTE origin to Tauri. A custom Rust
    command (`invoke('open_vault')`) is rejected: **"Command open_vault not allowed
-   by ACL"**. Two-part fix:
+   by ACL"**. Three-part fix:
    - Add to the capability (`desktop/src-tauri/capabilities/default.json`):
      `"remote": { "urls": ["http://localhost:*", "http://127.0.0.1:*"] }` so the
      capability (and its permissions) apply to the loopback-served pages. This is
@@ -117,6 +118,7 @@ installed `/Applications/dreamcontext-beta.app` (ad-hoc signed) + a `.dmg`.
      core permission `core:webview:allow-create-webview-window`, which passes the
      ACL) instead of a custom command. Custom app commands stay ACL-blocked on
      remote pages even with `remote.urls`; core/plugin permissions pass.
+   - **[2026-07-06]** **`shell:allow-open` for external links.** External links (the "Open GitHub" button, any `target=_blank` anchor) route through the shell plugin's `open` command (Tauri's secure URL-opening API). The capability originally granted `shell:allow-spawn` and `shell:allow-kill` (for the Node child) but not `shell:allow-open`, so every external URL was blocked (`Command plugin:shell|open not allowed by ACL`). Fix: add `"shell:allow-open"` to the permissions array. Tauri's default `open` validator permits `https`, `http`, `mailto`, and `tel` schemes only — no `file://` or `javascript:` injection risk.
 
 3. **Relative URLs in `WebviewWindow` resolve to the bundled frontendDist, not the
    Node server.** A new window with `url: '/?vault=X'` loads Tauri's
@@ -766,16 +768,11 @@ A session can be minimized out of the side-by-side panes into a live progress ch
 
 Fix: render `<AgentDock />` as a sibling in `App.tsx` with a modifier class setting `z-index: 25` (above the overlay's `z-index: 20`). File: `dashboard/src/components/sleepy/AgentDock.tsx`.
 
-### Auto-resume reliability
+### Auto-resume reliability and conversation-id rotation (2026-07-06)
 
-`claude --resume <uuid>` throws "No conversation found" when a tab was created but the user never sent a message — Claude only writes the JSONL transcript file after the first turn completes.
+**The transcript-absent case:** `claude --resume <uuid>` throws "No conversation found" when a tab was created but the user never sent a message — Claude only writes the JSONL transcript file after the first turn completes. Before spawning, the server checks whether the transcript file exists: **exists** → `--resume <uuid>` (restores); **absent** → `--session-id <uuid>` (starts fresh but pins the id, making it resumable after the first turn). Transcript path format (confirmed empirically): `~/.claude/projects/<working-directory-with-/-replaced-by-->/<session-uuid>.jsonl`
 
-**Fix:** Before spawning, the server checks whether the transcript file exists:
-- **Exists** → `--resume <uuid>` (restores the prior conversation)
-- **Absent** → `--session-id <uuid>` (starts fresh but pins the id, making the session resumable after the first turn is recorded)
-
-**Transcript path format (confirmed empirically):**
-`~/.claude/projects/<working-directory-with-/-replaced-by-->/<session-uuid>.jsonl`
+**The conversation-id rotation gotcha (2026-07-06):** Claude Code **rotates the live conversation id underneath a running tab** (verified on v2.1.201) — `/clear` starts a brand-new session file, and the in-TUI resume picker switches to another conversation entirely. The dashboard roster pinned tabs to their birth UUID forever, so auto-title read stale transcripts and renamed the wrong tab, resume reopened frozen snapshots, and stats/model-picker hit the wrong session. **Fix:** `src/lib/agent-session-map.ts` — per-tab sidecar files (`state/.agent-session-map/<tab-uuid>.json`) record `tab id → live conversation id` on every rotation (PTY exports `DREAMCONTEXT_TAB_SESSION=<roster id>` into the `claude` process, SessionStart and Stop hooks call `recordAgentSession()`), and server routes resolve through `resolveAgentSession()` (mtime-cached read) with a `liveTranscriptPath()` fallback chain (map-resolved → pinned → UUID validation). Hardening: nested-claude guard (`isNestedClaudeHook()` ps-ancestry walk, skips `claude -p` child runs), Stop-hook re-record, symlink guard, uniqueness sweep (latest record wins; displaced tab falls back to pinned chain), auto-title retry cap (8), `$0` positional only-when-prompt + fish `$argv[1]`, version-skew degrade-to-visible-typing, tab→space prompt sanitize. Verified: tsc clean, 2851 unit tests passing, e2e hook probes green. Full architecture → `knowledge/features/sleepy-notch-capture.md` § "Agent session map".
 
 ### ⌘P "Go to Project" switcher + shared overlayStack (2026-07-04)
 
@@ -851,7 +848,7 @@ Cross-tree collapse uses the `dreamcontext-navigate` custom window event so the 
 - `App.tsx` — hosts the `<AgentSurface />` hoist (display:none) and sibling `<AgentDock />`; `<AgentFab />` wired to open the overlay.
 - ~~`dashboard/src/pages/SleepyPage.tsx`~~ — **deleted** 2026-06-30 (agent surface is now FAB-driven from any page).
 
-### Desktop dev workflow note
+### Desktop dev workflow note (updated 2026-07-06)
 
 **Dashboard/CSS/React/server-route changes do NOT need a Tauri rebuild.** The app's Rust shell spawns the global CLI (`find_global_cli` → `$SHELL -ilc 'command -v dreamcontext'`, `-ilc` fix shipped v0.10.0) and serves this repo's `dist/` on a random loopback port. The fast loop:
 1. `npm run build` (builds dashboard → dist/dashboard, then CLI → dist/index.js via tsup)
@@ -861,7 +858,9 @@ Do NOT use `⌘R` (refresh): WKWebView's document cache retains the OLD bundle a
 
 **Only Rust/lib.rs changes require** a full `tauri build` + `dreamcontext app install` (rebuilds the native Rust binary). Examples: changes to `NSPanel` behaviour, `find_global_cli`, `apply_sleepy_enabled`, new Tauri commands.
 
-**Last verified: 2026-06-29 (v0.10.0).** Version rename/delete dashboard feature was built (JS-only change), built via `npm run build`, and tested by ⌘Q + reopen — no Tauri rebuild required and the new routes were live immediately. The `-ilc` fix was baked in simultaneously via `tauri build` + `dreamcontext app install` as part of the v0.10.0 release.
+**Verification after rebuild/reinstall (2026-07-06):** After a Rust rebuild + `dreamcontext app install`, verify the app and CLI are both running the fresh dist: (1) launch the app, confirm `running: yes` via `dreamcontext app status`; (2) check the server spawned is the **global npm-linked CLI** (ps shows `node <nvm>/bin/dreamcontext dashboard …` — the GLOBAL CLI, not a bundled fallback); (3) hit `/api/health` → `{ok: true, version: "…"}`, confirm version matches the build; (4) test the change (e.g., a new route, a changed hotkey, a Rust-side capability). This loop was verified 2026-07-06 for the session-map + resize-debounce + health-handshake + review-fix cycle — rebuild/reinstall/relaunch, all changes live.
+
+**Last verified: 2026-07-06.** Agent session map + terminal-native status line + supporting changes (resize debounce, liveConversations leak fix, `useServerHealth` hook, hook hot-path optimizations) were built and tested via rebuild/reinstall/relaunch.
 
 **Dev-machine empirical note (corrected 2026-06-29):** At the start of this session the dev machine's global CLI was a **separate installed copy** (`<nvm>/lib/node_modules/dreamcontext` — a real directory, not a symlink), NOT `npm link`-ed to the repo. `npm link` was re-run in this session to restore the linked-repo dev setup. **npm-linked dev footgun:** even when the global IS npm-linked to the repo, the embedded terminal silently downgrades to "Open in Terminal" unless (a) `node-pty` is installed in the repo's `node_modules` (it is an optional dep — a plain `npm install` can skip it) AND (b) its prebuilt spawn-helper has `+x` (the tarball ships `-rw-r--r--` → `posix_spawnp failed` at runtime). `ensurePtyHelperExecutable()` restores `+x` at runtime; the in-app installer's `pty` target handles the missing-module case from the UI. The stale-dist symptom (app serving an older dist) is a separate concern — manifests on user machines with a separately installed, stale global CLI.
 

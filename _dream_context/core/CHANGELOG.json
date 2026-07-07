@@ -1,5 +1,124 @@
 [
   {
+    "date": "2026-07-07",
+    "type": "chore",
+    "scope": "release",
+    "description": "v0.13.0 released (2026-07-07). Ships: brain repo sync hardening (global auth store tiering, person-tier commit author C3, first-push bootstrap via fetchRemoteIfExists, credential redaction), Lab bounded sync history + insight detail panel, sleepy composer auto-submit race fix, Tauri shell allow-open ACL, dashboard version-skew fixes, agent tab auto-titling opt-in, skill Entity Router hardening (language-independent entity nouns + don't-rebuild rule, pinned by marker tests). All 5 version surfaces bumped 0.12.0→0.13.0; full suite 2886 green. Backlog groomed: 4 in_review tasks completed and attached to the release, 14 stale version labels normalized, v0.14.0 planning opened as active.",
+    "breaking": false,
+    "summary": "v0.13.0 released — brain sync hardening, Lab detail panel, composer/ACL/version-skew fixes, Entity Router hardening",
+    "references": [
+      "task:github-cloud-collaboration-brain-repo-sync",
+      "task:feat-lab-analytics-insights-subsystem"
+    ]
+  },
+  {
+    "date": "2026-07-06",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "New useServerHealth hook implements version handshake and stale-server detection. Prevents 'No route' errors when dashboard is newer than the running server (desktop app spawns server at launch; global CLI may be stale). Checks /api/health version against built-in VERSION, surfaces handshake status and server staleness. Complements the desktop orphan-process leak fix and the agent-terminal version-skew spawn degradation.",
+    "breaking": false,
+    "summary": "Server health hook and version handshake to prevent version-skew errors",
+    "references": [
+      "file:dashboard/src/hooks/useServerHealth.ts",
+      "file:dashboard/src/App.tsx"
+    ]
+  },
+  {
+    "date": "2026-07-06",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "AgentComposerBar restyled from toolbar to terminal-native status line. Same canvas (--color-bg, exactly xterm background, no divider/tint), same JetBrains Mono at 14.5px × --zoom, same 20px left gutter as .xterm, dim hint-line ink with · separators and accent-colored glyphs (@ ✦ ◆ ◈), mirroring Claude Code's ⏵⏵ bypass permissions hint row. Buttons lost all widget chrome (borders, pill backgrounds). Model/effort/skills menus render as TUI boxes: terminal background, rounded accent-purple border, monospace throughout, ❯ caret marks selected row (caret column reserved on every row for grid alignment). Focus ring moved to ::after overlay so it wraps terminal + status line as one surface. Pane-width degradation preserved: labels drop to glyphs on narrow splits, context/cost readout hides with its trailing · separator (no orphan dot).",
+    "breaking": false,
+    "summary": "Terminal-native status line: AgentComposerBar restyled as xterm's own bottom row",
+    "references": [
+      "file:dashboard/src/components/sleepy/AgentComposerBar.tsx",
+      "file:dashboard/src/components/sleepy/AgentSurface.tsx",
+      "file:dashboard/src/components/sleepy/AgentTerminal.css",
+      "file:dashboard/src/lib/agentComposer.ts"
+    ]
+  },
+  {
+    "date": "2026-07-06",
+    "type": "fix",
+    "scope": "dashboard",
+    "description": "Multi-review adversarial pass caught and fixed 3 dashboard UX issues: (1) Esc overlayStack registration for composer popover (LIFO Esc arbitration), AgentSurface collapse handler recognizes focus inside .agent-composer-menu; (2) Per-frame anchor-rect watcher replaces scroll listener for detached popover positioning, covers ⌘D splits and sidebar transitions, eliminates reflow-per-output-chunk thrash; (3) UUID_RE single source of truth (exported from agent-session-map.ts, imported by routes); (4) Vault-header hand-roll collapsed: session-model and session-stats now take router-resolved contextRoot like handleAgentTitle, liveTranscriptPath() helper eliminates 3 transcript-fallback chain copies.",
+    "breaking": false,
+    "summary": "Composer popover + resize: Esc handling, per-frame anchor tracking, UUID dedup",
+    "references": [
+      "file:dashboard/src/lib/agentComposer.ts",
+      "file:dashboard/src/components/sleepy/AgentSurface.tsx",
+      "file:src/lib/agent-session-map.ts",
+      "file:src/server/routes/agent-sessions.ts",
+      "file:src/server/routes/agent-terminal.ts"
+    ]
+  },
+  {
+    "date": "2026-07-06",
+    "type": "fix",
+    "scope": "agents",
+    "description": "Multi-review adversarial pass caught and fixed 4 agent-reliability issues: (1) Auto-title retry cap (8 attempts) prevents unbounded headless Haiku spawns on broken/offline CLI; (2) Brain gitignore now excludes state/.agent-session-map/ from team-synced brains; (3) Prompt operand appended to shell argv ONLY when a prompt exists, preserving real $0 during rc sourcing + fish $argv[1] instead of $0 for fish shell compatibility; (4) Version-skew spawn (stale server) degrades to visible typing instead of silent no-op; (5) Tab stripping: sanitizePrompt folds \\t into whitespace-to-space replace instead of deleting it.",
+    "breaking": false,
+    "summary": "Hardened agent robustness: auto-title retry cap, shell argv guards, version-skew degradation",
+    "references": [
+      "file:dashboard/src/components/sleepy/AgentSurface.tsx",
+      "file:src/cli/commands/hook.ts",
+      "file:src/lib/git-sync/brain-repo.ts",
+      "file:src/server/routes/agent-terminal.ts"
+    ]
+  },
+  {
+    "date": "2026-07-06",
+    "type": "fix",
+    "scope": "agents",
+    "description": "Claude Code rotates the live conversation UUID under a running tab (/clear, resume picker); tabs were pinned to their birth conversation UUID, breaking auto-title (renamed the wrong tab from a stale transcript), resume (stale snapshots), stats, model picker. Fix: PTY exports DREAMCONTEXT_TAB_SESSION=<tab id>; SessionStart hook records tab→live-conversation-id into state/.agent-session-map/ (per-tab sidecar files, gitignored incl. team-brain gitignore); server resolves through the map (src/lib/agent-session-map.ts, exported UUID_RE, liveTranscriptPath() helper) for --resume, auto-title, session stats, model picker. Nested-claude guard: isNestedClaudeHook() walks ps ancestry, skips recording for claude -p runs inside a tab, fails open on Windows.",
+    "breaking": false,
+    "summary": "Tab identity now tracks live conversation rotation via env-var + SessionStart hook mapping",
+    "references": [
+      "file:src/lib/agent-session-map.ts",
+      "file:tests/unit/agent-session-map.test.ts",
+      "file:src/cli/commands/hook.ts",
+      "file:src/server/routes/agent-sessions.ts",
+      "file:src/server/routes/agent-terminal.ts"
+    ]
+  },
+  {
+    "date": "2026-07-06",
+    "type": "fix",
+    "scope": "desktop",
+    "description": "External links (Open GitHub button, any target=_blank) were blocked by 'Command plugin:shell|open not allowed by ACL'. The capability granted shell:allow-spawn/allow-kill but never shell:allow-open. Added shell:allow-open to desktop/src-tauri/capabilities/default.json (Rust-side capability, compiled into the .app; needed cargo check + tauri build + reinstall). Tauri's default open validator permits https/http/mailto/tel only — correct security posture.",
+    "breaking": false,
+    "summary": "Added shell:allow-open capability for external link opening",
+    "references": [
+      "file:desktop/src-tauri/capabilities/default.json"
+    ]
+  },
+  {
+    "date": "2026-07-06",
+    "type": "feat",
+    "scope": "agents",
+    "description": "Added composer bar / skill-add ('write-but-don't-send') UX to agent terminals. When agents need to pre-populate the input without submitting (e.g., skill discovery flow), the composer now supports this pattern. Files: agentComposer.ts (+143), AgentComposerBar.tsx (+92), AgentTerminal.css (+80).",
+    "breaking": false,
+    "summary": "Composer bar skill-add UX (write-but-don't-send)",
+    "references": [
+      "file:dashboard/src/lib/agentComposer.ts",
+      "file:dashboard/src/components/sleepy/AgentComposerBar.tsx",
+      "file:dashboard/src/components/sleepy/AgentTerminal.css"
+    ]
+  },
+  {
+    "date": "2026-07-06",
+    "type": "fix",
+    "scope": "agents",
+    "description": "The Sleepy 'Sleep' agent's initial prompt was typed client-side after a ~1600ms boot settle timer. On slow boots (MCP auth delays), readline wasn't ready → timer fired into silence → text dropped → Sleep agent stuck on empty prompt. Fix: auto-submit (Sleep) mode passes the prompt as a POSITIONAL arg to claude via new prompt URL param in agent-terminal.ts (injection-safe, mirrors generateTitle pattern). Claude boots with the message already submitted — timing race eliminated. Fragile client-side injection now only remains for write-but-don't-send composer skill-add case.",
+    "breaking": false,
+    "summary": "Replaced fragile readline-injection with positional-arg prompt for Sleepy auto-submit",
+    "references": [
+      "file:src/server/routes/agent-terminal.ts",
+      "file:dashboard/src/components/sleepy/agentSession.ts",
+      "file:dashboard/src/components/sleepy/AgentSurface.tsx"
+    ]
+  },
+  {
     "date": "2026-07-06",
     "type": "chore",
     "scope": "release",

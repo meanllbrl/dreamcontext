@@ -2,7 +2,7 @@
 id: feat_UF2kRQGT
 status: in_review
 created: '2026-06-14'
-updated: '2026-06-28'
+updated: '2026-07-06T19:30:00.000Z'
 released_version: v0.8.7
 tags:
   - frontend
@@ -79,6 +79,7 @@ Developers lose quick thoughts, commands, and notes between coding sessions. The
 
 ## Constraints & Decisions
 
+- **[2026-07-06]** **Never type into a spawned TUI's readline after a timing guess — pass the message positionally at spawn.** The original Sleep-agent auto-submit (2026-07-04) used client-side readline injection triggered by a busy→idle edge, guessing when Claude Code's prompt was ready. When an MCP server auth pause delayed the boot, the send fired before the readline was mounted, dropping the consolidation message and leaving the agent stalled on an empty prompt. The fix: pass the prompt to `claude` as a positional CLI arg (`claude … "$0"`) at spawn — the TUI starts with the message already submitted, eliminating the race. Client-side readline injection survives only for the "write-but-don't-send" composer skill-add case (where the user finishes the prompt). This constraint is load-bearing for any future auto-submit feature — a spawned interactive TUI's readline timing is never reliably detectable from outside.
 - **[2026-06-28]** **Non-activating NSPanel via `tauri-nspanel` v2.** The original `WebviewWindow` (decorations-free, always-on-top) activates dreamcontext when summoned from another app — the MacBook notch companion pattern requires the capture panel to steal keystrokes without stealing app focus. `tauri-nspanel` wraps `NSPanel` with `.isFloatingPanel = true` and `.becomesKeyOnlyIfNeeded = true`, giving non-activating floating panel behaviour not exposed by the Tauri window API.
 - **[2026-06-28]** **Hover-to-open via Rust CoreGraphics cursor poll.** Registering a `CGEventTap` for cursor movement from JS/Tauri would require elevated permissions. The Rust shell polls cursor position against the static notch rect (hard-coded at top-center for MacBook) on a background thread; the notch rect is device-specific but safe to hard-code for the target hardware family. Auto-closes on cursor leave unless `sleepy:committed` is set (user is typing).
 - **[2026-06-28]** **PanelEnabled state: opt-in, default false.** Showing the Sleepy perch on first launch would confuse users who haven't set it up. `PanelEnabled` is an atomic Rust state (default false); the launcher JS mirrors it from the persisted `~/.dreamcontext/sleepy.json` `enabled` flag on mount and on `storage` events. This means the notch is visually absent until the user enables it in Settings — consistent with the existing hotkey-toggle model.
@@ -99,6 +100,34 @@ Developers lose quick thoughts, commands, and notes between coding sessions. The
 - **Desktop-only feature** — no npm package ships; reaches users only via a desktop release.
 
 ## Technical Details
+
+### Agent session map (2026-07-06) — tab tracking for auto-title + resume
+
+**The problem:** Claude Code rotates conversation IDs underneath a running tab (verified on v2.1.201). `/clear` starts a brand-new session file (the stub sits at the top of the fresh transcript), and the in-TUI resume picker switches to another conversation entirely. The dashboard roster pins a tab to its **birth** conversation UUID forever, but that pinned ID becomes stale the moment a rotation happens — auto-title read frozen transcripts and renamed the wrong tab, resume reopened snapshots from before the rotation, and session stats/model-picker hit the wrong session.
+
+**The fix (architectural):** `src/lib/agent-session-map.ts` — a per-tab sidecar file (`state/.agent-session-map/<tab-uuid>.json`) that records `tab id → live conversation id` on every rotation. The PTY exports `DREAMCONTEXT_TAB_SESSION=<roster id>` into the spawned `claude` process (the env var is inherited by the hook), the SessionStart hook (and Stop hook, belt-and-suspenders) calls `recordAgentSession(contextRoot, tabId, sessionId)` on every startup/resume/compact/clear, and server routes resolve through `resolveAgentSession(contextRoot, tabId)` (mtime-cached read) for `--resume`, auto-title, session stats, and the model picker. Returns `''` for unmapped (identity) tabs or when the file is absent/corrupt. `liveTranscriptPath()` helper in `agent-session-map.ts` wraps the fallback chain (map-resolved → pinned → session-id UUID validation) so every route uses one tested path.
+
+**Hardening (multi-review findings, all fixed):**
+- `isNestedClaudeHook()` guard (ps-ancestry walk via `ps -p <ppid> -o comm=`, skips recording when a second `claude` process sits above the hook's own — i.e., a `claude -p` child run from inside the tab; fails open on Windows / any `ps` error so normal recording is untouched).
+- Stop-hook re-record (a `/clear` followed by instant app quit could lose the SessionStart record to the hook timeout — the next completed turn re-records).
+- Symlink guard (won't write through `state` or the map dir if either exists as a symlink, same hazard class `ensureGitignoreEntries` defends with `lstat`).
+- Uniqueness sweep (a conversation can be LIVE in only one tab — if another tab's entry points at this same conversation, the latest record wins and the displaced entry is dropped, so two tabs don't double-attach on relaunch).
+- Pruning (MAX_ENTRIES = 40; oldest entries pruned on each record so a long-lived vault doesn't grow unbounded closed-tab files).
+- Team-brain gitignore (`buildBrainGitignore` includes `state/.agent-session-map/` so team-synced brains never commit machine-local conversation IDs).
+- Auto-title retry cap (8 attempts per session, tracked in `autoTitledRef` + `titleInFlightRef` split so an interrupted first turn doesn't permanently lose its name).
+- `$0` positional only-when-prompt (the prompt operand is appended to the shell argv ONLY when a prompt exists, so promptless agent tabs keep their real `$0` during rc sourcing; fish shells get `"$argv[1]"` instead of `"$0"`).
+- Version-skew degrade-to-visible-typing (the sleep spawn checks the cached `/health` version handshake; against a stale server it degrades to typing the prompt visibly instead of a silent no-op).
+- Tab→space prompt sanitize (`sanitizePrompt` folds `\t` into the whitespace-to-space replace so `fix\tbug` arrives as `fix bug`).
+
+**Verification:** `tsc` clean, 2851 unit tests passing (including a REAL-process integration test for the parent-death watchdog), e2e hook probes green.
+
+**Load-bearing exports:** `UUID_RE` (the shared session-id gate; both keys and values must be shell-inert UUIDs — the regex is an injection guard), `recordAgentSession()`, `resolveAgentSession()`, `liveTranscriptPath()`.
+
+### Auto-submit mechanism (2026-07-06)
+
+**Current path (positional arg at spawn):** `src/server/routes/agent-terminal.ts` reads the `prompt` URL param, sanitizes it via `sanitizePrompt()` (strips control chars, collapses newlines to spaces, caps at 8000 chars), and passes it as the login shell's `$0` positional: `['-ilc', 'exec claude … "$0"', initialPrompt]`. Claude boots the interactive TUI with the first message already submitted, autonomously — no reliance on client-side readline detection. `$0` is a real execve argument (never re-parsed by the shell), so a prompt with spaces/quotes/any metacharacter is inert.
+
+**Old path (readline injection, REMOVED 2026-07-06):** client-side `initialPrompt` + busy/idle detection fired a readline send after guessing the TUI was ready. Racy during slow boots (MCP auth pauses) — the send could fire before the readline was mounted, dropping the message. This path is GONE for auto-submit; it survives only for the "write-but-don't-send" composer skill-add case (where the user finishes the prompt, so the timing race is moot).
 
 ### Notch Redesign (2026-06-28)
 
@@ -142,10 +171,31 @@ Developers lose quick thoughts, commands, and notes between coding sessions. The
 ## Changelog
 <!-- LIFO: newest entry at top -->
 
+### 2026-07-06 - Auto-submit race eliminated: prompt passed positionally at spawn (working tree)
+- **BREAKING the old auto-submit mechanism.** The 2026-07-04 "auto-types and submits" path (`initialPrompt` + busy/idle detection firing a client-side readline injection) was **racy** — during a slow boot (3 MCP servers need authentication), the send could fire before the prompt was ready, dropping the consolidation message and leaving the Sleep agent stalled on an empty prompt. The new mechanism passes the prompt to `claude` as a **positional CLI arg** at spawn via a `prompt` URL param (`src/server/routes/agent-terminal.ts`): the prompt is passed as the login shell's `$0` positional and referenced as `"$0"` after all flags → `claude … "<prompt>"` starts the interactive TUI with the first message already submitted, autonomously. Client-side readline injection survives ONLY for the "write-but-don't-send" composer skill-add case (the user finishes the prompt).
+- `sanitizePrompt(v)`: strips control chars (NUL truncates a C arg; CR/LF would submit a partial line), collapses newlines to spaces, caps at 8000 chars. Never interpolated into the shell string — `$0` is a real execve argument, inert regardless of metacharacters.
+- **Constraint (added below)**: never type into a spawned TUI's readline after a timing guess — pass the message positionally at spawn. The old path was the exact failure mode this constraint guards against.
+
+### 2026-07-06 - Terminal-native status line redesign (working tree)
+- **AgentComposerBar restyled as the terminal's own status line** (`AgentComposerBar.tsx`, `AgentComposerBar.css`): same background/JetBrains Mono/zoom-tracked grid as xterm (no seam), Claude Code hint-row design language (dim monospace, accent-colored glyphs, `·` separators, `@` instead of 📎), TUI-box popovers (terminal bg, accent border, `❯` caret with reserved caret column for label alignment), split-view focus ring moved to a pointer-events-none `::after` overlay so it wraps terminal+status-line as one surface, per-theme dim ink derived from xterm foreground, pane-width degradation (labels→glyphs, context/cost readout hides with its `·`).
+- Dim ink: `readXtermTheme()` now extracts `--color-bg` AND the per-theme foreground (`#cdd3de` dark / `#33383f` light) and derives a calmed dim ink (same per-theme mixing the terminal itself uses for dim text) — so the status-line buttons match xterm's dim text in both themes instead of floating as a separate widget tone.
+- All chrome (borders, pill backgrounds, emoji) removed from buttons — they're now dim monospace words with accent-colored leading glyphs, deliberately mirroring Claude Code's own `⏵⏵ bypass permissions on (shift+tab to cycle) · …` row. Labels lowercased (`files`, `dreamcontext skills`, `fable`, `high`) to match the CLI's hint-row voice. The `@` glyph replaces 📎 (Claude Code's file-reference character). The `◆`/`◈`/`✦` glyphs are tinted the accent purple the way the CLI colors its `⏵⏵` prefix.
+- Spacing/sizing: JetBrains Mono at `14.5px × --zoom` (identical font, size, and zoom-tracking as the terminal cells), body letter-spacing reset, left padding aligned to `.xterm` 20px gutter.
+- Verified: tsc clean, production build passes, restart the dev server to see it.
+
+### 2026-07-06 - Composer skill-add UX: two-pane skill browser with live detail (working tree)
+- The AgentComposerBar's ✦ Skills popover was redesigned as a **two-pane skill browser** (`AgentComposerBar.tsx`, `agentComposer.ts`): left pane shows capability chips grouped by category ("Brain lifecycle" / "Build & review" / "Decide & draw"); right pane shows a live detail card that follows hover/focus, rendering WHAT the skill is (one sentence) and HOW it works (ordered phase flow + dispatched sub-agents if any). Clicking a chip drops its trigger into the focused terminal's input line (the "write-but-don't-send" inject — the user finishes the prompt).
+- Each `SkillTrigger` now carries rich detail: `what`, `how[]`, `agents[]` — so the popover can render a meaningful explainer without relying on a native one-line tooltip.
+- Skill groups reorganized: "Brain lifecycle" (initializer, curator, deep-research, dream-sync), "Build & review" (goal-skill, multi-review), "Decide & draw" (council, excalidraw).
+- This extends the existing AgentSurface/composer workflow (same domain); not a separate feature.
+
+### 2026-07-06 - Auto-title retry fix: interrupted first turns no longer permanently lose their name (working tree)
+- AgentSurface auto-title was guarded to "once per session" via `autoTitledRef` — but an interrupted or not-yet-flushed first turn (a busy→idle edge before Claude Code writes the transcript) returns an empty title, permanently marking that session as "handled" so it never got a second chance. Fixed: split `autoTitledRef` (successfully named or permanently ineligible) from `titleInFlightRef` (one outstanding Haiku call at a time). A call that comes back empty leaves the id retryable — so the tab you actually worked on gets named on its next completed turn instead of losing the race to a slower, older tab's late rename.
+
 ### 2026-07-04 - Sleep-agent launcher integrated into header SleepDebtTracker (working tree, feat/sleep-debt-header-tracker)
 - The header SleepDebtTracker became an **interactive in-app Sleep-agent launcher**: clicking the sleepy-face widget (previously a nav-to-Sleep-page link) now opens a dropdown menu with "Show sleep details" (old behavior) and "Run sleep agent" (new).
 - "Run sleep agent" is capability-gated (desktop + node-pty + Claude CLI via `/agent/capabilities` AND Agents surface enabled in Settings) — disabled with a tooltip when prereqs are missing.
-- When clicked, it dispatches a `dreamcontext-run-sleep-agent` window event; the always-mounted `AgentSurface` spawns a real "Sleep" Claude Code session in the bottom-right dock, kept collapsed to a chip. The session auto-types and submits the consolidation prompt once (after the SessionStart brain-preload goes idle, via `initialPrompt` + busy/idle detection). Duplicate requests bring the existing "Sleep" session forward instead of spawning another.
+- When clicked, it dispatches a `dreamcontext-run-sleep-agent` window event; the always-mounted `AgentSurface` spawns a real "Sleep" Claude Code session in the bottom-right dock, kept collapsed to a chip. ~~The session auto-types and submits the consolidation prompt once (after the SessionStart brain-preload goes idle, via `initialPrompt` + busy/idle detection).~~ **[SUPERSEDED 2026-07-06]** The prompt is now passed as a positional arg at spawn (see above) — no readline injection.
 - Active-consolidation UI: when `sleep_started_at` is stamped (real sleep in flight), the tracker flips to a violet "Sleeping" chip with the face asleep, the bar breathing, and animated "z z z" — and the "Run sleep agent" dropdown item is disabled (matches the backend's one-consolidation lock).
 - The spawned Sleep session runs with default permission settings (bypass OFF) — respects the project's `.claude` allow-list, not auto-armed to skip permissions.
 - New files: `lib/sleepAgent.ts` (event + prompt), `hooks/useAgentCapabilities.ts` (readiness gate). Touched: `SleepDebtTracker.tsx/.css`, `agentSession.ts`, `AgentSurface.tsx`, `I18nContext.tsx`.
