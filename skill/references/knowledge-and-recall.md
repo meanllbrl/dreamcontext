@@ -55,7 +55,7 @@ The `memory` command group is your interface to the curated corpus: `knowledge/*
 | **delete** | Remove a knowledge file (irreversible; recover via git) | `dreamcontext memory delete <slug> -f` |
 | **list** | Enumerate the corpus by type | `dreamcontext memory list [--types …]` |
 | **status** | See corpus size + breakdown by type | `dreamcontext memory status` |
-| **recall mode** | Switch how recall ranks (haiku/raw/off) | `dreamcontext recall on\|raw\|off\|status` |
+| **recall mode** | Switch how recall ranks (haiku/raw/hybrid/off) | `dreamcontext recall on\|raw\|hybrid\|off\|status` |
 
 ### recall — your first-line discovery tool
 
@@ -96,6 +96,7 @@ Writes a CHANGELOG entry (`type=note`, `scope=quick`); the sleep cycle reconcile
 |---|---|---|
 | `haiku` (**default**) | A small cloud model picks 0–3 relevant docs per prompt (smarter than keywords; BM25 fallback) | `dreamcontext recall on` |
 | `raw` | BM25 keyword scoring only — no LLM call | `dreamcontext recall raw` |
+| `hybrid` (**experimental**) | BM25 + local dense embeddings fused (multilingual, no LLM call; falls back to BM25 if the model is unavailable) | `dreamcontext recall hybrid` |
 | `off` | No recall injection at all | `dreamcontext recall off` |
 | — | Inspect current mode | `dreamcontext recall status` |
 

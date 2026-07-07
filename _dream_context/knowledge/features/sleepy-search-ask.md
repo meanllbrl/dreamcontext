@@ -2,8 +2,7 @@
 id: feat_t9fQ1w-A
 status: in_review
 created: '2026-06-27'
-updated: '2026-06-29'
-released_version: null
+updated: '2026-07-07'
 tags:
   - frontend
   - backend

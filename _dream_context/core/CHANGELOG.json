@@ -2,6 +2,23 @@
   {
     "date": "2026-07-07",
     "type": "feat",
+    "scope": "recall",
+    "description": "Ships the embedding epic tasks 1-4 (decision-embedding-layer): multilingual-e5-small via @huggingface/transformers (optionalDependency, ~113MB one-time download, models cached at ~/.dreamcontext/models), heading-boundary code-fence-aware chunker, content-hash incremental vector cache at _dream_context/.embeddings/ (self-gitignoring, mtime+size pre-filter, --force bypass), confidence-adaptive fusion (relative-score when BM25 decisive, weighted RRF when weak, top-1 pin guard, changelog docs excluded from dense channel). Raw BM25 score untouched in every mode — hook gates frozen. Freshness: lazy per hybrid query, eager --force at sleep done (gated on existing cache), plus new 'dreamcontext embed refresh [--force|--if-present]' and 'embed status' commands. A/B on frozen gold sets: train r@1 76.7→81.7, held-out 60.0→66.7, held-out r@5 90→96.7, turkish r@1 doubled, EN paraphrase r@1 +16.7, zero regressed recall/MRR cells; all four graduation gates met. Off by default; degrades to plain BM25 without the model. 41 new tests; suite 2922 green.",
+    "breaking": false,
+    "summary": "v0.14.0: experimental local embedding layer — opt-in hybrid BM25+dense recall (dreamcontext recall hybrid), multilingual, fully offline",
+    "references": [
+      "knowledge:decision-embedding-layer",
+      "file:src/lib/embeddings/hybrid.ts",
+      "file:eval/RESULTS.md",
+      "task:feat-hybrid-recall-fusion-bm25-plus-dense-via-rrf-behind-flag"
+    ],
+    "authors": [
+      "mehmet"
+    ]
+  },
+  {
+    "date": "2026-07-07",
+    "type": "feat",
     "scope": "lab",
     "description": "New InsightPicker component added to objective creation and detail modals, enabling users to bind a Lab insight to an objective's Key Result directly from the dashboard UI (complementing the existing 'lab bind' CLI command). Picking an insight prefills the metric's label, unit, and current value from the cached snapshot and auto-binds on objective creation. Insight groups are now collapsible/expandable with per-machine state persistence. New useLabPrefs hook and ui-settings route manage Lab UI preferences. Server-side group expansion state added to store.ts and lab routes.",
     "breaking": false,

@@ -565,6 +565,18 @@ Specific issues the reviewers flagged with the vector approach:
 
 BM25 over the curated corpus gives ~80% of the value at 1% of the complexity: zero new npm dependencies, deterministic ranking, version-controllable, instant. The full decision trace lives at `_dream_context/core/features/memory-recall-bm25.md`.
 
+### Hybrid recall — the local embedding overlay (experimental, opt-in)
+
+The mem0 rejection named its own escape hatch: *an overlay on the BM25 layer, not a replacement, pure-Node, local*. That overlay now exists — **off by default**, enabled with `dreamcontext recall hybrid` (or `DREAMCONTEXT_RECALL_MODE=hybrid`).
+
+What it is: `multilingual-e5-small` (384-dim, ~113 MB quantized ONNX) running in-process via `@huggingface/transformers` — no Python, no daemon, no API key; vectors never leave the machine. Docs are chunked at markdown heading boundaries (~200–512 tokens, code-fence-aware) and cached by **content hash** in `_dream_context/.embeddings/` (self-gitignoring — vectors are partially invertible, so the cache is treated as credential-class). Refresh is incremental: an edit re-embeds only its changed chunks — lazily at every hybrid query (mtime+size pre-filter, ~15 ms when nothing changed), eagerly with a full re-check at `sleep done`, and manually via `dreamcontext embed refresh [--force]`.
+
+Fusion is **confidence-adaptive**, and every piece was benchmark-driven: plain RRF (the textbook choice) was measured first and killed — it regressed exact-term recall@1 from 100% to 83% because rank fusion erases BM25's score margins. What shipped instead: when BM25's top raw score is decisive, score-preserving relative fusion (dense cannot flip an exact-token win — those queries stay byte-identical to BM25); when BM25 is weak, weighted rank fusion lets dense rescue buried docs, with a pin guard protecting internally-confident BM25 top-1s. Dense/RRF feeds `rankScore` only — the raw BM25 `score` the hook gates on is untouched in every mode.
+
+Measured on the frozen 60-query train + 30-query held-out gold sets (tuned on train only): overall recall@1 +5.0/+6.7 pts, held-out recall@5 90→96.7, **Turkish recall@1 doubled** (20→40, r@5 90→100 — the multilingual space bridges TR→EN natively, no LLM call), English paraphrase recall@1 +16.7, and **not one recall@k or MRR cell regressed** on either set. Dense-only was also measured and is far *worse* than BM25 alone (38% r@1) — which is exactly why this is an overlay, never a replacement. If the model isn't installed (`@huggingface/transformers` is an optionalDependency), hybrid mode silently falls back to plain BM25. Full numbers: `eval/RESULTS.md` ("Embedding A/B").
+
+Note: hybrid replaces the per-prompt Haiku call — recall becomes fully local and deterministic. What you give up is Haiku's judgment (its ability to answer "this prompt has no searchable intent" with silence); what you gain is zero token cost and native cross-lingual matching.
+
 ### What is indexed
 
 The corpus is deliberately narrower than "everything in `_dream_context/`":

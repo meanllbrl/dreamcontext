@@ -2,8 +2,7 @@
 id: feat_f1B8gR0v
 status: in_review
 created: '2026-06-21'
-updated: '2026-06-21'
-released_version: null
+updated: '2026-07-07'
 tags:
   - architecture
   - 'topic:agents'

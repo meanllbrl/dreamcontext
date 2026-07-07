@@ -145,7 +145,9 @@ Sections for `features insert`: `changelog`, `notes`, `technical_details`, `cons
 | `memory delete <slug>` | Delete a knowledge file (irreversible; recover via git). `-f/--force`. |
 | `memory list` | List the corpus by type. `--types <csv>`, `--plain`. |
 | `memory status` | Corpus size + breakdown by type. |
-| `recall status\|on\|off\|raw` | Control recall mode: `on`=haiku (default, LLM picks docs), `raw`=BM25 only, `off`=disabled. |
+| `recall status\|on\|off\|raw\|hybrid` | Control recall mode: `on`=haiku (default, LLM picks docs), `raw`=BM25 only, `hybrid`=experimental BM25+local-embedding fusion (no LLM), `off`=disabled. |
+| `embed refresh` | Bring the hybrid-recall embedding index up to date (embeds only changed chunks). `--force` re-chunks everything; `--if-present` no-ops unless a cache already exists (cron/sleep-safe). |
+| `embed status` | Embedding cache presence, model, vector count, size. |
 
 ---
 
@@ -251,7 +253,7 @@ Sync the WHOLE brain (`_dream_context/`) — tasks, knowledge, features, sleep s
 | Var | Effect |
 |---|---|
 | `DREAMCONTEXT_MEMORY_HOOK=0` | Disable auto-injected recall on prompts. |
-| `DREAMCONTEXT_RECALL_MODE=haiku\|raw\|off` | Override recall mode for the session (else uses `recall` setting; default `haiku`). |
+| `DREAMCONTEXT_RECALL_MODE=haiku\|raw\|hybrid\|off` | Override recall mode for the session (else uses `recall` setting; default `haiku`). |
 | `DREAMCONTEXT_AUTO_DASHBOARD=0` | Don't auto-open the dashboard on session start. |
 | `DREAMCONTEXT_DASHBOARD_PORT` | Default dashboard port (else 4173). |
 | `DREAMCONTEXT_AUTO_UPGRADE=0` | Disable automatic CLI self-upgrade. |

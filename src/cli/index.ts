@@ -73,6 +73,7 @@ ${chalk.bold('Content')}
   ${chalk.magentaBright('knowledge')}         Create and index knowledge files
   ${chalk.magentaBright('taxonomy')}          Inspect and maintain the project tag vocabulary
   ${chalk.magentaBright('memory')}            Recall facts via BM25 search over the project corpus
+  ${chalk.magentaBright('embed')}             ${chalk.dim('(experimental)')} Local embedding index for hybrid recall
   ${chalk.magentaBright('tasks')}             Create tasks, log progress, and mark complete
   ${chalk.magentaBright('roadmap')}           PO-authored objective board (rollups, dependencies, target vs forecast)
   ${chalk.magentaBright('lab')}               Analytics insights: curated metrics from HTTP APIs or scripts

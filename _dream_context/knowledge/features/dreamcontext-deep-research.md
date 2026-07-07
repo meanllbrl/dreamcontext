@@ -2,8 +2,7 @@
 id: feat_I8gilyj8
 status: in_review
 created: '2026-06-25'
-updated: '2026-06-26'
-released_version: null
+updated: '2026-07-07'
 tags:
   - 'topic:skills'
   - 'topic:cli'

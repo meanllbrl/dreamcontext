@@ -2,8 +2,7 @@
 id: feat_WBfWsxgS
 status: in_review
 created: '2026-07-02'
-updated: '2026-07-04'
-released_version: null
+updated: '2026-07-07'
 tags:
   - 'topic:roadmap'
   - 'topic:pm'

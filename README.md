@@ -484,7 +484,17 @@ dreamcontext memory remember "Chose BM25 over mem0 after 3-reviewer review"
 dreamcontext memory status
 ```
 
-**Why not a vector DB or mem0.** dreamcontext content is already curated atomic facts — knowledge docs, feature PRDs, closed tasks, memory entries, CHANGELOG entries. The LLM-extraction step a mem0-style stack provides solves a problem this system already solved. BM25 over the live corpus gives ~80% of the value at 1% of the complexity: zero new npm dependencies, no Python, no Ollama, no API keys, no embeddings to invalidate, version-controllable. Cold start is under 100ms on a 40-doc corpus; the index is rebuilt in memory on every call.
+**Why not a vector DB or mem0.** dreamcontext content is already curated atomic facts — knowledge docs, feature PRDs, closed tasks, memory entries, CHANGELOG entries. The LLM-extraction step a mem0-style stack provides solves a problem this system already solved. BM25 over the live corpus gives ~80% of the value at 1% of the complexity: no Python, no Ollama, no API keys, no daemon, version-controllable. Cold start is under 100ms on a 40-doc corpus; the index is rebuilt in memory on every call.
+
+**Hybrid recall _(experimental, opt-in)_.** For the remaining ~20% — paraphrased questions and cross-lingual queries (e.g. a Turkish question whose answer lives in an English doc) — an optional **local embedding layer** can be fused on top of BM25. Fully offline after a one-time model download (`multilingual-e5-small`, ~113 MB, no API keys, vectors never leave your machine), incremental content-hash cache under `_dream_context/.embeddings/` (gitignored), and confidence-gated fusion so exact-term queries stay byte-identical to BM25. On the benchmark it lifted Turkish recall@1 2× and English paraphrase recall@1 by +17 pts with zero regressed categories. **Off by default** — BM25 behavior is unchanged unless you enable it:
+
+```bash
+dreamcontext recall hybrid       # switch recall mode to BM25 + dense fusion
+dreamcontext embed refresh       # prewarm / refresh the embedding index (first run indexes the corpus)
+dreamcontext embed status        # cache size, model, vector count
+```
+
+Freshness is automatic: recall refreshes changed chunks lazily per query, and `sleep done` runs an eager full re-check. If the model isn't installed, hybrid mode silently falls back to plain BM25.
 
 Hook injection is **ON by default**: top hits are auto-surfaced to the agent on every non-trivial user prompt via the UserPromptSubmit hook. Opt out with `DREAMCONTEXT_MEMORY_HOOK=0` if you want raw prompts without context augmentation.
 
