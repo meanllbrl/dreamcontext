@@ -303,6 +303,35 @@ export function createInsight(contextRoot: string, input: CreateInsightInput): I
 }
 
 /**
+ * Persist (or clear) an insight's objective binding. STRICT on shape: the
+ * objective slug must be kebab-safe and `value` must be `latest` or
+ * `series:<name>`. Objective EXISTENCE is checked by the caller (`bindInsight`
+ * in sync.ts) — the store stays free of roadmap imports.
+ */
+export function writeInsightBinding(
+  contextRoot: string,
+  slug: string,
+  binding: Binding | null,
+): InsightManifest {
+  const manifest = getInsight(contextRoot, slug);
+  if (!manifest) throw new LabError(`Insight not found: ${slug}`);
+  if (binding) {
+    const objective = binding.objective.trim();
+    if (!isSafeInsightSlug(objective)) {
+      throw new LabError(`Invalid objective slug "${binding.objective}" — use kebab-case.`);
+    }
+    const value = binding.value.trim() || 'latest';
+    if (value !== 'latest' && !(value.startsWith('series:') && value.slice('series:'.length).trim())) {
+      throw new LabError(`Binding value must be "latest" or "series:<name>" (got "${binding.value}").`);
+    }
+    updateFrontmatterFields(manifest.path, { binding: { objective, value }, updated_at: today() });
+  } else {
+    updateFrontmatterFields(manifest.path, { binding: null, updated_at: today() });
+  }
+  return readInsightFile(manifest.path);
+}
+
+/**
  * Persist new tweak VALUES onto an insight's declared tweaks. Each key must be a
  * declared tweak; the value is validated against its type (enum → one of options;
  * date → calendar date; string → any). Unknown keys and type violations throw.

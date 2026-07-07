@@ -156,3 +156,10 @@ function makeSettingsHandlers(relPath: string, logTag: string): { get: SettingsH
 const roadmapPrefsHandlers = makeSettingsHandlers('state/.roadmap-prefs.json', 'roadmap-prefs');
 export const handleRoadmapPrefsGet = roadmapPrefsHandlers.get;
 export const handleRoadmapPrefsPut = roadmapPrefsHandlers.put;
+
+// ─── Lab (Insights) board preferences (per-machine) ──────────────────────────
+// Per-group card order + collapsed groups on the Insights page — personal to
+// this machine, mirrored server-side for the same loopback-port reason.
+const labPrefsHandlers = makeSettingsHandlers('state/.lab-prefs.json', 'lab-prefs');
+export const handleLabPrefsGet = labPrefsHandlers.get;
+export const handleLabPrefsPut = labPrefsHandlers.put;

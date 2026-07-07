@@ -19,6 +19,17 @@
   box-shadow: var(--shadow-md);
 }
 
+/* Ghost of the card being dragged. */
+.lab-card--dragging {
+  opacity: 0.45;
+}
+
+/* Card another card hovers over — the drop takes this position. */
+.lab-card--drop-target {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 1px var(--color-accent), var(--shadow-md);
+}
+
 .lab-card-header {
   display: flex;
   align-items: flex-start;

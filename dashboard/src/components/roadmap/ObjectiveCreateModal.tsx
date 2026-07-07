@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useObjectives, useCreateObjective, type Objective, type ObjectiveMetric } from '../../hooks/useObjectives';
+import { useLabInsights, useUpdateBinding } from '../../hooks/useLab';
 import { DateRangePicker } from './DateRangePicker';
 import { DependencyPicker } from './DependencyPicker';
+import { InsightPicker } from './InsightPicker';
 import './ObjectiveCreateModal.css';
 
 /**
@@ -58,6 +60,12 @@ export function ObjectiveCreateModal({ onClose, onCreated }: ObjectiveCreateModa
   // baseline are required (mirrors the store's validateMetric).
   const [useMetric, setUseMetric] = useState(false);
   const [metric, setMetric] = useState<ObjectiveMetric>({ label: '', unit: null, baseline: 0, target: 100, current: 0 });
+  // Optional Lab insight feeding the Key Result — selecting one prefills the
+  // metric from the insight's cached snapshot; the binding itself is written to
+  // the insight AFTER the objective exists (it needs the new slug).
+  const [insightSlug, setInsightSlug] = useState<string | null>(null);
+  const { data: insights = [] } = useLabInsights();
+  const bindInsight = useUpdateBinding();
   const [error, setError] = useState<string | null>(null);
 
   const titleRef = useRef<HTMLInputElement>(null);
@@ -75,7 +83,24 @@ export function ObjectiveCreateModal({ onClose, onCreated }: ObjectiveCreateModa
     && Number.isFinite(metric.current)
     && metric.target !== metric.baseline
   );
-  const canSubmit = title.trim().length > 0 && slugValid && !slugCollides && metricValid && !createObjective.isPending;
+  const canSubmit = title.trim().length > 0 && slugValid && !slugCollides && metricValid
+    && !createObjective.isPending && !bindInsight.isPending;
+
+  // Picking an insight prefills the metric from its cached snapshot — the label
+  // and unit only when still blank (never clobber what the user typed); the
+  // current value always (that's the point of connecting).
+  const selectInsight = (slug: string | null) => {
+    setInsightSlug(slug);
+    if (!slug) return;
+    const ins = insights.find((i) => i.slug === slug);
+    if (!ins) return;
+    setMetric((m) => ({
+      ...m,
+      label: m.label.trim() ? m.label : ins.title,
+      unit: m.unit && m.unit.trim() ? m.unit : ins.unit,
+      current: ins.latest !== null && Number.isFinite(ins.latest) ? ins.latest : m.current,
+    }));
+  };
 
   const submit = () => {
     if (!canSubmit) return;
@@ -101,7 +126,23 @@ export function ObjectiveCreateModal({ onClose, onCreated }: ObjectiveCreateModa
           : undefined,
       },
       {
-        onSuccess: (res) => { onCreated?.(res.objective); onClose(); },
+        onSuccess: async (res) => {
+          // Connect the chosen insight to the freshly-created objective. The
+          // objective already exists at this point, so a bind failure must stay
+          // LOUD but not lose the creation: surface it inline and let the user
+          // close — the connection can be retried from the objective's panel.
+          if (useMetric && insightSlug) {
+            try {
+              await bindInsight.mutateAsync({ slug: insightSlug, binding: { objective: res.objective.slug, value: 'latest' } });
+            } catch (e) {
+              onCreated?.(res.objective);
+              setError(`Objective created, but connecting the insight failed: ${e instanceof Error ? e.message : 'unknown error'}. Connect it from the objective's panel.`);
+              return;
+            }
+          }
+          onCreated?.(res.objective);
+          onClose();
+        },
         onError: (e) => setError(e instanceof Error ? e.message : 'Failed to create objective.'),
       },
     );
@@ -278,6 +319,19 @@ export function ObjectiveCreateModal({ onClose, onCreated }: ObjectiveCreateModa
                 </div>
                 {!metricValid && (
                   <span className="ocm-rice-hint">Needs a label and a target that differs from the baseline.</span>
+                )}
+                {insights.length > 0 && (
+                  <div className="ocm-metric-insight">
+                    <InsightPicker
+                      insights={insights}
+                      selected={insightSlug}
+                      objectiveSlug={null}
+                      onSelect={selectInsight}
+                    />
+                    {insightSlug && (
+                      <span className="ocm-rice-hint">Current updates automatically from the insight on every lab sync.</span>
+                    )}
+                  </div>
                 )}
               </div>
             ) : (

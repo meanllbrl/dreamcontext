@@ -5,7 +5,7 @@ import { password } from '@inquirer/prompts';
 import { ensureContextRoot } from '../../lib/context-path.js';
 import { success, error, header, warn } from '../../lib/format.js';
 import { createInsight, getInsight, listInsights, readCache, writeInsightTweaks } from '../../lib/lab/store.js';
-import { syncInsight, syncAll } from '../../lib/lab/sync.js';
+import { bindInsight, syncInsight, syncAll } from '../../lib/lab/sync.js';
 import { writeCredential, listCredentialNames } from '../../lib/lab/credentials.js';
 import { gitignoreCovers } from '../../lib/gitignore.js';
 import { LabError, type Render } from '../../lib/lab/types.js';
@@ -177,6 +177,35 @@ export function registerLabCommand(program: Command): void {
       try {
         writeInsightTweaks(root, slug, { [key]: value });
         success(`${slug}: tweak "${key}" set to "${value}".`);
+      } catch (err) {
+        handleLabError(err);
+      }
+    });
+
+  lab
+    .command('bind')
+    .argument('<slug>', 'Insight slug')
+    .argument('[objective]', 'Objective slug whose Key Result this insight feeds (omit with --clear)')
+    .description('Connect an insight to an objective Key Result (metric.current updates on every sync)')
+    .option('--value <value>', 'Bound value: "latest" (default) or "series:<name>"')
+    .option('--clear', 'Disconnect the insight from its objective')
+    .action((slug: string, objective: string | undefined, opts: { value?: string; clear?: boolean }) => {
+      const root = ensureContextRoot();
+      if (!opts.clear && !objective) {
+        error('Provide an objective slug, or pass --clear to disconnect.');
+        process.exitCode = 1;
+        return;
+      }
+      try {
+        if (opts.clear) {
+          bindInsight(root, slug, null);
+          success(`${slug}: binding cleared.`);
+          return;
+        }
+        const { unbound, seededCurrent } = bindInsight(root, slug, { objective: objective!, value: opts.value ?? 'latest' });
+        success(`${slug}: now feeds objective "${objective}".`);
+        if (seededCurrent !== null) console.log(chalk.dim(`  metric.current seeded to ${seededCurrent} from the cached snapshot.`));
+        for (const u of unbound) warn(`${u}: unbound from "${objective}" — an objective's Key Result has one feeder.`);
       } catch (err) {
         handleLabError(err);
       }

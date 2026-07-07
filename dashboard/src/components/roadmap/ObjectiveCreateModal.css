@@ -376,3 +376,6 @@
   animation: ocm-spin 0.6s linear infinite;
 }
 @keyframes ocm-spin { to { transform: rotate(360deg); } }
+
+/* Lab insight feeding the Key Result — picker sits under the metric grid. */
+.ocm-metric-insight { display: flex; flex-direction: column; gap: 6px; margin-top: 2px; }

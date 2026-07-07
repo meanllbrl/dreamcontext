@@ -71,7 +71,7 @@ Sections for `tasks insert`: `why`, `user_stories`, `acceptance_criteria`, `cons
 | `roadmap objective delete <slug>` | Delete; other objectives' `depends_on` are healed automatically. `--yes`. |
 | `roadmap objective depend <A> <B>` | A depends on B — **rejected at write time** if it would create a circular dependency. |
 | `roadmap objective undepend <A> <B>` | Remove the dependency edge. |
-| `roadmap objective metric <slug>` | Set/update the objective's Key Result metric (outcome-based progress instead of task rollup). `--current <n>` (the common nudge — latest observed value), `--target <n>`, `--baseline <n>`, `--label <text>`, `--unit <text>`, `--clear` (remove the metric, back to task-based progress). Sleep may update `--current` when it observes a new real value; all other objective fields stay PO-owned. |
+| `roadmap objective metric <slug>` | Set/update the objective's Key Result metric (outcome-based progress instead of task rollup). `--current <n>` (the common nudge — latest observed value), `--target <n>`, `--baseline <n>`, `--label <text>`, `--unit <text>`, `--clear` (remove the metric, back to task-based progress). Sleep may update `--current` when it observes a new real value; all other objective fields stay PO-owned. **Insight-fed objectives are hands-off:** if a Lab insight binds this objective (`lab list --json` → `binding.objective`), `lab sync` owns `current` — don't hand-write it, suggest a sync instead; and before `--clear`, disconnect the feeder (`lab bind <insight> --clear`) so no binding is left warning on every sync. |
 
 Task-side linkage: `tasks create --objectives a,b` · `tasks objectives <task> a,b|clear` · `tasks list --objective <slug>`. Objectives are recallable: `memory recall "<query>" --types objective`.
 
@@ -88,10 +88,11 @@ Curated metrics synced from HTTP APIs or local scripts into `_dream_context/lab/
 | `lab list` | All insights with latest value, unit, staleness. `--json`. |
 | `lab show <slug>` | Manifest + cached series — **cache only, never fetches**. `--json`. |
 | `lab tweak <slug> <key> <value>` | Set one declared tweak (typed `enum\|date\|string`; a relative range is an enum tweak keyed `range`). |
+| `lab bind <slug> [objective]` | Connect an insight to an objective's Key Result (`--value latest\|series:<name>`; `--clear` disconnects). Enforces ONE feeder per objective (a previous feeder is unbound loudly) and immediately seeds `metric.current` from the cached latest. The dashboard equivalent lives in the objective create modal / detail panel (Key Result section). |
 | `lab credentials set <key>` | Store a secret for `{{cred:key}}` placeholders — hidden prompt (`--value` works but is shell-history-risky). Gitignore-first, mode 0600. **The only supported way to create `lab/credentials.json`.** |
 | `lab credentials list` | Credential key NAMES only — values are never printed. |
 
-**Trust note:** `lab/scripts/*.mjs` run locally, in-process, with credentials passed in — same trust level as the repo. Review scripts before their first sync. **Sleep does NOT run lab sync** — refreshing is always an explicit action. An insight manifest may carry `binding: {objective: <slug>, value: latest}` to auto-write that objective's Key-Result `metric.current` on every successful sync.
+**Trust note:** `lab/scripts/*.mjs` run locally, in-process, with credentials passed in — same trust level as the repo. Review scripts before their first sync. **Sleep does NOT run lab sync** — refreshing is always an explicit action. An insight manifest may carry `binding: {objective: <slug>, value: latest}` to auto-write that objective's Key-Result `metric.current` on every successful sync — set it via `lab bind` or the dashboard's objective dialogs, not by hand.
 
 ---
 

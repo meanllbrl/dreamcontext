@@ -139,6 +139,7 @@ export function buildBrainGitignore(taskBackend?: SetupConfig['taskBackend']): s
     'state/.version-check.json',
     'state/.auto-upgrade.json',
     'state/.brain-local.json',
+    'state/.lab-prefs.json',
     'state/.tasks-map.json',
     'state/.tasks-sync.*',
     'state/.tasks-queue.json',

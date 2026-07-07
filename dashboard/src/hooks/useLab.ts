@@ -140,6 +140,24 @@ export function useSyncAll() {
   });
 }
 
+/** Connect (binding) or disconnect (null) an insight to an objective's Key Result.
+ *  The server enforces one feeder per objective (`unbound[]`) and seeds
+ *  `metric.current` from the cached latest (`seededCurrent`), so objectives and
+ *  roadmap queries are invalidated too. */
+export function useUpdateBinding() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ slug, binding }: { slug: string; binding: Binding | null }) =>
+      api.patch<{ insight: PublicManifest; unbound: string[]; seededCurrent: number | null }>(`/lab/${slug}/binding`, { binding }),
+    onSuccess: (_data, { slug }) => {
+      queryClient.invalidateQueries({ queryKey: ['lab'] });
+      queryClient.invalidateQueries({ queryKey: ['lab', slug] });
+      queryClient.invalidateQueries({ queryKey: ['objectives'] });
+      queryClient.invalidateQueries({ queryKey: ['roadmap'] });
+    },
+  });
+}
+
 /** Persist edited tweak values for one insight. */
 export function useUpdateTweaks() {
   const queryClient = useQueryClient();

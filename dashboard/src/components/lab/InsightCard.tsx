@@ -27,10 +27,24 @@ export function InsightCard({
   summary,
   onToast,
   onOpen,
+  dragging = false,
+  dropTarget = false,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  onDragEnd,
 }: {
   summary: InsightSummary;
   onToast: (msg: string) => void;
   onOpen: (slug: string) => void;
+  /** Dimmed "ghost" state while this card is the one being dragged. */
+  dragging?: boolean;
+  /** Highlighted while another card hovers here — drop takes this position. */
+  dropTarget?: boolean;
+  onDragStart?: (e: React.DragEvent) => void;
+  onDragOver?: (e: React.DragEvent) => void;
+  onDrop?: (e: React.DragEvent) => void;
+  onDragEnd?: (e: React.DragEvent) => void;
 }) {
   const [showTweaks, setShowTweaks] = useState(false);
   const detail = useLabInsight(summary.slug);
@@ -60,12 +74,17 @@ export function InsightCard({
 
   return (
     <div
-      className="lab-card lab-card--clickable"
+      className={`lab-card lab-card--clickable${dragging ? ' lab-card--dragging' : ''}${dropTarget ? ' lab-card--drop-target' : ''}`}
       onClick={() => onOpen(summary.slug)}
       role="button"
       tabIndex={0}
       onKeyDown={(e) => { if (e.key === 'Enter') onOpen(summary.slug); }}
       title="Open details, history & interactive chart"
+      draggable
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      onDragEnd={onDragEnd}
     >
       <div className="lab-card-header">
         <div className="lab-card-title-row">

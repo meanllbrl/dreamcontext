@@ -167,3 +167,7 @@
   font-size: 12px; font-weight: 600; transition: all var(--transition-fast);
 }
 .odp-delete:hover { border-color: var(--color-error); background: rgba(240, 97, 109, 0.1); color: var(--color-error); }
+
+/* Lab insight feeding the Key Result — picker sits under the metric grid. */
+.odp-metric-insight { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+.odp-metric-insight-hint { font-size: 11px; color: var(--color-text-tertiary); }

@@ -9,8 +9,10 @@ import {
   handleLabShow,
   handleLabSync,
   handleLabTweaks,
+  handleLabBinding,
 } from '../../src/server/routes/lab.js';
 import { createInsight, writeCache } from '../../src/lib/lab/store.js';
+import { createObjective, getObjective } from '../../src/lib/objectives-store.js';
 import { readFrontmatter, writeFrontmatter } from '../../src/lib/frontmatter.js';
 
 function makeRes(): { res: ServerResponse; status: () => number; body: () => any } {
@@ -147,5 +149,84 @@ describe('PATCH /api/lab/:slug/tweaks — persists', () => {
     const { res, status } = makeRes();
     await handleLabTweaks(makeReq('PATCH', {}), res, { slug: 'wau' }, root);
     expect(status()).toBe(400);
+  });
+});
+
+describe('PATCH /api/lab/:slug/binding — connect/disconnect an objective Key Result', () => {
+  it('connects an insight, seeds metric.current from the cache, and unbinds the previous feeder', async () => {
+    createObjective(root, { slug: 'mrr-goal', title: 'MRR', metric: { label: 'MRR', unit: 'USD', baseline: 0, target: 2000, current: 0 } });
+    createInsight(root, { slug: 'mrr', title: 'MRR insight', unit: 'USD' });
+    createInsight(root, { slug: 'old-feeder', title: 'Old feeder' });
+    // old-feeder currently feeds the objective — connecting mrr must move it.
+    {
+      const { res, status } = makeRes();
+      await handleLabBinding(makeReq('PATCH', { binding: { objective: 'mrr-goal' } }), res, { slug: 'old-feeder' }, root);
+      expect(status()).toBe(200);
+    }
+    writeCache(root, 'mrr', {
+      slug: 'mrr', fetchedAt: new Date().toISOString(), tweaks: {}, granularity: 'daily',
+      unit: 'USD', series: [{ name: 'default', points: [{ t: '2026-07-01', v: 850 }] }],
+      latest: 850, error: null, errorAt: null, scriptHash: null,
+    });
+    const { res, status, body } = makeRes();
+    await handleLabBinding(makeReq('PATCH', { binding: { objective: 'mrr-goal' } }), res, { slug: 'mrr' }, root);
+    expect(status()).toBe(200);
+    expect(body().insight.binding).toEqual({ objective: 'mrr-goal', value: 'latest' });
+    expect(body().unbound).toEqual(['old-feeder']);
+    expect(body().seededCurrent).toBe(850);
+    expect(getObjective(root, 'mrr-goal')?.metric?.current).toBe(850);
+  });
+
+  it('disconnects with binding: null', async () => {
+    createObjective(root, { slug: 'goal', title: 'Goal', metric: { label: 'X', unit: null, baseline: 0, target: 10, current: 0 } });
+    createInsight(root, { slug: 'wau', title: 'WAU' });
+    {
+      const { res } = makeRes();
+      await handleLabBinding(makeReq('PATCH', { binding: { objective: 'goal' } }), res, { slug: 'wau' }, root);
+    }
+    const { res, status, body } = makeRes();
+    await handleLabBinding(makeReq('PATCH', { binding: null }), res, { slug: 'wau' }, root);
+    expect(status()).toBe(200);
+    expect(body().insight.binding).toBeNull();
+  });
+
+  it('404s when the objective does not exist (nothing written)', async () => {
+    createInsight(root, { slug: 'wau', title: 'WAU' });
+    const { res, status } = makeRes();
+    await handleLabBinding(makeReq('PATCH', { binding: { objective: 'no-such-objective' } }), res, { slug: 'wau' }, root);
+    expect(status()).toBe(404);
+    const { res: res2, body: body2 } = makeRes();
+    await handleLabShow(makeReq('GET'), res2, { slug: 'wau' }, root);
+    expect(body2().insight.binding).toBeNull();
+  });
+
+  it('404s for an unknown insight and 400s on a malformed body / bad value', async () => {
+    createObjective(root, { slug: 'goal', title: 'Goal' });
+    createInsight(root, { slug: 'wau', title: 'WAU' });
+    {
+      const { res, status } = makeRes();
+      await handleLabBinding(makeReq('PATCH', { binding: { objective: 'goal' } }), res, { slug: 'nope' }, root);
+      expect(status()).toBe(404);
+    }
+    {
+      const { res, status } = makeRes();
+      await handleLabBinding(makeReq('PATCH', {}), res, { slug: 'wau' }, root);
+      expect(status()).toBe(400);
+    }
+    {
+      const { res, status } = makeRes();
+      await handleLabBinding(makeReq('PATCH', { binding: { objective: 'goal', value: 'series:' } }), res, { slug: 'wau' }, root);
+      expect(status()).toBe(400);
+    }
+  });
+
+  it('connects without seeding when the objective has no metric or the cache is empty', async () => {
+    createObjective(root, { slug: 'no-metric', title: 'No metric' });
+    createInsight(root, { slug: 'wau', title: 'WAU' });
+    const { res, status, body } = makeRes();
+    await handleLabBinding(makeReq('PATCH', { binding: { objective: 'no-metric' } }), res, { slug: 'wau' }, root);
+    expect(status()).toBe(200);
+    expect(body().insight.binding).toEqual({ objective: 'no-metric', value: 'latest' });
+    expect(body().seededCurrent).toBeNull();
   });
 });

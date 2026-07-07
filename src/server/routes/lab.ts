@@ -7,8 +7,8 @@ import {
   writeInsightTweaks,
 } from '../../lib/lab/store.js';
 import { resolveTweaks } from '../../lib/lab/tweaks.js';
-import { syncInsight, syncAll } from '../../lib/lab/sync.js';
-import { LabError, type InsightManifest } from '../../lib/lab/types.js';
+import { bindInsight, syncInsight, syncAll } from '../../lib/lab/sync.js';
+import { LabError, type Binding, type InsightManifest } from '../../lib/lab/types.js';
 
 /**
  * Lab HTTP API — mirrors objectives.ts. Thin wrappers over the same sync engine
@@ -156,6 +156,46 @@ export async function handleLabSync(
     }
     console.error('[lab] sync failed:', err);
     sendError(res, 500, 'sync_failed', 'Failed to sync the insight(s).');
+  }
+}
+
+/** PATCH /api/lab/:slug/binding { binding: { objective, value? } | null } —
+ *  connect/disconnect an insight to an objective's Key Result. Enforces the
+ *  single-feeder invariant (returns `unbound[]`) and seeds `metric.current`
+ *  from the cached latest (`seededCurrent`, null when nothing was written). */
+export async function handleLabBinding(
+  req: IncomingMessage,
+  res: ServerResponse,
+  params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const body = await parseJsonBody(req);
+  if (!body || !('binding' in body)) {
+    sendError(res, 400, 'invalid_body', 'Request body must be { binding: { objective, value? } | null }.');
+    return;
+  }
+  let binding: Binding | null = null;
+  if (body.binding !== null) {
+    const raw = body.binding as Record<string, unknown> | undefined;
+    const objective = raw && typeof raw.objective === 'string' ? raw.objective.trim() : '';
+    if (!objective) {
+      sendError(res, 400, 'invalid_body', 'binding.objective must be a non-empty objective slug (or binding must be null to disconnect).');
+      return;
+    }
+    const value = raw && typeof raw.value === 'string' && raw.value.trim() ? raw.value.trim() : 'latest';
+    binding = { objective, value };
+  }
+  try {
+    const { manifest, unbound, seededCurrent } = bindInsight(contextRoot, params.slug, binding);
+    sendJson(res, 200, { insight: toPublicManifest(manifest), unbound, seededCurrent });
+  } catch (err) {
+    if (err instanceof LabError) {
+      const notFound = /not found/i.test(err.message);
+      sendError(res, notFound ? 404 : 400, notFound ? 'not_found' : 'binding_rejected', err.message);
+      return;
+    }
+    console.error('[lab] binding update failed:', err);
+    sendError(res, 500, 'binding_failed', 'Failed to update the binding.');
   }
 }
 

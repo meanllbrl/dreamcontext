@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { getObjective, updateObjectiveMetric } from '../objectives-store.js';
 import { getAdapter, scriptFilePath } from './adapters/index.js';
 import { readCredentials, redactSecrets } from './credentials.js';
-import { getInsight, listInsights, readCache, writeCache } from './store.js';
+import { getInsight, listInsights, readCache, writeCache, writeInsightBinding } from './store.js';
 import { resolveTweaks } from './tweaks.js';
 import { rollupSeries } from './rollup.js';
 import {
@@ -121,6 +121,59 @@ function writeBinding(
   } catch (err) {
     console.warn(`[lab] ${slug}: binding write to "${binding.objective}" failed: ${(err as Error).message}`);
   }
+}
+
+export interface BindResult {
+  manifest: InsightManifest;
+  /** Other insights whose binding to the same objective was cleared (single feeder). */
+  unbound: string[];
+  /** metric.current seeded from the cached latest on connect, or null if nothing was written. */
+  seededCurrent: number | null;
+}
+
+/**
+ * Connect (or disconnect, binding=null) an insight to an objective's Key Result.
+ * The write-path counterpart of the sync-time binding: validates the objective
+ * exists, enforces the single-feeder invariant (an objective's metric.current
+ * must have ONE writer — any other insight bound to it is unbound and reported),
+ * and immediately seeds `metric.current` from the cached latest so the roadmap
+ * reflects the measured value without waiting for the next sync.
+ */
+export function bindInsight(
+  contextRoot: string,
+  slug: string,
+  binding: Binding | null,
+): BindResult {
+  if (!binding) {
+    return { manifest: writeInsightBinding(contextRoot, slug, null), unbound: [], seededCurrent: null };
+  }
+  const objective = getObjective(contextRoot, binding.objective);
+  if (!objective) throw new LabError(`Objective not found: ${binding.objective}`);
+
+  const manifest = writeInsightBinding(contextRoot, slug, binding);
+
+  const unbound: string[] = [];
+  for (const other of listInsights(contextRoot)) {
+    if (other.slug !== slug && other.binding?.objective === binding.objective) {
+      writeInsightBinding(contextRoot, other.slug, null);
+      unbound.push(other.slug);
+    }
+  }
+
+  let seededCurrent: number | null = null;
+  const cache = readCache(contextRoot, slug);
+  if (objective.metric && cache) {
+    const latest = computeLatest(Array.isArray(cache.series) ? cache.series : [], manifest.binding);
+    if (latest !== null && Number.isFinite(latest)) {
+      try {
+        updateObjectiveMetric(contextRoot, binding.objective, { current: latest });
+        seededCurrent = latest;
+      } catch (err) {
+        console.warn(`[lab] ${slug}: seeding metric.current on "${binding.objective}" failed: ${(err as Error).message}`);
+      }
+    }
+  }
+  return { manifest, unbound, seededCurrent };
 }
 
 /** Sync one insight by slug. */

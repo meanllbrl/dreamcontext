@@ -35,7 +35,8 @@ Identity is sacred — a fresh session must immediately understand who the agent
 | `core/0-4.*`, `core/6.*` files (Edit, surgical) | task files (sleep-tasks owns) |
 | `dreamcontext core changelog add` | knowledge files incl. `knowledge/data-structures/<product>.md` (sleep-product owns + writes; you only flag staleness) |
 | `dreamcontext core releases {add,active,list,show}` | feature PRDs (sleep-product owns) |
-| `dreamcontext trigger add` (context-dependent reminders) | |
+| `dreamcontext trigger add` (context-dependent reminders) | `core/objectives/*.md` (PO-authored roadmap objectives — no sleep-state writes) |
+|  | `_dream_context/lab/**` (Lab insight manifests, cache, credentials — never edit; **never run `lab sync`**) |
 
 ## Inputs
 
@@ -76,6 +77,8 @@ One commit ≠ one changelog entry. Cluster by **scope and intent**:
 - Docs changes coherent enough to describe → **one** `docs` entry.
 
 Don't skip uncommitted work — sessions often end before commit.
+
+**Lab & roadmap signals are diary-worthy too:** a new insight created (`lab create`), a Key-Result binding set or changed (`lab bind` / dashboard objective dialogs), an insight source/tweak change, or a new roadmap objective each earn an entry (scope `lab` / `roadmap`). Routine `lab/cache/*.json` churn from syncs is NOT user-facing — skip it, same as `.sleep.json` updates.
 
 Read the latest 5–10 entries in `CHANGELOG.json` first to match voice/length.
 

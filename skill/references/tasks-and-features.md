@@ -143,9 +143,9 @@ Objectives are PO-authored, so this is an **offer-and-confirm** flow, never a si
 1. **Dedup first.** Run `dreamcontext roadmap objective list` and `dreamcontext memory recall "<the outcome>" --types objective`. If an objective already covers it, DON'T propose a new one — offer to update the existing one instead (or just link the current work to it).
 2. **Offer it.** If it's genuinely new, ask: *"This sounds like a roadmap objective — want me to add it?"* Never create without a yes.
 3. **Ask the dates.** On yes, ask for the committed window — start and target date (`--target`, and set start via `objective edit`/dashboard). Don't invent dates.
-4. **Offer a Key Result.** Ask whether to track it by a number rather than member tasks: *"Track this by a metric (e.g. MRR 0→2000) or by its tasks?"* If a metric, capture `label` + `baseline`/`target` (`--metric*` flags on create, or `objective metric` after).
+4. **Offer a Key Result.** Ask whether to track it by a number rather than member tasks: *"Track this by a metric (e.g. MRR 0→2000) or by its tasks?"* If a metric, capture `label` + `baseline`/`target` (`--metric*` flags on create, or `objective metric` after). If a Lab insight already measures this outcome (`memory recall "<outcome>" --types insight`), offer to connect it — `dreamcontext lab bind <insight> <objective>` — so `current` is measured, not asserted.
 5. **Detect + propose dependencies.** From the existing objective list, infer likely `depends_on` edges ("make-it-a-business can't happen before simplified-ux and team-ready ship") and **propose them for confirmation**; on yes, apply with `objective depend <A> <B>` (the write-time cycle guard protects you). Never write a dependency edge silently.
-6. **Keep the Key Result current.** When the session later surfaces a real observed value for a tracked objective ("MRR just hit $1,250", "we're at 400 active users"), offer to update it: `dreamcontext roadmap objective metric <slug> --current <n>`. Use a value you actually observed — never estimate. (Sleep may also refresh `--current` autonomously from observed values.)
+6. **Keep the Key Result current — unless an insight feeds it.** When the session later surfaces a real observed value for a tracked objective ("MRR just hit $1,250", "we're at 400 active users"), offer to update it: `dreamcontext roadmap objective metric <slug> --current <n>`. Use a value you actually observed — never estimate. (Sleep may also refresh `--current` autonomously from observed values.) **Exception:** if a bound insight feeds the objective (`dreamcontext lab list --json` → a manifest whose `binding.objective` is the slug), `current` is *measured* — hands off; suggest `dreamcontext lab sync <insight>` instead of writing a number the next sync would overwrite. And when removing a fed objective's metric (`--clear`), disconnect the feeder first (`lab bind <insight> --clear`) — a binding with no Key Result warns on every sync.
 
 The through-line: **you detect and propose; the PO confirms.** Every create, date, dependency, and metric write waits for a yes — matching the "objectives are PO-authored" invariant and the board-first ritual (`knowledge/visual-first-board-ritual.md`).
 
@@ -171,13 +171,14 @@ dreamcontext lab sync --all [--force]       # every insight; exits non-zero if a
 dreamcontext lab list [--json]              # all insights with latest value + staleness
 dreamcontext lab show <slug> [--json]       # manifest + cached series (never fetches)
 dreamcontext lab tweak <slug> <key> <value> # set a declared tweak (e.g. range last_1_year)
+dreamcontext lab bind <slug> <objective>    # connect to an objective's KR (--value latest|series:<name>; --clear)
 dreamcontext lab credentials set <key>      # hidden prompt; the ONLY way to store a secret
 dreamcontext lab credentials list           # key NAMES only — values are never printed
 ```
 
 **Adapters:** `http` — declarative JSON API (endpoint/headers/body templates with `{{tweak:key}}` and `{{cred:key}}` placeholders, JSON-path `extract`, multi-series split via `seriesKey`); `script` — escape hatch, `lab/scripts/<slug>.mjs` exporting a default async function. `lab create` scaffolds the manifest; edit it to set the real endpoint/extract config, then run the first sync.
 
-**Key-Result binding (insight → objective):** a manifest `binding: {objective: <slug>, value: latest}` makes every successful sync write the objective's KR `metric.current` automatically — upgrading the roadmap from PO-asserted numbers to measured ones. Offer this whenever an insight measures an existing objective's outcome.
+**Key-Result binding (insight → objective):** a manifest `binding: {objective: <slug>, value: latest}` makes every successful sync write the objective's KR `metric.current` automatically — upgrading the roadmap from PO-asserted numbers to measured ones. Offer this whenever an insight measures an existing objective's outcome. Set it via `lab bind` (or the dashboard's objective create modal / detail panel, which search insights by name); binding is ONE feeder per objective — connecting a new insight unbinds the previous one loudly, and connecting immediately seeds `metric.current` from the cached latest.
 
 **Sync semantics:** TTL staleness (default 1440 min) — fresh insights are skipped and reported, `--force` refetches; on failure the prior series is KEPT and the error is loud (never a silent half-sync). **Sleep does NOT run lab sync** — refresh is always an explicit user/agent action.
 
@@ -191,7 +192,7 @@ Mirrors proactive objective capture. When the user states or implies a recurring
 4. **Pick the source.** HTTP endpoint (+ extract path) or a custom script. Secrets go in via `dreamcontext lab credentials set <key>` — never inline in the manifest.
 5. **Declare tweaks** the user will want to adjust (typed `enum`/`date`/`string`; a relative range is an enum tweak keyed `range`).
 6. **Scaffold + first sync.** `lab create`, edit the manifest, `lab sync <slug>`, confirm the value looks right.
-7. **Offer KR binding** if an existing roadmap objective tracks the same outcome.
+7. **Offer KR binding** if an existing roadmap objective tracks the same outcome: `dreamcontext lab bind <insight> <objective>` — connecting seeds the objective's `metric.current` from the cached latest immediately, and every future sync keeps it measured. One feeder per objective (binding a new insight unbinds the previous one loudly); disconnect with `lab bind <insight> --clear`.
 
 Every write waits for a yes.
 

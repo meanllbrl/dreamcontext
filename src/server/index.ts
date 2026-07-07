@@ -43,7 +43,7 @@ import {
   handleAgentSettingsGet,
   handleAgentSettingsSet,
 } from './routes/launcher.js';
-import { handleBrainSettingsGet, handleBrainSettingsPut, handleRoadmapPrefsGet, handleRoadmapPrefsPut } from './routes/ui-settings.js';
+import { handleBrainSettingsGet, handleBrainSettingsPut, handleRoadmapPrefsGet, handleRoadmapPrefsPut, handleLabPrefsGet, handleLabPrefsPut } from './routes/ui-settings.js';
 import {
   handleObjectivesList,
   handleObjectivesCreate,
@@ -58,6 +58,7 @@ import {
   handleLabShow,
   handleLabSync,
   handleLabTweaks,
+  handleLabBinding,
 } from './routes/lab.js';
 import { handleBoardGet, handleBoardSharedPut, handleBoardLocalPut } from './routes/board.js';
 import {
@@ -297,6 +298,11 @@ function buildRouter(): Router {
   router.get('/api/roadmap-prefs', handleRoadmapPrefsGet);
   router.put('/api/roadmap-prefs', handleRoadmapPrefsPut);
 
+  // Lab (Insights) board preferences (per-group card order + collapsed groups) —
+  // per-machine, persisted for the same reason.
+  router.get('/api/lab-prefs', handleLabPrefsGet);
+  router.put('/api/lab-prefs', handleLabPrefsPut);
+
   // Roadmap computed model (progress, forecast, member tasks, warnings).
   router.get('/api/roadmap', handleRoadmapModel);
 
@@ -316,6 +322,7 @@ function buildRouter(): Router {
   router.post('/api/lab/sync', handleLabSync);
   router.get('/api/lab/:slug', handleLabShow);
   router.patch('/api/lab/:slug/tweaks', handleLabTweaks);
+  router.patch('/api/lab/:slug/binding', handleLabBinding);
 
   // Tasks-board preferences (saved views) — split persistence:
   //   shared → overrides/board.json (version-controlled, "save for all")

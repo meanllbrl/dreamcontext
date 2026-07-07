@@ -4,8 +4,10 @@ import type { RoadmapItem } from '../../hooks/useRoadmapItems';
 import type { Forecast } from './roadmap-forecast';
 import { fmtShort } from './roadmap-forecast';
 import { useUpdateObjective, useAddDependency, useRemoveDependency, useDeleteObjective, type ObjectiveMetric, type UpdateObjectivePatch } from '../../hooks/useObjectives';
+import { useLabInsights, useUpdateBinding } from '../../hooks/useLab';
 import { DateRangePicker } from './DateRangePicker';
 import { DependencyPicker } from './DependencyPicker';
+import { InsightPicker } from './InsightPicker';
 import './ObjectiveDetailPanel.css';
 
 /**
@@ -36,6 +38,8 @@ export function ObjectiveDetailPanel({ item, forecast, itemsBySlug, forecasts, o
   const addDep = useAddDependency();
   const removeDep = useRemoveDependency();
   const deleteObjective = useDeleteObjective();
+  const { data: insights = [] } = useLabInsights();
+  const bindInsight = useUpdateBinding();
 
   const [title, setTitle] = useState(item.title);
   const [editingTitle, setEditingTitle] = useState(false);
@@ -106,7 +110,32 @@ export function ObjectiveDetailPanel({ item, forecast, itemsBySlug, forecasts, o
     patch({ metric: clean }, 'Could not update metric.');
   };
   const addMetric = () => patch({ metric: { label: 'MRR', unit: null, baseline: 0, target: 100, current: 0 } });
-  const clearMetric = () => patch({ metric: null });
+  // The insight feeding this objective's Key Result (the binding lives on the insight side).
+  const feedingInsight = insights.find((i) => i.binding?.objective === item.slug) ?? null;
+  const clearMetric = () => {
+    // Removing the metric also disconnects its feeding insight — a binding with
+    // no Key Result to write to would just warn on every sync.
+    if (feedingInsight) {
+      bindInsight.mutate({ slug: feedingInsight.slug, binding: null }, { onError: () => onToast('Could not disconnect the insight.') });
+    }
+    patch({ metric: null });
+  };
+  const connectInsight = (slug: string | null) => {
+    if (slug === null) {
+      if (!feedingInsight) return;
+      bindInsight.mutate({ slug: feedingInsight.slug, binding: null }, {
+        onSuccess: () => onToast('Insight disconnected — the metric is manual again.'),
+        onError: (e) => onToast(e instanceof Error ? e.message : 'Could not disconnect the insight.'),
+      });
+      return;
+    }
+    bindInsight.mutate({ slug, binding: { objective: item.slug, value: 'latest' } }, {
+      onSuccess: (res) => onToast(res.seededCurrent !== null
+        ? `Connected — current set to ${res.seededCurrent} from the insight.`
+        : 'Connected — current updates on the next lab sync.'),
+      onError: (e) => onToast(e instanceof Error ? e.message : 'Could not connect the insight.'),
+    });
+  };
   const setImpact = (n: number) => patch({ impact: item.impact === n ? null : n });
   const setEffort = (w: number) => patch({ effort: item.effort === w ? null : w });
   const setDeps = (next: string[]) => {
@@ -250,6 +279,20 @@ export function ObjectiveDetailPanel({ item, forecast, itemsBySlug, forecasts, o
                       onChange={(e) => setMetricDraft((m) => m && { ...m, target: e.target.valueAsNumber })}
                       onBlur={() => commitMetric()} onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} /></label>
                 </div>
+                {insights.length > 0 && (
+                  <div className="odp-metric-insight">
+                    <InsightPicker
+                      insights={insights}
+                      selected={feedingInsight?.slug ?? null}
+                      objectiveSlug={item.slug}
+                      onSelect={connectInsight}
+                      disabled={bindInsight.isPending}
+                    />
+                    {feedingInsight && (
+                      <span className="odp-metric-insight-hint">Current updates automatically from this insight on every lab sync.</span>
+                    )}
+                  </div>
+                )}
               </div>
             </>
           ) : (

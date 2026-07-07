@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLabInsights, useSyncAll } from '../../hooks/useLab';
+import { useLabPrefs } from '../../hooks/useLabPrefs';
 import { InsightCard } from './InsightCard';
 import { InsightDetailPanel } from './InsightDetailPanel';
 import { LabEmptyState } from './LabEmptyState';
@@ -23,11 +24,28 @@ function groupInsights<T extends { group: string | null }>(insights: T[]): [stri
   return ordered.map((g) => [g, byGroup.get(g)!]);
 }
 
+/** Apply a persisted manual order to one group's items: listed slugs first (in
+ *  saved order), unlisted ones (new insights) after, in API order. */
+function applyOrder<T extends { slug: string }>(items: T[], order: string[] | undefined): T[] {
+  if (!order || order.length === 0) return items;
+  const pos = new Map(order.map((slug, i) => [slug, i]));
+  return items
+    .map((item, apiIdx) => ({ item, key: pos.get(item.slug) ?? order.length + apiIdx }))
+    .sort((a, b) => a.key - b.key)
+    .map((e) => e.item);
+}
+
 export function LabBoard() {
   const { data: insights, isLoading, isError, error } = useLabInsights();
   const syncAll = useSyncAll();
+  const { prefs, toggleCollapsed, setGroupOrder } = useLabPrefs();
   const [toast, setToast] = useState<string | null>(null);
   const [openSlug, setOpenSlug] = useState<string | null>(null);
+  // Card being dragged (with its group — reordering is within-group only) and
+  // the card it currently hovers. Cleared on drop/dragend, never on dragleave
+  // (per-item dragleave flickers in WKWebView — see KanbanBoard).
+  const [drag, setDrag] = useState<{ slug: string; group: string } | null>(null);
+  const [dragOverSlug, setDragOverSlug] = useState<string | null>(null);
 
   useEffect(() => {
     if (!toast) return;
@@ -35,10 +53,29 @@ export function LabBoard() {
     return () => clearTimeout(t);
   }, [toast]);
 
-  const grouped = useMemo(() => groupInsights(insights ?? []), [insights]);
+  const grouped = useMemo(() => {
+    return groupInsights(insights ?? []).map(([group, items]) =>
+      [group, applyOrder(items, prefs.order[group])] as const,
+    );
+  }, [insights, prefs.order]);
   // Re-derive the open summary from the live list so the panel header (staleness,
   // latest, error) refreshes after a sync instead of showing a stale snapshot.
   const openSummary = openSlug ? (insights ?? []).find((s) => s.slug === openSlug) ?? null : null;
+
+  const endDrag = useCallback(() => {
+    setDrag(null);
+    setDragOverSlug(null);
+  }, []);
+
+  /** Drop the dragged card at `targetSlug`'s position (or at the end when null). */
+  const dropInGroup = useCallback((group: string, displayed: { slug: string }[], targetSlug: string | null) => {
+    if (!drag || drag.group !== group) { endDrag(); return; }
+    const slugs = displayed.map((s) => s.slug).filter((s) => s !== drag.slug);
+    const at = targetSlug === null ? slugs.length : slugs.indexOf(targetSlug);
+    slugs.splice(at === -1 ? slugs.length : at, 0, drag.slug);
+    setGroupOrder(group, slugs);
+    endDrag();
+  }, [drag, setGroupOrder, endDrag]);
 
   const handleSyncAll = () => {
     syncAll.mutate(true, {
@@ -95,16 +132,72 @@ export function LabBoard() {
       </div>
 
       <div className="lab-board-sections">
-        {grouped.map(([group, items]) => (
-          <section key={group} className="lab-board-section">
-            <h3 className="lab-board-section-title">{group}</h3>
-            <div className="lab-board-grid">
-              {items.map((summary) => (
-                <InsightCard key={summary.slug} summary={summary} onToast={setToast} onOpen={setOpenSlug} />
-              ))}
-            </div>
-          </section>
-        ))}
+        {grouped.map(([group, items]) => {
+          const collapsed = prefs.collapsed.includes(group);
+          return (
+            <section key={group} className="lab-board-section">
+              <button
+                className="lab-board-section-header"
+                onClick={() => toggleCollapsed(group)}
+                aria-expanded={!collapsed}
+              >
+                <svg
+                  className={`lab-board-section-chevron ${collapsed ? '' : 'lab-board-section-chevron--open'}`}
+                  width="10" height="10" viewBox="0 0 10 10" fill="none"
+                >
+                  <path d="M3 2L7 5L3 8" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                <span className="lab-board-section-title">{group}</span>
+                <span className="lab-board-section-count">{items.length}</span>
+              </button>
+              {!collapsed && (
+                <div
+                  className="lab-board-grid"
+                  // Grid-level drop = append to the end of this group (fires only
+                  // in the gaps — cards stop propagation of their own drops).
+                  onDragOver={(e) => {
+                    if (drag?.group !== group) return;
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                  }}
+                  onDrop={(e) => {
+                    if (drag?.group !== group) return;
+                    e.preventDefault();
+                    dropInGroup(group, items, null);
+                  }}
+                >
+                  {items.map((summary) => (
+                    <InsightCard
+                      key={summary.slug}
+                      summary={summary}
+                      onToast={setToast}
+                      onOpen={setOpenSlug}
+                      dragging={drag?.slug === summary.slug}
+                      dropTarget={dragOverSlug === summary.slug && drag?.slug !== summary.slug}
+                      onDragStart={(e) => {
+                        setDrag({ slug: summary.slug, group });
+                        try { e.dataTransfer.effectAllowed = 'move'; } catch { /* noop */ }
+                      }}
+                      onDragOver={(e) => {
+                        if (drag?.group !== group) return;
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = 'move';
+                        setDragOverSlug(summary.slug);
+                      }}
+                      onDrop={(e) => {
+                        if (drag?.group !== group) return;
+                        e.preventDefault();
+                        e.stopPropagation();
+                        dropInGroup(group, items, summary.slug);
+                      }}
+                      onDragEnd={endDrag}
+                    />
+                  ))}
+                </div>
+              )}
+            </section>
+          );
+        })}
       </div>
 
       {openSummary && (
