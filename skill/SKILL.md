@@ -3,10 +3,12 @@ name: dreamcontext
 description: >
   AI agent persistent context management system. Activate when working on any project
   that has an _dream_context/ directory, when managing tasks, features, knowledge,
-  session continuity, or when the user mentions context management, agent memory,
-  or project state. Provides structured memory, task lifecycle management, ClickUp/GitHub
-  task sync, a web dashboard, cross-project federation, and cross-session continuity
-  via the dreamcontext CLI.
+  insights (Lab analytics metrics), roadmap objectives/OKRs, session continuity, or
+  when the user mentions context management, agent memory, or project state — the words
+  insight, objective, task, feature, knowledge name dreamcontext entities in any language.
+  Provides structured memory, task lifecycle management, analytics insight syncing,
+  ClickUp/GitHub task sync, a web dashboard, cross-project federation, and cross-session
+  continuity via the dreamcontext CLI.
 user-invocable: false
 alwaysApply: true
 hooks:
@@ -106,9 +108,14 @@ dreamcontext is **more than memory files**. Every capability below is real and s
 
 dreamcontext has **eight distinct entity types**, each with ONE home and ONE creation path. When the user says "create/add/track X", route by what X **is** — never by the nearest command you happen to remember. The canonical mistake: user says *"create an insight"* and the agent runs `knowledge create`. An insight is not knowledge.
 
+Two routing rules that override surface reading:
+
+- **Entity nouns are reserved words — in ANY language.** In a dreamcontext project, *insight, objective, roadmap, task, feature, knowledge, bookmark, trigger, release* name THESE entities, not their dictionary meanings — whatever language the sentence around them is in ("insight oluşturalım", "crea un insight" → `lab create`, not a prose analysis or an external dashboard). The trigger phrases below are English examples; match the **intent**, not the exact words.
+- **Route by problem-shape too, not only by verbs.** Users often describe the need without naming the entity. If the described capability matches a subsystem's shape (see litmus tests + the "don't rebuild" rule below), that subsystem IS the answer.
+
 | User says… | Entity | What it IS | Create with |
 |---|---|---|---|
-| "create an insight", "track MRR / WAU / signups", "add a metric", "I want to see X every session" | **Insight** — `lab/insights/<slug>.md` | A curated analytics **metric backed by an external source** (HTTP API or script) — a number/series that re-syncs. Has a manifest, cache, TTL, adapters, optional KR binding | `dreamcontext lab create <slug> --title "…"` (offer-and-confirm protocol → [tasks-and-features.md](references/tasks-and-features.md)) |
+| "create an insight", "track MRR / WAU / signups", "add a metric", "I want to see X every session", **or the problem-shape:** "a chart/number that refreshes itself from Notion/Stripe/an API", "I don't want to ask you to re-fetch it every time", "same data, different views/date ranges" | **Insight** — `lab/insights/<slug>.md` | A curated analytics **metric backed by an external source** (HTTP API or script) — a number/series that re-syncs. Has a manifest, cache, TTL, adapters, tweaks, dashboard renders with a refresh button, optional KR binding | `dreamcontext lab create <slug> --title "…"` (offer-and-confirm protocol → [tasks-and-features.md](references/tasks-and-features.md)) |
 | "add an objective / goal / OKR", "put it on the roadmap", "we want X by Q4" | **Objective** — `core/objectives/<slug>.md` | A PO-authored **outcome** with target date, dependency DAG, optional Key-Result metric | `dreamcontext roadmap objective create` (ASK first — objectives are PO-owned) |
 | "document this", "write up the research / decision / how X works" | **Knowledge** — `knowledge/…` | Durable **prose**: research, decisions, rationale, domain context. It doesn't refresh itself and it isn't work to do | `dreamcontext knowledge create <name>` |
 | "the X feature", what a shipped capability is | **Feature PRD** — `knowledge/features/` | Retrospective **product doc** (user stories + acceptance criteria) | Sleep agent ONLY — never during active work |
@@ -122,6 +129,8 @@ dreamcontext has **eight distinct entity types**, each with ONE home and ONE cre
 - Is it an **outcome with a committed date**? → objective (`roadmap`).
 - Is it **prose you write once and maintain**? → knowledge.
 - Is it **work to do**? → task.
+
+**Don't rebuild what the brain already has.** Before proposing to scaffold ANY new app, script, page, or external service for the user's need, check whether a dreamcontext subsystem already covers it: a self-refreshing metric/chart → **Lab insight** (the dashboard's Lab page IS the refreshable view — adapters, tweaks, renders included); OKR/goal tracking → **roadmap objectives**; "remind me when…" → **triggers**; kanban/board views → the **dashboard**. The second canonical mistake (a real past failure): the user described "a debt number that refreshes from Notion, with tweakable views" and the agent designed a brand-new Vercel dashboard — when `lab create` + a script adapter was the whole answer. Propose external builds only when no subsystem fits, and say why it doesn't.
 
 If the requested entity type is ambiguous ("track this" could be insight, objective, or trigger), **ask one clarifying question instead of guessing** — creating the wrong entity pollutes the brain and the user has to notice and undo it.
 

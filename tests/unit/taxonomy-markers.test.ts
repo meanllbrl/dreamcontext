@@ -63,6 +63,17 @@ describe('skill/SKILL.md markers', () => {
   it('names the lab create command for insights', () => {
     expect(content).toContain('dreamcontext lab create');
   });
+
+  // A real session routed "insight oluşturalım" (Turkish) to a prose analysis and
+  // then designed an external dashboard for what `lab create` already covers.
+  // These markers pin the two router rules that prevent that.
+  it('declares entity nouns as language-independent reserved words', () => {
+    expect(content).toContain('Entity nouns are reserved words — in ANY language.');
+  });
+
+  it("has the 'don't rebuild what the brain already has' rule", () => {
+    expect(content).toContain("Don't rebuild what the brain already has.");
+  });
 });
 
 // ── skill/references lab markers ─────────────────────────────────────────────
