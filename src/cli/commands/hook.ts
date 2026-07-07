@@ -25,6 +25,7 @@ import { generateSnapshot, generateSubagentBriefing } from './snapshot.js';
 import { listStaleRecs } from '../../lib/marketing/snapshot.js';
 import { isMarketingEnvPath } from '../../lib/marketing/path-guards.js';
 import { buildCorpus, bm25Search, loadSkillDocs, type RecallHit } from '../../lib/recall.js';
+import { hybridSearch } from '../../lib/embeddings/hybrid.js';
 import {
   crossVaultRecall,
   resolveConnectedVaults,
@@ -1125,7 +1126,7 @@ export function registerHookCommand(program: Command): void {
   hook
     .command('user-prompt-submit')
     .description('Inject sleep debt reminder on every user message (called by Claude Code UserPromptSubmit hook)')
-    .action(() => {
+    .action(async () => {
       const input = readStdin();
       if (!input) process.exit(0);
 
@@ -1282,6 +1283,14 @@ export function registerHookCommand(program: Command): void {
                   const corpus = buildCorpus(root);
                   hits = bm25Search(prompt, corpus, 3);
                 }
+              } else if (recallMode === 'hybrid') {
+                // EXPERIMENTAL: BM25 + dense RRF fusion (decision-embedding-layer).
+                // Falls back to plain BM25 inside hybridSearch when the model is
+                // unavailable. Raw `.score` is untouched, so the >= 2.0 gate below
+                // behaves identically in this mode.
+                const corpus = buildCorpus(root);
+                hits = await hybridSearch(prompt, corpus, root, 3);
+                mode = 'Hybrid';
               } else {
                 const corpus = buildCorpus(root);
                 hits = bm25Search(prompt, corpus, 3);
