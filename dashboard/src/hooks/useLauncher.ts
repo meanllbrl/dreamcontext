@@ -87,7 +87,7 @@ export interface ScaffoldPayload {
   priority?: string;
   parentDir?: string;
   projectPath?: string;
-  /** Target agent platforms (e.g. ['claude','codex']). Defaults to ['claude']. */
+  /** Target agent platforms (e.g. ['claude']). Defaults to ['claude']. */
   platforms?: string[];
   /** Optional skill-pack names to install after setup. */
   packs?: string[];

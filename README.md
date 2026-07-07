@@ -169,7 +169,7 @@ curl -fsSL https://cdn.jsdelivr.net/npm/dreamcontext/install.sh | sh
 npm install -g dreamcontext
 ```
 
-> Requires **Node.js >= 18**. Currently supports **Claude Code** and **Codex**.
+> Requires **Node.js >= 18**. Currently supports **Claude Code**.
 
 ```bash
 # One-shot setup — scaffolds _dream_context/, installs the skill, agents,
@@ -177,7 +177,7 @@ npm install -g dreamcontext
 dreamcontext setup
 
 # Scriptable / non-interactive (explicit platforms, skip all prompts)
-dreamcontext setup --platforms claude,codex --defaults
+dreamcontext setup --platforms claude --defaults
 ```
 
 One command. Next session, the hook fires, context loads, and the agent is ready.
@@ -193,7 +193,7 @@ dreamcontext init
 
 # Install platform integration (multi-select prompt; defaults to Claude)
 dreamcontext install-skill
-dreamcontext install-skill --platforms claude,codex
+dreamcontext install-skill --platforms claude
 ```
 
 `dreamcontext init` on its own leaves you without `.claude/` skills, agents, and hooks — your agent won't load the context until you also run `install-skill` (or just use `setup`). When run interactively, `init` now offers to finish the install for you.
@@ -263,10 +263,10 @@ your-project/
 For projects that want managed root instruction files without installing the full skill + agent bundle:
 
 ```bash
-dreamcontext install-instructions --platforms claude,codex
+dreamcontext install-instructions --platforms claude
 ```
 
-This writes managed fenced blocks into `CLAUDE.md` and/or `AGENTS.md` at the project root, preserving existing non-managed content.
+This writes managed fenced blocks into `CLAUDE.md` at the project root, preserving existing non-managed content.
 
 ## Skills
 
@@ -319,7 +319,7 @@ dreamcontext install-skill --list
 | **excalidraw** | Lay out images, labels, shapes, arrows, frames, and lanes on an Obsidian Excalidraw board from a small JSON spec — renders deterministically at near-zero token cost |
 | **video-watching** | Turn a video into a time-mapped transcript with on-screen visuals described inline (whisper.cpp + ffmpeg), then reason about it |
 
-_Always-on_ packs apply their base principles to every relevant task; the rest load only when the work matches. Packs install to platform-specific paths — Claude: `.claude/skills/{pack}/` (+ agents in `.claude/agents/`); Codex: `.agents/skills/{pack}/` (+ agents in `.codex/agents/`). Cross-pack dependencies are warned at install time.
+_Always-on_ packs apply their base principles to every relevant task; the rest load only when the work matches. Packs install to `.claude/skills/{pack}/` (+ agents in `.claude/agents/`). Cross-pack dependencies are warned at install time.
 
 ## Staying Up to Date
 
@@ -506,7 +506,7 @@ dreamcontext lab show weekly-active-users --json         # cached series only �
 
 - **Insights, not raw dumps.** A hard cap of **62 points per series** is structural — a year of daily data rolls up to monthly buckets, a month may stay daily. Lab delivers curated metrics to agents and dashboards; it is not a BI tool.
 - **Every session sees the latest value.** Cached snapshots live in the brain, so an insight's latest value and staleness ride the SessionStart snapshot and are recallable by meaning — `dreamcontext memory recall "weekly active users" --types insight` — without knowing the slug.
-- **Measured roadmap progress.** Bind an insight to a roadmap objective's Key Result and `lab sync` writes `metric.current` for you, so the [forecast cascade](#roadmap-objectives--the-okr-board) reflects *measured* progress instead of PO-asserted numbers.
+- **Measured roadmap progress.** Bind an insight to a roadmap objective's Key Result — `dreamcontext lab bind <insight> <objective>`, or search-and-connect it right in the dashboard's objective dialogs — and `lab sync` writes `metric.current` for you, so the [forecast cascade](#roadmap-objectives--the-okr-board) reflects *measured* progress instead of PO-asserted numbers. Connecting seeds the current value from the cached snapshot immediately, and an objective has exactly one feeder: binding a new insight unbinds the previous one, loudly.
 - **Credentials are gitignore-first.** API keys and tokens are written only through `lab credentials set`, stored gitignored at mode `0600`, and structurally redacted — never logged, never returned by a route, and never printed by `credentials list` (names only).
 - **Custom scripts run locally, with a tripwire.** A `.mjs` script insight executes on your machine with your credentials — the same trust level as the repo itself — so if the script changes, Lab prints a loud change notice *before* it runs again.
 - **No silent half-sync.** When a fetch fails the prior cached series is kept intact, the error is surfaced loudly, and the sync exits non-zero. **Sleep does not run lab sync** (credential exposure, latency, non-determinism) — a bound insight feeds a Key Result through its own `lab sync` instead.
@@ -710,6 +710,7 @@ dreamcontext lab show <slug> [--json]                 # Show one insight's cache
 dreamcontext lab sync [slug] [--all] [--force]        # Refresh cached snapshots (skips fresh unless --force)
 dreamcontext lab create <slug> --title "..." --render number|line|pie|raw --adapter http|script [--group <g>] [--ttl <min>]
 dreamcontext lab tweak <slug> <key> <value>           # Adjust a declared tweak (e.g. a time range)
+dreamcontext lab bind <slug> <objective> [--value latest|series:<n>] [--clear]  # Feed an objective's Key Result
 dreamcontext lab credentials set <key>                # Store a source credential (hidden prompt or --value)
 dreamcontext lab credentials list                     # List credential names only — values are never printed
 ```
@@ -905,12 +906,12 @@ dreamcontext upgrade                     # Upgrade the CLI to the latest publish
 dreamcontext upgrade --check             # Print current vs latest version, no install
 dreamcontext update                      # Refresh installed skill/agent/hook files to match the CLI
 dreamcontext install-skill               # Install core integration for selected platforms
-dreamcontext install-skill --platforms claude,codex  # Explicit platform selection
+dreamcontext install-skill --platforms claude  # Explicit platform selection
 dreamcontext install-skill --packs       # Interactive skill pack browser
 dreamcontext install-skill --packs engineering design  # Install specific packs
 dreamcontext install-skill --skill <name>  # Install a single sub-skill
 dreamcontext install-skill --list        # Show available skill packs
-dreamcontext install-instructions --platforms claude,codex  # Write managed root instruction blocks
+dreamcontext install-instructions --platforms claude  # Write managed root instruction blocks
 dreamcontext install-claude-md           # Legacy alias: CLAUDE.md only
 ```
 
@@ -925,7 +926,6 @@ dreamcontext install-claude-md           # Legacy alias: CLAUDE.md only
 ## Works With
 
 - **Claude Code**: full support via skill, core sub-agents (the **initializer** and **curator** skill families, explore, the iterative `dreamcontext-deep-research` synthesis skill, the three primary RemSleep specialists — sleep-tasks, sleep-state, sleep-product — plus conditional sleep-federation and sleep-migration specialists), 7 hooks, plus optional pack sub-agents (council persona/synthesizer, multi-review specialists, goal-skill orchestrators)
-- **Codex**: project-level skills (`.agents/skills`), managed `AGENTS.md`, native `.codex/agents/*.toml`, and managed `.codex/config.toml` hooks (best-effort parity where event semantics differ)
 - **Desktop app (macOS beta)**: native Tauri 2 multi-vault launcher with in-app onboarding and the Sleepy notch quick-capture companion — wraps the same dashboard server (`dreamcontext app install`)
 - **Web Dashboard**: local UI with an in-app **Agent surface** (multi-session terminals + ⌘K command palette), a Tasks board with time-axis views (Timeline/Calendar/Activity heatmap), Core editor, Knowledge, Features, Brain graph, Sleep tracker, and Council Hall (ships in the package)
 - **Obsidian**: `_dream_context/` can be opened as an Obsidian vault; the directory is scaffolded with curated vault settings at `dreamcontext init` time

@@ -27,11 +27,6 @@ const INSTRUCTION_SPECS: Record<PlatformId, InstructionSpec> = {
     targetFile: 'CLAUDE.md',
     templateFile: 'CLAUDE.md',
   },
-  codex: {
-    platform: 'codex',
-    targetFile: 'AGENTS.md',
-    templateFile: 'AGENTS.md',
-  },
 };
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
@@ -167,7 +162,7 @@ export async function installClaudeMd(
 function printResult(result: InstallResult): void {
   const lines: string[] = [];
   const fileLabel = INSTRUCTION_SPECS[result.platform].targetFile;
-  const platformLabel = result.platform === 'claude' ? 'Claude' : 'Codex';
+  const platformLabel = 'Claude';
 
   switch (result.action) {
     case 'created':
@@ -219,7 +214,7 @@ function parsePlatformsOption(raw?: string): PlatformId[] {
 export function registerInstallInstructionsCommand(program: Command): void {
   program
     .command('install-instructions')
-    .description('Install managed root instruction files (CLAUDE.md / AGENTS.md)')
+    .description('Install managed root instruction files (CLAUDE.md)')
     .option('--platforms <list>', `Comma-separated platforms: ${formatSupportedPlatforms()}`)
     .option('--mode <mode>', 'Conflict mode when file exists: append | replace | skip')
     .action(async (opts: { platforms?: string; mode?: string }) => {

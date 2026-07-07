@@ -124,7 +124,7 @@ export async function pruneStaleFiles(
 
   if (unsafe.length > 0) {
     console.log();
-    warn(`Skipped ${unsafe.length} stale path(s) outside safe prefixes (.claude/, .agents/, .codex/):`);
+    warn(`Skipped ${unsafe.length} stale path(s) outside safe prefixes (.claude/):`);
     for (const p of unsafe) console.log(`  ${chalk.dim('•')} ${chalk.dim(p)}`);
   }
 

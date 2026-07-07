@@ -71,12 +71,12 @@ describe('git-sync/semantic-merge — mergeReleasesJson', () => {
 describe('git-sync/semantic-merge — mergeConfigJson', () => {
   it('unions people/packs/platforms rosters and peopleIdentity keys', () => {
     const ours = JSON.stringify({ people: ['alice'], packs: ['growth'], platforms: ['claude'], peopleIdentity: { alice: { role: 'eng' } } });
-    const theirs = JSON.stringify({ people: ['bob'], packs: ['design'], platforms: ['codex'], peopleIdentity: { bob: { role: 'pm' } } });
+    const theirs = JSON.stringify({ people: ['bob'], packs: ['design'], platforms: ['claude'], peopleIdentity: { bob: { role: 'pm' } } });
     const { merged } = mergeConfigJson('{}', ours, theirs);
     const obj = JSON.parse(merged);
     expect(obj.people.sort()).toEqual(['alice', 'bob']);
     expect(obj.packs.sort()).toEqual(['design', 'growth']);
-    expect(obj.platforms.sort()).toEqual(['claude', 'codex']);
+    expect(obj.platforms.sort()).toEqual(['claude']);
     expect(Object.keys(obj.peopleIdentity).sort()).toEqual(['alice', 'bob']);
   });
 });

@@ -178,7 +178,6 @@ const translations: Record<string, Record<string, string>> = {
     'settings.saved': 'Saved',
     'settings.no_config': 'No configuration file found. Saving will create one with your selections.',
     'settings.platform.claude': 'Claude (Anthropic)',
-    'settings.platform.codex': 'Codex (OpenAI)',
     'settings.packs.installed': 'Installed',
     'settings.memory': 'Memory',
     'settings.brain': 'Cloud sync',

@@ -95,7 +95,6 @@ interface PlatformOption {
 
 const PLATFORM_OPTIONS: PlatformOption[] = [
   { id: 'claude', labelKey: 'settings.platform.claude' },
-  { id: 'codex', labelKey: 'settings.platform.codex' },
 ];
 
 // ─── Default config when config is null ───────────────────────────────────────

@@ -1,4 +1,4 @@
-export const SUPPORTED_PLATFORMS = ['claude', 'codex'] as const;
+export const SUPPORTED_PLATFORMS = ['claude'] as const;
 
 export type PlatformId = typeof SUPPORTED_PLATFORMS[number];
 
@@ -15,11 +15,6 @@ export const PLATFORM_CATALOG: PlatformMeta[] = [
     id: 'claude',
     label: 'Claude',
     description: 'Install .claude skills, agents, and hooks',
-  },
-  {
-    id: 'codex',
-    label: 'Codex',
-    description: 'Install .agents skills, .codex agents/config, and AGENTS.md guidance',
   },
 ];
 

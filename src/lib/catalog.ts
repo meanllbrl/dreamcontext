@@ -66,11 +66,12 @@ export interface Catalog {
 /**
  * Root directory where skill packs are installed for a given platform.
  * claude  → <projectRoot>/.claude/skills
- * codex   → <projectRoot>/.agents/skills
+ *
+ * 'claude' is currently the only supported platform. When another platform is
+ * re-added, branch here to return its skill root.
  */
-export function platformSkillRoot(projectRoot: string, platform: PlatformId): string {
-  if (platform === 'claude') return join(projectRoot, '.claude', 'skills');
-  return join(projectRoot, '.agents', 'skills');
+export function platformSkillRoot(projectRoot: string, _platform: PlatformId): string {
+  return join(projectRoot, '.claude', 'skills');
 }
 
 /**

@@ -16,7 +16,6 @@ import {
   writeProjectPlatformDefaults,
   getPlatformDefaultsPath,
 } from '../../lib/platform-defaults.js';
-import { installInstructions } from './install-claude-md.js';
 import {
   readManifest,
   writeManifest,
@@ -42,115 +41,6 @@ const POST_TOOL_USE_HOOK = 'npx dreamcontext hook post-tool-use';
 const PRE_COMPACT_HOOK = 'npx dreamcontext hook pre-compact';
 const ENSURE_DASHBOARD_HOOK = 'npx dreamcontext hook ensure-dashboard';
 const OLD_HOOK = 'npx dreamcontext snapshot'; // migration target
-
-// ─── Codex Config ──────────────────────────────────────────────────────────
-
-const CODEX_BLOCK_START = '# dreamcontext:codex:start';
-const CODEX_BLOCK_END = '# dreamcontext:codex:end';
-
-interface CodexHookSpec {
-  event: 'SessionStart' | 'Stop' | 'UserPromptSubmit' | 'PostToolUse';
-  command: string;
-  timeout: number;
-  matcher?: string;
-  statusMessage?: string;
-}
-
-const CODEX_HOOK_SPECS: CodexHookSpec[] = [
-  { event: 'SessionStart', command: SESSION_START_HOOK, timeout: 10, matcher: 'startup|resume|clear' },
-  { event: 'Stop', command: STOP_HOOK, timeout: 5 },
-  { event: 'UserPromptSubmit', command: USER_PROMPT_SUBMIT_HOOK, timeout: 120 },
-  { event: 'PostToolUse', command: POST_TOOL_USE_HOOK, timeout: 30, matcher: 'Edit|Write' },
-];
-
-function codexHooksBlock(): string {
-  const lines = [
-    CODEX_BLOCK_START,
-    '# dreamcontext managed hooks for Codex',
-    '# SubagentStart, PreCompact, and agent-gating PreToolUse are Claude-specific and omitted here.',
-  ];
-
-  for (const spec of CODEX_HOOK_SPECS) {
-    lines.push(`[[hooks.${spec.event}]]`);
-    if (spec.matcher) lines.push(`matcher = ${JSON.stringify(spec.matcher)}`);
-    lines.push('');
-    lines.push(`[[hooks.${spec.event}.hooks]]`);
-    lines.push('type = "command"');
-    lines.push(`command = ${JSON.stringify(spec.command)}`);
-    lines.push(`timeout = ${spec.timeout}`);
-    if (spec.statusMessage) lines.push(`statusMessage = ${JSON.stringify(spec.statusMessage)}`);
-    lines.push('');
-  }
-
-  lines.push(CODEX_BLOCK_END, '');
-  return lines.join('\n');
-}
-
-function ensureCodexHooksFeatureEnabled(content: string): { content: string; updated: boolean } {
-  const normalized = content.replace(/\r\n/g, '\n');
-  const lines = normalized.split('\n');
-  const featureIdx = lines.findIndex((line) => line.trim() === '[features]');
-
-  if (featureIdx === -1) {
-    const prefix = ['[features]', 'codex_hooks = true', ''].join('\n');
-    const suffix = normalized.trimStart();
-    return {
-      content: suffix ? `${prefix}\n${suffix}` : `${prefix}\n`,
-      updated: true,
-    };
-  }
-
-  let sectionEnd = lines.length;
-  for (let i = featureIdx + 1; i < lines.length; i++) {
-    if (/^\s*\[\[?.+\]\]?\s*$/.test(lines[i])) {
-      sectionEnd = i;
-      break;
-    }
-  }
-
-  for (let i = featureIdx + 1; i < sectionEnd; i++) {
-    if (/^\s*codex_hooks\s*=/.test(lines[i])) {
-      if (lines[i].trim() === 'codex_hooks = true') {
-        return { content: normalized, updated: false };
-      }
-      lines[i] = 'codex_hooks = true';
-      return { content: lines.join('\n'), updated: true };
-    }
-  }
-
-  lines.splice(featureIdx + 1, 0, 'codex_hooks = true');
-  return { content: lines.join('\n'), updated: true };
-}
-
-function ensureCodexConfig(projectRoot: string): { created: boolean; updated: boolean } {
-  const configDir = join(projectRoot, '.codex');
-  const configPath = join(configDir, 'config.toml');
-  const block = codexHooksBlock();
-
-  mkdirSync(configDir, { recursive: true });
-
-  if (!existsSync(configPath)) {
-    const initial = ensureCodexHooksFeatureEnabled('').content.trimEnd();
-    writeFileSync(configPath, `${initial}\n\n${block}`, 'utf-8');
-    return { created: true, updated: true };
-  }
-
-  const existing = readFileSync(configPath, 'utf-8');
-  const startIdx = existing.indexOf(CODEX_BLOCK_START);
-  const endIdx = existing.indexOf(CODEX_BLOCK_END);
-
-  let withoutManaged = existing;
-  if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
-    const before = existing.slice(0, startIdx).replace(/\n+$/, '');
-    const after = existing.slice(endIdx + CODEX_BLOCK_END.length).replace(/^\n+/, '');
-    withoutManaged = `${before}${before && after ? '\n\n' : ''}${after}`;
-  }
-
-  const withFeatures = ensureCodexHooksFeatureEnabled(withoutManaged).content.replace(/\n+$/, '');
-  const merged = `${withFeatures ? `${withFeatures}\n\n` : ''}${block}`;
-  writeFileSync(configPath, merged, 'utf-8');
-  return { created: false, updated: true };
-}
 
 // ─── Hook Types ─────────────────────────────────────────────────────────────
 
@@ -192,7 +82,7 @@ const HOOK_SPECS: HookSpec[] = [
   // Auto-open the dashboard when a session starts and no server is already up.
   // Separate SessionStart group (own matcher) so it does NOT fire on compaction —
   // mid-session compaction should not relaunch the dashboard. Opt out with
-  // DREAMCONTEXT_AUTO_DASHBOARD=0. Claude-only (omitted from CODEX_HOOK_SPECS).
+  // DREAMCONTEXT_AUTO_DASHBOARD=0.
   { event: 'SessionStart', command: ENSURE_DASHBOARD_HOOK, timeout: 10, matcher: 'startup|resume' },
 ];
 
@@ -242,8 +132,8 @@ interface Catalog {
 
 // ─── Platform Helpers ───────────────────────────────────────────────────────
 
-function platformLabel(platform: PlatformId): string {
-  return platform === 'claude' ? 'Claude' : 'Codex';
+function platformLabel(_platform: PlatformId): string {
+  return 'Claude';
 }
 
 function platformPrefixed(platform: PlatformId, relPath: string): string {
@@ -252,13 +142,11 @@ function platformPrefixed(platform: PlatformId, relPath: string): string {
 
 /**
  * Prefix an installed rel-path with its platform tag for the CLI summary. The
- * lib returns plain (uncolored, unprefixed) rel paths; the platform is inferred
- * from the destination prefix (.agents/.codex → codex, otherwise claude).
+ * lib returns plain (uncolored, unprefixed) rel paths; 'claude' is currently the
+ * only supported platform.
  */
 function labelInstalledPath(relPath: string): string {
-  const platform: PlatformId =
-    relPath.startsWith('.agents/') || relPath.startsWith('.codex/') ? 'codex' : 'claude';
-  return platformPrefixed(platform, relPath);
+  return platformPrefixed('claude', relPath);
 }
 
 /**
@@ -908,7 +796,7 @@ export async function installCoreForPlatform(
     }
   }
 
-  if (platform === 'claude') {
+  {
     const hookResult = ensureClaudeHooks(projectRoot);
     recordIfManifest(manifest, '.claude/settings.json', 'hook');
     if (hookResult.added.length > 0) {
@@ -935,25 +823,6 @@ export async function installCoreForPlatform(
         ? chalk.dim('Disabled Claude native auto-memory (autoMemoryEnabled:false) — dreamcontext owns memory')
         : chalk.dim('Enabled Claude native auto-memory (autoMemoryEnabled:true) per config')));
     }
-  } else {
-    const codexResult = ensureCodexConfig(projectRoot);
-    recordIfManifest(manifest, '.codex/config.toml', 'hook');
-    if (codexResult.updated) {
-      installed.push(platformPrefixed(platform, '.codex/config.toml (managed hooks block)'));
-    }
-
-    // Codex relies on AGENTS.md; use append to avoid destructive replacement in automated installs.
-    try {
-      const result = await installInstructions(projectRoot, 'codex', 'append');
-      if (result.action !== 'skipped') {
-        notes.push(platformPrefixed(platform, `Root guidance synced: ${result.target}`));
-      }
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      notes.push(platformPrefixed(platform, `${chalk.yellow('⚠')} AGENTS.md install skipped: ${msg}`));
-    }
-
-    notes.push(platformPrefixed(platform, chalk.dim('Codex gap: SubagentStart + PreCompact hooks are Claude-only.')));
   }
 
   return { installed, notes };

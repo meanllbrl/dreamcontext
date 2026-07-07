@@ -8,7 +8,6 @@ import {
   rmSync,
 } from 'node:fs';
 import { basename, dirname, join, resolve, sep } from 'node:path';
-import matter from 'gray-matter';
 import {
   loadCatalog,
   platformSkillRoot,
@@ -70,79 +69,28 @@ export class UnknownPackError extends Error {
   }
 }
 
-// ─── Agent File Parsing ─────────────────────────────────────────────────────
-
-interface ParsedAgent {
-  name: string;
-  description: string;
-  model: string;
-  body: string;
-}
-
-export function parseAgentFile(agentPath: string): ParsedAgent {
-  const raw = readFileSync(agentPath, 'utf-8');
-  const parsed = matter(raw);
-  const data = parsed.data as Record<string, unknown>;
-
-  const name = typeof data.name === 'string' && data.name.trim().length > 0
-    ? data.name.trim()
-    : basename(agentPath, '.md');
-
-  const description = typeof data.description === 'string'
-    ? data.description.replace(/\s+/g, ' ').trim()
-    : '';
-
-  const model = typeof data.model === 'string' && data.model.trim().length > 0
-    ? data.model.trim()
-    : 'sonnet';
-
-  return {
-    name,
-    description,
-    model,
-    body: parsed.content.trim(),
-  };
-}
-
-function writeCodexAgent(projectRoot: string, agentPath: string): string {
-  const parsed = parseAgentFile(agentPath);
-  const agentsDir = join(projectRoot, '.codex', 'agents');
-  mkdirSync(agentsDir, { recursive: true });
-
-  const configPath = join(agentsDir, `${parsed.name}.toml`);
-  const lines = [
-    `name = ${JSON.stringify(parsed.name)}`,
-    `description = ${JSON.stringify(parsed.description)}`,
-    `model = ${JSON.stringify(parsed.model)}`,
-    `developer_instructions = ${JSON.stringify(parsed.body)}`,
-    '',
-  ];
-  writeFileSync(configPath, lines.join('\n'), 'utf-8');
-
-  return `.codex/agents/${parsed.name}.toml`;
-}
+// ─── Agent File Installation ────────────────────────────────────────────────
 
 /**
  * Write an agent file for one platform and return its project-relative path.
  * Owned by this lib so there is exactly one copy of the agent-write logic;
  * `installCoreForPlatform` (in install-skill.ts) imports this.
+ *
+ * 'claude' is currently the only supported platform. When another platform is
+ * re-added, branch on `platform` here.
  */
 export function installAgentForPlatform(
-  platform: PlatformId,
+  _platform: PlatformId,
   projectRoot: string,
   agentPath: string,
   agentName?: string,
 ): string {
-  if (platform === 'claude') {
-    const agentsDestDir = join(projectRoot, '.claude', 'agents');
-    mkdirSync(agentsDestDir, { recursive: true });
-    const file = agentName ? `${agentName}.md` : basename(agentPath);
-    const dest = join(agentsDestDir, file);
-    writeFileSync(dest, readFileSync(agentPath, 'utf-8'), 'utf-8');
-    return `.claude/agents/${file}`;
-  }
-
-  return writeCodexAgent(projectRoot, agentPath);
+  const agentsDestDir = join(projectRoot, '.claude', 'agents');
+  mkdirSync(agentsDestDir, { recursive: true });
+  const file = agentName ? `${agentName}.md` : basename(agentPath);
+  const dest = join(agentsDestDir, file);
+  writeFileSync(dest, readFileSync(agentPath, 'utf-8'), 'utf-8');
+  return `.claude/agents/${file}`;
 }
 
 // ─── Manifest Recording ─────────────────────────────────────────────────────
@@ -392,9 +340,8 @@ function collectSkillFiles(
 }
 
 /** Project-relative path(s) for a related agent on one platform. */
-function agentRelPaths(agentName: string, platform: PlatformId): string[] {
-  if (platform === 'claude') return [`.claude/agents/${agentName}.md`];
-  return [`.codex/agents/${agentName}.toml`];
+function agentRelPaths(agentName: string, _platform: PlatformId): string[] {
+  return [`.claude/agents/${agentName}.md`];
 }
 
 // ─── Public: uninstall ──────────────────────────────────────────────────────

@@ -38,7 +38,7 @@ describe("setup-drift-update unit", () => {
 
   it("buildUpdateSummary handles empty packs and no removed files", () => {
     const summary = buildUpdateSummary({
-      platforms: ['claude', 'codex'],
+      platforms: ['claude'],
       installedCount: 3,
       packs: [],
       removed: [],
@@ -47,7 +47,6 @@ describe("setup-drift-update unit", () => {
 
     expect(summary).toContain('## Update Summary');
     expect(summary).toContain('claude');
-    expect(summary).toContain('codex');
     expect(summary).toContain('3');
     expect(summary).toContain('none');
     expect(summary).toContain('0.7.1');

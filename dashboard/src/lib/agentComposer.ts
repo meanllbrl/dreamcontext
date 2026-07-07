@@ -8,7 +8,7 @@
  * option list + aliases), the effort levels from `claude --help`, and the user's own
  * defaults from `~/.claude/settings.json`. A session's CURRENT model comes from its
  * transcript (`GET /api/agent/session-model`). Switching either fires the live `/model`
- * or `/effort` slash command into that agent. Provider-neutral so a Codex backend can
+ * or `/effort` slash command into that agent. Provider-neutral so another backend can
  * later populate the same shapes.
  */
 

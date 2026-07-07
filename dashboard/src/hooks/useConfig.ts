@@ -3,7 +3,7 @@ import { api } from '../api/client';
 
 // ─── Types (duplicated client-side — can't import from src/lib) ───────────────
 
-export type PlatformId = 'claude' | 'codex';
+export type PlatformId = 'claude';
 
 export interface ClickUpConfig {
   teamId?: string;

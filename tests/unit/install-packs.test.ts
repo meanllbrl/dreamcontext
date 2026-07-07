@@ -114,24 +114,6 @@ describe('uninstallPack — shared agent', () => {
   });
 });
 
-// ─── A5 — codex platform ──────────────────────────────────────────────────────
-
-describe('install/uninstall — codex platform', () => {
-  it('A5: install writes .agents/skills + .codex/agents toml; uninstall removes them', () => {
-    const inst = installPack('engineering', tmpDir, ['codex'], manifest);
-    const codexSkill = join(tmpDir, '.agents', 'skills', 'engineering', 'SKILL.md');
-    const codexAgent = join(tmpDir, '.codex', 'agents', 'reviewer.toml');
-    expect(existsSync(codexSkill)).toBe(true);
-    expect(existsSync(codexAgent)).toBe(true);
-    expect(inst.installed).toContain('.agents/skills/engineering/SKILL.md');
-    expect(inst.installed).toContain('.codex/agents/reviewer.toml');
-
-    uninstallPack('engineering', tmpDir, ['codex'], manifest);
-    expect(existsSync(codexSkill)).toBe(false);
-    expect(existsSync(codexAgent)).toBe(false);
-  });
-});
-
 // ─── A6 — fallback on-disk removal with an empty manifest ──────────────────────
 
 describe('uninstallPack — on-disk fallback (no manifest record)', () => {

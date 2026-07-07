@@ -63,21 +63,6 @@ describe('bootstrapManifestFromScan — allowlist', () => {
     expect(m.files['.claude/skills/my-custom-thing/SKILL.md']).toBeUndefined();
   });
 
-  it('T3: adopts only known codex (.toml) agents, never custom ones', () => {
-    touch(join(tmp, '.codex', 'agents', 'reviewer.toml')); // known
-    touch(join(tmp, '.codex', 'agents', 'watchlist-monitor.toml')); // custom
-
-    const known: KnownArtifacts = {
-      agentNames: new Set(['reviewer']),
-      skillDirs: new Set(['dreamcontext']),
-    };
-    const m = bootstrapManifestFromScan(tmp, known);
-
-    expect(m.files['.codex/agents/reviewer.toml']).toBeDefined();
-    expect(m.files['.codex/agents/reviewer.toml'].kind).toBe('agent');
-    expect(m.files['.codex/agents/watchlist-monitor.toml']).toBeUndefined();
-  });
-
   it('T4: knownArtifactNames() includes shipped artifacts, excludes custom/removed', () => {
     const known = knownArtifactNames();
 

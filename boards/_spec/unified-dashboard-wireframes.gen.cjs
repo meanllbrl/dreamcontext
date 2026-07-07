@@ -247,7 +247,7 @@ function Packs(x, y) {
 function Settings(x, y) {
   const c = chrome(x, y, { active: 'Settings', title: 'Settings' });
   rect(c.cx + c.cw - 50, c.cy - 26, 38, 16, { bg: VIO, stroke: VIO, sw: 1 }); txt(c.cx + c.cw - 44, c.cy - 22, 'Save', { size: 8, color: WHITE });
-  txt(c.cx + 12, c.cy + 2, 'Platforms', { size: 8.5, color: MUTED }); for (let i = 0; i < 2; i++) { rect(c.cx + 14, c.cy + 16 + i * 16, 10, 10, { bg: VIO, stroke: VIO, sw: 1 }); txt(c.cx + 30, c.cy + 15 + i * 16, ['Claude', 'Codex'][i], { size: 8 }); }
+  txt(c.cx + 12, c.cy + 2, 'Platforms', { size: 8.5, color: MUTED }); for (let i = 0; i < 1; i++) { rect(c.cx + 14, c.cy + 16 + i * 16, 10, 10, { bg: VIO, stroke: VIO, sw: 1 }); txt(c.cx + 30, c.cy + 15 + i * 16, ['Claude'][i], { size: 8 }); }
   txt(c.cx + 12, c.cy + 52, 'Tasks', { size: 8.5, color: MUTED }); rect(c.cx + 14, c.cy + 66, 10, 10, { bg: WHITE, stroke: LINE, sw: 1 }); txt(c.cx + 30, c.cy + 65, 'Enable cloud tasks (ClickUp)', { size: 8 });
   txt(c.cx + 12, c.cy + 86, 'Memory', { size: 8.5, color: MUTED }); rect(c.cx + 14, c.cy + 100, 10, 10, { bg: VIO, stroke: VIO, sw: 1 }); txt(c.cx + 30, c.cy + 99, 'Disable native memory', { size: 8 });
   rect(c.cx + 12, c.cy + 122, c.cw - 24, 22, { bg: MAGBG, stroke: MAG, sw: 1 }); txt(c.cx + 18, c.cy + 128, 'Federation → moved to Connections & Inbox', { size: 7.5, color: MAG });

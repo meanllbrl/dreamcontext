@@ -34,5 +34,4 @@ describe('doctor info line (#19)', () => {
 
 describe('explore agent routing block (#19)', () => {
   it.todo('agents/dreamcontext-explore.md contains the structure-question routing directive');
-  it.todo('.codex/agents/prompts/dreamcontext-explore.md mirror stays in sync with canonical');
 });

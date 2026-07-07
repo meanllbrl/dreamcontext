@@ -41,46 +41,6 @@ describe('platform-aware install flow (integration)', () => {
     expect(parsed.selected).toEqual(['claude']);
   });
 
-  it('init --platforms persists explicit multi-selection', () => {
-    run('init --yes --name "Test" --description "d" --stack "Node" --priority "p" --platforms codex,claude', tmpDir);
-    const path = join(tmpDir, '_dream_context', 'state', '.platforms.json');
-    const parsed = JSON.parse(readFileSync(path, 'utf-8')) as { selected: string[] };
-    expect(parsed.selected).toEqual(['codex', 'claude']);
-  });
-
-  it('install-skill --platforms codex installs codex artifacts', () => {
-    run('init --yes --name "Test" --description "d" --stack "Node" --priority "p"', tmpDir);
-    const output = run('install-skill --platforms codex', tmpDir);
-
-    expect(output).toContain('Integration installed for Codex');
-    expect(existsSync(join(tmpDir, '.agents', 'skills', 'dreamcontext', 'SKILL.md'))).toBe(true);
-    expect(existsSync(join(tmpDir, '.codex', 'config.toml'))).toBe(true);
-    expect(existsSync(join(tmpDir, '.codex', 'agents', 'dreamcontext-explore.toml'))).toBe(true);
-    expect(existsSync(join(tmpDir, 'AGENTS.md'))).toBe(true);
-
-    const codexAgent = readFileSync(join(tmpDir, '.codex', 'agents', 'dreamcontext-explore.toml'), 'utf-8');
-    expect(codexAgent).not.toContain('disallowed_tools');
-    expect(codexAgent).not.toContain('tools =');
-    expect(codexAgent).not.toContain('instructions_file');
-    expect(codexAgent).toContain('developer_instructions = ');
-
-    const codexConfig = readFileSync(join(tmpDir, '.codex', 'config.toml'), 'utf-8');
-    expect(codexConfig).toContain('[features]');
-    expect(codexConfig).toContain('codex_hooks = true');
-    expect(codexConfig).toContain('[[hooks.SessionStart]]');
-    expect(codexConfig).toContain('[[hooks.SessionStart.hooks]]');
-    expect(codexConfig).toContain('matcher = "startup|resume|clear"');
-    expect(codexConfig).not.toContain('hooks.session_start = ');
-  });
-
-  it('install-skill defaults to saved project platforms when --platforms is omitted', () => {
-    run('init --yes --name "Test" --description "d" --stack "Node" --priority "p" --platforms codex', tmpDir);
-    run('install-skill', tmpDir);
-
-    expect(existsSync(join(tmpDir, '.agents', 'skills', 'dreamcontext', 'SKILL.md'))).toBe(true);
-    expect(existsSync(join(tmpDir, '.claude', 'skills', 'dreamcontext', 'SKILL.md'))).toBe(false);
-  });
-
   it('install-skill installs the initializer core skill + 3 sub-agents (claude)', () => {
     run('init --yes --name "Test" --description "d" --stack "Node" --priority "p"', tmpDir);
     run('install-skill --platforms claude', tmpDir);
@@ -94,13 +54,6 @@ describe('platform-aware install flow (integration)', () => {
     for (const a of ['initializer-scout', 'initializer-ingestor', 'initializer-verifier']) {
       expect(existsSync(join(tmpDir, '.claude', 'agents', `${a}.md`))).toBe(true);
     }
-  });
-
-  it('install-skill installs the initializer core skill for codex too', () => {
-    run('init --yes --name "Test" --description "d" --stack "Node" --priority "p"', tmpDir);
-    run('install-skill --platforms codex', tmpDir);
-    expect(existsSync(join(tmpDir, '.agents', 'skills', 'initializer', 'SKILL.md'))).toBe(true);
-    expect(existsSync(join(tmpDir, '.codex', 'agents', 'initializer-scout.toml'))).toBe(true);
   });
 
   it('install-skill installs the curator core skill + 3 sub-agents (claude)', () => {
@@ -118,13 +71,6 @@ describe('platform-aware install flow (integration)', () => {
     }
   });
 
-  it('install-skill installs the curator core skill for codex too', () => {
-    run('init --yes --name "Test" --description "d" --stack "Node" --priority "p"', tmpDir);
-    run('install-skill --platforms codex', tmpDir);
-    expect(existsSync(join(tmpDir, '.agents', 'skills', 'curator', 'SKILL.md'))).toBe(true);
-    expect(existsSync(join(tmpDir, '.codex', 'agents', 'curator-auditor.toml'))).toBe(true);
-  });
-
   it('install-skill installs the deep-research core skill (claude)', () => {
     run('init --yes --name "Test" --description "d" --stack "Node" --priority "p"', tmpDir);
     run('install-skill --platforms claude', tmpDir);
@@ -139,20 +85,11 @@ describe('platform-aware install flow (integration)', () => {
     expect(existsSync(join(tmpDir, '.claude', 'agents', 'dreamcontext-explore.md'))).toBe(true);
   });
 
-  it('install-skill installs the deep-research core skill for codex too', () => {
+  it('install-instructions installs CLAUDE.md for the claude platform', () => {
     run('init --yes --name "Test" --description "d" --stack "Node" --priority "p"', tmpDir);
-    run('install-skill --platforms codex', tmpDir);
-    expect(existsSync(join(tmpDir, '.agents', 'skills', 'dreamcontext-deep-research', 'SKILL.md'))).toBe(true);
-  });
-
-  it('install-instructions can install both CLAUDE.md and AGENTS.md in one command', () => {
-    run('init --yes --name "Test" --description "d" --stack "Node" --priority "p"', tmpDir);
-    run('install-instructions --platforms claude,codex --mode append', tmpDir);
+    run('install-instructions --platforms claude --mode append', tmpDir);
 
     const claude = readFileSync(join(tmpDir, 'CLAUDE.md'), 'utf-8');
-    const agents = readFileSync(join(tmpDir, 'AGENTS.md'), 'utf-8');
-
     expect(claude).toContain('dreamcontext:claude:start');
-    expect(agents).toContain('dreamcontext:codex:start');
   });
 });

@@ -141,10 +141,10 @@ describe('PATCH /api/config — taskBackend + clickup block (strict-pick)', () =
 
   it('the prior allow-list still works untouched (platforms/disableNativeMemory)', async () => {
     const { res, status } = makeRes();
-    await handleConfigUpdate(makePatchReq({ platforms: ['codex'], disableNativeMemory: false }), res, {}, contextRoot);
+    await handleConfigUpdate(makePatchReq({ platforms: ['claude'], disableNativeMemory: false }), res, {}, contextRoot);
     expect(status()).toBe(200);
     const cfg = readSetupConfig(tmpDir);
-    expect(cfg?.platforms).toEqual(['codex']);
+    expect(cfg?.platforms).toEqual(['claude']);
     expect(cfg?.disableNativeMemory).toBe(false);
     expect(existsSync(join(tmpDir, '.gitignore'))).toBe(false); // no backend flip → no gitignore write
   });

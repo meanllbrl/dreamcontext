@@ -27,9 +27,9 @@ describe('project platform defaults', () => {
   });
 
   it('writes and reads defaults roundtrip', () => {
-    const path = writeProjectPlatformDefaults(projectRoot, ['codex', 'claude']);
+    const path = writeProjectPlatformDefaults(projectRoot, ['claude']);
     expect(path).toBe(join(projectRoot, '_dream_context', 'state', '.platforms.json'));
-    expect(readProjectPlatformDefaults(projectRoot)).toEqual(['codex', 'claude']);
+    expect(readProjectPlatformDefaults(projectRoot)).toEqual(['claude']);
   });
 
   it('falls back to claude when file is missing or malformed', () => {
@@ -44,8 +44,8 @@ describe('project platform defaults', () => {
 
   it('normalizes stored selections', () => {
     const path = getPlatformDefaultsPath(projectRoot);
-    writeFileSync(path!, JSON.stringify({ version: 1, selected: ['CODex', 'codex', 'bad'] }), 'utf-8');
-    expect(readProjectPlatformDefaults(projectRoot)).toEqual(['codex']);
+    writeFileSync(path!, JSON.stringify({ version: 1, selected: ['CLAUde', 'claude', 'bad'] }), 'utf-8');
+    expect(readProjectPlatformDefaults(projectRoot)).toEqual(['claude']);
   });
 
   it('returns null path when project has no _dream_context', () => {
@@ -60,7 +60,7 @@ describe('project platform defaults', () => {
   it('returns null on write when context is missing', () => {
     const other = makeTmpDir();
     try {
-      expect(writeProjectPlatformDefaults(other, ['codex'])).toBeNull();
+      expect(writeProjectPlatformDefaults(other, ['claude'])).toBeNull();
     } finally {
       rmSync(other, { recursive: true, force: true });
     }

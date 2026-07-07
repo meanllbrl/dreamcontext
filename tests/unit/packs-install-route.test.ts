@@ -59,7 +59,7 @@ afterEach(() => {
   rmSync(sentinelOutside, { force: true });
 });
 
-function seedConfig(platforms: ('claude' | 'codex')[]): void {
+function seedConfig(platforms: 'claude'[]): void {
   writeSetupConfig(tmpDir, {
     platforms,
     packs: [],
@@ -118,15 +118,6 @@ describe('POST /api/packs/:name/install', () => {
     expect(existsSync(join(tmpDir, '.agents'))).toBe(false);
   });
 
-  it('B5: platforms:[codex] → only .agents (no .claude skills)', async () => {
-    seedConfig(['codex']);
-    const { res, status } = makeRes();
-    await handlePackInstall(makeReq('POST'), res, { name: 'engineering' }, contextRoot);
-
-    expect(status()).toBe(200);
-    expect(existsSync(join(tmpDir, '.agents', 'skills', 'engineering', 'SKILL.md'))).toBe(true);
-    expect(existsSync(join(tmpDir, '.claude', 'skills', 'engineering', 'SKILL.md'))).toBe(false);
-  });
 });
 
 // ─── DELETE /api/packs/:name ──────────────────────────────────────────────────

@@ -50,7 +50,7 @@ export interface KnownArtifacts {
 const MANIFEST_REL_PATH = '_dream_context/state/.install-manifest.json';
 
 /** Path prefixes that may be safely deleted during an update. */
-export const SAFE_DELETE_PREFIXES = ['.claude/', '.agents/', '.codex/'] as const;
+export const SAFE_DELETE_PREFIXES = ['.claude/'] as const;
 
 // ─── Version Resolution ─────────────────────────────────────────────────────
 
@@ -202,7 +202,7 @@ export function diffManifests(oldM: Manifest, nextM: Manifest): ManifestDiff {
 
 /**
  * Returns true if the given path may be safely deleted by the update command.
- * Only paths under `.claude/`, `.agents/`, or `.codex/` are considered safe.
+ * Only paths under `.claude/` are considered safe.
  * Notably, anything under `_dream_context/` is NEVER safe to delete (user data).
  */
 export function isSafeDeletePath(relPath: string): boolean {
@@ -246,9 +246,6 @@ export function walk(dir: string, relBase: string, out: string[]): void {
  *
  * - .claude/skills/<dir>/**         → core ('dreamcontext') / pack-skill, if dir ∈ known.skillDirs
  * - .claude/agents/<name>.md         → agent, if name ∈ known.agentNames
- * - .agents/skills/<dir>/**          → same split as above, if dir ∈ known.skillDirs
- * - .codex/agents/<name>.toml        → agent, if name ∈ known.agentNames
- * - .codex/config.toml               → hook (always — out of allowlist scope)
  * - .claude/settings.json            → hook (always — out of allowlist scope)
  */
 export function bootstrapManifestFromScan(projectRoot: string, known: KnownArtifacts): Manifest {
@@ -284,38 +281,6 @@ export function bootstrapManifestFromScan(projectRoot: string, known: KnownArtif
   const claudeSettings = join(projectRoot, '.claude', 'settings.json');
   if (existsSync(claudeSettings)) {
     recordFile(m, '.claude/settings.json', PRE_MANIFEST_VERSION, 'hook');
-  }
-
-  // Codex / .agents
-  const agentsSkillsRoot = join(projectRoot, '.agents', 'skills');
-  if (existsSync(agentsSkillsRoot)) {
-    recordPlatform(m, 'codex');
-    for (const entry of readdirSync(agentsSkillsRoot)) {
-      const sub = join(agentsSkillsRoot, entry);
-      if (!statSync(sub).isDirectory()) continue;
-      if (!known.skillDirs.has(entry)) continue; // skip user-authored skill dirs
-      const files: string[] = [];
-      walk(sub, '', files);
-      const kind: ManagedFileKind = entry === 'dreamcontext' ? 'core' : 'pack-skill';
-      for (const f of files) {
-        recordFile(m, `.agents/skills/${entry}/${f}`, PRE_MANIFEST_VERSION, kind);
-      }
-    }
-  }
-
-  const codexAgentsDir = join(projectRoot, '.codex', 'agents');
-  if (existsSync(codexAgentsDir)) {
-    recordPlatform(m, 'codex');
-    for (const f of readdirSync(codexAgentsDir)) {
-      if (!f.endsWith('.toml')) continue;
-      if (!known.agentNames.has(basename(f, '.toml'))) continue; // skip user-authored agents
-      recordFile(m, `.codex/agents/${f}`, PRE_MANIFEST_VERSION, 'agent');
-    }
-  }
-
-  const codexConfig = join(projectRoot, '.codex', 'config.toml');
-  if (existsSync(codexConfig)) {
-    recordFile(m, '.codex/config.toml', PRE_MANIFEST_VERSION, 'hook');
   }
 
   return m;

@@ -6,7 +6,6 @@ dashboard/node_modules/
 dashboard/dist/
 .DS_Store
 .claude/
-.agents/
 
 # Obsidian vault config — editor-local (created by the excalidraw skill)
 .obsidian/
@@ -43,7 +42,6 @@ playwright-report/
 e2e/shots/
 .playwright/
 .playwright-mcp/
-.codex/
 
 # Local verification screenshots
 version-filter-sprint-aware.png

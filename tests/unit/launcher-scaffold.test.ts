@@ -133,7 +133,7 @@ describe('scaffoldProject — existing folder', () => {
     const { runner, calls } = recordingRunner();
 
     const res = await scaffoldProject(
-      { mode: 'existing', name: 'already', projectPath: proj, platforms: ['claude', 'codex'] },
+      { mode: 'existing', name: 'already', projectPath: proj, platforms: ['claude'] },
       runner,
       home,
     );
@@ -143,7 +143,7 @@ describe('scaffoldProject — existing folder', () => {
     expect(calls.some((c) => c[0] === 'init')).toBe(false);
     const setup = calls.find((c) => c[0] === 'setup');
     expect(setup).toBeTruthy();
-    expect(setup![setup!.indexOf('--platforms') + 1]).toBe('claude,codex');
+    expect(setup![setup!.indexOf('--platforms') + 1]).toBe('claude');
     expect(res.vault.name).toBe('already');
   });
 
@@ -170,18 +170,10 @@ describe('scaffoldProject — platforms', () => {
     expect(setup[setup.indexOf('--platforms') + 1]).toBe('claude');
   });
 
-  it('passes the selected platforms as a comma list', async () => {
+  it('filters out unknown platform ids (including the now-unsupported codex)', async () => {
     const parent = mkTmp(); const home = mkTmp('dc-home'); dirs.push(parent, home);
     const { runner, calls } = recordingRunner();
-    await scaffoldProject({ mode: 'new', name: 'p', parentDir: parent, platforms: ['claude', 'codex'] }, runner, home);
-    const init = calls.find((c) => c[0] === 'init')!;
-    expect(init[init.indexOf('--platforms') + 1]).toBe('claude,codex');
-  });
-
-  it('filters out unknown platform ids', async () => {
-    const parent = mkTmp(); const home = mkTmp('dc-home'); dirs.push(parent, home);
-    const { runner, calls } = recordingRunner();
-    await scaffoldProject({ mode: 'new', name: 'p', parentDir: parent, platforms: ['claude', 'bogus'] }, runner, home);
+    await scaffoldProject({ mode: 'new', name: 'p', parentDir: parent, platforms: ['claude', 'codex', 'bogus'] }, runner, home);
     const init = calls.find((c) => c[0] === 'init')!;
     expect(init[init.indexOf('--platforms') + 1]).toBe('claude');
   });
@@ -238,7 +230,6 @@ describe('handleLauncherCatalog', () => {
     expect(status).toBe(200);
     const ids = body.platforms.map((p: any) => p.id);
     expect(ids).toContain('claude');
-    expect(ids).toContain('codex');
     const claude = body.platforms.find((p: any) => p.id === 'claude');
     expect(claude.recommended).toBe(true);
     expect(Array.isArray(body.packs)).toBe(true);

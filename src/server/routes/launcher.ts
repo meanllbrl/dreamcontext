@@ -196,7 +196,7 @@ export interface ScaffoldAnswers {
   parentDir?: string;
   /** Absolute path to an EXISTING folder to initialize in place. */
   projectPath?: string;
-  /** Target agent platforms (e.g. ['claude','codex']). Defaults to ['claude']. */
+  /** Target agent platforms (e.g. ['claude']). Defaults to ['claude']. */
   platforms?: string[];
   /** Optional skill-pack names to install after setup (e.g. ['engineering']). */
   packs?: string[];
@@ -316,11 +316,11 @@ export async function scaffoldProject(
     await runner(initArgs, target);
   }
 
-  // setup installs/refreshes the platform integration (.claude/.agents skills,
-  // agents, hooks) for the SELECTED platforms. Run it for both fresh and
-  // existing projects: a fresh project needs it (init suppresses the interactive
-  // offer in a non-TTY child); connecting an existing folder uses it to install
-  // the platforms the user chose (e.g. add Codex) — idempotent and non-destructive.
+  // setup installs/refreshes the platform integration (.claude skills, agents,
+  // hooks) for the SELECTED platforms. Run it for both fresh and existing
+  // projects: a fresh project needs it (init suppresses the interactive offer in
+  // a non-TTY child); connecting an existing folder uses it to install the
+  // platforms the user chose — idempotent and non-destructive.
   await runner(['setup', '--defaults', '--platforms', platformArg], target);
 
   // Install any chosen optional skill packs onto the selected platforms. Runs
@@ -421,7 +421,7 @@ export async function handleLauncherDetect(
 
 /**
  * GET /api/launcher/catalog — the choices the onboarding wizard offers: target
- * platforms (Claude / Codex, with the default ones flagged `recommended`) and
+ * platforms (Claude, with the default ones flagged `recommended`) and
  * the available optional skill packs (name + description + tags). Read-only and
  * vault-agnostic (works in launcher mode). Never 500s: an unreadable pack
  * catalog yields an empty `packs` list, not an error.
