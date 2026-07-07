@@ -6,6 +6,7 @@ import { confirm, input } from '@inquirer/prompts';
 import { ensureContextRoot } from '../../lib/context-path.js';
 import { header, info, success, error } from '../../lib/format.js';
 import { buildCorpus, bm25Search, type CorpusType, type RecallHit } from '../../lib/recall.js';
+import { hybridSearch } from '../../lib/embeddings/hybrid.js';
 import {
   crossVaultRecall,
   currentVaultTarget,
@@ -163,7 +164,7 @@ export function registerMemoryCommand(program: Command): void {
     .option('--connected', 'Span the current vault + its out/both connections (shareable peers only)')
     .option('--all-vaults', 'Span the current vault + every shareable registered vault')
     .action(
-      (
+      async (
         queryParts: string[],
         opts: {
           top?: string;
@@ -212,7 +213,11 @@ export function registerMemoryCommand(program: Command): void {
 
         const corpus = buildCorpus(root, types ? { types } : {});
         const vocab = loadProjectVocabulary(root);
-        const hits = bm25Search(query, corpus, topK, { aliasGroups: aliasGroups(vocab) });
+        // EXPERIMENTAL hybrid recall (BM25 + dense via RRF) behind an env flag —
+        // default unchanged; falls back to plain BM25 if the model is unavailable.
+        const hits = process.env.DREAMCONTEXT_RECALL_MODE === 'hybrid'
+          ? await hybridSearch(query, corpus, root, topK, { aliasGroups: aliasGroups(vocab) })
+          : bm25Search(query, corpus, topK, { aliasGroups: aliasGroups(vocab) });
 
         if (opts.json) {
           const payload = hits.map((h) => ({

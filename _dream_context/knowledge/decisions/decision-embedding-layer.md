@@ -16,12 +16,49 @@ tags:
   - 'topic:embeddings'
 pinned: false
 date: '2026-06-29'
-updated: '2026-06-29'
+updated: '2026-07-07'
 ---
 
 ## Status
 
-**EXPERIMENTAL / BETA — flag-gated, off by default, A/B-gated before any default-on.**
+**EXPERIMENTAL / BETA — flag-gated, off by default. BUILT + A/B-MEASURED (2026-07-07). v2 same day: ALL FOUR GRADUATION GATES MET — default-on now blocked only by operational rollout (first-run download/index UX), not quality.**
+
+**A/B verdict v2 (full numbers: `eval/RESULTS.md` "Embedding A/B"):** hybrid
+beats BM25 on overall r@1/r@5/MRR/nDCG on BOTH gold sets with **not one
+recall@k or MRR cell regressing anywhere** (train r@1 +5.0, held-out r@1 +6.7,
+held-out r@5 90→96.7). Biggest scenario wins: Turkish/cross-lingual (held-out
+r@1 20→40, r@5 90→100), EN paraphrase (train r@1 66.7→83.3), recency (train
+r@1 +12.5). exact-term/field-match/mixed byte-identical to BM25 (guards).
+
+**The shipped fusion (v2), each piece measured in:**
+1. **Adaptive switch on BM25 confidence** — top raw ≥ 18 → relative-score
+   fusion λ=0.1 (margins preserved); below → weighted RRF 0.6/0.4 (rank fusion
+   lets dense rescue buried docs). Plain RRF (this doc's "start here") was
+   measured FIRST and killed: exact-term r@1 100→83.3; no global weight fixed
+   it because rank fusion erases BM25's score margins.
+2. **Top-1 pin guard** (`ADAPTIVE_PIN_MARGIN=1.35`) — in the RRF zone, a BM25
+   top-1 whose rankScore margin ≥ 1.35× is pinned at rank 1. Signature-derived:
+   the worst EN regression had margin 1.55 while every genuine dense win had
+   1.05–1.32.
+3. **Changelog docs excluded from the dense channel** (`DENSE_EXCLUDED_TYPES`)
+   — pointer docs' short focused vectors crowd out canonical docs (dense-only
+   held-out r@1 36.7→56.7 from this alone). Canonical-first, dense edition.
+
+Tuned on train ONLY, validated untouched on held-out, both times.
+Enable: `DREAMCONTEXT_RECALL_MODE=hybrid` or `dreamcontext recall hybrid`.
+**Rollout to default (beta-rollout task): staged — opt-in → auto-enable only
+when model + cache are already warm on the machine (never a surprise 113 MB
+download / 4-min index on someone's first prompt).**
+
+**Spike results (2026-07-07):** `Xenova/multilingual-e5-small` via
+`@huggingface/transformers` v4.2.0 (optionalDependency, dynamic import, same
+pattern as node-pty) — **no `token_type_ids` error** (the #1 risk is dead).
+384-dim, 113 MB q8 ONNX, cached at `~/.dreamcontext/models` (survives npm
+reinstalls). Cold start ~1 s (after one-time download), warm single embed
+~22 ms, batched ~3 ms/doc. Full-corpus first index (2503 chunks / 675 docs)
+~4 min one-time; warm incremental refresh ~15 ms. TR→EN cross-lingual cosine
+direction correct (E5 sims compress into 0.75–0.85 — only relative order is
+meaningful).
 
 This supersedes the deferral in [[decisions/decision-link-aware-vs-embedding-recall]] ("Option B — embedding overlay — remains deferred"). The precondition that deferral set ("build a gold set of real BM25 misses first") is **satisfied**: the 60-query `eval/gold.jsonl` + 30-query `eval/gold-heldout.jsonl` exist. We now **build the embedding overlay as an experiment**, behind a flag, measured against BM25 on those gold sets. We do **not** make it default until the A/B proves a win with no exact-term regression.
 
@@ -120,12 +157,12 @@ Full synthesized brief: session research agent `af52656747ba1e939` (2026-06-29).
 The "epic" is **this document**. The umbrella/organizing view lives in knowledge; only the buildable units live in `state/` as tasks. Implementation is tracked as six tasks under planning version **v0.11.0**, each of which references back here.
 
 **Children — execution order:**
-1. `feat-embedding-spike-pick-multilingual-model-validate-latency-and-token-type-ids` — de-risk the model (gates everything).
-2. `feat-embedding-cache-engine-content-hash-chunk-cache-and-incremental-refresh` — the embed-on-change engine.
-3. `feat-hybrid-recall-fusion-bm25-plus-dense-via-rrf-behind-flag` — RRF fusion behind the flag (needs 2).
-4. `feat-embedding-ab-eval-harness-bm25-vs-hybrid-vs-dense-on-frozen-gold-set` — prove-it-or-kill-it A/B (needs 3).
-5. `feat-sleep-semantic-dedup-nearest-neighbor-merge-instead-of-duplicate` — second consumer (needs 2).
-6. `feat-embedding-beta-rollout-opt-in-flag-doctor-gitignore-docs` — safe on/off + docs (needs 3, 4).
+1. ✅ `feat-embedding-spike-pick-multilingual-model-validate-latency-and-token-type-ids` — DONE 2026-07-07 (see Spike results above).
+2. ✅ `feat-embedding-cache-engine-content-hash-chunk-cache-and-incremental-refresh` — DONE 2026-07-07 (`src/lib/embeddings/{chunker,store}.ts`).
+3. ✅ `feat-hybrid-recall-fusion-bm25-plus-dense-via-rrf-behind-flag` — DONE 2026-07-07 (`src/lib/embeddings/hybrid.ts`; shipped fusion is the ADAPTIVE switch, not plain RRF — plain RRF was measured and killed).
+4. ✅ `feat-embedding-ab-eval-harness-bm25-vs-hybrid-vs-dense-on-frozen-gold-set` — DONE 2026-07-07 (`scripts/embed-ab.ts` + `evaluateSearch` in `eval/harness.ts`; verdict in `eval/RESULTS.md`).
+5. `feat-sleep-semantic-dedup-nearest-neighbor-merge-instead-of-duplicate` — second consumer (cache engine now available; still todo).
+6. `feat-embedding-beta-rollout-opt-in-flag-doctor-gitignore-docs` — partially covered by 1–4 (flag + gitignore + fallback shipped); remaining: doctor check, user docs, npm files audit.
 
 **Dependency graph:** `1 → 2 → {3 → 4, 5}`; `6` needs `{3, 4}`.
 
@@ -138,4 +175,5 @@ The "epic" is **this document**. The umbrella/organizing view lives in knowledge
 
 ## Last Verified
 
-2026-06-29 (decision + design authored; implementation not yet started).
+2026-07-07 (tasks 1–4 built + A/B measured; verdict: opt-in beta, category-shaped
+win — see Status. Full suite 2898 tests green, build clean. Tasks 5–6 remain.)

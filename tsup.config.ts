@@ -35,7 +35,9 @@ export default defineConfig({
   // node-pty is a NATIVE module — it cannot be bundled. It's an optionalDependency,
   // loaded via dynamic import() with graceful degradation (the agent terminal falls
   // back to "Open in Terminal"). Kept external so tsup never tries to inline the .node.
-  external: ['node-pty'],
+  // @huggingface/transformers ships onnxruntime-node native binaries — same deal:
+  // optionalDependency, dynamic import() in embedder.ts, degrades to BM25-only recall.
+  external: ['node-pty', '@huggingface/transformers'],
   onSuccess: async () => {
     cpSync('src/templates', 'dist/templates', { recursive: true });
     cpSync('agents', 'dist/agents', { recursive: true });

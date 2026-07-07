@@ -14,6 +14,8 @@ import { dreamcontextVersion } from '../../lib/manifest.js';
 import { acquireFileLock, releaseFileLock } from '../../lib/file-lock.js';
 import { runBrainSync } from '../../lib/git-sync/sync-engine.js';
 import { renderBrainSyncResult } from './brain.js';
+import { buildCorpus } from '../../lib/recall.js';
+import { refreshEmbeddings, embeddingCacheExists } from '../../lib/embeddings/store.js';
 import {
   sleepinessLevel,
   sleepinessRange,
@@ -509,6 +511,25 @@ export function registerSleepCommand(program: Command): void {
       } catch (err) {
         warn(`Brain sync: skipped — ${(err as Error).message ?? err}`);
       }
+
+      // Post-sleep embedding refresh (decision-embedding-layer: "eager during
+      // sleep"). Sleep just rewrote the corpus — the moment the mtime pre-filter
+      // is most likely to hide something — so run a FORCE refresh (content hash
+      // fully authoritative). Gated on an EXISTING cache: a vault that never
+      // enabled hybrid recall must never cold-start a 113 MB model download from
+      // `sleep done`. Best-effort by the same discipline as the syncs above.
+      try {
+        if (embeddingCacheExists(root)) {
+          const res = await refreshEmbeddings(root, buildCorpus(root), undefined, { force: true });
+          if (res === null) {
+            warn('Embedding refresh: skipped — model unavailable (hybrid recall will refresh lazily).');
+          } else if (res.stats.embedded > 0 || res.stats.evicted > 0) {
+            info(chalk.dim(`Embedding index refreshed: +${res.stats.embedded} embedded, −${res.stats.evicted} evicted (${res.index.chunks.length} chunks).`));
+          }
+        }
+      } catch (err) {
+        warn(`Embedding refresh: skipped — ${(err as Error).message ?? err}`);
+      }
     });
 
   // --- debt ---
@@ -550,13 +571,13 @@ export function registerSleepCommand(program: Command): void {
 
 // ─── Recall Command ───────────────────────────────────────────────────────
 
-const RECALL_MODES = ['haiku', 'raw', 'off'] as const;
+const RECALL_MODES = ['haiku', 'raw', 'hybrid', 'off'] as const;
 type RecallMode = typeof RECALL_MODES[number];
 
 export function registerRecallCommand(program: Command): void {
   const recall = program
     .command('recall')
-    .description('Control memory recall mode (haiku / raw / off)');
+    .description('Control memory recall mode (haiku / raw / hybrid / off)');
 
   recall
     .command('status')
@@ -568,6 +589,7 @@ export function registerRecallCommand(program: Command): void {
       const labels: Record<RecallMode, string> = {
         haiku: `${chalk.green('haiku')} — Haiku LLM picks relevant docs per prompt`,
         raw: `${chalk.yellow('raw')} — BM25 keyword search only (no LLM call)`,
+        hybrid: `${chalk.cyan('hybrid')} — EXPERIMENTAL: BM25 + local dense embeddings via RRF (no LLM call)`,
         off: `${chalk.red('off')} — memory recall disabled`,
       };
       console.log(header('Memory Recall'));
@@ -605,5 +627,16 @@ export function registerRecallCommand(program: Command): void {
       state.recall_mode = 'raw';
       writeSleepState(root, state);
       success('Recall mode set to raw — BM25 keyword search, no Haiku call');
+    });
+
+  recall
+    .command('hybrid')
+    .description('EXPERIMENTAL: BM25 + local dense embeddings fused via RRF (no LLM call)')
+    .action(() => {
+      const root = ensureContextRoot();
+      const state = readSleepState(root);
+      state.recall_mode = 'hybrid';
+      writeSleepState(root, state);
+      success('Recall mode set to hybrid — BM25 + dense RRF fusion (experimental; falls back to BM25 if the embedding model is unavailable)');
     });
 }

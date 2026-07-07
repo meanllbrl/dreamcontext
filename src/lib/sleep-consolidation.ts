@@ -107,7 +107,7 @@ export interface SleepState {
   knowledge_access: Record<string, KnowledgeAccessRecord>;
   dashboard_changes: DashboardChange[];
   compaction_log: CompactionRecord[];
-  recall_mode: 'haiku' | 'raw' | 'off';
+  recall_mode: 'haiku' | 'raw' | 'hybrid' | 'off';
   /**
    * Depth pinned for the in-progress consolidation cycle. Computed + persisted
    * by `sleep start` (always, even with no --deep flag, so it never holds a

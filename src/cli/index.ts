@@ -23,6 +23,7 @@ import { registerReflectCommand } from './commands/reflect.js';
 import { registerCouncilCommand } from './commands/council.js';
 import { registerMarketingCommand } from './commands/marketing.js';
 import { registerMemoryCommand } from './commands/memory.js';
+import { registerEmbedCommand } from './commands/embed.js';
 import { registerUpgradeCommand } from './commands/upgrade.js';
 import { registerAppCommand } from './commands/app.js';
 import { registerTaxonomyCommand } from './commands/taxonomy.js';
@@ -147,6 +148,7 @@ export function createProgram(): Command {
   registerCouncilCommand(program);
   registerMarketingCommand(program);
   registerMemoryCommand(program);
+  registerEmbedCommand(program);
   registerTaxonomyCommand(program);
   registerVaultsCommand(program);
   registerConnectionsCommand(program);
