@@ -8,6 +8,7 @@ import { readConflictReport } from '../../src/lib/git-sync/conflict-report.js';
 import { bootstrapBrainRepo, attachBrainRepo } from '../../src/lib/git-sync/brain-repo.js';
 import { runBrainSync } from '../../src/lib/git-sync/sync-engine.js';
 import { detachBrain } from '../../src/lib/git-sync/detach.js';
+import { setupPlatformLayer } from '../../src/lib/git-sync/platform-layer.js';
 
 /**
  * Scripted, no-network E2E for the brain-repo sync engine
@@ -450,5 +451,75 @@ describe('e2e: freshly attached EMPTY remote (zero refs) — first sync bootstra
     // Converged: nothing further to do.
     const again = await runBrainSync({ cwd: contextRoot, mode: 'auto' });
     expect(again.action).toBe('noop');
+  });
+});
+
+describe('e2e: platform layer — CLAUDE.md + .claude travel with the brain repo', () => {
+  let bare: string;
+  let projectRootA: string;
+  let contextRootA: string;
+  let projectRootB: string;
+  let contextRootB: string;
+  const ORIGINAL_GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+
+  beforeAll(() => {
+    process.env.GITHUB_TOKEN = 'e2e-dummy-token';
+    bare = mkdtempSync(join(tmpdir(), 'dc-e2e-platform-bare-'));
+    execFileSync('git', ['init', '--bare', bare]);
+    projectRootA = mkdtempSync(join(tmpdir(), 'dc-e2e-platform-a-'));
+    contextRootA = join(projectRootA, '_dream_context');
+    mkdirSync(join(contextRootA, 'knowledge'), { recursive: true });
+    writeFileSync(join(contextRootA, 'knowledge', 'note.md'), '# note\n');
+  });
+  afterAll(() => {
+    if (ORIGINAL_GITHUB_TOKEN === undefined) delete process.env.GITHUB_TOKEN;
+    else process.env.GITHUB_TOKEN = ORIGINAL_GITHUB_TOKEN;
+    for (const dir of [bare, projectRootA, projectRootB].filter(Boolean)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('A migrates + pushes; a fresh clone B pulls and the sync itself heals the root symlinks; settings.local.json never syncs', async () => {
+    // A has a real Claude Code layer at the project root.
+    writeFileSync(join(projectRootA, 'CLAUDE.md'), '# team rules\n');
+    mkdirSync(join(projectRootA, '.claude', 'skills'), { recursive: true });
+    writeFileSync(join(projectRootA, '.claude', 'settings.json'), '{"shared":true}\n');
+    writeFileSync(join(projectRootA, '.claude', 'settings.local.json'), '{"machineLocal":true}\n');
+
+    const setup = setupPlatformLayer(projectRootA, contextRootA);
+    expect(setup.moved.sort()).toEqual(['.claude', 'CLAUDE.md']);
+
+    git(contextRootA, ['init']);
+    setLocalIdentity(contextRootA);
+    const boot = await bootstrapBrainRepo({ contextRoot: contextRootA, projectRoot: projectRootA, remote: bare });
+    expect(boot.pushed).toBe(true);
+    updateSetupConfig(projectRootA, { brainRepo: { mode: 'separate', enabled: true, remote: bare, autoSync: true } });
+
+    // The shared layer is on the remote; the machine-local file is NOT.
+    const tree = git(bare, ['ls-tree', '-r', '--name-only', 'main']);
+    expect(tree).toContain('platform/CLAUDE.md');
+    expect(tree).toContain('platform/.claude/settings.json');
+    expect(tree).not.toContain('platform/.claude/settings.local.json');
+
+    // B: fresh clone of the brain — no root CLAUDE.md/.claude yet.
+    projectRootB = mkdtempSync(join(tmpdir(), 'dc-e2e-platform-b-'));
+    contextRootB = join(projectRootB, '_dream_context');
+    git(projectRootB, ['clone', bare, contextRootB]);
+    setLocalIdentity(contextRootB);
+    updateSetupConfig(projectRootB, { brainRepo: { mode: 'separate', enabled: true, remote: bare, autoSync: true } });
+    expect(existsSync(join(projectRootB, 'CLAUDE.md'))).toBe(false);
+
+    // Any sync (here: the background pull-only path) heals the links.
+    const pull = await runBrainSync({ cwd: contextRootB, mode: 'pull-only' });
+    expect(pull.action).toBe('noop'); // clone is already current — heal still runs
+    expect(readFileSync(join(projectRootB, 'CLAUDE.md'), 'utf-8')).toBe('# team rules\n');
+    expect(readFileSync(join(projectRootB, '.claude', 'settings.json'), 'utf-8')).toBe('{"shared":true}\n');
+    expect(existsSync(join(projectRootB, '.claude', 'settings.local.json'))).toBe(false);
+
+    // A edits the shared CLAUDE.md through the ROOT SYMLINK; sync pushes it; B pulls the edit.
+    writeFileSync(join(projectRootA, 'CLAUDE.md'), '# team rules v2\n');
+    const aPush = await runBrainSync({ cwd: contextRootA, mode: 'auto' });
+    expect(aPush.action).toBe('pushed');
+    const bPull = await runBrainSync({ cwd: contextRootB, mode: 'pull-only' });
+    expect(bPull.action).toBe('pulled');
+    expect(readFileSync(join(projectRootB, 'CLAUDE.md'), 'utf-8')).toBe('# team rules v2\n');
   });
 });

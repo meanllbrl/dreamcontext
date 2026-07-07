@@ -224,6 +224,13 @@
   font-weight: var(--font-weight-normal);
 }
 
+/* Memory recall — the intro line under the sub-heading sits flush left (the
+   per-option hints keep the checkbox-label indent) with room before the radios. */
+.settings-recall-desc {
+  padding-left: 0;
+  margin-bottom: var(--space-3);
+}
+
 /* "BETA" / "Lab" tag next to a section title or nav item (e.g. Sleepy). Both ride
    the same accent-violet chip — the shared "not-final surface" marker language used
    in the sidebar (Council's Lab chip). */

@@ -3,6 +3,7 @@ import { useLabInsights, useSyncAll } from '../../hooks/useLab';
 import { useLabPrefs } from '../../hooks/useLabPrefs';
 import { InsightCard } from './InsightCard';
 import { InsightDetailPanel } from './InsightDetailPanel';
+import { LabCredentialsBanner } from './LabCredentialsBanner';
 import { LabEmptyState } from './LabEmptyState';
 import './LabBoard.css';
 
@@ -116,13 +117,19 @@ export function LabBoard() {
   if (!insights || insights.length === 0) {
     return (
       <div className="lab-board lab-board--empty">
+        <LabCredentialsBanner onToast={setToast} />
         <LabEmptyState />
+        {toast && <div className="lab-toast">{toast}</div>}
       </div>
     );
   }
 
   return (
     <div className="lab-board">
+      {/* Missing-credentials warning sits above all chrome — insights that need
+          an absent key can't sync until the user fills it in (here or the CLI). */}
+      <LabCredentialsBanner onToast={setToast} />
+
       {/* No page title — the sidebar already names the active page. The toolbar
           keeps only the Sync-all action, aligned right. */}
       <div className="lab-board-toolbar">

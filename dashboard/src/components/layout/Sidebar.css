@@ -106,6 +106,51 @@
   flex-direction: column;
 }
 
+/* Refresh icon-button next to "Synced" — runs a full pull+merge sync on click.
+   Spins while the sync is in flight; the outcome briefly recolors the label. */
+.sidebar-sync-refresh {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.sidebar-sync-refresh:hover:not(:disabled) {
+  background: var(--color-bg-tertiary);
+  color: var(--color-accent);
+}
+
+.sidebar-sync-refresh:disabled {
+  cursor: default;
+  color: var(--color-accent);
+}
+
+.sidebar-sync-refresh--pending svg {
+  animation: sync-refresh-spin 0.9s linear infinite;
+}
+
+@keyframes sync-refresh-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Transient sync outcome on the "Synced" label (cleared after a few seconds). */
+.sidebar-label--sync-ok {
+  color: var(--color-success, #3fb950);
+}
+
+.sidebar-label--sync-warn {
+  color: var(--color-warning, #d98324);
+}
+
 /* ─── First-run nudge ─────────────────────────────────────────────────────── */
 /* Until the user opens "What is this?" once, the entry stands out and gently
    bounces to invite the first click. The prominent styling (accent fill + dot)

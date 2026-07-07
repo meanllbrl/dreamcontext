@@ -13,6 +13,7 @@ import { listInsights, isSafeInsightSlug } from '../../lib/lab/store.js';
 import { RENDERS } from '../../lib/lab/types.js';
 import { gitignoreCovers } from '../../lib/gitignore.js';
 import { resolveMode } from '../../lib/git-sync/brain-repo.js';
+import { platformLayerStatus } from '../../lib/git-sync/platform-layer.js';
 import { readSetupConfig } from '../../lib/setup-config.js';
 
 /**
@@ -413,6 +414,38 @@ export function checkLab(root: string): CheckResult[] {
  * that was bootstrapped BEFORE `taskBackend` switched to `github` (or whose
  * `.gitignore` was hand-edited) and never picked up the entry.
  */
+/**
+ * Platform layer (CLAUDE.md + .claude carried inside the brain repo): once
+ * `platform/` exists, every item in it should be reachable from the project
+ * root via a symlink. A fresh clone (or a deleted link) leaves the layer
+ * dormant — Claude Code would silently run without the shared skills/hooks.
+ */
+export function checkPlatformLayer(root: string): CheckResult[] {
+  const status = platformLayerStatus(dirname(root), root);
+  if (!status.active) return [];
+
+  const results: CheckResult[] = [];
+  for (const item of status.items) {
+    if (item.state === 'missing-link') {
+      results.push({
+        name: 'Platform layer',
+        status: 'warn',
+        message: `platform/${item.item} is in the brain repo but the project-root symlink is missing — run \`dreamcontext brain platform\` to re-link it.`,
+      });
+    } else if (item.state === 'conflict') {
+      results.push({
+        name: 'Platform layer',
+        status: 'warn',
+        message: `${item.item} exists BOTH at the project root and in _dream_context/platform/ — merge them manually, then delete one side.`,
+      });
+    }
+  }
+  if (results.length === 0) {
+    results.push({ name: 'Platform layer', status: 'ok', message: 'platform/ items are linked from the project root.' });
+  }
+  return results;
+}
+
 export function checkBrainRepo(root: string): CheckResult[] {
   const results: CheckResult[] = [];
   const projectRoot = dirname(root);
@@ -472,6 +505,7 @@ export function registerDoctorCommand(program: Command): void {
         ...checkObjectives(root),
         ...checkLab(root),
         ...checkBrainRepo(root),
+        ...checkPlatformLayer(root),
 
         // Taxonomy vocabulary (non-fatal: absent means DEFAULT_VOCABULARY used)
         ...(!existsSync(join(root, 'core', 'taxonomy.json'))

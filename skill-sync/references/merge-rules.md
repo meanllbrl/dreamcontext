@@ -30,10 +30,24 @@ returns `action:'disabled'`.
 | `overrides/**` | tracked | tracked |
 | `state/*.md` (tasks) | tracked (source of truth) | gitignored (local mirror; issues/ClickUp are source of truth) |
 | `state/.config.json`, `.active-version.json`, `.migrations.json` | tracked | tracked |
-| `state/.secrets.json`, `.sleep.json`, `.sleep-history.json`, `.agent-sessions.json`, `.session-digests/`, `.conflicts/`, `.brain-merge/`, `.version-check.json`, `.auto-upgrade.json`, `.brain-local.json`, `.tasks-map.json`, `.tasks-sync.*`, `.tasks-queue.json`, `.obsidian/`, `tmp/`, `**/.env` | gitignored | gitignored |
+| `state/.secrets.json`, `.sleep.json`, `.sleep-history.json`, `.agent-sessions.json`, `.session-digests/`, `.conflicts/`, `.brain-merge/`, `.version-check.json`, `.auto-upgrade.json`, `.brain-local.json`, `.lab-prefs.json`, `.tasks-map.json`, `.tasks-sync.*`, `.tasks-queue.json`, `.obsidian/`, `tmp/`, `**/.env`, `**/.DS_Store` | gitignored | gitignored |
+| `lab/**` (insights + cache) | tracked | tracked |
+| `lab/credentials.json` / `lab/credentials.*` (except the tracked `credentials.example.json`) | gitignored | gitignored |
+| `platform/**` (Claude Code layer: CLAUDE.md + .claude) | tracked | tracked |
+| `platform/.claude/settings.local.json`, `platform/.claude/scheduled_tasks.lock` | gitignored | gitignored |
 
 Built by `buildBrainGitignore(taskBackend)` (`src/lib/git-sync/brain-repo.ts`) and written on
 bootstrap (`brain init`/`attach`); `ensureLocalOnlyArtifacts` re-asserts it after a clone/pull.
+
+## 3b. Platform layer — CLAUDE.md + .claude travel with the brain
+
+A separate-mode brain repo is rooted at `_dream_context/`, so the Claude Code project files at
+the PROJECT root would never sync. `dreamcontext brain platform` migrates them: the real files
+move to `_dream_context/platform/{CLAUDE.md,.claude}` and the project root keeps relative
+symlinks into it (Claude Code resolves them transparently). On every `runBrainSync` the engine
+best-effort re-creates missing root symlinks (`healPlatformLinks`), so a fresh clone of the brain
+is fully wired after its first sync; `doctor` flags missing links and root-vs-platform conflicts.
+Machine-local runtime files inside `platform/.claude/` (see table) never sync.
 
 ## 4. Credential supply (GIT_ASKPASS — decision F)
 

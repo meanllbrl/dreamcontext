@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 
 interface SessionRecord {
@@ -35,6 +35,9 @@ interface Bookmark {
   created_at: string;
 }
 
+/** Mirrors `recall_mode` in `_dream_context/state/.sleep.json` (default 'haiku'). */
+export type RecallMode = 'haiku' | 'raw' | 'hybrid' | 'off';
+
 export interface SleepState {
   debt: number;
   last_sleep: string | null;
@@ -44,6 +47,7 @@ export interface SleepState {
   sessions: SessionRecord[];
   bookmarks?: Bookmark[];
   dashboard_changes: DashboardChange[];
+  recall_mode?: RecallMode;
 }
 
 export type { Bookmark, SessionRecord, DashboardChange };
@@ -88,5 +92,15 @@ export function useSleep() {
   return useQuery({
     queryKey: ['sleep'],
     queryFn: () => api.get<SleepState>('/sleep'),
+  });
+}
+
+/** PATCH /api/sleep — partial update (recall_mode, manual debt). Returns the fresh state. */
+export function useUpdateSleep() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (patch: { recall_mode?: RecallMode; debt?: number }) =>
+      api.patch<SleepState>('/sleep', patch),
+    onSuccess: (data) => queryClient.setQueryData(['sleep'], data),
   });
 }

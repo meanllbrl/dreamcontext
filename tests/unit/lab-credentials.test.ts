@@ -9,6 +9,12 @@ import {
   resolvePlaceholders,
   redactSecrets,
 } from '../../src/lib/lab/credentials.js';
+import {
+  collectRequiredCredentialKeys,
+  requiredCredentialKeys,
+  writeCredentialsExample,
+} from '../../src/lib/lab/required-credentials.js';
+import { readInsightFile } from '../../src/lib/lab/store.js';
 import { LabError } from '../../src/lib/lab/types.js';
 
 let projectRoot: string;
@@ -121,5 +127,116 @@ describe('redactSecrets — end-to-end final net', () => {
     const out = redactSecrets('Error calling https://x?key=sk-live-abc failed for sk-live-abc', ['sk-live-abc']);
     expect(out).not.toContain('sk-live-abc');
     expect(out.match(/\*\*\*/g)?.length).toBe(2);
+  });
+});
+
+/** Write a raw insight manifest into the temp contextRoot. */
+function writeInsight(slug: string, frontmatterYaml: string): void {
+  mkdirSync(join(contextRoot, 'lab', 'insights'), { recursive: true });
+  writeFileSync(
+    join(contextRoot, 'lab', 'insights', `${slug}.md`),
+    `---\n${frontmatterYaml}\n---\n## Meaning\n`,
+    'utf-8',
+  );
+}
+
+describe('requiredCredentialKeys / collectRequiredCredentialKeys', () => {
+  it('unions credentials_used with {{cred:*}} placeholders in http endpoint/headers/body, deduped and sorted', () => {
+    writeInsight('wau', [
+      'title: WAU',
+      'credentials_used: [declaredKey, sharedKey]',
+      'source:',
+      '  adapter: http',
+      '  http:',
+      '    endpoint: "https://api.example.com/metric?key={{cred:endpointKey}}"',
+      '    method: POST',
+      '    headers:',
+      '      Authorization: "Bearer {{cred:headerKey}}"',
+      '    body: \'{"token": "{{cred:bodyKey}}", "dup": "{{cred:sharedKey}}"}\'',
+      '    extract: { seriesPath: data, x: date, y: value, agg: last }',
+    ].join('\n'));
+
+    const manifest = readInsightFile(join(contextRoot, 'lab', 'insights', 'wau.md'));
+    expect(requiredCredentialKeys(manifest)).toEqual([
+      'bodyKey', 'declaredKey', 'endpointKey', 'headerKey', 'sharedKey',
+    ]);
+    expect(collectRequiredCredentialKeys(contextRoot)).toEqual([
+      'bodyKey', 'declaredKey', 'endpointKey', 'headerKey', 'sharedKey',
+    ]);
+  });
+
+  it('ignores {{tweak:*}} placeholders, and script insights contribute only their declared credentials_used', () => {
+    writeInsight('scripted', [
+      'title: Scripted',
+      'credentials_used: [scriptKey]',
+      'source:',
+      '  adapter: script',
+      '  script: { file: scripts/scripted.mjs }',
+    ].join('\n'));
+    writeInsight('tweaky', [
+      'title: Tweaky',
+      'source:',
+      '  adapter: http',
+      '  http:',
+      '    endpoint: "https://api.example.com?range={{tweak:range}}"',
+      '    method: GET',
+    ].join('\n'));
+
+    expect(collectRequiredCredentialKeys(contextRoot)).toEqual(['scriptKey']);
+  });
+
+  it('returns [] with no insights at all', () => {
+    expect(collectRequiredCredentialKeys(contextRoot)).toEqual([]);
+  });
+});
+
+describe('writeCredentialsExample — tracked, secret-free twin', () => {
+  const examplePath = () => join(contextRoot, 'lab', 'credentials.example.json');
+
+  it('writes { "<key>": "" } for every required key, pretty-printed with a trailing newline', () => {
+    writeInsight('wau', [
+      'title: WAU',
+      'credentials_used: [bKey, aKey]',
+    ].join('\n'));
+    writeCredentialsExample(contextRoot);
+
+    const raw = readFileSync(examplePath(), 'utf-8');
+    expect(raw.endsWith('\n')).toBe(true);
+    expect(raw).toBe(JSON.stringify({ aKey: '', bKey: '' }, null, 2) + '\n');
+  });
+
+  it('creates no file when there are zero required keys', () => {
+    writeCredentialsExample(contextRoot);
+    expect(existsSync(examplePath())).toBe(false);
+  });
+
+  it('refreshes an existing file so stale keys never linger', () => {
+    writeInsight('wau', ['title: WAU', 'credentials_used: [oldKey]'].join('\n'));
+    writeCredentialsExample(contextRoot);
+    expect(JSON.parse(readFileSync(examplePath(), 'utf-8'))).toEqual({ oldKey: '' });
+
+    rmSync(join(contextRoot, 'lab', 'insights', 'wau.md'));
+    writeCredentialsExample(contextRoot);
+    expect(JSON.parse(readFileSync(examplePath(), 'utf-8'))).toEqual({});
+  });
+
+  it('writeCredential refreshes the example (keys only, NEVER values) and both gitignores carry the negation entries', () => {
+    writeInsight('wau', ['title: WAU', 'credentials_used: [apiKey]'].join('\n'));
+    writeCredential(projectRoot, contextRoot, 'apiKey', 'sk-test-123');
+
+    const raw = readFileSync(examplePath(), 'utf-8');
+    expect(JSON.parse(raw)).toEqual({ apiKey: '' });
+    expect(raw).not.toContain('sk-test-123');
+
+    // Negation entries must come AFTER the wildcard so git keeps the example tracked.
+    const contextIgnore = readFileSync(join(contextRoot, '.gitignore'), 'utf-8');
+    expect(contextIgnore).toContain('!lab/credentials.example.json');
+    expect(contextIgnore.indexOf('lab/credentials.*'))
+      .toBeLessThan(contextIgnore.indexOf('!lab/credentials.example.json'));
+
+    const rootIgnore = readFileSync(join(projectRoot, '.gitignore'), 'utf-8');
+    expect(rootIgnore).toContain('!_dream_context/lab/credentials.example.json');
+    expect(rootIgnore.indexOf('_dream_context/lab/credentials.*'))
+      .toBeLessThan(rootIgnore.indexOf('!_dream_context/lab/credentials.example.json'));
   });
 });

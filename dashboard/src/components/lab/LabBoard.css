@@ -8,6 +8,133 @@
   position: relative;
 }
 
+/* ────────────────────────────────────────
+   Missing-credentials warning banner
+   Warning-toned (mirrors .lab-badge--stale): insights that need an absent key
+   can't sync. One row per missing key with a write-only password input.
+   ──────────────────────────────────────── */
+
+.lab-cred-banner {
+  margin-bottom: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 35%, transparent);
+  border-radius: var(--radius-md);
+  background: var(--color-warning-subtle);
+}
+
+/* The empty board strips its padding — give the banner its own breathing room. */
+.lab-board--empty .lab-cred-banner {
+  margin: var(--space-5) var(--space-5) 0;
+}
+
+.lab-cred-banner-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.lab-cred-banner-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-warning);
+}
+
+.lab-cred-banner-toggle {
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-warning);
+  cursor: pointer;
+  opacity: 0.85;
+}
+
+.lab-cred-banner-toggle:hover {
+  opacity: 1;
+}
+
+.lab-cred-banner-hint {
+  margin: var(--space-2) 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+}
+
+.lab-cred-banner-list {
+  list-style: none;
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.lab-cred-banner-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.lab-cred-banner-key {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.lab-cred-banner-key code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-text);
+}
+
+.lab-cred-banner-usedby {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
+.lab-cred-banner-form {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.lab-cred-banner-input {
+  width: 220px;
+  padding: 5px 9px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--color-text);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+
+.lab-cred-banner-input:focus {
+  outline: none;
+  border-color: var(--color-warning);
+}
+
+.lab-cred-banner-save {
+  border: none;
+  border-radius: var(--radius-md);
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  background: var(--color-warning);
+  color: var(--color-text-on-brand);
+}
+
+.lab-cred-banner-save:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
 /* Sync-all is the toolbar's only child now (the page title is gone), so it
    right-aligns via flex-end — space-between would park it on the left. */
 .lab-board-toolbar {

@@ -4,6 +4,10 @@ import { parseJsonBody, sendJson, sendError } from '../middleware.js';
 import { recordDashboardChange, buildFieldSummary } from '../change-tracker.js';
 import type { FieldChange } from '../change-tracker.js';
 
+/** Allowed recall modes — mirrors RECALL_MODES in src/cli/commands/sleep.ts. */
+const RECALL_MODES = ['haiku', 'raw', 'hybrid', 'off'] as const;
+type RecallMode = typeof RECALL_MODES[number];
+
 /**
  * GET /api/sleep - Get sleep state
  */
@@ -32,6 +36,12 @@ export async function handleSleepUpdate(
     return;
   }
 
+  // Validate before touching state so a bad value never partially persists.
+  if (body.recall_mode !== undefined && !RECALL_MODES.includes(body.recall_mode as RecallMode)) {
+    sendError(res, 400, 'invalid_value', `recall_mode must be one of: ${RECALL_MODES.join(', ')}.`);
+    return;
+  }
+
   const state = readSleepState(contextRoot);
   const oldDebt = state.debt;
   const fieldChanges: FieldChange[] = [];
@@ -39,6 +49,14 @@ export async function handleSleepUpdate(
   if (typeof body.debt === 'number' && body.debt !== oldDebt) {
     state.debt = body.debt;
     fieldChanges.push({ field: 'debt', from: oldDebt, to: body.debt });
+  }
+
+  if (body.recall_mode !== undefined) {
+    const oldMode = state.recall_mode ?? 'haiku';
+    if (body.recall_mode !== oldMode) {
+      state.recall_mode = body.recall_mode as RecallMode;
+      fieldChanges.push({ field: 'recall_mode', from: oldMode, to: body.recall_mode as RecallMode });
+    }
   }
 
   writeSleepState(contextRoot, state);

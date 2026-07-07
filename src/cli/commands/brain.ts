@@ -15,6 +15,7 @@ import {
   BRAIN_MARKER_TOPIC,
 } from '../../lib/git-sync/brain-repo.js';
 import { detachBrain, type DetachResult } from '../../lib/git-sync/detach.js';
+import { platformLayerStatus, setupPlatformLayer } from '../../lib/git-sync/platform-layer.js';
 import { scrubStagedFiles, summarizeScrub } from '../../lib/git-sync/scrub.js';
 import * as git from '../../lib/git-sync/git.js';
 import { GitSyncError } from '../../lib/git-sync/git.js';
@@ -166,6 +167,64 @@ export function registerBrainCommand(program: Command): void {
       } catch (err) {
         error(`Discover failed: ${(err as Error).message}`);
         process.exitCode = 1;
+      }
+    });
+
+  brain
+    .command('platform')
+    .description('Carry the Claude Code layer (CLAUDE.md + .claude) inside the brain repo — moves them into _dream_context/platform/ and symlinks from the project root')
+    .option('--status', 'Report the platform-layer state without changing anything')
+    .action((opts: { status?: boolean }) => {
+      const contextRoot = ensureContextRoot();
+      const projectRoot = dirname(contextRoot);
+      const config = readSetupConfig(projectRoot);
+
+      if (!opts.status && resolveMode(config) !== 'separate') {
+        warn('The platform layer only helps in separate mode — in-tree brains already live in the code repo, so CLAUDE.md/.claude are shareable as-is.');
+        info('Set up a separate brain repo first (`dreamcontext brain init` / `brain attach`).');
+        process.exitCode = 1;
+        return;
+      }
+
+      const result = opts.status
+        ? platformLayerStatus(projectRoot, contextRoot)
+        : setupPlatformLayer(projectRoot, contextRoot);
+
+      console.log(header('Platform Layer'));
+      if (!result.active && opts.status) {
+        info('Not set up — run `dreamcontext brain platform` to move CLAUDE.md + .claude into the brain repo.');
+        return;
+      }
+      if (!opts.status) {
+        const action = result as ReturnType<typeof setupPlatformLayer>;
+        for (const item of action.moved) success(`Moved ${item} → _dream_context/platform/${item}`);
+        for (const item of action.linked) success(`Linked ${item} → _dream_context/platform/${item}`);
+        if (action.moved.length === 0 && action.linked.length === 0) info('Nothing to migrate or heal.');
+      }
+      for (const item of result.items) {
+        switch (item.state) {
+          case 'linked':
+            info(`${item.item}: linked`);
+            break;
+          case 'missing-link':
+            warn(`${item.item}: platform copy exists but the project-root symlink is missing${item.error ? ` (link failed: ${item.error})` : ' — run `dreamcontext brain platform` to heal'}`);
+            break;
+          case 'not-migrated':
+            info(`${item.item}: at project root, not in the brain repo yet`);
+            break;
+          case 'conflict':
+            warn(`${item.item}: BOTH a real project-root copy and _dream_context/platform/${item.item} exist — merge them manually, then delete one side.`);
+            break;
+          case 'foreign-link':
+            warn(`${item.item}: project-root symlink points somewhere else — left untouched.`);
+            break;
+          case 'absent':
+            break;
+        }
+      }
+      const stillPending = result.items.some((i) => i.state === 'missing-link' || i.state === 'conflict' || !!i.error);
+      if (!opts.status && !stillPending && result.active) {
+        info('Platform layer is in the brain repo — the next `brain sync` shares it with the team.');
       }
     });
 

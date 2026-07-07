@@ -158,6 +158,37 @@ export function useUpdateBinding() {
   });
 }
 
+/** One row from GET /api/lab/credentials — key NAMES + presence only, never values. */
+export interface CredentialKeyStatus {
+  key: string;
+  present: boolean;
+  usedBy: string[];
+}
+
+/** Required-credential status for the board's missing-credentials banner. */
+export function useLabCredentials() {
+  return useQuery({
+    queryKey: ['lab-credentials'],
+    queryFn: () => api.get<{ keys: CredentialKeyStatus[] }>('/lab/credentials').then((r) => r.keys),
+    retry: 0,
+  });
+}
+
+/** Store one credential (the value is never echoed back by the server).
+ *  Invalidates the credentials status AND the insights list — a fixed key can
+ *  unblock syncs, so the board's error badges may change too. */
+export function useSetLabCredential() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ key, value }: { key: string; value: string }) =>
+      api.post<{ keys: CredentialKeyStatus[] }>('/lab/credentials', { key, value }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['lab-credentials'] });
+      queryClient.invalidateQueries({ queryKey: ['lab'] });
+    },
+  });
+}
+
 /** Persist edited tweak values for one insight. */
 export function useUpdateTweaks() {
   const queryClient = useQueryClient();

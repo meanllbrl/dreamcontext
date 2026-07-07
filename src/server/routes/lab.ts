@@ -1,4 +1,5 @@
 import { IncomingMessage, ServerResponse } from 'node:http';
+import { dirname } from 'node:path';
 import { parseJsonBody, sendJson, sendError } from '../middleware.js';
 import {
   getInsight,
@@ -8,6 +9,8 @@ import {
 } from '../../lib/lab/store.js';
 import { resolveTweaks } from '../../lib/lab/tweaks.js';
 import { bindInsight, syncInsight, syncAll } from '../../lib/lab/sync.js';
+import { readCredentials, redactSecrets, writeCredential } from '../../lib/lab/credentials.js';
+import { requiredCredentialKeys } from '../../lib/lab/required-credentials.js';
 import { LabError, type Binding, type InsightManifest } from '../../lib/lab/types.js';
 
 /**
@@ -196,6 +199,72 @@ export async function handleLabBinding(
     }
     console.error('[lab] binding update failed:', err);
     sendError(res, 500, 'binding_failed', 'Failed to update the binding.');
+  }
+}
+
+/** Per-key credential status: KEY NAMES + presence only — never a value.
+ *  `present` = the key exists in credentials.json with a non-empty value;
+ *  `usedBy` = slugs of the insights that require it. Sorted by key. */
+function credentialKeyStatuses(contextRoot: string): { key: string; present: boolean; usedBy: string[] }[] {
+  const creds = readCredentials(contextRoot);
+  const usedBy = new Map<string, string[]>();
+  for (const manifest of listInsights(contextRoot)) {
+    for (const key of requiredCredentialKeys(manifest)) {
+      const slugs = usedBy.get(key);
+      if (slugs) slugs.push(manifest.slug);
+      else usedBy.set(key, [manifest.slug]);
+    }
+  }
+  return [...usedBy.keys()].sort().map((key) => ({
+    key,
+    present: typeof creds[key] === 'string' && creds[key].trim() !== '',
+    usedBy: usedBy.get(key)!,
+  }));
+}
+
+/** GET /api/lab/credentials — required-key status (present/usedBy). NEVER values. */
+export async function handleLabCredentialsGet(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  try {
+    sendJson(res, 200, { keys: credentialKeyStatuses(contextRoot) });
+  } catch (err) {
+    console.error('[lab] credentials status failed:', err);
+    sendError(res, 500, 'credentials_failed', 'Failed to read credential status.');
+  }
+}
+
+/** POST /api/lab/credentials { key, value } — stores one credential via the same
+ *  gitignore-first `writeCredential` the CLI uses (which also refreshes the
+ *  tracked example file). Redact-safe: the value is never echoed or logged;
+ *  the response is the same key-status shape as GET. */
+export async function handleLabCredentialsSet(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const body = await parseJsonBody(req);
+  const key = body && typeof body.key === 'string' ? body.key.trim() : '';
+  const value = body && typeof body.value === 'string' ? body.value : '';
+  if (!key || !value) {
+    sendError(res, 400, 'invalid_body', 'Request body must be { key, value } with non-empty strings.');
+    return;
+  }
+  try {
+    writeCredential(dirname(contextRoot), contextRoot, key, value);
+    sendJson(res, 200, { keys: credentialKeyStatuses(contextRoot) });
+  } catch (err) {
+    const message = redactSecrets((err as Error).message ?? String(err), [value]);
+    if (err instanceof LabError) {
+      sendError(res, 400, 'credentials_rejected', message);
+      return;
+    }
+    console.error('[lab] credentials set failed:', message);
+    sendError(res, 500, 'credentials_failed', 'Failed to store the credential.');
   }
 }
 

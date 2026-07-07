@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Readable } from 'node:stream';
@@ -10,6 +10,8 @@ import {
   handleLabSync,
   handleLabTweaks,
   handleLabBinding,
+  handleLabCredentialsGet,
+  handleLabCredentialsSet,
 } from '../../src/server/routes/lab.js';
 import { createInsight, writeCache } from '../../src/lib/lab/store.js';
 import { createObjective, getObjective } from '../../src/lib/objectives-store.js';
@@ -228,5 +230,80 @@ describe('PATCH /api/lab/:slug/binding — connect/disconnect an objective Key R
     expect(status()).toBe(200);
     expect(body().insight.binding).toEqual({ objective: 'no-metric', value: 'latest' });
     expect(body().seededCurrent).toBeNull();
+  });
+});
+
+describe('GET/POST /api/lab/credentials — key status only, never a value', () => {
+  // Nested context root: the POST handler derives the project root as
+  // dirname(contextRoot), so gitignore writes must land inside the temp dir.
+  let ctx: string;
+
+  beforeEach(() => {
+    ctx = join(root, '_dream_context');
+    mkdirSync(ctx, { recursive: true });
+  });
+
+  function writeManifest(slug: string, frontmatterYaml: string): void {
+    mkdirSync(join(ctx, 'lab', 'insights'), { recursive: true });
+    writeFileSync(join(ctx, 'lab', 'insights', `${slug}.md`), `---\n${frontmatterYaml}\n---\n## Meaning\n`, 'utf-8');
+  }
+
+  it('GET reports present/missing per required key with usedBy slugs — and never a value', async () => {
+    writeManifest('declared', 'title: Declared\ncredentials_used: [sharedKey, emptyKey]');
+    writeManifest('placeholder', [
+      'title: Placeholder',
+      'source:',
+      '  adapter: http',
+      '  http:',
+      '    endpoint: "https://api.example.com?key={{cred:sharedKey}}"',
+      '    method: GET',
+      '    headers:',
+      '      Authorization: "Bearer {{cred:missingKey}}"',
+    ].join('\n'));
+    mkdirSync(join(ctx, 'lab'), { recursive: true });
+    writeFileSync(join(ctx, 'lab', 'credentials.json'), JSON.stringify({ sharedKey: 'sk-secret-value', emptyKey: '' }), 'utf-8');
+
+    const { res, status, body } = makeRes();
+    await handleLabCredentialsGet(makeReq('GET'), res, {}, ctx);
+    expect(status()).toBe(200);
+    expect(body().keys).toEqual([
+      { key: 'emptyKey', present: false, usedBy: ['declared'] },
+      { key: 'missingKey', present: false, usedBy: ['placeholder'] },
+      { key: 'sharedKey', present: true, usedBy: ['declared', 'placeholder'] },
+    ]);
+    expect(JSON.stringify(body())).not.toContain('sk-secret-value');
+  });
+
+  it('GET returns keys: [] with no insights', async () => {
+    const { res, status, body } = makeRes();
+    await handleLabCredentialsGet(makeReq('GET'), res, {}, ctx);
+    expect(status()).toBe(200);
+    expect(body().keys).toEqual([]);
+  });
+
+  it('POST stores the credential, refreshes the tracked example, and never echoes the value', async () => {
+    writeManifest('wau', 'title: WAU\ncredentials_used: [apiKey]');
+
+    const { res, status, body } = makeRes();
+    await handleLabCredentialsSet(makeReq('POST', { key: 'apiKey', value: 'sk-live-999' }), res, {}, ctx);
+    expect(status()).toBe(200);
+    expect(body().keys).toEqual([{ key: 'apiKey', present: true, usedBy: ['wau'] }]);
+    expect(JSON.stringify(body())).not.toContain('sk-live-999');
+
+    // The tracked example carries the key with an EMPTY value.
+    const example = readFileSync(join(ctx, 'lab', 'credentials.example.json'), 'utf-8');
+    expect(JSON.parse(example)).toEqual({ apiKey: '' });
+    // Gitignore-first writeCredential ran: negation entries keep the example tracked.
+    expect(readFileSync(join(ctx, '.gitignore'), 'utf-8')).toContain('!lab/credentials.example.json');
+    expect(readFileSync(join(root, '.gitignore'), 'utf-8')).toContain('!_dream_context/lab/credentials.example.json');
+  });
+
+  it('400s on a missing/empty key or value (and writes nothing)', async () => {
+    for (const bad of [{}, { key: 'apiKey' }, { key: 'apiKey', value: '' }, { key: '', value: 'v' }, { key: 'apiKey', value: 42 }]) {
+      const { res, status } = makeRes();
+      await handleLabCredentialsSet(makeReq('POST', bad), res, {}, ctx);
+      expect(status()).toBe(400);
+    }
+    expect(existsSync(join(ctx, 'lab', 'credentials.json'))).toBe(false);
   });
 });

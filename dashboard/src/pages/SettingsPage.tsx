@@ -9,6 +9,7 @@ import { TaskOverrideEditor } from '../components/settings/TaskOverrideEditor';
 import { SETTINGS_ICONS } from '../components/settings/SettingsIcons';
 import { useAgentCapabilities } from '../hooks/useAgentCapabilities';
 import { useBrainSettings, useUpdateBrainSettings } from '../hooks/useBrainStatus';
+import { useSleep, useUpdateSleep, type RecallMode } from '../hooks/useSleep';
 import { GitHubLogin } from '../components/brain/GitHubLogin';
 import { BrainRepoSetup } from '../components/brain/BrainRepoSetup';
 import { isDesktop } from '../lib/desktop';
@@ -97,6 +98,22 @@ const PLATFORM_OPTIONS: PlatformOption[] = [
   { id: 'claude', labelKey: 'settings.platform.claude' },
 ];
 
+// ─── Memory recall modes (mirror RECALL_MODES in src/cli/commands/sleep.ts) ───
+
+interface RecallModeOption {
+  mode: RecallMode;
+  labelKey: string;
+  hintKey: string;
+  experimental?: boolean;
+}
+
+const RECALL_MODE_OPTIONS: RecallModeOption[] = [
+  { mode: 'haiku', labelKey: 'settings.recall.haiku.label', hintKey: 'settings.recall.haiku.hint' },
+  { mode: 'raw', labelKey: 'settings.recall.raw.label', hintKey: 'settings.recall.raw.hint' },
+  { mode: 'hybrid', labelKey: 'settings.recall.hybrid.label', hintKey: 'settings.recall.hybrid.hint', experimental: true },
+  { mode: 'off', labelKey: 'settings.recall.off.label', hintKey: 'settings.recall.off.hint' },
+];
+
 // ─── Default config when config is null ───────────────────────────────────────
 
 const DEFAULT_CONFIG: Pick<SetupConfig, 'platforms' | 'disableNativeMemory'> = {
@@ -158,6 +175,12 @@ export function SettingsPage({ focus }: SettingsPageProps) {
   // SW2 — Cloud sync master toggle (Brain Repo & Collaboration section).
   const { data: brainSettings } = useBrainSettings();
   const updateBrainSettings = useUpdateBrainSettings();
+
+  // Memory recall mode — lives in .sleep.json (not the setup config), so it is
+  // persisted immediately via PATCH /api/sleep rather than buffered behind Save.
+  const { data: sleepState } = useSleep();
+  const updateSleep = useUpdateSleep();
+  const recallMode: RecallMode = sleepState?.recall_mode ?? 'haiku';
 
   // In-page section nav: only one settings group is shown at a time so a
   // specific setting is quick to find instead of buried in one long scroll.
@@ -744,6 +767,33 @@ export function SettingsPage({ focus }: SettingsPageProps) {
             <span>{t('settings.native_memory.label')}</span>
           </label>
           <p className="settings-field-hint">{t('settings.native_memory.hint')}</p>
+        </div>
+
+        <div className="settings-subsection">
+          <h3 className="settings-nav-label">{t('settings.recall.title')}</h3>
+          <p className="settings-field-hint settings-recall-desc">{t('settings.recall.desc')}</p>
+          <div className="settings-checkboxes" role="radiogroup" aria-label={t('settings.recall.title')}>
+            {RECALL_MODE_OPTIONS.map(({ mode, labelKey, hintKey, experimental }) => (
+              <div key={mode}>
+                <label className="settings-checkbox-label">
+                  <input
+                    type="radio"
+                    name="recall-mode"
+                    className="settings-checkbox"
+                    checked={recallMode === mode}
+                    disabled={updateSleep.isPending}
+                    onChange={() => updateSleep.mutate({ recall_mode: mode })}
+                  />
+                  <span>
+                    {t(labelKey)}
+                    {experimental && <span className="settings-beta-badge">{t('settings.recall.experimental')}</span>}
+                  </span>
+                </label>
+                <p className="settings-field-hint">{t(hintKey)}</p>
+              </div>
+            ))}
+          </div>
+          {updateSleep.isError && <p className="settings-test-err">✗ {t('common.error')}</p>}
         </div>
       </section>
       )}

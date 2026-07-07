@@ -9,6 +9,8 @@ import * as git from './git.js';
 import { GitSyncError } from './git.js';
 import { withGitCredentials } from './credentials.js';
 import { scrubStagedFiles, summarizeScrub, type ScrubHit } from './scrub.js';
+import { ensureGitignoreEntries } from '../gitignore.js';
+import { PLATFORM_DIR, PLATFORM_GITIGNORE_ENTRIES } from './platform-layer.js';
 
 /**
  * Brain-repo bootstrap/resolve/discover + local-artifact + lock + token
@@ -146,11 +148,19 @@ export function buildBrainGitignore(taskBackend?: SetupConfig['taskBackend']): s
     '.obsidian/',
     'tmp/',
     '**/.env',
+    '**/.DS_Store',
     // Lab (analytics insights) credentials — insights + cache DO sync (deny-list
     // gitignore); only the credential file is excluded. lab/scripts/*.env is
-    // already covered by the **/.env entry above.
+    // already covered by the **/.env entry above. The tracked example file
+    // (key names only, never values) is re-allowed so teammates can see which
+    // credentials an insight needs.
     'lab/credentials.json',
     'lab/credentials.*',
+    '!lab/credentials.example.json',
+    '',
+    '# platform/ — Claude Code layer (CLAUDE.md + .claude), synced for portability.',
+    '# Machine-local runtime files inside it must never sync.',
+    ...PLATFORM_GITIGNORE_ENTRIES,
   ];
   if (taskBackend && taskBackend !== 'local') {
     lines.push(
@@ -454,6 +464,17 @@ export function ensureLocalOnlyArtifacts(
   const gitignorePath = join(contextRoot, '.gitignore');
   if (!existsSync(gitignorePath)) {
     writeFileSync(gitignorePath, buildBrainGitignore(taskBackend), 'utf-8');
+  } else if (existsSync(join(contextRoot, PLATFORM_DIR))) {
+    // Self-heal older/hand-edited gitignores: a live platform layer must never
+    // sync its machine-local runtime files (an overwritten gitignore here once
+    // silently re-tracked settings.local.json).
+    try {
+      ensureGitignoreEntries(contextRoot, PLATFORM_GITIGNORE_ENTRIES, {
+        comment: 'platform/ — machine-local runtime files must never sync',
+      });
+    } catch {
+      /* a read-only gitignore must not break attach/sync */
+    }
   }
   void gitModule; // reserved for a future "assert nothing local-only is staged" check
 }

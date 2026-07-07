@@ -59,6 +59,8 @@ import {
   handleLabSync,
   handleLabTweaks,
   handleLabBinding,
+  handleLabCredentialsGet,
+  handleLabCredentialsSet,
 } from './routes/lab.js';
 import { handleBoardGet, handleBoardSharedPut, handleBoardLocalPut } from './routes/board.js';
 import {
@@ -316,10 +318,13 @@ function buildRouter(): Router {
 
   // Lab (analytics insights) — same sync engine the CLI uses. Router.match
   // filters by HTTP METHOD first, so POST /api/lab/sync can never be captured by
-  // GET /api/lab/:slug — ordering below is for readability only. No route ever
-  // returns a credential value.
+  // GET /api/lab/:slug — but GET /api/lab/credentials MUST be registered before
+  // GET /api/lab/:slug (first match wins within a method). No route ever
+  // returns a credential value — /api/lab/credentials carries key names only.
   router.get('/api/lab', handleLabList);
   router.post('/api/lab/sync', handleLabSync);
+  router.get('/api/lab/credentials', handleLabCredentialsGet);
+  router.post('/api/lab/credentials', handleLabCredentialsSet);
   router.get('/api/lab/:slug', handleLabShow);
   router.patch('/api/lab/:slug/tweaks', handleLabTweaks);
   router.patch('/api/lab/:slug/binding', handleLabBinding);

@@ -3,6 +3,7 @@ import { join, basename } from 'node:path';
 import fg from 'fast-glob';
 import { readFrontmatter, writeFrontmatter, updateFrontmatterFields } from '../frontmatter.js';
 import { today } from '../id.js';
+import { writeCredentialsExample } from './required-credentials.js';
 import {
   LabError,
   RENDERS,
@@ -299,6 +300,9 @@ export function createInsight(contextRoot: string, input: CreateInsightInput): I
 
   mkdirSync(insightsDir(contextRoot), { recursive: true });
   writeFrontmatter(path, frontmatter, body);
+  // Keep the tracked lab/credentials.example.json current with the new
+  // manifest's required keys (best-effort — the insight itself is written).
+  try { writeCredentialsExample(contextRoot); } catch { /* never fail the create */ }
   return readInsightFile(path);
 }
 

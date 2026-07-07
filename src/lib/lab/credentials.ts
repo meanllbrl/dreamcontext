@@ -2,6 +2,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'n
 import { join } from 'node:path';
 import { ensureGitignoreEntries } from '../gitignore.js';
 import { ensureLocalOnlyArtifacts, currentTaskBackend } from '../git-sync/brain-repo.js';
+import { writeCredentialsExample } from './required-credentials.js';
 import { LabError } from './types.js';
 
 /**
@@ -17,12 +18,19 @@ import { LabError } from './types.js';
 
 /** Relative path of the credential file under `_dream_context/`. */
 export const CREDENTIALS_REL = 'lab/credentials.json';
-/** Gitignore entries covering the credential file, brain-repo-relative. */
-export const LAB_GITIGNORE_ENTRIES = ['lab/credentials.json', 'lab/credentials.*'];
+/** Gitignore entries covering the credential file, brain-repo-relative. The
+ *  negation (AFTER the wildcard — order matters to git) keeps the secret-free
+ *  `lab/credentials.example.json` tracked. */
+export const LAB_GITIGNORE_ENTRIES = [
+  'lab/credentials.json',
+  'lab/credentials.*',
+  '!lab/credentials.example.json',
+];
 /** Gitignore entries covering the credential file, project-root-relative (in-tree mode). */
 export const LAB_GITIGNORE_ENTRIES_ROOT = [
   '_dream_context/lab/credentials.json',
   '_dream_context/lab/credentials.*',
+  '!_dream_context/lab/credentials.example.json',
 ];
 
 function credentialsPath(contextRoot: string): string {
@@ -90,6 +98,9 @@ export function writeCredential(
   writeFileSync(path, JSON.stringify(creds, null, 2) + '\n', { encoding: 'utf-8', mode: 0o600 });
   // writeFileSync's mode only applies on create — enforce on rewrite too.
   try { chmodSync(path, 0o600); } catch { /* best-effort on exotic filesystems */ }
+  // Keep the tracked, secret-free example file current (best-effort — the
+  // credential itself is already safely stored and gitignored).
+  try { writeCredentialsExample(contextRoot); } catch { /* never fail the credential write */ }
 }
 
 /** The credential KEY names (never values) — for `lab credentials list`. */

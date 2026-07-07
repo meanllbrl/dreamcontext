@@ -14,6 +14,7 @@ import {
   FALLBACK_AUTHOR,
 } from './brain-repo.js';
 import { withGitCredentials } from './credentials.js';
+import { healPlatformLinksBestEffort } from './platform-layer.js';
 import { readGlobalGitHubLogin } from './auth-store.js';
 import { mapLoginToPerson } from '../task-backend/identity.js';
 import { slugify } from '../id.js';
@@ -220,11 +221,17 @@ export async function runBrainSync(opts: SyncOptions, depsOverride: Partial<Sync
   if (!d.acquireBrainLock(contextRoot)) return { action: 'locked', scrub: EMPTY_SCRUB };
 
   try {
-    if (opts.continue) return await continueMerge(ctx);
-    if (opts.resume) return await resumeHandoff(ctx);
-    if (opts.mode === 'pull-only') return await pullOnlySync(ctx);
-    if (opts.mode === 'push-only') return await pushOnlySync(ctx);
-    return await autoSync(ctx);
+    let result: SyncResult;
+    if (opts.continue) result = await continueMerge(ctx);
+    else if (opts.resume) result = await resumeHandoff(ctx);
+    else if (opts.mode === 'pull-only') result = await pullOnlySync(ctx);
+    else if (opts.mode === 'push-only') result = await pushOnlySync(ctx);
+    else result = await autoSync(ctx);
+    // A merge/pull may have just delivered `platform/` (CLAUDE.md + .claude)
+    // from a teammate — re-create any missing project-root symlinks so the
+    // layer is live without a manual step. No-op without a platform layer.
+    healPlatformLinksBestEffort(projectRoot, contextRoot);
+    return result;
   } finally {
     d.releaseBrainLock(contextRoot);
   }

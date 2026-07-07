@@ -244,6 +244,17 @@ dreamcontext brain status             # mode (separate/in-tree), remote, sync st
 - **Manual sync any time:** `dreamcontext brain sync` (or `--pull-only` to just take team content in).
 - **On a prose merge conflict** (two people edited the same `##` section of a knowledge/feature doc), the CLI resolves every deterministic file itself and stops at `already-awaiting-agent`, deferring the rest to the **`/dream-sync` skill** — the agent reads base/ours/theirs snapshots, writes the real semantic merge, and hands back with `brain sync --continue`. (`--resume`/`--continue` are attended-only; never drive them unattended.)
 
+### Platform layer — share CLAUDE.md + .claude with the team
+
+A separate-mode brain repo is rooted at `_dream_context/`, so the Claude Code files at the
+project root (CLAUDE.md, `.claude/` skills/agents/hooks) would never sync on their own.
+`dreamcontext brain platform` fixes that: it moves them into `_dream_context/platform/` and
+symlinks them back from the project root (Claude Code resolves the links transparently).
+From then on they sync with the brain like everything else; every `brain sync` re-creates
+missing root symlinks on a fresh clone, and `doctor` flags broken links. Machine-local files
+(`platform/.claude/settings.local.json`, `scheduled_tasks.lock`) stay gitignored.
+`brain platform --status` reports without changing anything.
+
 ### Editing / reconfiguring
 
 - **Turn cloud sync on/off:** `dreamcontext brain enable` / `brain disable`.
