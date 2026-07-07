@@ -569,6 +569,7 @@ Federation lets separate projects read each other. **Brain Cloud Sync** is the o
 dreamcontext brain init      # Turn _dream_context/ into its own synced repo (separate or in-tree)
 dreamcontext brain status    # Mode, remote, and current sync state
 dreamcontext brain sync      # Manual fetch → merge → commit → push, outside a sleep cycle
+dreamcontext brain platform  # Share CLAUDE.md + .claude with the team (moved into the brain, symlinked back)
 dreamcontext brain enable    # Turn cloud sync on for this vault
 dreamcontext brain disable   # Turn it off (the brain stays local)
 ```
@@ -577,6 +578,7 @@ dreamcontext brain disable   # Turn it off (the brain stays local)
 - **Deterministic files merge themselves; prose defers to an agent.** JSON (changelog, releases, config) and task status/changelog merge automatically (task changelogs union, the furthest status wins). When two people edit the same *prose* section of a knowledge or feature file, the conflict is handed to a semantic **merge agent** — the `/dream-sync` skill — which reads base/ours/theirs and writes the real merge, then hands back to commit and push.
 - **Two modes.** `separate` is a dedicated brain repo with full auto-sync; **`in-tree`** nests the brain inside the code repo, commits on sleep but **never auto-pushes**, and is the safe default. The scrub gate applies to both.
 - **Nothing secret or machine-local is ever pushed.** A **scrub gate** runs before every commit and push and blocks secrets and absolute local paths. The auth token is never written into the remote URL — git network calls use `GIT_ASKPASS` with a `0600` temp file, so the token never lands in `.git/config`, the environment, or a process argument. Per-machine indexes, caches, and embeddings are gitignored and rebuilt locally, so derived state never causes merge noise.
+- **The Claude Code layer travels with the brain.** `dreamcontext brain platform` moves `CLAUDE.md` and `.claude/` (skills, agents, hooks) into `_dream_context/platform/` and symlinks them back from the project root, so the whole agent setup syncs with the team. A fresh clone re-creates the links automatically on its first sync; machine-local files (`settings.local.json`) stay gitignored.
 - **Private by default, attach is a trust decision.** New brain repos are created **private**. Because a shared brain is a prompt-injection channel, attaching to one prints a loud trust warning and an incoming-diff preview and refuses without an explicit confirmation. Personal attribution rides the existing multi-people awareness (`person:<slug>` tags, changelog authors) rather than per-person file forks.
 
 From the desktop **Launcher** the whole flow is terminal-free: **GitHub device-flow login** (with a personal-access-token fallback), **brain-repo discovery** (repos tagged with the `dreamcontext-brain` topic), **one-click create** of a scrubbed private brain repo, the trust-gated **attach** flow for a second machine, a **team-updates badge** that tells you when teammates have pushed, and a Settings **"Cloud sync"** toggle.
@@ -875,6 +877,7 @@ See the [Federation](#federation) section above for the full workflow.
 dreamcontext brain init                  # Make _dream_context/ its own synced git repo
 dreamcontext brain status                # Show mode (separate | in-tree), remote, and sync state
 dreamcontext brain sync                  # Manual fetch → merge → commit → push outside a sleep cycle
+dreamcontext brain platform              # Share CLAUDE.md + .claude via the brain repo (symlinked back)
 dreamcontext brain enable                # Turn cloud sync on for this vault
 dreamcontext brain disable               # Turn cloud sync off (the brain stays local)
 ```

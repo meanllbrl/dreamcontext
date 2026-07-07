@@ -2,6 +2,43 @@
   {
     "date": "2026-07-07",
     "type": "feat",
+    "scope": "dashboard",
+    "description": "Two dashboard controls: (1) a refresh button next to the sidebar's Synced badge runs a full brain pull+merge (POST /api/brain/sync mode:auto) with transient outcome feedback — success check, 'awaiting /dream-sync' warning on a deferred team merge, scrub-block warning; (2) Settings → Memory gains the recall-mode control (haiku / raw / hybrid / off) that was missing for v0.14.0's experimental hybrid recall — hybrid carries an Experimental badge and the ~113MB first-use model-download note; PATCH /api/sleep now accepts a validated recall_mode.",
+    "breaking": false,
+    "summary": "Dashboard: sidebar sync-refresh button + Settings recall-mode control (hybrid recall now enableable from UI)",
+    "references": [
+      "file:dashboard/src/components/layout/Sidebar.tsx",
+      "file:dashboard/src/pages/SettingsPage.tsx",
+      "file:src/server/routes/sleep.ts"
+    ]
+  },
+  {
+    "date": "2026-07-07",
+    "type": "feat",
+    "scope": "lab",
+    "description": "Lab credentials are now team-visible and dashboard-manageable: a tracked lab/credentials.example.json (key names only, generated from every insight's credentials_used + {{cred:*}} placeholders) tells teammates which keys a vault needs; GET/POST /api/lab/credentials report present/missing keys (values never serialized) and store a key from the UI; the Lab board shows a missing-credentials banner listing each absent key, the insights that need it, and an inline password input to add it on the spot.",
+    "breaking": false,
+    "summary": "Lab: tracked credentials.example.json + missing-credentials banner with add-from-dashboard",
+    "references": [
+      "file:src/lib/lab/required-credentials.ts",
+      "file:dashboard/src/components/lab/LabCredentialsBanner.tsx"
+    ]
+  },
+  {
+    "date": "2026-07-07",
+    "type": "feat",
+    "scope": "brain",
+    "description": "Platform layer: 'dreamcontext brain platform' moves CLAUDE.md + .claude into _dream_context/platform/ and symlinks them back from the project root, so a separate-mode brain repo shares the whole Claude Code layer (skills, agents, hooks) with the team. Every brain sync re-creates missing root symlinks (fresh clones self-wire), doctor flags broken links/conflicts, and the brain gitignore gains platform machine-local excludes (settings.local.json, scheduled_tasks.lock) + **/.DS_Store. Hardening: setupPlatformLayer writes the full canonical gitignore first — a platform-only stub used to defeat bootstrapBrainRepo's !existsSync guard and could sync local merge locks.",
+    "breaking": false,
+    "summary": "brain platform: CLAUDE.md + .claude sync with the brain repo via platform/ + root symlinks",
+    "references": [
+      "task:brain-portability-dashboard-controls-platform-layer-lab-credentials-example-sync-refresh-button-recall-mode-settings",
+      "file:src/lib/git-sync/platform-layer.ts"
+    ]
+  },
+  {
+    "date": "2026-07-07",
+    "type": "feat",
     "scope": "recall",
     "description": "Ships the embedding epic tasks 1-4 (decision-embedding-layer): multilingual-e5-small via @huggingface/transformers (optionalDependency, ~113MB one-time download, models cached at ~/.dreamcontext/models), heading-boundary code-fence-aware chunker, content-hash incremental vector cache at _dream_context/.embeddings/ (self-gitignoring, mtime+size pre-filter, --force bypass), confidence-adaptive fusion (relative-score when BM25 decisive, weighted RRF when weak, top-1 pin guard, changelog docs excluded from dense channel). Raw BM25 score untouched in every mode — hook gates frozen. Freshness: lazy per hybrid query, eager --force at sleep done (gated on existing cache), plus new 'dreamcontext embed refresh [--force|--if-present]' and 'embed status' commands. A/B on frozen gold sets: train r@1 76.7→81.7, held-out 60.0→66.7, held-out r@5 90→96.7, turkish r@1 doubled, EN paraphrase r@1 +16.7, zero regressed recall/MRR cells; all four graduation gates met. Off by default; degrades to plain BM25 without the model. 41 new tests; suite 2922 green.",
     "breaking": false,

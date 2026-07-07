@@ -1,5 +1,56 @@
 [
   {
+    "id": "rel__tis3stu",
+    "version": "0.14.1",
+    "date": "2026-07-07",
+    "summary": "Brain portability + dashboard control patch: 'brain platform' carries CLAUDE.md + .claude inside the brain repo (symlinked back, self-healing on sync); lab credentials get a tracked example file, missing-key banner, and add-from-dashboard; a sidebar refresh button runs a full pull+merge; Settings gains the recall-mode control so v0.14.0's experimental hybrid recall is enableable from the UI.",
+    "breaking": false,
+    "status": "released",
+    "features": [],
+    "tasks": [
+      "task_NNL9o_Vi"
+    ],
+    "changelog": [
+      {
+        "date": "2026-07-07",
+        "type": "feat",
+        "scope": "dashboard",
+        "description": "Two dashboard controls: (1) a refresh button next to the sidebar's Synced badge runs a full brain pull+merge (POST /api/brain/sync mode:auto) with transient outcome feedback — success check, 'awaiting /dream-sync' warning on a deferred team merge, scrub-block warning; (2) Settings → Memory gains the recall-mode control (haiku / raw / hybrid / off) that was missing for v0.14.0's experimental hybrid recall — hybrid carries an Experimental badge and the ~113MB first-use model-download note; PATCH /api/sleep now accepts a validated recall_mode.",
+        "breaking": false,
+        "summary": "Dashboard: sidebar sync-refresh button + Settings recall-mode control (hybrid recall now enableable from UI)",
+        "references": [
+          "file:dashboard/src/components/layout/Sidebar.tsx",
+          "file:dashboard/src/pages/SettingsPage.tsx",
+          "file:src/server/routes/sleep.ts"
+        ]
+      },
+      {
+        "date": "2026-07-07",
+        "type": "feat",
+        "scope": "lab",
+        "description": "Lab credentials are now team-visible and dashboard-manageable: a tracked lab/credentials.example.json (key names only, generated from every insight's credentials_used + {{cred:*}} placeholders) tells teammates which keys a vault needs; GET/POST /api/lab/credentials report present/missing keys (values never serialized) and store a key from the UI; the Lab board shows a missing-credentials banner listing each absent key, the insights that need it, and an inline password input to add it on the spot.",
+        "breaking": false,
+        "summary": "Lab: tracked credentials.example.json + missing-credentials banner with add-from-dashboard",
+        "references": [
+          "file:src/lib/lab/required-credentials.ts",
+          "file:dashboard/src/components/lab/LabCredentialsBanner.tsx"
+        ]
+      },
+      {
+        "date": "2026-07-07",
+        "type": "feat",
+        "scope": "brain",
+        "description": "Platform layer: 'dreamcontext brain platform' moves CLAUDE.md + .claude into _dream_context/platform/ and symlinks them back from the project root, so a separate-mode brain repo shares the whole Claude Code layer (skills, agents, hooks) with the team. Every brain sync re-creates missing root symlinks (fresh clones self-wire), doctor flags broken links/conflicts, and the brain gitignore gains platform machine-local excludes (settings.local.json, scheduled_tasks.lock) + **/.DS_Store. Hardening: setupPlatformLayer writes the full canonical gitignore first — a platform-only stub used to defeat bootstrapBrainRepo's !existsSync guard and could sync local merge locks.",
+        "breaking": false,
+        "summary": "brain platform: CLAUDE.md + .claude sync with the brain repo via platform/ + root symlinks",
+        "references": [
+          "task:brain-portability-dashboard-controls-platform-layer-lab-credentials-example-sync-refresh-button-recall-mode-settings",
+          "file:src/lib/git-sync/platform-layer.ts"
+        ]
+      }
+    ]
+  },
+  {
     "id": "rel_unfbu3vW",
     "version": "v0.13.1",
     "date": "2026-07-07",
