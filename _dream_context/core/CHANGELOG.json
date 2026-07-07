@@ -1,6 +1,95 @@
 [
   {
     "date": "2026-07-07",
+    "type": "feat",
+    "scope": "lab",
+    "description": "New InsightPicker component added to objective creation and detail modals, enabling users to bind a Lab insight to an objective's Key Result directly from the dashboard UI (complementing the existing 'lab bind' CLI command). Picking an insight prefills the metric's label, unit, and current value from the cached snapshot and auto-binds on objective creation. Insight groups are now collapsible/expandable with per-machine state persistence. New useLabPrefs hook and ui-settings route manage Lab UI preferences. Server-side group expansion state added to store.ts and lab routes.",
+    "breaking": false,
+    "summary": "Lab dashboard: insight-KR picker UI + collapsible groups",
+    "references": [
+      "file:dashboard/src/components/roadmap/InsightPicker.tsx",
+      "file:dashboard/src/components/roadmap/ObjectiveCreateModal.tsx",
+      "file:dashboard/src/components/roadmap/ObjectiveDetailPanel.tsx",
+      "file:dashboard/src/components/lab/LabBoard.tsx",
+      "file:dashboard/src/hooks/useLabPrefs.ts",
+      "file:src/server/routes/lab.ts",
+      "file:src/server/routes/ui-settings.ts"
+    ]
+  },
+  {
+    "date": "2026-07-07",
+    "type": "docs",
+    "scope": "skill",
+    "description": "skill Entity Router hardened after real misroute ('insight oluşturalım' → external dashboard proposal): language-independent entity nouns (reserved words in ANY language), problem-shape triggers on Insight row (self-refreshing metric/chart → Lab, not external build), don't-rebuild-existing-subsystems rule. +2 marker tests (15/15 green); installed .claude copy synced.",
+    "breaking": false,
+    "summary": "skill Entity Router: language-independent nouns + problem-shape routing + don't-rebuild rule"
+  },
+  {
+    "date": "2026-07-07",
+    "type": "feat",
+    "scope": "agents",
+    "description": "Agent composer UX: status strip redesigned (model ◆→⬡ hexagon, effort ◈→▚ fill-block — visually distinct + evocative), z-index fix (model/effort pickers no longer hide under floating dock chip via data-dock-floating padding-right 132px), skills popover flicker eliminated (fixed height 470px + overflow-y auto instead of min-height 300px resizing loop). Terminal-native status line styling: JetBrains Mono 14.5px × zoom, terminal background, dim ink, @ glyph, · separators, ❯ caret in popovers, focus ring as ::after overlay wrapping terminal+strip.",
+    "breaking": false,
+    "summary": "Agent composer: status strip redesign, z-index fix, flicker fix, terminal-native styling"
+  },
+  {
+    "date": "2026-07-07",
+    "type": "chore",
+    "scope": "platform",
+    "description": "Entire .codex/ tree removed (26 files: agent configs, prompts, config.toml) along with AGENTS.md as part of a deliberate descope decision. Platform abstraction layer simplified: platforms.ts, catalog.ts, install-packs.ts, and manifest.ts no longer handle multi-platform routing. Commands updated (init, install-skill, install-claude-md, update) to remove codex/opencode detection and scaffolding paths. Tests adapted across platform-install, install-packs, manifest-bootstrap, and platform-defaults suites. The project now ships Claude Code as the sole first-class platform.",
+    "breaking": false,
+    "summary": "Remove codex/opencode platform support — deliberate descope",
+    "references": [
+      "file:src/lib/platforms.ts",
+      "file:src/lib/catalog.ts",
+      "file:src/lib/install-packs.ts",
+      "file:src/lib/manifest.ts",
+      "file:src/cli/commands/init.ts",
+      "file:src/cli/commands/install-skill.ts"
+    ]
+  },
+  {
+    "date": "2026-07-07",
+    "type": "fix",
+    "scope": "brain-sync",
+    "description": "Brain sync empty-remote attach fixed end-to-end: sync-engine.ts + new git.remoteBranchExists checks whether origin/main exists before every fetch; attach bootstraps first commit immediately (same scrubbed primitive as Create); pull-only noops with guidance instead of crashing on 'couldn't find remote ref'; askpass helper self-heals non-executable installs at runtime (source +x, build enforces 755, resolveAskpassPath chmod if needed). 99/99 brain/git-sync tests green, runtime-verified against real server.",
+    "breaking": false,
+    "summary": "Brain sync: empty-remote attach + askpass self-heal fixed end-to-end"
+  },
+  {
+    "date": "2026-07-07",
+    "type": "docs",
+    "scope": "skill",
+    "description": "Lab/insights skill documentation pass: lab bind verb, insight→objective KR binding (single feeder, seed-on-connect, measured-KR exception), and 'sleep never runs lab sync' rule documented across all agent surfaces (agents/sleep-tasks.md, sleep-state.md, sleep.md), skill references (SKILL.md Entity Router + capabilities, cli-reference.md, tasks-and-features.md Lab section), README, and DEEP-DIVE. Marker tests pinned (15/15 green).",
+    "breaking": false,
+    "summary": "Lab/insights documentation: lab bind, KR binding, sleep policy across all surfaces"
+  },
+  {
+    "date": "2026-07-07",
+    "type": "feat",
+    "scope": "lab",
+    "description": "Lab insights: groups made collapsible (chevron header + count, aria-expanded) and cards drag-reorderable within group (HTML5 dnd, TaskCard idiom). Prefs persist per-machine via new useLabPrefs hook (localStorage mirror + debounced write-through to new GET/PUT /api/lab-prefs -> state/.lab-prefs.json, gitignored) — survives desktop app loopback-port localStorage wipe. Runtime-verified via verify-skill scratch vault.",
+    "breaking": false,
+    "summary": "Lab insights: collapsible groups + drag-reorder cards with per-machine persistence"
+  },
+  {
+    "date": "2026-07-07",
+    "type": "refactor",
+    "scope": "platform",
+    "description": "Codex/OpenCode platform support removed: .codex/ agent TOMLs + prompts (26 files) deleted, AGENTS.md deleted, codex dropped from SUPPORTED_PLATFORMS and platform catalog (platforms.ts, manifest.ts, catalog.ts, install-packs.ts), install-skill/install-claude-md/init/update commands cleaned, 11 test files updated (codex-only cases deleted, incidental fixtures swapped to claude, deliberate invalid-platform tests kept). Preserves multi-platform abstraction for future re-addition per include-codex-opencode-support objective.",
+    "breaking": false,
+    "summary": "Codex/OpenCode platform support removed — preserves abstraction for future re-addition"
+  },
+  {
+    "date": "2026-07-07",
+    "type": "chore",
+    "scope": "build",
+    "description": "v0.13.0 shipped end-to-end: all five version surfaces bumped (CLI package.json, dashboard, Tauri), npm published, desktop-release workflow verified green (signed .app.tar.gz + .sha256 to GitHub Releases), backlog groomed (4 completed, 14 relabeled, v0.14.0 planning activated)",
+    "breaking": false,
+    "summary": "v0.13.0 shipped — version bumps, npm publish, desktop release, backlog groomed"
+  },
+  {
+    "date": "2026-07-07",
     "type": "chore",
     "scope": "release",
     "description": "v0.13.0 released (2026-07-07). Ships: brain repo sync hardening (global auth store tiering, person-tier commit author C3, first-push bootstrap via fetchRemoteIfExists, credential redaction), Lab bounded sync history + insight detail panel, sleepy composer auto-submit race fix, Tauri shell allow-open ACL, dashboard version-skew fixes, agent tab auto-titling opt-in, skill Entity Router hardening (language-independent entity nouns + don't-rebuild rule, pinned by marker tests). All 5 version surfaces bumped 0.12.0→0.13.0; full suite 2886 green. Backlog groomed: 4 in_review tasks completed and attached to the release, 14 stale version labels normalized, v0.14.0 planning opened as active.",

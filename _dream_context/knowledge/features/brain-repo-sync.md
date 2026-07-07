@@ -2,8 +2,8 @@
 id: feat_Sx4EmLgP
 status: in_progress
 created: '2026-07-04'
-updated: '2026-07-06'
-released_version: '0.12.0'
+updated: '2026-07-07'
+released_version: v0.13.1
 tags:
   - 'topic:github'
   - 'topic:cli'
@@ -172,6 +172,10 @@ existing local dashboard. The two could coexist later but ship independently.
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-07-07 - Empty-remote attach now works end-to-end (v0.13.0)
+- **Empty-remote attach and bootstrap fixed.** Attaching an empty GitHub repo (no `origin/main` ref) now works without fatal errors: (1) sync engine checks `remoteBranchExists()` before every fetch site — on a freshly-attached ref-less repo, auto sync bootstraps the first commit and births `main` (including attach-after-detach case where local commits exist but tree is clean); (2) pull-only — the background/session-start path — noops with guidance instead of dying on "couldn't find remote ref main"; (3) failed push to empty remote reports clean token/permissions error instead of fetch crash. A README-initialized repo gets actionable "unrelated histories — attach empty or existing brain repo" error instead of raw git output. Attach immediately bootstraps (same scrubbed first-commit-and-push as Create): response carries `bootstrap: "pushed"|"blocked-scrub"|"skipped"`, UI warns if first push was scrub-blocked. Existing brain repos untouched (attach never pushes over content).
+- **Askpass permission fix** (GitHub token credential supply): helper shipped 644 because `cpSync` preserved source mode, and git execs `GIT_ASKPASS` directly — fixed: source file now +x, **build enforces 755** (`tsup.config.ts`), and **`resolveAskpassPath` self-heals** any already-shipped non-executable install at runtime. Verified helper executes (username → `x-access-token`, password → token). 99/99 tests across five brain/git-sync suites including new real-git e2e (attach empty bare → pull-only noop → auto births `main` → converged noop), askpass self-heal test, attach-bootstrap route tests, and fix for pre-existing token-test failures (now HOME-isolated).
 
 ### 2026-07-06 - OQ-1 RESOLVED: OAuth App registered, device flow LIVE
 - **Registered the "dreamcontext" GitHub OAuth App** (owner `meanllbrl`, Device

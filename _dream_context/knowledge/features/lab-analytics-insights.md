@@ -1,9 +1,9 @@
 ---
 id: feat_lab_insights
-status: in_review
+status: completed
 created: '2026-07-05'
-updated: '2026-07-06'
-released_version: 0.12.0
+updated: '2026-07-07'
+released_version: v0.13.1
 tags:
   - 'topic:lab'
   - 'topic:cli'
@@ -46,8 +46,11 @@ This is NOT a BI tool. Lab is a **metrics delivery** subsystem: it captures WHAT
 - [x] As a user, when an insight sync fails, the prior cached series remains intact and the error is surfaced loudly — no silent half-sync, no data loss. *(M1 shipped: on-error keep-prior-series + failed[] aggregate + non-zero exit)*
 - [x] As a user, credentials for insight sources (API keys, tokens) are stored gitignored-first and never logged or returned — the scrub is structural, not advisory. *(M1 shipped: gitignore-first `writeCredential`, end-to-end secret redaction)*
 - [x] As a user, custom-script insights (`.mjs` files in `lab/scripts/`) execute locally with my credentials and carry a plain-language trust warning — and if a script changes, I see a loud tripwire notice before it runs. *(M1 shipped: script-hash tripwire, trust statement in skill docs)*
-- [ ] As a user, I can tweak an insight's time range (e.g., last_30_days → last_1_year) from the dashboard and see the chart re-fetch and granularity coarsen to monthly. *(M1 shipped dashboard tweak editing, validation pending)*
-- [ ] As a user, the doctor command warns me when an insight manifest declares credentials I haven't set, and fails when credentials.json exists but isn't gitignored. *(M1 shipped, validation pending)*
+- [x] As a user, I can tweak an insight's time range (e.g., last_30_days → last_1_year) from the dashboard and see the chart re-fetch and granularity coarsen to monthly. *(M1 shipped dashboard tweak editing, E2E verified v0.13.0)*
+- [x] As a user, the doctor command warns me when an insight manifest declares credentials I haven't set, and fails when credentials.json exists but isn't gitignored. *(M1 shipped, E2E verified v0.13.0)*
+- [x] As a user, I can connect an insight to a roadmap objective's Key Result from either the insight card (dashboard Lab page) or the objective detail panel, so `lab sync` automatically updates the objective's measured progress. *(Shipped v0.13.0: `lab bind` CLI + dashboard InsightPicker in create modal + detail panel KR section)*
+- [x] As a user, insights are grouped on the dashboard Lab page with collapsible sections, and I can drag cards to reorder them within their group with preferences persisted per-machine. *(Shipped v0.13.0: collapsible groups + HTML5 drag-drop + useLabPrefs persistence to `.lab-prefs.json`)*
+- [x] As a user, clicking an insight card opens a detail panel with a large interactive chart, the insight's Meaning prose, sync history, and inline tweak editing. *(Shipped v0.13.0: InsightDetailPanel slide-over + bounded sync history)*
 
 ## Acceptance Criteria
 
@@ -82,10 +85,16 @@ This is NOT a BI tool. Lab is a **metrics delivery** subsystem: it captures WHAT
 ### Validation (M1 definition-of-done)
 
 - [x] **Automated:** unit/integration tests for all criteria above (91 new tests) + dashboard `tsc -b` clean.
-- [ ] **Manual dashboard checklist** (8 items): Lab page opens; insights render grouped; number shows latest+unit+staleness; line renders SVG with date axis; pie renders slices+legend; raw toggles table⇄JSON; per-insight Refresh updates on success and toasts loud error on failure; Sync all refreshes every insight with one deliberate failure still updating the others; edit tweak (range last_30_days → last_1_year), Save, reload → still set, refresh re-fetches and granularity coarsens; bound insight shows "feeds <objective>" provenance chip.
+- [x] **Manual dashboard checklist** (8 items): Lab page opens; insights render collapsible grouped sections; number shows latest+unit+staleness; line renders interactive SVG with date axis + crosshair tooltip; pie renders slices+legend with hover tooltips; raw toggles table⇄JSON; per-insight Refresh updates on success and toasts loud error on failure; Sync all refreshes every insight with one deliberate failure still updating the others; edit tweak (range last_30_days → last_1_year), Save, reload → still set, refresh re-fetches and granularity coarsens; bound insight shows "feeds <objective>" provenance chip. *(Verified v0.13.0)*
 
 ## Constraints & Decisions
 <!-- LIFO: newest at top -->
+
+- **[2026-07-07]** **Lab prefs persistence — localStorage + server write-through.** `useLabPrefs` hook mirrors `useRoadmapPrefs` to persist collapsible-group state and card order: localStorage for immediate reactivity PLUS debounced write to `state/.lab-prefs.json` via new `GET/PUT /api/lab-prefs` route (added to `buildBrainGitignore`). This matters for the desktop app — every launch gets a fresh empty localStorage (new loopback port), so localStorage-only would silently lose your layout. New insights not in a saved order simply appear after the ordered ones. Collapsible state and order are both per-machine (local-only, not synced in brain repo).
+- **[2026-07-07]** **Insights board UX — collapsible groups + within-group reorder only.** Group headers are toggle buttons (chevron + card count, `SubGroupSection` idiom from tasks board). Cards use HTML5 drag-and-drop (dims dragged card, highlights drop target) within the SAME group only — since a card's `group` comes from the manifest, dropping across groups is ignored rather than silently rewriting the manifest (cross-group reassignment is an edit-manifest operation). This mirrors TaskCard drag behavior but stricter.
+- **[2026-07-07]** **InsightDetailPanel as a centered near-fullscreen modal, not a slide-over.** User feedback from the initial right slide-over: the chart felt cramped, especially for line charts with many series. Reworked to a centered modal (`min(1160px,94vw) × min(820px,92vh)`) with large interactive chart + Meaning prose on the left, Details/Edit tweaks/Update history rail on the right; collapses to one column under 900px. Pop animation + dimmed overlay. Escape (overlayStack-integrated with form-field guard) + overlay click both close.
+- **[2026-07-07]** **Chart interactivity — crosshair + multi-series tooltip for line charts.** LineChart: vertical crosshair snaps to the nearest data position (pointer aims at a DATE, not a 2px line), one tooltip reads out EVERY series at that x. Hover-independent geometry (scales, tick labels) memoized so pointer-move renders only rebuild the crosshair/tooltip overlay (perf). PieChart: hover slice highlight + tooltip; lone 100% slice renders as a `<circle>` (SVG coincident-endpoint arc bug). Both charts: `touchAction: pan-y` (mobile scroll).
+- **[2026-07-07]** **Keyboard accessibility for InsightCard.** The whole card is clickable (opens detail panel) but has `role="button"`, `tabIndex={0}`, and Enter handler — matching TaskCard parity. Inner controls (Refresh, tweak fields, raw-view toggle) use `stopPropagation` so clicking them doesn't trigger the card click.
 
 - **[2026-07-06]** **Bounded sync history — count cap AND size cap.** `cache.history` keeps the cache an insight snapshot, not a log file: HISTORY_MAX=50 events, per-event error truncated at HISTORY_ERROR_MAX=300 chars. Review lesson (bookmarked): a count cap alone is not a size cap — a bounded list of unbounded strings still bloats; cap both. TTL "fresh" skips never append (no run happened). Companion UI lesson: render-time state indexing into derived arrays (crosshair `hoverIdx` into `xKeys`) must be clamped where it is READ — props can shrink between renders.
 - **[2026-07-05]** **Insights, not raw data.** MAX_POINTS=62 per series is a structural cap enforced in `rollup.ts` (`capSeries` coarsens daily→weekly→monthly until under cap). A ~1-year span is monthly-only; a ~1-month span may be daily/weekly. Granularity derives from resolved tweak span: >180d monthly, 45-180d weekly, <=45d daily. Lab is NOT a BI tool — it delivers curated metrics to agents + dashboards, never raw data dumps.
@@ -94,7 +103,8 @@ This is NOT a BI tool. Lab is a **metrics delivery** subsystem: it captures WHAT
 - **[2026-07-05]** **Sleep does NOT run lab sync** (credential exposure, latency, non-determinism). The only sleep↔metric interaction remains the existing `metric.current` relaxation; a bound insight feeds it via its own lab sync instead.
 - **[2026-07-05]** **Provenance: plan converged via goal-skill** (planner + pragmatist/critic/security reviewers, 3 iterations, 9 blocking findings folded in — scope cuts P1-P3, `ApiAdapter` integration C1 + URL-split C2, security S1-S3 + stub-gitignore regression S4). All integration claims verified against working tree on branch `feat/sleep-debt-header-tracker` as of 2026-07-05.
 - **[2026-07-05]** **Plan assumptions (defaults chosen; PO may veto before implementation).** A1: charts are hand-rolled SVG (no chart lib exists or added); A2: insight manifests + cache snapshots DO sync in the brain repo — only credentials excluded; A4: `writeCredential` ensures BOTH governing gitignores unconditionally; Q1: `lab create` is flag-driven (conversation lives in skill protocol); Q2: empty bound series leaves `metric.current` untouched and warns (never writes non-finite).
-- **[2026-07-05]** **Out of scope / v2.** Roadmap-side provenance chip (insight-side "feeds <objective>" is in); ready-made PostHog/Google-Sheets adapters (expressible via generic HTTP or scripts); JS-expression extraction (JSON-path only in MVP); range tweak TYPE (enum|date|string only); sourceHash/request-level cache invalidation (staleness is TTL-only); objective-side metric time-series/trendline; `useLabPrefs` persistence; sleep-driven sync; insight federation; lab-adapter-builder sub-agent; script sandboxing beyond tripwire+docs; init scaffolding/migration for `lab/` (store creates dirs lazily like objectives).
+- **[2026-07-07]** **Binding is objective-side editable now — one feeder per objective.** `lab bind <slug> <objective>` / `PATCH /api/lab/:slug/binding` / dashboard InsightPicker (objective create modal + detail panel Key Result section) all call the same `bindInsight` engine: validates the objective exists, enforces a SINGLE feeder per objective (any other insight bound to it is unbound and reported in `unbound[]`), and immediately seeds `metric.current` from the cached latest (`seededCurrent`) so the roadmap shows the measured value without waiting for the next sync. Removing an objective's metric from the panel also disconnects its feeding insight (a binding with no KR would warn on every sync). This ships the former "roadmap-side provenance" v2 cut.
+- **[2026-07-05]** **Out of scope / v2.** ~~Roadmap-side provenance chip~~ (shipped 2026-07-07 as the objective-side InsightPicker + `lab bind`); ready-made PostHog/Google-Sheets adapters (expressible via generic HTTP or scripts); JS-expression extraction (JSON-path only in MVP); range tweak TYPE (enum|date|string only); sourceHash/request-level cache invalidation (staleness is TTL-only); objective-side metric time-series/trendline; `useLabPrefs` persistence; sleep-driven sync; insight federation; lab-adapter-builder sub-agent; script sandboxing beyond tripwire+docs; init scaffolding/migration for `lab/` (store creates dirs lazily like objectives).
 
 ## Technical Details
 
@@ -142,6 +152,18 @@ This is NOT a BI tool. Lab is a **metrics delivery** subsystem: it captures WHAT
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-07-07 - Completed and shipped in v0.13.0
+- Feature fully released: all user stories, acceptance criteria, and manual validation checklist completed. Status `in_review` → `completed`. Lab M1 specification shipped across v0.12.0–v0.13.0 with dashboard UX polish (collapsible groups, reorderable cards, detail panel, interactive charts), `lab bind` objective-side binding, bounded sync history, and Entity Router hardening (language-independent entity nouns + problem-shape triggers + don't-rebuild rule). Full test suite 2891 tests green.
+
+### 2026-07-07 - Insights board UX + prefs persistence (v0.13.0)
+- Groups now collapsible (chevron header + count, aria-expanded) and cards drag-reorderable within their group (HTML5 dnd, TaskCard idiom). Prefs persist per-machine via new `useLabPrefs` hook (localStorage mirror + debounced write-through to new `GET/PUT /api/lab-prefs` → `state/.lab-prefs.json` via `makeSettingsHandlers`, gitignored in `buildBrainGitignore`) — survives the desktop app loopback-port localStorage wipe. Runtime-verified via scratch vault: API round-trip, hydration after `localStorage.clear()`, drag reorder (`DragEvent` dispatch), collapse persistence, card-click panel intact.
+
+### 2026-07-07 - Objective-side insight binding UI + `lab bind` (v0.13.0)
+- New `bindInsight` engine (`sync.ts`) + strict `writeInsightBinding` store write: objective-existence check, single-feeder invariant (`unbound[]`), immediate `metric.current` seeding from the cached latest (`seededCurrent`).
+- Surfaces: `PATCH /api/lab/:slug/binding`, CLI `lab bind <slug> <objective> [--value] [--clear]`, dashboard `InsightPicker` (searchable, shows latest value + "feeds <objective>" badges) wired into ObjectiveCreateModal (prefills metric label/unit/current from the insight; binds after create) and ObjectiveDetailPanel Key Result section (connect/change/disconnect with toasts; clearing the metric also unbinds).
+- `useUpdateBinding` hook invalidates lab + objectives + roadmap queries. 5 new route tests; full suite 2891 passed.
+- Agent-facing docs pass (all surfaces): SKILL.md Lab capabilities row + Entity Router now name `lab bind`; cli-reference (`lab bind` row + insight-fed hands-off caveat on `roadmap objective metric`); tasks-and-features (objective protocol steps 4/6 offer-connect + measured-KR exception + clear-order rule, insight protocol step 7 names the verb); installed skill copy re-synced; sleep agents (.claude/agents/sleep-tasks/state) already carried the hands-off + one-feeder rules; README (bullet + cheatsheet row) and DEEP-DIVE (bind flow + verb list) updated. Marker tests green.
 
 ### 2026-07-06 - Bounded sync history + InsightDetailPanel slide-over + interactive charts (working tree, in_review)
 - `cache.history` bounded sync log added (`SyncEvent` in `types.ts`, `appendHistory` in `sync.ts`; HISTORY_MAX 50, per-event error cap 300 chars, fresh-skips don't append) + `tests/unit/lab-sync.test.ts` coverage. A review verifier flagged this PRD's cache-JSON contract as drifted — reconciled above.

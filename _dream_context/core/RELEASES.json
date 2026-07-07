@@ -1,5 +1,69 @@
 [
   {
+    "id": "rel_unfbu3vW",
+    "version": "v0.13.1",
+    "date": "2026-07-07",
+    "summary": "Patch release: Codex/OpenCode platform support removed (deliberate descope — Claude Code sole platform, clean re-add seams kept), Lab insight-KR picker (lab bind from dashboard objective dialogs), collapsible + drag-reorderable insight groups with per-machine persisted prefs, empty-remote brain attach fix (remoteBranchExists + first-push bootstrap + askpass self-heal).",
+    "breaking": false,
+    "status": "released",
+    "features": [
+      "feat_lab_insights",
+      "feat_Sx4EmLgP"
+    ],
+    "tasks": [],
+    "changelog": [
+      {
+        "date": "2026-07-07",
+        "type": "feat",
+        "scope": "lab",
+        "description": "New InsightPicker component added to objective creation and detail modals, enabling users to bind a Lab insight to an objective's Key Result directly from the dashboard UI (complementing the existing 'lab bind' CLI command). Picking an insight prefills the metric's label, unit, and current value from the cached snapshot and auto-binds on objective creation. Insight groups are now collapsible/expandable with per-machine state persistence. New useLabPrefs hook and ui-settings route manage Lab UI preferences. Server-side group expansion state added to store.ts and lab routes.",
+        "breaking": false,
+        "summary": "Lab dashboard: insight-KR picker UI + collapsible groups",
+        "references": [
+          "file:dashboard/src/components/roadmap/InsightPicker.tsx",
+          "file:dashboard/src/components/roadmap/ObjectiveCreateModal.tsx",
+          "file:dashboard/src/components/roadmap/ObjectiveDetailPanel.tsx",
+          "file:dashboard/src/components/lab/LabBoard.tsx",
+          "file:dashboard/src/hooks/useLabPrefs.ts",
+          "file:src/server/routes/lab.ts",
+          "file:src/server/routes/ui-settings.ts"
+        ]
+      },
+      {
+        "date": "2026-07-07",
+        "type": "chore",
+        "scope": "platform",
+        "description": "Entire .codex/ tree removed (26 files: agent configs, prompts, config.toml) along with AGENTS.md as part of a deliberate descope decision. Platform abstraction layer simplified: platforms.ts, catalog.ts, install-packs.ts, and manifest.ts no longer handle multi-platform routing. Commands updated (init, install-skill, install-claude-md, update) to remove codex/opencode detection and scaffolding paths. Tests adapted across platform-install, install-packs, manifest-bootstrap, and platform-defaults suites. The project now ships Claude Code as the sole first-class platform.",
+        "breaking": false,
+        "summary": "Remove codex/opencode platform support — deliberate descope",
+        "references": [
+          "file:src/lib/platforms.ts",
+          "file:src/lib/catalog.ts",
+          "file:src/lib/install-packs.ts",
+          "file:src/lib/manifest.ts",
+          "file:src/cli/commands/init.ts",
+          "file:src/cli/commands/install-skill.ts"
+        ]
+      },
+      {
+        "date": "2026-07-07",
+        "type": "fix",
+        "scope": "brain-sync",
+        "description": "Brain sync empty-remote attach fixed end-to-end: sync-engine.ts + new git.remoteBranchExists checks whether origin/main exists before every fetch; attach bootstraps first commit immediately (same scrubbed primitive as Create); pull-only noops with guidance instead of crashing on 'couldn't find remote ref'; askpass helper self-heals non-executable installs at runtime (source +x, build enforces 755, resolveAskpassPath chmod if needed). 99/99 brain/git-sync tests green, runtime-verified against real server.",
+        "breaking": false,
+        "summary": "Brain sync: empty-remote attach + askpass self-heal fixed end-to-end"
+      },
+      {
+        "date": "2026-07-07",
+        "type": "docs",
+        "scope": "skill",
+        "description": "Lab/insights skill documentation pass: lab bind verb, insight→objective KR binding (single feeder, seed-on-connect, measured-KR exception), and 'sleep never runs lab sync' rule documented across all agent surfaces (agents/sleep-tasks.md, sleep-state.md, sleep.md), skill references (SKILL.md Entity Router + capabilities, cli-reference.md, tasks-and-features.md Lab section), README, and DEEP-DIVE. Marker tests pinned (15/15 green).",
+        "breaking": false,
+        "summary": "Lab/insights documentation: lab bind, KR binding, sleep policy across all surfaces"
+      }
+    ]
+  },
+  {
     "id": "rel_I4EvNe26",
     "version": "v0.14.0",
     "date": "",

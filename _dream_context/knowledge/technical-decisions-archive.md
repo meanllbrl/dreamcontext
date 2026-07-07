@@ -77,3 +77,7 @@ Granular implementation decisions moved here from 2.memory.md to keep the active
 - **Council: nested folder layout is deliberate convention break**: `_dream_context/council/{debate_id}/{persona_slug}/` because N×M doesn't scale flat. Exception, not a pattern to follow elsewhere.
 - **Council: promotion is two-path, no forced synchronous decision**: Main agent asks post-synthesis; rem-sleep picks up unpromoted via `council list --unpromoted`.
 - **Council: model diversity per persona uses Agent tool `model:` param**: Claude Code dispatch capability, not a dreamcontext feature.
+
+## Platform Support
+
+- **[2026-07-07] Codex/OpenCode platform support removed**: Narrowed to Claude Code as sole supported platform. Multi-platform abstraction kept (claude-only bodies with "branch here when re-adding" seams), but all Codex-specific code deleted: `.codex/` tree (26 files), `.agents/` (64 installed copies), `AGENTS.md`, TOML agent writer, dual config generation, parallel test surface. **Rationale:** Zero adoption, significant maintenance burden, Clean Code principle violated (dead code). Re-adding later per `include-codex-opencode-support` objective is a clean reversal. **Removed:** backend platform code, dashboard codex option, 11 test files updated (codex-only cases deleted). **Kept:** catalog/manifest seams, roadmap objective, brain history. **Outcome:** 2881 tests green, zero `codex` refs, simpler codebase. See `competitive-analysis-ecc.md` for ecosystem context (ECC ships 5 platforms; dreamcontext prioritizes depth over breadth).
