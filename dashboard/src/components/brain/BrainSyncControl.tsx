@@ -70,6 +70,9 @@ export function BrainSyncControl({ onOpenSettings }: BrainSyncControlProps) {
   const [feedback, setFeedback] = useState<SyncFeedback | null>(null);
   const [failure, setFailure] = useState<SyncFailure | null>(null);
   const [scrubBlocks, setScrubBlocks] = useState<ScrubBlock[]>([]);
+  // A blocked outcome with no panel of its own (detached HEAD, or a non-token
+  // no-remote) — held so the resting label reflects it instead of decaying to "synced".
+  const [blockedNote, setBlockedNote] = useState<string | null>(null);
   const [checkpointSha, setCheckpointSha] = useState<string | null>(null);
   const [fallbackOpen, setFallbackOpen] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -94,6 +97,7 @@ export function BrainSyncControl({ onOpenSettings }: BrainSyncControlProps) {
     setFeedback(null);
     setFailure(null);
     setScrubBlocks([]);
+    setBlockedNote(null);
     setCheckpointSha(null);
     runSync.mutate({ mode, noCheckpoint: opts.noCheckpoint }, {
       onSettled: (result?: BrainSyncResult, error?: unknown) => {
@@ -106,6 +110,7 @@ export function BrainSyncControl({ onOpenSettings }: BrainSyncControlProps) {
             break;
           case 'no-remote':
             if (result.failure) setFailure(result.failure);
+            else setBlockedNote(result.note ?? t('brain.sidebar.refreshFailed'));
             showFeedback({ kind: 'warn', message: result.note ?? t('brain.sidebar.refreshFailed') });
             break;
           case 'blocked-scrub':
@@ -123,6 +128,7 @@ export function BrainSyncControl({ onOpenSettings }: BrainSyncControlProps) {
             showFeedback({ kind: 'warn', message: t('brain.sync.userMergeShort') });
             break;
           case 'detached-head':
+            setBlockedNote(t('brain.sync.detachedShort'));
             showFeedback({ kind: 'warn', message: t('brain.sync.detachedShort') });
             break;
           case 'pulled':
@@ -182,7 +188,23 @@ export function BrainSyncControl({ onOpenSettings }: BrainSyncControlProps) {
     }
   };
 
-  const mainSyncLabel = feedback?.message ?? (runSync.isPending ? t('brain.sidebar.syncing') : t('brain.sidebar.syncedProject'));
+  // The resting label must reflect the last known sync state. Any persistent, unresolved
+  // condition — a classified failure, a scrub block, a merge awaiting resolution, or a
+  // panel-less block (detached HEAD / non-token no-remote) — means the sync did NOT succeed,
+  // so the row must never decay back to the cheerful "Project synced" once the transient
+  // feedback clears (that decay is what left an "expired sign-in" banner sitting above a
+  // green "Project synced" footer). Mirror the active panel's short label where there is one.
+  const blockedLabel: string | null =
+    failure ? t('brain.sidebar.refreshFailed')
+    : scrubBlocks.length > 0 ? t('brain.sidebar.refreshBlocked')
+    : mergeKind === 'code' ? t('brain.sync.codeConflictShort')
+    : mergeKind === 'user' ? t('brain.sync.userMergeShort')
+    : mergeKind === 'agent' ? t('brain.sidebar.refreshAwaitingAgent')
+    : blockedNote;
+
+  const mainSyncLabel = feedback?.message
+    ?? (runSync.isPending ? t('brain.sidebar.syncing') : (blockedLabel ?? t('brain.sidebar.syncedProject')));
+  const labelKind: SyncFeedback['kind'] | null = feedback?.kind ?? (blockedLabel ? 'warn' : null);
   const recovery = failure ? recoveryAction(failure) : null;
 
   return (
@@ -285,7 +307,11 @@ export function BrainSyncControl({ onOpenSettings }: BrainSyncControlProps) {
           <span className={`sidebar-icon${runSync.isPending ? ' sidebar-icon--spin' : ''}`}>
             {runSync.isPending ? <RefreshIcon size={14} /> : <GitHubMark size={14} />}
           </span>
-          <span className={`sidebar-label${feedback ? ` sidebar-label--sync-${feedback.kind}` : ''}`}>
+          <span
+            className={`sidebar-label${labelKind ? ` sidebar-label--sync-${labelKind}` : ''}`}
+            role="status"
+            aria-live="polite"
+          >
             {mainSyncLabel}
           </span>
         </button>
