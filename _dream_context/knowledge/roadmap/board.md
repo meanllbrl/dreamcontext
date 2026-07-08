@@ -7,22 +7,24 @@ tags:
   - 'topic:roadmap'
   - 'topic:pm'
 pinned: false
-date: '2026-07-07'
+date: '2026-07-08'
 ---
 
 # Roadmap Board
 
-> Auto-generated 2026-07-07 by `dreamcontext roadmap`. Objectives live in `core/objectives/`; task links live in each task's `objectives:` frontmatter.
+> Auto-generated 2026-07-08 by `dreamcontext roadmap`. Objectives live in `core/objectives/`; task links live in each task's `objectives:` frontmatter.
 
-### 🟢 **improve-recall-mechanism** — Improve Recall Mechanism · 4/4 done (100%) · target 2026-08-16 · forecast — (unforecastable: no dated member tasks)
+### ⚪ **improve-recall-mechanism** — Improve Recall Mechanism · 4/5 done (80%) · target 2026-08-16 · forecast — (unforecastable: no dated member tasks)
   Unblocks: hello-world-pr, make-it-a-business
   - feat-embedding-ab-eval-harness-bm25-vs-hybrid-vs-dense-on-frozen-gold-set (completed) · v0.14.0
+  - feat-embedding-beta-rollout-opt-in-flag-doctor-gitignore-docs (todo) · BACKLOG
   - feat-embedding-cache-engine-content-hash-chunk-cache-and-incremental-refresh (completed) · v0.14.0
   - feat-embedding-spike-pick-multilingual-model-validate-latency-and-token-type-ids (completed) · v0.14.0
   - feat-hybrid-recall-fusion-bm25-plus-dense-via-rrf-behind-flag (completed) · v0.14.0
 
-### ⚪ **improve-sleep-quality** — Improve sleep quality · no tasks yet · target 2026-08-02 · forecast — (unforecastable: no dated member tasks)
+### ⚪ **improve-sleep-quality** — Improve sleep quality · 0/1 done (0%) · target 2026-08-02 · forecast — (unforecastable: no dated member tasks)
   Unblocks: hello-world-pr, make-it-a-business
+  - feat-sleep-semantic-dedup-nearest-neighbor-merge-instead-of-duplicate (todo) · BACKLOG
 
 ### ⚪ **include-codex-opencode-support** — Include Codex&OpenCode Support · no tasks yet · target 2026-08-23 · forecast — (unforecastable: no dated member tasks)
   Unblocks: hello-world-pr, make-it-a-business
@@ -35,18 +37,26 @@ date: '2026-07-07'
   - github-cloud-collaboration-brain-repo-sync (completed) · v0.13.0 · 2026-07-04 → …
   - interactive-roadmap-dashboard-forecast-timeline-cascade-editable-detail-panel (completed) · v0.10.5
 
-### 🟡 **simplified-ux** — Simplified UX · 7/8 done (88%) · target 2026-07-31 · forecast 2026-07-04 ✓ on track
+### 🟡 **simplified-ux** — Simplified UX · 7/14 done (50%) · target 2026-07-31 · forecast 2026-07-04 ✓ on track
   Unblocks: hello-world-pr, make-it-a-business
+  - agent-surface-plus-new-button-face-should-open-menu-or-remember-last-kind (todo) · BACKLOG
+  - author-a-task-via-a-claude-agent-from-the-new-task-button (todo) · BACKLOG
   - collapse-features-into-typed-knowledge (completed) · 0.10.7 · 2026-07-05 → …
+  - delegate-a-task-to-a-claude-agent-from-the-board (todo) · BACKLOG
   - desktop-launcher-ux-drag-fix-cmd-p-project-switcher (completed) · 0.10.7 · 2026-07-04 → …
   - desktop-settings-agents-panel-hotkey-reopen-tabs-auto-title (completed) · 0.10.7 · 2026-07-04 → …
   - feat-sleepy-agent-surface-ux-redesign (completed) · v0.10.5
+  - feat-tasks-present-version-as-cycle-ui-cli-relabel-version-stays-canonical (todo) · BACKLOG
   - fix-agent-session-tab-rotation-mapping-auto-title-resume-stability (completed) · v0.13.0
   - fix-sleepy-agent-auto-submit-timing-race-plus-composer-skill-browser-ux (completed) · v0.13.0
   - fix-tauri-acl-shell-allow-open-for-external-links (completed) · v0.13.0
+  - in-app-task-detail-inline-agent-curate-the-task-via-anchored-comments-revise-summarize-split-status-with-real-time-refresh (todo) · BACKLOG
+  - launcher-cross-project-multi-vault-task-view-for-portfolio-planning (todo) · BACKLOG
   - launcher-federation-board-modeless-direct-manipulation-ux (in_review) · 0.12.0
 
 ### 🔵 **make-it-a-business** — Make it a Business · $ 857/2000 MRR (43%) · target 2026-09-05 · forecast 2026-07-04 ✓ on track · deps: improve-recall-mechanism, improve-sleep-quality, simplified-ux, make-dreamcontext-team-ready, include-codex-opencode-support
   Unblocks: hello-world-pr
+  - feat-web-hosted-dreamcontext-com-github-oauth-collaboration-layer-over-the-brain (todo) · BACKLOG
+  - feat-web-read-only-public-surface-safely-share-a-single-knowledge-file-excalidraw-board-via-tunnel (todo) · BACKLOG
 
 ### ⚪ **hello-world-pr** — Hello World PR · no tasks yet · target 2026-10-02 · forecast 2026-07-04 ✓ on track · deps: improve-recall-mechanism, improve-sleep-quality, simplified-ux, include-codex-opencode-support, make-it-a-business

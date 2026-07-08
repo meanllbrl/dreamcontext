@@ -2,7 +2,7 @@
 id: feat_I8gilyj8
 status: in_review
 created: '2026-06-25'
-updated: '2026-07-07'
+updated: '2026-07-08'
 tags:
   - 'topic:skills'
   - 'topic:cli'
@@ -16,6 +16,7 @@ name: dreamcontext-deep-research
 description: ''
 pinned: false
 date: '2026-06-25'
+released_version: v0.14.2
 ---
 
 ## Why

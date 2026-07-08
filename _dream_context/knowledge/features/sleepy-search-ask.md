@@ -2,7 +2,7 @@
 id: feat_t9fQ1w-A
 status: in_review
 created: '2026-06-27'
-updated: '2026-07-07'
+updated: '2026-07-08'
 tags:
   - frontend
   - backend
@@ -18,6 +18,7 @@ name: sleepy-search-ask
 description: ''
 pinned: false
 date: '2026-06-27'
+released_version: v0.14.2
 ---
 
 ## Why

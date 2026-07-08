@@ -2,7 +2,7 @@
 id: feat_nM4EnT8k
 status: in_review
 created: '2026-06-28'
-updated: '2026-07-07'
+updated: '2026-07-08'
 tags:
   - 'topic:desktop'
   - 'topic:agents'
@@ -20,6 +20,7 @@ name: in-app-agent-terminal
 description: ''
 pinned: false
 date: '2026-06-28'
+released_version: v0.14.2
 ---
 
 ## Why

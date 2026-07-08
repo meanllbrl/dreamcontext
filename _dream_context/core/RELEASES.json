@@ -1,5 +1,64 @@
 [
   {
+    "id": "rel_QDmxjDMb",
+    "version": "v0.14.2",
+    "date": "2026-07-08",
+    "summary": "Cloud-sync hardening + brain-sync skill reference: one-click AI resolve for merge conflicts, full-repo/whole-project sync safety, classified failure recovery with concrete remediation, comprehensive cross-OS setup docs (Windows CRLF+symlinks, WSL, token scope), silent-failure troubleshooting playbook.",
+    "breaking": false,
+    "status": "released",
+    "features": [
+      "feat_Sx4EmLgP"
+    ],
+    "tasks": [
+      "task_qRg4uW5k",
+      "task_cJDIx4uc"
+    ],
+    "changelog": [
+      {
+        "date": "2026-07-08",
+        "type": "feat",
+        "scope": "federation",
+        "description": "The snapshot's 'Connected projects' block now shows each peer's pinned knowledge titles (capped at 5, alphabetically sorted) — drawn from the peer-summary cache so the hot-path stays zero-I/O. New PeerSummary.pinnedKnowledge field; readPinnedTitles() scans both knowledge/** (recursive, flat + migrated features) and core/features/ (un-migrated peers) for pinned: true frontmatter, extracts title ?? name, dedupes, and caps at 5. The glance shows TITLES only (not full content); agents query live via recall --vault <name> when detail is needed. Tazelik semantics same as the rest of the peer-summary cache — refreshes on federation peers sync/connect or next sleep. Decision: peer-pinning a doc does NOT pin it for you (pin is a LOCAL file-level feature). Updated knowledge/federation-cross-vault.md snapshot-glance section.",
+        "breaking": false,
+        "summary": "Snapshot glance surfaces peer-pinned knowledge titles (cap 5, both-scan)",
+        "references": [
+          "file:src/lib/federation-peer-summary.ts",
+          "file:src/cli/commands/snapshot.ts",
+          "knowledge:federation-cross-vault",
+          "task:federation-glance-surfaces-peer-pinned-knowledge"
+        ]
+      },
+      {
+        "date": "2026-07-08",
+        "type": "feat",
+        "scope": "brain-sync",
+        "description": "Close every remaining gap in whole-project (full-repo) sync: real one-click 'Resolve with AI' (banner launches in-app agent running /dream-sync, browser dashboard falls back to copyable command); detached HEAD detection (refuse, never push a detached HEAD onto main); distinguish user's own git merge from team-merge handoff; code-conflict policy (files outside _dream_context/ defer to human editor, never semantically merged or sent to the agent; report separates code from brain conflicts); classified network/auth/permission/push-rejected failures with concrete recovery steps (Reconnect GitHub / Retry / names the repo+scope / offline-will-retry); scrub-block guidance + one-click add-to-.gitignore (safe local secret files only, hardened against !-negation injection); auto-checkpoint transparency (identifiable + undoable) + a disable-on-open setting; non-fast-forward recovery (Retry sync); mandatory pre-push scrub over the FULL push range in both auto and --push-only. Sidebar sync UI extracted to BrainSyncControl.tsx; status route adds mergeKind + codeConflicts. Full suite 3013 green.",
+        "breaking": false,
+        "summary": "Cloud sync hardening: one-click AI resolve, full-repo safety, classified failure recovery",
+        "references": [
+          "commit:d8f633d",
+          "file:src/lib/git-sync/failure.ts",
+          "file:src/lib/git-sync/conflict-report.ts",
+          "file:src/lib/git-sync/scrub.ts",
+          "file:dashboard/src/components/brain/BrainSyncControl.tsx",
+          "file:src/server/routes/brain.ts",
+          "knowledge:features/brain-repo-sync"
+        ]
+      },
+      {
+        "date": "2026-07-08",
+        "type": "docs",
+        "scope": "brain-sync",
+        "description": "New skill/references/brain-sync.md: three sync modes (separate/full-repo/in-tree), setup, secrets-first token auth (no gh/credential-helper) + required push scope, shared-vs-machine-local config, lifecycle, cross-OS setup (per-machine token, Windows CRLF + symlink privilege, enclosing-repo trap, WSL), silent-failure troubleshooting, second-machine onboarding. Slimmed integrations.md to a pointer + added full-repo; documented sleep-done brain sync in sleep.md; repointed SKILL.md; 6 marker tests pin the load-bearing sections. Closes the doc lag behind the full-repo hardening code (d8f633d).",
+        "breaking": false,
+        "summary": "Dedicated brain-sync skill reference — full-repo mode, cross-OS setup, token scope, troubleshooting",
+        "references": [
+          "commit:172bd11"
+        ]
+      }
+    ]
+  },
+  {
     "id": "rel__tis3stu",
     "version": "0.14.1",
     "date": "2026-07-07",

@@ -2,7 +2,7 @@
 id: feat_f1B8gR0v
 status: in_review
 created: '2026-06-21'
-updated: '2026-07-07'
+updated: '2026-07-08'
 tags:
   - architecture
   - 'topic:agents'
@@ -15,6 +15,7 @@ name: brain-curator
 description: ''
 pinned: false
 date: '2026-06-21'
+released_version: v0.14.2
 ---
 
 ## Why

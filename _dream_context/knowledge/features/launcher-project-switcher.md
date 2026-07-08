@@ -2,7 +2,7 @@
 id: feat_OhUtxfpb
 status: in_review
 created: '2026-07-04'
-updated: '2026-07-07'
+updated: '2026-07-08'
 tags:
   - 'topic:desktop'
   - frontend
@@ -13,6 +13,7 @@ name: launcher-project-switcher
 description: ''
 pinned: false
 date: '2026-07-04'
+released_version: v0.14.2
 ---
 
 ## Why

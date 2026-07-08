@@ -173,7 +173,20 @@ The "epic" is **this document**. The umbrella/organizing view lives in knowledge
 
 (Graduation-to-default gates are in "Conditions to Make It Default" above.)
 
+## Technical Hardening (Post-Ship)
+
+**Session 884d9d13 (2026-07-08) — 3-round adversarial review** hardened the embedding layer after initial v0.14.0 ship, catching two real defects:
+
+1. **Recall-mode-consistency cache thrash fix (`additive: true`):** Type-scoped dashboard search (`types=knowledge,feature`) was evicting all other vectors from the cache, so the next full query would re-embed the whole corpus inline on a keystroke — the exact stall the layer was built to prevent. Root cause: recall-time refresh was replacing the cache wholesale instead of adding incrementally. **Fix:** recall-time refresh is now **add-only** (`additive: true` flag); pruning is left to explicit refreshers (sleep cycle, manual refresh). Dashboard scoped search no longer triggers corpus-wide re-embedding.
+
+2. **Stale-model cache invalidation:** A model version/hash change left stale vectors in the cache, causing subtle ranking drift. **Fix:** cache store now validates model signature on load and forces a full re-index when the model changes.
+
+**Minor known issues (non-blocking, acknowledged by reviewers):**
+- Per-vault validity memo evicts FIFO rather than LRU (only matters past 32 simultaneously-open vaults; costs one extra cache read per eviction).
+- ⌘K Intelligent toggle unmounts the search component rather than hiding it (could drop focus in a near-impossible timing window; aesthetic only).
+
+These findings are captured in the multi-review report; the fixes shipped same-day and are regression-tested (suite 2988 green post-hardening vs 2922 at initial ship).
+
 ## Last Verified
 
-2026-07-07 (tasks 1–4 built + A/B measured; verdict: opt-in beta, category-shaped
-win — see Status. Full suite 2898 tests green, build clean. Tasks 5–6 remain.)
+2026-07-08 (tasks 1–4 built + A/B measured + post-ship hardening; verdict: opt-in beta, category-shaped win — see Status. Full suite 2988 tests green, build clean. Tasks 5–6 remain.)

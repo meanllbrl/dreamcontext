@@ -2,7 +2,7 @@
 id: feat_34wMAtiM
 status: planning
 created: '2026-07-04'
-updated: '2026-07-07'
+updated: '2026-07-08'
 tags:
   - 'topic:agents'
   - backend
@@ -15,6 +15,7 @@ name: calendar-integration
 description: ''
 pinned: false
 date: '2026-07-04'
+released_version: v0.14.2
 ---
 
 ## Why

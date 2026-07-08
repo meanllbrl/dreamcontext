@@ -2,7 +2,7 @@
 id: feat_WBfWsxgS
 status: in_review
 created: '2026-07-02'
-updated: '2026-07-07'
+updated: '2026-07-08'
 tags:
   - 'topic:roadmap'
   - 'topic:pm'
@@ -16,6 +16,7 @@ name: okr-roadmap
 description: ''
 pinned: false
 date: '2026-07-02'
+released_version: v0.14.2
 ---
 
 ## Why
