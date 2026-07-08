@@ -7,6 +7,7 @@ import { header } from '../../lib/format.js';
 import { listUnfencedDataStructures } from '../../lib/data-structures-migration.js';
 import { hasTaskOverride, loadTaskOverride } from '../../lib/overrides.js';
 import { listObjectives, getObjective, isSafeObjectiveSlug, isCalendarDate, OBJECTIVE_STATUSES } from '../../lib/objectives-store.js';
+import { auditFeatureLinks, reconcileFeatureLinks, type LinkAudit } from '../../lib/feature-links.js';
 import { buildRoadmapModel } from '../../lib/roadmap-model.js';
 import { dirname } from 'node:path';
 import { listInsights, isSafeInsightSlug } from '../../lib/lab/store.js';
@@ -400,11 +401,54 @@ export function checkLab(root: string): CheckResult[] {
   return results;
 }
 
+
+/**
+ * Task↔feature link integrity: every `task.related_feature` must resolve to a
+ * real feature (canonical slug) whose `related_tasks` lists the task back, and
+ * every `related_tasks` entry must be a live task pointing here. Deterministic
+ * drift is fixable in one shot with `doctor --heal-links`.
+ */
+function checkTaskFeatureLinks(root: string): CheckResult[] {
+  const results: CheckResult[] = [];
+  let audit: LinkAudit;
+  try {
+    audit = auditFeatureLinks(root);
+  } catch (err) {
+    return [{
+      name: 'Task↔feature links',
+      status: 'error',
+      message: `Link audit failed: ${err instanceof Error ? err.message : String(err)}`,
+    }];
+  }
+  const warnAll = (messages: string[]) => {
+    for (const message of messages) results.push({ name: 'Task↔feature links', status: 'warn', message });
+  };
+  warnAll(audit.ghostFeatureRefs.map((g) => g.candidates
+    ? `task '${g.task}' → related_feature '${g.feature}' is ambiguous across ${g.candidates.length} features (${g.candidates.join(', ')}) — qualify it: dreamcontext tasks feature ${g.task} <folder/slug>`
+    : `task '${g.task}' → related_feature '${g.feature}' does not exist (fix: dreamcontext tasks feature ${g.task} <feature|clear>)`));
+  warnAll(audit.conflictingClaims.map((c) => `task '${c.task}' is listed in related_tasks of ${c.features.length} features (${c.features.join(', ')}) but claims none (fix: dreamcontext tasks feature ${c.task} <feature>)`));
+  warnAll(audit.ghostTaskRefs.map((g) => `feature '${g.feature}' lists unknown task '${g.task}' in related_tasks`));
+  warnAll(audit.foreignClaims.map((f) => `feature '${f.feature}' lists task '${f.task}' which belongs to '${f.actual}'`));
+  warnAll(audit.missingBackRefs.map((m) => `feature '${m.feature}' lists task '${m.task}' but the task's related_feature is empty`));
+  warnAll(audit.missingMemberships.map((m) => `task '${m.task}' → feature '${m.feature}' but the feature's related_tasks misses it`));
+  warnAll(audit.nonCanonicalFeatureRefs.map((n) => `task '${n.task}' → related_feature '${n.from}' should be the canonical slug '${n.to}'`));
+  if (results.length === 0) {
+    results.push({ name: 'Task↔feature links', status: 'ok', message: 'task.related_feature ↔ feature.related_tasks are consistent' });
+  } else {
+    const healable = results.length - audit.ghostFeatureRefs.length - audit.conflictingClaims.length;
+    if (healable > 0) {
+      results.push({ name: 'Task↔feature links', status: 'warn', message: `${healable} of the above are deterministic — fix them all: dreamcontext doctor --heal-links` });
+    }
+  }
+  return results;
+}
+
 export function registerDoctorCommand(program: Command): void {
   program
     .command('doctor')
     .description('Validate _dream_context/ structure and report issues')
-    .action(() => {
+    .option('--heal-links', 'Apply the deterministic task↔feature link fixes (adopt back-refs, drop ghost/foreign related_tasks entries, canonicalize slugs) before running the checks')
+    .action((opts: { healLinks?: boolean }) => {
       const root = resolveContextRoot();
       if (!root) {
         console.log(chalk.red('✗') + ' _dream_context/ not found. Run `dreamcontext init` to create it.');
@@ -412,6 +456,22 @@ export function registerDoctorCommand(program: Command): void {
       }
 
       console.log(header('Doctor'));
+
+      if (opts.healLinks) {
+        const report = reconcileFeatureLinks(root);
+        const fixed =
+          report.adopted.length + report.canonicalized.length + report.membershipsAdded.length
+          + report.ghostTaskRefsDropped.length + report.foreignClaimsDropped.length;
+        console.log(chalk.bold('  Link heal'));
+        for (const a of report.adopted) console.log(chalk.green('  ✓') + ` ${a.task} → related_feature: ${a.feature} (adopted from the feature's related_tasks)`);
+        for (const c of report.canonicalized) console.log(chalk.green('  ✓') + ` ${c.task}: related_feature '${c.from}' → '${c.to}' (canonical slug)`);
+        for (const m of report.membershipsAdded) console.log(chalk.green('  ✓') + ` ${m.feature}: related_tasks += ${m.task}`);
+        for (const g of report.ghostTaskRefsDropped) console.log(chalk.green('  ✓') + ` ${g.feature}: dropped ghost task '${g.task}' from related_tasks`);
+        for (const f of report.foreignClaimsDropped) console.log(chalk.green('  ✓') + ` ${f.feature}: dropped '${f.task}' (belongs to ${f.actual})`);
+        for (const u of report.unresolved) console.log(chalk.yellow('  ⚠') + ` ${u}`);
+        if (fixed === 0 && report.unresolved.length === 0) console.log(chalk.dim('  nothing to heal — links already consistent'));
+        console.log();
+      }
 
       const results: CheckResult[] = [
         // Directories
@@ -435,6 +495,7 @@ export function registerDoctorCommand(program: Command): void {
         ...checkDataStructures(root),
         ...checkOverrides(root),
         ...checkObjectives(root),
+        ...checkTaskFeatureLinks(root),
         ...checkLab(root),
 
         // Taxonomy vocabulary (non-fatal: absent means DEFAULT_VOCABULARY used)
