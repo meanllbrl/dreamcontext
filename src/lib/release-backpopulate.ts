@@ -11,7 +11,8 @@ export function backPopulateFeatures(root: string, featureIds: string[], version
   const dir = featuresDir(root);
   if (!existsSync(dir)) return;
 
-  const files = fg.sync('*.md', { cwd: dir, absolute: true });
+  // Recurse so features grouped into topical/product subfolders are covered.
+  const files = fg.sync('**/*.md', { cwd: dir, absolute: true });
   const idSet = new Set(featureIds);
 
   for (const file of files) {

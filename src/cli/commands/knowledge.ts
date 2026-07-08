@@ -10,7 +10,7 @@ import { success, error, info, header } from '../../lib/format.js';
 import { buildKnowledgeIndex, STANDARD_TAGS } from '../../lib/knowledge-index.js';
 import { moveKnowledgeFile } from '../../lib/knowledge-move.js';
 import { mergeKnowledgeFiles } from '../../lib/knowledge-merge.js';
-import { readSleepState, writeSleepState, bumpKnowledgeAccess } from './sleep.js';
+import { readSleepState, writeSleepState, bumpKnowledgeAccess, migrateKnowledgeAccessKey } from './sleep.js';
 
 function getKnowledgeDir(): string {
   const root = ensureContextRoot();
@@ -146,26 +146,7 @@ export function registerKnowledgeCommand(program: Command): void {
       // moved file does not lose its access history. Best-effort — a failure
       // here must never undo a successful on-disk move.
       try {
-        const state = readSleepState(root);
-        const record = state.knowledge_access[result.oldSlug];
-        if (record) {
-          // Merge rather than skip when the target slug already has a record
-          // (move-back, or the target was touched independently): keep the
-          // higher count and the more recent access date, and ALWAYS drop the
-          // old key so it never lingers pointing at a now-missing file.
-          const existing = state.knowledge_access[result.newSlug];
-          state.knowledge_access[result.newSlug] = existing
-            ? {
-                count: Math.max(existing.count, record.count),
-                last_accessed:
-                  existing.last_accessed > record.last_accessed
-                    ? existing.last_accessed
-                    : record.last_accessed,
-              }
-            : record;
-          delete state.knowledge_access[result.oldSlug];
-          writeSleepState(root, state);
-        }
+        migrateKnowledgeAccessKey(root, result.oldSlug, result.newSlug);
       } catch {
         /* access tracking is best-effort; the move already succeeded */
       }

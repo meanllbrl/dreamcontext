@@ -5,7 +5,7 @@ import { readFrontmatter } from './frontmatter.js';
 import { expandQueryTerms } from './recall-synonyms.js';
 import { loadDigestDocs } from './session-digest.js';
 import { tagIndexValue } from './taxonomy.js';
-import { featuresDir } from './features-path.js';
+import { featuresDir, featureProductFromRelPath } from './features-path.js';
 import {
   isExcalidrawPath,
   extractExcalidrawText,
@@ -31,7 +31,7 @@ export interface CorpusDoc {
   termFreq: Map<string, number>;
   // ── B1/B2/B3/B5 ranking metadata (all optional so external CorpusDoc
   //    literals stay valid). Defaults keep behaviour identical to pre-uplift. ──
-  product?: string;                       // B1: derived from knowledge/products/<name>/…
+  product?: string;                       // B1: path-derived — knowledge/products/<name>/… or knowledge/features/<product>/…
   fieldFreq?: Map<string, number>;        // B2: BM25F field-weighted term frequency (for rankScore)
   fieldLen?: number;                      // B2: unweighted union token length (dl for BM25F)
   status?: string;                        // B3: frontmatter status (e.g. completed/in_progress)
@@ -366,7 +366,10 @@ function loadMarkdownDocs(
         identityTokens: fields.identityTokens,
         status: readStatus(data as Record<string, unknown>),
         updatedAt: readUpdatedAt(data as Record<string, unknown>),
-        product: productFromRelPath(relPath),
+        // Product facet is path-derived (single source of truth): a per-product
+        // knowledge file (knowledge/products/<name>/…) or a feature nested under
+        // knowledge/features/<product>/… . Never read from frontmatter.
+        product: productFromRelPath(relPath) ?? featureProductFromRelPath(relPath),
         // Federation: a doc ingested from a peer carries `federated: true`.
         federated: data.federated === true,
       });

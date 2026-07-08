@@ -191,6 +191,39 @@ export function bumpKnowledgeAccess(state: SleepState, slug: string): void {
   state.knowledge_access[slug].count++;
 }
 
+/**
+ * Migrate a `knowledge_access` decay record from `oldSlug` to `newSlug` after a
+ * knowledge/feature file moves, so the moved file keeps its access history and
+ * no key lingers pointing at a now-missing path. Best-effort: a failure here
+ * must never undo an already-successful on-disk move (callers wrap in try/catch).
+ *
+ * When the target slug already has a record (move-back, or the target was
+ * touched independently) the two are merged — higher count, more recent access —
+ * and the old key is ALWAYS dropped. No-op when the source has no record.
+ * Shared by `knowledge move` and `features move`.
+ */
+export function migrateKnowledgeAccessKey(
+  root: string,
+  oldSlug: string,
+  newSlug: string,
+): void {
+  const state = readSleepState(root);
+  const record = state.knowledge_access[oldSlug];
+  if (!record) return;
+  const existing = state.knowledge_access[newSlug];
+  state.knowledge_access[newSlug] = existing
+    ? {
+        count: Math.max(existing.count, record.count),
+        last_accessed:
+          existing.last_accessed > record.last_accessed
+            ? existing.last_accessed
+            : record.last_accessed,
+      }
+    : record;
+  delete state.knowledge_access[oldSlug];
+  writeSleepState(root, state);
+}
+
 // ─── Command Registration ──────────────────────────────────────────────────
 
 export function registerSleepCommand(program: Command): void {
@@ -480,10 +513,9 @@ export function registerSleepCommand(program: Command): void {
         warn(`Task sync: skipped — ${(err as Error).message ?? err}`);
       }
 
-      // Post-sleep brain-repo sync (github-cloud-collaboration-brain-repo-sync,
-      // M1): fetch/merge/commit/push when the project has opted into autoSync —
-      // `separate` (brain repo) or `full-repo` (whole project → origin). The
-      // engine resolves the mode internally, so this only checks the toggle.
+      // Post-sleep whole-project sync (github-cloud-collaboration-brain-repo-sync):
+      // fetch/merge/commit/push the whole project (`full-repo`) when autoSync is
+      // on. The engine resolves the mode internally, so this only checks the toggle.
       // Best-effort by the same discipline as task sync above — a sync failure
       // must never fail `sleep done`, but it must never fail SILENTLY either.
       try {

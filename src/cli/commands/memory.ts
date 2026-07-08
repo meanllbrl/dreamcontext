@@ -91,6 +91,9 @@ function recallFederated(
       title: h.doc.title,
       description: h.doc.description,
       tags: h.doc.tags,
+      // Path-derived product (single source of truth): present for per-product
+      // knowledge and features nested under features/<product>/; omitted otherwise.
+      product: h.doc.product,
       score: Number(h.score.toFixed(4)),
       snippet: h.snippet,
     }));
@@ -237,6 +240,8 @@ export function registerMemoryCommand(program: Command): void {
             title: h.doc.title,
             description: h.doc.description,
             tags: h.doc.tags,
+            // Path-derived product (single source of truth); omitted when unscoped.
+            product: h.doc.product,
             score: Number(h.score.toFixed(4)),
             snippet: h.snippet,
           }));

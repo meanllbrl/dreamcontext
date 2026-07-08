@@ -138,18 +138,35 @@ export function knowledgeIsEmpty(root: string): boolean {
   }
 }
 
-/** True when `knowledge/features/` holds no feature `.md` file. */
+/**
+ * True when `knowledge/features/` holds no feature `.md` file — recursing into
+ * topical/product subfolders, so a brain whose only features live under
+ * `features/<product>/` still reads as non-zero.
+ */
 export function featuresAreZero(root: string): boolean {
   try {
     const fdir = featuresDir(root);
     if (!existsSync(fdir)) return true;
-    const entries = readdirSync(fdir, { withFileTypes: true });
-    return !entries.some(
-      (e) => e.isFile() && !e.name.startsWith('.') && e.name.toLowerCase().endsWith('.md'),
-    );
+    return !hasMarkdownFile(fdir);
   } catch {
     return true;
   }
+}
+
+/** Recursively: does `dir` (or any descendant) contain a non-dotfile `.md`? */
+function hasMarkdownFile(dir: string): boolean {
+  let entries: import('node:fs').Dirent[];
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return false;
+  }
+  for (const e of entries) {
+    if (e.name.startsWith('.')) continue;
+    if (e.isFile() && e.name.toLowerCase().endsWith('.md')) return true;
+    if (e.isDirectory() && hasMarkdownFile(join(dir, e.name))) return true;
+  }
+  return false;
 }
 
 /**

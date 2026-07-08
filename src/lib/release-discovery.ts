@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import fg from 'fast-glob';
 import { readFrontmatter } from './frontmatter.js';
 import { readJsonArray } from './json-file.js';
-import { featuresDir } from './features-path.js';
+import { featuresDir, featureSlug } from './features-path.js';
 
 export interface ChangelogEntry {
   date: string;
@@ -127,7 +127,8 @@ export function findUnreleasedFeatures(root: string): UnreleasedFeature[] {
   const dir = featuresDir(root);
   if (!existsSync(dir)) return [];
 
-  const files = fg.sync('*.md', { cwd: dir, absolute: true });
+  // Recurse so features grouped into topical/product subfolders are covered.
+  const files = fg.sync('**/*.md', { cwd: dir, absolute: true });
   const result: UnreleasedFeature[] = [];
 
   for (const file of files) {
@@ -136,7 +137,7 @@ export function findUnreleasedFeatures(root: string): UnreleasedFeature[] {
       if (data.released_version !== null && data.released_version !== undefined) continue;
       result.push({
         id: String(data.id ?? ''),
-        slug: basename(file, '.md'),
+        slug: featureSlug(dir, file),
         status: String(data.status ?? 'planning'),
       });
     } catch { /* skip */ }
