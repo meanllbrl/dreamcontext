@@ -5,6 +5,8 @@ import { parseJsonBody, sendJson, sendError } from '../middleware.js';
 import { recordDashboardChange, buildFieldSummary } from '../change-tracker.js';
 import type { FieldChange } from '../change-tracker.js';
 import { mergeRice, validateRiceInput, type RiceFields, type RiceInput } from '../../lib/rice.js';
+import { listObjectives } from '../../lib/objectives-store.js';
+import { resolveFeature, applyTaskFeatureLink } from '../../lib/feature-links.js';
 import { readSetupConfig } from '../../lib/setup-config.js';
 import {
   loadTaskOverride,
@@ -839,12 +841,57 @@ export async function handleTasksUpdate(
     }
   }
 
+  // Validate objectives — write-time integrity, mirroring the CLI: a task can
+  // only reference roadmap objectives that exist ([] clears).
+  if (updates.objectives !== undefined) {
+    if (!Array.isArray(updates.objectives) || updates.objectives.some((s) => typeof s !== 'string')) {
+      sendError(res, 400, 'invalid_objectives', 'objectives must be an array of objective slugs.');
+      return;
+    }
+    const known = new Set(listObjectives(contextRoot).map((o) => o.slug));
+    const unknown = (updates.objectives as string[]).filter((s) => !known.has(s));
+    if (unknown.length > 0) {
+      sendError(res, 400, 'invalid_objectives', `Unknown objective(s): ${unknown.join(', ')}`);
+      return;
+    }
+    updates.objectives = Array.from(new Set(updates.objectives as string[]));
+  }
+
+  // Validate + canonicalize related_feature (null clears). The bidirectional
+  // write-through to the feature's related_tasks happens after the task write.
+  let featureLink: { slug: string } | null | undefined;
+  if (updates.related_feature !== undefined) {
+    if (updates.related_feature === null) {
+      featureLink = null;
+    } else if (typeof updates.related_feature !== 'string') {
+      sendError(res, 400, 'invalid_related_feature', 'related_feature must be a feature slug or null.');
+      return;
+    } else {
+      const resolved = resolveFeature(contextRoot, updates.related_feature);
+      if (!resolved.ok) {
+        sendError(res, 400, 'invalid_related_feature',
+          resolved.reason === 'ambiguous'
+            ? `Ambiguous feature "${updates.related_feature}" — candidates: ${resolved.candidates.join(', ')}`
+            : `Unknown feature: "${updates.related_feature}"`);
+        return;
+      }
+      updates.related_feature = resolved.slug;
+      featureLink = { slug: resolved.slug };
+    }
+  }
+
   updates.updated_at = today();
   const task = await backend.updateFields(
     slug,
     updates,
     bodyChanged && newBody !== null ? { body: newBody } : undefined,
   );
+
+  // Bidirectional invariant: the feature side (related_tasks membership)
+  // follows every task-side related_feature change.
+  if (featureLink !== undefined) {
+    applyTaskFeatureLink(contextRoot, slug, featureLink);
+  }
 
   const changedFieldNames = fieldChanges.map(f => f.field);
   recordDashboardChange(contextRoot, {

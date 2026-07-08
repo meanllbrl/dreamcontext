@@ -142,6 +142,13 @@ export function useUpdateTask() {
       if (variables.updates.objectives !== undefined) {
         queryClient.invalidateQueries({ queryKey: ['roadmap'] });
       }
+      // A `related_feature` change writes through to the target/previous feature's
+      // `related_tasks` on disk (server: applyTaskFeatureLink) — data the /knowledge
+      // endpoint serves. Invalidate it so any feature view reflects the new
+      // membership immediately instead of showing stale links.
+      if (variables.updates.related_feature !== undefined) {
+        queryClient.invalidateQueries({ queryKey: ['knowledge'] });
+      }
     },
   });
 }
@@ -276,9 +283,12 @@ export function useRemoveCustomFieldDef() {
 
 /**
  * Feature PRDs for the related-feature picker, sourced from the knowledge index
- * (PRDs live at knowledge/features/**). `related_feature` stores the BARE
- * basename slug (never `features/<slug>` — it round-trips to ClickUp/GitHub),
- * so strip the folder prefix here.
+ * (PRDs live at knowledge/features/**). `related_feature` stores the feature's
+ * CANONICAL slug relative to the features dir — nested features keep their
+ * folder prefix (`lina/checkout`), flat ones are the basename — matching what
+ * the link engine (src/lib/feature-links.ts) writes and validates. Only the
+ * `features/` root prefix is stripped. (ClickUp carries it as short text, so a
+ * folder-qualified slug round-trips unchanged.)
  */
 export function useFeatureOptions() {
   return useQuery({
@@ -288,8 +298,9 @@ export function useFeatureOptions() {
       (d.entries ?? [])
         .filter((e) => e.slug.startsWith('features/'))
         .map((e) => {
+          const slug = e.slug.slice('features/'.length);
           const base = e.slug.split('/').pop() ?? e.slug;
-          return { slug: base, name: e.name === e.slug ? base : e.name };
+          return { slug, name: e.name === e.slug ? base : e.name };
         }),
     staleTime: 60_000,
   });

@@ -12,6 +12,7 @@ import { matchMember } from '../../lib/task-backend/member-match.js';
 import { readSetupConfig, isMultiPerson, writeBrainLocal } from '../../lib/setup-config.js';
 import { getActivePlanningVersion } from '../../lib/active-version.js';
 import { listObjectives } from '../../lib/objectives-store.js';
+import { resolveFeature, applyTaskFeatureLink, anyFeaturesExist } from '../../lib/feature-links.js';
 import { loadTaskOverride, fieldKey, type CustomFieldDef } from '../../lib/overrides.js';
 import { mergeRice, validateRiceInput, type RiceFields, type RiceInput } from '../../lib/rice.js';
 import {
@@ -448,9 +449,10 @@ export function registerTasksCommand(program: Command): void {
     .option('--start <date>', 'Planned start date (YYYY-MM-DD)')
     .option('--due <date>', 'Due/end date (YYYY-MM-DD)')
     .option('--objectives <slugs>', 'Comma-separated roadmap objective slugs this task serves (many-to-many)')
+    .option('--feature <name>', 'Feature PRD this task belongs to (sets related_feature + the feature\'s related_tasks)')
     .option('--field <key=value...>', 'Set a declared custom field (repeatable): --field team=platform --field story_points=8')
     .option('--allow-missing-required', 'Create even when required custom fields are unset (intentional draft)')
-    .action(async (name: string, opts: { description?: string; priority?: string; urgency?: string; status?: string; tags?: string; why?: string; version?: string; person?: string; reach?: string; impact?: string; confidence?: string; effort?: string; start?: string; due?: string; objectives?: string; field?: string[]; allowMissingRequired?: boolean }) => {
+    .action(async (name: string, opts: { description?: string; priority?: string; urgency?: string; status?: string; tags?: string; why?: string; version?: string; person?: string; reach?: string; impact?: string; confidence?: string; effort?: string; start?: string; due?: string; objectives?: string; feature?: string; field?: string[]; allowMissingRequired?: boolean }) => {
       const backend = getTaskBackend();
       const slug = slugify(name);
 
@@ -533,6 +535,20 @@ export function registerTasksCommand(program: Command): void {
         if (parsed.length > 0) objectives = parsed;
       }
 
+      // Resolve --feature BEFORE creating so an unknown/ambiguous reference
+      // refuses the link up front instead of persisting a dangling slug.
+      let feature: { slug: string } | null = null;
+      if (opts.feature !== undefined) {
+        const resolved = resolveFeature(ensureContextRoot(), opts.feature);
+        if (!resolved.ok) {
+          error(resolved.reason === 'ambiguous'
+            ? `Ambiguous feature "${opts.feature}". Did you mean: ${resolved.candidates.join(', ')}?`
+            : `Unknown feature: "${opts.feature}". Check: ls _dream_context/knowledge/features/`);
+          return;
+        }
+        feature = { slug: resolved.slug };
+      }
+
       // --field key=value pairs → custom_fields, validated against the override.
       let customFields: Record<string, string | number> | undefined;
       if (opts.field && opts.field.length > 0) {
@@ -583,7 +599,21 @@ export function registerTasksCommand(program: Command): void {
         }
         throw err;
       }
+      if (feature) {
+        applyTaskFeatureLink(ensureContextRoot(), slug, feature);
+      }
       success(`Task created: ${slug}.md`);
+      if (feature) {
+        console.log(chalk.dim(`  feature: ${feature.slug} (related_tasks updated)`));
+      }
+      // Assignment nudges — links are how the brain graph, roadmap rollups, and
+      // feature freshness stay real. Nudge, never block: not every task fits.
+      if (!feature && opts.feature === undefined && anyFeaturesExist(ensureContextRoot())) {
+        console.log(chalk.dim(`  ○ no feature link — if this task builds a feature PRD: dreamcontext tasks feature ${slug} <feature>`));
+      }
+      if (!objectives && listObjectives(ensureContextRoot()).length > 0) {
+        console.log(chalk.dim(`  ○ no objective link — if this task serves a roadmap objective: dreamcontext tasks objectives ${slug} <a,b>`));
+      }
     });
 
   // RICE: print or update RICE values for a task
@@ -794,6 +824,55 @@ export function registerTasksCommand(program: Command): void {
       }
       await backend.updateFields(slug, { objectives: parsed, updated_at: today() });
       success(`${slug} now serves: ${parsed.join(', ')} (rollups update on next \`dreamcontext roadmap\`)`);
+    });
+
+  // Feature link on existing tasks (single-valued; bidirectional with the
+  // feature's related_tasks via the link engine — both sides always agree).
+  tasks
+    .command('feature')
+    .argument('<name>', 'Task slug or name')
+    .argument('[feature]', 'Feature slug/name to SET, or "clear" / omit to print')
+    .description('Print, set, or clear the feature this task belongs to (keeps the feature\'s related_tasks in sync)')
+    .action(async (name: string, featureRef: string | undefined) => {
+      const backend = getTaskBackend();
+      const root = ensureContextRoot();
+      const slug = await resolveTaskSlug(backend, name);
+      if (!slug) return;
+      const task = await backend.get(slug);
+      if (!task) {
+        error(`Task not found: ${name}`);
+        return;
+      }
+
+      if (featureRef === undefined) {
+        if (task.related_feature) {
+          console.log(`${slug} → feature: ${task.related_feature}`);
+        } else {
+          console.log(chalk.dim(`No feature on ${slug}. Set: dreamcontext tasks feature ${slug} <feature>`));
+        }
+        return;
+      }
+
+      if (featureRef.trim().toLowerCase() === 'clear') {
+        const result = applyTaskFeatureLink(root, slug, null);
+        await backend.updateFields(slug, { related_feature: null, updated_at: today() });
+        success(`Cleared feature on ${slug}${result.removedFrom.length > 0 ? ` (removed from related_tasks of: ${result.removedFrom.join(', ')})` : ''}`);
+        return;
+      }
+
+      const resolved = resolveFeature(root, featureRef);
+      if (!resolved.ok) {
+        error(resolved.reason === 'ambiguous'
+          ? `Ambiguous feature "${featureRef}". Did you mean: ${resolved.candidates.join(', ')}?`
+          : `Unknown feature: "${featureRef}". Check: ls _dream_context/knowledge/features/`);
+        return;
+      }
+      const result = applyTaskFeatureLink(root, slug, { slug: resolved.slug });
+      await backend.updateFields(slug, { related_feature: resolved.slug, updated_at: today() });
+      const notes: string[] = [];
+      if (result.addedTo) notes.push(`added to ${result.addedTo}'s related_tasks`);
+      if (result.removedFrom.length > 0) notes.push(`removed from: ${result.removedFrom.join(', ')}`);
+      success(`${slug} → feature: ${resolved.slug}${notes.length > 0 ? ` (${notes.join('; ')})` : ''}`);
     });
 
   // Tag management on existing tasks (person:<slug> tags drive remote assignees)

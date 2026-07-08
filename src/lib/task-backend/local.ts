@@ -6,6 +6,7 @@ import { readFrontmatter, updateFrontmatterFields, writeFrontmatter } from '../f
 import { insertToSection, listSections, readSection } from '../markdown.js';
 import { generateId, slugify, today } from '../id.js';
 import { normalizeRice } from '../rice.js';
+import { healTaskRemoved, healTaskRename } from '../feature-links.js';
 import { filterTasks, toTaskRecord, type TaskFilter } from '../task-query.js';
 import {
   TaskBackendError,
@@ -551,6 +552,26 @@ ${input.why || '(To be defined)'}
   async delete(slug: string): Promise<void> {
     const path = this.requirePath(slug);
     rmSync(path);
+    // Referential integrity: no feature may keep listing a task that is gone.
+    this.healFeatureLinks(() => healTaskRemoved(this.brainRoot(), slug));
+  }
+
+  /** The brain root (`_dream_context/`) — stateDir is always `<root>/state`. */
+  protected brainRoot(): string {
+    return dirname(this.stateDir);
+  }
+
+  /**
+   * Feature-side link healing must never block the primary task operation —
+   * but a failure is still reported loudly (a silent skip would reintroduce
+   * exactly the dangling refs this exists to prevent).
+   */
+  protected healFeatureLinks(heal: () => void): void {
+    try {
+      heal();
+    } catch (err) {
+      console.error(`Warning: task↔feature link healing failed: ${err instanceof Error ? err.message : String(err)} — run \`dreamcontext doctor\` to audit links.`);
+    }
   }
 
   async rename(slug: string, newName: string): Promise<string> {
@@ -576,6 +597,8 @@ ${input.why || '(To be defined)'}
     // is layered on by the remote backends' override.
     await this.updateFields(slug, { name: trimmed, updated_at: today() });
     renameSync(path, this.taskPath(newSlug));
+    // Referential integrity: features listing the old slug follow the rename.
+    this.healFeatureLinks(() => healTaskRename(this.brainRoot(), slug, newSlug));
     return newSlug;
   }
 

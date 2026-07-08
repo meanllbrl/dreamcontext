@@ -346,7 +346,10 @@ parent_task: null
       expect(content).toContain('Added JWT middleware');
     });
 
-    it('creates a feature with --tags / --status / --related-tasks', () => {
+    it('creates a feature with --tags / --status / --related-tasks (write-through to the tasks)', () => {
+      // related_tasks is validated at write time — the tasks must exist.
+      run('tasks create login --why "x"', tmpDir);
+      run('tasks create signup --why "x"', tmpDir);
       run('features create auth --why "Login" --tags security,backend --status in_progress --related-tasks login,signup', tmpDir);
       const content = readFileSync(join(tmpDir, '_dream_context', 'knowledge', 'features', 'auth.md'), 'utf-8');
       expect(content).toMatch(/status:\s*in_progress/);
@@ -354,6 +357,41 @@ parent_task: null
       expect(content).toContain('backend');
       expect(content).toContain('login');
       expect(content).toContain('signup');
+      // Bidirectional invariant: each listed task now points back at the feature.
+      for (const slug of ['login', 'signup']) {
+        const task = readFileSync(join(tmpDir, '_dream_context', 'state', `${slug}.md`), 'utf-8');
+        expect(task).toMatch(/related_feature:\s*auth/);
+      }
+    });
+
+    it('rejects --related-tasks entries that are not existing tasks', () => {
+      const output = run('features create ghosty --why "x" --related-tasks no-such-task', tmpDir);
+      expect(output).toContain('Unknown task slug');
+      const content = readFileSync(join(tmpDir, '_dream_context', 'knowledge', 'features', 'ghosty.md'), 'utf-8');
+      expect(content).not.toContain('no-such-task');
+    });
+
+    it('links a task to a feature via `tasks feature` and clears it (both sides maintained)', () => {
+      run('features create auth --why "Login"', tmpDir);
+      run('tasks create oauth-flow --why "x"', tmpDir);
+      const set = run('tasks feature oauth-flow auth', tmpDir);
+      expect(set).toContain('auth');
+      expect(readFileSync(join(tmpDir, '_dream_context', 'state', 'oauth-flow.md'), 'utf-8')).toMatch(/related_feature:\s*auth/);
+      expect(readFileSync(join(tmpDir, '_dream_context', 'knowledge', 'features', 'auth.md'), 'utf-8')).toContain('oauth-flow');
+      const cleared = run('tasks feature oauth-flow clear', tmpDir);
+      expect(cleared).toContain('Cleared');
+      expect(readFileSync(join(tmpDir, '_dream_context', 'state', 'oauth-flow.md'), 'utf-8')).toMatch(/related_feature:\s*null/);
+      expect(readFileSync(join(tmpDir, '_dream_context', 'knowledge', 'features', 'auth.md'), 'utf-8')).not.toContain('oauth-flow');
+    });
+
+    it('tasks create --feature validates and write-throughs; unknown feature is refused', () => {
+      run('features create auth --why "Login"', tmpDir);
+      run('tasks create linked-at-birth --why "x" --feature auth', tmpDir);
+      expect(readFileSync(join(tmpDir, '_dream_context', 'state', 'linked-at-birth.md'), 'utf-8')).toMatch(/related_feature:\s*auth/);
+      expect(readFileSync(join(tmpDir, '_dream_context', 'knowledge', 'features', 'auth.md'), 'utf-8')).toContain('linked-at-birth');
+      const refused = run('tasks create orphan --why "x" --feature no-such-feature', tmpDir);
+      expect(refused).toContain('Unknown feature');
+      expect(existsSync(join(tmpDir, '_dream_context', 'state', 'orphan.md'))).toBe(false);
     });
 
     it('rejects an invalid feature --status', () => {

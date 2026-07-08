@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import chalk from 'chalk';
 import fg from 'fast-glob';
@@ -9,9 +9,34 @@ import { insertToSection } from '../../lib/markdown.js';
 import { prepareSectionInsert, SECTION_MAP } from '../../lib/section-insert.js';
 import { promptInput } from '../../lib/prompt.js';
 import { generateId, slugify, today } from '../../lib/id.js';
-import { success, error, header, warn } from '../../lib/format.js';
+import { success, error, header, warn, info } from '../../lib/format.js';
 import { analyzeFeatures, type FeatureRef, type TaskRef } from '../../lib/feature-freshness.js';
-import { featuresDir, FEATURES_TYPE } from '../../lib/features-path.js';
+import { featuresDir, featureSlug, featureProduct, FEATURES_SUBDIR, FEATURES_TYPE } from '../../lib/features-path.js';
+import { resolveFeature, taskExists, applyFeatureTaskList, healFeatureRename } from '../../lib/feature-links.js';
+import { moveKnowledgeFile } from '../../lib/knowledge-move.js';
+import { migrateKnowledgeAccessKey } from './sleep.js';
+
+/**
+ * Normalise a free-form feature subfolder path (relative to knowledge/features/):
+ * forward-slash separators, trimmed, no leading/trailing slashes, each segment
+ * slugified. Returns '' for an empty/whitespace input. Nothing is reserved —
+ * folders are free-form topical groupings (typically per product).
+ */
+function normalizeFeatureFolder(raw: string): string {
+  return raw
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/^\/+|\/+$/g, '')
+    .split('/')
+    .map((seg) => slugify(seg))
+    .filter(Boolean)
+    .join('/');
+}
+
+/** A path segment is unsafe when it is empty, '.', or '..'. */
+function hasUnsafeSegment(p: string): boolean {
+  return p.split('/').some((seg) => seg === '' || seg === '.' || seg === '..');
+}
 
 const VALID_FEATURE_STATUSES = ['planning', 'in_progress', 'in_review', 'active', 'shipped', 'deprecated'];
 
@@ -36,35 +61,39 @@ function printDeprecation(): void {
   );
 }
 
+// Resolution lives in the link engine (src/lib/feature-links.ts) so the CLI,
+// server, and healing paths all match feature references identically.
 function findFeatureFile(name: string): string | null {
-  const dir = getFeaturesDir();
-  const slug = slugify(name);
-
-  // Try exact match first
-  const exact = join(dir, `${slug}.md`);
-  if (existsSync(exact)) return exact;
-
-  // Try glob match: prefer exact, then prefix, then substring
-  const files = fg.sync('*.md', { cwd: dir, absolute: true });
-
-  const exactGlob = files.find((f) => basename(f, '.md') === slug);
-  if (exactGlob) return exactGlob;
-
-  const prefixMatches = files.filter((f) => basename(f, '.md').startsWith(slug));
-  if (prefixMatches.length === 1) return prefixMatches[0];
-  if (prefixMatches.length > 1) {
-    error(`Ambiguous feature name "${name}". Did you mean: ${prefixMatches.map(f => basename(f, '.md')).join(', ')}?`);
-    return null;
+  const resolved = resolveFeature(ensureContextRoot(), name);
+  if (resolved.ok) return resolved.path;
+  if (resolved.reason === 'ambiguous') {
+    error(`Ambiguous feature name "${name}". Did you mean: ${resolved.candidates.join(', ')}?`);
   }
-
-  const substringMatches = files.filter((f) => basename(f, '.md').includes(slug));
-  if (substringMatches.length === 1) return substringMatches[0];
-  if (substringMatches.length > 1) {
-    error(`Ambiguous feature name "${name}". Did you mean: ${substringMatches.map(f => basename(f, '.md')).join(', ')}?`);
-    return null;
-  }
-
   return null;
+}
+
+/**
+ * Validate a related_tasks list against the task store and apply it through
+ * the bidirectional link engine (each added task's `related_feature` is set,
+ * each removed task's is cleared). Prints what changed. Returns false when a
+ * slug is unknown — the write is refused, mirroring `tasks objectives`.
+ */
+function setRelatedTasksValidated(file: string, taskSlugs: string[]): boolean {
+  const root = ensureContextRoot();
+  const slug = featureSlug(featuresDir(root), file);
+  const unknown = taskSlugs.filter((t) => !taskExists(root, t));
+  if (unknown.length > 0) {
+    error(
+      `Unknown task slug(s): ${unknown.join(', ')}. `
+      + 'related_tasks entries must be existing task slugs (state/<slug>.md) — check: dreamcontext tasks list',
+    );
+    return false;
+  }
+  const result = applyFeatureTaskList(root, { slug, path: file }, taskSlugs);
+  for (const t of result.linked) info(`  linked: ${t} → related_feature: ${slug}`);
+  for (const r of result.relinked) info(`  re-linked: ${r.task} (was → ${r.from})`);
+  for (const t of result.unlinked) info(`  unlinked: ${t} (related_feature cleared)`);
+  return true;
 }
 
 function getFeatureTemplate(): string {
@@ -141,15 +170,28 @@ export function registerFeaturesCommand(program: Command): void {
     .option('-t, --tags <tags>', 'Comma-separated tags')
     .option('-s, --status <status>', `Status (${VALID_FEATURE_STATUSES.join(', ')})`)
     .option('--related-tasks <slugs>', 'Comma-separated related task slugs')
+    .option('--folder <path>', 'Topical subfolder under knowledge/features/ (e.g. a product name like "lina" or "lina/billing")')
     .description('Create a new feature document (typed knowledge under knowledge/features/)')
-    .action(async (name: string, opts: { why?: string; description?: string; tags?: string; status?: string; relatedTasks?: string }) => {
+    .action(async (name: string, opts: { why?: string; description?: string; tags?: string; status?: string; relatedTasks?: string; folder?: string }) => {
       printDeprecation();
       const dir = getFeaturesDir();
-      const slug = slugify(name);
-      const filePath = join(dir, `${slug}.md`);
+      const base = slugify(name);
+
+      let folder = '';
+      if (opts.folder) {
+        folder = normalizeFeatureFolder(opts.folder);
+        if (!folder || hasUnsafeSegment(folder)) {
+          error(`Invalid --folder "${opts.folder}". Use a relative path under knowledge/features/ with no "..".`);
+          return;
+        }
+      }
+
+      const relSlug = folder ? `${folder}/${base}` : base;
+      const targetDir = folder ? join(dir, folder) : dir;
+      const filePath = join(targetDir, `${base}.md`);
 
       if (existsSync(filePath)) {
-        error(`Feature already exists: ${slug}.md`);
+        error(`Feature already exists: ${relSlug}.md`);
         return;
       }
 
@@ -169,17 +211,22 @@ export function registerFeaturesCommand(program: Command): void {
         .replaceAll('{{DESCRIPTION}}', opts.description ?? '')
         .replaceAll('{{WHY}}', why || '(To be defined)');
 
+      if (folder) mkdirSync(targetDir, { recursive: true });
       writeFileSync(filePath, content, 'utf-8');
 
       const fields: Record<string, unknown> = {};
       if (opts.tags) fields.tags = parseCsv(opts.tags);
       if (opts.status) fields.status = opts.status;
-      if (opts.relatedTasks) fields.related_tasks = parseCsv(opts.relatedTasks);
       if (Object.keys(fields).length > 0) {
         updateFrontmatterFields(filePath, fields);
       }
+      // related_tasks goes through the link engine: slugs are validated and each
+      // task's `related_feature` is written back (bidirectional invariant).
+      if (opts.relatedTasks) {
+        setRelatedTasksValidated(filePath, parseCsv(opts.relatedTasks));
+      }
 
-      success(`Feature created: ${slug}.md`);
+      success(`Feature created: ${relSlug}.md`);
     });
 
   // Set a feature's frontmatter field (tags / status / related_tasks)
@@ -201,8 +248,16 @@ export function registerFeaturesCommand(program: Command): void {
       const value = valueParts.join(' ').trim();
       const updates: Record<string, unknown> = {};
 
-      if (key === 'tags' || key === 'related_tasks' || key === 'related-tasks') {
-        updates[key === 'tags' ? 'tags' : 'related_tasks'] = parseCsv(value);
+      if (key === 'related_tasks' || key === 'related-tasks') {
+        // Validated + written through the link engine (sets/clears each task's
+        // related_feature) — never a raw frontmatter write.
+        if (setRelatedTasksValidated(file, parseCsv(value))) {
+          success(`Set related_tasks on ${featureSlug(getFeaturesDir(), file)}`);
+        }
+        return;
+      }
+      if (key === 'tags') {
+        updates.tags = parseCsv(value);
       } else if (key === 'status') {
         if (!VALID_FEATURE_STATUSES.includes(value)) {
           error(`Status must be one of: ${VALID_FEATURE_STATUSES.join(', ')}`);
@@ -216,7 +271,7 @@ export function registerFeaturesCommand(program: Command): void {
 
       updates.updated = today();
       updateFrontmatterFields(file, updates);
-      success(`Set ${key} on ${basename(file, '.md')}`);
+      success(`Set ${key} on ${featureSlug(getFeaturesDir(), file)}`);
     });
 
   // Insert into a section
@@ -257,9 +312,80 @@ export function registerFeaturesCommand(program: Command): void {
       try {
         insertToSection(file, prep.sectionName, prep.content, prep.position, true, prep.replacePlaceholders);
         updateFrontmatterFields(file, { updated: today() });
-        success(`Inserted into ${prep.sectionName} in ${basename(file)}`);
+        success(`Inserted into ${prep.sectionName} in ${featureSlug(getFeaturesDir(), file)}`);
       } catch (err: any) {
         error(err.message);
+      }
+    });
+
+  // Move a feature into a topical/product subfolder (or back to the root).
+  features
+    .command('move')
+    .argument('<name>', 'Feature name or current slug (e.g. "checkout" or "lina/checkout")')
+    .argument('<folder>', 'Destination subfolder under knowledge/features/ (free-form, e.g. a product name; "." or "/" moves back to the root)')
+    .description('Move a feature into a topical subfolder, rewriting inbound [[wikilinks]] atomically')
+    .action((name: string, folder: string) => {
+      printDeprecation();
+      const root = ensureContextRoot();
+      const dir = getFeaturesDir();
+
+      const file = findFeatureFile(name);
+      if (!file) {
+        error(`Feature not found: ${name}`);
+        return;
+      }
+      const curRelSlug = featureSlug(dir, file);
+
+      // Features are typed knowledge — reuse the knowledge move engine, scoping
+      // both slugs under `features/`. A folder of "." / "" / "/" targets the
+      // features root itself (move a nested feature back up).
+      const destFolder = normalizeFeatureFolder(folder === '.' ? '' : folder);
+      if (destFolder && hasUnsafeSegment(destFolder)) {
+        error(`Invalid destination folder "${folder}". Use a relative path under knowledge/features/ with no "..".`);
+        return;
+      }
+      const knowledgeSlug = `${FEATURES_SUBDIR}/${curRelSlug}`;
+      const knowledgeFolder = destFolder ? `${FEATURES_SUBDIR}/${destFolder}` : FEATURES_SUBDIR;
+
+      const result = moveKnowledgeFile(root, knowledgeSlug, knowledgeFolder);
+      if (!result.ok) {
+        error(result.message);
+        return;
+      }
+
+      // Keep decay tracking continuous (best-effort — never undo a done move).
+      try {
+        migrateKnowledgeAccessKey(root, result.oldSlug, result.newSlug);
+      } catch {
+        /* access tracking is best-effort; the move already succeeded */
+      }
+
+      // Heal the TASK side of the bidirectional link: a feature move changes its
+      // canonical slug, so every task whose `related_feature` pointed at the old
+      // slug must be repointed at the new one (mirror of healTaskRename on task
+      // rename/delete). Otherwise the link goes stale — invisible in the
+      // dashboard picker + `tasks list --feature`, and it silently mis-resolves
+      // once a same-basename feature exists elsewhere. Best-effort: a failure
+      // here must never undo the completed on-disk move (doctor --heal-links is
+      // the backstop). Feature slugs strip the `features/` knowledge prefix.
+      let healedTasks: string[] = [];
+      try {
+        const prefix = `${FEATURES_SUBDIR}/`;
+        const oldFeatureSlug = result.oldSlug.startsWith(prefix) ? result.oldSlug.slice(prefix.length) : result.oldSlug;
+        const newFeatureSlug = result.newSlug.startsWith(prefix) ? result.newSlug.slice(prefix.length) : result.newSlug;
+        healedTasks = healFeatureRename(root, oldFeatureSlug, newFeatureSlug);
+      } catch {
+        /* link healing is best-effort; the move already succeeded */
+      }
+
+      success(`Moved ${result.oldPath} → ${result.newPath}`);
+      if (result.wikilinksRewritten.length > 0) {
+        info(`Rewrote inbound [[wikilinks]] in ${result.wikilinksRewritten.length} file(s).`);
+      } else {
+        info('No inbound [[wikilinks]] needed rewriting.');
+      }
+      if (healedTasks.length > 0) {
+        info(`Repointed related_feature on ${healedTasks.length} task(s): ${healedTasks.join(', ')}`);
       }
     });
 
@@ -273,17 +399,22 @@ export function registerFeaturesCommand(program: Command): void {
       const dir = getFeaturesDir();
       const stateDir = join(root, 'state');
 
-      // Read all feature PRDs
+      // Read all feature PRDs (recurse into topical/product subfolders).
       const featureFiles = existsSync(dir)
-        ? fg.sync('*.md', { cwd: dir, absolute: true })
+        ? fg.sync('**/*.md', { cwd: dir, absolute: true })
         : [];
 
       const featureRefs: FeatureRef[] = [];
+      // SSOT guard: a feature's product is DERIVED from its folder, never stored.
+      // A `product:` frontmatter field is a second source that can diverge from
+      // the path — collect any so doctor can flag it.
+      const productDrift: Array<{ slug: string; stored: string; folder: string | undefined }> = [];
       for (const file of featureFiles) {
         try {
           const { data } = readFrontmatter<Record<string, unknown>>(file);
+          const slug = featureSlug(dir, file);
           featureRefs.push({
-            slug: basename(file, '.md'),
+            slug,
             id: data.id ? String(data.id) : undefined,
             created: data.created ? String(data.created) : undefined,
             updated: data.updated ? String(data.updated) : undefined,
@@ -291,6 +422,9 @@ export function registerFeaturesCommand(program: Command): void {
               ? data.related_tasks.map(String)
               : [],
           });
+          if (typeof data.product === 'string' && data.product.trim()) {
+            productDrift.push({ slug, stored: data.product.trim(), folder: featureProduct(dir, file) });
+          }
         } catch {
           // skip unreadable files
         }
@@ -320,7 +454,7 @@ export function registerFeaturesCommand(program: Command): void {
 
       console.log(header('Features doctor'));
 
-      const issueCount = stale.length + orphaned.length + danglingTaskRefs.length;
+      const issueCount = stale.length + orphaned.length + danglingTaskRefs.length + productDrift.length;
 
       if (issueCount === 0) {
         success(`All ${featureRefs.length} feature(s) fresh and linked.`);
@@ -345,6 +479,17 @@ export function registerFeaturesCommand(program: Command): void {
         console.log(`\n  ${chalk.red('DANGLING TASK REFS')} (${danglingTaskRefs.length})  — task points to missing feature PRD`);
         for (const d of danglingTaskRefs) {
           console.log(`    ${chalk.red('·')} ${chalk.bold(d.task)} → ${chalk.dim(d.missingFeature)}`);
+        }
+      }
+
+      if (productDrift.length > 0) {
+        console.log(`\n  ${chalk.yellow('STORED PRODUCT FIELD')} (${productDrift.length})  — a feature's product is derived from its folder; the frontmatter field is a divergence risk`);
+        for (const p of productDrift) {
+          const derived = p.folder ? `folder → ${p.folder}` : 'flat (no product)';
+          const verdict = p.folder === p.stored
+            ? chalk.dim('redundant — remove the field')
+            : chalk.red(`conflicts with ${derived} — remove the field${p.folder ? '' : `, or move to features/${p.stored}/`}`);
+          console.log(`    ${chalk.yellow('·')} ${chalk.bold(p.slug)}  ${chalk.dim(`product: ${p.stored}`)}  ${verdict}`);
         }
       }
 

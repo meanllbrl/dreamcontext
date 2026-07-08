@@ -189,6 +189,15 @@ describe('task backend golden (M1 — byte-identical state/*.md)', () => {
     contextRoot = join(projectRoot, '_dream_context');
     stateDir = join(contextRoot, 'state');
     mkdirSync(stateDir, { recursive: true });
+    // The op script PATCHes related_feature: feat-x, which is now validated
+    // against the features store at write time — the referenced PRD must exist
+    // for the (byte-pinned) link write to go through.
+    const featuresDir = join(contextRoot, 'knowledge', 'features');
+    mkdirSync(featuresDir, { recursive: true });
+    writeFileSync(
+      join(featuresDir, 'feat-x.md'),
+      '---\nid: feat_x\ntype: feature\nname: feat-x\nstatus: planning\nrelated_tasks: []\n---\n\n## Why\n\nGolden link target.\n',
+    );
     prevCwd = process.cwd();
     process.chdir(projectRoot);
     await runOperationScript();

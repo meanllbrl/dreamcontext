@@ -20,7 +20,7 @@ import { dreamcontextVersion } from '../../lib/manifest.js';
 import { buildDriftDirective, resolveDriftState } from '../../lib/setup-drift.js';
 import { readAssetDriftCache, cacheConfidentlyClean } from '../../lib/asset-drift-cache.js';
 import { computeFeatureFreshness, freshnessSnapshotNote } from '../../lib/feature-freshness.js';
-import { featuresDir } from '../../lib/features-path.js';
+import { featuresDir, featureSlug } from '../../lib/features-path.js';
 import { pendingInboxCount } from '../../lib/federation-inbox.js';
 import { buildRoadmapModel, type RoadmapObjective } from '../../lib/roadmap-model.js';
 import { listInsights, readCache } from '../../lib/lab/store.js';
@@ -175,6 +175,12 @@ function getActiveTaskEntries(root: string): ActiveTaskEntry[] {
       // the agent sees the WHY next to the work without opening the file.
       if (Array.isArray(data.objectives) && data.objectives.length > 0) {
         line += `\n  Objectives: ${data.objectives.map(String).join(', ')}`;
+      }
+
+      // Feature link (single-valued): the PRD this task ships work for —
+      // visible inline so an unset link is noticed (and set) without file I/O.
+      if (data.related_feature) {
+        line += `\n  Feature: ${String(data.related_feature)}`;
       }
 
       // Custom fields (project task-format override): show each declared field's
@@ -987,14 +993,17 @@ export function generateSnapshot(rootOverride?: string): string {
   // rest collapse to a name+status+path line (PRD is one Read away).
   const featuresPath = featuresDir(root);
   if (existsSync(featuresPath)) {
-    const featureFiles = fg.sync('*.md', { cwd: featuresPath, absolute: true });
+    // Recurse so features grouped into topical/product subfolders are listed too.
+    const featureFiles = fg.sync('**/*.md', { cwd: featuresPath, absolute: true });
     const features: string[] = [];
     const featureMeta: Array<{ detail: string; nameLine: string; status: string; updated: string }> = [];
 
     for (const file of featureFiles) {
       try {
         const { data } = readFrontmatter(file);
-        const name = basename(file, '.md');
+        // Folder-qualified slug: unambiguous label + correct path pointer for
+        // nested features (flat features round-trip to their basename).
+        const name = featureSlug(featuresPath, file);
         const status = String(data.status ?? 'unknown');
         const tags = Array.isArray(data.tags) ? data.tags.join(', ') : '';
 
@@ -1361,13 +1370,15 @@ export function generateSubagentBriefing(): string {
   // Features come FIRST because they're the most actionable context for sub-agents.
   const featuresPath = featuresDir(root);
   if (existsSync(featuresPath)) {
-    const featureFiles = fg.sync('*.md', { cwd: featuresPath, absolute: true });
+    // Recurse so features grouped into topical/product subfolders are listed too.
+    const featureFiles = fg.sync('**/*.md', { cwd: featuresPath, absolute: true });
     const features: string[] = [];
 
     for (const file of featureFiles) {
       try {
         const { data } = readFrontmatter(file);
-        const name = basename(file, '.md');
+        // Folder-qualified slug → correct Read: path pointer for nested features.
+        const name = featureSlug(featuresPath, file);
         const status = String(data.status ?? 'unknown');
         const tags = Array.isArray(data.tags) ? data.tags.join(', ') : '';
 

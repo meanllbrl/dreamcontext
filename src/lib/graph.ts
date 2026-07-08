@@ -3,7 +3,7 @@ import { join, basename } from 'node:path';
 import fg from 'fast-glob';
 import { readFrontmatter } from './frontmatter.js';
 import { buildKnowledgeIndex } from './knowledge-index.js';
-import { featuresDir } from './features-path.js';
+import { featuresDir, featureSlug } from './features-path.js';
 
 export type GraphGroup =
   | 'soul'
@@ -140,9 +140,10 @@ export function buildGraph(contextRoot: string): Graph {
   // ─── Features (typed knowledge under knowledge/features/) ─────────────
   const featuresPath = featuresDir(contextRoot);
   if (existsSync(featuresPath)) {
-    const files = fg.sync('*.md', { cwd: featuresPath, absolute: true });
+    // Recurse so features grouped into topical/product subfolders become nodes.
+    const files = fg.sync('**/*.md', { cwd: featuresPath, absolute: true });
     for (const file of files) {
-      const fileSlug = basename(file, '.md');
+      const fileSlug = featureSlug(featuresPath, file);
       try {
         const { data } = readFrontmatter(file);
         const id = data.id ? String(data.id) : `feature/${fileSlug}`;
@@ -292,11 +293,14 @@ export function buildGraph(contextRoot: string): Graph {
     }
   }
 
-  // Task → Feature (via related_feature ID), Task → Parent Task
+  // Task → Feature (related_feature holds the feature's relative SLUG — the
+  // canonical form the link engine writes — but legacy data may carry the
+  // frontmatter id, so both resolve), Task → Parent Task
   for (const [taskId, refs] of taskRefs) {
     if (refs.relatedFeature) {
-      const featureNode = byId.get(refs.relatedFeature);
-      if (featureNode) {
+      const slugHit = bySlug.get(refs.relatedFeature);
+      const featureNode = (slugHit?.group === 'feature' ? slugHit : undefined) ?? byId.get(refs.relatedFeature);
+      if (featureNode && featureNode.group === 'feature') {
         const exists = links.some(
           (l) =>
             l.kind === 'related_feature' && l.source === taskId && l.target === featureNode.id,
