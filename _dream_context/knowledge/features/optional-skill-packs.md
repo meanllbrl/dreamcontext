@@ -2,14 +2,13 @@
 id: feat_bTBRuxX0
 status: active
 created: '2026-03-24'
-updated: '2026-06-21'
+updated: '2026-07-08'
 released_version: v0.8.7
 tags:
   - 'topic:skills'
   - 'topic:cli'
   - devops
-related_tasks:
-  - optional-skill-packs
+related_tasks: []
 type: feature
 name: optional-skill-packs
 description: ''

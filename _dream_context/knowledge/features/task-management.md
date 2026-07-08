@@ -2,7 +2,7 @@
 id: feat_LDQn2Bi8
 status: in_review
 created: '2026-02-25'
-updated: '2026-07-01'
+updated: '2026-07-08'
 released_version: 0.1.0
 tags:
   - backend
@@ -13,16 +13,11 @@ tags:
 related_tasks:
   - multi-assignee-via-person-tags
   - post-sleep-clickup-sync-rate-limit-headroom-retry-no-silent-fail
-  - github-task-backend
   - tasks-clearable-due-dates-start-end-date-ranges-reliably-synced-to-backend
   - >-
-    clickup-sync-unmapped-person-slug-tags-silently-drop-assignee-falls-back-to-api-token-owner-assignee-picker-offers-non-member-free-text-slugs
-  - >-
     per-project-format-rule-overrides-for-specialist-agents-task-feature-knowledge
-  - >-
-    feat-dashboard-sprint-aware-version-filter-current-completed-actions-status-sort
-  - fix-77-rename-sync-dcid
   - github-sync-upload-local-task-images-so-they-resolve-in-issues
+  - task-feature-objective-links-validated-assignment-bidirectional-maintenance
 type: feature
 name: task-management
 description: ''
@@ -67,6 +62,10 @@ Work spans multiple sessions, and agents need a structured way to track what is 
 - [x] As an agent/user, creating a task with `--person <name>` resolves the name against the real member roster (fuzzy match by display name / first name), so the resulting `person:<slug>` tag maps to a real member and survives a backend sync round-trip.
 - [x] As a developer, unmapped `person:<slug>` tags never silently drop an assignee — the sync surface (push to ClickUp or GitHub) emits a `SyncReport.warnings[]` entry and skips the assignment, so failures are visible, not silent.
 - [x] As a developer, local images embedded in a task's markdown body (agent-drop screenshots, etc.) are uploaded to a hosted, content-addressed location and rewritten to a resolvable URL when the task pushes to GitHub Issues, so images render inline on the issue instead of appearing as broken links to a path that only exists on my machine.
+- [x] As an AI agent/developer, I can link a task to a feature PRD via `related_feature` (single-valued, canonical folder-qualified slug), mirrored automatically in the feature's `related_tasks` list, so both sides stay in lockstep without manual maintenance.
+- [x] As an AI agent/developer, when I create a task, the CLI nudges me to assign it to a feature if one exists and the link is unset, so feature assignment happens early rather than during sleep reconciliation.
+- [x] As a developer, ghost feature references are refused at write time (400 on unknown/ambiguous slugs), so a typo never creates a dangling link.
+- [x] As a developer, renaming or deleting a task self-heals the feature side (strips the task from `related_tasks`), and renaming/moving a feature heals all its member tasks' `related_feature` to the new canonical slug, so links stay valid across renames.
 
 - [x] As a project maintainer, I can drop `_dream_context/overrides/task.md` into my brain to declare custom fields (name, key, type, options, sync targets, prompt) that attach extra project-specific data to every task, so tasks carry domain-specific attributes without forking the CLI.
 - [x] As a project maintainer, I can mark a custom field as `required: true` so that the CLI refuses to create or complete a task (or transition it to `completed`/`in_review`) while that field is unset, preventing stale or incomplete task records from entering the done pipeline.
@@ -119,6 +118,7 @@ Work spans multiple sessions, and agents need a structured way to track what is 
 - [x] `tasks status <name> in_progress` auto-stamps `start_date` with today on the FIRST transition to `in_progress` if no start date is set; isolated in the pure `shouldStampStartDate()` helper; an already-planned start date is never overwritten. No other status transition stamps.
 - [x] Active planning version: `state/.active-version.json` holds `{ active_planning_version: string | null }`; re-validated against RELEASES.json on read (cleared if the version is no longer `planning`). CLI: `dreamcontext core releases active` / `dreamcontext core releases set-active <version>` / `dreamcontext core releases clear-active`. Dashboard: `GET/PUT /api/releases/active`.
 - [x] `CustomFieldDef` supports `ask?: boolean`. When `ask: true`, `renderOverrideBriefing()` tags the field `[ASK THE USER]` in the briefing and emits an `ASK-FIRST:` rule block — agent asks the user for the value before creating the task (in interactive sessions) and leaves the field unset with a note in no-user contexts (sleep, autonomous reconcile). No CLI hard-fail for `ask` fields (leaving unset in no-user context is valid). Dashboard: `AddCustomFieldForm` has an "Ask me" toggle; `POST /api/task-overrides/fields` carries `ask` boolean. Architecture rationale: `[[decisions/decision-task-format-override-and-custom-fields]]`.
+- [x] `related_feature` (single-valued canonical slug) links a task to its feature PRD; `tasks create --feature`, `tasks feature <task> <ref|clear>` (mirrors `tasks objectives`); CLI nudges when a link is unset at creation time and features exist; server PATCH validates feature references (400 on unknown/ambiguous) and writes through to the feature's `related_tasks`; graph.ts draws task→feature edges by slug; snapshot renders each task's Feature inline.
 
 - [ ] `tasks rename <name> <new-name>`: rewrites `name:` in frontmatter, renames the `.md` file, migrates the ledger slug in `.tasks-map.json` (preserving `dcId`/`remoteId`/base snapshot), and pushes a name update to the active remote backend.
 - [ ] `reconcileRenamedTasks(ledger, liveTasks)` (provider-agnostic pre-pass in `sync-state.ts`): before pull+push, detects any task whose current file slug differs from the map slug for its `dcId` and calls `migrateSlug` — non-destructive and idempotent; genuine deletions and already-migrated entries are left alone.
@@ -131,6 +131,7 @@ Work spans multiple sessions, and agents need a structured way to track what is 
 - **[2026-06-30]** GitHub task-image bridge — security hardening (multi-review round 1 FAIL → fix → PASS, session `6c2e2ded`): the local-image resolver initially honored **any** path a remote issue body could contain, including out-of-root absolute paths and `../` traversal (a malicious/compromised remote issue body reaching `applyRemoteIssue` could make the mirror read arbitrary files off disk) and buffered the full file into memory **before** checking the size cap (a large reference could exhaust memory prior to rejection). Fixed with two load-bearing patterns, reusable anywhere this shape recurs: (1) **allow-listed root containment** (`isInsideRoot` — lexical, `safeChildPath`-style: rejects out-of-root absolute paths, `../` segments, and null bytes) applied to every path derived from external/remote content before any filesystem read; (2) **stat-gate before read** (`resolveImageBytes`) — check the size cap via `fs.stat` and reject oversized files *before* buffering bytes, never after. General lesson: any code path that turns externally-sourced text (a remote issue body, a task changelog, a pulled sync payload) into a local filesystem path needs BOTH of these gates, not just a path-join. See also `[[dashboard-server-security]]` for the sibling instance of the same containment pattern in the dashboard HTTP server. 3 new tests (containment unit, out-of-root-rejection integration, wiped-asset/base pull-recovery); 122/122 task-backend tests green.
 - **[2026-06-24]** Sync reconciliation identity is the stable `dcId` (not the name-slug). The slug is the join key ONLY for a task never yet synced (no `remoteId`). Once a `remoteId` is established, `dcId` is the sole reconciliation key — rename-proof. `reconcileRenamedTasks()` runs as a provider-agnostic pre-pass before every `sync()` in both backends. Agents MUST use `tasks rename` (not hand-edit + file rename) to avoid bypassing the ledger migration. Full rationale: `[[decisions/decision-sync-identity-and-reconciliation]]`.
 - **[2026-06-24]** Assignee pull-back already works via the watermarked delta pull; the gap was below-watermark drift (pre-sync UI assignments). `--reconcile` is the opt-in heal path; `tasks doctor` stays local-only by design. The `planAssigneeHeal()` decision function is pure and in `merge.ts` so it is provider-agnostic and unit-testable without network I/O. Full rationale: `[[decisions/decision-sync-identity-and-reconciliation]]`.
+- **[2026-07-08]** Task↔feature links are validated, bidirectional, and self-healing (commit 3fe9922). `feature-links.ts` engine: canonical (folder-qualified) feature resolution with exact/prefix/substring fuzzy matching (path-qualified refs never fuzzy-match across folders to avoid silent product collision); bidirectional apply (task.related_feature ↔ feature.related_tasks), both directions written atomically; task rename/delete heals the feature side (strips task from related_tasks); feature rename/move heals all member tasks to the new canonical slug; audit/reconcile helpers; all reads/writes guarded against path traversal. CLI: `tasks create --feature`, new `tasks feature <task> [ref|clear]` (mirrors `tasks objectives`), create-time nudge when link unset and features exist. `features set/create related_tasks` validates slugs and writes through to each task's related_feature (ghost slugs refused). Server PATCH /api/tasks/:slug validates objectives + related_feature (400 on unknown/ambiguous), writes through the feature side. graph.ts draws task→feature edges by slug (was id-only, so real links drew none); snapshot renders each task's Feature inline. Dashboard feature picker emits folder-qualified slugs; invalidates knowledge query on related_feature change. 19-test feature-links engine suite, golden PATCH-route test, cli-commands integration coverage. See `doctor --heal-links` (held back from this commit, to ship once concurrent brain-sync work settles).
 - **[2026-06-23]** `ask: true` fields — ask-before-create for human-judgment fields: a field marked `ask` has a behavioral rule injected into the override briefing ("`[ASK THE USER]`" annotation + `ASK-FIRST:` block). The agent asks the user for the value at interactive task creation and leaves it unset (with a note) in no-user contexts (sleep/autonomous). This prevents the agent from satisfying a `required` gate by inventing a number. `ask` and `required` are orthogonal flags and may coexist on the same field. Full design: `[[decisions/decision-task-format-override-and-custom-fields]]`.
 - **[2026-06-23]** Required-field hard-fail: the enforcement gate (`checkRequiredFields`) fires at `tasks create`, `tasks complete`, and `tasks status … completed|in_review`. Blast radius is CLI command paths only — the dashboard task-create flow is excluded (advisory warning only) to avoid breaking the UI for partially-filled drafts. The `--allow-missing-required` / `DREAMCONTEXT_ALLOW_MISSING_REQUIRED=1` draft escape is intentional: agents or automation pipelines may need to create skeleton tasks before fields are known. Advisory briefing alone (snapshot `⚠ UNSET`) is not sufficient to prevent stale tasks reaching done status — hard-fail is the only lever that works across stale sessions where the briefing may not be read.
 - **[2026-06-23]** Agent visibility of custom field values is a two-part lever: (1) the snapshot Active Tasks block renders per-task `Custom fields:` with values and `⚠ UNSET (required)` annotations so any session sees the state at startup; (2) `tasks list --long` emits `TaskRecord.custom_fields` so scripting and sub-agent automation can read them without opening individual task files.
@@ -271,6 +272,9 @@ custom_fields:          # populated by `tasks field` or dashboard; synced to Cli
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-07-08 - Validated, bidirectional, self-healing task↔feature links
+- `related_feature` (single-valued) links a task to its feature PRD; mirrored automatically in the feature's `related_tasks` list. New `feature-links.ts` engine: canonical (folder-qualified) feature resolution, bidirectional apply (both sides written atomically), task rename/delete healing, audit/reconcile. CLI: `tasks create --feature`, new `tasks feature <task> [ref|clear]`, create-time nudges. `features set/create related_tasks` validates + writes through to tasks. Server PATCH validates (400 on ghost slugs) + writes through. Graph draws task→feature edges by slug; snapshot renders Feature inline. 19-test engine suite + golden PATCH-route + cli-commands integration coverage.
 
 ### 2026-06-30 - GitHub task-image bridge shipped (v0.10.5)
 - Local task images (agent-drops, screenshots) now upload to a content-addressed `dreamcontext-assets` branch and resolve inline on the synced GitHub issue; local mirror path never churns (wire-only rewrite). New `image-sniff.ts` + `github-assets.ts`.

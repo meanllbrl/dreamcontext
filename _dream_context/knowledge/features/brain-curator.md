@@ -8,8 +8,7 @@ tags:
   - 'topic:agents'
   - 'topic:skills'
   - onboarding
-related_tasks:
-  - curator-skill
+related_tasks: []
 type: feature
 name: brain-curator
 description: ''

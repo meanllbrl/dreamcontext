@@ -2,7 +2,7 @@
 id: feat_uihUmOmu
 status: in_review
 created: '2026-06-14'
-updated: '2026-07-05'
+updated: '2026-07-08'
 released_version: v0.8.7
 tags:
   - 'topic:desktop'
@@ -10,7 +10,6 @@ tags:
   - backend
   - 'topic:federation'
 related_tasks:
-  - launcher-quiz-onboarding
   - federation-read-only
 type: feature
 name: launcher-federation-graph

@@ -2,13 +2,12 @@
 id: feat_I4gU7kKs
 status: active
 created: '2026-05-09'
-updated: '2026-06-21'
+updated: '2026-07-08'
 released_version: v0.8.7
 tags:
   - 'topic:agents'
   - 'topic:sleep'
-related_tasks:
-  - sleep-fanout-architecture
+related_tasks: []
 type: feature
 name: sleep-fanout-architecture
 description: ''

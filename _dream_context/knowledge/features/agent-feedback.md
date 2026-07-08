@@ -2,14 +2,13 @@
 id: feat_vYyVonQ3
 status: active
 created: '2026-06-10'
-updated: '2026-06-21'
+updated: '2026-07-08'
 released_version: v0.8.7
 tags:
   - 'topic:cli'
   - backend
   - 'topic:agents'
-related_tasks:
-  - agent-feedback-loop
+related_tasks: []
 type: feature
 name: agent-feedback
 description: ''

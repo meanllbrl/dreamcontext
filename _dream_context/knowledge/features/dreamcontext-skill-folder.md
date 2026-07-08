@@ -2,15 +2,14 @@
 id: feat_IV4p9Yjx
 status: active
 created: '2026-06-20'
-updated: '2026-07-06'
+updated: '2026-07-08'
 released_version: v0.8.8
 tags:
   - 'topic:skills'
   - 'topic:cli'
   - 'topic:agents'
   - devops
-related_tasks:
-  - dreamcontext-skill-folder-overhaul
+related_tasks: []
 type: feature
 name: dreamcontext-skill-folder
 description: ''

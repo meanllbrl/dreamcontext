@@ -2,18 +2,13 @@
 id: feat_ControlPanel_v06
 status: in_review
 created: '2026-05-31'
-updated: '2026-06-18'
+updated: '2026-07-08'
 released_version: v0.8.7
 tags:
   - control-panel
   - backend
   - frontend
-related_tasks:
-  - v06-control-plane-backend
-  - v06-control-panel-frontend
-  - v06-vault-management
-  - v06-control-panel-polish
-  - disable-claude-native-memory
+related_tasks: []
 type: feature
 name: control-panel
 description: ''

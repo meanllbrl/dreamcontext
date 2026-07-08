@@ -11,8 +11,8 @@ tags:
   - 'topic:embeddings'
   - decisions
 related_tasks:
-  - recall-context-uplift-v07
-  - feat-embedding-spike-pick-multilingual-model-validate-latency-and-token-type-ids
+  - >-
+    feat-embedding-spike-pick-multilingual-model-validate-latency-and-token-type-ids
   - feat-embedding-cache-engine-content-hash-chunk-cache-and-incremental-refresh
   - feat-hybrid-recall-fusion-bm25-plus-dense-via-rrf-behind-flag
   - feat-embedding-ab-eval-harness-bm25-vs-hybrid-vs-dense-on-frozen-gold-set

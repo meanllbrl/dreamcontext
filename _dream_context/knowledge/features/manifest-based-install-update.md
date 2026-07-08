@@ -2,20 +2,14 @@
 id: feat_mBa5T4nU
 status: active
 created: '2026-05-22'
-updated: '2026-06-21'
+updated: '2026-07-08'
 released_version: v0.8.7
 tags:
   - devops
   - onboarding
   - architecture
 related_tasks:
-  - v04-ws1-install-update-overhaul
-  - v06-control-plane-backend
-  - v06-control-panel-frontend
   - issue-22-setup-version-drift
-  - cli-auto-upgrade
-  - continuous-app-update
-  - dreamcontext-skill-folder-overhaul
 type: feature
 name: manifest-based-install-update
 description: ''

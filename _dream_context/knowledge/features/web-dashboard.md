@@ -2,19 +2,13 @@
 id: feat_O7LODr7O
 status: active
 created: '2026-02-25'
-updated: '2026-07-06'
+updated: '2026-07-08'
 released_version: 0.12.0
 tags:
   - frontend
   - architecture
   - design
 related_tasks:
-  - web-dashboard
-  - v06-control-panel-frontend
-  - v06-control-plane-backend
-  - landing-page-v2
-  - dashboard-alignment
-  - data-structures-to-knowledge
   - knowledge-diagram-nesting
   - >-
     feat-dashboard-sprint-aware-version-filter-current-completed-actions-status-sort
@@ -22,8 +16,8 @@ related_tasks:
     feat-dashboard-redesign-tasks-board-saved-views-with-shared-local-persistence
   - dashboard-version-rename-and-delete-controls
   - board-version-filter-smart-buckets
-  - multi-assignee-via-person-tags
-  - collapse-the-feature-entity-into-typed-knowledge-knowledge-features-type-feature
+  - >-
+    collapse-the-feature-entity-into-typed-knowledge-knowledge-features-type-feature
 type: feature
 name: web-dashboard
 description: ''

@@ -128,7 +128,7 @@ The roadmap is therefore a **PO-authored board of Objectives** (OKR-style outcom
 ## Changelog
 <!-- LIFO: newest entry at top -->
 
-### 2026-07-08 - Forecast accuracy: effort-aware, envelope-clamped cascade (fix phantom dependency slip)
+### 2026-07-08 - Forecast accuracy: effort-aware, envelope-clamped cascade (commit e214338)
 - **Root cause of the "why is my last objective delayed?" report**: the timeline's `roadmap-forecast.ts` treated an objective's committed-window *width* as a rigid work block that slid forward on every dependency push, so a terminal objective slipped past target even when its deps were on time and no effort was set. The server (`roadmap-model.ts`) meanwhile *clamped* and only forecast from member-task dates, so the two engines disagreed, and the `effort` field never touched the forecast at all.
 - **Fix (both engines, identical math)**: effort-aware, envelope-clamped finish-to-start — `effortDays = effort×7`, `forecast_start = max(committed start, max dep forecast_end)`, `workEnd = forecast_start + effortDays`, `forecast_end = max(committed end, workEnd)`, `slipping = target set AND workEnd > target`, `slipDays = workEnd − target`. A dependency finishing on time consumes slack, not the deadline; `effort` drives a real, sized slip when the work can't fit before the target (owner-chosen 2026-07-08); with no effort an objective slips only when its achievable start is pushed past its target.
 - **Server gained a committed-window basis**: no-dated-task objectives with a committed `start_date` now forecast from window+effort+deps (were `null`), so the CLI/snapshot/agents match the timeline. Objectives with dated tasks keep the task-date basis; a bare `target_date` stays unforecastable.

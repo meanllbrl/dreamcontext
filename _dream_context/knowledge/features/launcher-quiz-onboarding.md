@@ -2,15 +2,14 @@
 id: feat_bt9zRxgL
 status: active
 created: '2026-06-13'
-updated: '2026-06-21'
+updated: '2026-07-08'
 released_version: v0.8.7
 tags:
   - 'topic:desktop'
   - onboarding
   - backend
   - frontend
-related_tasks:
-  - launcher-quiz-onboarding
+related_tasks: []
 type: feature
 name: launcher-quiz-onboarding
 description: ''

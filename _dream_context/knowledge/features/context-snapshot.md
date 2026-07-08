@@ -2,14 +2,13 @@
 id: feat_4NB3SlrK
 status: active
 created: '2026-02-25'
-updated: '2026-06-10'
+updated: '2026-07-08'
 released_version: 0.1.0
 tags:
   - architecture
   - backend
   - onboarding
-related_tasks:
-  - recall-context-uplift-v07
+related_tasks: []
 type: feature
 name: context-snapshot
 description: ''

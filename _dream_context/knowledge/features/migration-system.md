@@ -2,7 +2,7 @@
 id: feat_43YmPwNg
 status: active
 created: '2026-06-12'
-updated: '2026-06-21'
+updated: '2026-07-08'
 released_version: v0.8.7
 tags:
   - architecture
@@ -10,7 +10,6 @@ tags:
   - devops
 related_tasks:
   - issue-23-migration-system
-  - issue-20-excalidraw-knowledge
 type: feature
 name: migration-system
 description: ''

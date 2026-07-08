@@ -2,14 +2,13 @@
 id: feat_9qLM-gY_
 status: active
 created: '2026-02-25'
-updated: '2026-06-29'
+updated: '2026-07-08'
 released_version: 0.1.0
 tags:
   - architecture
   - backend
   - decisions
 related_tasks:
-  - sleep-fanout-architecture
   - enforce-mutual-exclusion-on-sleep-consolidation-lock
 type: feature
 name: sleep-consolidation

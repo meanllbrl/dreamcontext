@@ -2,7 +2,7 @@
 id: feat_cSWvTF1K
 status: in_review
 created: '2026-02-25'
-updated: '2026-06-21'
+updated: '2026-07-08'
 released_version: 0.1.0
 tags:
   - devops
@@ -10,7 +10,6 @@ tags:
   - architecture
   - 'topic:agents'
 related_tasks:
-  - initializer-skill
   - initializer-improvements
 type: feature
 name: project-initialization

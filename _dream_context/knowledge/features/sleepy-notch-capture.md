@@ -2,14 +2,13 @@
 id: feat_UF2kRQGT
 status: in_review
 created: '2026-06-14'
-updated: '2026-07-06T19:30:00.000Z'
+updated: '2026-07-08'
 released_version: v0.8.7
 tags:
   - frontend
   - backend
   - domain
 related_tasks:
-  - sleepy-notch-capture
   - sleepy-notch-panel-redesign
 type: feature
 name: sleepy-notch-capture

@@ -2,17 +2,18 @@
 id: feat_jI0huqeH
 status: active
 created: '2026-02-25'
-updated: '2026-07-01'
+updated: '2026-07-08'
 released_version: 0.1.0
 tags:
   - architecture
   - backend
   - decisions
 related_tasks:
-  - data-structures-to-knowledge
   - issue-20-excalidraw-knowledge
   - >-
     desktop-co-located-board-folder-renders-wrong-tree-splits-the-folder-excalidraw-embedded-images-don-t-load
+  - >-
+    knowledge-support-topical-subfolders-for-grouping-beyond-data-structures-diagrams-products
 type: feature
 name: knowledge-base
 description: ''
@@ -36,6 +37,8 @@ Core context files have a ~200 line limit to stay lightweight. When deep researc
 - [x] As a developer, I want `dreamcontext init` to scaffold schemas under `knowledge/data-structures/` so new projects land in the correct location from the start.
 - [x] As a dreamcontext user, I can keep Excalidraw boards in `knowledge/` without their embedded scene JSON poisoning BM25 recall or bloating the index/snapshot, so that memory stays precise while the dashboard still renders the boards.
 - [x] As a dreamcontext user, I can place a companion `.md` knowledge file beside an Excalidraw board in the same folder and have it indexed and recalled as first-class knowledge, so that detailed teardowns or notes co-located with a board are not silently excluded from recall.
+- [x] As a dreamcontext user, I can organize knowledge into arbitrary topical subfolders under `knowledge/` (not just `data-structures/` and `products/`), and `buildKnowledgeIndex()` recurses the whole tree so grouped files stay first-class across recall, dashboard, and sleep — subfolders are structural grouping, not a dark silo.
+- [x] As a dreamcontext user, I can organize feature PRDs into topical/product subfolders under `knowledge/features/` (e.g. `features/lina/`, `features/memoryos/`), and the top-level folder IS the feature's product (derived from the path, single source of truth), so a feature's product never drifts from its location.
 
 ## Acceptance Criteria
 
@@ -63,9 +66,12 @@ Core context files have a ~200 line limit to stay lightweight. When deep researc
 - [x] Self-contained board folders (a board + its `.board.cjs` generator + a companion teardown `.md` + an `assets/` image subfolder, all co-located) render as ONE grouped node in the dashboard knowledge tree — the folder is never split with the board hoisted to the parent level while a sibling card stays behind (fixed 2026-06-30, desktop bug report; see Constraints & Decisions).
 - [x] Embedded board images stored in a sibling `assets/` subfolder (not just the board's own directory or an `Attachments/` folder) resolve and render via `GET /api/knowledge-assets/:slug` — a bare `[[image.png]]` wikilink now matches `boardDir/assets/<basename>` in addition to the pre-existing candidates.
 - [x] The board builder (`build_excalidraw.js`) refuses to write a board with ANY dangling embedded-image reference — a pre-flight collects every missing asset across the whole spec and fails once with the complete list, rather than throwing on the first missing image mid-build (which could leave a partially-written board with silent gaps).
+- [x] Knowledge supports arbitrary topical subfolders — `buildKnowledgeIndex()` globs `knowledge/**/*.md` recursively (not just the flat root), and slugs are basename-only (not full relative path) so recall keys stay short and wikilinks stay portable across moves.
+- [x] Features support topical/product subfolders — `dreamcontext features create <name> --folder <product>` writes to `features/<product>/<name>.md`; `dreamcontext features move <name> <folder>` (or `.` for root) moves + rewrites inbound `[[wikilinks]]` atomically; nested features stay first-class everywhere (snapshot, recall, graph, releases, dashboard tree). The **top-level folder IS the feature's product** (single source of truth, derived from path — no stored `product:` field that can drift).
 
 ## Constraints & Decisions
 
+- **[2026-07-08]** Knowledge topical subfolders + feature-product SSOT (session 7d826ba9, uncommitted). Knowledge now supports arbitrary topical subfolders under `knowledge/` — `buildKnowledgeIndex()` globs `**/*.md` (recursive), and slugs are basename-only for short recall keys. Features support topical/product subfolders under `features/` — `dreamcontext features create <name> --folder <product>` or `features move <name> <folder>` (atomic move + inbound `[[wikilink]]` rewrite). The **top-level folder IS the feature's product** — derived from the path (single source of truth), no stored `product:` field that can drift. `features/<product>/<name>.md` → product = `<product>`; `features/<name>.md` → product = null (root). Nested features stay first-class everywhere (snapshot, recall, graph, releases, dashboard tree). The stored `product:` frontmatter field is RETIRED — session 7d826ba9 removed it from ~24 feature files, and the feature-product resolver (`features-path.ts`) now derives product from the top-level folder only. See also `dreamcontext-skill-folder.md` for the broader skill/agent/hook foldering model. `dreamcontext migrations apply-diagrams` (idempotent) folds flat `knowledge/diagrams/*.excalidraw.md` boards into per-title `diagrams/<title>/` subfolders + rewrites `[[wikilinks]]` (legacy structural; promoted layout is context-co-located).
 - **[2026-06-30]** Co-located board-folder tree/asset bugs (desktop feedback, session `65a69348`): (1) **Tree split** — `buildKnowledgeTree`'s "board self-wrapper collapse" heuristic (built for the legacy convention: a board alone in a folder named after itself) unconditionally hoisted the board out of ANY self-named folder, including the newer self-contained convention where a teardown `.md` lives alongside it — splitting the board from its own folder. Fix: the collapse now only fires when the board is the folder's SOLE occupant, counted over the WHOLE subtree (every ancestor prefix, not just direct children — a first-pass fix that only counted direct children was caught by two independent multi-reviewers as still splitting a board co-located with a *nested* notes subfolder). (2) **Blank embedded images** — `handleKnowledgeAssets` resolved wikilinks against vault-root/context-root/the board folder/`Attachments/`, but not the sibling `assets/` subfolder the self-contained convention uses; added `boardDir/<path>` and `boardDir/assets/<basename>` candidates, still `safeChildPath`-contained (multi-review security PASS — the new candidates are STRICTLY tighter than pre-existing ones, cannot widen traversal). (3) **Silent dangling embeds** — the builder's pre-flight now collects every missing asset across a spec and fails once with the full list (was: throw on the first missing image, and a directory-valued path silently skipped the guard entirely before raising a raw `EISDIR` later — also fixed via `statSync().isFile()`). 31 regression tests (`tests/unit/excalidraw-knowledge.test.ts`).
 - **[2026-06-17]** Companion-knowledge indexing (PR #35, commit e110d9f): `isDarkDiagramSibling()` was previously a blanket exclusion of ALL non-board `.md` files co-located with a board. It is now role-based: a `.md` with `name:` frontmatter beside a board (`isIndexableKnowledge=true`) is NOT dark — it is indexed as first-class knowledge. Generator scripts (`.board.cjs`), spec JSON, and frontmatter-less helper notes remain dark. This resolves the prior tradeoff where keeping a board + its teardown `.md` in one folder forced a choice between good co-location and recall. The predicate stays O(1) (caller supplies the flag from already-read frontmatter; no extra fs calls). The old "all files beside a board are dark siblings" documentation in `skill/SKILL.md` and `skill-packs/excalidraw/SKILL.md` is NOW STALE and should be updated to reflect the role-based rule.
 - **[2026-06-12]** Excalidraw memory/render invariant (#20): detail = raw, memory = extracted. The dashboard knowledge detail route returns the RAW body (the renderer needs the scene JSON); all memory surfaces (index content, BM25 corpus, snapshot) get only extracted text via `extractExcalidrawText()`. Extraction never returns the raw body (try/catch → `''`, frontmatter-only fallback). `src/` must not import `dashboard/src/` (separate builds) — the drawing-block regex is replicated with a cross-ref comment. Maintainer decisions (do not relitigate): migration version key = 0.7.2; snapshot relies on extraction (Option A — no new pinned-inline feature); migration code step never auto-moves flat boards (avoids silent slug/wikilink/access-record breakage) — moves are opt-in via the agentTask.
@@ -129,6 +135,11 @@ Full content of the knowledge file here...```
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-07-08 - Knowledge topical subfolders + feature-product SSOT (session 7d826ba9, uncommitted)
+- Knowledge now supports arbitrary topical subfolders — `buildKnowledgeIndex()` globs `**/*.md` recursively; slugs are basename-only for short recall keys.
+- Features support topical/product subfolders — `features create --folder <product>`, `features move <name> <folder>` (atomic move + `[[wikilink]]` rewrite). The **top-level folder IS the feature's product** (derived from path, single source of truth). Stored `product:` frontmatter field RETIRED (~24 files swept in session 7d826ba9).
+- Nested features first-class everywhere (snapshot, recall, graph, releases, dashboard tree). See `dreamcontext-skill-folder.md` for the broader foldering model.
 
 ### 2026-06-30 - Co-located board-folder tree/asset bugs fixed (desktop feedback)
 - Tree grouping: board self-wrapper collapse now gated on "sole occupant of the whole subtree" instead of unconditional — a board is never split from a co-located teardown note or nested notes subfolder.

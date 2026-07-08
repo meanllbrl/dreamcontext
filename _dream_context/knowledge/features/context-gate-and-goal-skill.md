@@ -2,15 +2,14 @@
 id: feat_rL12JiTu
 status: active
 created: '2026-05-31'
-updated: '2026-06-21'
+updated: '2026-07-08'
 released_version: v0.8.7
 tags:
   - 'topic:skills'
   - 'topic:cli'
   - 'topic:agents'
   - architecture
-related_tasks:
-  - goal-skill-and-related-skills-recall
+related_tasks: []
 type: feature
 name: context-gate-and-goal-skill
 description: ''

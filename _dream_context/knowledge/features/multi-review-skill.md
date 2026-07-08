@@ -2,15 +2,14 @@
 id: feat_multirev001
 status: active
 created: '2026-05-24'
-updated: '2026-06-21'
+updated: '2026-07-08'
 released_version: v0.8.7
 tags:
   - 'topic:skills'
   - 'topic:cli'
   - 'topic:agents'
   - 'kind:testing'
-related_tasks:
-  - multi-review-skill
+related_tasks: []
 type: feature
 name: multi-review-skill
 description: ''

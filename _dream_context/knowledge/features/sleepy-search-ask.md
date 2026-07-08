@@ -10,8 +10,6 @@ tags:
   - 'topic:dashboard'
   - 'topic:desktop'
 related_tasks:
-  - >-
-    feat-desktop-in-app-conversational-agent-surface-bm25-search-claude-chat-embedded-terminal
   - sleepy-intelligent-search-toggle-real-claude-code-ask-chat
 type: feature
 name: sleepy-search-ask

@@ -2,15 +2,14 @@
 id: feat_3VeOJa6a
 status: active
 created: '2026-05-09'
-updated: '2026-06-21'
+updated: '2026-07-08'
 released_version: v0.8.7
 tags:
   - tasks
   - prioritization
   - 'topic:dashboard'
   - 'topic:cli'
-related_tasks:
-  - rice-prioritization
+related_tasks: []
 type: feature
 name: rice-prioritization
 description: ''

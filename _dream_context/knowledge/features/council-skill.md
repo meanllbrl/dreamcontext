@@ -2,15 +2,14 @@
 id: feat_council001
 status: active
 created: '2026-04-19'
-updated: '2026-06-21'
+updated: '2026-07-08'
 released_version: v0.8.7
 tags:
   - 'topic:skills'
   - 'topic:cli'
   - 'topic:agents'
   - decisions
-related_tasks:
-  - council-skill
+related_tasks: []
 type: feature
 name: council-skill
 description: ''

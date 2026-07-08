@@ -37,7 +37,7 @@ date: '2026-07-08'
   - github-cloud-collaboration-brain-repo-sync (completed) · v0.13.0 · 2026-07-04 → …
   - interactive-roadmap-dashboard-forecast-timeline-cascade-editable-detail-panel (completed) · v0.10.5
 
-### 🟡 **simplified-ux** — Simplified UX · 8/15 done (53%) · target 2026-07-31 · forecast 2026-07-04 ✓ on track
+### 🟡 **simplified-ux** — Simplified UX · 9/16 done (56%) · target 2026-07-31 · forecast 2026-07-04 ✓ on track
   Unblocks: hello-world-pr, make-it-a-business
   - agent-surface-plus-new-button-face-should-open-menu-or-remember-last-kind (todo) · BACKLOG
   - author-a-task-via-a-claude-agent-from-the-new-task-button (todo) · BACKLOG
@@ -53,6 +53,7 @@ date: '2026-07-08'
   - in-app-task-detail-inline-agent-curate-the-task-via-anchored-comments-revise-summarize-split-status-with-real-time-refresh (todo) · BACKLOG
   - launcher-cross-project-multi-vault-task-view-for-portfolio-planning (todo) · BACKLOG
   - launcher-federation-board-modeless-direct-manipulation-ux (in_review) · 0.12.0
+  - roadmap-forecast-accuracy-effort-aware-envelope-clamped-cascade (completed) · 2026-07-08 → …
   - task-feature-objective-links-validated-assignment-bidirectional-maintenance (completed) · 2026-07-08 → …
 
 ### 🔵 **make-it-a-business** — Make it a Business · $ 857/2000 MRR (43%) · target 2026-09-05 · forecast 2026-09-21 🔴 SLIPPING · deps: improve-recall-mechanism, improve-sleep-quality, simplified-ux, make-dreamcontext-team-ready, include-codex-opencode-support
