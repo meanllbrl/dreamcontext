@@ -451,38 +451,51 @@ export function RoadmapTimeline({ items, allItems, cardProps, onOpen, onToast }:
 
                 {/* track */}
                 {f.forecastable ? (() => {
-                  const sx = gx(f.forecast_start!), ex = gx(f.forecast_end!), tx = gx(f.target!);
-                  const splitX = Math.max(sx, Math.min(tx, ex));
+                  const sx = gx(f.forecast_start!), ex = gx(f.forecast_end!);
+                  const hasTgt = f.target != null;
+                  const tx = hasTgt ? gx(f.target!) : ex;
+                  // Green fills the whole bar when on track; when slipping it stops at
+                  // the target and the red overshoot spans target → forecast_end. If the
+                  // achievable start is itself past the target, green collapses to 0.
+                  const greenEnd = f.slipping ? Math.min(tx, ex) : ex;
+                  const overStart = Math.max(sx, tx);
                   const barLeft = LW + sx;
                   const barW = Math.max(8, ex - sx);
-                  const mainW = Math.max(0, splitX - sx);
-                  const overW = Math.max(0, ex - splitX);
+                  const mainW = Math.max(0, greenEnd - sx);
+                  const overW = f.slipping ? Math.max(0, ex - overStart) : 0;
+                  const overLeft = Math.max(0, overStart - sx);
+                  // A pure milestone bar has no own committed dates yet — dragging it seeds
+                  // its committed window from the current (inherited) forecast position.
+                  const dragStart = f.committedStart ?? f.forecast_start!;
+                  const dragEnd = f.committedEnd ?? f.forecast_end!;
                   const isDragging = dragPreview?.slug === it.slug;
                   return (
                     <>
                       <div
                         className={`rtl-bar ${isDragging ? 'rtl-bar--active' : ''}`}
                         style={{ left: barLeft, width: barW, height: BAR_H }}
-                        onPointerDown={(e) => beginDrag(e, it.slug, f.committedStart!, f.committedEnd!, 'move')}
+                        onPointerDown={(e) => beginDrag(e, it.slug, dragStart, dragEnd, 'move')}
                         onClick={() => { if (!movedRef.current) onOpen(it.slug); }}
-                        title={`${it.title} · ${fmtShort(f.forecast_start!)} → ${fmtShort(f.forecast_end!)}${f.slipping ? ` · slipping ${f.slipDays}d` : ''}\nDrag to reschedule · drag an edge to resize`}
+                        title={`${it.title} · ${fmtShort(f.forecast_start!)} → ${fmtShort(f.forecast_end!)}${f.slipping ? ` · slipping ${f.slipDays}d` : f.slipDays < 0 ? ` · ${-f.slipDays}d buffer` : ''}\nDrag to reschedule · drag an edge to resize`}
                       >
                         <div className="rtl-bar-main" style={{ width: mainW, background: `linear-gradient(180deg, ${meta.lite}, ${meta.color})` }} />
-                        {f.slipping && overW > 0 && <div className="rtl-bar-over" style={{ left: mainW, width: overW }} />}
+                        {f.slipping && overW > 0 && <div className="rtl-bar-over" style={{ left: overLeft, width: overW }} />}
                         <span className="rtl-bar-inner">
                           <span className="rtl-bar-title">{it.title}</span>
                           {cardProps.progress !== false && pct !== null && barW > 88 && <span className="rtl-bar-pct">{pct}%</span>}
                         </span>
-                        <span className="rtl-handle rtl-handle--start" onPointerDown={(e) => beginDrag(e, it.slug, f.committedStart!, f.committedEnd!, 'start')} title="Drag to set start" />
-                        <span className="rtl-handle rtl-handle--end" onPointerDown={(e) => beginDrag(e, it.slug, f.committedStart!, f.committedEnd!, 'end')} title="Drag to set target" />
+                        <span className="rtl-handle rtl-handle--start" onPointerDown={(e) => beginDrag(e, it.slug, dragStart, dragEnd, 'start')} title="Drag to set start" />
+                        <span className="rtl-handle rtl-handle--end" onPointerDown={(e) => beginDrag(e, it.slug, dragStart, dragEnd, 'end')} title="Drag to set target" />
                       </div>
                       {/* connect dot */}
                       <span className="rtl-connect" style={{ left: barLeft + barW + 7, top: ROW_H / 2 }}
                         onPointerDown={(e) => beginLink(e, it.slug, sx + barW, i * ROW_H + ROW_H / 2)}
                         title="Drag onto another objective to link (this must finish first)">◆</span>
                       <span className="rtl-end-label" style={{ left: LW + ex + 12, color: f.slipping ? RM_RED : 'var(--color-text-tertiary)' }}>{fmtShort(f.forecast_end!)}</span>
-                      <div className="rtl-target-line" style={{ left: LW + tx }} title={`Target: ${fmtShort(f.target!)}`} />
-                      <div className="rtl-target-diamond" style={{ left: LW + tx - 5.5 }}>◆</div>
+                      {hasTgt && <>
+                        <div className="rtl-target-line" style={{ left: LW + tx }} title={`Target: ${fmtShort(f.target!)}`} />
+                        <div className="rtl-target-diamond" style={{ left: LW + tx - 5.5 }}>◆</div>
+                      </>}
                     </>
                   );
                 })() : (

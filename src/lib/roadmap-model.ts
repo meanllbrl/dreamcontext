@@ -220,6 +220,19 @@ function daysBetween(fromISO: string, toISO: string): number {
   return Math.round((b - a) / 86_400_000);
 }
 
+/** `iso` (YYYY-MM-DD, UTC) advanced by `days` (0 → unchanged; malformed → unchanged). */
+function addDaysISO(iso: string, days: number): string {
+  if (days === 0) return iso;
+  const t = Date.parse(`${iso}T00:00:00Z`);
+  if (Number.isNaN(t)) return iso;
+  return new Date(t + days * 86_400_000).toISOString().slice(0, 10);
+}
+
+/** Whole calendar days of work for an effort estimate (prioritization weeks → days); null/≤0 = 0. */
+export function effortToDays(effort: number | null | undefined): number {
+  return effort != null && effort > 0 ? Math.round(effort * 7) : 0;
+}
+
 /**
  * A one-line outcome summary for the snapshot: the first real prose line of the
  * objective body. Skips headings, HTML comments, and the parenthesised scaffold
@@ -311,25 +324,41 @@ export function buildRoadmapModel(contextRoot: string): RoadmapModel {
 
     // Forecast. Dependencies contribute their (already-cascaded) forecast_end;
     // a dependency that is itself unforecastable (null) imposes no constraint.
+    // Effort-aware, envelope-clamped finish-to-start — kept in lock-step with the
+    // dashboard's `roadmap-forecast.ts` so the timeline and the CLI/snapshot agree.
     const maxDepEnd = maxDate(
       o.depends_on.filter((d) => knownSlugs.has(d)).map((d) => forecastEndOf.get(d) ?? null),
     );
+    const effortDays = effortToDays(o.effort);
     const hasDates = tasks.some((t) => t.start_date !== null || t.due_date !== null);
     let forecastStart: string | null = null;
     let forecastEnd: string | null = null;
     if (hasDates) {
+      // Linked dated tasks are the schedule of record — their span already encodes
+      // the real duration, so effort is not re-added on top (it would double-count).
       const earliestStart = minDate(tasks.map((t) => t.start_date));
       const latestDue = maxDate(tasks.map((t) => t.due_date));
       forecastStart = maxDate([earliestStart, maxDepEnd]);
       forecastEnd = maxDate([latestDue, forecastStart]);
+    } else if (o.start_date !== null) {
+      // PO-committed window (no dated tasks yet): the start→target window is a DEADLINE
+      // PLAN, not a rigid block that slides. A dependency pushes only the achievable
+      // start; the objective finishes after `effort` weeks of work from there, but the
+      // bar never renders shorter than the committed window. It slips only when that
+      // work can't fit before the target — never merely for having a wide window.
+      const committedStart = o.start_date;
+      const committedEnd = o.target_date ?? o.start_date;
+      forecastStart = maxDate([committedStart, maxDepEnd]);
+      const workEnd = addDaysISO(forecastStart!, effortDays);
+      forecastEnd = maxDate([committedEnd, workEnd]);
     } else if (maxDepEnd !== null) {
-      // Pure MILESTONE objective (no dated tasks of its own, but depends on others):
-      // it finishes when its latest dependency does (finish-to-start, zero own
-      // duration), so an upstream slip cascades into it. Only when NO dependency is
-      // forecastable does it stay null ("unforecastable") — preserving the rule that
-      // a null-forecast objective never drags its dependents to "now".
+      // Pure MILESTONE objective (no dated tasks and no committed start of its own, but
+      // depends on others): it finishes when its latest dependency does (finish-to-start)
+      // plus any own effort, so an upstream slip cascades into it. Only when NO dependency
+      // is forecastable does it stay null ("unforecastable") — preserving the rule that a
+      // null-forecast objective never drags its dependents to "now".
       forecastStart = maxDepEnd;
-      forecastEnd = maxDepEnd;
+      forecastEnd = addDaysISO(maxDepEnd, effortDays);
     }
     forecastEndOf.set(o.slug, forecastEnd);
 

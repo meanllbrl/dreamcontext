@@ -8,6 +8,7 @@ import {
   computeRollupStatus,
   computeMetricStatus,
   metricProgressPct,
+  effortToDays,
   transitiveDependents,
   type RoadmapTaskRef,
 } from '../../src/lib/roadmap-model.js';
@@ -296,6 +297,87 @@ describe('buildRoadmapModel — slip attribution (days + auto-derived cause)', (
     const model = buildRoadmapModel(root);
     expect(model.objectives).toHaveLength(2);
     expect(model.warnings.some((w) => /circular/i.test(w))).toBe(true);
+  });
+});
+
+describe('buildRoadmapModel — committed-window forecast (no dated tasks: PO dates + effort)', () => {
+  it('effortToDays: weeks → calendar days; null/0/negative → 0', () => {
+    expect(effortToDays(null)).toBe(0);
+    expect(effortToDays(undefined)).toBe(0);
+    expect(effortToDays(0)).toBe(0);
+    expect(effortToDays(-2)).toBe(0);
+    expect(effortToDays(1)).toBe(7);
+    expect(effortToDays(4)).toBe(28);
+  });
+
+  it('forecasts from the committed window when there are no dated tasks (start→target, on track)', () => {
+    createObjective(root, { slug: 'a', title: 'A', start_date: '2026-07-10', target_date: '2026-07-25' });
+    const [a] = buildRoadmapModel(root).objectives;
+    expect(a.forecast_start).toBe('2026-07-10');
+    expect(a.forecast_end).toBe('2026-07-25');
+    expect(a.slipping).toBe(false);
+    expect(a.slip_days).toBeNull();
+  });
+
+  it('THE FIX: a dependency finishing on time consumes slack, not the deadline — no spurious slip', () => {
+    // "app" finishes at its Jul 16 target; "live" is planned Jul 10→Jul 25 with no effort.
+    // Old model slid live's full 15-day window to Jul 16→Jul 31 and flagged a slip.
+    createObjective(root, { slug: 'app', title: 'App', start_date: '2026-07-01', target_date: '2026-07-16' });
+    createObjective(root, { slug: 'live', title: 'Live', start_date: '2026-07-10', target_date: '2026-07-25', depends_on: ['app'] });
+    const by = Object.fromEntries(buildRoadmapModel(root).objectives.map((o) => [o.slug, o]));
+    expect(by.app.forecast_end).toBe('2026-07-16');
+    expect(by.app.slipping).toBe(false);
+    expect(by.live.forecast_start).toBe('2026-07-16'); // start pushed to the dep's finish
+    expect(by.live.forecast_end).toBe('2026-07-25');   // clamps to target — NOT slid to Jul 31
+    expect(by.live.slipping).toBe(false);              // on track, as it should be
+    expect(by.live.slip_days).toBeNull();
+  });
+
+  it('slips only when a dependency pushes the achievable start PAST the target', () => {
+    createObjective(root, { slug: 'up', title: 'Up', start_date: '2026-07-01', target_date: '2026-07-30' });
+    createObjective(root, { slug: 'down', title: 'Down', start_date: '2026-07-10', target_date: '2026-07-25', depends_on: ['up'] });
+    const by = Object.fromEntries(buildRoadmapModel(root).objectives.map((o) => [o.slug, o]));
+    expect(by.down.forecast_start).toBe('2026-07-30');
+    expect(by.down.forecast_end).toBe('2026-07-30');
+    expect(by.down.slipping).toBe(true);
+    expect(by.down.slip_days).toBe(5); // Jul 30 − Jul 25
+    expect(by.down.slip_upstream).toEqual(['up']);
+  });
+
+  it('effort drives the forecast: work that cannot fit before the target slips proportionally', () => {
+    // Window Aug 24→Sep 5 (12 days) but effort = 4 weeks (28 days).
+    createObjective(root, { slug: 'biz', title: 'Biz', start_date: '2026-08-24', target_date: '2026-09-05', effort: 4 });
+    const [biz] = buildRoadmapModel(root).objectives;
+    expect(biz.forecast_start).toBe('2026-08-24');
+    expect(biz.forecast_end).toBe('2026-09-21'); // Aug 24 + 28 days
+    expect(biz.slipping).toBe(true);
+    expect(biz.slip_days).toBe(16); // Sep 21 − Sep 5
+    expect(biz.slip_upstream).toEqual([]); // no upstream — the effort estimate overruns the window
+  });
+
+  it('effort that fits inside the window stays on track (bar clamps to the committed end)', () => {
+    createObjective(root, { slug: 'c', title: 'C', start_date: '2026-07-01', target_date: '2026-07-31', effort: 2 });
+    const [c] = buildRoadmapModel(root).objectives;
+    expect(c.forecast_end).toBe('2026-07-31'); // work (14d) finishes Jul 15, bar clamps to target
+    expect(c.slipping).toBe(false);
+  });
+
+  it('effort + an on-time dependency combine (dep on time → slip attributed to effort, not the dep)', () => {
+    createObjective(root, { slug: 'app', title: 'App', start_date: '2026-07-01', target_date: '2026-07-16' });
+    createObjective(root, { slug: 'live', title: 'Live', start_date: '2026-07-10', target_date: '2026-07-25', effort: 2, depends_on: ['app'] });
+    const by = Object.fromEntries(buildRoadmapModel(root).objectives.map((o) => [o.slug, o]));
+    expect(by.live.forecast_start).toBe('2026-07-16');
+    expect(by.live.forecast_end).toBe('2026-07-30'); // Jul 16 + 14 days
+    expect(by.live.slipping).toBe(true);
+    expect(by.live.slip_days).toBe(5);
+    expect(by.live.slip_upstream).toEqual([]); // app finished before Jul 25 — effort is the cause
+  });
+
+  it('a bare target with no start/effort/deps/tasks stays unforecastable (no invented forecast)', () => {
+    createObjective(root, { slug: 'a', title: 'A', target_date: '2026-09-01' });
+    const [a] = buildRoadmapModel(root).objectives;
+    expect(a.forecast_end).toBeNull();
+    expect(a.slipping).toBeNull();
   });
 });
 

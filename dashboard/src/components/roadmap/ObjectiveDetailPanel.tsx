@@ -153,10 +153,23 @@ export function ObjectiveDetailPanel({ item, forecast, itemsBySlug, forecasts, o
   if (forecast.slipping) {
     riskKind = 'slip'; riskGlyph = '🔴'; riskInk = RM_RED;
     riskTitle = `Slipping — ${forecast.slipDays} day${forecast.slipDays === 1 ? '' : 's'} past target`;
-    const cause = item.slipUpstream.length > 0
-      ? ` Likely cause: upstream ${item.slipUpstream.join(', ')} running late.`
-      : ' Cause: this objective’s own tasks overrun the target.';
-    riskSub = `Forecast end (${fmtShort(forecast.forecast_end!)}) overshoots the committed target (${fmtShort(forecast.target!)}). The slip cascades to everything this blocks.${cause}`;
+    // Attribute the slip to the real cause: a late upstream dep, a start pushed past
+    // the target, an effort estimate that won't fit, or the objective's own tasks.
+    const startPastTarget = forecast.forecast_start !== null && forecast.target !== null
+      && forecast.forecast_start > forecast.target;
+    let cause: string;
+    if (item.slipUpstream.length > 0) {
+      cause = ` Likely cause: upstream ${item.slipUpstream.join(', ')} running late.`;
+    } else if (startPastTarget) {
+      cause = ` Cause: it can’t start until ${fmtShort(forecast.forecast_start!)}, already past the target.`;
+    } else if (item.effort) {
+      cause = ` Cause: the ${item.effort}-week effort estimate doesn’t fit before the target — widen the window or lower the effort.`;
+    } else if (item.progress.total > 0) {
+      cause = ' Cause: this objective’s own tasks overrun the target.';
+    } else {
+      cause = ' Cause: the committed window overruns the target.';
+    }
+    riskSub = `Projected finish (${fmtShort(forecast.forecast_end!)}) overshoots the committed target (${fmtShort(forecast.target!)}). The slip cascades to everything this blocks.${cause}`;
   } else if (!forecast.forecastable) {
     riskKind = 'unforecastable'; riskGlyph = '◔'; riskInk = 'var(--color-text-secondary)';
     riskTitle = 'Unforecastable';
@@ -164,8 +177,10 @@ export function ObjectiveDetailPanel({ item, forecast, itemsBySlug, forecasts, o
   } else {
     riskKind = 'ontrack'; riskGlyph = '🟢'; riskInk = '#3fb950';
     const buf = Math.abs(forecast.slipDays);
-    riskTitle = `On track — ${buf} day${buf === 1 ? '' : 's'} of buffer`;
-    riskSub = `Forecast end (${fmtShort(forecast.forecast_end!)}) lands before the committed target (${fmtShort(forecast.target!)}).`;
+    riskTitle = buf > 0 ? `On track — ${buf} day${buf === 1 ? '' : 's'} of buffer` : 'On track';
+    riskSub = forecast.target !== null
+      ? `The work fits before the committed target (${fmtShort(forecast.target)})${buf > 0 ? ` with ${buf} day${buf === 1 ? '' : 's'} to spare` : ''}.`
+      : 'No committed target set — no deadline to slip against. Set a target to track slip.';
   }
 
   const dependents = forecast.dependents.map((slug) => {

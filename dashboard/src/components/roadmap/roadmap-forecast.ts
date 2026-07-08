@@ -1,21 +1,34 @@
 /**
  * Roadmap forecast cascade — the pure scheduling engine under the interactive
- * timeline. Given each objective's committed window (start_date → target_date) and
- * its dependencies, it computes a FORECAST window by propagating finish-to-start
- * constraints along the dependency DAG (topologically sorted, Kahn):
+ * timeline. Given each objective's committed window (start_date → target_date), its
+ * effort estimate, and its dependencies, it computes a FORECAST by propagating
+ * finish-to-start constraints along the dependency DAG (topologically sorted, Kahn).
  *
+ * The model is EFFORT-AWARE and ENVELOPE-CLAMPED — it never invents a delay:
+ *
+ *   effortDays     = effort ? effort * 7 : 0        (effort is prioritization weeks)
  *   forecast_start = max(committed start, max(forecast_end of dependencies))
- *   forecast_end   = forecast_start + committed duration
- *   slipping       = forecast_end > committed target
+ *   workEnd        = forecast_start + effortDays     (when the actual work finishes)
+ *   forecast_end   = max(committed end, workEnd)      (bar never shrinks below the window)
+ *   slipping       = target set AND workEnd > target
+ *   slipDays       = workEnd − target  (>0 = slip, <0 = buffer/runway)
  *
- * This is what makes the roadmap live: drag one objective's committed dates (via
- * `overrides`) and every dependent's forecast bar shifts to stay after it — turning
- * red the moment a forecast overruns its own committed target. Mirrors the server's
- * `roadmap-model.ts` cascade, but keyed off PO-committed dates (draggable) rather
- * than member-task dates, so it stays meaningful before any tasks are linked.
+ * The committed window (start→target) is a DEADLINE PLAN, not a rigid block of work
+ * that slides: a dependency finishing on time consumes the objective's *slack*, not
+ * its deadline. With no effort set, `workEnd == forecast_start`, so an objective only
+ * slips when a dependency (or its own committed start) pushes past its target — it is
+ * never postponed just for having a wide window. Set an effort estimate and it drives
+ * a real, sized forecast: `effort` weeks of work that can't fit before the target
+ * shows a proportionate slip. This mirrors the server's `roadmap-model.ts` cascade
+ * (kept in lock-step); the frontend is keyed off PO-committed dates (draggable) so it
+ * stays meaningful before any tasks are linked.
  *
- * An objective with no dates at all is "unforecastable" — it imposes no constraint
- * on its dependents (non-blocking), exactly like the null-forecast rule server-side.
+ * A dependency's contribution to its dependents' start is its `forecast_end` — i.e.
+ * its committed deadline (or later, if it overshoots), NOT its instantaneous workEnd:
+ * a predecessor isn't "done" until its own target passes.
+ *
+ * An objective with no dates and no forecastable dependency is "unforecastable" — it
+ * imposes no constraint on its dependents (non-blocking), like the server-side rule.
  */
 
 // ── calendar-safe date utils (shared by the timeline; never touches tasks utils) ──
@@ -62,7 +75,14 @@ export interface ForecastInput {
   slug: string;
   start_date: string | null;
   target_date: string | null;
+  /** Prioritization effort in WEEKS (Impact × Effort). Drives the work duration; null = unknown (0 days, no invented delay). */
+  effort?: number | null;
   depends_on: string[];
+}
+
+/** Whole calendar days of work for an effort estimate (weeks → days); null/≤0 = 0. */
+export function effortToDays(effort: number | null | undefined): number {
+  return effort != null && effort > 0 ? Math.round(effort * 7) : 0;
 }
 
 export type Signal = 'on_track' | 'slipping' | 'unforecastable';
@@ -73,13 +93,13 @@ export interface Forecast {
   /** Committed window (coalesced): the bar's authored anchor. */
   committedStart: string | null;
   committedEnd: string | null;
-  /** Computed cascade window (what the bar actually renders at). */
+  /** Computed cascade window the bar renders at: forecast_start → forecast_end (= max of committed end, workEnd). */
   forecast_start: string | null;
   forecast_end: string | null;
   /** Committed target date — the ◆ diamond marker. */
   target: string | null;
   slipping: boolean;
-  /** forecast_end − target in days; >0 = slip, <0 = buffer. */
+  /** workEnd − target in days (workEnd = forecast_start + effort); >0 = slip, <0 = buffer/runway. 0 when no target. */
   slipDays: number;
   /** Computed reverse edges (objectives that depend on this one). */
   dependents: string[];
@@ -137,6 +157,7 @@ export function buildForecasts(
   }
 
   const out = new Map<string, Forecast>();
+  // Bar end (= committed deadline, or later if it overshoots): what dependents consume.
   const forecastEndOf = new Map<string, string | null>();
 
   for (const o of topoOrder(inputs)) {
@@ -147,26 +168,41 @@ export function buildForecasts(
     // Coalesce a committed window: either date alone anchors a zero-length window.
     const committedStart = startRaw ?? targetRaw;
     const committedEnd = targetRaw ?? startRaw;
-    const target = targetRaw ?? committedEnd;
-    const forecastable = committedStart !== null && committedEnd !== null;
+    const effortDays = effortToDays(o.effort);
+
+    // Dependencies push the start to their finish (their bar end); an
+    // unforecastable dep imposes no constraint (non-blocking, never "now").
+    let depFinish: string | null = null;
+    for (const dep of o.depends_on) {
+      if (!known.has(dep)) continue;
+      depFinish = maxISO(depFinish, forecastEndOf.get(dep) ?? null);
+    }
+
+    // Forecastable if it has its own committed anchor OR inherits one from a dep
+    // (a pure milestone: "launch" that only depends on other objectives).
+    const anchorStart = committedStart ?? depFinish;
+    const forecastable = anchorStart !== null;
 
     let forecast_start: string | null = null;
     let forecast_end: string | null = null;
+    let workEnd: string | null = null;
     if (forecastable) {
-      const duration = Math.max(0, diffDays(committedStart!, committedEnd!));
-      // Dependencies push the start; unforecastable deps impose no constraint.
-      let depEnd: string | null = null;
-      for (const dep of o.depends_on) {
-        if (!known.has(dep)) continue;
-        depEnd = maxISO(depEnd, forecastEndOf.get(dep) ?? null);
-      }
-      forecast_start = maxISO(committedStart, depEnd)!;
-      forecast_end = addISO(forecast_start, duration);
+      forecast_start = maxISO(anchorStart, depFinish)!;
+      // When the actual work finishes: effort added to the achievable start.
+      workEnd = addISO(forecast_start, effortDays);
+      // The bar never renders shorter than the committed window the PO drew, and
+      // extends when the work overshoots it. Pure milestone (no own end) → workEnd.
+      const barEndFloor = committedEnd ?? forecast_start;
+      forecast_end = maxISO(barEndFloor, workEnd)!;
     }
     forecastEndOf.set(o.slug, forecast_end);
 
-    const slipDays = forecast_end && target ? diffDays(target, forecast_end) : 0;
-    const slipping = forecastable && slipDays > 0;
+    // Slip / buffer is measured against the real committed TARGET only (a deadline).
+    // No target → nothing to miss. Positive = slip; negative = days of buffer/runway.
+    const slipDays = targetRaw !== null && workEnd !== null ? diffDays(targetRaw, workEnd) : 0;
+    const slipping = forecastable && targetRaw !== null && slipDays > 0;
+    // Diamond marker: the committed target (falls back to the lone committed date).
+    const target = targetRaw ?? committedEnd;
     const signal: Signal = !forecastable ? 'unforecastable' : slipping ? 'slipping' : 'on_track';
 
     out.set(o.slug, {
