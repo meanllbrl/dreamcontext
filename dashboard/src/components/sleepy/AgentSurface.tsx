@@ -40,7 +40,7 @@ import { pickFiles } from '../../lib/desktop';
  * EXPANDED, the overlay is a TOP-BAR tab strip (every session as a tab, grouped per
  * pane) above a row of side-by-side PANES. Each pane renders ONLY its active session's
  * terminal. `panes: {id, tabs[], active}[]` is the layout: ⌘D spawns a fresh agent into
- * a NEW pane (split); ⌘T/＋ adds a tab to the active pane; dragging a tab onto another
+ * a NEW pane (split) and ⌘⇧D a fresh terminal likewise; ⌘T/＋ adds a tab to the active pane; dragging a tab onto another
  * pane's centre COMBINES it there, onto an edge SPLITS it into a new pane, onto a tab
  * REORDERS. COLLAPSED, each session is a horizontal chip in the bottom-right dock
  * (`AgentDock`); with zero sessions a lone "Agent" FAB is the entry point.
@@ -360,7 +360,7 @@ export function AgentSurface() {
     }
   }, [spawnAndRegister, panes, activePaneId]);
 
-  // Spawn a fresh session into a NEW pane beside the focused one (⌘D) → side-by-side.
+  // Spawn a fresh session into a NEW pane beside the focused one (⌘D agent / ⌘⇧D terminal) → side-by-side.
   const addSplitSession = useCallback((kind: SessionKind = 'agent') => {
     const s = spawnAndRegister(kind);
     const pid = nextPaneId();
@@ -1022,13 +1022,13 @@ export function AgentSurface() {
     return () => window.removeEventListener('dreamcontext-zoom', onZoom);
   }, []);
 
-  // ── Keyboard: ⌘D split-new · ⌘T new tab · ⌘W close focused ────────────────────
+  // ── Keyboard: ⌘D agent split · ⌘⇧D terminal split · ⌘T new agent tab · ⌘W close focused ──
   useEffect(() => {
     const host = hostRef.current;
     if (!host || !started) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.altKey) return;
-      // Typing in the composer field must never trigger the ⌘D/⌘T/⌘W/⌃` session chords
+      // Typing in the composer field must never trigger the ⌘D/⌘⇧D/⌘T/⌘W/⌃` session chords
       // (⌘W would close the focused session mid-compose).
       if ((document.activeElement as Element | null)?.closest('.agent-composer')) return;
       // ⌃` → new TERMINAL tab (standard "toggle terminal" chord). This is the ONLY Ctrl combo
@@ -1038,7 +1038,8 @@ export function AgentSurface() {
       if (e.ctrlKey && !e.metaKey && e.key === '`') { e.preventDefault(); e.stopPropagation(); addSession('shell'); return; }
       if (!e.metaKey || e.ctrlKey) return;
       const k = e.key.toLowerCase();
-      if (k === 'd') { e.preventDefault(); e.stopPropagation(); addSplitSession('agent'); }
+      // ⌘D → new AGENT split · ⌘⇧D → new TERMINAL split (same side-by-side action, shell kind).
+      if (k === 'd') { e.preventDefault(); e.stopPropagation(); addSplitSession(e.shiftKey ? 'shell' : 'agent'); }
       else if (k === 't') { e.preventDefault(); e.stopPropagation(); addSession('agent'); }
       else if (k === 'w') {
         e.preventDefault(); e.stopPropagation();
@@ -1302,7 +1303,7 @@ export function AgentSurface() {
                 <div className="agent-new-split" ref={newSplitRef}>
                   <button
                     className="agent-add-btn"
-                    title="New agent (⌘T) · ⌘D for side-by-side"
+                    title="New agent (⌘T) · side-by-side: ⌘D agent, ⌘⇧D terminal"
                     aria-label="New agent"
                     onClick={() => { setNewMenuOpen(false); addSession('agent'); }}
                   >
