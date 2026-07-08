@@ -1264,6 +1264,7 @@ export function generateSnapshot(rootOverride?: string): string {
       for (const act of p.lastActivity) lines.push(`  Last: ${act}`);
       if (p.activeTask) lines.push(`  In progress: ${p.activeTask}`);
       if (p.topTags.length > 0) lines.push(`  Tags: ${p.topTags.join(', ')}`);
+      if (p.pinnedKnowledge.length > 0) lines.push(`  Pinned docs: ${p.pinnedKnowledge.join(', ')}`);
     }
     lines.push('');
     lines.push(

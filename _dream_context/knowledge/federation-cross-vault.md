@@ -72,6 +72,16 @@ cache (written by `federation peers` / sleep cycle / post-connection). Zero peer
 session start; recall surfaces the peers' canonical docs live (no copies). If the cache
 is absent the section is silently skipped.
 
+Per peer the glance carries `whatItIs`, the last 1–2 changelog headlines, the active
+task, top tags, **and each peer's `pinned: true` doc titles** (`Pinned docs:` line —
+knowledge + features, scanned recursively over `knowledge/**` plus `core/features/` for
+un-migrated peers, alphabetically sorted, capped at 5). Pinned is the peer's own
+"load-bearing / canonical" signal, so this gives the agent a free table-of-contents of
+each peer's most important docs without a live recall. Titles only — content still comes
+from recall (`--vault <name>`). Built by `readPinnedTitles` in
+`src/lib/federation-peer-summary.ts`; refreshed on the same off-hot-path cadence as the
+rest of the summary, so a newly-pinned peer doc surfaces on the next refresh.
+
 ---
 
 ## HISTORICAL — the parked copy-based PUSH (do not re-enable without redesign)

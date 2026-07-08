@@ -32,6 +32,16 @@ interface SeedOpts {
   changelog?: Array<Record<string, unknown>>;
   task?: { name: string; status: string };
   knowledgeTags?: string[][];
+  /** Titles to write as `pinned: true` knowledge docs under `knowledge/`. */
+  pinnedKnowledge?: string[];
+  /** Titles to write as `pinned: true` feature docs under `knowledge/features/`
+   *  (migrated location — exercises the recursive scan). */
+  pinnedFeatures?: string[];
+}
+
+/** Turn a doc title into a filesystem-safe slug. */
+function slugify(title: string): string {
+  return title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'doc';
 }
 
 /** Create a vault on disk, register it, and seed peer content. */
@@ -68,6 +78,23 @@ function makeVault(base: string, name: string, home: string, opts: SeedOpts = {}
       `---\nname: ${slug}\ntype: knowledge\ntags: [${tags.join(', ')}]\n---\n\nbody\n`,
       'utf-8',
     );
+  }
+  for (const title of opts.pinnedKnowledge ?? []) {
+    writeFileSync(
+      join(ctx, 'knowledge', `${slugify(title)}.md`),
+      `---\nname: "${title}"\ntype: knowledge\npinned: true\n---\n\nbody\n`,
+      'utf-8',
+    );
+  }
+  if (opts.pinnedFeatures?.length) {
+    mkdirSync(join(ctx, 'knowledge', 'features'), { recursive: true });
+    for (const title of opts.pinnedFeatures) {
+      writeFileSync(
+        join(ctx, 'knowledge', 'features', `${slugify(title)}.md`),
+        `---\nname: "${title}"\ntype: feature\npinned: true\n---\n\nbody\n`,
+        'utf-8',
+      );
+    }
   }
   return projectRoot;
 }
@@ -117,6 +144,31 @@ describe('buildPeerSummary', () => {
     expect(summary.topTags.length).toBeLessThanOrEqual(5);
   });
 
+  it('surfaces pinned knowledge + feature titles (both locations), excludes un-pinned, sorts + caps at 5', () => {
+    const root = makeVault(base, 'orion', home, {
+      // Un-pinned knowledge — must NOT appear in pinnedKnowledge.
+      knowledgeTags: [['telemetry', 'backend'], ['auth']],
+      // Six pinned knowledge docs — cap should drop one; sort is alphabetical.
+      pinnedKnowledge: ['Zeta Doc', 'Alpha Model', 'Mu Spec', 'Kappa Policy', 'Delta Guide', 'Omega Overview'],
+      // Pinned feature under knowledge/features/ — proves recursion + "both".
+      pinnedFeatures: ['Beta Feature PRD'],
+    });
+
+    const summary = buildPeerSummary(join(root, '_dream_context'), 'orion');
+
+    // Both a pinned knowledge doc and a pinned feature are surfaced.
+    expect(summary.pinnedKnowledge).toContain('Beta Feature PRD');
+    expect(summary.pinnedKnowledge).toContain('Alpha Model');
+    // Un-pinned docs never leak in.
+    expect(summary.pinnedKnowledge).not.toContain('telemetry-backend');
+    expect(summary.pinnedKnowledge).not.toContain('auth');
+    // Capped at 5 (7 pinned docs seeded).
+    expect(summary.pinnedKnowledge).toHaveLength(5);
+    // Alphabetically sorted for a stable glance.
+    expect(summary.pinnedKnowledge).toEqual([...summary.pinnedKnowledge].sort((a, b) => a.localeCompare(b)));
+    expect(summary.pinnedKnowledge[0]).toBe('Alpha Model');
+  });
+
   it('never throws on an empty / missing peer (returns blank fields)', () => {
     const root = makeVault(base, 'empty', home, {});
     const summary = buildPeerSummary(join(root, '_dream_context'), 'empty');
@@ -125,6 +177,7 @@ describe('buildPeerSummary', () => {
     expect(summary.lastActivity).toEqual([]);
     expect(summary.activeTask).toBe('');
     expect(summary.topTags).toEqual([]);
+    expect(summary.pinnedKnowledge).toEqual([]);
   });
 });
 
@@ -235,7 +288,7 @@ describe('readPeerSummaryCache', () => {
       peerSummaryCachePath(dir),
       JSON.stringify({
         generatedAt: '2026-06-15T00:00:00Z',
-        peers: [{ vault: 'p', whatItIs: 'x', lastActivity: ['a'], activeTask: 't', topTags: ['tag'] }],
+        peers: [{ vault: 'p', whatItIs: 'x', lastActivity: ['a'], activeTask: 't', topTags: ['tag'], pinnedKnowledge: ['Canonical Doc'] }],
       }),
       'utf-8',
     );
@@ -243,5 +296,19 @@ describe('readPeerSummaryCache', () => {
     expect(cache).not.toBeNull();
     expect(cache!.peers[0].vault).toBe('p');
     expect(cache!.peers[0].topTags).toEqual(['tag']);
+    expect(cache!.peers[0].pinnedKnowledge).toEqual(['Canonical Doc']);
+  });
+
+  it('defaults pinnedKnowledge to [] for a legacy cache entry missing the field', () => {
+    writeFileSync(
+      peerSummaryCachePath(dir),
+      JSON.stringify({
+        generatedAt: '2026-06-15T00:00:00Z',
+        peers: [{ vault: 'old', whatItIs: 'x', lastActivity: [], activeTask: '', topTags: [] }],
+      }),
+      'utf-8',
+    );
+    const cache = readPeerSummaryCache(dir);
+    expect(cache!.peers[0].pinnedKnowledge).toEqual([]);
   });
 });

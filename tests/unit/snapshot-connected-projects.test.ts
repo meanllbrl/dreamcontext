@@ -99,6 +99,7 @@ describe('snapshot — Connected projects (cache-only, hot-path safe)', () => {
           lastActivity: ['2026-06-14 — Shipped refunds endpoint'],
           activeTask: 'refunds-v2',
           topTags: ['billing', 'api'],
+          pinnedKnowledge: ['Refund Ledger Model', 'Webhook Retry Policy'],
         },
       ],
     });
@@ -110,6 +111,7 @@ describe('snapshot — Connected projects (cache-only, hot-path safe)', () => {
     expect(snapshot).toContain('Shipped refunds endpoint');
     expect(snapshot).toContain('In progress: refunds-v2');
     expect(snapshot).toContain('Tags: billing, api');
+    expect(snapshot).toContain('Pinned docs: Refund Ledger Model, Webhook Retry Policy');
     // Usage line.
     expect(snapshot).toContain('memory recall <q> --vault <name>');
     // CRITICAL hot-path proof: the peer's ACTUAL corpus was never read — only the

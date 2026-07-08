@@ -37,6 +37,10 @@ export interface PeerSummary {
    *  knowledge/features/ now; `core/features/` is scanned too for back-compat
    *  with un-migrated peers). May be empty. */
   topTags: string[];
+  /** Titles of the peer's `pinned: true` knowledge + feature docs — the peer's
+   *  own "load-bearing / canonical" signal. Capped, alphabetically sorted for a
+   *  stable glance (never a dump). May be empty. */
+  pinnedKnowledge: string[];
 }
 
 /** Shape persisted to `<contextRoot>/state/.peer-summaries.json`. */
@@ -52,6 +56,8 @@ const CACHE_REL_PATH = 'state/.peer-summaries.json';
 const MAX_ACTIVITY = 2;
 /** Max tags kept per peer. */
 const MAX_TAGS = 5;
+/** Max pinned-doc titles kept per peer (a glance, not a dump). */
+const MAX_PINNED = 5;
 /** Char cap on the one-line "what it is" so the snapshot stays compact. */
 const WHAT_IT_IS_CHARS = 200;
 
@@ -93,6 +99,7 @@ function sanitizePeer(raw: Record<string, unknown>): PeerSummary {
     lastActivity: strArr(raw.lastActivity),
     activeTask: typeof raw.activeTask === 'string' ? raw.activeTask : '',
     topTags: strArr(raw.topTags),
+    pinnedKnowledge: strArr(raw.pinnedKnowledge),
   };
 }
 
@@ -110,6 +117,7 @@ export function buildPeerSummary(peerRoot: string, peerName: string): PeerSummar
     lastActivity: readLastActivity(peerRoot),
     activeTask: readActiveTask(peerRoot),
     topTags: readTopTags(peerRoot),
+    pinnedKnowledge: readPinnedTitles(peerRoot),
   };
 }
 
@@ -218,6 +226,42 @@ function readTopTags(peerRoot: string): string[] {
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .slice(0, MAX_TAGS)
     .map(([t]) => t);
+}
+
+/**
+ * Titles of the peer's `pinned: true` docs — its own "load-bearing / canonical"
+ * signal. Scans `knowledge/**` recursively (covers flat knowledge, migrated
+ * `knowledge/features/`, and any topical subfolders) plus `core/features/` for
+ * back-compat with un-migrated peers. Title = frontmatter `name` (fallback
+ * `title`). Alphabetically sorted + capped at {@link MAX_PINNED} for a stable
+ * glance. Never throws: any unreadable file is skipped.
+ */
+function readPinnedTitles(peerRoot: string): string[] {
+  const seen = new Set<string>();
+  const globs: Array<[string, string]> = [
+    [join(peerRoot, 'knowledge'), '**/*.md'],
+    [join(peerRoot, 'core', 'features'), '*.md'],
+  ];
+  for (const [dir, pattern] of globs) {
+    if (!existsSync(dir)) continue;
+    let files: string[];
+    try {
+      files = fg.sync(pattern, { cwd: dir, absolute: true });
+    } catch {
+      continue;
+    }
+    for (const file of files) {
+      try {
+        const { data } = readFrontmatter(file);
+        if (data.pinned !== true) continue;
+        const title = String(data.name ?? data.title ?? '').trim();
+        if (title) seen.add(title);
+      } catch {
+        // skip unreadable
+      }
+    }
+  }
+  return Array.from(seen).sort((a, b) => a.localeCompare(b)).slice(0, MAX_PINNED);
 }
 
 /**
