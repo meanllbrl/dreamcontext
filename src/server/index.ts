@@ -102,6 +102,9 @@ import {
   handleBrainSync,
   handleBrainSettingsGet as handleBrainSyncSettingsGet,
   handleBrainSettingsPost as handleBrainSyncSettingsPost,
+  handleBrainOriginCreate,
+  handleBrainOriginPreview,
+  handleBrainOriginAttach,
   handleBrainScrubIgnore,
   handleBrainTeamUpdates,
   handleBrainTeamFetch,
@@ -197,6 +200,9 @@ function buildRouter(): Router {
   router.post('/api/brain/sync', handleBrainSync);
   router.get('/api/brain/settings', handleBrainSyncSettingsGet);
   router.post('/api/brain/settings', handleBrainSyncSettingsPost);
+  router.post('/api/brain/origin/create', handleBrainOriginCreate);
+  router.post('/api/brain/origin/preview', handleBrainOriginPreview);
+  router.post('/api/brain/origin/attach', handleBrainOriginAttach);
   router.post('/api/brain/scrub/ignore', handleBrainScrubIgnore);
 
   // Graph

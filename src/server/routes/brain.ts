@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { dirname } from 'node:path';
+import { basename, dirname } from 'node:path';
 import { parseJsonBody, sendJson, sendError } from '../middleware.js';
 import { isDesktop } from '../desktop.js';
 import { readSetupConfig, updateSetupConfig, readBrainLocal } from '../../lib/setup-config.js';
@@ -8,7 +8,13 @@ import {
   resolveMode,
   resolveBrainSyncEnabled,
   ensureFullRepoGitignore,
+  resolveBrainSyncToken,
 } from '../../lib/git-sync/brain-repo.js';
+import {
+  createProjectOrigin,
+  attachProjectOrigin,
+  previewOrigin,
+} from '../../lib/git-sync/origin-setup.js';
 import { runBrainSync } from '../../lib/git-sync/sync-engine.js';
 import { runTeamFetch } from '../../lib/git-sync/team-fetch.js';
 import { readConflictReport } from '../../lib/git-sync/conflict-report.js';
@@ -129,16 +135,41 @@ export async function handleBrainSync(
   // auto-checkpoint-on-open — pull-only then skips a dirty tree instead of
   // auto-committing WIP. Manual syncs never set it (they always checkpoint).
   const noCheckpoint = body?.noCheckpoint === true;
+  sendJson(res, 200, await runSyncPayload(projectRoot, contextRoot, { mode, foreground, noCheckpoint }));
+}
+
+interface SyncPayload {
+  action: string;
+  pulledUpdates: number;
+  scrub: { blocks: unknown[]; warns: unknown[] };
+  note?: string;
+  checkpointed?: boolean;
+  checkpointSha?: string;
+  codeConflicts?: string[];
+  failure?: SyncFailure;
+}
+
+/**
+ * Run one sync and shape it into the dashboard's `BrainSyncResult` payload —
+ * shared by `POST /brain/sync` and the origin create/attach first-sync. A thrown
+ * GitSyncError (push-rejected, auth, network, permission, unrelated histories) is
+ * classified into a specific, recoverable failure — never a bare "Sync failed" —
+ * and returned as `action:'error'` (HTTP 200) so the UI can render the message +
+ * its recovery affordance. A `no-remote` with a token-shaped note is really an
+ * auth failure, so it gets a reconnect affordance too.
+ */
+async function runSyncPayload(
+  projectRoot: string,
+  contextRoot: string,
+  opts: { mode: 'pull-only' | 'auto'; foreground: boolean; noCheckpoint?: boolean },
+): Promise<SyncPayload> {
   try {
-    const result = await runBrainSync({ cwd: contextRoot, mode, foreground, noCheckpoint });
-    // `no-remote` with a token-shaped note is really an auth failure — attach a
-    // reconnect affordance so the sidebar can offer a concrete recovery, not a
-    // dead-end "sync failed". Every other operational action carries its own UI.
+    const result = await runBrainSync({ cwd: contextRoot, mode: opts.mode, foreground: opts.foreground, noCheckpoint: opts.noCheckpoint });
     let failure: SyncFailure | undefined;
     if (result.action === 'no-remote' && /token/i.test(result.note ?? '')) {
-      failure = classifySyncError(result.note ?? 'no github token found', syncRepoHint(projectRoot, result));
+      failure = classifySyncError(result.note ?? 'no github token found', syncRepoHint(projectRoot));
     }
-    sendJson(res, 200, {
+    return {
       action: result.action,
       pulledUpdates: result.pulledUpdates ?? 0,
       scrub: { blocks: result.scrub.blocks, warns: result.scrub.warns },
@@ -147,20 +178,16 @@ export async function handleBrainSync(
       checkpointSha: result.checkpointSha,
       codeConflicts: result.codeConflicts,
       failure,
-    });
+    };
   } catch (err) {
-    // A thrown GitSyncError (push-rejected-twice, auth, network, permission,
-    // unrelated histories) is classified into a specific, recoverable failure —
-    // never a bare "Sync failed". Returned 200 with `action:'error'` so the UI
-    // can render the message + its recovery affordance (Reconnect / Retry / …).
     const failure = classifySyncError((err as Error).message, syncRepoHint(projectRoot));
-    sendJson(res, 200, {
+    return {
       action: 'error',
       pulledUpdates: 0,
       scrub: { blocks: [], warns: [] },
       note: failure.message,
       failure,
-    });
+    };
   }
 }
 
@@ -253,6 +280,138 @@ export async function handleBrainSettingsPost(
     autoSync: next?.brainRepo?.autoSync ?? false,
     remote,
   });
+}
+
+// ─── Origin setup (create / attach a GitHub `origin` for whole-project sync) ──
+
+/**
+ * Flip config to `full-repo` + enabled + autoSync and lay down the gitignore-first
+ * machine-local excludes — the exact "enable" side-effects, factored so the origin
+ * create/attach routes can enable then immediately run the first sync.
+ */
+function enableFullRepo(projectRoot: string): void {
+  const config = readSetupConfig(projectRoot);
+  updateSetupConfig(projectRoot, {
+    brainRepo: { ...(config?.brainRepo ?? {}), mode: 'full-repo', enabled: true, autoSync: true },
+  });
+  ensureFullRepoGitignore(projectRoot, config?.taskBackend);
+}
+
+/** Best-effort current `origin` (null when not a repo / no origin). */
+function currentOrigin(projectRoot: string): string | null {
+  try { return git.isGitRepo(projectRoot) ? git.getRemoteUrl(projectRoot, 'origin') : null; } catch { return null; }
+}
+
+// ─── POST /api/brain/origin/create (new private GitHub repo → project origin) ─
+
+/**
+ * Create a new GitHub repo (default PRIVATE — S5) under the signed-in account,
+ * wire it as the project's `origin`, enable full-repo sync, and run the first
+ * sync to bootstrap+push the initial commit. Refuses if the project already has
+ * an `origin` (409 — just turn Cloud sync on) or no GitHub token (401).
+ */
+export async function handleBrainOriginCreate(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  if (!gate(res)) return;
+  const projectRoot = dirname(contextRoot);
+  const body = await parseJsonBody(req);
+
+  if (!resolveBrainSyncToken(projectRoot)) {
+    sendError(res, 401, 'no_token', 'Sign in with GitHub before creating a repo.');
+    return;
+  }
+  if (currentOrigin(projectRoot)) {
+    sendError(res, 409, 'origin_exists', 'This project already has a git origin — turn on Cloud sync to use it.');
+    return;
+  }
+
+  const name = typeof body?.name === 'string' && body.name.trim() ? body.name.trim() : basename(projectRoot);
+  const isPrivate = body?.private !== false; // default PRIVATE
+  const confirmed = body?.confirmed === true;
+
+  try {
+    const created = await createProjectOrigin({ projectRoot, name, private: isPrivate, confirmed });
+    enableFullRepo(projectRoot);
+    const sync = await runSyncPayload(projectRoot, contextRoot, { mode: 'auto', foreground: true });
+    sendJson(res, 200, { ok: true, remote: created.remote, fullName: created.fullName, private: created.private, sync });
+  } catch (err) {
+    // The repo-creation call failed (name taken, missing `repo` scope, public
+    // without confirm, …) — surface the GitHub/validation message verbatim. No
+    // origin was wired, so the UI stays on the setup panel.
+    sendError(res, 400, 'create_failed', (err as Error).message);
+  }
+}
+
+// ─── POST /api/brain/origin/preview (READ-ONLY reachability for attach) ──────
+
+/** GET-metadata for a candidate repo so the UI can confirm before attaching. */
+export async function handleBrainOriginPreview(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  if (!gate(res)) return;
+  const projectRoot = dirname(contextRoot);
+  const body = await parseJsonBody(req);
+  const url = typeof body?.url === 'string' ? body.url.trim() : '';
+  if (!url) {
+    sendError(res, 400, 'invalid_body', 'url is required.');
+    return;
+  }
+  const preview = await previewOrigin({ projectRoot, url });
+  sendJson(res, 200, preview);
+}
+
+// ─── POST /api/brain/origin/attach (existing repo URL → project origin) ──────
+
+/**
+ * Wire an existing GitHub repo as the project's `origin`, enable full-repo sync,
+ * and run the first sync. Validates reachability first (a bad URL / unreadable
+ * repo returns 400 with the reason). Refuses if the project already has an
+ * `origin` (409) or no GitHub token (401).
+ */
+export async function handleBrainOriginAttach(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  if (!gate(res)) return;
+  const projectRoot = dirname(contextRoot);
+  const body = await parseJsonBody(req);
+  const url = typeof body?.url === 'string' ? body.url.trim() : '';
+  if (!url) {
+    sendError(res, 400, 'invalid_body', 'url is required.');
+    return;
+  }
+  if (!resolveBrainSyncToken(projectRoot)) {
+    sendError(res, 401, 'no_token', 'Sign in with GitHub before attaching a repo.');
+    return;
+  }
+  if (currentOrigin(projectRoot)) {
+    sendError(res, 409, 'origin_exists', 'This project already has a git origin — turn on Cloud sync to use it.');
+    return;
+  }
+
+  const preview = await previewOrigin({ projectRoot, url });
+  if (!preview.reachable) {
+    sendError(res, 400, 'unreachable', preview.reason ?? 'That repo could not be reached with your GitHub account.');
+    return;
+  }
+
+  try {
+    const attached = attachProjectOrigin({ projectRoot, url });
+    enableFullRepo(projectRoot);
+    const sync = await runSyncPayload(projectRoot, contextRoot, { mode: 'auto', foreground: true });
+    sendJson(res, 200, { ok: true, remote: attached.remote, fullName: attached.fullName, private: preview.private, sync });
+  } catch (err) {
+    sendError(res, 400, 'attach_failed', (err as Error).message);
+  }
 }
 
 // ─── POST /api/brain/scrub/ignore (one-click "add <path> to .gitignore") ─────

@@ -12,6 +12,7 @@ import { useAgentCapabilities } from '../hooks/useAgentCapabilities';
 import { useBrainSettings, useUpdateBrainSettings } from '../hooks/useBrainStatus';
 import { useSleep, useUpdateSleep, type RecallMode } from '../hooks/useSleep';
 import { GitHubLogin } from '../components/brain/GitHubLogin';
+import { OriginSetup } from '../components/brain/OriginSetup';
 import { readAutoCheckpointOnOpen, writeAutoCheckpointOnOpen } from '../lib/brainSyncPrefs';
 import { isDesktop } from '../lib/desktop';
 import {
@@ -846,6 +847,8 @@ export function SettingsPage({ focus }: SettingsPageProps) {
         <div className="settings-subsection">
           <h3 className="settings-nav-label">{t('brain.auth.title')}</h3>
           <GitHubLogin />
+          {/* No project origin yet → create/attach one so full-repo sync can turn on. */}
+          <OriginSetup />
         </div>
 
         <div className="settings-subsection">

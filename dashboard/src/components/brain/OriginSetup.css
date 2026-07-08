@@ -1,0 +1,95 @@
+/* Origin setup panel — the "no GitHub origin yet" create/attach on-ramp shown in
+   Settings → Cloud sync. Reuses the shared .btn and .settings-text-input styles;
+   only the panel chrome + segmented tabs live here. */
+
+.origin-setup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  margin-top: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+}
+
+.origin-setup-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+}
+
+.origin-setup-mark {
+  display: inline-flex;
+  color: var(--color-text-secondary);
+}
+
+.origin-setup-tabs {
+  display: inline-flex;
+  gap: var(--space-1);
+  padding: 2px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  align-self: flex-start;
+}
+
+.origin-setup-tab {
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  padding: 4px var(--space-3);
+  border-radius: var(--radius-full);
+  cursor: pointer;
+}
+
+.origin-setup-tab--active {
+  background: var(--color-accent);
+  color: #fff;
+}
+
+.origin-setup-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-items: flex-start;
+}
+
+.origin-setup-form .settings-text-input {
+  width: 100%;
+}
+
+.origin-setup-form .btn {
+  align-self: flex-start;
+}
+
+.origin-setup-private {
+  margin-top: var(--space-1);
+}
+
+.origin-setup-warn {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-error);
+}
+
+.origin-setup-error {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-error);
+}
+
+.origin-setup-outcome {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-success);
+}
+
+.origin-setup-outcome--warn {
+  color: var(--color-error);
+}

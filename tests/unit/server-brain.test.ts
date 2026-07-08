@@ -10,6 +10,9 @@ import {
   handleBrainSync,
   handleBrainSettingsGet,
   handleBrainSettingsPost,
+  handleBrainOriginCreate,
+  handleBrainOriginPreview,
+  handleBrainOriginAttach,
   handleBrainScrubIgnore,
   handleBrainTeamUpdates,
 } from '../../src/server/routes/brain.js';
@@ -316,6 +319,74 @@ describe('brain routes — settings (master switch = whole-project sync)', () =>
     const config = readSetupConfig(projectRoot);
     expect(config?.brainRepo?.mode).toBe('in-tree');
     expect(config?.brainRepo?.enabled).toBe(false);
+  });
+});
+
+describe('brain routes — origin setup (create/attach guards)', () => {
+  it('create 401s without a GitHub token (before any network call)', async () => {
+    const ctx = makeVault('cur');
+    const { res, status, body } = makeRes();
+    await handleBrainOriginCreate(makeReq('POST', { name: 'x' }), res, {}, ctx);
+    expect(status()).toBe(401);
+    expect(body().error).toBe('no_token');
+  });
+
+  it('create 409s when the project already has an origin', async () => {
+    process.env.GITHUB_TOKEN = 'ghp_test';
+    const ctx = makeVault('cur');
+    const projectRoot = join(base, 'cur');
+    sh(projectRoot, ['init']);
+    sh(projectRoot, ['remote', 'add', 'origin', 'https://github.com/acme/proj.git']);
+    const { res, status, body } = makeRes();
+    await handleBrainOriginCreate(makeReq('POST', { name: 'x' }), res, {}, ctx);
+    expect(status()).toBe(409);
+    expect(body().error).toBe('origin_exists');
+  });
+
+  it('attach 400s when url is missing', async () => {
+    const ctx = makeVault('cur');
+    const { res, status, body } = makeRes();
+    await handleBrainOriginAttach(makeReq('POST', {}), res, {}, ctx);
+    expect(status()).toBe(400);
+    expect(body().error).toBe('invalid_body');
+  });
+
+  it('attach 401s without a token (url present)', async () => {
+    const ctx = makeVault('cur');
+    const { res, status, body } = makeRes();
+    await handleBrainOriginAttach(makeReq('POST', { url: 'https://github.com/acme/proj' }), res, {}, ctx);
+    expect(status()).toBe(401);
+    expect(body().error).toBe('no_token');
+  });
+
+  it('attach 409s when the project already has an origin', async () => {
+    process.env.GITHUB_TOKEN = 'ghp_test';
+    const ctx = makeVault('cur');
+    const projectRoot = join(base, 'cur');
+    sh(projectRoot, ['init']);
+    sh(projectRoot, ['remote', 'add', 'origin', 'https://github.com/acme/proj.git']);
+    const { res, status, body } = makeRes();
+    await handleBrainOriginAttach(makeReq('POST', { url: 'https://github.com/acme/other' }), res, {}, ctx);
+    expect(status()).toBe(409);
+    expect(body().error).toBe('origin_exists');
+  });
+
+  it('preview 400s when url is missing', async () => {
+    const ctx = makeVault('cur');
+    const { res, status, body } = makeRes();
+    await handleBrainOriginPreview(makeReq('POST', {}), res, {}, ctx);
+    expect(status()).toBe(400);
+    expect(body().error).toBe('invalid_body');
+  });
+
+  it('all origin routes 403 outside the desktop app', async () => {
+    delete process.env.DREAMCONTEXT_DESKTOP;
+    const ctx = makeVault('cur');
+    for (const handler of [handleBrainOriginCreate, handleBrainOriginPreview, handleBrainOriginAttach]) {
+      const { res, status } = makeRes();
+      await handler(makeReq('POST', { url: 'a/b', name: 'x' }), res, {}, ctx);
+      expect(status()).toBe(403);
+    }
   });
 });
 

@@ -164,6 +164,60 @@ export function useUpdateBrainSettings() {
   });
 }
 
+// ─── Origin setup (create / attach a GitHub origin when the project has none) ─
+
+/** READ-ONLY metadata for a candidate attach URL — reachability + name/visibility. */
+export interface OriginPreview {
+  reachable: boolean;
+  fullName?: string;
+  private?: boolean;
+  defaultBranch?: string;
+  empty?: boolean;
+  reason?: string;
+}
+
+/** Result of create/attach — the wired remote plus the first-sync outcome. */
+export interface OriginSetupResult {
+  ok: boolean;
+  remote: string;
+  fullName?: string;
+  private?: boolean;
+  sync?: BrainSyncResult;
+}
+
+export interface CreateOriginArgs {
+  /** Repo name; the server defaults to the project folder name when omitted/blank. */
+  name?: string;
+  /** PRIVATE by default; a public repo requires `confirmed: true`. */
+  private?: boolean;
+  confirmed?: boolean;
+}
+
+/** Preview a repo URL before attaching (no mutation). Returns `{ reachable, reason }`. */
+export function usePreviewOrigin() {
+  return useMutation({
+    mutationFn: (url: string) => api.post<OriginPreview>('/brain/origin/preview', { url }),
+  });
+}
+
+/** Create a new GitHub repo as the project's origin, then enable + first-sync. */
+export function useCreateOrigin() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (args: CreateOriginArgs = {}) => api.post<OriginSetupResult>('/brain/origin/create', args),
+    onSuccess: () => invalidateBrain(queryClient),
+  });
+}
+
+/** Attach an existing GitHub repo as the project's origin, then enable + first-sync. */
+export function useAttachOrigin() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (url: string) => api.post<OriginSetupResult>('/brain/origin/attach', { url }),
+    onSuccess: () => invalidateBrain(queryClient),
+  });
+}
+
 // ─── GitHub sign-in (app-global — device flow + PAT fallback) ────────────────
 
 export function useAuthStatus() {

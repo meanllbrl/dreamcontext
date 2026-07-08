@@ -13,7 +13,9 @@ tags:
   - backend
 related_tasks:
   - github-cloud-collaboration-brain-repo-sync
-  - brain-portability-dashboard-controls-platform-layer-lab-credentials-example-sync-refresh-button-recall-mode-settings
+  - >-
+    brain-portability-dashboard-controls-platform-layer-lab-credentials-example-sync-refresh-button-recall-mode-settings
+  - cloud-sync-origin-setup-create-attach-github-repo-ui
 type: feature
 name: brain-repo-sync
 description: ''
@@ -149,7 +151,7 @@ existing local dashboard. The two could coexist later but ship independently.
 
 **Architecture (compact form — full detail in the task + shipped skill reference):**
 
-**Modes:** `separate` (brain in its own GitHub repo + remote, rooted at `_dream_context/`, always on `main`; full auto-sync) vs `full-repo` (the WHOLE project folder — code + `_dream_context/` — is the synced unit, pushed to the project's OWN `origin` on the CURRENT branch; no separate brain repo, no platform-layer symlink hack) vs `in-tree` (brain nested in code repo; commit-only, NEVER auto-pushes; the safe default). Scrub gate applies to all three. `full-repo` additionally requires a project-root gitignore that excludes machine-local brain state + secrets under `_dream_context/` (`ensureFullRepoGitignore`, run gitignore-first before every whole-project stage) — without it `git add -A` at the root would commit-and-push the sync lock (poisoning clones with a foreign live PID → "locked") and, worse, secrets.
+**Modes (post-removal of `separate`, commit b45abd4):** `full-repo` (the WHOLE project folder — code + `_dream_context/` + `.claude/` — is the synced unit, pushed to the project's OWN `origin` on the CURRENT branch) vs `in-tree` (brain nested in code repo; commit-only, NEVER auto-pushes; the safe default). Scrub gate applies to both. `full-repo` requires a project-root gitignore that excludes machine-local brain state + secrets under `_dream_context/` (`ensureFullRepoGitignore`, run gitignore-first before every whole-project stage) — without it `git add -A` at the root would commit-and-push the sync lock (poisoning clones with a foreign live PID → "locked") and, worse, secrets. The DEPRECATED `separate` mode (brain-only in its own GitHub repo + remote, rooted at `_dream_context/`) was REMOVED in commit b45abd4 — it required the `platform` symlink hack to drag `.claude/` along and was architecturally wrong. A stale `mode:'separate'` config silently resolves to `in-tree`.
 
 **Credential supply:** Token NEVER embedded in remote URL (S1 — would persist in `.git/config` plaintext). Every git network call runs via `GIT_ASKPASS` + 0600-at-create tmp token file (path in env, token never in env/argv); `-c credential.helper=` disables persisted helpers; tmp file unlinked in `finally`. Resolves per-project `.secrets.json` → global `~/.dreamcontext/.secrets.json` (0600) → env (M1 is secrets-first; M2 inserts global tier). The reversed priority from `resolveGitHubToken` (env-first) is intentional — a distinct resolver, never reused.
 
@@ -163,7 +165,7 @@ existing local dashboard. The two could coexist later but ship independently.
 
 **Private-by-default + attach trust gate:** Brain repos default PRIVATE (S5 — public requires `--public` flag/toggle + loud interactive confirm). `brain attach` / dashboard attach is a TRUST decision (S6 — a brain repo is a prompt-injection channel); prints loud trust warning + incoming diff preview and refuses without confirmation.
 
-**M1/M2/M3 milestones:** M1 (CLI core, no launcher required) SHIPPED = brain init, git wrapper + GIT_ASKPASS credentials, resolveBrainSyncToken tiering, brain sync CLI, scrub gate BLOCKS on both commit paths, commit author tiering (git identity or `dreamcontext-sync <noreply@dreamcontext.local>` fallback), semantic merge (task changelog set-union + furthest status wins; knowledge conflict discard remote-wins + awaiting-agent), conflict-report lifecycle, pull-only content delivery + dirty-tree auto-checkpoint + headless effective-strict scrub, dream-sync skill loop (defer/resume/resolve/continue), reentrancy guard, brain lock, sleep done autoSync integration (sync failure never fails sleep), in-tree mode (commit-only, still scrubbed), session-start background pull (non-blocking PATH-safe detached spawn). M2 (Launcher/Dashboard/Desktop) SHIPPED = device-flow login (POST device-poll, `sessionId` UUID, token to global `~/.dreamcontext/.secrets.json` 0600), scope disclosure + fine-grained PAT recommendation, discover `dreamcontext-brain` topic repos, create from UI (one-click private + scrubbed first push, defense-in-depth confirmed gate), attach (S6 trust warning + read-only `previewAttach` diff + confirmed refusal, server-enforced), team-updates badge (cache-only endpoint + background fetch skips disabled vaults), Settings Cloud sync toggle (master switch M2 tier, spreads `brainRepo` config). 15 server routes (brain-auth.ts + brain.ts calling M1 in-process fns directly, NOT shell-to-CLI), 3 lib modules (oauth.ts device flow with injectable fetch + no `client_secret`, auth-store.ts global token tier, team-fetch.ts), 4 dashboard components (GitHubLogin/BrainRepoSetup/TeamUpdatesBadge/SettingsPage wiring), shared `src/server/desktop.ts` `isDesktop()`. M3 (Polish) PENDING = `taskBackend=github` task md gitignored + issues source of truth + doctor check, post-pull task-mirror refresh via `getTaskBackend sync`, GitHub login maps to person slug commit author, brain detach (private, scrubbed, showcase-safe `--keep-tracked` default).
+**M1/M2/M3 milestones:** M1 (CLI core, no launcher required) SHIPPED = brain init (REMOVED in b45abd4), git wrapper + GIT_ASKPASS credentials, resolveBrainSyncToken tiering, brain sync CLI, scrub gate BLOCKS on both commit paths, commit author tiering (git identity or `dreamcontext-sync <noreply@dreamcontext.local>` fallback), semantic merge (task changelog set-union + furthest status wins; knowledge conflict discard remote-wins + awaiting-agent), conflict-report lifecycle, pull-only content delivery + dirty-tree auto-checkpoint + headless effective-strict scrub, dream-sync skill loop (defer/resume/resolve/continue), reentrancy guard, brain lock, sleep done autoSync integration (sync failure never fails sleep), in-tree mode (commit-only, still scrubbed), session-start background pull (non-blocking PATH-safe detached spawn). M2 (Launcher/Dashboard/Desktop) SHIPPED-THEN-REDUCED (b45abd4) = device-flow login (POST device-poll, `sessionId` UUID, token to global `~/.dreamcontext/.secrets.json` 0600), scope disclosure + fine-grained PAT recommendation, ~~discover `dreamcontext-brain` topic repos~~ (REMOVED), ~~create from UI~~ (REMOVED), ~~attach~~ (REMOVED), ~~team-updates badge~~ (REMOVED), Settings Cloud sync toggle (master switch M2 tier, now only `full-repo` on enable / `in-tree` on disable). Removed in b45abd4: `brain init`/`attach`/`discover`/`detach`/`platform`, the create/attach/discover/disconnect/scope server routes, dashboard `BrainRepoSetup` + scope chooser, `brainRepo.remote`/`codeRepoUrl`/`marker` config. Kept: GitHub auth (device-flow + PAT), scrub gate, semantic merge agent, `/dream-sync`, `GitHubLogin`/`TeamUpdatesBadge`/`BrainSyncControl`. M3 (Polish) PENDING = `taskBackend=github` task md gitignored + issues source of truth + doctor check, post-pull task-mirror refresh via `getTaskBackend sync`, GitHub login maps to person slug commit author.
 
 **Phase 3 semantic merge agent is wanted from D0** (user-explicit) — not deferred to a "later phase". Phase boundaries (1 read-only → 2 one-way push + scrub + stop-on-conflict → 3 full semantic-merge sync + issue-sync onboarding) are M1 validation gates, not deferral of the merge-agent design work. The agent is being designed for from the start.
 
@@ -190,12 +192,34 @@ existing local dashboard. The two could coexist later but ship independently.
 ## Changelog
 <!-- LIFO: newest entry at top -->
 
-### 2026-07-08 - Removed `separate` mode: whole-project (`full-repo`) is the only cloud-sync option
+### 2026-07-09 - Origin setup UI: create/attach a GitHub repo when the project has none
 
-Pivoted the feature per user direction: `.claude/` and `_dream_context/` must be shared *together*
+**Re-added the create/attach affordance b45abd4 removed — but retargeted to the project's `origin`, not a
+separate brain repo.** After the `separate`-mode removal, enabling Cloud sync on a project with no GitHub
+`origin` dead-ended at a bare `400 no_origin` ("run `git remote add origin …` by hand"). The Settings →
+Cloud sync panel now offers, when signed in AND the project has no origin: **Create new** (a fresh
+PRIVATE-by-default GitHub repo → wired as `origin`) or **Connect existing** (an existing repo URL →
+`origin`), then it enables `full-repo` + lays the gitignore-first excludes + runs the first auto-sync to
+bootstrap+push. This is NOT the old dedicated brain repo — no `dreamcontext-brain` topic, no marker file,
+rooted at the PROJECT root.
+
+New: `src/lib/git-sync/origin-setup.ts` (`createProjectOrigin` → `POST /user/repos` private-default +
+S5 public-confirm guard; `attachProjectOrigin` → canonical HTTPS origin from https/ssh/`owner/repo`;
+`previewOrigin` read-only reachability; `setProjectOrigin` git-init + add/set). Routes:
+`POST /api/brain/origin/{create,preview,attach}` (desktop-gated; `401 no_token` / `409 origin_exists` /
+`400 unreachable` guards). `handleBrainSync` refactored to a shared `runSyncPayload`. Dashboard:
+`OriginSetup.tsx` (Create/Connect tabs) + `useCreateOrigin`/`useAttachOrigin`/`usePreviewOrigin` hooks +
+17 i18n keys. Coverage: +15 lib units, +7 route-guard units (adjacent brain/git-sync suites still green);
+tsc + dashboard prod build clean; GUI walkthrough on a scratch vault (fake token) confirmed the panel
+renders, Connect surfaces a GitHub 401 safely, and no origin is wired on failure. Task:
+`cloud-sync-origin-setup-create-attach-github-repo-ui`.
+
+### 2026-07-08 - BREAKING: Removed `separate` mode — whole-project (`full-repo`) is the only cloud-sync option (commit b45abd4)
+
+**Pivoted the feature per user direction:** `.claude/` and `_dream_context/` must be shared *together*
 for dreamcontext to work across a team, so the "brain-only" (`separate`) mode — which synced only
 `_dream_context/` into its own repo and needed the `platform` symlink hack for the Claude Code
-layer — is gone. Cloud sync is now one model: **`full-repo`** (whole project → its own `origin` on
+layer — is REMOVED. Cloud sync is now one model: **`full-repo`** (whole project → its own `origin` on
 the current branch) when ON, **`in-tree`** (commit-only) when OFF.
 
 Removed: `platform-layer.ts` + `brain platform`, `detach.ts` + `brain detach`, `brain init` /
