@@ -44,7 +44,7 @@ describe('git-sync/sync-engine — authorFor person tier (C3)', () => {
     projectRoot = mkdtempSync(join(tmpdir(), 'dc-brain-author-'));
     contextRoot = join(projectRoot, '_dream_context');
     mkdirSync(join(contextRoot, 'state'), { recursive: true });
-    updateSetupConfig(projectRoot, { brainRepo: { mode: 'separate', enabled: true, autoSync: true } });
+    updateSetupConfig(projectRoot, { brainRepo: { mode: 'in-tree', enabled: true, autoSync: true } });
   });
   afterEach(() => rmSync(projectRoot, { recursive: true, force: true }));
 
@@ -90,7 +90,7 @@ describe('git-sync/sync-engine — authorFor person tier (C3)', () => {
 
   it('uses the mapped person as commit author when a signed-in login maps to a roster person', async () => {
     updateSetupConfig(projectRoot, {
-      brainRepo: { mode: 'separate', enabled: true, autoSync: true },
+      brainRepo: { mode: 'in-tree', enabled: true, autoSync: true },
       people: ['Mehmet Nuraydin'],
       peopleIdentity: { 'mehmet-nuraydin': { githubLogin: 'mehmetnur' } },
     });
@@ -101,7 +101,7 @@ describe('git-sync/sync-engine — authorFor person tier (C3)', () => {
 
   it('overrides even a set local git identity — the person tier is layered ON TOP', async () => {
     updateSetupConfig(projectRoot, {
-      brainRepo: { mode: 'separate', enabled: true, autoSync: true },
+      brainRepo: { mode: 'in-tree', enabled: true, autoSync: true },
       people: ['Mehmet Nuraydin'],
       peopleIdentity: { 'mehmet-nuraydin': { githubLogin: 'mehmetnur' } },
     });
@@ -118,7 +118,7 @@ describe('git-sync/sync-engine — authorFor person tier (C3)', () => {
 
   it('falls through to the M1 FALLBACK_AUTHOR tier when signed in but unmapped and no git identity', async () => {
     updateSetupConfig(projectRoot, {
-      brainRepo: { mode: 'separate', enabled: true, autoSync: true },
+      brainRepo: { mode: 'in-tree', enabled: true, autoSync: true },
       peopleIdentity: { 'someone-else': { githubLogin: 'someone-else-login' } },
     });
     const commitCalls: { message: string; author?: { name: string; email: string } }[] = [];

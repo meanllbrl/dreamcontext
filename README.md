@@ -563,25 +563,22 @@ A peer is readable when your connection to it is `out`/`both`, it isn't stale, *
 
 ## Brain Cloud Sync
 
-Federation lets separate projects read each other. **Brain Cloud Sync** is the other half of team collaboration: it lets a whole team work on the *same* brain. Your `_dream_context/` can become **its own git repository** — separate from the code repo — so tasks, knowledge, and features are pushed, pulled, merged, and reviewed the way you already collaborate on code. It stays local-first the entire time: the brain is still plain markdown and JSON on disk, and git is only the sync transport, not a new database.
+Federation lets separate projects read each other. **Brain Cloud Sync** is the other half of team collaboration: it lets a whole team work on the *same* brain. When you turn it on, dreamcontext syncs the **whole project** — your code, `.claude/`, and the brain nested under `_dream_context/` — to the project's own GitHub repo, so tasks, knowledge, and features are pushed, pulled, merged, and reviewed the way you already collaborate on code. It stays local-first the entire time: the brain is still plain markdown and JSON on disk, and git is only the sync transport, not a new database.
 
 ```bash
-dreamcontext brain init      # Turn _dream_context/ into its own synced repo (separate or in-tree)
+dreamcontext brain enable    # Turn cloud sync on — whole project → its GitHub origin (needs an origin)
 dreamcontext brain status    # Mode, remote, and current sync state
 dreamcontext brain sync      # Manual fetch → merge → commit → push, outside a sleep cycle
-dreamcontext brain platform  # Share CLAUDE.md + .claude with the team (moved into the brain, symlinked back)
-dreamcontext brain enable    # Turn cloud sync on for this vault
-dreamcontext brain disable   # Turn it off (the brain stays local)
+dreamcontext brain disable   # Turn it off (the brain stays committed locally, never pushed)
 ```
 
-- **Sync rides sleep.** Every `dreamcontext sleep done` automatically runs fetch → merge → commit → push against the brain repo, so your teammates' consolidated context reaches you and yours reaches them with no extra step. A sync failure never fails the sleep.
-- **Deterministic files merge themselves; prose defers to an agent.** JSON (changelog, releases, config) and task status/changelog merge automatically (task changelogs union, the furthest status wins). When two people edit the same *prose* section of a knowledge or feature file, the conflict is handed to a semantic **merge agent** — the `/dream-sync` skill — which reads base/ours/theirs and writes the real merge, then hands back to commit and push.
-- **Two modes.** `separate` is a dedicated brain repo with full auto-sync; **`in-tree`** nests the brain inside the code repo, commits on sleep but **never auto-pushes**, and is the safe default. The scrub gate applies to both.
-- **Nothing secret or machine-local is ever pushed.** A **scrub gate** runs before every commit and push and blocks secrets and absolute local paths. The auth token is never written into the remote URL — git network calls use `GIT_ASKPASS` with a `0600` temp file, so the token never lands in `.git/config`, the environment, or a process argument. Per-machine indexes, caches, and embeddings are gitignored and rebuilt locally, so derived state never causes merge noise.
-- **The Claude Code layer travels with the brain.** `dreamcontext brain platform` moves `CLAUDE.md` and `.claude/` (skills, agents, hooks) into `_dream_context/platform/` and symlinks them back from the project root, so the whole agent setup syncs with the team. A fresh clone re-creates the links automatically on its first sync; machine-local files (`settings.local.json`) stay gitignored.
-- **Private by default, attach is a trust decision.** New brain repos are created **private**. Because a shared brain is a prompt-injection channel, attaching to one prints a loud trust warning and an incoming-diff preview and refuses without an explicit confirmation. Personal attribution rides the existing multi-people awareness (`person:<slug>` tags, changelog authors) rather than per-person file forks.
+- **Sync rides sleep.** Every `dreamcontext sleep done` automatically runs fetch → merge → commit → push against the project's `origin`, so your teammates' consolidated context reaches you and yours reaches them with no extra step. A sync failure never fails the sleep.
+- **Deterministic files merge themselves; prose defers to an agent; code goes to you.** JSON (changelog, releases, config) and task status/changelog merge automatically (task changelogs union, the furthest status wins). When two people edit the same *prose* section of a knowledge or feature file, the conflict is handed to a semantic **merge agent** — the `/dream-sync` skill — which reads base/ours/theirs and writes the real merge, then hands back to commit and push. A real **code** conflict is left for your editor with native git markers — never mangled by a merge agent.
+- **Two modes.** `full-repo` (cloud sync on) syncs the whole project to its own `origin` on the current branch; **`in-tree`** (the safe default, cloud sync off) commits the brain inside the code repo but **never auto-pushes**. The scrub gate applies to both. Because `.claude/` and `_dream_context/` already live in the code repo, they travel together — no separate brain repo, no symlink layer.
+- **Nothing secret or machine-local is ever pushed.** A **scrub gate** runs before every commit and push and blocks secrets and absolute local paths, and the project-root `.gitignore` is force-written with the machine-local brain excludes before every whole-project stage. The auth token is never written into the remote URL — git network calls use `GIT_ASKPASS` with a `0600` temp file, so the token never lands in `.git/config`, the environment, or a process argument. Per-machine indexes, caches, and embeddings are gitignored and rebuilt locally, so derived state never causes merge noise.
+- **Personal attribution, no per-person forks.** Attribution rides the existing multi-people awareness (`person:<slug>` tags, changelog authors) rather than per-person file forks.
 
-From the desktop **Launcher** the whole flow is terminal-free: **GitHub device-flow login** (with a personal-access-token fallback), **brain-repo discovery** (repos tagged with the `dreamcontext-brain` topic), **one-click create** of a scrubbed private brain repo, the trust-gated **attach** flow for a second machine, a **team-updates badge** that tells you when teammates have pushed, and a Settings **"Cloud sync"** toggle.
+From the desktop **Launcher** the whole flow is terminal-free: **GitHub device-flow login** (with a personal-access-token fallback), a Settings **"Cloud sync"** toggle that turns whole-project sync on/off, a **team-updates badge** that tells you when teammates have pushed, and a one-click **"Resolve with AI"** for a deferred prose merge.
 
 ## Commands
 
@@ -874,17 +871,15 @@ See the [Federation](#federation) section above for the full workflow.
 ### Brain (cloud sync)
 
 ```bash
-dreamcontext brain init                  # Make _dream_context/ its own synced git repo
-dreamcontext brain status                # Show mode (separate | in-tree), remote, and sync state
+dreamcontext brain enable                # Turn cloud sync on — whole project → its GitHub origin (full-repo)
+dreamcontext brain status                # Show mode (full-repo | in-tree), remote, and sync state
 dreamcontext brain sync                  # Manual fetch → merge → commit → push outside a sleep cycle
-dreamcontext brain platform              # Share CLAUDE.md + .claude via the brain repo (symlinked back)
-dreamcontext brain enable                # Turn cloud sync on for this vault
-dreamcontext brain disable               # Turn cloud sync off (the brain stays local)
+dreamcontext brain disable               # Turn cloud sync off (the brain stays committed locally)
 ```
 
-- `separate` mode is a dedicated brain repo with full post-`sleep done` auto-sync; **`in-tree`** (the safe default) nests the brain in the code repo, commits on sleep, and never auto-pushes.
-- Every `sleep done` runs fetch → merge → commit → push; a scrub gate blocks secrets and absolute paths before every push, and the token is supplied via `GIT_ASKPASS` (never in the remote URL). Prose conflicts defer to the `/dream-sync` merge agent; JSON and task status merge automatically.
-- Device-flow GitHub login, brain-repo discovery, one-click create, the trust-gated attach flow, and a Settings "Cloud sync" toggle are all available from the desktop Launcher.
+- `full-repo` mode (cloud sync on) syncs the whole project to its own `origin` with full post-`sleep done` auto-sync; **`in-tree`** (the safe default, cloud sync off) commits the brain in the code repo on sleep and never auto-pushes.
+- Every `sleep done` runs fetch → merge → commit → push; a scrub gate blocks secrets and absolute paths before every push, and the token is supplied via `GIT_ASKPASS` (never in the remote URL). Prose conflicts defer to the `/dream-sync` merge agent; JSON and task status merge automatically; real code conflicts go to your editor.
+- Device-flow GitHub login and a Settings "Cloud sync" toggle are available from the desktop Launcher.
 
 See the [Brain Cloud Sync](#brain-cloud-sync) section above for the full workflow.
 

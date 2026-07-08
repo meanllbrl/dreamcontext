@@ -214,13 +214,10 @@ Sync the WHOLE brain (`_dream_context/`) — tasks, knowledge, features, sleep s
 
 | Command | Description |
 |---|---|
-| `brain status` | Show brain-repo mode (`separate`/`in-tree`), remote, sync state, and whether cloud sync is ON. Reports `mergeInProgress` / `pendingAgentMerge` (the `/dream-sync` handoff signals). |
-| `brain init` | Create a NEW brain repo on GitHub (**private by default**) and push a scrubbed first commit. `--public` (requires interactive confirm), `--code-repo <url>` (store a pointer to the paired code repo). |
-| `brain attach <url>` | Attach an EXISTING team brain repo — a **TRUST decision** (S6): prints a trust warning + incoming-diff preview and refuses without confirmation. `-y/--yes` to skip the prompt. |
-| `brain discover` | List `dreamcontext-brain`-topic repos you can access on GitHub. |
+| `brain status` | Show sync mode (`full-repo`/`in-tree`), remote, sync state, and whether cloud sync is ON. Reports `mergeInProgress` / `pendingAgentMerge` (the `/dream-sync` handoff signals). |
+| `brain enable` | Turn cloud sync ON — sync the WHOLE project (code + `.claude/` + `_dream_context/`) to its GitHub `origin` on the current branch (`full-repo`). Needs a GitHub `origin`. |
+| `brain disable` | Turn cloud sync OFF — revert to `in-tree` (the brain is still committed locally, never pushed). |
 | `brain sync` | Fetch → semantic-merge-on-conflict → commit → push (or, in `in-tree` mode, commit-only — never auto-pushes). `--pull-only` (take team content in, never push), `--push-only`, `--strict` (WARN scrub hits block too), `--resume` / `--continue` (the attended `/dream-sync` handoff — see below). |
-| `brain enable` / `brain disable` | Explicit master switch for cloud sync on this project (v3.3). |
-| `brain platform` | Carry the Claude Code layer (CLAUDE.md + `.claude/`) INSIDE the brain repo: moves them into `_dream_context/platform/` and symlinks them back from the project root, so they sync with the team. Missing root symlinks are re-created automatically by every `brain sync` (fresh clones self-wire) and flagged by `doctor`. `--status` reports without changing anything. Machine-local files (`platform/.claude/settings.local.json`, `scheduled_tasks.lock`) never sync. |
 | `brain scrub` | Dry-run the secrets/absolute-path scrub gate against the current staged tree. |
 
 **Automatic sync:** every `dreamcontext sleep done` runs a brain sync (fetch/merge/commit/push); failure never fails sleep. Session-start does a non-blocking background pull. **On an agent-class merge conflict** (two people edited the same prose section) the CLI stops at `already-awaiting-agent` and defers to the **`/dream-sync` skill** — the agent half that reads base/ours/theirs and writes the semantic merge, then `brain sync --continue`. Never drive `--resume`/`--continue` unattended.

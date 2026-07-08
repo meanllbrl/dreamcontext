@@ -2,10 +2,10 @@ import { execFileSync } from 'node:child_process';
 import { getStagedFiles } from '../marketing/git-guard.js';
 
 /**
- * The mandatory pre-commit/pre-push scrub gate for the brain-repo sync engine.
- * Deterministic, no network. Called before EVERY brain content commit —
- * in-tree (S2), separate, `brain init` first commit (S3), `brain detach` (S4),
- * and after a merge (a merge can reintroduce a secret).
+ * The mandatory pre-commit/pre-push scrub gate for the sync engine.
+ * Deterministic, no network. Called before EVERY commit — in-tree (S2),
+ * full-repo whole-project push, and after a merge (a merge can reintroduce a
+ * secret).
  *
  * Two severities:
  *  - BLOCK: a real, structured credential shape (GitHub/AWS/Google/Slack/

@@ -66,9 +66,8 @@ Read `_dream_context/state/.brain-merge/report.json`. For each entry in `deferre
    section-by-section — sections only one side touched keep that side's version; sections BOTH
    touched are the ones you're here for — read them and write prose that keeps both people's point,
    reconciling wording, not concatenating raw diffs.
-3. Stage it — run `git add <path>` inside the brain repo (in `separate` mode, the brain repo root
-   IS `_dream_context/`; in `in-tree` mode, it's the code repo root and `path` already carries the
-   `_dream_context/` prefix).
+3. Stage it — run `git add <path>` at the project root (the git root is the project folder, so
+   `path` carries the `_dream_context/` prefix).
 
 Do this for every entry in `deferred` before moving on — `--continue` commits everything staged in
 one shot.

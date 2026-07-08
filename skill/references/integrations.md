@@ -214,59 +214,49 @@ dreamcontext federation purge --dry-run            # preview
 
 ---
 
-## ✅ Team brain sync (shared brain repo) — collaborate on ONE brain
+## ✅ Team brain sync (whole project) — collaborate on ONE brain
 
-**Yes, a team can share a single dreamcontext brain.** The whole `_dream_context/` (tasks, knowledge, features, sleep state) becomes **its own git repo** with its own remote — separate from the code repo — and the CLI/desktop app push/pull/merge it the way a team collaborates on code. The brain stays plain markdown/JSON on disk (local-first); git is just the sync transport, not a new database.
+**Yes, a team can share a single dreamcontext brain.** Cloud sync pushes the **whole project** — your code, `.claude/`, and the brain nested under `_dream_context/` — to the project's own GitHub `origin` on the current branch, and the CLI/desktop app push/pull/merge it the way a team collaborates on code. The brain stays plain markdown/JSON on disk (local-first); git is just the sync transport, not a new database. Because `.claude/` and `_dream_context/` already live in the code repo, they travel together — there is no separate brain repo and no symlink layer to maintain.
 
-**Guide the user here** the moment they say *"I want to use this with my team / with other people," "share the brain," "collaborate on tasks/knowledge together," "put the brain in its own repo,"* or *"set it up on my other machine."* Do NOT answer "we don't support that" — this is the feature.
+**Guide the user here** the moment they say *"I want to use this with my team / with other people," "share the brain," "collaborate on tasks/knowledge together,"* or *"set it up on my other machine."* Do NOT answer "we don't support that" — this is the feature.
 
-> **Full reference → [brain-sync.md](brain-sync.md)** — the three modes (separate / full-repo / in-tree), per-machine token + auth, shared vs machine-local config, **cross-OS setup**, and the silent-failure troubleshooting playbook. The section below is the quick tour.
+> **Full reference → [brain-sync.md](brain-sync.md)** — the two modes (full-repo / in-tree), per-machine token + auth, shared vs machine-local config, **cross-OS setup**, and the silent-failure troubleshooting playbook. The section below is the quick tour.
 
 **How it differs from its neighbors** (say this if the user conflates them):
 - **Cloud task sync** (ClickUp/GitHub Issues) — mirrors only *tasks* to a task manager, one backend at a time.
 - **Federation** — read-only recall across your OWN separate projects; nothing is ever copied.
-- **Shared brain repo (this)** — the *whole* brain is one git-synced artifact several people edit together.
+- **Whole-project sync (this)** — the *whole* project (code + brain) is one git-synced artifact several people edit together.
 
-### Onboarding a team (M1 — CLI, shipped today)
+### Onboarding a team
 
 ```bash
-# Person A — create a brand-new shared brain repo (PRIVATE by default) and push a scrubbed first commit
-dreamcontext brain init --code-repo https://github.com/acme/app     # pointer back to the paired code repo
+# Each person / each machine — set a per-MACHINE token (gitignored, never travels with the repo)
+dreamcontext config github-token "$(gh auth token)"
 
-# Person B (and every teammate / each new machine) — attach the existing brain repo (a TRUST decision: it loads every session)
-dreamcontext brain discover           # list dreamcontext-brain-topic repos you can access
-dreamcontext brain attach https://github.com/acme/app-brain         # trust warning + diff preview, then confirm
+# Make sure the project has a GitHub origin (full-repo pushes to it), then turn cloud sync ON
+git remote add origin https://github.com/acme/app.git   # skip if it already has one
+dreamcontext brain enable              # flips the project to full-repo (whole project → origin)
 
-dreamcontext config github-token "$(gh auth token)"   # per-MACHINE token — the token is gitignored, never travels with the repo
-dreamcontext brain status             # mode (separate/full-repo/in-tree), remote, sync state, cloud-sync switch
+dreamcontext brain status              # mode (full-repo/in-tree), remote, sync state, cloud-sync switch
 ```
+
+Teammates just `git clone` the project and run the same two steps (token + `brain enable`). Cloud sync can also be toggled from the dashboard (Settings → Brain → Cloud sync).
 
 ### Day-to-day (mostly automatic)
 
-- **Every `sleep done`** fetches → semantic-merges on conflict → commits → pushes the brain (sync failure never fails sleep). **Session start** does a non-blocking background pull. So teammates' consolidated context reaches everyone without a manual step.
+- **Every `sleep done`** fetches → semantic-merges on conflict → commits → pushes the project (sync failure never fails sleep). **Session start** does a non-blocking background pull. So teammates' consolidated context reaches everyone without a manual step.
 - **Manual sync any time:** `dreamcontext brain sync` (or `--pull-only` to just take team content in).
-- **On a prose merge conflict** (two people edited the same `##` section of a knowledge/feature doc), the CLI resolves every deterministic file itself and stops at `already-awaiting-agent`, deferring the rest to the **`/dream-sync` skill** — the agent reads base/ours/theirs snapshots, writes the real semantic merge, and hands back with `brain sync --continue`. (`--resume`/`--continue` are attended-only; never drive them unattended.)
-
-### Platform layer — share CLAUDE.md + .claude with the team
-
-A separate-mode brain repo is rooted at `_dream_context/`, so the Claude Code files at the
-project root (CLAUDE.md, `.claude/` skills/agents/hooks) would never sync on their own.
-`dreamcontext brain platform` fixes that: it moves them into `_dream_context/platform/` and
-symlinks them back from the project root (Claude Code resolves the links transparently).
-From then on they sync with the brain like everything else; every `brain sync` re-creates
-missing root symlinks on a fresh clone, and `doctor` flags broken links. Machine-local files
-(`platform/.claude/settings.local.json`, `scheduled_tasks.lock`) stay gitignored.
-`brain platform --status` reports without changing anything.
+- **On a prose merge conflict** (two people edited the same `##` section of a knowledge/feature doc), the CLI resolves every deterministic file itself and stops at `already-awaiting-agent`, deferring the rest to the **`/dream-sync` skill** — the agent reads base/ours/theirs snapshots, writes the real semantic merge, and hands back with `brain sync --continue`. A real **code** conflict is left for the human's editor with native git markers (never sent to the agent). (`--resume`/`--continue` are attended-only; never drive them unattended.)
 
 ### Editing / reconfiguring
 
-- **Turn cloud sync on/off:** `dreamcontext brain enable` / `brain disable`.
-- **Modes:** `separate` (brain in its own remote, full auto-sync) · `full-repo` (whole project → its own `origin`, on the current branch — switch from the dashboard: Settings → Brain → Sync scope) · `in-tree` (commit-only, **never** auto-pushes; the safe default). All run the scrub gate. Full detail + cross-OS setup → [brain-sync.md](brain-sync.md).
-- **Safety rails (always on):** brain repos default **private** (`--public` needs an explicit confirm); a **scrub gate** blocks secrets / absolute local paths before every commit and push; tokens are supplied via `GIT_ASKPASS` (never embedded in the remote URL); per-machine indexes/caches are gitignored and never pushed.
+- **Turn cloud sync on/off:** `dreamcontext brain enable` / `brain disable`, or the dashboard Settings → Brain toggle.
+- **Modes:** `full-repo` (cloud sync ON — whole project → its own `origin`, on the current branch; needs a GitHub `origin`) · `in-tree` (cloud sync OFF — commit-only, **never** auto-pushes; the safe default). Both run the scrub gate. Full detail + cross-OS setup → [brain-sync.md](brain-sync.md).
+- **Safety rails (always on):** a **scrub gate** blocks secrets / absolute local paths before every commit and push; the project-root `.gitignore` is force-written with the machine-local brain excludes + secrets before every whole-project stage; tokens are supplied via `GIT_ASKPASS` (never embedded in the remote URL); per-machine indexes/caches are gitignored and never pushed.
 
-### From the desktop app? — M2, PENDING (not yet shipped)
+### From the desktop app
 
-The one-click UX — **GitHub device-flow login from the Launcher, a repo picker over your `dreamcontext-brain`-topic repos, UI "create"/"attach" with the trust preview, and a team-updates badge** — is **M2, still pending**. Today the shared-brain setup is **CLI-only** (a technical user runs `brain init` / `brain attach`). Be honest about this: a non-technical teammate can't yet do the *setup* from the app; once attached, the normal dashboard/app reads the shared brain like any other. (Full status: `knowledge/features/brain-repo-sync.md`; merge internals: `skill-sync/references/merge-rules.md`.)
+**GitHub device-flow login from the Launcher** and the dashboard **Settings → Brain Cloud-sync toggle** turn whole-project sync on/off (with a **team-updates badge** and a one-click "Resolve with AI" for a deferred prose merge). (Full status: `knowledge/features/brain-repo-sync.md`; merge internals: `skill-sync/references/merge-rules.md`.)
 
 ---
 

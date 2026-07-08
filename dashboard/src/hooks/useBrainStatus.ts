@@ -10,7 +10,7 @@ import { api } from '../api/client';
 // ─── Types (mirror the route response shapes exactly) ─────────────────────────
 
 export type BrainSyncSource = 'explicit' | 'derived-github-connected' | 'derived-unconnected';
-export type BrainMode = 'separate' | 'in-tree' | 'full-repo';
+export type BrainMode = 'in-tree' | 'full-repo';
 
 /** What KIND of in-progress merge blocks sync — drives which sidebar banner shows. */
 export type MergeKind = 'agent' | 'code' | 'user' | null;
@@ -60,41 +60,12 @@ export interface AuthStatus {
   oauthConfigured?: boolean;
 }
 
-export interface DiscoveredRepo {
-  fullName: string;
-  htmlUrl: string;
-  private: boolean;
-}
-
 export interface ScrubBlock {
   file: string;
   line: number;
   rule: string;
   severity: string;
   excerpt: string;
-}
-
-export interface CreateBrainResult {
-  ok: boolean;
-  remote?: string;
-  blocked?: boolean;
-  scrub?: { blocks: ScrubBlock[] };
-}
-
-export interface AttachPreviewResult {
-  reachable: boolean;
-  fullName?: string;
-  private?: boolean;
-  isBrainRepo?: boolean;
-  defaultBranch?: string;
-  reason?: string;
-}
-
-export interface AttachResult {
-  ok: boolean;
-  reason?: string;
-  /** Empty-remote first-commit outcome: pushed / blocked-scrub / skipped (unreachable). Absent when the remote already had content. */
-  bootstrap?: 'pushed' | 'blocked-scrub' | 'skipped';
 }
 
 export interface BrainSyncResult {
@@ -151,7 +122,6 @@ const BRAIN_KEYS = {
   status: ['brain-status'] as const,
   settings: ['brain-settings'] as const,
   authStatus: ['brain-auth-status'] as const,
-  discover: ['brain-discover'] as const,
   teamUpdates: ['brain-team-updates'] as const,
 };
 
@@ -178,7 +148,11 @@ export function useBrainSettings() {
   });
 }
 
-/** SW2 — flip the Cloud sync master toggle. */
+/**
+ * The single Cloud sync master toggle. Enabling turns on whole-project (`full-repo`)
+ * sync — the server rejects with 400 `no_origin` if the project has no GitHub
+ * `origin`. Disabling reverts to `in-tree` (commit-only).
+ */
 export function useUpdateBrainSettings() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -228,59 +202,6 @@ export function useLogoutGitHub() {
   });
 }
 
-// ─── Discover / create / attach (vault-scoped) ────────────────────────────────
-
-/** `enabled` gates the request — discovery hits GitHub, so only fire it on demand. */
-export function useDiscoverBrainRepos(enabled: boolean) {
-  return useQuery({
-    queryKey: BRAIN_KEYS.discover,
-    queryFn: () => api.get<{ repos: DiscoveredRepo[] }>('/brain/discover'),
-    select: (d) => d.repos,
-    enabled,
-    retry: false,
-  });
-}
-
-export interface CreateBrainPayload {
-  name: string;
-  public?: boolean;
-  confirmed?: boolean;
-  codeRepo?: string;
-}
-
-export function useCreateBrainRepo() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (payload: CreateBrainPayload) => api.post<CreateBrainResult>('/brain/create', payload),
-    onSuccess: () => invalidateBrain(queryClient),
-  });
-}
-
-/** READ-ONLY — the S6 trust preview. Never mutates. */
-export function useAttachPreview() {
-  return useMutation({
-    mutationFn: (url: string) => api.post<AttachPreviewResult>('/brain/attach-preview', { url }),
-  });
-}
-
-export function useAttachBrainRepo() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (payload: { url: string; confirmed: boolean }) =>
-      api.post<AttachResult>('/brain/attach', payload),
-    onSuccess: () => invalidateBrain(queryClient),
-  });
-}
-
-/** Clears the brain-repo connection (config remote + the separate repo's origin). */
-export function useDisconnectBrainRepo() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: () => api.post<{ ok: boolean }>('/brain/disconnect', {}),
-    onSuccess: () => invalidateBrain(queryClient),
-  });
-}
-
 export interface RunBrainSyncArgs {
   mode?: 'pull-only' | 'auto';
   /** The on-open auto-pull passes this from the "auto-checkpoint on open" preference. */
@@ -306,23 +227,6 @@ export function useAddScrubIgnore() {
   return useMutation({
     mutationFn: (path: string) => api.post<{ ok: boolean; added: string[]; path: string }>('/brain/scrub/ignore', { path }),
     onSuccess: () => invalidateBrain(queryClient),
-  });
-}
-
-/**
- * Switch what cloud sync covers: `full-repo` (the whole project folder → the
- * project's own origin) or `brain` (brain-only). Server validates that
- * full-repo has a GitHub origin to push to.
- */
-export function useSetBrainScope() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (scope: 'full-repo' | 'brain') =>
-      api.post<BrainSettings>('/brain/scope', { scope }),
-    onSuccess: (data) => {
-      queryClient.setQueryData(BRAIN_KEYS.settings, data);
-      invalidateBrain(queryClient);
-    },
   });
 }
 

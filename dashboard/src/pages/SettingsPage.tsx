@@ -9,10 +9,9 @@ import { EmbeddingModelCard } from '../components/settings/EmbeddingModelCard';
 import { TaskOverrideEditor } from '../components/settings/TaskOverrideEditor';
 import { SETTINGS_ICONS } from '../components/settings/SettingsIcons';
 import { useAgentCapabilities } from '../hooks/useAgentCapabilities';
-import { useBrainSettings, useUpdateBrainSettings, useSetBrainScope } from '../hooks/useBrainStatus';
+import { useBrainSettings, useUpdateBrainSettings } from '../hooks/useBrainStatus';
 import { useSleep, useUpdateSleep, type RecallMode } from '../hooks/useSleep';
 import { GitHubLogin } from '../components/brain/GitHubLogin';
-import { BrainRepoSetup } from '../components/brain/BrainRepoSetup';
 import { readAutoCheckpointOnOpen, writeAutoCheckpointOnOpen } from '../lib/brainSyncPrefs';
 import { isDesktop } from '../lib/desktop';
 import {
@@ -177,7 +176,6 @@ export function SettingsPage({ focus }: SettingsPageProps) {
   // SW2 — Cloud sync master toggle (Brain Repo & Collaboration section).
   const { data: brainSettings } = useBrainSettings();
   const updateBrainSettings = useUpdateBrainSettings();
-  const setBrainScope = useSetBrainScope();
   // Item 7 — machine-local "auto-checkpoint on open" preference (localStorage, not team config).
   const [autoCheckpoint, setAutoCheckpoint] = useState<boolean>(() => readAutoCheckpointOnOpen());
 
@@ -838,48 +836,16 @@ export function SettingsPage({ focus }: SettingsPageProps) {
           </label>
         </div>
 
+        <p className="settings-section-desc">{t('brain.cloudSync.desc')}</p>
+        {updateBrainSettings.isError && (
+          <p className="settings-field-hint brain-scope-error">
+            {(updateBrainSettings.error as Error)?.message ?? t('brain.cloudSync.error')}
+          </p>
+        )}
+
         <div className="settings-subsection">
           <h3 className="settings-nav-label">{t('brain.auth.title')}</h3>
           <GitHubLogin />
-        </div>
-
-        <div className="settings-subsection">
-          <h3 className="settings-nav-label">{t('brain.setup.title')}</h3>
-          <BrainRepoSetup disabled={!(brainSettings?.enabled ?? false)} />
-        </div>
-
-        <div className="settings-subsection">
-          <h3 className="settings-nav-label">{t('brain.scope.title')}</h3>
-          <p className="settings-section-desc">{t('brain.scope.desc')}</p>
-          <div className="brain-scope-choices" role="radiogroup" aria-label={t('brain.scope.title')}>
-            <button
-              type="button"
-              role="radio"
-              aria-checked={brainSettings?.mode === 'full-repo'}
-              disabled={setBrainScope.isPending || !(brainSettings?.enabled ?? false)}
-              className={`brain-scope-choice${brainSettings?.mode === 'full-repo' ? ' brain-scope-choice--active' : ''}`}
-              onClick={() => brainSettings?.mode !== 'full-repo' && setBrainScope.mutate('full-repo')}
-            >
-              <span className="brain-scope-choice-title">{t('brain.scope.full.label')}</span>
-              <span className="brain-scope-choice-hint">{t('brain.scope.full.hint')}</span>
-            </button>
-            <button
-              type="button"
-              role="radio"
-              aria-checked={brainSettings?.mode !== 'full-repo'}
-              disabled={setBrainScope.isPending || !(brainSettings?.enabled ?? false)}
-              className={`brain-scope-choice${brainSettings?.mode !== 'full-repo' ? ' brain-scope-choice--active' : ''}`}
-              onClick={() => brainSettings?.mode === 'full-repo' && setBrainScope.mutate('brain')}
-            >
-              <span className="brain-scope-choice-title">{t('brain.scope.brain.label')}</span>
-              <span className="brain-scope-choice-hint">{t('brain.scope.brain.hint')}</span>
-            </button>
-          </div>
-          {setBrainScope.isError && (
-            <p className="settings-field-hint brain-scope-error">
-              {(setBrainScope.error as Error)?.message ?? t('brain.scope.error')}
-            </p>
-          )}
         </div>
 
         <div className="settings-subsection">

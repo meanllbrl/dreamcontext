@@ -57,16 +57,14 @@ export interface SetupConfig {
 
 export interface BrainRepoConfig {
   /**
-   * `separate` — the brain lives in its own git repo + remote; full auto-sync
-   * (commit → fetch → merge → push) rooted at `_dream_context/`, always on
-   * `main`. `full-repo` — the WHOLE project folder (code + `_dream_context/`)
+   * `full-repo` — the WHOLE project folder (code + `.claude` + `_dream_context/`)
    * is the synced unit; full auto-sync against the project's existing `origin`
-   * on the CURRENT branch (no separate brain repo, no platform-layer symlink
-   * hack). `in-tree` — the brain is nested inside the code repo; commit-only,
-   * NEVER auto-pushes. Absent ⇒ `in-tree` (the safe default for every project
-   * that hasn't opted into a pushing mode).
+   * on the CURRENT branch. This is the only pushing mode. `in-tree` — the brain
+   * is nested inside the code repo; commit-only, NEVER auto-pushes. Absent ⇒
+   * `in-tree` (the safe default for every project that hasn't turned cloud sync
+   * on).
    */
-  mode: 'separate' | 'in-tree' | 'full-repo';
+  mode: 'in-tree' | 'full-repo';
   /**
    * v3.3 MASTER SWITCH — cloud sync is COMPLETELY OPTIONAL. Explicit value
    * always wins. When ABSENT, the default is DERIVED: ON iff the project is
@@ -76,13 +74,7 @@ export interface BrainRepoConfig {
    * it via Settings or `dreamcontext brain enable`). See `resolveBrainSyncEnabled`.
    */
   enabled?: boolean;
-  /** Brain repo remote — CLEAN https URL, never contains a token (S1). Absent in in-tree mode. */
-  remote?: string;
-  /** Pointer BACK to the paired code repo (shared, so teammates resolve it). */
-  codeRepoUrl?: string;
-  /** Marker: how this repo is identified as a brain (topic name). Default 'dreamcontext-brain'. */
-  marker?: string;
-  /** Auto-sync on `sleep done`. Default true for `separate`, false for `in-tree`. Gated by `enabled`. */
+  /** Auto-sync on `sleep done`. Default true for `full-repo`, false for `in-tree`. Gated by `enabled`. */
   autoSync?: boolean;
 }
 
@@ -168,13 +160,11 @@ function sanitizeGitHub(raw: unknown): GitHubConfig | undefined {
 function sanitizeBrainRepo(raw: unknown): BrainRepoConfig | undefined {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
   const o = raw as Record<string, unknown>;
-  const mode: BrainRepoConfig['mode'] =
-    o.mode === 'separate' ? 'separate' : o.mode === 'full-repo' ? 'full-repo' : 'in-tree';
+  // Any value other than 'full-repo' (including the removed legacy 'separate')
+  // resolves to the safe 'in-tree' baseline — no migration, no notice.
+  const mode: BrainRepoConfig['mode'] = o.mode === 'full-repo' ? 'full-repo' : 'in-tree';
   const out: BrainRepoConfig = { mode };
   if (typeof o.enabled === 'boolean') out.enabled = o.enabled;
-  if (typeof o.remote === 'string') out.remote = o.remote;
-  if (typeof o.codeRepoUrl === 'string') out.codeRepoUrl = o.codeRepoUrl;
-  if (typeof o.marker === 'string') out.marker = o.marker;
   if (typeof o.autoSync === 'boolean') out.autoSync = o.autoSync;
   return out;
 }

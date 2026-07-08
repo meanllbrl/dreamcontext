@@ -1013,11 +1013,9 @@ export function registerHookCommand(program: Command): void {
           const projectRoot = dirname(root);
           const cfg = readSetupConfig(projectRoot);
           const enabledResolution = resolveBrainSyncEnabled(projectRoot, cfg);
-          // Both pushing modes fetch team updates in the background: `separate`
-          // (brain repo) and `full-repo` (whole project → origin). `in-tree` is
-          // commit-only and has no remote to pull from.
-          const pullMode = cfg?.brainRepo?.mode;
-          if (enabledResolution.enabled && (pullMode === 'separate' || pullMode === 'full-repo') && cfg?.brainRepo?.autoSync) {
+          // `full-repo` (whole project → origin) fetches team updates in the
+          // background; `in-tree` is commit-only and has no remote to pull from.
+          if (enabledResolution.enabled && cfg?.brainRepo?.mode === 'full-repo' && cfg?.brainRepo?.autoSync) {
             spawnBrainPull(root);
           }
           const local = readBrainLocal(projectRoot);

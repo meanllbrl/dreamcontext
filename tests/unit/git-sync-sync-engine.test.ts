@@ -126,7 +126,7 @@ describe('git-sync/sync-engine — runBrainSync', () => {
     mkdirSync(join(contextRoot, 'state'), { recursive: true });
     // Explicit `enabled:true` short-circuits the v3.3 derivation entirely — no
     // real git call needed to resolve the master switch in these tests.
-    updateSetupConfig(projectRoot, { brainRepo: { mode: 'separate', enabled: true, autoSync: true } });
+    updateSetupConfig(projectRoot, { brainRepo: { mode: 'full-repo', enabled: true, autoSync: true } });
   });
   afterEach(() => rmSync(projectRoot, { recursive: true, force: true }));
 
@@ -168,7 +168,7 @@ describe('git-sync/sync-engine — runBrainSync', () => {
     expect(state.pushCalls).toBe(1);
   });
 
-  it('scrub BLOCK aborts before commit — separate mode', async () => {
+  it('scrub BLOCK aborts before commit', async () => {
     const state = makeState({ dirty: ['x.md'] });
     const deps = baseDeps(state);
     deps.scrubStagedFiles = () => [{ file: 'x.md', line: 1, rule: 'github-pat', severity: 'block', excerpt: 'r' }];
@@ -311,7 +311,7 @@ describe('git-sync/sync-engine — runBrainSync', () => {
     const state = makeState({ aheadCount: 1, dirty: ['knowledge/y.md'] });
     const result = await runBrainSync({ cwd: contextRoot, mode: 'pull-only' }, baseDeps(state));
     expect(result.action).toBe('pulled');
-    expect(state.commitCalls[0].message).toBe('chore(brain): auto-checkpoint local edits before team merge');
+    expect(state.commitCalls[0].message).toBe('chore: checkpoint local edits before team merge (dreamcontext)');
   });
 
   it('amendment 2: falls back to the dreamcontext-sync author when git identity is unset', async () => {
@@ -484,7 +484,7 @@ describe('git-sync/sync-engine — runBrainSync', () => {
 
   // ── v3.3 master switch ───────────────────────────────────────────────
   it('v3.3: explicit enabled:false returns disabled and touches no git call at all', async () => {
-    updateSetupConfig(projectRoot, { brainRepo: { mode: 'separate', enabled: false, autoSync: true } });
+    updateSetupConfig(projectRoot, { brainRepo: { mode: 'full-repo', enabled: false, autoSync: true } });
     const state = makeState({ dirty: ['x.md'] });
     const result = await runBrainSync({ cwd: contextRoot, mode: 'auto' }, baseDeps(state));
     expect(result.action).toBe('disabled');
@@ -615,7 +615,7 @@ describe('git-sync/sync-engine — runBrainSync', () => {
   // `getTaskBackend(root).sync('both')` (src/cli/commands/sleep.ts) — already
   // covered by the C7 assertion above returning `needsTaskSync` on the result.
   it('C2: pull-only persists needsTaskSync to brain-local when the merge touches task-referencing files under taskBackend=github', async () => {
-    updateSetupConfig(projectRoot, { taskBackend: 'github', brainRepo: { mode: 'separate', enabled: true, autoSync: true } });
+    updateSetupConfig(projectRoot, { taskBackend: 'github', brainRepo: { mode: 'full-repo', enabled: true, autoSync: true } });
     const state = makeState({ aheadCount: 1, mergeConflicts: ['state/foo.md'] });
     const deps = baseDeps(state, { resolved: ['state/foo.md'], deferredToAgent: [] });
     const result = await runBrainSync({ cwd: contextRoot, mode: 'pull-only' }, deps);
@@ -624,7 +624,7 @@ describe('git-sync/sync-engine — runBrainSync', () => {
   });
 
   it('C2: pull-only persists needsTaskSync:false when the merge touches no task-referencing files (nothing to surface)', async () => {
-    updateSetupConfig(projectRoot, { taskBackend: 'github', brainRepo: { mode: 'separate', enabled: true, autoSync: true } });
+    updateSetupConfig(projectRoot, { taskBackend: 'github', brainRepo: { mode: 'full-repo', enabled: true, autoSync: true } });
     const state = makeState({ aheadCount: 1, mergeConflicts: ['knowledge/x.md'] });
     const deps = baseDeps(state, { resolved: ['knowledge/x.md'], deferredToAgent: [] });
     const result = await runBrainSync({ cwd: contextRoot, mode: 'pull-only' }, deps);
@@ -695,13 +695,6 @@ describe('git-sync/sync-engine — runBrainSync', () => {
     expect(state.fetchCalls).toBe(0);
     expect(state.pushCalls).toBe(0);
     expect(state.commitCalls).toHaveLength(0);
-  });
-
-  it('separate mode never consults currentBranch and is unaffected by a null branch', async () => {
-    // separate stays on `main` — a detached HEAD in the (irrelevant) enclosing repo must not trip it.
-    const state = makeState({ dirty: ['knowledge/x.md'], branch: null as unknown as string });
-    const result = await runBrainSync({ cwd: contextRoot, mode: 'auto' }, baseDeps(state));
-    expect(result.action).toBe('pushed');
   });
 
   // ── item 4: code-conflict policy (full-repo) ──

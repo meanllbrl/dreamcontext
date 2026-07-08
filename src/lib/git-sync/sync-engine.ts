@@ -15,7 +15,6 @@ import {
   FALLBACK_AUTHOR,
 } from './brain-repo.js';
 import { withGitCredentials } from './credentials.js';
-import { healPlatformLinksBestEffort } from './platform-layer.js';
 import { readGlobalGitHubLogin } from './auth-store.js';
 import { mapLoginToPerson } from '../task-backend/identity.js';
 import { slugify } from '../id.js';
@@ -35,7 +34,7 @@ const MERGE_COMMIT_MESSAGE = 'chore(brain): merge team updates';
 const AGENT_MERGE_COMMIT_MESSAGE = 'chore(brain): merge team updates (agent-resolved)';
 
 /**
- * Commit-message copy differs by mode: `separate`/`in-tree` sync only the brain
+ * Commit-message copy differs by mode: `in-tree` commits only the brain
  * (`_dream_context/`), so `chore(brain): …` reads true; `full-repo` syncs the
  * WHOLE project folder, so a `(brain)` scope would be misleading — it uses a
  * plain `chore: … (dreamcontext sync)` message instead.
@@ -160,9 +159,9 @@ interface Ctx {
   gitCwd: string;
   projectRoot: string;
   config: SetupConfig | null;
-  /** Resolved sync mode — drives gitCwd, branch, commit-message copy. */
-  mode: 'separate' | 'in-tree' | 'full-repo';
-  /** Remote branch to fetch/merge/push. `main` for separate/in-tree; the CURRENT branch for full-repo. */
+  /** Resolved sync mode — drives branch + commit-message copy. */
+  mode: 'in-tree' | 'full-repo';
+  /** Remote branch to fetch/merge/push. `main` for in-tree (unused — never pushes); the CURRENT branch for full-repo. */
   branch: string;
   /** `origin/${branch}` — the remote-tracking ref to merge from. */
   remoteRef: string;
@@ -226,24 +225,23 @@ export async function runBrainSync(opts: SyncOptions, depsOverride: Partial<Sync
   }
 
   const mode = resolveMode(config);
-  // `separate` roots the git repo at `_dream_context/`; `full-repo` and
-  // `in-tree` operate on the whole project repo at the project root.
-  const gitCwd = mode === 'separate' ? contextRoot : projectRoot;
+  // Both modes operate on the whole project repo at the project root — the brain
+  // lives inside it at `_dream_context/`.
+  const gitCwd = projectRoot;
 
   if (!d.git.isGitRepo(gitCwd)) {
     return {
       action: 'no-remote',
       scrub: EMPTY_SCRUB,
-      note: 'No git repository found for the brain. Run `dreamcontext brain init` or `brain attach` first.',
+      note: 'No git repository found for this project. Run `git init` and add a GitHub `origin` first.',
     };
   }
 
   // `full-repo` syncs whatever branch the user is on (never assume `main` — a
-  // teammate could be on a feature branch); the brain-only modes keep `main`.
-  // A DETACHED HEAD (`currentBranch` → null) has no branch to push: refuse
-  // LOUDLY rather than fall back to `main` (which would push the detached
-  // HEAD's commits onto the team's `main`). `separate`/`in-tree` never reach
-  // this — they operate on their fixed `main` brain branch.
+  // teammate could be on a feature branch). A DETACHED HEAD (`currentBranch` →
+  // null) has no branch to push: refuse LOUDLY rather than fall back to `main`
+  // (which would push the detached HEAD's commits onto the team's `main`).
+  // `in-tree` only commits locally, so its branch value is unused.
   let branch = DEFAULT_BRANCH;
   if (mode === 'full-repo') {
     const live = d.git.currentBranch(gitCwd);
@@ -273,8 +271,8 @@ export async function runBrainSync(opts: SyncOptions, depsOverride: Partial<Sync
 
   // In-tree NEVER syncs/merges with a remote — commit-only, always scrubbed
   // (S2). It bypasses the reentrancy guard entirely: that machinery exists
-  // for the separate-repo merge lifecycle, which in-tree never enters, and
-  // gating on an unrelated in-progress CODE-repo merge would be a false positive.
+  // for the full-repo merge lifecycle, which in-tree never enters, and gating
+  // on an unrelated in-progress CODE-repo merge would be a false positive.
   if (mode === 'in-tree') {
     if (!d.acquireBrainLock(contextRoot)) return { action: 'locked', scrub: EMPTY_SCRUB };
     try {
@@ -347,11 +345,6 @@ export async function runBrainSync(opts: SyncOptions, depsOverride: Partial<Sync
     else if (opts.mode === 'pull-only') result = await pullOnlySync(ctx);
     else if (opts.mode === 'push-only') result = await pushOnlySync(ctx);
     else result = await autoSync(ctx);
-    // A merge/pull may have just delivered `platform/` (CLAUDE.md + .claude)
-    // from a teammate — re-create any missing project-root symlinks so the
-    // layer is live without a manual step. No-op without a platform layer.
-    // `full-repo` syncs the root files natively (no symlink layer), so skip it.
-    if (mode !== 'full-repo') healPlatformLinksBestEffort(projectRoot, contextRoot);
     return result;
   } finally {
     d.releaseBrainLock(contextRoot);
@@ -581,7 +574,7 @@ async function pushWithRetry(ctx: Ctx, scrub: { blocks: ScrubHit[]; warns: Scrub
   throw new GitSyncError('Push rejected (non-fast-forward) twice — the remote is still ahead after a merge + one retry. Run `dreamcontext brain sync` again or resolve manually.');
 }
 
-// ─── auto (separate mode, default) ──────────────────────────────────────────
+// ─── auto (full-repo: fetch → merge → commit → push) ────────────────────────
 
 async function autoSync(ctx: Ctx): Promise<SyncResult> {
   const { d, gitCwd, projectRoot } = ctx;

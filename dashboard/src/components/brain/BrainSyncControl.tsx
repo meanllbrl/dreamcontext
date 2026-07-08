@@ -63,7 +63,6 @@ export function BrainSyncControl({ onOpenSettings }: BrainSyncControlProps) {
   // prerequisites met AND the agent surface enabled. Otherwise we fall back to a copyable command.
   const canRunAgent = isSleepAgentReady(caps) && readAgentSettings().enabled;
 
-  const isFullRepo = brainStatus?.mode === 'full-repo';
   const mergeKind = brainStatus?.mergeKind ?? null;
   const codeConflicts = brainStatus?.codeConflicts ?? [];
 
@@ -183,8 +182,7 @@ export function BrainSyncControl({ onOpenSettings }: BrainSyncControlProps) {
     }
   };
 
-  const syncedRest = isFullRepo ? t('brain.sidebar.syncedProject') : t('brain.sidebar.synced');
-  const mainSyncLabel = feedback?.message ?? (runSync.isPending ? t('brain.sidebar.syncing') : syncedRest);
+  const mainSyncLabel = feedback?.message ?? (runSync.isPending ? t('brain.sidebar.syncing') : t('brain.sidebar.syncedProject'));
   const recovery = failure ? recoveryAction(failure) : null;
 
   return (

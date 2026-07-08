@@ -87,6 +87,20 @@ existing local dashboard. The two could coexist later but ship independently.
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
 
+- **[2026-07-08]** **`separate` mode is REMOVED — `full-repo` is the only pushing mode; `in-tree`
+  is the OFF baseline.** For dreamcontext to work across a team, `.claude/` AND `_dream_context/`
+  must be shared together. `separate` synced only `_dream_context/` into its own dedicated repo and
+  needed the `platform` symlink hack to drag `.claude`/`CLAUDE.md` along — architecturally wrong and
+  confusing. The 3-mode model collapses to 2: `full-repo` (whole project → its own `origin`, current
+  branch) when cloud sync is ON, `in-tree` (commit-only, never pushes) when OFF. Deleted:
+  `platform-layer.ts` + `brain platform`, `detach.ts` + `brain detach`, `brain init`/`brain attach`/
+  `brain discover`, the dedicated-brain-repo create/attach/discover/scope/disconnect server routes +
+  dashboard `BrainRepoSetup` + the two-card scope chooser, and the `brainRepo.remote`/`codeRepoUrl`/
+  `marker` config fields. The master cloud-sync toggle now IS the on/off: enabling requires a GitHub
+  `origin` (400 `no_origin` otherwise) and sets `full-repo`; disabling reverts to `in-tree`.
+  No migration path — a stale `mode:'separate'` config silently resolves to `in-tree`. GitHub auth
+  (device-flow + PAT), the scrub gate, the semantic merge agent, and `GIT_ASKPASS` credential supply
+  are all KEPT — `full-repo` still pushes to GitHub over HTTPS with a token.
 - **[2026-07-07]** **Gitignore-first discipline is mandatory for any brain-content migration.** A platform-only gitignore stub (containing only platform excludes, no canonical brain excludes) defeats `bootstrapBrainRepo`'s `!existsSync` guard: the stub satisfies "file exists" but doesn't actually exclude local-only state, so `state/.brain-merge/.lock`, `state/.secrets.json`, and other machine-local artifacts would sync to the team. The fix: `setupPlatformLayer` writes the FULL canonical gitignore FIRST (via `ensureLocalOnlyArtifacts`), then appends platform-specific entries. This is the same discipline `writeCredential` uses and now applies everywhere. Caught by a new two-clone e2e test (clone A syncs local merge lock → clone B detects it as incoming diff → fail). Same root cause as the original `writeCredential` gitignore-first rationale.
 - **[2026-07-04]** **Brain repo is separate from the code repo.** `_dream_context/`
   becomes its own git repository (own remote, own history) rather than a folder
@@ -175,6 +189,32 @@ existing local dashboard. The two could coexist later but ship independently.
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-07-08 - Removed `separate` mode: whole-project (`full-repo`) is the only cloud-sync option
+
+Pivoted the feature per user direction: `.claude/` and `_dream_context/` must be shared *together*
+for dreamcontext to work across a team, so the "brain-only" (`separate`) mode — which synced only
+`_dream_context/` into its own repo and needed the `platform` symlink hack for the Claude Code
+layer — is gone. Cloud sync is now one model: **`full-repo`** (whole project → its own `origin` on
+the current branch) when ON, **`in-tree`** (commit-only) when OFF.
+
+Removed: `platform-layer.ts` + `brain platform`, `detach.ts` + `brain detach`, `brain init` /
+`brain attach` / `brain discover` CLI subcommands, the `bootstrapBrainRepo`/`createBrainRepo`/
+`discoverBrainRepos`/`attachBrainRepo`/`previewAttach`/`isOwnRepoRoot` lib functions, the
+`/api/brain/{create,attach,attach-preview,discover,disconnect,scope}` server routes, dashboard
+`BrainRepoSetup` + the Settings two-card "Sync scope" chooser + the discover/create/attach/
+disconnect/scope hooks + their i18n keys, and the `brainRepo.remote`/`codeRepoUrl`/`marker` config
+fields. The `mode` type is now `'in-tree' | 'full-repo'`; a stale `'separate'` config silently
+resolves to `in-tree` (no migration — nobody was on it). The master cloud-sync toggle
+(`POST /api/brain/settings` / `brain enable`) now sets `full-repo` on enable (400 `no_origin`
+without a project origin) and `in-tree` on disable.
+
+Kept (all shared with `full-repo`): GitHub device-flow + PAT login, `resolveBrainSyncToken` +
+`GIT_ASKPASS` credential supply, the scrub gate, the semantic merge agent + `/dream-sync` handoff,
+`GitHubLogin` / `TeamUpdatesBadge` / `BrainSyncControl` dashboard components. Skills + docs swept
+to the two-mode model (`brain-sync.md`, `merge-rules.md`, `integrations.md`, `cli-reference.md`,
+`SKILL.md`, README, DEEP-DIVE); e2e reduced to the full-repo whole-folder suite (+ a new prose
+agent-handoff test). Full unit + e2e suites green.
 
 ### 2026-07-08 - Cloud sync hardening: real one-click resolve + full-repo safety + failure UX
 

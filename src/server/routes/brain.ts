@@ -4,23 +4,12 @@ import { parseJsonBody, sendJson, sendError } from '../middleware.js';
 import { isDesktop } from '../desktop.js';
 import { readSetupConfig, updateSetupConfig, readBrainLocal } from '../../lib/setup-config.js';
 import * as git from '../../lib/git-sync/git.js';
-import { GitSyncError } from '../../lib/git-sync/git.js';
-import { ApiError } from '../../lib/task-backend/api-adapter.js';
 import {
   resolveMode,
   resolveBrainSyncEnabled,
-  resolveBrainSyncToken,
-  isOwnRepoRoot,
-  createBrainRepo,
-  discoverBrainRepos,
-  attachBrainRepo,
-  bootstrapBrainRepo,
-  previewAttach,
   ensureFullRepoGitignore,
 } from '../../lib/git-sync/brain-repo.js';
-import { withGitCredentials } from '../../lib/git-sync/credentials.js';
 import { runBrainSync } from '../../lib/git-sync/sync-engine.js';
-import { readGlobalGitHubLogin } from '../../lib/git-sync/auth-store.js';
 import { runTeamFetch } from '../../lib/git-sync/team-fetch.js';
 import { readConflictReport } from '../../lib/git-sync/conflict-report.js';
 import { classifySyncError, type SyncFailure } from '../../lib/git-sync/failure.js';
@@ -49,10 +38,9 @@ function mergeKindFor(contextRoot: string, hasMergeHead: boolean, pendingAgentMe
 }
 
 /**
- * `/api/brain/*` — the vault-scoped brain-repo cloud-sync routes. Every handler
- * is a THIN LAYER over M1's in-process functions (createBrainRepo /
- * discoverBrainRepos / attachBrainRepo / runBrainSync / updateSetupConfig) — it
- * NEVER spawns the CLI.
+ * `/api/brain/*` — the vault-scoped whole-project cloud-sync routes. Every
+ * handler is a THIN LAYER over the in-process sync functions (runBrainSync /
+ * updateSetupConfig / ensureFullRepoGitignore) — it NEVER spawns the CLI.
  *
  * `contextRoot` is `<vault>/_dream_context` (the strict header-resolved vault);
  * `projectRoot = dirname(contextRoot)`. Desktop-gated + loopback + CSRF (server
@@ -82,20 +70,13 @@ export async function handleBrainStatus(
   const enabled = resolveBrainSyncEnabled(projectRoot, config);
   const local = readBrainLocal(projectRoot);
 
-  // `remote` is the repo cloud-sync actually pushes to. `separate` → the brain
-  // repo's own origin (rooted at `_dream_context/`), falling back to the
-  // configured remote. `full-repo` → the PROJECT's own `origin` (the whole
-  // folder is the synced unit). `in-tree` is commit-only and never pushes, so
-  // it has NO sync remote; the code origin still goes out as `codeOrigin`
-  // (display context only).
+  // `remote` is the repo cloud-sync actually pushes to. `full-repo` → the
+  // PROJECT's own `origin` (the whole folder is the synced unit). `in-tree` is
+  // commit-only and never pushes, so it has NO sync remote; the code origin
+  // still goes out as `codeOrigin` (display context only).
   let remote: string | null = null;
   let mergeInProgress = false;
-  if (mode === 'separate') {
-    const ownRoot = isOwnRepoRoot(contextRoot);
-    try { remote = ownRoot ? git.getRemoteUrl(contextRoot, 'origin') : null; } catch { remote = null; }
-    remote = remote ?? config?.brainRepo?.remote ?? null;
-    try { mergeInProgress = ownRoot && git.hasMergeHead(contextRoot); } catch { mergeInProgress = false; }
-  } else if (mode === 'full-repo') {
+  if (mode === 'full-repo') {
     try { remote = git.isGitRepo(projectRoot) ? git.getRemoteUrl(projectRoot, 'origin') : null; } catch { remote = null; }
     try { mergeInProgress = git.hasMergeHead(projectRoot); } catch { mergeInProgress = false; }
   }
@@ -125,199 +106,6 @@ export async function handleBrainStatus(
     pendingAgentMerge: !!local.pendingAgentMerge,
     pulledUpdates: local.pulledUpdates ?? 0,
   });
-}
-
-// ─── GET /api/brain/discover ─────────────────────────────────────────────────
-
-export async function handleBrainDiscover(
-  _req: IncomingMessage,
-  res: ServerResponse,
-  _params: Record<string, string>,
-  contextRoot: string,
-): Promise<void> {
-  if (!gate(res)) return;
-  const projectRoot = dirname(contextRoot);
-  // Pre-resolve the token: with none, the ApiAdapter's lazy authHeaders would
-  // throw inside its retry loop and surface as a slow network error, not a clean
-  // auth signal — so short-circuit to auth_required here (thin, no network).
-  if (!resolveBrainSyncToken(projectRoot)) {
-    sendError(res, 400, 'auth_required', 'Sign in with GitHub first to discover brain repos.');
-    return;
-  }
-  try {
-    const repos = await discoverBrainRepos(projectRoot);
-    sendJson(res, 200, { repos: repos.map((r) => ({ fullName: r.fullName, htmlUrl: r.htmlUrl, private: r.private })) });
-  } catch (err) {
-    // A bad/expired token (ApiError kind:auth) also means "you need to sign in".
-    if (err instanceof GitSyncError || (err instanceof ApiError && err.kind === 'auth')) {
-      sendError(res, 400, 'auth_required', 'Sign in with GitHub first to discover brain repos.');
-      return;
-    }
-    sendError(res, 502, 'discover_failed', (err as Error).message);
-  }
-}
-
-// ─── POST /api/brain/create ──────────────────────────────────────────────────
-
-export async function handleBrainCreate(
-  req: IncomingMessage,
-  res: ServerResponse,
-  _params: Record<string, string>,
-  contextRoot: string,
-): Promise<void> {
-  if (!gate(res)) return;
-  const projectRoot = dirname(contextRoot);
-  const body = await parseJsonBody(req);
-  const name = typeof body?.name === 'string' ? body.name.trim() : '';
-  const makePublic = body?.public === true;
-  const confirmed = body?.confirmed === true;
-  const codeRepo = typeof body?.codeRepo === 'string' ? body.codeRepo.trim() : undefined;
-  if (!name) {
-    sendError(res, 400, 'invalid_body', 'name is required.');
-    return;
-  }
-  // Server-side S5 gate (defense-in-depth — the library also refuses).
-  if (makePublic && confirmed !== true) {
-    sendError(res, 400, 'confirmation_required', 'Creating a PUBLIC brain repo requires explicit confirmation.');
-    return;
-  }
-
-  const config = readSetupConfig(projectRoot);
-  const owner = readGlobalGitHubLogin() ?? '';
-  try {
-    const result = await createBrainRepo({
-      contextRoot,
-      projectRoot,
-      owner,
-      name,
-      private: !makePublic,
-      confirmed,
-      codeRepoUrl: codeRepo,
-      taskBackend: config?.taskBackend,
-    });
-    if (result.blocked) {
-      sendJson(res, 200, { ok: false, blocked: true, scrub: { blocks: result.scrub.blocks } });
-      return;
-    }
-    updateSetupConfig(projectRoot, {
-      brainRepo: { mode: 'separate', remote: result.remote, codeRepoUrl: codeRepo, autoSync: true, enabled: true },
-    });
-    sendJson(res, 200, { ok: true, remote: result.remote });
-  } catch (err) {
-    if (err instanceof GitSyncError) {
-      sendError(res, 400, 'create_refused', err.message);
-      return;
-    }
-    if (err instanceof ApiError && err.kind === 'auth') {
-      sendError(res, 400, 'auth_required', 'Sign in with GitHub first to create a brain repo.');
-      return;
-    }
-    sendError(res, 502, 'create_failed', (err as Error).message);
-  }
-}
-
-// ─── POST /api/brain/attach-preview ──────────────────────────────────────────
-
-export async function handleBrainAttachPreview(
-  req: IncomingMessage,
-  res: ServerResponse,
-  _params: Record<string, string>,
-  contextRoot: string,
-): Promise<void> {
-  if (!gate(res)) return;
-  const projectRoot = dirname(contextRoot);
-  const body = await parseJsonBody(req);
-  const url = typeof body?.url === 'string' ? body.url.trim() : '';
-  if (!url) {
-    sendError(res, 400, 'invalid_body', 'url is required.');
-    return;
-  }
-  try {
-    const preview = await previewAttach({ projectRoot, url });
-    sendJson(res, 200, preview);
-  } catch (err) {
-    if (err instanceof GitSyncError || (err instanceof ApiError && err.kind === 'auth')) {
-      sendError(res, 400, 'auth_required', 'Sign in with GitHub first to preview a brain repo.');
-      return;
-    }
-    sendError(res, 502, 'preview_failed', (err as Error).message);
-  }
-}
-
-// ─── POST /api/brain/attach ──────────────────────────────────────────────────
-
-export async function handleBrainAttach(
-  req: IncomingMessage,
-  res: ServerResponse,
-  _params: Record<string, string>,
-  contextRoot: string,
-): Promise<void> {
-  if (!gate(res)) return;
-  const projectRoot = dirname(contextRoot);
-  const body = await parseJsonBody(req);
-  const url = typeof body?.url === 'string' ? body.url.trim() : '';
-  const confirmed = body?.confirmed === true;
-  if (!url) {
-    sendError(res, 400, 'invalid_body', 'url is required.');
-    return;
-  }
-  const config = readSetupConfig(projectRoot);
-  const result = attachBrainRepo({ contextRoot, projectRoot, url, confirmed, taskBackend: config?.taskBackend });
-  if (!result.ok) {
-    sendJson(res, 200, { ok: false, reason: result.reason });
-    return;
-  }
-  updateSetupConfig(projectRoot, { brainRepo: { mode: 'separate', remote: url, autoSync: true, enabled: true } });
-
-  // Empty-remote bootstrap (best-effort — attach itself already succeeded):
-  // a freshly created repo has NO refs, so every later fetch-first sync would
-  // find nothing to pull and the repo would sit empty until an auto/push-only
-  // sync. Give it its scrubbed first commit + push right here, the same
-  // primitive Create uses. An existing brain repo (branch present) is left
-  // for the first `brain sync` to pull/merge — attach never merges (S6).
-  let bootstrap: 'pushed' | 'blocked-scrub' | 'skipped' | undefined;
-  const token = resolveBrainSyncToken(projectRoot);
-  if (token || !/^https?:\/\//i.test(url)) {
-    try {
-      const empty = await withGitCredentials(token?.token ?? '', async (env) =>
-        !git.remoteBranchExists(contextRoot, 'origin', 'main', env));
-      if (empty) {
-        const boot = await bootstrapBrainRepo({ contextRoot, projectRoot, remote: url, taskBackend: config?.taskBackend });
-        bootstrap = boot.blocked ? 'blocked-scrub' : 'pushed';
-      }
-    } catch {
-      bootstrap = 'skipped'; // unreachable remote / push failure — the next brain sync reports it loudly
-    }
-  }
-  sendJson(res, 200, { ok: true, bootstrap });
-}
-
-// ─── POST /api/brain/disconnect ──────────────────────────────────────────────
-
-export async function handleBrainDisconnect(
-  _req: IncomingMessage,
-  res: ServerResponse,
-  _params: Record<string, string>,
-  contextRoot: string,
-): Promise<void> {
-  if (!gate(res)) return;
-  const projectRoot = dirname(contextRoot);
-  const config = readSetupConfig(projectRoot);
-  const mode = resolveMode(config);
-  // Drop the brain repo's own origin — only when `_dream_context/` is its own
-  // repo root. The enclosing code repo's remotes are NEVER touched.
-  if (mode === 'separate' && isOwnRepoRoot(contextRoot)) {
-    try {
-      if (git.getRemoteUrl(contextRoot, 'origin')) git.removeRemote(contextRoot, 'origin');
-    } catch (err) {
-      sendError(res, 502, 'disconnect_failed', (err as Error).message);
-      return;
-    }
-  }
-  // Replace brainRepo wholesale: keep the mode, drop remote/autoSync, and pin
-  // enabled:false so the derived default can't silently re-enable sync.
-  updateSetupConfig(projectRoot, { brainRepo: { mode, enabled: false } });
-  sendJson(res, 200, { ok: true });
 }
 
 // ─── POST /api/brain/sync ────────────────────────────────────────────────────
@@ -378,15 +166,10 @@ export async function handleBrainSync(
 
 /** Best-effort `owner/repo` (or remote URL) for a failure message — the repo sync pushes to. */
 function syncRepoHint(projectRoot: string, _result?: unknown): string | undefined {
-  const config = readSetupConfig(projectRoot);
-  const mode = resolveMode(config);
   try {
-    if (mode === 'full-repo' || mode === 'in-tree') {
-      return (git.isGitRepo(projectRoot) ? git.getRemoteUrl(projectRoot, 'origin') : null) ?? undefined;
-    }
-    return config?.brainRepo?.remote ?? undefined;
+    return (git.isGitRepo(projectRoot) ? git.getRemoteUrl(projectRoot, 'origin') : null) ?? undefined;
   } catch {
-    return config?.brainRepo?.remote ?? undefined;
+    return undefined;
   }
 }
 
@@ -402,17 +185,27 @@ export async function handleBrainSettingsGet(
   const projectRoot = dirname(contextRoot);
   const config = readSetupConfig(projectRoot);
   const enabled = resolveBrainSyncEnabled(projectRoot, config);
+  const mode = resolveMode(config);
+  const remote = mode === 'full-repo' && git.isGitRepo(projectRoot)
+    ? (git.getRemoteUrl(projectRoot, 'origin') ?? null)
+    : null;
   sendJson(res, 200, {
     enabled: enabled.enabled,
     source: enabled.source,
-    mode: resolveMode(config),
+    mode,
     autoSync: config?.brainRepo?.autoSync ?? false,
-    remote: config?.brainRepo?.remote ?? null,
+    remote,
   });
 }
 
-// ─── POST /api/brain/settings (SW2 master toggle) ────────────────────────────
+// ─── POST /api/brain/settings (master toggle — enable = whole-project sync) ───
 
+/**
+ * The single cloud-sync switch. Enabling turns on `full-repo` sync (the whole
+ * project → the project's own `origin`) — it requires a GitHub `origin` (400
+ * `no_origin` without one) and lays down the gitignore-first machine-local
+ * excludes. Disabling reverts to `in-tree` (commit-only, never pushes).
+ */
 export async function handleBrainSettingsPost(
   req: IncomingMessage,
   res: ServerResponse,
@@ -426,53 +219,9 @@ export async function handleBrainSettingsPost(
     sendError(res, 400, 'invalid_body', 'enabled (boolean) is required.');
     return;
   }
-  const enabledValue = body.enabled;
   const config = readSetupConfig(projectRoot);
-  // MUST spread the existing brainRepo — updateSetupConfig replaces it wholesale.
-  updateSetupConfig(projectRoot, {
-    brainRepo: { ...(config?.brainRepo ?? { mode: 'in-tree' }), enabled: enabledValue },
-  });
-  const next = readSetupConfig(projectRoot);
-  const resolved = resolveBrainSyncEnabled(projectRoot, next);
-  sendJson(res, 200, {
-    enabled: resolved.enabled,
-    source: resolved.source,
-    mode: resolveMode(next),
-    autoSync: next?.brainRepo?.autoSync ?? false,
-    remote: next?.brainRepo?.remote ?? null,
-  });
-}
 
-// ─── POST /api/brain/scope (switch what cloud sync covers) ───────────────────
-
-/**
- * Switch the sync SCOPE for this project:
- *   `full-repo` — sync the WHOLE project folder (code + `_dream_context/`) to
- *                 the project's own `origin`, on the current branch.
- *   `brain`     — revert to brain-only: `separate` if a dedicated brain remote
- *                 is configured, otherwise `in-tree` (commit-only).
- * `full-repo` requires the project to already have a GitHub `origin` — that's
- * the repo it will push to. Enabling it flips the master switch on and sets
- * autoSync so `sleep done` keeps the folder in sync too.
- */
-export async function handleBrainScope(
-  req: IncomingMessage,
-  res: ServerResponse,
-  _params: Record<string, string>,
-  contextRoot: string,
-): Promise<void> {
-  if (!gate(res)) return;
-  const projectRoot = dirname(contextRoot);
-  const body = await parseJsonBody(req);
-  const scope = body?.scope === 'full-repo' ? 'full-repo' : body?.scope === 'brain' ? 'brain' : null;
-  if (!scope) {
-    sendError(res, 400, 'invalid_body', "scope must be 'full-repo' or 'brain'.");
-    return;
-  }
-  const config = readSetupConfig(projectRoot);
-  const existing = config?.brainRepo ?? { mode: 'in-tree' as const };
-
-  if (scope === 'full-repo') {
+  if (body.enabled) {
     let origin: string | null = null;
     try { origin = git.isGitRepo(projectRoot) ? git.getRemoteUrl(projectRoot, 'origin') : null; } catch { origin = null; }
     if (!origin) {
@@ -480,25 +229,29 @@ export async function handleBrainScope(
       return;
     }
     updateSetupConfig(projectRoot, {
-      brainRepo: { ...existing, mode: 'full-repo', enabled: true, autoSync: true },
+      brainRepo: { ...(config?.brainRepo ?? {}), mode: 'full-repo', enabled: true, autoSync: true },
     });
     // Gitignore-first: exclude machine-local brain state + secrets before the
     // first whole-project sync can stage them.
     ensureFullRepoGitignore(projectRoot, config?.taskBackend);
   } else {
-    // brain-only: keep a dedicated brain remote if one was configured, else in-tree.
-    const nextMode = existing.remote ? 'separate' : 'in-tree';
-    updateSetupConfig(projectRoot, { brainRepo: { ...existing, mode: nextMode } });
+    updateSetupConfig(projectRoot, {
+      brainRepo: { ...(config?.brainRepo ?? {}), mode: 'in-tree', enabled: false },
+    });
   }
 
   const next = readSetupConfig(projectRoot);
   const resolved = resolveBrainSyncEnabled(projectRoot, next);
+  const nextMode = resolveMode(next);
+  const remote = nextMode === 'full-repo' && git.isGitRepo(projectRoot)
+    ? (git.getRemoteUrl(projectRoot, 'origin') ?? null)
+    : null;
   sendJson(res, 200, {
     enabled: resolved.enabled,
     source: resolved.source,
-    mode: resolveMode(next),
+    mode: nextMode,
     autoSync: next?.brainRepo?.autoSync ?? false,
-    remote: next?.brainRepo?.remote ?? null,
+    remote,
   });
 }
 
@@ -549,12 +302,10 @@ export async function handleBrainScrubIgnore(
     sendError(res, 400, 'unsafe_path', 'That looks like a real source file — remove the secret from it instead of un-tracking it.');
     return;
   }
-  // Where the ignore rule belongs: full-repo/in-tree stage the whole project (root
-  // .gitignore); separate stages `_dream_context/` (its own .gitignore).
-  const mode = resolveMode(readSetupConfig(projectRoot));
-  const root = mode === 'separate' ? contextRoot : projectRoot;
+  // full-repo/in-tree both stage the whole project, so the ignore rule belongs
+  // in the project-root .gitignore.
   try {
-    const added = ensureGitignoreEntries(root, [relPath], {
+    const added = ensureGitignoreEntries(projectRoot, [relPath], {
       comment: 'dreamcontext: excluded a scrub-blocked local secret file (added from the dashboard)',
     });
     sendJson(res, 200, { ok: true, added, path: relPath });

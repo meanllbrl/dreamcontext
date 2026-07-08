@@ -12,8 +12,6 @@ import { dirname } from 'node:path';
 import { listInsights, isSafeInsightSlug } from '../../lib/lab/store.js';
 import { RENDERS } from '../../lib/lab/types.js';
 import { gitignoreCovers } from '../../lib/gitignore.js';
-import { resolveMode } from '../../lib/git-sync/brain-repo.js';
-import { platformLayerStatus } from '../../lib/git-sync/platform-layer.js';
 import { readSetupConfig } from '../../lib/setup-config.js';
 
 /**
@@ -348,16 +346,12 @@ export function checkLab(root: string): CheckResult[] {
   const credentialsPath = join(root, 'lab', 'credentials.json');
   if (existsSync(credentialsPath)) {
     const projectRoot = dirname(root);
-    const config = readSetupConfig(projectRoot);
-    const mode = resolveMode(config);
-    const covered = mode === 'separate'
-      ? gitignoreCovers(root, ['lab/credentials.json'])
-      : gitignoreCovers(projectRoot, ['_dream_context/lab/credentials.json']);
+    const covered = gitignoreCovers(projectRoot, ['_dream_context/lab/credentials.json']);
     if (!covered) {
       results.push({
         name: 'Lab credentials',
         status: 'error',
-        message: `lab/credentials.json exists but is not covered by the ${mode === 'separate' ? '_dream_context/.gitignore' : 'root .gitignore'} — run \`dreamcontext lab credentials set <key>\` to self-heal the gitignore before this can be trusted.`,
+        message: 'lab/credentials.json exists but is not covered by the root .gitignore — run `dreamcontext lab credentials set <key>` to self-heal the gitignore before this can be trusted.',
       });
     }
   }
@@ -406,68 +400,6 @@ export function checkLab(root: string): CheckResult[] {
   return results;
 }
 
-/**
- * C1 (github-cloud-collaboration-brain-repo-sync M3): under `taskBackend:
- * 'github'`, issues are the source of truth for tasks — `state/*.md` mirrors
- * must never sync into the shared brain repo. `buildBrainGitignore` already
- * writes that entry on bootstrap; this flags the DRIFT case — a brain repo
- * that was bootstrapped BEFORE `taskBackend` switched to `github` (or whose
- * `.gitignore` was hand-edited) and never picked up the entry.
- */
-/**
- * Platform layer (CLAUDE.md + .claude carried inside the brain repo): once
- * `platform/` exists, every item in it should be reachable from the project
- * root via a symlink. A fresh clone (or a deleted link) leaves the layer
- * dormant — Claude Code would silently run without the shared skills/hooks.
- */
-export function checkPlatformLayer(root: string): CheckResult[] {
-  const status = platformLayerStatus(dirname(root), root);
-  if (!status.active) return [];
-
-  const results: CheckResult[] = [];
-  for (const item of status.items) {
-    if (item.state === 'missing-link') {
-      results.push({
-        name: 'Platform layer',
-        status: 'warn',
-        message: `platform/${item.item} is in the brain repo but the project-root symlink is missing — run \`dreamcontext brain platform\` to re-link it.`,
-      });
-    } else if (item.state === 'conflict') {
-      results.push({
-        name: 'Platform layer',
-        status: 'warn',
-        message: `${item.item} exists BOTH at the project root and in _dream_context/platform/ — merge them manually, then delete one side.`,
-      });
-    }
-  }
-  if (results.length === 0) {
-    results.push({ name: 'Platform layer', status: 'ok', message: 'platform/ items are linked from the project root.' });
-  }
-  return results;
-}
-
-export function checkBrainRepo(root: string): CheckResult[] {
-  const results: CheckResult[] = [];
-  const projectRoot = dirname(root);
-  const config = readSetupConfig(projectRoot);
-  if (config?.taskBackend !== 'github') return results;
-  if (resolveMode(config) !== 'separate') return results; // in-tree's root .gitignore is covered by ensureRemoteBackendGitignore
-
-  const gitignorePath = join(root, '.gitignore');
-  if (!existsSync(gitignorePath)) return results; // brain repo not bootstrapped yet — nothing to flag
-
-  if (!gitignoreCovers(root, ['state/*.md'])) {
-    results.push({
-      name: 'Brain repo',
-      status: 'error',
-      message: 'taskBackend=github but the brain repo .gitignore does not exclude state/*.md — task-mirror markdown would leak into the shared brain repo (GitHub issues are the source of truth). Regenerate _dream_context/.gitignore to include "state/*.md".',
-    });
-  } else {
-    results.push({ name: 'Brain repo', status: 'ok', message: 'Brain repo correctly excludes task-mirror markdown under taskBackend=github.' });
-  }
-  return results;
-}
-
 export function registerDoctorCommand(program: Command): void {
   program
     .command('doctor')
@@ -504,8 +436,6 @@ export function registerDoctorCommand(program: Command): void {
         ...checkOverrides(root),
         ...checkObjectives(root),
         ...checkLab(root),
-        ...checkBrainRepo(root),
-        ...checkPlatformLayer(root),
 
         // Taxonomy vocabulary (non-fatal: absent means DEFAULT_VOCABULARY used)
         ...(!existsSync(join(root, 'core', 'taxonomy.json'))

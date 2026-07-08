@@ -99,15 +99,9 @@ import {
 } from './routes/brain-auth.js';
 import {
   handleBrainStatus,
-  handleBrainDiscover,
-  handleBrainCreate,
-  handleBrainAttachPreview,
-  handleBrainAttach,
-  handleBrainDisconnect,
   handleBrainSync,
   handleBrainSettingsGet as handleBrainSyncSettingsGet,
   handleBrainSettingsPost as handleBrainSyncSettingsPost,
-  handleBrainScope,
   handleBrainScrubIgnore,
   handleBrainTeamUpdates,
   handleBrainTeamFetch,
@@ -200,15 +194,9 @@ function buildRouter(): Router {
   router.get('/api/brain/team/updates', handleBrainTeamUpdates);
   router.post('/api/brain/team/fetch', handleBrainTeamFetch);
   router.get('/api/brain/status', handleBrainStatus);
-  router.get('/api/brain/discover', handleBrainDiscover);
-  router.post('/api/brain/create', handleBrainCreate);
-  router.post('/api/brain/attach-preview', handleBrainAttachPreview);
-  router.post('/api/brain/attach', handleBrainAttach);
-  router.post('/api/brain/disconnect', handleBrainDisconnect);
   router.post('/api/brain/sync', handleBrainSync);
   router.get('/api/brain/settings', handleBrainSyncSettingsGet);
   router.post('/api/brain/settings', handleBrainSyncSettingsPost);
-  router.post('/api/brain/scope', handleBrainScope);
   router.post('/api/brain/scrub/ignore', handleBrainScrubIgnore);
 
   // Graph

@@ -58,10 +58,9 @@ export function readCredentials(contextRoot: string): Record<string, string> {
  * Store one credential. STRICT ordering (any failure aborts BEFORE the secret
  * touches disk):
  *   1. `ensureLocalOnlyArtifacts` — writes the FULL canonical brain gitignore iff
- *      `_dream_context/.gitignore` is missing (never a 2-line stub that would
- *      permanently defeat `bootstrapBrainRepo`'s `!existsSync` guard).
- *   2. append the lab entries to `_dream_context/.gitignore` (brain-repo mode).
- *   3. append the project-root entries to `.gitignore` (in-tree mode).
+ *      `_dream_context/.gitignore` is missing (never a 2-line stub).
+ *   2. append the lab entries to `_dream_context/.gitignore`.
+ *   3. append the project-root entries to `.gitignore` (full-repo mode).
  * On success: mkdir, merge, write mode 0600 + chmod 0600.
  */
 export function writeCredential(

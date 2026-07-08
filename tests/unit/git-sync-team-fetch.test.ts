@@ -13,12 +13,11 @@ function makeHome(vaults: { name: string; path: string }[]): string {
   return home;
 }
 
-function makeVault(mode: 'separate' | 'in-tree', enabled?: boolean): string {
+function makeVault(mode: 'full-repo' | 'in-tree', enabled?: boolean): string {
   const root = mkdtempSync(join(tmpdir(), 'dc-vault-'));
   mkdirSync(join(root, '_dream_context', 'state'), { recursive: true });
   const brainRepo: Record<string, unknown> = { mode };
   if (typeof enabled === 'boolean') brainRepo.enabled = enabled;
-  if (mode === 'separate') brainRepo.remote = 'https://github.com/acme/brain.git';
   writeFileSync(
     join(root, '_dream_context', 'state', '.config.json'),
     JSON.stringify({ platforms: [], packs: [], multiProduct: false, setupVersion: '1', disableNativeMemory: true, brainRepo }),
@@ -33,9 +32,9 @@ describe('git-sync/team-fetch — runTeamFetch', () => {
     for (const p of created.splice(0)) rmSync(p, { recursive: true, force: true });
   });
 
-  it('skips disabled and in-tree vaults server-side; pull-only fetches enabled separate vaults', async () => {
-    const enabledVault = makeVault('separate', true);
-    const disabledVault = makeVault('separate', false);
+  it('skips disabled and in-tree vaults server-side; pull-only fetches enabled full-repo vaults', async () => {
+    const enabledVault = makeVault('full-repo', true);
+    const disabledVault = makeVault('full-repo', false);
     const inTreeVault = makeVault('in-tree', true);
     created.push(enabledVault, disabledVault, inTreeVault);
     const home = makeHome([
@@ -58,13 +57,13 @@ describe('git-sync/team-fetch — runTeamFetch', () => {
     expect(byName.enabled.pulledUpdates).toBe(2);
     expect(byName.disabled.skipped).toBe('disabled');
     expect(byName.intree.skipped).toBe('in-tree');
-    // Only the enabled separate vault reached the sync engine, and pull-only.
+    // Only the enabled full-repo vault reached the sync engine, and pull-only.
     expect(syncCalls).toEqual(['pull-only']);
   });
 
   it('restricts to a single vault when { vault } is given', async () => {
-    const a = makeVault('separate', true);
-    const b = makeVault('separate', true);
+    const a = makeVault('full-repo', true);
+    const b = makeVault('full-repo', true);
     created.push(a, b);
     const home = makeHome([{ name: 'a', path: a }, { name: 'b', path: b }]);
     created.push(home);
@@ -82,7 +81,7 @@ describe('git-sync/team-fetch — runTeamFetch', () => {
   });
 
   it('captures a single vault failure without aborting the loop', async () => {
-    const a = makeVault('separate', true);
+    const a = makeVault('full-repo', true);
     created.push(a);
     const home = makeHome([{ name: 'a', path: a }]);
     created.push(home);

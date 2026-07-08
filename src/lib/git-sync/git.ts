@@ -91,7 +91,7 @@ export function currentSha(cwd: string): string | null {
  * branch). Uses `symbolic-ref` (not `rev-parse --abbrev-ref`) so it returns the
  * real branch name even on an UNBORN branch (a fresh repo with zero commits,
  * where `rev-parse --abbrev-ref HEAD` degrades to the literal `HEAD`).
- * `separate`/`in-tree` keep their dedicated `main` brain branch and never call this.
+ * `in-tree` only commits locally and never calls this.
  */
 export function currentBranch(cwd: string): string | null {
   try {

@@ -122,10 +122,13 @@ describe('skill/references/brain-sync.md markers', () => {
     'utf-8',
   );
 
-  it('documents the three sync modes (separate / full-repo / in-tree)', () => {
-    expect(content).toContain('## The three sync modes');
+  it('documents the two sync modes (full-repo / in-tree)', () => {
+    expect(content).toContain('## The two sync modes');
     expect(content).toContain('full-repo');
     expect(content).toContain('in-tree');
+    // separate mode was removed — it must not creep back into the doc.
+    expect(content).not.toContain('brain init');
+    expect(content).not.toContain('brain platform');
   });
 
   it('has the cross-machine / cross-OS setup section', () => {

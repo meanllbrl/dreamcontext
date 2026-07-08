@@ -24,7 +24,7 @@ const TEAM_FETCH_INTERVAL_MS = 5 * 60 * 1000;
  * card reads with the same at-a-glance vocabulary as the freshness dot above it.
  */
 function LauncherBrainChip({ vault }: { vault?: TeamVaultUpdate }) {
-  if (!vault || !vault.enabled || vault.mode !== 'separate') {
+  if (!vault || !vault.enabled || vault.mode !== 'full-repo') {
     return (
       <span className="launcher-brain-chip launcher-brain-chip--unconnected" title="Cloud sync not set up for this project">
         <VaultDot exists={false} needsUpdate={false} />

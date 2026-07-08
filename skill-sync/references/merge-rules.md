@@ -5,23 +5,28 @@ plan v3.3). The CLI (`src/lib/git-sync/*`) implements everything on this page.
 
 ## 1. Modes
 
-- **`separate`** — the brain (`_dream_context/`) lives in its own git repo + remote. Full
-  auto-sync: fetch → merge → commit → push. Opt-in (`dreamcontext brain init`/`attach`).
-- **`in-tree`** — the brain is nested inside the code repo (the default for every existing
-  project). **Commit-only — NEVER auto-pushes** (a push here would push the code repo). The scrub
-  gate still runs before every in-tree commit — an in-tree commit lands in the code repo's history
-  and can be pushed to a public OSS remote by the user's own normal `git push`.
+- **`full-repo`** — cloud sync ON: the WHOLE project (code + `.claude/` + `_dream_context/`) is the
+  synced unit, pushed to the project's own `origin` on the CURRENT branch. Full auto-sync: fetch →
+  merge → commit → push. Enabled via `dreamcontext brain enable` or the Settings toggle (requires a
+  GitHub `origin`).
+- **`in-tree`** (default) — cloud sync OFF: the brain is nested inside the code repo. **Commit-only —
+  NEVER auto-pushes.** The scrub gate still runs before every in-tree commit — an in-tree commit
+  lands in the code repo's history and can be pushed to a public OSS remote by the user's own normal
+  `git push`.
 
 ## 2. Cloud-sync master switch (v3.3)
 
 `brainRepo.enabled` (explicit) always wins. Absent ⇒ derived: **ON** iff the project is already
-GitHub-connected (code repo's `origin` is a `github.com` URL, OR `taskBackend==='github'`, OR a
-`brainRepo.remote` is configured) — **OFF** otherwise (new/unconnected projects stay off until the
-user runs `dreamcontext brain enable` or flips the Settings toggle). When OFF: `sleep done` skips
-the whole block with one dim line, the session-start pull is never spawned, and `brain sync`
-returns `action:'disabled'`.
+GitHub-connected (code repo's `origin` is a `github.com` URL, OR `taskBackend==='github'`) — **OFF**
+otherwise (new/unconnected projects stay off until the user runs `dreamcontext brain enable` or
+flips the Settings toggle). Enabling flips the mode to `full-repo`; disabling reverts to `in-tree`.
+When OFF: `sleep done` skips the whole block with one dim line, the session-start pull is never
+spawned, and `brain sync` returns `action:'disabled'`.
 
-## 3. Tracked vs local — the brain repo's own `.gitignore`
+## 3. Tracked vs local — machine-local excludes under `_dream_context/`
+
+In `full-repo` the whole project is staged with `git add -A` at the project root, so the project's
+own `.gitignore` must exclude the machine-local brain runtime + secrets (prefixed `_dream_context/`).
 
 | Path | `taskBackend=local` | `taskBackend=github`/`clickup` |
 |---|---|---|
@@ -33,21 +38,12 @@ returns `action:'disabled'`.
 | `state/.secrets.json`, `.sleep.json`, `.sleep-history.json`, `.agent-sessions.json`, `.session-digests/`, `.conflicts/`, `.brain-merge/`, `.version-check.json`, `.auto-upgrade.json`, `.brain-local.json`, `.lab-prefs.json`, `.tasks-map.json`, `.tasks-sync.*`, `.tasks-queue.json`, `.obsidian/`, `tmp/`, `**/.env`, `**/.DS_Store` | gitignored | gitignored |
 | `lab/**` (insights + cache) | tracked | tracked |
 | `lab/credentials.json` / `lab/credentials.*` (except the tracked `credentials.example.json`) | gitignored | gitignored |
-| `platform/**` (Claude Code layer: CLAUDE.md + .claude) | tracked | tracked |
-| `platform/.claude/settings.local.json`, `platform/.claude/scheduled_tasks.lock` | gitignored | gitignored |
 
-Built by `buildBrainGitignore(taskBackend)` (`src/lib/git-sync/brain-repo.ts`) and written on
-bootstrap (`brain init`/`attach`); `ensureLocalOnlyArtifacts` re-asserts it after a clone/pull.
-
-## 3b. Platform layer — CLAUDE.md + .claude travel with the brain
-
-A separate-mode brain repo is rooted at `_dream_context/`, so the Claude Code project files at
-the PROJECT root would never sync. `dreamcontext brain platform` migrates them: the real files
-move to `_dream_context/platform/{CLAUDE.md,.claude}` and the project root keeps relative
-symlinks into it (Claude Code resolves them transparently). On every `runBrainSync` the engine
-best-effort re-creates missing root symlinks (`healPlatformLinks`), so a fresh clone of the brain
-is fully wired after its first sync; `doctor` flags missing links and root-vs-platform conflicts.
-Machine-local runtime files inside `platform/.claude/` (see table) never sync.
+The `_dream_context/.gitignore` is built by `buildBrainGitignore(taskBackend)` and the project-root
+excludes by `ensureFullRepoGitignore(projectRoot, taskBackend)` (both `src/lib/git-sync/brain-repo.ts`),
+written gitignore-first before every whole-project stage; `ensureLocalOnlyArtifacts` re-asserts the
+`_dream_context/.gitignore` after a clone/pull. `CLAUDE.md` and `.claude/` are plain files at the
+project root and sync natively — no separate brain repo, no platform-layer symlinks.
 
 ## 4. Credential supply (GIT_ASKPASS — decision F)
 
@@ -74,8 +70,8 @@ global `~/.dreamcontext/.secrets.json` tier between the two.)
 
 ## 6. Scrub gate (decisions — BLOCK vs WARN)
 
-Runs before EVERY brain content commit: in-tree, separate, `brain init`'s first commit, `brain
-detach`, and after every merge (a merge can reintroduce a secret).
+Runs before EVERY commit: in-tree commits, the full-repo whole-project push, and after every merge
+(a merge can reintroduce a secret).
 
 - **BLOCK** (aborts everywhere, loudly, non-zero exit): GitHub PAT/OAuth tokens, AWS/Google/Slack/
   OpenAI/Anthropic/Stripe keys, private-key headers, 3-part JWTs.
@@ -145,7 +141,7 @@ report is a LIVE handoff — never auto-cleared, consumable only via `--resume`.
 
 ## 10. The reentrancy guard — 5-clause precedence (v3.2)
 
-Every `runBrainSync` call (separate mode only — in-tree bypasses this entirely, see §1) checks, in
+Every `runBrainSync` call (full-repo only — in-tree bypasses this entirely, see §1) checks, in
 order, BEFORE acquiring the lock:
 
 1. **Flag misuse** → `invalid-flag` + a guiding `note`: `--continue` without `MERGE_HEAD`;
@@ -212,19 +208,19 @@ the fixed `dreamcontext-sync <noreply@dreamcontext.local>` author (passed explic
 takes zero forward dependency on M3. **M3 tier (adds, does not replace):** once a GitHub login
 exists, `mapLoginToPerson(login)` swaps in the resolved `person:` identity on top.
 
-## 15. Manual UI checklist (M2 — appendix)
+## 15. Manual UI checklist (dashboard — appendix)
 
-When M2 (launcher/dashboard) ships, verify by hand: device-flow login (shows `user_code`, opens
-`verification_uri`) AND the PAT-paste fallback, both with the scope disclosure visible; `Discover`
-lists only `dreamcontext-brain`-topic repos; `Create` defaults private (public requires a
-confirmed toggle); `Attach` shows the trust warning + incoming diff preview and refuses without
-confirmation; the team-updates badge shows N after a teammate pushes, driven by a background fetch
-(the badge endpoint itself makes no network call in the request path).
+Verify by hand: device-flow login (shows `user_code`, opens `verification_uri`) AND the PAT-paste
+fallback, both with the scope disclosure visible; the **Cloud sync toggle** turns whole-project
+sync on (400 `no_origin` if the project has no GitHub `origin`) and off (reverts to `in-tree`);
+the team-updates badge shows N after a teammate pushes, driven by a background fetch (the badge
+endpoint itself makes no network call in the request path); a deferred prose merge surfaces a
+one-click **"Resolve with AI"** banner.
 
 ## 16. full-repo hardening (2026-07-08) — refuse/defer/recover, never mangle
 
 `full-repo` mode makes the WHOLE project repo the synced unit, so the engine touches real code
-and the user's own git state. Five extra guarantees on top of the separate/in-tree contract:
+and the user's own git state. Five extra guarantees on top of the base merge contract:
 
 - **Detached HEAD → refuse.** `full-repo` syncs the CURRENT branch (`git.currentBranch`); on a
   detached HEAD there is no branch to push. The engine returns **`detached-head`** ("check out a
