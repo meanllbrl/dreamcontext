@@ -1,6 +1,8 @@
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { buildCorpus, bm25Search, type CorpusType, type CorpusDoc, type RecallHit } from '../../lib/recall.js';
+import { hybridSearch, hybridReady } from '../../lib/embeddings/hybrid.js';
 import { haikuRecall, makeClaudeExecutor } from '../../lib/recall-query-extractor.js';
+import { resolveRecallMode } from '../../cli/commands/sleep.js';
 import { sendJson, sendError } from '../middleware.js';
 
 const ALL_TYPES: CorpusType[] = ['knowledge', 'feature', 'task', 'memory', 'changelog'];
@@ -54,9 +56,13 @@ function corpusFor(contextRoot: string, types: CorpusType[]): CorpusDoc[] {
 /**
  * GET /api/recall?q=<query>&types=knowledge,task,...&top=10
  *
- * Field-weighted BM25 search across the project brain — the same local, zero-LLM
- * recall engine the CLI's `dreamcontext memory recall` uses. Powers the Sleepy
- * Search/Ask view: query in, ranked hits out, no tokens spent.
+ * Local, zero-LLM recall across the project brain — the SAME engine and mode as
+ * the CLI's `dreamcontext memory recall`. Honours the vault's recall mode: when
+ * it's 'hybrid' AND already warm (model downloaded + cache built), it fuses BM25
+ * with local dense embeddings; otherwise plain BM25. `hybridReady` guarantees a
+ * keystroke never triggers a download or a cold index — those are explicit
+ * (Settings card / `embed refresh`). The response `mode` reports which ran, so
+ * the UI can label it accurately and drop the (now-redundant) Intelligent toggle.
  */
 export async function handleRecallGet(
   req: IncomingMessage,
@@ -67,8 +73,11 @@ export async function handleRecallGet(
   const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
   const query = (url.searchParams.get('q') ?? '').trim();
 
+  const useHybrid = hybridReady(contextRoot, resolveRecallMode(contextRoot));
+  const mode = useHybrid ? 'hybrid' : 'bm25';
+
   if (!query) {
-    sendJson(res, 200, { query: '', hits: [], tookMs: 0 });
+    sendJson(res, 200, { query: '', mode, hits: [], tookMs: 0 });
     return;
   }
 
@@ -80,10 +89,12 @@ export async function handleRecallGet(
   try {
     const started = Date.now();
     const corpus = corpusFor(contextRoot, types);
-    const hits = bm25Search(query, corpus, topK);
+    const hits = useHybrid
+      ? await hybridSearch(query, corpus, contextRoot, topK)
+      : bm25Search(query, corpus, topK);
     const tookMs = Date.now() - started;
 
-    sendJson(res, 200, { query, tookMs, hits: hits.map(serializeHit) });
+    sendJson(res, 200, { query, mode, tookMs, hits: hits.map(serializeHit) });
   } catch (err) {
     sendError(res, 500, 'recall_failed', err instanceof Error ? err.message : 'Recall failed');
   }

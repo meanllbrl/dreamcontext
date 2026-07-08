@@ -17,6 +17,9 @@ export interface RecallHit {
 
 export interface RecallResponse {
   query: string;
+  /** Which engine actually ran: 'hybrid' (BM25 + dense) when hybrid mode is warm,
+   *  else 'bm25'. Mirrors the vault's recall mode; lets the UI label results. */
+  mode?: 'bm25' | 'hybrid';
   tookMs: number;
   hits: RecallHit[];
 }

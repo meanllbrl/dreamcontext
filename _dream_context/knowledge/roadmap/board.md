@@ -14,8 +14,12 @@ date: '2026-07-07'
 
 > Auto-generated 2026-07-07 by `dreamcontext roadmap`. Objectives live in `core/objectives/`; task links live in each task's `objectives:` frontmatter.
 
-### ⚪ **improve-recall-mechanism** — Improve Recall Mechanism · no tasks yet · target 2026-08-16 · forecast — (unforecastable: no dated member tasks)
+### 🟢 **improve-recall-mechanism** — Improve Recall Mechanism · 4/4 done (100%) · target 2026-08-16 · forecast — (unforecastable: no dated member tasks)
   Unblocks: hello-world-pr, make-it-a-business
+  - feat-embedding-ab-eval-harness-bm25-vs-hybrid-vs-dense-on-frozen-gold-set (completed) · v0.14.0
+  - feat-embedding-cache-engine-content-hash-chunk-cache-and-incremental-refresh (completed) · v0.14.0
+  - feat-embedding-spike-pick-multilingual-model-validate-latency-and-token-type-ids (completed) · v0.14.0
+  - feat-hybrid-recall-fusion-bm25-plus-dense-via-rrf-behind-flag (completed) · v0.14.0
 
 ### ⚪ **improve-sleep-quality** — Improve sleep quality · no tasks yet · target 2026-08-02 · forecast — (unforecastable: no dated member tasks)
   Unblocks: hello-world-pr, make-it-a-business
@@ -23,8 +27,9 @@ date: '2026-07-07'
 ### ⚪ **include-codex-opencode-support** — Include Codex&OpenCode Support · no tasks yet · target 2026-08-23 · forecast — (unforecastable: no dated member tasks)
   Unblocks: hello-world-pr, make-it-a-business
 
-### 🟢 **make-dreamcontext-team-ready** — Make Dreamcontext, Team Ready · 4/4 done (100%) · target 2026-07-12 · forecast 2026-07-04 ✓ on track
+### 🟢 **make-dreamcontext-team-ready** — Make Dreamcontext, Team Ready · 5/5 done (100%) · target 2026-07-12 · forecast 2026-07-04 ✓ on track
   Unblocks: make-it-a-business
+  - brain-portability-dashboard-controls-platform-layer-lab-credentials-example-sync-refresh-button-recall-mode-settings (completed) · v0.14.1
   - feat-dashboard-live-sleep-debt-tracker-header-widget (completed) · 0.10.7 · 2026-07-04 → …
   - feat-okr-key-result-metric-outcome-based-progress (completed) · 0.10.7
   - github-cloud-collaboration-brain-repo-sync (completed) · v0.13.0 · 2026-07-04 → …

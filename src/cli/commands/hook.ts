@@ -5,7 +5,7 @@ import { get as httpGet, request as httpRequest } from 'node:http';
 import { dirname, resolve, join, extname, basename, relative } from 'node:path';
 import { resolveContextRoot } from '../../lib/context-path.js';
 import type { SleepState, Bookmark } from './sleep.js';
-import { readSleepState, writeSleepState, bumpKnowledgeAccess } from './sleep.js';
+import { readSleepState, writeSleepState, bumpKnowledgeAccess, resolveRecallMode } from './sleep.js';
 import {
   upsertSessionOnStop,
   appendCompactionRecord,
@@ -25,7 +25,7 @@ import { generateSnapshot, generateSubagentBriefing } from './snapshot.js';
 import { listStaleRecs } from '../../lib/marketing/snapshot.js';
 import { isMarketingEnvPath } from '../../lib/marketing/path-guards.js';
 import { buildCorpus, bm25Search, loadSkillDocs, type RecallHit } from '../../lib/recall.js';
-import { hybridSearch } from '../../lib/embeddings/hybrid.js';
+import { hybridSearch, hybridReady } from '../../lib/embeddings/hybrid.js';
 import {
   crossVaultRecall,
   resolveConnectedVaults,
@@ -1013,7 +1013,11 @@ export function registerHookCommand(program: Command): void {
           const projectRoot = dirname(root);
           const cfg = readSetupConfig(projectRoot);
           const enabledResolution = resolveBrainSyncEnabled(projectRoot, cfg);
-          if (enabledResolution.enabled && cfg?.brainRepo?.mode === 'separate' && cfg?.brainRepo?.autoSync) {
+          // Both pushing modes fetch team updates in the background: `separate`
+          // (brain repo) and `full-repo` (whole project → origin). `in-tree` is
+          // commit-only and has no remote to pull from.
+          const pullMode = cfg?.brainRepo?.mode;
+          if (enabledResolution.enabled && (pullMode === 'separate' || pullMode === 'full-repo') && cfg?.brainRepo?.autoSync) {
             spawnBrainPull(root);
           }
           const local = readBrainLocal(projectRoot);
@@ -1258,12 +1262,13 @@ export function registerHookCommand(program: Command): void {
 
       // Memory recall injection — single Haiku call sees corpus index + prompt,
       // returns only relevant docs. Falls back to raw BM25 if Haiku fails.
-      // Priority: env var > state file > default 'haiku'.
+      // Mode via the shared resolver so the hook, `memory recall`, and /api/recall
+      // never disagree (env override, else persisted .sleep.json, else 'haiku').
       if (process.env.DREAMCONTEXT_MEMORY_HOOK !== '0') {
         try {
           const prompt = String((input as Record<string, unknown>).prompt ?? '');
           if (prompt.trim().length >= 8) {
-            const recallMode = process.env.DREAMCONTEXT_RECALL_MODE ?? state.recall_mode ?? 'haiku';
+            const recallMode = resolveRecallMode(root);
 
             if (recallMode !== 'off') {
               let hits: RecallHit[] = [];
@@ -1283,11 +1288,14 @@ export function registerHookCommand(program: Command): void {
                   const corpus = buildCorpus(root);
                   hits = bm25Search(prompt, corpus, 3);
                 }
-              } else if (recallMode === 'hybrid') {
+              } else if (hybridReady(root, recallMode)) {
                 // EXPERIMENTAL: BM25 + dense RRF fusion (decision-embedding-layer).
-                // Falls back to plain BM25 inside hybridSearch when the model is
-                // unavailable. Raw `.score` is untouched, so the >= 2.0 gate below
-                // behaves identically in this mode.
+                // `hybridReady` gates on model-downloaded AND cache-warm, so a
+                // prompt never triggers a surprise 113 MB download or a cold
+                // multi-minute index build. (A per-process ~1s model cold-load
+                // to embed the query is still paid on the first hybrid recall in
+                // each short-lived hook process — inherent to hybrid mode.) Raw
+                // `.score` is untouched, so the >= 2.0 gate below is unchanged.
                 const corpus = buildCorpus(root);
                 hits = await hybridSearch(prompt, corpus, root, 3);
                 mode = 'Hybrid';

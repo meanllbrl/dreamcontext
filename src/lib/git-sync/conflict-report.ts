@@ -28,6 +28,13 @@ export interface ConflictReport {
   remoteRef: string;
   resolvedByCli: string[];
   deferred: DeferredEntry[];
+  /**
+   * full-repo only: real code/non-brain files git couldn't auto-merge. Kept
+   * SEPARATE from `deferred` (brain prose that an agent can reconcile) because a
+   * code conflict is NEVER an agent job — the human resolves it in their editor.
+   * Present ⇒ the report is a `code-conflict` handoff, not an `awaiting-agent` one.
+   */
+  codeConflicts?: string[];
   status: 'awaiting-agent';
 }
 
@@ -35,6 +42,8 @@ export interface WriteConflictReportInput {
   remoteRef: string;
   resolvedByCli: string[];
   deferred: { path: string; class: MergeClass; reason: string; base: string; ours: string; theirs: string }[];
+  /** full-repo code/non-brain conflicts left in the tree for the human (no snapshots — git markers are the source). */
+  codeConflicts?: string[];
 }
 
 function mergeDir(contextRoot: string): string {
@@ -70,6 +79,7 @@ export function writeConflictReport(contextRoot: string, input: WriteConflictRep
     remoteRef: input.remoteRef,
     resolvedByCli: input.resolvedByCli,
     deferred,
+    ...(input.codeConflicts && input.codeConflicts.length > 0 ? { codeConflicts: input.codeConflicts } : {}),
     status: 'awaiting-agent',
   };
   writeFileSync(reportPath(contextRoot), `${JSON.stringify(report, null, 2)}\n`, 'utf-8');

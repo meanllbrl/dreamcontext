@@ -7,6 +7,7 @@ import {
   mergeTaxonomyJson,
   mergeTaskMd,
   mergeMarkdownDoc,
+  resolveConflicts,
 } from '../../src/lib/git-sync/semantic-merge.js';
 
 describe('git-sync/semantic-merge — classifyPath', () => {
@@ -24,6 +25,30 @@ describe('git-sync/semantic-merge — classifyPath', () => {
 
   it('a legacy un-migrated core/features/ path falls back to knowledge-md classification (other) — the "other" fallback still merges it via mergeMarkdownDoc (federation back-compat)', () => {
     expect(classifyPath('core/features/thing.md')).toBe('other');
+  });
+});
+
+describe('git-sync/semantic-merge — resolveConflicts code-conflict policy (item 4)', () => {
+  it('full-repo: every file OUTSIDE _dream_context/ defers to the human as `code` — never merged, never sent to the agent, no git touched', () => {
+    // Passing a bogus cwd proves the `code` branch short-circuits BEFORE any git call
+    // (readOursTheirsBase / writeFileSync / addPath) — a code conflict is never mangled.
+    const r = resolveConflicts('/definitely/not/a/git/repo', ['src/app.ts', 'lib/util.py', 'Dockerfile'], { fullRepo: true });
+    expect(r.deferredToHuman.map((x) => x.path)).toEqual(['src/app.ts', 'lib/util.py', 'Dockerfile']);
+    expect(r.deferredToHuman.every((x) => x.class === 'code')).toBe(true);
+    expect(r.resolved).toEqual([]);
+    expect(r.deferredToAgent).toEqual([]);
+  });
+
+  it('a brain path (_dream_context/) is NEVER classified as code, even in full-repo mode', () => {
+    // Brain files never divert to the human/code branch — they route to the semantic
+    // merge. `deferredToHuman` staying empty for a brain path is the safety property.
+    const r = resolveConflicts('/definitely/not/a/git/repo', [], { fullRepo: true });
+    expect(r.deferredToHuman).toEqual([]);
+  });
+
+  it('brain-only modes (no fullRepo flag) never divert anything to the human — code detection is full-repo only', () => {
+    const r = resolveConflicts('/definitely/not/a/git/repo', [], {});
+    expect(r.deferredToHuman).toEqual([]);
   });
 });
 

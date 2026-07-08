@@ -8,6 +8,7 @@ import { serveStatic } from './static.js';
 import { handleHealthGet } from './routes/health.js';
 import { handleTasksList, handleTasksCreate, handleTasksGet, handleTasksUpdate, handleTasksChangelog, handleTasksInsert, handleTasksSyncStatus, handleTasksSync, handleTasksSyncTest, handleTasksDelete, handleTasksMembers, handleTasksContainers, handleTasksProvision, handleTasksTokenStatus, handleTasksSetToken, handleTaskOverrides, handleTaskOverrideDocGet, handleTaskOverrideDocSave, handleTaskOverrideAddField, handleTaskOverrideRemoveField } from './routes/tasks.js';
 import { handleSleepGet, handleSleepUpdate } from './routes/sleep.js';
+import { handleEmbeddingModelStatus, handleEmbeddingModelDownload, handleEmbeddingIndexStatus, handleEmbeddingIndexBuild } from './routes/embeddings.js';
 import { handleCoreList, handleCoreGet, handleCoreUpdate } from './routes/core.js';
 import { handleKnowledgeList, handleKnowledgeGet, handleKnowledgeUpdate, handleKnowledgeAssets } from './routes/knowledge.js';
 import { handleChangelogGet, handleReleasesGet, handleUnreleasedGet, handleReleaseGet, handleReleasesCreate, handleReleasesUpdate, handleReleasesDelete, handleActiveVersionGet, handleActiveVersionSet } from './routes/changelog.js';
@@ -106,6 +107,8 @@ import {
   handleBrainSync,
   handleBrainSettingsGet as handleBrainSyncSettingsGet,
   handleBrainSettingsPost as handleBrainSyncSettingsPost,
+  handleBrainScope,
+  handleBrainScrubIgnore,
   handleBrainTeamUpdates,
   handleBrainTeamFetch,
 } from './routes/brain.js';
@@ -157,6 +160,13 @@ function buildRouter(): Router {
   // Sleep
   router.get('/api/sleep', handleSleepGet);
   router.patch('/api/sleep', handleSleepUpdate);
+  // Embedding-model status + warm-up (backs the Hybrid recall card). The MODEL
+  // is vault-agnostic (shared under ~/.dreamcontext/models); the INDEX is
+  // per-vault (guarded inside the handler — needs a resolved contextRoot).
+  router.get('/api/embeddings/status', handleEmbeddingModelStatus);
+  router.post('/api/embeddings/download', handleEmbeddingModelDownload);
+  router.get('/api/embeddings/index/status', handleEmbeddingIndexStatus);
+  router.post('/api/embeddings/index', handleEmbeddingIndexBuild);
 
   // Core
   router.get('/api/core', handleCoreList);
@@ -198,6 +208,8 @@ function buildRouter(): Router {
   router.post('/api/brain/sync', handleBrainSync);
   router.get('/api/brain/settings', handleBrainSyncSettingsGet);
   router.post('/api/brain/settings', handleBrainSyncSettingsPost);
+  router.post('/api/brain/scope', handleBrainScope);
+  router.post('/api/brain/scrub/ignore', handleBrainScrubIgnore);
 
   // Graph
   router.get('/api/graph', handleGraphGet);
@@ -359,7 +371,7 @@ function buildRouter(): Router {
 }
 
 /** API path prefixes that do NOT need a vault — they work in launcher mode. */
-const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/agent/capabilities', '/api/agent/install', '/api/agent/model-config', '/api/agent/session-model', '/api/agent/session-stats', '/api/brain/auth', '/api/brain/team'];
+const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/agent/model-config', '/api/agent/session-model', '/api/agent/session-stats', '/api/brain/auth', '/api/brain/team'];
 
 function isVaultAgnostic(pathname: string): boolean {
   return VAULT_AGNOSTIC_PREFIXES.some(

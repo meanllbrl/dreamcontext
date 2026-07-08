@@ -41,8 +41,10 @@ export function registerBrainCommand(program: Command): void {
 
       console.log(header('Brain Repo Status'));
       info(`Cloud sync: ${enabledResolution.enabled ? 'ON' : 'OFF'} (${enabledResolution.source})`);
-      info(`Mode: ${mode}`);
-      if (mode === 'separate') {
+      info(`Mode: ${mode}${mode === 'full-repo' ? ' (whole project → origin)' : ''}`);
+      // Both pushing modes have a sync remote (gitCwd's origin): `separate` →
+      // the brain repo, `full-repo` → the project origin. `in-tree` has none.
+      if (mode !== 'in-tree') {
         const remote = git.isGitRepo(gitCwd) ? git.getRemoteUrl(gitCwd, 'origin') : null;
         info(`Remote: ${remote ?? '(none configured)'}`);
       }
@@ -180,7 +182,7 @@ export function registerBrainCommand(program: Command): void {
       const config = readSetupConfig(projectRoot);
 
       if (!opts.status && resolveMode(config) !== 'separate') {
-        warn('The platform layer only helps in separate mode — in-tree brains already live in the code repo, so CLAUDE.md/.claude are shareable as-is.');
+        warn('The platform layer only helps in separate mode — in-tree and full-repo brains already live in the code repo, so CLAUDE.md/.claude sync as-is.');
         info('Set up a separate brain repo first (`dreamcontext brain init` / `brain attach`).');
         process.exitCode = 1;
         return;

@@ -2,16 +2,18 @@
 id: feat_Sx4EmLgP
 status: in_progress
 created: '2026-07-04'
-updated: '2026-07-07'
-released_version: v0.13.1
+updated: '2026-07-08'
+released_version: v0.14.1
 tags:
   - 'topic:github'
   - 'topic:cli'
   - 'topic:desktop'
+  - 'topic:lab'
   - architecture
   - backend
 related_tasks:
   - github-cloud-collaboration-brain-repo-sync
+  - brain-portability-dashboard-controls-platform-layer-lab-credentials-example-sync-refresh-button-recall-mode-settings
 type: feature
 name: brain-repo-sync
 description: ''
@@ -85,6 +87,7 @@ existing local dashboard. The two could coexist later but ship independently.
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
 
+- **[2026-07-07]** **Gitignore-first discipline is mandatory for any brain-content migration.** A platform-only gitignore stub (containing only platform excludes, no canonical brain excludes) defeats `bootstrapBrainRepo`'s `!existsSync` guard: the stub satisfies "file exists" but doesn't actually exclude local-only state, so `state/.brain-merge/.lock`, `state/.secrets.json`, and other machine-local artifacts would sync to the team. The fix: `setupPlatformLayer` writes the FULL canonical gitignore FIRST (via `ensureLocalOnlyArtifacts`), then appends platform-specific entries. This is the same discipline `writeCredential` uses and now applies everywhere. Caught by a new two-clone e2e test (clone A syncs local merge lock → clone B detects it as incoming diff → fail). Same root cause as the original `writeCredential` gitignore-first rationale.
 - **[2026-07-04]** **Brain repo is separate from the code repo.** `_dream_context/`
   becomes its own git repository (own remote, own history) rather than a folder
   committed inside the code repo. The brain repo stores a pointer to its associated
@@ -132,7 +135,7 @@ existing local dashboard. The two could coexist later but ship independently.
 
 **Architecture (compact form — full detail in the task + shipped skill reference):**
 
-**Modes:** `separate` (brain in its own GitHub repo + remote; full auto-sync) vs `in-tree` (brain nested in code repo; commit-only, NEVER auto-pushes; the safe default). Scrub gate applies to both.
+**Modes:** `separate` (brain in its own GitHub repo + remote, rooted at `_dream_context/`, always on `main`; full auto-sync) vs `full-repo` (the WHOLE project folder — code + `_dream_context/` — is the synced unit, pushed to the project's OWN `origin` on the CURRENT branch; no separate brain repo, no platform-layer symlink hack) vs `in-tree` (brain nested in code repo; commit-only, NEVER auto-pushes; the safe default). Scrub gate applies to all three. `full-repo` additionally requires a project-root gitignore that excludes machine-local brain state + secrets under `_dream_context/` (`ensureFullRepoGitignore`, run gitignore-first before every whole-project stage) — without it `git add -A` at the root would commit-and-push the sync lock (poisoning clones with a foreign live PID → "locked") and, worse, secrets.
 
 **Credential supply:** Token NEVER embedded in remote URL (S1 — would persist in `.git/config` plaintext). Every git network call runs via `GIT_ASKPASS` + 0600-at-create tmp token file (path in env, token never in env/argv); `-c credential.helper=` disables persisted helpers; tmp file unlinked in `finally`. Resolves per-project `.secrets.json` → global `~/.dreamcontext/.secrets.json` (0600) → env (M1 is secrets-first; M2 inserts global tier). The reversed priority from `resolveGitHubToken` (env-first) is intentional — a distinct resolver, never reused.
 
@@ -172,6 +175,91 @@ existing local dashboard. The two could coexist later but ship independently.
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-07-08 - Cloud sync hardening: real one-click resolve + full-repo safety + failure UX
+
+Closed every remaining gap in the whole-project sync + sidebar UX so that **every failure is
+surfaced clearly, loses no local work, and offers a concrete recovery**. Eight items, each unit-tested
+(+ a real-git e2e where it applies):
+
+1. **REAL one-click "Resolve with AI"** (was: opened Settings). The sidebar banner now launches the
+   in-app agent surface running `/dream-sync` (autonomous `brain sync --resume` → resolve the deferred
+   report → `--continue`) via a `RUN_BRAIN_RESOLVE_EVENT` window-event bridge (`brainResolveAgent.ts`,
+   mirroring the sleep-agent bridge); brain-status polls back to "Synced" on completion. In the plain
+   browser dashboard (no agent surface) it falls back to a copyable `dream-sync` command panel.
+2. **Detached HEAD in full-repo → refuse.** New `detached-head` outcome ("check out a branch before
+   syncing the whole project") instead of falling back to `main` and pushing a detached HEAD's commits.
+3. **User's-own-merge false positive fixed.** A `MERGE_HEAD` with NO conflict report is the user's own
+   `git merge`/`rebase` (full-repo gitCwd is the project root) → new `user-merge-in-progress` ("Finish
+   your in-progress git merge first"), never the misleading "team merge awaiting /dream-sync".
+4. **Code-conflict policy.** A conflicted file OUTSIDE `_dream_context/` is classified `code` and
+   deferred to the HUMAN's editor — NEVER semantically merged (no source mangling) and NEVER sent to
+   the agent. Foreground leaves git's native markers (resolve → commit → sync pushes it); headless
+   aborts to a clean tree. The conflict report now **separates `codeConflicts` from brain `deferred`**.
+   Real-git e2e: two clones conflict on `src/app.ts` → markers preserve both sides, nothing pushed over
+   it, converges after a human resolve. Also fixed `autoSync` to push a locally-ahead HEAD (else the
+   human's resolved merge commit was silently stranded).
+5. **Network/auth/token failure UX** (`failure.ts`). Engine errors map to SPECIFIC failures + recovery:
+   expired/invalid token → **Reconnect GitHub**; offline → "you're offline, will retry"; missing
+   Contents-write → **names the repo + scope**; the route returns `action:'error'` + `failure` (200) so
+   the sidebar renders the affordance — never a bare "Sync failed".
+6. **Scrub-block guidance.** `blocked-scrub` lists each block (file/line/rule) and offers one-click
+   **"Add to .gitignore"** (`POST /api/brain/scrub/ignore`) — but ONLY for local secret/config files
+   (`.env`, `credentials*`, `*.pem`, …); a real source file is refused (remove the secret, don't
+   un-track it). Server-revalidated, traversal-guarded.
+7. **Auto-checkpoint transparency.** The pull-only dirty-tree checkpoint now reports
+   `checkpointed`/`checkpointSha` (subtle "Checkpointed your local edits" note + undo hint
+   `git reset --soft <sha>^`), and a Settings toggle disables auto-checkpoint-on-open (`noCheckpoint`
+   skips a dirty tree entirely, leaving WIP untouched).
+8. **Non-fast-forward recovery.** Push-rejected-twice maps to `push-rejected` → a clear message + a
+   **Retry sync** button in the sidebar error panel.
+
+Sidebar sync UI extracted to `BrainSyncControl.tsx` (resolve/code/user banners + failure/scrub/checkpoint
+panels + the sync row). Status route adds `mergeKind` (`agent`/`code`/`user`/`null`) + `codeConflicts` so
+the right banner shows for each in-progress-merge kind.
+
+**Adversarial-review hardening (same pass).** A clean-context reviewer found three real defects, all
+fixed + regression-tested: (a) **gitignore-injection** — `isSafeToGitignore` accepted a `!`-negation
+(`!.env`, `!_dream_context/state/.secrets.json`) that would UN-ignore a secret before a full-repo push;
+now rejects `! # * ? [ ]` and control chars (server + client mirror). (b) **dropped agent record** — a
+merge conflicting on BOTH a code file and a brain-prose file wrote `deferred: []`, stranding the prose
+conflict with no record; now records both. (c) **unscrubbed locally-ahead push** — pushing a
+human-finished merge commit (or any locally-ahead work) bypassed the scrub gate; new `scrubCommitRange`
+scrubs the full push range and BLOCKS on a hit before any push, in BOTH `autoSync` (`origin/main..HEAD`)
+AND `pushOnlySync` (the `--push-only` CLI path, `revParse(remoteRef) ?? EMPTY_TREE..HEAD`). A clean-context
+reviewer re-verified all three fixes: **PASS**.
+
+Coverage: +engine units (detached-head, user-merge, code-conflict fg/headless, checkpoint/noCheckpoint,
+localAhead scrub-block/clean, mixed code+prose conflict record), +semantic-merge units (code
+classification), +route units (mergeKind agent/code/user, scrub/ignore safe/unsafe/traversal/negation/
+multiline), +`failure.ts` units (every failure class), +1 real-git full-repo code-conflict e2e. Full
+suite **3013 green**. Merge rules updated: `skill-sync/references/merge-rules.md` §10 + new §16.
+
+### 2026-07-08 - Whole-project sync mode + sidebar UX overhaul + one-click merge
+
+User feedback (frustration): the cloud-sync feature was confusing and under-serving. Three concrete pains, all addressed:
+
+**New `full-repo` sync mode — sync the WHOLE folder, not just `_dream_context/`.** Users can now sync the entire project (code + brain) to the project's own `origin` on the current branch, rather than carving `_dream_context/` out as a separate repo. New `POST /api/brain/scope` endpoint (`scope: 'full-repo' | 'brain'`) flips `brainRepo.mode` (full-repo requires a project `origin` — 400 `no_origin` without one). Settings → Brain gets a two-card "Sync scope" chooser. The engine now threads a per-context branch (`git.currentBranch` via `symbolic-ref` — works on unborn branches, unlike `rev-parse --abbrev-ref`) and remote-ref through every fetch/merge/push instead of hardcoding `origin/main`; commit messages are project-scoped (`chore: sync project (dreamcontext)`) in full-repo. Session-start background pull + `sleep done` autoSync both fire for full-repo (previously `separate`-only). `brain platform` correctly declines full-repo (root files sync natively).
+
+**Gitignore-first safety (caught by the new full-repo e2e).** `git add -A` at the project root would stage `_dream_context/state/.brain-merge/.lock` — leaking the sync lock into every clone as a foreign LIVE PID that reads as `locked` — and, far worse, secrets. `ensureFullRepoGitignore(projectRoot, taskBackend)` writes the machine-local + secrets deny-list (`_dream_context/`-prefixed) to the project-root gitignore, run gitignore-first before every whole-project stage AND on scope-enable. The e2e asserts the lock, `.brain-local.json`, and `.secrets.json` never reach the remote.
+
+**Sidebar UX overhaul.** Removed the inscrutable bare-number "team updates" card (it showed `pulledUpdates` — updates ALREADY pulled, not waiting — genuinely meaningless as a persistent badge). The sync row now SYNCS on click (was: opened Settings — the core confusion); a small gear is the only element that opens Settings. Status label is self-explanatory (`Syncing…` / `Pulled N update(s) ✓` / `Synced` / `Project synced`). Dashboard auto-runs a safe foreground pull+merge ONCE on open (`pull-only`, auto-checkpoints dirty work first so nothing is lost, never pushes); the button + sleep do the full commit→push cycle. A teammate-conflict surfaces as a one-click "Resolve with AI" banner instead of the cryptic "awaiting agent" label.
+
+**Foreground scrub relaxation.** Dashboard-initiated syncs (`/brain/sync` defaults `foreground:true`) keep WARN-tier scrub hits non-blocking (only real secrets BLOCK) — absolute-path WARNs are common across a whole code repo and must not block the human-watched pull. The truly headless session-start background pull keeps its effective-strict "any hit blocks" gate.
+
+Coverage: +5 engine unit tests (branch/foreground/messages/block), +4 route tests (full-repo status, scope enable/revert/no-origin/invalid), +1 real-git full-repo e2e (whole folder → feature branch, round-trip merge, lock+secret exclusion). Full suite 2974 green.
+
+### 2026-07-07 - v0.14.1: Platform layer portability + Lab credentials + dashboard controls
+
+**Platform layer — CLAUDE.md + .claude sync with the brain repo.** A separate-mode brain repo is rooted at `_dream_context/`, so Claude Code files at the project root (CLAUDE.md, `.claude/` skills/agents/hooks) would never sync on their own. `dreamcontext brain platform` now migrates them: real files move to `_dream_context/platform/` and the project root holds relative symlinks (Claude Code resolves transparently). From then on they sync like everything else; every `brain sync` runs `healPlatformLinks()` so a fresh clone self-wires. `doctor` flags broken links. Machine-local files (`platform/.claude/settings.local.json`, `scheduled_tasks.lock`) stay gitignored.
+
+**Gitignore-first discipline hardening.** `setupPlatformLayer` now writes the FULL canonical gitignore BEFORE moving content — a platform-only stub used to defeat `bootstrapBrainRepo`'s `!existsSync` guard, leaking local state (`state/.brain-merge/.lock`, secrets) to the team. Caught by a new two-clone e2e test. `ensureLocalOnlyArtifacts` also self-heals older/hand-edited gitignores when a live platform layer exists.
+
+**Lab credentials surface.** Tracked `lab/credentials.example.json` generated from `credentials_used` + `{{cred:*}}` placeholders (gitignore negation `!lab/credentials.example.json`), so teammates see which keys an insight needs. `GET/POST /api/lab/credentials` (key names only, values never returned/logged). `LabCredentialsBanner` in dashboard lists missing keys with inline add.
+
+**Dashboard controls.** Sidebar refresh button next to "Synced" badge runs full pull+merge (`POST /brain/sync mode:auto`) with outcome feedback (ok / awaiting-agent / blocked-scrub). Settings → Memory: recall-mode radio group (haiku / raw / hybrid experimental / off) — the missing UI surface for v0.14.0 hybrid recall; `PATCH /api/sleep` now accepts validated `recall_mode`.
+
+Suite 2958 tests green. See `skill-sync/references/merge-rules.md` for updated gitignore table.
 
 ### 2026-07-07 - Empty-remote attach now works end-to-end (v0.13.0)
 - **Empty-remote attach and bootstrap fixed.** Attaching an empty GitHub repo (no `origin/main` ref) now works without fatal errors: (1) sync engine checks `remoteBranchExists()` before every fetch site — on a freshly-attached ref-less repo, auto sync bootstraps the first commit and births `main` (including attach-after-detach case where local commits exist but tree is clean); (2) pull-only — the background/session-start path — noops with guidance instead of dying on "couldn't find remote ref main"; (3) failed push to empty remote reports clean token/permissions error instead of fetch crash. A README-initialized repo gets actionable "unrelated histories — attach empty or existing brain repo" error instead of raw git output. Attach immediately bootstraps (same scrubbed first-commit-and-push as Create): response carries `bootstrap: "pushed"|"blocked-scrub"|"skipped"`, UI warns if first push was scrub-blocked. Existing brain repos untouched (attach never pushes over content).

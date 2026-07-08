@@ -22,6 +22,8 @@ interface FakeState {
   identity: boolean;
   dirty: string[];
   aheadCount: number;
+  /** Commits WE have that the remote doesn't (`origin/main..HEAD`) — drives the localAhead push gate. */
+  localAhead: number;
   shaSequence: (string | null)[];
   shaIdx: number;
   mergeConflicts: string[] | null; // null => clean; array => conflicted paths
@@ -34,6 +36,10 @@ interface FakeState {
   pushFailFirstN: number;
   commitCalls: { message: string; author?: { name: string; email: string } }[];
   abortMergeCalls: number;
+  /** What `currentBranch()` returns — full-repo syncs whatever branch you're on. */
+  branch: string;
+  /** Records the branch args every `fetch`/`push`/`remoteBranchExists` was called with. */
+  branchCalls: string[];
 }
 
 function makeFakeGit(state: FakeState): typeof git {
@@ -45,7 +51,10 @@ function makeFakeGit(state: FakeState): typeof git {
     statusPorcelainTracked: () => state.dirty,
     stageAll: () => {},
     stagePath: () => {},
-    revListCount: () => state.aheadCount,
+    // `origin/main..HEAD` (ends with ..HEAD, not a HEAD..X range) → localAhead;
+    // `HEAD..origin/main` and the pull-only `before..after` range → aheadCount.
+    revListCount: (_cwd: string, range: string) =>
+      (/\.\.HEAD$/.test(range) && !range.startsWith('HEAD..') ? state.localAhead : state.aheadCount),
     currentSha: () => {
       const sha = state.shaSequence[Math.min(state.shaIdx, state.shaSequence.length - 1)];
       state.shaIdx += 1;
@@ -55,16 +64,22 @@ function makeFakeGit(state: FakeState): typeof git {
       state.commitCalls.push({ message, author });
       return 'newsha';
     },
-    fetch: () => {
+    currentBranch: () => state.branch,
+    fetch: (_cwd: string, _remote: string, branch: string) => {
       state.fetchCalls += 1;
+      state.branchCalls.push(branch);
     },
-    push: () => {
+    push: (_cwd: string, _remote: string, branch: string) => {
       state.pushCalls += 1;
+      state.branchCalls.push(branch);
       if (state.pushCalls <= state.pushFailFirstN) {
         throw new Error('push rejected (non-fast-forward)');
       }
     },
-    remoteBranchExists: () => state.remoteExists,
+    remoteBranchExists: (_cwd: string, _remote: string, branch: string) => {
+      state.branchCalls.push(branch);
+      return state.remoteExists;
+    },
     attemptMerge: () => {
       if (state.mergeThrows) throw new Error(state.mergeThrows);
       if (state.mergeConflicts === null) return { clean: true, conflicts: [] };
@@ -84,6 +99,7 @@ function makeState(overrides: Partial<FakeState> = {}): FakeState {
     identity: true,
     dirty: [],
     aheadCount: 0,
+    localAhead: 0,
     shaSequence: ['sha1', 'sha2'],
     shaIdx: 0,
     mergeConflicts: null,
@@ -94,6 +110,8 @@ function makeState(overrides: Partial<FakeState> = {}): FakeState {
     pushFailFirstN: 0,
     commitCalls: [],
     abortMergeCalls: 0,
+    branch: 'main',
+    branchCalls: [],
     ...overrides,
   };
 }
@@ -112,11 +130,20 @@ describe('git-sync/sync-engine — runBrainSync', () => {
   });
   afterEach(() => rmSync(projectRoot, { recursive: true, force: true }));
 
-  function baseDeps(state: FakeState, resolvedConflicts: { resolved: string[]; deferredToAgent: { path: string; class: 'knowledge-md' }[] } = { resolved: [], deferredToAgent: [] }): Partial<SyncEngineDeps> {
+  function baseDeps(
+    state: FakeState,
+    resolvedConflicts: {
+      resolved: string[];
+      deferredToAgent: { path: string; class: 'knowledge-md' }[];
+      deferredToHuman?: { path: string; class: 'code' }[];
+    } = { resolved: [], deferredToAgent: [] },
+  ): Partial<SyncEngineDeps> {
+    const resolution = { deferredToHuman: [] as { path: string; class: 'code' }[], ...resolvedConflicts };
     return {
       git: makeFakeGit(state),
       scrubStagedFiles: () => [],
-      resolveConflicts: () => resolvedConflicts,
+      scrubCommitRange: () => [],
+      resolveConflicts: () => resolution,
       resolveBrainSyncToken: () => ({ token: 'fake-token', source: 'secrets', via: 'token' }),
       withGitCredentials: (async (_token: string, fn: (env: NodeJS.ProcessEnv) => unknown) => fn({} as NodeJS.ProcessEnv)) as SyncEngineDeps['withGitCredentials'],
       acquireBrainLock: () => true,
@@ -313,12 +340,42 @@ describe('git-sync/sync-engine — runBrainSync', () => {
   });
 
   // ── reentrancy + concurrency ──────────────────────────────────────────
-  it('C3: MERGE_HEAD present -> already-awaiting-agent, touches nothing', async () => {
+  it('C3: MERGE_HEAD present (with our conflict report) -> already-awaiting-agent, touches nothing', async () => {
+    // A merge dreamcontext started ALWAYS leaves a conflict report — that's what
+    // distinguishes it from the user's own git merge (see the item-3 test below).
+    writeConflictReport(contextRoot, {
+      remoteRef: 'origin/main', resolvedByCli: [],
+      deferred: [{ path: 'knowledge/x.md', class: 'knowledge-md', reason: 'r', base: 'b', ours: 'o', theirs: 't' }],
+    });
     const state = makeState({ hasMergeHead: true });
     const result = await runBrainSync({ cwd: contextRoot, mode: 'auto' }, baseDeps(state));
     expect(result.action).toBe('already-awaiting-agent');
     expect(state.fetchCalls).toBe(0);
     expect(state.commitCalls).toHaveLength(0);
+  });
+
+  // ── item 3: distinguish the user's OWN merge from a dreamcontext handoff ──
+  it("user-merge-in-progress: MERGE_HEAD with NO conflict report is the user's own git merge, not a team handoff", async () => {
+    // No conflict report written — this is a `git merge`/`rebase` the user started
+    // themselves (common in full-repo, where gitCwd is the project root). Must NOT
+    // claim a team merge is awaiting /dream-sync.
+    const state = makeState({ hasMergeHead: true });
+    const result = await runBrainSync({ cwd: contextRoot, mode: 'auto' }, baseDeps(state));
+    expect(result.action).toBe('user-merge-in-progress');
+    expect(result.note).toMatch(/finish your in-progress git merge/i);
+    expect(state.fetchCalls).toBe(0);
+    expect(state.commitCalls).toHaveLength(0);
+  });
+
+  it('a persisted code-conflict report (MERGE_HEAD present) surfaces code-conflict, not already-awaiting-agent', async () => {
+    writeConflictReport(contextRoot, {
+      remoteRef: 'origin/main', resolvedByCli: [], deferred: [], codeConflicts: ['src/app.ts'],
+    });
+    const state = makeState({ hasMergeHead: true });
+    const result = await runBrainSync({ cwd: contextRoot, mode: 'auto' }, baseDeps(state));
+    expect(result.action).toBe('code-conflict');
+    expect(result.codeConflicts).toEqual(['src/app.ts']);
+    expect(result.note).toMatch(/code conflict in src\/app\.ts/i);
   });
 
   it('lock contention: a live holder returns locked (real file-lock, PID-liveness-gated)', async () => {
@@ -573,5 +630,192 @@ describe('git-sync/sync-engine — runBrainSync', () => {
     const result = await runBrainSync({ cwd: contextRoot, mode: 'pull-only' }, deps);
     expect(result.needsTaskSync).toBeFalsy();
     expect(readBrainLocal(projectRoot).needsTaskSync).toBe(false);
+  });
+
+  // ── full-repo mode: sync the WHOLE project folder to origin on the current branch ──
+  const fullRepo = () => updateSetupConfig(projectRoot, { brainRepo: { mode: 'full-repo', enabled: true, autoSync: true } });
+
+  it('full-repo: auto fetches/pushes the CURRENT branch, never assumes main', async () => {
+    fullRepo();
+    const state = makeState({ dirty: ['src/index.ts'], branch: 'feature/x' });
+    const result = await runBrainSync({ cwd: contextRoot, mode: 'auto' }, baseDeps(state));
+    expect(result.action).toBe('pushed');
+    // Every fetch/exists/push branch arg is the checked-out branch, not 'main'.
+    expect(state.branchCalls.length).toBeGreaterThan(0);
+    expect(state.branchCalls.every((b) => b === 'feature/x')).toBe(true);
+  });
+
+  it('full-repo: the sync commit message is project-scoped, not (brain)-scoped', async () => {
+    fullRepo();
+    const state = makeState({ dirty: ['README.md'], branch: 'main' });
+    await runBrainSync({ cwd: contextRoot, mode: 'auto' }, baseDeps(state));
+    expect(state.commitCalls[0].message).toBe('chore: sync project (dreamcontext)');
+    expect(state.commitCalls[0].message).not.toMatch(/\(brain\)/);
+  });
+
+  it('full-repo: foreground pull-only keeps a WARN-only hit NON-blocking (a human is watching the dashboard)', async () => {
+    fullRepo();
+    const state = makeState({ aheadCount: 1, dirty: ['src/app.ts'], branch: 'main' });
+    const deps = baseDeps(state);
+    // Absolute-path WARNs are common across a whole code repo — they must not block the dashboard pull.
+    deps.scrubStagedFiles = () => [{ file: 'src/app.ts', line: 1, rule: 'home-path', severity: 'warn', excerpt: 'r' }];
+    const result = await runBrainSync({ cwd: contextRoot, mode: 'pull-only', foreground: true }, deps);
+    expect(result.action).not.toBe('blocked-scrub');
+    expect(state.commitCalls[0].message).toBe('chore: checkpoint local edits before team merge (dreamcontext)');
+  });
+
+  it('full-repo: HEADLESS pull-only still blocks the same WARN hit (no human eye — effective strict preserved)', async () => {
+    fullRepo();
+    const state = makeState({ aheadCount: 1, dirty: ['src/app.ts'], branch: 'main' });
+    const deps = baseDeps(state);
+    deps.scrubStagedFiles = () => [{ file: 'src/app.ts', line: 1, rule: 'home-path', severity: 'warn', excerpt: 'r' }];
+    const result = await runBrainSync({ cwd: contextRoot, mode: 'pull-only' /* foreground unset */ }, deps);
+    expect(result.action).toBe('blocked-scrub');
+    expect(state.commitCalls).toHaveLength(0);
+  });
+
+  it('full-repo: a real secret (BLOCK) still stops even a foreground pull', async () => {
+    fullRepo();
+    const state = makeState({ aheadCount: 1, dirty: ['.env'], branch: 'main' });
+    const deps = baseDeps(state);
+    deps.scrubStagedFiles = () => [{ file: '.env', line: 1, rule: 'github-pat', severity: 'block', excerpt: 'ghp_x' }];
+    const result = await runBrainSync({ cwd: contextRoot, mode: 'pull-only', foreground: true }, deps);
+    expect(result.action).toBe('blocked-scrub');
+    expect(state.commitCalls).toHaveLength(0);
+  });
+
+  // ── item 2: detached HEAD in full-repo ──
+  it('full-repo: a detached HEAD refuses with detached-head, touching no git network call', async () => {
+    fullRepo();
+    // currentBranch() returns null on a detached HEAD.
+    const state = makeState({ dirty: ['src/app.ts'], branch: null as unknown as string });
+    const result = await runBrainSync({ cwd: contextRoot, mode: 'auto' }, baseDeps(state));
+    expect(result.action).toBe('detached-head');
+    expect(result.note).toMatch(/detached head/i);
+    expect(state.fetchCalls).toBe(0);
+    expect(state.pushCalls).toBe(0);
+    expect(state.commitCalls).toHaveLength(0);
+  });
+
+  it('separate mode never consults currentBranch and is unaffected by a null branch', async () => {
+    // separate stays on `main` — a detached HEAD in the (irrelevant) enclosing repo must not trip it.
+    const state = makeState({ dirty: ['knowledge/x.md'], branch: null as unknown as string });
+    const result = await runBrainSync({ cwd: contextRoot, mode: 'auto' }, baseDeps(state));
+    expect(result.action).toBe('pushed');
+  });
+
+  // ── item 4: code-conflict policy (full-repo) ──
+  it('full-repo: a conflicting CODE file defers to the human (code-conflict) and is never merged/agent-deferred', async () => {
+    fullRepo();
+    const state = makeState({ aheadCount: 1, mergeConflicts: ['src/app.ts'], branch: 'main' });
+    // The REAL resolveConflicts runs here (not the fake) so the fullRepo→code classification is exercised.
+    const deps = baseDeps(state);
+    delete (deps as { resolveConflicts?: unknown }).resolveConflicts;
+    // The dashboard's manual sync is foreground (a human is watching).
+    const result = await runBrainSync({ cwd: contextRoot, mode: 'auto', foreground: true }, deps);
+    expect(result.action).toBe('code-conflict');
+    expect(result.codeConflicts).toEqual(['src/app.ts']);
+    // Foreground leaves the merge in progress (markers for the human) — never aborts.
+    expect(state.abortMergeCalls).toBe(0);
+    // A code-conflict report is written and separates code from brain files.
+    const report = readConflictReport(contextRoot);
+    expect(report?.codeConflicts).toEqual(['src/app.ts']);
+    expect(report?.deferred).toEqual([]);
+  });
+
+  it('full-repo: HEADLESS pull-only aborts a code conflict to a clean tree (no broken tree with no human watching)', async () => {
+    fullRepo();
+    const state = makeState({ aheadCount: 1, mergeConflicts: ['src/app.ts'], branch: 'main' });
+    const deps = baseDeps(state);
+    delete (deps as { resolveConflicts?: unknown }).resolveConflicts;
+    const result = await runBrainSync({ cwd: contextRoot, mode: 'pull-only' /* headless */ }, deps);
+    expect(result.action).toBe('code-conflict');
+    expect(state.abortMergeCalls).toBe(1);
+  });
+
+  // ── item 7: auto-checkpoint transparency + opt-out ──
+  it('full-repo: pull-only reports checkpointed + a checkpointSha when it auto-commits dirty WIP', async () => {
+    fullRepo();
+    const state = makeState({ aheadCount: 1, dirty: ['src/app.ts'], branch: 'main' });
+    const result = await runBrainSync({ cwd: contextRoot, mode: 'pull-only', foreground: true }, baseDeps(state));
+    expect(result.action).toBe('pulled');
+    expect(result.checkpointed).toBe(true);
+    expect(result.checkpointSha).toBeTruthy();
+  });
+
+  it('full-repo: noCheckpoint skips the pull on a dirty tree, leaving WIP untouched (no commit)', async () => {
+    fullRepo();
+    const state = makeState({ aheadCount: 1, dirty: ['src/app.ts'], branch: 'main' });
+    const result = await runBrainSync({ cwd: contextRoot, mode: 'pull-only', foreground: true, noCheckpoint: true }, baseDeps(state));
+    expect(result.action).toBe('noop');
+    expect(result.note).toMatch(/auto-checkpoint-on-open is off/i);
+    expect(state.commitCalls).toHaveLength(0); // WIP left untouched — no auto-commit
+    expect(state.pushCalls).toBe(0); // pull-only never pushes, and here it never even merges
+  });
+
+  it('pull-only on a CLEAN tree still pulls with noCheckpoint set (opt-out only guards a dirty tree)', async () => {
+    fullRepo();
+    const state = makeState({ aheadCount: 1, dirty: [], branch: 'main' });
+    const result = await runBrainSync({ cwd: contextRoot, mode: 'pull-only', foreground: true, noCheckpoint: true }, baseDeps(state));
+    expect(result.action).toBe('pulled');
+    expect(result.checkpointed).toBe(false);
+  });
+
+  // ── review fix: locally-ahead commits are pushed, but NEVER unscrubbed ──
+  it('full-repo: locally-ahead commits (a human-finished merge) push cleanly when there is nothing to scrub', async () => {
+    fullRepo();
+    // aheadCount 0 (remote not ahead), localAhead 1 (a native merge commit), clean tree.
+    const state = makeState({ aheadCount: 0, localAhead: 1, dirty: [], branch: 'main' });
+    const result = await runBrainSync({ cwd: contextRoot, mode: 'auto', foreground: true }, baseDeps(state));
+    expect(result.action).toBe('pushed');
+    expect(state.pushCalls).toBe(1);
+  });
+
+  it('full-repo: a secret in a locally-ahead commit is scrubbed and BLOCKS the push (scrub gate is never bypassed)', async () => {
+    fullRepo();
+    const state = makeState({ aheadCount: 0, localAhead: 1, dirty: [], branch: 'main' });
+    const deps = baseDeps(state);
+    // The commit skipped our staged-commit scrub — the pre-push range scrub catches it.
+    deps.scrubCommitRange = () => [{ file: 'src/app.ts', line: 3, rule: 'github-pat', severity: 'block', excerpt: 'ghp_[REDACTED]' }];
+    const result = await runBrainSync({ cwd: contextRoot, mode: 'auto', foreground: true }, deps);
+    expect(result.action).toBe('blocked-scrub');
+    expect(result.scrub.blocks).toHaveLength(1);
+    expect(state.pushCalls).toBe(0);
+  });
+
+  it('a clean-tree, remote-not-ahead, no-local-ahead sync is still a plain noop', async () => {
+    fullRepo();
+    const state = makeState({ aheadCount: 0, localAhead: 0, dirty: [], branch: 'main' });
+    const result = await runBrainSync({ cwd: contextRoot, mode: 'auto', foreground: true }, baseDeps(state));
+    expect(result.action).toBe('noop');
+  });
+
+  it('push-only ALSO range-scrubs everything being pushed — a secret in a local-ahead commit blocks (--push-only is not a bypass)', async () => {
+    fullRepo();
+    const state = makeState({ branch: 'main' });
+    const deps = baseDeps(state);
+    // The staged scrub sees nothing new (clean tree); the pre-push range scrub catches the committed secret.
+    deps.scrubCommitRange = () => [{ file: 'src/app.ts', line: 1, rule: 'github-pat', severity: 'block', excerpt: 'ghp_[REDACTED]' }];
+    const result = await runBrainSync({ cwd: contextRoot, mode: 'push-only' }, deps);
+    expect(result.action).toBe('blocked-scrub');
+    expect(state.pushCalls).toBe(0);
+  });
+
+  // ── review fix: a mixed code + brain-prose conflict records BOTH (no dropped agent record) ──
+  it('full-repo: a merge conflicting on BOTH a code file and a brain file records the agent-deferred file too', async () => {
+    fullRepo();
+    const state = makeState({ aheadCount: 1, mergeConflicts: ['src/app.ts', 'knowledge/k.md'], branch: 'main' });
+    const deps = baseDeps(state, {
+      resolved: [],
+      deferredToAgent: [{ path: 'knowledge/k.md', class: 'knowledge-md' }],
+      deferredToHuman: [{ path: 'src/app.ts', class: 'code' }],
+    });
+    const result = await runBrainSync({ cwd: contextRoot, mode: 'auto', foreground: true }, deps);
+    expect(result.action).toBe('code-conflict');
+    expect(result.codeConflicts).toEqual(['src/app.ts']);
+    const report = readConflictReport(contextRoot);
+    expect(report?.codeConflicts).toEqual(['src/app.ts']);
+    // The coincident brain-prose conflict is NOT silently dropped — it stays in the report.
+    expect(report?.deferred.map((d) => d.path)).toEqual(['knowledge/k.md']);
   });
 });

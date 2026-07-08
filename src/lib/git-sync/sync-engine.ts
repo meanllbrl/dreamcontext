@@ -2,7 +2,7 @@ import { dirname } from 'node:path';
 import { readSetupConfig, readBrainLocal, writeBrainLocal, type SetupConfig } from '../setup-config.js';
 import * as git from './git.js';
 import { GitSyncError } from './git.js';
-import { scrubStagedFiles, summarizeScrub, type ScrubHit } from './scrub.js';
+import { scrubStagedFiles, scrubCommitRange, summarizeScrub, type ScrubHit } from './scrub.js';
 import { resolveConflicts } from './semantic-merge.js';
 import { writeConflictReport, readConflictReport, clearConflictReport } from './conflict-report.js';
 import {
@@ -11,6 +11,7 @@ import {
   resolveBrainSyncEnabled,
   acquireBrainLock,
   releaseBrainLock,
+  ensureFullRepoGitignore,
   FALLBACK_AUTHOR,
 } from './brain-repo.js';
 import { withGitCredentials } from './credentials.js';
@@ -27,11 +28,26 @@ import { slugify } from '../id.js';
  */
 
 const REMOTE_NAME = 'origin';
-const REMOTE_BRANCH = 'main';
-const REMOTE_REF = `${REMOTE_NAME}/${REMOTE_BRANCH}`;
-const AUTO_CHECKPOINT_MESSAGE = 'chore(brain): auto-checkpoint local edits before team merge';
+const DEFAULT_BRANCH = 'main';
+/** git's canonical empty-tree sha — the base for scrubbing a never-pushed branch's whole tree. */
+const EMPTY_TREE_SHA = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 const MERGE_COMMIT_MESSAGE = 'chore(brain): merge team updates';
 const AGENT_MERGE_COMMIT_MESSAGE = 'chore(brain): merge team updates (agent-resolved)';
+
+/**
+ * Commit-message copy differs by mode: `separate`/`in-tree` sync only the brain
+ * (`_dream_context/`), so `chore(brain): …` reads true; `full-repo` syncs the
+ * WHOLE project folder, so a `(brain)` scope would be misleading — it uses a
+ * plain `chore: … (dreamcontext sync)` message instead.
+ */
+function syncCommitMessage(ctx: Ctx): string {
+  return ctx.mode === 'full-repo' ? 'chore: sync project (dreamcontext)' : 'chore(brain): sync';
+}
+function autoCheckpointMessage(ctx: Ctx): string {
+  return ctx.mode === 'full-repo'
+    ? 'chore: checkpoint local edits before team merge (dreamcontext)'
+    : 'chore(brain): auto-checkpoint local edits before team merge';
+}
 
 export type SyncAction =
   | 'noop'
@@ -45,17 +61,37 @@ export type SyncAction =
   | 'skipped-in-tree'
   | 'no-remote'
   | 'invalid-flag'
-  | 'disabled';
+  | 'disabled'
+  /** full-repo only: the working repo is on a detached HEAD — refuse (never push onto `main`). */
+  | 'detached-head'
+  /** A merge is mid-flight that dreamcontext did NOT start (the user's own `git merge`/`rebase`). */
+  | 'user-merge-in-progress'
+  /** full-repo only: a real code file conflicts — defer to the human's editor, never semantically merge. */
+  | 'code-conflict';
 
 export interface SyncOptions {
   /** Absolute path to `_dream_context/` (what `ensureContextRoot()` returns). */
   cwd: string;
   mode: 'auto' | 'pull-only' | 'push-only';
   strict?: boolean;
+  /**
+   * A human/agent is watching (dashboard button, dashboard auto-open pull, CLI).
+   * Foreground pull-only keeps WARN-tier scrub hits NON-blocking (only real
+   * secrets block); the truly headless session-start background pull leaves this
+   * unset and keeps its unconditional effective-strict "any hit blocks" gate.
+   */
+  foreground?: boolean;
   /** Commit an IN-PROGRESS merge (requires `MERGE_HEAD`). */
   continue?: boolean;
   /** ATTENDED redo of a pull-only-deferred handoff (requires `pendingAgentMerge && !MERGE_HEAD`). */
   resume?: boolean;
+  /**
+   * The dashboard's on-open auto-pull sets this when the user has disabled
+   * "auto-checkpoint on open": pull-only then REFUSES to touch a dirty tree
+   * (no WIP auto-commit) and returns a `noop` with guidance instead. Manual
+   * syncs never set it — they always checkpoint so nothing is lost.
+   */
+  noCheckpoint?: boolean;
 }
 
 export interface SyncResult {
@@ -65,6 +101,12 @@ export interface SyncResult {
   pushed?: boolean;
   pulledUpdates?: number;
   conflicts?: string[];
+  /** full-repo `code-conflict`: the real code files git couldn't auto-merge, for the human. */
+  codeConflicts?: string[];
+  /** A dirty tree was auto-committed ("checkpoint") before a pull-only merge. */
+  checkpointed?: boolean;
+  /** The checkpoint commit sha — surfaced so the user can trivially undo it (`git reset --soft <sha>^`). */
+  checkpointSha?: string;
   /** Conflict report path (repo-relative), when one was written. */
   report?: string;
   /** C7: a merge/pull touched task-referencing files under a remote task backend. */
@@ -90,6 +132,8 @@ export interface SyncEngineDeps {
   git: typeof git;
   resolveConflicts: typeof resolveConflicts;
   scrubStagedFiles: typeof scrubStagedFiles;
+  /** Pre-push gate over a commit RANGE — scrubs commits that skipped the staged-commit gate. */
+  scrubCommitRange: typeof scrubCommitRange;
   resolveBrainSyncToken: typeof resolveBrainSyncToken;
   withGitCredentials: typeof withGitCredentials;
   acquireBrainLock: typeof acquireBrainLock;
@@ -102,6 +146,7 @@ const defaultDeps: SyncEngineDeps = {
   git,
   resolveConflicts,
   scrubStagedFiles,
+  scrubCommitRange,
   resolveBrainSyncToken,
   withGitCredentials,
   acquireBrainLock,
@@ -115,8 +160,25 @@ interface Ctx {
   gitCwd: string;
   projectRoot: string;
   config: SetupConfig | null;
+  /** Resolved sync mode — drives gitCwd, branch, commit-message copy. */
+  mode: 'separate' | 'in-tree' | 'full-repo';
+  /** Remote branch to fetch/merge/push. `main` for separate/in-tree; the CURRENT branch for full-repo. */
+  branch: string;
+  /** `origin/${branch}` — the remote-tracking ref to merge from. */
+  remoteRef: string;
   /** `--strict`: escalate WARN-tier scrub hits to blocking on every gated commit path. */
   strict: boolean;
+  /** A human/agent is present (see SyncOptions.foreground) — relaxes pull-only's headless scrub gate. */
+  foreground: boolean;
+  /** Disable the pull-only dirty-tree auto-checkpoint (the on-open "don't touch my WIP" preference). */
+  noCheckpoint: boolean;
+}
+
+/** Human-facing copy for a full-repo code conflict — names the file + how to finish. */
+function codeConflictNote(paths: string[]): string {
+  const first = paths[0] ?? 'a code file';
+  const more = paths.length > 1 ? ` (+${paths.length - 1} more)` : '';
+  return `Code conflict in ${first}${more} — the team changed it too. Resolve it in your editor, commit the merge, then run sync again.`;
 }
 
 function computeNeedsTaskSync(config: SetupConfig | null, paths: string[]): boolean {
@@ -164,8 +226,9 @@ export async function runBrainSync(opts: SyncOptions, depsOverride: Partial<Sync
   }
 
   const mode = resolveMode(config);
+  // `separate` roots the git repo at `_dream_context/`; `full-repo` and
+  // `in-tree` operate on the whole project repo at the project root.
   const gitCwd = mode === 'separate' ? contextRoot : projectRoot;
-  const ctx: Ctx = { d, contextRoot, gitCwd, projectRoot, config, strict: !!opts.strict };
 
   if (!d.git.isGitRepo(gitCwd)) {
     return {
@@ -174,6 +237,39 @@ export async function runBrainSync(opts: SyncOptions, depsOverride: Partial<Sync
       note: 'No git repository found for the brain. Run `dreamcontext brain init` or `brain attach` first.',
     };
   }
+
+  // `full-repo` syncs whatever branch the user is on (never assume `main` — a
+  // teammate could be on a feature branch); the brain-only modes keep `main`.
+  // A DETACHED HEAD (`currentBranch` → null) has no branch to push: refuse
+  // LOUDLY rather than fall back to `main` (which would push the detached
+  // HEAD's commits onto the team's `main`). `separate`/`in-tree` never reach
+  // this — they operate on their fixed `main` brain branch.
+  let branch = DEFAULT_BRANCH;
+  if (mode === 'full-repo') {
+    const live = d.git.currentBranch(gitCwd);
+    if (!live) {
+      return {
+        action: 'detached-head',
+        scrub: EMPTY_SCRUB,
+        note: "You're on a detached HEAD — check out a branch before syncing the whole project.",
+      };
+    }
+    branch = live;
+  }
+
+  const ctx: Ctx = {
+    d, contextRoot, gitCwd, projectRoot, config, mode, branch,
+    remoteRef: `${REMOTE_NAME}/${branch}`,
+    strict: !!opts.strict,
+    foreground: !!opts.foreground,
+    noCheckpoint: !!opts.noCheckpoint,
+  };
+
+  // full-repo stages the WHOLE project (`git add -A` at the root), so the
+  // project's own `.gitignore` MUST exclude machine-local brain state + secrets
+  // BEFORE anything is staged — else the sync lock (and worse, secrets) get
+  // committed and pushed. Gitignore-first, on every sync, defensively.
+  if (mode === 'full-repo') ensureFullRepoGitignore(projectRoot, config?.taskBackend);
 
   // In-tree NEVER syncs/merges with a remote — commit-only, always scrubbed
   // (S2). It bypasses the reentrancy guard entirely: that machinery exists
@@ -208,6 +304,30 @@ export async function runBrainSync(opts: SyncOptions, depsOverride: Partial<Sync
   }
 
   if (hasMerge && !opts.continue) {
+    // An in-progress merge that dreamcontext STARTED always leaves a conflict
+    // report; the user's OWN unrelated `git merge`/`rebase` (common in full-repo,
+    // where gitCwd is the project root) leaves none. Telling the user to run
+    // /dream-sync on their own merge would be wrong — there's nothing for the
+    // agent to resolve. Distinguish the two by the report's presence.
+    const report = readConflictReport(contextRoot);
+    if (!report) {
+      return {
+        action: 'user-merge-in-progress',
+        scrub: EMPTY_SCRUB,
+        note: 'Finish your in-progress git merge first, then run sync again.',
+      };
+    }
+    // A full-repo CODE conflict left in the tree for the human — never an agent job.
+    if (report.codeConflicts && report.codeConflicts.length > 0) {
+      return {
+        action: 'code-conflict',
+        scrub: EMPTY_SCRUB,
+        conflicts: report.codeConflicts,
+        codeConflicts: report.codeConflicts,
+        report: 'state/.brain-merge/report.json',
+        note: codeConflictNote(report.codeConflicts),
+      };
+    }
     return { action: 'already-awaiting-agent', scrub: EMPTY_SCRUB, note: 'A team merge is awaiting resolution — run /dream-sync to reconcile.' };
   }
   if (pending && !hasMerge && !opts.resume) {
@@ -230,7 +350,8 @@ export async function runBrainSync(opts: SyncOptions, depsOverride: Partial<Sync
     // A merge/pull may have just delivered `platform/` (CLAUDE.md + .claude)
     // from a teammate — re-create any missing project-root symlinks so the
     // layer is live without a manual step. No-op without a platform layer.
-    healPlatformLinksBestEffort(projectRoot, contextRoot);
+    // `full-repo` syncs the root files natively (no symlink layer), so skip it.
+    if (mode !== 'full-repo') healPlatformLinksBestEffort(projectRoot, contextRoot);
     return result;
   } finally {
     d.releaseBrainLock(contextRoot);
@@ -315,8 +436,8 @@ function withMergeOutcome(result: SyncResult, preMergeScrub: { blocks: ScrubHit[
 async function fetchRemoteIfExists(ctx: Ctx, token: string): Promise<boolean> {
   const { d, gitCwd } = ctx;
   return d.withGitCredentials(token, async (env) => {
-    const exists = d.git.remoteBranchExists(gitCwd, REMOTE_NAME, REMOTE_BRANCH, env);
-    if (exists) d.git.fetch(gitCwd, REMOTE_NAME, REMOTE_BRANCH, env);
+    const exists = d.git.remoteBranchExists(gitCwd, REMOTE_NAME, ctx.branch, env);
+    if (exists) d.git.fetch(gitCwd, REMOTE_NAME, ctx.branch, env);
     return exists;
   });
 }
@@ -326,7 +447,7 @@ function mergeAndMaybeDefer(ctx: Ctx, opts: MergeAndMaybeDeferOpts): MergeOutcom
   const { d, gitCwd, contextRoot, projectRoot, config } = ctx;
   let mergeResult: { clean: boolean; conflicts: string[] };
   try {
-    mergeResult = d.git.attemptMerge(gitCwd, REMOTE_REF);
+    mergeResult = d.git.attemptMerge(gitCwd, ctx.remoteRef);
   } catch (err) {
     // Surface git's rawest failure mode with an actionable message: a repo
     // created on GitHub WITH a README/gitignore shares no ancestry with the
@@ -349,12 +470,53 @@ function mergeAndMaybeDefer(ctx: Ctx, opts: MergeAndMaybeDeferOpts): MergeOutcom
     return { result: blocked, needsTaskSync: false };
   }
 
-  const resolution = d.resolveConflicts(gitCwd, mergeResult.conflicts);
+  const resolution = d.resolveConflicts(gitCwd, mergeResult.conflicts, { fullRepo: ctx.mode === 'full-repo' });
   const needsTaskSync = computeNeedsTaskSync(config, resolution.resolved);
+
+  // CODE conflict (full-repo, a file outside `_dream_context/`): git's semantic
+  // 3-way merge must NEVER touch source — leave its native markers for the human.
+  // Foreground (a human just triggered/opened the sync): leave the merge in
+  // progress so they resolve in their editor + commit. Headless background pull:
+  // abort to a clean tree (never break a working tree with no one watching) — the
+  // next foreground sync re-surfaces it with markers.
+  if (resolution.deferredToHuman.length > 0) {
+    const codePaths = resolution.deferredToHuman.map((x) => x.path);
+    if (ctx.foreground) {
+      // Record BOTH the code files (human) AND any coincident brain-prose files
+      // (agent) — a merge can conflict on both at once. Dropping the prose entries
+      // would strand them in the tree with markers and no record for /dream-sync or
+      // the user, risking a silently-wrong hand-resolution (the exact loss the
+      // agent-merge path exists to prevent). The human resolves everything, but the
+      // report stays truthful.
+      writeConflictReport(contextRoot, {
+        remoteRef: ctx.remoteRef,
+        resolvedByCli: resolution.resolved,
+        deferred: resolution.deferredToAgent.map((x) => {
+          const snap = d.git.readOursTheirsBase(gitCwd, x.path);
+          return { path: x.path, class: x.class, reason: 'overlapping edits to same section', ...snap };
+        }),
+        codeConflicts: codePaths,
+      });
+    } else {
+      d.git.abortMerge(gitCwd);
+    }
+    return {
+      result: {
+        action: 'code-conflict',
+        scrub: EMPTY_SCRUB,
+        conflicts: codePaths,
+        codeConflicts: codePaths,
+        report: ctx.foreground ? 'state/.brain-merge/report.json' : undefined,
+        note: codeConflictNote(codePaths),
+        needsTaskSync,
+      },
+      needsTaskSync,
+    };
+  }
 
   if (resolution.deferredToAgent.length > 0) {
     writeConflictReport(contextRoot, {
-      remoteRef: REMOTE_REF,
+      remoteRef: ctx.remoteRef,
       resolvedByCli: resolution.resolved,
       deferred: resolution.deferredToAgent.map((x) => {
         const snap = d.git.readOursTheirsBase(gitCwd, x.path);
@@ -393,7 +555,7 @@ async function pushWithRetry(ctx: Ctx, scrub: { blocks: ScrubHit[]; warns: Scrub
   const tryPush = async (): Promise<boolean> => {
     try {
       await d.withGitCredentials(token.token, async (env) => {
-        d.git.push(gitCwd, REMOTE_NAME, REMOTE_BRANCH, env);
+        d.git.push(gitCwd, REMOTE_NAME, ctx.branch, env);
       });
       return true;
     } catch {
@@ -431,13 +593,18 @@ async function autoSync(ctx: Ctx): Promise<SyncResult> {
   // `HEAD:main`, and `commit` on an unborn HEAD creates the root commit).
   const remoteExists = await fetchRemoteIfExists(ctx, token.token);
 
-  const aheadCount = remoteExists ? d.git.revListCount(gitCwd, `HEAD..${REMOTE_REF}`) : 0;
+  const aheadCount = remoteExists ? d.git.revListCount(gitCwd, `HEAD..${ctx.remoteRef}`) : 0;
+  // Commits we have that the remote does NOT — e.g. a merge the HUMAN finished
+  // natively after resolving a full-repo code conflict, or any locally-committed
+  // work never pushed. Without this the next sync would noop and silently strand
+  // those commits (the tree is clean, the remote isn't ahead) — they must go out.
+  const localAhead = remoteExists ? d.git.revListCount(gitCwd, `${ctx.remoteRef}..HEAD`) : 0;
   const dirty = d.git.statusPorcelainTracked(gitCwd);
   // Empty remote + existing local commits (e.g. attach right after a detach):
-  // there's nothing to fetch OR commit, but `main` still has to be born.
+  // there's nothing to fetch OR commit, but the branch still has to be born.
   const needsBootstrapPush = !remoteExists && !!d.git.currentSha(gitCwd);
 
-  if (aheadCount === 0 && dirty.length === 0 && !needsBootstrapPush) return { action: 'noop', scrub: EMPTY_SCRUB };
+  if (aheadCount === 0 && localAhead === 0 && dirty.length === 0 && !needsBootstrapPush) return { action: 'noop', scrub: EMPTY_SCRUB };
 
   let scrub = EMPTY_SCRUB;
   if (dirty.length > 0) {
@@ -445,7 +612,7 @@ async function autoSync(ctx: Ctx): Promise<SyncResult> {
     const hits = d.scrubStagedFiles(gitCwd);
     scrub = summarizeScrub(hits);
     if (isBlockingScrub(scrub, ctx.strict)) return { action: 'blocked-scrub', scrub };
-    d.git.commit(gitCwd, 'chore(brain): sync', authorFor(ctx));
+    d.git.commit(gitCwd, syncCommitMessage(ctx), authorFor(ctx));
   }
 
   let needsTaskSync = false;
@@ -453,6 +620,16 @@ async function autoSync(ctx: Ctx): Promise<SyncResult> {
     const outcome = mergeAndMaybeDefer(ctx, { abortOnDefer: false, markPendingOnDefer: false });
     if (outcome.result) return withMergeOutcome(outcome.result, scrub);
     needsTaskSync = outcome.needsTaskSync;
+  }
+
+  // Final pre-push gate (the scrub is MANDATORY before ANY push, never bypassed).
+  // The dirty-commit path above scrubs only THIS run's staging; commits made outside
+  // it — a human-finished full-repo code-conflict merge, or any locally-ahead work —
+  // would otherwise reach the remote unscrubbed. Scrub everything about to be pushed.
+  if (remoteExists && localAhead > 0) {
+    const rangeScrub = summarizeScrub(d.scrubCommitRange(gitCwd, `${ctx.remoteRef}..HEAD`));
+    if (isBlockingScrub(rangeScrub, ctx.strict)) return { action: 'blocked-scrub', scrub: rangeScrub };
+    if (rangeScrub.blocks.length > 0 || rangeScrub.warns.length > 0) scrub = rangeScrub;
   }
 
   const pushResult = await pushWithRetry(ctx, scrub);
@@ -473,27 +650,45 @@ async function pullOnlySync(ctx: Ctx): Promise<SyncResult> {
   }
 
   const beforeSha = d.git.currentSha(gitCwd);
-  const aheadCount = d.git.revListCount(gitCwd, `HEAD..${REMOTE_REF}`);
+  const aheadCount = d.git.revListCount(gitCwd, `HEAD..${ctx.remoteRef}`);
   if (aheadCount === 0) return { action: 'noop', scrub: EMPTY_SCRUB };
 
   const dirty = d.git.statusPorcelainTracked(gitCwd);
   let scrub = EMPTY_SCRUB;
+  let checkpointSha: string | undefined;
   if (dirty.length > 0) {
+    // Auto-checkpoint disabled (the on-open "don't touch my WIP" preference): skip
+    // the pull entirely rather than auto-commit uncommitted work. Nothing is lost —
+    // the manual sidebar sync (which always checkpoints) is one click away.
+    if (ctx.noCheckpoint) {
+      return {
+        action: 'noop',
+        scrub: EMPTY_SCRUB,
+        note: 'You have uncommitted local edits and auto-checkpoint-on-open is off — skipped the pull so your WIP is untouched. Sync from the sidebar when ready.',
+      };
+    }
     d.git.stageAll(gitCwd);
     const hits = d.scrubStagedFiles(gitCwd);
     scrub = summarizeScrub(hits);
-    // Effective --strict (amendment 4): headless, no human eye — ANY hit blocks.
-    if (scrub.blocks.length > 0 || scrub.warns.length > 0) {
+    // Headless (background session-start pull, `foreground` unset) has no human
+    // eye, so it stays effective-strict — ANY hit (even WARN) blocks. Foreground
+    // callers (the dashboard's auto-open pull + manual button) have a human
+    // present, so only real secrets (BLOCK) stop them; absolute-path WARNs —
+    // common across a whole code repo in `full-repo` mode — stay non-blocking.
+    const blocks = ctx.foreground ? scrub.blocks.length > 0 : scrub.blocks.length > 0 || scrub.warns.length > 0;
+    if (blocks) {
       return {
         action: 'blocked-scrub',
         scrub,
-        note: 'Your local brain edits contain something that looks sensitive — review and run `dreamcontext brain sync` manually.',
+        note: 'Your local edits contain something that looks sensitive — review and run sync manually.',
       };
     }
-    d.git.commit(gitCwd, AUTO_CHECKPOINT_MESSAGE, authorFor(ctx));
+    // The auto-checkpoint commit is deliberately identifiable (its own message)
+    // and trivially undoable (`git reset --soft <sha>^`) — surfaced via checkpointSha.
+    checkpointSha = d.git.commit(gitCwd, autoCheckpointMessage(ctx), authorFor(ctx)) ?? undefined;
   }
 
-  const outcome = mergeAndMaybeDefer(ctx, { abortOnDefer: true, markPendingOnDefer: true, effectiveStrict: true });
+  const outcome = mergeAndMaybeDefer(ctx, { abortOnDefer: true, markPendingOnDefer: true, effectiveStrict: !ctx.foreground });
   if (outcome.result) return withMergeOutcome(outcome.result, scrub);
 
   const afterSha = d.git.currentSha(gitCwd);
@@ -509,7 +704,7 @@ async function pullOnlySync(ctx: Ctx): Promise<SyncResult> {
     needsTaskSync: outcome.needsTaskSync,
   });
 
-  return { action: 'pulled', scrub, pulledUpdates, needsTaskSync: outcome.needsTaskSync };
+  return { action: 'pulled', scrub, pulledUpdates, needsTaskSync: outcome.needsTaskSync, checkpointed: !!checkpointSha, checkpointSha };
 }
 
 // ─── push-only ───────────────────────────────────────────────────────────────
@@ -518,9 +713,20 @@ async function pushOnlySync(ctx: Ctx): Promise<SyncResult> {
   const { d, gitCwd } = ctx;
   d.git.stageAll(gitCwd);
   const hits = d.scrubStagedFiles(gitCwd);
-  const scrub = summarizeScrub(hits);
+  let scrub = summarizeScrub(hits);
   if (isBlockingScrub(scrub, ctx.strict)) return { action: 'blocked-scrub', scrub };
-  d.git.commit(gitCwd, 'chore(brain): sync', authorFor(ctx));
+  d.git.commit(gitCwd, syncCommitMessage(ctx), authorFor(ctx));
+
+  // Mandatory pre-push gate over EVERYTHING being pushed — not just this run's staged
+  // changes. Pre-existing local-ahead commits (e.g. a human-finished full-repo
+  // code-conflict merge) never hit the staged scrub above; without this, `brain sync
+  // --push-only` on a clean tree would push them unscrubbed. Range from the
+  // locally-known remote ref (or the empty tree, for a never-pushed branch) to HEAD.
+  const base = d.git.revParse(gitCwd, ctx.remoteRef) ? ctx.remoteRef : EMPTY_TREE_SHA;
+  const rangeScrub = summarizeScrub(d.scrubCommitRange(gitCwd, `${base}..HEAD`));
+  if (isBlockingScrub(rangeScrub, ctx.strict)) return { action: 'blocked-scrub', scrub: rangeScrub };
+  if (rangeScrub.blocks.length > 0 || rangeScrub.warns.length > 0) scrub = rangeScrub;
+
   return pushWithRetry(ctx, scrub);
 }
 
@@ -568,7 +774,7 @@ async function resumeHandoff(ctx: Ctx): Promise<SyncResult> {
     const hits = d.scrubStagedFiles(gitCwd);
     const s = summarizeScrub(hits);
     if (isBlockingScrub(s, ctx.strict)) return { action: 'blocked-scrub', scrub: s };
-    d.git.commit(gitCwd, 'chore(brain): sync', authorFor(ctx));
+    d.git.commit(gitCwd, syncCommitMessage(ctx), authorFor(ctx));
   }
 
   // Leave the merge IN PROGRESS on a re-defer (classic auto behavior) — do NOT abort here.

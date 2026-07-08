@@ -6,7 +6,8 @@ import { confirm, input } from '@inquirer/prompts';
 import { ensureContextRoot } from '../../lib/context-path.js';
 import { header, info, success, error } from '../../lib/format.js';
 import { buildCorpus, bm25Search, type CorpusType, type RecallHit } from '../../lib/recall.js';
-import { hybridSearch } from '../../lib/embeddings/hybrid.js';
+import { hybridSearch, hybridReady } from '../../lib/embeddings/hybrid.js';
+import { resolveRecallMode } from './sleep.js';
 import {
   crossVaultRecall,
   currentVaultTarget,
@@ -213,9 +214,18 @@ export function registerMemoryCommand(program: Command): void {
 
         const corpus = buildCorpus(root, types ? { types } : {});
         const vocab = loadProjectVocabulary(root);
-        // EXPERIMENTAL hybrid recall (BM25 + dense via RRF) behind an env flag —
-        // default unchanged; falls back to plain BM25 if the model is unavailable.
-        const hits = process.env.DREAMCONTEXT_RECALL_MODE === 'hybrid'
+        // Honour the vault's recall mode (the SAME source of truth the hook and
+        // the dashboard read): hybrid BM25+dense fusion when it's selected AND
+        // already warm, else plain BM25. `hybridReady` guarantees the explicit
+        // `memory recall` never blocks on a first-time download or index build.
+        const mode = resolveRecallMode(root);
+        const useHybrid = hybridReady(root, mode);
+        // Hybrid selected but not warm yet → we searched with BM25. Nudge (on
+        // stderr, so --json / --plain stdout stays clean) toward the one-time warm-up.
+        if (mode === 'hybrid' && !useHybrid) {
+          console.error(chalk.dim('  (hybrid recall selected but not warmed — using BM25. Run `dreamcontext embed refresh` to enable it.)'));
+        }
+        const hits = useHybrid
           ? await hybridSearch(query, corpus, root, topK, { aliasGroups: aliasGroups(vocab) })
           : bm25Search(query, corpus, topK, { aliasGroups: aliasGroups(vocab) });
 

@@ -150,8 +150,15 @@ order, BEFORE acquiring the lock:
 
 1. **Flag misuse** → `invalid-flag` + a guiding `note`: `--continue` without `MERGE_HEAD`;
    `--resume` with `MERGE_HEAD` present; `--resume` without a pending handoff.
-2. **`MERGE_HEAD` present** → only `--continue` proceeds; everything else (including `--resume`)
-   returns `already-awaiting-agent`, touching nothing.
+2. **`MERGE_HEAD` present** → only `--continue` proceeds; everything else disambiguates by the
+   **conflict report** (a merge dreamcontext started ALWAYS leaves one; the user's own
+   `git merge`/`rebase` — common in `full-repo`, where the git repo IS the project root —
+   leaves none):
+   - **no report** → `user-merge-in-progress` ("Finish your in-progress git merge first"). Never
+     claims a team merge awaits `/dream-sync` (there's nothing for the agent to resolve).
+   - **report with `codeConflicts`** → `code-conflict` (a full-repo code file for the human's
+     editor — see §16), never an agent job.
+   - **report without `codeConflicts`** → `already-awaiting-agent` (a real prose handoff for `/dream-sync`).
 3. **`pendingAgentMerge && !MERGE_HEAD`** (a LIVE pull-only-deferred handoff) → only `--resume`
    proceeds; everything else returns `already-awaiting-agent`.
 4. **Stale report** (`!MERGE_HEAD && !pendingAgentMerge`, and an existing report) → cleared, then
@@ -213,3 +220,62 @@ lists only `dreamcontext-brain`-topic repos; `Create` defaults private (public r
 confirmed toggle); `Attach` shows the trust warning + incoming diff preview and refuses without
 confirmation; the team-updates badge shows N after a teammate pushes, driven by a background fetch
 (the badge endpoint itself makes no network call in the request path).
+
+## 16. full-repo hardening (2026-07-08) — refuse/defer/recover, never mangle
+
+`full-repo` mode makes the WHOLE project repo the synced unit, so the engine touches real code
+and the user's own git state. Five extra guarantees on top of the separate/in-tree contract:
+
+- **Detached HEAD → refuse.** `full-repo` syncs the CURRENT branch (`git.currentBranch`); on a
+  detached HEAD there is no branch to push. The engine returns **`detached-head`** ("check out a
+  branch") instead of falling back to `main` (which would push detached commits onto the team's
+  `main`). Brain-only modes keep their fixed `main` and never call `currentBranch`.
+- **The user's own merge ≠ a team handoff.** The reentrancy guard (§10.2) distinguishes them by
+  the conflict report's presence. A `MERGE_HEAD` with no report is the user's own `git
+  merge`/`rebase` → **`user-merge-in-progress`**, never `already-awaiting-agent`.
+- **Code conflicts defer to the HUMAN, never to the agent.** A conflicted path OUTSIDE
+  `_dream_context/` is classified **`code`** (`resolveConflicts({fullRepo:true})` →
+  `deferredToHuman`). It is NEVER semantically merged (`merge3Bodies` is for markdown/frontmatter
+  and would mangle source) and NEVER sent to `/dream-sync`. Foreground: git's native 3-way markers
+  are left in the tree for the editor; the human resolves, `git commit`s the merge, and the next
+  sync pushes it (a locally-ahead HEAD now pushes — see below). Headless background pull: aborts to
+  a clean tree (never breaks a working tree with no one watching); the next foreground sync
+  re-surfaces it. The conflict report **separates `codeConflicts` (human) from `deferred` (agent)** so
+  the two never blur → **`code-conflict`** outcome.
+- **Locally-ahead HEAD pushes.** `autoSync` now proceeds (not `noop`) when HEAD is ahead of the
+  remote even with a clean tree and remote-not-ahead — e.g. after the human finishes a code-conflict
+  merge natively. Without this those commits would be silently stranded.
+- **Auto-checkpoint transparency + opt-out.** The pull-only dirty-tree checkpoint reports
+  `checkpointed` + `checkpointSha` (identifiable message, undo via `git reset --soft <sha>^`). The
+  dashboard's on-open pull can pass **`noCheckpoint`** (the "auto-checkpoint on open" preference off) →
+  a dirty tree is left UNTOUCHED (the pull is skipped) instead of auto-committing WIP.
+
+**Failure classification (`src/lib/git-sync/failure.ts`).** Every thrown `GitSyncError` (and a
+token-shaped `no-remote`) maps to a SPECIFIC failure + recovery, never a generic "sync failed":
+`auth` → Reconnect GitHub; `permission` → names the repo + Contents-write scope; `network` →
+"you're offline, will retry" (passive); `push-rejected` (non-fast-forward twice) → Retry sync;
+`unrelated histories` → manual. The `/api/brain/sync` route returns these as `action:'error'` +
+`failure` (200, so the UI renders the recovery affordance). No local work is ever lost — the bar is
+that every failure is surfaced clearly and offers a concrete next step.
+
+**Scrub is MANDATORY over EVERYTHING pushed.** In addition to the staged-commit scrub, EVERY pushing
+path runs a pre-push **`scrubCommitRange`** over the commits about to leave: `autoSync` scrubs
+`origin/main..HEAD` when HEAD is locally ahead; `pushOnlySync` (the `--push-only` CLI path) scrubs
+`(revParse(origin/main) ?? EMPTY_TREE)..HEAD`. So commits made OUTSIDE our staged-commit path (a
+human-finished code-conflict merge, any locally-ahead work) can never reach the remote unscrubbed. A
+block there aborts the push, loudly.
+
+**Scrub-block guidance.** `blocked-scrub` surfaces each `scrub.blocks` entry (file/line/rule); for a
+file whose name marks it a local secret/config (`.env`, `credentials*`, `*.pem`, …) the dashboard
+offers one-click **add-to-`.gitignore`** (`POST /api/brain/scrub/ignore`, server-revalidated). A real
+source file is refused — the secret must be removed, not the file un-tracked. The path is rejected if it
+contains gitignore metacharacters (`! # * ? [ ]`) or control chars: a leading `!` is a NEGATION that
+would UN-ignore an already-excluded secret, so it can never be written.
+
+**Mixed conflicts keep both records.** When one merge conflicts on BOTH a code file (human) and a brain
+prose file (agent), the report records `codeConflicts` AND the agent `deferred` snapshots — the prose
+conflict is never silently dropped.
+
+**Status `mergeKind`.** `GET /api/brain/status` returns `mergeKind: 'agent' | 'code' | 'user' | null`
+(+ `codeConflicts[]`) so the dashboard shows the right banner: Resolve-with-AI (agent), resolve-in-editor
+(code), or finish-your-git-merge (user).

@@ -95,6 +95,16 @@ export function useSleep() {
   });
 }
 
+/**
+ * The vault's effective recall mode (default 'haiku'), shared by the search
+ * surfaces so they can reflect it — notably: when it's 'hybrid', search runs
+ * BM25+dense locally and the Haiku "Intelligent" toggle is redundant (hidden).
+ */
+export function useRecallMode(): RecallMode {
+  const { data } = useSleep();
+  return data?.recall_mode ?? 'haiku';
+}
+
 /** PATCH /api/sleep — partial update (recall_mode, manual debt). Returns the fresh state. */
 export function useUpdateSleep() {
   const queryClient = useQueryClient();

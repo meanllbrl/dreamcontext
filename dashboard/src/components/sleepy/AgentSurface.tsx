@@ -22,6 +22,7 @@ import {
   titleStyle, subStyle, primaryBtn, secondaryBtn,
 } from './AgentSetup';
 import { RUN_SLEEP_AGENT_EVENT, SLEEP_AGENT_TITLE, SLEEP_AGENT_PROMPT } from '../../lib/sleepAgent';
+import { RUN_BRAIN_RESOLVE_EVENT, BRAIN_RESOLVE_TITLE, BRAIN_RESOLVE_PROMPT } from '../../lib/brainResolveAgent';
 import { PaneComposer } from './PaneComposer';
 import { quotePath, FALLBACK_MODEL_CONFIG } from '../../lib/agentComposer';
 import { useAgentModelConfig } from '../../hooks/useAgentCapabilities';
@@ -509,6 +510,42 @@ export function AgentSurface() {
     window.addEventListener(RUN_SLEEP_AGENT_EVENT, onRun);
     return () => window.removeEventListener(RUN_SLEEP_AGENT_EVENT, onRun);
   }, [runSleepAgent]);
+
+  // ── Run brain-resolve agent (the sidebar's one-click "Resolve with AI") ──────────
+  // Spawn a dedicated "/dream-sync" session that reconciles the deferred team merge,
+  // fully autonomously, and EXPAND the overlay so the user can watch progress (a merge
+  // resolution is something they'll want to see, unlike a background sleep). Same guards
+  // + dedup + version-handshake as runSleepAgent. When it finishes, the sidebar's
+  // brain-status poll flips back to "Synced" on its own (pendingAgentMerge → false).
+  const runBrainResolveAgent = useCallback(() => {
+    if (!(caps?.desktop && caps.embeddedTerminal && caps.claudeCli) || !agentSettings.enabled) return;
+    const existing = sessionList.find((m) => !m.dormant && m.title === BRAIN_RESOLVE_TITLE);
+    if (existing) {
+      setExpanded(true);
+      focusSession(existing.id);
+      const live = sessions.current.get(existing.id);
+      if (live && live.status !== 'closed' && !live.busy) {
+        live.sendText(BRAIN_RESOLVE_PROMPT);
+        setTimeout(() => {
+          const s2 = sessions.current.get(existing.id);
+          if (s2 && s2.status !== 'closed') s2.sendText('\r');
+        }, 200);
+      }
+      return;
+    }
+    const s = spawn(bypass, undefined, false, 'agent', BRAIN_RESOLVE_PROMPT, '', serverCurrent);
+    setSessionList((prev) => [...prev, { id: s.id, title: BRAIN_RESOLVE_TITLE, kind: 'agent', bypass: s.bypass, claudeId: s.claudeId }]);
+    const pid = nextPaneId();
+    setPanes((prev) => [...prev, { id: pid, tabs: [s.id], active: s.id }]);
+    setActivePaneId(pid);
+    setExpanded(true);
+  }, [caps, agentSettings.enabled, sessionList, spawn, bypass, focusSession, serverCurrent]);
+
+  useEffect(() => {
+    const onRun = () => runBrainResolveAgent();
+    window.addEventListener(RUN_BRAIN_RESOLVE_EVENT, onRun);
+    return () => window.removeEventListener(RUN_BRAIN_RESOLVE_EVENT, onRun);
+  }, [runBrainResolveAgent]);
 
   // ── Bottom strip ─────────────────────────────────────────────────────────────────
   // There is NO separate text field: a skill/file goes straight into the terminal's OWN

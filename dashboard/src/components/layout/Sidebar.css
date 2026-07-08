@@ -151,6 +151,88 @@
   color: var(--color-warning, #d98324);
 }
 
+/* Connected sync control: a resolve banner (optional) stacked over the sync row. */
+.sidebar-brain-sync--connected {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-1);
+}
+.sidebar-brain-sync-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.sidebar-brain-sync-row .sidebar-item--synced {
+  flex: 1;
+  min-width: 0;
+}
+/* The whole button syncs on click — make that obvious on hover. */
+.sidebar-item--synced:hover:not(:disabled) {
+  background: var(--color-bg-tertiary);
+}
+.sidebar-item--synced:disabled {
+  cursor: default;
+}
+/* The GitHub mark swaps to a spinning refresh glyph while a sync is in flight. */
+.sidebar-icon--spin svg {
+  animation: sync-refresh-spin 0.9s linear infinite;
+}
+
+/* Small gear — the ONLY sync-row element that opens Settings. */
+.sidebar-sync-settings {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.sidebar-sync-settings:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-accent);
+}
+
+/* Teammate-conflict banner — one click opens the AI-resolve flow. */
+.sidebar-sync-resolve {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-warning, #d98324);
+  border-radius: var(--radius-sm);
+  background: var(--color-warning-subtle);
+  color: var(--color-warning, #d98324);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  line-height: 1.25;
+  text-align: left;
+  cursor: pointer;
+  transition: filter var(--transition-fast);
+}
+.sidebar-sync-resolve:hover {
+  filter: brightness(1.08);
+}
+.sidebar-sync-resolve-icon,
+.sidebar-sync-resolve-cta {
+  flex-shrink: 0;
+}
+.sidebar-sync-resolve-label {
+  flex: 1;
+  min-width: 0;
+}
+.sidebar--collapsed .sidebar-sync-resolve-label,
+.sidebar--collapsed .sidebar-sync-resolve-cta {
+  display: none;
+}
+
 /* ─── First-run nudge ─────────────────────────────────────────────────────── */
 /* Until the user opens "What is this?" once, the entry stands out and gently
    bounces to invite the first click. The prominent styling (accent fill + dot)

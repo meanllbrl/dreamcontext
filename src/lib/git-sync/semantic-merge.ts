@@ -25,7 +25,13 @@ export type MergeClass =
   | 'knowledge-md'
   | 'feature-md'
   | 'taxonomy-json'
-  | 'other';
+  | 'other'
+  /**
+   * full-repo only: a real project/code file (anything NOT under `_dream_context/`).
+   * NEVER semantically merged and NEVER deferred to the prose agent — a code
+   * conflict is git's native 3-way markers for the human to resolve in their editor.
+   */
+  | 'code';
 
 /** Classify a conflicted path (as reported by git — may carry an `_dream_context/` prefix in in-tree mode). */
 export function classifyPath(relPath: string): MergeClass {
@@ -251,6 +257,28 @@ export interface MergeResult {
   resolved: string[];
   /** Paths whose conflict needs a semantic prose merge by an agent — left unstaged, conflict markers intact. */
   deferredToAgent: { path: string; class: MergeClass }[];
+  /**
+   * full-repo only: real code/non-brain files whose conflict must go to the
+   * HUMAN (their editor), never to the prose agent or a semantic merge. Left
+   * untouched in the tree with git's native conflict markers.
+   */
+  deferredToHuman: { path: string; class: MergeClass }[];
+}
+
+export interface ResolveConflictsOptions {
+  /**
+   * full-repo mode: the WHOLE project is the synced unit, so a conflicted path
+   * NOT under `_dream_context/` is real code — classify it as `code` and defer
+   * it to the human instead of ever running the markdown/prose merge on it.
+   */
+  fullRepo?: boolean;
+}
+
+/** True for a conflicted path that is a real project/code file in full-repo mode (not a brain file). */
+function isCodePath(relPath: string, opts: ResolveConflictsOptions): boolean {
+  if (!opts.fullRepo) return false;
+  const norm = relPath.replace(/\\/g, '/');
+  return !norm.startsWith('_dream_context/');
 }
 
 /**
@@ -259,13 +287,23 @@ export interface MergeResult {
  * `feature-md` / `other` classes that need an agent are left untouched in the
  * working tree (conflict markers intact, NOT staged) so the caller can either
  * leave the merge in progress (auto mode → `--continue` later) or `abortMerge`
- * back to a clean tree (pull-only mode).
+ * back to a clean tree (pull-only mode). In full-repo mode, a conflicted CODE
+ * file (anything outside `_dream_context/`) is classified `code` and deferred to
+ * the HUMAN — never merged, never sent to the prose agent (mangling/silent loss
+ * of source is unacceptable).
  */
-export function resolveConflicts(cwd: string, conflicts: string[]): MergeResult {
+export function resolveConflicts(cwd: string, conflicts: string[], opts: ResolveConflictsOptions = {}): MergeResult {
   const resolved: string[] = [];
   const deferredToAgent: { path: string; class: MergeClass }[] = [];
+  const deferredToHuman: { path: string; class: MergeClass }[] = [];
 
   for (const relPath of conflicts) {
+    // A real code file in full-repo mode never touches the semantic merge — it
+    // stays exactly as git left it (native conflict markers) for the human.
+    if (isCodePath(relPath, opts)) {
+      deferredToHuman.push({ path: relPath, class: 'code' });
+      continue;
+    }
     const cls = classifyPath(relPath);
     const { base, ours, theirs } = readOursTheirsBase(cwd, relPath);
     let mergedContent: string | null = null;
@@ -306,5 +344,5 @@ export function resolveConflicts(cwd: string, conflicts: string[]): MergeResult 
     }
   }
 
-  return { resolved, deferredToAgent };
+  return { resolved, deferredToAgent, deferredToHuman };
 }

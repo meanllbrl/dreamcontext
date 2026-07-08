@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useRecall, haikuRecallOnce, recallOnce, type RecallHit } from '../../hooks/useRecall';
+import { useRecallMode } from '../../hooks/useSleep';
 import { TypeIcon, SearchIcon, SparkIcon } from '../sleepy/TypeIcons';
 import { tagHue } from '../../lib/tagColor';
 import './BrainSearch.css';
@@ -89,7 +90,11 @@ export function BrainSearch({
 }: BrainSearchProps) {
   const [q, setQ] = useState('');
   const [debouncedQ, setDebouncedQ] = useState('');
-  const [intelligent, setIntelligent] = useState(false);
+  // When the vault recall mode is 'hybrid', live search already runs BM25+dense
+  // locally, so the Haiku "Intelligent" toggle is redundant — hidden + forced off.
+  const hybridActive = useRecallMode() === 'hybrid';
+  const [intelligentPref, setIntelligentPref] = useState(false);
+  const intelligent = intelligentPref && !hybridActive;
   const [intelliHits, setIntelliHits] = useState<RecallHit[]>([]);
   const [intelliState, setIntelliState] = useState<IntelliState>('idle');
   const [intelliQuery, setIntelliQuery] = useState('');
@@ -156,7 +161,7 @@ export function BrainSearch({
   }, [trimmedQ, types]);
 
   const toggleIntelligent = () => {
-    setIntelligent(v => {
+    setIntelligentPref(v => {
       setIntelliState('idle'); setIntelliHits([]); setIntelliQuery(''); setFocused(0);
       return !v;
     });
@@ -200,17 +205,21 @@ export function BrainSearch({
         {hasQuery && (
           <button className="bsearch-clear" onClick={clear} title="Clear" aria-label="Clear search">×</button>
         )}
-        <button
-          className={`bsearch-intel ${intelligent ? 'bsearch-intel--on' : ''}`}
-          onClick={toggleIntelligent}
-          title={intelligent
-            ? 'Intelligent search is on — reasons over your brain (uses tokens)'
-            : 'Turn on intelligent search — intent-aware, beyond keywords'}
-        >
-          <span className="bsearch-intel-dot" />
-          <SparkIcon size={13} color={intelligent ? '#fff' : 'currentColor'} />
-          Intelligent
-        </button>
+        {/* Hybrid mode does semantic recall locally — the Haiku toggle is
+            redundant there, so it's hidden (per the recall-mode setting). */}
+        {!hybridActive && (
+          <button
+            className={`bsearch-intel ${intelligent ? 'bsearch-intel--on' : ''}`}
+            onClick={toggleIntelligent}
+            title={intelligent
+              ? 'Intelligent search is on — reasons over your brain (uses tokens)'
+              : 'Turn on intelligent search — intent-aware, beyond keywords'}
+          >
+            <span className="bsearch-intel-dot" />
+            <SparkIcon size={13} color={intelligent ? '#fff' : 'currentColor'} />
+            Intelligent
+          </button>
+        )}
       </div>
 
       {/* ── Two-column body: results/browse · detail ───────────────── */}
@@ -238,8 +247,10 @@ export function BrainSearch({
             <>
               <div className="bsearch-meta">
                 <span className="bsearch-count">{rows.length} {rows.length === 1 ? 'match' : 'matches'}</span>
-                <span className={`bsearch-mode ${intelligent ? 'bsearch-mode--intel' : ''}`}>
-                  {intelligent ? (intelliMode === 'haiku' ? 'intelligent' : 'bm25 fallback') : 'keyword'}
+                <span className={`bsearch-mode ${intelligent || hybridActive ? 'bsearch-mode--intel' : ''}`}>
+                  {intelligent
+                    ? (intelliMode === 'haiku' ? 'intelligent' : 'bm25 fallback')
+                    : hybridActive ? (data?.mode ?? 'hybrid') : 'keyword'}
                 </span>
               </div>
               {rows.map((hit, i) => {
@@ -280,7 +291,7 @@ export function BrainSearch({
             <div className="bsearch-empty">
               <SearchIcon size={22} />
               <p>No {scope} match “{trimmedQ}”.</p>
-              {!intelligent && <span>Try <button className="bsearch-empty-link" onClick={toggleIntelligent}>Intelligent search</button> for intent-aware matches.</span>}
+              {!intelligent && !hybridActive && <span>Try <button className="bsearch-empty-link" onClick={toggleIntelligent}>Intelligent search</button> for intent-aware matches.</span>}
             </div>
           )}
         </div>

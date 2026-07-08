@@ -2,15 +2,20 @@
 id: feat_mem0Recall1
 status: active
 created: '2026-05-23'
-updated: '2026-06-21'
-released_version: v0.8.7
+updated: '2026-07-08'
+released_version: v0.14.0
 tags:
   - 'domain:knowledge'
   - 'topic:cli'
   - 'topic:recall'
+  - 'topic:embeddings'
   - decisions
 related_tasks:
   - recall-context-uplift-v07
+  - feat-embedding-spike-pick-multilingual-model-validate-latency-and-token-type-ids
+  - feat-embedding-cache-engine-content-hash-chunk-cache-and-incremental-refresh
+  - feat-hybrid-recall-fusion-bm25-plus-dense-via-rrf-behind-flag
+  - feat-embedding-ab-eval-harness-bm25-vs-hybrid-vs-dense-on-frozen-gold-set
 type: feature
 name: memory-recall-bm25
 description: ''
@@ -36,6 +41,15 @@ dreamcontext's existing snapshot pre-loads soul + user + memory + active tasks +
 - [x] As a developer, auto-captured session content never crowds out curated knowledge files in recall results, thanks to the capture rank penalty.
 
 - [x] As a Turkish-speaking developer using v3 of the engine, my recall is dramatically more accurate (recall@1 TR 75.0→90%, paraphrase 66.7→91.7%) because two-hop TR morphology, directed synonym bridges, and EN -e fold fix address structural gaps from v2.
+
+### Hybrid/Embedding Layer (v0.14.0 experimental, opt-in)
+
+- [x] As a Turkish-speaking developer, I can enable hybrid recall mode and see dramatically improved cross-lingual results (held-out Turkish recall@1 20→40%, recall@5 90→100%) because the multilingual embedding model natively maps Turkish and English into the same semantic space.
+- [x] As a developer writing paraphrase queries, hybrid mode improves my recall (train paraphrase recall@1 66.7→83.3%) because dense vectors understand meaning, not just keyword overlap.
+- [x] As a developer, I can trust that hybrid mode never regresses exact-term queries — they stay at 100% recall@1 because BM25 guards prevent dense vectors from overriding confident lexical matches.
+- [x] As a developer, hybrid mode works fully offline after the first model download (~113MB one-time) with no API calls, no network, and deterministic results every time.
+- [x] As a developer, the embedding cache stays fresh automatically — incremental refresh on every recall (lazy) and on every sleep done (eager) means changed files are re-embedded without manual intervention.
+- [x] As a developer using hybrid mode, I see +5.0 to +6.7 point improvements in overall recall@1 with zero category regressions across both train and held-out gold sets.
 
 ## Acceptance Criteria
 
@@ -87,9 +101,26 @@ dreamcontext's existing snapshot pre-loads soul + user + memory + active tasks +
 - [x] PreCompact partial digest: on PreCompact hook, a bounded summary of in-progress work is written before context resets, ensuring continuity across compactions.
 - [x] Recall A/B harness (`scripts/recall-ab.ts`) runs engine comparisons on a frozen corpus (filters live captures + in-flight tasks) for deterministic measurement — required after discovering live corpus mutation caused false results.
 
+### Hybrid/Embedding Layer (v0.14.0 experimental, opt-in)
+
+- [x] Local multilingual embedding model (`Xenova/multilingual-e5-small`, 384-dim, ~113 MB quantized) loads via `@huggingface/transformers` (optionalDependency, dynamic import, graceful BM25 fallback when unavailable).
+- [x] Content-hash chunk cache at `_dream_context/.embeddings/` (gitignored, never synced): heading-boundary markdown chunks (~200–380 words / ~130–512 tokens), SHA256 content hash as cache key, incremental refresh on file changes.
+- [x] Hybrid BM25+dense fusion via adaptive strategy: confident BM25 (top raw score ≥18) uses relative-score fusion (λ=0.1, preserves margins); low-confidence uses weighted RRF (0.6/0.4, lets dense rescue buried docs).
+- [x] Top-1 pin guard (`ADAPTIVE_PIN_MARGIN=1.35`): in RRF zone, a BM25 top-1 with ≥1.35× rankScore margin is pinned at rank 1 (prevents dense from overriding high-confidence lexical matches).
+- [x] Changelog docs excluded from dense channel (`DENSE_EXCLUDED_TYPES`): short pointer docs' focused vectors crowd out canonical docs — exclusion lifted dense-only held-out r@1 from 36.7→56.7.
+- [x] Incremental cache refresh: lazy at recall (~15ms when nothing changed), eager at sleep (via `sleep done` integration).
+- [x] Model cache at `~/.dreamcontext/models` (survives npm reinstalls); first download ~4 minutes one-time; cold start ~1s, warm single embed ~22ms, batched ~3ms/doc.
+- [x] `DREAMCONTEXT_RECALL_MODE=hybrid` or `dreamcontext recall hybrid` enables; default stays `haiku`; degrades to BM25 when model unavailable.
+- [x] A/B validated on frozen 60-query train + 30-query held-out gold sets: train r@1 76.7→81.7 (+5.0), held-out r@1 60.0→66.7 (+6.7), held-out r@5 90.0→96.7 (+6.7). Zero recall@k or MRR regressions anywhere.
+- [x] Per-category wins: Turkish/cross-lingual (held-out r@1 20→40, r@5 90→100), EN paraphrase (train r@1 66.7→83.3), recency (train r@1 +12.5). Exact-term/field-match byte-identical to BM25.
+- [x] E5 contract: queries prefixed `query: `, passages prefixed `passage: ` (model trained with these markers).
+- [x] Suite 2922 tests green including 41 embedding-specific tests (chunker, cache, fusion, guards, A/B harness).
+
 ## Constraints & Decisions
 
-
+- **[2026-07-07]** **Decision (v0.14.0): hybrid recall shipped EXPERIMENTAL/OPT-IN, not default.** All four graduation gates were met (r@1/r@5/MRR up, exact-term preserved, zero category regression, acceptable latency), but first-run UX blocks default-on: a surprise 113MB download + 4-minute index on someone's first prompt is unacceptable. Rollout strategy: stay opt-in (`dreamcontext recall hybrid` or `DREAMCONTEXT_RECALL_MODE=hybrid`), then auto-enable hybrid only when the model + vault cache are already warm on the machine. This makes hybrid a strict invisible upgrade for users who tried it, without surprising new users. See [[decisions/decision-embedding-layer]].
+- **[2026-07-07]** **Decision: adaptive fusion over plain RRF.** Plain RRF (the original plan from the decision doc) was measured FIRST and killed: it regressed exact-term r@1 from 100→83.3 because rank fusion erases BM25's score margins. No global weight fixed it. The shipped fusion is an adaptive switch: confident BM25 (top raw ≥18) uses margin-preserving relative-score fusion; low-confidence uses weighted RRF so dense can rescue buried docs. Tuned on train, validated on held-out both times. Prevents the catastrophic exact-term regression while keeping the semantic wins.
+- **[2026-07-07]** **Decision: top-1 pin guard is forensically derived.** The worst EN regression (train paraphrase query that slipped rank 1→out-of-top-10 in v1) had a signature: BM25's top-1 led its runner-up by 1.55× on rankScore, while every case where dense *correctly* overrode BM25 had flat margins (1.05–1.32). The pin guard threshold (1.35×) sits between these distributions. Prevents dense from outvoting high-confidence lexical matches while still allowing it to rescue low-margin ties.
 - **[2026-06-10]** **Decision (2026-06-10): directed synonym bridges only.** Bidirectional synonym bridges measurably regressed topical-adjacency recall — adding 'fold'↔'consolidation' as bidirectional caused unrelated queries to hit sleep/consolidation docs. DIRECTED_BRIDGES enforces one-way paraphrase→canonical mapping only.
 - **Decision (2026-05-23): chose Path A over mem0 integration after 3-reviewer adversarial review.** Critic raised "premise not steel-manned" (mem0's LLM extraction solves a problem dreamcontext already solved). Pragmatist recommended cutting ~70% of the mem0 plan even in best case. Security flagged 5 critical hardening blockers (redaction order, embedding inversion, rebase data loss, finalizer crash, OpenAI exfil). Path A (BM25 over curated corpus) is deterministic, version-controllable, zero new deps. Full decision trace: see archived `/tmp/dreamcontext-mem0-{plan,decision}.md` + reviewer reports.
 - **No persistent index file.** BM25 inverted index is rebuilt in-memory on every `recall` call. With ≤500 docs the rebuild is <100ms; storing an index file would add gitignore complications and cache-invalidation bugs for negligible speedup.
@@ -116,6 +147,17 @@ dreamcontext's existing snapshot pre-loads soul + user + memory + active tasks +
 - `eval/harness.ts` — eval harness; `eval/BASELINE.md` + `eval/RESULTS.md` — before/after report.
 - `tests/unit/recall-weighting.test.ts` — regression lock on `score` vs `rankScore` decoupling invariant.
 - `tests/unit/recall-capture-stress.test.ts` — guard proof: zero gold displacement under worst-case capture flood.
+
+**Key files (v0.14.0 hybrid/embedding layer, experimental/opt-in):**
+
+- `src/lib/embeddings/chunker.ts` — heading-boundary markdown chunker: splits on `#{1,6}`, merges runts forward (≥100 words min), splits giants on paragraph boundaries (≤380 words max), deterministic SHA256 content hash per chunk.
+- `src/lib/embeddings/embedder.ts` — lazy-load wrapper for `@huggingface/transformers` (optionalDependency, dynamic import); model cache at `~/.dreamcontext/models`; `embeddingsAvailable()` predicate; E5 contract (`query:` / `passage:` prefixes).
+- `src/lib/embeddings/store.ts` — content-hash chunk cache on disk (`_dream_context/.embeddings/cache.json`); incremental refresh via mtime+size pre-filter → content-hash source-of-truth; atomic writes; corruption recovery; model-change invalidation.
+- `src/lib/embeddings/hybrid.ts` — adaptive BM25+dense fusion: confident BM25 (top raw ≥18) → relative-score λ=0.1; low-confidence → weighted RRF 0.6/0.4; top-1 pin guard (margin ≥1.35×); changelog exclusion from dense channel.
+- `scripts/embed-ab.ts` — A/B runner: BM25-only vs hybrid vs dense-only on frozen corpus (excludes live captures + in-flight tasks); sweep mode for λ/k tuning; outputs RESULTS.md.
+- `eval/harness.ts` — extended with `evaluateSearch()`: recall@1/3/5, MRR, nDCG@10, per-category breakdown, latency.
+- `eval/RESULTS.md` — A/B verdict with full numbers; baseline vs v2 adaptive fusion.
+- `tests/unit/recall-embeddings-*.test.ts` — 41 embedding-specific tests: chunker (fence guards, CRLF, unicode), cache (incremental, corruption, staleness), hybrid (guards, fallback, exclusions), A/B harness.
 
 **Corpus types (`CorpusType`):**
 
@@ -173,6 +215,7 @@ Originally shipped opt-in with raw BM25 (2026-05-23). Flipped to default-on the 
 |---|---|
 | `haiku` (default) | Single Haiku call; BM25 fallback on failure |
 | `raw` | BM25 only, no external process |
+| `hybrid` (v0.14.0 experimental, opt-in) | BM25+dense fusion via local embeddings; fully offline, no LLM call; falls back to BM25 when model unavailable |
 | `off` | No recall injection |
 
 **Output format (`— Memory recall (Haiku, top N) —`):**```
@@ -214,3 +257,20 @@ Both tier sizes (3 detailed, 10 titles-only, ~300 char body cap) are configurabl
 - ~~CHANGELOG entries as a recall corpus type~~ — **shipped 2026-05-23.**
 - ~~`memory remember` writes to CHANGELOG instead of LIFO~~ — **shipped 2026-05-23.**
 - ~~Haiku single-call semantic recall (default mode)~~ — **shipped 2026-05-26.**
+
+## Changelog
+<!-- LIFO: newest entry at top -->
+
+### 2026-07-07 - v0.14.0: Hybrid/Embedding Layer (experimental, opt-in)
+
+**Shipped experimental local embedding layer for hybrid BM25+dense recall.** Multilingual semantic search via `Xenova/multilingual-e5-small` (384-dim, 113MB, ~4min one-time index) with content-hash chunk cache (`_dream_context/.embeddings/`, gitignored) and incremental refresh (lazy at recall ~15ms, eager at sleep). Adaptive fusion strategy: confident BM25 (top raw ≥18) uses relative-score fusion (λ=0.1, preserves margins); low-confidence uses weighted RRF (0.6/0.4, lets dense rescue buried docs). Top-1 pin guard (margin ≥1.35×) and changelog exclusion from dense channel prevent regressions.
+
+**A/B validated on frozen 60-query train + 30-query held-out gold sets**: train r@1 76.7→81.7 (+5.0), held-out r@1 60.0→66.7 (+6.7), held-out r@5 90.0→96.7 (+6.7). Zero recall@k or MRR regressions anywhere. Category wins: Turkish/cross-lingual (held-out r@1 20→40, r@5 90→100 — doubled), EN paraphrase (train r@1 66.7→83.3), recency (train r@1 +12.5). Exact-term/field-match byte-identical to BM25.
+
+**Enable**: `DREAMCONTEXT_RECALL_MODE=hybrid` or `dreamcontext recall hybrid`. Default stays `haiku`. Degrades to BM25 when model unavailable (no breaking change for machines without the optional dependency). Fully offline after first download, no API calls, deterministic results.
+
+**Dashboard control** added in v0.14.1 (Settings → Memory → recall-mode radio).
+
+Plain RRF (original plan) was measured and killed: regressed exact-term r@1 100→83.3 because rank fusion erases BM25 score margins. Adaptive fusion is the shipped design.
+
+Suite 2922 tests green including 41 embedding-specific tests. See [[decisions/decision-embedding-layer]] for full design rationale and prior art.

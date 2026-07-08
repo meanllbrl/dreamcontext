@@ -1,0 +1,122 @@
+/* Brain cloud-sync banners/panels (github-cloud-collaboration-brain-repo-sync hardening).
+   Compact, sidebar-scoped surfaces for resolve / code-conflict / failure / scrub /
+   checkpoint. Tokens only — theme-aware via the shared design variables. */
+
+.brain-sync-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  width: 100%;
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-subtle, rgba(127, 127, 127, 0.06));
+  font-size: var(--font-size-xs);
+  line-height: 1.35;
+  text-align: left;
+}
+.brain-sync-panel--warn {
+  border-color: var(--color-warning, #d98324);
+  background: var(--color-warning-subtle, rgba(217, 131, 36, 0.1));
+}
+.brain-sync-panel--error {
+  border-color: var(--color-error, #e5484d);
+  background: var(--color-error-subtle, rgba(229, 72, 77, 0.1));
+}
+.brain-sync-panel--info {
+  border-color: var(--color-accent, #8b7bff);
+  background: var(--color-accent-subtle, rgba(139, 123, 255, 0.1));
+}
+
+.brain-sync-panel-title {
+  margin: 0;
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text);
+}
+.brain-sync-panel-hint {
+  margin: 0;
+  color: var(--color-text-muted, #8a8f98);
+}
+.brain-sync-panel-mark {
+  display: inline-flex;
+  color: var(--color-text-muted, #8a8f98);
+}
+
+.brain-sync-panel-btn {
+  align-self: flex-start;
+  padding: 2px var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg, #14171f);
+  color: var(--color-text);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: filter var(--transition-fast, 120ms);
+}
+.brain-sync-panel-btn:hover:not(:disabled) { filter: brightness(1.12); }
+.brain-sync-panel-btn:disabled { opacity: 0.6; cursor: default; }
+
+.brain-sync-cmd {
+  display: block;
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg, #0f1117);
+  color: var(--color-text);
+  font-family: var(--font-mono, ui-monospace, Menlo, monospace);
+  font-size: 10.5px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+}
+
+.brain-sync-files {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.brain-sync-files li {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+.brain-sync-files code {
+  font-family: var(--font-mono, ui-monospace, Menlo, monospace);
+  font-size: 10.5px;
+  color: var(--color-text);
+  word-break: break-all;
+}
+.brain-sync-rule {
+  color: var(--color-text-muted, #8a8f98);
+  font-size: 10px;
+}
+.brain-sync-inline-btn {
+  padding: 0 6px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-accent, #8b7bff);
+  font-size: 10px;
+  cursor: pointer;
+}
+.brain-sync-inline-btn:hover:not(:disabled) { background: var(--color-accent-subtle, rgba(139, 123, 255, 0.12)); }
+.brain-sync-inline-btn:disabled { opacity: 0.5; cursor: default; }
+
+.brain-sync-note {
+  width: 100%;
+  padding: 2px var(--space-1);
+  color: var(--color-text-muted, #8a8f98);
+  font-size: 10.5px;
+  line-height: 1.3;
+}
+.brain-sync-note span { color: var(--color-success, #4ade80); }
+
+/* Collapsed rail: hide the verbose panels, keep the sync row usable. */
+.sidebar--collapsed .brain-sync-panel,
+.sidebar--collapsed .brain-sync-note { display: none; }

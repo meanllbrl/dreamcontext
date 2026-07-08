@@ -481,10 +481,11 @@ export function registerSleepCommand(program: Command): void {
       }
 
       // Post-sleep brain-repo sync (github-cloud-collaboration-brain-repo-sync,
-      // M1): fetch/merge/commit/push the brain to its own remote when the
-      // project has opted into `separate` mode + autoSync. Best-effort by the
-      // same discipline as task sync above — a sync failure must never fail
-      // `sleep done`, but it must never fail SILENTLY either.
+      // M1): fetch/merge/commit/push when the project has opted into autoSync —
+      // `separate` (brain repo) or `full-repo` (whole project → origin). The
+      // engine resolves the mode internally, so this only checks the toggle.
+      // Best-effort by the same discipline as task sync above — a sync failure
+      // must never fail `sleep done`, but it must never fail SILENTLY either.
       try {
         const cfg = readSetupConfig(dirname(root));
         if (cfg?.brainRepo?.autoSync) {
@@ -571,8 +572,21 @@ export function registerSleepCommand(program: Command): void {
 
 // ─── Recall Command ───────────────────────────────────────────────────────
 
-const RECALL_MODES = ['haiku', 'raw', 'hybrid', 'off'] as const;
-type RecallMode = typeof RECALL_MODES[number];
+export const RECALL_MODES = ['haiku', 'raw', 'hybrid', 'off'] as const;
+export type RecallMode = typeof RECALL_MODES[number];
+
+/**
+ * The effective recall mode for a vault. Single source of truth for every
+ * recall consumer (the always-on hook, `memory recall`, and the dashboard's
+ * `/api/recall` route) so they never disagree: an env override wins (test /
+ * per-invocation), else the persisted `.sleep.json` value the dashboard and
+ * `dreamcontext recall <mode>` both write, else the default `haiku`.
+ */
+export function resolveRecallMode(root: string): RecallMode {
+  const env = process.env.DREAMCONTEXT_RECALL_MODE;
+  if (env && (RECALL_MODES as readonly string[]).includes(env)) return env as RecallMode;
+  return readSleepState(root).recall_mode ?? 'haiku';
+}
 
 export function registerRecallCommand(program: Command): void {
   const recall = program

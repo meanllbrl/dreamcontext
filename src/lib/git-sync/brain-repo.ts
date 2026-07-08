@@ -75,8 +75,11 @@ export function isOwnRepoRoot(
 
 // ─── A/B. Mode resolution ────────────────────────────────────────────────────
 
-export function resolveMode(config: SetupConfig | null | undefined): 'separate' | 'in-tree' {
-  return config?.brainRepo?.mode === 'separate' ? 'separate' : 'in-tree';
+export function resolveMode(config: SetupConfig | null | undefined): 'separate' | 'in-tree' | 'full-repo' {
+  const mode = config?.brainRepo?.mode;
+  if (mode === 'separate') return 'separate';
+  if (mode === 'full-repo') return 'full-repo';
+  return 'in-tree';
 }
 
 // ─── v3.3 master switch — resolveBrainSyncEnabled ───────────────────────────
@@ -170,6 +173,65 @@ export function buildBrainGitignore(taskBackend?: SetupConfig['taskBackend']): s
     );
   }
   return `${lines.join('\n')}\n`;
+}
+
+// ─── full-repo mode: machine-local brain excludes at the PROJECT root ────────
+
+/**
+ * In `full-repo` mode the WHOLE project folder is staged (`git add -A` at the
+ * project root), so the project's OWN `.gitignore` — not a dedicated brain
+ * repo's — must exclude the machine-local brain runtime and secrets under
+ * `_dream_context/`. Without this, `git add -A` would commit-and-push the sync
+ * lock (`state/.brain-merge/.lock`) — poisoning every clone with a foreign live
+ * PID that reads as "locked" — and, far worse, secrets. Same gitignore-first
+ * discipline the separate-mode `buildBrainGitignore` enforces, applied at the
+ * project root. `_dream_context/state/.tasks-map.json` is DELIBERATELY absent:
+ * the stable slug↔remoteId map is meant to sync.
+ */
+export const FULL_REPO_LOCAL_GITIGNORE_ENTRIES = [
+  // Secrets — never sync, regardless of anything else.
+  '_dream_context/state/.secrets.json',
+  '_dream_context/**/.env',
+  // Machine-local brain runtime — per-machine; must never sync (merge churn, or
+  // in the sync lock's case, cross-machine lock contention).
+  '_dream_context/state/.brain-merge/',
+  '_dream_context/state/.brain-local.json',
+  '_dream_context/state/.sleep.json',
+  '_dream_context/state/.sleep-history.json',
+  '_dream_context/state/.agent-sessions.json',
+  '_dream_context/state/.agent-session-map/',
+  '_dream_context/state/.session-digests/',
+  '_dream_context/state/.conflicts/',
+  '_dream_context/state/.version-check.json',
+  '_dream_context/state/.auto-upgrade.json',
+  '_dream_context/state/.lab-prefs.json',
+  '_dream_context/state/.tasks-sync.lock',
+  '_dream_context/state/.tasks-sync.json',
+  '_dream_context/state/.tasks-queue.json',
+  '_dream_context/tmp/',
+  // Lab analytics credentials — the example (key names only) still syncs.
+  '_dream_context/lab/credentials.json',
+  '_dream_context/lab/credentials.*',
+  '!_dream_context/lab/credentials.example.json',
+];
+
+/**
+ * Idempotently ensure the project-root `.gitignore` excludes every machine-local
+ * brain artifact + secret (full-repo mode). Adds the derived task-mirror
+ * (`state/*.md`) exclude only under a remote task backend. Returns the entries
+ * newly added (empty when already covered). Best-effort — a read-only gitignore
+ * must never break a sync.
+ */
+export function ensureFullRepoGitignore(projectRoot: string, taskBackend?: SetupConfig['taskBackend']): string[] {
+  const entries = [...FULL_REPO_LOCAL_GITIGNORE_ENTRIES];
+  if (taskBackend && taskBackend !== 'local') entries.push('_dream_context/state/*.md');
+  try {
+    return ensureGitignoreEntries(projectRoot, entries, {
+      comment: 'dreamcontext full-repo sync — machine-local brain state + secrets (never sync)',
+    });
+  } catch {
+    return [];
+  }
 }
 
 // ─── Bootstrap (local part) + createBrainRepo (GitHub API + bootstrap) ──────

@@ -109,6 +109,42 @@ export function scrubStagedFiles(cwd: string, opts?: { pathPrefix?: string }): S
   return hits;
 }
 
+/**
+ * Scrub every file changed across a commit RANGE (e.g. `origin/main..HEAD`), reading
+ * each file's content from HEAD. This is the pre-push gate for commits that never went
+ * through our staged-commit scrub — a human-finished merge, or any locally-committed
+ * work being pushed. Best-effort: a missing range/ref (e.g. an unborn remote branch)
+ * yields no hits rather than throwing.
+ */
+export function scrubCommitRange(cwd: string, range: string): ScrubHit[] {
+  let raw: string;
+  try {
+    raw = execFileSync('git', ['diff', '--name-only', '-z', range], {
+      cwd,
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+  } catch {
+    return [];
+  }
+  const files = raw.split('\0').filter((p) => p.length > 0);
+  const hits: ScrubHit[] = [];
+  for (const relPath of files) {
+    let content: string;
+    try {
+      content = execFileSync('git', ['show', `HEAD:${relPath}`], {
+        cwd,
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+    } catch {
+      continue; // deleted in HEAD / binary / unreadable — skip
+    }
+    hits.push(...scrubContent(relPath, content));
+  }
+  return hits;
+}
+
 export function summarizeScrub(hits: ScrubHit[]): { blocks: ScrubHit[]; warns: ScrubHit[] } {
   return {
     blocks: hits.filter((h) => h.severity === 'block'),

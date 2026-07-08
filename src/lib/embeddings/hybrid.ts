@@ -1,6 +1,26 @@
 import { bm25Search, docKey, type Bm25Options, type CorpusDoc, type RecallHit } from '../recall.js';
-import { embedQuery } from './embedder.js';
-import { refreshEmbeddings, type DenseIndex } from './store.js';
+import { embedQuery, isEmbedModelDownloaded } from './embedder.js';
+import { refreshEmbeddings, embeddingCacheUsable, type DenseIndex } from './store.js';
+
+/**
+ * Whether hybrid recall should ACTUALLY run for a vault right now — the single
+ * gate every automatic recall path shares (the always-on hook, the dashboard's
+ * live `/api/recall`, `memory recall`). Hybrid engages only when the mode is
+ * 'hybrid', the model is already downloaded, AND the vault's embedding cache is
+ * present and USABLE for the current model/version. This keeps the two EXPENSIVE,
+ * one-time operations off the keystroke/prompt path — a 113 MB model download and
+ * a full corpus (re)index — since both are paid explicitly (the Settings card /
+ * `dreamcontext embed refresh`). When it returns false, callers fall back to BM25.
+ *
+ * NOTE: this does not promise zero latency — a warm search embeds the query
+ * (~22 ms) and, in a freshly-started process, pays a one-time in-process model
+ * load (~1 s) on the FIRST hybrid query. That per-process load is inherent to the
+ * daemonless design (see decision-embedding-layer) and is why hybrid recall is
+ * opt-in; what this gate guarantees is no DOWNLOAD and no COLD FULL INDEX inline.
+ */
+export function hybridReady(root: string, mode: string): boolean {
+  return mode === 'hybrid' && isEmbedModelDownloaded() && embeddingCacheUsable(root);
+}
 
 /**
  * Hybrid recall: BM25 (backbone) + dense vectors (overlay), fused with
@@ -217,7 +237,11 @@ export async function hybridSearch(
   const bm25Hits = bm25Search(query, corpus, POOL, opts);
 
   const [refreshed, queryVec] = await Promise.all([
-    refreshEmbeddings(contextRoot, corpus),
+    // ADD-ONLY: `corpus` may be type-scoped (e.g. the dashboard Knowledge search
+    // asks only for knowledge+feature). Never evict out-of-scope vectors here, or
+    // the next full-corpus query would re-embed the whole corpus inline. Pruning
+    // is the explicit refreshers' job.
+    refreshEmbeddings(contextRoot, corpus, undefined, { additive: true }),
     embedQuery(query),
   ]);
   if (refreshed === null || queryVec === null) return bm25Hits.slice(0, topK);
@@ -312,7 +336,8 @@ export async function denseSearch(
   denseExcludedTypes: readonly string[] = DENSE_EXCLUDED_TYPES,
 ): Promise<RecallHit[]> {
   const [refreshed, queryVec] = await Promise.all([
-    refreshEmbeddings(contextRoot, corpus),
+    // ADD-ONLY, same reasoning as hybridSearch — never evict from a query-time corpus.
+    refreshEmbeddings(contextRoot, corpus, undefined, { additive: true }),
     embedQuery(query),
   ]);
   if (refreshed === null || queryVec === null) return [];

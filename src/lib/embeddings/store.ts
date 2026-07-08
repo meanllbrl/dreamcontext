@@ -117,6 +117,62 @@ export function embeddingCacheExists(contextRoot: string): boolean {
   return existsSync(cachePath(contextRoot));
 }
 
+/**
+ * Number of indexed chunk-slots in the vault's embedding cache (sum of each
+ * doc's chunk hashes — matches the materialized DenseIndex size), or 0 when
+ * there's no readable cache. Cheap enough for an occasional status read; used to
+ * show "N sections indexed" without running a build.
+ */
+export function embeddingCacheChunkCount(contextRoot: string): number {
+  try {
+    const cache = loadCache(contextRoot);
+    let n = 0;
+    for (const doc of Object.values(cache.docs)) n += doc.hashes.length;
+    return n;
+  } catch {
+    return 0;
+  }
+}
+
+// Memoize the (relatively expensive) validity parse by cache-file mtime so
+// `embeddingCacheUsable` stays cheap when called per-keystroke on the live
+// search path — a re-parse happens only when the cache file actually changes.
+// Keyed per-vault (bounded) so multiple concurrently-open vaults don't thrash.
+const usableMemo = new Map<string, { mtimeMs: number; usable: boolean }>();
+const USABLE_MEMO_MAX = 32;
+
+/**
+ * True when the vault's embedding cache is present AND USABLE for hybrid recall
+ * RIGHT NOW: it exists, its `model`/`version` still match the current build, and
+ * it holds vectors. This is stronger than {@link embeddingCacheExists} on
+ * purpose — a cache left over from a previous EMBED_MODEL/CACHE_VERSION still
+ * exists on disk, but `loadCache` would discard it and `refreshEmbeddings` would
+ * re-embed the WHOLE corpus inline. Gating hybrid on THIS (not mere existence)
+ * keeps that multi-minute rebuild off the keystroke/prompt path — it falls back
+ * to BM25 until the index is explicitly rebuilt.
+ */
+export function embeddingCacheUsable(contextRoot: string): boolean {
+  const path = cachePath(contextRoot);
+  let mtimeMs: number;
+  try {
+    mtimeMs = statSync(path).mtimeMs;
+  } catch {
+    usableMemo.delete(path);
+    return false; // no cache file
+  }
+  const memo = usableMemo.get(path);
+  if (memo && memo.mtimeMs === mtimeMs) return memo.usable;
+  // loadCache returns an EMPTY cache on a version/model mismatch (or parse error),
+  // so a non-empty vector set proves the on-disk cache is valid for this build.
+  const usable = Object.keys(loadCache(contextRoot).vectors).length > 0;
+  usableMemo.set(path, { mtimeMs, usable });
+  if (usableMemo.size > USABLE_MEMO_MAX) {
+    const oldest = usableMemo.keys().next().value;
+    if (oldest !== undefined) usableMemo.delete(oldest);
+  }
+  return usable;
+}
+
 export interface RefreshOptions {
   /**
    * Bypass the mtime+size pre-filter and re-chunk EVERY doc, making the
@@ -127,6 +183,20 @@ export interface RefreshOptions {
    * mtime granularity AND the same byte size.
    */
   force?: boolean;
+  /**
+   * Fires as chunks are embedded (`done` of `total` this refresh) so a long
+   * first-time index build can report progress. Only meaningful with the
+   * default embedder; ignored otherwise.
+   */
+  onProgress?: (done: number, total: number) => void;
+  /**
+   * ADD-ONLY reconcile: merge the given docs in and NEVER evict. Set this on the
+   * recall path (which may pass a type-scoped corpus) so a partial view can't
+   * delete out-of-scope vectors and force a full inline re-embed later. Leave it
+   * false for the authoritative full-corpus refreshers (`embed refresh`, the
+   * index-build endpoint, sleep), which SHOULD prune deleted docs.
+   */
+  additive?: boolean;
 }
 
 /**
@@ -141,7 +211,7 @@ export interface RefreshOptions {
 export async function refreshEmbeddings(
   contextRoot: string,
   corpus: CorpusDoc[],
-  embed: (texts: string[]) => Promise<Float32Array[] | null> = embedPassages,
+  embed: (texts: string[], onProgress?: (done: number, total: number) => void) => Promise<Float32Array[] | null> = embedPassages,
   opts: RefreshOptions = {},
 ): Promise<{ index: DenseIndex; stats: RefreshStats } | null> {
   const cache = loadCache(contextRoot);
@@ -208,7 +278,7 @@ export async function refreshEmbeddings(
   let embeddedCount = 0;
   if (missing.length > 0) {
     const texts = missing.map((h) => chunkTextByHash.get(h) ?? '');
-    const vectors = await embed(texts);
+    const vectors = await embed(texts, opts.onProgress);
     if (vectors === null) return null; // model unavailable → BM25-only fallback
     for (let i = 0; i < missing.length; i++) {
       cache.vectors[missing[i]] = encodeVector(vectors[i]);
@@ -216,25 +286,44 @@ export async function refreshEmbeddings(
     embeddedCount = missing.length;
   }
 
-  // 4. Evict: docs gone from the corpus, then vectors nothing references.
-  const referenced = new Set<string>();
-  const newDocs: Record<string, CacheDocEntry> = {};
-  for (const [key, { entry }] of wanted) {
-    newDocs[key] = entry;
-    for (const h of entry.hashes) referenced.add(h);
-  }
+  // 4. Reconcile the cache.
+  //
+  // ADDITIVE mode (recall time): merge the wanted docs in and keep everything
+  // else. Recall may be handed a TYPE-SCOPED corpus (the dashboard's Knowledge
+  // search asks only for knowledge+feature), and evicting "unreferenced" vectors
+  // then would delete every task/memory/changelog vector — so the next FULL-corpus
+  // query would re-embed the whole corpus inline on a keystroke. Recall must never
+  // shrink the cache; only add.
+  //
+  // PRUNE mode (default — explicit `embed refresh`, the index-build endpoint,
+  // sleep): the corpus is authoritative and whole, so drop docs/vectors that no
+  // longer exist. This is the only place the cache is allowed to shrink.
   let evicted = 0;
-  const newVectors: Record<string, string> = {};
-  for (const [h, v] of Object.entries(cache.vectors)) {
-    if (referenced.has(h)) newVectors[h] = v;
-    else evicted++;
+  let docsChanged = false;
+  if (opts.additive) {
+    for (const [key, { entry }] of wanted) {
+      if (cache.docs[key] !== entry) docsChanged = true; // re-chunked → new object
+      cache.docs[key] = entry;
+    }
+    // cache.vectors already holds the new embeds (step 3); out-of-scope vectors stay.
+  } else {
+    const referenced = new Set<string>();
+    const newDocs: Record<string, CacheDocEntry> = {};
+    for (const [key, { entry }] of wanted) {
+      newDocs[key] = entry;
+      for (const h of entry.hashes) referenced.add(h);
+    }
+    const newVectors: Record<string, string> = {};
+    for (const [h, v] of Object.entries(cache.vectors)) {
+      if (referenced.has(h)) newVectors[h] = v;
+      else evicted++;
+    }
+    docsChanged =
+      Object.keys(newDocs).length !== Object.keys(cache.docs).length ||
+      Object.keys(newDocs).some((k) => cache.docs[k] !== newDocs[k]);
+    cache.docs = newDocs;
+    cache.vectors = newVectors;
   }
-  const docsChanged =
-    Object.keys(newDocs).length !== Object.keys(cache.docs).length ||
-    Object.keys(newDocs).some((k) => cache.docs[k] !== newDocs[k]);
-
-  cache.docs = newDocs;
-  cache.vectors = newVectors;
   if (embeddedCount > 0 || evicted > 0 || docsChanged) saveCache(contextRoot, cache);
 
   // 5. Materialize the in-memory index (brute-force cosine downstream — exact
@@ -252,8 +341,11 @@ export async function refreshEmbeddings(
     }
   }
 
+  // reused = distinct referenced chunk hashes now in the index minus the ones we
+  // just embedded (computed from the index so it holds in both reconcile modes).
+  const distinctHashes = new Set(chunks.map((c) => c.hash)).size;
   return {
     index: { chunks, dims },
-    stats: { embedded: embeddedCount, reused: referenced.size - embeddedCount, evicted },
+    stats: { embedded: embeddedCount, reused: Math.max(0, distinctHashes - embeddedCount), evicted },
   };
 }

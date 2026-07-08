@@ -16,12 +16,12 @@ tags:
   - 'topic:embeddings'
 pinned: false
 date: '2026-06-29'
-updated: '2026-07-07'
+updated: '2026-07-08'
 ---
 
 ## Status
 
-**EXPERIMENTAL / BETA — flag-gated, off by default. BUILT + A/B-MEASURED (2026-07-07). v2 same day: ALL FOUR GRADUATION GATES MET — default-on now blocked only by operational rollout (first-run download/index UX), not quality.**
+**SHIPPED v0.14.0 (2026-07-07) as EXPERIMENTAL / BETA — flag-gated, off by default. Dashboard control added v0.14.1 (2026-07-07). ALL FOUR GRADUATION GATES MET — default-on now blocked only by operational rollout (first-run download/index UX), not quality.**
 
 **A/B verdict v2 (full numbers: `eval/RESULTS.md` "Embedding A/B"):** hybrid
 beats BM25 on overall r@1/r@5/MRR/nDCG on BOTH gold sets with **not one
@@ -157,12 +157,12 @@ Full synthesized brief: session research agent `af52656747ba1e939` (2026-06-29).
 The "epic" is **this document**. The umbrella/organizing view lives in knowledge; only the buildable units live in `state/` as tasks. Implementation is tracked as six tasks under planning version **v0.11.0**, each of which references back here.
 
 **Children — execution order:**
-1. ✅ `feat-embedding-spike-pick-multilingual-model-validate-latency-and-token-type-ids` — DONE 2026-07-07 (see Spike results above).
-2. ✅ `feat-embedding-cache-engine-content-hash-chunk-cache-and-incremental-refresh` — DONE 2026-07-07 (`src/lib/embeddings/{chunker,store}.ts`).
-3. ✅ `feat-hybrid-recall-fusion-bm25-plus-dense-via-rrf-behind-flag` — DONE 2026-07-07 (`src/lib/embeddings/hybrid.ts`; shipped fusion is the ADAPTIVE switch, not plain RRF — plain RRF was measured and killed).
-4. ✅ `feat-embedding-ab-eval-harness-bm25-vs-hybrid-vs-dense-on-frozen-gold-set` — DONE 2026-07-07 (`scripts/embed-ab.ts` + `evaluateSearch` in `eval/harness.ts`; verdict in `eval/RESULTS.md`).
+1. ✅ `feat-embedding-spike-pick-multilingual-model-validate-latency-and-token-type-ids` — SHIPPED v0.14.0 (see Spike results above).
+2. ✅ `feat-embedding-cache-engine-content-hash-chunk-cache-and-incremental-refresh` — SHIPPED v0.14.0 (`src/lib/embeddings/{chunker,store}.ts`).
+3. ✅ `feat-hybrid-recall-fusion-bm25-plus-dense-via-rrf-behind-flag` — SHIPPED v0.14.0 (`src/lib/embeddings/hybrid.ts`; shipped fusion is the ADAPTIVE switch, not plain RRF — plain RRF was measured and killed).
+4. ✅ `feat-embedding-ab-eval-harness-bm25-vs-hybrid-vs-dense-on-frozen-gold-set` — SHIPPED v0.14.0 (`scripts/embed-ab.ts` + `evaluateSearch` in `eval/harness.ts`; verdict in `eval/RESULTS.md`).
 5. `feat-sleep-semantic-dedup-nearest-neighbor-merge-instead-of-duplicate` — second consumer (cache engine now available; still todo).
-6. `feat-embedding-beta-rollout-opt-in-flag-doctor-gitignore-docs` — partially covered by 1–4 (flag + gitignore + fallback shipped); remaining: doctor check, user docs, npm files audit.
+6. `feat-embedding-beta-rollout-opt-in-flag-doctor-gitignore-docs` — partially SHIPPED v0.14.0/v0.14.1 (flag + gitignore + fallback shipped v0.14.0; dashboard control shipped v0.14.1); remaining: doctor check, user docs expansion, npm files audit.
 
 **Dependency graph:** `1 → 2 → {3 → 4, 5}`; `6` needs `{3, 4}`.
 

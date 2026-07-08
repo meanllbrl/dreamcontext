@@ -10,7 +10,10 @@ import { api } from '../api/client';
 // ─── Types (mirror the route response shapes exactly) ─────────────────────────
 
 export type BrainSyncSource = 'explicit' | 'derived-github-connected' | 'derived-unconnected';
-export type BrainMode = 'separate' | 'in-tree';
+export type BrainMode = 'separate' | 'in-tree' | 'full-repo';
+
+/** What KIND of in-progress merge blocks sync — drives which sidebar banner shows. */
+export type MergeKind = 'agent' | 'code' | 'user' | null;
 
 export interface BrainStatus {
   enabled: boolean;
@@ -21,8 +24,20 @@ export interface BrainStatus {
   /** Code repo `origin` — display context only, NEVER the brain connection. */
   codeOrigin: string | null;
   mergeInProgress: boolean;
+  /** `agent` = /dream-sync handoff, `code` = human's editor (full-repo), `user` = the user's own git merge. */
+  mergeKind: MergeKind;
+  /** full-repo code files a conflict left for the human (when mergeKind === 'code'). */
+  codeConflicts: string[];
   pendingAgentMerge: boolean;
   pulledUpdates: number;
+}
+
+/** A classified sync failure with a concrete recovery affordance (never a generic "sync failed"). */
+export interface SyncFailure {
+  kind: 'auth' | 'permission' | 'network' | 'push-rejected' | 'unknown';
+  recovery: 'reconnect-github' | 'check-permissions' | 'wait-online' | 'retry' | 'manual';
+  message: string;
+  repo?: string;
 }
 
 export interface BrainSettings {
@@ -87,6 +102,14 @@ export interface BrainSyncResult {
   pulledUpdates: number;
   scrub: { blocks: ScrubBlock[]; warns: ScrubBlock[] };
   note?: string;
+  /** A dirty tree was auto-committed before the pull-only merge (item 7 transparency). */
+  checkpointed?: boolean;
+  /** The checkpoint commit sha — surfaced so the user can undo it (`git reset --soft <sha>^`). */
+  checkpointSha?: string;
+  /** full-repo code files a code-conflict left for the human. */
+  codeConflicts?: string[];
+  /** Set when `action === 'error'` (or a token-shaped no-remote) — the specific, recoverable failure. */
+  failure?: SyncFailure;
 }
 
 export interface TeamVaultUpdate {
@@ -258,12 +281,48 @@ export function useDisconnectBrainRepo() {
   });
 }
 
+export interface RunBrainSyncArgs {
+  mode?: 'pull-only' | 'auto';
+  /** The on-open auto-pull passes this from the "auto-checkpoint on open" preference. */
+  noCheckpoint?: boolean;
+}
+
 export function useRunBrainSync() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (mode: 'pull-only' | 'auto' = 'pull-only') =>
-      api.post<BrainSyncResult>('/brain/sync', { mode }),
+    // Every dashboard-initiated sync is FOREGROUND (a human is watching): WARN
+    // scrub hits stay non-blocking, only real secrets stop it.
+    mutationFn: (args: RunBrainSyncArgs | 'pull-only' | 'auto' = 'pull-only') => {
+      const { mode = 'pull-only', noCheckpoint = false } = typeof args === 'string' ? { mode: args } : args;
+      return api.post<BrainSyncResult>('/brain/sync', { mode, foreground: true, noCheckpoint });
+    },
     onSuccess: () => invalidateBrain(queryClient),
+  });
+}
+
+/** One-click "add <path> to .gitignore" for a scrub-blocked local secret file (item 6). */
+export function useAddScrubIgnore() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (path: string) => api.post<{ ok: boolean; added: string[]; path: string }>('/brain/scrub/ignore', { path }),
+    onSuccess: () => invalidateBrain(queryClient),
+  });
+}
+
+/**
+ * Switch what cloud sync covers: `full-repo` (the whole project folder → the
+ * project's own origin) or `brain` (brain-only). Server validates that
+ * full-repo has a GitHub origin to push to.
+ */
+export function useSetBrainScope() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (scope: 'full-repo' | 'brain') =>
+      api.post<BrainSettings>('/brain/scope', { scope }),
+    onSuccess: (data) => {
+      queryClient.setQueryData(BRAIN_KEYS.settings, data);
+      invalidateBrain(queryClient);
+    },
   });
 }
 

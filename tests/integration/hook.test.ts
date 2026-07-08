@@ -1418,7 +1418,7 @@ describe('hook user-prompt-submit (integration)', () => {
       'Webhook retry idempotency dedup. Webhook retry idempotency dedup. Webhook retry idempotency dedup.',
     ].join('\n'));
     // Skills hook off here so the gate fires purely from the recalled knowledge doc.
-    const env = { ...process.env, DREAMCONTEXT_RECALL_MODE: 'bm25', DREAMCONTEXT_SKILLS_HOOK: '0' };
+    const env = { ...process.env, DREAMCONTEXT_RECALL_MODE: 'raw', DREAMCONTEXT_SKILLS_HOOK: '0' };
     const input = JSON.stringify({ session_id: 'sess-1', prompt: 'webhook retry idempotency dedup policy' });
     const output = runWithStdin('hook user-prompt-submit', input, tmpDir, env);
     expect(output).toContain('Memory recall');                              // recall block ran
@@ -1432,7 +1432,7 @@ describe('hook user-prompt-submit (integration)', () => {
 
   it('no context gate when neither knowledge nor skills are relevant', () => {
     writeSleep(ctx, { debt: 8, sessions: [], bookmarks: [], triggers: [], knowledge_access: {}, dashboard_changes: [] });
-    const env = { ...process.env, DREAMCONTEXT_RECALL_MODE: 'bm25', DREAMCONTEXT_SKILLS_HOOK: '0' };
+    const env = { ...process.env, DREAMCONTEXT_RECALL_MODE: 'raw', DREAMCONTEXT_SKILLS_HOOK: '0' };
     const input = JSON.stringify({ session_id: 'sess-1', prompt: 'xyzzy qqq zzz nothing matches here at all' });
     const output = runWithStdin('hook user-prompt-submit', input, tmpDir, env);
     expect(output).toContain('Sleep debt is 8'); // existing behaviour intact
@@ -1842,7 +1842,7 @@ describe('hook initializer detection (integration)', () => {
     for (let i = 0; i < 6; i++) writeFileSync(join(docs, `d${i}.md`), `# doc ${i}`);
     // Memory hook ON, skills off, BM25 recall — prompt carries BOTH ingest intent
     // (+ an existing docs folder) AND the recall keywords.
-    const env = { ...process.env, DREAMCONTEXT_VERSION_CHECK: '0', DREAMCONTEXT_SKILLS_HOOK: '0', DREAMCONTEXT_RECALL_MODE: 'bm25' };
+    const env = { ...process.env, DREAMCONTEXT_VERSION_CHECK: '0', DREAMCONTEXT_SKILLS_HOOK: '0', DREAMCONTEXT_RECALL_MODE: 'raw' };
     const input = JSON.stringify({
       session_id: 'sess-1',
       prompt: 'please ingest ./docs — also surface the webhook retry idempotency dedup policy webhook retry idempotency dedup',

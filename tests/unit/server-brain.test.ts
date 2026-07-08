@@ -14,10 +14,14 @@ import {
   handleBrainSync,
   handleBrainSettingsGet,
   handleBrainSettingsPost,
+  handleBrainScope,
+  handleBrainScrubIgnore,
   handleBrainTeamUpdates,
 } from '../../src/server/routes/brain.js';
 import { addVault } from '../../src/lib/vaults.js';
 import { readSetupConfig, writeBrainLocal } from '../../src/lib/setup-config.js';
+import { writeConflictReport } from '../../src/lib/git-sync/conflict-report.js';
+import { readFileSync, existsSync } from 'node:fs';
 
 function makeRes(): { res: ServerResponse; status: () => number; body: () => any } {
   let statusCode = 0;
@@ -133,6 +137,187 @@ describe('brain routes — status', () => {
     await handleBrainStatus(makeReq('GET'), res, {}, ctx);
     expect(body().remote).toBe('https://github.com/acme/brain.git');
     expect(body().hasRemote).toBe(true);
+  });
+
+  it('full-repo mode reports the PROJECT origin as the sync remote (whole folder syncs there)', async () => {
+    const ctx = makeVault('cur', { mode: 'full-repo', enabled: true });
+    const projectRoot = join(base, 'cur');
+    sh(projectRoot, ['init']);
+    sh(projectRoot, ['remote', 'add', 'origin', 'https://github.com/meanllbrl/dreamcontext.git']);
+
+    const { res, body } = makeRes();
+    await handleBrainStatus(makeReq('GET'), res, {}, ctx);
+    expect(body().mode).toBe('full-repo');
+    expect(body().remote).toBe('https://github.com/meanllbrl/dreamcontext.git');
+    expect(body().hasRemote).toBe(true);
+    expect(body().codeOrigin).toBe('https://github.com/meanllbrl/dreamcontext.git');
+  });
+});
+
+describe('brain routes — scope (whole project vs brain-only)', () => {
+  it('switching to full-repo requires a project origin — 400 no_origin without one', async () => {
+    const ctx = makeVault('cur');
+    const projectRoot = join(base, 'cur');
+    sh(projectRoot, ['init']); // repo but NO origin
+
+    const { res, status, body } = makeRes();
+    await handleBrainScope(makeReq('POST', { scope: 'full-repo' }), res, {}, ctx);
+    expect(status()).toBe(400);
+    expect(body().error).toBe('no_origin');
+    // Config is untouched — mode never flipped to full-repo.
+    expect(readSetupConfig(projectRoot)?.brainRepo?.mode).not.toBe('full-repo');
+  });
+
+  it('switching to full-repo with an origin flips mode + enables sync + autoSync', async () => {
+    const ctx = makeVault('cur');
+    const projectRoot = join(base, 'cur');
+    sh(projectRoot, ['init']);
+    sh(projectRoot, ['remote', 'add', 'origin', 'https://github.com/meanllbrl/dreamcontext.git']);
+
+    const { res, status, body } = makeRes();
+    await handleBrainScope(makeReq('POST', { scope: 'full-repo' }), res, {}, ctx);
+    expect(status()).toBe(200);
+    expect(body().mode).toBe('full-repo');
+    expect(body().enabled).toBe(true);
+    const cfg = readSetupConfig(projectRoot)?.brainRepo;
+    expect(cfg?.mode).toBe('full-repo');
+    expect(cfg?.enabled).toBe(true);
+    expect(cfg?.autoSync).toBe(true);
+  });
+
+  it('switching back to brain reverts full-repo to in-tree when no dedicated brain remote is set', async () => {
+    const ctx = makeVault('cur', { mode: 'full-repo', enabled: true, autoSync: true });
+    const projectRoot = join(base, 'cur');
+    const { res, status, body } = makeRes();
+    await handleBrainScope(makeReq('POST', { scope: 'brain' }), res, {}, ctx);
+    expect(status()).toBe(200);
+    expect(body().mode).toBe('in-tree');
+    expect(readSetupConfig(projectRoot)?.brainRepo?.mode).toBe('in-tree');
+  });
+
+  it('rejects an unknown scope', async () => {
+    const ctx = makeVault('cur');
+    const { res, status, body } = makeRes();
+    await handleBrainScope(makeReq('POST', { scope: 'nonsense' }), res, {}, ctx);
+    expect(status()).toBe(400);
+    expect(body().error).toBe('invalid_body');
+  });
+});
+
+// ── item 3: in-progress merge kind (agent vs code vs user) ──
+describe('brain routes — status mergeKind', () => {
+  function fullRepoWithMerge(): { ctx: string; projectRoot: string } {
+    const ctx = makeVault('cur', { mode: 'full-repo', enabled: true });
+    const projectRoot = join(base, 'cur');
+    sh(projectRoot, ['init']);
+    sh(projectRoot, ['remote', 'add', 'origin', 'https://github.com/acme/proj.git']);
+    // Simulate an in-progress merge (git writes .git/MERGE_HEAD).
+    writeFileSync(join(projectRoot, '.git', 'MERGE_HEAD'), 'deadbeef\n', 'utf-8');
+    return { ctx, projectRoot };
+  }
+
+  it("MERGE_HEAD with NO conflict report → mergeKind 'user' (the user's own git merge, not a team handoff)", async () => {
+    const { ctx } = fullRepoWithMerge();
+    const { res, body } = makeRes();
+    await handleBrainStatus(makeReq('GET'), res, {}, ctx);
+    expect(body().mergeInProgress).toBe(true);
+    expect(body().mergeKind).toBe('user');
+  });
+
+  it("MERGE_HEAD + a code-conflict report → mergeKind 'code' (human's editor, not the agent)", async () => {
+    const { ctx } = fullRepoWithMerge();
+    writeConflictReport(ctx, { remoteRef: 'origin/main', resolvedByCli: [], deferred: [], codeConflicts: ['src/app.ts'] });
+    const { res, body } = makeRes();
+    await handleBrainStatus(makeReq('GET'), res, {}, ctx);
+    expect(body().mergeKind).toBe('code');
+  });
+
+  it("MERGE_HEAD + an agent (prose) report → mergeKind 'agent'", async () => {
+    const { ctx } = fullRepoWithMerge();
+    writeConflictReport(ctx, {
+      remoteRef: 'origin/main', resolvedByCli: [],
+      deferred: [{ path: 'knowledge/x.md', class: 'knowledge-md', reason: 'r', base: 'b', ours: 'o', theirs: 't' }],
+    });
+    const { res, body } = makeRes();
+    await handleBrainStatus(makeReq('GET'), res, {}, ctx);
+    expect(body().mergeKind).toBe('agent');
+  });
+
+  it("a pull-only deferred handoff (pendingAgentMerge, no MERGE_HEAD) is still 'agent'", async () => {
+    const ctx = makeVault('cur', { mode: 'separate', remote: 'https://github.com/acme/brain.git', enabled: true });
+    const projectRoot = join(base, 'cur');
+    writeBrainLocal(projectRoot, { pendingAgentMerge: true });
+    const { res, body } = makeRes();
+    await handleBrainStatus(makeReq('GET'), res, {}, ctx);
+    expect(body().mergeKind).toBe('agent');
+  });
+});
+
+// ── item 6: one-click add-to-.gitignore for scrub-blocked local secret files ──
+describe('brain routes — scrub/ignore', () => {
+  it('adds a safe local secret file (full-repo → project-root .gitignore) and reports it', async () => {
+    const ctx = makeVault('cur', { mode: 'full-repo', enabled: true });
+    const projectRoot = join(base, 'cur');
+    const { res, status, body } = makeRes();
+    await handleBrainScrubIgnore(makeReq('POST', { path: 'config/app.env' }), res, {}, ctx);
+    expect(status()).toBe(200);
+    expect(body().ok).toBe(true);
+    expect(readFileSync(join(projectRoot, '.gitignore'), 'utf-8')).toContain('config/app.env');
+  });
+
+  it('separate mode writes to the brain (_dream_context) .gitignore, not the project root', async () => {
+    const ctx = makeVault('cur', { mode: 'separate', remote: 'https://github.com/acme/brain.git', enabled: true });
+    const { res, status } = makeRes();
+    await handleBrainScrubIgnore(makeReq('POST', { path: 'lab/credentials.json' }), res, {}, ctx);
+    expect(status()).toBe(200);
+    expect(readFileSync(join(ctx, '.gitignore'), 'utf-8')).toContain('lab/credentials.json');
+  });
+
+  it('REFUSES a real source file (a secret must be removed, not un-tracked)', async () => {
+    const ctx = makeVault('cur', { mode: 'full-repo', enabled: true });
+    const projectRoot = join(base, 'cur');
+    const { res, status, body } = makeRes();
+    await handleBrainScrubIgnore(makeReq('POST', { path: 'src/config.ts' }), res, {}, ctx);
+    expect(status()).toBe(400);
+    expect(body().error).toBe('unsafe_path');
+    expect(existsSync(join(projectRoot, '.gitignore'))).toBe(false);
+  });
+
+  it('REFUSES a path traversal attempt', async () => {
+    const ctx = makeVault('cur', { mode: 'full-repo', enabled: true });
+    const { res, status, body } = makeRes();
+    await handleBrainScrubIgnore(makeReq('POST', { path: '../../etc/passwd' }), res, {}, ctx);
+    expect(status()).toBe(400);
+    expect(body().error).toBe('invalid_path');
+  });
+
+  it('REFUSES a gitignore NEGATION that would un-ignore a secret (!-prefix injection)', async () => {
+    const ctx = makeVault('cur', { mode: 'full-repo', enabled: true });
+    const projectRoot = join(base, 'cur');
+    for (const evil of ['!.env', '!_dream_context/state/.secrets.json']) {
+      const { res, status, body } = makeRes();
+      await handleBrainScrubIgnore(makeReq('POST', { path: evil }), res, {}, ctx);
+      expect(status()).toBe(400);
+      expect(body().error).toBe('unsafe_path');
+    }
+    // Nothing was written — the negation never reached .gitignore.
+    expect(existsSync(join(projectRoot, '.gitignore'))).toBe(false);
+  });
+
+  it('REFUSES a multi-line payload that would inject arbitrary .gitignore rules', async () => {
+    const ctx = makeVault('cur', { mode: 'full-repo', enabled: true });
+    const { res, status, body } = makeRes();
+    await handleBrainScrubIgnore(makeReq('POST', { path: 'pwned.env\n!/.gitignore\ncore.important' }), res, {}, ctx);
+    expect(status()).toBe(400);
+    expect(body().error).toBe('unsafe_path');
+  });
+
+  it('400s on a missing path', async () => {
+    const ctx = makeVault('cur', { mode: 'full-repo', enabled: true });
+    const { res, status, body } = makeRes();
+    await handleBrainScrubIgnore(makeReq('POST', {}), res, {}, ctx);
+    expect(status()).toBe(400);
+    expect(body().error).toBe('invalid_body');
   });
 });
 

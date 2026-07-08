@@ -1,39 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { useI18n } from '../../context/I18nContext';
 import { BrandMark } from '../brand/BrandMark';
 import { NavIcon } from './NavIcons';
 import { GitHubMark } from '../brain/GitHubLogin';
-import { TeamUpdatesBadge } from '../brain/TeamUpdatesBadge';
-import { useAuthStatus, useBrainStatus, useRunBrainSync } from '../../hooks/useBrainStatus';
+import { useAuthStatus, useBrainStatus } from '../../hooks/useBrainStatus';
+import { BrainSyncControl } from '../brain/BrainSyncControl';
 import './Sidebar.css';
-
-/** Circular-arrow refresh glyph for the sidebar sync button. */
-function RefreshIcon({ size = 12 }: { size?: number }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.6"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" />
-      <path d="M13.7 2.2v2.9h-2.9" />
-    </svg>
-  );
-}
-
-/** How long a sync outcome (✓ / warning) stays on the rail before reverting. */
-const SYNC_FEEDBACK_MS = 4000;
-
-interface SyncFeedback {
-  kind: 'ok' | 'warn';
-  message: string;
-}
 
 /** The active vault's display name, as passed by the launcher via `?vault=`. */
 function readVaultLabel(): string {
@@ -135,40 +107,11 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
   const { data: brainStatus } = useBrainStatus();
   const vaultLabel = readVaultLabel();
 
-  // Rail refresh — a full pull+merge sync (`mode: 'auto'`), with a short-lived
-  // outcome swap on the "Synced" label (✓ on success, a warning when the sync
-  // is blocked or a team merge awaits the /dream-sync agent).
-  const runSync = useRunBrainSync();
-  const [syncFeedback, setSyncFeedback] = useState<SyncFeedback | null>(null);
-  const syncFeedbackTimer = useRef<number | null>(null);
-  useEffect(() => () => {
-    if (syncFeedbackTimer.current !== null) window.clearTimeout(syncFeedbackTimer.current);
-  }, []);
-
-  const handleRefreshSync = () => {
-    if (runSync.isPending) return;
-    setSyncFeedback(null);
-    runSync.mutate('auto', {
-      onSettled: (result, error) => {
-        let feedback: SyncFeedback;
-        if (error || !result) {
-          feedback = { kind: 'warn', message: t('brain.sidebar.refreshFailed') };
-        } else if (result.action === 'awaiting-agent' || result.action === 'already-awaiting-agent') {
-          feedback = { kind: 'warn', message: result.note ?? t('brain.sidebar.refreshAwaitingAgent') };
-        } else if (result.action === 'blocked-scrub') {
-          feedback = { kind: 'warn', message: t('brain.sidebar.refreshBlocked') };
-        } else if (result.action === 'noop' || result.action === 'pulled' || result.action === 'pushed') {
-          feedback = { kind: 'ok', message: t('brain.sidebar.refreshDone') };
-        } else {
-          // locked / no-remote / disabled — surface the server's note verbatim.
-          feedback = { kind: 'warn', message: result.note ?? t('brain.sidebar.refreshFailed') };
-        }
-        setSyncFeedback(feedback);
-        if (syncFeedbackTimer.current !== null) window.clearTimeout(syncFeedbackTimer.current);
-        syncFeedbackTimer.current = window.setTimeout(() => setSyncFeedback(null), SYNC_FEEDBACK_MS);
-      },
-    });
-  };
+  // 3-state cloud-sync CTA: not signed in → invite sign-in; signed in but no
+  // remote configured yet → invite setup; connected → the sync control
+  // (BrainSyncControl owns the sync row + every failure/handoff surface).
+  const signedIn = !!authStatus?.connected;
+  const hasRemote = !!brainStatus?.hasRemote;
 
   // Opening "What is this?" retires the first-run nudge for good.
   const openAbout = () => {
@@ -191,10 +134,7 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
   const nudgeAbout = !aboutSeen && activePage !== 'about';
   const nudgeGithubSync = !githubSyncSeen;
 
-  // 3-state cloud-sync CTA: not signed in → invite sign-in; signed in but no
-  // remote configured yet → invite setup; connected → quiet "Synced" / badge.
-  const signedIn = !!authStatus?.connected;
-  const hasRemote = !!brainStatus?.hasRemote;
+  // Connect / set-up CTA label for the pre-connected states.
   const githubSyncLabel = !signedIn
     ? t('brain.sidebar.connect')
     : !hasRemote
@@ -244,33 +184,13 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
         </div>
       ))}
 
-      {/* Pinned to the bottom: the GitHub cloud-sync CTA — 3 states (connect /
-          set up team sync / synced), reusing the team-updates pill once a
-          remote is configured so a pending pull surfaces right on the rail. */}
+      {/* Pinned to the bottom: the cloud-sync control. Not connected → a single
+          connect/set-up button. Connected → the sync row: the big button SYNCS
+          on click (label shows live status), the gear opens Settings, and a
+          teammate-conflict surfaces as a one-click "Resolve with AI" banner. */}
       <div className="sidebar-footer">
         {signedIn && hasRemote ? (
-          <div className="sidebar-brain-sync sidebar-brain-sync--connected">
-            <TeamUpdatesBadge compact />
-            <button
-              className="sidebar-item sidebar-item--synced"
-              onClick={openGithubSync}
-              title={syncFeedback?.message ?? t('brain.sidebar.synced')}
-            >
-              <span className="sidebar-icon"><GitHubMark size={14} /></span>
-              <span className={`sidebar-label${syncFeedback ? ` sidebar-label--sync-${syncFeedback.kind}` : ''}`}>
-                {syncFeedback?.message ?? t('brain.sidebar.synced')}
-              </span>
-            </button>
-            <button
-              className={`sidebar-sync-refresh${runSync.isPending ? ' sidebar-sync-refresh--pending' : ''}`}
-              onClick={handleRefreshSync}
-              disabled={runSync.isPending}
-              title={runSync.isPending ? t('brain.sidebar.refreshing') : t('brain.sidebar.refreshTip')}
-              aria-label={t('brain.sidebar.refresh')}
-            >
-              <RefreshIcon />
-            </button>
-          </div>
+          <BrainSyncControl onOpenSettings={openGithubSync} />
         ) : (
           <button
             className={`sidebar-item sidebar-item--brain-sync${nudgeGithubSync ? ' sidebar-item--nudge' : ''}`}

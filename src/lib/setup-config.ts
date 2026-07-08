@@ -58,11 +58,15 @@ export interface SetupConfig {
 export interface BrainRepoConfig {
   /**
    * `separate` — the brain lives in its own git repo + remote; full auto-sync
-   * (commit → fetch → merge → push). `in-tree` — the brain is nested inside
-   * the code repo; commit-only, NEVER auto-pushes. Absent ⇒ `in-tree` (the
-   * safe default for every project that hasn't opted into `separate`).
+   * (commit → fetch → merge → push) rooted at `_dream_context/`, always on
+   * `main`. `full-repo` — the WHOLE project folder (code + `_dream_context/`)
+   * is the synced unit; full auto-sync against the project's existing `origin`
+   * on the CURRENT branch (no separate brain repo, no platform-layer symlink
+   * hack). `in-tree` — the brain is nested inside the code repo; commit-only,
+   * NEVER auto-pushes. Absent ⇒ `in-tree` (the safe default for every project
+   * that hasn't opted into a pushing mode).
    */
-  mode: 'separate' | 'in-tree';
+  mode: 'separate' | 'in-tree' | 'full-repo';
   /**
    * v3.3 MASTER SWITCH — cloud sync is COMPLETELY OPTIONAL. Explicit value
    * always wins. When ABSENT, the default is DERIVED: ON iff the project is
@@ -164,7 +168,8 @@ function sanitizeGitHub(raw: unknown): GitHubConfig | undefined {
 function sanitizeBrainRepo(raw: unknown): BrainRepoConfig | undefined {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
   const o = raw as Record<string, unknown>;
-  const mode: BrainRepoConfig['mode'] = o.mode === 'separate' ? 'separate' : 'in-tree';
+  const mode: BrainRepoConfig['mode'] =
+    o.mode === 'separate' ? 'separate' : o.mode === 'full-repo' ? 'full-repo' : 'in-tree';
   const out: BrainRepoConfig = { mode };
   if (typeof o.enabled === 'boolean') out.enabled = o.enabled;
   if (typeof o.remote === 'string') out.remote = o.remote;

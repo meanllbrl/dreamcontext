@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { chunkDoc } from '../../src/lib/embeddings/chunker.js';
-import { refreshEmbeddings } from '../../src/lib/embeddings/store.js';
+import { refreshEmbeddings, embeddingCacheExists, embeddingCacheUsable, embeddingCacheChunkCount } from '../../src/lib/embeddings/store.js';
 import { rrfFuse, relativeFuse, denseRank, hybridSearch, ADAPTIVE_RAW_CUTOFF } from '../../src/lib/embeddings/hybrid.js';
 import { buildFields, type CorpusDoc } from '../../src/lib/recall.js';
 
@@ -131,6 +131,62 @@ describe('embeddings store (incremental refresh)', () => {
     const second = await refreshEmbeddings(root, corpus, fakeEmbed);
     expect(second!.stats.embedded).toBe(0);
     expect(second!.index.chunks.length).toBe(first!.index.chunks.length);
+  });
+
+  it('cache readiness: exists vs USABLE (model/version gate) + chunk count', async () => {
+    const p1 = writeDocFile('a', 'alpha '.repeat(150));
+    const corpus = [makeDoc({ slug: 'a', path: p1, body: 'alpha '.repeat(150) })];
+
+    // Cold vault: no cache → neither exists nor usable, 0 chunks.
+    expect(embeddingCacheExists(root)).toBe(false);
+    expect(embeddingCacheUsable(root)).toBe(false);
+    expect(embeddingCacheChunkCount(root)).toBe(0);
+
+    const first = await refreshEmbeddings(root, corpus, fakeEmbed);
+    expect(embeddingCacheExists(root)).toBe(true);
+    expect(embeddingCacheUsable(root)).toBe(true);
+    expect(embeddingCacheChunkCount(root)).toBe(first!.index.chunks.length);
+
+    // Stale cache from a PRIOR model: the file still exists, but it is NOT usable
+    // (hybridReady must fall back to BM25 instead of forcing a full inline re-index).
+    const cachePath = join(root, '.embeddings', 'cache.json');
+    const parsed = JSON.parse(readFileSync(cachePath, 'utf-8'));
+    parsed.model = 'OLD/stale-model';
+    writeFileSync(cachePath, JSON.stringify(parsed));
+    // Bump mtime so the mtime-keyed usability memo re-evaluates.
+    const now = Date.now() / 1000 + 5;
+    utimesSync(cachePath, now, now);
+    expect(embeddingCacheExists(root)).toBe(true);   // still on disk
+    expect(embeddingCacheUsable(root)).toBe(false);  // but not usable → BM25 fallback
+  });
+
+  it('additive refresh (recall) never evicts out-of-scope vectors; prune (default) does', async () => {
+    const pA = writeDocFile('a', 'alpha '.repeat(150));
+    const pB = writeDocFile('b', 'beta '.repeat(150));
+    const docA = makeDoc({ slug: 'a', path: pA, body: 'alpha '.repeat(150) });
+    const docB = makeDoc({ slug: 'b', path: pB, body: 'beta '.repeat(150) });
+    const full = [docA, docB];
+
+    // Warm the full cache.
+    const warm = await refreshEmbeddings(root, full, fakeEmbed);
+    const fullChunks = warm!.index.chunks.length;
+    expect(warm!.stats.embedded).toBeGreaterThan(0);
+
+    // Recall with a TYPE-SCOPED corpus (only docA) in ADDITIVE mode: docB's vectors
+    // must survive, so the next full query re-embeds NOTHING (no inline thrash).
+    const scoped = await refreshEmbeddings(root, [docA], fakeEmbed, { additive: true });
+    expect(scoped!.stats.embedded).toBe(0);
+    expect(scoped!.stats.evicted).toBe(0);
+    const afterScoped = await refreshEmbeddings(root, full, fakeEmbed, { additive: true });
+    expect(afterScoped!.stats.embedded).toBe(0);            // ← no re-embed: cache intact
+    expect(afterScoped!.index.chunks.length).toBe(fullChunks);
+
+    // Contrast — the OLD behavior: a scoped PRUNE refresh evicts docB, so the next
+    // full refresh must re-embed it (the exact thrash the additive fix prevents).
+    const pruned = await refreshEmbeddings(root, [docA], fakeEmbed); // default = prune
+    expect(pruned!.stats.evicted).toBeGreaterThan(0);
+    const afterPrune = await refreshEmbeddings(root, full, fakeEmbed, { additive: true });
+    expect(afterPrune!.stats.embedded).toBeGreaterThan(0);  // docB had to be re-embedded
   });
 
   it('re-embeds ONLY the changed doc; deleted docs are evicted', async () => {

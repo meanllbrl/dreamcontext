@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useRecall, haikuRecallOnce, recallOnce, type RecallHit } from '../../hooks/useRecall';
+import { useRecallMode } from '../../hooks/useSleep';
 import { TypeIcon, SearchIcon, SparkIcon } from '../sleepy/TypeIcons';
 import { DocContent } from '../sleepy/DocContent';
 import { recallNavTarget } from '../../lib/recallNav';
@@ -68,8 +69,14 @@ export function CommandPalette({ open, onClose, onNavigate }: CommandPaletteProp
   const [debouncedQ, setDebouncedQ] = useState('');
   const inputRef = useRef<HTMLInputElement | null>(null);
 
+  // When the vault's recall mode is 'hybrid', the Normal (live) search already
+  // runs BM25 + local dense embeddings server-side — so the Haiku "Intelligent"
+  // escalation is redundant. We hide the toggle and force it off in that mode.
+  const hybridActive = useRecallMode() === 'hybrid';
+
   // Intelligent (Haiku) mode — preference persists; results are submit-driven.
-  const [intelligent, setIntelligent] = useState(readIntelligentPref);
+  const [intelligentPref, setIntelligentPref] = useState(readIntelligentPref);
+  const intelligent = intelligentPref && !hybridActive;
   const [intelliHits, setIntelliHits] = useState<RecallHit[]>([]);
   const [intelliState, setIntelliState] = useState<'idle' | 'thinking' | 'done'>('idle');
   const [intelliQuery, setIntelliQuery] = useState('');
@@ -139,7 +146,7 @@ export function CommandPalette({ open, onClose, onNavigate }: CommandPaletteProp
   }, [trimmed, setFocused]);
 
   const toggleIntelligent = useCallback(() => {
-    setIntelligent((v) => {
+    setIntelligentPref((v) => {
       const next = !v;
       try { window.localStorage.setItem(INTELLIGENT_PREF_KEY, next ? '1' : '0'); } catch { /* ignore */ }
       return next;
@@ -200,19 +207,23 @@ export function CommandPalette({ open, onClose, onNavigate }: CommandPaletteProp
             onKeyDown={onKeyDown}
           />
           {!intelligent && isFetching && !!trimmed && <span className="cmdk-spin" aria-hidden="true" />}
-          <button
-            type="button"
-            className={`cmdk-intel${intelligent ? ' cmdk-intel--on' : ''}`}
-            onClick={toggleIntelligent}
-            aria-pressed={intelligent}
-            title={intelligent
-              ? 'Intelligent search is on — reasons over your brain with Haiku (uses tokens)'
-              : 'Turn on intelligent search — intent-aware, beyond keywords'}
-          >
-            <span className="cmdk-intel-dot" aria-hidden="true" />
-            <SparkIcon size={13} color={intelligent ? '#fff' : 'currentColor'} />
-            <span className="cmdk-intel-label">Intelligent</span>
-          </button>
+          {/* Hybrid mode already does semantic recall locally — the Haiku toggle
+              is redundant there, so it's hidden (per the recall-mode setting). */}
+          {!hybridActive && (
+            <button
+              type="button"
+              className={`cmdk-intel${intelligent ? ' cmdk-intel--on' : ''}`}
+              onClick={toggleIntelligent}
+              aria-pressed={intelligent}
+              title={intelligent
+                ? 'Intelligent search is on — reasons over your brain with Haiku (uses tokens)'
+                : 'Turn on intelligent search — intent-aware, beyond keywords'}
+            >
+              <span className="cmdk-intel-dot" aria-hidden="true" />
+              <SparkIcon size={13} color={intelligent ? '#fff' : 'currentColor'} />
+              <span className="cmdk-intel-label">Intelligent</span>
+            </button>
+          )}
         </div>
         <kbd className="cmdk-kbd">esc</kbd>
       </div>
@@ -283,10 +294,12 @@ export function CommandPalette({ open, onClose, onNavigate }: CommandPaletteProp
         <span><kbd>↑</kbd><kbd>↓</kbd> move</span>
         <span><kbd>↵</kbd> {intelligent && !intelliReady ? 'reason' : 'open'}</span>
         <span><kbd>esc</kbd> close</span>
-        <span className={`cmdk-foot-mode${intelligent ? ' cmdk-foot-mode--intel' : ''}`}>
+        <span className={`cmdk-foot-mode${intelligent || hybridActive ? ' cmdk-foot-mode--intel' : ''}`}>
           {intelligent
             ? (intelliReady && intelliMode === 'bm25' ? 'bm25 · fallback' : 'intelligent · haiku')
-            : 'local · bm25'}
+            : hybridActive
+              ? `local · ${data?.mode ?? 'hybrid'}`
+              : 'local · bm25'}
         </span>
       </div>
     </CommandModal>

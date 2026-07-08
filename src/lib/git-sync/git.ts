@@ -84,6 +84,24 @@ export function currentSha(cwd: string): string | null {
   }
 }
 
+/**
+ * The checked-out branch name, or null on a detached HEAD / non-repo.
+ * `full-repo` mode syncs the WHOLE project repo on whatever branch the user is
+ * actually on — never assume `main` there (a teammate may be on a feature
+ * branch). Uses `symbolic-ref` (not `rev-parse --abbrev-ref`) so it returns the
+ * real branch name even on an UNBORN branch (a fresh repo with zero commits,
+ * where `rev-parse --abbrev-ref HEAD` degrades to the literal `HEAD`).
+ * `separate`/`in-tree` keep their dedicated `main` brain branch and never call this.
+ */
+export function currentBranch(cwd: string): string | null {
+  try {
+    const branch = run(cwd, ['symbolic-ref', '--short', 'HEAD']).trim();
+    return branch && branch !== 'HEAD' ? branch : null;
+  } catch {
+    return null;
+  }
+}
+
 export function addRemote(cwd: string, name: string, url: string): void {
   run(cwd, ['remote', 'add', name, url]);
 }
