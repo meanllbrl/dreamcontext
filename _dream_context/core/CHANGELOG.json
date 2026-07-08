@@ -1,6 +1,57 @@
 [
   {
     "date": "2026-07-08",
+    "type": "fix",
+    "scope": "brain-sync",
+    "description": "The resting sync label decayed to 'Project synced' once the 4s transient feedback cleared — even while a persistent failure banner (expired GitHub sign-in, scrub block, deferred merge, detached HEAD) was still on screen. The footer label now mirrors the last known sync state in warn color and only falls back to 'Project synced' when the last sync genuinely succeeded; a new blockedNote signal covers the two panel-less blocked outcomes. The label is now a role=status aria-live region.",
+    "breaking": false,
+    "summary": "Sidebar sync footer stays honest when sync is blocked",
+    "references": [
+      "commit:50f59c2",
+      "file:dashboard/src/components/sleepy"
+    ]
+  },
+  {
+    "date": "2026-07-08",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "In the agent surface, ⌘⇧D opens a fresh terminal into a new side-by-side pane, mirroring ⌘D's agent split. Composer-field guard and tooltips/aria updated for the new chord.",
+    "breaking": false,
+    "summary": "⌘⇧D spawns a terminal split (agent stays ⌘D)",
+    "references": [
+      "commit:5052ddb",
+      "file:dashboard/src/components/sleepy/AgentSurface.tsx"
+    ]
+  },
+  {
+    "date": "2026-07-08",
+    "type": "feat",
+    "scope": "doctor",
+    "description": "New checkTaskFeatureLinks audit surfaces every kind of task↔feature link drift (ghost/ambiguous related_feature, conflicting/foreign claims, missing back-refs or memberships, non-canonical slugs). dreamcontext doctor --heal-links applies the deterministic fixes in one shot — adopt back-refs, drop ghost/foreign related_tasks entries, canonicalize slugs — before running the checks.",
+    "breaking": false,
+    "summary": "doctor --heal-links reconciles task↔feature link drift",
+    "references": [
+      "commit:6edb2aa",
+      "file:src/cli/commands/doctor.ts",
+      "file:src/lib/feature-links.ts"
+    ]
+  },
+  {
+    "date": "2026-07-08",
+    "type": "feat",
+    "scope": "brain-sync",
+    "description": "Whole-project (full-repo) sync pushes to the project's own origin, but after the separate-mode removal a project with no origin dead-ended at a bare 400 no_origin. Settings → Cloud sync now offers, when signed in and the project has no origin: Create new (a fresh private-by-default GitHub repo wired as origin) or Connect existing (an existing repo URL). It then enables full-repo, lays the gitignore-first excludes, and runs the first auto-sync to bootstrap+push. Not the old dedicated brain repo — rooted at the project root, no discovery marker. lib: src/lib/git-sync/origin-setup.ts; routes: POST /api/brain/origin/{create,preview,attach}; dashboard: OriginSetup panel + hooks + i18n; +22 unit/route-guard tests.",
+    "breaking": false,
+    "summary": "Create/attach a GitHub origin from the Cloud sync panel",
+    "references": [
+      "commit:e685e9d",
+      "file:src/lib/git-sync/origin-setup.ts",
+      "file:dashboard/src/components/brain/OriginSetup.tsx",
+      "knowledge:features/brain-repo-sync"
+    ]
+  },
+  {
+    "date": "2026-07-08",
     "type": "feat",
     "scope": "tasks",
     "description": "Make task→feature assignment real and keep both sides in lockstep. New feature-links.ts engine: canonical (folder-qualified) feature resolution, bidirectional apply (task.related_feature ↔ feature.related_tasks), task rename/delete healing, and audit/reconcile — all reads/writes guarded against path traversal. CLI: tasks create --feature, new tasks feature <task> [ref|clear] (mirrors tasks objectives), and create-time nudges when a link is unset. features set/create related_tasks now validate slugs and write through to each task's related_feature (ghost slugs refused). Server PATCH /api/tasks/:slug validates objectives + related_feature (400 on unknown/ambiguous) and write-throughs the feature side. graph.ts draws task→feature edges by slug (was id-only, so real links drew none); snapshot renders each task's Feature inline. Dashboard feature picker emits folder-qualified slugs; invalidates knowledge query on related_feature change. 11 files, 1266 insertions. +19-test feature-links engine suite, golden PATCH-route coverage, and cli-commands integration coverage for create/set validation + write-through. Backfilled this brain's links: 35 tasks now carry related_feature (was 1). Held back from this commit (file-level tangled with concurrent brain-sync refactor): doctor --heal-links wiring in doctor.ts and skill/agent docs (to be committed once that work settled).",

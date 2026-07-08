@@ -1,5 +1,131 @@
 [
   {
+    "id": "rel_OKd5v_L-",
+    "version": "v0.15.0",
+    "date": "2026-07-09",
+    "summary": "Feature/knowledge topical & product subfolders (path-derived product scoping, recursive discovery); whole-project cloud sync gains one-click Create/Connect origin from the Cloud sync panel; validated bidirectional task↔feature links with doctor --heal-links; effort-aware roadmap forecast; ⌘⇧D terminal split. Breaking: cloud-sync 'separate' (dedicated brain-repo) mode removed — full-repo whole-project is the only cloud-sync option.",
+    "breaking": true,
+    "status": "released",
+    "features": [],
+    "tasks": [
+      "task-feature-objective-links-validated-assignment-bidirectional-maintenance"
+    ],
+    "changelog": [
+      {
+        "date": "2026-07-08",
+        "type": "feat",
+        "scope": "brain-sync",
+        "description": "Whole-project (full-repo) sync pushes to the project's own origin, but after the separate-mode removal a project with no origin dead-ended at a bare 400 no_origin. Settings → Cloud sync now offers, when signed in and the project has no origin: Create new (a fresh private-by-default GitHub repo wired as origin) or Connect existing (an existing repo URL). It then enables full-repo, lays the gitignore-first excludes, and runs the first auto-sync to bootstrap+push. Not the old dedicated brain repo — rooted at the project root, no discovery marker. lib: src/lib/git-sync/origin-setup.ts; routes: POST /api/brain/origin/{create,preview,attach}; dashboard: OriginSetup panel + hooks + i18n; +22 unit/route-guard tests.",
+        "breaking": false,
+        "summary": "Create/attach a GitHub origin from the Cloud sync panel",
+        "references": [
+          "commit:e685e9d",
+          "file:src/lib/git-sync/origin-setup.ts",
+          "file:dashboard/src/components/brain/OriginSetup.tsx",
+          "knowledge:features/brain-repo-sync"
+        ]
+      },
+      {
+        "date": "2026-07-08",
+        "type": "feat",
+        "scope": "doctor",
+        "description": "New checkTaskFeatureLinks audit surfaces every kind of task↔feature link drift (ghost/ambiguous related_feature, conflicting/foreign claims, missing back-refs or memberships, non-canonical slugs). dreamcontext doctor --heal-links applies the deterministic fixes in one shot — adopt back-refs, drop ghost/foreign related_tasks entries, canonicalize slugs — before running the checks.",
+        "breaking": false,
+        "summary": "doctor --heal-links reconciles task↔feature link drift",
+        "references": [
+          "commit:6edb2aa",
+          "file:src/cli/commands/doctor.ts",
+          "file:src/lib/feature-links.ts"
+        ]
+      },
+      {
+        "date": "2026-07-08",
+        "type": "feat",
+        "scope": "dashboard",
+        "description": "In the agent surface, ⌘⇧D opens a fresh terminal into a new side-by-side pane, mirroring ⌘D's agent split. Composer-field guard and tooltips/aria updated for the new chord.",
+        "breaking": false,
+        "summary": "⌘⇧D spawns a terminal split (agent stays ⌘D)",
+        "references": [
+          "commit:5052ddb",
+          "file:dashboard/src/components/sleepy/AgentSurface.tsx"
+        ]
+      },
+      {
+        "date": "2026-07-08",
+        "type": "fix",
+        "scope": "brain-sync",
+        "description": "The resting sync label decayed to 'Project synced' once the 4s transient feedback cleared — even while a persistent failure banner (expired GitHub sign-in, scrub block, deferred merge, detached HEAD) was still on screen. The footer label now mirrors the last known sync state in warn color and only falls back to 'Project synced' when the last sync genuinely succeeded; a new blockedNote signal covers the two panel-less blocked outcomes. The label is now a role=status aria-live region.",
+        "breaking": false,
+        "summary": "Sidebar sync footer stays honest when sync is blocked",
+        "references": [
+          "commit:50f59c2",
+          "file:dashboard/src/components/sleepy"
+        ]
+      },
+      {
+        "date": "2026-07-08",
+        "type": "feat",
+        "scope": "tasks",
+        "description": "Make task→feature assignment real and keep both sides in lockstep. New feature-links.ts engine: canonical (folder-qualified) feature resolution, bidirectional apply (task.related_feature ↔ feature.related_tasks), task rename/delete healing, and audit/reconcile — all reads/writes guarded against path traversal. CLI: tasks create --feature, new tasks feature <task> [ref|clear] (mirrors tasks objectives), and create-time nudges when a link is unset. features set/create related_tasks now validate slugs and write through to each task's related_feature (ghost slugs refused). Server PATCH /api/tasks/:slug validates objectives + related_feature (400 on unknown/ambiguous) and write-throughs the feature side. graph.ts draws task→feature edges by slug (was id-only, so real links drew none); snapshot renders each task's Feature inline. Dashboard feature picker emits folder-qualified slugs; invalidates knowledge query on related_feature change. 11 files, 1266 insertions. +19-test feature-links engine suite, golden PATCH-route coverage, and cli-commands integration coverage for create/set validation + write-through. Backfilled this brain's links: 35 tasks now carry related_feature (was 1). Held back from this commit (file-level tangled with concurrent brain-sync refactor): doctor --heal-links wiring in doctor.ts and skill/agent docs (to be committed once that work settled).",
+        "breaking": false,
+        "summary": "Validated, bidirectional, self-healing task↔feature links",
+        "references": [
+          "commit:3fe9922",
+          "file:src/lib/feature-links.ts",
+          "file:tests/unit/feature-links.test.ts",
+          "file:src/cli/commands/tasks.ts",
+          "file:src/cli/commands/features.ts",
+          "task:task-feature-objective-links-validated-assignment-bidirectional-maintenance"
+        ]
+      },
+      {
+        "date": "2026-07-08",
+        "type": "fix",
+        "scope": "roadmap",
+        "description": "The timeline forecast slid an objective's full committed-window width forward on every dependency push (forecast_end = forecast_start + windowWidth), so a terminal objective slipped past its target even when its dependencies were on time and no effort was set. The frontend (slide) and server (clamp) also silently disagreed, and the effort field was captured but never touched the forecast. Unified both engines on an effort-aware, envelope-clamped finish-to-start model: forecast_start = max(committed start, max dep forecast_end); workEnd = forecast_start + effort×7; forecast_end = max(committed end, workEnd) — bar never shrinks below the window; slipping = target set AND workEnd > target; slipDays = workEnd − target (negative = buffer/runway). An on-time dependency now consumes an objective's slack, not its deadline (no effort + deps on time = on track); effort drives a real, sized slip when the work can't fit before the target. The server also forecasts committed-window objectives that have no dated tasks (were unforecastable), so the CLI/snapshot match the timeline. Objectives with dated tasks keep the task-date basis. Also rewrote the timeline bar green/red split (slip-aware, handles start pushed past target and a null target), made milestone bars render + draggable, and made the detail-panel risk banner attribute a slip to its real cause. +20 new tests (12 in roadmap-forecast.test.ts, 8 in roadmap-model.test.ts).",
+        "breaking": false,
+        "summary": "Effort-aware, envelope-clamped forecast — no phantom dependency slip",
+        "references": [
+          "commit:e214338",
+          "file:dashboard/src/components/roadmap/roadmap-forecast.ts",
+          "file:src/lib/roadmap-model.ts",
+          "file:tests/unit/roadmap-forecast.test.ts",
+          "knowledge:features/okr-roadmap"
+        ]
+      },
+      {
+        "date": "2026-07-08",
+        "type": "feat",
+        "scope": "brain-sync",
+        "description": "For dreamcontext to work across a team, .claude/ and _dream_context/ must be shared together. The brain-only 'separate' mode synced only _dream_context/ into its own dedicated repo and needed the 'platform' symlink hack to drag the Claude Code layer along — architecturally wrong. Cloud sync is now one model: full-repo (whole project → its own origin, current branch) when ON, in-tree (commit-only, never pushes) when OFF. Removed: platform-layer.ts + brain platform command, detach.ts + brain detach, brain init/attach/discover, the create/attach/attach-preview/discover/disconnect/scope server routes + dashboard hooks, dashboard BrainRepoSetup + the two-card scope chooser + i18n keys, and the brainRepo.remote/codeRepoUrl/marker config fields. The master cloud-sync toggle now sets full-repo on enable (400 no_origin without a project origin) and in-tree on disable. No migration — a stale mode:separate config silently resolves to in-tree. Kept (all shared with full-repo): GitHub device-flow + PAT login, GIT_ASKPASS token supply, the scrub gate, the semantic merge agent + /dream-sync, and the GitHubLogin/TeamUpdatesBadge/BrainSyncControl components. Skills + docs swept to the two-mode model. 41 files, +465/−4199 lines.",
+        "breaking": true,
+        "summary": "Removed separate mode — whole-project (full-repo) is the only cloud-sync option",
+        "references": [
+          "commit:b45abd4",
+          "file:src/cli/commands/brain.ts",
+          "file:src/lib/git-sync/brain-repo.ts",
+          "file:skill/references/brain-sync.md",
+          "knowledge:features/brain-repo-sync"
+        ]
+      },
+      {
+        "date": "2026-07-08",
+        "type": "feat",
+        "scope": "knowledge",
+        "description": "Knowledge now supports arbitrary topical subfolders beyond data-structures/diagrams/products. Features (PRDs) can be grouped into topical/product subfolders under knowledge/features/ (e.g. features/lina/, features/memoryos/) — flat and nested features are first-class everywhere (recall corpus, graph, releases, dashboard tree, etc.). A feature's product is the SINGLE SOURCE OF TRUTH derived from its top-level folder path (features/lina/checkout.md → lina; features/lina/growth/x.md → lina; features/x.md → undefined/global) — the stored product: frontmatter field was removed across ~24 feature files because it could diverge from the path. Moving a feature (via features move) is the one operation that re-scopes it. New helpers in features-path.ts: featureSlug (folder-qualified slug relative to features/, e.g. lina/checkout), featureProduct (top-level folder only), featureProductFromRelPath (for recall corpus). Recall corpus, graph, initializer, release-discovery/backpopulate all updated to recurse subfolders and emit folder-qualified slugs. New test suite tests/unit/features-subfolder.test.ts pins the invariants. Touches doctor.ts, knowledge.ts, memory.ts, sleep.ts, features-path.ts, initializer-detect.ts, recall.ts, release-backpopulate.ts, release-discovery.ts.",
+        "breaking": false,
+        "summary": "Features support arbitrary topical/product subfolders; product is path-derived (SSOT), never stored",
+        "references": [
+          "file:src/lib/features-path.ts",
+          "file:tests/unit/features-subfolder.test.ts",
+          "file:src/lib/recall.ts",
+          "file:src/lib/graph.ts",
+          "file:src/cli/commands/knowledge.ts"
+        ]
+      }
+    ]
+  },
+  {
     "id": "rel_QDmxjDMb",
     "version": "v0.14.2",
     "date": "2026-07-08",
