@@ -110,3 +110,51 @@ describe('skill/references/knowledge-and-recall.md markers', () => {
     expect(content).toContain('taxonomy alias');
   });
 });
+
+// ── brain-sync.md markers ────────────────────────────────────────────────────
+// Brain-sync docs lagged the code once: full-repo mode + cross-OS setup shipped
+// with zero skill coverage, so an agent could neither explain nor guide GitHub
+// sync across machines. These markers make a silent doc regression loud.
+
+describe('skill/references/brain-sync.md markers', () => {
+  const content = readFileSync(
+    join(ROOT, 'skill', 'references', 'brain-sync.md'),
+    'utf-8',
+  );
+
+  it('documents the three sync modes (separate / full-repo / in-tree)', () => {
+    expect(content).toContain('## The three sync modes');
+    expect(content).toContain('full-repo');
+    expect(content).toContain('in-tree');
+  });
+
+  it('has the cross-machine / cross-OS setup section', () => {
+    expect(content).toContain('## Cross-machine / cross-OS setup');
+    expect(content).toContain('core.autocrlf false'); // Windows CRLF gotcha
+    expect(content).toContain('enclosing-repo trap'); // the git-root footgun
+  });
+
+  it('documents token resolution + that gh/credential helpers are NOT used', () => {
+    expect(content).toContain('resolveBrainSyncToken');
+    expect(content).toContain('config github-token');
+  });
+
+  it('has the silent-failure troubleshooting playbook', () => {
+    expect(content).toContain('When sync is');
+    expect(content).toContain('brain sync --push-only');
+  });
+});
+
+describe('skill/SKILL.md brain-sync routing', () => {
+  const content = readFileSync(join(ROOT, 'skill', 'SKILL.md'), 'utf-8');
+  it('routes the shared-brain capability to brain-sync.md', () => {
+    expect(content).toContain('references/brain-sync.md');
+  });
+});
+
+describe('skill/references/sleep.md brain-sync step', () => {
+  const content = readFileSync(join(ROOT, 'skill', 'references', 'sleep.md'), 'utf-8');
+  it('documents that sleep done runs brain sync', () => {
+    expect(content).toContain('Brain sync also fires here');
+  });
+});

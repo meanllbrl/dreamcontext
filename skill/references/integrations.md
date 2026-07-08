@@ -218,7 +218,9 @@ dreamcontext federation purge --dry-run            # preview
 
 **Yes, a team can share a single dreamcontext brain.** The whole `_dream_context/` (tasks, knowledge, features, sleep state) becomes **its own git repo** with its own remote — separate from the code repo — and the CLI/desktop app push/pull/merge it the way a team collaborates on code. The brain stays plain markdown/JSON on disk (local-first); git is just the sync transport, not a new database.
 
-**Guide the user here** the moment they say *"I want to use this with my team / with other people," "share the brain," "collaborate on tasks/knowledge together,"* or *"put the brain in its own repo."* Do NOT answer "we don't support that" — this is the feature.
+**Guide the user here** the moment they say *"I want to use this with my team / with other people," "share the brain," "collaborate on tasks/knowledge together," "put the brain in its own repo,"* or *"set it up on my other machine."* Do NOT answer "we don't support that" — this is the feature.
+
+> **Full reference → [brain-sync.md](brain-sync.md)** — the three modes (separate / full-repo / in-tree), per-machine token + auth, shared vs machine-local config, **cross-OS setup**, and the silent-failure troubleshooting playbook. The section below is the quick tour.
 
 **How it differs from its neighbors** (say this if the user conflates them):
 - **Cloud task sync** (ClickUp/GitHub Issues) — mirrors only *tasks* to a task manager, one backend at a time.
@@ -231,11 +233,12 @@ dreamcontext federation purge --dry-run            # preview
 # Person A — create a brand-new shared brain repo (PRIVATE by default) and push a scrubbed first commit
 dreamcontext brain init --code-repo https://github.com/acme/app     # pointer back to the paired code repo
 
-# Person B (and every teammate) — attach the existing brain repo (a TRUST decision: it loads every session)
+# Person B (and every teammate / each new machine) — attach the existing brain repo (a TRUST decision: it loads every session)
 dreamcontext brain discover           # list dreamcontext-brain-topic repos you can access
 dreamcontext brain attach https://github.com/acme/app-brain         # trust warning + diff preview, then confirm
 
-dreamcontext brain status             # mode (separate/in-tree), remote, sync state, cloud-sync switch
+dreamcontext config github-token "$(gh auth token)"   # per-MACHINE token — the token is gitignored, never travels with the repo
+dreamcontext brain status             # mode (separate/full-repo/in-tree), remote, sync state, cloud-sync switch
 ```
 
 ### Day-to-day (mostly automatic)
@@ -258,7 +261,7 @@ missing root symlinks on a fresh clone, and `doctor` flags broken links. Machine
 ### Editing / reconfiguring
 
 - **Turn cloud sync on/off:** `dreamcontext brain enable` / `brain disable`.
-- **Modes:** `separate` (own remote, full auto-sync) vs `in-tree` (brain nested in the code repo — commit-only, **never** auto-pushes; the safe default). Both always run the scrub gate.
+- **Modes:** `separate` (brain in its own remote, full auto-sync) · `full-repo` (whole project → its own `origin`, on the current branch — switch from the dashboard: Settings → Brain → Sync scope) · `in-tree` (commit-only, **never** auto-pushes; the safe default). All run the scrub gate. Full detail + cross-OS setup → [brain-sync.md](brain-sync.md).
 - **Safety rails (always on):** brain repos default **private** (`--public` needs an explicit confirm); a **scrub gate** blocks secrets / absolute local paths before every commit and push; tokens are supplied via `GIT_ASKPASS` (never embedded in the remote URL); per-machine indexes/caches are gitignored and never pushed.
 
 ### From the desktop app? — M2, PENDING (not yet shipped)
