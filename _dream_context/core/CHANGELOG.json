@@ -1,5 +1,16 @@
 [
   {
+    "date": "2026-07-08",
+    "type": "docs",
+    "scope": "brain-sync",
+    "description": "New skill/references/brain-sync.md: three sync modes (separate/full-repo/in-tree), setup, secrets-first token auth (no gh/credential-helper) + required push scope, shared-vs-machine-local config, lifecycle, cross-OS setup (per-machine token, Windows CRLF + symlink privilege, enclosing-repo trap, WSL), silent-failure troubleshooting, second-machine onboarding. Slimmed integrations.md to a pointer + added full-repo; documented sleep-done brain sync in sleep.md; repointed SKILL.md; 6 marker tests pin the load-bearing sections. Closes the doc lag behind the full-repo hardening code (d8f633d).",
+    "breaking": false,
+    "summary": "Dedicated brain-sync skill reference — full-repo mode, cross-OS setup, token scope, troubleshooting",
+    "references": [
+      "commit:172bd11"
+    ]
+  },
+  {
     "date": "2026-07-07",
     "type": "feat",
     "scope": "dashboard",
