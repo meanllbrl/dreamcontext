@@ -754,7 +754,7 @@ Every machine builds its own recall index, embeddings, and caches over the share
 
 ### Desktop integration
 
-The launcher wraps all of this without a terminal: a device-flow GitHub login (with a PAT fallback), a Settings "Cloud sync" toggle that turns whole-project sync on/off (the master switch), a team-updates badge fed by a cache-only endpoint, and a one-click "Resolve with AI" for a deferred prose merge. The server routes call the same in-process sync functions the CLI uses — not a shell-out to the CLI — so the desktop and terminal paths share one implementation.
+The launcher wraps all of this without a terminal: a device-flow GitHub login (with a PAT fallback), a Settings "Cloud sync" toggle that turns whole-project sync on/off (the master switch), a team-updates badge fed by a cache-only endpoint, and a one-click "Resolve with AI" for a deferred prose merge. When the project has no `origin`, the same panel offers **Create new** (a fresh private-by-default repo wired as `origin`) or **Connect existing** — so a project can go from no remote to synced without dropping to a shell — then lays the gitignore-first excludes and runs the first push. The server routes call the same in-process sync functions the CLI uses — not a shell-out to the CLI — so the desktop and terminal paths share one implementation.
 
 ## Obsidian Integration
 
