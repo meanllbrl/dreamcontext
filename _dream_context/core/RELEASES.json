@@ -1,5 +1,16 @@
 [
   {
+    "id": "rel_odC6Ra7D",
+    "version": "0.17.0",
+    "date": "",
+    "summary": "Cloud-sync origin management + reliability. Settings → Cloud sync now shows a connected-origin card to view / change / disconnect the linked repo (preview-gated re-point, confirm-gated detach, merge-guarded). Plus: stop false 'GitHub sign-in expired' when the session is valid (real git auth result is now the single source of truth); desktop app auto-relaunches after an in-place upgrade (macOS self-heal, ships via npm — no Tauri rebuild); and the dashboard roadmap timeline now honours the task-date basis, killing a phantom rollup slip that disagreed with the CLI forecast.",
+    "breaking": false,
+    "status": "planning",
+    "features": [],
+    "tasks": [],
+    "changelog": []
+  },
+  {
     "id": "rel_FlKV6wOw",
     "version": "0.16.0",
     "date": "2026-07-09",

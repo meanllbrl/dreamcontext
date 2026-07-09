@@ -1,6 +1,70 @@
 [
   {
     "date": "2026-07-09",
+    "type": "fix",
+    "scope": "roadmap",
+    "description": "The frontend forecast engine (roadmap-forecast.ts) never consumed member tasks — it only ran the committed-window + effort basis — so any objective with dated member tasks silently disagreed with the CLI/snapshot engine (roadmap-model.ts), which treats the task span as the schedule of record. Visible failure: a ROLLUP objective that BOTH depends_on its sub-objectives AND shares their member tasks — the timeline pushed forecast_start to the dependency finish then stacked the rollup's own effort on top, but that own work IS the shared tasks it already counted via the dependency, inflating the bar into a phantom slip while the CLI read on track. buildForecasts now mirrors roadmap-model.ts three-branch order exactly: (1) dated member tasks give a span (earliest start to latest due) clamped to dep finishes, effort NOT re-added; (2) else committed start gives window + effort; (3) else deps give milestone + effort. Each Forecast carries a basis of tasks|window|milestone|none; ObjectiveDetailPanel uses it to attribute a slip and caption the footer. Adds a cross-engine parity test driving both engines through real scratch vaults.",
+    "breaking": false,
+    "summary": "Timeline forecast honours the task-date basis (kills phantom rollup slip)",
+    "references": [
+      "commit:0df09cb",
+      "file:dashboard/src/components/roadmap/roadmap-forecast.ts",
+      "file:tests/unit/roadmap-forecast-model-parity.test.ts"
+    ],
+    "authors": [
+      "mehmet"
+    ]
+  },
+  {
+    "date": "2026-07-09",
+    "type": "feat",
+    "scope": "cloud-sync",
+    "description": "Once a project had a git origin, Settings then Cloud sync showed nothing between GitHub sign-in and Linked repos — OriginSetup self-hid the moment an origin existed, leaving the connected repo invisible and unmanageable. OriginSetup now renders a connected-origin card when an origin is set: View (repo name linking to GitHub + full remote URL), Change (re-point origin at a different reachable repo, preview-gated; reverts sync to in-tree so no background pull races the new remote's history), and Disconnect (confirm-gated detach that removes origin + reverts to in-tree; refuses with 409 merge_in_progress while a merge is live). Backend: POST /api/brain/origin/update and /detach, detachProjectOrigin() + disableFullRepo(). Frontend: useUpdateOrigin/useDetachOrigin hooks + card + 8 i18n keys. Security review PASS (git via execFileSync argv, canonicalRemote rebuild, fixed api.github.com host, no token leak). +5 lib/route tests.",
+    "breaking": false,
+    "summary": "Manage the connected origin — view / change / disconnect in Settings",
+    "references": [
+      "commit:897e7e2",
+      "file:dashboard/src/components/brain/OriginSetup.tsx",
+      "file:src/server/routes/brain.ts"
+    ],
+    "authors": [
+      "mehmet"
+    ]
+  },
+  {
+    "date": "2026-07-09",
+    "type": "fix",
+    "scope": "desktop",
+    "description": "A long-lived desktop dashboard server holds its route table and frontend bundle in memory, so after `dreamcontext upgrade` / `npm i -g` it kept serving the OLD build (stale UI, missing sections, old routes) until manually quit + relaunched; macOS had no auto-heal (the drift self-exit is excluded for the desktop app and the ensure-dashboard heal was Windows-only). Now: server-side startUpgradeReadyWatch (desktop-gated) flags a strictly-newer on-disk version (compareVersions > 0, so a downgrade never force-relaunches), surfaced on /api/health as upgradeReady; an UpgradeRelaunchBanner auto-relaunches the whole app (close windows then app quits then detached open reopens on the fresh CLI), checking the relaunch ok before quitting so a failed relaunch never dead-ends, with an 8s stuck-spinner safety net and a 20s countdown + Later escape; launcher dedups in-flight /launcher/relaunch; version-check reads the CLI version fresh from disk so the update badge self-clears. Ships via npm (no Tauri rebuild).",
+    "breaking": false,
+    "summary": "Desktop app auto-relaunches after an in-place upgrade (macOS self-heal)",
+    "references": [
+      "commit:51a2c66",
+      "file:src/server/lifecycle.ts",
+      "file:dashboard/src/components/layout/UpgradeRelaunchBanner.tsx"
+    ],
+    "authors": [
+      "mehmet"
+    ]
+  },
+  {
+    "date": "2026-07-09",
+    "type": "fix",
+    "scope": "cloud-sync",
+    "description": "The desktop app disables the OS credential helper and authenticates git only via its stored global OAuth token, while three surfaces read three uncoordinated signals — the sidebar read the real git result, /brain/auth/status reported \"connected\" on token PRESENCE alone, and the CLI used a separate keychain credential. A stale app token made the on-open pull throw auth (\"GitHub sign-in expired\") while Settings still showed a valid session and the CLI synced fine. Fix makes the ACTUAL git auth result the single source of truth: new global needsReconnect flag written off the real git outcome (set on a classified auth-reject, cleared on any authenticated result; never marks-invalid with no token), surfaced on /brain/auth/status so the Settings chip and sidebar can't disagree; classifySyncError splits \"no token\" from \"expired/invalid\"; Settings renders an invalid chip + in-place Reconnect; a sync refreshes auth-status in real time. +unit/route tests.",
+    "breaking": false,
+    "summary": "Stop false 'GitHub sign-in expired' when the session is actually valid",
+    "references": [
+      "commit:f523723",
+      "file:src/lib/git-sync/auth-store.ts",
+      "file:src/server/routes/brain.ts"
+    ],
+    "authors": [
+      "mehmet"
+    ]
+  },
+  {
+    "date": "2026-07-09",
     "type": "feat",
     "scope": "brain",
     "description": "A dreamcontext brain can now govern bare code repositories via a two-layer model: shared {name, gitRemoteUrl} in .config.json (team-synced when cloud-sync is on); machine-local url→path registry (~/.dreamcontext/linked-repos.json, never synced). 'Link' is a pointer, not a pipe — records existence + local location, never syncs code. New 'dreamcontext link' CLI (add/list/remove/clone); GET+POST /api/linked-repos server routes; dashboard Linked Repos panel in Settings (Add / Clone missing / Remove). Trust-gated clone: user confirms the repo URL before any git operation. Security ordering: S1 (RCE/arg-injection guard BEFORE any git call — parseRepoSlug + canonicalRemote rebuild), S2 (path-traversal containment — sanitizeRepoName + resolve + startsWith guard), S3 (governed-repo origin-match checks in linkRepo). git.ts clone() globally hardened with -c protocol.ext.allow=never + -- terminator. lib: src/lib/linked-repos.ts; CLI: src/cli/commands/link.ts; routes: src/server/routes/linked-repos.ts; dashboard: LinkedRepos.tsx + useLinkedRepos hook; +4 unit/integration tests. Uncommitted (session 94eda2ea).",
