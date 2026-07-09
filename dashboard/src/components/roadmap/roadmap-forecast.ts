@@ -27,8 +27,21 @@
  * its committed deadline (or later, if it overshoots), NOT its instantaneous workEnd:
  * a predecessor isn't "done" until its own target passes.
  *
- * An objective with no dates and no forecastable dependency is "unforecastable" — it
- * imposes no constraint on its dependents (non-blocking), like the server-side rule.
+ * DATED MEMBER TASKS ARE THE SCHEDULE OF RECORD. When an objective has member tasks
+ * carrying real start/due dates, those dates ARE the forecast (span = earliest start →
+ * latest due, still clamped to dependency finishes) and effort is NOT re-added on top —
+ * the tasks already encode the duration. This mirrors `roadmap-model.ts` exactly and is
+ * what keeps a ROLLUP objective honest: one that BOTH `depends_on` its sub-objectives
+ * AND shares their member tasks must not stack its own effort after the dependency's
+ * finish (the tasks it shares ARE that work). Without this rule the committed-window
+ * branch stacked effort past the dependency, inflating the bar into a phantom slip that
+ * disagreed with the CLI forecast. Only when an objective has no dated tasks does the
+ * committed-window (start→target + effort) or pure-milestone (inherited-finish + effort)
+ * basis apply.
+ *
+ * An objective with no dated tasks, no dates and no forecastable dependency is
+ * "unforecastable" — it imposes no constraint on its dependents (non-blocking), like
+ * the server-side rule.
  */
 
 // ── calendar-safe date utils (shared by the timeline; never touches tasks utils) ──
@@ -55,6 +68,8 @@ export const todayISO = () => formatISO(new Date());
 export const fmtShort = (iso: string) => { const d = parseISO(iso); return `${MONTH_SHORT[d.getMonth()]} ${d.getDate()}`; };
 const maxISO = (a: string | null, b: string | null): string | null =>
   a === null ? b : b === null ? a : a > b ? a : b;
+const minISO = (a: string | null, b: string | null): string | null =>
+  a === null ? b : b === null ? a : a < b ? a : b;
 
 /**
  * Defense-in-depth: a committed date that isn't a real YYYY-MM-DD is treated as
@@ -78,6 +93,14 @@ export interface ForecastInput {
   /** Prioritization effort in WEEKS (Impact × Effort). Drives the work duration; null = unknown (0 days, no invented delay). */
   effort?: number | null;
   depends_on: string[];
+  /**
+   * Member tasks (from the computed model). When ANY carries a real start/due date the
+   * task span becomes the SCHEDULE OF RECORD — the objective forecasts from those dates
+   * (earliest start → latest due, clamped to dep finishes) and effort is NOT re-added,
+   * mirroring `roadmap-model.ts`. Undated/omitted → the committed-window/effort basis is
+   * used. `RoadmapItem.tasks` is structurally assignable here (extra fields are ignored).
+   */
+  tasks?: Array<{ start_date: string | null; due_date: string | null }>;
 }
 
 /** Whole calendar days of work for an effort estimate (weeks → days); null/≤0 = 0. */
@@ -104,6 +127,12 @@ export interface Forecast {
   /** Computed reverse edges (objectives that depend on this one). */
   dependents: string[];
   signal: Signal;
+  /**
+   * Which input drove the forecast: `tasks` (dated member tasks = schedule of record,
+   * no effort re-added), `window` (committed start→target + effort), `milestone`
+   * (finish inherited from dependencies + effort), or `none` (unforecastable).
+   */
+  basis: 'tasks' | 'window' | 'milestone' | 'none';
 }
 
 /** Kahn topological sort by depends_on (dependencies first); cycles fall back to input order. */
@@ -178,23 +207,42 @@ export function buildForecasts(
       depFinish = maxISO(depFinish, forecastEndOf.get(dep) ?? null);
     }
 
-    // Forecastable if it has its own committed anchor OR inherits one from a dep
-    // (a pure milestone: "launch" that only depends on other objectives).
-    const anchorStart = committedStart ?? depFinish;
-    const forecastable = anchorStart !== null;
+    // Dated member tasks (start and/or due) are the SCHEDULE OF RECORD — sanitized so a
+    // malformed date is treated as absent. See the top-of-file docstring.
+    const taskStart = (o.tasks ?? []).reduce<string | null>((acc, t) => minISO(acc, validISO(t.start_date)), null);
+    const taskDue = (o.tasks ?? []).reduce<string | null>((acc, t) => maxISO(acc, validISO(t.due_date)), null);
+    const hasDatedTasks = taskStart !== null || taskDue !== null;
 
     let forecast_start: string | null = null;
     let forecast_end: string | null = null;
     let workEnd: string | null = null;
-    if (forecastable) {
-      forecast_start = maxISO(anchorStart, depFinish)!;
-      // When the actual work finishes: effort added to the achievable start.
+    let basis: Forecast['basis'] = 'none';
+    if (hasDatedTasks) {
+      // Task-date basis (mirrors roadmap-model.ts): span = earliest start → latest due,
+      // clamped to the dependency finish. Effort is NOT re-added — the task dates already
+      // encode the duration, so a rollup sharing its deps' tasks can't double-count. Slip
+      // is measured on the task-derived finish (no separate workEnd).
+      forecast_start = maxISO(taskStart, depFinish) ?? taskDue;
+      forecast_end = maxISO(taskDue, forecast_start);
+      workEnd = forecast_end;
+      basis = 'tasks';
+    } else if (committedStart !== null) {
+      // Committed-window basis: the start→target window is a deadline plan, not a rigid
+      // block that slides. A dependency pushes the achievable start; effort weeks of work
+      // run from there; the bar never renders shorter than the committed window the PO drew.
+      forecast_start = maxISO(committedStart, depFinish)!;
       workEnd = addISO(forecast_start, effortDays);
-      // The bar never renders shorter than the committed window the PO drew, and
-      // extends when the work overshoots it. Pure milestone (no own end) → workEnd.
-      const barEndFloor = committedEnd ?? forecast_start;
-      forecast_end = maxISO(barEndFloor, workEnd)!;
+      forecast_end = maxISO(committedEnd ?? forecast_start, workEnd)!;
+      basis = 'window';
+    } else if (depFinish !== null) {
+      // Pure MILESTONE (no dated tasks, no own committed start): inherits its finish from
+      // its latest dependency plus any own effort, so an upstream slip cascades in.
+      forecast_start = depFinish;
+      workEnd = addISO(depFinish, effortDays);
+      forecast_end = workEnd;
+      basis = 'milestone';
     }
+    const forecastable = basis !== 'none';
     forecastEndOf.set(o.slug, forecast_end);
 
     // Slip / buffer is measured against the real committed TARGET only (a deadline).
@@ -217,6 +265,7 @@ export function buildForecasts(
       slipDays,
       dependents: (dependentsOf.get(o.slug) ?? []).slice().sort(),
       signal,
+      basis,
     });
   }
   return out;

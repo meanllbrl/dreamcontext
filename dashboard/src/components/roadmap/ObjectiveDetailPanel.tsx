@@ -162,10 +162,11 @@ export function ObjectiveDetailPanel({ item, forecast, itemsBySlug, forecasts, o
       cause = ` Likely cause: upstream ${item.slipUpstream.join(', ')} running late.`;
     } else if (startPastTarget) {
       cause = ` Cause: it can’t start until ${fmtShort(forecast.forecast_start!)}, already past the target.`;
+    } else if (forecast.basis === 'tasks') {
+      // Dated tasks are the schedule of record — effort isn't in play here, the tasks are.
+      cause = ' Cause: this objective’s own member tasks overrun the target.';
     } else if (item.effort) {
       cause = ` Cause: the ${item.effort}-week effort estimate doesn’t fit before the target — widen the window or lower the effort.`;
-    } else if (item.progress.total > 0) {
-      cause = ' Cause: this objective’s own tasks overrun the target.';
     } else {
       cause = ' Cause: the committed window overruns the target.';
     }
@@ -396,7 +397,13 @@ export function ObjectiveDetailPanel({ item, forecast, itemsBySlug, forecasts, o
 
         <div className="odp-foot">
           <span className="odp-foot-note">
-            {item.progress.total > 0 ? `forecast from ${item.progress.total} task${item.progress.total === 1 ? '' : 's'} + deps` : 'forecast from committed dates + deps'}
+            {forecast.basis === 'tasks'
+              ? `forecast from ${item.progress.total} task${item.progress.total === 1 ? '' : 's'} + deps`
+              : forecast.basis === 'milestone'
+                ? 'forecast from dependencies'
+                : forecast.forecastable
+                  ? 'forecast from committed dates + deps'
+                  : 'no forecast — set dates or link dated tasks'}
           </span>
           <button className="odp-delete" onClick={handleDelete} title="Delete this objective">
             {deleteObjective.isPending ? 'Deleting…' : 'Delete'}

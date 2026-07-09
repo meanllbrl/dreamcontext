@@ -130,3 +130,87 @@ describe('buildForecasts — committed window, effort-aware, envelope-clamped', 
     expect(f.forecast_end).toBeNull();
   });
 });
+
+describe('buildForecasts — dated tasks are the schedule of record (lock-step with roadmap-model.ts)', () => {
+  const task = (start: string | null, due: string | null) => ({ start_date: start, due_date: due });
+
+  it('THE FIX: a rollup sharing its dependency’s member tasks does NOT stack effort (phantom slip gone)', () => {
+    // `child` owns a dated task (Jul 1 → Aug 1). `rollup` depends_on `child`, SHARES that
+    // same task, and carries a 4-week effort estimate over a Jul 1 → Aug 15 window.
+    // The old committed-window+effort engine stacked rollup's 28 days AFTER child's Aug 1
+    // finish → Aug 29, a phantom slip past Aug 15 that disagreed with the CLI forecast.
+    // With the task-date basis the shared task is the schedule of record: no effort added,
+    // and rollup finishes Aug 1 on track — exactly what roadmap-model.ts computes.
+    const shared = [task('2026-07-01', '2026-08-01')];
+    const m = buildForecasts([
+      obj('child', '2026-07-01', '2026-08-01', { tasks: shared }),
+      obj('rollup', '2026-07-01', '2026-08-15', { effort: 4, depends_on: ['child'], tasks: shared }),
+    ]);
+    expect(m.get('child')!.forecast_end).toBe('2026-08-01');
+    const r = m.get('rollup')!;
+    expect(r.basis).toBe('tasks');
+    expect(r.forecast_start).toBe('2026-08-01'); // pushed to the dependency finish
+    expect(r.forecast_end).toBe('2026-08-01');   // task span — effort NOT stacked on top
+    expect(r.slipping).toBe(false);              // Aug 1 ≤ Aug 15 target → on track
+    expect(r.slipDays).toBe(-14);                // 14 days of buffer, not a 14-day slip
+  });
+
+  it('a task-bearing objective forecasts from its task span; effort is not re-added on top', () => {
+    // Effort 4 (28d) is set, but dated tasks win — forecast is the task span (Jul 1 → Jul 20),
+    // NOT start + effort (which would be Jul 29). Mirrors the server’s hasDates branch.
+    const f = buildForecasts([
+      obj('a', '2026-07-01', '2026-07-31', { effort: 4, tasks: [task('2026-07-01', '2026-07-20')] }),
+    ]).get('a')!;
+    expect(f.basis).toBe('tasks');
+    expect(f.forecast_start).toBe('2026-07-01');
+    expect(f.forecast_end).toBe('2026-07-20');
+    expect(f.slipping).toBe(false);
+  });
+
+  it('a task-bearing objective slips when its OWN tasks overrun the committed target', () => {
+    const f = buildForecasts([
+      obj('a', '2026-07-01', '2026-08-01', { tasks: [task('2026-07-01', '2026-08-11')] }),
+    ]).get('a')!;
+    expect(f.basis).toBe('tasks');
+    expect(f.forecast_end).toBe('2026-08-11');
+    expect(f.slipping).toBe(true);
+    expect(f.slipDays).toBe(10); // Aug 11 − Aug 1
+  });
+
+  it('an objective with only dated tasks (no committed window, no deps) is forecastable from them', () => {
+    // Previously this rendered as an "unforecastable — no dates" ghost row on the timeline
+    // even though the CLI forecast it from its tasks; now the two agree.
+    const f = buildForecasts([
+      obj('a', null, null, { tasks: [task('2026-07-01', '2026-07-20')] }),
+    ]).get('a')!;
+    expect(f.forecastable).toBe(true);
+    expect(f.basis).toBe('tasks');
+    expect(f.forecast_start).toBe('2026-07-01');
+    expect(f.forecast_end).toBe('2026-07-20');
+  });
+
+  it('an upstream slip still cascades into a task-bearing dependent (finish-to-start clamp holds)', () => {
+    // `up` finishes late (Dec 1, own task); `down` shares a fine task (due Aug 1) but must
+    // start after `up`, so its span is clamped forward and it slips past its Sep 1 target.
+    const m = buildForecasts([
+      obj('up', null, null, { tasks: [task('2026-07-01', '2026-12-01')] }),
+      obj('down', '2026-07-01', '2026-09-01', { depends_on: ['up'], tasks: [task('2026-07-01', '2026-08-01')] }),
+    ]);
+    const d = m.get('down')!;
+    expect(d.basis).toBe('tasks');
+    expect(d.forecast_start).toBe('2026-12-01'); // clamped to the dep finish
+    expect(d.forecast_end).toBe('2026-12-01');
+    expect(d.slipping).toBe(true);
+  });
+
+  it('an undated member task does not trigger the task basis (falls back to the committed window)', () => {
+    // A task with neither start nor due is not a schedule of record — the objective keeps
+    // its committed-window + effort forecast, exactly as before this change.
+    const f = buildForecasts([
+      obj('a', '2026-07-01', '2026-07-25', { tasks: [task(null, null)] }),
+    ]).get('a')!;
+    expect(f.basis).toBe('window');
+    expect(f.forecast_start).toBe('2026-07-01');
+    expect(f.forecast_end).toBe('2026-07-25');
+  });
+});
