@@ -93,3 +93,45 @@
 .origin-setup-outcome--warn {
   color: var(--color-error);
 }
+
+/* ─── Connected-origin card (view / change / disconnect) ─── */
+
+.origin-connected-repo {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.origin-connected-name {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+a.origin-connected-name:hover {
+  color: var(--color-accent);
+  text-decoration: underline;
+}
+
+.origin-connected-url {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.origin-connected-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.origin-connected-detach-warn {
+  flex: 1 1 100%;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}

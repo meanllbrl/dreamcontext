@@ -228,6 +228,29 @@ export function useAttachOrigin() {
   });
 }
 
+/**
+ * Re-point the existing origin at a DIFFERENT reachable repo (connected-card
+ * "Change"). Preview-gated server-side; does NOT run a first sync (re-pointing at
+ * an unrelated repo could trigger an unrelated-histories merge — the user syncs
+ * when ready).
+ */
+export function useUpdateOrigin() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (url: string) => api.post<OriginSetupResult>('/brain/origin/update', { url }),
+    onSuccess: () => invalidateBrain(queryClient),
+  });
+}
+
+/** Remove the origin + revert cloud sync to in-tree (connected-card "Disconnect"). */
+export function useDetachOrigin() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post<{ ok: boolean; remote: null }>('/brain/origin/detach', {}),
+    onSuccess: () => invalidateBrain(queryClient),
+  });
+}
+
 // ─── GitHub sign-in (app-global — device flow + PAT fallback) ────────────────
 
 export function useAuthStatus() {

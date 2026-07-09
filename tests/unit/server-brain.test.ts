@@ -13,6 +13,8 @@ import {
   handleBrainOriginCreate,
   handleBrainOriginPreview,
   handleBrainOriginAttach,
+  handleBrainOriginUpdate,
+  handleBrainOriginDetach,
   handleBrainScrubIgnore,
   handleBrainTeamUpdates,
 } from '../../src/server/routes/brain.js';
@@ -382,11 +384,117 @@ describe('brain routes — origin setup (create/attach guards)', () => {
   it('all origin routes 403 outside the desktop app', async () => {
     delete process.env.DREAMCONTEXT_DESKTOP;
     const ctx = makeVault('cur');
-    for (const handler of [handleBrainOriginCreate, handleBrainOriginPreview, handleBrainOriginAttach]) {
+    for (const handler of [handleBrainOriginCreate, handleBrainOriginPreview, handleBrainOriginAttach, handleBrainOriginUpdate, handleBrainOriginDetach]) {
       const { res, status } = makeRes();
       await handler(makeReq('POST', { url: 'a/b', name: 'x' }), res, {}, ctx);
       expect(status()).toBe(403);
     }
+  });
+});
+
+describe('brain routes — origin update (re-point) guards', () => {
+  it('400s when url is missing', async () => {
+    const ctx = makeVault('cur');
+    const { res, status, body } = makeRes();
+    await handleBrainOriginUpdate(makeReq('POST', {}), res, {}, ctx);
+    expect(status()).toBe(400);
+    expect(body().error).toBe('invalid_body');
+  });
+
+  it('401s without a token (url present)', async () => {
+    const ctx = makeVault('cur');
+    const { res, status, body } = makeRes();
+    await handleBrainOriginUpdate(makeReq('POST', { url: 'https://github.com/acme/other' }), res, {}, ctx);
+    expect(status()).toBe(401);
+    expect(body().error).toBe('no_token');
+  });
+
+  it('409 no_origin when the project has no origin yet (use Connect instead)', async () => {
+    process.env.GITHUB_TOKEN = 'ghp_test';
+    const ctx = makeVault('cur');
+    const projectRoot = join(base, 'cur');
+    sh(projectRoot, ['init']); // repo but NO origin
+    const { res, status, body } = makeRes();
+    await handleBrainOriginUpdate(makeReq('POST', { url: 'https://github.com/acme/other' }), res, {}, ctx);
+    expect(status()).toBe(409);
+    expect(body().error).toBe('no_origin');
+  });
+
+  it('re-points the origin to the canonical URL AND turns cloud sync off (in-tree)', async () => {
+    process.env.GITHUB_TOKEN = 'ghp_test';
+    const ctx = makeVault('cur', { mode: 'full-repo', enabled: true, autoSync: true });
+    const projectRoot = join(base, 'cur');
+    sh(projectRoot, ['init']);
+    sh(projectRoot, ['remote', 'add', 'origin', 'https://github.com/acme/old.git']);
+    // Mock the GitHub reachability preview (previewOrigin → GET /repos/acme/new).
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ full_name: 'acme/new', private: true, default_branch: 'main' }),
+    } as unknown as Response);
+
+    const { res, status, body } = makeRes();
+    await handleBrainOriginUpdate(makeReq('POST', { url: 'acme/new' }), res, {}, ctx);
+    expect(status()).toBe(200);
+    expect(body().ok).toBe(true);
+    expect(body().remote).toBe('https://github.com/acme/new.git');
+    expect(body().syncDisabled).toBe(true);
+    // origin actually re-pointed on disk
+    expect(sh(projectRoot, ['remote', 'get-url', 'origin'])).toBe('https://github.com/acme/new.git');
+    // sync reverted to in-tree so no background pull races the new remote (unrelated histories)
+    const cfg = readSetupConfig(projectRoot)?.brainRepo;
+    expect(cfg?.mode).toBe('in-tree');
+    expect(cfg?.enabled).toBe(false);
+    fetchSpy.mockRestore();
+  });
+});
+
+describe('brain routes — origin detach (disconnect)', () => {
+  it('removes the origin and reverts cloud sync to in-tree (disabled)', async () => {
+    const ctx = makeVault('cur', { mode: 'full-repo', enabled: true, autoSync: true });
+    const projectRoot = join(base, 'cur');
+    sh(projectRoot, ['init']);
+    sh(projectRoot, ['remote', 'add', 'origin', 'https://github.com/acme/proj.git']);
+
+    const { res, status, body } = makeRes();
+    await handleBrainOriginDetach(makeReq('POST', {}), res, {}, ctx);
+    expect(status()).toBe(200);
+    expect(body().ok).toBe(true);
+    expect(body().remote).toBeNull();
+    // origin is gone
+    expect(() => sh(projectRoot, ['remote', 'get-url', 'origin'])).toThrow();
+    // config reverted to in-tree + disabled (full-repo sync needs an origin)
+    const cfg = readSetupConfig(projectRoot)?.brainRepo;
+    expect(cfg?.mode).toBe('in-tree');
+    expect(cfg?.enabled).toBe(false);
+  });
+
+  it('is idempotent when there is no origin (still 200 + reverts to in-tree)', async () => {
+    const ctx = makeVault('cur', { mode: 'full-repo', enabled: true });
+    const projectRoot = join(base, 'cur');
+    sh(projectRoot, ['init']); // repo, no origin
+    const { res, status, body } = makeRes();
+    await handleBrainOriginDetach(makeReq('POST', {}), res, {}, ctx);
+    expect(status()).toBe(200);
+    expect(body().ok).toBe(true);
+    expect(readSetupConfig(projectRoot)?.brainRepo?.mode).toBe('in-tree');
+  });
+
+  it('REFUSES (409) while a merge is in progress — origin + config left untouched', async () => {
+    const ctx = makeVault('cur', { mode: 'full-repo', enabled: true });
+    const projectRoot = join(base, 'cur');
+    sh(projectRoot, ['init']);
+    sh(projectRoot, ['remote', 'add', 'origin', 'https://github.com/acme/proj.git']);
+    // Simulate an in-progress merge (git writes .git/MERGE_HEAD).
+    writeFileSync(join(projectRoot, '.git', 'MERGE_HEAD'), 'deadbeef\n', 'utf-8');
+
+    const { res, status, body } = makeRes();
+    await handleBrainOriginDetach(makeReq('POST', {}), res, {}, ctx);
+    expect(status()).toBe(409);
+    expect(body().error).toBe('merge_in_progress');
+    // nothing mutated: origin still there, config still full-repo (merge stays visible)
+    expect(sh(projectRoot, ['remote', 'get-url', 'origin'])).toBe('https://github.com/acme/proj.git');
+    expect(readSetupConfig(projectRoot)?.brainRepo?.mode).toBe('full-repo');
   });
 });
 

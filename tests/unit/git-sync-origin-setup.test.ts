@@ -8,6 +8,7 @@ import {
   createProjectOrigin,
   attachProjectOrigin,
   previewOrigin,
+  detachProjectOrigin,
 } from '../../src/lib/git-sync/origin-setup.js';
 
 // ─── Fakes ─────────────────────────────────────────────────────────────────
@@ -21,6 +22,7 @@ function fakeGit(initial: { isRepo?: boolean; origin?: string | null } = {}) {
     getRemoteUrl: (_cwd: string, name: string) => (name === 'origin' ? state.origin : null),
     addRemote: (_cwd: string, name: string, url: string) => { if (name === 'origin') state.origin = url; state.calls.push(`add:${url}`); },
     setRemoteUrl: (_cwd: string, name: string, url: string) => { if (name === 'origin') state.origin = url; state.calls.push(`set:${url}`); },
+    removeRemote: (_cwd: string, name: string) => { if (name === 'origin') state.origin = null; state.calls.push(`remove:${name}`); },
   } as unknown as typeof gitModule;
   return { module, state };
 }
@@ -135,6 +137,27 @@ describe('attachProjectOrigin', () => {
   it('throws on a URL that is not a GitHub repo', () => {
     const { module } = fakeGit({ isRepo: true });
     expect(() => attachProjectOrigin({ projectRoot: '/p', url: 'not a url', gitModule: module })).toThrow(/GitHub repo URL/);
+  });
+});
+
+// ─── detachProjectOrigin ─────────────────────────────────────────────────────
+
+describe('detachProjectOrigin', () => {
+  it('removes an existing origin', () => {
+    const { module, state } = fakeGit({ isRepo: true, origin: 'https://github.com/a/b.git' });
+    detachProjectOrigin('/p', module);
+    expect(state.calls).toContain('remove:origin');
+    expect(state.origin).toBeNull();
+  });
+  it('is a no-op when there is no origin (never calls removeRemote)', () => {
+    const { module, state } = fakeGit({ isRepo: true, origin: null });
+    detachProjectOrigin('/p', module);
+    expect(state.calls).not.toContain('remove:origin');
+  });
+  it('is a no-op when the project is not a git repo', () => {
+    const { module, state } = fakeGit({ isRepo: false });
+    detachProjectOrigin('/p', module);
+    expect(state.calls).toEqual([]);
   });
 });
 

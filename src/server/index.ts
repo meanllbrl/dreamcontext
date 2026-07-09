@@ -105,6 +105,8 @@ import {
   handleBrainOriginCreate,
   handleBrainOriginPreview,
   handleBrainOriginAttach,
+  handleBrainOriginUpdate,
+  handleBrainOriginDetach,
   handleBrainScrubIgnore,
   handleBrainTeamUpdates,
   handleBrainTeamFetch,
@@ -209,6 +211,8 @@ function buildRouter(): Router {
   router.post('/api/brain/origin/create', handleBrainOriginCreate);
   router.post('/api/brain/origin/preview', handleBrainOriginPreview);
   router.post('/api/brain/origin/attach', handleBrainOriginAttach);
+  router.post('/api/brain/origin/update', handleBrainOriginUpdate);
+  router.post('/api/brain/origin/detach', handleBrainOriginDetach);
   router.post('/api/brain/scrub/ignore', handleBrainScrubIgnore);
 
   // Linked repos — the shared brain governs bare code repos (products) with no

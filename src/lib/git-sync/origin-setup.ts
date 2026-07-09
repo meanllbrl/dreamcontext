@@ -203,3 +203,17 @@ export function attachProjectOrigin(opts: AttachOriginOptions): OriginSetupResul
   setProjectOrigin(opts.projectRoot, remote, opts.gitModule);
   return { remote, fullName: `${slug.owner}/${slug.repo}` };
 }
+
+// ─── Detach ────────────────────────────────────────────────────────────────
+
+/**
+ * Remove the project's `origin` remote — the inverse of create/attach, backing the
+ * connected-origin card's "Disconnect". Idempotent: a no-op when the project is not
+ * a repo or has no `origin`. Local-only (never touches the remote GitHub repo) and
+ * reversible (the user can re-attach). The caller reverts config to `in-tree` so
+ * cloud sync isn't left "on" pointing at a remote that no longer exists.
+ */
+export function detachProjectOrigin(projectRoot: string, gitModule: typeof git = git): void {
+  if (!gitModule.isGitRepo(projectRoot)) return;
+  if (gitModule.getRemoteUrl(projectRoot, 'origin')) gitModule.removeRemote(projectRoot, 'origin');
+}

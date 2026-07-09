@@ -14,6 +14,9 @@ import {
   createProjectOrigin,
   attachProjectOrigin,
   previewOrigin,
+  setProjectOrigin,
+  detachProjectOrigin,
+  canonicalRemote,
 } from '../../lib/git-sync/origin-setup.js';
 import { runBrainSync } from '../../lib/git-sync/sync-engine.js';
 import { runTeamFetch } from '../../lib/git-sync/team-fetch.js';
@@ -320,6 +323,19 @@ function enableFullRepo(projectRoot: string): void {
   ensureFullRepoGitignore(projectRoot, config?.taskBackend);
 }
 
+/**
+ * Revert to `in-tree` (commit-only) + pin enabled:false — the exact "disable"
+ * side-effects of the master toggle, factored so the detach route can turn sync
+ * off when it removes the origin. Full-repo sync needs an `origin`, so leaving it
+ * "on" after a detach would be a broken state (every push would 400 `no_origin`).
+ */
+function disableFullRepo(projectRoot: string): void {
+  const config = readSetupConfig(projectRoot);
+  updateSetupConfig(projectRoot, {
+    brainRepo: { ...(config?.brainRepo ?? {}), mode: 'in-tree', enabled: false },
+  });
+}
+
 /** Best-effort current `origin` (null when not a repo / no origin). */
 function currentOrigin(projectRoot: string): string | null {
   try { return git.isGitRepo(projectRoot) ? git.getRemoteUrl(projectRoot, 'origin') : null; } catch { return null; }
@@ -434,6 +450,101 @@ export async function handleBrainOriginAttach(
     sendJson(res, 200, { ok: true, remote: attached.remote, fullName: attached.fullName, private: preview.private, sync });
   } catch (err) {
     sendError(res, 400, 'attach_failed', (err as Error).message);
+  }
+}
+
+// ─── POST /api/brain/origin/update (re-point the origin at a different repo) ──
+
+/**
+ * Re-point the project's existing `origin` at a DIFFERENT reachable repo — the
+ * connected-origin card's "Change". Validates reachability first (bad/unreadable
+ * URL → 400). Re-pointing at an unrelated repo would risk an unrelated-histories
+ * merge, so instead of running a first sync it reverts cloud sync to `in-tree`
+ * (disabled): NO background auto-sync fires at the new remote until the user
+ * deliberately turns Cloud sync back on (which runs the proper first-sync path).
+ * Leaving `autoSync` on here would let the next session-start/sleep pull hit
+ * "unrelated histories" with no warning. Requires an existing origin (409
+ * `no_origin` if none — use Connect instead) and a GitHub token (401).
+ */
+export async function handleBrainOriginUpdate(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  if (!gate(res)) return;
+  const projectRoot = dirname(contextRoot);
+  const body = await parseJsonBody(req);
+  const url = typeof body?.url === 'string' ? body.url.trim() : '';
+  if (!url) {
+    sendError(res, 400, 'invalid_body', 'url is required.');
+    return;
+  }
+  if (!resolveBrainSyncToken(projectRoot)) {
+    sendError(res, 401, 'no_token', 'Sign in with GitHub before changing the repo.');
+    return;
+  }
+  if (!currentOrigin(projectRoot)) {
+    sendError(res, 409, 'no_origin', 'This project has no git origin yet — use Connect to set one.');
+    return;
+  }
+
+  const preview = await previewOrigin({ projectRoot, url });
+  if (!preview.reachable) {
+    sendError(res, 400, 'unreachable', preview.reason ?? 'That repo could not be reached with your GitHub account.');
+    return;
+  }
+
+  const canonical = canonicalRemote(url);
+  if (!canonical) {
+    sendError(res, 400, 'invalid_body', 'That does not look like a GitHub repo URL.');
+    return;
+  }
+  try {
+    setProjectOrigin(projectRoot, canonical);
+    // Re-pointing changes the sync target — turn sync off so no background pull
+    // races the new remote (unrelated histories). The user re-enables when ready.
+    disableFullRepo(projectRoot);
+    sendJson(res, 200, { ok: true, remote: canonical, fullName: preview.fullName, private: preview.private, syncDisabled: true });
+  } catch (err) {
+    sendError(res, 400, 'update_failed', (err as Error).message);
+  }
+}
+
+// ─── POST /api/brain/origin/detach (remove the origin, turn sync off) ────────
+
+/**
+ * Remove the project's `origin` remote and revert cloud sync to `in-tree` — the
+ * connected-origin card's "Disconnect". Local-only + reversible (re-attach any
+ * time). Idempotent when there is no origin. Requires the desktop app; no token
+ * needed (a purely local git op).
+ *
+ * REFUSES (409) while a merge is in progress: reverting to `in-tree` would make
+ * that merge invisible to the dashboard (`handleBrainStatus` only surfaces
+ * `mergeInProgress`/`mergeKind` in `full-repo` mode), so a live `MERGE_HEAD` +
+ * conflict markers would silently drop off the UI. The user must resolve the merge
+ * before disconnecting.
+ */
+export async function handleBrainOriginDetach(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  if (!gate(res)) return;
+  const projectRoot = dirname(contextRoot);
+  let mergeInProgress = false;
+  try { mergeInProgress = git.isGitRepo(projectRoot) && git.hasMergeHead(projectRoot); } catch { mergeInProgress = false; }
+  if (mergeInProgress) {
+    sendError(res, 409, 'merge_in_progress', 'Finish or resolve the in-progress merge before disconnecting the origin.');
+    return;
+  }
+  try {
+    detachProjectOrigin(projectRoot);
+    disableFullRepo(projectRoot);
+    sendJson(res, 200, { ok: true, remote: null });
+  } catch (err) {
+    sendError(res, 400, 'detach_failed', (err as Error).message);
   }
 }
 
