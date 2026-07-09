@@ -33,6 +33,24 @@ function writeCacheFile(tmpDir: string, cache: VersionCache): void {
   writeFileSync(join(dir, '.version-check.json'), JSON.stringify(cache, null, 2) + '\n', 'utf-8');
 }
 
+/** Write .config.json declaring which packs this project opted into. */
+function writeConfigFile(tmpDir: string, packs: string[]): void {
+  const dir = join(tmpDir, '_dream_context', 'state');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, '.config.json'),
+    JSON.stringify({ platforms: ['claude'], packs, setupVersion: '9.9.9' }, null, 2) + '\n',
+    'utf-8',
+  );
+}
+
+/** Simulate a pack installed on disk (its SKILL.md exists for the claude platform). */
+function installSkillOnDisk(tmpDir: string, name: string): void {
+  const dir = join(tmpDir, '.claude', 'skills', name);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'SKILL.md'), `# ${name}\n`, 'utf-8');
+}
+
 // contextRoot = <tmpDir>/_dream_context
 let tmpDir: string;
 let contextRoot: string;
@@ -142,6 +160,70 @@ describe('GET /api/version-check', () => {
     // readVersionCache returns null on malformed JSON
     expect(payload.cache).toBeNull();
     expect(payload.fresh).toBe(false);
+    expect(payload.nudge).toBeNull();
+  });
+
+  it('does NOT surface a DECLINED catalog pack as newPacks (regression: permanent false "Update available")', async () => {
+    // Catalog offers two optional packs; the project opted into only one and has
+    // it installed on disk. The declined pack must never show as "new" — else the
+    // header badge nags "Update available" forever on a fully up-to-date vault.
+    const cache: VersionCache = {
+      checkedAt: Date.now() - 60 * 60 * 1000,
+      latestCli: '0.0.1', // installed >= this → no CLI nudge, isolates pack logic
+      availablePacks: ['engineering', 'meta-marketing'],
+      ttlHours: 24,
+    };
+    writeCacheFile(tmpDir, cache);
+    writeConfigFile(tmpDir, ['engineering']); // opted into engineering, DECLINED meta-marketing
+    installSkillOnDisk(tmpDir, 'engineering'); // and it's installed on disk
+
+    const { res, status, body } = makeRes();
+    await handleVersionCheckGet(makeGetReq(), res, {}, contextRoot);
+    expect(status()).toBe(200);
+
+    const payload = body() as { newPacks: string[]; nudge: string | null };
+    expect(payload.newPacks).toEqual([]); // meta-marketing (declined) excluded
+    expect(payload.nudge).toBeNull(); // no "new packs" prose either
+  });
+
+  it('DOES surface an opted-in pack that is missing on disk as newPacks (genuine update gap)', async () => {
+    // engineering is opted into but NOT installed on disk → a real `dreamcontext
+    // update` gap that should still nudge. meta-marketing (declined) stays hidden.
+    const cache: VersionCache = {
+      checkedAt: Date.now() - 60 * 60 * 1000,
+      latestCli: '0.0.1',
+      availablePacks: ['engineering', 'meta-marketing'],
+      ttlHours: 24,
+    };
+    writeCacheFile(tmpDir, cache);
+    writeConfigFile(tmpDir, ['engineering']); // opted in but NOT installed on disk
+
+    const { res, status, body } = makeRes();
+    await handleVersionCheckGet(makeGetReq(), res, {}, contextRoot);
+    expect(status()).toBe(200);
+
+    const payload = body() as { newPacks: string[]; nudge: string | null };
+    expect(payload.newPacks).toEqual(['engineering']);
+    expect(payload.nudge).toContain('engineering');
+    expect(payload.nudge).not.toContain('meta-marketing');
+  });
+
+  it('surfaces no pack nudge when the project has no config (no opted-in universe)', async () => {
+    const cache: VersionCache = {
+      checkedAt: Date.now() - 60 * 60 * 1000,
+      latestCli: '0.0.1',
+      availablePacks: ['engineering', 'meta-marketing'],
+      ttlHours: 24,
+    };
+    writeCacheFile(tmpDir, cache);
+    // no .config.json written
+
+    const { res, status, body } = makeRes();
+    await handleVersionCheckGet(makeGetReq(), res, {}, contextRoot);
+    expect(status()).toBe(200);
+
+    const payload = body() as { newPacks: string[]; nudge: string | null };
+    expect(payload.newPacks).toEqual([]);
     expect(payload.nudge).toBeNull();
   });
 

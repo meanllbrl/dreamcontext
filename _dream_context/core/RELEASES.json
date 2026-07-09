@@ -1,5 +1,16 @@
 [
   {
+    "id": "rel_12PzKKOP",
+    "version": "0.17.2",
+    "date": "",
+    "summary": "Update-nudge accuracy: declined optional packs no longer flash a false 'Update available' badge/nudge (scope pack universe to opted-in ∩ catalog)",
+    "breaking": false,
+    "status": "planning",
+    "features": [],
+    "tasks": [],
+    "changelog": []
+  },
+  {
     "id": "rel_AuthRec01",
     "version": "0.17.1",
     "date": "2026-07-09",

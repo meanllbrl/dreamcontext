@@ -4,6 +4,7 @@ import { sendJson } from '../middleware.js';
 import { readVersionCache, isCacheFresh, buildNudge, readAutoUpgradeMarker, shouldSuppressCliNudge, compareVersions } from '../../lib/version-check.js';
 import { dreamcontextVersion, readDreamcontextVersionFromDisk } from '../../lib/manifest.js';
 import { isSkillInstalled } from '../../lib/catalog.js';
+import { readSetupConfig } from '../../lib/setup-config.js';
 
 /**
  * GET /api/version-check — Return cached update nudge data.
@@ -34,12 +35,22 @@ export async function handleVersionCheckGet(
     // momentarily unavailable (npm mid-swap returns the '0.0.0' sentinel).
     const freshCli = readDreamcontextVersionFromDisk();
     const installedCli = freshCli === '0.0.0' ? dreamcontextVersion() : freshCli;
+    // Scope the pack universe to what THIS project opted into (config.packs),
+    // intersected with the catalog. A pack the user consciously DECLINED (in the
+    // catalog but never chosen for this vault) must NEVER surface as a "new pack
+    // available" — otherwise every vault that skipped an optional pack shows a
+    // permanent, un-actionable "Update available" nag (e.g. a personal notes vault
+    // that will never want meta-marketing / business-idea-* / video-watching). The
+    // universe is opted-in ∩ catalog; a pack is "new" only when it's opted-in but
+    // missing on disk (a genuine `dreamcontext update` gap).
     const catalogPackNames = cache?.availablePacks ?? [];
-    // Filesystem truth (the pack's SKILL.md on disk), NOT config.packs — config
-    // drifts from reality and produced false "new pack available" nudges for packs
-    // that were already installed. Mirrors the /api/packs `installed` computation.
-    const installedPacks = catalogPackNames.filter((name) => isSkillInstalled(projectRoot, name));
-    const newPacks = fresh ? catalogPackNames.filter((name) => !installedPacks.includes(name)) : [];
+    const optedInPacks = readSetupConfig(projectRoot)?.packs ?? [];
+    const relevantPacks = catalogPackNames.filter((name) => optedInPacks.includes(name));
+    // Filesystem truth (the pack's SKILL.md on disk), NOT config.packs alone —
+    // config drifts and produced false "new pack" nudges for packs already installed.
+    // Mirrors the /api/packs `installed` computation.
+    const installedPacks = relevantPacks.filter((name) => isSkillInstalled(projectRoot, name));
+    const newPacks = fresh ? relevantPacks.filter((name) => !installedPacks.includes(name)) : [];
     // App-context guard: inside the desktop app (DREAMCONTEXT_DESKTOP=1) the app
     // owns updates (self-update), so the manual CLI line is always wrong noise.
     // Otherwise suppress only while a background auto-upgrade for this version is
@@ -48,7 +59,10 @@ export async function handleVersionCheckGet(
     const suppressCliNudge =
       process.env.DREAMCONTEXT_DESKTOP === '1' ||
       shouldSuppressCliNudge(fresh ? cache?.latestCli ?? null : null, marker, process.env);
-    const nudge = buildNudge(installedCli, fresh ? cache : null, installedPacks, catalogPackNames, {
+    // Pass the OPTED-IN pack universe (relevantPacks), not the full catalog, so the
+    // prose nudge's own "new packs" computation matches `newPacks` above and never
+    // lists a declined pack.
+    const nudge = buildNudge(installedCli, fresh ? cache : null, installedPacks, relevantPacks, {
       suppressCliNudge,
     });
     // Structured upgrade signal — independent of the manual-nudge suppression.

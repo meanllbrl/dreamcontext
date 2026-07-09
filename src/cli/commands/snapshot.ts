@@ -364,12 +364,16 @@ function getVersionNudge(root: string): string {
     if (!cache || !isCacheFresh(cache)) return '';
 
     const installedCli = dreamcontextVersion();
-    // availablePacks was stored by refreshVersionCache. Filter by filesystem truth
-    // (the pack's SKILL.md on disk) — NOT config.packs, which drifts and produces
-    // false "new pack available" nudges for packs that are already installed.
-    // isSkillInstalled only stats a path; it does not load/parse the catalog.
-    const catalogPackNames = cache.availablePacks;
-    const installedPacks = catalogPackNames.filter((name) => isSkillInstalled(projectRoot, name));
+    // Scope the pack universe to what THIS project opted into (config.packs) ∩ the
+    // catalog. A pack the user DECLINED (in the catalog but never chosen for this
+    // vault) must NEVER surface as "new" — otherwise every session in a vault that
+    // skipped an optional pack prints a permanent, un-actionable "New skill packs
+    // available" line. A pack is "new" only when opted-in but missing on disk (a
+    // genuine `dreamcontext update` gap). Installed = filesystem truth (SKILL.md on
+    // disk); isSkillInstalled only stats a path, it does not load/parse the catalog.
+    const optedInPacks = readSetupConfig(projectRoot)?.packs ?? [];
+    const relevantPacks = cache.availablePacks.filter((name) => optedInPacks.includes(name));
+    const installedPacks = relevantPacks.filter((name) => isSkillInstalled(projectRoot, name));
 
     // Auto-upgrade is on by default. Suppress the redundant "run dreamcontext
     // upgrade" line only while a background upgrade for this exact version is
@@ -377,7 +381,7 @@ function getVersionNudge(root: string): string {
     // returns so the user can act. New-packs line is unaffected.
     const marker = readAutoUpgradeMarker(projectRoot);
     const suppressCliNudge = shouldSuppressCliNudge(cache.latestCli, marker, process.env);
-    const nudge = buildNudge(installedCli, cache, installedPacks, catalogPackNames, { suppressCliNudge });
+    const nudge = buildNudge(installedCli, cache, installedPacks, relevantPacks, { suppressCliNudge });
     return nudge ?? '';
   } catch {
     return '';
