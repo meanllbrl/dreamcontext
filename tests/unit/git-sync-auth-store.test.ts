@@ -6,6 +6,8 @@ import {
   globalSecretsPath,
   writeGlobalGitHubToken,
   readGlobalGitHubToken,
+  readGlobalGitHubNeedsReconnect,
+  setGlobalGitHubAuthValid,
   clearGlobalGitHubToken,
 } from '../../src/lib/git-sync/auth-store.js';
 import { writeGitHubToken } from '../../src/lib/task-backend/secrets.js';
@@ -48,6 +50,48 @@ describe('git-sync/auth-store — global GitHub token store', () => {
 
   it('rejects an empty token', () => {
     expect(() => writeGlobalGitHubToken('  ', home)).toThrow();
+  });
+});
+
+describe('git-sync/auth-store — session-validity flag (needsReconnect)', () => {
+  let home: string;
+
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'dc-home-'));
+  });
+  afterEach(() => {
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  it('is false when no token is stored (a never-connected account cannot need reconnect)', () => {
+    expect(readGlobalGitHubNeedsReconnect(home)).toBe(false);
+    // ...and marking-invalid with no token is a no-op (does not create/flip state).
+    setGlobalGitHubAuthValid(false, home);
+    expect(readGlobalGitHubNeedsReconnect(home)).toBe(false);
+  });
+
+  it('flags then clears reconnect for a stored token', () => {
+    writeGlobalGitHubToken('ghp_x', home);
+    expect(readGlobalGitHubNeedsReconnect(home)).toBe(false);
+
+    setGlobalGitHubAuthValid(false, home); // an auth-rejected git op
+    expect(readGlobalGitHubNeedsReconnect(home)).toBe(true);
+    // The token is preserved — invalidation must not wipe the credential.
+    expect(readGlobalGitHubToken(home)?.token).toBe('ghp_x');
+
+    setGlobalGitHubAuthValid(true, home); // a later successful git op / fresh sign-in
+    expect(readGlobalGitHubNeedsReconnect(home)).toBe(false);
+    expect(readGlobalGitHubToken(home)?.token).toBe('ghp_x');
+  });
+
+  it('logout clears the reconnect flag along with the token', () => {
+    writeGlobalGitHubToken('ghp_x', home);
+    setGlobalGitHubAuthValid(false, home);
+    expect(readGlobalGitHubNeedsReconnect(home)).toBe(true);
+
+    clearGlobalGitHubToken(home);
+    expect(readGlobalGitHubToken(home)).toBeNull();
+    expect(readGlobalGitHubNeedsReconnect(home)).toBe(false);
   });
 });
 

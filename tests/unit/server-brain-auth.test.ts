@@ -13,7 +13,7 @@ import {
   __setBrainAuthFetch,
   __setBrainAuthHome,
 } from '../../src/server/routes/brain-auth.js';
-import { globalSecretsPath, writeGlobalGitHubToken } from '../../src/lib/git-sync/auth-store.js';
+import { globalSecretsPath, writeGlobalGitHubToken, setGlobalGitHubAuthValid } from '../../src/lib/git-sync/auth-store.js';
 import { PLACEHOLDER_CLIENT_ID } from '../../src/lib/git-sync/oauth.js';
 
 function makeRes(): { res: ServerResponse; status: () => number; body: () => any } {
@@ -187,7 +187,28 @@ describe('brain-auth — status + PAT fallback (B2)', () => {
     expect(status()).toBe(200);
     expect(body().connected).toBe(true);
     expect(body().source).toBe('global');
+    expect(body().needsReconnect).toBe(false);
     expect(JSON.stringify(body())).not.toContain('ghp_status');
+  });
+
+  it('status surfaces needsReconnect when the session was flagged invalid, and a fresh PAT clears it', async () => {
+    writeGlobalGitHubToken('ghp_status', home);
+    setGlobalGitHubAuthValid(false, home); // an auth-rejected sync flagged the session
+
+    const flagged = makeRes();
+    await handleBrainAuthStatus(makeReq('GET'), flagged.res);
+    expect(flagged.body().connected).toBe(true);
+    expect(flagged.body().needsReconnect).toBe(true);
+
+    // Reconnecting via the PAT path re-validates and must clear the flag.
+    __setBrainAuthFetch((async () => jsonRes(200, { login: 'octocat' })) as unknown as typeof fetch);
+    const reconnected = makeRes();
+    await handleBrainAuthToken(makeReq('POST', { token: 'ghp_fresh' }), reconnected.res);
+    expect(reconnected.body().needsReconnect).toBe(false);
+
+    const after = makeRes();
+    await handleBrainAuthStatus(makeReq('GET'), after.res);
+    expect(after.body().needsReconnect).toBe(false);
   });
 
   it('token: a valid PAT is accepted (200, login) and never echoed', async () => {

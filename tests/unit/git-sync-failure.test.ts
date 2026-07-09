@@ -28,6 +28,17 @@ describe('git-sync/failure — classifySyncError', () => {
     expect(f.recovery).toBe('reconnect-github');
   });
 
+  it('no token configured → no-token (NOT auth), and never says "expired"', () => {
+    // The engine's `no-remote` note — a state check, not a rejected git op. It
+    // must not read like an EXPIRED sign-in (which would falsely alarm a
+    // signed-in user whose token is fine).
+    const f = classifySyncError('No GitHub token found for the brain repo (per-project secrets or GITHUB_TOKEN/GH_TOKEN env).');
+    expect(f.kind).toBe('no-token');
+    expect(f.recovery).toBe('reconnect-github');
+    expect(f.message).not.toMatch(/expired|invalid/i);
+    expect(f.message).toMatch(/connect github/i);
+  });
+
   it('offline / DNS failure → network + wait-online, and says nothing was lost', () => {
     const f = classifySyncError("fatal: unable to access 'https://github.com/acme/brain.git/': Could not resolve host: github.com");
     expect(f.kind).toBe('network');

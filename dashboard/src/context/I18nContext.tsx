@@ -473,6 +473,10 @@ const translations: Record<string, Record<string, string>> = {
     'brain.auth.signedIn': 'Signed in with GitHub',
     'brain.auth.signedInAs': 'Signed in as {login}',
     'brain.auth.signOut': 'Sign out',
+    // Expired/invalid session — the Settings-side reconnect affordance.
+    'brain.auth.expired': 'GitHub sign-in expired',
+    'brain.auth.expiredAs': 'Signed in as {login} — session expired',
+    'brain.auth.expiredHint': 'GitHub rejected your saved sign-in, so cloud sync can’t push or pull. Reconnect below to fix it — your local work is safe and nothing was lost.',
     'brain.auth.scopeDisclosure': 'This grants access to all your private repositories — GitHub does not offer a narrower scope for the device flow. If you would rather limit access to one repo, use a fine-grained personal access token instead.',
     'brain.auth.device.hint': 'Enter this code on GitHub to finish connecting.',
     'brain.auth.device.open': 'Open GitHub',

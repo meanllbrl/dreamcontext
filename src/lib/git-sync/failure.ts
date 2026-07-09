@@ -11,8 +11,10 @@
  */
 
 export type SyncFailureKind =
-  /** Expired/invalid/absent token — the account needs to reconnect. */
+  /** Expired/invalid token — the account is connected but GitHub rejected it; reconnect. */
   | 'auth'
+  /** No token is configured at all — not signed in yet (distinct from an EXPIRED one). */
+  | 'no-token'
   /** Authenticated, but the token lacks Contents write on the repo (or a protected branch). */
   | 'permission'
   /** Offline / DNS / unreachable host — transient; retry later. */
@@ -89,8 +91,22 @@ export function classifySyncError(rawMessage: string, repoHint?: string): SyncFa
     };
   }
 
-  // Auth: expired/invalid/absent credentials.
-  if (/authentication failed|could not read Username|bad credentials|invalid credentials|401\b|terminal prompts disabled|Support for password authentication|no github token found/i.test(m)) {
+  // No token configured at all — NOT an expired sign-in. This comes from the
+  // engine's `no-remote` note ("No GitHub token found …"), a state check, never a
+  // rejected git op. It must not read "expired or invalid" (which would falsely
+  // alarm a signed-in user); it's simply "not connected yet".
+  if (/no github token found|no token found for the brain/i.test(m)) {
+    return {
+      kind: 'no-token',
+      recovery: 'reconnect-github',
+      repo,
+      message: 'Cloud sync needs a GitHub account. Connect GitHub to start syncing.',
+    };
+  }
+
+  // Auth: a real git op authenticated and GitHub REJECTED the credential
+  // (expired/revoked/invalid). This is the only path that should say "sign-in expired".
+  if (/authentication failed|could not read Username|bad credentials|invalid credentials|401\b|terminal prompts disabled|Support for password authentication/i.test(m)) {
     return {
       kind: 'auth',
       recovery: 'reconnect-github',

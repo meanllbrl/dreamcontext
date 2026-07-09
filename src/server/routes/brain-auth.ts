@@ -15,6 +15,8 @@ import {
   setGlobalGitHubLogin,
   readGlobalGitHubToken,
   readGlobalGitHubLogin,
+  readGlobalGitHubNeedsReconnect,
+  setGlobalGitHubAuthValid,
   clearGlobalGitHubToken,
 } from '../../lib/git-sync/auth-store.js';
 
@@ -177,6 +179,8 @@ export async function handleBrainAuthDevicePoll(
         let login: string | null = null;
         try { login = await fetchAuthenticatedLogin(result.token, fetchImpl); } catch { login = null; }
         if (login) setGlobalGitHubLogin(login, authHome);
+        // A fresh, GitHub-issued token clears any stale reconnect flag immediately.
+        setGlobalGitHubAuthValid(true, authHome);
         deviceSessions.delete(sessionId);
         sendJson(res, 200, { status: 'authorized', login });
         return;
@@ -223,6 +227,9 @@ export async function handleBrainAuthStatus(
       connected: true,
       login: readGlobalGitHubLogin(authHome) ?? undefined,
       source: 'global',
+      // Read straight off the shared truth the sync path writes — so this chip
+      // and the sidebar sync surface can never disagree about the session.
+      needsReconnect: readGlobalGitHubNeedsReconnect(authHome),
       oauthConfigured,
     });
     return;
@@ -266,7 +273,9 @@ export async function handleBrainAuthToken(
   // Never echo the token back.
   writeGlobalGitHubToken(token, authHome);
   setGlobalGitHubLogin(login, authHome);
-  sendJson(res, 200, { connected: true, login, source: 'global' });
+  // The PAT just validated against GitHub — clear any stale reconnect flag.
+  setGlobalGitHubAuthValid(true, authHome);
+  sendJson(res, 200, { connected: true, login, source: 'global', needsReconnect: false });
 }
 
 // ─── POST /api/brain/auth/logout ─────────────────────────────────────────────

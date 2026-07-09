@@ -19,6 +19,7 @@ import { runBrainSync } from '../../lib/git-sync/sync-engine.js';
 import { runTeamFetch } from '../../lib/git-sync/team-fetch.js';
 import { readConflictReport } from '../../lib/git-sync/conflict-report.js';
 import { classifySyncError, type SyncFailure } from '../../lib/git-sync/failure.js';
+import { setGlobalGitHubAuthValid } from '../../lib/git-sync/auth-store.js';
 import { ensureGitignoreEntries } from '../../lib/gitignore.js';
 import { listVaults } from '../../lib/vaults.js';
 
@@ -155,8 +156,14 @@ interface SyncPayload {
  * GitSyncError (push-rejected, auth, network, permission, unrelated histories) is
  * classified into a specific, recoverable failure — never a bare "Sync failed" —
  * and returned as `action:'error'` (HTTP 200) so the UI can render the message +
- * its recovery affordance. A `no-remote` with a token-shaped note is really an
- * auth failure, so it gets a reconnect affordance too.
+ * its recovery affordance. A `no-remote` with a "no token" note is a NOT-CONNECTED
+ * state (not an expired sign-in), so it gets a `no-token` failure — never the
+ * alarming "sign-in expired" copy.
+ *
+ * The ACTUAL git auth result is the single source of truth for the session's
+ * validity: a talked-to-the-remote outcome (or an authenticated-then-rejected
+ * permission error) clears the reconnect flag; an auth-rejected op sets it. The
+ * Settings session chip reads the SAME flag, so the two surfaces cannot disagree.
  */
 async function runSyncPayload(
   projectRoot: string,
@@ -165,6 +172,8 @@ async function runSyncPayload(
 ): Promise<SyncPayload> {
   try {
     const result = await runBrainSync({ cwd: contextRoot, mode: opts.mode, foreground: opts.foreground, noCheckpoint: opts.noCheckpoint });
+    // Any outcome that REACHED the remote proves the stored token still authenticates.
+    if (AUTH_OK_ACTIONS.has(result.action)) setGlobalGitHubAuthValid(true);
     let failure: SyncFailure | undefined;
     if (result.action === 'no-remote' && /token/i.test(result.note ?? '')) {
       failure = classifySyncError(result.note ?? 'no github token found', syncRepoHint(projectRoot));
@@ -181,6 +190,11 @@ async function runSyncPayload(
     };
   } catch (err) {
     const failure = classifySyncError((err as Error).message, syncRepoHint(projectRoot));
+    // Only a GENUINELY auth-rejected op flags the session invalid. A permission
+    // error means GitHub accepted the credential (it just lacks a scope), so the
+    // session is still valid; network/unknown leave validity untouched.
+    if (failure.kind === 'auth') setGlobalGitHubAuthValid(false);
+    else if (failure.kind === 'permission') setGlobalGitHubAuthValid(true);
     return {
       action: 'error',
       pulledUpdates: 0,
@@ -190,6 +204,15 @@ async function runSyncPayload(
     };
   }
 }
+
+/**
+ * Sync outcomes that could only happen AFTER a successful fetch/push handshake
+ * with the remote — i.e. the stored token authenticated. Pre-network outcomes
+ * (`no-remote`, `disabled`, `locked`, `invalid-flag`, `already-awaiting-agent`,
+ * `user-merge-in-progress`, `detached-head`, `skipped-in-tree`) are excluded: they
+ * prove nothing about the token, so they must not clear a real reconnect flag.
+ */
+const AUTH_OK_ACTIONS = new Set(['pulled', 'pushed', 'noop', 'merged', 'blocked-scrub', 'awaiting-agent', 'code-conflict']);
 
 /** Best-effort `owner/repo` (or remote URL) for a failure message — the repo sync pushes to. */
 function syncRepoHint(projectRoot: string, _result?: unknown): string | undefined {

@@ -26,6 +26,15 @@ interface GlobalSecretsFile {
     token?: string;
     /** The signed-in account's login — cached so `status` needs no network call. NOT a secret. */
     login?: string;
+    /**
+     * Set when the LAST real git op authenticated with this token was rejected
+     * for auth (expired/revoked/invalid) — the SINGLE source of truth both the
+     * sidebar sync surface and the Settings session chip read, so they can never
+     * disagree ("Sync failed / sign-in expired" over a green "Signed in as …").
+     * Cleared the moment a git op authenticates successfully or a fresh token is
+     * stored. NOT a secret.
+     */
+    needsReconnect?: boolean;
   };
 }
 
@@ -96,12 +105,48 @@ export function readGlobalGitHubLogin(home?: string): string | null {
   return v && v.trim() ? v.trim() : null;
 }
 
+/**
+ * Whether the signed-in GitHub session is currently known to be INVALID — the
+ * last authenticated git op was rejected for auth. Only meaningful when a token
+ * is actually stored (a never-connected account cannot "need reconnect"), so it
+ * returns false when there is no token.
+ */
+export function readGlobalGitHubNeedsReconnect(home?: string): boolean {
+  const gh = readGlobalSecretsFile(home).github;
+  return !!(gh?.token && gh.token.trim() && gh.needsReconnect === true);
+}
+
+/**
+ * Record whether the stored token just authenticated successfully. `valid:false`
+ * flags the session as needing a reconnect (an auth-rejected git op); `valid:true`
+ * clears that flag (a git op authenticated, or a fresh token was stored). This is
+ * the ONE writer both surfaces trust — the sync path calls it off the ACTUAL git
+ * result, never a standalone token guess. No-ops (no write) when the flag is
+ * already in the target state, and never marks-invalid when no token is stored.
+ */
+export function setGlobalGitHubAuthValid(valid: boolean, home?: string): void {
+  const secrets = readGlobalSecretsFile(home);
+  const gh = secrets.github;
+  // No token ⇒ nothing to invalidate/validate; the disconnected UI already covers it.
+  if (!gh?.token || !gh.token.trim()) return;
+  const current = gh.needsReconnect === true;
+  const next = !valid;
+  if (current === next) return; // idempotent — avoid rewriting the 0600 file every sync
+  if (next) gh.needsReconnect = true;
+  else delete gh.needsReconnect;
+
+  const path = globalSecretsPath(home);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(secrets, null, 2) + '\n', { encoding: 'utf-8', mode: 0o600 });
+  try { chmodSync(path, 0o600); } catch { /* best-effort */ }
+}
+
 /** Clear the global GitHub token + login (logout). Idempotent — a missing file is a no-op. */
 export function clearGlobalGitHubToken(home?: string): void {
   const path = globalSecretsPath(home);
   if (!existsSync(path)) return;
   const secrets = readGlobalSecretsFile(home);
-  if (secrets.github) { delete secrets.github.token; delete secrets.github.login; }
+  if (secrets.github) { delete secrets.github.token; delete secrets.github.login; delete secrets.github.needsReconnect; }
   writeFileSync(path, JSON.stringify(secrets, null, 2) + '\n', { encoding: 'utf-8', mode: 0o600 });
   try { chmodSync(path, 0o600); } catch { /* best-effort */ }
 }

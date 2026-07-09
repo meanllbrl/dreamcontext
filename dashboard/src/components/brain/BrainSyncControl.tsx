@@ -256,7 +256,7 @@ export function BrainSyncControl({ onOpenSettings }: BrainSyncControlProps) {
       {failure && (
         <div className={`brain-sync-panel brain-sync-panel--${failure.kind === 'network' ? 'info' : 'error'}`}>
           <p className="brain-sync-panel-title">{failure.message}</p>
-          {failure.kind === 'auth' && (
+          {(failure.kind === 'auth' || failure.kind === 'no-token') && (
             <span className="brain-sync-panel-mark" aria-hidden="true"><GitHubMark size={13} /></span>
           )}
           {recovery && (

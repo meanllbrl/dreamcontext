@@ -122,3 +122,27 @@
 .gh-login-logout {
   font-size: var(--font-size-xs);
 }
+
+/* Expired/invalid session — the reconnect layout stacks the invalid chip, a
+   hint, and the reused connect controls. */
+.gh-login--expired {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-3);
+}
+
+.gh-login-badge--expired {
+  align-self: flex-start;
+  background: var(--color-warning-subtle);
+  border-color: var(--color-warning);
+  color: var(--color-warning);
+}
+
+.gh-login-expired-hint {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.gh-login--expired .gh-login-logout {
+  align-self: flex-start;
+}

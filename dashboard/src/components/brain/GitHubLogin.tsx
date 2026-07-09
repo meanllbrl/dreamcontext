@@ -146,28 +146,9 @@ export function GitHubLogin() {
     return <p className="settings-field-hint">{t('common.loading')}</p>;
   }
 
-  if (authStatus?.connected) {
-    return (
-      <div className="gh-login gh-login--connected">
-        <span className="gh-login-badge">
-          <GitHubMark size={15} />
-          {authStatus.login ? t('brain.auth.signedInAs').replace('{login}', authStatus.login) : t('brain.auth.signedIn')}
-        </span>
-        <button
-          type="button"
-          className="btn btn--ghost gh-login-logout"
-          onClick={() => logout.mutate()}
-          disabled={logout.isPending}
-        >
-          {t('brain.auth.signOut')}
-        </button>
-      </div>
-    );
-  }
-
-  // The PAT paste-in form — the fine-grained-token path. Shared by both the
-  // device-flow layout (revealed on demand) and the PAT-primary layout (always
-  // visible when no OAuth App is registered).
+  // The PAT paste-in form — the fine-grained-token path. Shared by the
+  // device-flow layout (revealed on demand), the PAT-primary layout (always
+  // visible when no OAuth App is registered), AND the reconnect layout.
   const patForm = (
     <div className="gh-login-pat-form">
       <p className="settings-field-hint">{t('brain.auth.pat.hint')}</p>
@@ -193,19 +174,16 @@ export function GitHubLogin() {
     </div>
   );
 
-  // No registered OAuth App ⇒ the one-click device flow can't reach GitHub
-  // (placeholder client_id → 404). Present the PAT path as the primary,
-  // always-visible way to connect instead of a doomed button.
-  if (authStatus?.oauthConfigured === false) {
-    return (
-      <div className="gh-login gh-login--pat-primary">
-        <p className="gh-login-disclosure">{t('brain.auth.oauthUnavailable')}</p>
-        {patForm}
-      </div>
-    );
-  }
-
-  return (
+  // The full "connect a GitHub account" surface — the one-click device flow, or
+  // the PAT-primary layout when no OAuth App is registered (placeholder client_id
+  // → the device flow can't reach GitHub). Extracted so the SAME controls RECONNECT
+  // an expired session in place, not just connect a first-time account.
+  const connectControls = authStatus?.oauthConfigured === false ? (
+    <div className="gh-login gh-login--pat-primary">
+      <p className="gh-login-disclosure">{t('brain.auth.oauthUnavailable')}</p>
+      {patForm}
+    </div>
+  ) : (
     <div className="gh-login">
       <p className="gh-login-disclosure">{t('brain.auth.scopeDisclosure')}</p>
 
@@ -253,4 +231,54 @@ export function GitHubLogin() {
       {showPatForm && patForm}
     </div>
   );
+
+  // Connected AND the token still authenticates → the resting green badge.
+  if (authStatus?.connected && !authStatus?.needsReconnect) {
+    return (
+      <div className="gh-login gh-login--connected">
+        <span className="gh-login-badge">
+          <GitHubMark size={15} />
+          {authStatus.login ? t('brain.auth.signedInAs').replace('{login}', authStatus.login) : t('brain.auth.signedIn')}
+        </span>
+        <button
+          type="button"
+          className="btn btn--ghost gh-login-logout"
+          onClick={() => logout.mutate()}
+          disabled={logout.isPending}
+        >
+          {t('brain.auth.signOut')}
+        </button>
+      </div>
+    );
+  }
+
+  // Connected but GitHub REJECTED the stored token (expired/invalid). This is the
+  // exact state that used to show a green "Signed in as …" with no way to act while
+  // the sidebar screamed "sign-in expired". Surface the invalid chip + an in-place
+  // reconnect here, where the user was told to go.
+  if (authStatus?.connected && authStatus?.needsReconnect) {
+    return (
+      <div className="gh-login gh-login--expired">
+        <span className="gh-login-badge gh-login-badge--expired">
+          <GitHubMark size={15} />
+          {authStatus.login
+            ? t('brain.auth.expiredAs').replace('{login}', authStatus.login)
+            : t('brain.auth.expired')}
+        </span>
+        <p className="settings-field-hint gh-login-expired-hint">{t('brain.auth.expiredHint')}</p>
+        {connectControls}
+        <button
+          type="button"
+          className="btn btn--ghost gh-login-logout"
+          onClick={() => logout.mutate()}
+          disabled={logout.isPending}
+        >
+          {t('brain.auth.signOut')}
+        </button>
+      </div>
+    );
+  }
+
+  // Not connected at all → the first-time connect surface.
+  return connectControls;
 }

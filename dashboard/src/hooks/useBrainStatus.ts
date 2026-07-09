@@ -34,7 +34,7 @@ export interface BrainStatus {
 
 /** A classified sync failure with a concrete recovery affordance (never a generic "sync failed"). */
 export interface SyncFailure {
-  kind: 'auth' | 'permission' | 'network' | 'push-rejected' | 'unknown';
+  kind: 'auth' | 'no-token' | 'permission' | 'network' | 'push-rejected' | 'unknown';
   recovery: 'reconnect-github' | 'check-permissions' | 'wait-online' | 'retry' | 'manual';
   message: string;
   repo?: string;
@@ -52,6 +52,13 @@ export interface AuthStatus {
   connected: boolean;
   login?: string;
   source: 'global' | 'env' | null;
+  /**
+   * The stored session is connected but GitHub last REJECTED its token (expired/
+   * invalid) — the Settings chip flips to an invalid + "Reconnect" state. Read off
+   * the same server-side flag the sync path writes, so it always agrees with the
+   * sidebar's "sign-in expired" surface.
+   */
+  needsReconnect?: boolean;
   /**
    * Whether a real GitHub OAuth App is wired up. When false, the one-click
    * device flow is unavailable (placeholder client_id) and the UI steers users
@@ -129,6 +136,9 @@ function invalidateBrain(queryClient: ReturnType<typeof useQueryClient>): void {
   queryClient.invalidateQueries({ queryKey: BRAIN_KEYS.status });
   queryClient.invalidateQueries({ queryKey: BRAIN_KEYS.settings });
   queryClient.invalidateQueries({ queryKey: BRAIN_KEYS.teamUpdates });
+  // A sync updates the shared auth-validity flag; refresh the session chip so it
+  // agrees with the sidebar sync surface (both read one source of truth).
+  queryClient.invalidateQueries({ queryKey: BRAIN_KEYS.authStatus });
 }
 
 // ─── Status / settings (vault-scoped — SW2 master switch) ────────────────────
