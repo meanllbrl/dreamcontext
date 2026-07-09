@@ -116,7 +116,7 @@ import {
   handleLinkedReposUnlink,
 } from './routes/linked-repos.js';
 import { listVaults } from '../lib/vaults.js';
-import { startParentDeathWatch, startVersionDriftWatch, registerShutdownHandler, killTrackedChildren } from './lifecycle.js';
+import { startParentDeathWatch, startVersionDriftWatch, startUpgradeReadyWatch, registerShutdownHandler, killTrackedChildren } from './lifecycle.js';
 import { handleAdminShutdown } from './routes/admin.js';
 import { dreamcontextVersion, readDreamcontextVersionFromDisk } from '../lib/manifest.js';
 
@@ -532,6 +532,11 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
         console.log(`\n  dreamcontext was updated to v${diskVersion} — restarting the dashboard server is required. Exiting; the next session (or \`dreamcontext dashboard\`) starts the new version.`);
         shutdown();
       });
+      // Desktop counterpart: the app is excluded from the self-exit above (it would
+      // blank a live window with nothing to respawn it), so instead FLAG the on-disk
+      // upgrade — GET /api/health surfaces it and the dashboard bundle auto-relaunches
+      // the app onto the new version. Self-gates to DREAMCONTEXT_DESKTOP=1.
+      startUpgradeReadyWatch(dreamcontextVersion(), readDreamcontextVersionFromDisk);
     });
   });
 }

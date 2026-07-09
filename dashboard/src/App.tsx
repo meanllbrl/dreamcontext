@@ -10,6 +10,7 @@ import { ThemeProvider } from './context/ThemeContext';
 import { I18nProvider } from './context/I18nContext';
 import { ProjectProvider } from './context/ProjectContext';
 import { Shell, type ShellNavigation } from './components/layout/Shell';
+import { UpgradeRelaunchBanner } from './components/layout/UpgradeRelaunchBanner';
 import { ProjectSwitcher } from './components/search/ProjectSwitcher';
 import { AgentSurface } from './components/sleepy/AgentSurface';
 import { TasksPage } from './pages/TasksPage';
@@ -200,6 +201,7 @@ export function App() {
         <QueryClientProvider client={queryClient}>
           <ThemeProvider>
             <I18nProvider>
+              <UpgradeRelaunchBanner />
               <SleepyHotkeyRegistrar />
               <LauncherPage />
               <ProjectSwitcher />
@@ -216,6 +218,7 @@ export function App() {
         <ProjectProvider>
           <ThemeProvider>
             <I18nProvider>
+              <UpgradeRelaunchBanner />
               <StaleServerBanner />
               <Shell>
                 {(nav) => <PageRouter nav={nav} />}

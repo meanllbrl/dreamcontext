@@ -1236,6 +1236,18 @@ export async function handleLauncherUpgradeStatus(
 }
 
 /**
+ * De-dup guard for concurrent relaunch arms. The desktop app is multi-window, and
+ * the auto-relaunch banner mounts in EVERY window — so an upgrade can make N
+ * windows each POST here within the same tick. Arming N detached `sleep 2; open`
+ * children is wasteful (and races N `closeAllWindows()`), so once one is armed we
+ * report success for the rest without spawning again. Time-boxed (not a latch) so
+ * a manual retry after a relaunch that failed to actually quit still works. The
+ * value naturally resets to 0 on the fresh process after a successful relaunch.
+ */
+let lastRelaunchArmedAt = 0;
+const RELAUNCH_ARM_TTL_MS = 10_000;
+
+/**
  * POST /api/launcher/relaunch — relaunch the installed desktop app so a freshly
  * upgraded CLI/app bundle takes effect. Mutation; behind the CSRF guard.
  *
@@ -1258,12 +1270,20 @@ export async function handleLauncherRelaunch(
     sendJson(res, 200, { ok: false, reason: 'app_not_installed' });
     return;
   }
+  // Already armed by another window in the last few seconds → don't arm a second
+  // `open`; the pending one will reopen the app for everyone. Report success.
+  const now = Date.now();
+  if (now - lastRelaunchArmedAt < RELAUNCH_ARM_TTL_MS) {
+    sendJson(res, 200, { ok: true, alreadyArmed: true });
+    return;
+  }
   try {
     // `$0` is the bundle path positional — never interpolated into the string.
     const child = spawn('/bin/sh', ['-c', 'sleep 2; open "$0"', appPath], {
       detached: true,
       stdio: 'ignore',
     });
+    lastRelaunchArmedAt = now;
     // Detached + unref'd: a LATE (async) spawn 'error' has no listener otherwise and would
     // crash this long-lived server as an uncaughtException. Best-effort relaunch — there's
     // nothing to recover once detached, so just swallow it (matches the upgrade child above).

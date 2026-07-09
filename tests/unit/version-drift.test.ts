@@ -7,6 +7,9 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 
 import {
   startVersionDriftWatch,
+  startUpgradeReadyWatch,
+  getUpgradeReadyVersion,
+  __resetUpgradeReadyVersion,
   registerShutdownHandler,
   requestShutdown,
 } from '../../src/server/lifecycle.js';
@@ -103,6 +106,76 @@ describe('startVersionDriftWatch', () => {
   });
 });
 
+describe('startUpgradeReadyWatch (desktop self-heal flag)', () => {
+  const ORIG = { ...process.env };
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    __resetUpgradeReadyVersion();
+    process.env.DREAMCONTEXT_DESKTOP = '1'; // this watch is the desktop counterpart
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+    process.env = { ...ORIG };
+    __resetUpgradeReadyVersion();
+  });
+
+  it('flags the newer on-disk version once an upgrade lands (does NOT exit)', () => {
+    let disk = '1.0.0';
+    const stop = startUpgradeReadyWatch('1.0.0', () => disk, 1000);
+    expect(stop).toBeDefined();
+    expect(getUpgradeReadyVersion()).toBeNull();
+
+    vi.advanceTimersByTime(3000);
+    expect(getUpgradeReadyVersion()).toBeNull(); // same version → no flag
+
+    disk = '1.1.0'; // npm upgrade landed on disk under the running app
+    vi.advanceTimersByTime(1000);
+    expect(getUpgradeReadyVersion()).toBe('1.1.0');
+    stop?.();
+  });
+
+  it("never flags on '0.0.0' (transient mid-upgrade read)", () => {
+    let disk = '1.0.0';
+    startUpgradeReadyWatch('1.0.0', () => disk, 1000);
+
+    disk = '0.0.0';
+    vi.advanceTimersByTime(3000);
+    expect(getUpgradeReadyVersion()).toBeNull();
+
+    disk = '1.2.0'; // upgrade completes → real flag
+    vi.advanceTimersByTime(1000);
+    expect(getUpgradeReadyVersion()).toBe('1.2.0');
+  });
+
+  it('does NOT flag a downgrade (rollback under a running newer server)', () => {
+    let disk = '0.16.0';
+    startUpgradeReadyWatch('0.16.0', () => disk, 1000);
+
+    disk = '0.13.0'; // `npm i -g dreamcontext@0.13.0` under a running 0.16.0
+    vi.advanceTimersByTime(3000);
+    expect(getUpgradeReadyVersion()).toBeNull(); // downgrade must never force a relaunch
+
+    disk = '0.17.0'; // a real upgrade DOES flag
+    vi.advanceTimersByTime(1000);
+    expect(getUpgradeReadyVersion()).toBe('0.17.0');
+  });
+
+  it('does NOT start off-desktop (terminal servers self-exit via the drift watch)', () => {
+    delete process.env.DREAMCONTEXT_DESKTOP;
+    const stop = startUpgradeReadyWatch('1.0.0', () => '2.0.0', 1000);
+    expect(stop).toBeUndefined();
+    vi.advanceTimersByTime(5000);
+    expect(getUpgradeReadyVersion()).toBeNull();
+  });
+
+  it("does not start when the startup version is unknown ('0.0.0'/empty)", () => {
+    expect(startUpgradeReadyWatch('0.0.0', () => '1.0.0', 1000)).toBeUndefined();
+    expect(startUpgradeReadyWatch('', () => '1.0.0', 1000)).toBeUndefined();
+  });
+});
+
 describe('shutdown handler registry', () => {
   it('requestShutdown is a no-op (false) before registration, true after', () => {
     // Reset any handler leaked by other tests by registering a known one.
@@ -139,6 +212,13 @@ describe('GET /api/health version handshake', () => {
     const caps = body().capabilities as string[];
     expect(caps).toContain('tasks.token');
     expect(caps).toContain('tasks.token-status');
+  });
+
+  it('exposes upgradeReady (null when no upgrade has landed under the server)', async () => {
+    __resetUpgradeReadyVersion();
+    const { res, body } = makeRes();
+    await handleHealthGet(stubReq, res, {}, '/tmp/x');
+    expect(body().upgradeReady).toBeNull();
   });
 });
 

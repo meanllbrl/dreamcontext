@@ -1,6 +1,7 @@
 import { IncomingMessage, ServerResponse } from 'node:http';
 import { sendJson } from '../middleware.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
+import { getUpgradeReadyVersion } from '../lifecycle.js';
 
 /**
  * LEGACY capability list, kept only so OLDER dashboard bundles (which compare
@@ -38,5 +39,9 @@ export async function handleHealthGet(
     // The version this PROCESS is running (not what's on disk) — the bundle
     // and ensure-dashboard compare it against their own to detect skew.
     version: dreamcontextVersion(),
+    // Desktop self-heal: the newer on-disk version when an upgrade landed under
+    // this running server (else null). The bundle uses it to auto-relaunch the
+    // app onto the new version without any manual quit/reopen.
+    upgradeReady: getUpgradeReadyVersion(),
   });
 }

@@ -4,6 +4,12 @@ import { api } from '../api/client';
 export interface ServerHealth {
   ok: boolean;
   version?: string;
+  /**
+   * Set to the newer on-disk version when an upgrade landed under the running
+   * desktop server (else null/undefined). Drives the automatic app relaunch so a
+   * desktop app never serves a stale bundle after `dreamcontext upgrade`/`npm i -g`.
+   */
+  upgradeReady?: string | null;
 }
 
 /**

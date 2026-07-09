@@ -58,6 +58,28 @@ export async function closeCurrentWindow(): Promise<void> {
 }
 
 /**
+ * Close EVERY open app window so the app actually quits — the auto-relaunch flow
+ * needs a real quit, and closing a single window doesn't quit a multi-window app
+ * (launcher + one window per vault). After the server has armed its detached
+ * `open <app>` relauncher, quitting tears down the stale server and the reopened
+ * (swapped) bundle spawns a fresh one. Falls back to closing just this window if
+ * the window list can't be enumerated. No-op off-desktop.
+ */
+export async function closeAllWindows(): Promise<void> {
+  if (!isDesktop()) return;
+  try {
+    const mod = await import('@tauri-apps/api/webviewWindow');
+    const WW = mod.WebviewWindow as unknown as { getAll?: () => Promise<Array<{ close: () => Promise<void> }>> };
+    const wins = WW.getAll ? await WW.getAll() : [];
+    if (wins.length > 0) {
+      await Promise.all(wins.map((w) => w.close().catch(() => { /* already gone */ })));
+      return;
+    }
+  } catch { /* fall through to single-window close */ }
+  await closeCurrentWindow();
+}
+
+/**
  * Minimal structural shape of a mousedown event — satisfied by BOTH the DOM
  * `MouseEvent` and React's synthetic `MouseEvent`, so this module stays free of
  * React types while still being callable straight from a JSX `onMouseDown`.

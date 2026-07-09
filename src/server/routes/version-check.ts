@@ -2,7 +2,7 @@ import { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname } from 'node:path';
 import { sendJson } from '../middleware.js';
 import { readVersionCache, isCacheFresh, buildNudge, readAutoUpgradeMarker, shouldSuppressCliNudge, compareVersions } from '../../lib/version-check.js';
-import { dreamcontextVersion } from '../../lib/manifest.js';
+import { dreamcontextVersion, readDreamcontextVersionFromDisk } from '../../lib/manifest.js';
 import { isSkillInstalled } from '../../lib/catalog.js';
 
 /**
@@ -23,7 +23,17 @@ export async function handleVersionCheckGet(
     const projectRoot = dirname(contextRoot);
     const cache = readVersionCache(projectRoot);
     const fresh = isCacheFresh(cache);
-    const installedCli = dreamcontextVersion();
+    // Read the CLI version FRESH from disk, not the process-cached value.
+    // `dreamcontextVersion()` memoizes at process start; the desktop app's
+    // long-lived dashboard server therefore keeps reporting its launch-time
+    // version even after an in-place `dreamcontext upgrade` rewrote package.json.
+    // That made the header badge show a phantom "vOLD → vNEW" nudge for a version
+    // the user had ALREADY installed — until they fully relaunched the app.
+    // Reading fresh lets the badge self-clear on the next poll once the on-disk
+    // package is upgraded. Fall back to the cached value if the fresh read is
+    // momentarily unavailable (npm mid-swap returns the '0.0.0' sentinel).
+    const freshCli = readDreamcontextVersionFromDisk();
+    const installedCli = freshCli === '0.0.0' ? dreamcontextVersion() : freshCli;
     const catalogPackNames = cache?.availablePacks ?? [];
     // Filesystem truth (the pack's SKILL.md on disk), NOT config.packs — config
     // drifts from reality and produced false "new pack available" nudges for packs

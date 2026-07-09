@@ -1,0 +1,45 @@
+/* Automatic desktop self-heal banner (an upgrade landed under the running app). */
+.upgrade-relaunch-banner {
+  position: sticky;
+  top: 0;
+  z-index: 101; /* above the stale-server banner (100) */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  background: #4c1d95; /* violet accent — an update, not an error */
+  color: #ede9fe;
+  font-size: 13px;
+  padding: 8px 12px;
+}
+
+.upgrade-relaunch-actions {
+  display: inline-flex;
+  gap: 8px;
+}
+
+.upgrade-relaunch-btn {
+  font: inherit;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: transparent;
+  color: #ede9fe;
+  border-radius: 6px;
+  padding: 3px 12px;
+  cursor: pointer;
+}
+
+.upgrade-relaunch-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.upgrade-relaunch-btn--primary {
+  background: #ede9fe;
+  color: #4c1d95;
+  border-color: #ede9fe;
+  font-weight: 600;
+}
+
+.upgrade-relaunch-btn--primary:hover {
+  background: #ffffff;
+}

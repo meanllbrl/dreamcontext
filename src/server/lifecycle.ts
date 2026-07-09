@@ -15,6 +15,7 @@
 // parent is gone, no matter how the parent died.
 
 import type { ChildProcess } from 'node:child_process';
+import { compareVersions } from '../lib/version-check.js';
 
 /** Kill callbacks for live children (PTYs, capture spawns) we want reaped on exit. */
 const liveChildren = new Set<() => void>();
@@ -103,6 +104,78 @@ export function startVersionDriftWatch(
   // Same discipline as the parent-death watch: never hold the event loop open.
   timer.unref?.();
 
+  return () => clearInterval(timer);
+}
+
+// ─── Desktop upgrade-ready flag (self-heal) ─────────────────────────────────────
+//
+// The desktop app is EXCLUDED from startVersionDriftWatch's self-exit: killing the
+// server would blank a live window with nothing to respawn it. But it still MUST
+// notice an on-disk upgrade — otherwise a long-lived app keeps serving the OLD
+// dashboard bundle + OLD routes (a missing Settings section, "No route" errors)
+// until the user manually quits and reopens. That was the whole "I updated but the
+// app stays stale on another machine" report.
+//
+// This is the desktop counterpart to the drift watch: the SAME disk-version poll,
+// but instead of exiting it records the newer version in a flag that
+// GET /api/health exposes. The bundle polls health, sees a newer version is
+// installed under it, and drives an AUTOMATIC relaunch (close windows → app quits →
+// the server's detached `open <app>` reopens the swapped bundle → a fresh server
+// spawns from the upgraded CLI). Ships via the normal npm/CLI bundle — no Tauri
+// rebuild — so every future upgrade self-heals once the app is on a build with this.
+
+// Intentionally process-global (NOT request/vault-scoped): the CLI version is
+// vault-agnostic, and this is written ONLY by the internal timer below — never
+// from request input — so there is no cross-vault or attacker-writable path here.
+let upgradeReadyVersion: string | null = null;
+
+/**
+ * The newer on-disk version that landed while this (desktop) server was running,
+ * or null if none has. Read by GET /api/health for the bundle's auto-relaunch.
+ */
+export function getUpgradeReadyVersion(): string | null {
+  return upgradeReadyVersion;
+}
+
+/** Test-only: clear the flag between cases. */
+export function __resetUpgradeReadyVersion(): void {
+  upgradeReadyVersion = null;
+}
+
+/**
+ * Desktop-only watch: poll the on-disk package.json version and flag a confirmed
+ * upgrade (a VALID version different from startup) for the bundle to act on.
+ * '0.0.0'/read-failure never flags (transient mid-upgrade state, not a real bump).
+ * Gated to DREAMCONTEXT_DESKTOP=1 — a terminal `dreamcontext dashboard` is covered
+ * by startVersionDriftWatch's self-exit instead. Returns a stop fn, or undefined.
+ */
+export function startUpgradeReadyWatch(
+  startupVersion: string,
+  readDiskVersion: () => string,
+  pollMs = 30_000,
+): (() => void) | undefined {
+  if (process.env.DREAMCONTEXT_DESKTOP !== '1') return undefined;
+  if (!startupVersion || startupVersion === '0.0.0') return undefined;
+
+  upgradeReadyVersion = null;
+  const timer = setInterval(() => {
+    let disk = '0.0.0';
+    try {
+      disk = readDiskVersion();
+    } catch {
+      return; // read failure = unknown, never a flag
+    }
+    // Only flag a genuine UPGRADE (strictly newer), never a downgrade. A rollback
+    // (e.g. `npm i -g dreamcontext@0.13.0` under a running 0.16.0) must NOT show
+    // "updated to v0.13.0" and force-relaunch the app onto older code. '0.0.0'
+    // (unreadable/mid-swap) compares below everything, so it never trips this.
+    if (disk !== '0.0.0' && compareVersions(disk, startupVersion) > 0) {
+      upgradeReadyVersion = disk;
+      clearInterval(timer); // latched — the bundle relaunches from here
+    }
+  }, pollMs);
+
+  timer.unref?.();
   return () => clearInterval(timer);
 }
 
