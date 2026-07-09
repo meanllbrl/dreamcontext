@@ -1,0 +1,107 @@
+/* Linked repos panel — the bare code repos this brain governs, shown in
+   Settings → Cloud sync after OriginSetup. Reuses the shared .btn and
+   .settings-text-input styles; only the panel chrome lives here. */
+
+.linked-repos {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  margin-top: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+}
+
+.linked-repos-title {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+}
+
+.linked-repos-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.linked-repos-item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+}
+
+.linked-repos-item-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.linked-repos-name {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+}
+
+.linked-repos-url {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  word-break: break-all;
+}
+
+.linked-repos-path {
+  font-size: var(--font-size-xs);
+  color: var(--color-success);
+  word-break: break-all;
+}
+
+.linked-repos-missing {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary, var(--color-text-secondary));
+}
+
+.linked-repos-item-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.linked-repos-trust-warn {
+  font-size: var(--font-size-xs);
+  color: var(--color-error);
+  max-width: 220px;
+}
+
+.linked-repos-add {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.linked-repos-add .settings-text-input {
+  flex: 1;
+}
+
+.linked-repos-error {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-error);
+}
+
+/* Compact button variant for the inline row actions. */
+.linked-repos .btn--sm {
+  padding: 4px var(--space-3);
+  font-size: var(--font-size-xs);
+}

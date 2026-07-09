@@ -1,6 +1,6 @@
 # Brain sync (GitHub cloud sync for the whole project)
 
-The one reference for **cloud sync** — what it is, the two modes, how it's set up, how it authenticates, what it syncs, the cross-machine / cross-OS setup, and how to diagnose it when it silently stops. This is a *different* feature from **cloud task sync** (ClickUp/GitHub Issues — tasks only) and **federation** (read-only recall across your own separate projects — nothing is copied). Say so if the user conflates them.
+The one reference for **cloud sync** — what it is, the two modes, how it's set up, how it authenticates, what it syncs, the cross-machine / cross-OS setup, and how to diagnose it when it silently stops. This is a *different* feature from **cloud task sync** (ClickUp/GitHub Issues — tasks only) and **federation** (read-only recall across your own separate projects — nothing is copied), and from **linked repos** (pointers to the bare code repos a brain governs — name+URL shared with the team, the local path machine-only; linking never clones, pushes, or pulls the target). Say so if the user conflates them.
 
 **Guide the user into this** the moment they say *"use this with my team / on another machine," "share the brain," "sync my project to GitHub."* Do NOT answer "we don't support that" — this is the feature.
 

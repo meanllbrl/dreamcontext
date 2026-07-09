@@ -109,6 +109,12 @@ import {
   handleBrainTeamUpdates,
   handleBrainTeamFetch,
 } from './routes/brain.js';
+import {
+  handleLinkedReposList,
+  handleLinkedReposLink,
+  handleLinkedReposClone,
+  handleLinkedReposUnlink,
+} from './routes/linked-repos.js';
 import { listVaults } from '../lib/vaults.js';
 import { startParentDeathWatch, startVersionDriftWatch, registerShutdownHandler, killTrackedChildren } from './lifecycle.js';
 import { handleAdminShutdown } from './routes/admin.js';
@@ -204,6 +210,14 @@ function buildRouter(): Router {
   router.post('/api/brain/origin/preview', handleBrainOriginPreview);
   router.post('/api/brain/origin/attach', handleBrainOriginAttach);
   router.post('/api/brain/scrub/ignore', handleBrainScrubIgnore);
+
+  // Linked repos — the shared brain governs bare code repos (products) with no
+  // `_dream_context/` of their own. Vault-scoped (header-resolved, NOT vault-
+  // agnostic), desktop-gated. Thin over the in-process `linked-repos.ts` fns.
+  router.get('/api/linked-repos', handleLinkedReposList);
+  router.post('/api/linked-repos/link', handleLinkedReposLink);
+  router.post('/api/linked-repos/clone', handleLinkedReposClone);
+  router.post('/api/linked-repos/unlink', handleLinkedReposUnlink);
 
   // Graph
   router.get('/api/graph', handleGraphGet);

@@ -13,6 +13,7 @@ import { useBrainSettings, useUpdateBrainSettings } from '../hooks/useBrainStatu
 import { useSleep, useUpdateSleep, type RecallMode } from '../hooks/useSleep';
 import { GitHubLogin } from '../components/brain/GitHubLogin';
 import { OriginSetup } from '../components/brain/OriginSetup';
+import { LinkedRepos } from '../components/brain/LinkedRepos';
 import { readAutoCheckpointOnOpen, writeAutoCheckpointOnOpen } from '../lib/brainSyncPrefs';
 import { isDesktop } from '../lib/desktop';
 import {
@@ -849,6 +850,8 @@ export function SettingsPage({ focus }: SettingsPageProps) {
           <GitHubLogin />
           {/* No project origin yet → create/attach one so full-repo sync can turn on. */}
           <OriginSetup />
+          {/* Linked repos — the bare code repos this brain governs (present/missing + clone). */}
+          <LinkedRepos />
         </div>
 
         <div className="settings-subsection">

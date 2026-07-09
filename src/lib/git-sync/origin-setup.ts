@@ -45,6 +45,20 @@ function remoteForSlug(slug: { owner: string; repo: string }): string {
   return `https://github.com/${slug.owner}/${slug.repo}.git`;
 }
 
+/**
+ * Collapse any accepted GitHub URL form (ssh, https, `owner/repo`, with/without
+ * `.git` or a trailing slash) to ONE canonical HTTPS remote string, so the same
+ * repo always maps to the same key regardless of how it was written. Returns null
+ * for a non-GitHub / non-repo string. GitHub-only by construction (v1). Used as
+ * the globally-unique join key for the linked-repos registry and as the ONLY URL
+ * shape that ever reaches `git clone` (S1 — the raw team-writable string never
+ * does).
+ */
+export function canonicalRemote(url: string): string | null {
+  const slug = parseRepoSlug(url);
+  return slug ? remoteForSlug(slug) : null;
+}
+
 function githubAdapter(projectRoot: string, injected?: ApiAdapter): ApiAdapter {
   return injected ?? new ApiAdapter({
     baseUrl: 'https://api.github.com',

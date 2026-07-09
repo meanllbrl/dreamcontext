@@ -34,6 +34,7 @@ import { registerConfigCommand } from './commands/config.js';
 import { registerFeedbackCommand } from './commands/feedback.js';
 import { registerMigrationsCommand } from './commands/migrations.js';
 import { registerBrainCommand } from './commands/brain.js';
+import { registerLinkCommand } from './commands/link.js';
 import { startInteractive } from './interactive.js';
 import { renderBanner } from '../lib/pixel-banner.js';
 import { dreamcontextVersion } from '../lib/manifest.js';
@@ -94,6 +95,11 @@ ${chalk.bold('Dashboard')}
 
 ${chalk.bold('Cloud Collaboration')}
   ${chalk.magentaBright('brain')}             Sync the brain to its own GitHub repo (init/attach/sync/enable/disable)
+
+${chalk.bold('Linked Repos')}
+  ${chalk.magentaBright('link')}              Govern bare code repos: add/clone/ls/rm linked repos
+  ${chalk.magentaBright('links')}             List linked repos (alias for link ls)
+  ${chalk.magentaBright('unlink')}            Unlink a repo (alias for link rm)
 
 ${chalk.bold('Vaults')}
   ${chalk.magentaBright('vaults')}            Manage the global vault registry (multi-project)
@@ -158,6 +164,7 @@ export function createProgram(): Command {
   registerFeedbackCommand(program);
   registerMigrationsCommand(program);
   registerBrainCommand(program);
+  registerLinkCommand(program);
 
   return program;
 }

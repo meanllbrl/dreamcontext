@@ -53,6 +53,23 @@ export interface SetupConfig {
   shareable?: boolean;
   /** Cloud collaboration for the brain repo (github-cloud-collaboration-brain-repo-sync). */
   brainRepo?: BrainRepoConfig;
+  /**
+   * Linked CODE repos this brain governs (bare products with no `_dream_context/`
+   * of their own). SHARED half of the two-layer design: `{name, gitRemoteUrl}`
+   * only — NEVER a local path (that lives machine-globally in
+   * `~/.dreamcontext/linked-repos.json`, keyed by canonical URL). This list rides
+   * to teammates in `.config.json`; each machine resolves it to a local path via
+   * the home registry. Orthogonal to `multiProduct`. Absent ⇒ no linked repos.
+   */
+  linkedRepos?: LinkedRepo[];
+}
+
+/** A governed CODE repo, SHARED across the team — name (per-project label) + canonical GitHub URL. NEVER a path. */
+export interface LinkedRepo {
+  /** Per-project display label (e.g. `api`). Not globally unique — the URL is the join key. */
+  name: string;
+  /** Canonical GitHub remote (`https://github.com/owner/repo.git`). The globally-unique key. */
+  gitRemoteUrl: string;
 }
 
 export interface BrainRepoConfig {
@@ -169,6 +186,27 @@ function sanitizeBrainRepo(raw: unknown): BrainRepoConfig | undefined {
   return out;
 }
 
+/**
+ * Keep ONLY `{name, gitRemoteUrl}` (both non-empty strings) per entry — a
+ * hand-injected `path` (or any other stray key) is DROPPED, so a local path can
+ * never leak into the shared, pushed config (defense-in-depth on the
+ * path-never-tracked invariant). Does NOT canonicalize (that would couple this
+ * file to git-sync and risk a circular import); `linkRepo` persists canonical and
+ * `resolveLinkedRepos`/the snapshot render canonical. Absent/empty ⇒ undefined.
+ */
+function sanitizeLinkedRepos(raw: unknown): LinkedRepo[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: LinkedRepo[] = [];
+  for (const entry of raw) {
+    if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) continue;
+    const e = entry as Record<string, unknown>;
+    if (typeof e.name !== 'string' || typeof e.gitRemoteUrl !== 'string') continue;
+    if (!e.name.trim() || !e.gitRemoteUrl.trim()) continue;
+    out.push({ name: e.name, gitRemoteUrl: e.gitRemoteUrl });
+  }
+  return out.length > 0 ? out : undefined;
+}
+
 function sanitizePeopleIdentity(raw: unknown): Record<string, PersonIdentity> | undefined {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
   const out: Record<string, PersonIdentity> = {};
@@ -223,6 +261,7 @@ export function readSetupConfig(projectRoot: string): SetupConfig | null {
       // which `isShareable` treats as private (the default-false invariant).
       shareable: typeof parsed.shareable === 'boolean' ? parsed.shareable : undefined,
       brainRepo: sanitizeBrainRepo(parsed.brainRepo),
+      linkedRepos: sanitizeLinkedRepos(parsed.linkedRepos),
     };
   } catch {
     return null;
@@ -264,6 +303,7 @@ export function updateSetupConfig(
     peopleIdentity: patch.peopleIdentity ?? existing.peopleIdentity,
     shareable: patch.shareable ?? existing.shareable,
     brainRepo: patch.brainRepo ?? existing.brainRepo,
+    linkedRepos: patch.linkedRepos ?? existing.linkedRepos,
   };
   writeSetupConfig(projectRoot, next);
   return next;

@@ -67,6 +67,8 @@ directly (a connected peer is a normal directory on disk). A connection is a sta
 "may read" — use it instead of reporting "not found here" when a sibling project owns
 the answer.
 
+**Linked code repos are reachable too.** This brain may *govern* bare code repos — products/services in their own GitHub repos, with **no `_dream_context/` of their own** — cloned at machine-local paths. `dreamcontext links` (or the SessionStart "Linked repos" glance) resolves each to its local path on this machine. When the answer lives in a governed product's *code* rather than in this repo, Grep/Read that resolved absolute path directly instead of reporting "not found here". A **missing (✗)** linked repo simply isn't checked out on this machine — say so rather than guessing.
+
 Recall is appropriate for Track A (Documented Knowledge) and for Track B when
 the query is about a documented concept. It is NOT a substitute for Glob/Grep
 on raw code symbols — for "find the function that does X" go straight to
@@ -144,7 +146,7 @@ No preamble. No emojis. Absolute paths only.
 
 ## Bash Restrictions
 
-Use Bash ONLY for: `ls`, `git log`, `git diff`, `git show`, `git status`, `find`, `cat`, `head`, `tail`, `wc`, `pwd`, `dreamcontext memory recall`, `dreamcontext snapshot`, `dreamcontext transcript distill`
+Use Bash ONLY for: `ls`, `git log`, `git diff`, `git show`, `git status`, `find`, `cat`, `head`, `tail`, `wc`, `pwd`, `dreamcontext memory recall`, `dreamcontext links`, `dreamcontext snapshot`, `dreamcontext transcript distill`
 NEVER use Bash for any command that modifies files or system state.
 
 ## Rules

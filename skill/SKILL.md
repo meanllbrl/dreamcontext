@@ -92,6 +92,7 @@ dreamcontext is **more than memory files**. Every capability below is real and s
 | **Desktop app** | macOS Tauri app: multi-vault launcher, federation board, Sleepy notch capture | [integrations.md](references/integrations.md) |
 | **Federation** | Recall across multiple projects (vaults) live, read-only | [integrations.md](references/integrations.md) |
 | **✅ Team brain sync (whole project)** | **Yes — a team OR one person across machines can share ONE brain.** Cloud sync pushes the WHOLE project (code + `.claude/` + `_dream_context/`) to its GitHub `origin` on the current branch (`full-repo`); when off it's `in-tree` (commit-only). `sleep done` auto fetch→merge→commit→pushes it; the `/dream-sync` skill resolves prose conflicts. Different from federation (read-only cross-project recall) and cloud task sync (tasks only). Each machine needs its own token. | [brain-sync.md](references/brain-sync.md) |
+| **Linked repos** | One brain governs **bare code repos** (products in their own GitHub repos, no `_dream_context/`): the shared `{name,url}` travels with the team; a machine-local `url→path` registry (`~/.dreamcontext/linked-repos.json`, never synced) resolves each on THIS machine. `dreamcontext link add\|clone\|ls\|rm`, a session-start present/missing glance, a trust-gated clone, a dashboard panel. A **pointer to code, not a sync**. | [cli-reference.md](references/cli-reference.md) |
 | **Council** | Structured multi-persona debates with a synthesized verdict | [integrations.md](references/integrations.md) |
 | **Marketing (`mk`)** | Meta marketing skill: cohorts, campaigns, competitor ingest | [integrations.md](references/integrations.md) |
 | **Versions / releases** | Planning versions and releases unify in RELEASES.json | [tasks-and-features.md](references/tasks-and-features.md) |
@@ -399,7 +400,8 @@ _dream_context/
 │   └── task.md                       ← OPTIONAL: project task template + custom_fields schema (briefed to agents)
 ├── state/
 │   ├── <task>.md                     ← Active tasks (frontmatter may include product:, start_date, due_date, custom_fields)
-│   ├── .config.json                  ← platforms, packs, multiProduct, taskBackend, people…
+│   ├── .config.json                  ← platforms, packs, multiProduct, taskBackend, people, linkedRepos…
+│   │                                    (linked-repo LOCAL paths live in ~/.dreamcontext/linked-repos.json, never synced)
 │   ├── .active-version.json          ← current sprint (active planning version)
 │   ├── .sleep.json  .secrets.json (gitignored)  .active-task
 ```

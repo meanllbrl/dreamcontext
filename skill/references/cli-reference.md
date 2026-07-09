@@ -224,6 +224,21 @@ Sync the WHOLE brain (`_dream_context/`) — tasks, knowledge, features, sleep s
 
 ---
 
+## Linked repos — the bare code repos a brain governs (see [brain-sync.md](brain-sync.md))
+
+One shared brain can point at the **bare code repos it governs** — products/services in their own GitHub repos, cloned at different local paths on each machine (or absent on some), with **no `_dream_context/` of their own**. Distinct from **brain sync** (syncs the whole project) and **federation** (read-only recall across *brains*): linked repos are **pointers to code, not a sync** — linking never clones, pushes, pulls, or commits the target. Two layers: the **shared** half (`{name, gitRemoteUrl}` in `.config.json`) travels to the team so everyone knows the repo exists; the **machine-local** half (`~/.dreamcontext/linked-repos.json`, keyed by canonical URL → local path) records where it lives on *this* machine and **never leaves it**. GitHub-only for now.
+
+| Command | Description |
+|---|---|
+| `link add <name> <path>` | Register a local checkout the brain governs. Derives the canonical GitHub URL from the repo's `origin` (or pass `--url`); writes `{name,url}` to `.config.json` + `url→path` to the machine-local registry. Requires `path` to be a git repo whose `origin` matches — **no fetch/clone happens**. |
+| `link ls` (alias: `links`) | List governed repos: ✓ present (resolved local path) / ✗ missing on this machine. `--json`. |
+| `link clone <name>` | Clone a **missing** repo from its shared URL to this machine — a normal one-way `git clone`, behind a **trust-gate** (the URL is team-writable). `--dir <dir>`, `--yes`. |
+| `link rm <name>` (alias: `unlink`) | Drop the repo from `.config.json`; the machine-local `url→path` mapping is intentionally **left** (re-link stays instant; other brains keep resolving it). |
+
+The SessionStart snapshot shows a cheap **Linked repos** glance (present → the resolved path is handed to the agent so it can Grep/Read the governed code; missing → a `link clone` hint). Fully manageable from the dashboard (Settings → Cloud sync → **Linked repos**; desktop-gated, native folder picker).
+
+---
+
 ## Council (see [integrations.md](integrations.md))
 
 `council create`, `council agent create`, `council round start\|end`, `council synthesize`, `council complete`, `council promote`, `council list`, `council show`. Plus sub-agent helpers (`round-context`, `report append`, `summaries`, `research add\|list`).

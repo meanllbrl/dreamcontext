@@ -517,6 +517,18 @@ const translations: Record<string, Record<string, string>> = {
     'brain.team.awaitingAgent': 'Awaiting agent merge',
     'brain.team.checkNow': 'Check now',
     'brain.team.checking': 'Checking…',
+    'linkedRepos.title': 'Linked repos',
+    'linkedRepos.desc': 'The bare code repos this brain governs. The name + GitHub URL are shared with your team; each machine maps them to its own local path, which never leaves this computer.',
+    'linkedRepos.empty': 'No linked repos yet. Bind a local checkout to start governing a code repo.',
+    'linkedRepos.missing': 'Not on this machine yet',
+    'linkedRepos.clone': 'Clone',
+    'linkedRepos.cloneConfirm': 'Clone anyway',
+    'linkedRepos.cloning': 'Cloning…',
+    'linkedRepos.trustWarn': 'This URL comes from the shared config — clone only if you trust it.',
+    'linkedRepos.unlink': 'Unlink',
+    'linkedRepos.add': 'Add',
+    'linkedRepos.adding': 'Adding…',
+    'linkedRepos.namePlaceholder': 'Name (e.g. api), then pick its folder',
   },
 };
 

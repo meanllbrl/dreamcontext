@@ -89,6 +89,7 @@ the planner and the synthesizer.
   - current vault only → recall as-is (already spans eligible peers by default),
   - specific peers → `--vault <name>` (repeatable),
   - everything readable → `--connected` (out/both peers) or `--all-vaults`.
+- If the brain **governs linked code repos** (`dreamcontext links` → resolved local paths for the bare product repos it points at, no `_dream_context/` of their own), those checkouts are part of the substrate too: a fan-out searcher can Grep/Read a governed product's *code* directly when a claim depends on the implementation, not just the docs. Missing (✗) linked repos aren't on this machine — note the gap rather than guessing.
 - **Seed with recall, in JSON, scoped by type:**
   ```bash
   dreamcontext memory recall "<facet>" --json --top 15 --types knowledge,feature,task,memory,changelog,objective --connected

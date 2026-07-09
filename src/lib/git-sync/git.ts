@@ -26,6 +26,16 @@ export class GitSyncError extends Error {
 /** Every networked call passes this to disable any persisted credential helper (e.g. osxkeychain) — F. */
 export const CREDENTIAL_HELPER_DISABLE_ARGS = ['-c', 'credential.helper='];
 
+/**
+ * Transport hardening for `clone` (S1). `protocol.ext.allow=never` refuses git's
+ * `ext::` transport, which would otherwise run an ARBITRARY shell command for a
+ * URL like `ext::sh -c "…"`. `clone` is the ONLY networked call that takes a
+ * team-writable URL (the linked-repos feature), so this lives on the clone argv
+ * (verified: git.clone has zero other callers). Paired with a `--` end-of-options
+ * terminator so a leading-dash URL/dest can never be read as a git flag.
+ */
+export const SAFE_TRANSPORT_ARGS = ['-c', 'protocol.ext.allow=never'];
+
 function run(
   cwd: string,
   args: string[],
@@ -168,9 +178,16 @@ export function push(cwd: string, remote: string, branch: string, env: NodeJS.Pr
   run(cwd, [...CREDENTIAL_HELPER_DISABLE_ARGS, 'push', remote, `HEAD:${branch}`], { env });
 }
 
-/** Networked. Must be called with the env from `withGitCredentials`. `dest` must not yet exist. */
+/**
+ * Networked. Must be called with the env from `withGitCredentials`. `dest` must
+ * not yet exist. Transport-hardened (S1): `protocol.ext.allow=never` refuses the
+ * `ext::` RCE transport, and the `--` terminator stops any leading-dash `url`/
+ * `dest` being parsed as a flag. The caller (`cloneLinkedRepo`) additionally
+ * rebuilds `url` into a canonical `https://github.com/…` form BEFORE it reaches
+ * here, so a raw team-writable string never lands on this argv.
+ */
 export function clone(url: string, dest: string, env: NodeJS.ProcessEnv): void {
-  run(process.cwd(), [...CREDENTIAL_HELPER_DISABLE_ARGS, 'clone', url, dest], { env });
+  run(process.cwd(), [...CREDENTIAL_HELPER_DISABLE_ARGS, ...SAFE_TRANSPORT_ARGS, 'clone', '--', url, dest], { env });
 }
 
 export function mergeBase(cwd: string, a: string, b: string): string | null {
