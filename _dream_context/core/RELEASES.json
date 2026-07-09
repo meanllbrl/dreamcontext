@@ -1,5 +1,16 @@
 [
   {
+    "id": "rel_AuthRec01",
+    "version": "0.17.1",
+    "date": "2026-07-09",
+    "summary": "Cloud-sync sign-in reliability. Centralizes the global 'GitHub sign-in expired' reconciliation into one shared funnel (new auth-reconcile.ts) used by all three sync paths — the server route, the brain sync CLI, and sleep-done autoSync. Only outcomes that could follow a real fetch/push handshake clear the reconnect flag; a failure raises it only when the failing credential is the GLOBAL sign-in (a per-project or env token is fixed by config, not by reconnecting), and a permission error keeps the session valid because GitHub accepted the credential. This closes the root cause of the false 'sign-in expired' desktop banner that persisted despite clean CLI/autoSync syncs — the follow-up hardening to v0.17.0's initial fix.",
+    "breaking": false,
+    "status": "released",
+    "features": [],
+    "tasks": [],
+    "changelog": []
+  },
+  {
     "id": "rel_odC6Ra7D",
     "version": "0.17.0",
     "date": "2026-07-09",
