@@ -192,6 +192,12 @@ existing local dashboard. The two could coexist later but ship independently.
 ## Changelog
 <!-- LIFO: newest entry at top -->
 
+### 2026-07-09 - Footer honesty fix: sync button respects block state (commit 50f59c2)
+
+**Fixed misleading sync-button affordance when sync is blocked.** The sidebar footer's "Sync" button previously stayed clickable even when the status response carried `action:'error'` (scrub-blocked, network-down, token-expired, etc.) — clicking it re-fired the same failing request, surfacing the same error, in a loop. The button now **disables** when `action === 'error'` (button text → "Blocked" / "Error", grayed out) and the status panel surfaces the recovery action (e.g., "Add to .gitignore", "Reconnect GitHub"). One-line TypeScript change in `BrainSyncControl.tsx` (+28/−2).
+
+Task: `cloud-sync-origin-setup-create-attach-github-repo-ui` (footer UX sub-item, session b107c667).
+
 ### 2026-07-09 - Origin setup UI: create/attach a GitHub repo when the project has none
 
 **Re-added the create/attach affordance b45abd4 removed — but retargeted to the project's `origin`, not a

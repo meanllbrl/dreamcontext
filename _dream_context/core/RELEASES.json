@@ -1,5 +1,16 @@
 [
   {
+    "id": "rel_FlKV6wOw",
+    "version": "0.16.0",
+    "date": "",
+    "summary": "Linked repos — one shared brain governs the bare code repos it points at (products in their own GitHub repos, no _dream_context/ of their own). Shared {name,gitRemoteUrl} in .config.json travels with the team; a machine-local url->path registry (~/.dreamcontext/linked-repos.json) resolves each on THIS machine and never syncs. CLI link add|clone|ls|rm (+ links/unlink aliases), a hot-path session-start present/missing glance handing resolved paths to the agent, a trust-gated clone, and a dashboard Linked repos panel. Linking is a pointer to code, not a sync. Security-hardened clone: canonical-URL rebuild before git + protocol.ext.allow=never + '--', dest sanitize + containment, isGitRepo + canonical-origin match on link.",
+    "breaking": false,
+    "status": "planning",
+    "features": [],
+    "tasks": [],
+    "changelog": []
+  },
+  {
     "id": "rel_OKd5v_L-",
     "version": "v0.15.0",
     "date": "2026-07-09",

@@ -7,12 +7,12 @@ tags:
   - 'topic:roadmap'
   - 'topic:pm'
 pinned: false
-date: '2026-07-08'
+date: '2026-07-09'
 ---
 
 # Roadmap Board
 
-> Auto-generated 2026-07-08 by `dreamcontext roadmap`. Objectives live in `core/objectives/`; task links live in each task's `objectives:` frontmatter.
+> Auto-generated 2026-07-09 by `dreamcontext roadmap`. Objectives live in `core/objectives/`; task links live in each task's `objectives:` frontmatter.
 
 ### ⚪ **improve-recall-mechanism** — Improve Recall Mechanism · 4/5 done (80%) · target 2026-08-16 · forecast 2026-08-16 ✓ on track
   Unblocks: hello-world-pr, make-it-a-business
@@ -29,10 +29,12 @@ date: '2026-07-08'
 ### ⚪ **include-codex-opencode-support** — Include Codex&OpenCode Support · no tasks yet · target 2026-08-23 · forecast 2026-08-23 ✓ on track
   Unblocks: hello-world-pr, make-it-a-business
 
-### 🟢 **make-dreamcontext-team-ready** — Make Dreamcontext, Team Ready · 5/5 done (100%) · target 2026-07-12 · forecast 2026-07-04 ✓ on track
+### 🟢 **make-dreamcontext-team-ready** — Make Dreamcontext, Team Ready · 7/7 done (100%) · target 2026-07-12 · forecast 2026-07-04 ✓ on track
   Unblocks: make-it-a-business
   - brain-portability-dashboard-controls-platform-layer-lab-credentials-example-sync-refresh-button-recall-mode-settings (completed) · v0.14.1
+  - cloud-sync-origin-setup-create-attach-github-repo-ui (completed) · 2026-07-08 → …
   - feat-dashboard-live-sleep-debt-tracker-header-widget (completed) · 0.10.7 · 2026-07-04 → …
+  - feat-linked-repos-shared-brain-governs-bare-code-repos-machine-local-path-registry-link-cli-trust-gated-clone-dashboard (completed) · 2026-07-09 → …
   - feat-okr-key-result-metric-outcome-based-progress (completed) · 0.10.7
   - github-cloud-collaboration-brain-repo-sync (completed) · v0.13.0 · 2026-07-04 → …
   - interactive-roadmap-dashboard-forecast-timeline-cascade-editable-detail-panel (completed) · v0.10.5

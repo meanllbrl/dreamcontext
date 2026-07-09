@@ -1,5 +1,18 @@
 [
   {
+    "date": "2026-07-09",
+    "type": "feat",
+    "scope": "brain",
+    "description": "A dreamcontext brain can now govern bare code repositories via a two-layer model: shared {name, gitRemoteUrl} in .config.json (team-synced when cloud-sync is on); machine-local url→path registry (~/.dreamcontext/linked-repos.json, never synced). 'Link' is a pointer, not a pipe — records existence + local location, never syncs code. New 'dreamcontext link' CLI (add/list/remove/clone); GET+POST /api/linked-repos server routes; dashboard Linked Repos panel in Settings (Add / Clone missing / Remove). Trust-gated clone: user confirms the repo URL before any git operation. Security ordering: S1 (RCE/arg-injection guard BEFORE any git call — parseRepoSlug + canonicalRemote rebuild), S2 (path-traversal containment — sanitizeRepoName + resolve + startsWith guard), S3 (governed-repo origin-match checks in linkRepo). git.ts clone() globally hardened with -c protocol.ext.allow=never + -- terminator. lib: src/lib/linked-repos.ts; CLI: src/cli/commands/link.ts; routes: src/server/routes/linked-repos.ts; dashboard: LinkedRepos.tsx + useLinkedRepos hook; +4 unit/integration tests. Uncommitted (session 94eda2ea).",
+    "breaking": false,
+    "summary": "Linked repos: machine-local registry + link CLI + trust-gated clone + dashboard panel",
+    "references": [
+      "file:src/lib/linked-repos.ts",
+      "file:src/cli/commands/link.ts",
+      "file:dashboard/src/components/brain/LinkedRepos.tsx"
+    ]
+  },
+  {
     "date": "2026-07-08",
     "type": "fix",
     "scope": "brain-sync",

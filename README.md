@@ -31,6 +31,7 @@
   <a href="#lab-insights">Lab</a> &nbsp;&middot;&nbsp;
   <a href="#federation">Federation</a> &nbsp;&middot;&nbsp;
   <a href="#brain-cloud-sync">Brain Sync</a> &nbsp;&middot;&nbsp;
+  <a href="#linked-repos">Linked Repos</a> &nbsp;&middot;&nbsp;
   <a href="#commands">Commands</a> &nbsp;&middot;&nbsp;
   <a href="DEEP-DIVE.md">Deep Dive</a>
 </p>
@@ -580,6 +581,21 @@ dreamcontext brain disable   # Turn it off (the brain stays committed locally, n
 
 From the desktop **Launcher** the whole flow is terminal-free: **GitHub device-flow login** (with a personal-access-token fallback), a Settings **"Cloud sync"** toggle that turns whole-project sync on/off, a **team-updates badge** that tells you when teammates have pushed, and a one-click **"Resolve with AI"** for a deferred prose merge. If the project has no `origin` yet, the Cloud sync panel offers **Create new** (a fresh private-by-default GitHub repo wired as `origin`) or **Connect existing** (an existing repo URL), then enables sync and does the first push for you — no `git remote add` by hand.
 
+## Linked Repos
+
+Federation reads across brains; Brain Cloud Sync shares one brain. **Linked Repos** is the third piece: it lets one brain **govern the bare code repos it points at** — the products or services that live in their *own* GitHub repos, with no `_dream_context/` of their own, cloned to different local paths on each teammate's machine (or not cloned at all). The brain becomes a control tower over a family of repos, decoupled from where any of them physically lives.
+
+Linking is a **pointer, not a pipe** — it never clones, pushes, pulls, or commits the target repo. It records two things: a **shared** `{name, gitRemoteUrl}` in `.config.json` that travels with the team so everyone knows the repo exists, and a **machine-local** `url → path` mapping in `~/.dreamcontext/linked-repos.json` that says where it lives on *this* machine and **never leaves it**.
+
+```bash
+dreamcontext link add app-b ../app-b     # Govern a repo — URL derived from its git origin (no clone/push happens)
+dreamcontext links                       # List them: ✓ present (local path) / ✗ missing here
+dreamcontext link clone app-c            # Fetch a missing one to this machine — one-way, trust-gated clone
+dreamcontext link rm app-b               # Stop governing it (the machine-local path mapping is kept)
+```
+
+Each session's context snapshot shows a **Linked repos** glance — present repos hand their resolved local path to the agent so it can read and edit the governed code directly; missing ones show a one-line `link clone` hint. It's fully manageable from the dashboard (**Settings → Cloud sync → Linked repos**), with a native folder picker to bind a checkout and a trust-gated **Clone** for missing repos. GitHub-only for now, and the clone path is hardened so a team-writable URL can never turn into code execution.
+
 ## Commands
 
 ### Core
@@ -882,6 +898,20 @@ dreamcontext brain disable               # Turn cloud sync off (the brain stays 
 - Device-flow GitHub login and a Settings "Cloud sync" toggle are available from the desktop Launcher.
 
 See the [Brain Cloud Sync](#brain-cloud-sync) section above for the full workflow.
+
+### Linked Repos
+
+```bash
+dreamcontext link add <name> <path>      # Govern a bare code repo (URL from its origin, or --url); no clone/push happens
+dreamcontext links                       # List governed repos: ✓ present / ✗ missing on this machine (--json)
+dreamcontext link clone <name>           # Clone a missing repo here — one-way, trust-gated (--dir, --yes)
+dreamcontext link rm <name>              # Drop it from the shared config (local path mapping kept; alias: unlink)
+```
+
+- A **pointer, not a sync**: `link add` records only `{name, url}` (shared) + a machine-local `url → path` (never synced). Only the explicit `link clone` touches the network.
+- The session-start snapshot surfaces present/missing and hands resolved paths to the agent; also manageable from **Settings → Cloud sync → Linked repos**.
+
+See the [Linked Repos](#linked-repos) section above.
 
 ### Desktop App (macOS)
 
