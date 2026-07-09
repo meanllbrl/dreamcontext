@@ -10,6 +10,7 @@ import {
   ensureFullRepoGitignore,
 } from '../../lib/git-sync/brain-repo.js';
 import { scrubStagedFiles, summarizeScrub } from '../../lib/git-sync/scrub.js';
+import { reconcileBrainSyncSuccess, reconcileBrainSyncFailure } from '../../lib/git-sync/auth-reconcile.js';
 import * as git from '../../lib/git-sync/git.js';
 import { GitSyncError } from '../../lib/git-sync/git.js';
 
@@ -125,9 +126,14 @@ export function registerBrainCommand(program: Command): void {
           continue: opts.continue,
           resume: opts.resume,
         });
+        // A CLI sync is a real git op too — reconcile the global sign-in flag off
+        // its result so a working sync clears a stale "reconnect" banner (the
+        // server route is no longer the only path that keeps the flag honest).
+        reconcileBrainSyncSuccess(result.action);
         renderBrainSyncResult(result);
         if (result.action === 'invalid-flag' || result.action === 'blocked-scrub') process.exitCode = 1;
       } catch (err) {
+        reconcileBrainSyncFailure((err as Error).message, dirname(contextRoot));
         if (err instanceof GitSyncError) {
           error(err.message);
         } else {

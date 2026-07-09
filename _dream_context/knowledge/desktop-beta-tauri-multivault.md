@@ -49,7 +49,11 @@ description: >-
   handler alone missed force-quit/crash/dev-rebuild teardown paths, leaking ~25
   launcher servers reparented to PID 1; fixed via a parent-liveness poll inside
   the Node server itself, a PTY child-reaping registry, and Rust SIGTERM->SIGKILL
-  process-group hardening).
+  process-group hardening), and the 2026-07-09 desktop auto-relaunch on upgrade
+  (macOS self-heal): the app detects version drift at startup (dashboard reports
+  a newer version than the app's own VERSION → sets upgradeReady flag), displays
+  an upgrade banner, and auto-relaunches itself to heal the skew — the root cause
+  was stale-server self-exit + health handshake gaps (commit 51a2c66, v0.17.0).
 type: knowledge
 tags:
   - architecture
@@ -58,8 +62,8 @@ tags:
   - topic:federation
 pinned: true
 created: '2026-06-13'
-updated: '2026-07-06T19:30:00.000Z'
-released_version: v0.8.6
+updated: '2026-07-09'
+released_version: v0.17.0
 ---
 
 ## What this is

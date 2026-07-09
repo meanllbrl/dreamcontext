@@ -29,17 +29,19 @@ date: '2026-07-09'
 ### ⚪ **include-codex-opencode-support** — Include Codex&OpenCode Support · no tasks yet · target 2026-08-23 · forecast 2026-08-23 ✓ on track
   Unblocks: hello-world-pr, make-it-a-business
 
-### 🟢 **make-dreamcontext-team-ready** — Make Dreamcontext, Team Ready · 7/7 done (100%) · target 2026-07-12 · forecast 2026-07-04 ✓ on track
+### 🔵 **make-dreamcontext-team-ready** — Make Dreamcontext, Team Ready · 8/9 done (89%) · target 2026-07-12 · forecast 2026-07-04 ✓ on track
   Unblocks: make-it-a-business
   - brain-portability-dashboard-controls-platform-layer-lab-credentials-example-sync-refresh-button-recall-mode-settings (completed) · v0.14.1
+  - cloud-sync-connected-origin-is-invisible-unmanageable-once-set-no-view-edit-remove (completed) · 0.17.0
   - cloud-sync-origin-setup-create-attach-github-repo-ui (completed) · 2026-07-08 → …
+  - cloud-sync-reports-false-sync-failed-github-sign-in-expired-while-git-is-fully-in-sync-and-settings-shows-a-valid-session (in_progress) · 0.17.0
   - feat-dashboard-live-sleep-debt-tracker-header-widget (completed) · 0.10.7 · 2026-07-04 → …
   - feat-linked-repos-shared-brain-governs-bare-code-repos-machine-local-path-registry-link-cli-trust-gated-clone-dashboard (completed) · 2026-07-09 → …
   - feat-okr-key-result-metric-outcome-based-progress (completed) · 0.10.7
   - github-cloud-collaboration-brain-repo-sync (completed) · v0.13.0 · 2026-07-04 → …
   - interactive-roadmap-dashboard-forecast-timeline-cascade-editable-detail-panel (completed) · v0.10.5
 
-### 🟡 **simplified-ux** — Simplified UX · 9/16 done (56%) · target 2026-07-31 · forecast 2026-07-04 ✓ on track
+### 🟡 **simplified-ux** — Simplified UX · 10/17 done (59%) · target 2026-07-31 · forecast 2026-07-04 ✓ on track
   Unblocks: hello-world-pr, make-it-a-business
   - agent-surface-plus-new-button-face-should-open-menu-or-remember-last-kind (todo) · BACKLOG
   - author-a-task-via-a-claude-agent-from-the-new-task-button (todo) · BACKLOG
@@ -50,6 +52,7 @@ date: '2026-07-09'
   - feat-sleepy-agent-surface-ux-redesign (completed) · v0.10.5
   - feat-tasks-present-version-as-cycle-ui-cli-relabel-version-stays-canonical (todo) · BACKLOG
   - fix-agent-session-tab-rotation-mapping-auto-title-resume-stability (completed) · v0.13.0
+  - fix-desktop-auto-relaunch-on-version-drift-macos-self-heal-upgradeready-flag-auto-relaunch-banner (completed) · 0.17.0
   - fix-sleepy-agent-auto-submit-timing-race-plus-composer-skill-browser-ux (completed) · v0.13.0
   - fix-tauri-acl-shell-allow-open-for-external-links (completed) · v0.13.0
   - in-app-task-detail-inline-agent-curate-the-task-via-anchored-comments-revise-summarize-split-status-with-real-time-refresh (todo) · BACKLOG

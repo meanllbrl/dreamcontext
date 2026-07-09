@@ -5,10 +5,10 @@ name: "linked-repos"
 description: "A shared brain governs bare code repos with no _dream_context/ of their own — shared {name,url} config + machine-local path registry + link CLI + trust-gated clone + dashboard panel"
 pinned: false
 date: "2026-07-09"
-status: "in_review"
+status: "completed"
 created: "2026-07-09"
 updated: "2026-07-09"
-released_version: null
+released_version: "v0.16.0"
 tags:
   - "topic:github"
   - "topic:federation"

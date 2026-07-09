@@ -13,6 +13,7 @@ import { readSetupConfig, readBrainLocal, writeBrainLocal } from '../../lib/setu
 import { dreamcontextVersion } from '../../lib/manifest.js';
 import { acquireFileLock, releaseFileLock } from '../../lib/file-lock.js';
 import { runBrainSync } from '../../lib/git-sync/sync-engine.js';
+import { reconcileBrainSyncSuccess, reconcileBrainSyncFailure } from '../../lib/git-sync/auth-reconcile.js';
 import { renderBrainSyncResult } from './brain.js';
 import { buildCorpus } from '../../lib/recall.js';
 import { refreshEmbeddings, embeddingCacheExists } from '../../lib/embeddings/store.js';
@@ -522,6 +523,9 @@ export function registerSleepCommand(program: Command): void {
         const cfg = readSetupConfig(dirname(root));
         if (cfg?.brainRepo?.autoSync) {
           const result = await runBrainSync({ cwd: root, mode: 'auto' });
+          // autoSync is a real git op — keep the global sign-in flag honest so a
+          // clean post-sleep sync clears any stale desktop "reconnect" banner.
+          reconcileBrainSyncSuccess(result.action);
           renderBrainSyncResult(result);
           if (result.action === 'awaiting-agent' || result.action === 'already-awaiting-agent') {
             warn('Brain sync paused on a team merge — run /dream-sync to reconcile (it will resume or continue as needed).');
@@ -542,6 +546,7 @@ export function registerSleepCommand(program: Command): void {
           }
         }
       } catch (err) {
+        reconcileBrainSyncFailure((err as Error).message ?? String(err), dirname(root));
         warn(`Brain sync: skipped — ${(err as Error).message ?? err}`);
       }
 

@@ -6,10 +6,10 @@ tags:
   - domain:database
   - database
   - topic:schema
-updated: "2026-06-09"
+updated: "2026-07-09"
 ---```sql
 -- Data Structures — dreamcontext
--- Updated: 2026-06-09
+-- Updated: 2026-07-09
 --
 -- dreamcontext has no database. All data is stored as files in _dream_context/.
 -- This file documents the file-based data schemas instead.
@@ -110,6 +110,38 @@ updated: "2026-06-09"
 -- NOTE: code_registry.json was removed before v0.1.0. It went stale immediately
 -- when methods were renamed or moved. Native Glob/Grep tools serve code discovery better.
 -- Slot 6 in core is reserved for user customization (e.g., 6.system_flow.md, 7.brand_voice.md).
+
+
+-- ============================================================
+-- SETUP CONFIG: _dream_context/state/.config.json
+-- Managed by: dreamcontext setup, brain commands, link commands
+-- ============================================================
+
+-- SetupConfig (written by setup.ts, read by setup-config.ts):
+-- {
+--   "platforms":           ["cli"],               -- PlatformId[]
+--   "packs":               ["default"],           -- installed skill packs
+--   "multiProduct":        false | ["api", ...],  -- multi-product monorepo products
+--   "people":              ["alice", "bob"],      -- optional roster (derived multi-person flag)
+--   "setupVersion":        "1.2.0",
+--   "disableNativeMemory": true,                  -- disable Claude's auto MEMORY.md
+--   "taskBackend":         "local" | "clickup" | "github",  -- where tasks live
+--   "cloudTaskManagement": false,                 -- Advanced Config switch (remote backend in use)
+--   "linkedRepos":         [                      -- bare code repos (no _dream_context/) governed by this brain
+--     {
+--       "name":          "api",                   -- per-project display label
+--       "gitRemoteUrl":  "https://github.com/owner/repo.git"  -- canonical GitHub URL (globally unique key)
+--     }
+--   ],
+--   "brainRepo": {                                -- cloud sync config
+--     "mode":         "in-tree" | "full-repo",    -- sync mode
+--     "autoSync":     false,                      -- auto-sync on sleep done
+--     ...                                         -- origin, marker (full schema in brain-repo.ts)
+--   }
+-- }
+
+-- LinkedRepo entry: shared {name, gitRemoteUrl} in .config.json (team-committed);
+-- machine-local path registry in ~/.dreamcontext/linked-repos.json (gitignored, keyed by URL).
 
 
 -- ============================================================

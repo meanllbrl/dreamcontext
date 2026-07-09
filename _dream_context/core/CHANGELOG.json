@@ -1,6 +1,23 @@
 [
   {
     "date": "2026-07-09",
+    "type": "refactor",
+    "scope": "cloud-sync",
+    "description": "Extract the global needsReconnect flag reconciliation into a new auth-reconcile.ts module that serves as the ONE funnel shared by the server route, the brain sync CLI, and sleep done autoSync. Key design: AUTH_OK_ACTIONS set defines the sync outcomes that could only follow a real fetch/push handshake (pulled, pushed, noop, merged, blocked-scrub, awaiting-agent, code-conflict) and clear the flag; pre-network outcomes (no-remote, disabled, locked, etc.) prove nothing about the token and never clear. On failure: raise the reconnect flag ONLY when the resolved token is the GLOBAL one (a per-project or env token failing auth is fixed by config github-token, not by reconnecting the global sign-in). A permission error means GitHub ACCEPTED the credential, so the session is still valid. This closes the root cause of the false sign-in expired alarm: two credentials (per-project + global) that diverge, plus a flag only the server route ever cleared, created a permanent false alarm on the desktop banner despite clean CLI/autoSync syncs.",
+    "breaking": false,
+    "summary": "Centralize GitHub sign-in reconciliation into one shared funnel",
+    "references": [
+      "file:src/lib/git-sync/auth-reconcile.ts",
+      "file:src/server/routes/brain.ts",
+      "file:src/cli/commands/brain.ts",
+      "file:src/cli/commands/sleep.ts"
+    ],
+    "authors": [
+      "mehmet"
+    ]
+  },
+  {
+    "date": "2026-07-09",
     "type": "fix",
     "scope": "roadmap",
     "description": "The frontend forecast engine (roadmap-forecast.ts) never consumed member tasks — it only ran the committed-window + effort basis — so any objective with dated member tasks silently disagreed with the CLI/snapshot engine (roadmap-model.ts), which treats the task span as the schedule of record. Visible failure: a ROLLUP objective that BOTH depends_on its sub-objectives AND shares their member tasks — the timeline pushed forecast_start to the dependency finish then stacked the rollup's own effort on top, but that own work IS the shared tasks it already counted via the dependency, inflating the bar into a phantom slip while the CLI read on track. buildForecasts now mirrors roadmap-model.ts three-branch order exactly: (1) dated member tasks give a span (earliest start to latest due) clamped to dep finishes, effort NOT re-added; (2) else committed start gives window + effort; (3) else deps give milestone + effort. Each Forecast carries a basis of tasks|window|milestone|none; ObjectiveDetailPanel uses it to attribute a slip and caption the footer. Adds a cross-engine parity test driving both engines through real scratch vaults.",

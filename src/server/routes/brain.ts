@@ -22,7 +22,7 @@ import { runBrainSync } from '../../lib/git-sync/sync-engine.js';
 import { runTeamFetch } from '../../lib/git-sync/team-fetch.js';
 import { readConflictReport } from '../../lib/git-sync/conflict-report.js';
 import { classifySyncError, type SyncFailure } from '../../lib/git-sync/failure.js';
-import { setGlobalGitHubAuthValid } from '../../lib/git-sync/auth-store.js';
+import { reconcileBrainSyncSuccess, reconcileBrainSyncFailure } from '../../lib/git-sync/auth-reconcile.js';
 import { ensureGitignoreEntries } from '../../lib/gitignore.js';
 import { listVaults } from '../../lib/vaults.js';
 
@@ -176,7 +176,7 @@ async function runSyncPayload(
   try {
     const result = await runBrainSync({ cwd: contextRoot, mode: opts.mode, foreground: opts.foreground, noCheckpoint: opts.noCheckpoint });
     // Any outcome that REACHED the remote proves the stored token still authenticates.
-    if (AUTH_OK_ACTIONS.has(result.action)) setGlobalGitHubAuthValid(true);
+    reconcileBrainSyncSuccess(result.action);
     let failure: SyncFailure | undefined;
     if (result.action === 'no-remote' && /token/i.test(result.note ?? '')) {
       failure = classifySyncError(result.note ?? 'no github token found', syncRepoHint(projectRoot));
@@ -193,11 +193,12 @@ async function runSyncPayload(
     };
   } catch (err) {
     const failure = classifySyncError((err as Error).message, syncRepoHint(projectRoot));
-    // Only a GENUINELY auth-rejected op flags the session invalid. A permission
-    // error means GitHub accepted the credential (it just lacks a scope), so the
-    // session is still valid; network/unknown leave validity untouched.
-    if (failure.kind === 'auth') setGlobalGitHubAuthValid(false);
-    else if (failure.kind === 'permission') setGlobalGitHubAuthValid(true);
+    // Only a GENUINELY auth-rejected op on the GLOBAL sign-in flags the session
+    // invalid. A permission error means GitHub accepted the credential (it just
+    // lacks a scope), so the session is still valid; a per-project/env token
+    // failing auth is not a global-sign-in problem; network/unknown leave
+    // validity untouched. (Attribution lives in reconcileBrainSyncFailure.)
+    reconcileBrainSyncFailure((err as Error).message, projectRoot, syncRepoHint(projectRoot));
     return {
       action: 'error',
       pulledUpdates: 0,
@@ -208,14 +209,6 @@ async function runSyncPayload(
   }
 }
 
-/**
- * Sync outcomes that could only happen AFTER a successful fetch/push handshake
- * with the remote — i.e. the stored token authenticated. Pre-network outcomes
- * (`no-remote`, `disabled`, `locked`, `invalid-flag`, `already-awaiting-agent`,
- * `user-merge-in-progress`, `detached-head`, `skipped-in-tree`) are excluded: they
- * prove nothing about the token, so they must not clear a real reconnect flag.
- */
-const AUTH_OK_ACTIONS = new Set(['pulled', 'pushed', 'noop', 'merged', 'blocked-scrub', 'awaiting-agent', 'code-conflict']);
 
 /** Best-effort `owner/repo` (or remote URL) for a failure message — the repo sync pushes to. */
 function syncRepoHint(projectRoot: string, _result?: unknown): string | undefined {

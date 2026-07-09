@@ -2,8 +2,8 @@
 id: feat_Sx4EmLgP
 status: in_progress
 created: '2026-07-04'
-updated: '2026-07-08'
-released_version: v0.14.1
+updated: '2026-07-09'
+released_version: v0.17.0
 tags:
   - 'topic:github'
   - 'topic:cli'
@@ -191,6 +191,20 @@ existing local dashboard. The two could coexist later but ship independently.
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-07-09 - v0.17.0: Origin management + auth reliability + desktop auto-relaunch + roadmap task-date fix
+
+**Shipped four improvements to cloud-sync robustness and UX:**
+
+1. **Manage the connected origin (view / change / disconnect)** — After enabling cloud sync, the Settings → Cloud sync panel now displays the connected GitHub origin in a `ConnectedOriginCard` (canonical URL + repo owner/name). Users can **change** the origin (re-points to a different repo URL, reverts to `in-tree` mode to avoid a background-sync race — the copy makes this explicit: "Cloud sync turns off when you change origin"), or **disconnect** (removes the origin, reverts to `in-tree`). Disconnect is guarded: returns **409 `merge_in_progress`** when `hasMergeHead` (leaves origin + config untouched so the in-progress merge stays visible). Commit `897e7e2`. Coverage: origin-setup route tests (`update` success/409, `detach` success/409); dashboard builds clean.
+
+2. **False 'sign-in expired' fixed across entry points** — The desktop "Sync failed / GitHub sign-in expired" banner previously stayed on indefinitely even when sync worked via CLI (agents, autoSync, session-start pull), because the global `needsReconnect` flag was reconciled ONLY from the server route. Commit `f523723` introduced the flag (in `auth-store.ts`) and reconciled it from the server route on every sync outcome; the dashboard Settings chip and sidebar now read the same flag. **In progress (uncommitted):** a centralized `auth-reconcile.ts` module that funnels ALL sync entry points (server route, `brain sync` CLI, `sleep done` autoSync) through one reconciliation function (`reconcileBrainSyncSuccess` / `reconcileBrainSyncFailure`), so a CLI-driven sync clears a stale flag. The uncommitted module defines `AUTH_OK_ACTIONS` (post-handshake outcomes that prove auth worked) and only raises the reconnect flag when the GLOBAL token failed (per-project or env token failures don't trigger the global banner). Status: server-route reconciliation SHIPPED; all-paths centralization in progress.
+
+3. **Desktop auto-relaunch on upgrade (macOS self-heal)** — The desktop app now detects version drift at startup (dashboard reports a newer version than the app's own `VERSION` → sets `upgradeReady` flag) and auto-relaunches itself to heal the skew. The root cause was stale-server self-exit + health handshake gaps; the fix adds an upgrade banner + auto-relaunch on version skew. Commit `51a2c66`. Coverage: +desktop tests; full suite green. Reconciled into `knowledge/desktop-beta-tauri-multivault.md` (this is a desktop-app capability, not a brain-sync feature — cross-referenced here for completeness).
+
+4. **Roadmap forecast: task-date basis honored** — The dashboard timeline's `buildForecasts` now mirrors the server's three-branch model: dated member tasks → span (earliest start → latest due), clamped to dep finishes, effort NOT re-added. A rollup objective that BOTH `depends_on` sub-objectives AND shares their member tasks no longer double-counts effort into a phantom slip. Client and server forecasts now agree. Commit `0df09cb`. Coverage: +6 `roadmap-forecast.test.ts` +4 parity tests; full suite 3122 green. Reconciled into `knowledge/features/okr-roadmap.md` (a roadmap feature, not brain-sync — cross-referenced here because it shipped in the same v0.17.0 bundle).
+
+Task: `cloud-sync-origin-setup-create-attach-github-repo-ui`, `cloud-sync-reports-false-sync-failed-github-sign-in-expired-while-git-is-fully-in-sync-and-settings-shows-a-valid-session`, `fix-desktop-auto-relaunch-on-version-drift-macos-self-heal-upgradeready-flag-auto-relaunch-banner`, `roadmap-forecast-accuracy-effort-aware-envelope-clamped-cascade`.
 
 ### 2026-07-09 - Footer honesty fix: sync button respects block state (commit 50f59c2)
 
