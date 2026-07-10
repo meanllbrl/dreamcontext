@@ -19,6 +19,11 @@ tauri = { version = "2", features = ["devtools", "macos-private-api"] }
 tauri-plugin-shell = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-global-shortcut = "2"
+# OS-native clipboard writes. The WKWebView's JS clipboard (`navigator.clipboard.writeText`)
+# re-decodes UTF-8 as Mac Roman (Ş→"≈û", ü→"√º") — see issue #171 / the copyPreservingUnicode
+# comment. Routing copies through this Rust-side plugin bypasses the WKWebView entirely and
+# round-trips UTF-8 correctly.
+tauri-plugin-clipboard-manager = "2"
 # Converts the Sleepy notch window into a non-activating NSPanel so the hotkey
 # summons it OVER whatever app is focused — the user types into it without their
 # current app deactivating, and dismissing it never surfaces the dreamcontext

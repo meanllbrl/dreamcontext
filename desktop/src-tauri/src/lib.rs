@@ -123,6 +123,10 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        // Native OS clipboard so the dashboard can write UTF-8 without the WKWebView JS
+        // clipboard mangling non-ASCII as Mac Roman (issue #171). Used by the in-app agent
+        // terminal's copy path via @tauri-apps/plugin-clipboard-manager on the loopback origin.
+        .plugin(tauri_plugin_clipboard_manager::init())
         // Global shortcut for the Sleepy notch quick-capture bar. The hotkey is
         // registered/unregistered from the dashboard JS via the plugin's permitted
         // API (the capability grants global-shortcut on the loopback origin), so

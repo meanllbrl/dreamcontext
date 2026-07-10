@@ -3,6 +3,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import '@xterm/xterm/css/xterm.css';
 import { getActiveVault } from '../../api/client';
+import { copyPreservingUnicode } from '../../lib/clipboard';
 
 /**
  * The imperative session engine behind {@link AgentSurface} — one `node-pty` ↔
@@ -166,32 +167,6 @@ export interface Session {
 let sessionSeq = 0;
 // Output must go quiet for this long before we call a session "finished".
 const IDLE_MS = 800;
-
-/**
- * Copy text to the clipboard PRESERVING Unicode (Turkish ç/ğ/ı/İ/Ü, → — …). In this
- * WKWebView, `navigator.clipboard.writeText` mangles non-ASCII — UTF-8 bytes get
- * re-decoded as Mac Roman (ç → "√ß", ğ → "ƒü", — → "‚Äî"). The legacy hidden-textarea +
- * `execCommand('copy')` path routes through the OS's native text-copy pipeline (the same
- * one xterm used before we intercepted ⌘C to stop the beep), which round-trips UTF-8
- * correctly. Must run inside a user gesture (it is — called from the keydown handler).
- */
-function copyPreservingUnicode(text: string): void {
-  try {
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    ta.setAttribute('readonly', '');
-    ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none;';
-    document.body.appendChild(ta);
-    ta.select();
-    ta.setSelectionRange(0, text.length);
-    let ok = false;
-    try { ok = document.execCommand('copy'); } catch { ok = false; }
-    ta.remove();
-    if (ok) return;
-  } catch { /* fall through to the API path */ }
-  // Fallback only if execCommand is unavailable (may mangle non-ASCII in WKWebView).
-  try { void navigator.clipboard?.writeText(text).catch(() => { /* blocked */ }); } catch { /* none */ }
-}
 
 export function createSession(bypass: boolean, notify: () => void, claudeId: string, resume = false, kind: SessionKind = 'agent', initialPrompt = '', model = '', submitInitial = true): Session {
   const id = `agent-${++sessionSeq}`;
