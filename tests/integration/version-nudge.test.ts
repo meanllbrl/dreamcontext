@@ -143,15 +143,20 @@ describe('version nudge in generateSnapshot (integration)', () => {
   });
 
   it('shows ## Update Available when new packs exist (CLI up-to-date)', () => {
-    // Write a setup config with an installed pack
+    // A pack is "new" only when opted-in ∩ catalog but missing on disk (snapshot.ts's
+    // opted-in∩catalog pack-nudge scoping). Opt into BOTH packs, install existing-pack
+    // on disk (SKILL.md present) and leave brand-new-pack off disk — so exactly one
+    // pack (brand-new-pack) is a genuine `dreamcontext update` gap.
     writeFileSync(
       join(ctx, 'state', '.config.json'),
-      JSON.stringify({ packs: ['existing-pack'], platforms: [] }),
+      JSON.stringify({ packs: ['existing-pack', 'brand-new-pack'], platforms: [] }),
     );
+    mkdirSync(join(tmpDir, '.claude', 'skills', 'existing-pack'), { recursive: true });
+    writeFileSync(join(tmpDir, '.claude', 'skills', 'existing-pack', 'SKILL.md'), '# existing-pack\n');
     seedVersionCache(ctx, {
       checkedAt: Date.now() - 60 * 60 * 1000, // fresh
       latestCli: SAME_VERSION,                  // CLI is current
-      availablePacks: ['existing-pack', 'brand-new-pack'], // 1 new pack
+      availablePacks: ['existing-pack', 'brand-new-pack'], // 1 genuinely-new pack (brand-new-pack)
     });
     const output = runSnapshot(tmpDir);
     expect(output).toContain('## Update Available');

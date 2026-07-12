@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useI18n } from '../../context/I18nContext';
 import { openFolderPicker } from '../../lib/desktop';
 import {
@@ -14,7 +14,9 @@ import './LinkedRepos.css';
  * brain governs bare CODE repos (products) with no `_dream_context/` of their
  * own. Shows each governed repo present/missing on THIS machine:
  *  - present → its resolved local path.
- *  - missing → a trust-gated Clone (the URL is team-writable — a confirm precedes
+ *  - missing → "Link local folder" (bind an EXISTING checkout via the folder
+ *    picker — the server refuses a folder whose origin doesn't match the entry's
+ *    URL) or a trust-gated Clone (the URL is team-writable — a confirm precedes
  *    the POST /clone confirmed=true).
  * Add binds a local checkout picked via the native folder picker.
  */
@@ -29,6 +31,13 @@ export function LinkedRepos() {
   const [addName, setAddName] = useState('');
   // The repo the user is confirming a clone for (trust gate).
   const [confirmClone, setConfirmClone] = useState<string | null>(null);
+  // The missing repo currently being bound to a picked local folder.
+  const [locating, setLocating] = useState<string | null>(null);
+  // Synchronous latch guarding the folder-picker window: both handlers `await`
+  // openFolderPicker() BEFORE their mutation starts, so `busy` (isPending) stays
+  // false across that gap — a rapid double-click would otherwise open two native
+  // pickers. A ref flips immediately so the second call bails on the same tick.
+  const pickerBusyRef = useRef(false);
 
   const busy = linkRepo.isPending || cloneRepo.isPending || unlinkRepo.isPending;
   const error =
@@ -39,11 +48,32 @@ export function LinkedRepos() {
 
   const handleAdd = async () => {
     const name = addName.trim();
-    if (!name) return;
-    linkRepo.reset();
-    const path = await openFolderPicker();
-    if (!path) return;
-    linkRepo.mutate({ name, path }, { onSuccess: () => setAddName('') });
+    if (!name || pickerBusyRef.current) return;
+    pickerBusyRef.current = true;
+    try {
+      linkRepo.reset();
+      const path = await openFolderPicker();
+      if (!path) return;
+      linkRepo.mutate({ name, path }, { onSuccess: () => setAddName('') });
+    } finally {
+      pickerBusyRef.current = false;
+    }
+  };
+
+  // Bind an EXISTING local checkout to a missing entry. Passing the entry's URL
+  // makes the server refuse a folder whose origin points at a different repo.
+  const handleLocate = async (name: string, url: string) => {
+    if (pickerBusyRef.current) return;
+    pickerBusyRef.current = true;
+    try {
+      linkRepo.reset();
+      const path = await openFolderPicker();
+      if (!path) return;
+      setLocating(name);
+      linkRepo.mutate({ name, path, url }, { onSettled: () => setLocating(null) });
+    } finally {
+      pickerBusyRef.current = false;
+    }
   };
 
   return (
@@ -65,6 +95,16 @@ export function LinkedRepos() {
                 )}
               </div>
               <div className="linked-repos-item-actions">
+                {!r.present && confirmClone !== r.name && (
+                  <button
+                    className="btn btn--primary btn--sm"
+                    disabled={busy}
+                    title={t('linkedRepos.locateTip')}
+                    onClick={() => handleLocate(r.name, r.gitRemoteUrl)}
+                  >
+                    {locating === r.name && linkRepo.isPending ? t('linkedRepos.locating') : t('linkedRepos.locate')}
+                  </button>
+                )}
                 {!r.present &&
                   (confirmClone === r.name ? (
                     <>

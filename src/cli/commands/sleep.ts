@@ -14,6 +14,9 @@ import { dreamcontextVersion } from '../../lib/manifest.js';
 import { acquireFileLock, releaseFileLock } from '../../lib/file-lock.js';
 import { runBrainSync } from '../../lib/git-sync/sync-engine.js';
 import { reconcileBrainSyncSuccess, reconcileBrainSyncFailure } from '../../lib/git-sync/auth-reconcile.js';
+import { classifySyncError } from '../../lib/git-sync/failure.js';
+import { resolveBrainSyncToken } from '../../lib/git-sync/brain-repo.js';
+import { isPerProjectToken } from '../../lib/git-sync/token-fallback.js';
 import { renderBrainSyncResult } from './brain.js';
 import { buildCorpus } from '../../lib/recall.js';
 import { refreshEmbeddings, embeddingCacheExists } from '../../lib/embeddings/store.js';
@@ -546,8 +549,16 @@ export function registerSleepCommand(program: Command): void {
           }
         }
       } catch (err) {
-        reconcileBrainSyncFailure((err as Error).message ?? String(err), dirname(root));
+        const projectRoot = dirname(root);
+        reconcileBrainSyncFailure((err as Error).message ?? String(err), projectRoot);
         warn(`Brain sync: skipped — ${(err as Error).message ?? err}`);
+        // Tier-aware hint: a stale per-project token shadowing the signed-in
+        // account is the usual cause of a persistent auth/permission failure.
+        const perProjectToken = isPerProjectToken(resolveBrainSyncToken(projectRoot));
+        const failure = classifySyncError((err as Error).message ?? String(err), undefined, { perProjectToken });
+        if (perProjectToken && (failure.kind === 'auth' || failure.kind === 'permission')) {
+          warn(failure.message);
+        }
       }
 
       // Post-sleep embedding refresh (decision-embedding-layer: "eager during

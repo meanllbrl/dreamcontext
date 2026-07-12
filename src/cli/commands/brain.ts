@@ -8,8 +8,11 @@ import {
   resolveMode,
   resolveBrainSyncEnabled,
   ensureFullRepoGitignore,
+  resolveBrainSyncToken,
 } from '../../lib/git-sync/brain-repo.js';
 import { scrubStagedFiles, summarizeScrub } from '../../lib/git-sync/scrub.js';
+import { classifySyncError } from '../../lib/git-sync/failure.js';
+import { isPerProjectToken } from '../../lib/git-sync/token-fallback.js';
 import { reconcileBrainSyncSuccess, reconcileBrainSyncFailure } from '../../lib/git-sync/auth-reconcile.js';
 import * as git from '../../lib/git-sync/git.js';
 import { GitSyncError } from '../../lib/git-sync/git.js';
@@ -133,11 +136,21 @@ export function registerBrainCommand(program: Command): void {
         renderBrainSyncResult(result);
         if (result.action === 'invalid-flag' || result.action === 'blocked-scrub') process.exitCode = 1;
       } catch (err) {
-        reconcileBrainSyncFailure((err as Error).message, dirname(contextRoot));
+        const projectRoot = dirname(contextRoot);
+        reconcileBrainSyncFailure((err as Error).message, projectRoot);
         if (err instanceof GitSyncError) {
           error(err.message);
         } else {
           error(`Brain sync failed: ${(err as Error).message}`);
+        }
+        // Tier-aware guidance: a stale per-project token still shadowing the
+        // signed-in account is the usual cause of a persistent auth/permission
+        // failure — name it so the user fixes the right thing.
+        const failure = classifySyncError((err as Error).message, undefined, {
+          perProjectToken: isPerProjectToken(resolveBrainSyncToken(projectRoot)),
+        });
+        if ((failure.kind === 'auth' || failure.kind === 'permission') && isPerProjectToken(resolveBrainSyncToken(projectRoot))) {
+          warn(failure.message);
         }
         process.exitCode = 1;
       }
@@ -183,4 +196,7 @@ export function renderBrainSyncResult(result: SyncResult): void {
     default:
       info(`Brain sync: ${result.action}.`);
   }
+  // Surface the stale-per-project-token self-heal on ANY successful outcome (the
+  // note isn't printed by the success/pushed/pulled cases above).
+  if (result.healedStaleProjectToken && result.note) info(result.note);
 }

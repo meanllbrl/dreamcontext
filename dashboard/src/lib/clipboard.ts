@@ -63,34 +63,46 @@ function copyViaExecCommand(text: string): boolean {
 
 /**
  * Write `text` to the clipboard preserving Unicode (Turkish ç/ğ/ı/İ/Ü/Ş, → — …). Walks
- * `clipboardStrategyOrder` and stops at the first strategy that succeeds. Fire-and-forget: the
- * synchronous first strategy on web (`exec-command`) still runs inside the caller's user gesture
- * because the async body doesn't `await` before reaching it.
+ * `clipboardStrategyOrder` and stops at the first strategy that succeeds. The synchronous first
+ * strategy on web (`exec-command`) still runs inside the caller's user gesture because the async
+ * body doesn't `await` before reaching it.
+ *
+ * Returns a promise resolving to `true` if a strategy actually wrote the clipboard, `false` if
+ * every strategy failed. Callable fire-and-forget (the promise may be ignored) — but on total
+ * failure it `console.warn`s so a regression to "silently copies nothing" is at least observable,
+ * and callers that want to surface a toast can await the result.
  */
-export function copyPreservingUnicode(text: string): void {
-  void runClipboardStrategies(text, clipboardStrategyOrder(isDesktopShell()));
+export function copyPreservingUnicode(text: string): Promise<boolean> {
+  return runClipboardStrategies(text, clipboardStrategyOrder(isDesktopShell())).then((ok) => {
+    if (!ok) console.warn('[clipboard] copy failed: no clipboard strategy succeeded');
+    return ok;
+  });
 }
 
-async function runClipboardStrategies(text: string, order: ClipboardStrategy[]): Promise<void> {
+async function runClipboardStrategies(text: string, order: ClipboardStrategy[]): Promise<boolean> {
   for (const strategy of order) {
     try {
       if (strategy === 'tauri') {
         const { writeText } = await import('@tauri-apps/plugin-clipboard-manager');
         await writeText(text);
-        return;
+        return true;
       }
       if (strategy === 'exec-command') {
-        if (copyViaExecCommand(text)) return;
+        if (copyViaExecCommand(text)) return true;
         continue; // execCommand reported failure — try the next strategy
       }
       if (strategy === 'navigator') {
         // Known to mangle non-ASCII in the WKWebView; reached only as a last resort on web,
-        // or on desktop if the native clipboard AND the OS pipeline both failed.
-        await navigator.clipboard?.writeText(text);
-        return;
+        // or on desktop if the native clipboard AND the OS pipeline both failed. Guard the API's
+        // presence explicitly: `navigator.clipboard?.writeText()` returns `undefined` (not a
+        // rejection) when the API is absent, so awaiting it would otherwise report a false success.
+        if (!navigator.clipboard) continue;
+        await navigator.clipboard.writeText(text);
+        return true;
       }
     } catch {
       // This strategy threw — fall through to the next one in the order.
     }
   }
+  return false;
 }

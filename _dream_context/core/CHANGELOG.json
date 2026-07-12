@@ -1,5 +1,65 @@
 [
   {
+    "date": "2026-07-11",
+    "type": "fix",
+    "scope": "cloud-sync",
+    "description": "Brain sync could get stuck in a permanent auth/permission failure that re-signing-in never fixed: resolveBrainSyncToken resolves per-project (_dream_context/state/.secrets.json) → global (~/.dreamcontext/.secrets.json) → env, so a STALE per-project token (e.g. revoked weeks ago) kept WINNING resolution and shadowing the fresh token the user just re-signed-in with (which only ever lands in the GLOBAL tier). Every sync then failed forever and the UI offered no recovery. Fix: wrap every credentialed git network op in a BrainSyncTokenSession — when an op fails AND classifies as auth/permission AND the active token came from the per-project tier AND a DIFFERING global token exists, retry that ONE op once with the global token; on success, switch the whole run to global and SELF-HEAL by deleting the stale per-project github.token; on failure, surface the ORIGINAL error and remove nothing. Exactly one fallback attempt per run, never loops. Token hygiene preserved — values only ever flow through withGitCredentials (askpass tmp file), never into any message/note/error. New lib src/lib/git-sync/token-fallback.ts (injectable deps); wired through sync-engine, auth-reconcile, the brain CLI + route, and sleep. 11 new unit tests.",
+    "breaking": false,
+    "summary": "Self-heal stale per-project brain-sync token shadowing a fresh global re-sign-in (fallback-to-global + prune)",
+    "references": [
+      "file:src/lib/git-sync/token-fallback.ts",
+      "file:src/lib/git-sync/sync-engine.ts",
+      "file:tests/unit/git-sync-token-fallback.test.ts",
+      "task:cloud-sync-stale-per-project-token-shadowing-auto-heal-fallback-to-global"
+    ]
+  },
+  {
+    "date": "2026-07-10",
+    "type": "feat",
+    "scope": "launcher",
+    "description": "Launcher onboarding wizard gains a third mode: Clone from GitHub. Sign in with GitHub (reuse device-flow/PAT), search your repos (substring filter, direct owner/repo lookup, ≤50 results), clone one to a local parent dir as a BACKGROUND JOB with live git progress. Clone is now streaming and cancelable: cloneStreaming (git.ts) spawns 'git clone --progress' with hardened argv, streams stderr, cancelable via SIGTERM (git cleans the partial dest), 10-min timeout (SIGTERM→10s SIGKILL escalation). Routes: POST /api/launcher/clone validates synchronously via planGitHubClone then returns cloneId; GET /clone/status streams state+progress+result; POST /clone/cancel idempotent; cloneDestsInFlight map 409s concurrent clones into the same dest; pruneCloneRuns never evicts a running job (dest-guard bypass closed). Wizard UX: dest step shows live 'Receiving objects: N%' tail + spinner + Cancel; backdrop click inert mid-clone, explicit ✕ cancels then closes; Back disabled while cloning; dest-conflict pre-check (probeFolder on exact dest) offers 'Open the existing project'/'Use the existing folder'/'Choose another location' instead of a dead-end error; GitHub repo description prefills the quiz description; detected stack prefills stack; launcher queries invalidated when a ready clone registers a vault. New lib src/lib/git-sync/github-browse.ts (resolveLauncherGitHubToken, listGitHubRepos with pagination/filter/direct-lookup, cloneGitHubRepo with guards + withGitCredentials askpass). GET /api/launcher/github/repos?q= (desktop-gated, 401 no_token/bad_token, 502 github_error). 30 new unit tests (was 24); tsc + vite build clean both sides. Shipped in v0.17.2.",
+    "breaking": false,
+    "summary": "Clone from GitHub in onboarding wizard — sign in, search repos, background clone with live progress",
+    "references": [
+      "file:src/lib/git-sync/github-browse.ts",
+      "file:src/lib/git-sync/git.ts",
+      "file:src/server/routes/launcher.ts",
+      "file:dashboard/src/pages/OnboardingWizard.tsx",
+      "file:tests/unit/git-sync-github-browse.test.ts",
+      "file:tests/unit/launcher-clone-route.test.ts",
+      "task:launcher-clone-from-github-sign-in-search-repos-clone-locally-dreamcontext-ready",
+      "feature:launcher-quiz-onboarding"
+    ]
+  },
+  {
+    "date": "2026-07-10",
+    "type": "fix",
+    "scope": "agents",
+    "description": "Copying Turkish/UTF-8 text from the in-app agent terminal produced Mac-Roman mojibake (Ş `C5 9E` → '≈û', ü → '√º', ı → 'ƒ±'). Regression of the 2026-07-01 fix: copyPreservingUnicode's execCommand('copy') primary degraded in a newer WKWebView and the code silently fell through to its own navigator.clipboard.writeText fallback — the exact call that mangles non-ASCII in this WKWebView. The copy code was byte-identical since that fix, so the regression is environmental, not a code change. Durable fix: on the desktop shell, write via the Tauri clipboard plugin (Rust-side OS clipboard), bypassing the WKWebView JS clipboard entirely so UTF-8 round-trips correctly. The plain web dashboard keeps the browser paths (no WKWebView bug there). New dashboard/src/lib/clipboard.ts with pure clipboardStrategyOrder() — desktop = [tauri, exec-command, navigator], web = [exec-command, navigator]; the mangling navigator path is never reached before an encoding-safe one. Wired agentSession.ts to use the shared helper. Desktop: tauri-plugin-clipboard-manager v2 (Cargo + lib.rs init) + capability clipboard-manager:allow-write-text; @tauri-apps/plugin-clipboard-manager on the JS side. Added tests/unit/clipboard-encoding.test.ts (6 tests): strategy order + UTF-8 byte-identity + Mac-Roman corruption model with the Turkish fixture. Verified: regression test 6/6, dashboard tsc clean, vite build clean, cargo check clean. Pending: real-app verification in the packaged WKWebView.",
+    "breaking": false,
+    "summary": "UTF-8-safe clipboard on desktop — kill Turkish copy mojibake (Tauri native OS clipboard)",
+    "references": [
+      "commit:f293db0",
+      "file:dashboard/src/lib/clipboard.ts",
+      "file:tests/unit/clipboard-encoding.test.ts",
+      "task:fix-171-agent-terminal-utf-8-copy-mojibake-regression-tauri-native-clipboard"
+    ]
+  },
+  {
+    "date": "2026-07-09",
+    "type": "fix",
+    "scope": "cli",
+    "description": "The dashboard 'Update available' badge and the SessionStart terminal nudge computed newPacks as every catalog pack not physically on disk, with no regard for what the vault opted into. A project that deliberately declined optional packs (e.g., a personal vault skipping meta-marketing, business-idea-*, video-watching) showed a permanent, un-actionable 'Update available' nag — the badge/nudge listed every declined pack as 'new' forever. Fixed by scoping the pack universe to opted-in ∩ catalog (readSetupConfig().packs filtered against availablePacks), keeping filesystem truth (SKILL.md on disk) for 'installed'. A pack is now 'new' only when it's opted-in but missing on disk — a genuine dreamcontext update gap. Applies the identical fix to both surfaces: src/server/routes/version-check.ts (dashboard header badge) and src/cli/commands/snapshot.ts (SessionStart terminal nudge). Added 3 regression tests covering declined-pack (must not nag), opted-in-but-missing (must still nag), and no-config (no nag) cases.",
+    "breaking": false,
+    "summary": "Scope update-nudge pack universe to opted-in ∩ catalog (kill false 'Update available' nag for declined packs)",
+    "references": [
+      "commit:814b679",
+      "file:src/server/routes/version-check.ts",
+      "file:src/cli/commands/snapshot.ts",
+      "file:tests/unit/version-check-route.test.ts"
+    ]
+  },
+  {
     "date": "2026-07-09",
     "type": "refactor",
     "scope": "cloud-sync",

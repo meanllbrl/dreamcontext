@@ -73,8 +73,11 @@ describe('roadmap forecast parity — timeline engine vs CLI/model engine', () =
 
     const model = buildRoadmapModel(root);
     const rollup = model.objectives.find((o) => o.slug === 'rollup')!;
-    // Sanity: the CLI reads on track at Aug 1 (task span), NOT slipping to late Aug from effort.
-    expect(rollup.forecast_end).toBe('2026-08-01');
+    // Sanity: the committed window (target 2026-08-15) is the ENVELOPE — forecast_end
+    // clamps up to it and is NOT inflated PAST it by re-adding the rollup's effort after
+    // the dependency finish (the shared task IS that work). Slip is measured on the
+    // task-derived finish (Aug 1 ≤ target), so the rollup reads on track, not slipping.
+    expect(rollup.forecast_end).toBe('2026-08-15');
     expect(rollup.slipping).toBe(false);
 
     assertParity(root); // timeline now computes the same — no phantom slip

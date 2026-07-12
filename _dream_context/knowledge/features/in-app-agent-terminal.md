@@ -2,7 +2,7 @@
 id: feat_nM4EnT8k
 status: in_review
 created: '2026-06-28'
-updated: '2026-07-08'
+updated: '2026-07-11'
 tags:
   - 'topic:desktop'
   - 'topic:agents'
@@ -86,6 +86,7 @@ Developers using the dreamcontext desktop app need to run Claude Code interactiv
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
 
+- **[2026-07-10] WKWebView clipboard is persistently hostile to UTF-8 — third fix, Tauri native clipboard is durable.** Copying Turkish/UTF-8 text from the terminal regressed AGAIN (Ş→"≈û", ü→"√º"), despite the 2026-07-01 `execCommand('copy')` fix. Root cause this time: environmental, not code — `execCommand` degraded in a newer WKWebView and the code fell through to its own `navigator.clipboard.writeText` fallback (the exact call that mangles non-ASCII). Timeline: (1) 2026-07-01 original UTF-8 corruption discovered, fixed with hidden-textarea `execCommand` primary + `navigator.clipboard` fallback; (2) 2026-07-10 `execCommand` degraded silently (WKWebView update?), fell through to the mangling fallback; (3) 2026-07-10 durable fix: on desktop, **bypass the WKWebView JS clipboard entirely** and write via Tauri's clipboard plugin (Rust-side OS clipboard). New `clipboard.ts` strategy order: desktop = [tauri, exec-command, navigator]; web = [exec-command, navigator]. The mangling `navigator` path is never reached before an encoding-safe one. Lesson: **WKWebView JS clipboard APIs are not reliable for non-ASCII; always route to the native OS clipboard on desktop.**
 - **[2026-07-04] Auto-title reads the transcript file, never the raw PTY stream.** Every agent tab is pinned to a known conversation UUID and Claude Code already writes that conversation to `~/.claude/projects/<slug>/<uuid>.jsonl` (used for the existing resume check) — reading the first user message from there is far simpler and more reliable than parsing PTY output. `findTranscriptPath()` is now the shared primitive behind both auto-resume and auto-title.
 - **[2026-07-04] Auto-title runs in `homedir()`, not the vault.** A titling call is a plain `claude -p` invocation; running it inside the vault would trigger that project's SessionStart brain-preload for a throwaway one-shot call — wasteful and pointless for a 6-word title.
 - **[2026-07-04] A manual rename always wins over auto-title, even mid-flight.** The dedup guard (`autoTitledRef`) fires at most once per session, but the apply step itself re-checks that the tab still holds its default `Agent N` name before overwriting — so a user who renames a tab while Haiku is still "thinking" never gets clobbered.
@@ -143,6 +144,14 @@ Key files summary (post-2026-07-01 readability polish; 2026-07-04 basic-terminal
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-07-10 — UTF-8 clipboard regression fix, third iteration (commit f293db0, #171)
+- Turkish/UTF-8 copy mojibake regressed AGAIN (Ş→"≈û", ü→"√º"), despite the 2026-07-01 `execCommand('copy')` fix. Root cause: `execCommand` degraded in a newer WKWebView (environmental, not code change) and fell through to the `navigator.clipboard.writeText` fallback — the exact call that mangles non-ASCII.
+- Durable fix: on desktop, bypass the WKWebView JS clipboard entirely and write via **Tauri's clipboard plugin** (Rust-side OS clipboard). New `dashboard/src/lib/clipboard.ts`: pure `clipboardStrategyOrder()` — desktop = [tauri, exec-command, navigator]; web = [exec-command, navigator]. The mangling `navigator` path is never reached before an encoding-safe one.
+- Added tauri-plugin-clipboard-manager v2 (Cargo + lib.rs init) + capability `clipboard-manager:allow-write-text`; `@tauri-apps/plugin-clipboard-manager` on JS side.
+- Added `tests/unit/clipboard-encoding.test.ts` (6 tests): strategy order + UTF-8 byte-identity + Mac-Roman corruption model with Turkish fixture.
+- Lesson: **WKWebView JS clipboard APIs are not reliable for non-ASCII; always route to the native OS clipboard on desktop.**
+- Status: committed to branch `fix/171-agent-copy-utf8-mojibake`, pending merge.
 
 ### 2026-07-04 — Settings polish + split-button fix (working tree, feat/sleep-debt-header-tracker)
 - **Settings → Agents section now uses the "Lab" chip** (the violet marker shared with Council in the sidebar) instead of a generic BETA badge — Sleepy/Agents surfaces are experimental, and the app's existing Lab language unifies them.

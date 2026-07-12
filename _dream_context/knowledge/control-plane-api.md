@@ -100,6 +100,20 @@ After moving, `findPackageDir` runs from `dist/lib/` (depth changes). The 3-cand
 - `src/server/safe-path.ts`, `src/lib/catalog.ts`, `src/lib/vaults.ts`
 - Knowledge file `dashboard-server-security.md` — full threat model (loopback bind + CSRF + safeChildPath)
 
+## Pack-scoping behavior (2026-07-09, v0.17.2)
+
+**The pack universe is scoped to opted-in ∩ catalog, not the full catalog.** A pack is "new" (surfaces in the update nudge + dashboard badge) only when:
+- The project's `.config.json` `packs` array includes it (opted-in), AND
+- The pack's `SKILL.md` is missing on disk for the current platform
+
+**Why**: A personal vault that deliberately DECLINED optional packs (`meta-marketing`, `business-idea-discovery`, etc.) was permanently nagging "Update available / New skill packs available" because the old logic surfaced every catalog pack not on disk. The vault is fully up-to-date; the declined packs are not an update gap.
+
+**Fixed in v0.17.2** (`814b679`) across both surfaces:
+- `src/server/routes/version-check.ts` — the dashboard header badge
+- `src/cli/commands/snapshot.ts` — the SessionStart terminal nudge
+
+Both now filter `catalogPackNames` by `readSetupConfig(projectRoot)?.packs ?? []` before computing `installedPacks` and `newPacks`. Regression tests added (declined pack stays hidden; opted-in-but-missing still nags; no-config → no nag).
+
 ## Last verified
 
-2026-06-01 (v0.6.0, all 11 A-criteria met, suite 949 green)
+2026-07-09 (v0.17.2, pack-scoping fix empirically verified against real Second-brain vault)

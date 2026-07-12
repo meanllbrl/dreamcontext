@@ -61,12 +61,44 @@ function extractRepo(message: string, fallbackRepo?: string): string | undefined
   return undefined;
 }
 
+/** Extra classification context — kept optional so every existing 2-arg call is unchanged. */
+export interface ClassifyOpts {
+  /**
+   * The token that produced this failure came from the PER-PROJECT secrets tier
+   * (`_dream_context/state/.secrets.json`), which shadows the signed-in global
+   * account. On an auth/permission failure that stale project token is almost
+   * always the real culprit — so the message names it and points at the real fix
+   * (remove it / re-sign-in) instead of sending the user in circles reconnecting
+   * a global account that was never the one being used.
+   */
+  perProjectToken?: boolean;
+}
+
 /**
  * Classify a thrown sync error. `repoHint` (e.g. from `brain status`) names the repo
- * when git's own message doesn't. Order matters: the most specific, actionable
+ * when git's own message doesn't. `opts.perProjectToken` appends a tier-aware note
+ * for auth/permission failures. Order matters: the most specific, actionable
  * signals win before the generic network/unknown fallbacks.
+ *
+ * Pure + deterministic. Backward compatible: `classifySyncError(msg)` and
+ * `classifySyncError(msg, hint)` behave exactly as before.
  */
-export function classifySyncError(rawMessage: string, repoHint?: string): SyncFailure {
+export function classifySyncError(rawMessage: string, repoHint?: string, opts?: ClassifyOpts): SyncFailure {
+  const failure = classifyBase(rawMessage, repoHint);
+  // A per-project token failing auth/permission: name the shadowing token so the
+  // user fixes the RIGHT thing. Never touches network/no-token/push-rejected copy.
+  if (opts?.perProjectToken && (failure.kind === 'auth' || failure.kind === 'permission')) {
+    return {
+      ...failure,
+      message:
+        `${failure.message} Note: this project has its own GitHub token that overrides your ` +
+        `signed-in account — it appears stale. Remove the project token (or re-sign-in) so sync uses your account.`,
+    };
+  }
+  return failure;
+}
+
+function classifyBase(rawMessage: string, repoHint?: string): SyncFailure {
   const m = rawMessage || '';
   const repo = extractRepo(m, repoHint);
   const named = repo ? ` on ${repo}` : '';

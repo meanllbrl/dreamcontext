@@ -22,6 +22,7 @@ import { runBrainSync } from '../../lib/git-sync/sync-engine.js';
 import { runTeamFetch } from '../../lib/git-sync/team-fetch.js';
 import { readConflictReport } from '../../lib/git-sync/conflict-report.js';
 import { classifySyncError, type SyncFailure } from '../../lib/git-sync/failure.js';
+import { isPerProjectToken } from '../../lib/git-sync/token-fallback.js';
 import { reconcileBrainSyncSuccess, reconcileBrainSyncFailure } from '../../lib/git-sync/auth-reconcile.js';
 import { ensureGitignoreEntries } from '../../lib/gitignore.js';
 import { listVaults } from '../../lib/vaults.js';
@@ -151,6 +152,8 @@ interface SyncPayload {
   checkpointSha?: string;
   codeConflicts?: string[];
   failure?: SyncFailure;
+  /** The sync detected + removed a stale per-project token, falling back to the signed-in account. */
+  healedStaleProjectToken?: boolean;
 }
 
 /**
@@ -190,9 +193,14 @@ async function runSyncPayload(
       checkpointSha: result.checkpointSha,
       codeConflicts: result.codeConflicts,
       failure,
+      healedStaleProjectToken: result.healedStaleProjectToken,
     };
   } catch (err) {
-    const failure = classifySyncError((err as Error).message, syncRepoHint(projectRoot));
+    // Tier-aware failure copy: if the token that failed is a per-project one (it
+    // still resolves here — the self-heal only removed it on a SUCCESSFUL global
+    // retry), name the shadowing stale project token as the real culprit.
+    const perProjectToken = isPerProjectToken(resolveBrainSyncToken(projectRoot));
+    const failure = classifySyncError((err as Error).message, syncRepoHint(projectRoot), { perProjectToken });
     // Only a GENUINELY auth-rejected op on the GLOBAL sign-in flags the session
     // invalid. A permission error means GitHub accepted the credential (it just
     // lacks a scope), so the session is still valid; a per-project/env token

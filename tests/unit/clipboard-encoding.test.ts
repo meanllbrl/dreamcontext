@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   clipboardStrategyOrder,
+  copyPreservingUnicode,
   TURKISH_COPY_FIXTURE,
 } from '../../dashboard/src/lib/clipboard.js';
 
@@ -38,6 +39,23 @@ describe('clipboard strategy order (issue #171)', () => {
     const order = clipboardStrategyOrder(false);
     expect(order).toEqual(['exec-command', 'navigator']);
     expect(order).not.toContain('tauri');
+  });
+});
+
+describe('copyPreservingUnicode never reports a false success', () => {
+  // Regression guard: the `navigator` fallback used `await navigator.clipboard?.writeText(text)`,
+  // which resolves to `undefined` (NOT a rejection) when the Clipboard API is absent — so the
+  // strategy loop `return`ed as if it had written the clipboard when nothing landed. With no
+  // clipboard mechanism available (no document, no navigator.clipboard), the copy must resolve
+  // to `false` and warn — never silently pretend it worked.
+  it('resolves false (and warns) when every strategy is unavailable', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await expect(copyPreservingUnicode('hello')).resolves.toBe(false);
+      expect(warn).toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 

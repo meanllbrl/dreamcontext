@@ -15,7 +15,9 @@ import {
   FALLBACK_AUTHOR,
 } from './brain-repo.js';
 import { withGitCredentials } from './credentials.js';
-import { readGlobalGitHubLogin } from './auth-store.js';
+import { readGlobalGitHubLogin, readGlobalGitHubToken } from './auth-store.js';
+import { removeProjectGitHubToken, type ResolvedToken } from '../task-backend/secrets.js';
+import { BrainSyncTokenSession } from './token-fallback.js';
 import { mapLoginToPerson } from '../task-backend/identity.js';
 import { slugify } from '../id.js';
 
@@ -112,6 +114,13 @@ export interface SyncResult {
   needsTaskSync?: boolean;
   /** Human-facing guidance (flag-misuse notes, disabled notice, etc). CLI renders via `error()`/`warn()`. */
   note?: string;
+  /**
+   * The sync detected a STALE per-project GitHub token that was shadowing the
+   * signed-in account, transparently fell back to the global token, and removed
+   * the stale project token. Surfaced so the CLI/dashboard can tell the user what
+   * self-healed. Never carries any token value.
+   */
+  healedStaleProjectToken?: boolean;
 }
 
 const EMPTY_SCRUB = { blocks: [] as ScrubHit[], warns: [] as ScrubHit[] };
@@ -139,6 +148,10 @@ export interface SyncEngineDeps {
   releaseBrainLock: typeof releaseBrainLock;
   /** C3 (M3): who is signed into dreamcontext right now (global auth-store), if anyone. */
   readGlobalGitHubLogin: typeof readGlobalGitHubLogin;
+  /** Stale-per-project-token self-heal: the signed-in global token to fall back to. */
+  readGlobalGitHubToken: typeof readGlobalGitHubToken;
+  /** Stale-per-project-token self-heal: remove the shadowing per-project `github.token`. */
+  removeProjectGitHubToken: typeof removeProjectGitHubToken;
 }
 
 const defaultDeps: SyncEngineDeps = {
@@ -151,6 +164,8 @@ const defaultDeps: SyncEngineDeps = {
   acquireBrainLock,
   releaseBrainLock,
   readGlobalGitHubLogin,
+  readGlobalGitHubToken,
+  removeProjectGitHubToken,
 };
 
 interface Ctx {
@@ -171,6 +186,12 @@ interface Ctx {
   foreground: boolean;
   /** Disable the pull-only dirty-tree auto-checkpoint (the on-open "don't touch my WIP" preference). */
   noCheckpoint: boolean;
+  /**
+   * The active token session for THIS run — set by whichever sync function first
+   * resolves a token. Carries the stale-per-project-token self-heal state so
+   * `runBrainSync` can stamp `healedStaleProjectToken` onto the final result.
+   */
+  session?: BrainSyncTokenSession;
 }
 
 /** Human-facing copy for a full-repo code conflict — names the file + how to finish. */
@@ -206,6 +227,46 @@ function personAuthorFor(ctx: Ctx): { name: string; email: string } | undefined 
 
 function authorFor(ctx: Ctx): { name: string; email: string } | undefined {
   return personAuthorFor(ctx) ?? (ctx.d.git.hasGitIdentity(ctx.gitCwd) ? undefined : FALLBACK_AUTHOR);
+}
+
+/**
+ * Resolve the brain sync token and wrap it in a `BrainSyncTokenSession` (the
+ * stale-per-project-token self-heal), storing it on the ctx so `runBrainSync`
+ * can read the heal flag. Returns null when NO token is configured at all (the
+ * caller returns the `no-remote` "no token" outcome). Reuses an existing session
+ * on the ctx so a fetch that already healed carries the global token into the push.
+ */
+function resolveTokenSession(ctx: Ctx): BrainSyncTokenSession | null {
+  if (ctx.session) return ctx.session;
+  const token: ResolvedToken | null = ctx.d.resolveBrainSyncToken(ctx.projectRoot);
+  if (!token) return null;
+  const session = new BrainSyncTokenSession(token, ctx.projectRoot, {
+    withGitCredentials: ctx.d.withGitCredentials,
+    readGlobalGitHubToken: ctx.d.readGlobalGitHubToken,
+    removeProjectGitHubToken: ctx.d.removeProjectGitHubToken,
+  });
+  ctx.session = session;
+  return session;
+}
+
+const NO_TOKEN_NOTE = 'No GitHub token found for the brain repo (per-project secrets or GITHUB_TOKEN/GH_TOKEN env).';
+
+/** Human-facing note when a stale per-project token was self-healed away mid-sync. */
+const HEALED_STALE_TOKEN_NOTE =
+  "This project had its own GitHub token that was stale — sync switched to your signed-in GitHub account and removed the stale project token.";
+
+/**
+ * Stamp the stale-per-project-token heal onto a returned result. No-op when
+ * nothing healed. Appends (never clobbers) any existing note. Applied once,
+ * centrally, in `runBrainSync` — every successful entry-point result flows through it.
+ */
+function applyHealInfo(ctx: Ctx, result: SyncResult): SyncResult {
+  if (!ctx.session?.healedStaleProjectToken) return result;
+  return {
+    ...result,
+    healedStaleProjectToken: true,
+    note: result.note ? `${result.note} ${HEALED_STALE_TOKEN_NOTE}` : HEALED_STALE_TOKEN_NOTE,
+  };
 }
 
 /** Single entry point. Never throws for operational outcomes — a persistent push failure is the one true programmer-facing GitSyncError. */
@@ -345,7 +406,8 @@ export async function runBrainSync(opts: SyncOptions, depsOverride: Partial<Sync
     else if (opts.mode === 'pull-only') result = await pullOnlySync(ctx);
     else if (opts.mode === 'push-only') result = await pushOnlySync(ctx);
     else result = await autoSync(ctx);
-    return result;
+    // Stamp the stale-per-project-token self-heal (if it fired) onto the result.
+    return applyHealInfo(ctx, result);
   } finally {
     d.releaseBrainLock(contextRoot);
   }
@@ -426,9 +488,9 @@ function withMergeOutcome(result: SyncResult, preMergeScrub: { blocks: ScrubHit[
  * before the first commit/push can ever happen. Callers treat `false` as
  * "nothing to pull/merge" and (in pushing modes) proceed to bootstrap `main`.
  */
-async function fetchRemoteIfExists(ctx: Ctx, token: string): Promise<boolean> {
+async function fetchRemoteIfExists(ctx: Ctx, session: BrainSyncTokenSession): Promise<boolean> {
   const { d, gitCwd } = ctx;
-  return d.withGitCredentials(token, async (env) => {
+  return session.run(async (env) => {
     const exists = d.git.remoteBranchExists(gitCwd, REMOTE_NAME, ctx.branch, env);
     if (exists) d.git.fetch(gitCwd, REMOTE_NAME, ctx.branch, env);
     return exists;
@@ -538,16 +600,22 @@ function mergeAndMaybeDefer(ctx: Ctx, opts: MergeAndMaybeDeferOpts): MergeOutcom
 
 // ─── push with the C4 non-fast-forward retry loop ───────────────────────────
 
-async function pushWithRetry(ctx: Ctx, scrub: { blocks: ScrubHit[]; warns: ScrubHit[] }): Promise<SyncResult> {
-  const { d, gitCwd, projectRoot } = ctx;
-  const token = d.resolveBrainSyncToken(projectRoot);
-  if (!token) {
-    return { action: 'no-remote', scrub, note: 'No GitHub token found for the brain repo (per-project secrets or GITHUB_TOKEN/GH_TOKEN env).' };
+async function pushWithRetry(
+  ctx: Ctx,
+  scrub: { blocks: ScrubHit[]; warns: ScrubHit[] },
+  session?: BrainSyncTokenSession,
+): Promise<SyncResult> {
+  const { d, gitCwd } = ctx;
+  // Reuse the caller's session (so a fetch that already healed carries the global
+  // token into the push); otherwise resolve one now (`--push-only`, `--continue`).
+  const s = session ?? resolveTokenSession(ctx);
+  if (!s) {
+    return { action: 'no-remote', scrub, note: NO_TOKEN_NOTE };
   }
 
   const tryPush = async (): Promise<boolean> => {
     try {
-      await d.withGitCredentials(token.token, async (env) => {
+      await s.run(async (env) => {
         d.git.push(gitCwd, REMOTE_NAME, ctx.branch, env);
       });
       return true;
@@ -562,7 +630,7 @@ async function pushWithRetry(ctx: Ctx, scrub: { blocks: ScrubHit[]; warns: Scrub
   // makes sense when the remote branch exists — a failed push to an EMPTY
   // remote failed for some other reason (auth, protection, network), and the
   // fetch would just die with `couldn't find remote ref main` on top of it.
-  const remoteExists = await fetchRemoteIfExists(ctx, token.token);
+  const remoteExists = await fetchRemoteIfExists(ctx, s);
   if (!remoteExists) {
     throw new GitSyncError('Push to the empty brain remote failed — check the token has Contents read/write on that repo and the remote URL is correct.');
   }
@@ -577,14 +645,14 @@ async function pushWithRetry(ctx: Ctx, scrub: { blocks: ScrubHit[]; warns: Scrub
 // ─── auto (full-repo: fetch → merge → commit → push) ────────────────────────
 
 async function autoSync(ctx: Ctx): Promise<SyncResult> {
-  const { d, gitCwd, projectRoot } = ctx;
-  const token = d.resolveBrainSyncToken(projectRoot);
-  if (!token) return { action: 'no-remote', scrub: EMPTY_SCRUB, note: 'No GitHub token found for the brain repo (per-project secrets or GITHUB_TOKEN/GH_TOKEN env).' };
+  const { d, gitCwd } = ctx;
+  const session = resolveTokenSession(ctx);
+  if (!session) return { action: 'no-remote', scrub: EMPTY_SCRUB, note: NO_TOKEN_NOTE };
 
   // Empty remote (freshly attached, zero commits): nothing to fetch/merge —
   // fall through to the commit+push half, which bootstraps `main` (push is
   // `HEAD:main`, and `commit` on an unborn HEAD creates the root commit).
-  const remoteExists = await fetchRemoteIfExists(ctx, token.token);
+  const remoteExists = await fetchRemoteIfExists(ctx, session);
 
   const aheadCount = remoteExists ? d.git.revListCount(gitCwd, `HEAD..${ctx.remoteRef}`) : 0;
   // Commits we have that the remote does NOT — e.g. a merge the HUMAN finished
@@ -625,20 +693,20 @@ async function autoSync(ctx: Ctx): Promise<SyncResult> {
     if (rangeScrub.blocks.length > 0 || rangeScrub.warns.length > 0) scrub = rangeScrub;
   }
 
-  const pushResult = await pushWithRetry(ctx, scrub);
+  const pushResult = await pushWithRetry(ctx, scrub, session);
   return { ...pushResult, needsTaskSync: needsTaskSync || pushResult.needsTaskSync };
 }
 
 // ─── pull-only — content delivery, safe headless (P2/C6, amendment 4) ──────
 
 async function pullOnlySync(ctx: Ctx): Promise<SyncResult> {
-  const { d, gitCwd, projectRoot, contextRoot } = ctx;
-  const token = d.resolveBrainSyncToken(projectRoot);
-  if (!token) return { action: 'no-remote', scrub: EMPTY_SCRUB, note: 'No GitHub token found for the brain repo (per-project secrets or GITHUB_TOKEN/GH_TOKEN env).' };
+  const { d, gitCwd, projectRoot } = ctx;
+  const session = resolveTokenSession(ctx);
+  if (!session) return { action: 'no-remote', scrub: EMPTY_SCRUB, note: NO_TOKEN_NOTE };
 
   // Pull-only NEVER pushes — an empty remote simply has nothing to deliver.
   // The first push happens via auto/push-only (or the attach-time bootstrap).
-  if (!(await fetchRemoteIfExists(ctx, token.token))) {
+  if (!(await fetchRemoteIfExists(ctx, session))) {
     return { action: 'noop', scrub: EMPTY_SCRUB, note: 'Remote brain repo is empty — nothing to pull yet. Run `dreamcontext brain sync` to push the first commit.' };
   }
 
@@ -750,13 +818,13 @@ async function resumeHandoff(ctx: Ctx): Promise<SyncResult> {
   // Pre-clear the OLD report — it described an aborted merge, about to be superseded.
   clearConflictReport(contextRoot);
 
-  const token = d.resolveBrainSyncToken(projectRoot);
-  if (!token) return { action: 'no-remote', scrub: EMPTY_SCRUB, note: 'No GitHub token found for the brain repo (per-project secrets or GITHUB_TOKEN/GH_TOKEN env).' };
+  const session = resolveTokenSession(ctx);
+  if (!session) return { action: 'no-remote', scrub: EMPTY_SCRUB, note: NO_TOKEN_NOTE };
 
   // A pending handoff implies origin/main was fetched before; guard the
   // re-fetch anyway (the remote could have been force-emptied since) and
   // merge against the locally-known ref.
-  await fetchRemoteIfExists(ctx, token.token);
+  await fetchRemoteIfExists(ctx, session);
 
   // FOREGROUND flow: WARN stays non-blocking here UNLESS --strict is set
   // (a human/agent is present, so it's not effective-strict like headless pull-only).
@@ -774,7 +842,7 @@ async function resumeHandoff(ctx: Ctx): Promise<SyncResult> {
   const outcome = mergeAndMaybeDefer(ctx, { abortOnDefer: false, markPendingOnDefer: false });
   if (outcome.result) return withMergeOutcome(outcome.result, scrub);
 
-  const pushResult = await pushWithRetry(ctx, scrub);
+  const pushResult = await pushWithRetry(ctx, scrub, session);
   if (pushResult.action === 'pushed') {
     writeBrainLocal(projectRoot, { pendingAgentMerge: false });
   }

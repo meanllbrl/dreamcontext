@@ -37,6 +37,10 @@ import {
   handleLauncherSyncCreate,
   handleLauncherSyncRemove,
   handleLauncherShareable,
+  handleLauncherGithubRepos,
+  handleLauncherClone,
+  handleLauncherCloneStatus,
+  handleLauncherCloneCancel,
   handleSleepyVideo,
   handleSleepyAnim,
   handleSleepyConfigGet,
@@ -264,6 +268,10 @@ function buildRouter(): Router {
   router.post('/api/launcher/sync', handleLauncherSyncCreate);
   router.post('/api/launcher/sync/remove', handleLauncherSyncRemove);
   router.post('/api/launcher/shareable', handleLauncherShareable);
+  router.get('/api/launcher/github/repos', handleLauncherGithubRepos);
+  router.post('/api/launcher/clone', handleLauncherClone);
+  router.get('/api/launcher/clone/status', handleLauncherCloneStatus);
+  router.post('/api/launcher/clone/cancel', handleLauncherCloneCancel);
   router.get('/api/sleepy/video', handleSleepyVideo);
   router.get('/api/sleepy/anim', handleSleepyAnim);
 

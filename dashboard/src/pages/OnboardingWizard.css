@@ -308,3 +308,58 @@
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+
+/* Clone-from-GitHub repo picker: a bounded, scrollable result list so a
+   50-repo result set never blows the modal past the viewport. */
+.wiz-repo-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.wiz-repo {
+  padding: var(--space-3) var(--space-4);
+}
+
+/* Live clone progress: git's own "Receiving objects: 42%…" tail, kept to a few
+   lines so the modal never grows past the viewport mid-download. */
+.wiz-clone-progress {
+  margin-top: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 10em;
+  overflow-y: auto;
+}
+
+.wiz-spinner {
+  display: inline-block;
+  width: 0.85em;
+  height: 0.85em;
+  margin-right: var(--space-2);
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  vertical-align: -0.1em;
+  animation: wiz-spin 0.8s linear infinite;
+}
+
+@keyframes wiz-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Respect reduced-motion: stop the spin for users who opt out of animation. */
+@media (prefers-reduced-motion: reduce) {
+  .wiz-spinner {
+    animation: none;
+  }
+}

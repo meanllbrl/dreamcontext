@@ -2,6 +2,7 @@ import type { SyncAction } from './sync-engine.js';
 import { setGlobalGitHubAuthValid } from './auth-store.js';
 import { resolveBrainSyncToken } from './brain-repo.js';
 import { classifySyncError } from './failure.js';
+import { isPerProjectToken } from './token-fallback.js';
 
 /**
  * Reconcile the GLOBAL GitHub session's `needsReconnect` flag off a REAL sync
@@ -55,11 +56,23 @@ export function reconcileBrainSyncSuccess(action: SyncAction): void {
  * untouched.
  */
 export function reconcileBrainSyncFailure(rawMessage: string, projectRoot: string, repoHint?: string): void {
-  const failure = classifySyncError(rawMessage, repoHint);
+  const resolved = resolveBrainSyncToken(projectRoot);
+  // Tier-aware classification: a per-project token failing auth/permission gets a
+  // message that NAMES the shadowing stale token (the dashboard renders it). This
+  // does not change the failure KIND, so the flag logic below is unaffected.
+  const failure = classifySyncError(rawMessage, repoHint, { perProjectToken: isPerProjectToken(resolved) });
   if (failure.kind === 'permission') {
     setGlobalGitHubAuthValid(true);
     return;
   }
   if (failure.kind !== 'auth') return;
-  if (resolveBrainSyncToken(projectRoot)?.via === 'global') setGlobalGitHubAuthValid(false);
+  // ONLY a GLOBAL-token auth failure raises the "reconnect your sign-in" banner.
+  // A per-project (or env) token failing auth is not something reconnecting the
+  // global account would fix — the real fix is removing the stale project token
+  // (which the engine now self-heals when a good global token exists) or fixing
+  // the shell env. In the rare retry-also-failed path the per-project token still
+  // shadows resolution here, so we honestly DECLINE to flip the global flag off a
+  // per-project attribution; the tier-aware failure MESSAGE carries that truth
+  // to the UI instead of a (possibly wrong) global-invalid signal.
+  if (resolved?.via === 'global') setGlobalGitHubAuthValid(false);
 }

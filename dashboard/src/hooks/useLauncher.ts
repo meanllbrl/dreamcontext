@@ -48,6 +48,16 @@ function invalidateLauncher(queryClient: ReturnType<typeof useQueryClient>): voi
   }
 }
 
+/**
+ * The same launcher-wide refresh as a callable, for flows whose mutation happens
+ * OUTSIDE a useMutation (e.g. a background clone job that registers a vault
+ * server-side — the wizard learns about it from a status poll, not an onSuccess).
+ */
+export function useInvalidateLauncher(): () => void {
+  const queryClient = useQueryClient();
+  return () => invalidateLauncher(queryClient);
+}
+
 // ─── Hooks ──────────────────────────────────────────────────────────────────
 
 /**
@@ -174,6 +184,86 @@ export interface FolderProbe {
 /** Probe an existing folder: detected stack, whether it's already a vault, basename. */
 export async function probeFolder(path: string): Promise<FolderProbe> {
   return api.get<FolderProbe>(`/launcher/detect?path=${encodeURIComponent(path)}`);
+}
+
+// ─── Clone from GitHub (wizard third mode) ────────────────────────────────────
+
+/** One repo row in the wizard's GitHub picker. */
+export interface GithubRepoSummary {
+  fullName: string;
+  private: boolean;
+  description: string | null;
+  defaultBranch?: string;
+  pushedAt?: string;
+}
+
+/**
+ * The signed-in user's repos, newest-push first, filtered by `q` server-side.
+ * Disabled until the caller says the picker is visible AND the user is signed
+ * in — a 401 for a signed-out user is expected, not worth firing.
+ */
+export function useGithubRepos(q: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ['launcher-github-repos', q],
+    queryFn: () =>
+      api.get<{ repos: GithubRepoSummary[] }>(
+        `/launcher/github/repos?q=${encodeURIComponent(q)}`,
+      ),
+    enabled,
+    staleTime: 30_000,
+  });
+}
+
+export interface ClonePayload {
+  /** `owner/repo` or a full GitHub URL. */
+  url: string;
+  /** Absolute parent directory the clone lands under. */
+  parentDir: string;
+}
+
+/** What a finished clone job hands back to the wizard. */
+export interface CloneResult {
+  /** Absolute path of the fresh clone. */
+  path: string;
+  /** Folder basename (= repo name). */
+  name: string;
+  /** True when the clone is already a dreamcontext project (registered server-side). */
+  hasContext: boolean;
+  /** The registered vault name when `hasContext` (may be suffixed on a collision). */
+  vaultName?: string;
+  cli?: CliInstallResult;
+}
+
+export interface CloneStatus {
+  state: 'running' | 'done' | 'error' | 'unknown';
+  /** git's live progress tail ("Receiving objects: 42%…"). */
+  progress: string;
+  result?: CloneResult;
+  error?: string;
+}
+
+/** Start a background clone job; poll {@link getCloneStatus} with the returned id. */
+export function useCloneGithubRepo() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: ClonePayload) =>
+      api.post<{ ok: true; cloneId: string }>('/launcher/clone', payload),
+    onSuccess: () => {
+      // A vault may appear when the job finishes; refetch once more from the
+      // wizard's terminal poll, but refresh eagerly too so nothing goes stale.
+      invalidateLauncher(queryClient);
+    },
+  });
+}
+
+/** Poll a background clone job (plain fetch — the wizard drives its own cadence). */
+export function getCloneStatus(cloneId: string): Promise<CloneStatus> {
+  return api.get<CloneStatus>(`/launcher/clone/status?id=${encodeURIComponent(cloneId)}`);
+}
+
+/** Abort a running background clone job. Idempotent. */
+export function cancelClone(cloneId: string): Promise<{ ok: true; canceled: boolean }> {
+  return api.post<{ ok: true; canceled: boolean }>('/launcher/clone/cancel', { id: cloneId });
 }
 
 // ─── Project status (green / yellow / red) ────────────────────────────────────

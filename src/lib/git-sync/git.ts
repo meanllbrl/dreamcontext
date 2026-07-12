@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -188,6 +188,110 @@ export function push(cwd: string, remote: string, branch: string, env: NodeJS.Pr
  */
 export function clone(url: string, dest: string, env: NodeJS.ProcessEnv): void {
   run(process.cwd(), [...CREDENTIAL_HELPER_DISABLE_ARGS, ...SAFE_TRANSPORT_ARGS, 'clone', '--', url, dest], { env });
+}
+
+/** Safety ceiling for a full clone — big repos over slow links, not runaway hangs. */
+const CLONE_TIMEOUT_MS = 10 * 60 * 1000;
+/** Grace period after SIGTERM before escalating to SIGKILL on a wedged git child. */
+const CLONE_HARD_KILL_GRACE_MS = 10_000;
+
+/** A running background clone: await `promise`, or `cancel()` to abort it. */
+export interface CloneHandle {
+  promise: Promise<void>;
+  /** Abort the clone (SIGTERM). The promise rejects with a GitSyncError. */
+  cancel: () => void;
+}
+
+/**
+ * Streaming async `clone` for the long-lived dashboard server (launcher
+ * clone-from-GitHub). Identical hardened argv to {@link clone} plus
+ * `--progress` (git only emits progress to stderr when it looks like a tty
+ * unless forced); `spawn` (not `execFileSync`) so a multi-minute clone never
+ * blocks the server's event loop — the sync variant would freeze every
+ * dashboard window until the clone finished. `onProgress` receives raw stderr
+ * chunks (git's live "Receiving objects: 42%…" lines) so the UI can show real
+ * progress. Same `withGitCredentials` contract: callers must pass the askpass
+ * env. Cancelable: `cancel()` SIGTERMs the child — git removes the directory
+ * it created when a clone is interrupted.
+ */
+export function cloneStreaming(
+  url: string,
+  dest: string,
+  env: NodeJS.ProcessEnv,
+  onProgress?: (chunk: string) => void,
+): CloneHandle {
+  const child = spawn(
+    'git',
+    [...CREDENTIAL_HELPER_DISABLE_ARGS, ...SAFE_TRANSPORT_ARGS, 'clone', '--progress', '--', url, dest],
+    { env, stdio: ['ignore', 'pipe', 'pipe'] },
+  );
+
+  let canceled = false;
+  let timedOut = false;
+  let stderrTail = '';
+  let hardKill: ReturnType<typeof setTimeout> | undefined;
+  const onChunk = (chunk: Buffer) => {
+    const text = chunk.toString('utf-8');
+    stderrTail = (stderrTail + text).slice(-4000);
+    onProgress?.(text);
+  };
+  child.stdout?.on('data', onChunk);
+  child.stderr?.on('data', onChunk);
+
+  // Termination shared by BOTH the timeout guard and the user `cancel()`:
+  // SIGTERM first — git traps it and removes the partial clone directory (the
+  // cleanup contract the retry path relies on; a bare SIGKILL would strand a
+  // half-written dest that then blocks every retry at planGitHubClone's
+  // dest-exists gate). Then SIGKILL after a grace period if git ignores the
+  // TERM — without this escalation a wedged git (e.g. blocked in a network
+  // read on a stalled connection) never fires 'close', the promise never
+  // settles, and the caller's dest lock leaks forever.
+  const terminate = () => {
+    try { child.kill('SIGTERM'); } catch { /* already gone */ }
+    if (hardKill) return; // escalation already armed
+    hardKill = setTimeout(() => {
+      try { child.kill('SIGKILL'); } catch { /* already gone */ }
+    }, CLONE_HARD_KILL_GRACE_MS);
+    (hardKill as unknown as { unref?: () => void }).unref?.();
+  };
+
+  const promise = new Promise<void>((resolvePromise, reject) => {
+    const guard = setTimeout(() => {
+      timedOut = true;
+      terminate();
+    }, CLONE_TIMEOUT_MS);
+    (guard as unknown as { unref?: () => void }).unref?.();
+
+    child.on('error', (err) => {
+      clearTimeout(guard);
+      if (hardKill) clearTimeout(hardKill);
+      reject(new GitSyncError(`git clone failed to start: ${err.message}`));
+    });
+    child.on('close', (code) => {
+      clearTimeout(guard);
+      if (hardKill) clearTimeout(hardKill);
+      if (code === 0 && !canceled && !timedOut) {
+        resolvePromise();
+        return;
+      }
+      // A user cancel and a timeout must read differently: the caller silently
+      // resets on cancel but must SHOW a timeout.
+      const detail = timedOut
+        ? `Clone timed out after ${Math.round(CLONE_TIMEOUT_MS / 60000)} minutes.`
+        : canceled
+          ? 'Clone was canceled.'
+          : stderrTail.trim() || `git clone exited with code ${code}`;
+      reject(new GitSyncError(`git clone failed: ${detail}`, stderrTail || undefined));
+    });
+  });
+
+  return {
+    promise,
+    cancel: () => {
+      canceled = true;
+      terminate();
+    },
+  };
 }
 
 export function mergeBase(cwd: string, a: string, b: string): string | null {

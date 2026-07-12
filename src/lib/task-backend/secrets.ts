@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { ensureGitignoreEntries } from '../gitignore.js';
 
@@ -122,6 +122,37 @@ export function writeGitHubToken(projectRoot: string, token: string, user?: stri
     secrets.github.users = { ...(secrets.github.users ?? {}), [user.trim()]: token.trim() };
   } else {
     secrets.github.token = token.trim();
+  }
+
+  writeFileSync(path, JSON.stringify(secrets, null, 2) + '\n', { encoding: 'utf-8', mode: 0o600 });
+  // mode in writeFileSync only applies on create — enforce on rewrite too.
+  try { chmodSync(path, 0o600); } catch { /* best-effort on exotic filesystems */ }
+}
+
+/**
+ * Remove ONLY the per-project default GitHub token (`github.token`) from
+ * `_dream_context/state/.secrets.json`, preserving every other key — the
+ * per-user token map (`github.users`), the whole `clickup` block, anything
+ * else. This is the self-heal for a STALE per-project token that shadows the
+ * signed-in global account (the token never wins resolution again, so
+ * `resolveBrainSyncToken` falls through to the global tier). If deleting the
+ * token empties the `github` block AND the whole file, the file is removed
+ * entirely. Idempotent — a missing file / missing token is a no-op. NEVER logs
+ * the token value.
+ */
+export function removeProjectGitHubToken(projectRoot: string): void {
+  const path = secretsPath(projectRoot);
+  if (!existsSync(path)) return;
+  const secrets = readSecretsFile(projectRoot);
+  if (!secrets.github || secrets.github.token === undefined) return;
+
+  delete secrets.github.token;
+  // Drop an emptied github block, then the whole file if nothing else remains —
+  // never leave a `{}`/`{"github":{}}` husk behind.
+  if (Object.keys(secrets.github).length === 0) delete secrets.github;
+  if (Object.keys(secrets).length === 0) {
+    try { unlinkSync(path); } catch { /* best-effort — already gone */ }
+    return;
   }
 
   writeFileSync(path, JSON.stringify(secrets, null, 2) + '\n', { encoding: 'utf-8', mode: 0o600 });

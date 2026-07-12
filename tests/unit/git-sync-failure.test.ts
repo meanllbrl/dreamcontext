@@ -75,4 +75,37 @@ describe('git-sync/failure — classifySyncError', () => {
     expect(f.message.length).toBeGreaterThan(0);
     expect(f.recovery).toBe('retry');
   });
+
+  // ── tier-aware messages (stale per-project token shadowing the signed-in account) ──
+  describe('perProjectToken tier awareness', () => {
+    it('an AUTH failure with a per-project token NAMES the shadowing stale project token', () => {
+      const f = classifySyncError("fatal: Authentication failed for 'https://github.com/o/r.git'", undefined, { perProjectToken: true });
+      expect(f.kind).toBe('auth');
+      expect(f.recovery).toBe('reconnect-github');
+      expect(f.message).toMatch(/its own github token/i);
+      expect(f.message).toMatch(/stale/i);
+      // Still carries the base copy — the tier note is APPENDED, not a replacement.
+      expect(f.message).toMatch(/expired or is invalid/i);
+    });
+
+    it('a PERMISSION failure with a per-project token also appends the tier note', () => {
+      const f = classifySyncError('remote: Permission to acme/brain.git denied to someone.', 'https://github.com/acme/brain.git', { perProjectToken: true });
+      expect(f.kind).toBe('permission');
+      expect(f.message).toMatch(/acme\/brain/);
+      expect(f.message).toMatch(/its own github token/i);
+    });
+
+    it('perProjectToken:false is identical to the 2-arg call (backward compatible)', () => {
+      const base = classifySyncError("fatal: Authentication failed for 'https://github.com/o/r.git'");
+      const withFalse = classifySyncError("fatal: Authentication failed for 'https://github.com/o/r.git'", undefined, { perProjectToken: false });
+      expect(withFalse).toEqual(base);
+      expect(withFalse.message).not.toMatch(/its own github token/i);
+    });
+
+    it('the tier note is NOT appended to non-auth/permission kinds (network stays clean)', () => {
+      const f = classifySyncError("fatal: unable to access 'https://github.com/o/r.git/': Could not resolve host: github.com", undefined, { perProjectToken: true });
+      expect(f.kind).toBe('network');
+      expect(f.message).not.toMatch(/its own github token/i);
+    });
+  });
 });

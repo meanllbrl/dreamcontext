@@ -2,12 +2,18 @@
   {
     "id": "rel_12PzKKOP",
     "version": "0.17.2",
-    "date": "",
-    "summary": "Update-nudge accuracy: declined optional packs no longer flash a false 'Update available' badge/nudge (scope pack universe to opted-in ∩ catalog)",
+    "date": "2026-07-12",
+    "summary": "Launcher onboarding gains a third mode — Clone from GitHub: sign in, search your repos, and clone one locally as a cancelable background job with live git progress. Plus three fixes: UTF-8-safe clipboard on the desktop agent terminal (Tauri native OS clipboard kills the Turkish/Mac-Roman copy mojibake regression, #171); a brain-sync self-heal so a stale per-project token can no longer shadow a fresh global re-sign-in and wedge every sync in a permanent auth failure (fallback-to-global + prune the stale token); and update-nudge accuracy (declined optional packs no longer flash a false 'Update available' badge/nudge — pack universe scoped to opted-in ∩ catalog). Desktop release: bundles the Tauri clipboard-manager plugin.",
     "breaking": false,
-    "status": "planning",
-    "features": [],
-    "tasks": [],
+    "status": "released",
+    "features": [
+      "launcher-quiz-onboarding"
+    ],
+    "tasks": [
+      "launcher-clone-from-github-sign-in-search-repos-clone-locally-dreamcontext-ready",
+      "fix-171-agent-terminal-utf-8-copy-mojibake-regression-tauri-native-clipboard",
+      "cloud-sync-stale-per-project-token-shadowing-auto-heal-fallback-to-global"
+    ],
     "changelog": []
   },
   {

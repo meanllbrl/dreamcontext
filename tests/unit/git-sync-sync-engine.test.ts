@@ -2,9 +2,11 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { readFileSync, existsSync } from 'node:fs';
 import { updateSetupConfig, readBrainLocal, writeBrainLocal } from '../../src/lib/setup-config.js';
 import { writeConflictReport, readConflictReport } from '../../src/lib/git-sync/conflict-report.js';
 import { acquireBrainLock, releaseBrainLock, FALLBACK_AUTHOR } from '../../src/lib/git-sync/brain-repo.js';
+import { writeGitHubToken, writeClickUpToken, type ResolvedToken } from '../../src/lib/task-backend/secrets.js';
 import * as git from '../../src/lib/git-sync/git.js';
 import { runBrainSync, type SyncEngineDeps } from '../../src/lib/git-sync/sync-engine.js';
 
@@ -810,5 +812,134 @@ describe('git-sync/sync-engine — runBrainSync', () => {
     expect(report?.codeConflicts).toEqual(['src/app.ts']);
     // The coincident brain-prose conflict is NOT silently dropped — it stays in the report.
     expect(report?.deferred.map((d) => d.path)).toEqual(['knowledge/k.md']);
+  });
+});
+
+// ── stale-per-project-token self-heal (fallback to the signed-in global token) ──
+describe('git-sync/sync-engine — stale per-project token self-heal', () => {
+  let projectRoot: string;
+  let contextRoot: string;
+
+  const STALE = 'stale-project-token';
+  const FRESH = 'fresh-global-token';
+
+  beforeEach(() => {
+    projectRoot = mkdtempSync(join(tmpdir(), 'dc-heal-'));
+    contextRoot = join(projectRoot, '_dream_context');
+    mkdirSync(join(contextRoot, 'state'), { recursive: true });
+    updateSetupConfig(projectRoot, { brainRepo: { mode: 'full-repo', enabled: true, autoSync: true } });
+  });
+  afterEach(() => rmSync(projectRoot, { recursive: true, force: true }));
+
+  function secretsPath() { return join(contextRoot, 'state', '.secrets.json'); }
+  function readSecrets() { return JSON.parse(readFileSync(secretsPath(), 'utf-8')); }
+
+  /** A `withGitCredentials` fake that threads the active token into the op env. */
+  const withCreds = (async (token: string, fn: (env: NodeJS.ProcessEnv) => unknown) =>
+    fn({ DC_TOKEN: token })) as SyncEngineDeps['withGitCredentials'];
+
+  /** Token-aware fake git: network ops throw `throwMessage` when run with a bad token. */
+  function tokenAwareGit(state: FakeState, badTokens: string[], throwMessage: string): typeof git {
+    const base = makeFakeGit(state);
+    return {
+      ...base,
+      remoteBranchExists: (_c: string, _r: string, branch: string, env?: NodeJS.ProcessEnv) => {
+        state.branchCalls.push(branch);
+        if (badTokens.includes(String(env?.DC_TOKEN))) throw new Error(throwMessage);
+        return state.remoteExists;
+      },
+      fetch: (_c: string, _r: string, branch: string, env?: NodeJS.ProcessEnv) => {
+        state.fetchCalls += 1; state.branchCalls.push(branch);
+        if (badTokens.includes(String(env?.DC_TOKEN))) throw new Error(throwMessage);
+      },
+      push: (_c: string, _r: string, branch: string, env?: NodeJS.ProcessEnv) => {
+        state.pushCalls += 1; state.branchCalls.push(branch);
+        if (badTokens.includes(String(env?.DC_TOKEN))) throw new Error(throwMessage);
+        if (state.pushCalls <= state.pushFailFirstN) throw new Error('push rejected (non-fast-forward)');
+      },
+    } as typeof git;
+  }
+
+  function healDeps(state: FakeState, opts: { global: ResolvedToken | null; badTokens: string[]; throwMessage: string }): Partial<SyncEngineDeps> {
+    return {
+      git: tokenAwareGit(state, opts.badTokens, opts.throwMessage),
+      scrubStagedFiles: () => [],
+      scrubCommitRange: () => [],
+      resolveConflicts: () => ({ resolved: [], deferredToAgent: [], deferredToHuman: [] }),
+      // Per-project token WINS resolution (the shadowing slot) — the real bug.
+      resolveBrainSyncToken: () => ({ token: STALE, source: 'secrets', via: 'token' }),
+      readGlobalGitHubToken: () => opts.global,
+      // Use the REAL removeProjectGitHubToken (from defaultDeps) so the on-disk
+      // self-heal is exercised for real against the temp secrets file.
+      withGitCredentials: withCreds,
+      acquireBrainLock: () => true,
+      releaseBrainLock: () => {},
+    };
+  }
+
+  it('per-project auth/permission failure → falls back to global, heals, removes ONLY github.token (other keys preserved)', async () => {
+    // Real secrets file: the stale github.token PLUS a per-user token map and a clickup block that must survive.
+    writeGitHubToken(projectRoot, STALE);
+    writeGitHubToken(projectRoot, 'alice-token', 'alice');
+    writeClickUpToken(projectRoot, 'cu-token');
+    expect(readSecrets().github.token).toBe(STALE);
+
+    const state = makeState({ dirty: ['knowledge/x.md'], branch: 'main' });
+    const deps = healDeps(state, { global: { token: FRESH, source: 'secrets', via: 'global' }, badTokens: [STALE], throwMessage: 'remote: Permission to Genevous/genevous-brain.git denied to meanllbrl.' });
+    const result = await runBrainSync({ cwd: contextRoot, mode: 'auto' }, deps);
+
+    expect(result.action).toBe('pushed');
+    expect(result.healedStaleProjectToken).toBe(true);
+    expect(result.note).toMatch(/stale/i);
+    // Askpass hygiene: neither token value ever appears in the surfaced note.
+    expect(result.note).not.toContain(STALE);
+    expect(result.note).not.toContain(FRESH);
+    expect(state.pushCalls).toBeGreaterThanOrEqual(1);
+
+    // Self-heal on disk: github.token gone; the per-user map + clickup block untouched.
+    const secrets = readSecrets();
+    expect(secrets.github?.token).toBeUndefined();
+    expect(secrets.github?.users?.alice).toBe('alice-token');
+    expect(secrets.clickup?.token).toBe('cu-token');
+  });
+
+  it('retry ALSO fails (global rejected too) → surfaces the ORIGINAL failure and does NOT remove the project token', async () => {
+    writeGitHubToken(projectRoot, STALE);
+    const state = makeState({ dirty: ['knowledge/x.md'], branch: 'main' });
+    const deps = healDeps(state, { global: { token: FRESH, source: 'secrets', via: 'global' }, badTokens: [STALE, FRESH], throwMessage: 'remote: Permission to Genevous/genevous-brain.git denied.' });
+
+    await expect(runBrainSync({ cwd: contextRoot, mode: 'auto' }, deps)).rejects.toThrow(/denied/);
+    // Stale token NOT removed — the recovery never succeeded.
+    expect(readSecrets().github?.token).toBe(STALE);
+  });
+
+  it('no global token configured → no retry, stale token left in place', async () => {
+    writeGitHubToken(projectRoot, STALE);
+    const state = makeState({ dirty: ['knowledge/x.md'], branch: 'main' });
+    const deps = healDeps(state, { global: null, badTokens: [STALE], throwMessage: 'fatal: Authentication failed' });
+
+    await expect(runBrainSync({ cwd: contextRoot, mode: 'auto' }, deps)).rejects.toThrow();
+    expect(readSecrets().github?.token).toBe(STALE);
+  });
+
+  it('a NON-auth failure (network) never triggers the fallback and never touches the secrets file', async () => {
+    writeGitHubToken(projectRoot, STALE);
+    const state = makeState({ dirty: ['knowledge/x.md'], branch: 'main' });
+    const deps = healDeps(state, { global: { token: FRESH, source: 'secrets', via: 'global' }, badTokens: [STALE], throwMessage: 'fatal: unable to access: Could not resolve host: github.com' });
+
+    await expect(runBrainSync({ cwd: contextRoot, mode: 'auto' }, deps)).rejects.toThrow(/resolve host/);
+    expect(readSecrets().github?.token).toBe(STALE);
+  });
+
+  it('pull-only path also self-heals a stale per-project token on the fetch', async () => {
+    writeGitHubToken(projectRoot, STALE);
+    const state = makeState({ aheadCount: 1, shaSequence: ['before', 'after'], branch: 'main' });
+    const deps = healDeps(state, { global: { token: FRESH, source: 'secrets', via: 'global' }, badTokens: [STALE], throwMessage: 'fatal: Authentication failed' });
+
+    const result = await runBrainSync({ cwd: contextRoot, mode: 'pull-only', foreground: true }, deps);
+    expect(result.action).toBe('pulled');
+    expect(result.healedStaleProjectToken).toBe(true);
+    // Only github.token existed → removing it empties the file, which is deleted whole.
+    expect(existsSync(secretsPath())).toBe(false);
   });
 });
