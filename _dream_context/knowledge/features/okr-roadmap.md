@@ -2,7 +2,7 @@
 id: feat_WBfWsxgS
 status: in_review
 created: '2026-07-02'
-updated: '2026-07-08'
+updated: '2026-07-12'
 tags:
   - 'topic:roadmap'
   - 'topic:pm'
@@ -12,6 +12,8 @@ related_tasks:
     interactive-roadmap-dashboard-forecast-timeline-cascade-editable-detail-panel
   - feat-okr-key-result-metric-outcome-based-progress
   - roadmap-forecast-accuracy-effort-aware-envelope-clamped-cascade
+  - >-
+    roadmap-timeline-start-only-dated-tasks-collapse-the-committed-window-bar-to-a-point
 type: feature
 name: okr-roadmap
 description: ''

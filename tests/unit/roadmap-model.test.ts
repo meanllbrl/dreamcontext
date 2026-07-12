@@ -147,14 +147,28 @@ describe('buildRoadmapModel — join + rollups', () => {
 });
 
 describe('buildRoadmapModel — forecast cascade (full DAG)', () => {
-  it('computes forecast from member dates: start=min(starts), end=max(dues)', () => {
+  it('computes forecast from member dates: start=min(starts), end clamps to the target envelope', () => {
     createObjective(root, { slug: 'a', title: 'A', target_date: '2026-09-01' });
     writeTask('t1', { objectives: ['a'], start: '2026-07-01', due: '2026-08-01' });
     writeTask('t2', { objectives: ['a'], start: '2026-06-15', due: '2026-08-20' });
     const [a] = buildRoadmapModel(root).objectives;
     expect(a.forecast_start).toBe('2026-06-15');
-    expect(a.forecast_end).toBe('2026-08-20');
+    expect(a.forecast_end).toBe('2026-09-01'); // work ends Aug 20, bar clamps to the Sep 1 target
     expect(a.slipping).toBe(false); // 2026-08-20 <= 2026-09-01
+  });
+
+  it('REGRESSION (Tilki board): start-only dated tasks keep the committed window (no point-collapse)', () => {
+    // Member tasks carry only start dates. The old hasDates branch collapsed the
+    // forecast to a single day at the earliest task start, erasing the PO's
+    // committed month-long window — the timeline drew an 8px stub instead of a bar.
+    createObjective(root, {
+      slug: 'a', title: 'A', start_date: '2026-06-03', target_date: '2026-07-07', effort: 12,
+    });
+    writeTask('t1', { objectives: ['a'], start: '2026-06-27', status: 'completed' });
+    const [a] = buildRoadmapModel(root).objectives;
+    expect(a.forecast_start).toBe('2026-06-03'); // committed start, not the task start
+    expect(a.forecast_end).toBe('2026-07-07');   // committed target — the full window survives
+    expect(a.slipping).toBe(false);
   });
 
   it('flags slipping when forecast_end > target_date', () => {
@@ -202,8 +216,9 @@ describe('buildRoadmapModel — forecast cascade (full DAG)', () => {
     expect(by.a.forecast_start).toBeNull();
     expect(by.a.forecast_end).toBeNull();
     expect(by.a.slipping).toBeNull(); // unforecastable → no target comparison
-    // b is NOT dragged to "now" or blocked by a's null forecast.
-    expect(by.b.forecast_end).toBe('2026-08-01');
+    // b is NOT dragged to "now" or blocked by a's null forecast; its own task ends
+    // Aug 1 and the bar clamps to its Sep 1 target envelope — still on track.
+    expect(by.b.forecast_end).toBe('2026-09-01');
     expect(by.b.slipping).toBe(false);
   });
 

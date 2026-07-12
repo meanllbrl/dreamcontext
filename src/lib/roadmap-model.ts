@@ -21,11 +21,15 @@ import {
  * are COMPUTED here — never stored — so the two sides cannot drift.
  *
  * Forecast cascade = FULL transitive propagation over the dependency DAG
- * (topo-sorted; diamond shapes included):
- *   forecast_start = max(earliest member-task start, max(forecast_end of deps))
- *   forecast_end   = max(latest member-task due, forecast_start)
- * Null handling (review-mandated): an objective with NO dated member tasks has
- * forecast = null ("unforecastable") and imposes NO constraint on dependents.
+ * (topo-sorted; diamond shapes included). With dated member tasks (the schedule
+ * of record — effort is NOT re-added), the committed window stays an ENVELOPE:
+ *   forecast_start = max(min(earliest task start, committed start), max(forecast_end of deps))
+ *   forecast_end   = max(committed end, latest member-task due, forecast_start)
+ * so start-only tasks never collapse the bar to a point, and a predecessor isn't
+ * "done" for its dependents until its own target passes. Slip is still measured
+ * on the task-derived finish. Null handling (review-mandated): an objective with
+ * NO dated member tasks and no committed window has forecast = null
+ * ("unforecastable") and imposes NO constraint on dependents.
  */
 
 export interface RoadmapTaskRef {
@@ -336,10 +340,18 @@ export function buildRoadmapModel(contextRoot: string): RoadmapModel {
     if (hasDates) {
       // Linked dated tasks are the schedule of record — their span already encodes
       // the real duration, so effort is not re-added on top (it would double-count).
+      // The committed window is still the ENVELOPE (same clamp as the window basis
+      // below, lock-step with roadmap-forecast.ts): the bar starts no later than the
+      // committed start and never ends before the committed end — start-only tasks
+      // must not collapse the forecast to a point, and a predecessor isn't "done"
+      // for its dependents until its own target passes. Slip is still measured on
+      // the task-derived finish (workEnd), not the envelope end.
       const earliestStart = minDate(tasks.map((t) => t.start_date));
       const latestDue = maxDate(tasks.map((t) => t.due_date));
-      forecastStart = maxDate([earliestStart, maxDepEnd]);
-      forecastEnd = maxDate([latestDue, forecastStart]);
+      const committedEnd = o.target_date ?? o.start_date;
+      forecastStart = maxDate([minDate([earliestStart, o.start_date]), maxDepEnd]) ?? latestDue;
+      const workEnd = maxDate([latestDue, forecastStart]);
+      forecastEnd = maxDate([committedEnd, workEnd]);
     } else if (o.start_date !== null) {
       // PO-committed window (no dated tasks yet): the start→target window is a DEADLINE
       // PLAN, not a rigid block that slides. A dependency pushes only the achievable

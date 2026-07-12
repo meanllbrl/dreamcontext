@@ -140,7 +140,8 @@ describe('buildForecasts — dated tasks are the schedule of record (lock-step w
     // The old committed-window+effort engine stacked rollup's 28 days AFTER child's Aug 1
     // finish → Aug 29, a phantom slip past Aug 15 that disagreed with the CLI forecast.
     // With the task-date basis the shared task is the schedule of record: no effort added,
-    // and rollup finishes Aug 1 on track — exactly what roadmap-model.ts computes.
+    // work finishes Aug 1 on track and the bar clamps to the committed Aug 15 end —
+    // exactly what roadmap-model.ts computes.
     const shared = [task('2026-07-01', '2026-08-01')];
     const m = buildForecasts([
       obj('child', '2026-07-01', '2026-08-01', { tasks: shared }),
@@ -150,21 +151,52 @@ describe('buildForecasts — dated tasks are the schedule of record (lock-step w
     const r = m.get('rollup')!;
     expect(r.basis).toBe('tasks');
     expect(r.forecast_start).toBe('2026-08-01'); // pushed to the dependency finish
-    expect(r.forecast_end).toBe('2026-08-01');   // task span — effort NOT stacked on top
-    expect(r.slipping).toBe(false);              // Aug 1 ≤ Aug 15 target → on track
+    expect(r.forecast_end).toBe('2026-08-15');   // envelope: bar never ends before the committed end
+    expect(r.slipping).toBe(false);              // work ends Aug 1 ≤ Aug 15 target → on track
     expect(r.slipDays).toBe(-14);                // 14 days of buffer, not a 14-day slip
   });
 
   it('a task-bearing objective forecasts from its task span; effort is not re-added on top', () => {
-    // Effort 4 (28d) is set, but dated tasks win — forecast is the task span (Jul 1 → Jul 20),
-    // NOT start + effort (which would be Jul 29). Mirrors the server’s hasDates branch.
+    // Effort 4 (28d) is set, but dated tasks win — work ends at the task span (Jul 20),
+    // NOT start + effort (which would be Jul 29); the bar clamps to the committed Jul 31
+    // end (envelope). Mirrors the server’s hasDates branch.
     const f = buildForecasts([
       obj('a', '2026-07-01', '2026-07-31', { effort: 4, tasks: [task('2026-07-01', '2026-07-20')] }),
     ]).get('a')!;
     expect(f.basis).toBe('tasks');
     expect(f.forecast_start).toBe('2026-07-01');
-    expect(f.forecast_end).toBe('2026-07-20');
+    expect(f.forecast_end).toBe('2026-07-31'); // committed end, not Jul 29 (start + effort)
     expect(f.slipping).toBe(false);
+    expect(f.slipDays).toBe(-11); // work ends Jul 20 → 11 days of buffer before the target
+  });
+
+  it('REGRESSION (Tilki board): start-only dated tasks must not collapse the committed window', () => {
+    // Real-world shape: member tasks carry only start dates (no dues). The old tasks
+    // basis made forecast_start = forecast_end = the task start, so the bar collapsed
+    // to an 8px stub and the PO's 1-month committed window vanished from the timeline.
+    // The window is an ENVELOPE — the bar renders the full committed span.
+    const f = buildForecasts([
+      obj('a', '2026-06-03', '2026-07-07', { effort: 12, tasks: [task('2026-06-27', null)] }),
+    ]).get('a')!;
+    expect(f.basis).toBe('tasks');
+    expect(f.forecast_start).toBe('2026-06-03'); // committed start (earlier than the task start)
+    expect(f.forecast_end).toBe('2026-07-07');   // committed target — full window, no point-collapse
+    expect(f.slipping).toBe(false);
+  });
+
+  it('a dependent consumes the envelope end (deadline), not an early task finish', () => {
+    // `act` has a start-only task at Jul 11 but its committed window runs to Jul 27 —
+    // a predecessor isn't "done" until its own target passes, so `mkt` starts Jul 27
+    // (its own committed start, agreeing with the pushed dep finish), not Jul 11.
+    const m = buildForecasts([
+      obj('act', '2026-07-10', '2026-07-27', { effort: 2, tasks: [task('2026-07-11', null)] }),
+      obj('mkt', '2026-07-27', '2026-08-26', { effort: 4, depends_on: ['act'], tasks: [task('2026-06-27', null)] }),
+    ]);
+    expect(m.get('act')!.forecast_end).toBe('2026-07-27');
+    const mkt = m.get('mkt')!;
+    expect(mkt.forecast_start).toBe('2026-07-27');
+    expect(mkt.forecast_end).toBe('2026-08-26');
+    expect(mkt.slipping).toBe(false);
   });
 
   it('a task-bearing objective slips when its OWN tasks overrun the committed target', () => {

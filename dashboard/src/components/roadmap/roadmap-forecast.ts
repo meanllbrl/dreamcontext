@@ -28,9 +28,13 @@
  * a predecessor isn't "done" until its own target passes.
  *
  * DATED MEMBER TASKS ARE THE SCHEDULE OF RECORD. When an objective has member tasks
- * carrying real start/due dates, those dates ARE the forecast (span = earliest start →
+ * carrying real start/due dates, those dates drive the forecast (span = earliest start →
  * latest due, still clamped to dependency finishes) and effort is NOT re-added on top —
- * the tasks already encode the duration. This mirrors `roadmap-model.ts` exactly and is
+ * the tasks already encode the duration. The committed window remains an ENVELOPE here
+ * too: the bar starts no later than the committed start and ends no earlier than the
+ * committed end (start-only tasks must not collapse the bar to a point and erase the
+ * PO's window from the timeline), while slip is still measured on the task-derived
+ * finish. This mirrors `roadmap-model.ts` exactly and is
  * what keeps a ROLLUP objective honest: one that BOTH `depends_on` its sub-objectives
  * AND shares their member tasks must not stack its own effort after the dependency's
  * finish (the tasks it shares ARE that work). Without this rule the committed-window
@@ -220,11 +224,15 @@ export function buildForecasts(
     if (hasDatedTasks) {
       // Task-date basis (mirrors roadmap-model.ts): span = earliest start → latest due,
       // clamped to the dependency finish. Effort is NOT re-added — the task dates already
-      // encode the duration, so a rollup sharing its deps' tasks can't double-count. Slip
-      // is measured on the task-derived finish (no separate workEnd).
-      forecast_start = maxISO(taskStart, depFinish) ?? taskDue;
-      forecast_end = maxISO(taskDue, forecast_start);
-      workEnd = forecast_end;
+      // encode the duration, so a rollup sharing its deps' tasks can't double-count. The
+      // committed window is still the ENVELOPE: the bar starts no later than the committed
+      // start and never ends before the committed end (start-only tasks would otherwise
+      // collapse the bar to a point and erase the PO's window from the timeline — and a
+      // predecessor isn't "done" for its dependents until its own target passes). Slip is
+      // measured on the task-derived finish (workEnd), not the envelope end.
+      forecast_start = maxISO(minISO(taskStart, startRaw), depFinish) ?? taskDue;
+      workEnd = maxISO(taskDue, forecast_start);
+      forecast_end = maxISO(committedEnd, workEnd);
       basis = 'tasks';
     } else if (committedStart !== null) {
       // Committed-window basis: the start→target window is a deadline plan, not a rigid
