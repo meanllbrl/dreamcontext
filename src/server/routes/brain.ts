@@ -9,6 +9,7 @@ import {
   resolveBrainSyncEnabled,
   ensureFullRepoGitignore,
   resolveBrainSyncToken,
+  healStaleBrainConfig,
 } from '../../lib/git-sync/brain-repo.js';
 import {
   createProjectOrigin,
@@ -76,7 +77,9 @@ export async function handleBrainStatus(
 ): Promise<void> {
   if (!gate(res)) return;
   const projectRoot = dirname(contextRoot);
-  const config = readSetupConfig(projectRoot);
+  // Self-heal the pre-b45adb4 stale combo (enabled:true + in-tree) BEFORE reading
+  // mode/enabled/remote, so status and Settings can never disagree on this project.
+  const config = healStaleBrainConfig(projectRoot, readSetupConfig(projectRoot));
   const mode = resolveMode(config);
   const enabled = resolveBrainSyncEnabled(projectRoot, config);
   const local = readBrainLocal(projectRoot);
@@ -237,7 +240,9 @@ export async function handleBrainSettingsGet(
 ): Promise<void> {
   if (!gate(res)) return;
   const projectRoot = dirname(contextRoot);
-  const config = readSetupConfig(projectRoot);
+  // Self-heal the pre-b45adb4 stale combo (enabled:true + in-tree) so the toggle
+  // + connected-repo card reflect actual sync state (see healStaleBrainConfig).
+  const config = healStaleBrainConfig(projectRoot, readSetupConfig(projectRoot));
   const enabled = resolveBrainSyncEnabled(projectRoot, config);
   const mode = resolveMode(config);
   const remote = mode === 'full-repo' && git.isGitRepo(projectRoot)

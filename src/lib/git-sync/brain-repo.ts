@@ -2,7 +2,7 @@ import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { readGitHubTokenSecretsOnly, type ResolvedToken } from '../task-backend/secrets.js';
 import { readGlobalGitHubToken } from './auth-store.js';
-import { readSetupConfig, type SetupConfig } from '../setup-config.js';
+import { readSetupConfig, updateSetupConfig, type SetupConfig } from '../setup-config.js';
 import { acquireFileLock, releaseFileLock } from '../file-lock.js';
 import * as git from './git.js';
 import { ensureGitignoreEntries } from '../gitignore.js';
@@ -47,6 +47,69 @@ export function resolveBrainSyncToken(projectRoot: string): ResolvedToken | null
 
 export function resolveMode(config: SetupConfig | null | undefined): 'in-tree' | 'full-repo' {
   return config?.brainRepo?.mode === 'full-repo' ? 'full-repo' : 'in-tree';
+}
+
+// ─── Stale-config self-heal — healStaleBrainConfig ──────────────────────────
+
+/**
+ * Migrate the pre-b45adb4 config-model drift: a project with
+ * `brainRepo: { enabled: true, mode: 'in-tree' }` renders DISHONESTLY — Settings
+ * reads `enabled:true` ("sync on + connected repo") while the sidebar reads the
+ * MODE (`in-tree` → `hasRemote:false` → "Set up team sync"), and `in-tree` never
+ * pushes, so sync is effectively OFF despite the "on" UI. That combo is a legacy
+ * artifact: the old toggle wrote only `enabled` and a separate `/api/brain/scope`
+ * endpoint flipped `mode` independently; when the `separate` mode was removed
+ * (b45abd4) no migration was written. Current code can't PRODUCE this state
+ * (enable sets `full-repo`, disable sets `in-tree` atomically), but old configs
+ * still carry it.
+ *
+ * The heal, run idempotently on the dashboard/CLI status read path:
+ *  - origin EXISTS → PROMOTE to `full-repo` (what "enabled" means today — the only
+ *    pushing mode), lay the gitignore-first machine-local excludes, and persist.
+ *    The UI now honestly shows on + connected + actually syncing. This is exactly
+ *    the side-effect the master toggle's "enable" already performs.
+ *  - no origin → COERCE `enabled:false`, so the toggle renders an honest OFF
+ *    (full-repo can't push without an origin, so "on" would still be a lie).
+ *
+ * Touches ONLY the exact stale combo — every other config (disabled, already
+ * `full-repo`, no `brainRepo`) is returned untouched, so a healthy config never
+ * triggers a git lookup or a write. Returns the (possibly rewritten) config so
+ * the caller reads truth on the same request.
+ */
+export function healStaleBrainConfig(
+  projectRoot: string,
+  config: SetupConfig | null,
+  gitModule: Pick<typeof git, 'isGitRepo' | 'getRemoteUrl'> = git,
+): SetupConfig | null {
+  const brainRepo = config?.brainRepo;
+  // The dishonest combo is EXACTLY explicit `enabled:true` with a non-pushing
+  // mode. Anything else is already honest — short-circuit (no git, no write).
+  if (!config || !brainRepo || brainRepo.enabled !== true || brainRepo.mode === 'full-repo') {
+    return config;
+  }
+
+  let origin: string | null = null;
+  try {
+    origin = gitModule.isGitRepo(projectRoot) ? gitModule.getRemoteUrl(projectRoot, 'origin') : null;
+  } catch {
+    origin = null;
+  }
+
+  if (origin) {
+    // Promote to the only functional pushing mode — mirrors the master toggle's
+    // "enable" (full-repo + autoSync + gitignore-first). Preserve an explicit
+    // autoSync opt-out if one somehow exists; default it on like `enable` does.
+    const next = updateSetupConfig(projectRoot, {
+      brainRepo: { ...brainRepo, mode: 'full-repo', enabled: true, autoSync: brainRepo.autoSync ?? true },
+    });
+    ensureFullRepoGitignore(projectRoot, config.taskBackend);
+    return next;
+  }
+
+  // No origin — full-repo can't push, so honor the truth: render the toggle OFF.
+  return updateSetupConfig(projectRoot, {
+    brainRepo: { ...brainRepo, mode: 'in-tree', enabled: false },
+  });
 }
 
 // ─── v3.3 master switch — resolveBrainSyncEnabled ───────────────────────────

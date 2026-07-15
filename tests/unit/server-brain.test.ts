@@ -135,6 +135,80 @@ describe('brain routes — status', () => {
   });
 });
 
+// ── pre-b45adb4 stale-config self-heal: enabled:true + in-tree renders dishonestly ──
+describe('brain routes — stale-config self-heal (enabled:true + in-tree)', () => {
+  it('WITH a github origin: status promotes to full-repo → hasRemote true + enabled true (honest on + connected), and persists', async () => {
+    const ctx = makeVault('cur', { mode: 'in-tree', enabled: true });
+    const projectRoot = join(base, 'cur');
+    sh(projectRoot, ['init']);
+    sh(projectRoot, ['remote', 'add', 'origin', 'https://github.com/meanllbrl/dreamcontext.git']);
+
+    const { res, status, body } = makeRes();
+    await handleBrainStatus(makeReq('GET'), res, {}, ctx);
+    expect(status()).toBe(200);
+    // The dishonest split is gone: mode now matches the "on" claim.
+    expect(body().mode).toBe('full-repo');
+    expect(body().hasRemote).toBe(true);
+    expect(body().remote).toBe('https://github.com/meanllbrl/dreamcontext.git');
+    expect(body().enabled).toBe(true);
+    // Self-heal persisted the promotion.
+    const cfg = readSetupConfig(projectRoot)?.brainRepo;
+    expect(cfg?.mode).toBe('full-repo');
+    expect(cfg?.enabled).toBe(true);
+    expect(cfg?.autoSync).toBe(true);
+    // Gitignore-first excludes were laid before any full-repo push.
+    expect(readFileSync(join(projectRoot, '.gitignore'), 'utf-8')).toContain('_dream_context/state/.secrets.json');
+  });
+
+  it('WITHOUT an origin: status renders the toggle OFF (enabled:false) despite the stale enabled:true', async () => {
+    const ctx = makeVault('cur', { mode: 'in-tree', enabled: true });
+    const projectRoot = join(base, 'cur');
+    sh(projectRoot, ['init']); // repo but NO origin
+
+    const { res, status, body } = makeRes();
+    await handleBrainStatus(makeReq('GET'), res, {}, ctx);
+    expect(status()).toBe(200);
+    expect(body().enabled).toBe(false);
+    expect(body().source).toBe('explicit');
+    expect(body().mode).toBe('in-tree');
+    expect(body().hasRemote).toBe(false);
+    expect(readSetupConfig(projectRoot)?.brainRepo?.enabled).toBe(false);
+  });
+
+  it('status and Settings GET AGREE after the heal (the exact bug: Settings "on+connected" vs sidebar "set up")', async () => {
+    const ctx = makeVault('cur', { mode: 'in-tree', enabled: true });
+    const projectRoot = join(base, 'cur');
+    sh(projectRoot, ['init']);
+    sh(projectRoot, ['remote', 'add', 'origin', 'https://github.com/acme/proj.git']);
+
+    const s1 = makeRes();
+    await handleBrainStatus(makeReq('GET'), s1.res, {}, ctx);
+    const s2 = makeRes();
+    await handleBrainSettingsGet(makeReq('GET'), s2.res, {}, ctx);
+
+    // Sidebar (hasRemote) and Settings (remote/enabled) now tell the same story.
+    expect(s1.body().hasRemote).toBe(true);
+    expect(s1.body().mode).toBe('full-repo');
+    expect(s2.body().mode).toBe('full-repo');
+    expect(s2.body().remote).toBe('https://github.com/acme/proj.git');
+    expect(s1.body().enabled).toBe(s2.body().enabled);
+    expect(s1.body().enabled).toBe(true);
+  });
+
+  it('Settings GET alone also heals (dashboard may hit Settings before status)', async () => {
+    const ctx = makeVault('cur', { mode: 'in-tree', enabled: true });
+    const projectRoot = join(base, 'cur');
+    sh(projectRoot, ['init']);
+    sh(projectRoot, ['remote', 'add', 'origin', 'https://github.com/acme/proj.git']);
+
+    const { res, body } = makeRes();
+    await handleBrainSettingsGet(makeReq('GET'), res, {}, ctx);
+    expect(body().mode).toBe('full-repo');
+    expect(body().enabled).toBe(true);
+    expect(readSetupConfig(projectRoot)?.brainRepo?.mode).toBe('full-repo');
+  });
+});
+
 // ── item 3: in-progress merge kind (agent vs code vs user) ──
 describe('brain routes — status mergeKind', () => {
   function fullRepoWithMerge(): { ctx: string; projectRoot: string } {

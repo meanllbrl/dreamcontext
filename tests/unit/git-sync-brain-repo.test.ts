@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { writeGitHubToken } from '../../src/lib/task-backend/secrets.js';
 import * as git from '../../src/lib/git-sync/git.js';
+import { readSetupConfig, updateSetupConfig } from '../../src/lib/setup-config.js';
 import {
   resolveMode,
   resolveBrainSyncEnabled,
@@ -11,6 +12,7 @@ import {
   buildBrainGitignore,
   acquireBrainLock,
   releaseBrainLock,
+  healStaleBrainConfig,
 } from '../../src/lib/git-sync/brain-repo.js';
 
 describe('git-sync/brain-repo — resolveMode', () => {
@@ -107,6 +109,88 @@ describe('git-sync/brain-repo — resolveBrainSyncToken (M1: secrets-first, env-
     delete process.env.GITHUB_TOKEN;
     delete process.env.GH_TOKEN;
     expect(resolveBrainSyncToken(projectRoot)).toBeNull();
+  });
+});
+
+describe('git-sync/brain-repo — healStaleBrainConfig (pre-b45adb4 config-drift self-heal)', () => {
+  let projectRoot: string;
+  const withOrigin = { isGitRepo: () => true, getRemoteUrl: () => 'https://github.com/acme/repo.git' } as Pick<typeof git, 'isGitRepo' | 'getRemoteUrl'>;
+  const noOrigin = { isGitRepo: () => true, getRemoteUrl: () => null } as Pick<typeof git, 'isGitRepo' | 'getRemoteUrl'>;
+  const throwingGit = { isGitRepo: () => { throw new Error('git must NOT be consulted for a healthy config'); }, getRemoteUrl: () => null } as Pick<typeof git, 'isGitRepo' | 'getRemoteUrl'>;
+
+  beforeEach(() => {
+    projectRoot = mkdtempSync(join(tmpdir(), 'dc-brain-heal-'));
+  });
+  afterEach(() => {
+    rmSync(projectRoot, { recursive: true, force: true });
+  });
+
+  /** Seed a config with the given brainRepo, then re-read it (sanitized). */
+  function seed(brainRepo: Record<string, unknown>) {
+    updateSetupConfig(projectRoot, { brainRepo: brainRepo as never });
+    return readSetupConfig(projectRoot);
+  }
+
+  it('stale enabled:true + in-tree WITH an origin → promotes to full-repo (honest on + connected) and persists', () => {
+    const stale = seed({ mode: 'in-tree', enabled: true });
+    const healed = healStaleBrainConfig(projectRoot, stale, withOrigin);
+    expect(healed?.brainRepo?.mode).toBe('full-repo');
+    expect(healed?.brainRepo?.enabled).toBe(true);
+    expect(healed?.brainRepo?.autoSync).toBe(true);
+    // Persisted, not just returned.
+    const onDisk = readSetupConfig(projectRoot);
+    expect(onDisk?.brainRepo?.mode).toBe('full-repo');
+    expect(onDisk?.brainRepo?.enabled).toBe(true);
+    // Gitignore-first: machine-local excludes laid before any full-repo push can stage them.
+    const gi = readFileSync(join(projectRoot, '.gitignore'), 'utf-8');
+    expect(gi).toContain('_dream_context/state/.secrets.json');
+    expect(gi).toContain('_dream_context/state/.brain-merge/');
+  });
+
+  it('stale enabled:true + in-tree with NO origin → coerces enabled:false (honest OFF), no gitignore', () => {
+    const stale = seed({ mode: 'in-tree', enabled: true });
+    const healed = healStaleBrainConfig(projectRoot, stale, noOrigin);
+    expect(healed?.brainRepo?.mode).toBe('in-tree');
+    expect(healed?.brainRepo?.enabled).toBe(false);
+    expect(readSetupConfig(projectRoot)?.brainRepo?.enabled).toBe(false);
+    // No full-repo push is possible, so no project-root excludes are written.
+    expect(existsSync(join(projectRoot, '.gitignore'))).toBe(false);
+  });
+
+  it('promotion preserves an explicit autoSync:false opt-out', () => {
+    const stale = seed({ mode: 'in-tree', enabled: true, autoSync: false });
+    const healed = healStaleBrainConfig(projectRoot, stale, withOrigin);
+    expect(healed?.brainRepo?.mode).toBe('full-repo');
+    expect(healed?.brainRepo?.autoSync).toBe(false);
+  });
+
+  it('is idempotent — a second heal after promotion is a no-op (mode already full-repo)', () => {
+    const stale = seed({ mode: 'in-tree', enabled: true });
+    healStaleBrainConfig(projectRoot, stale, withOrigin);
+    const afterFirst = readSetupConfig(projectRoot);
+    // Second pass must short-circuit (full-repo is not the stale combo) — throwing git proves no lookup.
+    const afterSecond = healStaleBrainConfig(projectRoot, afterFirst, throwingGit);
+    expect(afterSecond?.brainRepo?.mode).toBe('full-repo');
+    expect(afterSecond?.brainRepo?.enabled).toBe(true);
+  });
+
+  it('a healthy full-repo/enabled config is returned untouched WITHOUT consulting git', () => {
+    const healthy = seed({ mode: 'full-repo', enabled: true, autoSync: true });
+    // throwingGit throws if isGitRepo is called — the short-circuit must run first.
+    expect(() => healStaleBrainConfig(projectRoot, healthy, throwingGit)).not.toThrow();
+    expect(readSetupConfig(projectRoot)?.brainRepo?.mode).toBe('full-repo');
+  });
+
+  it('a disabled config (enabled:false + in-tree) is honest already — untouched, no git lookup', () => {
+    const disabled = seed({ mode: 'in-tree', enabled: false });
+    expect(() => healStaleBrainConfig(projectRoot, disabled, throwingGit)).not.toThrow();
+    expect(readSetupConfig(projectRoot)?.brainRepo?.enabled).toBe(false);
+  });
+
+  it('a config with no brainRepo (and a null config) is returned untouched', () => {
+    const noBrain = seed({}); // sanitizeBrainRepo({}) → { mode: 'in-tree' }, enabled undefined
+    expect(healStaleBrainConfig(projectRoot, noBrain, throwingGit)?.brainRepo?.enabled).toBeUndefined();
+    expect(healStaleBrainConfig(projectRoot, null, throwingGit)).toBeNull();
   });
 });
 

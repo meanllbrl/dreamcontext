@@ -2,7 +2,7 @@
 id: feat_Sx4EmLgP
 status: in_progress
 created: '2026-07-04'
-updated: '2026-07-09'
+updated: '2026-07-14'
 released_version: v0.17.0
 tags:
   - 'topic:github'
@@ -16,6 +16,7 @@ related_tasks:
   - >-
     brain-portability-dashboard-controls-platform-layer-lab-credentials-example-sync-refresh-button-recall-mode-settings
   - cloud-sync-origin-setup-create-attach-github-repo-ui
+  - cloud-sync-stale-per-project-token-shadowing-auto-heal-fallback-to-global
 type: feature
 name: brain-repo-sync
 description: ''
@@ -89,6 +90,9 @@ existing local dashboard. The two could coexist later but ship independently.
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
 
+- **[2026-07-14]** **Config-model drift dishonesty — MIGRATION SHIPPED (the tech-debt item below, now done).** The pre-b45adb4 stale combo (`brainRepo: { enabled: true, mode: 'in-tree' }`) is now self-healed on the status read path via `healStaleBrainConfig(projectRoot, config, gitModule?)` in `src/lib/git-sync/brain-repo.ts`. It fires ONLY on the exact stale combo (`enabled === true && mode !== 'full-repo'`) — a healthy config short-circuits before any git lookup or write, so the status poll stays cheap. **Origin exists →** promote to `full-repo` + `autoSync` (preserving an explicit `autoSync:false`), lay the gitignore-first machine-local excludes — exactly the master toggle's "enable" side-effect, so the "on" UI claim becomes true. **No origin →** coerce `enabled:false` (honest OFF; full-repo can't push without an origin). Wired into `handleBrainStatus`, `handleBrainSettingsGet`, and the CLI `brain status` so no surface can disagree; the dashboard TSX was untouched because the sidebar (`hasRemote`) and Settings (`enabled`/`remote`) were only ever rendering inconsistent server data. The heal is idempotent (once promoted, the combo no longer matches) and one-time per stale project. Tests: +7 heal-fn units + 4 route cases (promote→hasRemote, coerce→OFF, status↔Settings agreement, Settings-GET-alone heals). Task: `cloud-sync-stale-config-enabled-true-in-tree-mode-renders-dishonestly`.
+- **[2026-07-12]** **Stale per-project token auto-heal.** When a sync operation fails with an auth/permission error AND the error is attributed to a per-project token (`_dream_context/state/.secrets.json` `github.token`) that differs from the global signed-in token (`~/.dreamcontext/.secrets.json`), the engine retries the failing git operation ONCE with the global token. On success: the rest of the sync run continues with the global token, and the stale per-project `github.token` is removed (self-heal via `removeProjectGitHubToken` — preserves `github.users`/`clickup`, deletes the file if empty). This heals the common case where a user re-signed-in globally (fresh token) but an old per-project token shadows it, causing sync to fail with "sign-in expired" even though Settings shows a valid session. Implemented in `src/lib/git-sync/token-fallback.ts` (`BrainSyncTokenSession` wraps credentialed git network ops); token values never logged. Shipped v0.17.2.
+- **[2026-07-11]** **Config-model drift dishonesty (pre-b45adb4 `separate`-mode footprint).** A project with `brainRepo: { enabled: true, mode: "in-tree" }` renders dishonestly in the dashboard — Settings shows "sync on + connected" (reading `enabled: true`) while the sidebar says "Set up team sync" (reading `mode`, and `in-tree` never pushes). This state is a legacy artifact from before commit b45adb4 removed the `separate` mode: the old toggle wrote only `enabled`, and a separate `/api/brain/scope` endpoint flipped `mode` independently; when `separate` was removed no migration was written, leaving old configs in this inconsistent state. The lesson: **explicit migrations matter when removing a mode**. Current code can't produce this state (enable sets `full-repo`, disable sets `in-tree` atomically), but old projects may still have it. Self-heal: toggling sync off then on again resolves it (rewrites both fields). A proper migration would auto-upgrade `enabled:true` + `mode:"in-tree"` to `full-repo` on first dashboard load if an `origin` exists, or coerce `enabled:false` if no origin — deferred as tech debt.
 - **[2026-07-08]** **`separate` mode is REMOVED — `full-repo` is the only pushing mode; `in-tree`
   is the OFF baseline.** For dreamcontext to work across a team, `.claude/` AND `_dream_context/`
   must be shared together. `separate` synced only `_dream_context/` into its own dedicated repo and

@@ -9,6 +9,7 @@ import {
   resolveBrainSyncEnabled,
   ensureFullRepoGitignore,
   resolveBrainSyncToken,
+  healStaleBrainConfig,
 } from '../../lib/git-sync/brain-repo.js';
 import { scrubStagedFiles, summarizeScrub } from '../../lib/git-sync/scrub.js';
 import { classifySyncError } from '../../lib/git-sync/failure.js';
@@ -29,7 +30,9 @@ export function registerBrainCommand(program: Command): void {
     .action(() => {
       const contextRoot = ensureContextRoot();
       const projectRoot = dirname(contextRoot);
-      const config = readSetupConfig(projectRoot);
+      // Self-heal the pre-b45adb4 stale combo (enabled:true + in-tree) so the CLI
+      // reports the same honest state the dashboard does (see healStaleBrainConfig).
+      const config = healStaleBrainConfig(projectRoot, readSetupConfig(projectRoot));
       const mode = resolveMode(config);
       const enabledResolution = resolveBrainSyncEnabled(projectRoot, config);
       const local = readBrainLocal(projectRoot);
