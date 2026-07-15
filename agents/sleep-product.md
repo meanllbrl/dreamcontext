@@ -222,7 +222,24 @@ The dated archive copy is the recovery net; the "Dropped-but-load-bearing self-c
 
 **A knowledge file is a tag-able identity, not a dumping ground.** Aim for the *fewest* files that keep each topic cleanly findable. Fragmenting one topic across many near-duplicate slugs makes tags noisy and recall worse; cramming unrelated topics into one super-file makes tags meaningless. Pick the boundary on purpose.
 
-**Dedup first — recall by the topic AND by its family** (vertical / brand / parent domain), not just the exact phrase:
+**Dedup first — run the SEMANTIC nearest-neighbor check BEFORE you create anything.** Keyword recall only finds files you thought to search for; the exact keyword fragility this project keeps hitting. `dreamcontext embed dedup` embeds the candidate and returns its closest existing docs by meaning — the guesswork-free dedup gate:
+
+```bash
+dreamcontext embed dedup --if-present \
+  --title "<candidate title>" \
+  --description "<one-line summary>" \
+  --content "<the body you were about to write>"   # or --file <path> / --stdin
+```
+
+It prints the nearest knowledge+feature docs with cosine similarity and a **verdict**:
+
+| Verdict | What it means | What you do |
+|---|---|---|
+| **MERGE** | A near-verbatim twin already exists (cosine ≥ 0.97, decisively closer than the runner-up) | Do **not** create. Extend the named file (or `dreamcontext knowledge merge` at deep tier). |
+| **REVIEW** | Same-topic candidate in the 0.91–0.97 band | Apply the sharp-vs-soft rubric below against the **named** neighbor — usually extend it. |
+| **CREATE** | No near-duplicate above the review threshold | Safe to create — still sanity-check the top neighbor. |
+
+`--if-present` makes it a no-op (and it prints a fallback note) when this vault has no embedding cache or the model isn't installed — so it's always safe to run and never triggers a first-time model download during sleep. When it's a no-op or reports the model is unavailable, **fall back to keyword recall.** Semantic dedup is an ASSIST, not a replacement — also recall by the topic AND its family (vertical / brand / parent domain), especially for CREATE/REVIEW verdicts:
 
 ```bash
 dreamcontext memory recall "<topic>" --types knowledge,feature
@@ -236,7 +253,7 @@ Then decide — **default to extending an existing file**:
 | The **same vertical / brand / topic family** as an existing file, or a sub-aspect / increment / follow-up of a topic already covered (a *soft* distinction) | **Extend that file** — add a section, update `summary:` if it drifted. Don't fork a near-duplicate slug. Similar brands, similar verticals, similar topics belong together in the fewest files. |
 | A **genuinely separate topic / domain / concern** a future session would expect to find standing alone, where its own tag set sharpens discovery (a *sharp* distinction) | **Create a new file** (below). A clean topical boundary earns its own slug so tagging stays valuable. |
 
-The test for sharp-vs-soft: *Would a future recall expect this bundled with the existing file, or standing on its own? Would a separate file make the tag set more discriminating — or just split one topic across two slugs?* If splitting wouldn't sharpen the tags, extend.
+The test for sharp-vs-soft: *Would a future recall expect this bundled with the existing file, or standing on its own? Would a separate file make the tag set more discriminating — or just split one topic across two slugs?* If splitting wouldn't sharpen the tags, extend. A **MERGE** verdict settles it (extend); **REVIEW** is where this rubric earns its keep.
 
 This is **not** "always make super-files." Distinct topics MUST get distinct files — that's exactly what makes tags worth having. It's the *soft* distinctions (same family, narrower slice, incremental finding) that fold into an existing file.
 
