@@ -1,13 +1,16 @@
 ---
 name: excalidraw
 description: >-
-  Generate or extend Obsidian Excalidraw (.excalidraw.md) boards in this vault — lay out
-  images/screenshots, text labels, shapes, arrows, frames, lanes and grids — by writing a small
-  JSON spec and letting a deterministic script emit valid plugin markup (so it costs ~no tokens and
-  always renders). Embeds local images via the plugin's sha1 wikilink trick (no base64). Triggers:
-  '/excalidraw', 'draw this in excalidraw', 'make an excalidraw board', 'excalidraw diagram',
-  'funnel map board', 'embed screenshots into excalidraw', 'add images to an excalidraw file',
-  'excalidraw çiz', 'excalidraw board oluştur', 'ekran görüntülerini excalidraw a ekle'.
+  Generate or extend Obsidian Excalidraw (.excalidraw.md) boards in this vault — visual-first diagrams,
+  funnels, wireframes/prototypes/mockups, flowcharts, image/screenshot layouts, shapes, arrows, frames,
+  lanes and grids — by writing a small JSON spec (or JS) and letting a deterministic script emit valid
+  plugin markup (so it costs ~no tokens and always renders). Text wraps to a readable measure and never
+  overlaps; the build audits the scene and warns on collisions. Embeds local images via the plugin's
+  sha1 wikilink trick (no base64). Triggers: '/excalidraw', 'draw this in excalidraw', 'make an
+  excalidraw board', 'excalidraw diagram', 'funnel', 'conversion funnel', 'wireframe', 'prototype',
+  'mockup', 'app/web screen mockup', 'funnel map board', 'embed screenshots into excalidraw', 'add
+  images to an excalidraw file', 'excalidraw çiz', 'excalidraw board oluştur', 'funnel çiz', 'wireframe
+  çiz', 'prototip çiz', 'ekran görüntülerini excalidraw a ekle'.
 ---
 
 # Excalidraw board generator (Obsidian)
@@ -16,6 +19,26 @@ Write `.excalidraw.md` files that render natively in this vault's Obsidian Excal
 **Do not hand-author the scene JSON.** Build a small spec and run the generator — it produces the
 frontmatter, `## Text Elements`, `## Embedded Files`, and the `%% ## Drawing … %%` JSON, with
 correct sha1 image links, fractional z-indices, and deterministic seeds (clean git diffs).
+
+## Design principles (read first)
+
+Excalidraw's strength is **pictures, not paragraphs**. Three rules keep a board clean, readable, and
+visually rich — the primitives below enforce them, so lean on them instead of placing raw text/shapes:
+
+1. **Visual-first.** Explain complex things with *structure you can see*: a `funnel()` of trapezoid
+   bands, a `windowFrame()` wireframe of the actual UI, a `hub()`/flow of `card()`s, image placeholders.
+   Reach for a picture before a sentence. When you must write, keep it to labels and short notes.
+2. **Readable measure — text never runs edge-to-edge.** Every text primitive wraps to a bounded width
+   (`READ_W ≈ 620px`, ~60 chars). Use `prose()` for body copy, `bullets()` for lists, `sectionTitle()`
+   for headers — they cap + wrap for you. A raw `text` element **must** carry a `width` (it then wraps
+   and the newlines are baked in, so it renders at that measure). Long unbounded text is the #1
+   readability killer.
+3. **No overlap — flow the layout, don't hand-place.** Build with `stack()` (top-to-bottom) and `row()`
+   (left-to-right): each block is placed after the previous one's *measured* size, so boxes can't
+   collide. The build step also **audits the finished scene and prints `[excalidraw] N overlap(s)`** if
+   two boxes stack — treat any such warning as a bug to fix (usually: switch that spot to `stack()`/`row()`).
+
+Everything downstream (the primitives, the auditor, the wrap-baking) exists to make these three cheap.
 
 ## The one trick that makes images work
 An image element references `fileId` = **sha1 of the image file**. The `## Embedded Files` section
@@ -179,11 +202,53 @@ Match the team's look by default. The builder now defaults text to **Excalifont 
 - **`bullets({x,y,items})`** → one left-aligned bulleted text block (their spec-list pattern).
 - Edge helpers `center/rightOf/leftOf/topOf/bottomOf(x,y,w,h)` to wire connectors to card edges.
 
-Compose these into a `buildExcalidraw({ out, elements })` call. Runnable example: `examples/style_board.js`.
+### Readable text + flow layout (use these, don't hand-place)
+Every builder below returns an `ElementSpec[]` that also carries `.x/.y/.w/.h/.nextX/.nextY`, so the
+layout helpers can measure and place blocks for you — no coordinate math, no overlap.
+- **`prose({x,y,text,fontSize,width})`** → a wrapped paragraph. `width` defaults to `READ_W` (~60 chars);
+  text can never exceed it. This is THE body-copy primitive. Height is derived from the wrapped lines.
+- **`bullets({x,y,items,width})`** → left-aligned list; each item wraps to `width` with a hanging indent.
+- **`sectionTitle({x,y,text,fontSize,maxWidth})`** → big header; long titles wrap to `maxWidth`.
+- **`stack({x,y,gap,items})`** → flow blocks TOP-TO-BOTTOM. Each item is a factory `(x,y)=>els` (draws
+  itself at the running cursor) or a pre-built `els` array (gets shifted down). Returns `.nextY`.
+- **`row({x,y,gap,valign,items})`** → flow blocks LEFT-TO-RIGHT (same contract). Returns `.nextX`.
+- `READ_W` / `NOTE_W` are the exported reading measures; `translate(els,dx,dy)` / `bbox(els)` are the
+  low-level helpers the layout uses.
+
+### Funnel
+- **`funnel({x,y,w,stageH,stages,topW,botW})`** → a conversion/marketing funnel: filled trapezoid bands
+  narrowing top→bottom, one per `stages[]` entry `{ label, note?, color? }`. Labels auto-fit; an optional
+  `note` (a metric / drop-off) is placed in the right margin with a short non-crossing connector. Colors
+  cycle through the semantic palette unless you set `color`. Returns `.nextY`.
+
+### Wireframe / prototype kit (neutral grayscale — sketch a UI, not decoration)
+- **`windowFrame({x,y,w,h,kind,url,title})`** → a browser (`kind:'browser'`, draws a URL bar) or app
+  (`kind:'app'`, centered title) window with traffic-light chrome. **Returns `.inner = {x,y,w,h}`** — the
+  safe content region; place children there (via `stack`/`row`) and they won't hit the chrome.
+- **`navbar({x,y,w,brand,items,cta})`** → top nav: brand left, links right, optional CTA button.
+- **`button({x,y,w,h,text,color,variant})`** → solid CTA (default) or `variant:'outline'`.
+- **`input({x,y,w,h,placeholder,label})`** → a form field with a muted placeholder + optional label.
+- **`textRows({x,y,w,rows})`** → grey bars standing in for body copy — VISUAL filler, no real text. Use
+  these instead of lorem ipsum so a wireframe never becomes a wall of text.
+- **`imagePlaceholder({x,y,w,h,label})`** → the universal box-with-an-X where a screenshot would go.
+- **`avatar({cx,cy,r})`** → round user placeholder. **`chip({x,y,text,color})`** → a pill/tag/badge.
+  **`divider({x,y,w})`** → a thin rule.
+
+Compose these into a `buildExcalidraw({ out, elements })` call. Runnable examples:
+`examples/style_board.js` (cards + connectors + lanes) and `examples/visual_board.js` (funnel + browser
+prototype via `stack`/`row` + readable prose — the visual-first kit end to end).
 Conventions: color nodes by ROLE, label every arrow, put specs in side-annotations, use big plain
-section titles to break the board into "slides", keep one idea per card.
+section titles to break the board into "slides", keep one idea per card, and **prefer a picture to a
+paragraph**.
 
 ### Layout rules that keep boards clean
+- **Flow the layout with `stack()` / `row()`; never eyeball coordinates for a column or a grid.** They
+  place each block after the previous one's measured size, so nothing overlaps by construction. Reserve
+  hand-picked `x/y` for a handful of top-level anchors (where a funnel goes vs where a window goes).
+- **Heed the overlap audit.** After every build the generator prints `[excalidraw] N overlap(s) …` if two
+  filled boxes collide (it ignores intentional nesting like a button inside a window). A non-zero count is
+  a real defect — fix it, usually by flowing that region through `stack()`/`row()`. Opt out with
+  `spec.audit === false` only if you *know* an overlap is deliberate.
 - **Size boxes for their text.** A card guarantees the label stays *inside*, but it does so by shrinking
   the font — a long label in a small box ends up tiny. Give wide/long labels a wider `w` (or more `h`),
   or split the idea across two cards. Watch for `[excalidraw]` fit warnings on the console.
@@ -214,7 +279,10 @@ so they work in any project):
 cd .claude/skills/excalidraw
 node scripts/build_excalidraw.js examples/hello.spec.json   # spec-driven: text/shapes/image → examples/Hello Excalidraw.excalidraw.md
 node examples/style_board.js                                # JS API: card/connector/lane house style → examples/Style Demo.excalidraw.md
+node examples/visual_board.js                              # visual-first kit: funnel + browser prototype + readable prose (prints `overlaps: 0`)
 ```
+Each build prints an `overlaps=` count (and a `[excalidraw]` warning if any boxes collide) — a clean
+board reports `overlaps: 0`.
 Then open the resulting board in Obsidian (Excalidraw view) to confirm it renders.
 
 See `reference/format.md` for the exact `.excalidraw.md` anatomy reverse-engineered from this vault.
