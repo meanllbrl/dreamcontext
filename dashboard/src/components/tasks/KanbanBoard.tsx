@@ -17,6 +17,10 @@ import { AtRiskAlert } from './AtRiskAlert';
 import { SaveScopeDialog } from './SaveScopeDialog';
 import { TaskDetailPanel } from './TaskDetailPanel';
 import { TaskCreateModal } from './TaskCreateModal';
+import { DelegateComposer } from './DelegateComposer';
+import { useAgentCapabilities, isSleepAgentReady } from '../../hooks/useAgentCapabilities';
+import { readAgentSettings, AGENT_SETTINGS_EVENT } from '../../lib/agentSettings';
+import { SparkIcon } from '../sleepy/TypeIcons';
 import { EisenhowerMatrix } from './EisenhowerMatrix';
 import { RiceScatter } from './RiceScatter';
 import { TimelineGantt } from './TimelineGantt';
@@ -37,6 +41,20 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
   const { data: activeVersion = null } = useActiveVersion();
   const updateTask = useUpdateTask();
   const deleteTask = useDeleteTask();
+  // Desktop-only gate for "Delegate to Claude": the in-app agent needs a real embedded
+  // terminal + the claude CLI (so it's hidden on the web build / when prereqs are missing,
+  // A6) AND the Agents surface must be enabled in Settings — otherwise the delegated agent
+  // has no dock to surface in and the menu item would dead-end. Same readiness check the
+  // header's Sleep tracker uses, plus the live `enabled` flag (kept in sync via the same
+  // event the Settings page broadcasts on save).
+  const { data: agentCaps } = useAgentCapabilities();
+  const [agentEnabled, setAgentEnabled] = useState(() => readAgentSettings().enabled);
+  useEffect(() => {
+    const onChange = () => setAgentEnabled(readAgentSettings().enabled);
+    window.addEventListener(AGENT_SETTINGS_EVENT, onChange);
+    return () => window.removeEventListener(AGENT_SETTINGS_EVENT, onChange);
+  }, []);
+  const agentReady = isSleepAgentReady(agentCaps) && agentEnabled;
 
   const [openMenu, setOpenMenu] = useState<MenuKey>(null);
   const [viewMenuId, setViewMenuId] = useState<string | null>(null);
@@ -45,6 +63,7 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
   const [dragId, setDragId] = useState<string | null>(null);
   const [dragOverKey, setDragOverKey] = useState<string | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; task: Task } | null>(null);
+  const [delegateTask, setDelegateTask] = useState<Task | null>(null);
   const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [pendingSave, setPendingSave] = useState<PendingSave>(null);
@@ -164,6 +183,9 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
     deleteTask.mutate(task.slug, { onSuccess: () => flash('Task deleted'), onError: () => flash('Delete failed') });
     if (selectedSlug === task.slug) setSelectedSlug(null);
   }, [deleteTask, flash, selectedSlug]);
+  // Open the Delegate composer for a task (from the context menu). The composer dispatches
+  // the delegate event the always-mounted AgentSurface listens for; we just host the modal.
+  const ctxDelegate = useCallback((task: Task) => { setDelegateTask(task); setCtxMenu(null); }, []);
 
   // ── view actions ────────────────────────────────────────────────────────────────
   const handleRequestSave = useCallback(() => { setPendingSave({ mode: 'save' }); closeAllMenus(); }, [closeAllMenus]);
@@ -319,11 +341,21 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
       {ctxMenu && (
         <TaskContextMenu
           menu={ctxMenu}
+          agentReady={agentReady}
           onClose={() => setCtxMenu(null)}
           onOpen={(t) => { setSelectedSlug(t.slug); setCtxMenu(null); }}
+          onDelegate={ctxDelegate}
           onSetStatus={ctxSetStatus}
           onSetPriority={ctxSetPriority}
           onDelete={ctxDelete}
+        />
+      )}
+
+      {delegateTask && (
+        <DelegateComposer
+          task={delegateTask}
+          onClose={() => setDelegateTask(null)}
+          onDelegated={(title) => flash(`Delegated “${title}” to Claude`)}
         />
       )}
 
@@ -341,17 +373,20 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
 }
 
 interface CtxMenuState { x: number; y: number; task: Task }
-function TaskContextMenu({ menu, onClose, onOpen, onSetStatus, onSetPriority, onDelete }: {
+function TaskContextMenu({ menu, agentReady, onClose, onOpen, onDelegate, onSetStatus, onSetPriority, onDelete }: {
   menu: CtxMenuState;
+  agentReady?: boolean;
   onClose: () => void;
   onOpen: (t: Task) => void;
+  onDelegate: (t: Task) => void;
   onSetStatus: (t: Task, status: string) => void;
   onSetPriority: (t: Task, priority: string) => void;
   onDelete: (t: Task) => void;
 }) {
   const { task } = menu;
-  // The collapsed menu is short now (≈ 220×190px); submenus fly out to the side.
-  const W = 220, H = 190, SUB_W = 188;
+  // The collapsed menu is short now (≈ 220×190px, +34 for the Delegate row); submenus fly
+  // out to the side.
+  const W = 220, H = agentReady ? 224 : 190, SUB_W = 188;
   const left = typeof window !== 'undefined' ? Math.min(menu.x, window.innerWidth - W - 8) : menu.x;
   const top = typeof window !== 'undefined' ? Math.min(menu.y, window.innerHeight - H - 8) : menu.y;
   // Flip the flyout to the left when the main menu sits too close to the right edge.
@@ -386,6 +421,15 @@ function TaskContextMenu({ menu, onClose, onOpen, onSetStatus, onSetPriority, on
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" style={{ flex: '0 0 auto' }}><path d="M15 3h6v6M10 14 21 3M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5" /></svg>
           <span style={{ flex: 1 }}>Open details</span>
         </div>
+
+        {/* Delegate to Claude — desktop-only (the in-app agent). Hands the task to a
+            background Claude Code agent via a prefilled composer. */}
+        {agentReady && (
+          <div className="bd-row" onClick={() => onDelegate(task)} style={{ ...row, color: 'var(--color-accent)' }}>
+            <span style={{ display: 'inline-flex', flex: '0 0 auto' }}><SparkIcon size={14} /></span>
+            <span style={{ flex: 1 }}>Delegate to Claude</span>
+          </div>
+        )}
 
         <div style={{ height: 1, background: 'var(--color-border)', margin: '5px 4px' }} />
 

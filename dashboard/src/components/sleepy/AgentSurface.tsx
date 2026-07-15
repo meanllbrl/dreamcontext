@@ -23,6 +23,7 @@ import {
 } from './AgentSetup';
 import { RUN_SLEEP_AGENT_EVENT, SLEEP_AGENT_TITLE, SLEEP_AGENT_PROMPT } from '../../lib/sleepAgent';
 import { RUN_BRAIN_RESOLVE_EVENT, BRAIN_RESOLVE_TITLE, BRAIN_RESOLVE_PROMPT } from '../../lib/brainResolveAgent';
+import { DELEGATE_AGENT_EVENT, type DelegateAgentDetail } from '../../lib/delegateAgent';
 import { PaneComposer } from './PaneComposer';
 import { quotePath, FALLBACK_MODEL_CONFIG } from '../../lib/agentComposer';
 import { useAgentModelConfig } from '../../hooks/useAgentCapabilities';
@@ -546,6 +547,38 @@ export function AgentSurface() {
     window.addEventListener(RUN_BRAIN_RESOLVE_EVENT, onRun);
     return () => window.removeEventListener(RUN_BRAIN_RESOLVE_EVENT, onRun);
   }, [runBrainResolveAgent]);
+
+  // ── Delegate a task to a background agent (from a board card's context menu) ──────
+  // A board task card hands a task to Claude via the DELEGATE_AGENT_EVENT bridge (the
+  // decoupled window-event pattern, since the board lives in the page tree and this surface
+  // is mounted above the router). Spawn a fresh agent with the composed prompt auto-submitted
+  // SERVER-SIDE (race-free — the same `&prompt=` positional-arg mechanism as Sleep /
+  // brain-resolve; degrades to type-without-submit only against a stale server), titled with
+  // the task name, and start it MINIMIZED: it appears immediately as a background corner chip
+  // and works without stealing the screen. Clicking the chip restores it as a pane (the dock's
+  // onOpen → restoreMinimized, since its id is in minimizedIds). Same guards as the other
+  // spawn-from-elsewhere paths (desktop + node-pty + claude CLI + surface enabled).
+  const delegateAgent = useCallback((detail: DelegateAgentDetail) => {
+    if (!(caps?.desktop && caps.embeddedTerminal && caps.claudeCli) || !agentSettings.enabled) return;
+    const title = detail.title.trim() || 'Delegated task';
+    const s = spawn(detail.bypass, undefined, false, 'agent', detail.prompt, '', serverCurrent);
+    // Begin life as a background (minimized) session: no pane, and the overlay stays as it is.
+    // Set the Session's own `minimized` flag NOW — the layout effect won't run (panes/expanded
+    // are unchanged by a minimize-only spawn), so without this the idle timer couldn't raise the
+    // "finished" attention badge on the corner chip when the delegated run completes.
+    s.minimized = true;
+    setSessionList((prev) => [...prev, { id: s.id, title, kind: 'agent', bypass: s.bypass, claudeId: s.claudeId }]);
+    setMinimizedIds((prev) => (prev.includes(s.id) ? prev : [...prev, s.id]));
+  }, [caps, agentSettings.enabled, spawn, serverCurrent]);
+
+  useEffect(() => {
+    const onDelegate = (e: Event) => {
+      const detail = (e as CustomEvent<DelegateAgentDetail>).detail;
+      if (detail?.prompt) delegateAgent(detail);
+    };
+    window.addEventListener(DELEGATE_AGENT_EVENT, onDelegate);
+    return () => window.removeEventListener(DELEGATE_AGENT_EVENT, onDelegate);
+  }, [delegateAgent]);
 
   // ── Bottom strip ─────────────────────────────────────────────────────────────────
   // There is NO separate text field: a skill/file goes straight into the terminal's OWN
