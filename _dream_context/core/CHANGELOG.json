@@ -1,5 +1,20 @@
 [
   {
+    "date": "2026-07-14",
+    "type": "fix",
+    "scope": "roadmap",
+    "description": "The tasks-basis forecast ignored the PO's committed window: objectives whose member tasks carry only start dates (no dues) forecast a zero-width span, so the timeline drew an invisible 8px stub instead of the expected month-long committed bar. This hit objectives like tilki-enterprise, improve-activation, and marketing-ready-social-media on the real Tilki board. Fixed by envelope-clamping the tasks basis in BOTH engines (roadmap-forecast.ts + roadmap-model.ts, identical math, lock-step): forecast_start = max(min(taskStart, committedStart), depFinish) ?? taskDue; workEnd = max(taskDue, forecast_start); forecast_end = max(committedEnd, workEnd). Slip is still measured on the task-derived finish; a predecessor isn't 'done' for its dependents until its own target passes. Effort remains un-stacked for rollups sharing dep tasks. Added 3 new regression tests covering the exact Tilki shape; full suite green (53 roadmap tests), verified against real Tilki data.",
+    "breaking": false,
+    "summary": "Envelope-clamp task-only-start-dates to committed window (kill invisible 8px bar)",
+    "references": [
+      "commit:9876dc8",
+      "file:dashboard/src/components/roadmap/roadmap-forecast.ts",
+      "file:src/lib/roadmap-model.ts",
+      "file:tests/unit/roadmap-forecast.test.ts",
+      "file:tests/unit/roadmap-model.test.ts"
+    ]
+  },
+  {
     "date": "2026-07-11",
     "type": "fix",
     "scope": "cloud-sync",

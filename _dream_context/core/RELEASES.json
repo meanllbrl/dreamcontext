@@ -1,5 +1,16 @@
 [
   {
+    "id": "rel_ODadgMbB",
+    "version": "0.18.0",
+    "date": "",
+    "summary": "",
+    "breaking": false,
+    "status": "planning",
+    "features": [],
+    "tasks": [],
+    "changelog": []
+  },
+  {
     "id": "rel_12PzKKOP",
     "version": "0.17.2",
     "date": "2026-07-12",
