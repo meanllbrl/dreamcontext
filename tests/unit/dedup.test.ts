@@ -143,3 +143,98 @@ describe('dedupCandidate — options & edges', () => {
     expect(res!.neighbors[1].sim).toBeGreaterThanOrEqual(res!.neighbors[2].sim);
   });
 });
+
+// ── Review-hardening regressions ─────────────────────────────────────────────
+// Each test below pins a defect found in the multi-reviewer pass on 61dbc3d.
+describe('dedupCandidate — hardening regressions', () => {
+  it('topK ≤ 0 never suppresses the verdict (was: silent CREATE on a certain duplicate)', async () => {
+    writeKnowledge('alpha', 'Alpha', '@v(1,0,0)');
+    writeKnowledge('beta', 'Beta', '@v(0,1,0)');
+    const cand = { title: 'Alpha restated', body: '@v(1,0,0) identical to alpha' };
+    for (const topK of [0, -3, 0.4]) {
+      const res = await call(cand, { topK });
+      expect(res!.top, `topK=${topK} must not drop top`).not.toBeNull();
+      expect(res!.top!.sim).toBeCloseTo(1, 5);
+      expect(res!.verdict, `topK=${topK} must still MERGE`).toBe('merge');
+      expect(res!.neighbors.length).toBeGreaterThanOrEqual(1);
+    }
+  });
+
+  it('an inverted review>merge pair is clamped so the bands can never invert', async () => {
+    writeKnowledge('alpha', 'Alpha', '@v(1,0,0)');
+    writeKnowledge('beta', 'Beta', '@v(0,1,0)');
+    const inverted = { mergeThreshold: 0.99, reviewThreshold: 0.999 };
+
+    const res = await call({ title: 'near alpha', body: `${atCosine(0.98)} near alpha` }, inverted);
+    // The invariant: the reported review bar NEVER sits above the merge bar, so
+    // the printed/JSON bands are always coherent (no "below 0.99 merge, above
+    // 0.999 review" nonsense).
+    expect(res!.reviewThreshold).toBe(0.99);
+    expect(res!.reviewThreshold).toBeLessThanOrEqual(res!.mergeThreshold);
+    // 0.98 sits below both bars → CREATE. Well-defined, not an inverted-band artifact.
+    expect(res!.verdict).toBe('create');
+
+    // …and a near-verbatim twin still merges under the same clamped config.
+    const dup = await call({ title: 'Alpha', body: '@v(1,0,0) identical' }, inverted);
+    expect(dup!.verdict).toBe('merge');
+  });
+
+  it('a blank candidate throws instead of scoring a degenerate vector', async () => {
+    writeKnowledge('alpha', 'Alpha', '@v(1,0,0)');
+    await expect(call({ title: '   ', body: '' })).rejects.toThrow(/blank/i);
+    await expect(call({ title: '', body: '', description: '' })).rejects.toThrow(TypeError);
+  });
+
+  it('an embedder that THROWS degrades to null (keyword-recall fallback), not a crash', async () => {
+    writeKnowledge('alpha', 'Alpha', '@v(1,0,0)');
+    const res = await dedupCandidate(
+      root,
+      { title: 'x', body: '@v(1,0,0) y' },
+      { embed: async () => { throw new Error('WASM exploded'); } },
+    );
+    expect(res).toBeNull();
+  });
+
+  it('an embedder returning fewer vectors than texts degrades to null', async () => {
+    writeKnowledge('alpha', 'Alpha', '@v(1,0,0)');
+    const res = await dedupCandidate(
+      root,
+      { title: 'x', body: '@v(1,0,0) y' },
+      { embed: async (ts) => (ts.length > 1 ? ts.map(vecFor) : []) },
+    );
+    expect(res).toBeNull();
+  });
+
+  it('a dimension mismatch fails LOUD rather than scoring a truncated prefix', async () => {
+    writeKnowledge('alpha', 'Alpha', '@v(1,0,0)');
+    // Corpus indexed at 3d (fakeEmbed) but the candidate comes back 2d.
+    await call({ title: 'seed', body: '@v(1,0,0) seed' }); // build the 3d index first
+    const mixed = async (ts: string[]): Promise<Float32Array[]> =>
+      ts.map((t) => (t.includes('CANDIDATE') ? new Float32Array([1, 0]) : vecFor(t)));
+    await expect(
+      dedupCandidate(root, { title: 'CANDIDATE', body: 'CANDIDATE body' }, { embed: mixed }),
+    ).rejects.toThrow(/dimension mismatch/i);
+  });
+
+  it('an unnormalized candidate vector fails LOUD (cosine thresholds would be meaningless)', async () => {
+    writeKnowledge('alpha', 'Alpha', '@v(1,0,0)');
+    await call({ title: 'seed', body: '@v(1,0,0) seed' });
+    const unnorm = async (ts: string[]): Promise<Float32Array[]> =>
+      ts.map((t) => (t.includes('CANDIDATE') ? new Float32Array([5, 0, 0]) : vecFor(t)));
+    await expect(
+      dedupCandidate(root, { title: 'CANDIDATE', body: 'CANDIDATE body' }, { embed: unnorm }),
+    ).rejects.toThrow(/normalized/i);
+  });
+
+  it('a lone neighbor still requires the absolute floor (margin bypass is not a free merge)', async () => {
+    writeKnowledge('alpha', 'Alpha', '@v(1,0,0)');
+    // Single-doc corpus → margin null → gate bypassed, but 0.94 < 0.97 floor.
+    const res = await call({ title: 'kinda alpha', body: `${atCosine(0.94)} kinda` });
+    expect(res!.margin).toBeNull();
+    expect(res!.verdict).toBe('review');
+    // …and a near-verbatim twin on that same lone corpus DOES merge.
+    const dup = await call({ title: 'Alpha', body: '@v(1,0,0) identical' });
+    expect(dup!.margin).toBeNull();
+    expect(dup!.verdict).toBe('merge');
+  });
+});

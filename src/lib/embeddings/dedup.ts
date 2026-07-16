@@ -30,12 +30,26 @@ import { refreshEmbeddings, type DenseIndex } from './store.js';
 
 export type DedupVerdict = 'merge' | 'review' | 'create';
 
-/** Clamp an env-provided threshold to a sane [0,1]; fall back on any bad value. */
-function envThreshold(name: string, fallback: number): number {
+/**
+ * Lowest cosine an OPERATOR may configure as a similarity threshold. A merge bar
+ * below this is not a tuning choice, it's a footgun: at 0 EVERY candidate would
+ * auto-MERGE into whatever doc happened to rank first, silently folding distinct
+ * docs together — the exact failure this module is built to prevent. Anything
+ * under 0.5 is far outside the measured operating bands (see the calibration note
+ * below: even UNRELATED docs sit at ~0.83+), so it can only be a mistake.
+ */
+export const DEDUP_MIN_THRESHOLD = 0.5;
+
+/**
+ * Read an env-provided threshold. Falls back on anything that isn't a finite
+ * number in [{@link DEDUP_MIN_THRESHOLD}, 1] — a bad value must never silently
+ * widen the merge gate. `min` is relaxed for the margin (a legitimately tiny gap).
+ */
+function envThreshold(name: string, fallback: number, min = DEDUP_MIN_THRESHOLD): number {
   const raw = process.env[name];
   if (raw === undefined) return fallback;
   const n = Number(raw);
-  if (!Number.isFinite(n) || n < 0 || n > 1) return fallback;
+  if (!Number.isFinite(n) || n < min || n > 1) return fallback;
   return n;
 }
 
@@ -82,9 +96,11 @@ export const DEDUP_MERGE_THRESHOLD = envThreshold('DREAMCONTEXT_DEDUP_MERGE', 0.
  * equidistant to a neighborhood of adjacent docs (so top1−top2 is small even when
  * top1 is high). Requiring the margin strictly REDUCES false merges — a long novel
  * doc that grazes 0.95 against several neighbors gets REVIEW, not MERGE.
- * Override: `DREAMCONTEXT_DEDUP_MERGE_MARGIN` (0–1).
+ * Override: `DREAMCONTEXT_DEDUP_MERGE_MARGIN` (0–1) — floor 0 (unlike the cosine
+ * thresholds, a legitimately tiny gap is meaningful, and 0 merely disables the
+ * secondary gate rather than widening the primary one).
  */
-export const DEDUP_MERGE_MARGIN = envThreshold('DREAMCONTEXT_DEDUP_MERGE_MARGIN', 0.02);
+export const DEDUP_MERGE_MARGIN = envThreshold('DREAMCONTEXT_DEDUP_MERGE_MARGIN', 0.02, 0);
 
 /**
  * Cosine at/above which the nearest doc is SURFACED for the agent to judge
@@ -153,6 +169,37 @@ export interface DedupOptions {
   force?: boolean;
 }
 
+/**
+ * Guard the two assumptions the cosine math silently depends on: every vector has
+ * the SAME dimensionality, and every vector is L2-normalized (dot ≡ cosine ONLY
+ * when ‖v‖ = 1). Violating either yields a plausible-but-wrong similarity — and a
+ * wrong similarity here means a FALSE MERGE, the one failure mode this module
+ * exists to prevent. Unreachable via the shipped path (both sides always use
+ * `embedPassages`, and the cache invalidates on a model change), so this fails
+ * LOUD rather than degrading: it can only mean a caller wired the `embed`
+ * extension point to an incompatible embedder.
+ */
+const NORM_TOLERANCE = 1e-3;
+function assertComparable(candidateVecs: Float32Array[], index: DenseIndex): void {
+  const indexDims = index.chunks[0]?.vector.length;
+  for (const cv of candidateVecs) {
+    if (indexDims !== undefined && cv.length !== indexDims) {
+      throw new Error(
+        `[dedup] embedding dimension mismatch: candidate ${cv.length}d vs index ${indexDims}d. ` +
+        'The candidate and the index must come from the SAME embedding model.',
+      );
+    }
+    let norm = 0;
+    for (let i = 0; i < cv.length; i++) norm += cv[i] * cv[i];
+    if (Math.abs(Math.sqrt(norm) - 1) > NORM_TOLERANCE) {
+      throw new Error(
+        `[dedup] candidate vector is not L2-normalized (‖v‖=${Math.sqrt(norm).toFixed(4)}). ` +
+        'Cosine thresholds are meaningless on unnormalized vectors.',
+      );
+    }
+  }
+}
+
 /** Score each indexed doc by its MAX cosine to any candidate chunk vector. */
 function maxSimByDoc(candidateVecs: Float32Array[], index: DenseIndex): Map<string, number> {
   const best = new Map<string, number>();
@@ -161,8 +208,9 @@ function maxSimByDoc(candidateVecs: Float32Array[], index: DenseIndex): Map<stri
     let docBest = best.get(chunk.docKey) ?? -Infinity;
     for (const cv of candidateVecs) {
       let dot = 0;
-      const n = Math.min(v.length, cv.length);
-      for (let i = 0; i < n; i++) dot += v[i] * cv[i];
+      // Dims are asserted equal upstream (assertComparable) — no truncation here,
+      // which would silently compare a PREFIX of two different spaces.
+      for (let i = 0; i < v.length; i++) dot += v[i] * cv[i];
       if (dot > docBest) docBest = dot;
     }
     best.set(chunk.docKey, docBest);
@@ -173,9 +221,13 @@ function maxSimByDoc(candidateVecs: Float32Array[], index: DenseIndex): Map<stri
 /**
  * Nearest-neighbor dedup check for a candidate doc.
  *
- * Returns null when the embedding model is unavailable (caller decides: fall back
- * to keyword dedup, or skip). An empty corpus yields a `create` verdict with no
- * neighbors. Never throws on a normal missing-model path.
+ * Returns null when the embedding layer can't produce an answer — the model is
+ * unavailable OR an embed call failed — so the caller can fall back to keyword
+ * dedup. An empty corpus yields a `create` verdict with no neighbors.
+ *
+ * Throws ONLY on programmer error (a blank candidate, or an `embed` extension
+ * point wired to an incompatible model) — never on the operational
+ * missing-model/failed-embed path, which is what the sleep pipeline runs into.
  */
 export async function dedupCandidate(
   contextRoot: string,
@@ -184,10 +236,27 @@ export async function dedupCandidate(
 ): Promise<DedupResult | null> {
   const mergeThreshold = opts.mergeThreshold ?? DEDUP_MERGE_THRESHOLD;
   const mergeMargin = opts.mergeMargin ?? DEDUP_MERGE_MARGIN;
-  const reviewThreshold = opts.reviewThreshold ?? DEDUP_REVIEW_THRESHOLD;
-  const topK = opts.topK ?? 5;
+  // Coherence: the bands are [review, merge) and [merge, 1]. An inverted pair
+  // (review > merge) would silently ERASE the review band — a same-topic
+  // candidate would fall through to `create` with no signal, defeating the gate.
+  // Clamp instead of trusting the caller: review can never exceed merge.
+  const reviewThreshold = Math.min(
+    opts.reviewThreshold ?? DEDUP_REVIEW_THRESHOLD,
+    mergeThreshold,
+  );
+  // topK only ever trims the REPORTED neighbor list. Clamp to ≥1 so it can never
+  // empty the list and drop `top` to null — which would silently return `create`
+  // for a candidate whose twin is sitting right there at cosine 1.0.
+  const topK = Math.max(1, Math.floor(opts.topK ?? 5));
   const embed = opts.embed ?? embedPassages;
   const types = opts.types ?? ['knowledge', 'feature'];
+
+  // A candidate with no embeddable text at all can only produce a meaningless
+  // verdict from a degenerate `"passage: "` vector. That's a caller bug, not an
+  // operational condition — fail loud rather than emit a confident-looking verdict.
+  if (`${candidate.title ?? ''}${candidate.description ?? ''}${candidate.body ?? ''}`.trim() === '') {
+    throw new TypeError('[dedup] candidate is blank — title, description and body are all empty.');
+  }
 
   const corpus = buildCorpus(contextRoot, { types });
   const byKey = new Map<string, CorpusDoc>(corpus.map((d) => [docKey(d), d]));
@@ -198,18 +267,38 @@ export async function dedupCandidate(
   const candidateTexts =
     candidateChunks.length > 0
       ? candidateChunks.map((c) => c.text)
-      // Degenerate candidate (no title, no body): embed whatever identity text
-      // we have so an all-empty candidate still returns a defined result.
-      : [[candidate.title, candidate.description].filter(Boolean).join('\n') || candidate.title || ''];
+      // Body chunked to nothing (e.g. headings-only) — fall back to the identity
+      // text. Guaranteed non-blank by the blank-candidate guard above.
+      : [[candidate.title, candidate.description].filter(Boolean).join('\n').trim()];
 
   // ADD-ONLY refresh: the corpus is type-scoped (knowledge+feature), so pruning
   // would evict every task/memory/changelog vector from the shared cache and
   // force a full inline re-embed on the next recall. Only add.
-  const [refreshed, candidateVecs] = await Promise.all([
-    refreshEmbeddings(contextRoot, corpus, embed, { additive: true, force: opts.force }),
-    embed(candidateTexts),
-  ]);
+  //
+  // An embed call that THROWS (OOM, a WASM crash, a transient model fault) is an
+  // operational failure, not a programmer error: this runs unattended inside sleep,
+  // where a stack trace would abort the specialist. Degrade to the documented null
+  // contract so the caller falls back to keyword recall. Missing-model already
+  // returns null; this closes the throw path to the same place.
+  let refreshed: Awaited<ReturnType<typeof refreshEmbeddings>>;
+  let candidateVecs: Float32Array[] | null;
+  try {
+    [refreshed, candidateVecs] = await Promise.all([
+      refreshEmbeddings(contextRoot, corpus, embed, { additive: true, force: opts.force }),
+      embed(candidateTexts),
+    ]);
+  } catch (err) {
+    if (process.env.DREAMCONTEXT_DEBUG) {
+      console.error(`[dedup] embedding failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    return null;
+  }
   if (refreshed === null || candidateVecs === null) return null;
+  // An embedder that returns FEWER vectors than texts would leave holes; treat a
+  // short/empty return as an embed failure rather than scoring against undefined.
+  if (candidateVecs.length !== candidateTexts.length) return null;
+
+  assertComparable(candidateVecs, refreshed.index);
 
   const sims = maxSimByDoc(candidateVecs, refreshed.index);
   const neighbors: DedupNeighbor[] = [];
@@ -236,8 +325,14 @@ export async function dedupCandidate(
   let verdict: DedupVerdict = 'create';
   if (top && top.sim >= mergeThreshold && (margin === null || margin >= mergeMargin)) {
     // Auto-MERGE: close in absolute terms AND decisively closer to THIS doc than
-    // to the runner-up (or it's the only doc). The margin gate is what keeps a
-    // long novel doc — high-but-flat against a neighborhood — out of MERGE.
+    // to the runner-up. The margin gate is what keeps a long novel doc —
+    // high-but-flat against a neighborhood — out of MERGE.
+    //
+    // `margin === null` (exactly ONE candidate neighbor — a single-doc corpus, or
+    // `excludeDocKey` narrowing a two-doc one) DELIBERATELY bypasses the gate:
+    // with no runner-up there is no ambiguity about WHICH doc a near-verbatim
+    // twin belongs to, and the absolute floor still has to clear 0.97. Requiring
+    // a margin there would make merge structurally impossible on a small corpus.
     verdict = 'merge';
   } else if (top && top.sim >= reviewThreshold) {
     verdict = 'review';
