@@ -946,7 +946,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     }
 
     // Success bookkeeping. last_synced_at is ClickUp SERVER time — never the
-    // local clock; when the server omitted it we keep the previous watermark.
+    // local clock; when the server omitted it we keep the previous value.
     const raw = readFileSync(path, 'utf-8');
     this.ledger.updateTaskSync(slug, {
       last_synced_at: serverTime ?? entry?.last_synced_at ?? 0,
@@ -954,7 +954,18 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       localHash: hashContent(raw),
       pendingPush: false,
     });
-    this.ledger.advanceWatermark(serverTime);
+    // NOTE: the push must NOT advance the global pull watermark (#185). The
+    // watermark's contract is "I have PULLED everything up to T" — it gates
+    // `date_updated_gt`. A push proves only "I WROTE at T", which is a different
+    // fact. Advancing it here silently skipped every remote change older than our
+    // own write that we had not pulled yet: teammate pushes at T1, we push at
+    // T2 > T1 without pulling, and their task is excluded from every future delta
+    // pull. Forever, with no error — the pull just reports `pulled 0`.
+    //
+    // Echo suppression (the reason this was here) does not need the watermark:
+    // base_snapshot + localHash are written right above, so re-pulling our own
+    // write merges to a no-op. Per-task `last_synced_at` stays — that IS per-task
+    // bookkeeping, not the global pull gate.
     this.ledger.dequeueFor(slug, enqueueCutoff);
   }
 
@@ -1108,6 +1119,30 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     report: SyncReport,
   ): Promise<void> {
     const remoteTime = serverTimeMs(remote.date_updated);
+
+    // ECHO GATE (#185) — skip a remote state we ourselves just wrote.
+    //
+    // Echo suppression used to ride on the GLOBAL pull watermark: the push
+    // advanced it past its own writes so the next delta pull wouldn't see them.
+    // That silently dropped a COLLABORATOR's older, unpulled change out of every
+    // future pull — their task's date_updated sat below a watermark our own push
+    // had jumped. Suppression has to be per-task, because "I wrote this task at
+    // T" is a fact about ONE task, not about the whole list.
+    //
+    // `last_synced_at` is the server time of the remote state we last ingested or
+    // wrote for THIS task, so `remoteTime <= last_synced_at` means we are looking
+    // at our own write (or a state already merged). A real edit by someone else
+    // always advances date_updated beyond it. Cheap, precise, and it lets the
+    // watermark go back to meaning only "I have pulled everything up to T".
+    const known = this.ledger.slugForRemoteId(remote.id);
+    if (known !== null && remoteTime !== null) {
+      const seenAt = this.ledger.taskSync(known)?.last_synced_at ?? 0;
+      if (seenAt > 0 && remoteTime <= seenAt) {
+        this.ledger.advanceWatermark(remoteTime);
+        return; // not a change — never count or journal our own echo
+      }
+    }
+
     const commentsRes = await adapter.request<{ comments?: ClickUpComment[] }>(
       'GET',
       `/task/${remote.id}/comment`,

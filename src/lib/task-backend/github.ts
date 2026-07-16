@@ -818,7 +818,10 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       localHash: hashContent(raw),
       pendingPush: false,
     });
-    this.ledger.advanceWatermark(serverTime);
+    // Same rule as the ClickUp backend (#185): a push must not advance the global
+    // pull watermark. "I wrote at T" is not "I have pulled everything up to T",
+    // and conflating them silently drops a collaborator's older, unpulled change
+    // out of every future delta pull. Echo is absorbed by base_snapshot/localHash.
     this.ledger.dequeueFor(slug, enqueueCutoff);
   }
 
@@ -1159,6 +1162,22 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       return;
     }
     let remoteStatus = remoteStatusRaw;
+
+    // ECHO GATE (#185) — skip a remote state we ourselves just wrote. Per-task,
+    // because the push no longer advances the global pull watermark: doing so
+    // silently dropped a collaborator's older, unpulled change out of every
+    // future delta pull. `last_synced_at` is the server time of the remote state
+    // we last ingested or wrote for THIS issue, so anything at or below it is our
+    // own echo; a real edit by someone else always advances `updated_at` past it.
+    // Placed after the soft-delete branch so deletion semantics are untouched.
+    const knownSlug = this.ledger.slugForRemoteId(remoteId);
+    if (knownSlug !== null && remoteTime !== null) {
+      const seenAt = this.ledger.taskSync(knownSlug)?.last_synced_at ?? 0;
+      if (seenAt > 0 && remoteTime <= seenAt) {
+        this.ledger.advanceWatermark(remoteTime);
+        return;
+      }
+    }
 
     const remoteComments = await this.fetchIssueComments(adapter, owner, repo, remoteId);
     const remoteEntries = remoteComments

@@ -173,10 +173,19 @@ describe('clickup PUSH (M3, mocked transport)', () => {
     const entry = state.tasks['clock-proof'];
     // Server clock lives at ~1.9e12; the injected local clock stays ~1e3.
     expect(entry.last_synced_at).toBeGreaterThan(1_800_000_000_000);
-    expect(state.watermark).toBeGreaterThan(1_800_000_000_000);
     expect(String(entry.last_synced_at)).toBe(
       [...fake.tasks.values()][0].date_updated,
     );
+
+    // A PUSH must not advance the pull watermark (#185). The watermark means
+    // "I have pulled everything up to T"; a push only proves "I wrote at T".
+    // Conflating them made our own write jump the watermark past a teammate's
+    // older, unpulled task and excluded it from every future delta pull.
+    expect(state.watermark).toBeNull();
+
+    // The PULL is what advances it — still server time, never the local clock.
+    await backend.sync('pull');
+    expect(syncStateFile().watermark).toBeGreaterThan(1_800_000_000_000);
   });
 
   it('assignee maps to the ClickUp member id from the identity layer', async () => {

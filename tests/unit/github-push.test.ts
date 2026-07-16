@@ -199,9 +199,15 @@ describe('github PUSH (A3/A7, mocked transport)', () => {
     const entry = state.tasks['clock-proof'];
     // Server clock lives at ~1.9e12; the injected local clock stays ~1e3.
     expect(entry.last_synced_at).toBeGreaterThan(1_800_000_000_000);
-    expect(state.watermark).toBeGreaterThan(1_800_000_000_000);
     const issue = [...fake.issues.values()][0];
     expect(entry.last_synced_at).toBe(Date.parse(issue.updated_at));
+
+    // A PUSH must not advance the pull watermark (#185) — see the ClickUp twin.
+    expect(state.watermark).toBeNull();
+
+    // The PULL is what advances it — still server time, never the local clock.
+    await backend.sync('pull');
+    expect(syncStateFile().watermark).toBeGreaterThan(1_800_000_000_000);
   });
 
   it('assignees: a person tag for a collaborator round-trips to the issue login', async () => {
