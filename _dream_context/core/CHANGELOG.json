@@ -1,5 +1,128 @@
 [
   {
+    "date": "2026-07-16",
+    "type": "fix",
+    "scope": "sleep",
+    "description": "Multi-review of the semantic dedup feature (61dbc3d) caught 9 findings, all now fixed and regression-tested: (1) MAJOR — --stdin hung forever on a TTY (added isTTY guard, proven with perl alarm harness); (2-9) MINOR — topK ≤ 0 silently returned create on a cosine-1.0 duplicate (clamp ≥1), embed throw/short-return degraded to null instead of the documented keyword-recall fallback, threshold validation added (DEDUP_MIN_THRESHOLD = 0.5, review ≤ merge clamp prevents band inversion), single-neighbor margin bypass documented + tested (deliberate: no runner-up means no ambiguity), blank candidate now throws instead of embedding a degenerate passage vector, --file on directory/EACCES → clean errors, dim-mismatch & unnormalized vectors fail loud (was silently on the false-merge axis), --top 0 warns. Tests: 9 → 17 (one regression test per finding). Full suite 3259 passed (baseline 3251 + 8 new). Core behavior re-verified against the real model: near-verbatim → MERGE (0.996, margin +0.068), novel → CREATE. Uncommitted (finished session 19014bcc, 2026-07-15).",
+    "breaking": false,
+    "summary": "Semantic dedup hardening — 9 adversarial findings closed",
+    "references": [
+      "file:src/cli/commands/embed.ts",
+      "file:src/lib/embeddings/dedup.ts",
+      "file:tests/unit/dedup.test.ts"
+    ]
+  },
+  {
+    "date": "2026-07-16",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "Agent terminal's @ Files button upgraded from file-only to dual-mode: 'Attach files…' and 'Attach folders…' in a Popover menu (same style as model/effort selectors). New pickFolders() in dashboard/src/lib/desktop.ts wraps Tauri's native macOS folder picker with multi-select support — separate from pickFiles() because the Tauri dialog plugin's directory boolean prevents mixed file+folder selection in one dialog. Selected folder paths are tırnaklanıp (quoted) and inserted into the focused terminal's input line, same as files. Browser fallback: prompt for folder path. AgentComposerBar's @ Files became a Popover trigger; handlePickFilesFor generalized to handlePickPathsFor(sessionId, 'files' | 'folders'). Uncommitted (finished session ee98c80a, 2026-07-15).",
+    "breaking": false,
+    "summary": "Agent composer @ Files button adds folder picker",
+    "references": [
+      "file:dashboard/src/components/sleepy/AgentComposerBar.tsx",
+      "file:dashboard/src/lib/desktop.ts",
+      "file:dashboard/src/components/sleepy/PaneComposer.tsx"
+    ]
+  },
+  {
+    "date": "2026-07-16",
+    "type": "feat",
+    "scope": "excalidraw",
+    "description": "Boards were coming out text-heavy, with labels running edge-to-edge and drawings stacking on top of each other. Three changes fix that at the root. Readable measure — text can no longer run edge-to-edge: build_excalidraw now BAKES word-wrap newlines into every width-set text (new wrapText(); sizeText returns the wrapped string). A width-set text with no hard newlines was re-flowed by the renderer into ONE over-wide line, so lane()/grid() captions overflowed and overlapped their neighbours. Every caption/label/paragraph now renders at its intended measure. The wrapper preserves a line's leading indent, so hanging indents survive. style.js: READ_W(620)/NOTE_W(260), new prose(); sectionTitle()/bullets()/annotate() now cap+wrap instead of sizing to the full text length. No overlap — flow the layout, and audit what ships: new stack()/row() flow layout: each block is placed after the previous one's measured size, so boxes cannot collide. Builders carry .x/.y/.w/.h/.nextX/.nextY (box(); plus translate()/bbox()). build_excalidraw audits the finished scene and warns '[excalidraw] N overlap(s)' on sibling box collisions, ignoring intentional containment (a button inside a window) and grouped composites. Returns an overlaps count; opt out with spec.audit === false. Visual-first kit — pictures instead of paragraphs: funnel(): filled trapezoid bands with non-crossing right-margin metric notes. Wireframe/prototype kit: windowFrame() (browser/app chrome, exposes .inner content region), navbar(), button(), input(), textRows() (body-copy filler), imagePlaceholder(), avatar(), chip(), divider(). Widgets are grouped so they move as one unit. connector(): labels on a vertical run now sit beside the line instead of being struck through by it (new labelSide). Verified by rendering to PNG and inspecting: new examples/visual_board.js and the inbox showcase board both build with overlaps: 0; all 10 doc-board generators build clean. SKILL.md documents the three design principles, the new primitives, the auditor, and adds funnel/wireframe/prototype triggers.",
+    "breaking": false,
+    "summary": "Visual-first kit, readable measure, and overlap prevention",
+    "references": [
+      "commit:4068b21",
+      "file:skill-packs/excalidraw/scripts/build_excalidraw.js",
+      "file:skill-packs/excalidraw/scripts/lib/style.js",
+      "file:skill-packs/excalidraw/SKILL.md"
+    ]
+  },
+  {
+    "date": "2026-07-16",
+    "type": "fix",
+    "scope": "cloud-sync",
+    "description": "A project carrying the pre-b45adb4 combo brainRepo: { enabled: true, mode: 'in-tree' } rendered contradictory UI: Settings read enabled:true and showed 'sync on + connected', while the sidebar read the MODE (in-tree → hasRemote:false) and showed 'Set up team sync'. Since in-tree never pushes, sync was effectively OFF while the UI claimed it was on. The combo is a legacy artifact — the old toggle wrote only enabled and a separate /api/brain/scope endpoint flipped mode; when separate mode was removed (b45abd4) no migration was written. Current code can't produce it, but old configs still carry it. Adds healStaleBrainConfig() (src/lib/git-sync/brain-repo.ts), an idempotent migration on the status read path. It fires ONLY on the exact stale combo (enabled === true && mode !== 'full-repo') — every healthy config short-circuits before any git lookup or write, so status polling stays cheap. Origin exists → promote to full-repo + autoSync (preserving an explicit autoSync:false) and lay the gitignore-first machine-local excludes. This is exactly the master toggle's enable side-effect, so the 'on' claim becomes true — it actually pushes now. No origin → coerce enabled:false, so the toggle renders an honest OFF (full-repo can't push without an origin). Wired into handleBrainStatus, handleBrainSettingsGet, and the CLI brain status so no surface can disagree. No dashboard change needed: the sidebar (hasRemote) and Settings (enabled/remote) were faithfully rendering inconsistent server data; a self-consistent read path makes both surfaces agree. 7 heal-fn units + 4 route cases. Full suite 3220 green; brain-sync e2e green.",
+    "breaking": false,
+    "summary": "Self-heal stale enabled:true + in-tree config that rendered dishonestly",
+    "references": [
+      "commit:05596c8",
+      "file:src/lib/git-sync/brain-repo.ts",
+      "file:src/server/routes/brain.ts",
+      "file:tests/unit/git-sync-brain-repo.test.ts",
+      "task:cloud-sync-stale-config-enabled-true-in-tree-mode-renders-dishonestly"
+    ]
+  },
+  {
+    "date": "2026-07-16",
+    "type": "feat",
+    "scope": "sleep",
+    "description": "Second consumer of the embedding index (the first is hybrid recall). Before a sleep sub-agent creates a knowledge/feature doc, it embeds the CANDIDATE and scores it against the existing knowledge+feature corpus by cosine similarity, replacing the keyword-guessing dedup gate in the sleep-product prompt — you cannot recall a doc you didn't think to search for. The candidate isn't in the corpus yet, so denseRank can't be reused: the candidate is chunked the same way indexed docs are, embedded as PASSAGES (same E5 space, both sides passage:-prefixed), and each existing doc scored as the MAX cosine over all (candidate-chunk x doc-chunk) pairs. Best-passage matching on both sides catches a candidate whose one section duplicates one section of an existing doc even when the rest differs. New dreamcontext embed dedup returns the nearest docs + a verdict: MERGE (near-verbatim twin, extend the named file), REVIEW (same-topic band, apply the sharp-vs-soft rubric against the named neighbor), CREATE (no near-duplicate). --if-present no-ops when the vault has no embedding cache or the model isn't installed, so it never triggers a first-time model download during sleep and always falls back to keyword recall. The module ADVISES only — the fold-in is the agent's knowledge merge/Edit; sleep specialists' writes are never silently rewritten. sleep-product.md rewritten to run the semantic check first and treat it as an assist, not a replacement for family-aware keyword recall. Includes review-driven hardening: --stdin TTY guard, topK clamped ≥1, blank candidate throws, threshold validation (DEDUP_MIN_THRESHOLD = 0.5), single-neighbor margin bypass documented, path/size validation BEFORE read. 8 new dedup.test.ts tests + 1 regression per finding.",
+    "breaking": false,
+    "summary": "Semantic near-duplicate gate — merge instead of duplicate",
+    "references": [
+      "commit:61dbc3d",
+      "file:src/cli/commands/embed.ts",
+      "file:src/lib/embeddings/dedup.ts",
+      "file:agents/sleep-product.md",
+      "file:tests/unit/dedup.test.ts"
+    ]
+  },
+  {
+    "date": "2026-07-16",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "A task card lives deep in the board's React tree, while the Agent surface that actually spawns Claude Code sessions is mounted once ABOVE the page router so it never remounts on navigation. They can't share a ref, so the board's Delegate composer asks for an agent by dispatching a window event and the always-mounted AgentSurface listens for it — the same decoupled bridge the surface already uses for dreamcontext-navigate / dreamcontext-zoom / the Sleep + brain-resolve agents. No prop threading across the tree. The composer hands the surface a tab title (the task name), the composed prompt to auto-submit, and whether to arm bypass-permissions for the delegated agent. Includes review-driven hardening: WebSocket prompt length cap (6000 chars, server-validated before parsing to prevent Node's 16KB HTTP request-line overflow), client-side 'Delegate' menu gates on fresh /api/agent/capabilities (not stale mount-time caps), and a safety marker embedding the task slug (itself capped at 200 chars) to prevent the overflow-guard defeating itself.",
+    "breaking": false,
+    "summary": "Delegate a task to Claude from the board",
+    "references": [
+      "commit:8cf8626",
+      "file:dashboard/src/components/tasks/DelegateComposer.tsx",
+      "file:dashboard/src/lib/delegateAgent.ts",
+      "file:tests/unit/delegate-agent.test.ts"
+    ]
+  },
+  {
+    "date": "2026-07-16",
+    "type": "feat",
+    "scope": "excalidraw",
+    "description": "Agents were hand-rolling composites out of rects+text and getting them subtly wrong. Now they pass DATA to a ready builder and get correct geometry. charts.js (13): lineChart, barChart(+horizontal), barCompare, stackedBar, gantt, quadrant, donut/pie, sparkline, heatmap, table, timeline, kpi, callout. wireframe.js (10 + 31 icons): device(iPhone/iPad/Mac at real proportions), appBar, tabBar, icon, iconButton, listRow, toggle, segmented, slider, searchField. Same ElementSpec[] contract as style.js, so everything composes in stack()/row() and nothing is random or time-dependent. Declarative surface: expanding composites BEFORE the primitive loop made all 44 types (charts + house style + wireframe + stack/row) usable as spec JSON — a whole board can now be pure JSON with no generator script. Audit went 1 check → 4, each born from a real defect: longLines (body copy past READ_W, was documented but unenforced), buriedText (a label swallowed by a foreign box, checked per LINE and gated on z-order), text-vs-text (wrapped title landing on copy beneath). Found real pre-existing bugs: hello.spec's caption collided with its image, federation buried a line, four boards carried 940-1372px lines. callout() now sizes to its own wrapped text (w is a MAXIMUM), not a target. Device shells are filled polygons with ADAPTIVE_RADIUS (~32px, too tight for phones). examples/atomic_check.js guards the core promise: every type drawn from ONE spec element with data only, plus degenerate input coverage.",
+    "breaking": false,
+    "summary": "Atomic kit — 44 builders on JS + JSON, 4-check audit, devices",
+    "references": [
+      "commit:d26a198",
+      "file:skill-packs/excalidraw/scripts/lib/style.js",
+      "file:skill-packs/excalidraw/examples/atomic_check.js"
+    ]
+  },
+  {
+    "date": "2026-07-16",
+    "type": "feat",
+    "scope": "excalidraw",
+    "description": "The kit could draw anything but the boards it produced were unrecallable. The skill's own doc says every board MUST carry name + description (memory reads frontmatter + Text Elements, never the scene JSON), yet buildExcalidraw emitted a fixed excalidraw-plugin + tags block — so every generator hand-patched the file afterwards with a regex. That hack shipped in the MyChar board and was the top open item in the showroom's next-steps quadrant. Now: pass name / description / tags (and an optional frontmatter passthrough) to buildExcalidraw. Long prose becomes a folded YAML block, so a paragraph-length description with colons parses cleanly. Omit them and output is byte-identical to before — scratch boards are unaffected. Verified as an integration: generated frontmatter parses as YAML and the excalidraw-knowledge extractor reads it (31 tests). atomic_check grew a frontmatter contract check (42 total). Removed the post-patch from the MyChar generator — it now takes the supported path. 13/13 boards clean, 4/4 examples, 58/58 tests, 3 copies synced.",
+    "breaking": false,
+    "summary": "Emit name/description frontmatter — close the dreamcontext recall gap",
+    "references": [
+      "commit:74ca087",
+      "file:skill-packs/excalidraw/scripts/build_excalidraw.js",
+      "file:skill-packs/excalidraw/SKILL.md"
+    ]
+  },
+  {
+    "date": "2026-07-16",
+    "type": "fix",
+    "scope": "dashboard",
+    "description": "computeSessionStats summed usage per JSONL line, but Claude Code writes one line per content block, each repeating the same message.id + usage — a 59-turn session was billed as 147. Cost now sums once per unique message id. Pricing table was stuck on Opus 4.1-era rates ($15/$75) and priced Fable as an Opus placeholder. Now: Fable $10/$50, Opus 4.5+ $5/$25 (legacy 4.1/4.0/3 keep $15/$75 via version-aware priceForModel), cache write/read at 1.25x/0.1x input. Sidechain (subagent) turns still count toward cost but no longer override the main conversation's context-window footprint. Verified against the real transcript behind the reported screenshot: old code reproduced the wrong $70.60 exactly; fixed code yields $9.25 at 225k context. 11 new unit tests in tests/unit/agent-session-stats.test.ts.",
+    "breaking": false,
+    "summary": "Session cost was ~7.6x inflated — dedupe per message.id + current API prices",
+    "references": [
+      "commit:fcdb1b2",
+      "file:src/server/routes/agent-terminal.ts",
+      "file:tests/unit/agent-session-stats.test.ts"
+    ]
+  },
+  {
     "date": "2026-07-14",
     "type": "fix",
     "scope": "roadmap",
