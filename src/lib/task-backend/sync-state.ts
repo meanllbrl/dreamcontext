@@ -286,6 +286,30 @@ export class SyncLedger {
     return { switched: from !== null, from };
   }
 
+  /**
+   * Drop the pull watermark so the next sync re-reads the container in full.
+   * Returns true only when it actually changed something.
+   *
+   * This is the #185 SELF-HEAL. A ledger written before that fix can carry a
+   * watermark that our own PUSH advanced — past a collaborator's older, unpulled
+   * change. That change is then excluded from every future delta pull, forever
+   * and silently. Fixing the push stops NEW poisoning but cannot un-hide what is
+   * already hidden: the watermark on disk still says "I have everything up to T"
+   * when we never did. Only a full re-read can recover it, so upgrading has to
+   * clear it once.
+   *
+   * Cheap and safe: the echo gate makes the re-read a no-op for everything
+   * already current, and a null watermark is exactly the state a fresh ledger
+   * starts in.
+   */
+  resetPullWatermark(): boolean {
+    const state = this.readSyncState();
+    if (state.watermark === null || state.watermark === undefined) return false;
+    state.watermark = null;
+    this.writeSyncState(state);
+    return true;
+  }
+
   readListStatuses(): string[] {
     return this.readSyncState().listStatuses ?? [];
   }

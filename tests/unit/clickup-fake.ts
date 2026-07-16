@@ -15,6 +15,12 @@ export interface FakeFieldDef {
 
 export interface FakeTask {
   id: string;
+  /**
+   * The list this task lives in. The fake used to ignore lists entirely and
+   * serve every task for any `GET /list/:id/task`, which silently made
+   * list-scoping tests pass for the wrong reason (#184/#185 review).
+   */
+  listId: string;
   name: string;
   description: string;
   status: { status: string };
@@ -160,6 +166,7 @@ export function makeFakeClickUp(opts: { serverStart?: number } = {}): FakeClickU
         const id = `cu_${++idCounter}`;
         const task: FakeTask = {
           id,
+          listId: m[1],
           name: body.name ?? '',
           description: body.description ?? '',
           status: { status: body.status ?? 'to do' },
@@ -195,7 +202,7 @@ export function makeFakeClickUp(opts: { serverStart?: number } = {}): FakeClickU
         // fake mirrors that so the backend's client-side strictly-greater
         // watermark guard stays under test.
         const all = [...tasks.values()].filter(
-          (t) => gt === null || Number(t.date_updated) >= Number(gt),
+          (t) => t.listId === m![1] && (gt === null || Number(t.date_updated) >= Number(gt)),
         );
         // single-page fake (last_page signals no more)
         return jsonResponse(200, { tasks: page === 0 ? all : [], last_page: true });

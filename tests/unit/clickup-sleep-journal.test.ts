@@ -38,6 +38,7 @@ function seedRemote(name: string, extra: Partial<Omit<FakeTask, 'id'>> = {}): Fa
   const id = `cu_seed_${++seedN}`;
   const task: FakeTask = {
     id,
+    listId: 'list1', // the list these tests sync against
     name,
     description: '## Why\n\nremote why\n',
     status: { status: 'to do' },

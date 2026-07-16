@@ -3,6 +3,7 @@ import { migration070 } from './0.7.0.js';
 import { migration072 } from './0.7.2.js';
 import { migration080 } from './0.8.0.js';
 import { migration1007 } from './0.10.7.js';
+import { migration0180 } from './0.18.0.js';
 import type { Migration } from './types.js';
 
 /**
@@ -11,7 +12,7 @@ import type { Migration } from './types.js';
  * export its Migration object, and push it here.
  * See CONTRIBUTING.md §"Shipping a migration" for the full checklist.
  */
-export const REGISTRY: Migration[] = [migration070, migration072, migration080, migration1007];
+export const REGISTRY: Migration[] = [migration070, migration072, migration080, migration1007, migration0180];
 
 /**
  * Return all migrations whose version falls in the half-open range (from, to].
