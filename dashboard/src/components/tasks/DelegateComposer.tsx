@@ -1,9 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Task } from '../../hooks/useTasks';
-import {
-  buildDelegatePrompt, requestDelegateAgent, fitPromptForTransport,
-  encodedPromptLen, MAX_PROMPT_ENCODED,
-} from '../../lib/delegateAgent';
+import { buildDelegatePrompt, delegateTaskToAgent } from '../../lib/delegateAgent';
 import { SparkIcon } from '../sleepy/TypeIcons';
 import { taskName } from './boardModel';
 import './TaskCreateModal.css';
@@ -47,28 +44,37 @@ export function DelegateComposer({ task, onClose, onDelegated }: DelegateCompose
     return () => window.removeEventListener('keydown', onKey, true);
   }, [onClose]);
 
-  const canSend = prompt.trim().length > 0;
-  // The prefill is already transport-fitted, but the user can paste past the budget — warn
-  // before they send rather than trimming behind their back.
-  const willTruncate = encodedPromptLen(prompt.trim()) > MAX_PROMPT_ENCODED;
+  const [sending, setSending] = useState(false);
+  const canSend = prompt.trim().length > 0 && !sending;
 
   const submit = () => {
     if (!canSend) return;
-    // Final guard: an over-budget prompt would overflow the WS upgrade request line and the
-    // session would die silently with no agent and no output. Never send an unfitted prompt.
-    const fitted = fitPromptForTransport(prompt.trim(), task.slug);
-    // Report what REALLY happened. The surface gates on its own capabilities snapshot, which
-    // can disagree with the one that made this menu item visible — an optimistic "Delegated ✓"
-    // could leave the user believing an agent is working overnight when none ever spawned.
-    if (!requestDelegateAgent({ title, prompt: fitted, bypass })) {
-      setError(
-        "Couldn't start the agent — the in-app Claude agent isn't available right now. "
-        + 'Check that the Agents surface is enabled in Settings → Agents and that the Claude CLI is installed.',
-      );
-      return;
-    }
-    onDelegated?.(title);
-    onClose();
+    setSending(true);
+    // Hand the prompt over WHOLE — `delegateTaskToAgent` picks a transport that can carry it
+    // (inline for a short prompt, a POSTed token for a long one), so what is shown above is
+    // exactly what the agent receives. Nothing is trimmed behind the user's back.
+    void delegateTaskToAgent({ title, prompt, bypass })
+      .then((accepted) => {
+        // Report what REALLY happened. The surface gates on its own capabilities snapshot,
+        // which can disagree with the one that made this menu item visible — an optimistic
+        // "Delegated ✓" could leave the user believing an agent is working overnight when
+        // none ever spawned.
+        if (!accepted) {
+          setError(
+            "Couldn't start the agent — the in-app Claude agent isn't available right now. "
+            + 'Check that the Agents surface is enabled in Settings → Agents and that the Claude CLI is installed.',
+          );
+          return;
+        }
+        onDelegated?.(title);
+        onClose();
+      })
+      .catch((e: unknown) => {
+        // The prompt hand-off itself failed (server refused the token). Say so and keep the
+        // modal open with the text intact, rather than sending a silently shortened brief.
+        setError(`Couldn't hand the prompt to the agent: ${e instanceof Error ? e.message : String(e)}`);
+      })
+      .finally(() => setSending(false));
   };
 
   // ⌘↵ / Ctrl+↵ submits from inside the textarea.
@@ -103,12 +109,6 @@ export function DelegateComposer({ task, onClose, onDelegated }: DelegateCompose
               rows={12}
               style={{ minHeight: 240, fontFamily: 'var(--font-mono)', fontSize: 12.5, lineHeight: 1.55 }}
             />
-            {willTruncate && (
-              <span style={{ fontSize: 11.5, color: 'var(--color-warning)', lineHeight: 1.45, marginTop: 2 }}>
-                This prompt is longer than the agent's launch channel allows — the tail will be
-                trimmed on send. The agent still reads the full task from its slug, so nothing is lost.
-              </span>
-            )}
           </label>
           <label
             className="field"
@@ -142,7 +142,7 @@ export function DelegateComposer({ task, onClose, onDelegated }: DelegateCompose
           <div className="modal-actions">
             <button type="button" className="btn btn--ghost" onClick={onClose}>Cancel</button>
             <button type="button" className="btn btn--primary" onClick={submit} disabled={!canSend}>
-              Delegate <kbd style={{ marginLeft: 6, fontSize: 10.5, opacity: 0.8 }}>⌘↵</kbd>
+              {sending ? 'Delegating…' : <>Delegate <kbd style={{ marginLeft: 6, fontSize: 10.5, opacity: 0.8 }}>⌘↵</kbd></>}
             </button>
           </div>
         </div>

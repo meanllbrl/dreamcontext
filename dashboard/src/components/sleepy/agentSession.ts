@@ -168,7 +168,13 @@ let sessionSeq = 0;
 // Output must go quiet for this long before we call a session "finished".
 const IDLE_MS = 800;
 
-export function createSession(bypass: boolean, notify: () => void, claudeId: string, resume = false, kind: SessionKind = 'agent', initialPrompt = '', model = '', submitInitial = true): Session {
+/**
+ * `promptToken` is the large-prompt transport: a token minted by `preparePrompt`
+ * (lib/agentPrompt.ts) that the server redeems back into the full text, so a prompt too big
+ * for the upgrade URL never has to be truncated. When set it REPLACES `initialPrompt` on the
+ * wire — pass one or the other, never both.
+ */
+export function createSession(bypass: boolean, notify: () => void, claudeId: string, resume = false, kind: SessionKind = 'agent', initialPrompt = '', model = '', submitInitial = true, promptToken = ''): Session {
   const id = `agent-${++sessionSeq}`;
   const container = document.createElement('div');
   container.className = 'agent-pane-term';
@@ -221,15 +227,23 @@ export function createSession(bypass: boolean, notify: () => void, claudeId: str
   // re-validates the token before it ever reaches the shell command, so this is a hint.
   const modelParam = !isShell && model ? `&model=${encodeURIComponent(model)}` : '';
   const bypassParam = isShell ? '0' : (bypass ? '1' : '0');
-  // An AUTO-SUBMIT initial prompt (the Sleep consolidation) is handed to the SERVER, which
-  // passes it to `claude` as a positional arg so the TUI boots with it already submitted —
-  // race-free. The old path typed it into the readline after a boot-settle heuristic, which
-  // dropped the message when a slow boot (e.g. "MCP servers need authentication") opened a
-  // quiet gap before the prompt was ready. The type-WITHOUT-submit case (a composer skill/file
-  // insert, `submitInitial=false`) still injects client-side below — the server can't leave a
-  // line unsubmitted.
-  const serverSubmitsPrompt = !isShell && submitInitial && !!initialPrompt;
-  const promptParam = serverSubmitsPrompt ? `&prompt=${encodeURIComponent(initialPrompt)}` : '';
+  // An AUTO-SUBMIT initial prompt (the Sleep consolidation, a delegated task, a curate
+  // session) is handed to the SERVER, which passes it to `claude` as a positional arg so the
+  // TUI boots with it already submitted — race-free. The old path typed it into the readline
+  // after a boot-settle heuristic, which dropped the message when a slow boot (e.g. "MCP
+  // servers need authentication") opened a quiet gap before the prompt was ready. The
+  // type-WITHOUT-submit case (a composer skill/file insert, `submitInitial=false`) still
+  // injects client-side below — the server can't leave a line unsubmitted.
+  //
+  // A pre-minted `promptToken` wins over an inline prompt: it means the caller already found
+  // the text too big for the URL and POSTed it (see lib/agentPrompt.ts). Sending both would
+  // put the oversized text back in the request line — the exact overflow the token avoids.
+  const serverSubmitsPrompt = !isShell && submitInitial && (!!initialPrompt || !!promptToken);
+  const promptParam = !serverSubmitsPrompt
+    ? ''
+    : promptToken
+      ? `&promptToken=${encodeURIComponent(promptToken)}`
+      : `&prompt=${encodeURIComponent(initialPrompt)}`;
   const url = `${proto}://${location.host}/api/agent/terminal?vault=${encodeURIComponent(vault ?? '')}&bypass=${bypassParam}&theme=${theme}${idParam}${kindParam}${modelParam}${promptParam}`;
   const ws = new WebSocket(url);
 

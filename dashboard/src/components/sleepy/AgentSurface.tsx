@@ -28,7 +28,7 @@ import { PaneComposer } from './PaneComposer';
 import { quotePath, FALLBACK_MODEL_CONFIG } from '../../lib/agentComposer';
 import { useAgentModelConfig } from '../../hooks/useAgentCapabilities';
 import { useServerHealth } from '../../hooks/useServerHealth';
-import { pickFiles } from '../../lib/desktop';
+import { pickFiles, pickFolders } from '../../lib/desktop';
 
 /**
  * Agent — the REAL interactive Claude Code, in-app, MULTI-SESSION. Each session is
@@ -327,9 +327,12 @@ export function AgentSurface() {
   // ── Session actions ────────────────────────────────────────────────────────
   // claudeId omitted → a fresh conversation (new UUID via `--session-id`); provided with
   // resume=true → reopen that exact conversation (`--resume`) after an app relaunch.
-  const spawn = useCallback((bp: boolean, claudeId?: string, resume = false, kind: SessionKind = 'agent', initialPrompt = '', model = '', submitInitial = true) => {
+  // `promptToken` carries an initial prompt too large for the upgrade URL — mint it with
+  // `preparePrompt` (lib/agentPrompt.ts) BEFORE calling spawn, so spawn itself stays
+  // synchronous (the delegate ACK in lib/delegateAgent.ts depends on that).
+  const spawn = useCallback((bp: boolean, claudeId?: string, resume = false, kind: SessionKind = 'agent', initialPrompt = '', model = '', submitInitial = true, promptToken = '') => {
     // A shell has no permission model, so bypass is meaningless for it — force it off.
-    const s = createSession(kind === 'shell' ? false : bp, bumpStatus, claudeId ?? newClaudeId(), resume, kind, initialPrompt, model, submitInitial);
+    const s = createSession(kind === 'shell' ? false : bp, bumpStatus, claudeId ?? newClaudeId(), resume, kind, initialPrompt, model, submitInitial, promptToken);
     s.applyZoom(currentZoom());
     sessions.current.set(s.id, s);
     return s;
@@ -552,8 +555,8 @@ export function AgentSurface() {
   // A board task card hands a task to Claude via the DELEGATE_AGENT_EVENT bridge (the
   // decoupled window-event pattern, since the board lives in the page tree and this surface
   // is mounted above the router). Spawn a fresh agent with the composed prompt auto-submitted
-  // SERVER-SIDE (race-free — the same `&prompt=` positional-arg mechanism as Sleep /
-  // brain-resolve; degrades to type-without-submit only against a stale server), titled with
+  // SERVER-SIDE (race-free — the same positional-arg mechanism as Sleep / brain-resolve;
+  // degrades to type-without-submit only against a stale server), titled with
   // the task name, and start it MINIMIZED: it appears immediately as a background corner chip
   // and works without stealing the screen. Clicking the chip restores it as a pane (the dock's
   // onOpen → restoreMinimized, since its id is in minimizedIds). Same guards as the other
@@ -563,7 +566,9 @@ export function AgentSurface() {
   const delegateAgent = useCallback((detail: DelegateAgentDetail): boolean => {
     if (!(caps?.desktop && caps.embeddedTerminal && caps.claudeCli) || !agentSettings.enabled) return false;
     const title = detail.title.trim() || 'Delegated task';
-    const s = spawn(detail.bypass, undefined, false, 'agent', detail.prompt, '', serverCurrent);
+    // The caller already routed the prompt to a transport (inline for a short one, a POSTed
+    // token for a large one) — see `delegateTaskToAgent`. Exactly one of the two is set.
+    const s = spawn(detail.bypass, undefined, false, 'agent', detail.prompt, '', serverCurrent, detail.promptToken);
     // Begin life as a background (minimized) session: no pane, and the overlay stays as it is.
     // Set the Session's own `minimized` flag NOW — the layout effect won't run (panes/expanded
     // are unchanged by a minimize-only spawn), so without this the idle timer couldn't raise the
@@ -579,7 +584,8 @@ export function AgentSurface() {
     // the detail is visible to `requestDelegateAgent` the moment it returns.
     const onDelegate = (e: Event) => {
       const detail = (e as CustomEvent<DelegateAgentDetail>).detail;
-      if (detail?.prompt && delegateAgent(detail)) detail.accepted = true;
+      // Either transport counts as "there is a prompt"; a detail carrying neither is a no-op.
+      if ((detail?.prompt || detail?.promptToken) && delegateAgent(detail)) detail.accepted = true;
     };
     window.addEventListener(DELEGATE_AGENT_EVENT, onDelegate);
     return () => window.removeEventListener(DELEGATE_AGENT_EVENT, onDelegate);
@@ -676,9 +682,10 @@ export function AgentSurface() {
     return () => { cancelled = true; };
   }, [panes, sessionList, caps]);
 
-  // Native multi-file picker → drop the chosen absolute paths (quoted) into a pane's terminal.
-  const handlePickFilesFor = useCallback(async (sid: string) => {
-    const paths = await pickFiles();
+  // Native multi-select picker (files OR folders — the Tauri dialog can't mix the two in
+  // one dialog) → drop the chosen absolute paths (quoted) into a pane's terminal.
+  const handlePickPathsFor = useCallback(async (sid: string, kind: 'files' | 'folders') => {
+    const paths = kind === 'folders' ? await pickFolders() : await pickFiles();
     if (!paths.length) return;
     injectToSession(sid, `${paths.map(quotePath).join(' ')} `);
   }, [injectToSession]);
@@ -1256,7 +1263,8 @@ export function AgentSurface() {
                     model={sessionModel[pane.active] ?? modelConfig.defaultModel}
                     effort={sessionEffort[pane.active] ?? modelConfig.defaultEffort}
                     onInsert={(snippet) => insertSkillInto(pane.active, snippet)}
-                    onPickFiles={() => handlePickFilesFor(pane.active)}
+                    onPickFiles={() => handlePickPathsFor(pane.active, 'files')}
+                    onPickFolders={() => handlePickPathsFor(pane.active, 'folders')}
                     onModelChange={(id) => changeModelFor(pane.active, id)}
                     onEffortChange={(level) => changeEffortFor(pane.active, level)}
                   />

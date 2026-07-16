@@ -79,6 +79,7 @@ import {
   handleOpenTerminal,
   handleAgentInstall,
   handleAgentInstallStatus,
+  handleAgentPromptToken,
   handleAgentTitle,
   handleAgentModelConfig,
   handleAgentSessionModel,
@@ -297,6 +298,10 @@ function buildRouter(): Router {
   // In-app prerequisite installer (Claude CLI / node-pty) — vault-agnostic.
   router.post('/api/agent/install', handleAgentInstall);
   router.get('/api/agent/install/status', handleAgentInstallStatus);
+  // Hand off an initial prompt of ANY size to a terminal session about to be opened: POST the
+  // text, get a token, put the token (not the text) in the WS upgrade URL. Names its own vault
+  // in the body and validates it there, so it is vault-agnostic at the router level.
+  router.post('/api/agent/prompt', handleAgentPromptToken);
   // Image drop → write under the active vault's temp dir (desktop-gated, vault-scoped:
   // NOT vault-agnostic, so it resolves contextRoot from the X-Dreamcontext-Vault header).
   router.post('/api/agent/drop', handleAgentDrop);
@@ -391,7 +396,7 @@ function buildRouter(): Router {
 }
 
 /** API path prefixes that do NOT need a vault — they work in launcher mode. */
-const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/agent/model-config', '/api/agent/session-model', '/api/agent/session-stats', '/api/brain/auth', '/api/brain/team'];
+const VAULT_AGNOSTIC_PREFIXES = ['/api/health', '/api/admin/shutdown', '/api/vaults', '/api/launcher', '/api/sleepy', '/api/embeddings', '/api/agent/capabilities', '/api/agent/install', '/api/agent/prompt', '/api/agent/model-config', '/api/agent/session-model', '/api/agent/session-stats', '/api/brain/auth', '/api/brain/team'];
 
 function isVaultAgnostic(pathname: string): boolean {
   return VAULT_AGNOSTIC_PREFIXES.some(

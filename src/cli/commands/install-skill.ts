@@ -785,6 +785,25 @@ export async function installCoreForPlatform(
     installed.push(platformPrefixed(platform, deepResearchSkillRel));
   }
 
+  // Copy the `task-agent` core skill (the task-scoped CURATE agent: revise / summarize /
+  // split / status-reconcile ONE task document via the CLI). Foundational, not an optional
+  // pack: the dashboard's task-detail Curate pane opens a Claude session that names this skill
+  // in its first message, so a project whose skills lag would open a curate session with no
+  // curate instructions — it would improvise markdown rewrites and desync the Workflow mermaid
+  // from the acceptance criteria, which is exactly what the skill exists to prevent. Shipped at
+  // repo root in `skill-task-agent/` (package.json `files`), mirroring the curator/dream-sync
+  // pattern. Recorded 'core' so `update` refreshes it. Non-fatal if absent (older/partial
+  // packages still install the rest).
+  const taskAgentSkillSource = findPackageFile('skill-task-agent', 'SKILL.md');
+  if (taskAgentSkillSource) {
+    const taskAgentDestDir = join(skillRoot, 'task-agent');
+    mkdirSync(taskAgentDestDir, { recursive: true });
+    writeFileSync(join(taskAgentDestDir, 'SKILL.md'), readFileSync(taskAgentSkillSource, 'utf-8'), 'utf-8');
+    const taskAgentSkillRel = `${skillRootRel}/task-agent/SKILL.md`;
+    recordIfManifest(manifest, taskAgentSkillRel, 'core');
+    installed.push(platformPrefixed(platform, taskAgentSkillRel));
+  }
+
   const agentsSourceDir = findPackageDir('agents');
   if (agentsSourceDir) {
     const agentFiles = readdirSync(agentsSourceDir).filter((f) => f.endsWith('.md'));
