@@ -163,6 +163,14 @@ Key conventions:
   "attachDir": "Attachments",                 // external images get copied here (relative to board dir)
   "wikilinkMode": "basename",                 // "basename" (default) or "path" (vault-relative)
   "background": "#ffffff",
+
+  // frontmatter — REQUIRED for a board that lives in knowledge/ (dreamcontext indexes name +
+  // description + tags; without them the board is effectively unrecallable). Omit for scratch boards.
+  "name": "recall-engine-v2",
+  "description": "One paragraph on what this board visualises. Long prose is fine — it is emitted as a folded YAML block.",
+  "tags": ["architecture", "excalidraw"],
+  "frontmatter": { "any-extra-key": "value" },   // optional passthrough
+
   "elements": [ /* ElementSpec… */ ]
 }
 ```
@@ -448,8 +456,16 @@ JSON).
 
 ### Required frontmatter
 
-Every board MUST have `name:` and `description:`. Boards with no `## Text Elements` content rely
-entirely on description for recall — make it descriptive.
+Every board MUST have `name:` and `description:` — **pass them to `buildExcalidraw`** and it emits
+them for you (long descriptions become a folded YAML block; `tags` defaults to `[excalidraw]`).
+Do NOT hand-patch the generated file afterwards.
+
+```js
+buildExcalidraw({ out, elements, name: 'recall-engine-v2', tags: ['architecture', 'excalidraw'],
+  description: 'How recall ranks and merges hits across the vault and consenting peers…' });
+```
+Memory indexes frontmatter + `## Text Elements` and never the scene JSON, so a board with few labels
+leans entirely on `description` for recall — make it descriptive.
 
 ```yaml
 ---

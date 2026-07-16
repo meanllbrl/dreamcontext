@@ -81,5 +81,19 @@ for (const [name, el] of Object.entries(CASES)) check(name, el);
 console.log('\nDegenerate input must not throw:');
 for (const [name, el] of Object.entries(EDGE)) check(name, el, false);
 
+// dreamcontext contract: a board destined for knowledge/ must carry name + description, or it cannot
+// be recalled. This is the integration that used to require hand-patching every generated file.
+console.log('\nFrontmatter (dreamcontext recall contract):');
+try {
+  const out = path.join(tmp, 'frontmatter.excalidraw.md');
+  buildExcalidraw({ out, name: 'demo-board', description: 'What this board shows.', tags: ['x', 'excalidraw'],
+    elements: [{ type: 'kpi', x: 0, y: 0, label: 'A', value: '1' }] });
+  const fm = require('fs').readFileSync(out, 'utf8').split('---')[1] || '';
+  const ok = /(^|\n)name: demo-board/.test(fm) && /(^|\n)description: >-/.test(fm)
+    && /(^|\n)tags: \[x, excalidraw\]/.test(fm) && /excalidraw-plugin: parsed/.test(fm);
+  if (ok) { pass++; console.log('  ✓ name + description + tags emitted'); }
+  else { fail++; console.log('  ✗ frontmatter wrong:', JSON.stringify(fm.trim())); }
+} catch (e) { fail++; console.log('  ✗ THREW:', e.message.slice(0, 60)); }
+
 console.log(`\n  ${pass} passed / ${fail} failed`);
 process.exit(fail ? 1 : 0);

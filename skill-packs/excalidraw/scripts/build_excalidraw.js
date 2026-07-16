@@ -76,6 +76,25 @@ function expandElements(list) {
   return out;
 }
 
+// ---------- frontmatter YAML ----------
+// Minimal, dependency-free emitters. Only what frontmatter needs: a safe scalar and a folded block
+// for long prose (a description is often a paragraph, and an unquoted one with `:` breaks the parse).
+function yamlScalar(v) {
+  const s = String(v);
+  return /^[\w][\w .\-/()]*$/.test(s) ? s : JSON.stringify(s);
+}
+function yamlFolded(key, text, width = 96) {
+  // `>-` folds newlines to spaces on read, so wrap freely; indent 2 marks the block.
+  const words = String(text).replace(/\s+/g, ' ').trim().split(' ');
+  const lines = [];
+  let cur = '';
+  for (const w of words) {
+    if (cur && (cur + ' ' + w).length > width) { lines.push(cur); cur = w; } else cur = cur ? cur + ' ' + w : w;
+  }
+  if (cur) lines.push(cur);
+  return [`${key}: >-`, ...lines.map((l) => '  ' + l)];
+}
+
 // ---------- deterministic PRNG (stable seeds => clean git diffs) ----------
 function mulberry32(seed) {
   let a = seed >>> 0;
@@ -528,7 +547,16 @@ function buildExcalidraw(spec) {
 
   // ---------- assemble markdown ----------
   const L = [];
-  L.push('---', '', 'excalidraw-plugin: parsed', 'tags: [excalidraw]', '', '---');
+  // Frontmatter. dreamcontext REQUIRES `name` + `description` to index/recall a board — memory reads
+  // frontmatter + `## Text Elements`, never the scene JSON — so emit them when given rather than
+  // making every generator hand-patch the file afterwards.
+  L.push('---', '');
+  if (spec.name) L.push(`name: ${yamlScalar(spec.name)}`);
+  if (spec.description) L.push(...yamlFolded('description', spec.description));
+  const tags = spec.tags && spec.tags.length ? spec.tags : ['excalidraw'];
+  L.push(`tags: [${tags.join(', ')}]`);
+  for (const [k, v] of Object.entries(spec.frontmatter || {})) L.push(`${k}: ${yamlScalar(v)}`);
+  L.push('excalidraw-plugin: parsed', '', '---');
   L.push("==⚠  Switch to EXCALIDRAW VIEW in the MORE OPTIONS menu of this document. ⚠== You can decompress Drawing data with the command palette: 'Decompress current Excalidraw file'. For more info check in plugin settings under 'Saving'");
   L.push('', '', '# Excalidraw Data', '');
   L.push('## Text Elements');
