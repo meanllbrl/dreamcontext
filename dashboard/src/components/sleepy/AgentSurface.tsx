@@ -558,8 +558,10 @@ export function AgentSurface() {
   // and works without stealing the screen. Clicking the chip restores it as a pane (the dock's
   // onOpen → restoreMinimized, since its id is in minimizedIds). Same guards as the other
   // spawn-from-elsewhere paths (desktop + node-pty + claude CLI + surface enabled).
-  const delegateAgent = useCallback((detail: DelegateAgentDetail) => {
-    if (!(caps?.desktop && caps.embeddedTerminal && caps.claudeCli) || !agentSettings.enabled) return;
+  // Returns whether it actually spawned — the caller (the board's Delegate composer) reports
+  // success or a real error from this, never optimistically. See `requestDelegateAgent`.
+  const delegateAgent = useCallback((detail: DelegateAgentDetail): boolean => {
+    if (!(caps?.desktop && caps.embeddedTerminal && caps.claudeCli) || !agentSettings.enabled) return false;
     const title = detail.title.trim() || 'Delegated task';
     const s = spawn(detail.bypass, undefined, false, 'agent', detail.prompt, '', serverCurrent);
     // Begin life as a background (minimized) session: no pane, and the overlay stays as it is.
@@ -569,12 +571,15 @@ export function AgentSurface() {
     s.minimized = true;
     setSessionList((prev) => [...prev, { id: s.id, title, kind: 'agent', bypass: s.bypass, claudeId: s.claudeId }]);
     setMinimizedIds((prev) => (prev.includes(s.id) ? prev : [...prev, s.id]));
+    return true;
   }, [caps, agentSettings.enabled, spawn, serverCurrent]);
 
   useEffect(() => {
+    // Synchronous ACK: `dispatchEvent` runs listeners inline, so writing `accepted` back onto
+    // the detail is visible to `requestDelegateAgent` the moment it returns.
     const onDelegate = (e: Event) => {
       const detail = (e as CustomEvent<DelegateAgentDetail>).detail;
-      if (detail?.prompt) delegateAgent(detail);
+      if (detail?.prompt && delegateAgent(detail)) detail.accepted = true;
     };
     window.addEventListener(DELEGATE_AGENT_EVENT, onDelegate);
     return () => window.removeEventListener(DELEGATE_AGENT_EVENT, onDelegate);

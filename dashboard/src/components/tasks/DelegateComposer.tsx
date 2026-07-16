@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Task } from '../../hooks/useTasks';
-import { buildDelegatePrompt, requestDelegateAgent } from '../../lib/delegateAgent';
+import {
+  buildDelegatePrompt, requestDelegateAgent, fitPromptForTransport,
+  encodedPromptLen, MAX_PROMPT_ENCODED,
+} from '../../lib/delegateAgent';
 import { SparkIcon } from '../sleepy/TypeIcons';
 import { taskName } from './boardModel';
 import './TaskCreateModal.css';
@@ -21,9 +24,12 @@ interface DelegateComposerProps {
  * Esc / Cancel closes without spawning. Reuses the shared modal + field CSS.
  */
 export function DelegateComposer({ task, onClose, onDelegated }: DelegateComposerProps) {
+  // ONE source for the title: the prompt's "Task:" line and the delegated tab's title both
+  // come from this call, so they can't drift.
   const title = taskName(task);
-  const [prompt, setPrompt] = useState(() => buildDelegatePrompt(task));
+  const [prompt, setPrompt] = useState(() => buildDelegatePrompt(task, title));
   const [bypass, setBypass] = useState(true);
+  const [error, setError] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Focus the prompt on open, cursor at the START (so the reviewer reads top-down and
@@ -42,9 +48,25 @@ export function DelegateComposer({ task, onClose, onDelegated }: DelegateCompose
   }, [onClose]);
 
   const canSend = prompt.trim().length > 0;
+  // The prefill is already transport-fitted, but the user can paste past the budget — warn
+  // before they send rather than trimming behind their back.
+  const willTruncate = encodedPromptLen(prompt.trim()) > MAX_PROMPT_ENCODED;
+
   const submit = () => {
     if (!canSend) return;
-    requestDelegateAgent({ title, prompt: prompt.trim(), bypass });
+    // Final guard: an over-budget prompt would overflow the WS upgrade request line and the
+    // session would die silently with no agent and no output. Never send an unfitted prompt.
+    const fitted = fitPromptForTransport(prompt.trim(), task.slug);
+    // Report what REALLY happened. The surface gates on its own capabilities snapshot, which
+    // can disagree with the one that made this menu item visible — an optimistic "Delegated ✓"
+    // could leave the user believing an agent is working overnight when none ever spawned.
+    if (!requestDelegateAgent({ title, prompt: fitted, bypass })) {
+      setError(
+        "Couldn't start the agent — the in-app Claude agent isn't available right now. "
+        + 'Check that the Agents surface is enabled in Settings → Agents and that the Claude CLI is installed.',
+      );
+      return;
+    }
     onDelegated?.(title);
     onClose();
   };
@@ -76,11 +98,17 @@ export function DelegateComposer({ task, onClose, onDelegated }: DelegateCompose
               ref={textareaRef}
               className="field-textarea"
               value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
+              onChange={(e) => { setPrompt(e.target.value); if (error) setError(''); }}
               onKeyDown={onTextareaKeyDown}
               rows={12}
               style={{ minHeight: 240, fontFamily: 'var(--font-mono)', fontSize: 12.5, lineHeight: 1.55 }}
             />
+            {willTruncate && (
+              <span style={{ fontSize: 11.5, color: 'var(--color-warning)', lineHeight: 1.45, marginTop: 2 }}>
+                This prompt is longer than the agent's launch channel allows — the tail will be
+                trimmed on send. The agent still reads the full task from its slug, so nothing is lost.
+              </span>
+            )}
           </label>
           <label
             className="field"
@@ -99,6 +127,18 @@ export function DelegateComposer({ task, onClose, onDelegated }: DelegateCompose
               </span>
             </span>
           </label>
+          {error && (
+            <div
+              role="alert"
+              style={{
+                fontSize: 12, lineHeight: 1.5, color: 'var(--color-error)',
+                background: 'var(--color-bg-secondary)', border: '1px solid var(--color-error)',
+                borderRadius: 'var(--radius-md)', padding: '8px 10px',
+              }}
+            >
+              {error}
+            </div>
+          )}
           <div className="modal-actions">
             <button type="button" className="btn btn--ghost" onClick={onClose}>Cancel</button>
             <button type="button" className="btn btn--primary" onClick={submit} disabled={!canSend}>
