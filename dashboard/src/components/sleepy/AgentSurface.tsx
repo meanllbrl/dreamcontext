@@ -893,7 +893,7 @@ export function AgentSurface() {
 
     const tmSlots = new Map<string, HTMLElement>();
     document.querySelectorAll<HTMLElement>('.agent-task-manager-slot[data-task]')
-      .forEach((el) => { if (el.dataset.curate) tmSlots.set(el.dataset.curate, el); });
+      .forEach((el) => { if (el.dataset.task) tmSlots.set(el.dataset.task, el); });
     // Only a session whose slot is actually mounted has a home; one whose task was
     // closed goes to the garage and keeps running there.
     const tmHomed = new Map<string, HTMLElement>();
