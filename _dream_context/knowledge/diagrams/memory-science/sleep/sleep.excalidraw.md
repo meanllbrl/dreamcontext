@@ -50,7 +50,7 @@ in parallel ^Dw1zpRIn
 			"type": "text",
 			"x": 60,
 			"y": 8,
-			"width": 843.6,
+			"width": 853.4799999999997,
 			"height": 48,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",

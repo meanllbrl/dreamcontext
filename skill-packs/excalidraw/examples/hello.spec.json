@@ -2,13 +2,83 @@
   "out": "examples/Hello Excalidraw.excalidraw.md",
   "background": "#ffffff",
   "elements": [
-    { "type": "text", "x": 0, "y": -70, "text": "excalidraw skill — portable smoke test", "fontSize": 28, "color": "#1971c2" },
-    { "type": "text", "x": 0, "y": -28, "text": "Give a text a width and it wraps to that width (no overlap). The image embeds via sha1 wikilink — no base64. Only skill-relative paths, so this runs in any project.", "fontSize": 15, "color": "#868e96", "width": 540 },
-    { "type": "rectangle", "x": 0, "y": 40, "width": 260, "height": 140, "strokeColor": "#1e1e1e", "backgroundColor": "#a5d8ff", "fillStyle": "solid", "strokeWidth": 2, "roundness": true },
-    { "type": "text", "x": 24, "y": 96, "text": "rounded rect\n+ fill", "fontSize": 20, "color": "#1e1e1e" },
-    { "type": "ellipse", "x": 340, "y": 40, "width": 160, "height": 140, "strokeColor": "#2f9e44", "backgroundColor": "#b2f2bb", "fillStyle": "hachure" },
-    { "type": "arrow", "points": [[260, 110], [340, 110]], "strokeColor": "#e8590c", "strokeWidth": 3 },
-    { "type": "text", "x": 0, "y": 220, "text": "embedded image (resolved from vault by sha1 wikilink):", "fontSize": 16, "color": "#555", "width": 420 },
-    { "type": "image", "x": 0, "y": 250, "path": "examples/sample.png", "width": 320 }
+    {
+      "type": "text",
+      "x": 0,
+      "y": -70,
+      "text": "excalidraw skill — portable smoke test",
+      "fontSize": 28,
+      "color": "#1971c2"
+    },
+    {
+      "type": "text",
+      "x": 0,
+      "y": -28,
+      "text": "Give a text a width and it wraps to that width (no overlap). The image embeds via sha1 wikilink — no base64. Only skill-relative paths, so this runs in any project.",
+      "fontSize": 15,
+      "color": "#868e96",
+      "width": 540
+    },
+    {
+      "type": "rectangle",
+      "x": 0,
+      "y": 40,
+      "width": 260,
+      "height": 140,
+      "strokeColor": "#1e1e1e",
+      "backgroundColor": "#a5d8ff",
+      "fillStyle": "solid",
+      "strokeWidth": 2,
+      "roundness": true
+    },
+    {
+      "type": "text",
+      "x": 24,
+      "y": 96,
+      "text": "rounded rect\n+ fill",
+      "fontSize": 20,
+      "color": "#1e1e1e"
+    },
+    {
+      "type": "ellipse",
+      "x": 340,
+      "y": 40,
+      "width": 160,
+      "height": 140,
+      "strokeColor": "#2f9e44",
+      "backgroundColor": "#b2f2bb",
+      "fillStyle": "hachure"
+    },
+    {
+      "type": "arrow",
+      "points": [
+        [
+          260,
+          110
+        ],
+        [
+          340,
+          110
+        ]
+      ],
+      "strokeColor": "#e8590c",
+      "strokeWidth": 3
+    },
+    {
+      "type": "text",
+      "x": 0,
+      "y": 220,
+      "text": "embedded image (resolved from vault by sha1 wikilink):",
+      "fontSize": 16,
+      "color": "#555",
+      "width": 540
+    },
+    {
+      "type": "image",
+      "x": 0,
+      "y": 250,
+      "path": "examples/sample.png",
+      "width": 320
+    }
   ]
 }

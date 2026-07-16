@@ -24,7 +24,7 @@ RemSleep agent — consolidates ^tRajueKB
 
 You — edit files or dashboard ^k4XbM5DM
 
-_dream_context/  (store) ^fjN7MjJt
+_dream_context/ (store) ^fjN7MjJt
 
 core/ — soul · user · memory
 style · tech · features · changelog ^7Wwyn5Lu
@@ -61,7 +61,7 @@ Agent starts with full context ^ktDBFGMY
 			"type": "text",
 			"x": 60,
 			"y": 8,
-			"width": 615.6,
+			"width": 633.08,
 			"height": 48,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
@@ -497,7 +497,7 @@ Agent starts with full context ^ktDBFGMY
 			"type": "text",
 			"x": 470,
 			"y": 90,
-			"width": 316.8,
+			"width": 328.2399999999999,
 			"height": 28,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
@@ -519,9 +519,9 @@ Agent starts with full context ^ktDBFGMY
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
-			"text": "_dream_context/  (store)",
-			"rawText": "_dream_context/  (store)",
-			"originalText": "_dream_context/  (store)",
+			"text": "_dream_context/ (store)",
+			"rawText": "_dream_context/ (store)",
+			"originalText": "_dream_context/ (store)",
 			"fontSize": 22,
 			"fontFamily": 5,
 			"textAlign": "left",

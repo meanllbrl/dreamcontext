@@ -1,7 +1,8 @@
 ---
+
 excalidraw-plugin: parsed
-tags:
-  - 'topic:excalidraw'
+tags: [excalidraw]
+
 ---
 ==⚠  Switch to EXCALIDRAW VIEW in the MORE OPTIONS menu of this document. ⚠== You can decompress Drawing data with the command palette: 'Decompress current Excalidraw file'. For more info check in plugin settings under 'Saving'
 
@@ -13,7 +14,8 @@ dreamcontext — memory upgrade plan ^0ynz9jHX
 
 Snapshot outgrew the injection budget
 79KB hook output → harness keeps a 2KB blind preview
-the brain is NOT loaded — cut is positional, not curated ^PQA9u9zK
+the brain is NOT loaded — cut is positional, not
+curated ^PQA9u9zK
 
 why it grew (linear with project age)
 decisions 14.7KB · 35 active tasks 10KB
@@ -42,7 +44,8 @@ budget pressure
 demotes, never deletes ^S1jXTrKU
 
 safety net: UserPromptSubmit recall knows the
-prompt — tier-4 docs return exactly when relevant ^EknL1QWB
+prompt — tier-4 docs return exactly when
+relevant ^EknL1QWB
 
 we choose the cut,
 not the harness ^1Y0xK1Q6
@@ -59,36 +62,45 @@ no more mid-sentence chops · effort S ^shTlt4sX
 
 PreCompact → digest live transcript
 reuse the session-digest pipeline as-is
-compacted-away decisions land in corpus · effort S-M ^zRueemdX
+compacted-away decisions land in corpus · effort
+S-M ^zRueemdX
 
 digest expiry gated on consolidation
 K=50 cap drops only sleep-processed digests
-nothing forgotten before it is consolidated · effort S ^52DGZgm3
+nothing forgotten before it is consolidated ·
+effort S ^52DGZgm3
 
 Higher impact — the flagship work ^CeJqYmZf
 
 snapshot hard token budget (~10-12K)
 enforces the demotion ladder + never-evict tier
-fixes the live 79KB breakage · effort M · impact ★★★ ^gVt22CGv
+fixes the live 79KB breakage · effort M · impact
+★★★ ^gVt22CGv
 
 sleep coverage audit at `sleep done`
-every salience≥2 bookmark/decision must be referenced
+every salience≥2 bookmark/decision must be
+referenced
 by changelog/knowledge/task — else warn with orphans ^6fsfRfrr
 
 section-level (H2) recall chunking
 hit the right section, not a 300-line file
-sharper Haiku index entries + cheaper follow-up reads ^P8J6TJcH
+sharper Haiku index entries + cheaper follow-up
+reads ^P8J6TJcH
 
 behind measured triggers (not yet)
-hierarchical knowledge index · persistent mtime index
+hierarchical knowledge index · persistent mtime
+index
 5K-doc benchmark · Haiku salience extraction ^Y2xOs5Pr
 
 start here ^sDmAZGCM
 
 then ^cO0iB0qL
 
-order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder → 4 coverage audit
-→ 5 H2 chunking → scale items only when corpus metrics trigger them ^xnz1tT4X
+execution order ^xnz1tT4X
+
+1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder
+→ 4 coverage audit → 5 H2 chunking. Scale items only when corpus
+metrics trigger them. ^VowXBQuU
 
 ## Embedded Files
 %%
@@ -104,7 +116,7 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"type": "text",
 			"x": 60,
 			"y": 8,
-			"width": 775.1999999999999,
+			"width": 787.3599999999998,
 			"height": 48,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
@@ -153,7 +165,7 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"VowXBQuUuBKouiRt"
+				"KouiRtOF3OaEwI3S"
 			],
 			"frameId": null,
 			"index": "a1",
@@ -173,9 +185,9 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"id": "PQA9u9zK",
 			"type": "text",
 			"x": 60,
-			"y": 116.25,
+			"y": 107.5,
 			"width": 560,
-			"height": 68,
+			"height": 85,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
 			"backgroundColor": "transparent",
@@ -185,7 +197,7 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"VowXBQuUuBKouiRt"
+				"KouiRtOF3OaEwI3S"
 			],
 			"frameId": null,
 			"index": "a2",
@@ -198,10 +210,10 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
-			"text": "Snapshot outgrew the injection budget\n79KB hook output → harness keeps a 2KB blind preview\nthe brain is NOT loaded — cut is positional, not curated",
-			"rawText": "Snapshot outgrew the injection budget\n79KB hook output → harness keeps a 2KB blind preview\nthe brain is NOT loaded — cut is positional, not curated",
-			"originalText": "Snapshot outgrew the injection budget\n79KB hook output → harness keeps a 2KB blind preview\nthe brain is NOT loaded — cut is positional, not curated",
-			"fontSize": 18,
+			"text": "Snapshot outgrew the injection budget\n79KB hook output → harness keeps a 2KB blind preview\nthe brain is NOT loaded — cut is positional, not\ncurated",
+			"rawText": "Snapshot outgrew the injection budget\n79KB hook output → harness keeps a 2KB blind preview\nthe brain is NOT loaded — cut is positional, not\ncurated",
+			"originalText": "Snapshot outgrew the injection budget\n79KB hook output → harness keeps a 2KB blind preview\nthe brain is NOT loaded — cut is positional, not\ncurated",
+			"fontSize": 17,
 			"fontFamily": 5,
 			"textAlign": "center",
 			"verticalAlign": "top",
@@ -225,7 +237,7 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"OF3OaEwI3SZiZedZ"
+				"ZiZedZOucWIxpGuC"
 			],
 			"frameId": null,
 			"index": "a3",
@@ -257,7 +269,7 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"OF3OaEwI3SZiZedZ"
+				"ZiZedZOucWIxpGuC"
 			],
 			"frameId": null,
 			"index": "a4",
@@ -327,9 +339,9 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 		{
 			"id": "ghkP1DEC",
 			"type": "text",
-			"x": 585.52,
+			"x": 581.6800000000001,
 			"y": 130,
-			"width": 128.96,
+			"width": 136.64,
 			"height": 20,
 			"angle": 0,
 			"strokeColor": "#495057",
@@ -367,7 +379,7 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"type": "text",
 			"x": 60,
 			"y": 270,
-			"width": 639.6,
+			"width": 644.2799999999999,
 			"height": 33,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
@@ -416,7 +428,7 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"OucWIxpGuC31NsHr"
+				"31NsHrB4Nitk5cMk"
 			],
 			"frameId": null,
 			"index": "a8",
@@ -448,7 +460,7 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"OucWIxpGuC31NsHr"
+				"31NsHrB4Nitk5cMk"
 			],
 			"frameId": null,
 			"index": "a9",
@@ -488,7 +500,7 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"B4Nitk5cMkQKqhX1"
+				"QKqhX1ULEV5rj7GH"
 			],
 			"frameId": null,
 			"index": "aA",
@@ -520,7 +532,7 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"B4Nitk5cMkQKqhX1"
+				"QKqhX1ULEV5rj7GH"
 			],
 			"frameId": null,
 			"index": "aB",
@@ -560,7 +572,7 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"ULEV5rj7GHVbctzF"
+				"VbctzFC2idfTSkk2"
 			],
 			"frameId": null,
 			"index": "aC",
@@ -592,7 +604,7 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"ULEV5rj7GHVbctzF"
+				"VbctzFC2idfTSkk2"
 			],
 			"frameId": null,
 			"index": "aD",
@@ -632,7 +644,7 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"C2idfTSkk2XlZvov"
+				"XlZvov0v1fNz5DGr"
 			],
 			"frameId": null,
 			"index": "aE",
@@ -664,7 +676,7 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"C2idfTSkk2XlZvov"
+				"XlZvov0v1fNz5DGr"
 			],
 			"frameId": null,
 			"index": "aF",
@@ -704,7 +716,7 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"0v1fNz5DGrmRd0i9"
+				"mRd0i95a8fCMJfkP"
 			],
 			"frameId": null,
 			"index": "aG",
@@ -736,7 +748,7 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"0v1fNz5DGrmRd0i9"
+				"mRd0i95a8fCMJfkP"
 			],
 			"frameId": null,
 			"index": "aH",
@@ -808,7 +820,7 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"type": "text",
 			"x": 0,
 			"y": 0,
-			"width": 376.96,
+			"width": 368.6399999999997,
 			"height": 40,
 			"angle": 0,
 			"strokeColor": "#495057",
@@ -857,7 +869,7 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"5a8fCMJfkPWYQXfi"
+				"WYQXfi5HZ4n91fhP"
 			],
 			"frameId": null,
 			"index": "aK",
@@ -877,9 +889,9 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"id": "EknL1QWB",
 			"type": "text",
 			"x": 60,
-			"y": 774,
+			"y": 764,
 			"width": 460,
-			"height": 40,
+			"height": 60,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
 			"backgroundColor": "transparent",
@@ -889,7 +901,7 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"5a8fCMJfkPWYQXfi"
+				"WYQXfi5HZ4n91fhP"
 			],
 			"frameId": null,
 			"index": "aL",
@@ -902,9 +914,9 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
-			"text": "safety net: UserPromptSubmit recall knows the\nprompt — tier-4 docs return exactly when relevant",
-			"rawText": "safety net: UserPromptSubmit recall knows the\nprompt — tier-4 docs return exactly when relevant",
-			"originalText": "safety net: UserPromptSubmit recall knows the\nprompt — tier-4 docs return exactly when relevant",
+			"text": "safety net: UserPromptSubmit recall knows the\nprompt — tier-4 docs return exactly when\nrelevant",
+			"rawText": "safety net: UserPromptSubmit recall knows the\nprompt — tier-4 docs return exactly when\nrelevant",
+			"originalText": "safety net: UserPromptSubmit recall knows the\nprompt — tier-4 docs return exactly when\nrelevant",
 			"fontSize": 16,
 			"fontFamily": 5,
 			"textAlign": "center",
@@ -959,9 +971,9 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 		{
 			"id": "1Y0xK1Q6",
 			"type": "text",
-			"x": 146.36,
-			"y": 250,
-			"width": 337.28,
+			"x": -24.51999999999981,
+			"y": 260.08,
+			"width": 331.5199999999998,
 			"height": 40,
 			"angle": 0,
 			"strokeColor": "#495057",
@@ -988,7 +1000,7 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"originalText": "we choose the cut,\nnot the harness",
 			"fontSize": 16,
 			"fontFamily": 5,
-			"textAlign": "center",
+			"textAlign": "right",
 			"verticalAlign": "top",
 			"containerId": null,
 			"lineHeight": 1.25,
@@ -999,7 +1011,7 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"type": "text",
 			"x": 640,
 			"y": 270,
-			"width": 421.2,
+			"width": 433.1599999999997,
 			"height": 33,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
@@ -1048,7 +1060,7 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"5HZ4n91fhPKrisJK"
+				"KrisJKKYnh1cVyKg"
 			],
 			"frameId": null,
 			"index": "aP",
@@ -1080,7 +1092,7 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"5HZ4n91fhPKrisJK"
+				"KrisJKKYnh1cVyKg"
 			],
 			"frameId": null,
 			"index": "aQ",
@@ -1120,7 +1132,7 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"KYnh1cVyKgn8ZuFe"
+				"n8ZuFe0mnDqZJ3LT"
 			],
 			"frameId": null,
 			"index": "aR",
@@ -1152,7 +1164,7 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"KYnh1cVyKgn8ZuFe"
+				"n8ZuFe0mnDqZJ3LT"
 			],
 			"frameId": null,
 			"index": "aS",
@@ -1192,7 +1204,7 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"0mnDqZJ3LTD0WWq5"
+				"D0WWq5eVFp0IwlKp"
 			],
 			"frameId": null,
 			"index": "aT",
@@ -1212,9 +1224,9 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"id": "zRueemdX",
 			"type": "text",
 			"x": 640,
-			"y": 576,
+			"y": 566,
 			"width": 480,
-			"height": 60,
+			"height": 80,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
 			"backgroundColor": "transparent",
@@ -1224,7 +1236,7 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"0mnDqZJ3LTD0WWq5"
+				"D0WWq5eVFp0IwlKp"
 			],
 			"frameId": null,
 			"index": "aU",
@@ -1237,9 +1249,9 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
-			"text": "PreCompact → digest live transcript\nreuse the session-digest pipeline as-is\ncompacted-away decisions land in corpus · effort S-M",
-			"rawText": "PreCompact → digest live transcript\nreuse the session-digest pipeline as-is\ncompacted-away decisions land in corpus · effort S-M",
-			"originalText": "PreCompact → digest live transcript\nreuse the session-digest pipeline as-is\ncompacted-away decisions land in corpus · effort S-M",
+			"text": "PreCompact → digest live transcript\nreuse the session-digest pipeline as-is\ncompacted-away decisions land in corpus · effort\nS-M",
+			"rawText": "PreCompact → digest live transcript\nreuse the session-digest pipeline as-is\ncompacted-away decisions land in corpus · effort\nS-M",
+			"originalText": "PreCompact → digest live transcript\nreuse the session-digest pipeline as-is\ncompacted-away decisions land in corpus · effort\nS-M",
 			"fontSize": 16,
 			"fontFamily": 5,
 			"textAlign": "center",
@@ -1264,7 +1276,7 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"eVFp0IwlKp6zkAXU"
+				"6zkAXUwBSwvLs41e"
 			],
 			"frameId": null,
 			"index": "aV",
@@ -1284,9 +1296,9 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"id": "52DGZgm3",
 			"type": "text",
 			"x": 640,
-			"y": 690,
+			"y": 680,
 			"width": 480,
-			"height": 60,
+			"height": 80,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
 			"backgroundColor": "transparent",
@@ -1296,7 +1308,7 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"eVFp0IwlKp6zkAXU"
+				"6zkAXUwBSwvLs41e"
 			],
 			"frameId": null,
 			"index": "aW",
@@ -1309,9 +1321,9 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
-			"text": "digest expiry gated on consolidation\nK=50 cap drops only sleep-processed digests\nnothing forgotten before it is consolidated · effort S",
-			"rawText": "digest expiry gated on consolidation\nK=50 cap drops only sleep-processed digests\nnothing forgotten before it is consolidated · effort S",
-			"originalText": "digest expiry gated on consolidation\nK=50 cap drops only sleep-processed digests\nnothing forgotten before it is consolidated · effort S",
+			"text": "digest expiry gated on consolidation\nK=50 cap drops only sleep-processed digests\nnothing forgotten before it is consolidated ·\neffort S",
+			"rawText": "digest expiry gated on consolidation\nK=50 cap drops only sleep-processed digests\nnothing forgotten before it is consolidated ·\neffort S",
+			"originalText": "digest expiry gated on consolidation\nK=50 cap drops only sleep-processed digests\nnothing forgotten before it is consolidated ·\neffort S",
 			"fontSize": 16,
 			"fontFamily": 5,
 			"textAlign": "center",
@@ -1325,7 +1337,7 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"type": "text",
 			"x": 1200,
 			"y": 270,
-			"width": 514.8,
+			"width": 523.6399999999996,
 			"height": 33,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
@@ -1374,7 +1386,7 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"wBSwvLs41e7znAD3"
+				"7znAD3LOvzZXJ6oZ"
 			],
 			"frameId": null,
 			"index": "aY",
@@ -1394,9 +1406,9 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"id": "gVt22CGv",
 			"type": "text",
 			"x": 1200,
-			"y": 348,
+			"y": 338,
 			"width": 510,
-			"height": 60,
+			"height": 80,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
 			"backgroundColor": "transparent",
@@ -1406,7 +1418,7 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"wBSwvLs41e7znAD3"
+				"7znAD3LOvzZXJ6oZ"
 			],
 			"frameId": null,
 			"index": "aZ",
@@ -1419,9 +1431,9 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
-			"text": "snapshot hard token budget (~10-12K)\nenforces the demotion ladder + never-evict tier\nfixes the live 79KB breakage · effort M · impact ★★★",
-			"rawText": "snapshot hard token budget (~10-12K)\nenforces the demotion ladder + never-evict tier\nfixes the live 79KB breakage · effort M · impact ★★★",
-			"originalText": "snapshot hard token budget (~10-12K)\nenforces the demotion ladder + never-evict tier\nfixes the live 79KB breakage · effort M · impact ★★★",
+			"text": "snapshot hard token budget (~10-12K)\nenforces the demotion ladder + never-evict tier\nfixes the live 79KB breakage · effort M · impact\n★★★",
+			"rawText": "snapshot hard token budget (~10-12K)\nenforces the demotion ladder + never-evict tier\nfixes the live 79KB breakage · effort M · impact\n★★★",
+			"originalText": "snapshot hard token budget (~10-12K)\nenforces the demotion ladder + never-evict tier\nfixes the live 79KB breakage · effort M · impact\n★★★",
 			"fontSize": 16,
 			"fontFamily": 5,
 			"textAlign": "center",
@@ -1446,7 +1458,7 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"LOvzZXJ6oZngPW6R"
+				"ngPW6RWu6enC7yQ1"
 			],
 			"frameId": null,
 			"index": "aa",
@@ -1466,9 +1478,9 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"id": "6fsfRfrr",
 			"type": "text",
 			"x": 1200,
-			"y": 462,
+			"y": 452,
 			"width": 510,
-			"height": 60,
+			"height": 80,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
 			"backgroundColor": "transparent",
@@ -1478,7 +1490,7 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"LOvzZXJ6oZngPW6R"
+				"ngPW6RWu6enC7yQ1"
 			],
 			"frameId": null,
 			"index": "ab",
@@ -1491,9 +1503,9 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
-			"text": "sleep coverage audit at `sleep done`\nevery salience≥2 bookmark/decision must be referenced\nby changelog/knowledge/task — else warn with orphans",
-			"rawText": "sleep coverage audit at `sleep done`\nevery salience≥2 bookmark/decision must be referenced\nby changelog/knowledge/task — else warn with orphans",
-			"originalText": "sleep coverage audit at `sleep done`\nevery salience≥2 bookmark/decision must be referenced\nby changelog/knowledge/task — else warn with orphans",
+			"text": "sleep coverage audit at `sleep done`\nevery salience≥2 bookmark/decision must be\nreferenced\nby changelog/knowledge/task — else warn with orphans",
+			"rawText": "sleep coverage audit at `sleep done`\nevery salience≥2 bookmark/decision must be\nreferenced\nby changelog/knowledge/task — else warn with orphans",
+			"originalText": "sleep coverage audit at `sleep done`\nevery salience≥2 bookmark/decision must be\nreferenced\nby changelog/knowledge/task — else warn with orphans",
 			"fontSize": 16,
 			"fontFamily": 5,
 			"textAlign": "center",
@@ -1518,7 +1530,7 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"Wu6enC7yQ1uuIjAk"
+				"uuIjAkiIa2EKUQLz"
 			],
 			"frameId": null,
 			"index": "ac",
@@ -1538,9 +1550,9 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"id": "P8J6TJcH",
 			"type": "text",
 			"x": 1200,
-			"y": 576,
+			"y": 566,
 			"width": 510,
-			"height": 60,
+			"height": 80,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
 			"backgroundColor": "transparent",
@@ -1550,7 +1562,7 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"Wu6enC7yQ1uuIjAk"
+				"uuIjAkiIa2EKUQLz"
 			],
 			"frameId": null,
 			"index": "ad",
@@ -1563,9 +1575,9 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
-			"text": "section-level (H2) recall chunking\nhit the right section, not a 300-line file\nsharper Haiku index entries + cheaper follow-up reads",
-			"rawText": "section-level (H2) recall chunking\nhit the right section, not a 300-line file\nsharper Haiku index entries + cheaper follow-up reads",
-			"originalText": "section-level (H2) recall chunking\nhit the right section, not a 300-line file\nsharper Haiku index entries + cheaper follow-up reads",
+			"text": "section-level (H2) recall chunking\nhit the right section, not a 300-line file\nsharper Haiku index entries + cheaper follow-up\nreads",
+			"rawText": "section-level (H2) recall chunking\nhit the right section, not a 300-line file\nsharper Haiku index entries + cheaper follow-up\nreads",
+			"originalText": "section-level (H2) recall chunking\nhit the right section, not a 300-line file\nsharper Haiku index entries + cheaper follow-up\nreads",
 			"fontSize": 16,
 			"fontFamily": 5,
 			"textAlign": "center",
@@ -1590,7 +1602,7 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"iIa2EKUQLzQqqICM"
+				"QqqICMQag0PGpnqe"
 			],
 			"frameId": null,
 			"index": "ae",
@@ -1610,9 +1622,9 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"id": "Y2xOs5Pr",
 			"type": "text",
 			"x": 1200,
-			"y": 690,
+			"y": 680,
 			"width": 510,
-			"height": 60,
+			"height": 80,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
 			"backgroundColor": "transparent",
@@ -1622,7 +1634,7 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"iIa2EKUQLzQqqICM"
+				"QqqICMQag0PGpnqe"
 			],
 			"frameId": null,
 			"index": "af",
@@ -1635,9 +1647,9 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
-			"text": "behind measured triggers (not yet)\nhierarchical knowledge index · persistent mtime index\n5K-doc benchmark · Haiku salience extraction",
-			"rawText": "behind measured triggers (not yet)\nhierarchical knowledge index · persistent mtime index\n5K-doc benchmark · Haiku salience extraction",
-			"originalText": "behind measured triggers (not yet)\nhierarchical knowledge index · persistent mtime index\n5K-doc benchmark · Haiku salience extraction",
+			"text": "behind measured triggers (not yet)\nhierarchical knowledge index · persistent mtime\nindex\n5K-doc benchmark · Haiku salience extraction",
+			"rawText": "behind measured triggers (not yet)\nhierarchical knowledge index · persistent mtime\nindex\n5K-doc benchmark · Haiku salience extraction",
+			"originalText": "behind measured triggers (not yet)\nhierarchical knowledge index · persistent mtime\nindex\n5K-doc benchmark · Haiku salience extraction",
 			"fontSize": 16,
 			"fontFamily": 5,
 			"textAlign": "center",
@@ -1692,9 +1704,9 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 		{
 			"id": "sDmAZGCM",
 			"type": "text",
-			"x": 530.4,
-			"y": 434.5,
-			"width": 99.2,
+			"x": 463.2,
+			"y": 444.58,
+			"width": 108.8,
 			"height": 20,
 			"angle": 0,
 			"strokeColor": "#495057",
@@ -1721,7 +1733,7 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"originalText": "start here",
 			"fontSize": 16,
 			"fontFamily": 5,
-			"textAlign": "center",
+			"textAlign": "right",
 			"verticalAlign": "top",
 			"containerId": null,
 			"lineHeight": 1.25,
@@ -1773,9 +1785,9 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 		{
 			"id": "cO0iB0qL",
 			"type": "text",
-			"x": 1140,
+			"x": 1133.44,
 			"y": 358,
-			"width": 40,
+			"width": 53.12,
 			"height": 20,
 			"angle": 0,
 			"strokeColor": "#495057",
@@ -1813,10 +1825,10 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"type": "rectangle",
 			"x": 640,
 			"y": 810,
-			"width": 1070,
-			"height": 84,
+			"width": 817,
+			"height": 84.25,
 			"angle": 0,
-			"strokeColor": "#1e1e1e",
+			"strokeColor": "#f08c00",
 			"backgroundColor": "#ffec99",
 			"fillStyle": "solid",
 			"strokeWidth": 2,
@@ -1824,7 +1836,7 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"Qag0PGpnqe5yHL4a"
+				"5yHL4asQMQS5a7fv"
 			],
 			"frameId": null,
 			"index": "ak",
@@ -1843,12 +1855,12 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 		{
 			"id": "xnz1tT4X",
 			"type": "text",
-			"x": 640,
-			"y": 830.75,
-			"width": 1070,
-			"height": 43,
+			"x": 656,
+			"y": 824,
+			"width": 147.90000000000003,
+			"height": 21,
 			"angle": 0,
-			"strokeColor": "#1e1e1e",
+			"strokeColor": "#f08c00",
 			"backgroundColor": "transparent",
 			"fillStyle": "solid",
 			"strokeWidth": 2,
@@ -1856,7 +1868,7 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"Qag0PGpnqe5yHL4a"
+				"5yHL4asQMQS5a7fv"
 			],
 			"frameId": null,
 			"index": "al",
@@ -1869,12 +1881,52 @@ order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder �
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
-			"text": "order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder → 4 coverage audit\n→ 5 H2 chunking → scale items only when corpus metrics trigger them",
-			"rawText": "order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder → 4 coverage audit\n→ 5 H2 chunking → scale items only when corpus metrics trigger them",
-			"originalText": "order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder → 4 coverage audit\n→ 5 H2 chunking → scale items only when corpus metrics trigger them",
+			"text": "execution order",
+			"rawText": "execution order",
+			"originalText": "execution order",
 			"fontSize": 17,
 			"fontFamily": 5,
-			"textAlign": "center",
+			"textAlign": "left",
+			"verticalAlign": "top",
+			"containerId": null,
+			"lineHeight": 1.25,
+			"autoResize": false
+		},
+		{
+			"id": "VowXBQuU",
+			"type": "text",
+			"x": 843.9000000000001,
+			"y": 824,
+			"width": 597,
+			"height": 56,
+			"angle": 0,
+			"strokeColor": "#1e1e1e",
+			"backgroundColor": "transparent",
+			"fillStyle": "solid",
+			"strokeWidth": 2,
+			"strokeStyle": "solid",
+			"roughness": 1,
+			"opacity": 100,
+			"groupIds": [
+				"5yHL4asQMQS5a7fv"
+			],
+			"frameId": null,
+			"index": "am",
+			"roundness": null,
+			"seed": 1661244424,
+			"version": 1,
+			"versionNonce": 1047799329,
+			"isDeleted": false,
+			"boundElements": [],
+			"updated": 1735689600000,
+			"link": null,
+			"locked": false,
+			"text": "1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder\n→ 4 coverage audit → 5 H2 chunking. Scale items only when corpus\nmetrics trigger them.",
+			"rawText": "1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder\n→ 4 coverage audit → 5 H2 chunking. Scale items only when corpus\nmetrics trigger them.",
+			"originalText": "1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder\n→ 4 coverage audit → 5 H2 chunking. Scale items only when corpus\nmetrics trigger them.",
+			"fontSize": 15,
+			"fontFamily": 5,
+			"textAlign": "left",
 			"verticalAlign": "top",
 			"containerId": null,
 			"lineHeight": 1.25,

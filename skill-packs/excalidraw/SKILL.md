@@ -2,15 +2,21 @@
 name: excalidraw
 description: >-
   Generate or extend Obsidian Excalidraw (.excalidraw.md) boards in this vault — visual-first diagrams,
-  funnels, wireframes/prototypes/mockups, flowcharts, image/screenshot layouts, shapes, arrows, frames,
-  lanes and grids — by writing a small JSON spec (or JS) and letting a deterministic script emit valid
-  plugin markup (so it costs ~no tokens and always renders). Text wraps to a readable measure and never
-  overlaps; the build audits the scene and warns on collisions. Embeds local images via the plugin's
+  charts (line/bar/comparison/stacked/gantt/quadrant/donut/heatmap/table/timeline/KPI/sparkline),
+  funnels, device mockups (iPhone/iPad/Mac) and wireframes/prototypes, flowcharts, image/screenshot
+  layouts, shapes, arrows, frames, lanes and grids — by passing DATA to ~44 ready-made deterministic
+  builders and letting a script emit valid plugin markup (so it costs ~no tokens and always renders).
+  Every builder works from JS or straight from a JSON spec. Text wraps to a readable measure; the build
+  audits the scene for overlaps, buried labels and over-long lines. Embeds local images via the plugin's
   sha1 wikilink trick (no base64). Triggers: '/excalidraw', 'draw this in excalidraw', 'make an
-  excalidraw board', 'excalidraw diagram', 'funnel', 'conversion funnel', 'wireframe', 'prototype',
-  'mockup', 'app/web screen mockup', 'funnel map board', 'embed screenshots into excalidraw', 'add
-  images to an excalidraw file', 'excalidraw çiz', 'excalidraw board oluştur', 'funnel çiz', 'wireframe
-  çiz', 'prototip çiz', 'ekran görüntülerini excalidraw a ekle'.
+  excalidraw board', 'excalidraw diagram', 'chart', 'line chart', 'bar chart', 'compare before/after',
+  'gantt', 'timeline', 'quadrant', 'impact effort matrix', 'heatmap', 'KPI tiles', 'dashboard board',
+  'funnel', 'conversion funnel', 'wireframe', 'prototype', 'mockup', 'app/web screen mockup', 'iphone
+  mockup', 'ipad mockup', 'mac app mockup', 'ui kit', 'icon button', 'funnel map board', 'embed
+  screenshots into excalidraw', 'add images to an excalidraw file', 'excalidraw çiz', 'excalidraw board
+  oluştur', 'grafik çiz', 'çizgi grafik', 'bar grafik', 'karşılaştırma grafiği', 'zaman çizelgesi',
+  'funnel çiz', 'wireframe çiz', 'prototip çiz', 'iphone ekranı çiz', 'ekran tasarımı çiz', 'ekran
+  görüntülerini excalidraw a ekle'.
 ---
 
 # Excalidraw board generator (Obsidian)
@@ -22,23 +28,34 @@ correct sha1 image links, fractional z-indices, and deterministic seeds (clean g
 
 ## Design principles (read first)
 
-Excalidraw's strength is **pictures, not paragraphs**. Three rules keep a board clean, readable, and
+Excalidraw's strength is **pictures, not paragraphs**. Four rules keep a board clean, readable, and
 visually rich — the primitives below enforce them, so lean on them instead of placing raw text/shapes:
 
-1. **Visual-first.** Explain complex things with *structure you can see*: a `funnel()` of trapezoid
-   bands, a `windowFrame()` wireframe of the actual UI, a `hub()`/flow of `card()`s, image placeholders.
+1. **Use a primitive; don't hand-roll one.** There are ~44 ready builders (charts, house style,
+   devices/UI) covering most of what a board needs — pass DATA, get correct geometry. This is the rule
+   the other three depend on: hand-rolled composites are where boards break. Reach for `charts.js` /
+   `wireframe.js` / `style.js` **before** writing rects + text yourself, and only drop to raw elements
+   when nothing fits. Every builder is also a spec JSON `type`, so a whole board can be pure JSON.
+2. **Visual-first.** Explain complex things with *structure you can see*: a `funnel()` of trapezoid
+   bands, a `device()` of the actual screen, a `lineChart()` of the trend, a `hub()`/flow of `card()`s.
    Reach for a picture before a sentence. When you must write, keep it to labels and short notes.
-2. **Readable measure — text never runs edge-to-edge.** Every text primitive wraps to a bounded width
-   (`READ_W ≈ 620px`, ~60 chars). Use `prose()` for body copy, `bullets()` for lists, `sectionTitle()`
-   for headers — they cap + wrap for you. A raw `text` element **must** carry a `width` (it then wraps
-   and the newlines are baked in, so it renders at that measure). Long unbounded text is the #1
-   readability killer.
-3. **No overlap — flow the layout, don't hand-place.** Build with `stack()` (top-to-bottom) and `row()`
+3. **Readable measure — text never runs edge-to-edge.** Every text primitive wraps to a bounded width
+   (`READ_W ≈ 620px`, ~60 chars). Use `prose()` for body copy, `bullets()` for lists, `callout()` for
+   titled notes, `sectionTitle()` for headers — they cap + wrap for you. A raw `text` element **must**
+   carry a `width` (it then wraps and the newlines are baked in, so it renders at that measure). Long
+   unbounded text is the #1 readability killer, and the build now **enforces** this (`longLines`).
+4. **No overlap — flow the layout, don't hand-place.** Build with `stack()` (top-to-bottom) and `row()`
    (left-to-right): each block is placed after the previous one's *measured* size, so boxes can't
-   collide. The build step also **audits the finished scene and prints `[excalidraw] N overlap(s)`** if
-   two boxes stack — treat any such warning as a bug to fix (usually: switch that spot to `stack()`/`row()`).
+   collide. Every build audits the finished scene and reports
+   `overlaps=N buriedText=N longLines=N` — any non-zero count is a real defect (see **Layout rules**).
 
-Everything downstream (the primitives, the auditor, the wrap-baking) exists to make these three cheap.
+Everything downstream (the primitives, the auditors, the wrap-baking) exists to make these four cheap.
+
+> **A clean audit is necessary, not sufficient — render the board and LOOK at it.** This is not a
+> platitude: in practice most defects that reach a finished board are ones the audit cannot see —
+> a mis-scaled axis, an axis caption wrapping one glyph per line, a sentence torn across a gap,
+> content escaping a device bezel, a row label silently truncated. The audit catches geometry it can
+> measure; your eyes catch the rest. See **Verify** for the headless render command.
 
 ## The one trick that makes images work
 An image element references `fileId` = **sha1 of the image file**. The `## Embedded Files` section
@@ -51,7 +68,10 @@ maps `<sha1>: [[image.png]]`. The plugin resolves the picture from the vault via
 ```bash
 node .claude/skills/excalidraw/scripts/build_excalidraw.js <spec.json> [--out <path.excalidraw.md>]
 ```
-Write a spec JSON, then run it. The script prints `elements/images/texts` counts on success.
+Write a spec JSON, then run it. On success it prints
+`elements=… images=… texts=… overlaps=… buriedText=… longLines=…` — the last three must all be **0**.
+A spec element's `type` may be a primitive OR any of the ~44 composites (charts, house style, devices,
+`stack`/`row`), so a whole board can be pure JSON with no generator script.
 
 ### JS API (for pipelines that generate many boards)
 ```js
@@ -151,6 +171,11 @@ Key conventions:
 hardcode absolute paths. This keeps the generator portable: move the folder and it still runs.
 
 ### Element types
+A `type` is either a **primitive** (below) or any **composite** — every chart (`lineChart`, `barCompare`,
+`gantt`, `quadrant`, `heatmap`, `table`, `kpi`, `callout`, …), house-style widget (`card`, `funnel`,
+`windowFrame`, `chip`, …) or layout (`stack`, `row`, which nest via `items`). Composites expand to
+primitives before the build, so the JSON surface is as capable as the JS API. See **Charts** below.
+
 - `text`     — `{ x, y, text, fontSize?, color?, width?, align?, fontFamily? }` (fontFamily 1=hand, 2=normal, 3=code). **Set `width` for any caption/label that must stay inside a column or card** → the text WRAPS to that width (autoResize off) and its height is computed from the wrapped line count. Omit `width` only for short single-line text you want sized to content (it renders on one line and will overlap neighbours if long).
 - `image`    — `{ x, y, path, width? , height? }` — give ONE of width/height; the other is derived from aspect. `path` is an absolute file path.
 - `rectangle`/`ellipse`/`diamond` — `{ x, y, width, height, strokeColor?, backgroundColor?, fillStyle?(solid|hachure|cross-hatch), strokeWidth?, roundness?(true=rounded) }`
@@ -215,16 +240,110 @@ layout helpers can measure and place blocks for you — no coordinate math, no o
 - `READ_W` / `NOTE_W` are the exported reading measures; `translate(els,dx,dy)` / `bbox(els)` are the
   low-level helpers the layout uses.
 
+## Charts (`scripts/lib/charts.js`) — data in, correct geometry out
+
+**Never hand-roll a chart from rects + text.** These builders own the axes, scales, wrapping, label
+thinning and collision-avoidance; you supply DATA only. Same contract as `style.js` (return an
+`ElementSpec[]` carrying `.x/.y/.w/.h/.nextY`), so they drop straight into `stack()`/`row()`. Nothing
+is random or time-dependent — same input ⇒ same bytes. Each chart is **grouped**, so it moves as one
+unit and the auditors treat its internals as intentional.
+
+| builder | use it for |
+|---|---|
+| **`lineChart({series,xLabels,area,markers})`** | trend over time — DAU, spend, error rate. `series[].points` is a `number[]` aligned to `xLabels` (or `[{x,y}]` for irregular spacing) |
+| **`barChart({bars,horizontal})`** | one value per category. `horizontal:true` when labels are long — they get their own gutter instead of being crammed under vertical bars |
+| **`barCompare({groups,seriesLabels})`** | the "did it move?" chart — same categories across 2+ scenarios (W1↔W2, before/after, plan/actual) |
+| **`stackedBar({groups,seriesLabels})`** | composition per category (revenue by plan, traffic by source); segments stack to each group's total |
+| **`gantt({tasks,today})`** | timeline bars over a date axis. `start`/`end` take `'YYYY-MM-DD'`; `done:0..1` overlays progress; `milestone:true` draws a diamond |
+| **`quadrant({items,xAxis,yAxis,quadrantLabels})`** | 2×2 positioning map (impact×effort, RICE). `items[]` carry `{label,x,y}` in 0..1; top-right is tinted as the "go" quadrant |
+| **`donut({slices,inner})`** / **`pie`** | composition of a whole. Keep to ≤ ~6 slices — beyond that `barChart` reads better |
+| **`sparkline({points})`** | a tiny trend with no axes, for inside a KPI tile or table cell. A glyph, not a chart |
+| **`heatmap({rows,cols,values})`** | matrix of intensities (cohort×day retention). Cell tint interpolates, and the label flips to white on dark cells |
+| **`table({headers,rows,align})`** | a real grid — column widths derive from content, so cells never spill. A cell may be `{text,color}` |
+| **`timeline({events})`** | milestones on a track; labels alternate above/below so they can't collide |
+| **`kpi({label,value,delta,spark})`** | the metric tile: three type sizes for hierarchy, optional sparkline footer |
+| **`callout({title,text,sideTitle})`** | a titled note band. Body copy is **always** bounded to `READ_W`; a wide band puts its heading *beside* the text rather than stretching one line |
+
+**`w` is a MAXIMUM, not a target.** `callout()` sizes itself to its own wrapped text — hand it 1080px for
+620px of copy and it returns ~780px, not a band with 27% dead space. The title gutter hugs the title too.
+That is what makes a primitive atomic: the caller says *at most this wide*, the builder works out the rest.
+Pin `titleW` only to align the gutters of several stacked callouts; pass `fit: false` for a deliberate
+full-width band. `prose()` already hugs the same way. (`card()`/`kpi()` stay caller-sized on purpose —
+a row of tiles should be uniform.)
+
+Helpers for custom charts: `linScale`, `niceScale`, `fmtNum`, `plotFrame`, `chartHead`, `xTickLabels`.
+
+**Never split short copy into newspaper columns.** A 1–2 line "column" reads as a sentence torn across
+a gap — worse than a long line. `callout()` handles this for you.
+
+### Declarative charts — any composite works as a spec `type`
+Every chart and house-style widget is also a **spec JSON element type**, expanded to primitives before
+the build. An agent can draw a whole board without writing a generator — `stack`/`row` nest as JSON too:
+```jsonc
+{ "out": "./Board.excalidraw.md", "elements": [
+  { "type": "stack", "x": 40, "y": 40, "gap": 40, "items": [
+    { "type": "sectionTitle", "text": "Weekly review", "fontSize": 34 },
+    { "type": "row", "gap": 24, "items": [
+      { "type": "kpi", "w": 260, "label": "D0 ROAS", "value": "0.25", "delta": "flat", "color": "red" },
+      { "type": "lineChart", "w": 620, "h": 300, "xLabels": ["3","5","7"],
+        "series": [{ "label": "DAU", "color": "blue", "points": [58, 69, 32] }] }
+    ]}
+  ]}
+]}
+```
+Reach for the JS API instead when you need loops, data mapping, or many boards from one data set.
+Runnable: `node examples/chart_board.js` (every builder) · `node scripts/build_excalidraw.js examples/chart.spec.json` (pure JSON).
+
 ### Funnel
 - **`funnel({x,y,w,stageH,stages,topW,botW})`** → a conversion/marketing funnel: filled trapezoid bands
   narrowing top→bottom, one per `stages[]` entry `{ label, note?, color? }`. Labels auto-fit; an optional
   `note` (a metric / drop-off) is placed in the right margin with a short non-crossing connector. Colors
   cycle through the semantic palette unless you set `color`. Returns `.nextY`.
 
-### Wireframe / prototype kit (neutral grayscale — sketch a UI, not decoration)
+## Devices + product UI (`scripts/lib/wireframe.js`) — sketch a real screen
+
+For **app/product** wireframes. One require gives the whole UI kit (it re-exports style.js's wireframe
+bits too). Every builder is also a spec JSON `type`.
+
+- **`device({kind,x,y,w?,label?,dark?,content?})`** → a device shell at **real proportions**
+  (`iphone` 393×852 · `ipad` 834×1194 · `mac` 1440×900), with status bar, dynamic island / camera /
+  notch, home indicator, Mac menu bar + laptop foot. Returns **`.inner`** — the safe content region
+  (inside the bezel, below the island, above the home indicator) — and `.screen`.
+  **Pass `content: (inner) => els`**: it's the only place overflow can be caught. The build audit is
+  blind here — a device shell is a filled polygon and `isOpaqueBox()` only knows rect/ellipse/diamond/
+  image — so a hardcoded child width silently renders *outside the bezel*. `content` warns instead.
+- **`appBar({title,back,actions})`** · **`tabBar({items,active})`** — mobile top/bottom chrome.
+- **`icon({name,size})`** — 31 line-drawn glyphs. `iconNames()` lists them; an unknown name draws a
+  box so a typo is visible rather than silently absent.
+- **`iconButton({icon,shape,variant,color})`** — `shape`: circle/square/rounded · `variant`: solid/outline/ghost.
+- **`listRow({title,subtitle,leading,trailing})`** — `leading` an icon name or `'avatar'`; `trailing`
+  an icon name, `'toggle'`, or text.
+- **`toggle({on})`** · **`segmented({items,active})`** · **`slider({value})`** · **`searchField({placeholder})`**
+- Plus the generic bits: `windowFrame` (browser/app chrome), `navbar`, `button`, `input`, `textRows`,
+  `imagePlaceholder`, `avatar`, `chip`, `divider`.
+
+```js
+const { device, appBar, tabBar, listRow } = require('.../lib/wireframe.js');
+P(device({ kind: 'iphone', x: 60, y: 80, label: 'Ayarlar', content: (inner) => stack({
+  x: inner.x, y: inner.y, gap: 0, items: [
+    (x, y) => appBar({ x, y, w: inner.w, title: 'Ayarlar', back: true }),
+    (x, y) => listRow({ x, y, w: inner.w, leading: 'bell', title: 'Bildirimler', trailing: 'toggle' }),
+  ],
+})}));
+```
+Runnable: `node examples/wireframe_board.js` — three devices, every control, the full icon set.
+
+**Corner radius gotcha**: `roundness:true` maps to Excalidraw's ADAPTIVE_RADIUS, capped at ~32px —
+too tight for a phone (an iPhone's is ~14% of its width). Device shells are therefore filled
+**polygons** with exact arc corners (`roundRect()` is exported if you need the same trick).
+
+### Generic UI bits (grayscale — sketch a UI, not decoration)
+These live in `style.js` and are re-exported by `wireframe.js`, so `require` either one. Use them
+inside a `device()` for an app screen, or a `windowFrame()` for a web page.
 - **`windowFrame({x,y,w,h,kind,url,title})`** → a browser (`kind:'browser'`, draws a URL bar) or app
   (`kind:'app'`, centered title) window with traffic-light chrome. **Returns `.inner = {x,y,w,h}`** — the
   safe content region; place children there (via `stack`/`row`) and they won't hit the chrome.
+  For an **iPhone/iPad/Mac** shell with real proportions, use `device()` above instead.
 - **`navbar({x,y,w,brand,items,cta})`** → top nav: brand left, links right, optional CTA button.
 - **`button({x,y,w,h,text,color,variant})`** → solid CTA (default) or `variant:'outline'`.
 - **`input({x,y,w,h,placeholder,label})`** → a form field with a muted placeholder + optional label.
@@ -234,21 +353,36 @@ layout helpers can measure and place blocks for you — no coordinate math, no o
 - **`avatar({cx,cy,r})`** → round user placeholder. **`chip({x,y,text,color})`** → a pill/tag/badge.
   **`divider({x,y,w})`** → a thin rule.
 
-Compose these into a `buildExcalidraw({ out, elements })` call. Runnable examples:
-`examples/style_board.js` (cards + connectors + lanes) and `examples/visual_board.js` (funnel + browser
-prototype via `stack`/`row` + readable prose — the visual-first kit end to end).
 Conventions: color nodes by ROLE, label every arrow, put specs in side-annotations, use big plain
 section titles to break the board into "slides", keep one idea per card, and **prefer a picture to a
 paragraph**.
+
+### Which lib?
+| file | owns | reach for it when |
+|---|---|---|
+| `lib/style.js` | house style + layout: `card`, `node`, `connector`, `hub`, `column`, `funnel`, `prose`, `bullets`, `sectionTitle`, `chip`, `divider`, **`stack`/`row`**, `READ_W`, `measureText`, `wrapToWidth`, `fitText` | diagrams, flows, any board's skeleton |
+| `lib/charts.js` | data viz + copy: `lineChart`, `barChart`, `barCompare`, `stackedBar`, `gantt`, `quadrant`, `donut`/`pie`, `sparkline`, `heatmap`, `table`, `timeline`, `kpi`, `callout` | anything with numbers |
+| `lib/wireframe.js` | product UI: `device`, `appBar`, `tabBar`, `icon`, `iconButton`, `listRow`, `toggle`, `segmented`, `slider`, `searchField` (+ re-exports style.js's UI bits) | app/screen mockups |
+
+All three share one contract — an `ElementSpec[]` carrying `.x/.y/.w/.h/.nextX/.nextY` — so anything
+composes inside `stack()`/`row()`, and everything is also a spec JSON `type`.
 
 ### Layout rules that keep boards clean
 - **Flow the layout with `stack()` / `row()`; never eyeball coordinates for a column or a grid.** They
   place each block after the previous one's measured size, so nothing overlaps by construction. Reserve
   hand-picked `x/y` for a handful of top-level anchors (where a funnel goes vs where a window goes).
-- **Heed the overlap audit.** After every build the generator prints `[excalidraw] N overlap(s) …` if two
-  filled boxes collide (it ignores intentional nesting like a button inside a window). A non-zero count is
-  a real defect — fix it, usually by flowing that region through `stack()`/`row()`. Opt out with
-  `spec.audit === false` only if you *know* an overlap is deliberate.
+- **Heed the audit — all three checks.** Every build reports `overlaps=N buriedText=N longLines=N`, and
+  prints a `[excalidraw]` warning naming the offenders. Any non-zero count is a real defect:
+  - `overlaps` — two filled boxes collide (intentional nesting like a button inside a window is ignored).
+  - `buriedText` — a text LINE is >30% swallowed by a box it isn't grouped with, i.e. an unreadable
+    label. Box-vs-box cannot see this: a section title eaten by a card is text-vs-box.
+  - `longLines` — body copy past the reading measure (`READ_W`, +10% tolerance; display type ≥28px is
+    exempt). This is the skill's headline rule, and it is now enforced rather than merely documented.
+
+  Fix by flowing that region through `stack()`/`row()`, or by using the primitives that cap the measure
+  (`prose`/`bullets`/`callout`). Opt out with `spec.audit === false` only if you *know* it's deliberate.
+  **A clean audit is necessary, not sufficient — always render the board and LOOK at it.** The audit
+  cannot see a chart with a mis-scaled axis, a torn sentence, or a layout that is merely ugly.
 - **Size boxes for their text.** A card guarantees the label stays *inside*, but it does so by shrinking
   the font — a long label in a small box ends up tiny. Give wide/long labels a wider `w` (or more `h`),
   or split the idea across two cards. Watch for `[excalidraw]` fit warnings on the console.
@@ -279,11 +413,24 @@ so they work in any project):
 cd .claude/skills/excalidraw
 node scripts/build_excalidraw.js examples/hello.spec.json   # spec-driven: text/shapes/image → examples/Hello Excalidraw.excalidraw.md
 node examples/style_board.js                                # JS API: card/connector/lane house style → examples/Style Demo.excalidraw.md
-node examples/visual_board.js                              # visual-first kit: funnel + browser prototype + readable prose (prints `overlaps: 0`)
+node examples/visual_board.js                              # visual-first kit: funnel + browser prototype + readable prose
+node examples/chart_board.js                               # every chart in the kit, one board (smoke test)
+node scripts/build_excalidraw.js examples/chart.spec.json  # charts declaratively, pure JSON, no generator
+node examples/atomic_check.js                             # every type from ONE spec element + degenerate input
+node examples/wireframe_board.js                          # devices (iPhone/iPad/Mac) + every UI control + icon set
 ```
-Each build prints an `overlaps=` count (and a `[excalidraw]` warning if any boxes collide) — a clean
-board reports `overlaps: 0`.
-Then open the resulting board in Obsidian (Excalidraw view) to confirm it renders.
+`atomic_check.js` is the guard on the kit's core promise: each type must draw from a **single spec
+element with data only**, and must not throw on degenerate input (empty series, one point, all-equal
+values). Add a chart to `charts.js` but forget to register it in `COMPOSITES` and this fails. It exits
+non-zero, so it can be wired into CI.
+Each build prints `overlaps=N buriedText=N longLines=N` — a clean board reports **0 for all three**.
+
+**Then LOOK at the board.** A clean audit is necessary, not sufficient: it cannot see a mis-scaled
+axis, a sentence torn across a gap, or a layout that is simply ugly. Either open it in Obsidian
+(Excalidraw view), or render it headlessly and inspect the PNG:
+```bash
+node scripts/diagrams/render-excalidraw.mjs <board.excalidraw.md> /tmp/out.png 1   # (in this repo)
+```
 
 See `reference/format.md` for the exact `.excalidraw.md` anatomy reverse-engineered from this vault.
 

@@ -21,11 +21,60 @@
 //   "elements": [ <ElementSpec>, ... ]
 // }
 // ElementSpec.type: text | image | rectangle | ellipse | diamond | line | arrow | frame
+//   ...plus any COMPOSITE type (chart / house-style widget / layout) — see COMPOSITES below. A
+//   composite element is expanded into primitives before the build, so the CLI can draw a whole
+//   lineChart or funnel declaratively without writing a generator script.
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { generateNKeysBetween } = require('./lib/fractional-indexing.js');
 const { imageSize } = require('./lib/imagesize.js');
+const STYLE = require('./lib/style.js');
+const CHARTS = require('./lib/charts.js');
+const WF = require('./lib/wireframe.js');
+
+// ---------- composite element types (declarative surface) ----------
+// Every entry maps a spec `type` to a builder that returns an ElementSpec[]. The expander runs BEFORE
+// the primitive loop and is recursive, so composites may emit composites. This is what makes the JSON
+// surface as capable as the JS API — the same builders back both.
+const COMPOSITES = {
+  // charts
+  lineChart: CHARTS.lineChart, barChart: CHARTS.barChart, barCompare: CHARTS.barCompare,
+  stackedBar: CHARTS.stackedBar, gantt: CHARTS.gantt, quadrant: CHARTS.quadrant,
+  donut: CHARTS.donut, pie: (o) => CHARTS.donut(Object.assign({ inner: 0 }, o)),
+  sparkline: CHARTS.sparkline, heatmap: CHARTS.heatmap, table: CHARTS.table,
+  timeline: CHARTS.timeline, kpi: CHARTS.kpi, callout: CHARTS.callout,
+  // house style
+  funnel: STYLE.funnel, card: STYLE.card, node: STYLE.node, column: STYLE.column, hub: STYLE.hub,
+  connector: STYLE.connector, annotate: STYLE.annotate, chip: STYLE.chip, divider: STYLE.divider,
+  prose: STYLE.prose, bullets: STYLE.bullets, sectionTitle: STYLE.sectionTitle,
+  // wireframe kit
+  windowFrame: STYLE.windowFrame, navbar: STYLE.navbar, button: STYLE.button, input: STYLE.input,
+  textRows: STYLE.textRows, imagePlaceholder: STYLE.imagePlaceholder, avatar: STYLE.avatar,
+  // device + product-UI kit
+  device: WF.device, appBar: WF.appBar, tabBar: WF.tabBar, icon: WF.icon, iconButton: WF.iconButton,
+  listRow: WF.listRow, toggle: WF.toggle, segmented: WF.segmented, slider: WF.slider,
+  searchField: WF.searchField, roundRect: WF.roundRect,
+};
+// Layout composites take `items` (child specs) rather than scalar props, so they expand differently.
+const LAYOUTS = { stack: STYLE.stack, row: STYLE.row };
+
+function expandElements(list) {
+  const out = [];
+  for (const e of (list || [])) {
+    if (!e || typeof e !== 'object' || Array.isArray(e)) { if (e) out.push(e); continue; }
+    if (LAYOUTS[e.type]) {
+      // each item is itself a spec (or array of specs) → expand first, then let stack/row measure it
+      const items = (e.items || []).map((it) => expandElements(Array.isArray(it) ? it : [it]));
+      out.push(...expandElements(LAYOUTS[e.type](Object.assign({}, e, { items }))));
+    } else if (COMPOSITES[e.type]) {
+      out.push(...expandElements(COMPOSITES[e.type](e)));
+    } else {
+      out.push(e);
+    }
+  }
+  return out;
+}
 
 // ---------- deterministic PRNG (stable seeds => clean git diffs) ----------
 function mulberry32(seed) {
@@ -195,10 +244,111 @@ function auditOverlaps(elements) {
   return hits.length;
 }
 
+// A text element buried under a foreign opaque box. The box-vs-box audit above cannot see this: a
+// section title swallowed by a card is text-vs-box, and it ships looking like `overlaps: 0`.
+//
+// Z-ORDER is the discriminator, and it is what keeps this check honest. Excalidraw paints in array
+// order, so a box only BURIES text that was pushed BEFORE it. Text pushed after a box is drawn on top
+// — that's just a label on a shape (the `hello.spec.json` pattern), which is fine and must not warn.
+// Text inside its OWN composite (same group) never flags either.
+function auditTextCollisions(elements) {
+  const zOf = new Map();
+  elements.forEach((e, i) => zOf.set(e, i));
+  const isOpaqueBox = (e) => (
+    ((e.type === 'rectangle' || e.type === 'ellipse' || e.type === 'diamond') && e.backgroundColor && e.backgroundColor !== 'transparent') ||
+    e.type === 'image'
+  );
+  const grp = (e) => (e.groupIds && e.groupIds[0]) || null;
+  const texts = elements.filter((e) => e.type === 'text' && e.width > 0 && e.height > 0);
+  const boxes = elements.filter(isOpaqueBox);
+  const hits = [];
+  for (const t of texts) {
+    // Check EACH LINE, not the element as a whole: a 2-line title with its second line swallowed only
+    // scores ~18% element-wide and would slip through, yet that line is just as unreadable. A line is
+    // also only as wide as its glyphs — measuring the full `width` box would over-report centered text.
+    const lines = String(t.text).split('\n');
+    const lh = (t.fontSize || 20) * 1.25;
+    let worst = null;
+    for (let i = 0; i < lines.length; i++) {
+      const lw = measureText(lines[i], t.fontSize || 20);
+      if (lw <= 0) continue;
+      const align = t.textAlign || 'left';
+      const lx = align === 'center' ? t.x + (t.width - lw) / 2 : align === 'right' ? t.x + t.width - lw : t.x;
+      const ly = t.y + i * lh;
+      const lArea = Math.max(1, lw * lh);
+      for (const b of boxes) {
+        if (grp(t) && grp(t) === grp(b)) continue;        // its own composite's chrome
+        if (zOf.get(b) < zOf.get(t)) continue;            // box painted first ⇒ text sits ON it (a label)
+        const ix = Math.max(0, Math.min(lx + lw, b.x + b.width) - Math.max(lx, b.x));
+        const iy = Math.max(0, Math.min(ly + lh, b.y + b.height) - Math.max(ly, b.y));
+        const frac = (ix * iy) / lArea;
+        if (frac > 0.3 && (!worst || frac > worst.frac)) worst = { t, b, frac, line: lines[i] };
+      }
+      // Text-on-text. Two texts have no reason to share pixels — this is always a defect, and z-order
+      // can't save it (both are painted, so they just tangle). A wrapped title landing on the subtitle
+      // beneath it is the classic case, and neither the box audit nor the measure audit can see it.
+      for (const u of texts) {
+        if (u === t) continue;
+        if (grp(t) && grp(t) === grp(u)) continue;
+        if (zOf.get(u) < zOf.get(t)) continue;            // report the pair once, from the lower element
+        const ulines = String(u.text).split('\n');
+        const ulh = (u.fontSize || 20) * 1.25;
+        for (let k = 0; k < ulines.length; k++) {
+          const uw = measureText(ulines[k], u.fontSize || 20);
+          if (uw <= 0) continue;
+          const ua = u.textAlign || 'left';
+          const ux = ua === 'center' ? u.x + (u.width - uw) / 2 : ua === 'right' ? u.x + u.width - uw : u.x;
+          const uy = u.y + k * ulh;
+          const ix = Math.max(0, Math.min(lx + lw, ux + uw) - Math.max(lx, ux));
+          const iy = Math.max(0, Math.min(ly + lh, uy + ulh) - Math.max(ly, uy));
+          const frac = (ix * iy) / lArea;
+          if (frac > 0.3 && (!worst || frac > worst.frac)) worst = { t, b: u, frac, line: lines[i], vsText: true };
+        }
+      }
+    }
+    if (worst) hits.push(worst);
+  }
+  if (hits.length) {
+    const sample = hits.slice(0, 5).map((h) => {
+      const onto = h.vsText ? `text ${JSON.stringify(String(h.b.text).split('\n')[0].slice(0, 22))}` : `${h.b.type}@(${Math.round(h.b.x)},${Math.round(h.b.y)})`;
+      return `  ${JSON.stringify(String(h.line).slice(0, 30))} collides with ${onto} (${Math.round(h.frac * 100)}%)`;
+    }).join('\n');
+    try {
+      console.warn(`[excalidraw] ${hits.length} text element(s) collide — the label is unreadable.\n${sample}${hits.length > 5 ? '\n  …' : ''}\n  Fix: flow the region with stack()/row(); a wrapped title landing on the text below is the usual cause.`);
+    } catch (e) {}
+  }
+  return hits.length;
+}
+
+// Body copy that runs past the reading measure. This is the skill's headline rule and it was, until
+// now, unenforced — a board could ship 1400px lines reporting a clean audit. Display type (>= 28px)
+// is scanned, not read, so it is exempt; a 10% tolerance keeps borderline headings quiet.
+function auditMeasure(elements, limit) {
+  const cap = (limit || STYLE.READ_W) * 1.1;
+  const hits = [];
+  for (const e of elements) {
+    if (e.type !== 'text' || !e.text || e.fontSize >= 28) continue;
+    let longest = 0;
+    for (const line of String(e.text).split('\n')) longest = Math.max(longest, STYLE.measureText(line, e.fontSize));
+    if (longest > cap) hits.push({ e, longest });
+  }
+  if (hits.length) {
+    hits.sort((a, b) => b.longest - a.longest);
+    const sample = hits.slice(0, 5).map((h) => `  ${Math.round(h.longest)}px  ${JSON.stringify(String(h.e.text).split('\n')[0].slice(0, 36))}`).join('\n');
+    try {
+      console.warn(`[excalidraw] ${hits.length} text block(s) exceed the reading measure (${Math.round(cap)}px) — long lines are the #1 readability killer.\n${sample}${hits.length > 5 ? '\n  …' : ''}\n  Fix: use prose()/bullets()/callout() (they cap at READ_W), or set an explicit \`width\` on the text element.`);
+    } catch (e) {}
+  }
+  return hits.length;
+}
+
 // ---------- main build ----------
 function buildExcalidraw(spec) {
   const outPath = spec.out;
   if (!outPath) throw new Error('spec.out (output .excalidraw.md path) is required');
+  // Expand composite types (charts, house-style widgets, stack/row) down to primitives first, so the
+  // rest of the build only ever sees text/image/rectangle/line/… — one code path for JSON and JS.
+  spec = Object.assign({}, spec, { elements: expandElements(spec.elements) });
   const boardDir = path.dirname(path.resolve(outPath));
   const vaultRoot = spec.vaultRoot || findVaultRoot(boardDir) || boardDir;
   const attachDir = spec.attachDir || 'Attachments';
@@ -358,8 +508,14 @@ function buildExcalidraw(spec) {
   const keys = generateNKeysBetween(null, null, elements.length);
   elements.forEach((el, i) => { el.index = keys[i]; });
 
-  // catch overlapping opaque boxes before the board ships (opt out with spec.audit === false)
-  const overlaps = spec.audit === false ? 0 : auditOverlaps(elements);
+  // Catch the three ways a board ships broken (opt out with spec.audit === false):
+  //   overlaps       — two opaque boxes stacked
+  //   buriedText     — a label swallowed by a foreign box (box-vs-box audit is blind to this)
+  //   longLines      — body copy past the reading measure
+  const doAudit = spec.audit !== false;
+  const overlaps = doAudit ? auditOverlaps(elements) : 0;
+  const buriedText = doAudit ? auditTextCollisions(elements) : 0;
+  const longLines = doAudit ? auditMeasure(elements, spec.measure) : 0;
 
   const scene = {
     type: 'excalidraw',
@@ -390,7 +546,7 @@ function buildExcalidraw(spec) {
   fs.mkdirSync(boardDir, { recursive: true });
   fs.writeFileSync(outPath, md, 'utf8');
 
-  return { outPath, elements: elements.length, images: embedded.size, texts: textEntries.length, overlaps, vaultRoot };
+  return { outPath, elements: elements.length, images: embedded.size, texts: textEntries.length, overlaps, buriedText, longLines, vaultRoot };
 }
 
 // ---------- layout helpers (JS API) ----------
@@ -473,5 +629,5 @@ if (require.main === module) {
   const spec = JSON.parse(fs.readFileSync(specPath, 'utf8'));
   if (out) spec.out = out;
   const res = buildExcalidraw(spec);
-  console.log(`OK  ${res.outPath}\n    elements=${res.elements} images=${res.images} texts=${res.texts} overlaps=${res.overlaps}\n    vaultRoot=${res.vaultRoot}`);
+  console.log(`OK  ${res.outPath}\n    elements=${res.elements} images=${res.images} texts=${res.texts} overlaps=${res.overlaps} buriedText=${res.buriedText} longLines=${res.longLines}\n    vaultRoot=${res.vaultRoot}`);
 }

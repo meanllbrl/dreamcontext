@@ -12,79 +12,89 @@ tags: [excalidraw]
 ## Text Elements
 dreamcontext — how two vaults federate ^8UJVNazI
 
-vault registry (~/.dreamcontext) — every _dream_context/ project addressable by name · the one shared index ^uZgq3K86
+vault registry
+(~/.dreamcontext) ^uZgq3K86
 
-PUSH — sleep-driven, automatic ^rpHxmS0p
+Every _dream_context/ project addressable by name · the one shared
+index. ^rpHxmS0p
+
+PUSH — sleep-driven, automatic ^pBLsZF5n
 
 Vault A — sleep cycle
 sleep-federation
-specialist ^agY9AOMY
+specialist ^9LQo8Bl3
 
 computeDigest
 FULL corpus − federated
-− already-synced (watermark) ^VfopHFFc
+− already-synced (watermark) ^iyUHHlxl
 
 consent gate
 receiver must declare
-in/both + shareable ^Rovl2PZ6
+in/both + shareable ^RaSKZZ3M
 
 Vault B
 .federation-inbox
-(digest entries) ^7xsVjuzl
+(digest entries) ^sVGEmo11
 
-since last sync ^rTcF5e27
+since last sync ^MCDFaV6n
 
 BM25-ranked to
-peer interest ^FvQvJxR6
+peer interest ^54dbcBHF
 
-if consent ^aUaeOEqw
+if consent ^oFzjoa8e
 
-source = FULL corpus (knowledge+feature+task+changelog+memory)
-NOT knowledge-only · only a title+summary digest crosses ^A1UZK8rX
+source = FULL corpus
+(knowledge+feature+task+changelog+memory) — NOT
+knowledge-only. Only a title+summary digest crosses. ^vZ4yvgtM
 
 Vault B
-federation drain ^xDW52PNu
+federation drain ^8mJWPaH6
 
 knowledge/<slug>--from-A.md
 federated:true + provenance
 (origin vault · entryId ·
-timestamp) ^lWngCJJ8
+timestamp) ^8q3UOzll
 
 normal recall surfaces it
-like any local doc ^qCwRv0NU
+like any local doc ^ESGf1PdI
 
-ingest as first-class ^Rxsci5h7
+ingest as first-class ^nqBUZL4m
 
-now local ^nHOcz38e
+now local ^YrfFz2ce
 
-kind map: changelog→changelog · task→decision · rest→knowledge.
-All land as knowledge/*.md on the receiver. ^iCW4IDMJ
+kind map: changelog→changelog ·
+task→decision · rest→knowledge. All land as
+knowledge/*.md on the receiver. ^aTUuVlCP
 
-PULL — on-demand (you run it) ^aTUuVlCP
+PULL — on-demand (you run it) ^BBformww
 
 dreamcontext memory recall
---connected / --all-vaults ^cZPqBgQ4
+--connected / --all-vaults ^8nWGeC63
 
 crossVaultRecall
 search A + consenting peers LIVE
 federated docs excluded (no
-re-serve) ^l6wcezVe
+re-serve) ^I3SseCAB
 
 merged hits, tagged by vault
-<vault>::<type>/<slug> ^AcmJT1OK
+<vault>::<type>/<slug> ^KR4KxubL
 
-rankScore desc ^V6mQqcTZ
+rankScore desc ^Om0niCOn
 
-The only knobs ^Om0niCOn
+The only knobs ^rS6lACWv
 
 • direction: out / in / both
-• status: active / stale (dead peer skipped)
-• consent: receiver shareable + reciprocal
-• topics: filter WHAT (not WHEN) ^rS6lACWv
+• status: active / stale (dead peer
+   skipped)
+• consent: receiver shareable +
+   reciprocal
+• topics: filter WHAT (not WHEN) ^XdWdhavx
 
 • There is no "when X, read Y" trigger.
-• PUSH copies peer digests in at every sleep cycle → then they are just local.
-• PULL is live but only when you pass --connected. The per-prompt hook is local-only. ^XdWdhavx
+• PUSH copies peer digests in at every sleep cycle → then they are just
+   local.
+• PULL is live but only when you pass --connected. The per-prompt hook is
+   local-only. ^4Yu2IfUW
 
 ## Embedded Files
 %%
@@ -100,7 +110,7 @@ The only knobs ^Om0niCOn
 			"type": "text",
 			"x": 60,
 			"y": 8,
-			"width": 866.4,
+			"width": 875.5199999999996,
 			"height": 48,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
@@ -138,10 +148,10 @@ The only knobs ^Om0niCOn
 			"type": "rectangle",
 			"x": 60,
 			"y": 70,
-			"width": 1180,
-			"height": 60,
+			"width": 814,
+			"height": 70.5,
 			"angle": 0,
-			"strokeColor": "#1e1e1e",
+			"strokeColor": "#868e96",
 			"backgroundColor": "#e9ecef",
 			"fillStyle": "solid",
 			"strokeWidth": 2,
@@ -149,7 +159,7 @@ The only knobs ^Om0niCOn
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"4Yu2IfUWv70amf4x"
+				"0amf4xgnVN628Ryw"
 			],
 			"frameId": null,
 			"index": "a1",
@@ -168,12 +178,12 @@ The only knobs ^Om0niCOn
 		{
 			"id": "uZgq3K86",
 			"type": "text",
-			"x": 60,
-			"y": 89.375,
-			"width": 1180,
-			"height": 21,
+			"x": 76,
+			"y": 84,
+			"width": 167.62000000000006,
+			"height": 43,
 			"angle": 0,
-			"strokeColor": "#1e1e1e",
+			"strokeColor": "#868e96",
 			"backgroundColor": "transparent",
 			"fillStyle": "solid",
 			"strokeWidth": 2,
@@ -181,7 +191,7 @@ The only knobs ^Om0niCOn
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"4Yu2IfUWv70amf4x"
+				"0amf4xgnVN628Ryw"
 			],
 			"frameId": null,
 			"index": "a2",
@@ -194,12 +204,12 @@ The only knobs ^Om0niCOn
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
-			"text": "vault registry (~/.dreamcontext) — every _dream_context/ project addressable by name · the one shared index",
-			"rawText": "vault registry (~/.dreamcontext) — every _dream_context/ project addressable by name · the one shared index",
-			"originalText": "vault registry (~/.dreamcontext) — every _dream_context/ project addressable by name · the one shared index",
+			"text": "vault registry\n(~/.dreamcontext)",
+			"rawText": "vault registry\n(~/.dreamcontext)",
+			"originalText": "vault registry\n(~/.dreamcontext)",
 			"fontSize": 17,
 			"fontFamily": 5,
-			"textAlign": "center",
+			"textAlign": "left",
 			"verticalAlign": "top",
 			"containerId": null,
 			"lineHeight": 1.25,
@@ -208,9 +218,49 @@ The only knobs ^Om0niCOn
 		{
 			"id": "rpHxmS0p",
 			"type": "text",
+			"x": 283.62000000000006,
+			"y": 84,
+			"width": 574.1999999999999,
+			"height": 38,
+			"angle": 0,
+			"strokeColor": "#1e1e1e",
+			"backgroundColor": "transparent",
+			"fillStyle": "solid",
+			"strokeWidth": 2,
+			"strokeStyle": "solid",
+			"roughness": 1,
+			"opacity": 100,
+			"groupIds": [
+				"0amf4xgnVN628Ryw"
+			],
+			"frameId": null,
+			"index": "a3",
+			"roundness": null,
+			"seed": 1737291533,
+			"version": 1,
+			"versionNonce": 4202222766,
+			"isDeleted": false,
+			"boundElements": [],
+			"updated": 1735689600000,
+			"link": null,
+			"locked": false,
+			"text": "Every _dream_context/ project addressable by name · the one shared\nindex.",
+			"rawText": "Every _dream_context/ project addressable by name · the one shared\nindex.",
+			"originalText": "Every _dream_context/ project addressable by name · the one shared\nindex.",
+			"fontSize": 15,
+			"fontFamily": 5,
+			"textAlign": "left",
+			"verticalAlign": "top",
+			"containerId": null,
+			"lineHeight": 1.25,
+			"autoResize": false
+		},
+		{
+			"id": "pBLsZF5n",
+			"type": "text",
 			"x": 60,
 			"y": 168,
-			"width": 432,
+			"width": 441.6000000000001,
 			"height": 30,
 			"angle": 0,
 			"strokeColor": "#1971c2",
@@ -222,11 +272,11 @@ The only knobs ^Om0niCOn
 			"opacity": 100,
 			"groupIds": [],
 			"frameId": null,
-			"index": "a3",
+			"index": "a4",
 			"roundness": null,
-			"seed": 1737291533,
+			"seed": 140552691,
 			"version": 1,
-			"versionNonce": 4202222766,
+			"versionNonce": 2941416617,
 			"isDeleted": false,
 			"boundElements": [],
 			"updated": 1735689600000,
@@ -244,7 +294,7 @@ The only knobs ^Om0niCOn
 			"autoResize": false
 		},
 		{
-			"id": "pBLsZF5n",
+			"id": "agY9AOMY",
 			"type": "rectangle",
 			"x": 60,
 			"y": 220,
@@ -259,16 +309,16 @@ The only knobs ^Om0niCOn
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"gnVN628RywDfuc9K"
+				"Dfuc9Kut1b5st4b3"
 			],
 			"frameId": null,
-			"index": "a4",
+			"index": "a5",
 			"roundness": {
 				"type": 3
 			},
-			"seed": 140552691,
+			"seed": 857572803,
 			"version": 1,
-			"versionNonce": 2941416617,
+			"versionNonce": 1272569194,
 			"isDeleted": false,
 			"boundElements": [],
 			"updated": 1735689600000,
@@ -276,7 +326,7 @@ The only knobs ^Om0niCOn
 			"locked": false
 		},
 		{
-			"id": "agY9AOMY",
+			"id": "9LQo8Bl3",
 			"type": "text",
 			"x": 60,
 			"y": 238,
@@ -291,14 +341,14 @@ The only knobs ^Om0niCOn
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"gnVN628RywDfuc9K"
+				"Dfuc9Kut1b5st4b3"
 			],
 			"frameId": null,
-			"index": "a5",
+			"index": "a6",
 			"roundness": null,
-			"seed": 857572803,
+			"seed": 1384235436,
 			"version": 1,
-			"versionNonce": 1272569194,
+			"versionNonce": 296502291,
 			"isDeleted": false,
 			"boundElements": [],
 			"updated": 1735689600000,
@@ -316,7 +366,7 @@ The only knobs ^Om0niCOn
 			"autoResize": false
 		},
 		{
-			"id": "9LQo8Bl3",
+			"id": "VfopHFFc",
 			"type": "rectangle",
 			"x": 340,
 			"y": 210,
@@ -331,16 +381,16 @@ The only knobs ^Om0niCOn
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"ut1b5st4b3PedtVo"
+				"PedtVoxT4iagTulD"
 			],
 			"frameId": null,
-			"index": "a6",
+			"index": "a7",
 			"roundness": {
 				"type": 3
 			},
-			"seed": 1384235436,
+			"seed": 3474790778,
 			"version": 1,
-			"versionNonce": 296502291,
+			"versionNonce": 3719233846,
 			"isDeleted": false,
 			"boundElements": [],
 			"updated": 1735689600000,
@@ -348,7 +398,7 @@ The only knobs ^Om0niCOn
 			"locked": false
 		},
 		{
-			"id": "VfopHFFc",
+			"id": "iyUHHlxl",
 			"type": "text",
 			"x": 340,
 			"y": 238,
@@ -363,14 +413,14 @@ The only knobs ^Om0niCOn
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"ut1b5st4b3PedtVo"
+				"PedtVoxT4iagTulD"
 			],
 			"frameId": null,
-			"index": "a7",
+			"index": "a8",
 			"roundness": null,
-			"seed": 3474790778,
+			"seed": 2058718516,
 			"version": 1,
-			"versionNonce": 3719233846,
+			"versionNonce": 4101801516,
 			"isDeleted": false,
 			"boundElements": [],
 			"updated": 1735689600000,
@@ -388,7 +438,7 @@ The only knobs ^Om0niCOn
 			"autoResize": false
 		},
 		{
-			"id": "iyUHHlxl",
+			"id": "Rovl2PZ6",
 			"type": "rectangle",
 			"x": 700,
 			"y": 220,
@@ -403,16 +453,16 @@ The only knobs ^Om0niCOn
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"xT4iagTulD0kyGdt"
+				"0kyGdtctPD4GkVRX"
 			],
 			"frameId": null,
-			"index": "a8",
+			"index": "a9",
 			"roundness": {
 				"type": 3
 			},
-			"seed": 2058718516,
+			"seed": 3561886836,
 			"version": 1,
-			"versionNonce": 4101801516,
+			"versionNonce": 804940952,
 			"isDeleted": false,
 			"boundElements": [],
 			"updated": 1735689600000,
@@ -420,7 +470,7 @@ The only knobs ^Om0niCOn
 			"locked": false
 		},
 		{
-			"id": "Rovl2PZ6",
+			"id": "RaSKZZ3M",
 			"type": "text",
 			"x": 700,
 			"y": 238,
@@ -435,14 +485,14 @@ The only knobs ^Om0niCOn
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"xT4iagTulD0kyGdt"
+				"0kyGdtctPD4GkVRX"
 			],
 			"frameId": null,
-			"index": "a9",
+			"index": "aA",
 			"roundness": null,
-			"seed": 3561886836,
+			"seed": 1784051683,
 			"version": 1,
-			"versionNonce": 804940952,
+			"versionNonce": 3704226397,
 			"isDeleted": false,
 			"boundElements": [],
 			"updated": 1735689600000,
@@ -460,7 +510,7 @@ The only knobs ^Om0niCOn
 			"autoResize": false
 		},
 		{
-			"id": "RaSKZZ3M",
+			"id": "7xsVjuzl",
 			"type": "rectangle",
 			"x": 990,
 			"y": 220,
@@ -475,16 +525,16 @@ The only knobs ^Om0niCOn
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"ctPD4GkVRXv4cZLw"
+				"v4cZLwyyBVQ48i6U"
 			],
 			"frameId": null,
-			"index": "aA",
+			"index": "aB",
 			"roundness": {
 				"type": 3
 			},
-			"seed": 1784051683,
+			"seed": 3626271367,
 			"version": 1,
-			"versionNonce": 3704226397,
+			"versionNonce": 2177401241,
 			"isDeleted": false,
 			"boundElements": [],
 			"updated": 1735689600000,
@@ -492,7 +542,7 @@ The only knobs ^Om0niCOn
 			"locked": false
 		},
 		{
-			"id": "7xsVjuzl",
+			"id": "sVGEmo11",
 			"type": "text",
 			"x": 990,
 			"y": 238,
@@ -507,14 +557,14 @@ The only knobs ^Om0niCOn
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"ctPD4GkVRXv4cZLw"
+				"v4cZLwyyBVQ48i6U"
 			],
 			"frameId": null,
-			"index": "aB",
+			"index": "aC",
 			"roundness": null,
-			"seed": 3626271367,
+			"seed": 206211346,
 			"version": 1,
-			"versionNonce": 2177401241,
+			"versionNonce": 2308862115,
 			"isDeleted": false,
 			"boundElements": [],
 			"updated": 1735689600000,
@@ -532,7 +582,7 @@ The only knobs ^Om0niCOn
 			"autoResize": false
 		},
 		{
-			"id": "sVGEmo11",
+			"id": "rTcF5e27",
 			"type": "arrow",
 			"x": 280,
 			"y": 268,
@@ -540,49 +590,6 @@ The only knobs ^Om0niCOn
 			"height": 0,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
-			"backgroundColor": "transparent",
-			"fillStyle": "solid",
-			"strokeWidth": 2,
-			"strokeStyle": "solid",
-			"roughness": 1,
-			"opacity": 100,
-			"groupIds": [],
-			"frameId": null,
-			"index": "aC",
-			"roundness": null,
-			"seed": 206211346,
-			"version": 1,
-			"versionNonce": 2308862115,
-			"isDeleted": false,
-			"boundElements": [],
-			"updated": 1735689600000,
-			"link": null,
-			"locked": false,
-			"points": [
-				[
-					0,
-					0
-				],
-				[
-					60,
-					0
-				]
-			],
-			"lastCommittedPoint": null,
-			"startBinding": null,
-			"endBinding": null,
-			"startArrowhead": null,
-			"endArrowhead": "arrow"
-		},
-		{
-			"id": "rTcF5e27",
-			"type": "text",
-			"x": 232.4,
-			"y": 248,
-			"width": 155.2,
-			"height": 20,
-			"angle": 0,
-			"strokeColor": "#495057",
 			"backgroundColor": "transparent",
 			"fillStyle": "solid",
 			"strokeWidth": 2,
@@ -601,26 +608,31 @@ The only knobs ^Om0niCOn
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
-			"text": "since last sync",
-			"rawText": "since last sync",
-			"originalText": "since last sync",
-			"fontSize": 16,
-			"fontFamily": 5,
-			"textAlign": "center",
-			"verticalAlign": "top",
-			"containerId": null,
-			"lineHeight": 1.25,
-			"autoResize": false
+			"points": [
+				[
+					0,
+					0
+				],
+				[
+					60,
+					0
+				]
+			],
+			"lastCommittedPoint": null,
+			"startBinding": null,
+			"endBinding": null,
+			"startArrowhead": null,
+			"endArrowhead": "arrow"
 		},
 		{
 			"id": "MCDFaV6n",
-			"type": "arrow",
-			"x": 640,
-			"y": 268,
-			"width": 60,
-			"height": 0,
+			"type": "text",
+			"x": 232.4,
+			"y": 248,
+			"width": 155.2,
+			"height": 20,
 			"angle": 0,
-			"strokeColor": "#1e1e1e",
+			"strokeColor": "#495057",
 			"backgroundColor": "transparent",
 			"fillStyle": "solid",
 			"strokeWidth": 2,
@@ -639,31 +651,26 @@ The only knobs ^Om0niCOn
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
-			"points": [
-				[
-					0,
-					0
-				],
-				[
-					60,
-					0
-				]
-			],
-			"lastCommittedPoint": null,
-			"startBinding": null,
-			"endBinding": null,
-			"startArrowhead": null,
-			"endArrowhead": "arrow"
+			"text": "since last sync",
+			"rawText": "since last sync",
+			"originalText": "since last sync",
+			"fontSize": 16,
+			"fontFamily": 5,
+			"textAlign": "center",
+			"verticalAlign": "top",
+			"containerId": null,
+			"lineHeight": 1.25,
+			"autoResize": false
 		},
 		{
 			"id": "FvQvJxR6",
-			"type": "text",
-			"x": 532.08,
-			"y": 248,
-			"width": 275.84,
-			"height": 40,
+			"type": "arrow",
+			"x": 640,
+			"y": 268,
+			"width": 60,
+			"height": 0,
 			"angle": 0,
-			"strokeColor": "#495057",
+			"strokeColor": "#1e1e1e",
 			"backgroundColor": "transparent",
 			"fillStyle": "solid",
 			"strokeWidth": 2,
@@ -682,6 +689,49 @@ The only knobs ^Om0niCOn
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
+			"points": [
+				[
+					0,
+					0
+				],
+				[
+					60,
+					0
+				]
+			],
+			"lastCommittedPoint": null,
+			"startBinding": null,
+			"endBinding": null,
+			"startArrowhead": null,
+			"endArrowhead": "arrow"
+		},
+		{
+			"id": "54dbcBHF",
+			"type": "text",
+			"x": 532.08,
+			"y": 248,
+			"width": 275.84,
+			"height": 40,
+			"angle": 0,
+			"strokeColor": "#495057",
+			"backgroundColor": "transparent",
+			"fillStyle": "solid",
+			"strokeWidth": 2,
+			"strokeStyle": "solid",
+			"roughness": 1,
+			"opacity": 100,
+			"groupIds": [],
+			"frameId": null,
+			"index": "aG",
+			"roundness": null,
+			"seed": 2983666266,
+			"version": 1,
+			"versionNonce": 253082409,
+			"isDeleted": false,
+			"boundElements": [],
+			"updated": 1735689600000,
+			"link": null,
+			"locked": false,
 			"text": "BM25-ranked to\npeer interest",
 			"rawText": "BM25-ranked to\npeer interest",
 			"originalText": "BM25-ranked to\npeer interest",
@@ -694,7 +744,7 @@ The only knobs ^Om0niCOn
 			"autoResize": false
 		},
 		{
-			"id": "54dbcBHF",
+			"id": "aUaeOEqw",
 			"type": "arrow",
 			"x": 930,
 			"y": 268,
@@ -710,11 +760,11 @@ The only knobs ^Om0niCOn
 			"opacity": 100,
 			"groupIds": [],
 			"frameId": null,
-			"index": "aG",
+			"index": "aH",
 			"roundness": null,
-			"seed": 2983666266,
+			"seed": 1879613314,
 			"version": 1,
-			"versionNonce": 253082409,
+			"versionNonce": 2600503765,
 			"isDeleted": false,
 			"boundElements": [],
 			"updated": 1735689600000,
@@ -737,7 +787,7 @@ The only knobs ^Om0niCOn
 			"endArrowhead": "arrow"
 		},
 		{
-			"id": "aUaeOEqw",
+			"id": "oFzjoa8e",
 			"type": "text",
 			"x": 905.6,
 			"y": 248,
@@ -753,11 +803,11 @@ The only knobs ^Om0niCOn
 			"opacity": 100,
 			"groupIds": [],
 			"frameId": null,
-			"index": "aH",
+			"index": "aI",
 			"roundness": null,
-			"seed": 1879613314,
+			"seed": 677255870,
 			"version": 1,
-			"versionNonce": 2600503765,
+			"versionNonce": 2094556987,
 			"isDeleted": false,
 			"boundElements": [],
 			"updated": 1735689600000,
@@ -775,60 +825,17 @@ The only knobs ^Om0niCOn
 			"autoResize": false
 		},
 		{
-			"id": "oFzjoa8e",
+			"id": "A1UZK8rX",
 			"type": "arrow",
 			"x": 640,
-			"y": 150,
+			"y": 146,
 			"width": 70,
-			"height": 72,
+			"height": 76,
 			"angle": 0,
 			"strokeColor": "#495057",
 			"backgroundColor": "transparent",
 			"fillStyle": "solid",
 			"strokeWidth": 1.5,
-			"strokeStyle": "solid",
-			"roughness": 1,
-			"opacity": 100,
-			"groupIds": [],
-			"frameId": null,
-			"index": "aI",
-			"roundness": null,
-			"seed": 677255870,
-			"version": 1,
-			"versionNonce": 2094556987,
-			"isDeleted": false,
-			"boundElements": [],
-			"updated": 1735689600000,
-			"link": null,
-			"locked": false,
-			"points": [
-				[
-					0,
-					72
-				],
-				[
-					70,
-					0
-				]
-			],
-			"lastCommittedPoint": null,
-			"startBinding": null,
-			"endBinding": null,
-			"startArrowhead": null,
-			"endArrowhead": "arrow"
-		},
-		{
-			"id": "A1UZK8rX",
-			"type": "text",
-			"x": 716,
-			"y": 140.4,
-			"width": 615.04,
-			"height": 40,
-			"angle": 0,
-			"strokeColor": "#495057",
-			"backgroundColor": "transparent",
-			"fillStyle": "solid",
-			"strokeWidth": 2,
 			"strokeStyle": "solid",
 			"roughness": 1,
 			"opacity": 100,
@@ -844,9 +851,52 @@ The only knobs ^Om0niCOn
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
-			"text": "source = FULL corpus (knowledge+feature+task+changelog+memory)\nNOT knowledge-only · only a title+summary digest crosses",
-			"rawText": "source = FULL corpus (knowledge+feature+task+changelog+memory)\nNOT knowledge-only · only a title+summary digest crosses",
-			"originalText": "source = FULL corpus (knowledge+feature+task+changelog+memory)\nNOT knowledge-only · only a title+summary digest crosses",
+			"points": [
+				[
+					0,
+					76
+				],
+				[
+					70,
+					0
+				]
+			],
+			"lastCommittedPoint": null,
+			"startBinding": null,
+			"endBinding": null,
+			"startArrowhead": null,
+			"endArrowhead": "arrow"
+		},
+		{
+			"id": "vZ4yvgtM",
+			"type": "text",
+			"x": 716,
+			"y": 136.4,
+			"width": 520,
+			"height": 60,
+			"angle": 0,
+			"strokeColor": "#495057",
+			"backgroundColor": "transparent",
+			"fillStyle": "solid",
+			"strokeWidth": 2,
+			"strokeStyle": "solid",
+			"roughness": 1,
+			"opacity": 100,
+			"groupIds": [],
+			"frameId": null,
+			"index": "aK",
+			"roundness": null,
+			"seed": 3018678501,
+			"version": 1,
+			"versionNonce": 1262937690,
+			"isDeleted": false,
+			"boundElements": [],
+			"updated": 1735689600000,
+			"link": null,
+			"locked": false,
+			"text": "source = FULL corpus\n(knowledge+feature+task+changelog+memory) — NOT\nknowledge-only. Only a title+summary digest crosses.",
+			"rawText": "source = FULL corpus\n(knowledge+feature+task+changelog+memory) — NOT\nknowledge-only. Only a title+summary digest crosses.",
+			"originalText": "source = FULL corpus\n(knowledge+feature+task+changelog+memory) — NOT\nknowledge-only. Only a title+summary digest crosses.",
 			"fontSize": 16,
 			"fontFamily": 5,
 			"textAlign": "left",
@@ -856,7 +906,7 @@ The only knobs ^Om0niCOn
 			"autoResize": false
 		},
 		{
-			"id": "vZ4yvgtM",
+			"id": "xDW52PNu",
 			"type": "rectangle",
 			"x": 990,
 			"y": 380,
@@ -871,16 +921,16 @@ The only knobs ^Om0niCOn
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"yyBVQ48i6U7hacO2"
+				"7hacO2nkfSTcq6sI"
 			],
 			"frameId": null,
-			"index": "aK",
+			"index": "aL",
 			"roundness": {
 				"type": 3
 			},
-			"seed": 3018678501,
+			"seed": 582155355,
 			"version": 1,
-			"versionNonce": 1262937690,
+			"versionNonce": 2319799850,
 			"isDeleted": false,
 			"boundElements": [],
 			"updated": 1735689600000,
@@ -888,7 +938,7 @@ The only knobs ^Om0niCOn
 			"locked": false
 		},
 		{
-			"id": "xDW52PNu",
+			"id": "8mJWPaH6",
 			"type": "text",
 			"x": 990,
 			"y": 400,
@@ -903,14 +953,14 @@ The only knobs ^Om0niCOn
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"yyBVQ48i6U7hacO2"
+				"7hacO2nkfSTcq6sI"
 			],
 			"frameId": null,
-			"index": "aL",
+			"index": "aM",
 			"roundness": null,
-			"seed": 582155355,
+			"seed": 963449533,
 			"version": 1,
-			"versionNonce": 2319799850,
+			"versionNonce": 1661483683,
 			"isDeleted": false,
 			"boundElements": [],
 			"updated": 1735689600000,
@@ -928,7 +978,7 @@ The only knobs ^Om0niCOn
 			"autoResize": false
 		},
 		{
-			"id": "8mJWPaH6",
+			"id": "lWngCJJ8",
 			"type": "rectangle",
 			"x": 620,
 			"y": 372,
@@ -943,16 +993,16 @@ The only knobs ^Om0niCOn
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"nkfSTcq6sIf2Ploh"
+				"f2PlohAPl2amF7nE"
 			],
 			"frameId": null,
-			"index": "aM",
+			"index": "aN",
 			"roundness": {
 				"type": 3
 			},
-			"seed": 963449533,
+			"seed": 929194801,
 			"version": 1,
-			"versionNonce": 1661483683,
+			"versionNonce": 135067602,
 			"isDeleted": false,
 			"boundElements": [],
 			"updated": 1735689600000,
@@ -960,7 +1010,7 @@ The only knobs ^Om0niCOn
 			"locked": false
 		},
 		{
-			"id": "lWngCJJ8",
+			"id": "8q3UOzll",
 			"type": "text",
 			"x": 620,
 			"y": 382.5,
@@ -975,14 +1025,14 @@ The only knobs ^Om0niCOn
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"nkfSTcq6sIf2Ploh"
+				"f2PlohAPl2amF7nE"
 			],
 			"frameId": null,
-			"index": "aN",
+			"index": "aO",
 			"roundness": null,
-			"seed": 929194801,
+			"seed": 891266531,
 			"version": 1,
-			"versionNonce": 135067602,
+			"versionNonce": 3372036763,
 			"isDeleted": false,
 			"boundElements": [],
 			"updated": 1735689600000,
@@ -1000,7 +1050,7 @@ The only knobs ^Om0niCOn
 			"autoResize": false
 		},
 		{
-			"id": "8q3UOzll",
+			"id": "qCwRv0NU",
 			"type": "rectangle",
 			"x": 300,
 			"y": 380,
@@ -1015,16 +1065,16 @@ The only knobs ^Om0niCOn
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"APl2amF7nEIUZW7N"
+				"IUZW7Nal1H7hcEUS"
 			],
 			"frameId": null,
-			"index": "aO",
+			"index": "aP",
 			"roundness": {
 				"type": 3
 			},
-			"seed": 891266531,
+			"seed": 2149111664,
 			"version": 1,
-			"versionNonce": 3372036763,
+			"versionNonce": 2934379180,
 			"isDeleted": false,
 			"boundElements": [],
 			"updated": 1735689600000,
@@ -1032,7 +1082,7 @@ The only knobs ^Om0niCOn
 			"locked": false
 		},
 		{
-			"id": "qCwRv0NU",
+			"id": "ESGf1PdI",
 			"type": "text",
 			"x": 300,
 			"y": 400,
@@ -1047,14 +1097,14 @@ The only knobs ^Om0niCOn
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"APl2amF7nEIUZW7N"
+				"IUZW7Nal1H7hcEUS"
 			],
 			"frameId": null,
-			"index": "aP",
+			"index": "aQ",
 			"roundness": null,
-			"seed": 2149111664,
+			"seed": 3184019104,
 			"version": 1,
-			"versionNonce": 2934379180,
+			"versionNonce": 1960455600,
 			"isDeleted": false,
 			"boundElements": [],
 			"updated": 1735689600000,
@@ -1072,55 +1122,12 @@ The only knobs ^Om0niCOn
 			"autoResize": false
 		},
 		{
-			"id": "ESGf1PdI",
+			"id": "4kPT6R5w",
 			"type": "arrow",
 			"x": 1115,
 			"y": 316,
 			"width": 0,
 			"height": 64,
-			"angle": 0,
-			"strokeColor": "#1e1e1e",
-			"backgroundColor": "transparent",
-			"fillStyle": "solid",
-			"strokeWidth": 2,
-			"strokeStyle": "solid",
-			"roughness": 1,
-			"opacity": 100,
-			"groupIds": [],
-			"frameId": null,
-			"index": "aQ",
-			"roundness": null,
-			"seed": 3184019104,
-			"version": 1,
-			"versionNonce": 1960455600,
-			"isDeleted": false,
-			"boundElements": [],
-			"updated": 1735689600000,
-			"link": null,
-			"locked": false,
-			"points": [
-				[
-					0,
-					0
-				],
-				[
-					0,
-					64
-				]
-			],
-			"lastCommittedPoint": null,
-			"startBinding": null,
-			"endBinding": null,
-			"startArrowhead": null,
-			"endArrowhead": "arrow"
-		},
-		{
-			"id": "4kPT6R5w",
-			"type": "arrow",
-			"x": 940,
-			"y": 420,
-			"width": 50,
-			"height": 0,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
 			"backgroundColor": "transparent",
@@ -1143,12 +1150,12 @@ The only knobs ^Om0niCOn
 			"locked": false,
 			"points": [
 				[
-					50,
+					0,
 					0
 				],
 				[
 					0,
-					0
+					64
 				]
 			],
 			"lastCommittedPoint": null,
@@ -1159,46 +1166,8 @@ The only knobs ^Om0niCOn
 		},
 		{
 			"id": "Rxsci5h7",
-			"type": "text",
-			"x": 859.56,
-			"y": 400,
-			"width": 210.88,
-			"height": 20,
-			"angle": 0,
-			"strokeColor": "#495057",
-			"backgroundColor": "transparent",
-			"fillStyle": "solid",
-			"strokeWidth": 2,
-			"strokeStyle": "solid",
-			"roughness": 1,
-			"opacity": 100,
-			"groupIds": [],
-			"frameId": null,
-			"index": "aS",
-			"roundness": null,
-			"seed": 3770993215,
-			"version": 1,
-			"versionNonce": 3306116066,
-			"isDeleted": false,
-			"boundElements": [],
-			"updated": 1735689600000,
-			"link": null,
-			"locked": false,
-			"text": "ingest as first-class",
-			"rawText": "ingest as first-class",
-			"originalText": "ingest as first-class",
-			"fontSize": 16,
-			"fontFamily": 5,
-			"textAlign": "center",
-			"verticalAlign": "top",
-			"containerId": null,
-			"lineHeight": 1.25,
-			"autoResize": false
-		},
-		{
-			"id": "nqBUZL4m",
 			"type": "arrow",
-			"x": 570,
+			"x": 940,
 			"y": 420,
 			"width": 50,
 			"height": 0,
@@ -1212,11 +1181,11 @@ The only knobs ^Om0niCOn
 			"opacity": 100,
 			"groupIds": [],
 			"frameId": null,
-			"index": "aT",
+			"index": "aS",
 			"roundness": null,
-			"seed": 609648266,
+			"seed": 3770993215,
 			"version": 1,
-			"versionNonce": 3061143451,
+			"versionNonce": 3306116066,
 			"isDeleted": false,
 			"boundElements": [],
 			"updated": 1735689600000,
@@ -1239,14 +1208,52 @@ The only knobs ^Om0niCOn
 			"endArrowhead": "arrow"
 		},
 		{
-			"id": "nHOcz38e",
+			"id": "nqBUZL4m",
 			"type": "text",
-			"x": 545.24,
+			"x": 859.56,
 			"y": 400,
-			"width": 99.52,
+			"width": 210.88,
 			"height": 20,
 			"angle": 0,
 			"strokeColor": "#495057",
+			"backgroundColor": "transparent",
+			"fillStyle": "solid",
+			"strokeWidth": 2,
+			"strokeStyle": "solid",
+			"roughness": 1,
+			"opacity": 100,
+			"groupIds": [],
+			"frameId": null,
+			"index": "aT",
+			"roundness": null,
+			"seed": 609648266,
+			"version": 1,
+			"versionNonce": 3061143451,
+			"isDeleted": false,
+			"boundElements": [],
+			"updated": 1735689600000,
+			"link": null,
+			"locked": false,
+			"text": "ingest as first-class",
+			"rawText": "ingest as first-class",
+			"originalText": "ingest as first-class",
+			"fontSize": 16,
+			"fontFamily": 5,
+			"textAlign": "center",
+			"verticalAlign": "top",
+			"containerId": null,
+			"lineHeight": 1.25,
+			"autoResize": false
+		},
+		{
+			"id": "nHOcz38e",
+			"type": "arrow",
+			"x": 570,
+			"y": 420,
+			"width": 50,
+			"height": 0,
+			"angle": 0,
+			"strokeColor": "#1e1e1e",
 			"backgroundColor": "transparent",
 			"fillStyle": "solid",
 			"strokeWidth": 2,
@@ -1265,6 +1272,49 @@ The only knobs ^Om0niCOn
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
+			"points": [
+				[
+					50,
+					0
+				],
+				[
+					0,
+					0
+				]
+			],
+			"lastCommittedPoint": null,
+			"startBinding": null,
+			"endBinding": null,
+			"startArrowhead": null,
+			"endArrowhead": "arrow"
+		},
+		{
+			"id": "YrfFz2ce",
+			"type": "text",
+			"x": 545.24,
+			"y": 400,
+			"width": 99.52,
+			"height": 20,
+			"angle": 0,
+			"strokeColor": "#495057",
+			"backgroundColor": "transparent",
+			"fillStyle": "solid",
+			"strokeWidth": 2,
+			"strokeStyle": "solid",
+			"roughness": 1,
+			"opacity": 100,
+			"groupIds": [],
+			"frameId": null,
+			"index": "aV",
+			"roundness": null,
+			"seed": 334741870,
+			"version": 1,
+			"versionNonce": 1738622979,
+			"isDeleted": false,
+			"boundElements": [],
+			"updated": 1735689600000,
+			"link": null,
+			"locked": false,
 			"text": "now local",
 			"rawText": "now local",
 			"originalText": "now local",
@@ -1277,7 +1327,7 @@ The only knobs ^Om0niCOn
 			"autoResize": false
 		},
 		{
-			"id": "YrfFz2ce",
+			"id": "iCW4IDMJ",
 			"type": "arrow",
 			"x": 650,
 			"y": 468,
@@ -1293,11 +1343,11 @@ The only knobs ^Om0niCOn
 			"opacity": 100,
 			"groupIds": [],
 			"frameId": null,
-			"index": "aV",
+			"index": "aW",
 			"roundness": null,
-			"seed": 334741870,
+			"seed": 2049699473,
 			"version": 1,
-			"versionNonce": 1738622979,
+			"versionNonce": 2948023692,
 			"isDeleted": false,
 			"boundElements": [],
 			"updated": 1735689600000,
@@ -1320,52 +1370,14 @@ The only knobs ^Om0niCOn
 			"endArrowhead": "arrow"
 		},
 		{
-			"id": "iCW4IDMJ",
+			"id": "aTUuVlCP",
 			"type": "text",
 			"x": 656,
 			"y": 498.4,
-			"width": 624.96,
-			"height": 40,
+			"width": 430,
+			"height": 60,
 			"angle": 0,
 			"strokeColor": "#495057",
-			"backgroundColor": "transparent",
-			"fillStyle": "solid",
-			"strokeWidth": 2,
-			"strokeStyle": "solid",
-			"roughness": 1,
-			"opacity": 100,
-			"groupIds": [],
-			"frameId": null,
-			"index": "aW",
-			"roundness": null,
-			"seed": 2049699473,
-			"version": 1,
-			"versionNonce": 2948023692,
-			"isDeleted": false,
-			"boundElements": [],
-			"updated": 1735689600000,
-			"link": null,
-			"locked": false,
-			"text": "kind map: changelog→changelog · task→decision · rest→knowledge.\nAll land as knowledge/*.md on the receiver.",
-			"rawText": "kind map: changelog→changelog · task→decision · rest→knowledge.\nAll land as knowledge/*.md on the receiver.",
-			"originalText": "kind map: changelog→changelog · task→decision · rest→knowledge.\nAll land as knowledge/*.md on the receiver.",
-			"fontSize": 16,
-			"fontFamily": 5,
-			"textAlign": "left",
-			"verticalAlign": "top",
-			"containerId": null,
-			"lineHeight": 1.25,
-			"autoResize": false
-		},
-		{
-			"id": "aTUuVlCP",
-			"type": "text",
-			"x": 60,
-			"y": 560,
-			"width": 417.59999999999997,
-			"height": 30,
-			"angle": 0,
-			"strokeColor": "#6741d9",
 			"backgroundColor": "transparent",
 			"fillStyle": "solid",
 			"strokeWidth": 2,
@@ -1384,6 +1396,44 @@ The only knobs ^Om0niCOn
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
+			"text": "kind map: changelog→changelog ·\ntask→decision · rest→knowledge. All land as\nknowledge/*.md on the receiver.",
+			"rawText": "kind map: changelog→changelog ·\ntask→decision · rest→knowledge. All land as\nknowledge/*.md on the receiver.",
+			"originalText": "kind map: changelog→changelog ·\ntask→decision · rest→knowledge. All land as\nknowledge/*.md on the receiver.",
+			"fontSize": 16,
+			"fontFamily": 5,
+			"textAlign": "left",
+			"verticalAlign": "top",
+			"containerId": null,
+			"lineHeight": 1.25,
+			"autoResize": false
+		},
+		{
+			"id": "BBformww",
+			"type": "text",
+			"x": 60,
+			"y": 560,
+			"width": 427.68000000000006,
+			"height": 30,
+			"angle": 0,
+			"strokeColor": "#6741d9",
+			"backgroundColor": "transparent",
+			"fillStyle": "solid",
+			"strokeWidth": 2,
+			"strokeStyle": "solid",
+			"roughness": 1,
+			"opacity": 100,
+			"groupIds": [],
+			"frameId": null,
+			"index": "aY",
+			"roundness": null,
+			"seed": 1704265739,
+			"version": 1,
+			"versionNonce": 3467280971,
+			"isDeleted": false,
+			"boundElements": [],
+			"updated": 1735689600000,
+			"link": null,
+			"locked": false,
 			"text": "PULL — on-demand (you run it)",
 			"rawText": "PULL — on-demand (you run it)",
 			"originalText": "PULL — on-demand (you run it)",
@@ -1396,7 +1446,7 @@ The only knobs ^Om0niCOn
 			"autoResize": false
 		},
 		{
-			"id": "BBformww",
+			"id": "cZPqBgQ4",
 			"type": "rectangle",
 			"x": 60,
 			"y": 612,
@@ -1411,16 +1461,16 @@ The only knobs ^Om0niCOn
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"al1H7hcEUSl7N1wX"
+				"l7N1wXLWqxTZDy2p"
 			],
 			"frameId": null,
-			"index": "aY",
+			"index": "aZ",
 			"roundness": {
 				"type": 3
 			},
-			"seed": 1704265739,
+			"seed": 1458705195,
 			"version": 1,
-			"versionNonce": 3467280971,
+			"versionNonce": 2017017246,
 			"isDeleted": false,
 			"boundElements": [],
 			"updated": 1735689600000,
@@ -1428,7 +1478,7 @@ The only knobs ^Om0niCOn
 			"locked": false
 		},
 		{
-			"id": "cZPqBgQ4",
+			"id": "8nWGeC63",
 			"type": "text",
 			"x": 60,
 			"y": 640,
@@ -1443,14 +1493,14 @@ The only knobs ^Om0niCOn
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"al1H7hcEUSl7N1wX"
+				"l7N1wXLWqxTZDy2p"
 			],
 			"frameId": null,
-			"index": "aZ",
+			"index": "aa",
 			"roundness": null,
-			"seed": 1458705195,
+			"seed": 1027153140,
 			"version": 1,
-			"versionNonce": 2017017246,
+			"versionNonce": 1525167515,
 			"isDeleted": false,
 			"boundElements": [],
 			"updated": 1735689600000,
@@ -1468,7 +1518,7 @@ The only knobs ^Om0niCOn
 			"autoResize": false
 		},
 		{
-			"id": "8nWGeC63",
+			"id": "l6wcezVe",
 			"type": "rectangle",
 			"x": 440,
 			"y": 602,
@@ -1483,16 +1533,16 @@ The only knobs ^Om0niCOn
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"LWqxTZDy2pWZ3i5n"
+				"WZ3i5nZpn1mVWXZi"
 			],
 			"frameId": null,
-			"index": "aa",
+			"index": "ab",
 			"roundness": {
 				"type": 3
 			},
-			"seed": 1027153140,
+			"seed": 3557046055,
 			"version": 1,
-			"versionNonce": 1525167515,
+			"versionNonce": 3913681333,
 			"isDeleted": false,
 			"boundElements": [],
 			"updated": 1735689600000,
@@ -1500,7 +1550,7 @@ The only knobs ^Om0niCOn
 			"locked": false
 		},
 		{
-			"id": "l6wcezVe",
+			"id": "I3SseCAB",
 			"type": "text",
 			"x": 440,
 			"y": 622.5,
@@ -1515,14 +1565,14 @@ The only knobs ^Om0niCOn
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"LWqxTZDy2pWZ3i5n"
+				"WZ3i5nZpn1mVWXZi"
 			],
 			"frameId": null,
-			"index": "ab",
+			"index": "ac",
 			"roundness": null,
-			"seed": 3557046055,
+			"seed": 2092463637,
 			"version": 1,
-			"versionNonce": 3913681333,
+			"versionNonce": 450064370,
 			"isDeleted": false,
 			"boundElements": [],
 			"updated": 1735689600000,
@@ -1540,7 +1590,7 @@ The only knobs ^Om0niCOn
 			"autoResize": false
 		},
 		{
-			"id": "I3SseCAB",
+			"id": "AcmJT1OK",
 			"type": "rectangle",
 			"x": 860,
 			"y": 612,
@@ -1555,16 +1605,16 @@ The only knobs ^Om0niCOn
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"Zpn1mVWXZiJrzYim"
+				"JrzYimsJwzu8Ryvn"
 			],
 			"frameId": null,
-			"index": "ac",
+			"index": "ad",
 			"roundness": {
 				"type": 3
 			},
-			"seed": 2092463637,
+			"seed": 584743389,
 			"version": 1,
-			"versionNonce": 450064370,
+			"versionNonce": 3505797351,
 			"isDeleted": false,
 			"boundElements": [],
 			"updated": 1735689600000,
@@ -1572,7 +1622,7 @@ The only knobs ^Om0niCOn
 			"locked": false
 		},
 		{
-			"id": "AcmJT1OK",
+			"id": "KR4KxubL",
 			"type": "text",
 			"x": 860,
 			"y": 640,
@@ -1587,14 +1637,14 @@ The only knobs ^Om0niCOn
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"Zpn1mVWXZiJrzYim"
+				"JrzYimsJwzu8Ryvn"
 			],
 			"frameId": null,
-			"index": "ad",
+			"index": "ae",
 			"roundness": null,
-			"seed": 584743389,
+			"seed": 2444242024,
 			"version": 1,
-			"versionNonce": 3505797351,
+			"versionNonce": 2082006698,
 			"isDeleted": false,
 			"boundElements": [],
 			"updated": 1735689600000,
@@ -1612,52 +1662,9 @@ The only knobs ^Om0niCOn
 			"autoResize": false
 		},
 		{
-			"id": "KR4KxubL",
-			"type": "arrow",
-			"x": 360,
-			"y": 660,
-			"width": 80,
-			"height": 0,
-			"angle": 0,
-			"strokeColor": "#1e1e1e",
-			"backgroundColor": "transparent",
-			"fillStyle": "solid",
-			"strokeWidth": 2,
-			"strokeStyle": "solid",
-			"roughness": 1,
-			"opacity": 100,
-			"groupIds": [],
-			"frameId": null,
-			"index": "ae",
-			"roundness": null,
-			"seed": 2444242024,
-			"version": 1,
-			"versionNonce": 2082006698,
-			"isDeleted": false,
-			"boundElements": [],
-			"updated": 1735689600000,
-			"link": null,
-			"locked": false,
-			"points": [
-				[
-					0,
-					0
-				],
-				[
-					80,
-					0
-				]
-			],
-			"lastCommittedPoint": null,
-			"startBinding": null,
-			"endBinding": null,
-			"startArrowhead": null,
-			"endArrowhead": "arrow"
-		},
-		{
 			"id": "Eq1QrJyU",
 			"type": "arrow",
-			"x": 780,
+			"x": 360,
 			"y": 660,
 			"width": 80,
 			"height": 0,
@@ -1699,13 +1706,13 @@ The only knobs ^Om0niCOn
 		},
 		{
 			"id": "V6mQqcTZ",
-			"type": "text",
-			"x": 747.04,
-			"y": 640,
-			"width": 145.92,
-			"height": 20,
+			"type": "arrow",
+			"x": 780,
+			"y": 660,
+			"width": 80,
+			"height": 0,
 			"angle": 0,
-			"strokeColor": "#495057",
+			"strokeColor": "#1e1e1e",
 			"backgroundColor": "transparent",
 			"fillStyle": "solid",
 			"strokeWidth": 2,
@@ -1724,24 +1731,29 @@ The only knobs ^Om0niCOn
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
-			"text": "rankScore desc",
-			"rawText": "rankScore desc",
-			"originalText": "rankScore desc",
-			"fontSize": 16,
-			"fontFamily": 5,
-			"textAlign": "center",
-			"verticalAlign": "top",
-			"containerId": null,
-			"lineHeight": 1.25,
-			"autoResize": false
+			"points": [
+				[
+					0,
+					0
+				],
+				[
+					80,
+					0
+				]
+			],
+			"lastCommittedPoint": null,
+			"startBinding": null,
+			"endBinding": null,
+			"startArrowhead": null,
+			"endArrowhead": "arrow"
 		},
 		{
 			"id": "Om0niCOn",
 			"type": "text",
-			"x": 860,
-			"y": 740,
-			"width": 200,
-			"height": 23,
+			"x": 747.04,
+			"y": 640,
+			"width": 145.92,
+			"height": 20,
 			"angle": 0,
 			"strokeColor": "#495057",
 			"backgroundColor": "transparent",
@@ -1762,12 +1774,12 @@ The only knobs ^Om0niCOn
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
-			"text": "The only knobs",
-			"rawText": "The only knobs",
-			"originalText": "The only knobs",
-			"fontSize": 18,
+			"text": "rankScore desc",
+			"rawText": "rankScore desc",
+			"originalText": "rankScore desc",
+			"fontSize": 16,
 			"fontFamily": 5,
-			"textAlign": "left",
+			"textAlign": "center",
 			"verticalAlign": "top",
 			"containerId": null,
 			"lineHeight": 1.25,
@@ -1777,11 +1789,11 @@ The only knobs ^Om0niCOn
 			"id": "rS6lACWv",
 			"type": "text",
 			"x": 860,
-			"y": 772,
-			"width": 320,
-			"height": 113,
+			"y": 740,
+			"width": 200,
+			"height": 23,
 			"angle": 0,
-			"strokeColor": "#1e1e1e",
+			"strokeColor": "#495057",
 			"backgroundColor": "transparent",
 			"fillStyle": "solid",
 			"strokeWidth": 2,
@@ -1800,10 +1812,10 @@ The only knobs ^Om0niCOn
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
-			"text": "• direction: out / in / both\n• status: active / stale (dead peer skipped)\n• consent: receiver shareable + reciprocal\n• topics: filter WHAT (not WHEN)",
-			"rawText": "• direction: out / in / both\n• status: active / stale (dead peer skipped)\n• consent: receiver shareable + reciprocal\n• topics: filter WHAT (not WHEN)",
-			"originalText": "• direction: out / in / both\n• status: active / stale (dead peer skipped)\n• consent: receiver shareable + reciprocal\n• topics: filter WHAT (not WHEN)",
-			"fontSize": 15,
+			"text": "The only knobs",
+			"rawText": "The only knobs",
+			"originalText": "The only knobs",
+			"fontSize": 18,
 			"fontFamily": 5,
 			"textAlign": "left",
 			"verticalAlign": "top",
@@ -1814,10 +1826,10 @@ The only knobs ^Om0niCOn
 		{
 			"id": "XdWdhavx",
 			"type": "text",
-			"x": 60,
-			"y": 760,
-			"width": 740,
-			"height": 80,
+			"x": 860,
+			"y": 772,
+			"width": 320,
+			"height": 113,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
 			"backgroundColor": "transparent",
@@ -1838,9 +1850,47 @@ The only knobs ^Om0niCOn
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
-			"text": "• There is no \"when X, read Y\" trigger.\n• PUSH copies peer digests in at every sleep cycle → then they are just local.\n• PULL is live but only when you pass --connected. The per-prompt hook is local-only.",
-			"rawText": "• There is no \"when X, read Y\" trigger.\n• PUSH copies peer digests in at every sleep cycle → then they are just local.\n• PULL is live but only when you pass --connected. The per-prompt hook is local-only.",
-			"originalText": "• There is no \"when X, read Y\" trigger.\n• PUSH copies peer digests in at every sleep cycle → then they are just local.\n• PULL is live but only when you pass --connected. The per-prompt hook is local-only.",
+			"text": "• direction: out / in / both\n• status: active / stale (dead peer\n   skipped)\n• consent: receiver shareable +\n   reciprocal\n• topics: filter WHAT (not WHEN)",
+			"rawText": "• direction: out / in / both\n• status: active / stale (dead peer\n   skipped)\n• consent: receiver shareable +\n   reciprocal\n• topics: filter WHAT (not WHEN)",
+			"originalText": "• direction: out / in / both\n• status: active / stale (dead peer\n   skipped)\n• consent: receiver shareable +\n   reciprocal\n• topics: filter WHAT (not WHEN)",
+			"fontSize": 15,
+			"fontFamily": 5,
+			"textAlign": "left",
+			"verticalAlign": "top",
+			"containerId": null,
+			"lineHeight": 1.25,
+			"autoResize": false
+		},
+		{
+			"id": "4Yu2IfUW",
+			"type": "text",
+			"x": 60,
+			"y": 760,
+			"width": 740,
+			"height": 100,
+			"angle": 0,
+			"strokeColor": "#1e1e1e",
+			"backgroundColor": "transparent",
+			"fillStyle": "solid",
+			"strokeWidth": 2,
+			"strokeStyle": "solid",
+			"roughness": 1,
+			"opacity": 100,
+			"groupIds": [],
+			"frameId": null,
+			"index": "ak",
+			"roundness": null,
+			"seed": 2314862375,
+			"version": 1,
+			"versionNonce": 3799428393,
+			"isDeleted": false,
+			"boundElements": [],
+			"updated": 1735689600000,
+			"link": null,
+			"locked": false,
+			"text": "• There is no \"when X, read Y\" trigger.\n• PUSH copies peer digests in at every sleep cycle → then they are just\n   local.\n• PULL is live but only when you pass --connected. The per-prompt hook is\n   local-only.",
+			"rawText": "• There is no \"when X, read Y\" trigger.\n• PUSH copies peer digests in at every sleep cycle → then they are just\n   local.\n• PULL is live but only when you pass --connected. The per-prompt hook is\n   local-only.",
+			"originalText": "• There is no \"when X, read Y\" trigger.\n• PUSH copies peer digests in at every sleep cycle → then they are just\n   local.\n• PULL is live but only when you pass --connected. The per-prompt hook is\n   local-only.",
 			"fontSize": 16,
 			"fontFamily": 5,
 			"textAlign": "left",

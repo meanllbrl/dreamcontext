@@ -7,14 +7,15 @@ const path = require('node:path');
 const { buildExcalidraw } = require('../../../../../scripts/diagrams/excalidraw/build_excalidraw.js');
 const {
   card, sectionTitle, connector,
-  leftOf, rightOf,
+  leftOf, rightOf, prose,
 } = require('../../../../../scripts/diagrams/excalidraw/lib/style.js');
+const { callout } = require('../../../../../scripts/diagrams/excalidraw/lib/charts.js');
 
 const OUT = path.resolve(__dirname, 'memory-uplift-comparison.excalidraw.md');
 
 const els = [];
-els.push(...sectionTitle({ x: 60, y: 8, text: 'dreamcontext memory uplift — measured before / after', fontSize: 36 }));
-els.push(...sectionTitle({ x: 60, y: 64, text: 'tuned on 60q train set · validated on 30q BLIND held-out set · frozen 242-doc corpus · zero regressions', fontSize: 16 }));
+els.push(...sectionTitle({ x: 60, y: 8, text: 'dreamcontext memory uplift — measured before / after', fontSize: 36, maxWidth: 1240 }));
+els.push(...prose({ x: 60, y: 64, width: 620, fontSize: 16, color: '#495057', text: 'tuned on 60q train set · validated on 30q BLIND held-out set · frozen 242-doc corpus · zero regressions' }));
 
 // ── Column geometry ─────────────────────────────────────────────────────────
 const BEFORE_X = 60, AFTER_X = 720, COL_W = 560, ROW_H = 96, GAP = 16;
@@ -70,9 +71,10 @@ for (const row of rows) {
 
 // ── Bottom: what shipped ────────────────────────────────────────────────────
 const SHIP = { x: 60, y: y + 18, w: 1220, h: 96 };
-els.push(...card({
-  ...SHIP, color: 'yellow', fontSize: 15,
-  text: 'shipped: recall.ts v3 (TR two-hop stemming · -e fold · CHANGELOG_RANK_FACTOR 0.85) · recall-synonyms.ts (DIRECTED_BRIDGES) · snapshot-budget.ts (demotion ladder, DREAMCONTEXT_SNAPSHOT_BUDGET)\nhook.ts (PreCompact partial digest) · session-digest.ts (partial supersede) · agents/sleep-tasks.md (staleness sweep) · eval/gold-heldout.jsonl (30q blind) · scripts/recall-ab.ts (frozen-corpus A/B)',
+els.push(...callout({
+  ...SHIP, color: 'yellow', titleSize: 16, fontSize: 14, sideTitle: true, minH: SHIP.h,
+  title: 'shipped',
+  text: 'recall.ts v3 (TR two-hop stemming · -e fold · CHANGELOG_RANK_FACTOR 0.85) · recall-synonyms.ts (DIRECTED_BRIDGES) · snapshot-budget.ts (demotion ladder, DREAMCONTEXT_SNAPSHOT_BUDGET) · hook.ts (PreCompact partial digest) · session-digest.ts (partial supersede) · agents/sleep-tasks.md (staleness sweep) · eval/gold-heldout.jsonl (30q blind) · scripts/recall-ab.ts (frozen-corpus A/B)',
 }));
 
 buildExcalidraw({ out: OUT, background: '#ffffff', elements: els });

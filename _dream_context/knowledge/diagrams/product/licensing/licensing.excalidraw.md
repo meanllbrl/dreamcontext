@@ -1,7 +1,8 @@
 ---
+
 excalidraw-plugin: parsed
-tags:
-  - 'topic:excalidraw'
+tags: [excalidraw]
+
 ---
 ==⚠  Switch to EXCALIDRAW VIEW in the MORE OPTIONS menu of this document. ⚠== You can decompress Drawing data with the command palette: 'Decompress current Excalidraw file'. For more info check in plugin settings under 'Saving'
 
@@ -19,7 +20,7 @@ SOURCE-AVAILABLE — kuralı SEN koyarsın ^DED3QxqQ
 
 KAPALI ^5VwVWUO4
 
-MIT  (şu an)
+MIT (şu an)
 Herkes kullanır,
 değiştirir, SATAR.
 Sıfır koruma. ^jlkTD8lG
@@ -39,7 +40,7 @@ serbest.
 ~4 yılda OSS olur. ^IHnYAhaG
 
 PolyForm
-Internal Use  ★
+Internal Use ★
 Kişisel + şirket-içi
 serbest. Satış YASAK. ^bpELE5zo
 
@@ -52,13 +53,14 @@ daha KORUMALI ^l3M0zgcL
 
 2 · Senin Kuralların 3 Lisansta ^mrOMukns
 
-Renk = senin niyetine uyuyor mu?   yeşil = istediğin gibi · kırmızı = istemediğin · sarı = kısmen ^1OAQd697
+Renk = senin niyetine uyuyor mu?
+yeşil = istediğin gibi · kırmızı = istemediğin · sarı = kısmen ^1OAQd697
 
 SENİN KURALIN ^Nj204vkp
 
-MIT  (şu an) ^SiL8CVM8
+MIT (şu an) ^SiL8CVM8
 
-PolyForm Internal Use  ★ ^1OcHFivg
+PolyForm Internal Use ★ ^1OcHFivg
 
 BSL 1.1 ^LB7n5Nvq
 
@@ -134,14 +136,16 @@ Gerçek koruma = kapalı tut ya da patent. ^MlkGRJm8
 
 4 · Öneri ^KvU1ciCL
 
-PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
-Çekirdek korunur  ·  kişisel & şirket-içi serbest  ·  satış / ürün kapalı  ·  süresiz ^O8FVEY9q
+PolyForm Internal Use 1.0.0 ^O8FVEY9q
 
-1 · LICENSE + package.json değiş ^GYFE1gst
+"açık kaynak" değil, "source-available". Çekirdek korunur ·
+kişisel & şirket-içi serbest · satış / ürün kapalı · süresiz. ^GY2zaYFM
 
-2 · TRADEMARK.md + NOTICE (marka) ^YXCbrbeQ
+1 · LICENSE + package.json değiş ^vbVnDj1W
 
-3 · CONTRIBUTING + DCO (relicense hakkı) ^EtaCtjOf
+2 · TRADEMARK.md + NOTICE (marka) ^6QJKtFUr
+
+3 · CONTRIBUTING + DCO (relicense hakkı) ^yBvJHNem
 
 ## Embedded Files
 %%
@@ -157,7 +161,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"type": "text",
 			"x": 40,
 			"y": -40,
-			"width": 792,
+			"width": 805.6000000000003,
 			"height": 50,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
@@ -195,7 +199,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"type": "text",
 			"x": 40,
 			"y": 40,
-			"width": 624,
+			"width": 629.1999999999998,
 			"height": 33,
 			"angle": 0,
 			"strokeColor": "#6741d9",
@@ -358,7 +362,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"ykOdp0R16hmcDhjl"
+				"mcDhjlQk3KP9wclN"
 			],
 			"frameId": null,
 			"index": "a5",
@@ -390,7 +394,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"ykOdp0R16hmcDhjl"
+				"mcDhjlQk3KP9wclN"
 			],
 			"frameId": null,
 			"index": "a6",
@@ -403,9 +407,9 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
-			"text": "MIT  (şu an)\nHerkes kullanır,\ndeğiştirir, SATAR.\nSıfır koruma.",
-			"rawText": "MIT  (şu an)\nHerkes kullanır,\ndeğiştirir, SATAR.\nSıfır koruma.",
-			"originalText": "MIT  (şu an)\nHerkes kullanır,\ndeğiştirir, SATAR.\nSıfır koruma.",
+			"text": "MIT (şu an)\nHerkes kullanır,\ndeğiştirir, SATAR.\nSıfır koruma.",
+			"rawText": "MIT (şu an)\nHerkes kullanır,\ndeğiştirir, SATAR.\nSıfır koruma.",
+			"originalText": "MIT (şu an)\nHerkes kullanır,\ndeğiştirir, SATAR.\nSıfır koruma.",
 			"fontSize": 14,
 			"fontFamily": 5,
 			"textAlign": "center",
@@ -430,7 +434,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"Qk3KP9wclNuajYbR"
+				"uajYbR9q0CZ628JV"
 			],
 			"frameId": null,
 			"index": "a7",
@@ -462,7 +466,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"Qk3KP9wclNuajYbR"
+				"uajYbR9q0CZ628JV"
 			],
 			"frameId": null,
 			"index": "a8",
@@ -502,7 +506,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"9q0CZ628JVQep5jH"
+				"Qep5jHMBw6pNbxVn"
 			],
 			"frameId": null,
 			"index": "a9",
@@ -534,7 +538,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"9q0CZ628JVQep5jH"
+				"Qep5jHMBw6pNbxVn"
 			],
 			"frameId": null,
 			"index": "aA",
@@ -574,7 +578,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"MBw6pNbxVnSBzGKO"
+				"SBzGKOPRbzJe4qeh"
 			],
 			"frameId": null,
 			"index": "aB",
@@ -606,7 +610,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"MBw6pNbxVnSBzGKO"
+				"SBzGKOPRbzJe4qeh"
 			],
 			"frameId": null,
 			"index": "aC",
@@ -646,7 +650,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"PRbzJe4qehEcHchA"
+				"EcHchAyD1RddNf6c"
 			],
 			"frameId": null,
 			"index": "aD",
@@ -678,7 +682,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"PRbzJe4qehEcHchA"
+				"EcHchAyD1RddNf6c"
 			],
 			"frameId": null,
 			"index": "aE",
@@ -691,9 +695,9 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
-			"text": "PolyForm\nInternal Use  ★\nKişisel + şirket-içi\nserbest. Satış YASAK.",
-			"rawText": "PolyForm\nInternal Use  ★\nKişisel + şirket-içi\nserbest. Satış YASAK.",
-			"originalText": "PolyForm\nInternal Use  ★\nKişisel + şirket-içi\nserbest. Satış YASAK.",
+			"text": "PolyForm\nInternal Use ★\nKişisel + şirket-içi\nserbest. Satış YASAK.",
+			"rawText": "PolyForm\nInternal Use ★\nKişisel + şirket-içi\nserbest. Satış YASAK.",
+			"originalText": "PolyForm\nInternal Use ★\nKişisel + şirket-içi\nserbest. Satış YASAK.",
 			"fontSize": 14,
 			"fontFamily": 5,
 			"textAlign": "center",
@@ -718,7 +722,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"yD1RddNf6cmC2XYx"
+				"mC2XYxs6C5BE1OtM"
 			],
 			"frameId": null,
 			"index": "aF",
@@ -750,7 +754,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"yD1RddNf6cmC2XYx"
+				"mC2XYxs6C5BE1OtM"
 			],
 			"frameId": null,
 			"index": "aG",
@@ -984,7 +988,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"type": "text",
 			"x": 40,
 			"y": 392,
-			"width": 483.59999999999997,
+			"width": 493.4799999999996,
 			"height": 33,
 			"angle": 0,
 			"strokeColor": "#6741d9",
@@ -1022,8 +1026,8 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"type": "text",
 			"x": 40,
 			"y": 430,
-			"width": 1200,
-			"height": 18,
+			"width": 620,
+			"height": 35,
 			"angle": 0,
 			"strokeColor": "#868e96",
 			"backgroundColor": "transparent",
@@ -1044,9 +1048,9 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
-			"text": "Renk = senin niyetine uyuyor mu?   yeşil = istediğin gibi · kırmızı = istemediğin · sarı = kısmen",
-			"rawText": "Renk = senin niyetine uyuyor mu?   yeşil = istediğin gibi · kırmızı = istemediğin · sarı = kısmen",
-			"originalText": "Renk = senin niyetine uyuyor mu?   yeşil = istediğin gibi · kırmızı = istemediğin · sarı = kısmen",
+			"text": "Renk = senin niyetine uyuyor mu?\nyeşil = istediğin gibi · kırmızı = istemediğin · sarı = kısmen",
+			"rawText": "Renk = senin niyetine uyuyor mu?\nyeşil = istediğin gibi · kırmızı = istemediğin · sarı = kısmen",
+			"originalText": "Renk = senin niyetine uyuyor mu?\nyeşil = istediğin gibi · kırmızı = istemediğin · sarı = kısmen",
 			"fontSize": 14,
 			"fontFamily": 5,
 			"textAlign": "left",
@@ -1071,7 +1075,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"s6C5BE1OtMJQT7SL"
+				"JQT7SL9aSM2wZ6bk"
 			],
 			"frameId": null,
 			"index": "aO",
@@ -1103,7 +1107,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"s6C5BE1OtMJQT7SL"
+				"JQT7SL9aSM2wZ6bk"
 			],
 			"frameId": null,
 			"index": "aP",
@@ -1143,7 +1147,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"9aSM2wZ6bkg87gtY"
+				"g87gtYJ7ZnhoiMoO"
 			],
 			"frameId": null,
 			"index": "aQ",
@@ -1175,7 +1179,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"9aSM2wZ6bkg87gtY"
+				"g87gtYJ7ZnhoiMoO"
 			],
 			"frameId": null,
 			"index": "aR",
@@ -1188,9 +1192,9 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
-			"text": "MIT  (şu an)",
-			"rawText": "MIT  (şu an)",
-			"originalText": "MIT  (şu an)",
+			"text": "MIT (şu an)",
+			"rawText": "MIT (şu an)",
+			"originalText": "MIT (şu an)",
 			"fontSize": 17,
 			"fontFamily": 5,
 			"textAlign": "center",
@@ -1215,7 +1219,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"J7ZnhoiMoOzCWr0g"
+				"zCWr0gZCyBkLbEoS"
 			],
 			"frameId": null,
 			"index": "aS",
@@ -1247,7 +1251,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"J7ZnhoiMoOzCWr0g"
+				"zCWr0gZCyBkLbEoS"
 			],
 			"frameId": null,
 			"index": "aT",
@@ -1260,9 +1264,9 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
-			"text": "PolyForm Internal Use  ★",
-			"rawText": "PolyForm Internal Use  ★",
-			"originalText": "PolyForm Internal Use  ★",
+			"text": "PolyForm Internal Use ★",
+			"rawText": "PolyForm Internal Use ★",
+			"originalText": "PolyForm Internal Use ★",
 			"fontSize": 16,
 			"fontFamily": 5,
 			"textAlign": "center",
@@ -1287,7 +1291,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"ZCyBkLbEoSKqarga"
+				"KqargaIUNs323NwD"
 			],
 			"frameId": null,
 			"index": "aU",
@@ -1319,7 +1323,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"ZCyBkLbEoSKqarga"
+				"KqargaIUNs323NwD"
 			],
 			"frameId": null,
 			"index": "aV",
@@ -1359,7 +1363,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"IUNs323NwDqKjV52"
+				"qKjV52Z1VFpgAUVr"
 			],
 			"frameId": null,
 			"index": "aW",
@@ -1391,7 +1395,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"IUNs323NwDqKjV52"
+				"qKjV52Z1VFpgAUVr"
 			],
 			"frameId": null,
 			"index": "aX",
@@ -1431,7 +1435,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"Z1VFpgAUVrKb4Fv1"
+				"Kb4Fv1trTMXpOkQ9"
 			],
 			"frameId": null,
 			"index": "aY",
@@ -1463,7 +1467,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"Z1VFpgAUVrKb4Fv1"
+				"Kb4Fv1trTMXpOkQ9"
 			],
 			"frameId": null,
 			"index": "aZ",
@@ -1503,7 +1507,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"trTMXpOkQ9M1m8WV"
+				"M1m8WVwsAWuoF0HR"
 			],
 			"frameId": null,
 			"index": "aa",
@@ -1535,7 +1539,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"trTMXpOkQ9M1m8WV"
+				"M1m8WVwsAWuoF0HR"
 			],
 			"frameId": null,
 			"index": "ab",
@@ -1575,7 +1579,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"wsAWuoF0HR5Nn8SE"
+				"5Nn8SEMBnDSHavIp"
 			],
 			"frameId": null,
 			"index": "ac",
@@ -1607,7 +1611,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"wsAWuoF0HR5Nn8SE"
+				"5Nn8SEMBnDSHavIp"
 			],
 			"frameId": null,
 			"index": "ad",
@@ -1647,7 +1651,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"MBnDSHavIp1ysgS9"
+				"1ysgS9e8SPJPfdrj"
 			],
 			"frameId": null,
 			"index": "ae",
@@ -1679,7 +1683,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"MBnDSHavIp1ysgS9"
+				"1ysgS9e8SPJPfdrj"
 			],
 			"frameId": null,
 			"index": "af",
@@ -1719,7 +1723,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"e8SPJPfdrj0ZZ8T0"
+				"0ZZ8T0ffqjxmBoEw"
 			],
 			"frameId": null,
 			"index": "ag",
@@ -1751,7 +1755,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"e8SPJPfdrj0ZZ8T0"
+				"0ZZ8T0ffqjxmBoEw"
 			],
 			"frameId": null,
 			"index": "ah",
@@ -1791,7 +1795,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"ffqjxmBoEwS86TUS"
+				"S86TUSaZrRSoFyDV"
 			],
 			"frameId": null,
 			"index": "ai",
@@ -1823,7 +1827,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"ffqjxmBoEwS86TUS"
+				"S86TUSaZrRSoFyDV"
 			],
 			"frameId": null,
 			"index": "aj",
@@ -1863,7 +1867,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"aZrRSoFyDVpIcsjI"
+				"pIcsjIOj3IYq6YrC"
 			],
 			"frameId": null,
 			"index": "ak",
@@ -1895,7 +1899,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"aZrRSoFyDVpIcsjI"
+				"pIcsjIOj3IYq6YrC"
 			],
 			"frameId": null,
 			"index": "al",
@@ -1935,7 +1939,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"Oj3IYq6YrCkGAWIQ"
+				"kGAWIQq931vHQdyC"
 			],
 			"frameId": null,
 			"index": "am",
@@ -1967,7 +1971,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"Oj3IYq6YrCkGAWIQ"
+				"kGAWIQq931vHQdyC"
 			],
 			"frameId": null,
 			"index": "an",
@@ -2007,7 +2011,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"q931vHQdyCr80i5X"
+				"r80i5XdTtdRnCFU4"
 			],
 			"frameId": null,
 			"index": "ao",
@@ -2039,7 +2043,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"q931vHQdyCr80i5X"
+				"r80i5XdTtdRnCFU4"
 			],
 			"frameId": null,
 			"index": "ap",
@@ -2079,7 +2083,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"dTtdRnCFU4dFNTf2"
+				"dFNTf2xj5j3qvaS1"
 			],
 			"frameId": null,
 			"index": "aq",
@@ -2111,7 +2115,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"dTtdRnCFU4dFNTf2"
+				"dFNTf2xj5j3qvaS1"
 			],
 			"frameId": null,
 			"index": "ar",
@@ -2151,7 +2155,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"xj5j3qvaS1Y30urD"
+				"Y30urDZquqsJmBjM"
 			],
 			"frameId": null,
 			"index": "as",
@@ -2183,7 +2187,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"xj5j3qvaS1Y30urD"
+				"Y30urDZquqsJmBjM"
 			],
 			"frameId": null,
 			"index": "at",
@@ -2223,7 +2227,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"ZquqsJmBjM0xavYV"
+				"0xavYVFv39sW3faY"
 			],
 			"frameId": null,
 			"index": "au",
@@ -2255,7 +2259,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"ZquqsJmBjM0xavYV"
+				"0xavYVFv39sW3faY"
 			],
 			"frameId": null,
 			"index": "av",
@@ -2295,7 +2299,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"Fv39sW3faYQ3Fhuu"
+				"Q3FhuuaKQB4q3htB"
 			],
 			"frameId": null,
 			"index": "aw",
@@ -2327,7 +2331,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"Fv39sW3faYQ3Fhuu"
+				"Q3FhuuaKQB4q3htB"
 			],
 			"frameId": null,
 			"index": "ax",
@@ -2367,7 +2371,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"aKQB4q3htB0DWqCi"
+				"0DWqCic2yoYVxIYh"
 			],
 			"frameId": null,
 			"index": "ay",
@@ -2399,7 +2403,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"aKQB4q3htB0DWqCi"
+				"0DWqCic2yoYVxIYh"
 			],
 			"frameId": null,
 			"index": "az",
@@ -2439,7 +2443,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"c2yoYVxIYhEKxVhR"
+				"EKxVhRmjcaHE9d63"
 			],
 			"frameId": null,
 			"index": "b00",
@@ -2471,7 +2475,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"c2yoYVxIYhEKxVhR"
+				"EKxVhRmjcaHE9d63"
 			],
 			"frameId": null,
 			"index": "b01",
@@ -2511,7 +2515,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"mjcaHE9d63ld1xwK"
+				"ld1xwKok2xbcgSmD"
 			],
 			"frameId": null,
 			"index": "b02",
@@ -2543,7 +2547,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"mjcaHE9d63ld1xwK"
+				"ld1xwKok2xbcgSmD"
 			],
 			"frameId": null,
 			"index": "b03",
@@ -2583,7 +2587,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"ok2xbcgSmDVZQ1ra"
+				"VZQ1ragQp52Xn2Wc"
 			],
 			"frameId": null,
 			"index": "b04",
@@ -2615,7 +2619,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"ok2xbcgSmDVZQ1ra"
+				"VZQ1ragQp52Xn2Wc"
 			],
 			"frameId": null,
 			"index": "b05",
@@ -2655,7 +2659,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"gQp52Xn2Wc876yUr"
+				"876yUrbtscWcEdmj"
 			],
 			"frameId": null,
 			"index": "b06",
@@ -2687,7 +2691,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"gQp52Xn2Wc876yUr"
+				"876yUrbtscWcEdmj"
 			],
 			"frameId": null,
 			"index": "b07",
@@ -2727,7 +2731,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"btscWcEdmjxUvueq"
+				"xUvueqP9E7EZRPK7"
 			],
 			"frameId": null,
 			"index": "b08",
@@ -2759,7 +2763,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"btscWcEdmjxUvueq"
+				"xUvueqP9E7EZRPK7"
 			],
 			"frameId": null,
 			"index": "b09",
@@ -2799,7 +2803,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"P9E7EZRPK7epCI4Y"
+				"epCI4Y5dF2VD500u"
 			],
 			"frameId": null,
 			"index": "b0A",
@@ -2831,7 +2835,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"P9E7EZRPK7epCI4Y"
+				"epCI4Y5dF2VD500u"
 			],
 			"frameId": null,
 			"index": "b0B",
@@ -2871,7 +2875,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"5dF2VD500uF5Giin"
+				"F5GiinNlPfFAY9WS"
 			],
 			"frameId": null,
 			"index": "b0C",
@@ -2903,7 +2907,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"5dF2VD500uF5Giin"
+				"F5GiinNlPfFAY9WS"
 			],
 			"frameId": null,
 			"index": "b0D",
@@ -2943,7 +2947,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"NlPfFAY9WS1RVivu"
+				"1RVivuYUhfqemZLW"
 			],
 			"frameId": null,
 			"index": "b0E",
@@ -2975,7 +2979,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"NlPfFAY9WS1RVivu"
+				"1RVivuYUhfqemZLW"
 			],
 			"frameId": null,
 			"index": "b0F",
@@ -3015,7 +3019,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"YUhfqemZLWhgoXL4"
+				"hgoXL4px6z6QEy61"
 			],
 			"frameId": null,
 			"index": "b0G",
@@ -3047,7 +3051,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"YUhfqemZLWhgoXL4"
+				"hgoXL4px6z6QEy61"
 			],
 			"frameId": null,
 			"index": "b0H",
@@ -3087,7 +3091,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"px6z6QEy61tNMhfR"
+				"tNMhfRisHxHXhyxl"
 			],
 			"frameId": null,
 			"index": "b0I",
@@ -3119,7 +3123,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"px6z6QEy61tNMhfR"
+				"tNMhfRisHxHXhyxl"
 			],
 			"frameId": null,
 			"index": "b0J",
@@ -3159,7 +3163,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"isHxHXhyxlmZ0h0L"
+				"mZ0h0LEi98Qo4H5H"
 			],
 			"frameId": null,
 			"index": "b0K",
@@ -3191,7 +3195,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"isHxHXhyxlmZ0h0L"
+				"mZ0h0LEi98Qo4H5H"
 			],
 			"frameId": null,
 			"index": "b0L",
@@ -3231,7 +3235,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"Ei98Qo4H5H7N76Kj"
+				"7N76KjoRQivObpDn"
 			],
 			"frameId": null,
 			"index": "b0M",
@@ -3263,7 +3267,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"Ei98Qo4H5H7N76Kj"
+				"7N76KjoRQivObpDn"
 			],
 			"frameId": null,
 			"index": "b0N",
@@ -3303,7 +3307,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"oRQivObpDnvyK3j8"
+				"vyK3j89em1TWZ05V"
 			],
 			"frameId": null,
 			"index": "b0O",
@@ -3335,7 +3339,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"oRQivObpDnvyK3j8"
+				"vyK3j89em1TWZ05V"
 			],
 			"frameId": null,
 			"index": "b0P",
@@ -3364,7 +3368,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"type": "text",
 			"x": 40,
 			"y": 1050,
-			"width": 296.4,
+			"width": 312.5199999999998,
 			"height": 33,
 			"angle": 0,
 			"strokeColor": "#e03131",
@@ -3413,7 +3417,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"9em1TWZ05VfRPSgQ"
+				"fRPSgQuQGXHMNeh7"
 			],
 			"frameId": null,
 			"index": "b0R",
@@ -3445,7 +3449,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"9em1TWZ05VfRPSgQ"
+				"fRPSgQuQGXHMNeh7"
 			],
 			"frameId": null,
 			"index": "b0S",
@@ -3485,7 +3489,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"uQGXHMNeh7wKEp0B"
+				"wKEp0BEutu8SpmGf"
 			],
 			"frameId": null,
 			"index": "b0T",
@@ -3517,7 +3521,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"uQGXHMNeh7wKEp0B"
+				"wKEp0BEutu8SpmGf"
 			],
 			"frameId": null,
 			"index": "b0U",
@@ -3584,10 +3588,10 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"type": "rectangle",
 			"x": 40,
 			"y": 1356,
-			"width": 1440,
+			"width": 972,
 			"height": 120,
 			"angle": 0,
-			"strokeColor": "#1e1e1e",
+			"strokeColor": "#6741d9",
 			"backgroundColor": "#d0bfff",
 			"fillStyle": "solid",
 			"strokeWidth": 2,
@@ -3595,7 +3599,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"Eutu8SpmGfuVs0ZR"
+				"uVs0ZRBjntIyGRwI"
 			],
 			"frameId": null,
 			"index": "b0W",
@@ -3614,12 +3618,12 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 		{
 			"id": "O8FVEY9q",
 			"type": "text",
-			"x": 40,
-			"y": 1392.25,
-			"width": 1440,
-			"height": 48,
+			"x": 56,
+			"y": 1370,
+			"width": 297.54,
+			"height": 24,
 			"angle": 0,
-			"strokeColor": "#1e1e1e",
+			"strokeColor": "#6741d9",
 			"backgroundColor": "transparent",
 			"fillStyle": "solid",
 			"strokeWidth": 2,
@@ -3627,7 +3631,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"Eutu8SpmGfuVs0ZR"
+				"uVs0ZRBjntIyGRwI"
 			],
 			"frameId": null,
 			"index": "b0X",
@@ -3640,12 +3644,12 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
-			"text": "PolyForm Internal Use 1.0.0   —   \"açık kaynak\" değil, \"source-available\"\nÇekirdek korunur  ·  kişisel & şirket-içi serbest  ·  satış / ürün kapalı  ·  süresiz",
-			"rawText": "PolyForm Internal Use 1.0.0   —   \"açık kaynak\" değil, \"source-available\"\nÇekirdek korunur  ·  kişisel & şirket-içi serbest  ·  satış / ürün kapalı  ·  süresiz",
-			"originalText": "PolyForm Internal Use 1.0.0   —   \"açık kaynak\" değil, \"source-available\"\nÇekirdek korunur  ·  kişisel & şirket-içi serbest  ·  satış / ürün kapalı  ·  süresiz",
+			"text": "PolyForm Internal Use 1.0.0",
+			"rawText": "PolyForm Internal Use 1.0.0",
+			"originalText": "PolyForm Internal Use 1.0.0",
 			"fontSize": 19,
 			"fontFamily": 5,
-			"textAlign": "center",
+			"textAlign": "left",
 			"verticalAlign": "top",
 			"containerId": null,
 			"lineHeight": 1.25,
@@ -3653,6 +3657,46 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 		},
 		{
 			"id": "GY2zaYFM",
+			"type": "text",
+			"x": 393.54,
+			"y": 1370,
+			"width": 601.4600000000006,
+			"height": 43,
+			"angle": 0,
+			"strokeColor": "#1e1e1e",
+			"backgroundColor": "transparent",
+			"fillStyle": "solid",
+			"strokeWidth": 2,
+			"strokeStyle": "solid",
+			"roughness": 1,
+			"opacity": 100,
+			"groupIds": [
+				"uVs0ZRBjntIyGRwI"
+			],
+			"frameId": null,
+			"index": "b0Y",
+			"roundness": null,
+			"seed": 2215620924,
+			"version": 1,
+			"versionNonce": 1942053397,
+			"isDeleted": false,
+			"boundElements": [],
+			"updated": 1735689600000,
+			"link": null,
+			"locked": false,
+			"text": "\"açık kaynak\" değil, \"source-available\". Çekirdek korunur ·\nkişisel & şirket-içi serbest · satış / ürün kapalı · süresiz.",
+			"rawText": "\"açık kaynak\" değil, \"source-available\". Çekirdek korunur ·\nkişisel & şirket-içi serbest · satış / ürün kapalı · süresiz.",
+			"originalText": "\"açık kaynak\" değil, \"source-available\". Çekirdek korunur ·\nkişisel & şirket-içi serbest · satış / ürün kapalı · süresiz.",
+			"fontSize": 17,
+			"fontFamily": 5,
+			"textAlign": "left",
+			"verticalAlign": "top",
+			"containerId": null,
+			"lineHeight": 1.25,
+			"autoResize": false
+		},
+		{
+			"id": "GYFE1gst",
 			"type": "rectangle",
 			"x": 40,
 			"y": 1496,
@@ -3667,16 +3711,16 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"BjntIyGRwIJ1bzhs"
+				"J1bzhsWElxdi363O"
 			],
 			"frameId": null,
-			"index": "b0Y",
+			"index": "b0Z",
 			"roundness": {
 				"type": 3
 			},
-			"seed": 2215620924,
+			"seed": 3641139205,
 			"version": 1,
-			"versionNonce": 1942053397,
+			"versionNonce": 1819790331,
 			"isDeleted": false,
 			"boundElements": [],
 			"updated": 1735689600000,
@@ -3684,7 +3728,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"locked": false
 		},
 		{
-			"id": "GYFE1gst",
+			"id": "vbVnDj1W",
 			"type": "text",
 			"x": 40,
 			"y": 1519,
@@ -3699,14 +3743,14 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"BjntIyGRwIJ1bzhs"
+				"J1bzhsWElxdi363O"
 			],
 			"frameId": null,
-			"index": "b0Z",
+			"index": "b0a",
 			"roundness": null,
-			"seed": 3641139205,
+			"seed": 4146372921,
 			"version": 1,
-			"versionNonce": 1819790331,
+			"versionNonce": 3673070975,
 			"isDeleted": false,
 			"boundElements": [],
 			"updated": 1735689600000,
@@ -3724,7 +3768,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"autoResize": false
 		},
 		{
-			"id": "vbVnDj1W",
+			"id": "YXCbrbeQ",
 			"type": "rectangle",
 			"x": 520,
 			"y": 1496,
@@ -3739,16 +3783,16 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"WElxdi363OZaB3OM"
+				"ZaB3OMX61JFCQHHB"
 			],
 			"frameId": null,
-			"index": "b0a",
+			"index": "b0b",
 			"roundness": {
 				"type": 3
 			},
-			"seed": 4146372921,
+			"seed": 3459757721,
 			"version": 1,
-			"versionNonce": 3673070975,
+			"versionNonce": 2092160199,
 			"isDeleted": false,
 			"boundElements": [],
 			"updated": 1735689600000,
@@ -3756,7 +3800,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"locked": false
 		},
 		{
-			"id": "YXCbrbeQ",
+			"id": "6QJKtFUr",
 			"type": "text",
 			"x": 520,
 			"y": 1519,
@@ -3771,14 +3815,14 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"WElxdi363OZaB3OM"
+				"ZaB3OMX61JFCQHHB"
 			],
 			"frameId": null,
-			"index": "b0b",
+			"index": "b0c",
 			"roundness": null,
-			"seed": 3459757721,
+			"seed": 1126874519,
 			"version": 1,
-			"versionNonce": 2092160199,
+			"versionNonce": 932139722,
 			"isDeleted": false,
 			"boundElements": [],
 			"updated": 1735689600000,
@@ -3796,7 +3840,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"autoResize": false
 		},
 		{
-			"id": "6QJKtFUr",
+			"id": "EtaCtjOf",
 			"type": "rectangle",
 			"x": 1000,
 			"y": 1496,
@@ -3811,16 +3855,16 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"X61JFCQHHBKo89PY"
+				"Ko89PY9f3WHecOXE"
 			],
 			"frameId": null,
-			"index": "b0c",
+			"index": "b0d",
 			"roundness": {
 				"type": 3
 			},
-			"seed": 1126874519,
+			"seed": 1276139438,
 			"version": 1,
-			"versionNonce": 932139722,
+			"versionNonce": 1145628883,
 			"isDeleted": false,
 			"boundElements": [],
 			"updated": 1735689600000,
@@ -3828,7 +3872,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"locked": false
 		},
 		{
-			"id": "EtaCtjOf",
+			"id": "yBvJHNem",
 			"type": "text",
 			"x": 1000,
 			"y": 1519,
@@ -3843,14 +3887,14 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"X61JFCQHHBKo89PY"
+				"Ko89PY9f3WHecOXE"
 			],
 			"frameId": null,
-			"index": "b0d",
+			"index": "b0e",
 			"roundness": null,
-			"seed": 1276139438,
+			"seed": 1620652284,
 			"version": 1,
-			"versionNonce": 1145628883,
+			"versionNonce": 4268948798,
 			"isDeleted": false,
 			"boundElements": [],
 			"updated": 1735689600000,
@@ -3868,7 +3912,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"autoResize": false
 		},
 		{
-			"id": "yBvJHNem",
+			"id": "5ZHliV4I",
 			"type": "arrow",
 			"x": 500,
 			"y": 1529,
@@ -3884,11 +3928,11 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"opacity": 100,
 			"groupIds": [],
 			"frameId": null,
-			"index": "b0e",
+			"index": "b0f",
 			"roundness": null,
-			"seed": 1620652284,
+			"seed": 4155577860,
 			"version": 1,
-			"versionNonce": 4268948798,
+			"versionNonce": 2606348433,
 			"isDeleted": false,
 			"boundElements": [],
 			"updated": 1735689600000,
@@ -3911,7 +3955,7 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"endArrowhead": "arrow"
 		},
 		{
-			"id": "5ZHliV4I",
+			"id": "ykOdp0R1",
 			"type": "arrow",
 			"x": 980,
 			"y": 1529,
@@ -3927,11 +3971,11 @@ PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"
 			"opacity": 100,
 			"groupIds": [],
 			"frameId": null,
-			"index": "b0f",
+			"index": "b0g",
 			"roundness": null,
-			"seed": 4155577860,
+			"seed": 1182154316,
 			"version": 1,
-			"versionNonce": 2606348433,
+			"versionNonce": 3708002857,
 			"isDeleted": false,
 			"boundElements": [],
 			"updated": 1735689600000,

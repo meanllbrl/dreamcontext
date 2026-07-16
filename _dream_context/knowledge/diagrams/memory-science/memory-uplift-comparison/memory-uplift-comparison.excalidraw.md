@@ -1,7 +1,8 @@
 ---
+
 excalidraw-plugin: parsed
-tags:
-  - 'topic:excalidraw'
+tags: [excalidraw]
+
 ---
 ==⚠  Switch to EXCALIDRAW VIEW in the MORE OPTIONS menu of this document. ⚠== You can decompress Drawing data with the command palette: 'Decompress current Excalidraw file'. For more info check in plugin settings under 'Saving'
 
@@ -11,7 +12,8 @@ tags:
 ## Text Elements
 dreamcontext memory uplift — measured before / after ^2e8lQKIS
 
-tuned on 60q train set · validated on 30q BLIND held-out set · frozen 242-doc corpus · zero regressions ^8aiMmFq4
+tuned on 60q train set · validated on 30q BLIND held-out set ·
+frozen 242-doc corpus · zero regressions ^8aiMmFq4
 
 BEFORE ^HgbxOSJS
 
@@ -29,7 +31,8 @@ suffix gaps: sunucusu/başında unmatched, nelerdi = noise ^OeKuXAgG
 
 Turkish recall (held-out)
 r@1 90% (+20) · r@3 100% (+20)
-two-hop suffix folding · TR→EN directed bridges · TR stopwords ^sAkk7KIf
+two-hop suffix folding · TR→EN directed bridges · TR
+stopwords ^sAkk7KIf
 
 EN paraphrase (train) r@1 66.7%
 stemmer bug: databases≠database,
@@ -63,8 +66,14 @@ Tests: 1310 passing (+29 regression locks)
 train/held-out split, held-out authored blind ·
 linkAware benchmarked → REJECTED (r@1 68.3) · stays off ^Yyvr0RuC
 
-shipped: recall.ts v3 (TR two-hop stemming · -e fold · CHANGELOG_RANK_FACTOR 0.85) · recall-synonyms.ts (DIRECTED_BRIDGES) · snapshot-budget.ts (demotion ladder, DREAMCONTEXT_SNAPSHOT_BUDGET)
-hook.ts (PreCompact partial digest) · session-digest.ts (partial supersede) · agents/sleep-tasks.md (staleness sweep) · eval/gold-heldout.jsonl (30q blind) · scripts/recall-ab.ts (frozen-corpus A/B) ^qLQlC66d
+shipped ^qLQlC66d
+
+recall.ts v3 (TR two-hop stemming · -e fold · CHANGELOG_RANK_FACTOR 0.85) ·
+recall-synonyms.ts (DIRECTED_BRIDGES) · snapshot-budget.ts (demotion ladder,
+DREAMCONTEXT_SNAPSHOT_BUDGET) · hook.ts (PreCompact partial digest) ·
+session-digest.ts (partial supersede) · agents/sleep-tasks.md (staleness
+sweep) · eval/gold-heldout.jsonl (30q blind) · scripts/recall-ab.ts
+(frozen-corpus A/B) ^9UfP1PYE
 
 ## Embedded Files
 %%
@@ -80,7 +89,7 @@ hook.ts (PreCompact partial digest) · session-digest.ts (partial supersede) · 
 			"type": "text",
 			"x": 60,
 			"y": 8,
-			"width": 1123.2,
+			"width": 1121.7600000000002,
 			"height": 45,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
@@ -118,10 +127,10 @@ hook.ts (PreCompact partial digest) · session-digest.ts (partial supersede) · 
 			"type": "text",
 			"x": 60,
 			"y": 64,
-			"width": 988.8,
-			"height": 20,
+			"width": 620,
+			"height": 40,
 			"angle": 0,
-			"strokeColor": "#1e1e1e",
+			"strokeColor": "#495057",
 			"backgroundColor": "transparent",
 			"fillStyle": "solid",
 			"strokeWidth": 2,
@@ -140,9 +149,9 @@ hook.ts (PreCompact partial digest) · session-digest.ts (partial supersede) · 
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
-			"text": "tuned on 60q train set · validated on 30q BLIND held-out set · frozen 242-doc corpus · zero regressions",
-			"rawText": "tuned on 60q train set · validated on 30q BLIND held-out set · frozen 242-doc corpus · zero regressions",
-			"originalText": "tuned on 60q train set · validated on 30q BLIND held-out set · frozen 242-doc corpus · zero regressions",
+			"text": "tuned on 60q train set · validated on 30q BLIND held-out set ·\nfrozen 242-doc corpus · zero regressions",
+			"rawText": "tuned on 60q train set · validated on 30q BLIND held-out set ·\nfrozen 242-doc corpus · zero regressions",
+			"originalText": "tuned on 60q train set · validated on 30q BLIND held-out set ·\nfrozen 242-doc corpus · zero regressions",
 			"fontSize": 16,
 			"fontFamily": 5,
 			"textAlign": "left",
@@ -243,7 +252,7 @@ hook.ts (PreCompact partial digest) · session-digest.ts (partial supersede) · 
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"9UfP1PYErAXxrKXy"
+				"XxrKXyKE5OstfCDx"
 			],
 			"frameId": null,
 			"index": "a4",
@@ -275,7 +284,7 @@ hook.ts (PreCompact partial digest) · session-digest.ts (partial supersede) · 
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"9UfP1PYErAXxrKXy"
+				"XxrKXyKE5OstfCDx"
 			],
 			"frameId": null,
 			"index": "a5",
@@ -315,7 +324,7 @@ hook.ts (PreCompact partial digest) · session-digest.ts (partial supersede) · 
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"KE5OstfCDxTUuH9G"
+				"TUuH9Gtq3Sy1uRP0"
 			],
 			"frameId": null,
 			"index": "a6",
@@ -347,7 +356,7 @@ hook.ts (PreCompact partial digest) · session-digest.ts (partial supersede) · 
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"KE5OstfCDxTUuH9G"
+				"TUuH9Gtq3Sy1uRP0"
 			],
 			"frameId": null,
 			"index": "a7",
@@ -430,7 +439,7 @@ hook.ts (PreCompact partial digest) · session-digest.ts (partial supersede) · 
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"tq3Sy1uRP0nUSBKd"
+				"nUSBKdpDsTLTRChW"
 			],
 			"frameId": null,
 			"index": "a9",
@@ -462,7 +471,7 @@ hook.ts (PreCompact partial digest) · session-digest.ts (partial supersede) · 
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"tq3Sy1uRP0nUSBKd"
+				"nUSBKdpDsTLTRChW"
 			],
 			"frameId": null,
 			"index": "aA",
@@ -502,7 +511,7 @@ hook.ts (PreCompact partial digest) · session-digest.ts (partial supersede) · 
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"pDsTLTRChWmAZ1b2"
+				"mAZ1b2iWwZE1mygK"
 			],
 			"frameId": null,
 			"index": "aB",
@@ -522,9 +531,9 @@ hook.ts (PreCompact partial digest) · session-digest.ts (partial supersede) · 
 			"id": "sAkk7KIf",
 			"type": "text",
 			"x": 720,
-			"y": 281.875,
+			"y": 272.5,
 			"width": 560,
-			"height": 56,
+			"height": 75,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",
 			"backgroundColor": "transparent",
@@ -534,7 +543,7 @@ hook.ts (PreCompact partial digest) · session-digest.ts (partial supersede) · 
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"pDsTLTRChWmAZ1b2"
+				"mAZ1b2iWwZE1mygK"
 			],
 			"frameId": null,
 			"index": "aC",
@@ -547,9 +556,9 @@ hook.ts (PreCompact partial digest) · session-digest.ts (partial supersede) · 
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
-			"text": "Turkish recall (held-out)\nr@1 90% (+20) · r@3 100% (+20)\ntwo-hop suffix folding · TR→EN directed bridges · TR stopwords",
-			"rawText": "Turkish recall (held-out)\nr@1 90% (+20) · r@3 100% (+20)\ntwo-hop suffix folding · TR→EN directed bridges · TR stopwords",
-			"originalText": "Turkish recall (held-out)\nr@1 90% (+20) · r@3 100% (+20)\ntwo-hop suffix folding · TR→EN directed bridges · TR stopwords",
+			"text": "Turkish recall (held-out)\nr@1 90% (+20) · r@3 100% (+20)\ntwo-hop suffix folding · TR→EN directed bridges · TR\nstopwords",
+			"rawText": "Turkish recall (held-out)\nr@1 90% (+20) · r@3 100% (+20)\ntwo-hop suffix folding · TR→EN directed bridges · TR\nstopwords",
+			"originalText": "Turkish recall (held-out)\nr@1 90% (+20) · r@3 100% (+20)\ntwo-hop suffix folding · TR→EN directed bridges · TR\nstopwords",
 			"fontSize": 15,
 			"fontFamily": 5,
 			"textAlign": "center",
@@ -617,7 +626,7 @@ hook.ts (PreCompact partial digest) · session-digest.ts (partial supersede) · 
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"iWwZE1mygKKopk4L"
+				"Kopk4LsYWhiFQklA"
 			],
 			"frameId": null,
 			"index": "aE",
@@ -649,7 +658,7 @@ hook.ts (PreCompact partial digest) · session-digest.ts (partial supersede) · 
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"iWwZE1mygKKopk4L"
+				"Kopk4LsYWhiFQklA"
 			],
 			"frameId": null,
 			"index": "aF",
@@ -689,7 +698,7 @@ hook.ts (PreCompact partial digest) · session-digest.ts (partial supersede) · 
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"sYWhiFQklAKncOsZ"
+				"KncOsZvGtYXFsVNU"
 			],
 			"frameId": null,
 			"index": "aG",
@@ -721,7 +730,7 @@ hook.ts (PreCompact partial digest) · session-digest.ts (partial supersede) · 
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"sYWhiFQklAKncOsZ"
+				"KncOsZvGtYXFsVNU"
 			],
 			"frameId": null,
 			"index": "aH",
@@ -804,7 +813,7 @@ hook.ts (PreCompact partial digest) · session-digest.ts (partial supersede) · 
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"vGtYXFsVNUmTVpmL"
+				"mTVpmL324iQyi8GJ"
 			],
 			"frameId": null,
 			"index": "aJ",
@@ -836,7 +845,7 @@ hook.ts (PreCompact partial digest) · session-digest.ts (partial supersede) · 
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"vGtYXFsVNUmTVpmL"
+				"mTVpmL324iQyi8GJ"
 			],
 			"frameId": null,
 			"index": "aK",
@@ -876,7 +885,7 @@ hook.ts (PreCompact partial digest) · session-digest.ts (partial supersede) · 
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"324iQyi8GJHqsovK"
+				"HqsovKa20csi1rsS"
 			],
 			"frameId": null,
 			"index": "aL",
@@ -908,7 +917,7 @@ hook.ts (PreCompact partial digest) · session-digest.ts (partial supersede) · 
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"324iQyi8GJHqsovK"
+				"HqsovKa20csi1rsS"
 			],
 			"frameId": null,
 			"index": "aM",
@@ -991,7 +1000,7 @@ hook.ts (PreCompact partial digest) · session-digest.ts (partial supersede) · 
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"a20csi1rsSzUmaAq"
+				"zUmaAqy3ITXKJhdp"
 			],
 			"frameId": null,
 			"index": "aO",
@@ -1023,7 +1032,7 @@ hook.ts (PreCompact partial digest) · session-digest.ts (partial supersede) · 
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"a20csi1rsSzUmaAq"
+				"zUmaAqy3ITXKJhdp"
 			],
 			"frameId": null,
 			"index": "aP",
@@ -1063,7 +1072,7 @@ hook.ts (PreCompact partial digest) · session-digest.ts (partial supersede) · 
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"y3ITXKJhdpFn5HmM"
+				"Fn5HmMHlZGVr8B1v"
 			],
 			"frameId": null,
 			"index": "aQ",
@@ -1095,7 +1104,7 @@ hook.ts (PreCompact partial digest) · session-digest.ts (partial supersede) · 
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"y3ITXKJhdpFn5HmM"
+				"Fn5HmMHlZGVr8B1v"
 			],
 			"frameId": null,
 			"index": "aR",
@@ -1178,7 +1187,7 @@ hook.ts (PreCompact partial digest) · session-digest.ts (partial supersede) · 
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"HlZGVr8B1vumAMfd"
+				"umAMfd3McrXRNttd"
 			],
 			"frameId": null,
 			"index": "aT",
@@ -1210,7 +1219,7 @@ hook.ts (PreCompact partial digest) · session-digest.ts (partial supersede) · 
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"HlZGVr8B1vumAMfd"
+				"umAMfd3McrXRNttd"
 			],
 			"frameId": null,
 			"index": "aU",
@@ -1250,7 +1259,7 @@ hook.ts (PreCompact partial digest) · session-digest.ts (partial supersede) · 
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"3McrXRNttdrVFUXd"
+				"rVFUXdcPoIYIAjAg"
 			],
 			"frameId": null,
 			"index": "aV",
@@ -1282,7 +1291,7 @@ hook.ts (PreCompact partial digest) · session-digest.ts (partial supersede) · 
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"3McrXRNttdrVFUXd"
+				"rVFUXdcPoIYIAjAg"
 			],
 			"frameId": null,
 			"index": "aW",
@@ -1354,10 +1363,10 @@ hook.ts (PreCompact partial digest) · session-digest.ts (partial supersede) · 
 			"type": "rectangle",
 			"x": 60,
 			"y": 840,
-			"width": 1220,
-			"height": 96,
+			"width": 755,
+			"height": 133,
 			"angle": 0,
-			"strokeColor": "#1e1e1e",
+			"strokeColor": "#f08c00",
 			"backgroundColor": "#ffec99",
 			"fillStyle": "solid",
 			"strokeWidth": 2,
@@ -1365,7 +1374,7 @@ hook.ts (PreCompact partial digest) · session-digest.ts (partial supersede) · 
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"cPoIYIAjAg1ZqXjR"
+				"1ZqXjRCLky2uFNYA"
 			],
 			"frameId": null,
 			"index": "aY",
@@ -1384,12 +1393,12 @@ hook.ts (PreCompact partial digest) · session-digest.ts (partial supersede) · 
 		{
 			"id": "qLQlC66d",
 			"type": "text",
-			"x": 60,
-			"y": 850.5,
-			"width": 1220,
-			"height": 75,
+			"x": 76,
+			"y": 854,
+			"width": 64.96,
+			"height": 20,
 			"angle": 0,
-			"strokeColor": "#1e1e1e",
+			"strokeColor": "#f08c00",
 			"backgroundColor": "transparent",
 			"fillStyle": "solid",
 			"strokeWidth": 2,
@@ -1397,7 +1406,7 @@ hook.ts (PreCompact partial digest) · session-digest.ts (partial supersede) · 
 			"roughness": 1,
 			"opacity": 100,
 			"groupIds": [
-				"cPoIYIAjAg1ZqXjR"
+				"1ZqXjRCLky2uFNYA"
 			],
 			"frameId": null,
 			"index": "aZ",
@@ -1410,12 +1419,52 @@ hook.ts (PreCompact partial digest) · session-digest.ts (partial supersede) · 
 			"updated": 1735689600000,
 			"link": null,
 			"locked": false,
-			"text": "shipped: recall.ts v3 (TR two-hop stemming · -e fold · CHANGELOG_RANK_FACTOR 0.85) · recall-synonyms.ts (DIRECTED_BRIDGES) · snapshot-budget.ts (demotion ladder, DREAMCONTEXT_SNAPSHOT_BUDGET)\nhook.ts (PreCompact partial digest) · session-digest.ts (partial supersede) · agents/sleep-tasks.md (staleness sweep) · eval/gold-heldout.jsonl (30q blind) · scripts/recall-ab.ts (frozen-corpus A/B)",
-			"rawText": "shipped: recall.ts v3 (TR two-hop stemming · -e fold · CHANGELOG_RANK_FACTOR 0.85) · recall-synonyms.ts (DIRECTED_BRIDGES) · snapshot-budget.ts (demotion ladder, DREAMCONTEXT_SNAPSHOT_BUDGET)\nhook.ts (PreCompact partial digest) · session-digest.ts (partial supersede) · agents/sleep-tasks.md (staleness sweep) · eval/gold-heldout.jsonl (30q blind) · scripts/recall-ab.ts (frozen-corpus A/B)",
-			"originalText": "shipped: recall.ts v3 (TR two-hop stemming · -e fold · CHANGELOG_RANK_FACTOR 0.85) · recall-synonyms.ts (DIRECTED_BRIDGES) · snapshot-budget.ts (demotion ladder, DREAMCONTEXT_SNAPSHOT_BUDGET)\nhook.ts (PreCompact partial digest) · session-digest.ts (partial supersede) · agents/sleep-tasks.md (staleness sweep) · eval/gold-heldout.jsonl (30q blind) · scripts/recall-ab.ts (frozen-corpus A/B)",
-			"fontSize": 15,
+			"text": "shipped",
+			"rawText": "shipped",
+			"originalText": "shipped",
+			"fontSize": 16,
 			"fontFamily": 5,
-			"textAlign": "center",
+			"textAlign": "left",
+			"verticalAlign": "top",
+			"containerId": null,
+			"lineHeight": 1.25,
+			"autoResize": false
+		},
+		{
+			"id": "9UfP1PYE",
+			"type": "text",
+			"x": 180.95999999999998,
+			"y": 854,
+			"width": 617.1200000000002,
+			"height": 105,
+			"angle": 0,
+			"strokeColor": "#1e1e1e",
+			"backgroundColor": "transparent",
+			"fillStyle": "solid",
+			"strokeWidth": 2,
+			"strokeStyle": "solid",
+			"roughness": 1,
+			"opacity": 100,
+			"groupIds": [
+				"1ZqXjRCLky2uFNYA"
+			],
+			"frameId": null,
+			"index": "aa",
+			"roundness": null,
+			"seed": 1215857501,
+			"version": 1,
+			"versionNonce": 4230113256,
+			"isDeleted": false,
+			"boundElements": [],
+			"updated": 1735689600000,
+			"link": null,
+			"locked": false,
+			"text": "recall.ts v3 (TR two-hop stemming · -e fold · CHANGELOG_RANK_FACTOR 0.85) ·\nrecall-synonyms.ts (DIRECTED_BRIDGES) · snapshot-budget.ts (demotion ladder,\nDREAMCONTEXT_SNAPSHOT_BUDGET) · hook.ts (PreCompact partial digest) ·\nsession-digest.ts (partial supersede) · agents/sleep-tasks.md (staleness\nsweep) · eval/gold-heldout.jsonl (30q blind) · scripts/recall-ab.ts\n(frozen-corpus A/B)",
+			"rawText": "recall.ts v3 (TR two-hop stemming · -e fold · CHANGELOG_RANK_FACTOR 0.85) ·\nrecall-synonyms.ts (DIRECTED_BRIDGES) · snapshot-budget.ts (demotion ladder,\nDREAMCONTEXT_SNAPSHOT_BUDGET) · hook.ts (PreCompact partial digest) ·\nsession-digest.ts (partial supersede) · agents/sleep-tasks.md (staleness\nsweep) · eval/gold-heldout.jsonl (30q blind) · scripts/recall-ab.ts\n(frozen-corpus A/B)",
+			"originalText": "recall.ts v3 (TR two-hop stemming · -e fold · CHANGELOG_RANK_FACTOR 0.85) ·\nrecall-synonyms.ts (DIRECTED_BRIDGES) · snapshot-budget.ts (demotion ladder,\nDREAMCONTEXT_SNAPSHOT_BUDGET) · hook.ts (PreCompact partial digest) ·\nsession-digest.ts (partial supersede) · agents/sleep-tasks.md (staleness\nsweep) · eval/gold-heldout.jsonl (30q blind) · scripts/recall-ab.ts\n(frozen-corpus A/B)",
+			"fontSize": 14,
+			"fontFamily": 5,
+			"textAlign": "left",
 			"verticalAlign": "top",
 			"containerId": null,
 			"lineHeight": 1.25,

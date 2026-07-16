@@ -48,7 +48,7 @@ assemble ^hiCSoka1
 			"type": "text",
 			"x": 60,
 			"y": 60,
-			"width": 907.1999999999999,
+			"width": 912.9599999999999,
 			"height": 45,
 			"angle": 0,
 			"strokeColor": "#1e1e1e",

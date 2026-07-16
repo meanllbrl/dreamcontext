@@ -5,6 +5,7 @@ const path = require('path');
 const SKILL = path.join(__dirname, '..', '..', '.claude', 'skills', 'excalidraw', 'scripts');
 const { buildExcalidraw } = require(path.join(SKILL, 'build_excalidraw.js'));
 const { card, node, sectionTitle, connector } = require(path.join(SKILL, 'lib', 'style.js'));
+const { callout } = require(path.join(SKILL, 'lib', 'charts.js'));
 
 const els = [];
 const P = (...a) => els.push(...a.flat());
@@ -47,7 +48,7 @@ T(SX0 + 6 * SW + 5 * SGAP - 170, SY + SH + 30, 'daha KORUMALI', 14, '#e03131', 1
 // ===== SLIDE 2 — your rules across 3 licenses =====
 const M_Y = 392;
 P(sectionTitle({ x: 40, y: M_Y, text: '2 · Senin Kuralların 3 Lisansta', fontSize: 26, color: '#6741d9' }));
-T(40, M_Y + 38, 'Renk = senin niyetine uyuyor mu?   yeşil = istediğin gibi · kırmızı = istemediğin · sarı = kısmen', 14, '#868e96', 1200);
+T(40, M_Y + 38, 'Renk = senin niyetine uyuyor mu?\nyeşil = istediğin gibi · kırmızı = istemediğin · sarı = kısmen', 14, '#868e96', 620);
 
 const RULE_X = 40, RULE_W = 430, COL_W = 290, GAP = 16;
 const MIT_X = RULE_X + RULE_W + GAP;          // 486
@@ -90,8 +91,9 @@ P(card({ x: 780, y: H_Y + 56, w: 700, h: 150, color: 'yellow', fontSize: 16,
 // ===== SLIDE 4 — recommendation =====
 const R_Y = H_Y + 250;
 P(sectionTitle({ x: 40, y: R_Y, text: '4 · Öneri', fontSize: 26, color: '#6741d9' }));
-P(card({ x: 40, y: R_Y + 56, w: 1440, h: 120, color: 'purple', fontSize: 19,
-  text: `PolyForm Internal Use 1.0.0   —   "açık kaynak" değil, "source-available"\nÇekirdek korunur  ·  kişisel & şirket-içi serbest  ·  satış / ürün kapalı  ·  süresiz` }));
+P(callout({ x: 40, y: R_Y + 56, w: 1440, color: 'purple', minH: 120, titleSize: 19, fontSize: 17, sideTitle: true,
+  title: 'PolyForm Internal Use 1.0.0',
+  text: '"açık kaynak" değil, "source-available". Çekirdek korunur · kişisel & şirket-içi serbest · satış / ürün kapalı · süresiz.' }));
 const STEPS_Y = R_Y + 196;
 P(node({ x: 40, y: STEPS_Y, w: 460, h: 66, color: 'blue', fontSize: 16, text: `1 · LICENSE + package.json değiş` }));
 P(node({ x: 520, y: STEPS_Y, w: 460, h: 66, color: 'blue', fontSize: 16, text: `2 · TRADEMARK.md + NOTICE (marka)` }));

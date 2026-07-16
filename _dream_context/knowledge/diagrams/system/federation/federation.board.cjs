@@ -8,6 +8,7 @@ const {
   card, sectionTitle, connector, annotate, bullets,
   topOf, bottomOf, leftOf, rightOf,
 } = require('../../../../../scripts/diagrams/excalidraw/lib/style.js');
+const { callout } = require('../../../../../scripts/diagrams/excalidraw/lib/charts.js');
 
 const OUT = path.resolve(__dirname, 'federation.excalidraw.md');
 const els = [];
@@ -16,7 +17,9 @@ els.push(...sectionTitle({ x: 60, y: 8, text: 'dreamcontext — how two vaults f
 
 // Shared registry strip (top, full width context)
 const REG = { x: 60, y: 70, w: 1180, h: 60 };
-els.push(...card({ ...REG, color: 'gray', fontSize: 17, text: 'vault registry (~/.dreamcontext) — every _dream_context/ project addressable by name · the one shared index' }));
+els.push(...callout({ ...REG, color: 'gray', minH: REG.h, titleSize: 17, fontSize: 15, sideTitle: true,
+  title: 'vault registry (~/.dreamcontext)',
+  text: 'Every _dream_context/ project addressable by name · the one shared index.' }));
 
 // ───────────────────────── PUSH band (sleep-driven, automatic) ─────────────────────────
 els.push(...sectionTitle({ x: 60, y: 168, text: 'PUSH — sleep-driven, automatic', fontSize: 24, color: '#1971c2' }));
@@ -39,8 +42,11 @@ els.push(...connector({ from: rightOf(CONSENT.x, CONSENT.y, CONSENT.w, CONSENT.h
 // band above the consent card so it never collides with the PUSH section title.
 els.push(...annotate({
   from: [DIGEST.x + DIGEST.w, DIGEST.y + 12],
-  to:   [DIGEST.x + DIGEST.w + 70, 150],
-  text: 'source = FULL corpus (knowledge+feature+task+changelog+memory)\nNOT knowledge-only · only a title+summary digest crosses',
+  to:   [DIGEST.x + DIGEST.w + 70, 146],
+  // NOTE_W (260) made this 5 lines ⇒ it grew down THROUGH the consent card. The band above that card
+  // is only ~68px, so widen the measure to keep it 3 lines and inside the band.
+  width: 520,
+  text: 'source = FULL corpus (knowledge+feature+task+changelog+memory) — NOT knowledge-only. Only a title+summary digest crosses.',
 }));
 
 // drain row (under the inbox, flowing right→left back into B's knowledge)
@@ -60,7 +66,8 @@ els.push(...connector({ from: leftOf(B_KNOW.x, B_KNOW.y, B_KNOW.w, B_KNOW.h), to
 els.push(...annotate({
   from: [B_KNOW.x + B_KNOW.w / 2, B_KNOW.y + B_KNOW.h],
   to:   [B_KNOW.x + 30, B_KNOW.y + B_KNOW.h + 40],
-  text: 'kind map: changelog→changelog · task→decision · rest→knowledge.\nAll land as knowledge/*.md on the receiver.',
+  width: 430,   // 260 (NOTE_W) made this 5 lines deep — the last line fell behind the card below
+  text: 'kind map: changelog→changelog · task→decision · rest→knowledge. All land as knowledge/*.md on the receiver.',
 }));
 
 // ───────────────────────── PULL band (on-demand) ─────────────────────────

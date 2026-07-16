@@ -1,0 +1,122 @@
+{
+  "out": "./examples/Chart Spec.excalidraw.md",
+  "background": "#ffffff",
+  "elements": [
+    {
+      "type": "stack",
+      "x": 40,
+      "y": 40,
+      "gap": 40,
+      "items": [
+        {
+          "type": "sectionTitle",
+          "text": "Declarative charts — pure JSON, no generator script",
+          "fontSize": 34
+        },
+        {
+          "type": "row",
+          "gap": 24,
+          "items": [
+            {
+              "type": "kpi",
+              "w": 260,
+              "label": "D0 ROAS",
+              "value": "0.25",
+              "delta": "W1: 0.25 — değişmedi",
+              "color": "red"
+            },
+            {
+              "type": "kpi",
+              "w": 260,
+              "label": "CPM",
+              "value": "$169",
+              "delta": "+%22",
+              "color": "red",
+              "spark": [
+                139,
+                144,
+                151,
+                158,
+                169
+              ]
+            },
+            {
+              "type": "callout",
+              "w": 640,
+              "color": "gray",
+              "title": "tak diye",
+              "text": "Bu board tek bir JSON. Agent hiç JS yazmadan lineChart/barCompare/gantt çizebiliyor."
+            }
+          ]
+        },
+        {
+          "type": "row",
+          "gap": 50,
+          "items": [
+            {
+              "type": "lineChart",
+              "w": 620,
+              "h": 300,
+              "title": "lineChart — DAU",
+              "xLabels": [
+                "3",
+                "5",
+                "7",
+                "9",
+                "11",
+                "13",
+                "15"
+              ],
+              "area": true,
+              "series": [
+                {
+                  "label": "DAU",
+                  "color": "blue",
+                  "points": [
+                    58,
+                    69,
+                    55,
+                    44,
+                    38,
+                    35,
+                    32
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "barCompare",
+              "w": 560,
+              "h": 300,
+              "title": "barCompare — W1 ↔ W2",
+              "seriesLabels": [
+                "W1",
+                "W2"
+              ],
+              "colors": [
+                "gray",
+                "red"
+              ],
+              "groups": [
+                {
+                  "label": "CPM",
+                  "values": [
+                    139,
+                    169
+                  ]
+                },
+                {
+                  "label": "Trans %",
+                  "values": [
+                    67.2,
+                    46.77
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

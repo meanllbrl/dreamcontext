@@ -8,6 +8,7 @@ const {
   card, sectionTitle, connector,
   topOf, bottomOf, rightOf, leftOf,
 } = require('../../../../../scripts/diagrams/excalidraw/lib/style.js');
+const { callout } = require('../../../../../scripts/diagrams/excalidraw/lib/charts.js');
 
 const OUT = path.resolve(__dirname, 'memory-upgrade-plan.excalidraw.md');
 
@@ -120,9 +121,10 @@ els.push(...connector({
 
 // ── Bottom: execution order ─────────────────────────────────────────────────
 const ORDER = { x: 640, y: wy + 24, w: 1070, h: 84 };
-els.push(...card({
-  ...ORDER, color: 'yellow', fontSize: 17,
-  text: 'order: 1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder → 4 coverage audit\n→ 5 H2 chunking → scale items only when corpus metrics trigger them',
+els.push(...callout({
+  ...ORDER, color: 'yellow', titleSize: 17, fontSize: 15, sideTitle: true, minH: ORDER.h,
+  title: 'execution order',
+  text: '1 staleness rule → 2 PreCompact digest → 3 budget + demotion ladder → 4 coverage audit → 5 H2 chunking. Scale items only when corpus metrics trigger them.',
 }));
 
 buildExcalidraw({ out: OUT, background: '#ffffff', elements: els });
