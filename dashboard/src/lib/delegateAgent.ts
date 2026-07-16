@@ -29,6 +29,17 @@ export interface DelegateAgentDetail {
   /** Token redeeming a prompt too large to inline. Empty when {@link prompt} is used. */
   promptToken: string;
   bypass: boolean;
+  /**
+   * Show the agent instead of backgrounding it: open the Agents overlay with the new session
+   * as a live pane, rather than starting it minimized as a corner chip.
+   *
+   * The default (false) is right for the board: you right-click a card, hand it off, and carry
+   * on triaging — a chip is exactly the feedback you want. It is wrong when you delegated from
+   * the task's OWN full-page view, because that screen is the thing you were looking at, and
+   * backgrounding the agent would leave you staring at a task that now has an invisible worker.
+   * Reveal replaces the screen you left with the screen you actually wanted.
+   */
+  reveal?: boolean;
   /** Set to true by the AgentSurface listener once it has actually spawned the session.
    *  Left false when its guards reject (not desktop / prereqs missing / surface disabled),
    *  or when no surface is mounted to listen at all. */
@@ -111,8 +122,10 @@ export function requestDelegateAgent(detail: DelegateAgentDetail): boolean {
  * resolves to the surface's ACK otherwise.
  */
 export async function delegateTaskToAgent(
-  args: { title: string; prompt: string; bypass: boolean },
+  args: { title: string; prompt: string; bypass: boolean; reveal?: boolean },
 ): Promise<boolean> {
   const { inline, token } = await preparePrompt(args.prompt.trim());
-  return requestDelegateAgent({ title: args.title, prompt: inline, promptToken: token, bypass: args.bypass });
+  return requestDelegateAgent({
+    title: args.title, prompt: inline, promptToken: token, bypass: args.bypass, reveal: args.reveal,
+  });
 }

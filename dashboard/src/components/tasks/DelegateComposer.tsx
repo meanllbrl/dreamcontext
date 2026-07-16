@@ -10,6 +10,9 @@ interface DelegateComposerProps {
   onClose: () => void;
   /** Called after a successful delegate so the board can flash a confirmation toast. */
   onDelegated?: (title: string) => void;
+  /** Open the Agents overlay on the new session instead of backgrounding it as a corner chip.
+   *  See {@link DelegateAgentDetail.reveal} for when each is right. */
+  reveal?: boolean;
 }
 
 /**
@@ -20,7 +23,7 @@ interface DelegateComposerProps {
  * `AgentSurface` listens for; the agent then spawns MINIMIZED as a background corner chip.
  * Esc / Cancel closes without spawning. Reuses the shared modal + field CSS.
  */
-export function DelegateComposer({ task, onClose, onDelegated }: DelegateComposerProps) {
+export function DelegateComposer({ task, onClose, onDelegated, reveal }: DelegateComposerProps) {
   // ONE source for the title: the prompt's "Task:" line and the delegated tab's title both
   // come from this call, so they can't drift.
   const title = taskName(task);
@@ -53,7 +56,7 @@ export function DelegateComposer({ task, onClose, onDelegated }: DelegateCompose
     // Hand the prompt over WHOLE — `delegateTaskToAgent` picks a transport that can carry it
     // (inline for a short prompt, a POSTed token for a long one), so what is shown above is
     // exactly what the agent receives. Nothing is trimmed behind the user's back.
-    void delegateTaskToAgent({ title, prompt, bypass })
+    void delegateTaskToAgent({ title, prompt, bypass, reveal })
       .then((accepted) => {
         // Report what REALLY happened. The surface gates on its own capabilities snapshot,
         // which can disagree with the one that made this menu item visible — an optimistic
@@ -95,8 +98,11 @@ export function DelegateComposer({ task, onClose, onDelegated }: DelegateCompose
         <div className="modal-body">
           <p style={{ margin: 0, fontSize: 'var(--font-size-sm)', color: 'var(--color-text-tertiary)', lineHeight: 1.5 }}>
             Hands <strong style={{ color: 'var(--color-text-secondary)' }}>{title}</strong> to an in-app Claude Code
-            agent. It starts <strong style={{ color: 'var(--color-text-secondary)' }}>minimized</strong> in the corner
-            and works in the background — click its chip to watch it as a pane.
+            agent.{' '}
+            {reveal
+              ? <>It opens in <strong style={{ color: 'var(--color-text-secondary)' }}>Agents</strong> so you can watch it work.</>
+              : <>It starts <strong style={{ color: 'var(--color-text-secondary)' }}>minimized</strong> in the corner
+                 and works in the background — click its chip to watch it as a pane.</>}
           </p>
           <label className="field">
             <span className="field-label">Prompt</span>

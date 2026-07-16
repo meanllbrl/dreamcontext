@@ -28,6 +28,18 @@
   transition: max-width var(--transition-normal);
 }
 
+/*
+ * Task Manager widens the drawer instead of squeezing into it.
+ *
+ * A fixed 680px is already >50% of a 1000px viewport, and a terminal inside the remaining
+ * ~300px would be unusable — a Claude TUI needs real columns before its output starts wrapping
+ * into noise. So asking for it in the drawer buys the width it needs. Capped at 92vw so a
+ * small laptop still shows the board underneath and the click-away-to-close target survives.
+ */
+.detail-panel--tm {
+  max-width: min(1100px, 92vw);
+}
+
 .detail-panel--fullscreen {
   max-width: 100vw;
   border-left: none;
@@ -45,6 +57,35 @@
   margin-left: auto;
   margin-right: auto;
   width: 100%;
+}
+
+/* ── Zones: document · Task Manager ───────────────────────────────────────────────
+ * The row that lets an agent live beside the task rather than under it. `min-height: 0` is
+ * load-bearing on both: without it a flex child refuses to shrink below its content and the
+ * document's own scroll is replaced by the whole panel scrolling — which would drag the
+ * terminal off-screen every time you scrolled the task.
+ */
+.detail-zones {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.detail-zones > .detail-body {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.detail-zones > .tm-pane {
+  flex: 0 0 clamp(340px, 32%, 420px);
+}
+
+/* Full-page: the document keeps its centred measure inside its own column, so widening the
+   window grows the margins, not the line length. */
+.detail-panel--fullscreen .detail-zones > .tm-pane {
+  flex: 0 0 clamp(360px, 28%, 460px);
 }
 
 .detail-panel--fullscreen .detail-header {
@@ -90,6 +131,65 @@
 .detail-icon-btn:hover {
   background: var(--color-bg-tertiary);
   color: var(--color-text);
+}
+
+/* Curate reads as a toggle, not a command: it opens a surface you can close again. Distinct
+   from Delegate — which is a one-way "go do this" — so it deliberately does NOT wear the
+   primary/filled treatment until it is actually on. */
+.detail-tm-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 28px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.detail-tm-btn:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.detail-tm-btn.is-on {
+  background: var(--color-accent-soft);
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.detail-tm-btn:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+/* Delegate is the committing action of the pair, so it carries the accent fill. */
+.detail-delegate-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 28px;
+  padding: 0 var(--space-3);
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--color-accent);
+  color: #fff;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter var(--transition-fast);
+}
+
+.detail-delegate-btn:hover { filter: brightness(1.06); }
+
+.detail-delegate-btn:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
 }
 
 .detail-title {

@@ -13,6 +13,11 @@ import { useI18n } from '../../context/I18nContext';
 import { useTheme } from '../../context/ThemeContext';
 import { tagHue } from '../../lib/tagColor';
 import { initMermaid, normalizeMermaidSvg } from '../../lib/mermaidRender';
+import { useAgentCapabilities } from '../../hooks/useAgentCapabilities';
+import { SparkIcon } from '../sleepy/TypeIcons';
+import { TaskManagerPane } from './detail/TaskManagerPane';
+import { DelegateComposer } from './DelegateComposer';
+import { taskName } from './boardModel';
 import './TaskDetailPanel.css';
 
 marked.setOptions({ gfm: true, breaks: true });
@@ -384,6 +389,16 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [riceExpanded, setRiceExpanded] = useState(initialRiceExpanded ?? !!task.rice);
   const [fullScreen, setFullScreen] = useState(false);
+  // Task Manager is desktop-only (it runs a real Claude Code session). On the web build the button
+  // never appears, and the pane's own fallback covers the case where caps flip mid-session.
+  const { data: agentCaps } = useAgentCapabilities();
+  const tmAvailable = !!(agentCaps?.desktop && agentCaps.embeddedTerminal && agentCaps.claudeCli);
+  // Off in the drawer (680px has no room for a terminal — asking for it widens the panel), on
+  // in full-page (the design's third zone). Following `fullScreen` rather than latching means
+  // toggling to full-page brings Curate with it, which is what "open this properly" implies.
+  const [tmOpen, setTmOpen] = useState(false);
+  useEffect(() => { if (fullScreen) setTmOpen(true); }, [fullScreen]);
+  const [delegating, setDelegating] = useState(false);
 
   const onMutationError = (err: Error) => {
     setMutationError(err.message);
@@ -857,11 +872,49 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
   }, [bodyHtml, task.slug, theme]);
 
   return (
-    <div className={`detail-overlay ${fullScreen ? 'detail-overlay--fullscreen' : ''}`} onClick={onClose}>
-      <div className={`detail-panel ${fullScreen ? 'detail-panel--fullscreen' : ''}`} onClick={e => e.stopPropagation()}>
+    <div
+      className={`detail-overlay ${fullScreen ? 'detail-overlay--fullscreen' : ''}`}
+      onClick={onClose}
+    >
+      <div
+        className={`detail-panel ${fullScreen ? 'detail-panel--fullscreen' : ''} ${tmOpen ? 'detail-panel--tm' : ''}`}
+        onClick={e => e.stopPropagation()}
+      >
         <div className="detail-header">
           <h2 className="detail-title">{task.name}</h2>
           <div className="detail-header-actions">
+            {/*
+              Task Manager is a toggle, not a permanent fixture, and that is the answer to "does the
+              680px slide-over survive an inline agent?" — it doesn't, so it doesn't have to.
+              In the drawer, Curate is opt-in: asking for it widens the panel to fit a real
+              terminal (see .detail-panel--tm) instead of cramming three columns into
+              680px. In full-page there is room, so it is simply on. Same component either way.
+            */}
+            {tmAvailable && (
+              <>
+                <button
+                  type="button"
+                  className={`detail-tm-btn ${tmOpen ? 'is-on' : ''}`}
+                  onClick={() => setTmOpen((v) => !v)}
+                  aria-pressed={tmOpen}
+                  title="Open Task Manager — a Claude session that maintains this task (it doesn’t build it)"
+                >
+                  <SparkIcon size={14} />
+                  Task Manager
+                </button>
+                {/* Delegate sits beside Task Manager so the boundary is legible at the point of
+                    choosing: Task Manager maintains this document, Delegate goes and builds it. */}
+                <button
+                  type="button"
+                  className="detail-delegate-btn"
+                  onClick={() => setDelegating(true)}
+                  title="Hand this task to a Claude agent to implement"
+                >
+                  <span aria-hidden>▶</span>
+                  Delegate
+                </button>
+              </>
+            )}
             <button
               type="button"
               className="detail-icon-btn"
@@ -883,10 +936,14 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
           </div>
         </div>
 
-        <div className="detail-body">
-          {mutationError && (
-            <div className="error-state" style={{ marginBottom: 'var(--space-3)' }}>{mutationError}</div>
-          )}
+        {/* Three zones: properties rail · document · Curate. In the drawer the rail and the
+            document stack in one scrolling column (there is no width for a rail); in full-page
+            they separate. The zone markup is identical — only the CSS differs. */}
+        <div className="detail-zones">
+          <div className="detail-body">
+            {mutationError && (
+              <div className="error-state" style={{ marginBottom: 'var(--space-3)' }}>{mutationError}</div>
+            )}
 
           {/* Properties Block */}
           <div className="props-block">
@@ -1225,8 +1282,41 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
             </button>
             <span className="detail-danger-hint">Removes the task locally and on the remote backend (next sync).</span>
           </div>
+          </div>
+
+          {/*
+            Mounted only while open, so a task you never curate never spawns a session. Keyed by
+            slug: switching tasks in the same panel must give the new task its OWN pane (and its
+            own conversation), not silently re-point the previous task's agent at a new slug.
+          */}
+          {tmOpen && tmAvailable && (
+            <TaskManagerPane key={task.slug} task={task} title={taskName(task)} />
+          )}
         </div>
       </div>
+
+      {delegating && (
+        <DelegateComposer
+          task={task}
+          /*
+           * REVEAL from full-page, background from the drawer — and the difference is the point.
+           * The drawer is a side-trip off the board: you glance at a task, hand it off, and go
+           * back to what you were doing, so a corner chip is the right feedback. Full-page IS
+           * the thing you were doing, so once you've delegated it there is nothing left to look
+           * at — the task view has served its purpose. Revealing swaps that spent screen for
+           * the agent you just asked for, instead of dumping you back on a board you'd left.
+           */
+          reveal={fullScreen}
+          onClose={() => setDelegating(false)}
+          onDelegated={() => {
+            setDelegating(false);
+            // The agent surface is now the screen. Leaving the task open behind a fullscreen
+            // overlay would strand it: closing the overlay later would reveal a stale task view
+            // the user had mentally finished with.
+            if (fullScreen) { setFullScreen(false); onClose(); }
+          }}
+        />
+      )}
     </div>
   );
 }

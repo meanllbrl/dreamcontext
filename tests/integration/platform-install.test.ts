@@ -85,16 +85,16 @@ describe('platform-aware install flow (integration)', () => {
     expect(existsSync(join(tmpDir, '.claude', 'agents', 'dreamcontext-explore.md'))).toBe(true);
   });
 
-  it('install-skill installs the task-agent core skill (claude)', () => {
+  it('install-skill installs the task-manager core skill (claude)', () => {
     run('init --yes --name "Test" --description "d" --stack "Node" --priority "p"', tmpDir);
     run('install-skill --platforms claude', tmpDir);
 
     // The task-scoped CURATE agent ships as a core skill: the dashboard's task-detail Curate
     // pane opens a session that names it by name, so it has to be on disk in every project.
-    const skillPath = join(tmpDir, '.claude', 'skills', 'task-agent', 'SKILL.md');
+    const skillPath = join(tmpDir, '.claude', 'skills', 'task-manager', 'SKILL.md');
     expect(existsSync(skillPath)).toBe(true);
     const skill = readFileSync(skillPath, 'utf-8');
-    expect(skill).toContain('name: task-agent');
+    expect(skill).toContain('name: task-manager');
     // It curates the task DOCUMENT via the CLI; implementation stays the delegate flow's job.
     expect(skill).toContain('dreamcontext tasks doctor');
   });

@@ -171,6 +171,28 @@ export async function pickFiles(): Promise<string[]> {
 }
 
 /**
+ * Pick one or more FOLDERS via the native macOS picker (multi-select), returning their
+ * absolute paths. A separate call from {@link pickFiles} because the Tauri dialog plugin
+ * exposes `directory` as a boolean — one native dialog cannot offer files AND folders
+ * mixed. Returns [] if the user cancelled or picked nothing.
+ */
+export async function pickFolders(): Promise<string[]> {
+  if (isDesktop()) {
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog');
+      const selected = await open({ directory: true, multiple: true });
+      if (Array.isArray(selected)) return selected.filter((p): p is string => typeof p === 'string');
+      if (typeof selected === 'string') return [selected];
+      return [];
+    } catch {
+      return [];
+    }
+  }
+  const entered = window.prompt('Enter absolute folder path(s), comma-separated:');
+  return entered ? entered.split(',').map((s) => s.trim()).filter(Boolean) : [];
+}
+
+/**
  * Structural shape of a freshly-built `WebviewWindow` — just the `once` we await.
  * Avoids a value import of the Tauri type into the plain browser build.
  */

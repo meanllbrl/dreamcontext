@@ -24,6 +24,11 @@ import {
 import { RUN_SLEEP_AGENT_EVENT, SLEEP_AGENT_TITLE, SLEEP_AGENT_PROMPT } from '../../lib/sleepAgent';
 import { RUN_BRAIN_RESOLVE_EVENT, BRAIN_RESOLVE_TITLE, BRAIN_RESOLVE_PROMPT } from '../../lib/brainResolveAgent';
 import { DELEGATE_AGENT_EVENT, type DelegateAgentDetail } from '../../lib/delegateAgent';
+import {
+  TASK_MANAGER_EVENT, TASK_MANAGER_DETACH_EVENT, TASK_MANAGER_SEND_EVENT, TASK_MANAGER_STATUS_EVENT,
+  taskManagerConversationId,
+  type TaskManagerDetail, type TaskManagerSendDetail, type TaskManagerStatusDetail,
+} from '../../lib/taskManagerAgent';
 import { PaneComposer } from './PaneComposer';
 import { quotePath, FALLBACK_MODEL_CONFIG } from '../../lib/agentComposer';
 import { useAgentModelConfig } from '../../hooks/useAgentCapabilities';
@@ -570,15 +575,33 @@ export function AgentSurface() {
     // The caller already routed the prompt to a transport (inline for a short one, a POSTed
     // token for a large one) — see `delegateTaskToAgent`. Exactly one of the two is set.
     const s = spawn(detail.bypass, undefined, false, 'agent', detail.prompt, '', serverCurrent, detail.promptToken);
-    // Begin life as a background (minimized) session: no pane, and the overlay stays as it is.
-    // Set the Session's own `minimized` flag NOW — the layout effect won't run (panes/expanded
-    // are unchanged by a minimize-only spawn), so without this the idle timer couldn't raise the
-    // "finished" attention badge on the corner chip when the delegated run completes.
-    s.minimized = true;
     setSessionList((prev) => [...prev, { id: s.id, title, kind: 'agent', bypass: s.bypass, claudeId: s.claudeId }]);
+
+    if (detail.reveal) {
+      // Show it: give the session a pane and open the overlay. Mirrors `addSession` — a tab of
+      // the focused pane, or the first pane if there is none — so a revealed delegate lands
+      // exactly where a ⌘T agent would, rather than inventing a placement of its own.
+      if (panes.length === 0) {
+        const pid = nextPaneId();
+        setPanes([{ id: pid, tabs: [s.id], active: s.id }]);
+        setActivePaneId(pid);
+      } else {
+        const apid = panes.some((p) => p.id === activePaneId) ? activePaneId : panes[0].id;
+        setPanes((prev) => prev.map((p) => (p.id === apid ? { ...p, tabs: [...p.tabs, s.id], active: s.id } : p)));
+        setActivePaneId(apid);
+      }
+      setExpanded(true);
+      return true;
+    }
+
+    // Otherwise begin life as a background (minimized) session: no pane, and the overlay stays
+    // as it is. Set the Session's own `minimized` flag NOW — the layout effect won't run
+    // (panes/expanded are unchanged by a minimize-only spawn), so without this the idle timer
+    // couldn't raise the "finished" attention badge on the corner chip when the run completes.
+    s.minimized = true;
     setMinimizedIds((prev) => (prev.includes(s.id) ? prev : [...prev, s.id]));
     return true;
-  }, [caps, agentSettings.enabled, spawn, serverCurrent]);
+  }, [caps, agentSettings.enabled, spawn, serverCurrent, panes, activePaneId]);
 
   useEffect(() => {
     // Synchronous ACK: `dispatchEvent` runs listeners inline, so writing `accepted` back onto
@@ -591,6 +614,75 @@ export function AgentSurface() {
     window.addEventListener(DELEGATE_AGENT_EVENT, onDelegate);
     return () => window.removeEventListener(DELEGATE_AGENT_EVENT, onDelegate);
   }, [delegateAgent]);
+
+  // ── Task Manager: a task's own agent, hosted by its detail view ──────────────────
+  // The task page owns no session: it renders `.agent-task-manager-slot[data-task="<slug>"]` and
+  // this surface moves the session's DOM into it (see the layout effect). Curate sessions are
+  // deliberately NOT in `sessionList` — that list is the roster + the corner dock, and a
+  // task-scoped session should neither restore on launch nor sit as a chip once you've closed
+  // the task. They live only here, keyed by slug.
+  const tmRef = useRef<Map<string, string>>(new Map()); // slug -> session id
+  // Bumped whenever a Task Manager slot appears or leaves. The layout effect reads the DOM for
+  // slots, and React can't tell it that a slot in ANOTHER tree just mounted — so the page's
+  // attach/detach events poke it.
+  const [tmEpoch, bumpTm] = useReducer((n: number) => n + 1, 0);
+
+  const taskManagerAgent = useCallback((detail: TaskManagerDetail): boolean => {
+    if (!(caps?.desktop && caps.embeddedTerminal && caps.claudeCli) || !agentSettings.enabled) return false;
+    const existing = tmRef.current.get(detail.slug);
+    // Reopening a task you already have a live session for: keep the conversation, just let the
+    // layout effect re-home it into the freshly-mounted slot. Spawning again would abandon a
+    // running agent and (worse) race its own conversation id.
+    if (existing && sessions.current.has(existing)) { bumpTm(); return true; }
+    // Always ask to resume: the id is stable per task, and the server falls back to
+    // `--session-id <same id>` when no transcript exists yet — so a never-curated task and a
+    // half-curated one take the same path, and neither errors.
+    const s = spawn(detail.bypass, taskManagerConversationId(detail.slug), true, 'agent', detail.prompt, '', serverCurrent, detail.promptToken);
+    tmRef.current.set(detail.slug, s.id);
+    bumpTm();
+    return true;
+  }, [caps, agentSettings.enabled, spawn, serverCurrent]);
+
+  // Publish each Task Manager session's status to its pane. The pane can't read `sessions.current`
+  // (it lives in another tree and must not own session state), and polling would miss the
+  // moment that matters most — `asking`, when Claude is blocked on an answer and the user is
+  // looking at a task doc rather than the terminal. `bumpStatus` already re-renders this
+  // component on every status change, so riding `statusTick` reports at exactly the right rate.
+  useEffect(() => {
+    tmRef.current.forEach((sid, slug) => {
+      const s = sessions.current.get(sid);
+      if (!s) return;
+      const info = deriveSessionStatus({ status: s.status, busy: s.busy, asking: s.asking });
+      window.dispatchEvent(new CustomEvent<TaskManagerStatusDetail>(TASK_MANAGER_STATUS_EVENT, {
+        detail: { slug, kind: info.kind, label: info.label },
+      }));
+    });
+  }, [statusTick, tmEpoch]);
+
+  useEffect(() => {
+    const onCurate = (e: Event) => {
+      const detail = (e as CustomEvent<TaskManagerDetail>).detail;
+      if (detail?.slug && taskManagerAgent(detail)) detail.accepted = true;
+    };
+    // Detach ≠ dispose. The task detail is closing, so the slot is about to vanish — but the
+    // agent may be mid-edit, and closing a task must not kill work the user asked for. The
+    // session is disposed only when its conversation is explicitly reset, or on unmount below.
+    const onDetach = () => bumpTm();
+    const onSend = (e: Event) => {
+      const { slug, text, submit = true } = (e as CustomEvent<TaskManagerSendDetail>).detail ?? {};
+      const sid = slug ? tmRef.current.get(slug) : undefined;
+      const s = sid ? sessions.current.get(sid) : undefined;
+      if (s && text) s.sendText(submit ? `${text}\r` : text);
+    };
+    window.addEventListener(TASK_MANAGER_EVENT, onCurate);
+    window.addEventListener(TASK_MANAGER_DETACH_EVENT, onDetach);
+    window.addEventListener(TASK_MANAGER_SEND_EVENT, onSend);
+    return () => {
+      window.removeEventListener(TASK_MANAGER_EVENT, onCurate);
+      window.removeEventListener(TASK_MANAGER_DETACH_EVENT, onDetach);
+      window.removeEventListener(TASK_MANAGER_SEND_EVENT, onSend);
+    };
+  }, [taskManagerAgent]);
 
   // ── Bottom strip ─────────────────────────────────────────────────────────────────
   // There is NO separate text field: a skill/file goes straight into the terminal's OWN
@@ -792,11 +884,33 @@ export function AgentSurface() {
   // garage. Raw-DOM moves, never a remount — a session moved between panes just lands in a
   // different slot. Runs on any layout (panes) or visibility (expanded) change.
   useLayoutEffect(() => {
-    const visible = new Set(panes.map((p) => p.active));
-    // Mirror "foreground" onto the Session objects so the idle timer knows whether a
-    // finishing session deserves an attention badge: foreground ONLY when the overlay is
-    // open AND the session is some pane's active tab.
-    sessions.current.forEach((s) => { s.minimized = !(expanded && visible.has(s.id)); });
+    // Two families of session with a home, homed for INDEPENDENT reasons:
+    //  • a pane's active tab — homed in the overlay's `.agent-pane-slot[data-pane]`;
+    //  • a task's Task Manager session — homed in the detail's `.agent-task-manager-slot[data-task]`,
+    //    which lives in the PAGE tree, so it is found by searching the document rather than
+    //    `hostRef` (that only contains the overlay's own panes).
+    const paneHomed = new Set(panes.map((p) => p.active));
+
+    const tmSlots = new Map<string, HTMLElement>();
+    document.querySelectorAll<HTMLElement>('.agent-task-manager-slot[data-task]')
+      .forEach((el) => { if (el.dataset.curate) tmSlots.set(el.dataset.curate, el); });
+    // Only a session whose slot is actually mounted has a home; one whose task was
+    // closed goes to the garage and keeps running there.
+    const tmHomed = new Map<string, HTMLElement>();
+    tmRef.current.forEach((sid, slug) => {
+      const slot = tmSlots.get(slug);
+      if (slot) tmHomed.set(sid, slot);
+    });
+
+    // HOMED and FOREGROUND are different questions, and conflating them regresses the
+    // persistence invariant. A collapsed overlay's panes are still homed (their slots merely go
+    // `display:none`) — garaging them on collapse would thrash the DOM on every expand. But
+    // they are NOT foreground, so a session finishing while collapsed still earns its dock
+    // attention badge. A curate session inverts the pane case: it is foreground whenever its
+    // task is open, regardless of the overlay.
+    const homed = new Set([...paneHomed, ...tmHomed.keys()]);
+    const foreground = new Set([...(expanded ? paneHomed : []), ...tmHomed.keys()]);
+    sessions.current.forEach((s) => { s.minimized = !foreground.has(s.id); });
 
     const slots = new Map<string, HTMLElement>();
     hostRef.current?.querySelectorAll<HTMLElement>('.agent-pane-slot[data-pane]')
@@ -807,18 +921,25 @@ export function AgentSurface() {
       const slot = slots.get(pane.id);
       if (s && slot && s.container.parentElement !== slot) { slot.appendChild(s.container); s.ensureOpen(); }
     });
+    tmHomed.forEach((slot, sid) => {
+      const s = sessions.current.get(sid);
+      if (s && s.container.parentElement !== slot) { slot.appendChild(s.container); s.ensureOpen(); }
+    });
     sessions.current.forEach((s) => {
-      if (!visible.has(s.id) && garageRef.current && s.container.parentElement !== garageRef.current) {
+      if (!homed.has(s.id) && garageRef.current && s.container.parentElement !== garageRef.current) {
         garageRef.current.appendChild(s.container);
       }
     });
     // A freshly-shown container only has offsetParent after display, so open/fit next
-    // frame. Refits ALL visible panes (a split/combine changes every pane's width).
+    // frame. Refits everything ON SCREEN (a split/combine changes every pane's width, and a
+    // Task Manager pane's width depends on the task view's layout mode).
     const raf = requestAnimationFrame(() => {
-      visible.forEach((id) => { const s = sessions.current.get(id); if (s) { s.ensureOpen(); s.fitAndResize(); } });
+      foreground.forEach((id) => { const s = sessions.current.get(id); if (s) { s.ensureOpen(); s.fitAndResize(); } });
     });
     return () => cancelAnimationFrame(raf);
-  }, [panes, expanded]);
+    // tmEpoch is the poke from the task page: its slot mounting/unmounting is a DOM event
+    // in another tree that React would otherwise never tell us about.
+  }, [panes, expanded, tmEpoch]);
 
   // Keep activePaneId pointing at a real pane (panes shrink as tabs close/move).
   useEffect(() => {
