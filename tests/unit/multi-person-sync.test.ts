@@ -204,6 +204,11 @@ describe('GitHub — two people, one repo (#185)', () => {
         }), now, sleep,
       }),
       has: (slug: string) => existsSync(join(contextRoot, 'state', `${slug}.md`)),
+      read: (slug: string) => readFileSync(join(contextRoot, 'state', `${slug}.md`), 'utf-8'),
+      watermark: (): number | null => {
+        const f = join(contextRoot, 'state', '.tasks-sync.json');
+        return existsSync(f) ? JSON.parse(readFileSync(f, 'utf-8')).watermark : null;
+      },
     };
   }
 
@@ -227,5 +232,66 @@ describe('GitHub — two people, one repo (#185)', () => {
     const report = await bob.backend().sync('pull');
     expect(report.errors).toEqual([]);
     expect(bob.has('alice-issue')).toBe(true);
+    expect(report.pulled).toBe(1); // bob's own issue is echo, not a pull
+  });
+
+  it('propagation is symmetric — neither person goes blind', async () => {
+    const alice = makePerson();
+    const bob = makePerson();
+    await alice.backend().sync('both');
+    await bob.backend().sync('both');
+
+    const a = alice.backend();
+    await a.create({ name: 'From Alice', variant: 'cli' } as never);
+    await a.sync('push');
+    const b = bob.backend();
+    await b.create({ name: 'From Bob', variant: 'cli' } as never);
+    await b.sync('push');
+
+    await bob.backend().sync('pull');
+    await alice.backend().sync('pull');
+    expect(bob.has('from-alice')).toBe(true);
+    expect(alice.has('from-bob')).toBe(true);
+  });
+
+  it('a push leaves the pull watermark alone; only a pull advances it', async () => {
+    const alice = makePerson();
+    const a = alice.backend();
+    await a.create({ name: 'Watermark Proof', variant: 'cli' } as never);
+    await a.sync('push');
+    expect(alice.watermark()).toBeNull();
+
+    await alice.backend().sync('pull');
+    expect(alice.watermark()).toBeGreaterThan(1_800_000_000_000); // server time
+  });
+
+  it('still converges: re-syncing after a push pulls nothing (echo stays suppressed)', async () => {
+    const alice = makePerson();
+    const a = alice.backend();
+    await a.create({ name: 'Converge', variant: 'cli' } as never);
+    await a.sync('both');
+
+    const again = await alice.backend().sync('both');
+    expect(again.pushed).toBe(0);
+    expect(again.pulled).toBe(0);
+    expect(again.errors).toEqual([]);
+  });
+
+  it("a teammate's REAL edit is still pulled (the gate suppresses echo, not changes)", async () => {
+    const alice = makePerson();
+    const bob = makePerson();
+    const a = alice.backend();
+    await a.create({ name: 'Shared Issue', variant: 'cli' } as never);
+    await a.sync('both');
+    await bob.backend().sync('both');
+    expect(bob.has('shared-issue')).toBe(true);
+
+    const a2 = alice.backend();
+    await a2.updateFields('shared-issue', { status: 'in_progress', updated_at: '2026-07-16' });
+    await a2.sync('push');
+
+    const report = await bob.backend().sync('pull');
+    expect(report.pulled).toBe(1);
+    expect(bob.read('shared-issue')).toContain('in_progress');
   });
 });
