@@ -12,6 +12,7 @@ import type { SetupConfig } from '../../src/lib/setup-config.js';
 import type { SyncReport } from '../../src/lib/task-backend/types.js';
 import matter from 'gray-matter';
 import { makeFakeClickUp, type FakeClickUp } from './clickup-fake.js';
+import { checkSharedTaskContainer } from '../../src/cli/commands/doctor.js';
 
 /**
  * Issue #184 — ClickUp sync provenance + version round-trip (consolidates #177,
@@ -397,5 +398,84 @@ describe('ClickUp version round-trip (#184/#179)', () => {
       (r) => r.method === 'GET' && /^\/list\/list1\/task$/.test(r.path),
     );
     expect(listFetches.length).toBe(1);
+  });
+});
+
+// ── doctor: two projects, one container (#177) ──────────────────────────────
+
+describe('doctor — shared task container (#184/#177)', () => {
+  let home: string, originalHome: string | undefined;
+
+  /** A registered vault with a _dream_context/ and the given backend config. */
+  function makeVault(name: string, cfg: Record<string, unknown>): string {
+    const path = join(home, name);
+    mkdirSync(join(path, '_dream_context', 'state'), { recursive: true });
+    writeFileSync(
+      join(path, '_dream_context', 'state', '.config.json'),
+      JSON.stringify({
+        platforms: [], packs: [], multiProduct: false, setupVersion: '0.0.0',
+        disableNativeMemory: true, cloudTaskManagement: true, ...cfg,
+      }, null, 2),
+    );
+    return path;
+  }
+  function register(paths: Array<{ name: string; path: string }>): void {
+    mkdirSync(join(home, '.dreamcontext'), { recursive: true });
+    writeFileSync(join(home, '.dreamcontext', 'vaults.json'), JSON.stringify({ vaults: paths }, null, 2));
+  }
+
+  beforeEach(() => {
+    originalHome = process.env.HOME;
+    const raw = join(tmpdir(), `dc-prov-doc-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(raw, { recursive: true });
+    home = realpathSync(raw);
+    process.env.HOME = home;
+  });
+  afterEach(() => {
+    if (originalHome === undefined) delete process.env.HOME; else process.env.HOME = originalHome;
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  const clickup = (listId: string) => ({ taskBackend: 'clickup', clickup: { teamId: 't', spaceId: 's', listId, changelogTarget: 'comments' } });
+
+  it('WARNS, naming the sibling, when two registered projects share one ClickUp list', () => {
+    const a = makeVault('ai-bf', clickup('list-shared'));
+    const b = makeVault('ai-gf', clickup('list-shared'));
+    register([{ name: 'ai-bf', path: a }, { name: 'ai-gf', path: b }]);
+
+    const [result] = checkSharedTaskContainer(join(a, '_dream_context'));
+    expect(result.status).toBe('warn');
+    expect(result.message).toContain('ai-gf');
+    expect(result.message).toContain('list-shared');
+  });
+
+  it('passes when each project has its own list', () => {
+    const a = makeVault('ai-bf', clickup('list-a'));
+    const b = makeVault('ai-gf', clickup('list-b'));
+    register([{ name: 'ai-bf', path: a }, { name: 'ai-gf', path: b }]);
+
+    const [result] = checkSharedTaskContainer(join(a, '_dream_context'));
+    expect(result.status).toBe('ok');
+  });
+
+  it('catches a shared GitHub repo on the same footing', () => {
+    const cfg = { taskBackend: 'github', github: { owner: 'acme', repo: 'monorepo' } };
+    const a = makeVault('svc-a', cfg);
+    const b = makeVault('svc-b', cfg);
+    register([{ name: 'svc-a', path: a }, { name: 'svc-b', path: b }]);
+
+    const [result] = checkSharedTaskContainer(join(a, '_dream_context'));
+    expect(result.status).toBe('warn');
+    expect(result.message).toContain('svc-b');
+  });
+
+  it('is silent for a local backend and for a lone registered project', () => {
+    const local = makeVault('solo', { taskBackend: 'local' });
+    register([{ name: 'solo', path: local }, { name: 'other', path: makeVault('other', clickup('x')) }]);
+    expect(checkSharedTaskContainer(join(local, '_dream_context'))).toEqual([]);
+
+    const only = makeVault('only', clickup('list-1'));
+    register([{ name: 'only', path: only }]);
+    expect(checkSharedTaskContainer(join(only, '_dream_context'))).toEqual([]);
   });
 });

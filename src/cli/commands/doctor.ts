@@ -9,6 +9,7 @@ import { hasTaskOverride, loadTaskOverride } from '../../lib/overrides.js';
 import { listObjectives, getObjective, isSafeObjectiveSlug, isCalendarDate, OBJECTIVE_STATUSES } from '../../lib/objectives-store.js';
 import { auditFeatureLinks, reconcileFeatureLinks, type LinkAudit } from '../../lib/feature-links.js';
 import { buildRoadmapModel } from '../../lib/roadmap-model.js';
+import { listVaults, type Vault } from '../../lib/vaults.js';
 import { dirname } from 'node:path';
 import { listInsights, isSafeInsightSlug } from '../../lib/lab/store.js';
 import { RENDERS } from '../../lib/lab/types.js';
@@ -408,6 +409,58 @@ export function checkLab(root: string): CheckResult[] {
  * every `related_tasks` entry must be a live task pointing here. Deterministic
  * drift is fixable in one shot with `doctor --heal-links`.
  */
+/**
+ * Two registered projects syncing against the SAME remote task container (#184/#177).
+ *
+ * A shared container has no per-project scoping, so each project pulls the other's
+ * tasks into its own brain as ordinary local tasks — same frontmatter, no field
+ * saying whose work they describe. A `completed` task then reads as evidence that
+ * THIS project has the capability, when the work actually landed in a sibling repo.
+ * Reported live: a sleep specialist read one and concluded "already done", nearly
+ * dropping a whole work group. Nothing else surfaces this, so doctor names it.
+ */
+export function checkSharedTaskContainer(root: string): CheckResult[] {
+  const NAME = 'Task backend scoping';
+  let vaults: Vault[];
+  try {
+    vaults = listVaults();
+  } catch {
+    return []; // no registry (single-project install) — nothing to compare
+  }
+  if (vaults.length < 2) return [];
+
+  const here = dirname(root);
+  const containerOf = (projectRoot: string): { key: string; label: string } | null => {
+    try {
+      const cfg = readSetupConfig(projectRoot);
+      if (cfg?.clickup?.listId) return { key: `clickup:${cfg.clickup.listId}`, label: `ClickUp list ${cfg.clickup.listId}` };
+      if (cfg?.github?.owner && cfg?.github?.repo) return { key: `github:${cfg.github.owner}/${cfg.github.repo}`, label: `GitHub repo ${cfg.github.owner}/${cfg.github.repo}` };
+    } catch { /* unreadable config — not this check's problem */ }
+    return null;
+  };
+
+  const mine = containerOf(here);
+  if (!mine) return [];
+
+  const siblings = vaults
+    .filter((v) => v.path !== here)
+    .filter((v) => containerOf(v.path)?.key === mine.key)
+    .map((v) => v.name);
+  if (siblings.length === 0) {
+    return [{ name: NAME, status: 'ok', message: `${mine.label} is not shared with another registered project.` }];
+  }
+  return [{
+    name: NAME,
+    status: 'warn',
+    message:
+      `${mine.label} is ALSO the sync target of: ${siblings.join(', ')}. ` +
+      `Synced tasks carry no field saying which project's work they describe, so a ` +
+      `'completed' task here may describe work done in a sibling — verify against this ` +
+      `project's source before trusting it. Give each project its own list/repo, or scope ` +
+      `the shared one per project.`,
+  }];
+}
+
 function checkTaskFeatureLinks(root: string): CheckResult[] {
   const results: CheckResult[] = [];
   let audit: LinkAudit;
@@ -496,6 +549,7 @@ export function registerDoctorCommand(program: Command): void {
         ...checkOverrides(root),
         ...checkObjectives(root),
         ...checkTaskFeatureLinks(root),
+        ...checkSharedTaskContainer(root),
         ...checkLab(root),
 
         // Taxonomy vocabulary (non-fatal: absent means DEFAULT_VOCABULARY used)

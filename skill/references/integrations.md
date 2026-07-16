@@ -55,6 +55,8 @@ dreamcontext config task-backend local
 dreamcontext tasks sync [push|pull|both]   # default: both; no-op on the local backend
 dreamcontext tasks sync --hook             # best-effort mode for git hooks (never fails, exit 0)
 dreamcontext tasks sync --json             # machine-readable sync report
+dreamcontext tasks sync pull --reconcile   # heal assignees + version that sit BELOW the watermark
+dreamcontext tasks sync --refresh-meta     # force-refresh cached statuses/members/fields (skip the hourly throttle)
 dreamcontext tasks members [--json]        # people with access to the remote list (assignee candidates)
 dreamcontext tasks provision               # create recommended + override-declared custom fields (reuses existing ones by name)
 dreamcontext tasks sync-hooks install|uninstall   # manage the git sync triggers
@@ -65,6 +67,46 @@ dreamcontext tasks sync-hooks install|uninstall   # manage the git sync triggers
 dreamcontext config show        # shows task backend, ClickUp token presence (masked), and list id
 ```
 The mirror, sync ledger, and conflict files are derived and gitignored — never commit them, never hand-edit them.
+
+#### Gotchas (#184 — learned the hard way)
+
+**One list per project.** A ClickUp list shared by two dreamcontext projects has no
+per-project scoping: each project pulls the other's tasks into its own brain as
+ordinary local tasks — same frontmatter, nothing recording whose work they describe.
+A `completed` task then reads as proof that THIS project has the capability when the
+work actually landed in a sibling repo. This is not hypothetical: a sleep specialist
+read one and concluded "already done", nearly dropping a whole work group. The tell
+was PR numbers in the changelog that were impossible for the repo.
+`dreamcontext doctor` now warns when two registered projects point at the same list —
+but the fix is to give each project its own.
+
+**Set the list's statuses in the ClickUp UI BEFORE the first sync to a new list.**
+ClickUp API v2 cannot write folder/list statuses (`PUT /folder/{id}` with
+`override_statuses` returns `override_statuses:false`), so dreamcontext cannot create
+them for you. If a dreamcontext status (`todo`/`in_progress`/`in_review`) has no name
+match on the list, the push omits the field and ClickUp stamps the list's first open
+status — every task landing in e.g. `backlog`. The sync warns when this is about to
+happen; heal it by adding the status in the UI, then:
+```bash
+dreamcontext tasks sync --refresh-meta   # bypass the hourly meta cache
+```
+
+**Changing the sync target invalidates the cached list meta automatically.** The
+cached statuses/members/field-defs and the pull watermark are stamped with the list
+they describe, so repointing `clickup-list` — via `--migrate`, `--keep`, the dashboard,
+or a hand-edited config — drops them and re-reads the new list in full. You should
+never need to hand-edit `state/.tasks-sync.json`; if you think you do, that is a bug.
+
+**ClickUp lowercases tag names**, and `version` rides the tags as `version:<v>`. A
+sprint pushed as `S5 (Jul 13 - Jul 17)` comes back as `s5 (jul 13 - jul 17)`. The pull
+restores the canonical spelling by folding against `RELEASES.json` + the active
+sprint, so register a sprint before syncing tasks into it — an *unregistered* version
+cannot be canonicalized and will not match a sprint bucket on the board. A version tag
+added in ClickUp after import lands below the sync watermark and needs:
+```bash
+dreamcontext tasks sync pull --reconcile   # heals assignees + version below the watermark
+dreamcontext tasks version <task> "S5 (Jul 13 - Jul 17)"   # or set it directly
+```
 
 ### GitHub Issues
 
