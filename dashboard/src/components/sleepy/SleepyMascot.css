@@ -137,16 +137,16 @@
 }
 .smascot-working .smascot-eyes { animation: smascot-scan 1.1s ease-in-out infinite; }
 
-/* Waving / WAITING (MAGENTA): done and happy — a curled-up smile, a gentle
-   whole-body tilt, and a little hand that waves hello. Paired with the
-   "finished" notification chip on the bubble. */
+/* Waving / READY (VIOLET): done and happy — a curled-up smile, a gentle
+   whole-body tilt, and a little hand that waves hello. Brand accent, matching
+   the "ready" kind colour (magenta now belongs to asking — "needs you"). */
 .smascot-waving .smascot-eye {
-  --eye-top: #ffc4ec;
-  --eye-bot: #ff5fc4;
-  --eye-glow: rgba(255, 95, 196, 0.85);
+  --eye-top: #d4c9ff;
+  --eye-bot: #8b7bff;
+  --eye-glow: rgba(157, 140, 255, 0.85);
 }
-.smascot-waving .smascot-smile path { stroke: var(--mood-waiting); }
-.smascot-waving .smascot-halo { background: radial-gradient(circle, rgba(255, 95, 196, 0.3), transparent 66%); }
+.smascot-waving .smascot-smile path { stroke: var(--color-accent); }
+.smascot-waving .smascot-halo { background: radial-gradient(circle, rgba(139, 123, 255, 0.32), transparent 66%); }
 .smascot-waving .smascot-face { animation: smascot-greet 2.4s ease-in-out infinite; }
 .smascot-waving .smascot-smile { transform: translateY(1px) scaleY(1.15); }
 .smascot-hand {
@@ -156,10 +156,49 @@
   width: 13px;
   height: 13px;
   border-radius: 6px 6px 6px 2px;
-  background: linear-gradient(180deg, color-mix(in srgb, var(--mood-waiting) 55%, white), var(--mood-waiting));
-  box-shadow: 0 0 10px color-mix(in srgb, var(--mood-waiting) 75%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--color-accent) 55%, white), var(--color-accent));
+  box-shadow: 0 0 10px color-mix(in srgb, var(--color-accent) 75%, transparent);
   transform-origin: bottom left;
   animation: smascot-wave 1s ease-in-out infinite;
+}
+
+/* Asking (MAGENTA): blocked on YOUR answer — wide alert eyes glancing at you, a
+   small "o" mouth, a quick urgent halo, the head tilting like a raised eyebrow,
+   and a floating "?" (full-size only). The unmissable state: it pairs with the
+   dock chip's shake + chime. */
+.smascot-asking .smascot-eye {
+  --eye-top: #ffc4ec;
+  --eye-bot: #ff5fc4;
+  --eye-glow: rgba(255, 95, 196, 0.9);
+  height: 30px;
+  animation: smascot-alert-pulse 1.2s ease-in-out infinite;
+}
+.smascot-asking .smascot-eyes { animation: smascot-peek 2.6s ease-in-out infinite; }
+/* Shrink the smile arc into a small curious "o" mouth. */
+.smascot-asking .smascot-smile { transform: translateY(1px) scaleX(0.4) scaleY(0.95); }
+.smascot-asking .smascot-smile path { stroke: var(--mood-waiting); }
+.smascot-asking .smascot-face { animation: smascot-tilt 2.6s ease-in-out infinite; }
+.smascot-asking .smascot-halo {
+  animation-duration: 1.3s;
+  background: radial-gradient(circle, rgba(255, 95, 196, 0.34), transparent 66%);
+}
+
+/* "?" (asking only) — floats up like the Zzz, insistently. */
+.smascot-q {
+  position: absolute;
+  top: -10%;
+  right: 12%;
+  font-family: -apple-system, system-ui, sans-serif;
+  font-weight: 800;
+  font-size: 19px;
+  color: #ff8fd6;
+  line-height: 1;
+  pointer-events: none;
+  text-shadow: 0 1px 6px rgba(255, 95, 196, 0.6);
+}
+.smascot-q span {
+  display: inline-block;
+  animation: smascot-qfloat 1.8s ease-in-out infinite;
 }
 
 /* ── Keyframes ─────────────────────────────────────────────────────────── */
@@ -205,6 +244,24 @@
   25% { opacity: 0.95; }
   100% { opacity: 0; transform: translateY(-16px) scale(1.15) rotate(8deg); }
 }
+/* Asking: eyes glance quickly between you and the question. */
+@keyframes smascot-peek {
+  0%, 55%, 100% { transform: translate(-2px, -1px); }
+  25%, 40% { transform: translate(3px, -2px); }
+}
+@keyframes smascot-alert-pulse {
+  0%, 100% { opacity: 0.8; }
+  50% { opacity: 1; }
+}
+/* Asking: the whole face tilts like a raised eyebrow, twice per cycle. */
+@keyframes smascot-tilt {
+  0%, 45%, 100% { transform: translateY(0) rotate(0deg); }
+  12%, 30% { transform: translateY(-2px) rotate(6deg); }
+}
+@keyframes smascot-qfloat {
+  0%, 100% { opacity: 0.85; transform: translateY(1px) scale(0.95) rotate(-4deg); }
+  50% { opacity: 1; transform: translateY(-4px) scale(1.12) rotate(6deg); }
+}
 
 @media (prefers-reduced-motion: reduce) {
   .smascot-halo,
@@ -212,5 +269,6 @@
   .smascot-eye,
   .smascot-eyes,
   .smascot-hand,
+  .smascot-q span,
   .smascot-zzz span { animation: none !important; }
 }

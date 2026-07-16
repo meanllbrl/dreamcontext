@@ -212,11 +212,12 @@
    `--kind-color` its dot / aura / caption read from. Tokens only — no hardcoded hues.
    The chip's state pill / handle dot carry their OWN `data-kind` (they're not always a
    child of the `--kind-color` owner), so they're listed here too. */
-:is(.agent-rail-row, .agent-rail-state, .agent-dock-chip, .agent-dock-chip-state, .agent-dock-anchor, .agent-dock-anchor-dot, .agent-pane-status)[data-kind="saved"]    { --kind-color: var(--mood-sleeping); }
-:is(.agent-rail-row, .agent-rail-state, .agent-dock-chip, .agent-dock-chip-state, .agent-dock-anchor, .agent-dock-anchor-dot, .agent-pane-status)[data-kind="starting"] { --kind-color: var(--color-warning); }
-:is(.agent-rail-row, .agent-rail-state, .agent-dock-chip, .agent-dock-chip-state, .agent-dock-anchor, .agent-dock-anchor-dot, .agent-pane-status)[data-kind="working"]  { --kind-color: var(--color-success); }
-:is(.agent-rail-row, .agent-rail-state, .agent-dock-chip, .agent-dock-chip-state, .agent-dock-anchor, .agent-dock-anchor-dot, .agent-pane-status)[data-kind="ready"]    { --kind-color: var(--color-accent); }
-:is(.agent-rail-row, .agent-rail-state, .agent-dock-chip, .agent-dock-chip-state, .agent-dock-anchor, .agent-dock-anchor-dot, .agent-pane-status)[data-kind="ended"]    { --kind-color: var(--color-error); }
+:is(.agent-rail-row, .agent-rail-state, .agent-dock-chip, .agent-dock-chip-state, .agent-dock-anchor, .agent-pane-status)[data-kind="saved"]    { --kind-color: var(--mood-sleeping); }
+:is(.agent-rail-row, .agent-rail-state, .agent-dock-chip, .agent-dock-chip-state, .agent-dock-anchor, .agent-pane-status)[data-kind="starting"] { --kind-color: var(--color-warning); }
+:is(.agent-rail-row, .agent-rail-state, .agent-dock-chip, .agent-dock-chip-state, .agent-dock-anchor, .agent-pane-status)[data-kind="working"]  { --kind-color: var(--color-success); }
+:is(.agent-rail-row, .agent-rail-state, .agent-dock-chip, .agent-dock-chip-state, .agent-dock-anchor, .agent-pane-status)[data-kind="asking"]   { --kind-color: var(--mood-waiting); }
+:is(.agent-rail-row, .agent-rail-state, .agent-dock-chip, .agent-dock-chip-state, .agent-dock-anchor, .agent-pane-status)[data-kind="ready"]    { --kind-color: var(--color-accent); }
+:is(.agent-rail-row, .agent-rail-state, .agent-dock-chip, .agent-dock-chip-state, .agent-dock-anchor, .agent-pane-status)[data-kind="ended"]    { --kind-color: var(--color-error); }
 
 /* ── Workspace: session-list rail + single active view ──────────────────────────
    The rail lives INSIDE the content-bounded overlay (header + sidebar stay visible). */
@@ -637,6 +638,7 @@
 :is(.agent-tab, .agent-tab-dot)[data-kind="saved"]    { --kind-color: var(--mood-sleeping); }
 :is(.agent-tab, .agent-tab-dot)[data-kind="starting"] { --kind-color: var(--color-warning); }
 :is(.agent-tab, .agent-tab-dot)[data-kind="working"]  { --kind-color: var(--color-success); }
+:is(.agent-tab, .agent-tab-dot)[data-kind="asking"]   { --kind-color: var(--mood-waiting); }
 :is(.agent-tab, .agent-tab-dot)[data-kind="ready"]    { --kind-color: var(--color-accent); }
 :is(.agent-tab, .agent-tab-dot)[data-kind="ended"]    { --kind-color: var(--color-error); }
 
@@ -891,15 +893,24 @@
 
 @media (prefers-reduced-motion: reduce) {
   .agent-tab-dot,
-  .agent-tab-badge { animation: none !important; }
+  .agent-tab-badge,
+  .agent-dock-chip,
+  .agent-dock-anchor,
+  .agent-dock-chip-q,
+  .agent-dock-chip-state,
+  .agent-dock-chip-dots i,
+  .agent-dock-chip-glyph i { animation: none !important; }
 }
 
 /* ── Session dock — a bare bottom-right stack of chip TILES (NOT a panel) ─────────
    Shown when the overlay is closed and ≥1 session exists. Each session is its OWN solid,
-   shadowed pill TILE — [dot · mascot · name · state · ✕] — so the names stay readable
+   shadowed pill TILE — [figure · name / state · ✕] — so the names stay readable
    over WHATEVER page/terminal content sits behind the fixed dock (the legibility fix: a
-   solid backing per name, not floating text). The stack grows UPWARD from the corner and
-   collapses into one combined anchor chip (`.agent-dock-anchor`) that re-expands it.
+   solid backing per name, not floating text). The FIGURE is the status (Sleepy's
+   per-state face for agents, a blinking prompt glyph for shells — no status dots); a
+   session asking a question jumps to the top, shakes, and wears a "?" bubble. The stack
+   grows UPWARD from the corner and collapses into one combined anchor chip
+   (`.agent-dock-anchor`) that re-expands it.
    Default is expanded; the choice is remembered. Click a tile to open + focus its session.
 
    `pointer-events` is OFF on the container and ON for the interactive pills, so the empty
@@ -947,17 +958,19 @@
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
-/* One session TILE — its own solid, shadowed pill (readable over any background). */
+/* One session TILE — its own solid, shadowed pill (readable over any background).
+   Layout: [figure] [title / state] [badge?] [✕]. The border carries a whisper of the
+   state colour so even a squint reads the stack. */
 .agent-dock-chip {
   position: relative;
   pointer-events: auto;
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: 7px var(--space-2);
+  padding: 6px var(--space-2);
   border-radius: var(--radius-md);
   background: var(--color-bg-elevated);
-  border: 1px solid var(--color-border);
+  border: 1px solid color-mix(in srgb, var(--kind-color, var(--color-border)) 26%, var(--color-border));
   box-shadow: var(--shadow-lg);
   cursor: pointer;
   transition: transform var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
@@ -970,56 +983,132 @@
 }
 .agent-dock-chip:focus-visible { outline: none; border-color: var(--color-accent); box-shadow: var(--shadow-lg), 0 0 0 2px var(--color-accent-soft); }
 
-.agent-dock-chip-dot {
-  flex: 0 0 auto;
-  width: 8px; height: 8px;
-  border-radius: 50%;
-  background: var(--kind-color, var(--color-text-tertiary));
-  box-shadow: 0 0 7px color-mix(in srgb, var(--kind-color, transparent) 75%, transparent);
+/* ASKING — the unmissable state: magenta glow + a burst of shake every few seconds
+   (continuous vibration would be exhausting; a periodic nudge keeps pulling the eye).
+   Hover steadies the tile so it's easy to click. */
+.agent-dock-chip[data-kind="asking"] {
+  border-color: color-mix(in srgb, var(--mood-waiting) 60%, transparent);
+  box-shadow: var(--shadow-lg), 0 0 16px -3px color-mix(in srgb, var(--mood-waiting) 70%, transparent);
+  animation: agentChipNudge 2.4s ease-in-out infinite;
 }
-.agent-dock-chip-dot[data-kind="working"],
-.agent-dock-chip-dot[data-kind="starting"] { animation: agentDotPulse 1.2s ease-in-out infinite; }
+.agent-dock-chip[data-kind="asking"]:hover { animation: none; }
+@keyframes agentChipNudge {
+  0%, 14%, 100% { transform: translateX(0) rotate(0deg); }
+  2%  { transform: translateX(-2px) rotate(-0.7deg); }
+  5%  { transform: translateX(2px) rotate(0.7deg); }
+  8%  { transform: translateX(-2px) rotate(-0.5deg); }
+  11% { transform: translateX(1px) rotate(0.3deg); }
+}
 
-/* The Sleepy face — rendered on Claude-agent chips only (a terminal chip has no mascot). */
-.agent-dock-chip-mascot {
+/* The status FIGURE — Sleepy's per-state face (agent) or a mini prompt glyph (shell).
+   Replaces the old status dot: the character IS the status. */
+.agent-dock-chip-figure {
+  position: relative;
   flex: 0 0 auto;
-  width: 24px; height: 24px;
+  width: 28px; height: 28px;
   display: flex; align-items: center; justify-content: center;
-  /* The mascot's inner 92×76 design box is only TRANSFORM-scaled (its layout box stays
-     76px tall). Contain it so that untransformed box never inflates the tile's height. */
+}
+/* The mascot's inner 92×76 design box is only TRANSFORM-scaled (its layout box stays
+   76px tall). Contain it so that untransformed box never inflates the tile's height. */
+.agent-dock-chip-figure-clip {
+  width: 100%; height: 100%;
+  display: flex; align-items: center; justify-content: center;
   overflow: hidden;
 }
 /* Recolour the shared "sleeps" face's eyes to a calm indigo inside the dock only. */
-.agent-dock-chip-mascot .smascot-sleeps .smascot-eye,
-.agent-dock-anchor-mascot .smascot-sleeps .smascot-eye {
+.agent-dock-chip-figure .smascot-sleeps .smascot-eye {
   --eye-top: #aeb9ff;
   --eye-bot: #6e7bff;
   --eye-glow: rgba(110, 123, 255, 0.6);
 }
-.agent-dock-chip-title {
+/* Shell tile figure: a mini terminal prompt with a live blinking cursor, tinted by the
+   state colour it inherits from the chip — a terminal has no agent, so no face. */
+.agent-dock-chip-glyph {
+  width: 24px; height: 24px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 2px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--kind-color, var(--color-text-tertiary)) 12%, var(--color-bg));
+  border: 1px solid color-mix(in srgb, var(--kind-color, var(--color-border)) 38%, var(--color-border));
+  color: var(--kind-color, var(--color-text-secondary));
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+}
+.agent-dock-chip-glyph i {
+  width: 4px; height: 9px;
+  background: currentColor;
+  animation: agentCursorBlink 1.1s steps(1) infinite;
+}
+@keyframes agentCursorBlink { 0%, 100% { opacity: 1; } 50% { opacity: 0.15; } }
+
+/* "?" bubble — pinned to the figure's corner while the session waits on an answer. */
+.agent-dock-chip-q {
+  position: absolute;
+  top: -4px; right: -5px;
+  min-width: 13px; height: 13px;
+  padding: 0 3px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: var(--radius-full);
+  background: var(--mood-waiting);
+  border: 1.5px solid var(--color-bg-elevated);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1;
+  box-shadow: 0 0 8px color-mix(in srgb, var(--mood-waiting) 80%, transparent);
+  animation: agentQPop 0.28s ease-out backwards, agentBadgePulse 1.5s ease-in-out 0.3s infinite;
+}
+@keyframes agentQPop {
+  from { transform: scale(0.2); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+/* Two-line text column: the name on top, the live state word under it. */
+.agent-dock-chip-text {
   flex: 1 1 auto;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.agent-dock-chip-title {
   font-family: var(--font-mono);
   font-size: var(--font-size-xs);
   color: var(--color-text);
+  line-height: 1.2;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .agent-dock-chip-state {
-  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
   font-family: var(--font-mono);
-  font-size: 8.5px;
+  font-size: 9px;
   font-weight: 700;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   line-height: 1;
-  padding: 3px 6px;
-  border-radius: var(--radius-full);
   color: var(--kind-color, var(--color-text-tertiary));
-  background: color-mix(in srgb, var(--kind-color, transparent) 16%, var(--color-bg-elevated));
-  border: 1px solid color-mix(in srgb, var(--kind-color, transparent) 42%, transparent);
 }
+.agent-dock-chip-state[data-kind="asking"] { animation: agentBadgePulse 1.5s ease-in-out infinite; }
+/* Live "typing" dots after working/starting — the state line breathes while it runs. */
+.agent-dock-chip-dots { display: inline-flex; gap: 2px; }
+.agent-dock-chip-dots i {
+  width: 3px; height: 3px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: agentDotWave 1.2s ease-in-out infinite;
+}
+.agent-dock-chip-dots i:nth-child(2) { animation-delay: 0.15s; }
+.agent-dock-chip-dots i:nth-child(3) { animation-delay: 0.3s; }
+@keyframes agentDotWave {
+  0%, 60%, 100% { opacity: 0.25; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-1.5px); }
+}
+
 /* "Waiting for you" dot — a backgrounded session finished while you weren't on it. */
 .agent-dock-chip-badge {
   flex: 0 0 auto;
@@ -1054,8 +1143,10 @@
 .agent-dock-chip-close:focus-visible { outline: none; opacity: 1; border-color: var(--color-accent); box-shadow: 0 0 0 2px var(--color-accent-soft); }
 
 /* Anchor chip — the corner-most element. Collapses the tile stack into this one combined
-   chip (mascot · count · chevron) and re-expands it; same footprint in both states. Its
-   border + glow read the worst-of state colour so a glance still tells you something. */
+   chip (figure · count · chevron) and re-expands it; same footprint in both states. Its
+   border + glow read the worst-of state colour, its figure wears the most urgent row's
+   face — and while any session is ASKING, the whole anchor shakes so even a collapsed
+   dock makes the question unmissable. */
 .agent-dock-anchor {
   pointer-events: auto;
   flex: 0 0 auto;
@@ -1072,36 +1163,12 @@
 }
 .agent-dock-anchor:hover { transform: translateY(-2px); }
 .agent-dock-anchor:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--color-accent-soft); }
-/* Anchor mascot — present only when the anchor's row is a Claude agent; otherwise the
-   anchor shows the bare inline dot below. */
-.agent-dock-anchor-mascot {
-  position: relative;
-  flex: 0 0 auto;
-  width: 24px; height: 24px;
+.agent-dock-anchor[data-asking] {
+  box-shadow: var(--shadow-lg), 0 0 18px -3px color-mix(in srgb, var(--mood-waiting) 75%, transparent);
+  animation: agentChipNudge 2.4s ease-in-out infinite;
 }
-/* Inner clip — contains the mascot's untransformed 76px layout box WITHOUT clipping the
-   status dot, which sits just outside as a wrapper sibling. */
-.agent-dock-anchor-mascot-clip {
-  width: 24px; height: 24px;
-  display: flex; align-items: center; justify-content: center;
-  overflow: hidden;
-}
-.agent-dock-anchor-dot {
-  flex: 0 0 auto;
-  width: 8px; height: 8px;
-  border-radius: 50%;
-  background: var(--kind-color, var(--color-text-tertiary));
-  box-shadow: 0 0 7px color-mix(in srgb, var(--kind-color, transparent) 75%, transparent);
-}
-/* When the dot rides on the mascot, tuck it into the corner as an overlay badge. */
-.agent-dock-anchor-mascot .agent-dock-anchor-dot {
-  position: absolute;
-  right: -2px; bottom: -2px;
-  width: 9px; height: 9px;
-  border: 2px solid var(--color-bg-elevated);
-}
-.agent-dock-anchor-dot[data-kind="working"],
-.agent-dock-anchor-dot[data-kind="starting"] { animation: agentDotPulse 1.2s ease-in-out infinite; }
+.agent-dock-anchor[data-asking]:hover { animation: none; }
+.agent-dock-anchor .agent-dock-chip-figure { width: 24px; height: 24px; }
 .agent-dock-anchor-count {
   font-family: var(--font-mono);
   font-size: var(--font-size-sm);
@@ -1117,10 +1184,10 @@
   animation: agentBadgePulse 1.5s ease-in-out infinite;
 }
 .agent-dock-anchor-chevron {
-  font-size: 12px;
   color: var(--color-text-tertiary);
-  line-height: 1;
+  transition: transform var(--transition-fast);
 }
+.agent-dock-anchor-chevron[data-open] { transform: rotate(180deg); }
 
 /* Garage — keeps backgrounded session terminals mounted (alive) but unseen. */
 .agent-garage { display: none; }
@@ -1256,9 +1323,7 @@
   .agent-pane-status .dot,
   .agent-rail-dot,
   .agent-rail-badge,
-  .agent-dock-chip-dot,
   .agent-dock-chip-badge,
-  .agent-dock-anchor-dot,
   .agent-dock-anchor-badge { animation: none !important; }
   .agent-confirm,
   .agent-confirm-scrim,

@@ -1,6 +1,6 @@
 import './SleepyMascot.css';
 
-export type SleepyMood = 'idle' | 'sleepy' | 'sleeps' | 'thinking' | 'working' | 'waving';
+export type SleepyMood = 'idle' | 'sleepy' | 'sleeps' | 'thinking' | 'working' | 'waving' | 'asking';
 
 /** Base design size the mascot is drawn at; `size` scales the whole thing. */
 const BASE = 92;
@@ -39,6 +39,9 @@ export function SleepyMascot({ mood = 'idle', size = BASE, compact = false }: Sl
             <span>z</span>
           </div>
         )}
+        {/* Floating "?" — asking only, full-size only (the dock chip's tight clip box
+            draws its own corner bubble instead, so nothing gets cut off). */}
+        {mood === 'asking' && !compact && <div className="smascot-q"><span>?</span></div>}
         <div className="smascot-face">
           <div className="smascot-eyes">
             <span className="smascot-eye" />

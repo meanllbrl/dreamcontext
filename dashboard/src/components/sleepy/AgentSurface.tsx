@@ -489,11 +489,12 @@ export function AgentSurface() {
       // The Sleep session is still open from a prior run. If it's idle (a previous
       // consolidation finished and it's sitting at the prompt), re-issue the sleep flow so
       // a fresh "Run sleep agent" actually starts a NEW sleep instead of silently focusing a
-      // done session. If it's still busy mid-run, just surface it — injecting text would
-      // corrupt the active turn. (During an in-flight sleep the header button is disabled, so
-      // this idle re-issue is the realistic path back in.)
+      // done session. If it's still busy mid-run — or blocked on a question — just surface
+      // it; injecting text would corrupt the active turn (or answer the dialog). (During an
+      // in-flight sleep the header button is disabled, so this idle re-issue is the
+      // realistic path back in.)
       const live = sessions.current.get(existing.id);
-      if (live && live.status !== 'closed' && !live.busy) {
+      if (live && live.status !== 'closed' && !live.busy && !live.asking) {
         live.sendText(SLEEP_AGENT_PROMPT);
         setTimeout(() => {
           const s2 = sessions.current.get(existing.id);
@@ -528,7 +529,7 @@ export function AgentSurface() {
       setExpanded(true);
       focusSession(existing.id);
       const live = sessions.current.get(existing.id);
-      if (live && live.status !== 'closed' && !live.busy) {
+      if (live && live.status !== 'closed' && !live.busy && !live.asking) {
         live.sendText(BRAIN_RESOLVE_PROMPT);
         setTimeout(() => {
           const s2 = sessions.current.get(existing.id);
@@ -1175,7 +1176,7 @@ export function AgentSurface() {
       return {
         id,
         title: meta?.title ?? id,
-        info: deriveSessionStatus({ dormant: meta?.dormant, status: s?.status, busy: s?.busy }),
+        info: deriveSessionStatus({ dormant: meta?.dormant, status: s?.status, busy: s?.busy, asking: s?.asking }),
         sessionKind: meta?.kind ?? 'agent',
         bypass: !!meta?.bypass,
         attention: !meta?.dormant && !!s?.attention,
@@ -1189,7 +1190,7 @@ export function AgentSurface() {
       id: meta.id,
       title: meta.title,
       kind: meta.kind,
-      info: deriveSessionStatus({ dormant: meta.dormant, status: s?.status, busy: s?.busy }),
+      info: deriveSessionStatus({ dormant: meta.dormant, status: s?.status, busy: s?.busy, asking: s?.asking }),
       attention: !meta.dormant && !!s?.attention,
     };
   });

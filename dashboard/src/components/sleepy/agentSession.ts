@@ -4,6 +4,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import '@xterm/xterm/css/xterm.css';
 import { getActiveVault } from '../../api/client';
 import { copyPreservingUnicode } from '../../lib/clipboard';
+import { playAskChime } from '../../lib/chime';
 
 /**
  * The imperative session engine behind {@link AgentSurface} — one `node-pty` ↔
@@ -152,8 +153,9 @@ export interface Session {
   ws: WebSocket;
   status: TermStatus;
   opened: boolean;
-  // Activity, derived from the PTY stream (drives the minimized bubble's mood/badge).
-  busy: boolean;        // output streamed within the last idle window → still working
+  // Activity, derived from the PTY stream + the visible screen (drives the dock chips).
+  busy: boolean;        // mid-turn: output streaming, or a quiet screen still mid-run
+  asking: boolean;      // a question is on screen — Claude is blocked on YOUR answer
   attention: boolean;   // finished / rang the bell since you last looked
   minimized: boolean;   // mirrored from layout state so the idle timer can read it
   ensureOpen: () => void;
@@ -165,8 +167,20 @@ export interface Session {
 }
 
 let sessionSeq = 0;
-// Output must go quiet for this long before we call a session "finished".
+// Output must go quiet for this long before we reclassify what the screen shows.
 const IDLE_MS = 800;
+// While the quiet screen still shows a live turn, re-check on this cadence — a long
+// tool call can stream nothing for seconds without being "done".
+const RECHECK_MS = 1200;
+
+// ── Quiet-screen classification ──────────────────────────────────────────────────
+// The byte stream alone can't tell "done" from "waiting for your answer" from "silent
+// mid-turn tool call" — all three just stop streaming. The visible buffer tail can:
+// Claude Code renders a ❯-cursor numbered option list whenever it's blocked on input
+// (permission prompts, AskUserQuestion, plan approval, trust dialog), and keeps
+// "esc to interrupt" on screen for the whole life of a turn.
+const ASKING_RE = /❯\s{0,2}\d+\.|\(y\/n\)|\[y\/n\]/i;
+const WORKING_RE = /esc to interrupt|ctrl\+b to run in background/i;
 
 /**
  * `promptToken` is the large-prompt transport: a token minted by `preparePrompt`
@@ -250,7 +264,7 @@ export function createSession(bypass: boolean, notify: () => void, claudeId: str
   const session: Session = {
     id, bypass, kind, claudeId, container, term, fit, ws,
     status: 'connecting', opened: false,
-    busy: false, attention: false, minimized: false,
+    busy: false, asking: false, attention: false, minimized: false,
     ensureOpen, fitAndResize, applyZoom, sendText, dispose,
   };
 
@@ -271,23 +285,72 @@ export function createSession(bypass: boolean, notify: () => void, claudeId: str
     fitAndResize();
   }
 
-  // Activity tracking — "working" while output streams, "finished" once it goes
-  // quiet. Notifies React only on a busy/attention TRANSITION (never per byte), so
-  // continuous streaming doesn't thrash re-renders.
+  // Activity tracking — "working" while output streams; once it goes quiet, the
+  // SCREEN decides what the quiet means (still mid-turn / a question / done). Notifies
+  // React only on a state TRANSITION (never per byte), so continuous streaming doesn't
+  // thrash re-renders.
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
-  function markActivity() {
-    if (!session.busy) { session.busy = true; notify(); }
+  function armSettle(ms: number) {
     if (idleTimer) clearTimeout(idleTimer);
-    idleTimer = setTimeout(() => {
-      idleTimer = undefined;
+    idleTimer = setTimeout(onSettle, ms);
+  }
+  function markActivity() {
+    if (session.asking) {
+      // Bytes during a question are usually dialog redraws / keystroke echo — but
+      // they're also how the turn RESUMES once the user answers. Re-classify on a
+      // short NON-SLIDING fuse: a sliding one would never fire under the heavy
+      // streaming that follows an answer, leaving the chip stuck on "needs you".
+      if (!idleTimer) armSettle(350);
+      return;
+    }
+    if (!session.busy) { session.busy = true; notify(); }
+    armSettle(IDLE_MS);
+  }
+  // Read the bottom viewport as plain text (baseY-anchored, so the user scrolling the
+  // scrollback never changes what we classify).
+  function readTail(): string {
+    try {
+      const buf = term.buffer.active;
+      const lines: string[] = [];
+      for (let y = buf.baseY; y < buf.baseY + term.rows; y++) {
+        const line = buf.getLine(y);
+        if (line) lines.push(line.translateToString(true));
+      }
+      return lines.join('\n');
+    } catch { return ''; }
+  }
+  // Output went quiet → decide what the quiet MEANS from what's actually on screen.
+  function onSettle() {
+    idleTimer = undefined;
+    // If the PTY closed in the meantime, don't raise the "finished, waiting for you"
+    // badge — an ended session must read as plain "sleeping", not sleeping+chip.
+    if (session.status === 'closed') { session.busy = false; session.asking = false; notify(); return; }
+    const tail = readTail();
+    if (ASKING_RE.test(tail)) {
+      const fresh = !session.asking;
       session.busy = false;
-      // If the PTY closed in the meantime, don't raise the "finished, waiting for you"
-      // badge — an ended session must read as plain "sleeping", not sleeping+chip.
-      if (session.status === 'closed') { notify(); return; }
-      // Finished while you weren't looking → flag the bubble's notification badge.
-      if (session.minimized && !session.attention) session.attention = true;
+      session.asking = true;
+      if (fresh) {
+        // A question is the strongest "needs you" there is: badge it and chime ONCE
+        // per question — redraws can't re-trigger, asking only rises on a fresh edge.
+        session.attention = true;
+        playAskChime();
+      }
       notify();
-    }, IDLE_MS);
+      return;
+    }
+    if (WORKING_RE.test(tail)) {
+      // Still mid-turn, just streaming nothing (a silent tool call) — hold "working"
+      // and re-check, so the chip never flaps to "ready" while Claude is busy.
+      if (!session.busy || session.asking) { session.busy = true; session.asking = false; notify(); }
+      armSettle(RECHECK_MS);
+      return;
+    }
+    session.busy = false;
+    session.asking = false;
+    // Finished while you weren't looking → flag the bubble's notification badge.
+    if (session.minimized && !session.attention) session.attention = true;
+    notify();
   }
 
   // Answer the TUI's foreground/background colour queries (OSC 10/11) with our live
@@ -305,14 +368,20 @@ export function createSession(bypass: boolean, notify: () => void, claudeId: str
   const oscBg = replyColor(11, '--color-bg', '#14171f');
 
   // Claude Code rings the terminal bell when a turn finishes / it needs your input —
-  // the strongest "done, look at me" signal we get from the stream.
-  const bellSub = term.onBell(() => { if (!session.attention) { session.attention = true; notify(); } });
+  // the strongest "done, look at me" signal we get from the stream. Badge immediately,
+  // and classify the screen on a short fuse so a question flips the chip to "needs you"
+  // fast instead of waiting out the full idle window.
+  const bellSub = term.onBell(() => {
+    if (!session.attention) { session.attention = true; notify(); }
+    armSettle(200);
+  });
 
   // Stop any pending idle timer first, so it can't fire AFTER close and flag a
   // notification badge on an already-ended session.
   const stopOnClose = () => {
     if (idleTimer) { clearTimeout(idleTimer); idleTimer = undefined; }
     session.busy = false;
+    session.asking = false;
     setStatus('closed');
   };
   ws.onopen = () => { setStatus('open'); fitAndResize(); };
