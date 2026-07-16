@@ -10,7 +10,7 @@ import type { ModelConfig } from '../../lib/agentComposer';
  */
 export function PaneComposer({
   claudeId, isAgent, isLiveAgent, modelConfig, model, effort,
-  onInsert, onPickFiles, onModelChange, onEffortChange,
+  onInsert, onPickFiles, onPickFolders, onModelChange, onEffortChange,
 }: {
   claudeId?: string;
   /** This pane's active session is a Claude agent (not a plain shell). */
@@ -22,6 +22,7 @@ export function PaneComposer({
   effort: string;
   onInsert: (snippet: string) => void;
   onPickFiles: () => void;
+  onPickFolders: () => void;
   onModelChange: (id: string) => void;
   onEffortChange: (level: string) => void;
 }) {
@@ -30,6 +31,7 @@ export function PaneComposer({
     <AgentComposerBar
       onInsert={onInsert}
       onPickFiles={onPickFiles}
+      onPickFolders={onPickFolders}
       models={modelConfig.models}
       efforts={modelConfig.efforts}
       model={model}

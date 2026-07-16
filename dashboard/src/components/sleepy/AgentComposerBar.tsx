@@ -188,12 +188,14 @@ function SkillBrowser({ onInsert, close }: { onInsert: (snippet: string) => void
 }
 
 export function AgentComposerBar({
-  onInsert, onPickFiles, models, efforts, model, effort, onModelChange, onEffortChange, disabled, skillsDisabled = false, stats,
+  onInsert, onPickFiles, onPickFolders, models, efforts, model, effort, onModelChange, onEffortChange, disabled, skillsDisabled = false, stats,
 }: {
   /** Type a skill trigger into the focused terminal's input line. */
   onInsert: (snippet: string) => void;
   /** Open the native multi-file picker and drop the chosen paths into the terminal. */
   onPickFiles: () => void;
+  /** Same, but the native multi-FOLDER picker (one Tauri dialog can't offer both mixed). */
+  onPickFolders: () => void;
   /** Model options the CLI offers, and effort levels from `claude --help`. */
   models: ModelOption[];
   efforts: string[];
@@ -219,17 +221,46 @@ export function AgentComposerBar({
 
   return (
     <div className="agent-composer">
-      {/* Files */}
-      <button
-        type="button"
-        className="agent-composer-btn"
-        title="Attach files (multi-select) — drops into the terminal input"
-        aria-label="Attach files"
-        onClick={onPickFiles}
+      {/* Files / Folders — two menu entries because one native dialog can't offer both mixed. */}
+      <Popover
+        align="left"
+        trigger={(open, toggle) => (
+          <button
+            type="button"
+            className={`agent-composer-btn${open ? ' open' : ''}`}
+            title="Attach files or a folder (multi-select) — drops into the terminal input"
+            aria-label="Attach files or folders"
+            aria-haspopup="menu"
+            aria-expanded={open}
+            onClick={toggle}
+          >
+            <span className="agent-composer-glyph" aria-hidden>@</span>
+            <span className="agent-composer-btn-label">Files</span>
+            <span className="agent-composer-caret" aria-hidden>▾</span>
+          </button>
+        )}
       >
-        <span className="agent-composer-glyph" aria-hidden>@</span>
-        <span className="agent-composer-btn-label">Files</span>
-      </button>
+        {(close) => (
+          <div className="agent-model-list">
+            <button
+              type="button"
+              className="agent-model-row"
+              role="menuitem"
+              onClick={() => { onPickFiles(); close(); }}
+            >
+              <span className="agent-model-row-label">Attach files…</span>
+            </button>
+            <button
+              type="button"
+              className="agent-model-row"
+              role="menuitem"
+              onClick={() => { onPickFolders(); close(); }}
+            >
+              <span className="agent-model-row-label">Attach folders…</span>
+            </button>
+          </div>
+        )}
+      </Popover>
 
       <span className="agent-composer-sep" aria-hidden>·</span>
 
