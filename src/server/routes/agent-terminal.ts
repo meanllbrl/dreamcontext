@@ -821,46 +821,73 @@ export async function handleAgentSessionModel(
 //     subscription is flat-rate, so it's a what-if, not a bill.
 
 interface TokenPrice { in: number; out: number; cacheWrite: number; cacheRead: number }
-/** Public API list prices, USD per MILLION tokens (best-effort; Fable priced at Opus tier as
- *  a placeholder until its public rate is wired in). Cache-write is the 5-minute rate. */
+/** Public API list prices, USD per MILLION tokens (platform.claude.com/docs/en/pricing).
+ *  Cache-write is the 5-minute rate (1.25× input); cache-read is 0.1× input. Current
+ *  1M-context models carry no long-context premium, so one rate per tier suffices.
+ *  `opusLegacy` covers Opus 4.1 / 4.0 / 3, which kept the old $15/$75 rate — Opus 4.5+
+ *  lists at $5/$25. */
 const MODEL_PRICING: Record<string, TokenPrice> = {
-  opus:   { in: 15,   out: 75, cacheWrite: 18.75, cacheRead: 1.5 },
-  sonnet: { in: 3,    out: 15, cacheWrite: 3.75,  cacheRead: 0.3 },
-  haiku:  { in: 1,    out: 5,  cacheWrite: 1.25,  cacheRead: 0.1 },
-  fable:  { in: 15,   out: 75, cacheWrite: 18.75, cacheRead: 1.5 },
+  fable:      { in: 10, out: 50, cacheWrite: 12.5,  cacheRead: 1 },
+  opus:       { in: 5,  out: 25, cacheWrite: 6.25,  cacheRead: 0.5 },
+  opusLegacy: { in: 15, out: 75, cacheWrite: 18.75, cacheRead: 1.5 },
+  sonnet:     { in: 3,  out: 15, cacheWrite: 3.75,  cacheRead: 0.3 },
+  haiku:      { in: 1,  out: 5,  cacheWrite: 1.25,  cacheRead: 0.1 },
 };
+
+export function priceForModel(model: string): TokenPrice {
+  const s = model.toLowerCase();
+  if (s.includes('fable') || s.includes('mythos')) return MODEL_PRICING.fable;
+  if (s.includes('haiku')) return MODEL_PRICING.haiku;
+  if (s.includes('sonnet')) return MODEL_PRICING.sonnet;
+  // Legacy full ids: claude-opus-4-1-20250805, claude-opus-4-20250514, claude-3-opus-*.
+  if (/opus-4-[01]\b|opus-4-\d{8}|3-opus/.test(s)) return MODEL_PRICING.opusLegacy;
+  return MODEL_PRICING.opus; // current opus + unknown models default to the opus tier
+}
 
 interface SessionStats { contextTokens: number | null; contextLimit: number | null; costUsd: number | null }
 const EMPTY_STATS: SessionStats = { contextTokens: null, contextLimit: null, costUsd: null };
 
 function num(v: unknown): number { return typeof v === 'number' && Number.isFinite(v) ? v : 0; }
 
-/** Parse a transcript's per-turn `usage` into { contextTokens, contextLimit, costUsd }. */
-function computeSessionStats(jsonlPath: string): SessionStats {
+/** Parse a transcript's per-turn `usage` into { contextTokens, contextLimit, costUsd }.
+ *  Claude Code writes one JSONL line PER CONTENT BLOCK of an assistant message, and every
+ *  line repeats the same `message.id` + the same `usage` — so cost must be summed per
+ *  unique message id, never per line (per-line summing multiple-counts every turn). */
+export function computeSessionStats(jsonlPath: string): SessionStats {
   let raw: string;
   try { raw = readFileSync(jsonlPath, 'utf-8'); } catch { return EMPTY_STATS; }
-  let costUsd = 0;
+  interface TurnUsage { inp: number; out: number; cw: number; cr: number; model: string }
+  const turns = new Map<string, TurnUsage>();
+  let unkeyed = 0;
   let contextTokens: number | null = null;
   let lastModel = '';
   for (const line of raw.split('\n')) {
     const s = line.trim();
     if (!s) continue;
-    let obj: { message?: { usage?: Record<string, unknown>; model?: unknown } };
+    let obj: { isSidechain?: unknown; message?: { id?: unknown; usage?: Record<string, unknown>; model?: unknown } };
     try { obj = JSON.parse(s); } catch { continue; }
     const u = obj?.message?.usage;
     if (!u || typeof u !== 'object') continue;
     const model = typeof obj.message?.model === 'string' && obj.message.model ? obj.message.model : lastModel;
-    lastModel = model || lastModel;
     const inp = num(u.input_tokens);
     const out = num(u.output_tokens);
     const cw = num(u.cache_creation_input_tokens);
     const cr = num(u.cache_read_input_tokens);
-    const p = MODEL_PRICING[modelAlias(model)] ?? MODEL_PRICING.opus;
-    costUsd += (inp * p.in + cw * p.cacheWrite + cr * p.cacheRead + out * p.out) / 1_000_000;
-    // The context window is what the MOST RECENT turn carried — not a running sum.
-    contextTokens = inp + cw + cr + out;
+    const id = typeof obj.message?.id === 'string' && obj.message.id ? obj.message.id : `line-${unkeyed++}`;
+    turns.set(id, { inp, out, cw, cr, model });
+    // The context window is what the MOST RECENT main-chain turn carried — not a running
+    // sum, and not a subagent's (sidechain) footprint, which lives in its own window.
+    if (obj.isSidechain !== true) {
+      lastModel = model || lastModel;
+      contextTokens = inp + cw + cr + out;
+    }
   }
   if (contextTokens === null) return EMPTY_STATS;
+  let costUsd = 0;
+  for (const t of turns.values()) {
+    const p = priceForModel(t.model);
+    costUsd += (t.inp * p.in + t.cw * p.cacheWrite + t.cr * p.cacheRead + t.out * p.out) / 1_000_000;
+  }
   // Claude Code's model ids carry a `[1m]` suffix for the 1M-context variants; fall back to
   // the standard 200K, and bump to 1M if the observed footprint already exceeds 200K.
   const contextLimit = /1m/i.test(lastModel) || contextTokens > 200_000 ? 1_000_000 : 200_000;
