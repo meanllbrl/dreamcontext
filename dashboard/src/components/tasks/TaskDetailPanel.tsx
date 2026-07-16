@@ -16,6 +16,8 @@ import { initMermaid, normalizeMermaidSvg } from '../../lib/mermaidRender';
 import { useAgentCapabilities } from '../../hooks/useAgentCapabilities';
 import { SparkIcon } from '../sleepy/TypeIcons';
 import { TaskManagerPane } from './detail/TaskManagerPane';
+import { TaskSection, TaskField, EmptyField, RequiredField } from './detail/TaskSection';
+import { useSectionCollapse } from './detail/useSectionCollapse';
 import { DelegateComposer } from './DelegateComposer';
 import { taskName } from './boardModel';
 import './TaskDetailPanel.css';
@@ -210,6 +212,83 @@ function updateMermaidNodeStatus(body: string, nodeId: string, checked: boolean)
   return lines.join('\n');
 }
 
+/**
+ * A nullable date, under the shared field contract.
+ *
+ * Three states, and the whole point is that they are DISTINCT — before this, all three rendered
+ * as an empty date input (or, under a `backlog` tag, as a sentence where the input should be):
+ *
+ *  - **never set** → the dashed "＋ Add" affordance. Says "nothing here, and you may put
+ *    something here", in the same shape every other empty field uses.
+ *  - **set** → the input, with a clear (×) that is the SAME gesture as every other field's
+ *    clear, rather than this field's private one.
+ *  - **undated by rule** (a `backlog` tag) → says so, names the tag as the cause, and offers to
+ *    remove it. The rule was always there; only its explanation is new.
+ *
+ * Clicking "＋ Add" reveals the input rather than writing a date immediately: an "Add" that
+ * silently commits today's date is a worse lie than an empty field.
+ */
+function TaskDateField(
+  { label, value, backlog, onChange, onRemoveBacklog }:
+  {
+    label: string;
+    value: string | null | undefined;
+    backlog: boolean;
+    onChange: (v: string) => void;
+    onRemoveBacklog: () => void;
+  },
+) {
+  const [revealed, setRevealed] = useState(false);
+  const id = `tf-date-${label.toLowerCase()}`;
+
+  if (backlog) {
+    return (
+      <TaskField label={label}>
+        <span className="prop-backlog">
+          <span className="prop-backlog-text">Undated — this task is <code>backlog</code></span>
+          <button type="button" className="prop-backlog-clear" onClick={onRemoveBacklog}>
+            Remove tag to schedule
+          </button>
+        </span>
+      </TaskField>
+    );
+  }
+
+  if (!value && !revealed) {
+    return (
+      <TaskField label={label}>
+        <EmptyField label={`Add ${label.toLowerCase()} date`} onClick={() => setRevealed(true)} />
+      </TaskField>
+    );
+  }
+
+  return (
+    <TaskField label={label} htmlFor={id}>
+      <span className="prop-date-edit">
+        <input
+          id={id}
+          type="date"
+          className="field-select prop-select"
+          autoFocus={revealed && !value}
+          value={value ?? ''}
+          onChange={e => onChange(e.target.value)}
+        />
+        {value && (
+          <button
+            type="button"
+            className="prop-clear"
+            aria-label={`Clear ${label.toLowerCase()} date`}
+            title="Clear"
+            onClick={() => { onChange(''); setRevealed(false); }}
+          >
+            ×
+          </button>
+        )}
+      </span>
+    </TaskField>
+  );
+}
+
 interface TaskDetailPanelProps {
   task: Task;
   onClose: () => void;
@@ -334,36 +413,12 @@ function RiceBlock({ task, expanded, onToggle, onUpdate }: RiceBlockProps) {
   );
 }
 
-function PropertyRow({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="prop-row">
-      <span className="prop-label">{label}</span>
-      <div className="prop-value">{children}</div>
-    </div>
-  );
-}
-
-function ExpandableText({ text }: { text: string }) {
-  const [expanded, setExpanded] = useState(false);
-  const [isTruncated, setIsTruncated] = useState(false);
-  const ref = useRef<HTMLSpanElement>(null);
-
-  useEffect(() => {
-    // Check after render with clamped class applied
-    requestAnimationFrame(() => {
-      const el = ref.current;
-      if (el) setIsTruncated(el.scrollHeight > el.clientHeight + 1);
-    });
-  }, [text]);
-
-  return (
-    <span className="prop-expandable" onClick={() => setExpanded(v => !v)}>
-      <span ref={ref} className={`prop-text ${expanded ? '' : 'prop-text--clamped'}`}>{text}</span>
-      {isTruncated && !expanded && <span className="prop-expand-hint">show more</span>}
-      {expanded && isTruncated && <span className="prop-expand-hint">show less</span>}
-    </span>
-  );
-}
+/* `PropertyRow` and `ExpandableText` lived here. Both are gone with the flat stack:
+ * `TaskField` (detail/TaskSection.tsx) replaces the rigid `140px 1fr` row — a fixed 140px label
+ * column left too little for a date input or a chip set once the rail narrowed — and
+ * `ExpandableText` existed only to clamp the duplicate read-only "Description" row, which was
+ * `task.description` rendered a second time under a second name. Summary is now the one place
+ * that field is read and written, so the clamp has nothing to clamp. */
 
 export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDetailPanelProps) {
   const { t } = useI18n();
@@ -399,6 +454,14 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
   const [tmOpen, setTmOpen] = useState(false);
   useEffect(() => { if (fullScreen) setTmOpen(true); }, [fullScreen]);
   const [delegating, setDelegating] = useState(false);
+  const sections = useSectionCollapse();
+
+  // A `backlog` tag means "undated by rule". That rule is real, but it used to be enforced by
+  // silently REPLACING both date inputs with a sentence — so the only way to learn why you
+  // couldn't schedule a task was to hover the text that had taken the input's place. The rule
+  // stays; the tag that causes it becomes visible and removable right where it bites.
+  const isBacklog = task.tags.some(x => x.toLowerCase() === 'backlog');
+  const removeBacklogTag = () => handleTagsChange(task.tags.filter(x => x.toLowerCase() !== 'backlog'));
 
   const onMutationError = (err: Error) => {
     setMutationError(err.message);
@@ -945,89 +1008,123 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
               <div className="error-state" style={{ marginBottom: 'var(--space-3)' }}>{mutationError}</div>
             )}
 
-          {/* Properties Block */}
+          {/*
+            Properties — grouped, collapsible, and remembered.
+
+            This replaces 18 flat rows in one undifferentiated stack, of which exactly one (RICE)
+            could collapse. With no hierarchy every property read as equally important, which
+            means none of them did: Status sat at the same weight as the record ID. The groups
+            below are the actual questions you open a task to answer — where it stands, when it
+            is due, whose it is — with reference material (scoring, labels, provenance) folded
+            away until asked for. Open/closed persists per user (see useSectionCollapse).
+          */}
           <div className="props-block">
-            <PropertyRow label="Status">
-              <select
-                className="field-select prop-select"
-                value={task.status}
-                onChange={e => handleStatusChange(e.target.value)}
-              >
-                <option value="todo">{t('tasks.todo')}</option>
-                <option value="in_progress">{t('tasks.in_progress')}</option>
-                <option value="in_review">{t('tasks.in_review')}</option>
-                <option value="completed">{t('tasks.completed')}</option>
-              </select>
-            </PropertyRow>
-
-            <PropertyRow label={t('tasks.priority')}>
-              <select
-                className="field-select prop-select"
-                value={task.priority}
-                onChange={e => handlePriorityChange(e.target.value)}
-              >
-                <option value="low">{t('priority.low')}</option>
-                <option value="medium">{t('priority.medium')}</option>
-                <option value="high">{t('priority.high')}</option>
-                <option value="critical">{t('priority.critical')}</option>
-              </select>
-            </PropertyRow>
-
-            <PropertyRow label="Urgency">
-              <select
-                className="field-select prop-select"
-                value={task.urgency}
-                onChange={e => handleUrgencyChange(e.target.value)}
-              >
-                <option value="low">{t('priority.low')}</option>
-                <option value="medium">{t('priority.medium')}</option>
-                <option value="high">{t('priority.high')}</option>
-                <option value="critical">{t('priority.critical')}</option>
-              </select>
-            </PropertyRow>
-
-            <PropertyRow label={t('rice.title')}>
-              <RiceBlock
-                task={task}
-                expanded={riceExpanded}
-                onToggle={() => setRiceExpanded(v => !v)}
-                onUpdate={handleRiceUpdate}
-              />
-            </PropertyRow>
-
-            <PropertyRow label={t('tasks.customFields.sectionLabel')}>
-              <div className="custom-fields-cell">
-                <TaskCustomFields
-                  defs={customFieldDefs ?? []}
-                  values={task.custom_fields}
-                  onCommit={handleCustomFieldChange}
+            <TaskSection
+              id="identity" title="Identity" count={2}
+              open={sections.isOpen('identity')}
+              onToggle={() => sections.toggle('identity')}
+            >
+              <TaskField label="Name" htmlFor="tf-name">
+                <input
+                  id="tf-name"
+                  className="settings-like-input prop-text-input"
+                  defaultValue={task.name}
+                  key={`name-${task.slug}-${task.name}`}
+                  onBlur={e => { if (e.target.value.trim() && e.target.value.trim() !== task.name) handleTextField('name', e.target.value); }}
+                  onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
                 />
-                <AddCustomFieldForm />
-              </div>
-            </PropertyRow>
+                {/* Name is the one REQUIRED field, and the only one that cannot be cleared —
+                    the blur handler above ignores an empty value. Saying so is the difference
+                    between "required" and "your edit silently didn't take". */}
+                {!task.name.trim() && <RequiredField label="Name required" />}
+              </TaskField>
 
-            <PropertyRow label="Name">
-              <input
-                className="settings-like-input prop-text-input"
-                defaultValue={task.name}
-                key={`name-${task.slug}-${task.name}`}
-                onBlur={e => { if (e.target.value.trim() && e.target.value.trim() !== task.name) handleTextField('name', e.target.value); }}
-                onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+              <TaskField label="Summary" htmlFor="tf-summary">
+                <input
+                  id="tf-summary"
+                  className="prop-text-input"
+                  defaultValue={task.description}
+                  key={`desc-${task.slug}-${task.description}`}
+                  placeholder="One-line summary"
+                  onBlur={e => { if (e.target.value.trim() && e.target.value.trim() !== task.description) handleTextField('description', e.target.value); }}
+                  onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                />
+              </TaskField>
+              {/* The old "Description" row rendered `task.description` a SECOND time, read-only,
+                  under a different label — the same field appearing twice under two names, one
+                  of which (Description) also names the markdown body below. Removed: Summary is
+                  where you read and write it. */}
+            </TaskSection>
+
+            <TaskSection
+              id="workflow" title="Workflow" count={3}
+              open={sections.isOpen('workflow')}
+              onToggle={() => sections.toggle('workflow')}
+            >
+              <TaskField label="Status" htmlFor="tf-status">
+                <select
+                  id="tf-status"
+                  className="field-select prop-select"
+                  value={task.status}
+                  onChange={e => handleStatusChange(e.target.value)}
+                >
+                  <option value="todo">{t('tasks.todo')}</option>
+                  <option value="in_progress">{t('tasks.in_progress')}</option>
+                  <option value="in_review">{t('tasks.in_review')}</option>
+                  <option value="completed">{t('tasks.completed')}</option>
+                </select>
+              </TaskField>
+
+              <TaskField label={t('tasks.priority')} htmlFor="tf-priority">
+                <select
+                  id="tf-priority"
+                  className="field-select prop-select"
+                  value={task.priority}
+                  onChange={e => handlePriorityChange(e.target.value)}
+                >
+                  <option value="low">{t('priority.low')}</option>
+                  <option value="medium">{t('priority.medium')}</option>
+                  <option value="high">{t('priority.high')}</option>
+                  <option value="critical">{t('priority.critical')}</option>
+                </select>
+              </TaskField>
+
+              <TaskField label="Urgency" htmlFor="tf-urgency">
+                <select
+                  id="tf-urgency"
+                  className="field-select prop-select"
+                  value={task.urgency}
+                  onChange={e => handleUrgencyChange(e.target.value)}
+                >
+                  <option value="low">{t('priority.low')}</option>
+                  <option value="medium">{t('priority.medium')}</option>
+                  <option value="high">{t('priority.high')}</option>
+                  <option value="critical">{t('priority.critical')}</option>
+                </select>
+              </TaskField>
+            </TaskSection>
+
+            <TaskSection
+              id="timeline" title="Timeline" count={2}
+              open={sections.isOpen('timeline')}
+              onToggle={() => sections.toggle('timeline')}
+            >
+              <TaskDateField
+                label="Start" value={task.start_date} backlog={isBacklog}
+                onChange={handleStartChange} onRemoveBacklog={removeBacklogTag}
               />
-            </PropertyRow>
-
-            <PropertyRow label="Summary">
-              <input
-                className="prop-text-input"
-                defaultValue={task.description}
-                key={`desc-${task.slug}-${task.description}`}
-                placeholder="One-line summary"
-                onBlur={e => { if (e.target.value.trim() && e.target.value.trim() !== task.description) handleTextField('description', e.target.value); }}
-                onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+              <TaskDateField
+                label="Due" value={task.due_date} backlog={isBacklog}
+                onChange={handleDueChange} onRemoveBacklog={removeBacklogTag}
               />
-            </PropertyRow>
+            </TaskSection>
 
-            <PropertyRow label="Assignees">
+            <TaskSection
+              id="ownership" title="Ownership" count={3}
+              open={sections.isOpen('ownership')}
+              onToggle={() => sections.toggle('ownership')}
+            >
+            <TaskField label="Assignees">
               <div className="assignee-multi">
                 {effectiveAssignees.length > 0 && (
                   <div className="assignee-chips">
@@ -1072,9 +1169,9 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
                   onChange={v => { if (v) addAssignee(v); }}
                 />
               </div>
-            </PropertyRow>
+            </TaskField>
 
-            <PropertyRow label="Feature">
+            <TaskField label="Feature">
               <SearchableSelect
                 value={task.related_feature ?? null}
                 options={(featureOptions ?? []).map(f => ({ value: f.slug, label: f.name ?? f.slug, hint: f.name ? f.slug : undefined }))}
@@ -1084,9 +1181,9 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
                 allowCustom
                 onChange={v => handleTextField('related_feature', v ?? '')}
               />
-            </PropertyRow>
+            </TaskField>
 
-            <PropertyRow label="Roadmap">
+            <TaskField label="Roadmap">
               <div className="assignee-multi">
                 {taskObjectives.length > 0 && (
                   <div className="assignee-chips">
@@ -1127,39 +1224,30 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
                   onChange={v => { if (v) addObjective(v); }}
                 />
               </div>
-            </PropertyRow>
+            </TaskField>
+            </TaskSection>
 
-            <PropertyRow label="Start">
-              {task.tags.some(t => t.toLowerCase() === 'backlog') ? (
-                <span className="prop-text" title="Backlog tasks are undated by rule — remove the backlog tag to schedule.">
-                  — backlog tasks are undated
-                </span>
-              ) : (
-                <input
-                  type="date"
-                  className="field-select prop-select"
-                  value={task.start_date ?? ''}
-                  onChange={e => handleStartChange(e.target.value)}
+            <TaskSection
+              id="scoring" title="Scoring · RICE" count={1}
+              open={sections.isOpen('scoring')}
+              onToggle={() => sections.toggle('scoring')}
+            >
+              <TaskField label={t('rice.title')}>
+                <RiceBlock
+                  task={task}
+                  expanded={riceExpanded}
+                  onToggle={() => setRiceExpanded(v => !v)}
+                  onUpdate={handleRiceUpdate}
                 />
-              )}
-            </PropertyRow>
+              </TaskField>
+            </TaskSection>
 
-            <PropertyRow label="Due">
-              {task.tags.some(t => t.toLowerCase() === 'backlog') ? (
-                <span className="prop-text" title="Backlog tasks are undated by rule — remove the backlog tag to schedule.">
-                  — backlog tasks are undated
-                </span>
-              ) : (
-                <input
-                  type="date"
-                  className="field-select prop-select"
-                  value={task.due_date ?? ''}
-                  onChange={e => handleDueChange(e.target.value)}
-                />
-              )}
-            </PropertyRow>
-
-            <PropertyRow label="Tags">
+            <TaskSection
+              id="labels" title="Labels" count={2}
+              open={sections.isOpen('labels')}
+              onToggle={() => sections.toggle('labels')}
+            >
+            <TaskField label="Tags">
               <div className="prop-tags prop-tags--editable">
                 {task.tags.map(tag => (
                   <span key={tag} className="task-tag" data-hue={tagHue(tag)}>
@@ -1189,10 +1277,11 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
                   onBlur={handleAddTag}
                 />
               </div>
-            </PropertyRow>
+            </TaskField>
 
-            <PropertyRow label="Version">
+            <TaskField label="Version" htmlFor="tf-version">
               <select
+                id="tf-version"
                 className="field-select prop-select"
                 value={task.version ?? ''}
                 onChange={e => handleVersionChange(e.target.value)}
@@ -1205,31 +1294,49 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
                   <option value={task.version}>{task.version}</option>
                 )}
               </select>
-            </PropertyRow>
+            </TaskField>
+            </TaskSection>
 
-            {task.description && (
-              <PropertyRow label="Description">
-                <ExpandableText text={task.description} />
-              </PropertyRow>
-            )}
+            <TaskSection
+              id="custom" title={t('tasks.customFields.sectionLabel')} count={customFieldDefs?.length ?? 0}
+              open={sections.isOpen('custom')}
+              onToggle={() => sections.toggle('custom')}
+            >
+              <div className="custom-fields-cell">
+                <TaskCustomFields
+                  defs={customFieldDefs ?? []}
+                  values={task.custom_fields}
+                  onCommit={handleCustomFieldChange}
+                />
+                <AddCustomFieldForm />
+              </div>
+            </TaskSection>
 
-            <PropertyRow label="Created">
-              <span className="prop-date">{task.created_at}</span>
-            </PropertyRow>
+            {/* Provenance. Real, but consulted rather than read — which is exactly why it was
+                wrong for the record ID to sit at the same visual weight as Status. */}
+            <TaskSection
+              id="system" title="System" count={task.parent_task ? 4 : 3}
+              open={sections.isOpen('system')}
+              onToggle={() => sections.toggle('system')}
+            >
+              <TaskField label="Created">
+                <span className="prop-date">{task.created_at}</span>
+              </TaskField>
 
-            <PropertyRow label="Updated">
-              <span className="prop-date">{task.updated_at}</span>
-            </PropertyRow>
+              <TaskField label="Updated">
+                <span className="prop-date">{task.updated_at}</span>
+              </TaskField>
 
-            {task.parent_task && (
-              <PropertyRow label="Parent">
-                <span className="prop-text">{task.parent_task}</span>
-              </PropertyRow>
-            )}
+              {task.parent_task && (
+                <TaskField label="Parent">
+                  <span className="prop-text">{task.parent_task}</span>
+                </TaskField>
+              )}
 
-            <PropertyRow label="ID">
-              <code className="prop-id">{task.id}</code>
-            </PropertyRow>
+              <TaskField label="ID">
+                <code className="prop-id">{task.id}</code>
+              </TaskField>
+            </TaskSection>
           </div>
 
           {/* Divider */}

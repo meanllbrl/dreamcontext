@@ -232,6 +232,188 @@
   border-radius: var(--radius-md);
 }
 
+/* ── Grouped properties ─────────────────────────────────────────────────────
+ * Replaces the flat 18-row stack. The section HEAD is the hierarchy: uppercase, tertiary,
+ * quiet — it labels the group without competing with the values inside it.
+ */
+
+.task-section { border-bottom: 1px solid var(--color-border); }
+.task-section:last-child { border-bottom: none; }
+
+.task-section-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-3);
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+}
+
+.task-section-head:hover { background: var(--color-bg-secondary); }
+.task-section-head:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
+.task-section-caret {
+  flex: 0 0 auto;
+  font-size: 9px;
+  color: var(--color-text-tertiary);
+  transition: transform var(--transition-fast);
+}
+.task-section-caret[data-open] { transform: rotate(90deg); }
+
+@media (prefers-reduced-motion: reduce) {
+  .task-section-caret { transition: none; }
+}
+
+.task-section-title {
+  flex: 1;
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+}
+
+/* A closed section still says how much it is holding, so collapsing never hides the fact that
+   there is something in there. */
+.task-section-count {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.task-section-body {
+  display: flex;
+  flex-direction: column;
+  padding: 0 var(--space-3) var(--space-3);
+}
+
+/* Not a `140px 1fr` grid: the label sits on a flexible column so a narrow rail gives its width
+   to the VALUE, which is the part that has to stay usable. */
+.task-field {
+  display: flex;
+  gap: var(--space-2);
+  align-items: flex-start;
+  padding: var(--space-1) 0;
+}
+
+.task-field-label {
+  flex: 0 0 92px;
+  padding-top: 6px;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-tertiary);
+}
+
+.task-field-value {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* ── The shared nullable-field states ───────────────────────────────────────
+ * One shape for "empty", one for "required and missing" — so a reader can tell them apart at a
+ * glance, and a writer doesn't relearn a gesture per field.
+ */
+
+.task-field-empty {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 26px;
+  padding: 0 var(--space-2);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition: border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.task-field-empty:hover:not(:disabled) {
+  border-color: var(--color-border-hover);
+  color: var(--color-text-secondary);
+}
+
+.task-field-empty:disabled { cursor: default; opacity: 0.7; }
+
+.task-field-empty:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.task-field-required {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 24px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--color-error);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-error);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+}
+
+/* A date's clear is the same × the chips use — not this field's private gesture. */
+.prop-date-edit { display: inline-flex; align-items: center; gap: var(--space-1); }
+
+.prop-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text-tertiary);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.prop-clear:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
+.prop-clear:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+
+/* "Undated by rule" now names its cause and offers the way out, instead of being a sentence
+   sitting where an input used to be with the explanation buried in a title attribute. */
+.prop-backlog { display: inline-flex; flex-direction: column; gap: 2px; }
+
+.prop-backlog-text { font-size: var(--font-size-xs); color: var(--color-text-tertiary); }
+
+.prop-backlog-text code {
+  font-family: var(--font-mono);
+  padding: 0 3px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-tertiary);
+}
+
+.prop-backlog-clear {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--color-accent);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  text-align: left;
+}
+
+.prop-backlog-clear:hover { text-decoration: underline; }
+
 .prop-row {
   display: grid;
   grid-template-columns: 140px 1fr;

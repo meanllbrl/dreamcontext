@@ -1,7 +1,10 @@
 import type { ReactNode } from 'react';
+import type { SectionId } from './useSectionCollapse';
 
 interface TaskSectionProps {
-  id: string;
+  /** Must be a registered id — see DEFAULTS in useSectionCollapse. An unregistered section
+   *  would have no default and silently render closed, so the type forbids one. */
+  id: SectionId;
   title: string;
   open: boolean;
   onToggle: () => void;

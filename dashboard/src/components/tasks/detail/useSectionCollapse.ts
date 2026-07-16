@@ -39,37 +39,22 @@ function read(): CollapseMap {
   }
 }
 
-export interface SectionCollapse {
-  /** Is this section open? Falls back to `fallback` when the user has never touched it. */
-  isOpen: (id: string, fallback: boolean) => boolean;
-  toggle: (id: string) => void;
-}
-
-export function useSectionCollapse(): SectionCollapse {
-  const [map, setMap] = useState<CollapseMap>(read);
-
-  const isOpen = useCallback((id: string, fallback: boolean) => map[id] ?? fallback, [map]);
-
-  const toggle = useCallback((id: string) => {
-    setMap((prev) => {
-      // The stored value is the user's explicit choice, so flip against what they SEE. The
-      // fallback lives with the section (it can change per release); only overrides persist.
-      const next = { ...prev, [id]: !(prev[id] ?? DEFAULTS[id] ?? false) };
-      try { localStorage.setItem(storageKey(), JSON.stringify(next)); } catch { /* best-effort */ }
-      return next;
-    });
-  }, []);
-
-  return { isOpen, toggle };
-}
-
 /**
- * Default-open set. Earned by what a task view is FOR, not by taste: you open a task to see
- * where it stands (Workflow), when it is due (Timeline), and whose it is (Ownership). Scoring,
- * Labels and System are reference — real, but consulted rather than read. Custom fields default
- * open only because a project that defined them did so deliberately.
+ * Default-open set — and the single registry of section ids.
+ *
+ * Earned by what a task view is FOR, not by taste: you open a task to see where it stands
+ * (Workflow), when it is due (Timeline), and whose it is (Ownership). Scoring, Labels and System
+ * are reference — real, but consulted rather than read. Custom fields default open only because
+ * a project that defined them did so deliberately.
+ *
+ * `satisfies` (not `:`) is what keeps the keys literal, so {@link SectionId} is the exact set of
+ * ids and a section that isn't listed here cannot be rendered. That matters: this map is read
+ * with `?? DEFAULTS[id]`, so an unregistered id would resolve `undefined` → falsy → silently
+ * CLOSED. A whole section vanishing because someone forgot a line in a lookup table is not a
+ * failure anyone would think to look for — so it is a compile error instead.
  */
-export const DEFAULTS: Record<string, boolean> = {
+export const DEFAULTS = {
+  identity: true,
   workflow: true,
   timeline: true,
   ownership: true,
@@ -77,4 +62,33 @@ export const DEFAULTS: Record<string, boolean> = {
   scoring: false,
   labels: false,
   system: false,
-};
+} satisfies Record<string, boolean>;
+
+export type SectionId = keyof typeof DEFAULTS;
+
+export interface SectionCollapse {
+  /** Is this section open? The user's stored choice, else the section's default. */
+  isOpen: (id: SectionId) => boolean;
+  toggle: (id: SectionId) => void;
+}
+
+export function useSectionCollapse(): SectionCollapse {
+  const [map, setMap] = useState<CollapseMap>(read);
+
+  // The default is looked up here rather than passed in by the caller: a caller that could pass
+  // the fallback could pass the WRONG one, and then a section's default would depend on which
+  // call site rendered it.
+  const isOpen = useCallback((id: SectionId) => map[id] ?? DEFAULTS[id], [map]);
+
+  const toggle = useCallback((id: SectionId) => {
+    setMap((prev) => {
+      // The stored value is the user's explicit choice, so flip against what they SEE. Defaults
+      // can change per release; only explicit overrides persist.
+      const next = { ...prev, [id]: !(prev[id] ?? DEFAULTS[id]) };
+      try { localStorage.setItem(storageKey(), JSON.stringify(next)); } catch { /* best-effort */ }
+      return next;
+    });
+  }, []);
+
+  return { isOpen, toggle };
+}
