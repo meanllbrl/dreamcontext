@@ -162,14 +162,31 @@ export type SyncDirection = 'push' | 'pull' | 'both';
 
 export interface SyncOptions {
   /**
-   * Heal pre-existing assignee drift in one pass (#78). The normal delta pull is
-   * watermark-gated, so a remote-side assignee change made BELOW the watermark is
-   * never re-examined and never reaches local `person:<slug>` tags. With this set,
-   * the sync re-fetches every mapped remote task regardless of the delta window and
-   * adopts the remote assignee set wherever local hasn't itself diverged. No-op for
-   * the local backend; idempotent (a second run heals nothing).
+   * Heal pre-existing drift in one pass (#78, #184). The normal delta pull is
+   * watermark-gated, so a remote-side change made BELOW the watermark is never
+   * re-examined and never reaches the local mirror. With this set, the sync
+   * re-fetches every mapped remote task regardless of the delta window and adopts
+   * the remote value wherever local hasn't itself diverged. No-op for the local
+   * backend; idempotent (a second run heals nothing).
+   *
+   * Covers assignees (#78) and tags/version (#184) — the latter because a version
+   * label added remotely after import lands below the watermark and would
+   * otherwise never propagate, silently dropping the task off the sprint board.
    */
   reconcile?: boolean;
+
+  /**
+   * Force a refresh of the cached container meta (statuses, members, field defs)
+   * instead of honouring the once-per-hour throttle (#184).
+   *
+   * The caches are invalidated automatically when the sync TARGET moves, but the
+   * container can also change under a stable target — someone adds the missing
+   * status in the provider's UI — and until the throttle lapses the sync keeps
+   * mapping against the set it cached an hour ago. The only workaround used to be
+   * hand-editing the sync ledger, a file agents are explicitly told not to touch.
+   * No-op for the local backend.
+   */
+  refreshMeta?: boolean;
 }
 
 /** A task whose remote assignees differ from its local `person:<slug>` tags (#78). */

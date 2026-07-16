@@ -15,7 +15,7 @@
  */
 
 import { slugify } from '../id.js';
-import { foldAscii } from './clickup-map.js';
+import { foldAscii } from '../fold-ascii.js';
 import type { RemoteMember } from './types.js';
 
 export type MemberMatch =

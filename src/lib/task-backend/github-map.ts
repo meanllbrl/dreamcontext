@@ -13,7 +13,8 @@
  *    ride as LABELS, with reserved prefixes carving the structured ones out.
  */
 
-import { foldAscii, splitChangelogEntries, normalizeEntry } from './clickup-map.js';
+import { foldAscii } from '../fold-ascii.js';
+import { splitChangelogEntries, normalizeEntry } from './clickup-map.js';
 
 // Re-export the shared changelog helpers so callers can import the whole
 // changelog-comment surface from one module (parity with clickup-map).

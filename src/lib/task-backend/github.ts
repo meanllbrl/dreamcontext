@@ -4,7 +4,7 @@ import matter from 'gray-matter';
 import { generateId, slugify } from '../id.js';
 import type { SetupConfig } from '../setup-config.js';
 import { ApiAdapter } from './api-adapter.js';
-import { foldAscii } from './clickup-map.js';
+import { foldAscii } from '../fold-ascii.js';
 import {
   bodyToIssueBody,
   composeIssueBody,
@@ -566,6 +566,15 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       }
       try {
         const { owner, repo } = this.requireRepo();
+        // Same provenance guard as ClickUp (#184): repointing `github.owner/repo`
+        // must not carry the old repo's cached collaborators/labels or its pull
+        // watermark into a different issue tracker.
+        const moved = this.ledger.adoptContainer(`github:${owner}/${repo}`);
+        if (moved.switched) {
+          report.warnings.push(
+            `sync target moved (${moved.from} → github:${owner}/${repo}): dropped the cached members/fields of the old repo and reset the pull watermark — this sync re-reads the new repo in full.`,
+          );
+        }
         await this.refreshMembers(this.getAdapter(), owner, repo);
         // Auto-provision the recommended labels so a push always has them with
         // proper colors (GitHub would otherwise auto-create them gray). Throttled

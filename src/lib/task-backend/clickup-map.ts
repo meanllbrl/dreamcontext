@@ -4,6 +4,7 @@
  * (besides clickup.ts) allowed to know ClickUp wire shapes; nothing here may
  * leak past the backend boundary.
  */
+import { foldAscii } from '../fold-ascii.js';
 
 /** ClickUp REST v2 task shape (the subset we read/write). */
 export interface ClickUpTask {
@@ -32,20 +33,10 @@ export interface ClickUpComment {
   user?: { id?: number | string; username?: string } | null;
 }
 
-/**
- * Ascii-fold for case/diacritic-insensitive comparisons. Real workspaces have
- * statuses like "in revıew" (Turkish dotless ı, typed on a Turkish keyboard)
- * that must still match the "in review" candidate.
- */
-export function foldAscii(s: string): string {
-  return s
-    .replace(/ı/g, 'i').replace(/İ/g, 'I')
-    .replace(/ş/g, 's').replace(/Ş/g, 'S')
-    .replace(/ğ/g, 'g').replace(/Ğ/g, 'G')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase();
-}
+// Ascii-fold now lives provider-neutrally in lib/fold-ascii.ts (it is a plain
+// string utility, and github-map/member-match need it too). Re-exported here so
+// the ClickUp-side modules keep a single import surface.
+export { foldAscii } from '../fold-ascii.js';
 
 // ─── Status ────────────────────────────────────────────────────────────────
 
@@ -138,12 +129,32 @@ export function tagsToClickUp(tags: string[], version: string | null): string[] 
   return out;
 }
 
-export function tagsFromClickUp(remote: ClickUpTask['tags']): { tags: string[]; version: string | null } {
+/**
+ * Restore the canonical spelling of a version that round-tripped through ClickUp.
+ *
+ * ClickUp LOWERCASES tag names, so a version pushed as `version:S5 (Jul 13 - Jul 17)`
+ * comes back as `s5 (jul 13 - jul 17)`. Every consumer compares versions exactly —
+ * the sprint board's filter does `version === active` — so the round-tripped value
+ * silently stops matching its own sprint and the task vanishes from the board with
+ * no warning (#184/#179). Fold it back against the versions this project actually
+ * knows (RELEASES.json + the active sprint); an unrecognised version is returned
+ * as-is rather than guessed at.
+ */
+export function canonicalizeVersion(version: string | null, known: readonly string[]): string | null {
+  if (!version) return null;
+  const folded = foldAscii(version);
+  return known.find((k) => foldAscii(k) === folded) ?? version;
+}
+
+export function tagsFromClickUp(
+  remote: ClickUpTask['tags'],
+  knownVersions: readonly string[] = [],
+): { tags: string[]; version: string | null } {
   const names = (remote ?? []).map((t) => t.name).filter(Boolean);
   const versionTag = names.find((n) => n.startsWith('version:'));
   return {
     tags: names.filter((n) => !n.startsWith('version:')),
-    version: versionTag ? versionTag.slice('version:'.length) : null,
+    version: canonicalizeVersion(versionTag ? versionTag.slice('version:'.length) : null, knownVersions),
   };
 }
 

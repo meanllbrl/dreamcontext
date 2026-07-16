@@ -411,12 +411,37 @@ export interface VersionMeta {
 }
 export const EMPTY_VERSION_META: VersionMeta = { active: null, released: [] };
 
+/**
+ * Case/diacritic fold for version comparison — the second line of defence for
+ * versions that round-tripped through a cloud backend (#184).
+ *
+ * ClickUp lowercases tag names, so a sprint pushed as `S5 (Jul 13 - Jul 17)` can
+ * come back as `s5 (jul 13 - jul 17)`. The sync now restores the canonical
+ * spelling on pull, but the board must not go blind on data that was already
+ * written before that fix, or on a version no RELEASES.json entry can canonicalize.
+ * An exact-match filter here means the task silently vanishes from its own sprint —
+ * the failure mode is invisible scope-loss, so matching leniently is the safe side.
+ *
+ * Code points are written escaped so the compiled bundle stays ASCII (see the
+ * matching fold in SearchableSelect.tsx).
+ */
+function foldVersion(s: string): string {
+  return s
+    .replace(/\u0131/g, 'i').replace(/\u0130/g, 'i') // dotless i / dotted I
+    .replace(/\u015f/g, 's').replace(/\u015e/g, 's') // s-cedilla
+    .replace(/\u011f/g, 'g').replace(/\u011e/g, 'g') // g-breve
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '') // combining diacritical marks
+    .toLowerCase()
+    .trim();
+}
+
 /** Does a task's version value satisfy a single filter token (literal or virtual)? */
 export function versionTokenMatches(version: string, token: string, meta: VersionMeta): boolean {
-  if (token === VV_CURRENT) return meta.active != null && version === meta.active;
-  if (token === VV_COMPLETED) return meta.released.includes(version);
+  if (token === VV_CURRENT) return meta.active != null && foldVersion(version) === foldVersion(meta.active);
+  if (token === VV_COMPLETED) return meta.released.some((r) => foldVersion(r) === foldVersion(version));
   if (token === VV_BACKLOG) return BACKLOG_RE.test(version);
-  return version === token;
+  return foldVersion(version) === foldVersion(token);
 }
 
 /** Version-aware include/exclude match — like matchField, but understands the virtual buckets. */

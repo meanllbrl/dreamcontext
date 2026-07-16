@@ -40,6 +40,8 @@ import {
   type FieldBinding,
 } from './clickup-fields.js';
 import { customFieldsFor, loadTaskOverride, type CustomFieldDef } from '../overrides.js';
+import { getActivePlanningVersion } from '../active-version.js';
+import { getExistingReleases } from '../release-discovery.js';
 import { recordDashboardChange, type FieldChange } from '../change-tracker.js';
 import { clickupMemberMap, resolveActor, resolveActorToken } from './identity.js';
 import { writeClickUpToken, resolveClickUpToken, maskToken } from './secrets.js';
@@ -164,6 +166,31 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
 
   protected get projectRoot(): string {
     return dirname(this.contextRoot);
+  }
+
+  /**
+   * The canonical version spellings a lowercased ClickUp tag folds back onto
+   * (#184) — RELEASES.json plus the active sprint. Deliberately NOT "any version
+   * string seen on a local task": that would let one typo'd task capture every
+   * pull. An unregistered version simply stays as ClickUp returned it.
+   *
+   * Memoised for the life of the backend: the pull calls this once per task.
+   */
+  private knownVersionsMemo: string[] | null = null;
+  protected knownVersions(): string[] {
+    if (this.knownVersionsMemo) return this.knownVersionsMemo;
+    const out = new Set<string>();
+    try {
+      for (const r of getExistingReleases(this.contextRoot)) {
+        if (r.version) out.add(r.version);
+      }
+    } catch { /* no/!readable RELEASES.json — nothing to canonicalize against */ }
+    try {
+      const active = getActivePlanningVersion(this.contextRoot);
+      if (active) out.add(active);
+    } catch { /* same */ }
+    this.knownVersionsMemo = [...out];
+    return this.knownVersionsMemo;
   }
 
   protected getAdapter(): ApiAdapter {
@@ -583,9 +610,27 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       for (const r of renamed) {
         report.warnings.push(`renamed: ${r.from} → ${r.to} (remapped to existing remote task; no duplicate created)`);
       }
-      // Member cache refresh (assignee candidates) — best-effort, 1 request.
+      // The remote-list memo is scoped to ONE sync — it exists so the two
+      // reconcile passes share a fetch, not so a reused backend instance can
+      // serve last sync's tasks.
+      this.remoteListMemo = null;
+      // Bind the derived caches to the list they describe BEFORE anything reads
+      // them (#184): whichever path repointed `clickup.listId` — `--keep`, the
+      // dashboard config PATCH, a hand-edited config — the cached statuses of the
+      // OLD list must not survive into this sync.
       try {
-        await this.refreshMembers(this.getAdapter(), this.requireListId());
+        const moved = this.ledger.adoptContainer(`list:${this.requireListId()}`);
+        if (moved.switched) {
+          report.warnings.push(
+            `sync target moved (${moved.from} → list:${this.requireListId()}): dropped the cached statuses/members/fields of the old list and reset the pull watermark — this sync re-reads the new list in full.`,
+          );
+        }
+      } catch { /* config errors surface below via pull/push */ }
+      // Member cache refresh (assignee candidates) — best-effort, 1 request.
+      // `--refresh-meta` bypasses the hourly throttle so a status just added in
+      // the ClickUp UI is picked up now rather than up to an hour from now.
+      try {
+        await this.refreshMembers(this.getAdapter(), this.requireListId(), opts.refreshMeta === true);
       } catch { /* config errors surface below via pull/push */ }
       // Auto-provision the recommended custom fields so a push always has
       // somewhere to write — the user shouldn't have to remember the button.
@@ -612,6 +657,9 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       // them). Opt-in (`--reconcile`) because it costs a full remote fetch.
       if (opts.reconcile) {
         await this.reconcileAssignees(report);
+        // Same below-the-watermark blind spot, different facet (#184): a version
+        // tag added remotely after import. Shares the assignee pass's full fetch.
+        await this.reconcileVersions(report);
       }
     } catch (err) {
       // Total failures (missing token/list, auth) — never throw out of sync():
@@ -718,7 +766,21 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
 
     // Map the status against the list's actual status set; an unmappable
     // status is OMITTED (the remote keeps its value) instead of 400-ing.
-    const mappedStatus = statusToClickUp(task.status, this.ledger.readListStatuses());
+    const listStatuses = this.ledger.readListStatuses();
+    const mappedStatus = statusToClickUp(task.status, listStatuses);
+    // Omitting the status is safe on an UPDATE but NOT honest on a CREATE: with
+    // no status in the payload ClickUp stamps the list's first open status, so
+    // an in_progress task silently materialises as e.g. 'backlog' and looks like
+    // data loss (#184/#178). The push can't do better — the list genuinely has no
+    // matching status — but it must not stay quiet about it.
+    if (mappedStatus === null && listStatuses.length > 0) {
+      report.warnings.push(
+        `push ${slug}: status '${task.status}' matches none of the list's statuses ` +
+        `(${listStatuses.join(', ')}) — ClickUp will stamp its first open status instead. ` +
+        `Add a matching status to the list in the ClickUp UI, then re-run ` +
+        `\`dreamcontext tasks sync --refresh-meta\`.`,
+      );
+    }
     // start_date + due_date ride the same single PUT/POST (both NATIVE ClickUp
     // fields). Each is sent when set, or as null to CLEAR one the remote already
     // had (so clears propagate). Backlog tasks are undated by rule → both null.
@@ -1054,7 +1116,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       .map((c) => (c.comment_text ?? '').trim())
       .filter(Boolean);
 
-    const { tags: remoteTags, version: remoteVersion } = tagsFromClickUp(remote.tags);
+    const { tags: remoteTags, version: remoteVersion } = tagsFromClickUp(remote.tags, this.knownVersions());
     let remoteStatus = statusFromClickUp(remote.status?.status);
     const remotePriority = priorityFromClickUp(remote.priority);
     const remoteDesc = (remote.description ?? '').replace(/\r\n/g, '\n').trim();
@@ -1400,11 +1462,18 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     } catch { /* the journal must never break a sync */ }
   }
 
-  // ── Assignee reconcile (#78) ──────────────────────────────────────────────
+  // ── Reconcile passes (#78 assignees, #184 version) ────────────────────────
 
-  /** remoteId → sorted person-slug assignee set, for EVERY task on the list. */
-  private async fetchRemoteAssigneeMap(adapter: ApiAdapter, listId: string): Promise<Map<string, string[]>> {
-    const out = new Map<string, string[]>();
+  /**
+   * EVERY task on the list, paged. Memoised for the life of the backend so the
+   * assignee (#78) and version (#184) reconcile passes of one sync share a single
+   * full fetch — this is the expensive call that makes `--reconcile` opt-in, and
+   * paying it twice for two facets of the same payload would be waste.
+   */
+  private remoteListMemo: ClickUpTask[] | null = null;
+  private async fetchAllRemote(adapter: ApiAdapter, listId: string): Promise<ClickUpTask[]> {
+    if (this.remoteListMemo) return this.remoteListMemo;
+    const all: ClickUpTask[] = [];
     for (let page = 0; ; page++) {
       const res = await adapter.request<{ tasks?: ClickUpTask[]; last_page?: boolean }>(
         'GET',
@@ -1412,17 +1481,25 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
         { query: { page, include_closed: true } }, // closed tasks drift too
       );
       const batch = res.tasks ?? [];
-      for (const t of batch) {
-        out.set(
-          t.id,
-          [...new Set(
-            (t.assignees ?? []).map(
-              (a) => this.slugForMemberId(String(a.id)) ?? memberSlug(String(a.username ?? a.id)),
-            ),
-          )].sort(),
-        );
-      }
+      all.push(...batch);
       if (res.last_page !== false || batch.length === 0) break;
+    }
+    this.remoteListMemo = all;
+    return all;
+  }
+
+  /** remoteId → sorted person-slug assignee set, for EVERY task on the list. */
+  private async fetchRemoteAssigneeMap(adapter: ApiAdapter, listId: string): Promise<Map<string, string[]>> {
+    const out = new Map<string, string[]>();
+    for (const t of await this.fetchAllRemote(adapter, listId)) {
+      out.set(
+        t.id,
+        [...new Set(
+          (t.assignees ?? []).map(
+            (a) => this.slugForMemberId(String(a.id)) ?? memberSlug(String(a.username ?? a.id)),
+          ),
+        )].sort(),
+      );
     }
     return out;
   }
@@ -1511,6 +1588,76 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
         } catch { /* the journal must never break a sync */ }
       } catch (err) {
         report.errors.push(`reconcile ${d.slug}: ${(err as Error).message ?? err}`);
+      }
+    }
+  }
+
+  // ── Version reconcile (#184) ──────────────────────────────────────────────
+
+  /**
+   * Adopt the remote `version:` tag for mapped tasks the delta pull cannot reach.
+   *
+   * A version label added in ClickUp AFTER a task was imported does not advance
+   * that task's `date_updated` past the sync watermark in any way the delta pull
+   * will revisit, so the version never lands locally — the task keeps `version:
+   * null` and silently drops out of the Current Sprint board while ClickUp shows
+   * it in the sprint. The only signal was noticing it missing (#184/#179).
+   *
+   * Deliberately conservative, mirroring the assignee heal: adopt ONLY where the
+   * remote has a version and local does not. A local version that differs is real
+   * divergence and belongs to the normal merge; a pending push must not be
+   * clobbered by the value we just read. Idempotent.
+   */
+  protected async reconcileVersions(report: SyncReport): Promise<void> {
+    let remote: ClickUpTask[];
+    try {
+      remote = await this.fetchAllRemote(this.getAdapter(), this.requireListId());
+    } catch (err) {
+      report.errors.push(`reconcile versions: ${(err as Error).message ?? err}`);
+      return;
+    }
+    const known = this.knownVersions();
+    const byId = new Map(remote.map((t) => [t.id, t]));
+
+    for (const entry of this.ledger.readMap()) {
+      const remoteTask = byId.get(entry.remoteId);
+      if (!remoteTask) continue; // remote gone — the deletion path owns it
+      try {
+        const { version: remoteVersion } = tagsFromClickUp(remoteTask.tags, known);
+        if (!remoteVersion) continue;
+        const local = await this.getLocal(entry.slug);
+        if (!local) continue;
+        const localVersion = (local.raw.version as string | null | undefined) ?? null;
+        if (localVersion !== null) continue; // local has a value — not ours to overwrite
+        if (this.ledger.taskSync(entry.slug)?.pendingPush) continue; // local write in flight
+
+        this.applyingRemote = true;
+        try {
+          await super.updateFields(entry.slug, { version: remoteVersion, updated_by: this.name });
+        } finally {
+          this.applyingRemote = false;
+        }
+        const newRaw = readFileSync(this.taskPath(entry.slug), 'utf-8');
+        const syncEntry = this.ledger.taskSync(entry.slug);
+        this.ledger.updateTaskSync(entry.slug, {
+          last_synced_at: syncEntry?.last_synced_at ?? 0,
+          base_snapshot: { hash: hashContent(newRaw), body: newRaw },
+          localHash: hashContent(newRaw),
+          pendingPush: false,
+        });
+        report.reconciled++;
+        try {
+          recordDashboardChange(this.contextRoot, {
+            entity: 'task',
+            action: 'update',
+            target: `state/${entry.slug}.md`,
+            field: 'version',
+            fields: [{ field: 'version', from: null, to: remoteVersion }],
+            summary: `Reconciled version on '${entry.slug}' from ${this.name} (${remoteVersion})`,
+          });
+        } catch { /* the journal must never break a sync */ }
+      } catch (err) {
+        report.errors.push(`reconcile version ${entry.slug}: ${(err as Error).message ?? err}`);
       }
     }
   }

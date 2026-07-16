@@ -40,6 +40,12 @@ export interface SyncStateFile {
   watermark: number | null;
   tasks: Record<string, TaskSyncEntry>;
   /**
+   * Opaque identity of the remote container every derived cache below describes,
+   * minted by the backend that owns it. Without it the caches are unattributed and
+   * silently survive a target switch (#184); `adoptContainer()` makes them honest.
+   */
+  container?: string;
+  /**
    * Remote container members, keyed by ascii-folded slug — refreshed
    * best-effort on each sync. Derived data (gitignored with the rest),
    * so assignee mapping needs no manual config.
@@ -230,6 +236,54 @@ export class SyncLedger {
 
   readMembers(): Record<string, CachedMember> {
     return this.readSyncState().members ?? {};
+  }
+
+  /**
+   * Bind the derived caches to the remote container they describe, dropping them
+   * when the target has moved. `listStatuses`/`members`/`customFields` are only
+   * meaningful for ONE container, but nothing recorded which — so repointing the
+   * target left a cache describing the OLD container, and every status push mapped
+   * against a status set the new one does not have, silently falling back to its
+   * first open status (#184).
+   *
+   * The backend passes an opaque key identifying its current target; only it knows
+   * what addresses a container. Checking provenance here, at READ time, covers
+   * every way the target can move — the migrate/keep CLI paths, the dashboard's
+   * config PATCH, or a hand-edited config — rather than trusting each writer to
+   * remember to invalidate. One of those writers already did (by dropping the
+   * whole ledger via `reset()`), which is exactly why the bug hid for so long:
+   * the path everyone tested was the one path that happened to be safe.
+   *
+   * The pull watermark goes too. It timestamps the OLD container's update axis,
+   * so carrying it over silently skips anything in the new container untouched
+   * since — invisible scope-loss rather than a visible error. Dropping it costs
+   * one full pull, which is what a fresh ledger already does.
+   *
+   * Returns the previous container when this is a genuine switch, so the caller
+   * can surface it. A first-ever stamp is not a switch (`from: null`).
+   */
+  adoptContainer(container: string): { switched: boolean; from: string | null } {
+    const state = this.readSyncState();
+    const from = state.container ?? null;
+    if (from === container) return { switched: false, from };
+
+    // A first-ever stamp is an ADOPTION, not a switch: an unstamped ledger is
+    // simply one written before this field existed, and its caches almost
+    // certainly describe the container we are about to record. Invalidating here
+    // would make every existing project pay a full re-pull on upgrade to fix a
+    // problem it does not have — and the hourly meta refresh re-validates the
+    // caches on its own anyway. Only a CHANGE of container proves staleness.
+    if (from !== null) {
+      delete state.listStatuses;
+      delete state.customFields;
+      delete state.members;
+      delete state.lastMetaRefreshAt;
+      delete state.lastLabelProvisionAt;
+      state.watermark = null;
+    }
+    state.container = container;
+    this.writeSyncState(state);
+    return { switched: from !== null, from };
   }
 
   readListStatuses(): string[] {

@@ -11,6 +11,8 @@ import { success, error, header, warn } from '../../lib/format.js';
 import { matchMember } from '../../lib/task-backend/member-match.js';
 import { readSetupConfig, isMultiPerson, writeBrainLocal } from '../../lib/setup-config.js';
 import { getActivePlanningVersion } from '../../lib/active-version.js';
+import { getExistingReleases } from '../../lib/release-discovery.js';
+import { foldAscii } from '../../lib/fold-ascii.js';
 import { listObjectives } from '../../lib/objectives-store.js';
 import { resolveFeature, applyTaskFeatureLink, anyFeaturesExist } from '../../lib/feature-links.js';
 import { loadTaskOverride, fieldKey, type CustomFieldDef } from '../../lib/overrides.js';
@@ -771,6 +773,64 @@ export function registerTasksCommand(program: Command): void {
       await setTaskDate(backend, slug, 'due_date', date);
     });
 
+  // VERSION (sprint/milestone) on existing tasks (synced to the remote backend)
+  // Parity with status/due/feature (#184). Its absence was a real gap, not an
+  // omission of convenience: a task whose version failed to round-trip through a
+  // cloud backend drops off the sprint board, and with no verb here the only way
+  // to heal it was a hand-rolled PATCH against the running dashboard server.
+  tasks
+    .command('version')
+    .argument('<name>', 'Task slug or name')
+    .argument('[version]', 'Version/sprint to SET, or "clear" / omit to print')
+    .description('Print, set, or clear the version (sprint/milestone) a task belongs to')
+    .action(async (name: string, versionRef: string | undefined) => {
+      const backend = getTaskBackend();
+      const root = ensureContextRoot();
+      const slug = await resolveTaskSlug(backend, name);
+      if (!slug) return;
+      const task = await backend.get(slug);
+      if (!task) {
+        error(`Task not found: ${name}`);
+        return;
+      }
+
+      if (versionRef === undefined) {
+        if (task.version) {
+          console.log(`${slug} → version: ${task.version}`);
+        } else {
+          console.log(chalk.dim(`No version on ${slug}. Set: dreamcontext tasks version ${slug} <version>`));
+        }
+        return;
+      }
+
+      if (versionRef.trim().toLowerCase() === 'clear') {
+        await backend.updateFields(slug, { version: null, updated_at: today() });
+        success(`Cleared version on ${slug}`);
+        return;
+      }
+
+      // Fold against the known versions so a lowercased round-trip (or a typed
+      // "s5") resolves to the canonical spelling the board filters by, rather
+      // than writing a second near-identical version string.
+      const known = getExistingReleases(root).map((r) => r.version).filter(Boolean);
+      const match = known.find((k) => foldAscii(k) === foldAscii(versionRef.trim()));
+      const resolved = match ?? versionRef.trim();
+      await backend.updateFields(slug, { version: resolved, updated_at: today() });
+      if (match) {
+        success(`${slug} → version: ${resolved}`);
+      } else {
+        // Not a hard error: BACKLOG and ad-hoc sprints are legitimate values that
+        // never appear in RELEASES.json. But an unregistered version is exactly
+        // what silently hides a task from the board, so say so.
+        success(`${slug} → version: ${resolved}`);
+        console.log(chalk.dim(
+          `Note: "${resolved}" is not in RELEASES.json${known.length > 0 ? ` (known: ${known.join(', ')})` : ''}. ` +
+          `It will not match a sprint bucket on the board. Register it with: ` +
+          `dreamcontext core releases add --ver "${resolved}" --status planning --summary "..." --yes`,
+        ));
+      }
+    });
+
   // User-defined custom fields (declared in overrides/task.md; synced to the remote backend)
   tasks
     .command('field')
@@ -1102,15 +1162,16 @@ export function registerTasksCommand(program: Command): void {
     .argument('[direction]', 'push, pull, or both (default: both)')
     .description('Sync tasks with the configured remote backend (no-op for local)')
     .option('--hook', 'Best-effort mode for git hooks: never fails, bounded time, exit 0')
-    .option('--reconcile', 'Also heal pre-existing assignee drift: re-pull assignees for every mapped task regardless of the sync watermark (#78)')
+    .option('--reconcile', 'Also heal pre-existing drift below the sync watermark: re-pull assignees (#78) and version (#184) for every mapped task')
+    .option('--refresh-meta', "Force a refresh of the cached remote statuses/members/fields instead of the hourly throttle — use after changing statuses in the provider's UI (#184)")
     .option('--json', 'Emit the sync report as JSON')
-    .action(async (direction: string | undefined, opts: { hook?: boolean; reconcile?: boolean; json?: boolean }) => {
+    .action(async (direction: string | undefined, opts: { hook?: boolean; reconcile?: boolean; refreshMeta?: boolean; json?: boolean }) => {
       const dir = (direction ?? 'both') as 'push' | 'pull' | 'both';
       if (!['push', 'pull', 'both'].includes(dir)) {
         error('Direction must be one of: push, pull, both');
         return;
       }
-      const syncOpts = { reconcile: !!opts.reconcile };
+      const syncOpts = { reconcile: !!opts.reconcile, refreshMeta: !!opts.refreshMeta };
       try {
         const root = ensureContextRoot();
         const backend = getTaskBackend(root);
