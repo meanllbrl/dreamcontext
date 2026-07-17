@@ -444,15 +444,18 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [riceExpanded, setRiceExpanded] = useState(initialRiceExpanded ?? !!task.rice);
   const [fullScreen, setFullScreen] = useState(false);
-  // Task Manager is desktop-only (it runs a real Claude Code session). On the web build the button
-  // never appears, and the pane's own fallback covers the case where caps flip mid-session.
+  // Task Manager is desktop-only (it runs a real Claude Code session). On the web build the
+  // button never appears. On desktop it shows even when the prerequisites (claude CLI /
+  // node-pty) are missing — the pane then offers the one-click install steps instead of a
+  // terminal, so "I don't have Claude Code yet" is a path in, not a wall.
   const { data: agentCaps } = useAgentCapabilities();
+  const tmVisible = !!agentCaps?.desktop;
   const tmAvailable = !!(agentCaps?.desktop && agentCaps.embeddedTerminal && agentCaps.claudeCli);
-  // Off in the drawer (680px has no room for a terminal — asking for it widens the panel), on
-  // in full-page (the design's third zone). Following `fullScreen` rather than latching means
-  // toggling to full-page brings Curate with it, which is what "open this properly" implies.
+  // ALWAYS opt-in — the drawer and full-page alike. It used to auto-open with full-page, but
+  // an agent session is a spend (a real Claude process, pinned to the task) and "read this
+  // task properly" must not imply "and start an agent on it". The user asks; nothing spawns
+  // on its own.
   const [tmOpen, setTmOpen] = useState(false);
-  useEffect(() => { if (fullScreen) setTmOpen(true); }, [fullScreen]);
   const [delegating, setDelegating] = useState(false);
   const sections = useSectionCollapse();
 
@@ -949,34 +952,37 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
             {/*
               Task Manager is a toggle, not a permanent fixture, and that is the answer to "does the
               680px slide-over survive an inline agent?" — it doesn't, so it doesn't have to.
-              In the drawer, Curate is opt-in: asking for it widens the panel to fit a real
-              terminal (see .detail-panel--tm) instead of cramming three columns into
-              680px. In full-page there is room, so it is simply on. Same component either way.
+              Opt-in EVERYWHERE (drawer and full-page): asking for it widens the drawer to fit a
+              real terminal (see .detail-panel--tm); full-page has the room already, but an agent
+              session still only starts when asked for. The button shows on any desktop — with the
+              prerequisites missing, the pane opens to the install steps instead of a terminal.
             */}
+            {tmVisible && (
+              <button
+                type="button"
+                className={`detail-tm-btn ${tmOpen ? 'is-on' : ''}`}
+                onClick={() => setTmOpen((v) => !v)}
+                aria-pressed={tmOpen}
+                title="Open Task Manager — a Claude session that maintains this task (it doesn’t build it)"
+              >
+                <SparkIcon size={14} />
+                Task Manager
+              </button>
+            )}
+            {/* Delegate sits beside Task Manager so the boundary is legible at the point of
+                choosing: Task Manager maintains this document, Delegate goes and builds it.
+                Unlike the TM button it needs the prerequisites NOW — it hands off immediately,
+                with no pane of its own to host an install flow. */}
             {tmAvailable && (
-              <>
-                <button
-                  type="button"
-                  className={`detail-tm-btn ${tmOpen ? 'is-on' : ''}`}
-                  onClick={() => setTmOpen((v) => !v)}
-                  aria-pressed={tmOpen}
-                  title="Open Task Manager — a Claude session that maintains this task (it doesn’t build it)"
-                >
-                  <SparkIcon size={14} />
-                  Task Manager
-                </button>
-                {/* Delegate sits beside Task Manager so the boundary is legible at the point of
-                    choosing: Task Manager maintains this document, Delegate goes and builds it. */}
-                <button
-                  type="button"
-                  className="detail-delegate-btn"
-                  onClick={() => setDelegating(true)}
-                  title="Hand this task to a Claude agent to implement"
-                >
-                  <span aria-hidden>▶</span>
-                  Delegate
-                </button>
-              </>
+              <button
+                type="button"
+                className="detail-delegate-btn"
+                onClick={() => setDelegating(true)}
+                title="Hand this task to a Claude agent to implement"
+              >
+                <span aria-hidden>▶</span>
+                Delegate
+              </button>
             )}
             <button
               type="button"
@@ -1395,8 +1401,10 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
             Mounted only while open, so a task you never curate never spawns a session. Keyed by
             slug: switching tasks in the same panel must give the new task its OWN pane (and its
             own conversation), not silently re-point the previous task's agent at a new slug.
+            Not gated on tmAvailable: with prerequisites missing the pane renders the install
+            steps, and flips to the live terminal by itself once they're in.
           */}
-          {tmOpen && tmAvailable && (
+          {tmOpen && (
             <TaskManagerPane key={task.slug} task={task} title={taskName(task)} />
           )}
         </div>

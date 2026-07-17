@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Task } from '../../../hooks/useTasks';
 import { useAgentCapabilities } from '../../../hooks/useAgentCapabilities';
+import { Prereqs } from '../../sleepy/AgentSetup';
 import { SparkIcon } from '../../sleepy/TypeIcons';
 import type { SessionStatusKind } from '../../sleepy/agentStatus';
 import {
@@ -35,7 +36,7 @@ interface TaskManagerPaneProps {
  * agent is still there.
  */
 export function TaskManagerPane({ task, title }: TaskManagerPaneProps) {
-  const { data: caps } = useAgentCapabilities();
+  const { data: caps, refetch: refetchCaps } = useAgentCapabilities();
   const available = !!(caps?.desktop && caps.embeddedTerminal && caps.claudeCli);
 
   const [status, setStatus] = useState<{ kind: SessionStatusKind; label: string } | null>(null);
@@ -79,15 +80,31 @@ export function TaskManagerPane({ task, title }: TaskManagerPaneProps) {
       <aside className="tm-pane tm-pane--unavailable">
         <TaskManagerHeader status={null} bypass={bypass} onBypass={setBypass} disabled />
         <div className="tm-fallback">
-          <p>
-            Task Manager runs a real Claude Code session inside the app, so it needs the desktop app
-            with the Claude CLI installed.
-          </p>
-          <p className="tm-fallback-hint">
-            You can still manage this task from a terminal — point Claude at{' '}
-            <code>_dream_context/state/{task.slug}.md</code> and ask it to load the{' '}
-            <code>task-manager</code> skill.
-          </p>
+          {caps?.desktop ? (
+            /* Desktop with prerequisites missing: the whole point of showing the pane anyway.
+               One-click install rows (shared with the agent surface's intro); the capabilities
+               query refetches on success, `available` flips, and this same mount becomes the
+               live terminal — no reopen needed. */
+            <>
+              <p>
+                Task Manager runs a real Claude Code session inside the app. It needs a couple of
+                things installed first:
+              </p>
+              <Prereqs caps={caps} onRefresh={async () => (await refetchCaps()).data ?? null} />
+            </>
+          ) : (
+            <>
+              <p>
+                Task Manager runs a real Claude Code session inside the app, so it needs the
+                desktop app with the Claude CLI installed.
+              </p>
+              <p className="tm-fallback-hint">
+                You can still manage this task from a terminal — point Claude at{' '}
+                <code>_dream_context/state/{task.slug}.md</code> and ask it to load the{' '}
+                <code>task-manager</code> skill.
+              </p>
+            </>
+          )}
         </div>
       </aside>
     );

@@ -177,6 +177,10 @@
   font-size: var(--font-size-sm);
   line-height: 1.55;
   color: var(--color-text-secondary);
+  /* The install-steps variant stacks prereq rows + a live install log — let it scroll
+     inside the pane rather than push the panel taller. */
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .tm-fallback p { margin: 0 0 var(--space-3); }
