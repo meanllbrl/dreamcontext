@@ -54,14 +54,45 @@
   height: 100%;
 }
 
+/* ── Full-page document layout: parameters LEFT, document RIGHT ─────────────────
+ * The design's full-page shape (and the drawer's opposite): the property form is a
+ * narrow left rail beside the document, not a stack on top of it. Grid, not flex —
+ * auto-placement sends every body child to the document column and only the
+ * props-block is pulled into the rail, so the JSX (shared with the drawer, where
+ * everything stays stacked) doesn't fork.
+ */
 .detail-panel--fullscreen .detail-body {
-  padding-left: 0;
-  padding-right: 0;
+  display: grid;
+  grid-template-columns: clamp(300px, 26%, 360px) minmax(0, 1fr);
+  column-gap: var(--space-6);
+  align-content: start;
+  width: 100%;
+  max-width: 1520px;
+  margin: 0 auto;
 }
 
-.detail-panel--fullscreen .detail-header,
 .detail-panel--fullscreen .detail-body > * {
-  max-width: 1100px;
+  grid-column: 2;
+  min-width: 0;
+}
+
+.detail-panel--fullscreen .detail-body > .props-block {
+  grid-column: 1;
+  /* Span "all the rows" (the count just needs to exceed the document column's child
+     count; surplus rows collapse to zero height) so the rail owns the whole first
+     column while the document flows freely beside it. */
+  grid-row: 1 / span 60;
+  align-self: start;
+  /* The rail stays put while the document scrolls; taller-than-viewport parameter
+     stacks scroll inside the rail instead of pinning uselessly. */
+  position: sticky;
+  top: 0;
+  max-height: calc(100vh - var(--header-height) - var(--space-10));
+  overflow-y: auto;
+}
+
+.detail-panel--fullscreen .detail-header {
+  max-width: 1520px;
   margin-left: auto;
   margin-right: auto;
   width: 100%;

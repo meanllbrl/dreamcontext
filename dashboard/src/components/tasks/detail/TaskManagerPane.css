@@ -15,6 +15,12 @@
      different product than the overlay panes. */
   background: var(--color-bg);
   border-left: 1px solid var(--color-border);
+  /* SAME responsive contract as an overlay pane: the composer's @container agentpane
+     breakpoints (≤560/500/420/360px) collapse its labels as the pane narrows. Without
+     this name the queries never match inside the task view and the bar just ellipsizes
+     into "@ fi… ✦ dreamcontext s…" instead of adapting. Safe here: the composer's
+     popovers portal to <body>, so the containment can't trap them. */
+  container: agentpane / inline-size;
 }
 
 /* ── Header ─────────────────────────────────────────────────────────────── */
