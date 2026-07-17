@@ -356,7 +356,7 @@
     {
       "name": "excalidraw",
       "file": "excalidraw/SKILL.md",
-      "description": "Generate or extend Obsidian Excalidraw (.excalidraw.md) boards — lay out images/screenshots, text, shapes, arrows, frames, lanes and grids — by writing a small JSON spec and running a deterministic script that emits valid plugin markup (near-zero tokens, always renders). Embeds local images via the plugin's sha1 wikilink trick (no base64). Triggers: 'draw this in excalidraw', 'make an excalidraw board', 'excalidraw diagram', 'funnel map board', 'embed screenshots into excalidraw', 'excalidraw çiz', 'excalidraw board oluştur'.",
+      "description": "Generate or extend Obsidian Excalidraw (.excalidraw.md) boards — charts (line/bar/compare/stacked/gantt/quadrant/donut/heatmap/table/timeline/KPI/sparkline), funnels, wireframes and real-proportion device mockups (iPhone/iPad/Mac), flowcharts, images/screenshots, shapes, arrows, frames, lanes and grids — by passing DATA to ~44 ready-made deterministic builders that emit valid plugin markup (near-zero tokens, always renders). Every builder works from JS or straight from a JSON spec; the build audits the scene for overlaps, buried labels and over-long lines. Embeds local images via the plugin's sha1 wikilink trick (no base64). Triggers: 'draw this in excalidraw', 'make an excalidraw board', 'excalidraw diagram', 'chart', 'gantt', 'funnel map board', 'wireframe', 'iphone mockup', 'embed screenshots into excalidraw', 'excalidraw çiz', 'excalidraw board oluştur', 'grafik çiz', 'wireframe çiz'.",
       "tags": [
         "excalidraw",
         "obsidian",

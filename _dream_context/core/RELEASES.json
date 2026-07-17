@@ -2,12 +2,20 @@
   {
     "id": "rel_ODadgMbB",
     "version": "0.18.0",
-    "date": "",
-    "summary": "",
+    "date": "2026-07-17",
+    "summary": "The Task Manager: a task gets its own Claude Code session, pinned inside the task view, that maintains the document (revise / summarize / split / status-reconcile) rather than implementing it — driven by a new core `task-manager` skill, with the terminal DOM re-parented from the one global Agent surface so the session survives navigation. Around it: anchored doc comments (select a span of the rendered task, batch comments, one Send delivers the batch to the session — quote-anchored, so they survive the agent rewriting the doc live), a live doc refresh with a git-style \"changes this session\" diff, and delegate-to-Claude straight from the board. The Agent dock went living — screen-true status classification from the visible buffer instead of byte-flow, ending the ready-flap during silent tool calls, with an asking/\"needs you\" state that shakes, chimes, and jumps the queue. The embedding index gained a second consumer: `dreamcontext embed dedup`, a semantic near-duplicate gate that makes sleep merge instead of duplicate. The excalidraw skill became an atomic kit — ~44 builders (charts, wireframes, real-proportion device mockups) drivable from JS or pure JSON, with a 3-check render audit. Plus `dreamcontext tasks version`, a doctor warning when two projects share one task container (#184), and a sync fix so a push can no longer advance the pull watermark (#185).",
     "breaking": false,
-    "status": "planning",
-    "features": [],
-    "tasks": [],
+    "status": "released",
+    "features": [
+      "in-app-agent-terminal",
+      "web-dashboard"
+    ],
+    "tasks": [
+      "in-app-task-detail-inline-agent-curate-the-task-via-anchored-comments-revise-summarize-split-status-with-real-time-refresh",
+      "delegate-a-task-to-a-claude-agent-from-the-board",
+      "feat-sleep-semantic-dedup-nearest-neighbor-merge-instead-of-duplicate",
+      "agent-composer-add-folder-picker-to-files-button"
+    ],
     "changelog": []
   },
   {

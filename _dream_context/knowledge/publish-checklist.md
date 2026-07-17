@@ -57,8 +57,8 @@ ready.
 
 ## 4. Publish```bash
 npm publish --access public```This pushes the current version. Confirm the version in `package.json` matches the
-intended release before running. As of 2026-06-30, shipped version is v0.10.5 (npm +
-tag). Always bump `package.json` to the new version before publishing (the CI pipeline
+intended release before running. As of 2026-07-17, shipped version is v0.17.2 (npm +
+tag); v0.18.0 is prepared and awaiting `npm publish`. Always bump `package.json` to the new version before publishing (the CI pipeline
 does NOT bump automatically) — bump ALL FIVE version surfaces if desktop is part of the
 release: `package.json`, `desktop/package.json`, `desktop/src-tauri/tauri.conf.json`,
 `desktop/src-tauri/Cargo.toml`, and `Cargo.lock`'s `dreamcontext-desktop` entry. These

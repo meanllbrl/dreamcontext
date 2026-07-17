@@ -1,5 +1,79 @@
 [
   {
+    "date": "2026-07-17",
+    "type": "change",
+    "scope": "migration",
+    "description": "Migration 0.18.0 applied: reset-poisoned-pull-watermark",
+    "breaking": false,
+    "summary": "Cleared the pull watermark — the next task sync re-reads the remote in full once, recovering any collaborator change a pre-0.18.0 push had silently excluded (#185)",
+    "references": [
+      "file:state/.migrations.json"
+    ]
+  },
+  {
+    "date": "2026-07-17",
+    "type": "fix",
+    "scope": "tasks",
+    "description": "Full-page task view parameters repositioned as a sticky LEFT rail (grid auto-placement; drawer JSX unchanged). .tm-pane container carries agentpane/inline-size so composer's @container breakpoints match inside task view. RUNTIME-VERIFIED end-to-end via verify-skill scratch vault + DREAMCONTEXT_DESKTOP=1 + claude-in-chrome (toggle, layout switch, live session survival, responsive composer).",
+    "breaking": false,
+    "summary": "Full-page parameters as LEFT rail + responsive composer",
+    "references": [
+      "commit:ee957c2",
+      "file:dashboard/src/components/tasks/TaskDetailPanel.css",
+      "file:dashboard/src/components/tasks/detail/TaskManagerPane.css"
+    ]
+  },
+  {
+    "date": "2026-07-17",
+    "type": "feat",
+    "scope": "tasks",
+    "description": "Select task doc text → comment popover → batch chips → single Send into the TM session (bracketed-paste multiline; quote anchors not offsets; ephemeral until sent; closed-pane Send opens + flushes on first ready/asking; fresh-session batch IS the first message so deferred pin context rides with it). Live doc refresh: ['tasks'] poll 2.5s while TM open; detail panel's task comes from LIST query which never refetched on its own. Git-style '± Changes' session diff: baseline at pane open (frontmatter-ish preamble so Summarize/Status edits diff too), dependency-free LCS hunker (lib/lineDiff.ts, prefix/suffix trim, DP cap degrades to block replace), 7 tests. Ephemeral (agent's edits + changelog are the record).",
+    "breaking": false,
+    "summary": "Anchored doc comments + live refresh with git-style session diff",
+    "references": [
+      "commit:f7fa13b",
+      "commit:94586d1",
+      "file:dashboard/src/components/tasks/detail/DocComments.tsx",
+      "file:dashboard/src/components/tasks/detail/SessionDiff.tsx",
+      "file:dashboard/src/lib/lineDiff.ts",
+      "file:tests/unit/line-diff.test.ts",
+      "file:dashboard/src/components/tasks/TaskDetailPanel.tsx"
+    ]
+  },
+  {
+    "date": "2026-07-17",
+    "type": "feat",
+    "scope": "task-manager",
+    "description": "Task Manager is now fully opt-in (no auto-spawned agent sessions — explicit request only), opens with bypass permissions by default (task-doc-scoped writes = low blast radius), and defers the pin prompt to the user's first message. Mechanism: client &deferPrompt=1 → server parks the sanitized prompt in a tmp file (0600, dreamcontext-deferred-<uuid>.txt) and exports DREAMCONTEXT_DEFERRED_PROMPT on the PTY env → the user-prompt-submit hook consumes it exactly once (print + delete) before every other gate; real resume drops the prompt entirely (fixes duplicate pin after relaunch); parked file cleaned on PTY exit; basename-prefix guard against env tampering. consumeDeferredPrompt exported + 6 tests. TM button on any desktop with Prereqs install steps in-pane when claude/node-pty missing. Overlay PaneComposer portaled into task page as one atomic component (React portal = raw-DOM hoist's React-rendered counterpart; TM helpers resolve from sessions map — TM sessions are deliberately roster-less; never setExpanded from TM paths).",
+    "breaking": false,
+    "summary": "Opt-in everywhere, bypass by default, deferred pin prompt to first user message",
+    "references": [
+      "commit:70e79ad",
+      "commit:9f0d700",
+      "commit:45e37f8",
+      "file:src/server/routes/agent-terminal.ts",
+      "file:src/cli/commands/hook.ts",
+      "file:dashboard/src/components/tasks/detail/TaskManagerPane.tsx",
+      "file:dashboard/src/components/sleepy/AgentSurface.tsx",
+      "file:tests/unit/hook.test.ts"
+    ]
+  },
+  {
+    "date": "2026-07-17",
+    "type": "fix",
+    "scope": "task-manager",
+    "description": "Three fixes ensure Task Manager terminal renders identically to the Agent surface and stays properly anchored. (1) Terminal position: .tm-slot must be position:relative so the arriving .agent-pane-term (position:absolute inset:0) resolves against it, not the page overlay — without this the terminal painted over the whole page. Load-bearing pattern: any slot receiving the terminal container MUST be its containing block. (2) Pixel parity: Task Manager terminal now carries the agent-pane-slot CLASS (all xterm styling scoped to it: 14/20px padding, transparent viewport, scrollbar, letter-spacing) without data-pane (skips pane-homing query); pane canvas --color-bg. Full-page task view starts below sticky app header (top: var(--header-height)). (3) Per-epoch ResizeObserver on TM slots (150ms settle debounce) — the overlay's observer never saw page-tree slots, so drawer↔full-page toggles left stale xterm grid clipping bottom rows.",
+    "breaking": false,
+    "summary": "Terminal rendering and positioning fixes — anchor to slot, pixel parity, ResizeObserver on resize",
+    "references": [
+      "commit:ef0ebf7",
+      "commit:c8711a9",
+      "commit:f57cd75",
+      "file:dashboard/src/components/tasks/detail/TaskManagerPane.tsx",
+      "file:dashboard/src/components/sleepy/AgentSurface.tsx"
+    ]
+  },
+  {
     "date": "2026-07-16",
     "type": "fix",
     "scope": "sleep",
