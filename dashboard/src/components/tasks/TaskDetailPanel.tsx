@@ -1,4 +1,5 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { marked } from 'marked';
 import mermaid from 'mermaid';
 import panzoom from 'panzoom';
@@ -17,6 +18,7 @@ import { useAgentCapabilities } from '../../hooks/useAgentCapabilities';
 import { SparkIcon } from '../sleepy/TypeIcons';
 import { TaskManagerPane } from './detail/TaskManagerPane';
 import { DocComments } from './detail/DocComments';
+import { SessionDiff } from './detail/SessionDiff';
 import { TaskSection, TaskField, EmptyField, RequiredField } from './detail/TaskSection';
 import { useSectionCollapse } from './detail/useSectionCollapse';
 import { DelegateComposer } from './DelegateComposer';
@@ -24,6 +26,23 @@ import { taskName } from './boardModel';
 import './TaskDetailPanel.css';
 
 marked.setOptions({ gfm: true, breaks: true });
+
+/**
+ * The task document as ONE diffable text: a frontmatter-style preamble (the fields the
+ * Task Manager's quick actions edit — Summarize touches description, Status moves status)
+ * over the raw markdown body. Approximates the real file closely enough that the session
+ * diff reads like `git diff` on `state/<slug>.md`.
+ */
+function composeDocText(task: Task): string {
+  return [
+    `name: ${task.name}`,
+    `description: ${task.description}`,
+    `status: ${task.status} · priority: ${task.priority} · urgency: ${task.urgency}`,
+    `version: ${task.version ?? '—'}`,
+    '---',
+    task.body,
+  ].join('\n');
+}
 
 
 const CLOSE_FOR: Record<string, string> = { '[': ']', '(': ')', '{': '}' };
@@ -457,6 +476,36 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
   // task properly" must not imply "and start an agent on it". The user asks; nothing spawns
   // on its own.
   const [tmOpen, setTmOpen] = useState(false);
+
+  // ── Task Manager session: live doc + "changes this session" diff ────────────────
+  // The panel's `task` prop comes from the ['tasks'] LIST query, which has no interval —
+  // without a poll the agent's edits would sit invisible until some unrelated mutation
+  // invalidated the list. While the Task Manager is open, refetch the list so the doc
+  // (and the diff below) tracks the file the agent is editing, near-live.
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    if (!tmOpen) return;
+    const timer = setInterval(() => {
+      void queryClient.refetchQueries({ queryKey: ['tasks'], type: 'active' });
+    }, 2500);
+    return () => clearInterval(timer);
+  }, [tmOpen, queryClient]);
+
+  // The diff baseline: the document as it stood the moment the Task Manager opened.
+  // Session-scoped by definition — closing the pane discards it, reopening re-snapshots.
+  // Kept as TEXT (not a task object) so the diff is exactly two strings, and composed with
+  // a small frontmatter-style preamble so Summarize/Status edits (description, status —
+  // fields outside the body) show up in the diff too.
+  const [docBaseline, setDocBaseline] = useState<string | null>(null);
+  const [showDiff, setShowDiff] = useState(false);
+  useEffect(() => {
+    if (!tmOpen) { setDocBaseline(null); setShowDiff(false); return; }
+    // Capture ONCE per open (the poll must not move the baseline under the diff).
+    setDocBaseline((prev) => prev ?? composeDocText(task));
+    // `task` is deliberately read at open time only — see the guard above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tmOpen, task.slug]);
+  const docCurrent = useMemo(() => composeDocText(task), [task]);
   const [delegating, setDelegating] = useState(false);
   const sections = useSectionCollapse();
 
@@ -958,6 +1007,20 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
               session still only starts when asked for. The button shows on any desktop — with the
               prerequisites missing, the pane opens to the install steps instead of a terminal.
             */}
+            {/* Session diff toggle — appears only while the Task Manager is open AND its
+                agent has actually changed the document. Flips the doc column between the
+                rendered markdown and a git-style diff since the pane opened. */}
+            {tmOpen && docBaseline !== null && docBaseline !== docCurrent && (
+              <button
+                type="button"
+                className={`detail-tm-btn detail-diff-btn ${showDiff ? 'is-on' : ''}`}
+                onClick={() => setShowDiff((v) => !v)}
+                aria-pressed={showDiff}
+                title="Show what the Task Manager changed this session, as a git-style diff"
+              >
+                ± Changes
+              </button>
+            )}
             {tmVisible && (
               <button
                 type="button"
@@ -1349,8 +1412,11 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
           {/* Divider */}
           <hr className="detail-divider" />
 
-          {/* Rendered Markdown Body */}
-          {bodyHtml ? (
+          {/* Rendered Markdown Body — or, when the ± Changes toggle is on, the live
+              git-style diff of everything the Task Manager changed this session. */}
+          {showDiff && docBaseline !== null ? (
+            <SessionDiff baseline={docBaseline} current={docCurrent} />
+          ) : bodyHtml ? (
             <div
               ref={bodyRef}
               className="markdown-body"
@@ -1362,8 +1428,9 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
 
           {/* Select any doc text → 💬 Comment → batch → send to the Task Manager. The
               anchored-comments leg of the curate design; delivery rides the TM session,
-              so it is desktop-gated exactly like the Task Manager button. */}
-          {tmVisible && (
+              so it is desktop-gated exactly like the Task Manager button. Hidden in diff
+              view — a selection there is diff text, not doc text an anchor can quote. */}
+          {tmVisible && !showDiff && (
             <DocComments
               slug={task.slug}
               docRef={bodyRef}

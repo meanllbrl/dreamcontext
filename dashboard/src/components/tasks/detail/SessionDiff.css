@@ -1,0 +1,93 @@
+/*
+ * Git-style unified diff of the task document. Terminal-adjacent content, so it uses the
+ * mono stack — but it lives in the document column, so spacing follows the panel's grid.
+ * Add/remove tints derive from the success/error tokens via color-mix (no literal hex),
+ * so both themes get a readable GitHub-style wash.
+ */
+
+.session-diff {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: var(--font-size-xs);
+}
+
+.session-diff--empty {
+  padding: var(--space-4);
+  color: var(--color-text-tertiary);
+  font-family: var(--font-family-text);
+  font-size: var(--font-size-sm);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-lg);
+  text-align: center;
+}
+
+.session-diff-stats {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-weight: 700;
+}
+
+.session-diff-added { color: var(--color-success); }
+.session-diff-removed { color: var(--color-error); }
+
+.session-diff-hint {
+  color: var(--color-text-tertiary);
+  font-family: var(--font-family-text);
+  font-weight: 400;
+}
+
+.session-diff-hunk {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.session-diff-hunk-head {
+  padding: var(--space-1) var(--space-3);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-tertiary);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.session-diff-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.session-diff-no {
+  width: 42px;
+  padding: 1px var(--space-2);
+  text-align: right;
+  color: var(--color-text-tertiary);
+  user-select: none;
+  vertical-align: top;
+}
+
+.session-diff-sign {
+  width: 18px;
+  padding: 1px 0;
+  text-align: center;
+  user-select: none;
+  vertical-align: top;
+}
+
+.session-diff-text {
+  padding: 1px var(--space-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.5;
+}
+
+.session-diff-line--add {
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+}
+.session-diff-line--add .session-diff-sign { color: var(--color-success); }
+
+.session-diff-line--del {
+  background: color-mix(in srgb, var(--color-error) 12%, transparent);
+}
+.session-diff-line--del .session-diff-sign { color: var(--color-error); }
