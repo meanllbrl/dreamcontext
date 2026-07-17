@@ -16,6 +16,7 @@ import { initMermaid, normalizeMermaidSvg } from '../../lib/mermaidRender';
 import { useAgentCapabilities } from '../../hooks/useAgentCapabilities';
 import { SparkIcon } from '../sleepy/TypeIcons';
 import { TaskManagerPane } from './detail/TaskManagerPane';
+import { DocComments } from './detail/DocComments';
 import { TaskSection, TaskField, EmptyField, RequiredField } from './detail/TaskSection';
 import { useSectionCollapse } from './detail/useSectionCollapse';
 import { DelegateComposer } from './DelegateComposer';
@@ -1357,6 +1358,18 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
             />
           ) : (
             <p className="detail-empty">No content.</p>
+          )}
+
+          {/* Select any doc text → 💬 Comment → batch → send to the Task Manager. The
+              anchored-comments leg of the curate design; delivery rides the TM session,
+              so it is desktop-gated exactly like the Task Manager button. */}
+          {tmVisible && (
+            <DocComments
+              slug={task.slug}
+              docRef={bodyRef}
+              tmOpen={tmOpen}
+              onOpenTaskManager={() => setTmOpen(true)}
+            />
           )}
 
           {/* Divider */}

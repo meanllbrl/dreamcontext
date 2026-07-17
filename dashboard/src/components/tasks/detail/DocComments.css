@@ -1,0 +1,174 @@
+/*
+ * Anchored doc comments — the floating "Comment" affordance over a selection, the
+ * comment input popover, and the pending-batch tray. Token-driven; the floating pieces
+ * portal to <body> (the doc scrolls, the affordance must not clip inside it).
+ */
+
+.doc-comment-fab {
+  position: fixed;
+  z-index: 130; /* above .detail-overlay (100) */
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-elevated);
+  color: var(--color-text);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: var(--shadow-md);
+}
+
+.doc-comment-fab:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.doc-comment-pop {
+  position: fixed;
+  z-index: 130;
+  width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-xl);
+}
+
+.doc-comment-quote {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  border-left: 2px solid var(--color-accent);
+  padding-left: var(--space-2);
+  max-height: 3.2em;
+  overflow: hidden;
+  font-style: italic;
+}
+
+.doc-comment-input {
+  width: 100%;
+  resize: vertical;
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  font-family: inherit;
+  line-height: 1.4;
+}
+
+.doc-comment-input:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.doc-comment-pop-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.doc-comment-btn {
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  background: var(--color-accent);
+  color: var(--color-bg);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.doc-comment-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.doc-comment-btn.ghost {
+  background: transparent;
+  border-color: var(--color-border);
+  color: var(--color-text-secondary);
+}
+
+/* ── Pending batch tray — sticky to the bottom of the scrolling doc column ────── */
+
+.doc-comment-tray {
+  position: sticky;
+  bottom: var(--space-3);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-lg);
+}
+
+.doc-comment-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.doc-comment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 100%;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  font-size: var(--font-size-xs);
+  min-width: 0;
+}
+
+.doc-comment-chip-quote {
+  color: var(--color-text-tertiary);
+  font-style: italic;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 180px;
+  flex-shrink: 1;
+}
+
+.doc-comment-chip-text {
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 220px;
+}
+
+.doc-comment-chip-x {
+  border: none;
+  background: none;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+.doc-comment-chip-x:hover { color: var(--color-error); }
+
+.doc-comment-send {
+  align-self: flex-end;
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  background: var(--color-accent);
+  color: var(--color-bg);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.doc-comment-send:disabled { opacity: 0.6; cursor: progress; }
