@@ -157,11 +157,17 @@
  * AgentSurface appends the live xterm container here. It must be a plain, unstyled box that
  * simply gives the terminal its area: the container arrives with its own `.agent-pane-term`
  * rules, and anything opinionated here would fight them.
+ *
+ * `position: relative` is load-bearing, not opinion: the arriving container is
+ * `position: absolute; inset: 0`, so this slot MUST be its containing block — exactly like
+ * `.agent-pane-slot`. Without it the terminal resolves against the nearest positioned
+ * ancestor, which is the fixed `.detail-overlay`, and the session paints over the whole page.
  */
 .tm-slot {
   flex: 1;
   min-height: 0;
   overflow: hidden;
+  position: relative;
 }
 
 /* ── Web / no-CLI fallback ──────────────────────────────────────────────── */
