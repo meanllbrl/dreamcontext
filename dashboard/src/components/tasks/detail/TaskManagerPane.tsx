@@ -133,8 +133,14 @@ export function TaskManagerPane({ task, title }: TaskManagerPaneProps) {
         (`.agent-task-manager-slot[data-task="<slug>"]`). React must never render children into it —
         the container is raw DOM the surface owns, and React reconciling this subtree would rip
         a live xterm out from under a running PTY.
+
+        `agent-pane-slot` (without `data-pane`, so the surface's pane-homing query skips it) is
+        load-bearing: ALL of the terminal's visual identity — the 14/20px xterm padding, the
+        transparent viewport that lets the pane canvas through, the scrollbar skin, the
+        letter-spacing measurement fix — is scoped to that class in AgentTerminal.css. Without
+        it the terminal renders xterm's raw defaults and looks nothing like the Agent surface.
       */}
-      <div className="agent-task-manager-slot tm-slot" data-task={task.slug} />
+      <div className="agent-task-manager-slot agent-pane-slot tm-slot" data-task={task.slug} />
       {/*
         The composer anchor. Also empty by design — the surface PORTALS its `PaneComposer`
         (files · skills · live model/effort · context/cost) here, so the task page gets the

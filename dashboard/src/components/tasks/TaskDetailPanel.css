@@ -13,6 +13,11 @@
 
 .detail-overlay--fullscreen {
   background: var(--color-bg);
+  /* Full-page is a PAGE, not a modal: the app's real top bar (sticky, --header-height,
+     z-index 30) stays visible and interactive above it. Covering it made the task view
+     read as a different app that had swallowed the chrome. The drawer variant keeps
+     inset:0 — a modal drawer dimming everything is exactly what a drawer is. */
+  top: var(--header-height);
 }
 
 .detail-panel {
@@ -44,6 +49,9 @@
   max-width: 100vw;
   border-left: none;
   box-shadow: none;
+  /* The overlay starts below the app header now — 100vh would overflow by exactly
+     --header-height and push the bottom of the panel (composer, tray) off-screen. */
+  height: 100%;
 }
 
 .detail-panel--fullscreen .detail-body {
