@@ -328,6 +328,9 @@ export class GitHubTaskBackend extends LocalTaskBackend {
   private static readonly RECONCILE_MS = 2 * 60 * 1000;
   private static readonly LOCK_STALE_MS = 3 * 60 * 1000;
 
+  /** GitHub's hard cap on an issue body (chars) — a longer POST/PATCH 422s. */
+  private static readonly MAX_ISSUE_BODY_CHARS = 65_536;
+
   /**
    * Best-effort collaborator cache refresh (1 GET). Throttled to once per hour
    * across processes; `force` (listMembers, provision) bypasses. Failure never
@@ -730,6 +733,18 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     // its hosted URL, WIRE-ONLY (the mirror keeps the canonical local path).
     const prose = await this.uploadAndRewriteImages(bodyToIssueBody(task.body), adapter, owner, repo, report);
     const body = composeIssueBody(prose, startLocal, dueLocal, fieldsBlock);
+
+    // GitHub rejects issue bodies over 65,536 chars with a 422 — and pushing a
+    // TRUNCATED body instead would read back as a remote edit on the next pull,
+    // clobbering the canonical local body. Skip with a warning: the task must be
+    // shortened or split locally before it can mirror.
+    if (body.length > GitHubTaskBackend.MAX_ISSUE_BODY_CHARS) {
+      report.warnings.push(
+        `push ${slug}: body is ${body.length} chars — over GitHub's ${GitHubTaskBackend.MAX_ISSUE_BODY_CHARS}-char issue limit; ` +
+        `skipped (shorten or split the task locally, then re-sync).`,
+      );
+      return;
+    }
 
     let remoteId = this.ledger.remoteIdFor(slug);
     if (!remoteId) {

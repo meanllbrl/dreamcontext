@@ -57,9 +57,11 @@ const WINDOW_MS = 60_000;
 const BASE_BACKOFF_MS = 500;
 
 function defaultSleep(ms: number): Promise<void> {
+  // The timer must stay ref'd: during a rate-limit/backoff wait it can be the
+  // ONLY pending handle, and an unref'd timer lets Node drain the event loop
+  // and exit 0 mid-sync — no report, finally blocks skipped, stale lock left.
   return new Promise((resolve) => {
-    const t = setTimeout(resolve, ms);
-    (t as unknown as { unref?: () => void }).unref?.();
+    setTimeout(resolve, ms);
   });
 }
 
