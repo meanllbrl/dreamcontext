@@ -713,6 +713,33 @@ export function AgentSurface() {
     ));
   }, [tmEpoch]);
 
+  // A TM slot lives in the PAGE, so the overlay's ResizeObserver (hostRef, expanded-only)
+  // never sees it resize — yet its size changes without any tmEpoch bump: the drawer↔full-page
+  // toggle moves the panel between 100vh and below-the-header, the drawer widens on open
+  // (max-width transition), the window resizes. Without a refit the xterm keeps its stale
+  // row/column grid and the TUI's bottom rows clip under the composer ("sığmıyor"). Same
+  // settle-debounce as the overlay observer: one fit after the final frame, no mid-animation
+  // judder. Re-armed per epoch so it always observes the CURRENT slot elements.
+  useEffect(() => {
+    if (typeof ResizeObserver === 'undefined') return;
+    const slots = Array.from(document.querySelectorAll<HTMLElement>('.agent-task-manager-slot[data-task]'));
+    if (slots.length === 0) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const fitTm = () => {
+      tmRef.current.forEach((sid, slug) => {
+        const s = sessions.current.get(sid);
+        const slot = slots.find((el) => el.dataset.task === slug);
+        if (s && slot?.isConnected) { s.ensureOpen(); s.fitAndResize(); }
+      });
+    };
+    const ro = new ResizeObserver(() => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => { timer = undefined; fitTm(); }, 150);
+    });
+    slots.forEach((el) => ro.observe(el));
+    return () => { ro.disconnect(); if (timer) clearTimeout(timer); };
+  }, [tmEpoch]);
+
   // TM sessions are deliberately NOT in `sessionList` (no roster, no dock chip), so the
   // pane-composer helpers below — which all resolve through the roster — can't see them.
   // This resolves straight from the live session map instead. It also must NOT
