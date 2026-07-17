@@ -41,10 +41,11 @@ export function TaskManagerPane({ task, title }: TaskManagerPaneProps) {
 
   const [status, setStatus] = useState<{ kind: SessionStatusKind; label: string } | null>(null);
   const [error, setError] = useState('');
-  // Bypass is OFF by default here, unlike Delegate. Delegate runs unattended overnight, so
-  // approval prompts would just stall it. Task Manager runs with you watching, editing the document
-  // you are reading — seeing what it is about to do is the point, not an obstacle.
-  const [bypass, setBypass] = useState(false);
+  // Bypass is ON by default, like Delegate. The Task Manager's writes are scoped to the task
+  // document you are reading — low blast radius — and per-edit approval prompts made every
+  // quick action a two-step chore. The Auto toggle stays for opting out BEFORE the session
+  // spawns (bypass is read at request time).
+  const [bypass, setBypass] = useState(true);
   // The session is requested ONCE per mounted pane. A re-request is harmless (the surface
   // re-homes the existing session) but it would re-park the deferred pin context and
   // re-dispatch for nothing, so guard it. The pin context itself is NOT auto-sent: the
@@ -134,6 +135,12 @@ export function TaskManagerPane({ task, title }: TaskManagerPaneProps) {
         a live xterm out from under a running PTY.
       */}
       <div className="agent-task-manager-slot tm-slot" data-task={task.slug} />
+      {/*
+        The composer anchor. Also empty by design — the surface PORTALS its `PaneComposer`
+        (files · skills · live model/effort · context/cost) here, so the task page gets the
+        exact bar an overlay pane has, driven by the same surface-owned session state.
+      */}
+      <div className="agent-task-manager-composer tm-composer" data-task={task.slug} />
     </aside>
   );
 }

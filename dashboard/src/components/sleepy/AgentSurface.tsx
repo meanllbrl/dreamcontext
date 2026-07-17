@@ -1,6 +1,7 @@
 import {
   useEffect, useRef, useState, useReducer, useCallback, useLayoutEffect,
 } from 'react';
+import { createPortal } from 'react-dom';
 import './AgentTerminal.css';
 import { api, getActiveVault } from '../../api/client';
 import {
@@ -689,6 +690,60 @@ export function AgentSurface() {
     };
   }, [taskManagerAgent]);
 
+  // ── Task Manager composer: the SAME per-pane bar, portaled into the task page ────
+  // The TM pane gets the exact `PaneComposer` strip an overlay pane has (files, skills,
+  // live model/effort, context/cost readout) — one atomic component, not a re-implementation.
+  // The pane can't render it itself: every composer action needs surface-owned session
+  // state, so the surface PORTALS the bar into the pane's anchor
+  // (`.agent-task-manager-composer[data-task]`), exactly like the terminal DOM hoist —
+  // except the composer is React-rendered, so a portal replaces appendChild.
+  const [tmComposerHosts, setTmComposerHosts] = useState<{ slug: string; sid: string; el: HTMLElement }[]>([]);
+  useEffect(() => {
+    const hosts: { slug: string; sid: string; el: HTMLElement }[] = [];
+    document.querySelectorAll<HTMLElement>('.agent-task-manager-composer[data-task]').forEach((el) => {
+      const slug = el.dataset.task ?? '';
+      const sid = slug ? tmRef.current.get(slug) : undefined;
+      if (sid && sessions.current.has(sid)) hosts.push({ slug, sid, el });
+    });
+    // Identity-compare so the quiet case (no TM open, epoch bumps from detach) never loops.
+    setTmComposerHosts((prev) => (
+      prev.length === hosts.length
+      && prev.every((p, i) => p.slug === hosts[i].slug && p.sid === hosts[i].sid && p.el === hosts[i].el)
+        ? prev : hosts
+    ));
+  }, [tmEpoch]);
+
+  // TM sessions are deliberately NOT in `sessionList` (no roster, no dock chip), so the
+  // pane-composer helpers below — which all resolve through the roster — can't see them.
+  // This resolves straight from the live session map instead. It also must NOT
+  // `setExpanded(true)`: the TM terminal lives in the PAGE, not the overlay.
+  const tmLiveAgent = useCallback((sid: string): Session | undefined => {
+    const s = sessions.current.get(sid);
+    return s && s.kind === 'agent' && s.status !== 'closed' ? s : undefined;
+  }, []);
+  const tmInsert = useCallback((sid: string, text: string) => {
+    const s = tmLiveAgent(sid);
+    if (s && text) { s.sendText(text); s.term.focus(); }
+  }, [tmLiveAgent]);
+  const tmPickPaths = useCallback(async (sid: string, kind: 'files' | 'folders') => {
+    const paths = kind === 'folders' ? await pickFolders() : await pickFiles();
+    if (paths.length) tmInsert(sid, `${paths.map(quotePath).join(' ')} `);
+  }, [tmInsert]);
+  const tmChangeModel = useCallback((sid: string, id: string) => {
+    const s = tmLiveAgent(sid);
+    if (!s || !id) return;
+    s.sendText(`/model ${id}\r`);
+    s.term.focus();
+    setSessionModel((prev) => ({ ...prev, [sid]: id }));
+  }, [tmLiveAgent]);
+  const tmChangeEffort = useCallback((sid: string, level: string) => {
+    const s = tmLiveAgent(sid);
+    if (!s || !level) return;
+    s.sendText(`/effort ${level}\r`);
+    s.term.focus();
+    setSessionEffort((prev) => ({ ...prev, [sid]: level }));
+  }, [tmLiveAgent]);
+
   // ── Bottom strip ─────────────────────────────────────────────────────────────────
   // There is NO separate text field: a skill/file goes straight into the terminal's OWN
   // input line (Claude Code's readline). Model/effort target the FOCUSED agent via the live
@@ -769,16 +824,26 @@ export function AgentSurface() {
   useEffect(() => {
     if (!caps?.desktop) return;
     let cancelled = false;
+    const readModel = (sid: string, claudeId: string) => {
+      void api.get<{ model: string | null }>(`/agent/session-model?claudeId=${encodeURIComponent(claudeId)}`)
+        .then((r) => { if (!cancelled && r?.model) setSessionModel((prev) => ({ ...prev, [sid]: r.model as string })); })
+        .catch(() => { /* best-effort: keep the fallback */ });
+    };
     const activeSids = Array.from(new Set(panes.map((p) => p.active)));
     activeSids.forEach((sid) => {
       const meta = sessionList.find((m) => m.id === sid);
       if (!meta || meta.dormant || !meta.claudeId) return;
-      void api.get<{ model: string | null }>(`/agent/session-model?claudeId=${encodeURIComponent(meta.claudeId)}`)
-        .then((r) => { if (!cancelled && r?.model) setSessionModel((prev) => ({ ...prev, [meta.id]: r.model as string })); })
-        .catch(() => { /* best-effort: keep the fallback */ });
+      readModel(meta.id, meta.claudeId);
+    });
+    // Task Manager sessions live outside the roster but their composer bar (portaled into
+    // the task page) shows a model picker too — read theirs on the same trigger, keyed by
+    // the slot epoch since panes never change when a task opens.
+    tmRef.current.forEach((sid) => {
+      const s = sessions.current.get(sid);
+      if (s?.claudeId && s.status !== 'closed') readModel(sid, s.claudeId);
     });
     return () => { cancelled = true; };
-  }, [panes, sessionList, caps]);
+  }, [panes, sessionList, caps, tmEpoch]);
 
   // Native multi-select picker (files OR folders — the Tauri dialog can't mix the two in
   // one dialog) → drop the chosen absolute paths (quoted) into a pane's terminal.
@@ -1560,6 +1625,30 @@ export function AgentSurface() {
           />
         )
       )}
+      {/* Task Manager composer strips — the same PaneComposer an overlay pane gets, portaled
+          into each open task's anchor (see the tmComposerHosts block). Rendered here (not in
+          the pane) because every action needs surface-owned session state. `statusTick`
+          re-renders keep liveness/disabled state current. */}
+      {tmComposerHosts.map(({ slug, sid, el }) => {
+        const s = sessions.current.get(sid);
+        return createPortal(
+          <PaneComposer
+            claudeId={s?.claudeId}
+            isAgent
+            isLiveAgent={!!tmLiveAgent(sid)}
+            modelConfig={modelConfig}
+            model={sessionModel[sid] ?? modelConfig.defaultModel}
+            effort={sessionEffort[sid] ?? modelConfig.defaultEffort}
+            onInsert={(snippet) => tmInsert(sid, snippet)}
+            onPickFiles={() => void tmPickPaths(sid, 'files')}
+            onPickFolders={() => void tmPickPaths(sid, 'folders')}
+            onModelChange={(id) => tmChangeModel(sid, id)}
+            onEffortChange={(level) => tmChangeEffort(sid, level)}
+          />,
+          el,
+          `tm-composer-${slug}`,
+        );
+      })}
     </>
   );
 }

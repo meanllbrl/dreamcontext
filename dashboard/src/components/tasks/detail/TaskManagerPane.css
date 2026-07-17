@@ -170,6 +170,15 @@
   position: relative;
 }
 
+/* The portaled PaneComposer's anchor. The bar (.agent-composer) brings its own layout and
+   terminal-canvas styling from AgentTerminal.css; this only pins the anchor to the pane
+   bottom and draws the seam against the terminal above it. */
+.tm-composer {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--color-border);
+}
+.tm-composer:empty { display: none; }
+
 /* ── Web / no-CLI fallback ──────────────────────────────────────────────── */
 
 .tm-fallback {
