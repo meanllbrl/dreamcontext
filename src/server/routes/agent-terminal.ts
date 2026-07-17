@@ -5,8 +5,8 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { basename, dirname, join } from 'node:path';
-import { existsSync, readdirSync, statSync, chmodSync, readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { existsSync, readdirSync, statSync, chmodSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { sendJson, sendError } from '../middleware.js';
 import { isDesktop } from '../desktop.js';
 import { listVaults } from '../../lib/vaults.js';
@@ -427,6 +427,10 @@ export function attachAgentTerminal(server: Server): void {
     const redeemed = redeemPromptToken(url.searchParams.get('promptToken'), vault);
     if (redeemed === null) { rejectUpgrade(socket, 401); return; }
     const initialPrompt = redeemed || sanitizePrompt(url.searchParams.get('prompt'));
+    // `deferPrompt=1` changes the prompt's DELIVERY: instead of auto-submitting it as the
+    // conversation opener, park it for the UserPromptSubmit hook to inject alongside the
+    // USER's first message (the Task Manager contract — the user speaks first).
+    const deferPrompt = url.searchParams.get('deferPrompt') === '1';
 
     void (async () => {
       let pty: typeof import('node-pty');
@@ -439,7 +443,7 @@ export function attachAgentTerminal(server: Server): void {
 
       const wss = new WebSocketServer({ noServer: true });
       wss.handleUpgrade(req, socket, head, (ws) => {
-        startPtySession(ws, pty, projectRoot, bypass, theme, sessionId, resumeId, kind, model, effort, initialPrompt);
+        startPtySession(ws, pty, projectRoot, bypass, theme, sessionId, resumeId, kind, model, effort, initialPrompt, deferPrompt);
       });
     })();
   });
@@ -1088,6 +1092,7 @@ function startPtySession(
   model = '',
   effort = '',
   initialPrompt = '',
+  deferPrompt = false,
 ): void {
   const shell = process.env.SHELL || '/bin/zsh';
   const flag = bypass ? ' --permission-mode bypassPermissions' : '';
@@ -1135,6 +1140,34 @@ function startPtySession(
     if (heldConversation) liveConversations.delete(heldConversation);
     if (kind === 'agent' && pinId) liveSpawnModels.delete(pinId);
   };
+  // ── Deferred first-message context (Task Manager) ────────────────────────────
+  // A `deferPrompt` session must NOT boot with the prompt already submitted — the USER
+  // speaks first, and the prompt joins that first message as context. Transport: park the
+  // text in a tmp file and export its path to the PTY env; the UserPromptSubmit hook
+  // (`dreamcontext hook user-prompt-submit`, which inherits this env through `claude`)
+  // prints + deletes it on the first user message. Two sub-cases:
+  //  • fresh conversation → park the file;
+  //  • resuming a real transcript → drop the prompt entirely: the pin context is already
+  //    in the conversation, and re-injecting it on every app relaunch would only re-say
+  //    what the transcript already holds.
+  // A failed park degrades to a promptless boot (session works, just unpinned) rather
+  // than falling back to auto-submit — the caller's contract is "never speak first".
+  let deferredEnv: Record<string, string> = {};
+  let cleanupDeferred = () => { /* nothing parked */ };
+  let submitPrompt = initialPrompt;
+  if (kind === 'agent' && initialPrompt && deferPrompt) {
+    submitPrompt = '';
+    if (!resumeTarget) {
+      const parked = join(tmpdir(), `dreamcontext-deferred-${randomUUID()}.txt`);
+      try {
+        writeFileSync(parked, initialPrompt, { encoding: 'utf-8', mode: 0o600 });
+        deferredEnv = { DREAMCONTEXT_DEFERRED_PROMPT: parked };
+        // If the session ends without the user ever speaking, the file must not outlive
+        // the PTY (idempotent — the hook usually consumed it long before).
+        cleanupDeferred = () => { try { rmSync(parked, { force: true }); } catch { /* tmp cleanup */ } };
+      } catch { /* degrade to promptless boot */ }
+    }
+  }
   // COLORFGBG hints the terminal's light/dark to TUI apps that read it: the trailing
   // field is the background (0 = dark, 15 = light). Combined with the webview's OSC
   // 10/11 colour replies, this lets Claude Code theme to our surface at spawn.
@@ -1154,10 +1187,10 @@ function startPtySession(
   // empty third argv would run every promptless tab's rc sourcing with `$0=''`, silently
   // breaking user rc logic that branches on `$0` (login detection, basename dispatch).
   const promptRef = basename(shell) === 'fish' ? '"$argv[1]"' : '"$0"';
-  const promptArg = kind === 'agent' && initialPrompt ? ` ${promptRef}` : '';
+  const promptArg = kind === 'agent' && submitPrompt ? ` ${promptRef}` : '';
   const shellArgs = kind === 'shell'
     ? ['-il']
-    : ['-ilc', `exec claude${idArg}${modelFlag}${effortFlag}${flag}${promptArg}`, ...(promptArg ? [initialPrompt] : [])];
+    : ['-ilc', `exec claude${idArg}${modelFlag}${effortFlag}${flag}${promptArg}`, ...(promptArg ? [submitPrompt] : [])];
   // An agent PTY exports its tab's STABLE roster id so the SessionStart hook (which
   // inherits this env through `claude`) can record roster id → live conversation id
   // on every rotation — the other half of the resume-staleness fix above. ONLY when
@@ -1178,7 +1211,7 @@ function startPtySession(
       cols: 80,
       rows: 24,
       cwd: projectRoot,
-      env: { ...process.env, TERM: 'xterm-256color', COLORFGBG: colorfgbg, ...tabEnv } as Record<string, string>,
+      env: { ...process.env, TERM: 'xterm-256color', COLORFGBG: colorfgbg, ...tabEnv, ...deferredEnv } as Record<string, string>,
     }) as unknown as PtyLike;
   } catch (err) {
     // pty.spawn can throw synchronously (documented posix_spawnp failure when the
@@ -1201,6 +1234,7 @@ function startPtySession(
     alive = false;
     untrack();
     releaseHeld();
+    cleanupDeferred();
     if (ws.readyState === ws.OPEN) {
       const what = kind === 'shell' ? 'shell' : 'claude';
       try { ws.send(`\r\n\x1b[2m[${what} exited with code ${exitCode}]\x1b[0m\r\n`); } catch { /* closing */ }
@@ -1225,7 +1259,7 @@ function startPtySession(
     term.write(str);
   });
 
-  const teardown = () => { if (alive) { alive = false; releaseHeld(); try { term.kill(); } catch { /* already dead */ } } };
+  const teardown = () => { if (alive) { alive = false; releaseHeld(); cleanupDeferred(); try { term.kill(); } catch { /* already dead */ } } };
   ws.on('close', teardown);
   ws.on('error', teardown);
 }

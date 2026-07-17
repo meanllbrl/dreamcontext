@@ -188,7 +188,7 @@ const WORKING_RE = /esc to interrupt|ctrl\+b to run in background/i;
  * for the upgrade URL never has to be truncated. When set it REPLACES `initialPrompt` on the
  * wire — pass one or the other, never both.
  */
-export function createSession(bypass: boolean, notify: () => void, claudeId: string, resume = false, kind: SessionKind = 'agent', initialPrompt = '', model = '', submitInitial = true, promptToken = ''): Session {
+export function createSession(bypass: boolean, notify: () => void, claudeId: string, resume = false, kind: SessionKind = 'agent', initialPrompt = '', model = '', submitInitial = true, promptToken = '', deferPrompt = false): Session {
   const id = `agent-${++sessionSeq}`;
   const container = document.createElement('div');
   container.className = 'agent-pane-term';
@@ -258,7 +258,12 @@ export function createSession(bypass: boolean, notify: () => void, claudeId: str
     : promptToken
       ? `&promptToken=${encodeURIComponent(promptToken)}`
       : `&prompt=${encodeURIComponent(initialPrompt)}`;
-  const url = `${proto}://${location.host}/api/agent/terminal?vault=${encodeURIComponent(vault ?? '')}&bypass=${bypassParam}&theme=${theme}${idParam}${kindParam}${modelParam}${promptParam}`;
+  // `deferPrompt` flips the prompt's DELIVERY, not its transport: the server parks it for the
+  // UserPromptSubmit hook instead of auto-submitting, so it joins the USER's first message as
+  // context rather than opening the conversation itself (the Task Manager pane's contract).
+  // Meaningful only when a server-submitted prompt exists at all.
+  const deferParam = serverSubmitsPrompt && deferPrompt ? '&deferPrompt=1' : '';
+  const url = `${proto}://${location.host}/api/agent/terminal?vault=${encodeURIComponent(vault ?? '')}&bypass=${bypassParam}&theme=${theme}${idParam}${kindParam}${modelParam}${promptParam}${deferParam}`;
   const ws = new WebSocket(url);
 
   const session: Session = {

@@ -335,9 +335,9 @@ export function AgentSurface() {
   // `promptToken` carries an initial prompt too large for the upgrade URL — mint it with
   // `preparePrompt` (lib/agentPrompt.ts) BEFORE calling spawn, so spawn itself stays
   // synchronous (the delegate ACK in lib/delegateAgent.ts depends on that).
-  const spawn = useCallback((bp: boolean, claudeId?: string, resume = false, kind: SessionKind = 'agent', initialPrompt = '', model = '', submitInitial = true, promptToken = '') => {
+  const spawn = useCallback((bp: boolean, claudeId?: string, resume = false, kind: SessionKind = 'agent', initialPrompt = '', model = '', submitInitial = true, promptToken = '', deferPrompt = false) => {
     // A shell has no permission model, so bypass is meaningless for it — force it off.
-    const s = createSession(kind === 'shell' ? false : bp, bumpStatus, claudeId ?? newClaudeId(), resume, kind, initialPrompt, model, submitInitial, promptToken);
+    const s = createSession(kind === 'shell' ? false : bp, bumpStatus, claudeId ?? newClaudeId(), resume, kind, initialPrompt, model, submitInitial, promptToken, deferPrompt);
     s.applyZoom(currentZoom());
     sessions.current.set(s.id, s);
     return s;
@@ -637,7 +637,12 @@ export function AgentSurface() {
     // Always ask to resume: the id is stable per task, and the server falls back to
     // `--session-id <same id>` when no transcript exists yet — so a never-curated task and a
     // half-curated one take the same path, and neither errors.
-    const s = spawn(detail.bypass, taskManagerConversationId(detail.slug), true, 'agent', detail.prompt, '', serverCurrent, detail.promptToken);
+    //
+    // deferPrompt=true: the pin prompt must NOT open the conversation — the session boots
+    // idle and the prompt rides the USER's first message as hook-injected context (see
+    // taskManagerAgent.ts). The server drops it entirely on a real resume, where the
+    // context is already in the transcript.
+    const s = spawn(detail.bypass, taskManagerConversationId(detail.slug), true, 'agent', detail.prompt, '', serverCurrent, detail.promptToken, true);
     tmRef.current.set(detail.slug, s.id);
     bumpTm();
     return true;

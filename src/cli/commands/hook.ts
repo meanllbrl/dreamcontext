@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { readFileSync, existsSync, statSync } from 'node:fs';
+import { readFileSync, existsSync, statSync, rmSync } from 'node:fs';
 import { execFileSync, execSync, spawn } from 'node:child_process';
 import { get as httpGet, request as httpRequest } from 'node:http';
 import { dirname, resolve, join, extname, basename, relative } from 'node:path';
@@ -478,6 +478,29 @@ export function getConsolidationDirective(state: SleepState): string | null {
     ].join('\n');
   }
   return null;
+}
+
+/**
+ * Consume a parked deferred prompt (Task Manager sessions) — the hook half of the
+ * `deferPrompt` contract with `agent-terminal.ts`. The embedded terminal parks a session's
+ * pin context in a tmp file instead of auto-submitting it, and exports the path as
+ * `DREAMCONTEXT_DEFERRED_PROMPT`; this reads the text and DELETES the file, so the context
+ * joins exactly one user message — the first — and every later prompt finds nothing.
+ *
+ * Returns '' whenever there is nothing to inject: no env, file already consumed, unreadable,
+ * or a path whose basename lacks the `dreamcontext-deferred-` prefix — that last check keeps
+ * a mangled/hostile env value from splicing an arbitrary file into the conversation context.
+ * Exported for tests.
+ */
+export function consumeDeferredPrompt(envPath: string | undefined): string {
+  const parked = envPath ?? '';
+  if (!parked || !basename(parked).startsWith('dreamcontext-deferred-') || !existsSync(parked)) return '';
+  let text = '';
+  try { text = readFileSync(parked, 'utf-8').trim(); } catch { return ''; }
+  // Single-use even when empty/unreadable-after-read: the file must never linger and
+  // re-inject on a later prompt.
+  try { rmSync(parked, { force: true }); } catch { /* tmp cleanup is best-effort */ }
+  return text;
 }
 
 /**
@@ -1131,6 +1154,20 @@ export function registerHookCommand(program: Command): void {
     .action(async () => {
       const input = readStdin();
       if (!input) process.exit(0);
+
+      // ── Deferred first-message context (Task Manager sessions) ──────────────
+      // The embedded terminal can park an initial prompt in a tmp file instead of
+      // auto-submitting it (agent-terminal.ts `deferPrompt`): the session boots
+      // idle, and the parked text joins the USER's first message as injected
+      // context — env inherited from the PTY through `claude`. Single-use:
+      // consumed (printed + deleted) on the first prompt, silent forever after.
+      // Runs before everything else — the pin context is what makes the session
+      // function, so neither a missing context root nor a mid-sleep lock may
+      // swallow it.
+      try {
+        const deferred = consumeDeferredPrompt(process.env.DREAMCONTEXT_DEFERRED_PROMPT);
+        if (deferred) console.log(deferred);
+      } catch { /* best-effort — a lost injection degrades to an unpinned session */ }
 
       const root = resolveContextRoot();
       if (!root) process.exit(0);

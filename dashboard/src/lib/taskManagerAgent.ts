@@ -103,24 +103,29 @@ export function forgetTaskManagerConversation(slug: string): void {
 }
 
 /**
- * The FIRST message: pin the agent to this task and load the skill that tells it how to manage one.
+ * The pin CONTEXT — injected alongside the user's FIRST message, never sent on its own.
+ *
+ * The session boots idle (`deferPrompt`, see agent-terminal.ts): opening a task must not
+ * spend tokens or start an agent talking before the user has asked anything. When the user
+ * does speak — typed into the terminal or via a quick action — the UserPromptSubmit hook
+ * splices this text in as context, so their first message arrives already pinned to the task.
+ * Written as CONTEXT, not as a request: the user's own message is the request, and this must
+ * not fight it with a competing instruction like "give me a read on the task".
  *
  * Deliberately short. It does NOT inline the task's body the way the delegate prompt does,
  * because the agent is about to read the file itself and the user is watching that same file —
- * an inlined copy would just be a second, staler version of what's on screen. The delegate
- * agent runs unattended and benefits from having the brief in-message; this one has the
- * document one Read away and a human next to it.
+ * an inlined copy would just be a second, staler version of what's on screen.
  *
  * `task-manager` is a core skill installed into every project (see skill-task-manager/SKILL.md), so
  * naming it here is enough for the session to load it.
  */
 export function buildTaskManagerPrompt(task: Task, title: string): string {
   return [
-    `Load the \`task-manager\` skill and manage this dreamcontext task with it. Do NOT implement the task — maintain its document.`,
+    `[Task Manager context — applies to this whole session] You are the Task Manager for one dreamcontext task. Load the \`task-manager\` skill and manage the task with it. Do NOT implement the task — maintain its document. Read the document before acting on it.`,
     `\nTask: ${title}`,
     `Slug: \`${task.slug}\``,
     `Document: \`${taskSourcePath(task.slug)}\``,
-    `\nRead the document first, then give me a SHORT read on its current state: is it clear, are the acceptance criteria testable, does anything look stale or already done? Then wait — I'll tell you what to change.`,
+    `\nNow answer the user's message with this context in mind.`,
   ].join('\n');
 }
 

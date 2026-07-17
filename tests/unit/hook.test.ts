@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer, type Server } from 'node:http';
 import {
   analyzeTranscript, scoreFromChangeCount, scoreFromToolCount, scoreFromSubstance,
   isJsTsFile, findFormatterConfig, findTsconfig, findProjectConfig,
-  resolveDashboardPort, isDashboardUp,
+  resolveDashboardPort, isDashboardUp, consumeDeferredPrompt,
 } from '../../src/cli/commands/hook.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -484,6 +484,59 @@ describe('resolveDashboardPort', () => {
     expect(resolveDashboardPort()).toBe(4173);
     process.env.DREAMCONTEXT_DASHBOARD_PORT = '0';
     expect(resolveDashboardPort()).toBe(4173);
+  });
+});
+
+describe('consumeDeferredPrompt', () => {
+  // The deferPrompt contract with agent-terminal.ts: the server parks the Task Manager pin
+  // context under this exact basename prefix, and the hook injects it on the FIRST user
+  // prompt only.
+  function parkFile(dir: string, name: string, content: string): string {
+    const path = join(dir, name);
+    writeFileSync(path, content, 'utf-8');
+    return path;
+  }
+
+  let dir: string;
+  beforeEach(() => { dir = makeTmpDir(); });
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+
+  it('returns the parked text and deletes the file (single-use)', () => {
+    const path = parkFile(dir, 'dreamcontext-deferred-abc.txt', '  pinned context  ');
+    expect(consumeDeferredPrompt(path)).toBe('pinned context');
+    expect(existsSync(path)).toBe(false);
+    // The second prompt of the session finds nothing — the context joined exactly one message.
+    expect(consumeDeferredPrompt(path)).toBe('');
+  });
+
+  it('returns "" for undefined / empty env', () => {
+    expect(consumeDeferredPrompt(undefined)).toBe('');
+    expect(consumeDeferredPrompt('')).toBe('');
+  });
+
+  it('returns "" for a missing file', () => {
+    expect(consumeDeferredPrompt(join(dir, 'dreamcontext-deferred-gone.txt'))).toBe('');
+  });
+
+  it('refuses a path without the deferred basename prefix, leaving the file alone', () => {
+    const path = parkFile(dir, 'passwords.txt', 'secret');
+    expect(consumeDeferredPrompt(path)).toBe('');
+    // Not consumed: the guard must not delete files it refuses to read.
+    expect(existsSync(path)).toBe(true);
+  });
+
+  it('prefix check is on the basename, not the directory', () => {
+    const nested = join(dir, 'dreamcontext-deferred-dir');
+    mkdirSync(nested, { recursive: true });
+    const path = parkFile(nested, 'other.txt', 'nope');
+    expect(consumeDeferredPrompt(path)).toBe('');
+    expect(existsSync(path)).toBe(true);
+  });
+
+  it('consumes an empty file silently (still single-use)', () => {
+    const path = parkFile(dir, 'dreamcontext-deferred-empty.txt', '   ');
+    expect(consumeDeferredPrompt(path)).toBe('');
+    expect(existsSync(path)).toBe(false);
   });
 });
 

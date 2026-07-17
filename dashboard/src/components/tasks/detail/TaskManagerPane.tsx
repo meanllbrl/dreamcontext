@@ -45,7 +45,9 @@ export function TaskManagerPane({ task, title }: TaskManagerPaneProps) {
   // you are reading — seeing what it is about to do is the point, not an obstacle.
   const [bypass, setBypass] = useState(false);
   // The session is requested ONCE per mounted pane. A re-request is harmless (the surface
-  // re-homes the existing session) but it would re-send the first message, so guard it.
+  // re-homes the existing session) but it would re-park the deferred pin context and
+  // re-dispatch for nothing, so guard it. The pin context itself is NOT auto-sent: the
+  // session boots idle and the context joins the user's first message (deferPrompt).
   const requested = useRef(false);
 
   useEffect(() => {
