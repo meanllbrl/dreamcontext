@@ -1410,6 +1410,7 @@ export function AgentSurface() {
       kind: meta.kind,
       info: deriveSessionStatus({ dormant: meta.dormant, status: s?.status, busy: s?.busy, asking: s?.asking }),
       attention: !meta.dormant && !!s?.attention,
+      claudeId: s?.claudeId,
     };
   });
   // Rows for the corner dock that floats over the EXPANDED overlay — only the sessions the

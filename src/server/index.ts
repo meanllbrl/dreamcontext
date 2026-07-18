@@ -84,6 +84,7 @@ import {
   handleAgentModelConfig,
   handleAgentSessionModel,
   handleAgentSessionStats,
+  handleAgentGoalLive,
   attachAgentTerminal,
 } from './routes/agent-terminal.js';
 import { handleAgentDrop } from './routes/agent-drop.js';
@@ -294,6 +295,7 @@ function buildRouter(): Router {
   router.get('/api/agent/model-config', handleAgentModelConfig);
   router.get('/api/agent/session-model', handleAgentSessionModel);
   router.get('/api/agent/session-stats', handleAgentSessionStats);
+  router.get('/api/agent/goal-live', handleAgentGoalLive);
   router.post('/api/agent/open-terminal', handleOpenTerminal);
   // In-app prerequisite installer (Claude CLI / node-pty) — vault-agnostic.
   router.post('/api/agent/install', handleAgentInstall);

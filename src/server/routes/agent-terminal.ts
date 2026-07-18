@@ -1263,3 +1263,50 @@ function startPtySession(
   ws.on('close', teardown);
   ws.on('error', teardown);
 }
+
+// ─── Goal-skill live state (in-app live panel) ────────────────────────────────
+
+const GOAL_LIVE_INACTIVE = { active: false } as const;
+
+/** A live file older than this is an abandoned run — same contract as the CLI strip. */
+const GOAL_LIVE_MAX_AGE_MS = 3 * 3600 * 1000;
+
+/** GET /api/agent/goal-live?claudeId=<uuid> — the vault's goal-skill live run state
+ *  (`_dream_context/tmp/.goal-skill-live.json`) for the in-app panel above the composer.
+ *
+ *  Session scoping (same contract as the terminal statusline): the orchestrator stamps
+ *  its CURRENT conversation id into the file as `session`. A pane matches when its
+ *  pinned tab id OR its map-resolved current conversation id equals that stamp. A
+ *  stamped file that matches neither → inactive for this pane. An UNSTAMPED file (an
+ *  older skill wrote it) stays visible to every pane — back-compat over silence.
+ *  Vault-scoped (contextRoot from the vault header); no desktop gate — the plain
+ *  browser dashboard renders the panel the same way. */
+export async function handleAgentGoalLive(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string | null,
+): Promise<void> {
+  if (!contextRoot) { sendJson(res, 200, GOAL_LIVE_INACTIVE); return; }
+  const url = new URL(req.url || '/', `http://${req.headers.host}`);
+  const claudeId = sanitizeUuid(url.searchParams.get('claudeId'));
+
+  let state: Record<string, unknown>;
+  try {
+    state = JSON.parse(readFileSync(join(contextRoot, 'tmp', '.goal-skill-live.json'), 'utf-8'));
+  } catch {
+    sendJson(res, 200, GOAL_LIVE_INACTIVE); return; // no active run
+  }
+  const upd = Date.parse(String(state?.updated ?? state?.started ?? ''));
+  if (!upd || Date.now() - upd > GOAL_LIVE_MAX_AGE_MS) {
+    sendJson(res, 200, GOAL_LIVE_INACTIVE); return; // abandoned run
+  }
+
+  const stamp = typeof state.session === 'string' ? state.session : '';
+  if (stamp && claudeId && stamp !== claudeId) {
+    const current = resolveAgentSession(contextRoot, claudeId);
+    if (stamp !== current) { sendJson(res, 200, GOAL_LIVE_INACTIVE); return; }
+  }
+
+  sendJson(res, 200, { active: true, state });
+}

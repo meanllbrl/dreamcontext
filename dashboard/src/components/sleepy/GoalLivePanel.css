@@ -1,0 +1,159 @@
+/* Goal-skill live panel — compact bar above the composer + expanded popup.
+   Dark-surface styling to sit flush with the agent terminal chrome. */
+
+/* ── Compact bar ─────────────────────────────────────────────────────────── */
+
+.goal-live-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 12px;
+  border: 0;
+  border-top: 1px solid rgba(139, 92, 246, 0.25);
+  background: linear-gradient(180deg, rgba(139, 92, 246, 0.10), rgba(139, 92, 246, 0.04));
+  color: #d6d3e3;
+  font: 500 11.5px/1.4 var(--font-mono, ui-monospace, monospace);
+  cursor: pointer;
+  text-align: left;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.goal-live-bar:hover { background: linear-gradient(180deg, rgba(139, 92, 246, 0.16), rgba(139, 92, 246, 0.07)); }
+
+.goal-live-mark { color: #b197fc; font-weight: 700; }
+.goal-live-goal { color: #8b8898; overflow: hidden; text-overflow: ellipsis; max-width: 18ch; flex-shrink: 1; }
+
+.goal-live-phases {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+.goal-live-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  color: #5c5f66;
+}
+.goal-live-chip i { font-style: normal; }
+.goal-live-chip[data-state='done'] { color: #51cf66; }
+.goal-live-chip[data-state='active'] { color: #22d3ee; font-weight: 700; }
+.goal-live-chip em { font-style: normal; color: #e6b317; }
+.goal-live-chip[data-heat='2'] em { color: #ffd43b; }
+.goal-live-chip[data-heat='3'] em { color: #fa5252; }
+
+.goal-live-forks { display: inline-flex; align-items: center; gap: 3px; margin-left: 4px; }
+.goal-live-forks b,
+.goal-live-dock-forks b {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #5c5f66;
+}
+.goal-live-forks b[data-s='done'], .goal-live-dock-forks b[data-s='done'] { background: #40c057; }
+.goal-live-forks b[data-s='run'], .goal-live-dock-forks b[data-s='run'] { background: #fab005; animation: goal-live-pulse 1.4s ease-in-out infinite; }
+.goal-live-forks b[data-s='fail'], .goal-live-dock-forks b[data-s='fail'] { background: #fa5252; }
+.goal-live-forks u { text-decoration: none; color: #4dabf7; margin-left: 3px; }
+
+.goal-live-tail { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; flex-shrink: 0; }
+.goal-live-done { color: #51cf66; font-weight: 700; }
+.goal-live-mins { color: #8b8898; }
+.goal-live-expand { color: #8b8898; }
+.goal-live-bar:hover .goal-live-expand { color: #b197fc; }
+
+@keyframes goal-live-pulse {
+  50% { opacity: 0.35; }
+}
+
+/* Narrow pane (container query context = agentpane): drop the goal name so phases keep room. */
+@container agentpane (max-width: 560px) {
+  .goal-live-goal { display: none; }
+  .goal-live-mins { display: none; }
+}
+
+/* ── Expanded popup ──────────────────────────────────────────────────────── */
+
+.goal-live-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(8, 8, 12, 0.55);
+  backdrop-filter: blur(3px);
+}
+.goal-live-popup {
+  background: #17171c;
+  border: 1px solid rgba(139, 92, 246, 0.35);
+  border-radius: 14px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+  max-width: min(960px, calc(100vw - 48px));
+  max-height: calc(100vh - 64px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  color: #e8e8ec;
+}
+.goal-live-popup header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 14px 18px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.goal-live-popup h3 { margin: 0; font-size: 15px; color: #b197fc; }
+.goal-live-popup-goal { color: #a9a6b6; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+.goal-live-popup-meta { color: #8b8898; font-size: 12px; font-family: var(--font-mono, monospace); flex-shrink: 0; }
+.goal-live-close {
+  border: 0;
+  background: transparent;
+  color: #8b8898;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 6px;
+  align-self: center;
+}
+.goal-live-close:hover { color: #fff; background: rgba(255, 255, 255, 0.08); }
+
+/* Responsive: the graph keeps its natural size and scrolls horizontally when the
+   viewport is narrower than the six-node row. */
+.goal-live-graph-scroll { overflow-x: auto; padding: 8px 8px 14px; }
+
+.goal-live-edge { stroke: #4a4a55; stroke-width: 2; }
+.goal-live-arrowhead { fill: #4a4a55; }
+.goal-live-arc { fill: none; stroke-width: 2; stroke-dasharray: 6 5; color: inherit; }
+.goal-live-arc-label { font: 700 12px var(--font-mono, monospace); text-anchor: middle; }
+
+.goal-live-node rect { fill: #232329; stroke: #5c5f66; stroke-width: 1.6; }
+.goal-live-node text {
+  fill: #8b8898;
+  font: 600 13px var(--font-mono, monospace);
+  text-anchor: middle;
+}
+.goal-live-node[data-state='done'] rect { fill: rgba(64, 192, 87, 0.14); stroke: #40c057; }
+.goal-live-node[data-state='done'] text { fill: #69db7c; }
+.goal-live-node[data-state='active'] rect { fill: rgba(34, 211, 238, 0.14); stroke: #22d3ee; stroke-width: 2.4; }
+.goal-live-node[data-state='active'] text { fill: #66e0f0; }
+
+.goal-live-sat-line { stroke: #3a3a44; stroke-width: 1.4; }
+.goal-live-wave { fill: #4dabf7; font: 600 12px var(--font-mono, monospace); text-anchor: middle; }
+
+/* ── Dock badge (minimized chip) ─────────────────────────────────────────── */
+
+.goal-live-dock-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+  font: 600 10px/1.2 var(--font-mono, monospace);
+  color: #b197fc;
+  white-space: nowrap;
+}
+.goal-live-dock-forks { display: inline-flex; gap: 2px; margin-left: 2px; }
+.goal-live-dock-forks b { width: 5px; height: 5px; }

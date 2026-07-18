@@ -1,6 +1,58 @@
 [
   {
     "date": "2026-07-18",
+    "type": "feat",
+    "scope": "app",
+    "description": "New GET /api/agent/goal-live serves the goal-skill live state per pane (session stamp matched against the pane's pinned tab id or its map-resolved current conversation id; unstamped files stay visible for back-compat; 3h staleness). GoalLivePanel renders a compact live bar directly above the agent composer (phase chips with loop heat, implementer fork dots, wave counter, elapsed) and expands on click into a portal popup with the Excalidraw-viewer-style SVG graph (phase nodes, heat arcs, fork satellites; Esc/backdrop close; horizontally scrollable when narrow, goal name auto-hides in narrow panes via container query). Minimized dock chips carry a sleepy-team badge (phase + wave + fork dots). The terminal statusline strip remains as the CLI fallback; the app panel is the primary surface per user decision.",
+    "breaking": false,
+    "summary": "Goal-skill live panel in the app: session-scoped bar above the composer, click-to-expand SVG viewer popup, sleepy-team badge on minimized dock chips",
+    "references": [
+      "task:feat-app-goal-skill-live-panel-above-the-agent-composer-sleepy-team-dock-chip",
+      "file:src/server/routes/agent-terminal.ts",
+      "file:dashboard/src/components/sleepy/GoalLivePanel.tsx"
+    ]
+  },
+  {
+    "date": "2026-07-18",
+    "type": "docs",
+    "scope": "goal-skill",
+    "description": "Documented the proven fork/resume mechanics for goal-skill v2's builder lane as first-class knowledge (patterns/fork-resume-builder-sessions.md). Covers the three CLI operations (claude -p --output-format json mints a session_id; claude -p --resume <id> pays ~10 new input tokens for the delta; claude -p --resume <id> --fork-session inherits the parent context in a new session). Includes the fork-base rule (fork from the planner's CLI session, never the orchestrator's Claude Code chat) and the keep-the-base-lean corollary. Provenance: user-requested 'learn while building it' capture during the v2 rewrite, not itself a board item.",
+    "breaking": false,
+    "summary": "New knowledge file: fork/resume builder sessions pattern — CLI session lifecycle for goal-skill v2",
+    "references": [
+      "knowledge:fork-resume-builder-sessions",
+      "task:goal-skill-v2-fork-resume"
+    ]
+  },
+  {
+    "date": "2026-07-18",
+    "type": "feat",
+    "scope": "agents",
+    "description": "Added dashboard infrastructure for rendering goal-skill's live run state above the in-app composer. New GET /api/agent/goal-live endpoint (src/server/routes/agent-terminal.ts) reads _dream_context/tmp/.goal-skill-live.json and returns {active:boolean, state?} scoped by session: the orchestrator stamps CLAUDE_CODE_SESSION_ID as 'session'; a pane matches when its claudeId equals that stamp. Unstamped files (legacy runs) stay visible everywhere (back-compat). 3h max-age abandonment check. New useAgentGoalLive hook (dashboard/src/hooks/useAgentCapabilities.ts) polls 2s while enabled. Type model in dashboard/src/lib/goalLive.ts (GoalLiveResponse, GoalLiveState, phase model). UNCOMMITTED — endpoint wired, types shipped, no UI renderer yet.",
+    "breaking": false,
+    "summary": "Goal-skill live run state panel: GET /api/agent/goal-live endpoint, session-scoped to orchestrator's conversation",
+    "references": [
+      "file:src/server/routes/agent-terminal.ts",
+      "file:dashboard/src/lib/goalLive.ts",
+      "file:dashboard/src/hooks/useAgentCapabilities.ts"
+    ]
+  },
+  {
+    "date": "2026-07-18",
+    "type": "feat",
+    "scope": "announcements",
+    "description": "Orchestrated 11-session multi-wave build of a complete dashboard Announcements surface: hand-authored seed (dashboard/public/announcements.json, ships with npm package — not vault-scoped), type-safe parsing + unread logic in React-free lib/announcements.ts (so root Vitest can import it), react-query hooks (useAnnouncements, useAnnouncementInbox), full page (AnnouncementsPage), centered modal popup (AnnouncementsModal, fires on load when unread), sidebar nav entry with unread count badge (Sidebar extends Page union + nav group), megaphone icon, routing wiring (Shell VALID_PAGES + App PageRouter + modal mount inside vault Shell only), i18n keys. Unread state = localStorage seen-id set (dreamcontext.dashboard.announcementsSeen); fetch cache-busted via ?v=__DC_VERSION__ (static server's immutable 1y cache). Seed content: goal-skill v2 announcement (fork/resume, tiers, parallel waves). 10 tasks (T1 lib → T2 seed + T3 i18n → T4 hooks + T5 tests → T6 page + T7 modal + T8 sidebar → T9 icon + T10 wiring) executed in 4 waves with build+test gates; all acceptance criteria met per task changelog. UNCOMMITTED — full working tree, not yet tested by orchestrator.",
+    "breaking": false,
+    "summary": "Dashboard Announcements / What's New section: page, modal, sidebar badge, unread tracking via localStorage",
+    "references": [
+      "task:announcements-whats-new",
+      "file:dashboard/src/lib/announcements.ts",
+      "file:dashboard/public/announcements.json",
+      "file:tests/unit/announcements.test.ts"
+    ]
+  },
+  {
+    "date": "2026-07-18",
     "type": "fix",
     "scope": "goal-skill",
     "description": "The live status strip leaked into EVERY Claude Code session of a project because the state file is project-scoped and the statusline read it unconditionally. Fix: orchestrator stamps $CLAUDE_CODE_SESSION_ID into .goal-skill-live.json as 'session'; statusline-goalskill.cjs reads Claude Code's stdin payload and renders only when session_id matches. Back-compat: either side missing → render everywhere (old skill / manual runs). Demo script stamps its launching session too. Verified: match renders, mismatch silent, legacy file renders, broken stdin renders.",

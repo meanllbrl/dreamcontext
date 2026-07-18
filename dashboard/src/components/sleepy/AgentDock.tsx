@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { SleepyMascot } from './SleepyMascot';
+import { GoalDockBadge } from './GoalLivePanel';
 import { orderRows, rollupKind, type SessionRow } from './agentStatus';
 
 /**
@@ -96,6 +97,11 @@ export function AgentDock({ rows, focusedId, onOpen, onClose, className }: {
                     {row.info.label}
                     {busyish && <span className="agent-dock-chip-dots" aria-hidden><i /><i /><i /></span>}
                   </span>
+                  {/* Sleepy-team line: a minimized agent running a goal-skill cycle
+                      shows its live phase + implementer dots right on the chip. */}
+                  {row.kind === 'agent' && (
+                    <GoalDockBadge claudeId={row.claudeId} enabled={!!row.claudeId} />
+                  )}
                 </span>
                 {row.attention && row.info.kind !== 'asking' && <span className="agent-dock-chip-badge" aria-label="Waiting for you" />}
                 <button

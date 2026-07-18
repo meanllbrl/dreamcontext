@@ -51,6 +51,9 @@ export interface SessionRow {
   info: SessionStatusInfo;
   /** A backgrounded session finished / rang the bell since you last looked at it. */
   attention: boolean;
+  /** The session's Claude conversation id (agents only) — lets the dock chip poll
+   *  per-conversation live state (goal-skill run badge). Absent for shells/dormant. */
+  claudeId?: string;
 }
 
 export interface SessionStatusInput {

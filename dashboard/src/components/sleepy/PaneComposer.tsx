@@ -1,4 +1,5 @@
 import { AgentComposerBar } from './AgentComposerBar';
+import { GoalLivePanel } from './GoalLivePanel';
 import { useAgentSessionStats } from '../../hooks/useAgentCapabilities';
 import type { ModelConfig } from '../../lib/agentComposer';
 
@@ -28,7 +29,11 @@ export function PaneComposer({
 }) {
   const stats = useAgentSessionStats(claudeId, isAgent && isLiveAgent).data;
   return (
-    <AgentComposerBar
+    <>
+      {/* Goal-skill live panel — renders only while THIS pane's conversation runs the
+          orchestrator (server-side session scoping); sits directly above the composer. */}
+      <GoalLivePanel claudeId={claudeId} enabled={isAgent && isLiveAgent} />
+      <AgentComposerBar
       onInsert={onInsert}
       onPickFiles={onPickFiles}
       onPickFolders={onPickFolders}
@@ -38,9 +43,10 @@ export function PaneComposer({
       effort={effort}
       onModelChange={onModelChange}
       onEffortChange={onEffortChange}
-      disabled={!isLiveAgent}
-      skillsDisabled={!isAgent}
-      stats={isAgent ? stats : null}
-    />
+        disabled={!isLiveAgent}
+        skillsDisabled={!isAgent}
+        stats={isAgent ? stats : null}
+      />
+    </>
   );
 }

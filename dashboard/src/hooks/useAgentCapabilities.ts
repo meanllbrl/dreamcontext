@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { Capabilities } from '../components/sleepy/agentSession';
 import { FALLBACK_MODEL_CONFIG, type ModelConfig, type SessionStats } from '../lib/agentComposer';
+import type { GoalLiveResponse } from '../lib/goalLive';
 
 /**
  * Agent prerequisite probe (`GET /api/agent/capabilities`) — desktop gate + node-pty
@@ -63,5 +64,26 @@ export function useAgentSessionStats(claudeId: string | undefined, enabled: bool
     staleTime: 4_000,
     retry: false,
     placeholderData: EMPTY_STATS,
+  });
+}
+
+const GOAL_LIVE_INACTIVE: GoalLiveResponse = { active: false };
+
+/**
+ * The vault's goal-skill live run state for THIS pane (`GET /api/agent/goal-live`),
+ * polled while a live agent backs the pane. The server scopes by session: a stamped
+ * run that belongs to another conversation returns `{active:false}` here, so the
+ * panel only ever renders above the orchestrator's own composer. Cheap poll — the
+ * server just reads one small JSON file.
+ */
+export function useAgentGoalLive(claudeId: string | undefined, enabled: boolean) {
+  return useQuery({
+    queryKey: ['agent-goal-live', claudeId],
+    queryFn: () => api.get<GoalLiveResponse>(`/agent/goal-live?claudeId=${encodeURIComponent(claudeId!)}`),
+    enabled: enabled && !!claudeId,
+    refetchInterval: enabled ? 2_000 : false,
+    staleTime: 1_500,
+    retry: false,
+    placeholderData: GOAL_LIVE_INACTIVE,
   });
 }
