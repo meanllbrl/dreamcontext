@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, rmSync, writeFileSync, existsSync, realpathSync, statSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync, readFileSync, existsSync, realpathSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -208,6 +208,105 @@ describe('installPack — video-watching (bundleDir + executable engine)', () =>
       expect(manifest.files[p]?.kind).toBe('pack-skill');
     }
     expect(manifest.packs['video-watching']).toBeDefined();
+  });
+});
+
+// ─── A11 — pack assets + statusLine (goal-skill) ──────────────────────────────
+
+describe('installPack — goal-skill assets + statusLine (claude)', () => {
+  it('A11a: copies the .cjs helpers into .claude/ and records them as pack-asset', () => {
+    const result = installPack('goal-skill', tmpDir, ['claude'], manifest);
+
+    for (const f of ['statusline-goalskill.cjs', 'goal-skill-viewer.cjs', 'goal-skill-demo.cjs']) {
+      const rel = `.claude/${f}`;
+      expect(existsSync(join(tmpDir, '.claude', f))).toBe(true);
+      expect(result.installed).toContain(rel);
+      expect(manifest.files[rel]?.kind).toBe('pack-asset');
+      expect(isSafeDeletePath(rel)).toBe(true);
+    }
+  });
+
+  it('A11b: registers statusLine in .claude/settings.json when absent', () => {
+    installPack('goal-skill', tmpDir, ['claude'], manifest);
+
+    const settings = JSON.parse(
+      readFileSync(join(tmpDir, '.claude', 'settings.json'), 'utf-8'),
+    );
+    expect(settings.statusLine).toEqual({
+      type: 'command',
+      command: 'node .claude/statusline-goalskill.cjs',
+      padding: 0,
+    });
+  });
+
+  it('A11c: NEVER clobbers a foreign statusLine — warns instead', () => {
+    mkdirSync(join(tmpDir, '.claude'), { recursive: true });
+    const foreign = { type: 'command', command: 'my-own-statusline.sh' };
+    writeFileSync(
+      join(tmpDir, '.claude', 'settings.json'),
+      JSON.stringify({ statusLine: foreign }, null, 2),
+      'utf-8',
+    );
+
+    const result = installPack('goal-skill', tmpDir, ['claude'], manifest);
+
+    const settings = JSON.parse(
+      readFileSync(join(tmpDir, '.claude', 'settings.json'), 'utf-8'),
+    );
+    expect(settings.statusLine).toEqual(foreign);
+    expect(result.warnings.some((w) => w.includes('statusLine'))).toBe(true);
+  });
+
+  it('A11d: refreshes a stale OWN statusLine registration on re-install', () => {
+    mkdirSync(join(tmpDir, '.claude'), { recursive: true });
+    writeFileSync(
+      join(tmpDir, '.claude', 'settings.json'),
+      JSON.stringify(
+        { statusLine: { type: 'command', command: 'node old/path/statusline-goalskill.cjs' } },
+        null,
+        2,
+      ),
+      'utf-8',
+    );
+
+    installPack('goal-skill', tmpDir, ['claude'], manifest);
+
+    const settings = JSON.parse(
+      readFileSync(join(tmpDir, '.claude', 'settings.json'), 'utf-8'),
+    );
+    expect(settings.statusLine.command).toBe('node .claude/statusline-goalskill.cjs');
+  });
+
+  it('A11e: uninstall removes the assets, drops manifest entries, and unregisters OUR statusLine', () => {
+    installPack('goal-skill', tmpDir, ['claude'], manifest);
+    const result = uninstallPack('goal-skill', tmpDir, ['claude'], manifest);
+
+    for (const f of ['statusline-goalskill.cjs', 'goal-skill-viewer.cjs', 'goal-skill-demo.cjs']) {
+      const rel = `.claude/${f}`;
+      expect(existsSync(join(tmpDir, '.claude', f))).toBe(false);
+      expect(result.removed).toContain(rel);
+      expect(manifest.files[rel]).toBeUndefined();
+    }
+    const settings = JSON.parse(
+      readFileSync(join(tmpDir, '.claude', 'settings.json'), 'utf-8'),
+    );
+    expect(settings.statusLine).toBeUndefined();
+    // other keys survive
+    expect(settings.hooks ?? settings.autoMemoryEnabled ?? 'ok').toBeDefined();
+  });
+
+  it('A11f: uninstall keeps a foreign statusLine untouched', () => {
+    installPack('goal-skill', tmpDir, ['claude'], manifest);
+    const foreign = { type: 'command', command: 'my-own-statusline.sh' };
+    const settingsPath = join(tmpDir, '.claude', 'settings.json');
+    const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    settings.statusLine = foreign;
+    writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
+
+    uninstallPack('goal-skill', tmpDir, ['claude'], manifest);
+
+    const after = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    expect(after.statusLine).toEqual(foreign);
   });
 });
 

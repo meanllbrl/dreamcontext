@@ -4,6 +4,7 @@ import {
   readFileSync,
   writeFileSync,
   readdirSync,
+  copyFileSync,
   cpSync,
   rmSync,
 } from 'node:fs';
@@ -11,11 +12,15 @@ import { basename, dirname, join, resolve, sep } from 'node:path';
 import {
   loadCatalog,
   platformSkillRoot,
+  platformAssetRoot,
   isPackInstalledForPlatform,
   type Catalog,
   type CatalogPack,
   type CatalogStandalone,
+  type CatalogAsset,
+  type CatalogSettings,
 } from './catalog.js';
+import { applyClaudeStatusLine, removeClaudeStatusLine } from './claude-settings.js';
 import {
   recordFile,
   recordPack,
@@ -225,6 +230,57 @@ function installStandaloneFiles(
   return [rel];
 }
 
+// ─── Pack Asset + Settings Installation ──────────────────────────────────────
+
+/**
+ * Install a pack's runtime assets (helper scripts) into the platform asset root
+ * (`.claude/` for claude) and register its settings (statusLine). Shared by
+ * packs and standalones. Dest paths are bounded to the asset root via
+ * safeChildPath — an entry can never write outside `.claude/`.
+ */
+function installEntryAssets(
+  entry: { name: string; assets?: CatalogAsset[]; settings?: CatalogSettings },
+  sourceDir: string,
+  projectRoot: string,
+  platform: PlatformId,
+  manifest: Manifest | undefined,
+  warnings: string[],
+): string[] {
+  const installed: string[] = [];
+  const assetRoot = platformAssetRoot(projectRoot, platform);
+  const assetRootRel = assetRoot.replace(projectRoot + sep, '').split('\\').join('/');
+
+  for (const asset of entry.assets ?? []) {
+    const src = join(sourceDir, asset.file);
+    if (!existsSync(src)) {
+      warnings.push(`${entry.name}: asset source "${asset.file}" missing from package — skipped`);
+      continue;
+    }
+    const destAbs = safeChildPath(assetRoot, asset.dest);
+    if (!destAbs || destAbs === resolve(assetRoot)) {
+      warnings.push(`${entry.name}: asset dest "${asset.dest}" escapes ${assetRootRel}/ — skipped`);
+      continue;
+    }
+    mkdirSync(dirname(destAbs), { recursive: true });
+    copyFileSync(src, destAbs); // raw byte copy — scripts and binaries survive
+    const rel = `${assetRootRel}/${asset.dest.split('\\').join('/')}`;
+    recordIfManifest(manifest, rel, 'pack-asset');
+    installed.push(rel);
+  }
+
+  const statusLine = entry.settings?.statusLine;
+  if (statusLine) {
+    const res = applyClaudeStatusLine(projectRoot, statusLine);
+    if (res === 'conflict') {
+      warnings.push(
+        `${entry.name}: an existing statusLine was left untouched — to use the ${entry.name} strip, set "statusLine" in .claude/settings.json to run: ${statusLine.command}`,
+      );
+    }
+  }
+
+  return installed;
+}
+
 // ─── Public: install ──────────────────────────────────────────────────────────
 
 /**
@@ -254,6 +310,9 @@ export function installPack(
   if (pack) {
     for (const platform of platforms) {
       installed.push(...installPackFiles(pack, packsDir, projectRoot, catalog, platform, manifest));
+      installed.push(
+        ...installEntryAssets(pack, join(packsDir, pack.name), projectRoot, platform, manifest, warnings),
+      );
     }
 
     // Cross-pack dependency warnings (plain strings; CLI/UI presents them).
@@ -269,6 +328,16 @@ export function installPack(
   } else if (standalone) {
     for (const platform of platforms) {
       installed.push(...installStandaloneFiles(standalone, packsDir, projectRoot, platform, manifest));
+      installed.push(
+        ...installEntryAssets(
+          standalone,
+          dirname(join(packsDir, standalone.file)),
+          projectRoot,
+          platform,
+          manifest,
+          warnings,
+        ),
+      );
     }
   }
 
@@ -390,6 +459,24 @@ export function uninstallPack(
 
     for (const rel of collectSkillFiles(name, projectRoot, platform, manifest, skillDirAbs)) {
       candidates.add(rel);
+    }
+  }
+
+  // Pack assets: catalog is the authority for which .claude/ helpers belong to
+  // this pack; the statusLine registration is removed only when it is still ours.
+  const entry = pack ?? standalone;
+  for (const asset of entry?.assets ?? []) {
+    for (const platform of platforms) {
+      const assetRoot = platformAssetRoot(projectRoot, platform);
+      const assetRootRel = assetRoot.replace(projectRoot + sep, '').split('\\').join('/');
+      const destAbs = safeChildPath(assetRoot, asset.dest);
+      if (!destAbs || destAbs === resolve(assetRoot)) continue;
+      candidates.add(`${assetRootRel}/${asset.dest.split('\\').join('/')}`);
+    }
+  }
+  if (entry?.settings?.statusLine) {
+    if (removeClaudeStatusLine(projectRoot, entry.settings.statusLine.command)) {
+      warnings.push(`removed statusLine registration (${entry.settings.statusLine.command})`);
     }
   }
 

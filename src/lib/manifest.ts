@@ -4,7 +4,14 @@ import { fileURLToPath } from 'node:url';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-export type ManagedFileKind = 'core' | 'agent' | 'skill' | 'hook' | 'pack-skill' | 'pack-agent';
+export type ManagedFileKind =
+  | 'core'
+  | 'agent'
+  | 'skill'
+  | 'hook'
+  | 'pack-skill'
+  | 'pack-agent'
+  | 'pack-asset';
 
 export interface ManagedFileEntry {
   version: string;

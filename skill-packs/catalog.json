@@ -164,7 +164,7 @@
     },
     {
       "name": "council",
-      "description": "Load when the user wants to debate a non-trivial decision, asks for a second opinion, says 'help me decide', 'run this by council', or invokes /council. Orchestrates 3\u201310 persona sub-agents across multiple rounds, then a synthesizer writes a final decision report.",
+      "description": "Load when the user wants to debate a non-trivial decision, asks for a second opinion, says 'help me decide', 'run this by council', or invokes /council. Orchestrates 3–10 persona sub-agents across multiple rounds, then a synthesizer writes a final decision report.",
       "tags": [
         "council",
         "debate",
@@ -223,7 +223,7 @@
     },
     {
       "name": "goal-skill",
-      "description": "Load when the user wants to drive a non-trivial goal to completion under sub-agent orchestration, or invokes /goal-skill. Triggers: 'drive this goal to completion', 'subagent-driven development', 'SDD', 'orchestrate this build', 'run this end-to-end with reviewers'. For multi-step features/fixes too large or risky for a single straight-line pass.",
+      "description": "Load when the user wants to drive a non-trivial goal to completion under sub-agent orchestration, or invokes /goal-skill. Triggers: 'drive this goal to completion', 'subagent-driven development', 'SDD', 'orchestrate this build', 'run this end-to-end with reviewers'. For multi-step features/fixes too large or risky for a single straight-line pass. v2: CLI builder sessions fork once and resume per round, clean fresh judges, a tier router (S/M/L) scales ceremony, and dependency-map waves parallelize implementation.",
       "tags": [
         "goal",
         "orchestration",
@@ -234,7 +234,7 @@
         "validation"
       ],
       "alwaysApply": false,
-      "base": "Subagent-driven goal completion: the main agent orchestrates plan -> plan-review -> task-doc -> implement -> code-review -> validate, iterating each gate (cap 3, then escalate) until validation passes against user-agreed criteria. Reuses the engineering reviewer for code review and the dreamcontext task system as the working doc.",
+      "base": "Subagent-driven goal completion: builders (planner, implementers) run as CLI sessions that fork once and resume per round, while judges (plan-reviewers, code reviewer, validator) stay clean and fresh each round, meeting the work only through the task doc. A tier router (S/M/L, with a hot-path override for auth/crypto/env/migrations) scales ceremony to goal size; a dependency-map table drives wave-parallel implementation; loops iterate to convergence by signal (new findings resume the builder, repeated findings trigger one re-fork, then escalate) rather than a fixed iteration count, until validation passes against user-agreed criteria. Reuses the engineering reviewer for code review and the dreamcontext task system as the working doc.",
       "subSkills": [],
       "relatedAgents": [
         "goal-planner",
@@ -245,7 +245,28 @@
       ],
       "crossPackDeps": [
         "engineering (planner/implementer/reviewer load engineering standards)"
-      ]
+      ],
+      "assets": [
+        {
+          "file": "assets/statusline-goalskill.cjs",
+          "dest": "statusline-goalskill.cjs"
+        },
+        {
+          "file": "assets/goal-skill-viewer.cjs",
+          "dest": "goal-skill-viewer.cjs"
+        },
+        {
+          "file": "assets/goal-skill-demo.cjs",
+          "dest": "goal-skill-demo.cjs"
+        }
+      ],
+      "settings": {
+        "statusLine": {
+          "type": "command",
+          "command": "node .claude/statusline-goalskill.cjs",
+          "padding": 0
+        }
+      }
     }
   ],
   "standalone": [
@@ -338,7 +359,7 @@
         "marketing-monitor",
         "marketing-creative"
       ],
-      "corpus_status": "9 videos \u00b7 4 speakers \u00b7 draft \u00b7 agent roster: 2 active (strategy, monitor) + 1 stubbed (creative)"
+      "corpus_status": "9 videos · 4 speakers · draft · agent roster: 2 active (strategy, monitor) + 1 stubbed (creative)"
     },
     {
       "name": "system-prompts",
@@ -453,7 +474,7 @@
       "name": "marketing-strategy",
       "file": "agents/marketing-strategy.md",
       "pack": "meta-marketing",
-      "description": "Strategy Optimizer for Meta ads \u2014 plans cohort hypotheses (shape-validated), drafts campaign briefs grounded in the meta-marketing skill-pack corpus, always asks for budget, never launches.",
+      "description": "Strategy Optimizer for Meta ads — plans cohort hypotheses (shape-validated), drafts campaign briefs grounded in the meta-marketing skill-pack corpus, always asks for budget, never launches.",
       "tags": [
         "meta",
         "ads",
@@ -468,7 +489,7 @@
       "name": "marketing-monitor",
       "file": "agents/marketing-monitor.md",
       "pack": "meta-marketing",
-      "description": "Performance Monitor for live Meta campaigns \u2014 reads insights, applies post-launch rules from account-ops.md \u00a74, writes hypothesis-ledger entries to per-day learnings, recommends moves but never auto-mutates.",
+      "description": "Performance Monitor for live Meta campaigns — reads insights, applies post-launch rules from account-ops.md §4, writes hypothesis-ledger entries to per-day learnings, recommends moves but never auto-mutates.",
       "tags": [
         "meta",
         "ads",
@@ -482,7 +503,7 @@
       "name": "marketing-creative",
       "file": "agents/marketing-creative.md",
       "pack": "meta-marketing",
-      "description": "Creative Director for Meta ads \u2014 STUBBED in v0. Refuses all requests until marketing.creative_director.enabled = true. v1 will merge brainstorming + copy + asset generation.",
+      "description": "Creative Director for Meta ads — STUBBED in v0. Refuses all requests until marketing.creative_director.enabled = true. v1 will merge brainstorming + copy + asset generation.",
       "tags": [
         "meta",
         "ads",
@@ -509,7 +530,7 @@
       "name": "review-security",
       "file": "agents/review-security.md",
       "pack": "multi-review",
-      "description": "Security specialist in the multi-review team. Reviews ONLY for security defects \u2014 exploitable vulnerabilities, secret leakage, auth/authz gaps, injection, SSRF/CSRF/XSS, env-var exposure, weak crypto, insecure deserialization. Outputs a bounded greptile-style report.",
+      "description": "Security specialist in the multi-review team. Reviews ONLY for security defects — exploitable vulnerabilities, secret leakage, auth/authz gaps, injection, SSRF/CSRF/XSS, env-var exposure, weak crypto, insecure deserialization. Outputs a bounded greptile-style report.",
       "tags": [
         "review",
         "security",
@@ -523,7 +544,7 @@
       "name": "review-cloud-functions",
       "file": "agents/review-cloud-functions.md",
       "pack": "multi-review",
-      "description": "Cloud Functions specialist in the multi-review team. Reviews ONLY Firebase Cloud Functions and serverless function changes \u2014 idempotency, infinite-loop risk, scaling/concurrency, cold-start cost, retry semantics, secrets handling, unbounded fan-out, billing footguns, trigger-loop hazards.",
+      "description": "Cloud Functions specialist in the multi-review team. Reviews ONLY Firebase Cloud Functions and serverless function changes — idempotency, infinite-loop risk, scaling/concurrency, cold-start cost, retry semantics, secrets handling, unbounded fan-out, billing footguns, trigger-loop hazards.",
       "tags": [
         "review",
         "cloud-functions",
@@ -537,7 +558,7 @@
       "name": "review-frontend",
       "file": "agents/review-frontend.md",
       "pack": "multi-review",
-      "description": "Frontend specialist in the multi-review team. Reviews ONLY frontend changes (React/Vue/Svelte/Next/web components/CSS) \u2014 file-size scalability, hook correctness, accessibility, bundle bloat, render perf, state management, design-token discipline, i18n, and frontend-specific security (XSS sinks, token storage).",
+      "description": "Frontend specialist in the multi-review team. Reviews ONLY frontend changes (React/Vue/Svelte/Next/web components/CSS) — file-size scalability, hook correctness, accessibility, bundle bloat, render perf, state management, design-token discipline, i18n, and frontend-specific security (XSS sinks, token storage).",
       "tags": [
         "review",
         "frontend",
@@ -551,7 +572,7 @@
       "name": "review-edge-cases",
       "file": "agents/review-edge-cases.md",
       "pack": "multi-review",
-      "description": "Edge-case and production-risk specialist in the multi-review team. The paranoid one. Enumerates failure modes the other specialists don't own \u2014 empty/null/undefined inputs, off-by-one, concurrency, partial successes, retries, network failures, clock skew, timezone bugs, locale assumptions, state machine gaps, error swallowing. Always included for tier >= Lite.",
+      "description": "Edge-case and production-risk specialist in the multi-review team. The paranoid one. Enumerates failure modes the other specialists don't own — empty/null/undefined inputs, off-by-one, concurrency, partial successes, retries, network failures, clock skew, timezone bugs, locale assumptions, state machine gaps, error swallowing. Always included for tier >= Lite.",
       "tags": [
         "review",
         "edge-cases",
@@ -565,7 +586,7 @@
       "name": "biv-researcher",
       "file": "agents/biv-researcher.md",
       "pack": "business-idea-validation",
-      "description": "Research specialist for BIV pipeline. Executes Stage 1 (Problem Discovery \u2014 Reddit mining, forum analysis, Google Trends) and Stage 4 (Competitive Intelligence \u2014 competitor dossiers, gap analysis, 2x2 matrix). Heavy web research.",
+      "description": "Research specialist for BIV pipeline. Executes Stage 1 (Problem Discovery — Reddit mining, forum analysis, Google Trends) and Stage 4 (Competitive Intelligence — competitor dossiers, gap analysis, 2x2 matrix). Heavy web research.",
       "tags": [
         "biv",
         "research",
@@ -579,7 +600,7 @@
       "name": "biv-customer-analyst",
       "file": "agents/biv-customer-analyst.md",
       "pack": "business-idea-validation",
-      "description": "Customer analysis specialist for BIV pipeline. Executes Stage 2 (Customer Analysis \u2014 segmentation, personas, beachhead selection) and Stage 5 (AI-simulated Customer Validation from forum data).",
+      "description": "Customer analysis specialist for BIV pipeline. Executes Stage 2 (Customer Analysis — segmentation, personas, beachhead selection) and Stage 5 (AI-simulated Customer Validation from forum data).",
       "tags": [
         "biv",
         "customer",
@@ -593,7 +614,7 @@
       "name": "biv-market-analyst",
       "file": "agents/biv-market-analyst.md",
       "pack": "business-idea-validation",
-      "description": "Market sizing specialist for BIV pipeline. Executes Stage 3 (Market Sizing \u2014 TAM/SAM/SOM via top-down and bottom-up analysis, ambition-level gating).",
+      "description": "Market sizing specialist for BIV pipeline. Executes Stage 3 (Market Sizing — TAM/SAM/SOM via top-down and bottom-up analysis, ambition-level gating).",
       "tags": [
         "biv",
         "market",
@@ -608,7 +629,7 @@
       "name": "biv-strategist",
       "file": "agents/biv-strategist.md",
       "pack": "business-idea-validation",
-      "description": "Strategy specialist for BIV pipeline. Executes Stage 6 (Synthesis & Hypothesis \u2014 opportunity snapshot, riskiest assumptions, testable hypothesis, RICE features), Stage 7 (GTM Strategy \u2014 channels, messaging, first-100-users plan), and optional Lean Canvas capstone.",
+      "description": "Strategy specialist for BIV pipeline. Executes Stage 6 (Synthesis & Hypothesis — opportunity snapshot, riskiest assumptions, testable hypothesis, RICE features), Stage 7 (GTM Strategy — channels, messaging, first-100-users plan), and optional Lean Canvas capstone.",
       "tags": [
         "biv",
         "strategy",
@@ -622,7 +643,7 @@
       "name": "biv-financial-analyst",
       "file": "agents/biv-financial-analyst.md",
       "pack": "business-idea-validation",
-      "description": "Financial viability specialist for BIV pipeline. Executes Stage 8 (Year 1 P&L, unit economics \u2014 CAC/LTV/LTV:CAC, sensitivity analysis, Year 2 outlook).",
+      "description": "Financial viability specialist for BIV pipeline. Executes Stage 8 (Year 1 P&L, unit economics — CAC/LTV/LTV:CAC, sensitivity analysis, Year 2 outlook).",
       "tags": [
         "biv",
         "financial",
@@ -636,7 +657,7 @@
       "name": "biv-decision-gate",
       "file": "agents/biv-decision-gate.md",
       "pack": "business-idea-validation",
-      "description": "Final decision specialist for BIV pipeline. Executes Stage 9 (Go/No-Go \u2014 scores 8 dimensions across Desirability/Feasibility/Viability, applies risk penalties, produces verdict: GO/PIVOT/NO-GO with specific next steps).",
+      "description": "Final decision specialist for BIV pipeline. Executes Stage 9 (Go/No-Go — scores 8 dimensions across Desirability/Feasibility/Viability, applies risk penalties, produces verdict: GO/PIVOT/NO-GO with specific next steps).",
       "tags": [
         "biv",
         "decision",
@@ -649,7 +670,7 @@
       "name": "goal-planner",
       "file": "agents/goal-planner.md",
       "pack": "goal-skill",
-      "description": "Planning specialist for goal-skill. Produces a rigorous file-by-file implementation plan by reading the codebase + dreamcontext context. Does not write code or the task doc. Dispatched at Phase 1.",
+      "description": "Planning specialist for goal-skill. Runs as a CLI builder session (fork once, resume per revision round) and produces a rigorous file-by-file plan plus a dependency-map table (task/files owned/depends on/wave/contract) by reading the codebase + dreamcontext context, thinking xhigh. Does not write code or the task doc. Dispatched at Phase 1.",
       "tags": [
         "goal",
         "planning",
@@ -662,7 +683,7 @@
       "name": "goal-plan-reviewer",
       "file": "agents/goal-plan-reviewer.md",
       "pack": "goal-skill",
-      "description": "Plan reviewer for goal-skill. Critiques a prose plan (pre-code) from one lens (pragmatist/critic/security) and returns SOLID or NEEDS_WORK with blocking findings. Distinct from the code reviewer. Dispatched in parallel at Phase 2.",
+      "description": "Plan reviewer for goal-skill. Dispatched clean and fresh every round, fed only the plan text from the task doc (never the planner's session), and critiques it from one lens (pragmatist/critic/security), returning SOLID or NEEDS_WORK with blocking findings. Distinct from the code reviewer. Dispatched in parallel at Phase 2.",
       "tags": [
         "goal",
         "plan-review",
@@ -675,7 +696,7 @@
       "name": "goal-implementer",
       "file": "agents/goal-implementer.md",
       "pack": "goal-skill",
-      "description": "Implementation specialist for goal-skill. Builds strictly to a validated task's acceptance criteria, logs progress, does not expand scope, stops+reports if the plan is wrong. Dispatched at Phase 4.",
+      "description": "Implementation specialist for goal-skill. Forked from the planner's CLI session for exactly one task/lane of the dependency map, thinking high; builds strictly to that lane's owned files and the validated task's acceptance criteria, logs progress, does not expand scope or edit the dependency map, and stops+reports if the plan is wrong. Dispatched per wave at Phase 4 (fork once, resume per fix).",
       "tags": [
         "goal",
         "implementation",

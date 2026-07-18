@@ -1,5 +1,44 @@
 [
   {
+    "date": "2026-07-18",
+    "type": "feat",
+    "scope": "distribution",
+    "description": "Closed the distribution gap where only .md files reached consumer projects. New catalog schema: assets[] ({file,dest}, dest bounded inside .claude/ via safeChildPath) and settings{statusLine} per pack/standalone. New pack-asset ManagedFileKind so update refreshes and prunes helpers. applyClaudeStatusLine ownership policy: installs when absent, refreshes own (script-basename match), NEVER clobbers a foreign statusLine (warns instead); uninstall removes assets and unregisters only our statusLine. update --core-only preserves pack-asset entries. goal-skill ships statusline-goalskill.cjs, goal-skill-viewer.cjs, goal-skill-demo.cjs and SKILL.md now auto-starts the viewer (idempotent curl probe + background node) at run start. 6 new unit tests A11a-f; e2e verified on a stale consumer project.",
+    "breaking": false,
+    "summary": "Skill packs ship runtime assets + settings: .cjs helpers land in .claude/, statusLine auto-registers; goal-skill's strip + viewer now reach every consumer via update",
+    "references": [
+      "task:fix-distribution-skill-packs-ship-all-assets-cjs-helpers-statusline-registration-via-setup-update",
+      "file:src/lib/install-packs.ts",
+      "file:src/lib/claude-settings.ts",
+      "file:skill-packs/catalog.json"
+    ]
+  },
+  {
+    "date": "2026-07-17",
+    "type": "feat",
+    "scope": "goal-skill",
+    "description": "Complete v2 rewrite of the goal-skill orchestrator built via the goal-skill process itself (plan v3 validated through 3 rounds, then 7 parallel implementer sessions forked from the planner). The orchestrator now runs planner + implementers as resumable CLI builder sessions (claude -p --output-format json captures session_id; --resume pays only the delta; --fork-session mints N implementers from one planner base — each inheriting the full context without re-exploration). Plan-review and code-review remain clean+fresh judge agents (never forked). Convergence shifted from fixed iteration caps to signal-based loops with an 8-round safety valve (no numeric caps anywhere). Added tier router (S/M/L by goal size + auth/crypto/env/migrations hot-path override; planner = xhigh/opus for L, high/sonnet for M/S; implementers = high/sonnet). Parallel implementer waves (max 3 concurrent; same-file tasks stay in the same lane; pinned contracts; single-writer discipline on the task doc + dependency map; build+test gate between waves). Five files changed: SKILL.md (full rewrite +382/-95), goal-planner.md (+34 role-rebind + CLI-builder lifecycle), goal-implementer.md (+43 role-rebind + wave-lane discipline + engineering always-loaded), goal-plan-reviewer.md (+7 clean+fresh independence note), catalog.json (pack + agent descriptions rewritten to v2 language; the old 'cap 3, then escalate' phrasing removed). New knowledge file patterns/fork-resume-builder-sessions.md documents the proven fork/resume mechanics (session d68255f2, fork f3657df6, resume ~10 input tokens at cache-read price). Dogfood run: plan converged in 3 rounds (each revision paid 2 new input tokens via resume — 74-90K context served from cache), 8 builder sessions + 6 judge runs, ~45 minutes vs v1's 1.5h. Validation PASS (all 17 acceptance criteria, including the literal session-registry Contract 2 block in SKILL.md + citation phrases in planner/implementer, no numeric caps via extended grep, mirror byte-identity via diff -q).",
+    "breaking": false,
+    "summary": "Goal-skill v2: fork/resume builder sessions, convergence-by-signal, tier router, parallel implementer waves",
+    "references": [
+      "file:skill-packs/goal-skill/SKILL.md",
+      "file:skill-packs/agents/goal-planner.md",
+      "file:skill-packs/agents/goal-plan-reviewer.md",
+      "file:skill-packs/agents/goal-implementer.md",
+      "file:skill-packs/catalog.json",
+      "knowledge:fork-resume-builder-sessions",
+      "task:goal-skill-v2-fork-resume"
+    ]
+  },
+  {
+    "date": "2026-07-17",
+    "type": "note",
+    "scope": "quick",
+    "summary": "Backlog groomed (2026-07-17): RICE-scored all 14 open tasks; created planning version 0.19.0 (active) with 8 tasks — theme: sync integrity (repoint-list data loss, watermark hiding teammate tasks, ...",
+    "description": "Backlog groomed (2026-07-17): RICE-scored all 14 open tasks; created planning version 0.19.0 (active) with 8 tasks — theme: sync integrity (repoint-list data loss, watermark hiding teammate tasks, ClickUp provenance/version round-trip), release-infra fixes (init bare-array bug bumped to high/high, releases-add scoping), embedding beta rollout (closes improve-recall-mechanism), task-authoring UX (author-via-agent + New-button fix, serve simplified-ux target 7/31). Created spike-codex-opencode-re-addition-scoping for the empty include-codex-opencode-support objective. Left in BACKLOG: knowledge-move board-dir bug, cycle-relabel, launcher portfolio view, graphify interop, both web moonshots (web-hosted scored 1.25 — lowest).",
+    "breaking": false
+  },
+  {
     "date": "2026-07-17",
     "type": "change",
     "scope": "migration",

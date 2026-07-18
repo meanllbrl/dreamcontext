@@ -19,6 +19,30 @@ export interface CatalogSubSkill {
   hasReferences?: boolean;
 }
 
+/**
+ * A runtime helper file a pack ships into the consumer project's platform dir
+ * (e.g. `.claude/statusline-goalskill.cjs`). `file` is relative to the pack's
+ * source dir inside skill-packs/; `dest` is relative to the platform dir
+ * (`.claude/`) and must resolve strictly inside it.
+ */
+export interface CatalogAsset {
+  file: string;
+  dest: string;
+}
+
+/**
+ * Settings a pack registers in the consumer's `.claude/settings.json`.
+ * Only keys modeled here are ever written — arbitrary settings injection is
+ * deliberately impossible.
+ */
+export interface CatalogSettings {
+  statusLine?: {
+    type: 'command';
+    command: string;
+    padding?: number;
+  };
+}
+
 export interface CatalogPack {
   name: string;
   description: string;
@@ -28,6 +52,8 @@ export interface CatalogPack {
   subSkills: CatalogSubSkill[];
   relatedAgents?: string[];
   crossPackDeps?: string[];
+  assets?: CatalogAsset[];
+  settings?: CatalogSettings;
 }
 
 export interface CatalogStandalone {
@@ -43,6 +69,8 @@ export interface CatalogStandalone {
    * alongside the prompt (e.g. excalidraw's board generator scripts).
    */
   bundleDir?: boolean;
+  assets?: CatalogAsset[];
+  settings?: CatalogSettings;
 }
 
 export interface CatalogAgent {
@@ -72,6 +100,15 @@ export interface Catalog {
  */
 export function platformSkillRoot(projectRoot: string, _platform: PlatformId): string {
   return join(projectRoot, '.claude', 'skills');
+}
+
+/**
+ * Root directory where pack runtime assets (helper scripts, statusline
+ * renderers, …) are installed for a given platform.
+ * claude → <projectRoot>/.claude
+ */
+export function platformAssetRoot(projectRoot: string, _platform: PlatformId): string {
+  return join(projectRoot, '.claude');
 }
 
 /**

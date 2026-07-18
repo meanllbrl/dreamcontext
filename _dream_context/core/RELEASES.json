@@ -1,5 +1,16 @@
 [
   {
+    "id": "rel_HH_LQdLz",
+    "version": "0.19.0",
+    "date": "",
+    "summary": "Sync integrity (repoint/watermark/provenance), release-infra fixes, recall beta closeout, task-authoring UX",
+    "breaking": false,
+    "status": "planning",
+    "features": [],
+    "tasks": [],
+    "changelog": []
+  },
+  {
     "id": "rel_ODadgMbB",
     "version": "0.18.0",
     "date": "2026-07-17",

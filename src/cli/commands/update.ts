@@ -231,7 +231,11 @@ export function registerUpdateCommand(program: Command): void {
         // "removed" and offer to delete them.
         if (opts.coreOnly && !opts.packsOnly) {
           for (const [path, entry] of Object.entries(oldManifest.files)) {
-            if (entry.kind === 'pack-skill' || entry.kind === 'pack-agent') {
+            if (
+              entry.kind === 'pack-skill' ||
+              entry.kind === 'pack-agent' ||
+              entry.kind === 'pack-asset'
+            ) {
               newManifest.files[path] = entry;
             }
           }
