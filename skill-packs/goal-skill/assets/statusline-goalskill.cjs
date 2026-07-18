@@ -21,6 +21,23 @@ try {
 const upd = Date.parse(st.updated || st.started || 0);
 if (!upd || Date.now() - upd > 3 * 3600 * 1000) process.exit(0); // abandoned run
 
+// Session scoping: the strip renders ONLY in the session that is running the
+// goal-skill orchestrator. Claude Code feeds the statusline a JSON payload on
+// stdin (session_id, model, workspace, …); the orchestrator stamps its own
+// $CLAUDE_CODE_SESSION_ID into the live file as `session`. Any mismatch →
+// stay silent. Either side missing (old skill, manual run) → render for all
+// sessions (back-compat).
+let currentSession = '';
+try {
+  if (!process.stdin.isTTY) {
+    const input = JSON.parse(fs.readFileSync(0, 'utf8') || '{}');
+    currentSession = typeof input.session_id === 'string' ? input.session_id : '';
+  }
+} catch {
+  // no/invalid stdin payload — fall through to back-compat rendering
+}
+if (st.session && currentSession && st.session !== currentSession) process.exit(0);
+
 const ORDER = ['plan', 'review', 'task', 'impl', 'codereview', 'validate'];
 const LABEL = { plan: 'PLAN', review: 'REVIEW', task: 'TASK', impl: 'IMPL', codereview: 'CODE-REV', validate: 'VALIDATE' };
 const cur = st.phase === 'done' ? ORDER.length : Math.max(0, ORDER.indexOf(st.phase));

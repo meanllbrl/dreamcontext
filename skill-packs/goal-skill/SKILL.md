@@ -358,11 +358,17 @@ and implementer state change:
 
 ```bash
 mkdir -p _dream_context/tmp && cat > _dream_context/tmp/.goal-skill-live.json <<EOF
-{"goal":"<slug>","started":"<run-start ISO8601>","updated":"<now ISO8601>",
+{"goal":"<slug>","session":"${CLAUDE_CODE_SESSION_ID:-}",
+ "started":"<run-start ISO8601>","updated":"<now ISO8601>",
  "phase":"impl","iters":{"plan":2,"review":2},
  "impl":{"wave":1,"waves":3,"forks":[{"s":"done"},{"s":"run"},{"s":"wait"}]}}
 EOF
 ```
+
+- `session`: ALWAYS include it exactly as above (the shell expands
+  `$CLAUDE_CODE_SESSION_ID`). It scopes the strip to YOUR session — other Claude Code
+  sessions open on the same project stay clean. Without it the strip leaks into every
+  session of the project.
 
 - `phase`: `plan | review | task | impl | codereview | validate | done`.
 - `iters.<phase>`: loop count for that phase — the strip glows hotter the more it looped

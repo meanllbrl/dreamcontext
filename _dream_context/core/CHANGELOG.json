@@ -1,6 +1,18 @@
 [
   {
     "date": "2026-07-18",
+    "type": "fix",
+    "scope": "goal-skill",
+    "description": "The live status strip leaked into EVERY Claude Code session of a project because the state file is project-scoped and the statusline read it unconditionally. Fix: orchestrator stamps $CLAUDE_CODE_SESSION_ID into .goal-skill-live.json as 'session'; statusline-goalskill.cjs reads Claude Code's stdin payload and renders only when session_id matches. Back-compat: either side missing → render everywhere (old skill / manual runs). Demo script stamps its launching session too. Verified: match renders, mismatch silent, legacy file renders, broken stdin renders.",
+    "breaking": false,
+    "summary": "Live strip is now session-scoped: renders only in the orchestrator's session (CLAUDE_CODE_SESSION_ID stamp + statusline session_id match), other sessions on the same project stay clean",
+    "references": [
+      "task:fix-distribution-skill-packs-ship-all-assets-cjs-helpers-statusline-registration-via-setup-update",
+      "file:skill-packs/goal-skill/assets/statusline-goalskill.cjs"
+    ]
+  },
+  {
+    "date": "2026-07-18",
     "type": "feat",
     "scope": "distribution",
     "description": "Closed the distribution gap where only .md files reached consumer projects. New catalog schema: assets[] ({file,dest}, dest bounded inside .claude/ via safeChildPath) and settings{statusLine} per pack/standalone. New pack-asset ManagedFileKind so update refreshes and prunes helpers. applyClaudeStatusLine ownership policy: installs when absent, refreshes own (script-basename match), NEVER clobbers a foreign statusLine (warns instead); uninstall removes assets and unregisters only our statusLine. update --core-only preserves pack-asset entries. goal-skill ships statusline-goalskill.cjs, goal-skill-viewer.cjs, goal-skill-demo.cjs and SKILL.md now auto-starts the viewer (idempotent curl probe + background node) at run start. 6 new unit tests A11a-f; e2e verified on a stale consumer project.",
