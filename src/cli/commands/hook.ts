@@ -4,7 +4,7 @@ import { execFileSync, execSync, spawn } from 'node:child_process';
 import { get as httpGet, request as httpRequest } from 'node:http';
 import { dirname, resolve, join, extname, basename, relative } from 'node:path';
 import { resolveContextRoot } from '../../lib/context-path.js';
-import type { SleepState, Bookmark } from './sleep.js';
+import type { SleepState, Bookmark, SessionRecord } from './sleep.js';
 import { readSleepState, writeSleepState, bumpKnowledgeAccess, resolveRecallMode } from './sleep.js';
 import {
   upsertSessionOnStop,
@@ -14,12 +14,18 @@ import {
   DEBT_SLEEPY,
   DEBT_MUST_SLEEP,
   RHYTHM_SESSIONS,
+  effectiveDebt,
+  effectiveRhythm,
+  floorScoreForNeverFlushed,
+  NEVER_FLUSHED_FINALIZE_MS,
   type StopUpsertInput,
 } from '../../lib/sleep-consolidation.js';
 import { DECISION_RE, CORRECTION_RE } from '../../lib/salience.js';
-import { distillTranscript } from './transcript.js';
+import { distillTranscript, mergeDistilled, distillSubagents } from './transcript.js';
 import { buildDigest, writeDigest, digestExists, digestIsPartial } from '../../lib/session-digest.js';
-import { detectSalience } from '../../lib/salience.js';
+import { detectSalience, detectSalienceFromMessage } from '../../lib/salience.js';
+import { resolveTranscript } from '../../lib/transcript-locate.js';
+import type { TranscriptLocation } from '../../lib/transcript-locate.js';
 import { generateId } from '../../lib/id.js';
 import { generateSnapshot, generateSubagentBriefing } from './snapshot.js';
 import { listStaleRecs } from '../../lib/marketing/snapshot.js';
@@ -115,8 +121,11 @@ export function analyzeTranscript(transcriptPath: string): TranscriptAnalysis {
 
     // Extract task slugs from dreamcontext CLI commands and task file paths.
     // Only match within "command":"..." JSON values to avoid prose/explanation noise.
+    // AC8b: widened from log|insert|complete|create to also catch status/start/
+    // reopen/rename — every verb that names a task slug as its first positional
+    // arg, still anchored inside the quoted "command" value.
     const slugs = new Set<string>();
-    for (const m of content.matchAll(/"command"\s*:\s*"[^"]*dreamcontext\s+tasks?\s+(?:log|insert|complete|create)\s+(?:\\?["'])?([a-z0-9][a-z0-9-]*)/g)) {
+    for (const m of content.matchAll(/"command"\s*:\s*"[^"]*dreamcontext\s+tasks?\s+(?:log|insert|complete|create|status|start|reopen|rename)\s+(?:\\?["'])?([a-z0-9][a-z0-9-]*)/g)) {
       slugs.add(m[1]);
     }
     // Match task file paths in "file_path":"..." JSON values
@@ -241,6 +250,110 @@ export function scoreFromToolCount(count: number): number {
   if (count <= 15) return 1;
   if (count <= 40) return 2;
   return 3;
+}
+
+// ─── Stop-hook transcript-less capture (AC2a) ────────────────────────────────
+
+/**
+ * Decide which NEW auto-bookmarks to add for a Stop that fired with no
+ * transcript on disk yet. Pure: `existingMessages` is the de-dup set (bookmark
+ * message text already present, explicit or prior-auto), `ctx.makeId`/
+ * `ctx.nowISO` are injected so callers stay deterministic in tests. Every
+ * returned bookmark carries `capture: true` (auto-detected, not user-typed)
+ * and `session_id`/`task_slug` from the calling session. `[]` on a null/empty
+ * message or when every detected moment already exists.
+ */
+export function resolveStopCaptureBookmarks(
+  lastAssistantMessage: string | null,
+  existingMessages: Set<string>,
+  ctx: { sessionId: string; taskSlug: string | null; nowISO: string; makeId: () => string },
+): Bookmark[] {
+  const bookmarks: Bookmark[] = [];
+  for (const moment of detectSalienceFromMessage(lastAssistantMessage)) {
+    if (existingMessages.has(moment.message)) continue;
+    bookmarks.push({
+      id: ctx.makeId(),
+      message: moment.message,
+      salience: moment.salience,
+      created_at: ctx.nowISO,
+      session_id: ctx.sessionId,
+      task_slug: ctx.taskSlug,
+      capture: true,
+    });
+  }
+  return bookmarks;
+}
+
+// ─── SessionStart catch-up finalization (AC2/AC3/AC4/AC8b) ──────────────────
+
+export interface CatchupFinalizeResult {
+  changeCount: number;
+  toolCount: number;
+  score: number;
+  /** Existing task_slugs UNION transcript-extracted ones — never a replacement. */
+  taskSlugs: string[];
+  /** Always true — every result of this function is a catch-up finalization. */
+  catchupFinalized: true;
+  /** Amount to add to state.debt. Always equals `score`, named separately so
+   *  callers can't accidentally re-derive it and drift from `score`. */
+  debtDelta: number;
+}
+
+/**
+ * Decide the score-finalization outcome for ONE pending session (score ===
+ * null) during the SessionStart catch-up sweep, GIVEN an already-resolved
+ * `TranscriptLocation` (AC3 — caller resolves via `resolveTranscript`, probing
+ * flat-then-dir). Pure: no disk I/O, `nowMs` injected for determinism.
+ *
+ * Returns `null` when the session must stay PENDING — no main transcript under
+ * EITHER layout, and younger than `NEVER_FLUSHED_FINALIZE_MS` (still possibly
+ * LIVE in another tab). Once aged out, finalizes at the AC2 floor score
+ * (`floorScoreForNeverFlushed`) rather than zero, so real work recorded only in
+ * `last_assistant_message` isn't silently dropped from the debt ledger.
+ *
+ * When a transcript IS found, scores it exactly as the Stop hook would
+ * (max of change/tool/substance — WS-DEBT), and MERGES transcript-extracted
+ * task slugs into the session's existing ones (AC8b — union, never replace;
+ * this is the one-line fix for the `task_slugs: []` evidence baseline: the
+ * catch-up loop previously recomputed score but never wrote task_slugs at all).
+ *
+ * Every returned result carries `catchupFinalized: true` (AC4) — this session's
+ * debt arrived via a BULK catch-up pass, not at Stop time, which is exactly the
+ * signal `catchupDebtSplit` uses to cap auto-deep consolidation.
+ */
+export function resolveCatchupFinalization(
+  session: Pick<SessionRecord, 'stopped_at' | 'last_assistant_message' | 'task_slugs'>,
+  loc: TranscriptLocation,
+  nowMs: number,
+): CatchupFinalizeResult | null {
+  if (!loc.mainPath) {
+    const stoppedMs = Date.parse(session.stopped_at ?? '') || 0;
+    if (nowMs - stoppedMs < NEVER_FLUSHED_FINALIZE_MS) return null; // still pending
+    const floor = floorScoreForNeverFlushed(session.last_assistant_message);
+    return {
+      changeCount: 0,
+      toolCount: 0,
+      score: floor,
+      taskSlugs: session.task_slugs ?? [],
+      catchupFinalized: true,
+      debtDelta: floor,
+    };
+  }
+
+  const analysis = analyzeTranscript(loc.mainPath);
+  const score = Math.max(
+    scoreFromChangeCount(analysis.changeCount),
+    scoreFromToolCount(analysis.toolCount),
+    scoreFromSubstance(analysis),
+  );
+  return {
+    changeCount: analysis.changeCount,
+    toolCount: analysis.toolCount,
+    score,
+    taskSlugs: [...new Set([...(session.task_slugs ?? []), ...analysis.taskSlugs])],
+    catchupFinalized: true,
+    debtDelta: score,
+  };
 }
 
 // ─── Post-Edit Quality Checks ───────────────────────────────────────────────
@@ -410,7 +523,17 @@ function runTscCheckWithConfig(filePath: string, tsconfigPath: string): string |
 // ─── Consolidation Directives ───────────────────────────────────────────────
 
 export function getConsolidationDirective(state: SleepState): string | null {
-  const { debt, bookmarks, sessions_since_last_sleep } = state;
+  const { bookmarks } = state;
+
+  // AC1 — pending-session provisional debt: sessions still awaiting analysis
+  // (score === null, transcript not yet flushed) add ESTIMATED debt for
+  // directive/display purposes only. `eff.effective` is what every threshold
+  // below reads; `state.debt` (the exact, persisted ledger) is never touched.
+  const eff = effectiveDebt(state);
+  const debt = eff.effective;
+  const pendingLine = eff.pendingCount > 0
+    ? `${eff.pendingCount} session(s) awaiting analysis (+${eff.provisional} provisional debt; persisted debt ${eff.persisted}).`
+    : null;
 
   // If a consolidation is already in progress, suppress all directives to prevent
   // duplicate sleeps. A STALE lock (the owning sleep crashed before `sleep done`)
@@ -438,6 +561,7 @@ export function getConsolidationDirective(state: SleepState): string | null {
       ...(criticalBookmarks.length > 0
         ? [`${criticalBookmarks.length} critical bookmark(s) awaiting consolidation.`]
         : []),
+      ...(pendingLine ? [pendingLine] : []),
       'You MUST inform the user and consolidate NOW.',
       'Run sleep consolidation: follow SKILL.md "Sleep" flow — main agent does `sleep start`, then dispatches sleep-tasks/sleep-state (and sleep-product when signals warrant) in parallel, then `sleep done`.',
       'If the user has an urgent task, consolidate IMMEDIATELY after completing it.',
@@ -450,6 +574,7 @@ export function getConsolidationDirective(state: SleepState): string | null {
       '',
       `${criticalBookmarks.length} critical (★★★) bookmark(s) tagged for consolidation:`,
       ...criticalBookmarks.slice(0, 3).map(b => `  - ${b.message}`),
+      ...(pendingLine ? [pendingLine] : []),
       'These represent important decisions/constraints that should be consolidated into context files.',
       'Run sleep consolidation: follow SKILL.md "Sleep" flow — main agent does `sleep start`, then dispatches sleep-tasks/sleep-state (and sleep-product when signals warrant) in parallel, then `sleep done`.',
       '',
@@ -460,6 +585,7 @@ export function getConsolidationDirective(state: SleepState): string | null {
       '>> CONSOLIDATION RECOMMENDED <<',
       '',
       `Sleep debt is ${debt}/${DEBT_MUST_SLEEP}. Context files are growing stale.`,
+      ...(pendingLine ? [pendingLine] : []),
       'You MUST inform the user and recommend consolidation before starting new work.',
       'Run sleep consolidation: follow SKILL.md "Sleep" flow — main agent does `sleep start`, then dispatches sleep-tasks/sleep-state (and sleep-product when signals warrant) in parallel, then `sleep done`.',
       '',
@@ -468,14 +594,26 @@ export function getConsolidationDirective(state: SleepState): string | null {
   if (debt >= DEBT_DROWSY) {
     return [
       `> Sleep debt is ${debt}. After completing the current task, you MUST offer to consolidate.`,
+      ...(pendingLine ? [pendingLine] : []),
       '',
     ].join('\n');
   }
-  if (sessions_since_last_sleep >= RHYTHM_SESSIONS) {
+  // AC1 — rhythm counter counts pending sessions too (a session awaiting
+  // analysis still counts toward "sessions since last sleep").
+  const rhythm = effectiveRhythm(state);
+  if (rhythm >= RHYTHM_SESSIONS) {
     return [
-      `> ${sessions_since_last_sleep} sessions since last consolidation. After completing the current task, offer to consolidate.`,
+      `> ${rhythm} sessions since last consolidation. After completing the current task, offer to consolidate.`,
+      ...(pendingLine ? [pendingLine] : []),
       '',
     ].join('\n');
+  }
+  // AC1 — lowest-priority pending-only directive: closes the audit's exact
+  // blind spot (sessions sat score:null for hours, debt displayed 0, directive
+  // fully silent). Fires only when nothing above already surfaced the pending
+  // count via a higher-priority branch.
+  if (pendingLine) {
+    return `> ${pendingLine}\n`;
   }
   return null;
 }
@@ -517,7 +655,13 @@ export function consumeDeferredPrompt(envPath: string | undefined): string {
  * - else: null (silent).
  */
 export function userPromptReminder(state: SleepState): string | null {
-  const { debt, bookmarks } = state;
+  const { bookmarks } = state;
+
+  // AC1 — same effective-debt substitution as getConsolidationDirective:
+  // thresholds read persisted + provisional; state.debt is never touched.
+  const eff = effectiveDebt(state);
+  const debt = eff.effective;
+  const pendingSuffix = eff.pendingCount > 0 ? ` (${eff.pendingCount} awaiting analysis)` : '';
 
   const lock = inspectSleepLock(state, Date.now());
   if (lock.locked && !lock.stale) {
@@ -529,16 +673,21 @@ export function userPromptReminder(state: SleepState): string | null {
 
   const criticalBookmarks = bookmarks.filter(b => b.salience === 3);
   if (debt >= DEBT_MUST_SLEEP) {
-    return `Sleep debt is ${debt}. CONSOLIDATION REQUIRED. Run sleep flow per SKILL.md (parallel specialist fan-out) NOW.`;
+    return `Sleep debt is ${debt}${pendingSuffix}. CONSOLIDATION REQUIRED. Run sleep flow per SKILL.md (parallel specialist fan-out) NOW.`;
   }
   if (criticalBookmarks.length > 0) {
     return `${criticalBookmarks.length} critical bookmark(s) need consolidation. Run sleep flow per SKILL.md.`;
   }
   if (debt >= DEBT_SLEEPY) {
-    return `Sleep debt is ${debt}. Consolidation recommended before starting new work.`;
+    return `Sleep debt is ${debt}${pendingSuffix}. Consolidation recommended before starting new work.`;
   }
   if (debt >= DEBT_DROWSY) {
-    return `Sleep debt is ${debt}. After completing the current task, offer to consolidate.`;
+    return `Sleep debt is ${debt}${pendingSuffix}. After completing the current task, offer to consolidate.`;
+  }
+  // AC1 — lowest-priority pending-only reminder, mirroring the directive's
+  // bottom branch: fires only when no threshold above already surfaced it.
+  if (eff.pendingCount > 0) {
+    return `${eff.pendingCount} session(s) awaiting analysis (+${eff.provisional} provisional debt; persisted debt ${eff.persisted}).`;
   }
   return null;
 }
@@ -803,6 +952,27 @@ export function registerHookCommand(program: Command): void {
       };
       const nextState = upsertSessionOnStop(state, upsertInput);
 
+      // AC2(a) — transcript-less salience: when the transcript isn't on disk
+      // yet (Claude Code's lazy flush), mine `last_assistant_message` with the
+      // same DECISION_RE/CORRECTION_RE vocabulary so a never-flushed session
+      // still leaves a trace instead of vanishing until the 7-day floor.
+      // Wrapped — the Stop hook must NEVER throw; capture here is best-effort.
+      if (!transcriptOnDisk && lastAssistantMessage) {
+        try {
+          const stopSession = nextState.sessions.find(s => s.session_id === sessionId);
+          const taskSlug = stopSession?.task_slugs?.[0] ?? null;
+          const existingMessages = new Set(nextState.bookmarks.map(b => b.message));
+          const newBookmarks = resolveStopCaptureBookmarks(lastAssistantMessage, existingMessages, {
+            sessionId, taskSlug, nowISO: new Date().toISOString(), makeId: () => generateId('bm'),
+          });
+          for (const b of newBookmarks) nextState.bookmarks.unshift(b);
+        } catch (captureErr) {
+          if (process.env.DREAMCONTEXT_DEBUG) {
+            console.error('[stop-capture] error:', (captureErr as Error).message ?? captureErr);
+          }
+        }
+      }
+
       writeSleepState(root, nextState);
     });
 
@@ -918,38 +1088,33 @@ export function registerHookCommand(program: Command): void {
       for (const session of state.sessions) {
         if (session.score !== null) continue;
         if (!session.transcript_path) {
+          // No transcript path was EVER recorded (distinct from "not flushed
+          // yet" below) — nothing will ever appear for this session, so
+          // finalize immediately at the AC2 floor rather than waiting 7 days.
+          const floor = floorScoreForNeverFlushed(session.last_assistant_message);
           session.change_count = 0;
           session.tool_count = 0;
-          session.score = 0;
-          dirty = true;
-          continue;
-        }
-        // Transcript not flushed yet (Claude Code ≥2.1.x writes `<uuid>.jsonl` only on
-        // exit/rotation): the session may still be LIVE in another tab — leave it
-        // pending for a later start instead of zero-finalizing real work. After 7 days
-        // assume the file will never appear (hard-killed tab, hand-cleaned ~/.claude)
-        // and finalize at zero so the debt ledger stops carrying ghosts. A missing or
-        // unparseable stopped_at counts as aged out — finalize rather than pend forever.
-        if (!existsSync(session.transcript_path)) {
-          const stoppedMs = Date.parse(session.stopped_at ?? '') || 0;
-          if (Date.now() - stoppedMs < 7 * 24 * 60 * 60 * 1000) continue;
-          session.change_count = 0;
-          session.tool_count = 0;
-          session.score = 0;
+          session.score = floor;
+          session.catchup_finalized = true;
+          state.debt += floor;
           dirty = true;
           continue;
         }
 
-        const analysis = analyzeTranscript(session.transcript_path);
-        const score = Math.max(
-          scoreFromChangeCount(analysis.changeCount),
-          scoreFromToolCount(analysis.toolCount),
-          scoreFromSubstance(analysis),
-        );
-        session.change_count = analysis.changeCount;
-        session.tool_count = analysis.toolCount;
-        session.score = score;
-        state.debt += score;
+        // AC3 — shared resolver: probes the FLAT layout first (still what
+        // Claude Code writes today), then the DIR layout, so a future
+        // transcript-location change degrades gracefully instead of silently
+        // zeroing capture.
+        const loc = resolveTranscript(session.transcript_path, { sessionId: session.session_id });
+        const result = resolveCatchupFinalization(session, loc, Date.now());
+        if (result === null) continue; // still pending — a later start catches it up
+
+        session.change_count = result.changeCount;
+        session.tool_count = result.toolCount;
+        session.score = result.score;
+        session.task_slugs = result.taskSlugs; // AC8b — MERGE, never replace (done inside resolveCatchupFinalization)
+        session.catchup_finalized = result.catchupFinalized; // AC4
+        state.debt += result.debtDelta;
         dirty = true;
       }
 
@@ -961,15 +1126,25 @@ export function registerHookCommand(program: Command): void {
       // in its own try/catch so a single bad transcript can NEVER break the hook.
       for (const session of state.sessions) {
         if (!session.transcript_path) continue;
-        // Unflushed transcript (live session on CLI ≥2.1.x) — distilling the missing
-        // file would write an EMPTY digest that then permanently blocks the real one
-        // (digestExists gates this loop). Skip; a later start catches it up.
-        if (!existsSync(session.transcript_path)) continue;
+        // AC3 — shared resolver: probes FLAT then DIR. Neither layout has a
+        // main transcript yet (live session on CLI ≥2.1.x, or a genuinely
+        // unflushed dir-only layout) — distilling nothing would write an EMPTY
+        // digest that then permanently blocks the real one (digestExists gates
+        // this loop). Skip; a later start catches it up.
+        const loc = resolveTranscript(session.transcript_path, { sessionId: session.session_id });
+        if (!loc.mainPath) continue;
         // A PARTIAL digest (written by the PreCompact hook mid-session) does
         // not block the catch-up: the full-transcript digest supersedes it.
         if (digestExists(root, session.session_id) && !digestIsPartial(root, session.session_id)) continue;
         try {
-          const distilled = distillTranscript(session.transcript_path);
+          const mainDistilled = distillTranscript(loc.mainPath);
+          // AC8a — sub-agent harvest: merge findings from
+          // <sessionDir>/subagents/agent-*.jsonl into the same digest/salience
+          // pass. `distillSubagents` returns an all-empty section (never
+          // throws) when there's no sessionDir/no subagent files, so this is a
+          // no-op merge on every session that predates the dir layout.
+          const subagentDistilled = distillSubagents(loc);
+          const distilled = mergeDistilled([mainDistilled, subagentDistilled]);
 
           // C1: bounded digest.
           const md = buildDigest(distilled);
@@ -988,6 +1163,7 @@ export function registerHookCommand(program: Command): void {
               created_at: new Date().toISOString(),
               session_id: session.session_id,
               task_slug: taskSlug,
+              capture: true,
             };
             state.bookmarks.unshift(bookmark);
             dirty = true;

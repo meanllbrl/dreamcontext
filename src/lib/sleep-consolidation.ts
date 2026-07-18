@@ -19,6 +19,10 @@ export interface SessionRecord {
   tool_count: number | null;
   score: number | null;
   task_slugs: string[];
+  /** True when this session's score was finalized in BULK by a SessionStart
+   *  catch-up, not at Stop time. Absent on pre-v0.19.0 records → falsy, so
+   *  `catchupDebtSplit` treats legacy history as 100% organic (no cap). */
+  catchup_finalized?: boolean;
 }
 
 export interface Bookmark {
@@ -28,6 +32,9 @@ export interface Bookmark {
   created_at: string;
   session_id: string | null;
   task_slug: string | null;
+  /** Marks an auto-captured bookmark (structural salience detector) as opposed
+   *  to an explicit user bookmark. Absent/false = explicit. */
+  capture?: true;
 }
 
 export interface Trigger {
@@ -142,6 +149,79 @@ export const DEBT_MUST_SLEEP = 20;  // ≥ this: consolidation required (Must Sl
 /** Sessions-since-last-sleep that trips the rhythm reminder (independent of debt points). */
 export const RHYTHM_SESSIONS = 5;
 
+// ─── Pending-session provisional debt (AC1) ──────────────────────────────────
+// Claude Code's lazy transcript flush leaves un-analyzed sessions (`score ===
+// null`) sitting at ZERO debt for hours — real work the ledger doesn't see yet.
+// Provisional debt estimates that gap for DIRECTIVE/DISPLAY purposes only; it
+// is NEVER written into `state.debt` (that stays the exact sum of finalized
+// scores). Tuned BELOW the observed mean finalized score/session (debt_mean
+// 12.9 / sessions_mean 4.49 ≈ 2.9 — see .sleep-history.json, 89 cycles) so the
+// estimate under-reads reality rather than inflating it.
+
+/** Provisional debt credited per un-analyzed (score === null) session. */
+export const PENDING_SESSION_PROVISIONAL = 2;
+
+/**
+ * Hard cap on TOTAL provisional debt. 12 is deliberate: DEBT_DROWSY + 4, and
+ * strictly below DEBT_MUST_SLEEP — provisional debt ALONE can never produce a
+ * "CONSOLIDATION REQUIRED" directive. Only real, finalized debt does that.
+ */
+export const PENDING_PROVISIONAL_CAP = 12;
+
+/** Count sessions still awaiting analysis (score === null — pending finalization). */
+export function countPendingSessions(sessions: SessionRecord[]): number {
+  return sessions.reduce((count, s) => count + (s.score === null ? 1 : 0), 0);
+}
+
+export interface EffectiveDebt {
+  /** state.debt, verbatim — NEVER mutated by this module. */
+  persisted: number;
+  /** Sessions with score === null. */
+  pendingCount: number;
+  /** min(PENDING_PROVISIONAL_CAP, PENDING_SESSION_PROVISIONAL * pendingCount). */
+  provisional: number;
+  /** persisted + provisional — what directives/reminders should threshold on. */
+  effective: number;
+}
+
+/** Compute effective (persisted + provisional) debt for directive/display use. */
+export function effectiveDebt(state: SleepState): EffectiveDebt {
+  const persisted = state.debt;
+  const pendingCount = countPendingSessions(state.sessions);
+  const provisional = Math.min(PENDING_PROVISIONAL_CAP, PENDING_SESSION_PROVISIONAL * pendingCount);
+  return { persisted, pendingCount, provisional, effective: persisted + provisional };
+}
+
+/**
+ * Rhythm counter FLOOR: pending sessions always count toward "sessions since
+ * last sleep", even before their score finalizes. `upsertSessionOnStop` already
+ * bumps `sessions_since_last_sleep` for every new session regardless of score,
+ * so this is a max() floor — it can raise the effective count, never lower it
+ * below the persisted counter.
+ */
+export function effectiveRhythm(state: SleepState): number {
+  return Math.max(state.sessions_since_last_sleep, countPendingSessions(state.sessions));
+}
+
+// ─── Transcript-less finalization floor (AC2) ────────────────────────────────
+
+/** After this long, a never-flushed session is assumed lost (hard-killed tab,
+ *  hand-cleaned ~/.claude) and finalized rather than left pending forever. */
+export const NEVER_FLUSHED_FINALIZE_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Floor score for a session finalized WITHOUT ever seeing its transcript. */
+export const NEVER_FLUSHED_FLOOR_SCORE = 1;
+
+/**
+ * Score a session finalized at the 7-day mark with no transcript ever having
+ * appeared. A non-empty `last_assistant_message` proves real work happened —
+ * floor to NEVER_FLUSHED_FLOOR_SCORE (not 0) so that work isn't silently
+ * dropped from the debt ledger. No message at all → genuinely nothing to score.
+ */
+export function floorScoreForNeverFlushed(message: string | null | undefined): 0 | 1 {
+  return message && message.trim().length > 0 ? NEVER_FLUSHED_FLOOR_SCORE : 0;
+}
+
 /** Human-readable sleepiness label for a debt value. */
 export function sleepinessLevel(debt: number): 'Alert' | 'Drowsy' | 'Sleepy' | 'Must Sleep' {
   if (debt < DEBT_DROWSY) return 'Alert';
@@ -175,32 +255,104 @@ function depthFromDebt(debt: number): ConsolidationDepth {
   return 'deep';
 }
 
+/** The greater of two depths by DEPTH_ORDER position. Used by the catch-up cap
+ *  to floor at 'standard' — never below what non-catch-up debt alone gives. */
+function maxDepth(a: ConsolidationDepth, b: ConsolidationDepth): ConsolidationDepth {
+  return DEPTH_ORDER[Math.max(DEPTH_ORDER.indexOf(a), DEPTH_ORDER.indexOf(b))];
+}
+
+// ─── Catch-up debt split (AC4) ────────────────────────────────────────────────
+
+/** Share of current debt that must have arrived via catch-up before the
+ *  auto-deep cap engages. Boundary is INCLUSIVE (ratio >= 0.5 caps). */
+export const CATCHUP_DEEP_CAP_RATIO = 0.5;
+
+export interface CatchupDebtSplit {
+  /** Sum of all session scores (== recomputeDebt(sessions), scores only, no floor). */
+  total: number;
+  /** Sum of scores over sessions with catchup_finalized === true. */
+  catchup: number;
+  /** total - catchup. */
+  organic: number;
+  /** total > 0 ? catchup / total : 0 — never NaN. */
+  ratio: number;
+}
+
+/** Split current session debt into catch-up-finalized vs. organic (Stop-time
+ *  scored) portions. Legacy sessions (no `catchup_finalized` field) count as
+ *  organic — pre-v0.19.0 history never triggers the cap. */
+export function catchupDebtSplit(sessions: SessionRecord[]): CatchupDebtSplit {
+  let total = 0;
+  let catchup = 0;
+  for (const s of sessions) {
+    const score = s.score ?? 0;
+    total += score;
+    if (s.catchup_finalized) catchup += score;
+  }
+  const organic = total - catchup;
+  const ratio = total > 0 ? catchup / total : 0;
+  return { total, catchup, organic, ratio };
+}
+
 export interface DepthDecision {
   depth: ConsolidationDepth;
   reason: string;
   source: 'user' | 'agent' | 'debt';
+  /** Present (true) only when the AC4 catch-up cap actually lowered the
+   *  debt-derived base this cycle. Absent otherwise (never `false`). */
+  cappedByCatchup?: true;
 }
 
 /**
  * Resolve the consolidation depth for a cycle.
  *
- * Precedence (highest wins): userRequestedDeep → agentBump → debt base.
- * - `userRequestedDeep` forces UP to 'deep' (never lowers).
- * - `agentBump` steps the debt-base depth up by N tiers. The bump is clamped
- *   INSIDE this function to 0..2, so a negative/garbage bump can only neutralize
- *   (never lower below the debt base) and an over-large bump caps at 'deep'.
+ * Precedence (highest wins): userRequestedDeep → [AC4 catch-up cap on the debt
+ * base] → agentBump → debt base.
+ * - `userRequestedDeep` forces UP to 'deep' (never lowers) — checked FIRST, so
+ *   it always wins over the catch-up cap (existing precedence, unchanged).
+ * - AC4 catch-up cap: when the debt base is 'deep' AND at least
+ *   CATCHUP_DEEP_CAP_RATIO of current debt arrived via a single catch-up batch
+ *   (`opts.catchup`), the base is floored down to
+ *   max('standard', depthFromDebt(organic debt)). One-way: it can only PREVENT
+ *   an auto-deep, never grant one, and never lowers below what non-catch-up
+ *   debt alone would give (the max() floor). Absent `opts.catchup` (or debt 0,
+ *   or base below 'deep', or ratio < threshold) → no-op, byte-identical to the
+ *   pre-AC4 behavior.
+ * - `agentBump` steps the (possibly capped) base up by N tiers. The bump is
+ *   clamped INSIDE this function to 0..2, so a negative/garbage bump can only
+ *   neutralize (never lower below the base) and an over-large bump caps at
+ *   'deep'. Agent authority is independent of the catch-up cap: an agent can
+ *   still bump a capped 'standard' back up to 'deep' (source stays 'agent').
  *
  * Monotonic & bounded by construction: depth never drops below the debt base
+ * unless AC4's cap applies (and even then never below the organic-debt floor),
  * and never exceeds 'deep'.
  */
 export function consolidationDepth(
   debt: number,
-  opts: { userRequestedDeep?: boolean; agentBump?: number } = {},
+  opts: { userRequestedDeep?: boolean; agentBump?: number; catchup?: CatchupDebtSplit } = {},
 ): DepthDecision {
-  const base = depthFromDebt(debt);
+  const debtBase = depthFromDebt(debt);
 
   if (opts.userRequestedDeep) {
     return { depth: 'deep', reason: 'user requested deep consolidation', source: 'user' };
+  }
+
+  // AC4 — one-way cap. Only ever lowers a 'deep' debt base, and only down to
+  // the organic-debt floor (never below it, never below 'standard').
+  let base = debtBase;
+  let cappedByCatchup = false;
+  let capReason = '';
+  const catchup = opts.catchup;
+  if (catchup && debt > 0 && debtBase === 'deep' && catchup.ratio >= CATCHUP_DEEP_CAP_RATIO) {
+    const organicBase = depthFromDebt(catchup.organic);
+    const floor = maxDepth('standard', organicBase);
+    if (floor !== base) {
+      base = floor;
+      cappedByCatchup = true;
+      const pct = Math.round(catchup.ratio * 100);
+      capReason = `, capped to ${base} (${pct}% of debt arrived via catch-up; non-catch-up debt ${catchup.organic} → ${organicBase})`;
+    }
   }
 
   // Clamp the bump internally: negatives → 0, > 2 → 2. Never trust the caller.
@@ -212,10 +364,16 @@ export function consolidationDepth(
       depth: DEPTH_ORDER[idx],
       reason: `agent bumped depth by ${bump} tier(s) from ${base}`,
       source: 'agent',
+      ...(cappedByCatchup ? { cappedByCatchup: true as const } : {}),
     };
   }
 
-  return { depth: base, reason: `debt ${debt} → ${base}`, source: 'debt' };
+  return {
+    depth: base,
+    reason: cappedByCatchup ? `debt ${debt} → deep${capReason}` : `debt ${debt} → ${base}`,
+    source: 'debt',
+    ...(cappedByCatchup ? { cappedByCatchup: true as const } : {}),
+  };
 }
 
 /**

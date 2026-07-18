@@ -10,6 +10,12 @@ import {
   finalizeSleepState,
   recomputeDebt,
   sleepinessLevel,
+  PENDING_SESSION_PROVISIONAL,
+  PENDING_PROVISIONAL_CAP,
+  DEBT_DROWSY,
+  DEBT_SLEEPY,
+  DEBT_MUST_SLEEP,
+  RHYTHM_SESSIONS,
   type SleepState,
   type SessionRecord,
   type Bookmark,
@@ -81,6 +87,20 @@ function session(id: string, stoppedAt: string | null, score: number): SessionRe
     change_count: null,
     tool_count: null,
     score,
+    task_slugs: [],
+  };
+}
+
+/** A session still awaiting analysis (score === null — AC1 pending debt). */
+function pendingSession(id: string): SessionRecord {
+  return {
+    session_id: id,
+    transcript_path: `/tmp/${id}.jsonl`,
+    stopped_at: '2026-07-18T00:00:00.000Z',
+    last_assistant_message: null,
+    change_count: null,
+    tool_count: null,
+    score: null,
     task_slugs: [],
   };
 }
@@ -490,6 +510,121 @@ describe('sleep 360° — capture → consolidation loop (WS4)', () => {
     const buckets = attributeByPerson(commits, ['Mehmet Nuraydin']);
     expect(Object.keys(buckets)).toEqual(['mehmet-nuraydin']); // no bot buckets, no phantom
     expect(buckets['mehmet-nuraydin'].map(c => c.hash)).toEqual(['aaa']); // bots filtered out
+  });
+});
+
+describe('sleep 360° — AC1 pending-session provisional debt (directive/reminder integration, T7)', () => {
+  it('persisted 6 + 1 pending → effective 8 crosses into DROWSY; directive names the pending count', () => {
+    const state = baseState({ debt: 6, sessions: [pendingSession('p1')] });
+    const d = getConsolidationDirective(state);
+    expect(d).not.toBeNull();
+    expect(d).toContain(`Sleep debt is ${6 + PENDING_SESSION_PROVISIONAL}`);
+    expect(d).toContain('1 session(s) awaiting analysis');
+    expect(d).toContain('persisted debt 6');
+    expect(d).not.toContain('CONSOLIDATION RECOMMENDED');
+    expect(d).not.toContain('CONSOLIDATION REQUIRED');
+  });
+
+  it('persisted 12 + 1 pending → effective 14 crosses into SLEEPY (CONSOLIDATION RECOMMENDED)', () => {
+    const state = baseState({ debt: 12, sessions: [pendingSession('p1')] });
+    const d = getConsolidationDirective(state);
+    expect(d).toContain('CONSOLIDATION RECOMMENDED');
+    expect(d).toContain('1 session(s) awaiting analysis');
+  });
+
+  it('persisted 18 + 1 pending → effective 20 crosses into MUST SLEEP (CONSOLIDATION REQUIRED)', () => {
+    const state = baseState({ debt: 18, sessions: [pendingSession('p1')] });
+    const d = getConsolidationDirective(state);
+    expect(d).toContain('CONSOLIDATION REQUIRED');
+    expect(d).toContain('1 session(s) awaiting analysis');
+  });
+
+  it('safety invariant: persisted 0 + any pending count never alone reaches CONSOLIDATION REQUIRED', () => {
+    for (const n of [0, 1, 5, 6, 50]) {
+      const state = baseState({ debt: 0, sessions: Array.from({ length: n }, (_, i) => pendingSession(`p${i}`)) });
+      const d = getConsolidationDirective(state);
+      expect(d ?? '').not.toContain('CONSOLIDATION REQUIRED');
+    }
+  });
+
+  it('provisional debt is NEVER persisted into state.debt (directive/reminder are read-only)', () => {
+    const state = baseState({ debt: 6, sessions: [pendingSession('p1'), pendingSession('p2')] });
+    const frozen = JSON.parse(JSON.stringify(state));
+    getConsolidationDirective(state);
+    userPromptReminder(state);
+    expect(state.debt).toBe(frozen.debt);
+    expect(state).toEqual(frozen);
+  });
+
+  it('the audit case (persisted 0, 5 pending) now returns a non-null directive naming the pending count', () => {
+    // 5 pending * PENDING_SESSION_PROVISIONAL(2) = 10 provisional → effective 10,
+    // which already crosses DEBT_DROWSY(8) — the pre-existing Drowsy branch
+    // fires (not the new bottom-priority branch below), but the audit's exact
+    // blind spot (debt 0, 5 sessions score:null, directive fully silent) is closed.
+    const state = baseState({ debt: 0, sessions: Array.from({ length: 5 }, (_, i) => pendingSession(`p${i}`)) });
+    const d = getConsolidationDirective(state);
+    expect(d).not.toBeNull();
+    expect(d).toContain('5 session(s) awaiting analysis');
+    expect(d).toContain(`Sleep debt is ${DEBT_DROWSY + 2}`); // 0 + min(12, 5*2) = 10
+  });
+
+  it('new lowest-priority branch fires when pending debt alone stays BELOW every other threshold', () => {
+    // 3 pending * 2 = 6 provisional → effective 6, below DEBT_DROWSY(8) and
+    // below RHYTHM_SESSIONS with sessions_since_last_sleep 0 — nothing else
+    // fires, so this exercises the new bottom branch specifically.
+    const state = baseState({ debt: 0, sessions: Array.from({ length: 3 }, (_, i) => pendingSession(`p${i}`)) });
+    const d = getConsolidationDirective(state);
+    expect(d).not.toBeNull();
+    expect(d).toContain('3 session(s) awaiting analysis');
+    expect(d).not.toContain('CONSOLIDATION');
+    expect(d?.trim().startsWith('>')).toBe(true);
+  });
+
+  it('zero pending sessions → directive unaffected (byte-identical regression)', () => {
+    for (const debt of [0, 7, 8, 13, 14, 19, 20, 32]) {
+      const withPending = getConsolidationDirective(baseState({ debt, sessions: [] }));
+      const withoutHelper = getConsolidationDirective(baseState({ debt, sessions: [] }));
+      expect(withPending).toBe(withoutHelper);
+    }
+    // Explicit byte check against the pre-existing fixed assertions.
+    expect(getConsolidationDirective(baseState({ debt: 20, sessions: [] }))).toContain('CONSOLIDATION REQUIRED');
+    expect(getConsolidationDirective(baseState({ debt: 7, sessions: [] }))).toBeNull();
+  });
+
+  it('rhythm regression: sessions_since_last_sleep >= 5 with zero pending still fires the rhythm advisory', () => {
+    // 5 sessions scored 1 each: persisted debt 5 (< DEBT_DROWSY), rhythm counter 5.
+    const state = baseState({ debt: 5, sessions_since_last_sleep: 5, sessions: [] });
+    const d = getConsolidationDirective(state);
+    expect(d).not.toBeNull();
+    expect(d).toContain('5 sessions since last consolidation');
+  });
+
+  it('userPromptReminder: effective debt crossing DROWSY includes the pending suffix', () => {
+    const state = baseState({ debt: 6, sessions: [pendingSession('p1')] });
+    const r = userPromptReminder(state);
+    expect(r).not.toBeNull();
+    expect(r).toContain(`Sleep debt is ${6 + PENDING_SESSION_PROVISIONAL}`);
+    expect(r).toContain('(1 awaiting analysis)');
+  });
+
+  it('userPromptReminder: pending-only (below every debt threshold) returns the bottom-branch line', () => {
+    const state = baseState({ debt: 0, sessions: Array.from({ length: 3 }, (_, i) => pendingSession(`p${i}`)) });
+    const r = userPromptReminder(state);
+    expect(r).not.toBeNull();
+    expect(r).toContain('3 session(s) awaiting analysis');
+  });
+
+  it('userPromptReminder: zero pending stays byte-identical (regression)', () => {
+    expect(userPromptReminder(baseState({ debt: 8, sessions: [] }))).not.toBeNull();
+    expect(userPromptReminder(baseState({ debt: 7, sessions: [] }))).toBeNull();
+    expect(userPromptReminder(baseState({ debt: 0, sessions: [] }))).toBeNull();
+  });
+
+  it('provisional debt caps at PENDING_PROVISIONAL_CAP regardless of pending count', () => {
+    const state100 = baseState({ debt: 0, sessions: Array.from({ length: 100 }, (_, i) => pendingSession(`p${i}`)) });
+    const d = getConsolidationDirective(state100);
+    expect(d).toContain(`Sleep debt is ${PENDING_PROVISIONAL_CAP}`);
+    expect(d).not.toContain(`Sleep debt is ${200}`);
   });
 });
 

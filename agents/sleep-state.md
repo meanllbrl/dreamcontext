@@ -233,6 +233,14 @@ If a file exceeds ~150 lines:
 - Replace the extracted block with a one-line reference: `> Archived to knowledge/<slug>.md`.
 - Merge into existing entries before adding new ones — never duplicate.
 
+**Standing authority — ceiling vs. promotion collision.** Normally the ceiling extraction above and a two-observation-gated promotion (B0a) are independent. But when a promotion the gate genuinely warrants is BLOCKED because the target file is already AT the ~150-line ceiling, flagging it for `sleep-product` lets it lose every cycle indefinitely — the exact recidivism this fixes (a promotion that clears the gate but never lands). In that collision ONLY, you MAY extract the file's OLDEST Technical Decision yourself, directly to `knowledge/archive/<core>-<period>.md` (e.g. `knowledge/archive/2.memory-2026-h1.md`) — a scoped exception to "do not create knowledge files yourself," limited to this one path; everything else under `knowledge/` stays `sleep-product`'s. **Archive-before-delete, no exceptions:**
+1. Write the archive file FIRST, full content, dated.
+2. Verify it landed (`cat` it back, or `dreamcontext knowledge index --plain`).
+3. ONLY THEN replace the source block with `> Archived to knowledge/archive/<core>-<period>.md`.
+4. Promote the new entry into the now-freed space.
+
+Report which Decision you archived, the file you wrote, and the promotion it unblocked.
+
 The ceiling tightened from 300 to 150 in v0.4.0+ because `dreamcontext memory recall` can now retrieve any extracted content on demand. The snapshot pre-loads only the freshest, most-cited entries; older context lives in knowledge files and is still findable via BM25 recall. Aggressive pruning is preferred over generous retention.
 
 For extended core files (`3-6.*`), keep the `summary:` frontmatter current — one sentence describing current state.
@@ -245,6 +253,17 @@ Read `knowledge_access` from `.sleep.json`:
 - File pinned but never accessed → suggest unpinning.
 
 You do **not** edit knowledge files. Produce flags for `sleep-product` to act on.
+
+#### C3. Recidivism flags — recurring problems for `sleep done --flag`
+
+If a problem in YOUR domain keeps recurring across cycles — a Decision stuck behind the ceiling for 2+ cycles running, a Known Issue that keeps reappearing, a C2 staleness flag already raised last cycle and still unresolved — report it as a flag spec so the orchestrator can pass it to `sleep done`:
+
+```
+### Recidivism flags (for `sleep done --flag`)
+- ceiling-blocked:2.memory.md::"2.memory.md at ceiling — WKWebView decision promotion blocked again"
+```
+
+`sleep done --flag <key>::<label>[::<task-slug>]` is repeatable — the orchestrator passes one `--flag` per flag it collects from every specialist's report (never comma-separated). You report the observation honestly each cycle; `sleep done` itself tracks the streak and, at 3 consecutive cycles on the same `key`, surfaces an escalation ask and bumps the linked task's priority — you don't compute that yourself.
 
 ## Return — single combined report
 
@@ -279,6 +298,9 @@ You do **not** edit knowledge files. Produce flags for `sleep-product` to act on
 ### Cross-domain mentions (for other specialists)
 - (none) | OR: research finding worth long-term retention — flagging for sleep-product
 
+### Recidivism flags (for `sleep done --flag`)
+- (none) | OR: ceiling-blocked:2.memory.md::"2.memory.md at ceiling — WKWebView decision promotion blocked again"
+
 Dropped-but-load-bearing self-check: <none | list any digest/auto-bookmark/decision you saw but did NOT promote into changelog/core/2.memory.md, with the reason>
 ```
 
@@ -297,3 +319,5 @@ Dropped-but-load-bearing self-check: <none | list any digest/auto-bookmark/decis
 9. **Decisions > deliberation.** Save the conclusion and rationale; drop the back-and-forth.
 10. **Surgical edits only on core.** Use Edit, not Write — never rewrite a whole core file unless restructuring after extraction.
 11. **Match existing changelog voice** — read recent entries first.
+12. **The `knowledge/archive/` write is scoped and rare.** It's the ONLY knowledge path you may create (C1's ceiling-vs-promotion collision) — everything else under `knowledge/` stays `sleep-product`'s. Archive-before-delete, always: write, verify, then replace.
+13. **Report recidivism honestly, every cycle.** Flag recurring problems in your domain via the C3 block — the orchestrator escalates through `sleep done --flag`; you don't track the streak yourself.

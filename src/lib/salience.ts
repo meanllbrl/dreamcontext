@@ -93,3 +93,27 @@ export function detectSalience(distilled: DistilledSection): SalientMoment[] {
 
   return moments.slice(0, MAX_MOMENTS);
 }
+
+/** Cap on auto-bookmarks harvested from a bare `last_assistant_message` (AC2). */
+export const MESSAGE_ONLY_MOMENT_CAP = 2;
+
+/**
+ * Salience detection over a BARE `last_assistant_message` — used when the Stop
+ * hook fires with no transcript on disk yet (Claude Code's lazy flush). Wraps
+ * the message as a single `agentDecisions` entry so the SAME DECISION_RE
+ * vocabulary `detectSalience` already uses applies here too — no new detector,
+ * per AC2. CORRECTION_RE deliberately does not apply: this is the AGENT's own
+ * closing message, not something the user typed, so "user correction" framing
+ * would misattribute it. Empty/whitespace-only input yields `[]`.
+ */
+export function detectSalienceFromMessage(message: string | null): SalientMoment[] {
+  if (!message || !message.trim()) return [];
+  const distilled: DistilledSection = {
+    userMessages: [],
+    agentDecisions: [message],
+    codeChanges: [],
+    errors: [],
+    bookmarks: [],
+  };
+  return detectSalience(distilled).slice(0, MESSAGE_ONLY_MOMENT_CAP);
+}

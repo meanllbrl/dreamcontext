@@ -1,8 +1,13 @@
 import { Command } from 'commander';
 import { readFileSync, existsSync, statSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { ensureContextRoot } from '../../lib/context-path.js';
 import { readSleepState, readSleepHistory } from './sleep.js';
 import { error, info } from '../../lib/format.js';
+import {
+  resolveTranscript, listSubagentTranscripts, subagentIdFromPath, DIR_LAYOUT_MAIN_CANDIDATES,
+} from '../../lib/transcript-locate.js';
+import type { TranscriptLocation } from '../../lib/transcript-locate.js';
 
 const MAX_TRANSCRIPT_BYTES = 50 * 1024 * 1024; // 50MB safety cap
 
@@ -259,6 +264,58 @@ export function distillTranscript(transcriptPath: string, sinceTimestamp?: strin
 }
 
 /**
+ * Merge multiple distilled sections into one, preserving the order sections
+ * (and items within each section) were given, and deduping each of the five
+ * arrays independently (a string repeated across sections — e.g. main +
+ * sub-agent both hitting the same error — collapses to one entry).
+ */
+export function mergeDistilled(sections: DistilledSection[]): DistilledSection {
+  const result: DistilledSection = {
+    userMessages: [], agentDecisions: [], codeChanges: [], errors: [], bookmarks: [],
+  };
+  const seen: Record<keyof DistilledSection, Set<string>> = {
+    userMessages: new Set(), agentDecisions: new Set(), codeChanges: new Set(),
+    errors: new Set(), bookmarks: new Set(),
+  };
+  for (const section of sections) {
+    for (const key of Object.keys(result) as Array<keyof DistilledSection>) {
+      for (const item of section[key]) {
+        if (seen[key].has(item)) continue;
+        seen[key].add(item);
+        result[key].push(item);
+      }
+    }
+  }
+  return result;
+}
+
+/**
+ * Distill every `<sessionDir>/subagents/agent-*.jsonl` found via `loc` and
+ * merge them into one section (AC8 sub-agent harvest). Subagent transcripts
+ * carry the same `message.role`/`message.content` shape as the main
+ * transcript (`isSidechain: true`, `agentId` — verified 2026-07-18), so
+ * `distillTranscript` parses them as-is. Each subagent's `agentDecisions` are
+ * prefixed `[subagent:<id>]` so a harvested finding is traceable back to the
+ * dispatching agent. `[]` sessionDir / no subagent files → an all-empty
+ * section (never throws — `listSubagentTranscripts` already guards fs).
+ */
+export function distillSubagents(
+  loc: TranscriptLocation,
+  opts: { max?: number; sinceTimestamp?: string } = {},
+): DistilledSection {
+  const paths = listSubagentTranscripts(loc, { max: opts.max });
+  const sections = paths.map((p) => {
+    const id = subagentIdFromPath(p);
+    const distilled = distillTranscript(p, opts.sinceTimestamp);
+    return {
+      ...distilled,
+      agentDecisions: distilled.agentDecisions.map((d) => `[subagent:${id}] ${d}`),
+    };
+  });
+  return mergeDistilled(sections);
+}
+
+/**
  * Format a distilled transcript as markdown.
  */
 export function formatDistilled(sessionId: string, distilled: DistilledSection, sinceTimestamp?: string): string {
@@ -318,8 +375,9 @@ export function registerTranscriptCommand(program: Command): void {
     .argument('<session_id>', 'Session ID to distill')
     .option('--since <timestamp>', 'Only include content after this ISO timestamp')
     .option('--full', 'Show full transcript (skip auto-filter by last consolidation)')
+    .option('--subagents', "Also merge in this session's sub-agent transcripts (<sessionDir>/subagents/agent-*.jsonl)")
     .description('Extract high-signal content from a session transcript (pure structural filtering)')
-    .action((sessionId: string, opts: { since?: string; full?: boolean }) => {
+    .action((sessionId: string, opts: { since?: string; full?: boolean; subagents?: boolean }) => {
       const root = ensureContextRoot();
       const state = readSleepState(root);
 
@@ -334,8 +392,26 @@ export function registerTranscriptCommand(program: Command): void {
         return;
       }
 
-      if (!existsSync(session.transcript_path)) {
-        error(`Transcript file not found: ${session.transcript_path}`);
+      // Shared resolver: probes the FLAT layout first (`<projectDir>/<sessionId>.jsonl`,
+      // still what Claude Code writes today), then the DIR layout
+      // (`<projectDir>/<sessionId>/`), so a future transcript-location change
+      // degrades gracefully instead of silently reporting "not found".
+      const loc = resolveTranscript(session.transcript_path, { sessionId });
+      if (!loc.mainPath) {
+        const projectDir = dirname(session.transcript_path);
+        const flatPath = join(projectDir, `${sessionId}.jsonl`);
+        const dirPath = join(projectDir, sessionId);
+        if (loc.layout === 'dir') {
+          error(
+            `Transcript not found for session: ${sessionId}.`,
+            `Probed flat: ${flatPath} (not found); dir: ${dirPath} (exists, but no main transcript — checked ${DIR_LAYOUT_MAIN_CANDIDATES.join(', ')}).`,
+          );
+        } else {
+          error(
+            `Transcript not found for session: ${sessionId}.`,
+            `Probed flat: ${flatPath} (not found); dir: ${dirPath} (not found).`,
+          );
+        }
         return;
       }
 
@@ -355,7 +431,11 @@ export function registerTranscriptCommand(program: Command): void {
         }
       }
 
-      const distilled = distillTranscript(session.transcript_path, sinceTimestamp);
+      let distilled = distillTranscript(loc.mainPath, sinceTimestamp);
+      if (opts.subagents) {
+        const subagentDistilled = distillSubagents(loc, { sinceTimestamp });
+        distilled = mergeDistilled([distilled, subagentDistilled]);
+      }
       console.log(formatDistilled(sessionId, distilled, sinceTimestamp));
     });
 }

@@ -9,6 +9,7 @@ import { readFrontmatter } from '../../lib/frontmatter.js';
 import { readJsonArray } from '../../lib/json-file.js';
 import { readSection } from '../../lib/markdown.js';
 import { readSleepState, writeSleepState, readSleepHistory } from './sleep.js';
+import { countPendingSessions } from '../../lib/sleep-consolidation.js';
 import { buildKnowledgeIndex } from '../../lib/knowledge-index.js';
 import { buildCoreIndex } from '../../lib/core-index.js';
 import { buildMarketingSnapshot } from '../../lib/marketing/snapshot.js';
@@ -833,6 +834,18 @@ export function generateSnapshot(rootOverride?: string): string {
       // Persist trigger fired_count updates
       writeSleepState(root, sleepState);
     }
+  }
+
+  // 5.8 Pending-session awareness (AC1) — sessions still awaiting analysis
+  // (transcript not yet flushed). Gated on pendingCount > 0 so a clean brain's
+  // snapshot stays byte-identical. This is the persistent snapshot surface;
+  // the SessionStart directive (getConsolidationDirective) is the transient
+  // per-prompt nudge — the two are complementary, not duplicative.
+  const pendingCount = countPendingSessions(sleepState.sessions);
+  if (pendingCount > 0) {
+    parts.push('## Sleep — Pending Analysis\n');
+    parts.push(`- ${pendingCount} session(s) awaiting analysis (transcript not yet flushed).`);
+    parts.push('');
   }
   flush('awareness', { neverEvict: true });
 

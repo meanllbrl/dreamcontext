@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
+import { join, basename } from 'node:path';
 import fg from 'fast-glob';
 import { readFrontmatter } from './frontmatter.js';
 import type { DistilledSection } from '../cli/commands/transcript.js';
@@ -30,7 +30,7 @@ const DIGESTS_DIRNAME = '.session-digests';
 // catch-up loop still finds "what did we just decide", bounded enough that the
 // corpus stays small. Older digests remain on disk for sleep consolidation to
 // fold into curated knowledge; they're simply not live in recall.
-const MAX_INDEXED_DIGESTS = 50;
+export const MAX_INDEXED_DIGESTS = 50;
 
 /**
  * Coerce a frontmatter `created_at` to an ISO string. gray-matter auto-parses
@@ -258,4 +258,115 @@ export function loadDigestDocs(root: string): CorpusDoc[] {
   // (e.g. all-default 0 in tests). Then cap to the most-recent K.
   parsed.sort((a, b) => (b.createdMs - a.createdMs) || a.doc.slug.localeCompare(b.doc.slug));
   return parsed.slice(0, MAX_INDEXED_DIGESTS).map((p) => p.doc);
+}
+
+// ── Garbage collection (`sleep done` retention) ──────────────────────────────
+// `.session-digests/` grows without bound — every session that has ever been
+// analyzed leaves a file on disk, whether or not it is still in the live
+// recall index (loadDigestDocs caps the INDEX at MAX_INDEXED_DIGESTS but never
+// deletes anything). GC brings on-disk retention in line with what recall
+// actually serves, while never deleting a digest a still-pending session needs
+// for its own catch-up.
+
+/** Retention count for on-disk digests at `sleep done`. Pinned to
+ *  MAX_INDEXED_DIGESTS so GC can never delete a digest that `loadDigestDocs`
+ *  still indexes for recall — the two must never drift apart. */
+export const DIGEST_GC_KEEP = MAX_INDEXED_DIGESTS;
+
+export interface DigestGcEntry {
+  path: string;       // absolute path to the digest file
+  sessionId: string;  // frontmatter session_id (falls back to the filename stem)
+  createdMs: number;  // parsed frontmatter created_at; 0 when missing/unparsable
+}
+
+export interface DigestGcPlan {
+  keep: string[];      // absolute paths retained
+  deleteAbs: string[]; // absolute paths to delete
+}
+
+/**
+ * Pure. Keep the newest `keep` entries by `created_at` (same newest-first +
+ * tie-break ordering as `loadDigestDocs`, using sessionId in place of the
+ * `digest#<sessionId>` slug — an equivalent order since the slug is just that
+ * prefix), PLUS every entry whose sessionId is in `protectedSessionIds`
+ * regardless of age or rank. Undated/malformed entries carry `createdMs: 0`
+ * and sort oldest, so they are the first candidates for deletion unless
+ * protected.
+ */
+export function planDigestGc(
+  entries: DigestGcEntry[],
+  protectedSessionIds: Set<string>,
+  keep: number = DIGEST_GC_KEEP,
+): DigestGcPlan {
+  const sorted = [...entries].sort(
+    (a, b) => (b.createdMs - a.createdMs) || a.sessionId.localeCompare(b.sessionId),
+  );
+
+  const keepPaths: string[] = [];
+  const deleteAbs: string[] = [];
+  sorted.forEach((entry, i) => {
+    if (i < keep || protectedSessionIds.has(entry.sessionId)) {
+      keepPaths.push(entry.path);
+    } else {
+      deleteAbs.push(entry.path);
+    }
+  });
+
+  return { keep: keepPaths, deleteAbs };
+}
+
+/**
+ * Scan `.session-digests/` into GC planner entries. Best-effort: a malformed
+ * frontmatter block is skipped (not thrown), and a missing `session_id` falls
+ * back to the filename stem so the entry can still be matched against a
+ * protected-session set. Never throws.
+ */
+export function scanDigests(root: string): DigestGcEntry[] {
+  const dir = digestsDir(root);
+  if (!existsSync(dir)) return [];
+
+  let files: string[];
+  try {
+    files = fg.sync('*.md', { cwd: dir, absolute: true });
+  } catch {
+    return [];
+  }
+
+  const entries: DigestGcEntry[] = [];
+  for (const file of files) {
+    try {
+      const { data } = readFrontmatter(file);
+      const sessionId = typeof data.session_id === 'string' && data.session_id.trim()
+        ? data.session_id
+        : basename(file, '.md');
+      const createdAt = coerceCreatedAt(data.created_at);
+      const ms = createdAt ? Date.parse(createdAt) : NaN;
+      entries.push({ path: file, sessionId, createdMs: Number.isNaN(ms) ? 0 : ms });
+    } catch {
+      // skip malformed digest — best-effort scan
+    }
+  }
+  return entries;
+}
+
+/**
+ * Execute a GC plan: unlink every path in `plan.deleteAbs`. Best-effort per
+ * file — one failed unlink (permissions, already-gone) does not stop the
+ * rest. Defense in depth: only ever unlinks paths inside this root's digests
+ * directory, even if the plan was built from a stale/malformed entry list.
+ * Returns the count actually deleted.
+ */
+export function runDigestGc(root: string, plan: DigestGcPlan): number {
+  const dir = digestsDir(root);
+  let deleted = 0;
+  for (const path of plan.deleteAbs) {
+    if (!path.startsWith(dir)) continue;
+    try {
+      unlinkSync(path);
+      deleted++;
+    } catch {
+      // best-effort — a single failure must not stop the rest
+    }
+  }
+  return deleted;
 }

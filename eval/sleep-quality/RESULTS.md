@@ -49,8 +49,9 @@ they exist to prove the refactor changed nothing.
 
 ## Layer 2 — manual live-LLM run (procedure)
 
-**Status: manual run pending.** These metrics require a real specialist fan-out
-and are tallied by hand, BEFORE vs AFTER the prompt changes.
+**Status: AFTER-only run completed 2026-07-18.** BEFORE not reproducible this
+run (see note below the table). These metrics require a real specialist
+fan-out and are tallied by hand.
 
 ### Procedure
 
@@ -81,12 +82,69 @@ and are tallied by hand, BEFORE vs AFTER the prompt changes.
 4. Run the same procedure on a checkout BEFORE the WS-DEPTH/prompt changes for
    the BEFORE column.
 
-### Layer-2 table (manual run pending)
+> **Fixture note (2026-07-18):** the committed `eval/sleep-quality/fixture/`
+> does **not** actually contain "two near-duplicate knowledge files" as this
+> procedure's step 3 describes — it has only `fixture-meta.json` and
+> `state/{.config.json,.sleep.json}` (verified: `find eval/sleep-quality/fixture
+> -type f` returns exactly those 3 files, no `knowledge/`, no `core/`). The
+> fixture *does* contain the two duplicate bookmark pairs (bm-2/bm-3, bm-4/bm-5)
+> and the salience-3 decision bookmark (bm-1) the procedure names. The 2026-07-18
+> run below measured what the fixture actually seeds (bookmark-level dedup +
+> bm-1 promotion); the knowledge-file-merge half of metric (4) remains
+> unmeasured pending a fixture update (fixture dirs are frozen for this task —
+> not fixed here).
 
-| metric                     | BEFORE | AFTER |  Δ  |
-|----------------------------|:------:|:-----:|:---:|
-| (4) dedup discipline       |  TBD   |  TBD  | TBD |
-| (6) capture→promote rate   |  TBD   |  TBD  | TBD |
+### Layer-2 table
+
+| metric                     |            BEFORE            |                 AFTER                | Δ |
+|-----------------------------|:-----------------------------:|:--------------------------------------:|:---:|
+| (4) dedup discipline        | not reproducible (see note) | 2/2 dup. bookmark pairs (100%) — knowledge-file half unmeasured | N/A |
+| (6) capture→promote rate    | not reproducible (see note) | 1/1 named target (100%); 1/2 broader load-bearing set (50%) | N/A |
+
+**BEFORE-column disposition:** not reproducible this run. The AC1–AC9 fix
+package is present only as **uncommitted working-tree changes** on this
+checkout, not a separate commit — reproducing BEFORE would require stashing
+~60 modified files (including this very task's own state) and re-dispatching
+a second live specialist fan-out against a stashed checkout, which is outside
+this run's sanctioned scope (RESULTS.md only) and unsafe alongside the
+in-progress consolidation lock active on this repo at run time. No BEFORE
+number is fabricated; the comparison is deferred to a future run with a real
+pre-change commit to check out.
+
+### 2026-07-18 run — method and findings
+
+Executed the documented procedure for real: copied `eval/sleep-quality/fixture/`
+into a scratch `_dream_context/` (outside the repo's own vault, never
+committed), ran `dreamcontext sleep start`, dispatched the real `sleep-state`
+and `sleep-tasks` specialist agents against it in parallel with a brief naming
+the epoch and the bookmark set, then `dreamcontext sleep done`. Findings below
+are read from the resulting files on disk, not from the agents' self-reports.
+
+- **(4) dedup discipline — 2/2 bookmark pairs, 100% (knowledge-file half
+  unmeasured — see fixture note).** Neither `sleep-state` nor `sleep-tasks`
+  double-recorded bm-2/bm-3 ("rate limiting on all auth endpoints") or bm-4/bm-5
+  ("CSS modules over styled-components") — both pairs were explicitly
+  recognized as exact duplicates and each contributed at most once to any
+  output. Depth resolved to `standard` for this cycle (debt 8), consistent with
+  the "flag, don't merge" tier — correct behavior for non-deep consolidation.
+- **(6) capture→promote rate — mixed, reported honestly rather than rounded up.**
+  The salience-3 bookmark the procedure names explicitly (bm-1, "Switched from
+  REST to GraphQL") **was promoted**: `sleep-state` created
+  `core/2.memory.md` with a Technical Decision entry for it, and `sleep-tasks`
+  independently created `state/api-design.md` referencing the same decision —
+  1/1 (100%) on the one item the procedure singles out. But taking the metric's
+  literal definition ("promoted / load-bearing-captured") over the full
+  salience-≥2 set in this fixture — bm-1 **and** the bm-2/bm-3 rate-limiting
+  requirement (salience 2, a genuine constraint) — only bm-1 reached a durable
+  artifact. `sleep-tasks` explicitly declined to create an `auth-refactor` task
+  for the rate-limiting requirement ("a requirement without implementation
+  doesn't warrant a task file yet"), which is a defensible conservative call
+  per its own protocol, not silent dropping — but it means that requirement did
+  **not** survive `sleep done` (bookmarks are cleared at consolidation; nothing
+  else records it) — **1/2 (50%)** on the broader set. Recorded as-is per the
+  integrity rule: the named-target number is a genuine 100%, the broader
+  capture-survival number is a genuine 50%, and both are reported rather than
+  picking the flattering one.
 
 > Layer 2 is the human-facing demonstration and is **explicitly not CI-asserted.**
 > The Layer-1 table above is the reproducible proof of measurable improvement.

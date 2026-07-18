@@ -1,8 +1,15 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { distillTranscript, formatDistilled, isSystemNoiseMessage } from '../../src/cli/commands/transcript.js';
+import { Command } from 'commander';
+import {
+  distillTranscript, formatDistilled, isSystemNoiseMessage,
+  mergeDistilled, distillSubagents, registerTranscriptCommand,
+  type DistilledSection,
+} from '../../src/cli/commands/transcript.js';
+import { resolveTranscript } from '../../src/lib/transcript-locate.js';
+import { readSleepState, writeSleepState } from '../../src/cli/commands/sleep.js';
 
 function makeTmpDir(): string {
   const dir = join(tmpdir(), `ac-distill-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -424,5 +431,273 @@ describe('distillTranscript drops system coordination noise from user messages',
     const result = distillTranscript(file);
     // Only the real human correction survives.
     expect(result.userMessages).toEqual(['No, actually use yarn instead of npm here.']);
+  });
+});
+
+function emptySection(): DistilledSection {
+  return { userMessages: [], agentDecisions: [], codeChanges: [], errors: [], bookmarks: [] };
+}
+
+describe('mergeDistilled', () => {
+  it('merges an empty list into an all-empty section', () => {
+    expect(mergeDistilled([])).toEqual(emptySection());
+  });
+
+  it('preserves section order and within-section order', () => {
+    const a: DistilledSection = { ...emptySection(), userMessages: ['a1', 'a2'], agentDecisions: ['dA'] };
+    const b: DistilledSection = { ...emptySection(), userMessages: ['b1'], agentDecisions: ['dB'] };
+    const merged = mergeDistilled([a, b]);
+    expect(merged.userMessages).toEqual(['a1', 'a2', 'b1']);
+    expect(merged.agentDecisions).toEqual(['dA', 'dB']);
+  });
+
+  it('dedups identical items within the same array across sections', () => {
+    const a: DistilledSection = { ...emptySection(), errors: ['boom'], codeChanges: ['EDIT x'] };
+    const b: DistilledSection = { ...emptySection(), errors: ['boom'], codeChanges: ['EDIT x'] };
+    const merged = mergeDistilled([a, b]);
+    expect(merged.errors).toEqual(['boom']);
+    expect(merged.codeChanges).toEqual(['EDIT x']);
+  });
+
+  it('dedups within a single section (not just across sections)', () => {
+    const a: DistilledSection = { ...emptySection(), bookmarks: ['bm1', 'bm1', 'bm2'] };
+    expect(mergeDistilled([a]).bookmarks).toEqual(['bm1', 'bm2']);
+  });
+
+  it('does not cross-dedup across different arrays (same string, different fields)', () => {
+    const a: DistilledSection = { ...emptySection(), userMessages: ['shared'], errors: ['shared'] };
+    const merged = mergeDistilled([a]);
+    expect(merged.userMessages).toEqual(['shared']);
+    expect(merged.errors).toEqual(['shared']);
+  });
+
+  it('does not mutate its inputs', () => {
+    const a: DistilledSection = { ...emptySection(), userMessages: ['a1'] };
+    const snapshot = JSON.parse(JSON.stringify(a));
+    mergeDistilled([a]).userMessages.push('mutated');
+    expect(a).toEqual(snapshot);
+  });
+});
+
+describe('distillSubagents', () => {
+  let sessionDir: string;
+
+  beforeEach(() => {
+    sessionDir = join(tmpdir(), `ac-subagents-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(join(sessionDir, 'subagents'), { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(sessionDir, { recursive: true, force: true });
+  });
+
+  /** Real-shape fixture (verified 2026-07-18): the FIRST line of a subagent
+   *  transcript is a `fork-context-ref` record with NO `message` field — it
+   *  must be skipped by distillTranscript's existing `if (!entry.message) continue`
+   *  guard, not treated as an error or a blank entry. */
+  function writeSubagentTranscript(agentId: string, text: string): string {
+    const p = join(sessionDir, 'subagents', `agent-${agentId}.jsonl`);
+    writeFileSync(p, [
+      JSON.stringify({ type: 'fork-context-ref', agentId, parentSessionId: 'parent-1', contextLength: 42 }),
+      assistantText(text),
+    ].join('\n'));
+    return p;
+  }
+
+  it('returns an all-empty section when sessionDir is null', () => {
+    expect(distillSubagents({ mainPath: null, sessionDir: null, layout: 'none' })).toEqual(emptySection());
+  });
+
+  it('returns an all-empty section when subagents/ has no matching files', () => {
+    const loc = { mainPath: null, sessionDir, layout: 'dir' as const };
+    expect(distillSubagents(loc)).toEqual(emptySection());
+  });
+
+  it('distills a subagent transcript and prefixes agentDecisions with [subagent:<id>]', () => {
+    writeSubagentTranscript('a80407b614ff89f5e', 'Merged the two duplicate knowledge files.');
+    const loc = { mainPath: null, sessionDir, layout: 'dir' as const };
+
+    const result = distillSubagents(loc);
+    expect(result.agentDecisions).toEqual(['[subagent:a80407b614ff89f5e] Merged the two duplicate knowledge files.']);
+    // The fork-context-ref line (no `message`) produced no error/noise entry.
+    expect(result.errors).toEqual([]);
+  });
+
+  it('does NOT prefix userMessages/codeChanges/errors/bookmarks — only agentDecisions', () => {
+    const p = join(sessionDir, 'subagents', 'agent-xyz.jsonl');
+    writeFileSync(p, [
+      JSON.stringify({ type: 'fork-context-ref', agentId: 'xyz', parentSessionId: 'p', contextLength: 1 }),
+      userMessage('a user-role turn inside the subagent transcript'),
+    ].join('\n'));
+    const loc = { mainPath: null, sessionDir, layout: 'dir' as const };
+    const result = distillSubagents(loc);
+    expect(result.userMessages).toEqual(['a user-role turn inside the subagent transcript']);
+  });
+
+  it('merges multiple subagent transcripts, each tagged with its own id', () => {
+    writeSubagentTranscript('agentone', 'Decision from agent one.');
+    writeSubagentTranscript('agenttwo', 'Decision from agent two.');
+    const loc = { mainPath: null, sessionDir, layout: 'dir' as const };
+    const result = distillSubagents(loc);
+    expect(result.agentDecisions).toContain('[subagent:agentone] Decision from agent one.');
+    expect(result.agentDecisions).toContain('[subagent:agenttwo] Decision from agent two.');
+    expect(result.agentDecisions).toHaveLength(2);
+  });
+
+  it('honors opts.max, capping the number of subagent transcripts harvested', () => {
+    for (let i = 0; i < 5; i++) writeSubagentTranscript(`a${i}`, `Decision ${i}`);
+    const loc = { mainPath: null, sessionDir, layout: 'dir' as const };
+    const result = distillSubagents(loc, { max: 2 });
+    expect(result.agentDecisions).toHaveLength(2);
+  });
+
+  it('forwards sinceTimestamp to each subagent distillTranscript call', () => {
+    const p = join(sessionDir, 'subagents', 'agent-time.jsonl');
+    writeFileSync(p, [
+      JSON.stringify({ type: 'fork-context-ref', agentId: 'time', parentSessionId: 'p', contextLength: 1 }),
+      JSON.stringify({ type: 'assistant', timestamp: '2026-01-01T00:00:00.000Z', message: { role: 'assistant', content: [{ type: 'text', text: 'old' }] } }),
+      JSON.stringify({ type: 'assistant', timestamp: '2026-06-01T00:00:00.000Z', message: { role: 'assistant', content: [{ type: 'text', text: 'new' }] } }),
+    ].join('\n'));
+    const loc = { mainPath: null, sessionDir, layout: 'dir' as const };
+    const result = distillSubagents(loc, { sinceTimestamp: '2026-03-01T00:00:00.000Z' });
+    expect(result.agentDecisions).toEqual(['[subagent:time] new']);
+  });
+});
+
+describe('transcript distill CLI — layout fallback + subagent harvest', () => {
+  let projectDir: string;
+  let contextRoot: string;
+  let originalCwd: string;
+  let logSpy: ReturnType<typeof vi.spyOn>;
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+
+  const SID = 'cli-distill-session';
+
+  beforeEach(() => {
+    originalCwd = process.cwd();
+    projectDir = join(tmpdir(), `ac-cli-distill-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    contextRoot = join(projectDir, '_dream_context');
+    mkdirSync(join(contextRoot, 'state'), { recursive: true });
+    process.chdir(projectDir);
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    process.chdir(originalCwd);
+    rmSync(projectDir, { recursive: true, force: true });
+    vi.restoreAllMocks();
+  });
+
+  function seedSession(transcriptPath: string): void {
+    const state = readSleepState(contextRoot);
+    state.sessions.push({
+      session_id: SID,
+      transcript_path: transcriptPath,
+      stopped_at: new Date().toISOString(),
+      last_assistant_message: 'done',
+      change_count: 0,
+      tool_count: 0,
+      score: 1,
+      task_slugs: [],
+    });
+    writeSleepState(contextRoot, state);
+  }
+
+  function runDistill(args: string[]): Promise<void> {
+    const program = new Command();
+    registerTranscriptCommand(program);
+    return program.parseAsync(['transcript', 'distill', SID, ...args], { from: 'user' });
+  }
+
+  it('resolves the flat transcript exactly as before (regression)', async () => {
+    const flatPath = join(projectDir, `${SID}.jsonl`);
+    writeFileSync(flatPath, assistantText('Chose token bucket for rate limiting.') + '\n');
+    seedSession(flatPath);
+
+    await runDistill([]);
+
+    expect(errorSpy).not.toHaveBeenCalled();
+    const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+    expect(output).toContain('token bucket');
+  });
+
+  it('errors naming BOTH probed layouts when neither flat file nor session dir exists', async () => {
+    const missingFlat = join(projectDir, `${SID}.jsonl`);
+    seedSession(missingFlat);
+
+    await runDistill([]);
+
+    expect(errorSpy).toHaveBeenCalled();
+    const combined = errorSpy.mock.calls.flat().join(' ');
+    expect(combined).toContain('flat');
+    expect(combined).toContain('dir');
+    expect(combined).toContain(missingFlat);
+    expect(combined).toContain(join(projectDir, SID));
+  });
+
+  it('errors naming BOTH probed layouts when the session dir exists but holds no main transcript', async () => {
+    const missingFlat = join(projectDir, `${SID}.jsonl`);
+    const dirPath = join(projectDir, SID);
+    mkdirSync(join(dirPath, 'subagents'), { recursive: true });
+    mkdirSync(join(dirPath, 'tool-results'), { recursive: true });
+    seedSession(missingFlat);
+
+    await runDistill([]);
+
+    expect(errorSpy).toHaveBeenCalled();
+    const combined = errorSpy.mock.calls.flat().join(' ');
+    expect(combined).toContain('flat');
+    expect(combined).toContain(missingFlat);
+    expect(combined).toContain(dirPath);
+    expect(combined.toLowerCase()).toContain('no main transcript');
+  });
+
+  it('--subagents merges sub-agent findings into the output', async () => {
+    const flatPath = join(projectDir, `${SID}.jsonl`);
+    writeFileSync(flatPath, assistantText('Main agent decision.') + '\n');
+    const dirPath = join(projectDir, SID);
+    mkdirSync(join(dirPath, 'subagents'), { recursive: true });
+    writeFileSync(join(dirPath, 'subagents', 'agent-sub1.jsonl'), [
+      JSON.stringify({ type: 'fork-context-ref', agentId: 'sub1', parentSessionId: SID, contextLength: 1 }),
+      assistantText('Sub-agent found a duplicate.'),
+    ].join('\n'));
+    seedSession(flatPath);
+
+    await runDistill(['--subagents']);
+
+    const output = logSpy.mock.calls.map((c) => c[0]).join('\n');
+    expect(output).toContain('Main agent decision.');
+    expect(output).toContain('[subagent:sub1] Sub-agent found a duplicate.');
+  });
+
+  it('output is byte-identical whether or not a subagents/ dir exists, when --subagents is omitted', async () => {
+    const flatPath = join(projectDir, `${SID}.jsonl`);
+    writeFileSync(flatPath, assistantText('Main agent decision only.') + '\n');
+    seedSession(flatPath);
+
+    await runDistill([]);
+    const withoutDir = logSpy.mock.calls.map((c) => c[0]).join('\n');
+    logSpy.mockClear();
+
+    const dirPath = join(projectDir, SID);
+    mkdirSync(join(dirPath, 'subagents'), { recursive: true });
+    writeFileSync(join(dirPath, 'subagents', 'agent-sub1.jsonl'), [
+      JSON.stringify({ type: 'fork-context-ref', agentId: 'sub1', parentSessionId: SID, contextLength: 1 }),
+      assistantText('This must NOT appear without --subagents.'),
+    ].join('\n'));
+
+    await runDistill([]);
+    const withDirButNoFlag = logSpy.mock.calls.map((c) => c[0]).join('\n');
+
+    expect(withDirButNoFlag).toBe(withoutDir);
+    expect(withDirButNoFlag).not.toContain('subagent');
+  });
+
+  it('resolveTranscript itself confirms the dir-layout fallback used by the CLI', () => {
+    const dirPath = join(projectDir, SID);
+    mkdirSync(join(dirPath, 'subagents'), { recursive: true });
+    const loc = resolveTranscript(join(projectDir, `${SID}.jsonl`), { sessionId: SID });
+    expect(loc).toEqual({ mainPath: null, sessionDir: dirPath, layout: 'dir' });
   });
 });

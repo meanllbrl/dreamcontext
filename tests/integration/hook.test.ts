@@ -446,7 +446,11 @@ describe('hook session-start (integration)', () => {
     expect(sessions[1].score).toBe(1); // sess-1: 2 writes
   });
 
-  it('sets score 0 for sessions with no transcript', () => {
+  it('finalizes at floor score 1 for a no-transcript session with a non-empty last_assistant_message (AC2)', () => {
+    // No transcript_path was EVER recorded — this is the "genuinely nothing
+    // will ever appear" case, finalized immediately (no 7-day wait). Since
+    // real work is evidenced by last_assistant_message, the AC2 floor applies
+    // (score 1, not 0) so that work isn't silently dropped from the debt ledger.
     writeSleep(ctx, {
       debt: 0,
       sessions: [{
@@ -463,10 +467,37 @@ describe('hook session-start (integration)', () => {
     runWithStdin('hook session-start', input, tmpDir);
 
     const state = readSleep(ctx);
-    expect(state.debt).toBe(0);
     const sessions = state.sessions as any[];
-    expect(sessions[0].score).toBe(0);
-    expect(sessions[0].change_count).toBe(0);
+    const finalized = sessions.find((s: any) => s.session_id === 'sess-no-transcript');
+    expect(finalized.score).toBe(1);
+    expect(finalized.change_count).toBe(0);
+    expect(finalized.catchup_finalized).toBe(true);
+    expect(state.debt).toBe(1);
+  });
+
+  it('finalizes at floor score 0 for a no-transcript session with NO last_assistant_message (AC2, other branch)', () => {
+    writeSleep(ctx, {
+      debt: 0,
+      sessions: [{
+        session_id: 'sess-no-transcript-empty',
+        transcript_path: null,
+        stopped_at: '2026-02-25T10:00:00.000Z',
+        last_assistant_message: null,
+        change_count: null,
+        score: null,
+      }],
+    });
+
+    const input = JSON.stringify({ session_id: 'sess-2', source: 'startup', transcript_path: '/tmp/t.jsonl' });
+    runWithStdin('hook session-start', input, tmpDir);
+
+    const state = readSleep(ctx);
+    const sessions = state.sessions as any[];
+    const finalized = sessions.find((s: any) => s.session_id === 'sess-no-transcript-empty');
+    expect(finalized.score).toBe(0);
+    expect(finalized.change_count).toBe(0);
+    expect(finalized.catchup_finalized).toBe(true);
+    expect(state.debt).toBe(0);
   });
 
   it('prepends CRITICAL directive when debt >= 20', () => {
@@ -560,7 +591,11 @@ describe('hook session-start (integration)', () => {
     expect(output).toContain('offer to consolidate');
   });
 
-  it('handles missing transcript file gracefully', () => {
+  it('finalizes at floor score 1 when a recorded transcript file never appeared (aged out) and last_assistant_message is non-empty (AC2/AC3)', () => {
+    // transcript_path IS recorded but the file never flushed under EITHER
+    // layout (resolveTranscript probes flat then dir, finds neither) — with
+    // stopped_at old enough to have aged past NEVER_FLUSHED_FINALIZE_MS, this
+    // finalizes at the AC2 floor rather than waiting or zeroing out real work.
     writeSleep(ctx, {
       debt: 0,
       sessions: [{
@@ -577,10 +612,37 @@ describe('hook session-start (integration)', () => {
     runWithStdin('hook session-start', input, tmpDir);
 
     const state = readSleep(ctx);
-    expect(state.debt).toBe(0); // No crash, no debt added
     const sessions = state.sessions as any[];
-    expect(sessions[0].score).toBe(0); // Analyzed as 0
-    expect(sessions[0].change_count).toBe(0);
+    const finalized = sessions.find((s: any) => s.session_id === 'sess-1');
+    expect(finalized.score).toBe(1);
+    expect(finalized.change_count).toBe(0);
+    expect(finalized.catchup_finalized).toBe(true);
+    expect(state.debt).toBe(1); // no crash, no silent drop of real work
+  });
+
+  it('finalizes at floor score 0 when a recorded transcript file never appeared (aged out) and last_assistant_message is empty (AC2, other branch)', () => {
+    writeSleep(ctx, {
+      debt: 0,
+      sessions: [{
+        session_id: 'sess-1',
+        transcript_path: '/tmp/nonexistent-transcript-empty.jsonl',
+        stopped_at: '2026-02-25T10:00:00.000Z',
+        last_assistant_message: null,
+        change_count: null,
+        score: null,
+      }],
+    });
+
+    const input = JSON.stringify({ session_id: 'sess-2', source: 'startup', transcript_path: '/tmp/t2.jsonl' });
+    runWithStdin('hook session-start', input, tmpDir);
+
+    const state = readSleep(ctx);
+    const sessions = state.sessions as any[];
+    const finalized = sessions.find((s: any) => s.session_id === 'sess-1');
+    expect(finalized.score).toBe(0); // No crash, no debt added
+    expect(finalized.change_count).toBe(0);
+    expect(finalized.catchup_finalized).toBe(true);
+    expect(state.debt).toBe(0);
   });
 
   it('backward compat: works with old .sleep.json (no sessions field)', () => {

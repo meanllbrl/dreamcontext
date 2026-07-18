@@ -137,6 +137,11 @@ const GITHUB_RATE_PER_MINUTE = 80;
 // Survive transient 429/5xx/secondary limits past the throttle. 5 attempts of
 // exponential backoff (honouring Retry-After, handled in ApiAdapter).
 const GITHUB_MAX_RETRIES = 5;
+// GitHub's secondary rate limit punishes WRITE bursts independently of the
+// per-minute ceiling above (observed: 4 content-creation ops queued during
+// `sleep done` tripped it, needing 90s + 10min retries). Spacing writes by 1s
+// self-throttles under that limit instead of hitting it and backing off.
+const GITHUB_MIN_WRITE_INTERVAL_MS = 1000;
 
 /** GitHub REST auth headers — Bearer token + the pinned API version. */
 function githubAuthHeaders(token: string): Record<string, string> {
@@ -217,6 +222,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
         authHeaders: () => githubAuthHeaders(token),
         ratePerMinute: GITHUB_RATE_PER_MINUTE,
         maxRetries: GITHUB_MAX_RETRIES,
+        minWriteIntervalMs: GITHUB_MIN_WRITE_INTERVAL_MS,
         fetchImpl: this.deps.fetchImpl,
         now: this.deps.now,
         sleep: this.deps.sleep,

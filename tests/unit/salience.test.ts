@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { DistilledSection } from '../../src/cli/commands/transcript.js';
-import { detectSalience } from '../../src/lib/salience.js';
+import { detectSalience, detectSalienceFromMessage, MESSAGE_ONLY_MOMENT_CAP } from '../../src/lib/salience.js';
 
 function empty(): DistilledSection {
   return {
@@ -132,5 +132,57 @@ describe('detectSalience', () => {
     // the 10 identical correction messages collapse to one
     const corrections = moments.filter(m => m.message.includes('User correction'));
     expect(corrections.length).toBe(1);
+  });
+});
+
+describe('detectSalienceFromMessage (AC2 — transcript-less salience)', () => {
+  it('null → []', () => {
+    expect(detectSalienceFromMessage(null)).toEqual([]);
+  });
+
+  it('empty string → []', () => {
+    expect(detectSalienceFromMessage('')).toEqual([]);
+  });
+
+  it('whitespace-only string → []', () => {
+    expect(detectSalienceFromMessage('   \n\t  ')).toEqual([]);
+  });
+
+  it('a decision-marker message (EN) → one salience-2 Decision moment', () => {
+    const moments = detectSalienceFromMessage('We decided to switch to BM25 for recall.');
+    expect(moments).toHaveLength(1);
+    expect(moments[0].salience).toBe(2);
+    expect(moments[0].message).toContain('Decision');
+  });
+
+  it('a decision-marker message (TR) → matches "karar"', () => {
+    const moments = detectSalienceFromMessage('Postgres kullanmaya karar verdik.');
+    expect(moments.some(m => m.salience === 2)).toBe(true);
+  });
+
+  it('a message with no marker → [] (conservative)', () => {
+    expect(detectSalienceFromMessage('Done. All tests pass.')).toEqual([]);
+  });
+
+  it('CORRECTION_RE does NOT apply — this is the agent\'s own message, not a user correction', () => {
+    // Leading "No, actually" would trip CORRECTION_RE if it were treated as a
+    // user message; detectSalienceFromMessage wraps it as an agentDecision, so
+    // only DECISION_RE (via the decision-keyword pass) can match it.
+    const moments = detectSalienceFromMessage('No, actually the tests are still failing.');
+    expect(moments.every(m => !m.message.startsWith('User correction'))).toBe(true);
+  });
+
+  it('caps at MESSAGE_ONLY_MOMENT_CAP even with multiple decision markers', () => {
+    const message = 'We decided X. We chose Y. We switched to Z. We will use W.';
+    const moments = detectSalienceFromMessage(message);
+    expect(moments.length).toBeLessThanOrEqual(MESSAGE_ONLY_MOMENT_CAP);
+  });
+
+  it('clamps an over-long message to 200 chars with an ellipsis', () => {
+    const long = 'We decided to do the following: ' + 'x'.repeat(500);
+    const moments = detectSalienceFromMessage(long);
+    expect(moments.length).toBeGreaterThan(0);
+    expect(moments[0].message.length).toBeLessThanOrEqual(200);
+    expect(moments[0].message.endsWith('…')).toBe(true);
   });
 });

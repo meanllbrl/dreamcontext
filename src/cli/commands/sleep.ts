@@ -15,11 +15,26 @@ import { acquireFileLock, releaseFileLock } from '../../lib/file-lock.js';
 import { runBrainSync } from '../../lib/git-sync/sync-engine.js';
 import { reconcileBrainSyncSuccess, reconcileBrainSyncFailure } from '../../lib/git-sync/auth-reconcile.js';
 import { classifySyncError } from '../../lib/git-sync/failure.js';
-import { resolveBrainSyncToken } from '../../lib/git-sync/brain-repo.js';
+import { resolveBrainSyncToken, resolveBrainSyncEnabled } from '../../lib/git-sync/brain-repo.js';
 import { isPerProjectToken } from '../../lib/git-sync/token-fallback.js';
 import { renderBrainSyncResult } from './brain.js';
 import { buildCorpus } from '../../lib/recall.js';
 import { refreshEmbeddings, embeddingCacheExists } from '../../lib/embeddings/store.js';
+import { loadProjectVocabulary, auditCorpus } from '../../lib/taxonomy.js';
+import {
+  readSleepFlags,
+  writeSleepFlags,
+  reconcileFlags,
+  escalations,
+  renderEscalationAsks,
+  bumpPriority,
+  parseFlagOption,
+  planCuratorTask,
+  CURATOR_TASK_SLUG,
+} from '../../lib/sleep-flags.js';
+import { readDedupDigest, renderDedupDigest } from '../../lib/embeddings/dedup-log.js';
+import { scanDigests, planDigestGc, runDigestGc } from '../../lib/session-digest.js';
+import { collectBrainDirty, renderBrainDirtyWarning } from '../../lib/brain-dirty.js';
 import {
   sleepinessLevel,
   sleepinessRange,
@@ -28,6 +43,7 @@ import {
   finalizeSleepState,
   validateSleepAdd,
   consolidationDepth,
+  catchupDebtSplit,
   inspectSleepLock,
   SLEEP_LOCK_STALE_MS,
   SLEEP_START_LOCK_STALE_MS,
@@ -380,7 +396,12 @@ export function registerSleepCommand(program: Command): void {
         // ALWAYS compute + persist the consolidation depth so it never holds a
         // stale prior value. With no --deep flag this stores the debt-base depth;
         // --deep forces it to 'deep' (user-requested). Reset to null by sleep done.
-        const decision = consolidationDepth(state.debt, { userRequestedDeep: !!opts.deep });
+        // AC4: catchup carries the bulk-catch-up split so a debt spike from
+        // lazily-flushed sessions can't auto-authorize destructive ops.
+        const decision = consolidationDepth(state.debt, {
+          userRequestedDeep: !!opts.deep,
+          catchup: catchupDebtSplit(state.sessions),
+        });
         state.consolidation_depth = decision.depth;
 
         // Clear any pending migration notices from the previous cycle so the
@@ -418,6 +439,9 @@ export function registerSleepCommand(program: Command): void {
         writeSleepState(root, state);
         success(`Consolidation epoch set: ${state.sleep_started_at}`);
         info(`Consolidation depth: ${decision.depth} (source: ${decision.source}) — ${decision.reason}`);
+        if (decision.cappedByCatchup) {
+          info('Auto-deep prevented: most of this debt arrived in a catch-up batch. Re-run with `--deep` to authorize destructive ops anyway.');
+        }
         if (decision.depth !== 'deep') {
           info('Light/standard consolidation: do NOT merge/summarize-replace/delete knowledge — flag candidates in the report instead.');
         }
@@ -433,7 +457,17 @@ export function registerSleepCommand(program: Command): void {
     .command('done')
     .argument('<summary...>', 'Summary of what was consolidated')
     .description('Mark consolidation complete, reset debt')
-    .action(async (summaryParts: string[]) => {
+    // Single-value + accumulator (NOT `<spec...>`): a variadic option would
+    // greedily swallow the trailing variadic `<summary...>` argument whenever
+    // --flag appears before it. This form is safe regardless of ordering and
+    // still repeatable (`--flag a --flag b` accumulates both).
+    .option(
+      '--flag <spec>',
+      'Recurring-problem flag observed this cycle: key::label[::task-slug] (repeatable)',
+      (value: string, previous: string[]) => previous.concat([value]),
+      [] as string[],
+    )
+    .action(async (summaryParts: string[], opts: { flag: string[] }) => {
       const summary = summaryParts.join(' ');
       if (!summary.trim()) {
         error('Summary is required.');
@@ -465,6 +499,112 @@ export function registerSleepCommand(program: Command): void {
         success(`Consolidation complete. Debt reduced from ${previousDebt} to ${finalState.debt}. ${finalState.sessions.length} post-epoch session(s) preserved.`);
       } else {
         success(`Consolidation complete. Debt reset from ${previousDebt} to ${finalState.debt}.`);
+      }
+
+      // AC6 (1/2) — recidivism escalation: reconcile this cycle's --flag
+      // observations against the persisted streak, surface a one-line ask for
+      // any flag at/over the escalation threshold, and bump the linked task's
+      // priority. Best-effort — a flag-tracking bug must never fail `sleep done`.
+      try {
+        const observed = opts.flag
+          .map(parseFlagOption)
+          .filter((f): f is NonNullable<ReturnType<typeof parseFlagOption>> => f !== null);
+        const prevFlags = readSleepFlags(root);
+        const nextFlags = reconcileFlags(prevFlags, observed, new Date().toISOString());
+        writeSleepFlags(root, nextFlags);
+
+        const escalated = escalations(nextFlags);
+        if (escalated.length > 0) {
+          for (const line of renderEscalationAsks(escalated)) warn(line);
+          const backend = getTaskBackend(root);
+          for (const flag of escalated) {
+            if (!flag.task_slug) continue;
+            try {
+              const task = await backend.get(flag.task_slug);
+              if (task) {
+                await backend.updateFields(flag.task_slug, { priority: bumpPriority(task.priority) });
+              }
+            } catch (err) {
+              warn(`Recidivism escalation: could not bump priority for ${flag.task_slug} — ${(err as Error).message ?? err}`);
+            }
+          }
+        }
+      } catch (err) {
+        warn(`Recidivism tracking: skipped — ${(err as Error).message ?? err}`);
+      }
+
+      // AC6 (2/2) — orphan-tag curator trigger: >= ORPHAN_TAG_CURATOR_THRESHOLD
+      // orphan tags across the corpus auto-creates (or refreshes) a standing
+      // curator task, using the same doc-list pattern as `taxonomy audit`.
+      // Best-effort — a taxonomy audit hiccup must never fail `sleep done`.
+      try {
+        const vocab = loadProjectVocabulary(root);
+        const corpus = buildCorpus(root);
+        const docs = corpus.map((d) => ({ slug: d.slug, tags: d.tags }));
+        const buckets = auditCorpus(docs, vocab);
+
+        const backend = getTaskBackend(root);
+        const existingTask = await backend.get(CURATOR_TASK_SLUG);
+        const plan = planCuratorTask(
+          buckets.orphan.length,
+          existingTask ? { slug: existingTask.slug, status: existingTask.status } : null,
+        );
+        if (plan.action === 'create') {
+          await backend.create({
+            name: plan.name,
+            description: plan.description,
+            priority: 'medium',
+            status: 'todo',
+            tags: ['topic:taxonomy'],
+            variant: 'cli',
+          });
+          info(`Curator task created: ${plan.slug} (${buckets.orphan.length} orphan tags).`);
+        } else if (plan.action === 'refresh') {
+          await backend.addChangelog(
+            plan.slug,
+            `- ${today_}: ${buckets.orphan.length} orphan tag(s) still present — curator pass still needed.`,
+            { fallbackAppend: true },
+          );
+          info(`Curator task refreshed: ${plan.slug} (${buckets.orphan.length} orphan tags).`);
+        }
+      } catch (err) {
+        warn(`Curator trigger: skipped — ${(err as Error).message ?? err}`);
+      }
+
+      // AC7 — semantic dedup digest: surface merge/review/create tallies since
+      // the epoch in the cycle summary. Best-effort — a log-read hiccup must
+      // never fail `sleep done`.
+      try {
+        const digest = readDedupDigest(root, epoch);
+        if (digest.total > 0) {
+          info(renderDedupDigest(digest));
+        }
+      } catch (err) {
+        warn(`Dedup digest: skipped — ${(err as Error).message ?? err}`);
+      }
+
+      // AC9a — digest GC: keep the newest K plus every still-pending session's
+      // digest. The protected set is the UNION of post-consolidation survivors
+      // (`finalState.sessions`) AND pre-consolidation pending sessions
+      // (`state.sessions` with score === null) — `applyConsolidation` drops
+      // `stopped_at === null` sessions, so without the pending half a live
+      // session's digest could be GC'd before its catch-up ever runs.
+      // Best-effort — a GC hiccup must never fail `sleep done`.
+      try {
+        const protectedIds = new Set([
+          ...finalState.sessions.map((s) => s.session_id),
+          ...state.sessions.filter((s) => s.score === null).map((s) => s.session_id),
+        ]);
+        const entries = scanDigests(root);
+        const plan = planDigestGc(entries, protectedIds);
+        if (plan.deleteAbs.length > 0) {
+          const deleted = runDigestGc(root, plan);
+          if (deleted > 0) {
+            info(chalk.dim(`Digest GC: removed ${deleted} stale session digest(s) (kept ${plan.keep.length}).`));
+          }
+        }
+      } catch (err) {
+        warn(`Digest GC: skipped — ${(err as Error).message ?? err}`);
       }
 
       // Post-sleep task sync (issue #11): push the consolidation's task updates,
@@ -578,6 +718,24 @@ export function registerSleepCommand(program: Command): void {
         }
       } catch (err) {
         warn(`Embedding refresh: skipped — ${(err as Error).message ?? err}`);
+      }
+
+      // AC5 — post-sleep durability, LAST so it's the final thing the user
+      // sees. When brain sync is OFF, warn LOUDLY about uncommitted
+      // `_dream_context/**` output with a ready-to-run command — user decision
+      // (2026-07-18): no auto-commit, no config flag, ever. Best-effort — a
+      // warning-render hiccup must never fail `sleep done`.
+      try {
+        const projectRoot = dirname(root);
+        const cfg = readSetupConfig(projectRoot);
+        const syncOn = resolveBrainSyncEnabled(projectRoot, cfg).enabled && !!cfg?.brainRepo?.autoSync;
+        if (!syncOn) {
+          const report = collectBrainDirty(projectRoot);
+          const lines = renderBrainDirtyWarning(report, { contextDirName: '_dream_context', today: today_ });
+          for (const line of lines) warn(line);
+        }
+      } catch (err) {
+        warn(`Brain durability check: skipped — ${(err as Error).message ?? err}`);
       }
     });
 

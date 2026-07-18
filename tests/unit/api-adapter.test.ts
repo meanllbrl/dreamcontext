@@ -156,4 +156,75 @@ describe('ApiAdapter (generic REST adapter — M2)', () => {
     await expect(adapter.request('GET', '/gone')).rejects.toBeInstanceOf(ApiError);
     await expect(adapter.request('GET', '/ok')).resolves.toEqual({ fine: true });
   });
+
+  describe('minWriteIntervalMs (write spacing)', () => {
+    it('spaces consecutive writes but never delays the first one', async () => {
+      const { adapter, sleeps, calls } = makeHarness(
+        [() => fakeResponse(200, {})],
+        { minWriteIntervalMs: 1000 },
+      );
+      await adapter.request('POST', '/a');
+      await adapter.request('POST', '/b');
+      await adapter.request('POST', '/c');
+      expect(calls).toHaveLength(3);
+      expect(sleeps).toEqual([1000, 1000]);
+    });
+
+    it('does not space GET requests, and a GET between writes is not itself spaced', async () => {
+      const { adapter, sleeps, calls } = makeHarness(
+        [() => fakeResponse(200, {})],
+        { minWriteIntervalMs: 1000 },
+      );
+      await adapter.request('POST', '/a');
+      await adapter.request('GET', '/b');
+      await adapter.request('POST', '/c');
+      expect(calls).toHaveLength(3);
+      // Only the second POST is spaced relative to the first POST; the GET
+      // in between incurs no spacing sleep of its own.
+      expect(sleeps).toEqual([1000]);
+    });
+
+    it('defaults to 0 (disabled) — zero spacing sleeps for back-to-back writes', async () => {
+      const { adapter, sleeps, calls } = makeHarness([() => fakeResponse(200, {})]);
+      await adapter.request('POST', '/a');
+      await adapter.request('PATCH', '/b');
+      await adapter.request('DELETE', '/c');
+      expect(calls).toHaveLength(3);
+      expect(sleeps).toEqual([]);
+    });
+
+    it('composes with 429 Retry-After backoff — both waits are observed, neither swallowed', async () => {
+      const { adapter, sleeps, calls } = makeHarness(
+        [
+          () => fakeResponse(200, {}), // first POST succeeds immediately
+          () => fakeResponse(429, { err: 'slow down' }, { 'retry-after': '5' }),
+          () => fakeResponse(200, { ok: 1 }),
+        ],
+        { minWriteIntervalMs: 1000 },
+      );
+      await adapter.request('POST', '/a');
+      const res = await adapter.request<{ ok: number }>('PUT', '/b');
+      expect(res).toEqual({ ok: 1 });
+      expect(calls).toHaveLength(3);
+      // Write spacing (1000ms, before the 429 attempt) AND Retry-After backoff
+      // (5000ms, before the retry) both show up as real, separate sleeps.
+      expect(sleeps).toContain(1000);
+      expect(sleeps).toContain(5000);
+    });
+
+    it('is wired into the GitHub backend at 1000ms, without leaking a provider name into the generic adapter', () => {
+      const githubSrc = readFileSync(
+        join(__dirname, '..', '..', 'src', 'lib', 'task-backend', 'github.ts'),
+        'utf-8',
+      );
+      expect(githubSrc).toMatch(/GITHUB_MIN_WRITE_INTERVAL_MS\s*=\s*1000/);
+      expect(githubSrc).toMatch(/minWriteIntervalMs:\s*GITHUB_MIN_WRITE_INTERVAL_MS/);
+      const adapterSrc = readFileSync(
+        join(__dirname, '..', '..', 'src', 'lib', 'task-backend', 'api-adapter.ts'),
+        'utf-8',
+      );
+      expect(adapterSrc.toLowerCase()).not.toContain('github');
+      expect(adapterSrc.toLowerCase()).not.toContain('clickup');
+    });
+  });
 });

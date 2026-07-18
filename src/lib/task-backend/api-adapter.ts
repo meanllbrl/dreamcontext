@@ -48,6 +48,13 @@ export interface ApiAdapterOptions {
   /** Injectable clock + sleeper so rate-limit/backoff tests run instantly. */
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * Minimum spacing (ms) between CONTENT-CREATING requests (POST/PATCH/PUT/
+   * DELETE). Some providers punish write bursts with a secondary rate limit
+   * independent of the per-minute ceiling above. 0 (default) disables this —
+   * GET/HEAD requests are never spaced regardless of this setting.
+   */
+  minWriteIntervalMs?: number;
 }
 
 const DEFAULT_RATE_PER_MINUTE = 100;
@@ -55,6 +62,7 @@ const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_TIMEOUT_MS = 15_000;
 const WINDOW_MS = 60_000;
 const BASE_BACKOFF_MS = 500;
+const WRITE_METHODS = new Set(['POST', 'PATCH', 'PUT', 'DELETE']);
 
 function defaultSleep(ms: number): Promise<void> {
   // The timer must stay ref'd: during a rate-limit/backoff wait it can be the
@@ -74,11 +82,14 @@ export class ApiAdapter {
   private readonly fetchImpl: typeof fetch;
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
+  private readonly minWriteIntervalMs: number;
 
   /** Dispatch timestamps within the sliding window (rate limiting). */
   private sent: number[] = [];
   /** Serialization chain: requests dispatch one at a time, in order. */
   private queue: Promise<unknown> = Promise.resolve();
+  /** Dispatch time of the last write (POST/PATCH/PUT/DELETE); null = none yet. */
+  private lastWriteAt: number | null = null;
 
   constructor(opts: ApiAdapterOptions) {
     this.baseUrl = opts.baseUrl.replace(/\/+$/, '');
@@ -89,6 +100,7 @@ export class ApiAdapter {
     this.fetchImpl = opts.fetchImpl ?? fetch;
     this.now = opts.now ?? Date.now;
     this.sleep = opts.sleep ?? defaultSleep;
+    this.minWriteIntervalMs = opts.minWriteIntervalMs ?? 0;
   }
 
   /**
@@ -109,6 +121,20 @@ export class ApiAdapter {
       if (v !== undefined) url.searchParams.set(k, String(v));
     }
     return url.toString();
+  }
+
+  /**
+   * Enforce `minWriteIntervalMs` spacing between content-creating requests.
+   * No-op for GET/HEAD or when disabled (0). The FIRST write is never delayed
+   * (no prior `lastWriteAt` to space against).
+   */
+  private async waitForWriteSpacing(method: string): Promise<void> {
+    if (this.minWriteIntervalMs <= 0 || !WRITE_METHODS.has(method.toUpperCase())) return;
+    if (this.lastWriteAt !== null) {
+      const wait = this.lastWriteAt + this.minWriteIntervalMs - this.now();
+      if (wait > 0) await this.sleep(wait);
+    }
+    this.lastWriteAt = this.now();
   }
 
   private async waitForSlot(): Promise<void> {
@@ -136,6 +162,7 @@ export class ApiAdapter {
       }
       this.retryAfterMs = null;
 
+      await this.waitForWriteSpacing(method);
       await this.waitForSlot();
 
       let response: Response;
