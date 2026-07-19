@@ -635,6 +635,7 @@ ${input.why || '(To be defined)'}
       created: 0,
       deleted: 0,
       mirrorDeleted: 0,
+      mirrorRemapped: 0,
       commentsAdded: 0,
       conflicts: [],
       pendingQueue: 0,

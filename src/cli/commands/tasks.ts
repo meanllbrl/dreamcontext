@@ -226,7 +226,11 @@ function renderTaskLine(t: TaskRecord, opts: { long?: boolean } = {}): string {
     : t.status === 'completed' ? chalk.green
     : chalk.white;
   const prio = t.priority !== '-' ? chalk.dim(` [${t.priority}]`) : '';
-  let line = `  ${statusColor(t.status.padEnd(12))} ${t.name}${prio}  ${chalk.dim(t.updated_at)}`;
+  // Foreign provenance (#177) rides on EVERY row (not just --long): a task that
+  // belongs to another project sharing the remote container must never read as
+  // native, or its `completed` status is mistaken for work done HERE.
+  const foreign = t.source_project ? ' ' + chalk.yellow(`⚠ foreign:${t.source_project}`) : '';
+  let line = `  ${statusColor(t.status.padEnd(12))} ${t.name}${prio}${foreign}  ${chalk.dim(t.updated_at)}`;
   if (opts.long) {
     const meta: string[] = [];
     if (t.version) meta.push(`v:${t.version}`);
@@ -1211,7 +1215,8 @@ export function registerTasksCommand(program: Command): void {
         }
         const deletedPart = report.deleted > 0 ? `, deleted ${report.deleted}` : '';
         const reconciledPart = report.reconciled > 0 ? `, reconciled ${report.reconciled}` : '';
-        success(`Sync (${report.direction}): pushed ${report.pushed}, pulled ${report.pulled}, created ${report.created}${deletedPart}, comments ${report.commentsAdded}${reconciledPart}`);
+        const remappedPart = report.mirrorRemapped > 0 ? `, kept+remapped ${report.mirrorRemapped}` : '';
+        success(`Sync (${report.direction}): pushed ${report.pushed}, pulled ${report.pulled}, created ${report.created}${deletedPart}${remappedPart}, comments ${report.commentsAdded}${reconciledPart}`);
         if (syncOpts.reconcile && report.reconciled === 0) {
           console.log(chalk.dim('  reconcile: no assignee drift found — local already matches the remote.'));
         }

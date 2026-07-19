@@ -5,6 +5,7 @@
  * leak past the backend boundary.
  */
 import { foldAscii } from '../fold-ascii.js';
+import { parseProjectTag, stripProjectTags } from './provenance.js';
 
 /** ClickUp REST v2 task shape (the subset we read/write). */
 export interface ClickUpTask {
@@ -149,12 +150,17 @@ export function canonicalizeVersion(version: string | null, known: readonly stri
 export function tagsFromClickUp(
   remote: ClickUpTask['tags'],
   knownVersions: readonly string[] = [],
-): { tags: string[]; version: string | null } {
+): { tags: string[]; version: string | null; project: string | null } {
   const names = (remote ?? []).map((t) => t.name).filter(Boolean);
   const versionTag = names.find((n) => n.startsWith('version:'));
+  // `version:` and `dcproject:` are synthetic — they ride the remote tags but
+  // never live as plain local tags (version has its own field; the project
+  // stamp becomes `source_project` provenance).
+  const plainTags = stripProjectTags(names.filter((n) => !n.startsWith('version:')));
   return {
-    tags: names.filter((n) => !n.startsWith('version:')),
+    tags: plainTags,
     version: canonicalizeVersion(versionTag ? versionTag.slice('version:'.length) : null, knownVersions),
+    project: parseProjectTag(names),
   };
 }
 

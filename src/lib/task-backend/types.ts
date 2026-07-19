@@ -44,6 +44,13 @@ export interface TaskFrontmatter {
   created_by?: string | null;
   updated_by?: string | null;
   /**
+   * Project provenance (#177) — set ONLY on a synced row that a shared remote
+   * container reports as belonging to ANOTHER project (its `dcproject:` stamp
+   * names a different project than this one). Absent on native and unstamped
+   * rows. Makes a foreign task visibly foreign in the snapshot and `tasks list`.
+   */
+  source_project?: string | null;
+  /**
    * User-defined custom fields (override-declared, see src/lib/overrides.ts).
    * A flat key→value map keyed by the field's snake_case key. Absent on tasks
    * in projects without a `_dream_context/overrides/task.md`.
@@ -215,6 +222,15 @@ export interface SyncReport {
   deleted: number;
   /** Local mirrors removed because the task was deleted on the remote. */
   mirrorDeleted: number;
+  /**
+   * Local mirrors PRESERVED (not deleted) whose stale mapping was dropped because
+   * the sync target changed and their old-container remote id is absent from the
+   * NEW container. Without this the deletion sweep read a target switch as a mass
+   * remote deletion and nuked every mirror; here the file is kept and re-created
+   * in the new container by the same sync's push (migrate semantics). Always 0
+   * unless the container switched this sync.
+   */
+  mirrorRemapped: number;
   commentsAdded: number;
   conflicts: SyncConflict[];
   pendingQueue: number;

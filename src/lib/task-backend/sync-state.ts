@@ -67,6 +67,17 @@ export interface SyncStateFile {
   assets?: AssetBridgeEntry[];
   /** True once the dedicated assets branch is known to exist (avoids re-checking). */
   assetsBranchReady?: boolean;
+  /**
+   * Set the moment the sync target changes (`adoptContainer` detects a switch) and
+   * cleared only after the FIRST authoritative deletion-reconciliation pass against
+   * the new container. While it is set, the deletion sweep treats a map entry that
+   * is absent from the remote as a STALE MAPPING from the old container — it keeps
+   * the local mirror and drops only the mapping (re-created in the new container by
+   * push) — never as a remote deletion. Persisted (not just an in-memory flag) so a
+   * switch sync whose pull fails half-way can't leave a later sync mistaking the
+   * still-stale map for a mass remote deletion and nuking every mirror.
+   */
+  pendingContainerRemap?: boolean;
 }
 
 export interface AssetBridgeEntry {
@@ -280,10 +291,30 @@ export class SyncLedger {
       delete state.lastMetaRefreshAt;
       delete state.lastLabelProvisionAt;
       state.watermark = null;
+      // The committed id-map still binds every local slug to the OLD container's
+      // remote ids, none of which exist in the new one — so the deletion sweep
+      // would read the switch as a mass remote deletion. Mark the remap intent so
+      // the sweep keeps those mirrors (and re-creates them in the new container)
+      // instead. Persisted, so a switch sync that dies before reconciling can't
+      // leave a later sync deleting the still-stale map.
+      state.pendingContainerRemap = true;
     }
     state.container = container;
     this.writeSyncState(state);
     return { switched: from !== null, from };
+  }
+
+  /** True while a target switch still needs its stale mappings reconciled. */
+  pendingContainerRemap(): boolean {
+    return this.readSyncState().pendingContainerRemap === true;
+  }
+
+  /** Clear the remap intent after an authoritative reconciliation pass. */
+  clearPendingContainerRemap(): void {
+    const state = this.readSyncState();
+    if (state.pendingContainerRemap === undefined) return;
+    delete state.pendingContainerRemap;
+    this.writeSyncState(state);
   }
 
   /**

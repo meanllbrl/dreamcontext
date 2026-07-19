@@ -44,6 +44,7 @@ import { getActivePlanningVersion } from '../active-version.js';
 import { getExistingReleases } from '../release-discovery.js';
 import { recordDashboardChange, type FieldChange } from '../change-tracker.js';
 import { clickupMemberMap, resolveActor, resolveActorToken } from './identity.js';
+import { foreignProjectOf, projectScopeId, projectTag } from './provenance.js';
 import { writeClickUpToken, resolveClickUpToken, maskToken } from './secrets.js';
 import { BACKLOG_TAG, LocalTaskBackend } from './local.js';
 import { merge3Bodies, mergeScalar, planAssigneeHeal, unionChangelog } from './merge.js';
@@ -191,6 +192,26 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     } catch { /* same */ }
     this.knownVersionsMemo = [...out];
     return this.knownVersionsMemo;
+  }
+
+  /**
+   * This project's stable provenance id (#177) — stamped on every pushed row and
+   * compared against a pulled row's `dcproject:` tag to tell native from foreign.
+   * Memoised; null only when no id can be derived at all (never in practice —
+   * the basename fallback always yields one).
+   */
+  private projectIdMemo: string | null | undefined;
+  protected myProjectId(): string | null {
+    if (this.projectIdMemo === undefined) {
+      this.projectIdMemo = projectScopeId(this.config, this.projectRoot);
+    }
+    return this.projectIdMemo;
+  }
+
+  /** Append this project's `dcproject:` stamp to a remote tag set (no-op when no id). */
+  protected withProjectStamp(tags: string[]): string[] {
+    const id = this.myProjectId();
+    return id ? [...tags, projectTag(id)] : tags;
   }
 
   protected getAdapter(): ApiAdapter {
@@ -581,6 +602,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       created: 0,
       deleted: 0,
       mirrorDeleted: 0,
+      mirrorRemapped: 0,
       commentsAdded: 0,
       conflicts: [],
       pendingQueue: 0,
@@ -622,7 +644,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
         const moved = this.ledger.adoptContainer(`list:${this.requireListId()}`);
         if (moved.switched) {
           report.warnings.push(
-            `sync target moved (${moved.from} → list:${this.requireListId()}): dropped the cached statuses/members/fields of the old list and reset the pull watermark — this sync re-reads the new list in full.`,
+            `sync target moved (${moved.from} → list:${this.requireListId()}): dropped the cached statuses/members/fields of the old list and reset the pull watermark — this sync re-reads the new list in full. Local task mirrors are KEPT (never deleted) and re-created in the new list; nothing is silently lost.`,
           );
         }
       } catch { /* config errors surface below via pull/push */ }
@@ -829,7 +851,8 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
         body: {
           ...fields,
           // person: tags stay local — the remote has real assignees.
-          tags: tagsToClickUp(stripPersonTags(task.tags), task.version),
+          // dcproject: stamps the row so a shared-list pull can tell it apart (#177).
+          tags: this.withProjectStamp(tagsToClickUp(stripPersonTags(task.tags), task.version)),
           assignees: assigneeIds,
         },
       });
@@ -892,6 +915,14 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       }
       if (desiredVersionTag && !liveTagNames.includes(desiredVersionTag) && !toAdd.includes(desiredVersionTag)) {
         toAdd.push(desiredVersionTag);
+      }
+
+      // dcproject: is a static stamp — self-heal it onto rows this project owns
+      // but pushed before provenance shipped (#177). Never removed here: a row we
+      // push is ours, so we only ever ensure OUR stamp is present.
+      const myStamp = this.myProjectId() ? projectTag(this.myProjectId()!) : null;
+      if (myStamp && !liveTagNames.includes(myStamp) && !toAdd.includes(myStamp)) {
+        toAdd.push(myStamp);
       }
 
       for (const tag of toAdd) {
@@ -1070,9 +1101,37 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     }
     this.ledger.writeThrottle('lastReconcileAt', this.nowMs());
 
+    // TARGET SWITCH, not a remote deletion. While a remap is pending, a map entry
+    // that points at the OLD container's remote id is absent from the NEW one
+    // because the target moved — not because the user deleted a task. This sweep
+    // now runs against an AUTHORITATIVE full remote set (a switch nulls the
+    // watermark, so `knownFullSet` is populated), so once we finish the loop the
+    // stale mappings are resolved and the intent can be cleared.
+    const remapMode = this.ledger.pendingContainerRemap();
+
     for (const entry of map) {
       if (remoteIds.has(entry.remoteId)) continue;
       if (pendingDeletes.has(entry.remoteId)) continue; // our own deletion in flight
+
+      // Deleting the mirror here would nuke every task the moment the target is
+      // repointed (via `--keep`, the dashboard config PATCH, or a hand-edited
+      // config). Instead we KEEP the file and drop only the stale mapping/sync
+      // state; this same sync's push re-creates the task in the new container
+      // (migrate semantics), so the `--keep`-but-wrong / dashboard / hand-edit
+      // paths all become non-destructive. Genuinely-moved tasks (`--keep`
+      // truthful) keep the same remote id, so they ARE present in the new
+      // container and never reach this branch.
+      if (remapMode) {
+        this.ledger.removeMapping(entry.slug);
+        this.ledger.removeTaskSync(entry.slug);
+        this.ledger.dequeueFor(entry.slug, Number.MAX_SAFE_INTEGER);
+        report.mirrorRemapped++;
+        report.warnings.push(
+          `task '${entry.slug}' was mapped to the previous sync target and is not in the new one — its local mirror is KEPT and will be re-created in the new container on this sync's push (not deleted).`,
+        );
+        continue;
+      }
+
       const path = this.taskPath(entry.slug);
 
       try {
@@ -1111,6 +1170,11 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
         report.errors.push(`reconcile ${entry.slug}: ${(err as Error).message ?? err}`);
       }
     }
+
+    // The stale mappings from the switch are now resolved against an authoritative
+    // remote set — clear the intent so ordinary remote deletions reconcile normally
+    // again on the next sync.
+    if (remapMode) this.ledger.clearPendingContainerRemap();
   }
 
   protected async applyRemoteTask(
@@ -1141,6 +1205,20 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
         this.ledger.advanceWatermark(remoteTime);
         return; // not a change — never count or journal our own echo
       }
+    }
+
+    // PROVENANCE (#177) — a shared list pulls every project's rows. `foreign` is
+    // set when the row's `dcproject:` stamp names ANOTHER project; null for a
+    // native or unstamped row. Under `scope: 'project'` a foreign row is skipped
+    // outright (never imported); otherwise it is imported but marked so it is
+    // visibly foreign in the snapshot and `tasks list`.
+    const remoteTagNames = (remote.tags ?? []).map((t) => t.name).filter(Boolean);
+    const foreign = foreignProjectOf(remoteTagNames, this.myProjectId());
+    if (foreign && this.config?.clickup?.scope === 'project') {
+      // Skip WITHOUT advancing the watermark: the global watermark must never
+      // jump on a row we didn't ingest, or an older unpulled native task could
+      // slip below it. Re-seen next delta pull, skipped again — cheap (no fetch).
+      return;
     }
 
     const commentsRes = await adapter.request<{ comments?: ClickUpComment[] }>(
@@ -1193,6 +1271,10 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
         due_date: remoteDue,
         created_by: 'clickup',
         updated_by: 'clickup',
+        // Foreign provenance (#177): only present when the row belongs to another
+        // project sharing this list — never on native rows, so `tasks list` and
+        // the snapshot stay clean for the common single-project case.
+        ...(foreign ? { source_project: foreign } : {}),
       };
       const written = this.writeMirror(slug, fm, remoteDesc, remoteEntries);
       this.ledger.recordMapping({ slug, dcId: fm.id as string, backend: this.name, remoteId: remote.id });

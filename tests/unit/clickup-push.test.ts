@@ -91,7 +91,9 @@ describe('clickup PUSH (M3, mocked transport)', () => {
     const remote = [...fake.tasks.values()].find((t) => t.name === 'Push One')!;
     expect(remote.status.status).toBe('to do');
     expect(remote.priority.id).toBe('2'); // high
-    expect(remote.tags.map((t) => t.name).sort()).toEqual(['a', 'version:v1']);
+    // The `dcproject:` provenance stamp (#177) rides every pushed row — exclude it.
+    expect(remote.tags.map((t) => t.name).filter((n) => !n.startsWith('dcproject:')).sort())
+      .toEqual(['a', 'version:v1']);
     expect(remote.description).toContain('## Why');
     expect(remote.description).not.toContain('## Changelog'); // changelog → comments
   });

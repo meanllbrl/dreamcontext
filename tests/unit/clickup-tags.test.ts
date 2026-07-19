@@ -58,7 +58,12 @@ afterEach(() => {
 });
 
 function remoteTags(): string[] {
-  return [...fake.tasks.values()][0].tags.map((t) => t.name).sort();
+  // The `dcproject:` provenance stamp (#177) rides every pushed row; these tests
+  // assert on plain/version tags, so exclude it here.
+  return [...fake.tasks.values()][0].tags
+    .map((t) => t.name)
+    .filter((n) => !n.startsWith('dcproject:'))
+    .sort();
 }
 
 describe('local tag edits push to the remote (per-tag endpoints)', () => {

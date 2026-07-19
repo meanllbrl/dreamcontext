@@ -546,6 +546,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       created: 0,
       deleted: 0,
       mirrorDeleted: 0,
+      mirrorRemapped: 0,
       commentsAdded: 0,
       conflicts: [],
       pendingQueue: 0,
@@ -581,7 +582,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
         const moved = this.ledger.adoptContainer(`github:${owner}/${repo}`);
         if (moved.switched) {
           report.warnings.push(
-            `sync target moved (${moved.from} → github:${owner}/${repo}): dropped the cached members/fields of the old repo and reset the pull watermark — this sync re-reads the new repo in full.`,
+            `sync target moved (${moved.from} → github:${owner}/${repo}): dropped the cached members/fields of the old repo and reset the pull watermark — this sync re-reads the new repo in full. Local task mirrors are KEPT (never deleted) and re-created in the new repo; nothing is silently lost.`,
           );
         }
         await this.refreshMembers(this.getAdapter(), owner, repo);
@@ -1125,9 +1126,35 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     }
     this.ledger.writeThrottle('lastReconcileAt', this.nowMs());
 
+    // TARGET SWITCH, not a remote deletion. While a remap is pending, a map entry
+    // that points at the OLD repo's issue number is absent from the NEW one because
+    // the target moved — not because the issue was deleted. This sweep runs against
+    // an AUTHORITATIVE full remote set (a switch nulls the watermark, so
+    // `knownFullSet` is populated), so once the loop finishes the stale mappings
+    // are resolved and the intent can be cleared.
+    const remapMode = this.ledger.pendingContainerRemap();
+
     for (const entry of map) {
       if (remoteIds.has(entry.remoteId)) continue;
       if (pendingDeletes.has(entry.remoteId)) continue;
+
+      // Deleting the mirror here would nuke every task the moment `github.owner/repo`
+      // is repointed (the dashboard config PATCH or a hand-edited config). Instead we
+      // KEEP the file and drop only the stale mapping/sync state; this same sync's
+      // push re-creates the issue in the new repo (migrate semantics). Genuinely
+      // moved work keeps its number only within the same repo, so a real repo switch
+      // never leaves a valid mapping here.
+      if (remapMode) {
+        this.ledger.removeMapping(entry.slug);
+        this.ledger.removeTaskSync(entry.slug);
+        this.ledger.dequeueFor(entry.slug, Number.MAX_SAFE_INTEGER);
+        report.mirrorRemapped++;
+        report.warnings.push(
+          `task '${entry.slug}' was mapped to the previous sync target and is not in the new one — its local mirror is KEPT and will be re-created in the new container on this sync's push (not deleted).`,
+        );
+        continue;
+      }
+
       const path = this.taskPath(entry.slug);
 
       try {
@@ -1163,6 +1190,10 @@ export class GitHubTaskBackend extends LocalTaskBackend {
         report.errors.push(`reconcile ${entry.slug}: ${(err as Error).message ?? err}`);
       }
     }
+
+    // Stale mappings from the switch are resolved against an authoritative remote
+    // set — clear the intent so ordinary remote deletions reconcile normally again.
+    if (remapMode) this.ledger.clearPendingContainerRemap();
   }
 
   protected async applyRemoteIssue(

@@ -185,6 +185,13 @@ function getActiveTaskEntries(root: string): ActiveTaskEntry[] {
         line += `\n  Feature: ${String(data.related_feature)}`;
       }
 
+      // Foreign provenance (#177): a synced row that belongs to ANOTHER project
+      // sharing the remote container. Surfaced loudly so its status (especially
+      // `completed`) is never mistaken for work done in THIS project.
+      if (data.source_project && String(data.source_project).trim()) {
+        line += `\n  ⚠ FOREIGN: belongs to project '${String(data.source_project).trim()}' (shared remote container) — do NOT treat its status as work done here.`;
+      }
+
       // Custom fields (project task-format override): show each declared field's
       // value inline so the agent never misses them; flag required ones still empty.
       if (declaredFields.length > 0) {

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, rmSync, readFileSync, writeFileSync, realpathSync } from 'node:fs';
+import { mkdirSync, rmSync, readFileSync, writeFileSync, realpathSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -250,6 +250,142 @@ describe('ClickUp sync target moves (#184/#178)', () => {
     const forced = makeBackend('list1');
     await forced.sync('pull', { refreshMeta: true });
     expect(cachedStatuses()).toEqual(['to do', 'in progress', 'in review', 'complete']);
+  });
+});
+
+// ── backend: a target switch must never delete local mirrors (task_NL91yjF2) ─
+
+describe('ClickUp target switch never deletes local mirrors (task_NL91yjF2)', () => {
+  const baseConfig = (listId: string): SetupConfig => ({
+    platforms: [], packs: [], multiProduct: false, setupVersion: '0.0.0',
+    disableNativeMemory: true, taskBackend: 'clickup', cloudTaskManagement: true,
+    clickup: { teamId: 'team1', spaceId: 'space1', listId, changelogTarget: 'comments' },
+    people: [], peopleIdentity: {},
+  });
+
+  let projectRoot: string, contextRoot: string, fake: FakeClickUp, clock: number;
+
+  function makeBackend(listId: string): ClickUpTaskBackend {
+    clock = 1000;
+    const now = () => (clock += 7);
+    const sleep = async () => { clock += 1; };
+    const adapter = new ApiAdapter({
+      baseUrl: 'https://api.clickup.com/api/v2',
+      authHeaders: () => ({ Authorization: 'pk_test' }),
+      fetchImpl: fake.fetchImpl, now, sleep,
+    });
+    return new ClickUpTaskBackend(contextRoot, baseConfig(listId), { adapter, now, sleep });
+  }
+
+  const mirrorExists = (slug: string) => existsSync(join(contextRoot, 'state', `${slug}.md`));
+  const readMap = () => new SyncLedger(contextRoot).readMap();
+  const remoteIdOf = (slug: string) => readMap().find((e) => e.slug === slug)?.remoteId ?? null;
+
+  beforeEach(() => {
+    delete process.env.DREAMCONTEXT_PERSON;
+    const raw = join(tmpdir(), `dc-switch-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(raw, { recursive: true });
+    projectRoot = realpathSync(raw);
+    contextRoot = join(projectRoot, '_dream_context');
+    mkdirSync(join(contextRoot, 'state'), { recursive: true });
+    fake = makeFakeClickUp();
+  });
+  afterEach(() => { rmSync(projectRoot, { recursive: true, force: true }); });
+
+  it('repointing at a DIFFERENT list keeps the mirrors (not delete) and re-creates them in the new list', async () => {
+    // Seed two tasks in list1 and sync them out.
+    const a = makeBackend('list1');
+    await a.create({ name: 'Task One', variant: 'cli' });
+    await a.create({ name: 'Task Two', variant: 'cli' });
+    await a.sync('both');
+    expect(readMap().map((e) => e.slug).sort()).toEqual(['task-one', 'task-two']);
+    const oldIds = new Set([remoteIdOf('task-one'), remoteIdOf('task-two')]);
+
+    // Repoint at a genuinely different, EMPTY list without resetting the ledger —
+    // the `--keep` / dashboard-PATCH / hand-edited-config shape. Before the fix
+    // the deletion sweep read the stale old-list mappings as remote deletions and
+    // nuked every mirror; now they are kept and re-created in the new list.
+    const b = makeBackend('list2');
+    const report = await b.sync('both');
+
+    expect(report.errors).toEqual([]);
+    expect(report.mirrorDeleted).toBe(0);
+    expect(report.mirrorRemapped).toBe(2);
+    // Mirrors survive on disk.
+    expect(mirrorExists('task-one')).toBe(true);
+    expect(mirrorExists('task-two')).toBe(true);
+    // …and were re-created in the NEW list (fresh ids, in list2).
+    expect(report.created).toBe(2);
+    for (const slug of ['task-one', 'task-two']) {
+      const id = remoteIdOf(slug)!;
+      expect(oldIds.has(id)).toBe(false);
+      expect(fake.tasks.get(id)?.listId).toBe('list2');
+    }
+    // The one-shot remap intent is consumed.
+    expect(new SyncLedger(contextRoot).pendingContainerRemap()).toBe(false);
+  });
+
+  it('a genuine ClickUp move (`--keep` truthful — same ids in the new list) preserves the mappings', async () => {
+    const a = makeBackend('list1');
+    await a.create({ name: 'Moved Task', variant: 'cli' });
+    await a.sync('both');
+    const id = remoteIdOf('moved-task')!;
+
+    // The task really was moved within ClickUp: same task id, now living in list2.
+    fake.tasks.get(id)!.listId = 'list2';
+
+    const b = makeBackend('list2');
+    const report = await b.sync('both');
+
+    expect(report.errors).toEqual([]);
+    expect(report.mirrorDeleted).toBe(0);
+    // Present in the new list → not stale → mapping kept, id unchanged.
+    expect(report.mirrorRemapped).toBe(0);
+    expect(remoteIdOf('moved-task')).toBe(id);
+    expect(mirrorExists('moved-task')).toBe(true);
+  });
+
+  it('the remap intent survives a switch sync that dies mid-pull (a later sync still keeps, not deletes)', async () => {
+    const a = makeBackend('list1');
+    await a.create({ name: 'Fragile Task', variant: 'cli' });
+    await a.sync('both');
+
+    // Switch the target, but the network dies before the pull can reconcile.
+    fake.setFailMode({ kind: 'network' });
+    const b = makeBackend('list2');
+    await b.sync('both'); // sync swallows the failure — must not delete anything
+    expect(mirrorExists('fragile-task')).toBe(true);
+    // The persisted intent is what stops the NEXT (non-switch) sync from mistaking
+    // the still-stale map for a mass remote deletion.
+    expect(new SyncLedger(contextRoot).pendingContainerRemap()).toBe(true);
+
+    // Network recovers. This sync sees no container switch, but the intent persists.
+    fake.setFailMode(null);
+    const c = makeBackend('list2');
+    const report = await c.sync('both');
+
+    expect(report.errors).toEqual([]);
+    expect(report.mirrorDeleted).toBe(0);
+    expect(report.mirrorRemapped).toBe(1);
+    expect(mirrorExists('fragile-task')).toBe(true);
+    expect(fake.tasks.get(remoteIdOf('fragile-task')!)?.listId).toBe('list2');
+    expect(new SyncLedger(contextRoot).pendingContainerRemap()).toBe(false);
+  });
+
+  it('an ORDINARY remote deletion (no switch) still removes the mirror', async () => {
+    const a = makeBackend('list1');
+    await a.create({ name: 'Doomed Task', variant: 'cli' });
+    await a.sync('both');
+    const id = remoteIdOf('doomed-task')!;
+
+    // Delete it remotely (no target switch), then sync the SAME list.
+    fake.tasks.delete(id);
+    const b = makeBackend('list1');
+    const report = await b.sync('both');
+
+    expect(report.mirrorRemapped).toBe(0);
+    expect(report.mirrorDeleted).toBe(1);
+    expect(mirrorExists('doomed-task')).toBe(false);
   });
 });
 

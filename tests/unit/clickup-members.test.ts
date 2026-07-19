@@ -95,7 +95,8 @@ describe('clickup members + person-tag assignee bridge', () => {
     const remote = [...fake.tasks.values()][0];
     expect(remote.assignees.map((a) => a.id)).toEqual([502]);
     // person: tags stay local — the remote has a real assignee instead.
-    expect(remote.tags.map((t) => t.name)).toEqual(['x']);
+    // (The `dcproject:` provenance stamp (#177) also rides the row — exclude it.)
+    expect(remote.tags.map((t) => t.name).filter((n) => !n.startsWith('dcproject:'))).toEqual(['x']);
   });
 
   it('multiple person:<slug> tags push as multiple assignees', async () => {
@@ -104,8 +105,8 @@ describe('clickup members + person-tag assignee bridge', () => {
     const remote = [...fake.tasks.values()][0];
     // Slugs sort → alice-smith (501) before mehmet-nuraydin (502).
     expect(remote.assignees.map((a) => a.id).sort()).toEqual([501, 502]);
-    // person: tags never travel as plain remote tags.
-    expect(remote.tags.map((t) => t.name)).toEqual([]);
+    // person: tags never travel as plain remote tags (the `dcproject:` stamp does — exclude it).
+    expect(remote.tags.map((t) => t.name).filter((n) => !n.startsWith('dcproject:'))).toEqual([]);
   });
 
   it('a legacy assignee field is folded in alongside person tags (union)', async () => {

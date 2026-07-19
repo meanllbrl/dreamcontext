@@ -21,6 +21,12 @@ export interface TaskRecord {
   rice: RiceFields | null;
   /** Project-declared custom field values (overrides/task.md); {} when none. */
   custom_fields: Record<string, string | number | null>;
+  /**
+   * Foreign project provenance (#177): the id of ANOTHER project this synced row
+   * belongs to, when a shared remote container reported it as foreign. Null for
+   * native and unstamped tasks — the common case.
+   */
+  source_project: string | null;
   created_at: string;
   updated_at: string;
   file: string;
@@ -121,6 +127,7 @@ export function toTaskRecord(
       data.custom_fields && typeof data.custom_fields === 'object' && !Array.isArray(data.custom_fields)
         ? (data.custom_fields as Record<string, string | number | null>)
         : {},
+    source_project: strOrNull(data.source_project),
     created_at: str(data.created_at, '-'),
     updated_at: str(data.updated_at ?? data.created_at, '-'),
     file,

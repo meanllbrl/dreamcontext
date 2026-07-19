@@ -62,6 +62,14 @@ export interface SetupConfig {
    * the home registry. Orthogonal to `multiProduct`. Absent ⇒ no linked repos.
    */
   linkedRepos?: LinkedRepo[];
+  /**
+   * Stable identity for THIS project's synced task rows (#177). Optional escape
+   * hatch: when set it pins the value used to stamp/scope rows on a shared
+   * remote container, surviving a folder rename or a repo move. Absent ⇒ the id
+   * is DERIVED (first `linkedRepos` URL, else the project folder basename) — see
+   * `projectScopeId`. Slug-safe; provenance slugifies it either way.
+   */
+  projectId?: string;
 }
 
 /** A governed CODE repo, SHARED across the team — name (per-project label) + canonical GitHub URL. NEVER a path. */
@@ -136,6 +144,14 @@ export interface ClickUpConfig {
   listId?: string;
   /** Where changelog entries land remotely. Comments are the natural ClickUp fit. */
   changelogTarget?: 'comments';
+  /**
+   * Shared-list scope filter (#177). `'all'` (the default, back-compat) pulls
+   * every row in the list. `'project'` skips importing rows stamped as belonging
+   * to ANOTHER project (`dcproject:<other>`), so two projects can share one list
+   * without cross-contaminating their brains. Unstamped rows are always pulled
+   * (we can't prove ownership, so we never silently drop them).
+   */
+  scope?: 'all' | 'project';
 }
 
 export interface GitHubConfig {
@@ -170,6 +186,7 @@ function sanitizeClickUp(raw: unknown): ClickUpConfig | undefined {
   if (typeof o.spaceId === 'string') out.spaceId = o.spaceId;
   if (typeof o.listId === 'string') out.listId = o.listId;
   if (o.changelogTarget === 'comments') out.changelogTarget = o.changelogTarget;
+  if (o.scope === 'all' || o.scope === 'project') out.scope = o.scope;
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
@@ -271,6 +288,9 @@ export function readSetupConfig(projectRoot: string): SetupConfig | null {
       shareable: typeof parsed.shareable === 'boolean' ? parsed.shareable : undefined,
       brainRepo: sanitizeBrainRepo(parsed.brainRepo),
       linkedRepos: sanitizeLinkedRepos(parsed.linkedRepos),
+      // Absent / blank / non-string ⇒ undefined (identity is derived downstream).
+      projectId:
+        typeof parsed.projectId === 'string' && parsed.projectId.trim() ? parsed.projectId.trim() : undefined,
     };
   } catch {
     return null;
@@ -313,6 +333,7 @@ export function updateSetupConfig(
     shareable: patch.shareable ?? existing.shareable,
     brainRepo: patch.brainRepo ?? existing.brainRepo,
     linkedRepos: patch.linkedRepos ?? existing.linkedRepos,
+    projectId: patch.projectId ?? existing.projectId,
   };
   writeSetupConfig(projectRoot, next);
   return next;
