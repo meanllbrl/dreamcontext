@@ -19,10 +19,12 @@ export interface Capabilities {
   platform: string;
   embeddedTerminal: boolean;
   openTerminal: boolean;
-  // Prerequisite breakdown (drives the in-app Setup panel).
+  // Prerequisite breakdown (drives the in-app Setup panel + the System dependencies doctor).
   nodePty: boolean;
   claudeCli: boolean;
   npm: boolean;
+  /** git presence probed with the server's own env — exactly how cloud sync invokes it. */
+  git: boolean;
 }
 
 export type TermStatus = 'connecting' | 'open' | 'closed';

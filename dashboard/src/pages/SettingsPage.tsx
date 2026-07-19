@@ -13,6 +13,7 @@ import { useBrainSettings, useUpdateBrainSettings } from '../hooks/useBrainStatu
 import { useSleep, useUpdateSleep, type RecallMode } from '../hooks/useSleep';
 import { GitHubLogin } from '../components/brain/GitHubLogin';
 import { OriginSetup } from '../components/brain/OriginSetup';
+import { SystemDependencies } from '../components/settings/SystemDependencies';
 import { LinkedRepos } from '../components/brain/LinkedRepos';
 import { readAutoCheckpointOnOpen, writeAutoCheckpointOnOpen } from '../lib/brainSyncPrefs';
 import { isDesktop } from '../lib/desktop';
@@ -126,7 +127,7 @@ const DEFAULT_CONFIG: Pick<SetupConfig, 'platforms' | 'disableNativeMemory'> = {
 
 // ─── Section navigation (in-page menu) ────────────────────────────────────────
 
-type SettingsSectionId = 'platforms' | 'tasks' | 'format' | 'memory' | 'connections' | 'brain' | 'agents' | 'sleepy';
+type SettingsSectionId = 'platforms' | 'tasks' | 'format' | 'memory' | 'connections' | 'brain' | 'system' | 'agents' | 'sleepy';
 
 interface SettingsNavItem {
   id: SettingsSectionId;
@@ -147,6 +148,7 @@ const SETTINGS_NAV: SettingsNavItem[] = [
   { id: 'memory', labelKey: 'settings.nav.memory', descKey: 'settings.navdesc.memory' },
   { id: 'connections', labelKey: 'settings.nav.connections', descKey: 'settings.navdesc.connections' },
   { id: 'brain', labelKey: 'settings.nav.brain', descKey: 'settings.navdesc.brain' },
+  { id: 'system', labelKey: 'settings.nav.system', descKey: 'settings.navdesc.system' },
   { id: 'format', labelKey: 'settings.nav.format', descKey: 'settings.navdesc.format', beta: true },
   { id: 'agents', labelKey: 'settings.nav.agents', descKey: 'settings.navdesc.agents', desktopOnly: true, beta: true },
   { id: 'sleepy', labelKey: 'settings.nav.sleepy', descKey: 'settings.navdesc.sleepy', desktopOnly: true, lab: true },
@@ -865,6 +867,16 @@ export function SettingsPage({ focus }: SettingsPageProps) {
           </label>
           <p className="settings-field-hint">{t('brain.scope.autoCheckpoint.hint')}</p>
         </div>
+      </section>
+      )}
+
+      {activeSection === 'system' && (
+      <section className="settings-section">
+        <div className="settings-section-head">
+          <h2 className="settings-section-title">{t('settings.system')}</h2>
+          <p className="settings-section-desc">{t('settings.desc.system')}</p>
+        </div>
+        <SystemDependencies />
       </section>
       )}
 

@@ -113,6 +113,15 @@ export function BrainRepoIcon(props: IconProps) {
   );
 }
 
+/** System dependencies — a wrench (setup/tooling). */
+export function SystemIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M11.42 15.17 6.9 19.7a2.1 2.1 0 0 1-2.97-2.97l4.52-4.52a6 6 0 0 1 7.5-7.6l-3.4 3.4 3.44 3.44 3.4-3.4a6 6 0 0 1-7.6 7.5Z" />
+    </Icon>
+  );
+}
+
 export const SETTINGS_ICONS = {
   platforms: PlatformsIcon,
   tasks: CloudTasksIcon,
@@ -120,6 +129,7 @@ export const SETTINGS_ICONS = {
   connections: ConnectionsIcon,
   format: FormatIcon,
   brain: BrainRepoIcon,
+  system: SystemIcon,
   agents: AgentsIcon,
   sleepy: SleepyIcon,
 } as const;

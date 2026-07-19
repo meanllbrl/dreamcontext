@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { writeGitHubToken } from '../../src/lib/task-backend/secrets.js';
+import { writeGlobalGitHubToken } from '../../src/lib/git-sync/auth-store.js';
 import * as git from '../../src/lib/git-sync/git.js';
 import { readSetupConfig, updateSetupConfig } from '../../src/lib/setup-config.js';
 import {
@@ -13,6 +14,7 @@ import {
   acquireBrainLock,
   releaseBrainLock,
   healStaleBrainConfig,
+  demoteProjectGitHubToken,
 } from '../../src/lib/git-sync/brain-repo.js';
 
 describe('git-sync/brain-repo — resolveMode', () => {
@@ -86,7 +88,14 @@ describe('git-sync/brain-repo — resolveBrainSyncToken (M1: secrets-first, env-
   });
   afterEach(() => {
     rmSync(projectRoot, { recursive: true, force: true });
-    process.env = { ...ORIGINAL_ENV };
+    // Restore keys IN PLACE — `process.env = {...}` would swap Node's magic env
+    // object for a plain one, after which HOME writes never reach the native
+    // environment and os.homedir() (libuv reads the REAL env) goes stale.
+    for (const key of ['HOME', 'GITHUB_TOKEN', 'GH_TOKEN']) {
+      const orig = ORIGINAL_ENV[key];
+      if (orig === undefined) delete process.env[key];
+      else process.env[key] = orig;
+    }
   });
 
   it('a per-project stored token wins over GITHUB_TOKEN env (the reverse of resolveGitHubToken)', () => {
@@ -109,6 +118,42 @@ describe('git-sync/brain-repo — resolveBrainSyncToken (M1: secrets-first, env-
     delete process.env.GITHUB_TOKEN;
     delete process.env.GH_TOKEN;
     expect(resolveBrainSyncToken(projectRoot)).toBeNull();
+  });
+
+  it('a DEMOTED per-project token loses to the global tier (kept on disk, no longer preferred)', () => {
+    delete process.env.GITHUB_TOKEN;
+    delete process.env.GH_TOKEN;
+    writeGitHubToken(projectRoot, 'task-backend-pat');
+    writeGlobalGitHubToken('global-signin-token');
+    demoteProjectGitHubToken(projectRoot, 'task-backend-pat');
+
+    const resolved = resolveBrainSyncToken(projectRoot);
+    expect(resolved?.token).toBe('global-signin-token');
+    expect(resolved?.via).toBe('global');
+  });
+
+  it('a demoted token is still the LAST resort when no global/env token exists', () => {
+    delete process.env.GITHUB_TOKEN;
+    delete process.env.GH_TOKEN;
+    writeGitHubToken(projectRoot, 'task-backend-pat');
+    demoteProjectGitHubToken(projectRoot, 'task-backend-pat');
+
+    const resolved = resolveBrainSyncToken(projectRoot);
+    expect(resolved?.token).toBe('task-backend-pat');
+  });
+
+  it('entering a NEW per-project token (different hash) automatically restores per-project priority', () => {
+    delete process.env.GITHUB_TOKEN;
+    delete process.env.GH_TOKEN;
+    writeGitHubToken(projectRoot, 'old-pat');
+    writeGlobalGitHubToken('global-signin-token');
+    demoteProjectGitHubToken(projectRoot, 'old-pat');
+    expect(resolveBrainSyncToken(projectRoot)?.via).toBe('global');
+
+    writeGitHubToken(projectRoot, 'brand-new-pat');
+    const resolved = resolveBrainSyncToken(projectRoot);
+    expect(resolved?.token).toBe('brand-new-pat');
+    expect(resolved?.source).toBe('secrets');
   });
 });
 

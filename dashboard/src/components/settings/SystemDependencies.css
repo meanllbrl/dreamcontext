@@ -1,0 +1,116 @@
+.sysdep {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.sysdep-npm-warn {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.sysdep-feature {
+  padding: 12px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-bg-secondary);
+}
+
+.sysdep-feature-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.sysdep-feature-title {
+  font-weight: 600;
+  font-size: 13.5px;
+  color: var(--color-text-primary);
+}
+
+.sysdep-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.sysdep-badge--ok {
+  background: color-mix(in srgb, #34d399 16%, transparent);
+  color: #34d399;
+}
+
+.sysdep-badge--warn {
+  background: color-mix(in srgb, #fbbf24 16%, transparent);
+  color: #fbbf24;
+}
+
+.sysdep-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 12.5px;
+}
+
+.sysdep-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #f87171;
+  flex: none;
+}
+
+.sysdep-dot--ok {
+  background: #34d399;
+}
+
+.sysdep-name {
+  color: var(--color-text-primary);
+  font-weight: 500;
+}
+
+.sysdep-status--ok {
+  color: var(--color-text-secondary);
+}
+
+.sysdep-status--missing {
+  color: #fbbf24;
+}
+
+.sysdep-manual {
+  color: var(--color-text-secondary);
+}
+
+.sysdep-manual code {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  background: var(--color-bg-tertiary);
+  padding: 2px 6px;
+  border-radius: 6px;
+  user-select: all;
+}
+
+.sysdep-nodeps {
+  margin: 8px 0 0;
+  font-size: 12.5px;
+  color: var(--color-text-secondary);
+}
+
+.sysdep-error {
+  flex-basis: 100%;
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: #f87171;
+  white-space: pre-wrap;
+}

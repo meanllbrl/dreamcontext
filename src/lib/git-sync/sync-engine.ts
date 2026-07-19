@@ -12,11 +12,12 @@ import {
   acquireBrainLock,
   releaseBrainLock,
   ensureFullRepoGitignore,
+  demoteProjectGitHubToken,
   FALLBACK_AUTHOR,
 } from './brain-repo.js';
 import { withGitCredentials } from './credentials.js';
 import { readGlobalGitHubLogin, readGlobalGitHubToken } from './auth-store.js';
-import { removeProjectGitHubToken, type ResolvedToken } from '../task-backend/secrets.js';
+import { type ResolvedToken } from '../task-backend/secrets.js';
 import { BrainSyncTokenSession } from './token-fallback.js';
 import { mapLoginToPerson } from '../task-backend/identity.js';
 import { slugify } from '../id.js';
@@ -150,8 +151,8 @@ export interface SyncEngineDeps {
   readGlobalGitHubLogin: typeof readGlobalGitHubLogin;
   /** Stale-per-project-token self-heal: the signed-in global token to fall back to. */
   readGlobalGitHubToken: typeof readGlobalGitHubToken;
-  /** Stale-per-project-token self-heal: remove the shadowing per-project `github.token`. */
-  removeProjectGitHubToken: typeof removeProjectGitHubToken;
+  /** Stale-per-project-token self-heal: demote (never delete) the shadowing per-project `github.token`. */
+  demoteProjectGitHubToken: typeof demoteProjectGitHubToken;
 }
 
 const defaultDeps: SyncEngineDeps = {
@@ -165,7 +166,7 @@ const defaultDeps: SyncEngineDeps = {
   releaseBrainLock,
   readGlobalGitHubLogin,
   readGlobalGitHubToken,
-  removeProjectGitHubToken,
+  demoteProjectGitHubToken,
 };
 
 interface Ctx {
@@ -243,7 +244,7 @@ function resolveTokenSession(ctx: Ctx): BrainSyncTokenSession | null {
   const session = new BrainSyncTokenSession(token, ctx.projectRoot, {
     withGitCredentials: ctx.d.withGitCredentials,
     readGlobalGitHubToken: ctx.d.readGlobalGitHubToken,
-    removeProjectGitHubToken: ctx.d.removeProjectGitHubToken,
+    demoteProjectGitHubToken: ctx.d.demoteProjectGitHubToken,
   });
   ctx.session = session;
   return session;
@@ -251,9 +252,9 @@ function resolveTokenSession(ctx: Ctx): BrainSyncTokenSession | null {
 
 const NO_TOKEN_NOTE = 'No GitHub token found for the brain repo (per-project secrets or GITHUB_TOKEN/GH_TOKEN env).';
 
-/** Human-facing note when a stale per-project token was self-healed away mid-sync. */
+/** Human-facing note when a stale per-project token was self-healed mid-sync. */
 const HEALED_STALE_TOKEN_NOTE =
-  "This project had its own GitHub token that was stale — sync switched to your signed-in GitHub account and removed the stale project token.";
+  "This project's own GitHub token didn't work for cloud sync — sync switched to your signed-in GitHub account and will keep using it. The project token was kept (task sync may still need it).";
 
 /**
  * Stamp the stale-per-project-token heal onto a returned result. No-op when

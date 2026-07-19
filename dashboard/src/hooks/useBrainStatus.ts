@@ -215,7 +215,9 @@ export function useCreateOrigin() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (args: CreateOriginArgs = {}) => api.post<OriginSetupResult>('/brain/origin/create', args),
-    onSuccess: () => invalidateBrain(queryClient),
+    // Settled, not success: even when the request errors mid-flight, the repo may
+    // already be created + wired server-side — refetch so the UI shows the truth.
+    onSettled: () => invalidateBrain(queryClient),
   });
 }
 
@@ -224,7 +226,7 @@ export function useAttachOrigin() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (url: string) => api.post<OriginSetupResult>('/brain/origin/attach', { url }),
-    onSuccess: () => invalidateBrain(queryClient),
+    onSettled: () => invalidateBrain(queryClient),
   });
 }
 

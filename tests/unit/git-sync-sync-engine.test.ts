@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { readFileSync, existsSync } from 'node:fs';
 import { updateSetupConfig, readBrainLocal, writeBrainLocal } from '../../src/lib/setup-config.js';
 import { writeConflictReport, readConflictReport } from '../../src/lib/git-sync/conflict-report.js';
-import { acquireBrainLock, releaseBrainLock, FALLBACK_AUTHOR } from '../../src/lib/git-sync/brain-repo.js';
+import { acquireBrainLock, releaseBrainLock, isDemotedProjectToken, FALLBACK_AUTHOR } from '../../src/lib/git-sync/brain-repo.js';
 import { writeGitHubToken, writeClickUpToken, type ResolvedToken } from '../../src/lib/task-backend/secrets.js';
 import * as git from '../../src/lib/git-sync/git.js';
 import { runBrainSync, type SyncEngineDeps } from '../../src/lib/git-sync/sync-engine.js';
@@ -869,15 +869,15 @@ describe('git-sync/sync-engine — stale per-project token self-heal', () => {
       // Per-project token WINS resolution (the shadowing slot) — the real bug.
       resolveBrainSyncToken: () => ({ token: STALE, source: 'secrets', via: 'token' }),
       readGlobalGitHubToken: () => opts.global,
-      // Use the REAL removeProjectGitHubToken (from defaultDeps) so the on-disk
-      // self-heal is exercised for real against the temp secrets file.
+      // Use the REAL demoteProjectGitHubToken (from defaultDeps) so the on-disk
+      // self-heal is exercised for real against the temp brain-local file.
       withGitCredentials: withCreds,
       acquireBrainLock: () => true,
       releaseBrainLock: () => {},
     };
   }
 
-  it('per-project auth/permission failure → falls back to global, heals, removes ONLY github.token (other keys preserved)', async () => {
+  it('per-project auth/permission failure → falls back to global, heals, DEMOTES github.token (kept on disk, every key preserved)', async () => {
     // Real secrets file: the stale github.token PLUS a per-user token map and a clickup block that must survive.
     writeGitHubToken(projectRoot, STALE);
     writeGitHubToken(projectRoot, 'alice-token', 'alice');
@@ -890,17 +890,22 @@ describe('git-sync/sync-engine — stale per-project token self-heal', () => {
 
     expect(result.action).toBe('pushed');
     expect(result.healedStaleProjectToken).toBe(true);
-    expect(result.note).toMatch(/stale/i);
+    expect(result.note).toMatch(/switched to your signed-in GitHub account/i);
     // Askpass hygiene: neither token value ever appears in the surfaced note.
     expect(result.note).not.toContain(STALE);
     expect(result.note).not.toContain(FRESH);
     expect(state.pushCalls).toBeGreaterThanOrEqual(1);
 
-    // Self-heal on disk: github.token gone; the per-user map + clickup block untouched.
+    // Self-heal on disk: github.token KEPT (the task backend may own it) — only
+    // demoted via the machine-local hash marker; everything else untouched.
     const secrets = readSecrets();
-    expect(secrets.github?.token).toBeUndefined();
+    expect(secrets.github?.token).toBe(STALE);
     expect(secrets.github?.users?.alice).toBe('alice-token');
     expect(secrets.clickup?.token).toBe('cu-token');
+    expect(isDemotedProjectToken(projectRoot, STALE)).toBe(true);
+    expect(isDemotedProjectToken(projectRoot, 'some-new-token')).toBe(false);
+    // The raw token value never lands in the brain-local file — hash only.
+    expect(JSON.stringify(readBrainLocal(projectRoot))).not.toContain(STALE);
   });
 
   it('retry ALSO fails (global rejected too) → surfaces the ORIGINAL failure and does NOT remove the project token', async () => {
@@ -939,7 +944,9 @@ describe('git-sync/sync-engine — stale per-project token self-heal', () => {
     const result = await runBrainSync({ cwd: contextRoot, mode: 'pull-only', foreground: true }, deps);
     expect(result.action).toBe('pulled');
     expect(result.healedStaleProjectToken).toBe(true);
-    // Only github.token existed → removing it empties the file, which is deleted whole.
-    expect(existsSync(secretsPath())).toBe(false);
+    // The token is DEMOTED, never deleted — the secrets file survives intact.
+    expect(existsSync(secretsPath())).toBe(true);
+    expect(readSecrets().github?.token).toBe(STALE);
+    expect(isDemotedProjectToken(projectRoot, STALE)).toBe(true);
   });
 });

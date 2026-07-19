@@ -119,6 +119,15 @@ export interface BrainLocalState {
    * needs this flag to persist.
    */
   needsTaskSync?: boolean;
+  /**
+   * SHA-256 of a per-project GitHub token DEMOTED for brain sync: the token
+   * failed auth/permission against the origin while the global sign-in worked,
+   * so cloud sync prefers the global tier while THIS exact token is present.
+   * The token itself is never deleted — it may belong to the task backend
+   * (a repo-scoped PAT). A newly entered token (different hash) wins again.
+   * Only ever a hash — the raw value never lands in this 0644 file.
+   */
+  demotedTokenSha256?: string;
 }
 
 export interface ClickUpConfig {
@@ -330,6 +339,7 @@ export function readBrainLocal(projectRoot: string): BrainLocalState {
     if (typeof parsed.pulledUpdates === 'number') out.pulledUpdates = parsed.pulledUpdates;
     if (typeof parsed.pendingAgentMerge === 'boolean') out.pendingAgentMerge = parsed.pendingAgentMerge;
     if (typeof parsed.needsTaskSync === 'boolean') out.needsTaskSync = parsed.needsTaskSync;
+    if (typeof parsed.demotedTokenSha256 === 'string') out.demotedTokenSha256 = parsed.demotedTokenSha256;
     return out;
   } catch {
     return {};

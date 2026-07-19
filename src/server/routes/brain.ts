@@ -155,7 +155,7 @@ interface SyncPayload {
   checkpointSha?: string;
   codeConflicts?: string[];
   failure?: SyncFailure;
-  /** The sync detected + removed a stale per-project token, falling back to the signed-in account. */
+  /** The sync detected + demoted a stale per-project token (kept on disk), falling back to the signed-in account. */
   healedStaleProjectToken?: boolean;
 }
 
@@ -200,7 +200,7 @@ async function runSyncPayload(
     };
   } catch (err) {
     // Tier-aware failure copy: if the token that failed is a per-project one (it
-    // still resolves here — the self-heal only removed it on a SUCCESSFUL global
+    // still resolves here — the self-heal only demotes it on a SUCCESSFUL global
     // retry), name the shadowing stale project token as the real culprit.
     const perProjectToken = isPerProjectToken(resolveBrainSyncToken(projectRoot));
     const failure = classifySyncError((err as Error).message, syncRepoHint(projectRoot), { perProjectToken });
@@ -220,6 +220,37 @@ async function runSyncPayload(
   }
 }
 
+
+/**
+ * First-sync response budget for origin create/attach. The origin is already
+ * wired and cloud sync enabled BEFORE the first sync runs — so when the network
+ * crawls, the route must still answer promptly with the connected repo instead
+ * of hanging the UI on an open request (the old behavior: repo created on
+ * GitHub, spinner forever, "connected" only after an app restart). The losing
+ * sync keeps running in the background; its outcome reconciles the shared auth
+ * flag inside `runSyncPayload`, and the sidebar's status poll surfaces it.
+ */
+const FIRST_SYNC_RESPONSE_BUDGET_MS = 15_000;
+
+async function raceFirstSync(sync: Promise<SyncPayload>): Promise<SyncPayload> {
+  let timer: NodeJS.Timeout | undefined;
+  const budget = new Promise<SyncPayload>((resolve) => {
+    timer = setTimeout(() => resolve({
+      action: 'in-progress',
+      pulledUpdates: 0,
+      scrub: { blocks: [], warns: [] },
+      note: 'First sync is still running in the background — the sidebar sync status will update when it finishes.',
+    }), FIRST_SYNC_RESPONSE_BUDGET_MS);
+  });
+  // runSyncPayload never rejects, but never risk an unhandled rejection from a
+  // race loser either.
+  sync.catch(() => {});
+  try {
+    return await Promise.race([sync, budget]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 /** Best-effort `owner/repo` (or remote URL) for a failure message — the repo sync pushes to. */
 function syncRepoHint(projectRoot: string, _result?: unknown): string | undefined {
@@ -381,7 +412,7 @@ export async function handleBrainOriginCreate(
   try {
     const created = await createProjectOrigin({ projectRoot, name, private: isPrivate, confirmed });
     enableFullRepo(projectRoot);
-    const sync = await runSyncPayload(projectRoot, contextRoot, { mode: 'auto', foreground: true });
+    const sync = await raceFirstSync(runSyncPayload(projectRoot, contextRoot, { mode: 'auto', foreground: true }));
     sendJson(res, 200, { ok: true, remote: created.remote, fullName: created.fullName, private: created.private, sync });
   } catch (err) {
     // The repo-creation call failed (name taken, missing `repo` scope, public
@@ -452,7 +483,7 @@ export async function handleBrainOriginAttach(
   try {
     const attached = attachProjectOrigin({ projectRoot, url });
     enableFullRepo(projectRoot);
-    const sync = await runSyncPayload(projectRoot, contextRoot, { mode: 'auto', foreground: true });
+    const sync = await raceFirstSync(runSyncPayload(projectRoot, contextRoot, { mode: 'auto', foreground: true }));
     sendJson(res, 200, { ok: true, remote: attached.remote, fullName: attached.fullName, private: preview.private, sync });
   } catch (err) {
     sendError(res, 400, 'attach_failed', (err as Error).message);

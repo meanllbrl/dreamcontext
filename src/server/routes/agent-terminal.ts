@@ -10,6 +10,7 @@ import { homedir, tmpdir } from 'node:os';
 import { sendJson, sendError } from '../middleware.js';
 import { isDesktop } from '../desktop.js';
 import { listVaults } from '../../lib/vaults.js';
+import { gitAvailable } from '../../lib/git-sync/git.js';
 import { trackChild } from '../lifecycle.js';
 import { resolveAgentSession, readAgentSessionEntry, UUID_RE } from '../../lib/agent-session-map.js';
 
@@ -133,6 +134,10 @@ export async function handleAgentCapabilities(
   const [nodePty, claudeCli, npm] = desktop
     ? await Promise.all([hasNodePty(), detectOnPath('claude'), detectOnPath('npm')])
     : [false, false, false];
+  // git is probed with the SERVER's own env (not a login shell) because that is
+  // exactly how the sync engine invokes it — and unconditionally: cloud sync runs
+  // in the browser dashboard too. Cheap (one --version exec).
+  const gitOk = gitAvailable();
   sendJson(res, 200, {
     desktop,
     platform: process.platform,
@@ -140,10 +145,11 @@ export async function handleAgentCapabilities(
     embeddedTerminal: desktop && process.platform !== 'win32' && nodePty,
     // Launching the user's real terminal is macOS-only (osascript) today.
     openTerminal: desktop && process.platform === 'darwin',
-    // Prerequisite breakdown for the in-app Setup panel.
+    // Prerequisite breakdown for the in-app Setup panel + the System dependencies doctor.
     nodePty,
     claudeCli,
     npm,
+    git: gitOk,
   });
 }
 
@@ -212,7 +218,7 @@ export async function handleOpenTerminal(
 // the package names are FIXED internal literals, never user input. The only body
 // field is `target`, validated against a closed whitelist.
 
-type InstallTarget = 'claude' | 'pty';
+type InstallTarget = 'claude' | 'pty' | 'git';
 
 interface InstallRun {
   state: 'running' | 'done' | 'error';
@@ -264,6 +270,13 @@ function installPlan(target: InstallTarget): { script: string; cwd?: string } | 
     // Anthropic's official Claude Code distribution.
     return { script: 'npm install -g @anthropic-ai/claude-code' };
   }
+  if (target === 'git') {
+    // macOS: `xcode-select --install` opens Apple's Command Line Tools installer
+    // dialog and returns immediately (or exits 1 when the tools are already
+    // installed). Other platforms have no safe unattended path — the UI shows a
+    // manual command instead (installPlan returns null there).
+    return process.platform === 'darwin' ? { script: 'xcode-select --install' } : null;
+  }
   // node-pty: install into the CLI's own package so the server can import it. Pinned
   // to the declared range; `--no-save` leaves the package manifest untouched.
   const root = cliPackageRoot();
@@ -291,12 +304,16 @@ export async function handleAgentInstall(
     target = chunks.length ? (JSON.parse(Buffer.concat(chunks).toString('utf-8')) as { target?: unknown }).target : undefined;
   } catch { /* invalid body → 400 below */ }
 
-  if (target !== 'claude' && target !== 'pty') {
-    sendError(res, 400, 'bad_target', "Body must be { target: 'claude' | 'pty' }.");
+  if (target !== 'claude' && target !== 'pty' && target !== 'git') {
+    sendError(res, 400, 'bad_target', "Body must be { target: 'claude' | 'pty' | 'git' }.");
     return;
   }
   const plan = installPlan(target);
   if (!plan) {
+    if (target === 'git') {
+      sendError(res, 501, 'no_install_path', 'Automatic git install is macOS-only — install git with your system package manager (e.g. `apt install git`).');
+      return;
+    }
     sendError(res, 500, 'no_install_path', "Couldn't locate the CLI package to install node-pty into.");
     return;
   }
@@ -329,7 +346,20 @@ export async function handleAgentInstall(
     child.on('close', (code) => {
       clearTimeout(watchdog);
       if (run.state !== 'running') return;
-      if (code === 0) {
+      if (target === 'git') {
+        // `xcode-select --install` exits 0 after LAUNCHING Apple's GUI installer
+        // (git lands minutes later — the capabilities poll flips it to ready),
+        // and exits 1 when the tools are already installed. Both are fine.
+        if (code === 0) {
+          run.state = 'done';
+          run.output += '\nApple’s Command Line Tools installer was opened — follow the macOS dialog. git will show as installed here once it finishes.';
+        } else if (/already installed/i.test(run.output)) {
+          run.state = 'done';
+        } else {
+          run.state = 'error';
+          if (!run.output.trim()) run.output = `Install exited with code ${code}. Run manually: ${plan.script}`;
+        }
+      } else if (code === 0) {
         // node-pty just landed: restore the spawn-helper +x bit and bust the probe
         // cache so the very next capabilities check reports the terminal as ready.
         if (target === 'pty') { ensurePtyHelperExecutable(); resetPtyCache(); }

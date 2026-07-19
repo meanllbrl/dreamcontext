@@ -28,11 +28,11 @@ interface HarnessOpts {
 }
 
 function harness(opts: HarnessOpts) {
-  const removed: string[] = [];
+  const demoted: Array<[string, string]> = [];
   const deps: TokenFallbackDeps = {
     withGitCredentials: withCreds,
     readGlobalGitHubToken: () => opts.global ?? null,
-    removeProjectGitHubToken: (root: string) => { removed.push(root); },
+    demoteProjectGitHubToken: (root: string, token: string) => { demoted.push([root, token]); },
   };
   let opCalls = 0;
   const tokensSeen: string[] = [];
@@ -46,7 +46,7 @@ function harness(opts: HarnessOpts) {
   return {
     deps,
     op,
-    removed,
+    demoted,
     tokensSeen,
     get opCalls() { return opCalls; },
   };
@@ -69,7 +69,7 @@ describe('git-sync/token-fallback — BrainSyncTokenSession', () => {
     const r = await s.run(h.op);
     expect(r).toBe('ok:stale-project-token');
     expect(s.healedStaleProjectToken).toBe(false);
-    expect(h.removed).toEqual([]);
+    expect(h.demoted).toEqual([]);
     expect(h.opCalls).toBe(1);
   });
 
@@ -80,7 +80,7 @@ describe('git-sync/token-fallback — BrainSyncTokenSession', () => {
     expect(r).toBe('ok:fresh-global-token'); // retried with the global token
     expect(s.healedStaleProjectToken).toBe(true);
     expect(s.activeToken.via).toBe('global'); // whole run continues on global now
-    expect(h.removed).toEqual(['/proj']); // stale project token removed
+    expect(h.demoted).toEqual([['/proj', 'stale-project-token']]); // stale token demoted, never deleted
     // The failing per-project op, then the successful global retry.
     expect(h.tokensSeen).toEqual(['stale-project-token', 'fresh-global-token']);
   });
@@ -91,7 +91,7 @@ describe('git-sync/token-fallback — BrainSyncTokenSession', () => {
     await s.run(h.op); // heals
     const r2 = await s.run(h.op);
     expect(r2).toBe('ok:fresh-global-token');
-    expect(h.removed).toEqual(['/proj']); // removed exactly once
+    expect(h.demoted).toHaveLength(1); // demoted exactly once
   });
 
   it('retry ALSO fails (global rejected too) → surfaces the ORIGINAL error and removes NOTHING', async () => {
@@ -99,7 +99,7 @@ describe('git-sync/token-fallback — BrainSyncTokenSession', () => {
     const s = new BrainSyncTokenSession(PROJECT, '/proj', h.deps);
     await expect(s.run(h.op)).rejects.toThrow(/denied/);
     expect(s.healedStaleProjectToken).toBe(false);
-    expect(h.removed).toEqual([]); // stale token NOT removed
+    expect(h.demoted).toEqual([]); // stale token NOT removed
     expect(h.tokensSeen).toEqual(['stale-project-token', 'fresh-global-token']); // exactly one retry
   });
 
@@ -118,7 +118,7 @@ describe('git-sync/token-fallback — BrainSyncTokenSession', () => {
     const s = new BrainSyncTokenSession(PROJECT, '/proj', h.deps);
     await expect(s.run(h.op)).rejects.toThrow();
     expect(h.tokensSeen).toEqual(['stale-project-token']); // no fallback attempted
-    expect(h.removed).toEqual([]);
+    expect(h.demoted).toEqual([]);
   });
 
   it('global token identical to the per-project one → no retry (reconnecting cannot help)', async () => {
@@ -126,7 +126,7 @@ describe('git-sync/token-fallback — BrainSyncTokenSession', () => {
     const s = new BrainSyncTokenSession(PROJECT, '/proj', h.deps);
     await expect(s.run(h.op)).rejects.toThrow();
     expect(h.tokensSeen).toEqual(['stale-project-token']);
-    expect(h.removed).toEqual([]);
+    expect(h.demoted).toEqual([]);
   });
 
   it('a NON-auth failure (network) never triggers the fallback', async () => {
@@ -134,7 +134,7 @@ describe('git-sync/token-fallback — BrainSyncTokenSession', () => {
     const s = new BrainSyncTokenSession(PROJECT, '/proj', h.deps);
     await expect(s.run(h.op)).rejects.toThrow(/resolve host/);
     expect(h.tokensSeen).toEqual(['stale-project-token']); // no global retry
-    expect(h.removed).toEqual([]);
+    expect(h.demoted).toEqual([]);
   });
 
   it('an ENV token failing auth never triggers the fallback (only per-project qualifies)', async () => {
@@ -142,7 +142,7 @@ describe('git-sync/token-fallback — BrainSyncTokenSession', () => {
     const s = new BrainSyncTokenSession(ENV_TOKEN, '/proj', h.deps);
     await expect(s.run(h.op)).rejects.toThrow();
     expect(h.tokensSeen).toEqual(['env-token']);
-    expect(h.removed).toEqual([]);
+    expect(h.demoted).toEqual([]);
   });
 
   it('askpass hygiene: neither token value ever appears in the surfaced error message', async () => {

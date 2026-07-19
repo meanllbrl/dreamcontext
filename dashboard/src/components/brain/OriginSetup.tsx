@@ -10,6 +10,8 @@ import {
   useDetachOrigin,
   type OriginSetupResult,
 } from '../../hooks/useBrainStatus';
+import { useAgentCapabilities } from '../../hooks/useAgentCapabilities';
+import { useSystemInstall } from '../settings/SystemDependencies';
 import './OriginSetup.css';
 
 /**
@@ -42,6 +44,7 @@ export function OriginSetup() {
   const { t } = useI18n();
   const { data: auth } = useAuthStatus();
   const { data: status } = useBrainStatus();
+  const { data: caps } = useAgentCapabilities();
   const createOrigin = useCreateOrigin();
   const attachOrigin = useAttachOrigin();
 
@@ -76,27 +79,40 @@ export function OriginSetup() {
     attachOrigin.mutate(url.trim(), { onSuccess: (r) => setResult(r) });
   };
 
-  // A finished setup: show the wired repo + the first-sync outcome, nothing else.
+  // A finished setup: show the wired repo + the first-sync outcome as a banner,
+  // AND the connected-origin card as soon as the refetched status carries the
+  // origin — the banner must never permanently mask the connected state (that
+  // was the "repo created but not connected until app restart" bug).
   if (result) {
     const failed = result.sync?.action === 'error';
+    const running = result.sync?.action === 'in-progress';
     return (
-      <div className="origin-setup origin-setup--done">
-        <p className="origin-setup-title">
-          <span className="origin-setup-mark" aria-hidden="true"><GitHubMark size={14} /></span>
-          {t('brain.origin.connected').replace('{repo}', result.fullName ?? result.remote)}
-        </p>
-        <p className={`origin-setup-outcome${failed ? ' origin-setup-outcome--warn' : ''}`}>
-          {failed
-            ? (result.sync?.failure?.message ?? t('brain.origin.firstSyncFailed'))
-            : t('brain.origin.firstSyncOk')}
-        </p>
-      </div>
+      <>
+        <div className="origin-setup origin-setup--done">
+          <p className="origin-setup-title">
+            <span className="origin-setup-mark" aria-hidden="true"><GitHubMark size={14} /></span>
+            {t('brain.origin.connected').replace('{repo}', result.fullName ?? result.remote)}
+          </p>
+          <p className={`origin-setup-outcome${failed ? ' origin-setup-outcome--warn' : ''}`}>
+            {failed
+              ? (result.sync?.failure?.message ?? t('brain.origin.firstSyncFailed'))
+              : running
+                ? t('brain.origin.firstSyncRunning')
+                : t('brain.origin.firstSyncOk')}
+          </p>
+        </div>
+        {status.codeOrigin && <ConnectedOriginCard origin={status.codeOrigin} />}
+      </>
     );
   }
 
   // An origin is already wired → show the connected-origin card (view / change /
   // disconnect) instead of nothing, so the origin is never invisible once set.
   if (status.codeOrigin) return <ConnectedOriginCard origin={status.codeOrigin} />;
+
+  // Cloud sync shells out to git — without it, create/connect would only fail
+  // downstream. Name the missing dependency and offer the fix instead of the form.
+  if (caps && !caps.git) return <GitMissingPanel />;
 
   return (
     <div className="origin-setup">
@@ -165,6 +181,38 @@ export function OriginSetup() {
         </div>
       )}
 
+      {error && <p className="origin-setup-error">{error}</p>}
+    </div>
+  );
+}
+
+/**
+ * git-missing blocker for the origin on-ramp: names the dependency, one-click
+ * installs it where possible (desktop macOS → Apple's CLT installer via the
+ * shared system installer), and shows the copyable command otherwise. The
+ * capabilities poll flips `git` to true when the install lands, and the parent
+ * swaps this panel for the real create/connect form automatically.
+ */
+function GitMissingPanel() {
+  const { t } = useI18n();
+  const { data: caps } = useAgentCapabilities();
+  const { install, running, error } = useSystemInstall();
+  const oneClick = !!caps && caps.desktop && caps.platform === 'darwin';
+  const manualCmd = caps?.platform === 'darwin' ? 'xcode-select --install' : 'sudo apt install git';
+
+  return (
+    <div className="origin-setup">
+      <p className="origin-setup-title">{t('brain.origin.gitMissing')}</p>
+      <p className="settings-field-hint">{t('brain.origin.gitMissingHint')}</p>
+      {oneClick ? (
+        <button className="btn btn--primary" onClick={() => install('git')} disabled={running !== null}>
+          {running ? t('system.dep.installing') : t('system.dep.install')}
+        </button>
+      ) : (
+        <p className="settings-field-hint">
+          {t('system.dep.manualHint')} <code>{manualCmd}</code>
+        </p>
+      )}
       {error && <p className="origin-setup-error">{error}</p>}
     </div>
   );

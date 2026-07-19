@@ -1,5 +1,5 @@
 import type { ResolvedToken } from '../task-backend/secrets.js';
-import { removeProjectGitHubToken } from '../task-backend/secrets.js';
+import { demoteProjectGitHubToken } from './brain-repo.js';
 import { readGlobalGitHubToken } from './auth-store.js';
 import { withGitCredentials } from './credentials.js';
 import { classifySyncError } from './failure.js';
@@ -19,12 +19,17 @@ import { classifySyncError } from './failure.js';
  * When an op fails AND the failure classifies as `auth`/`permission` AND the
  * ACTIVE token came from the per-project tier AND a DIFFERING global token
  * exists, retry that ONE op once with the global token. On success: switch the
- * whole run to the global token and SELF-HEAL by deleting the stale per-project
- * `github.token`. On failure (global also rejected): surface the ORIGINAL error,
- * remove nothing. Exactly one fallback attempt per run — never loops.
+ * whole run to the global token and SELF-HEAL by DEMOTING the per-project
+ * `github.token` (a machine-local hash marker — see `demoteProjectGitHubToken`),
+ * NEVER deleting it: the same token is often the task backend's credential (a
+ * PAT scoped to the tasks repo, not the origin), and deleting it forced users to
+ * re-enter their API key after every sync. On failure (global also rejected):
+ * surface the ORIGINAL error, demote nothing. Exactly one fallback attempt per
+ * run — never loops.
  *
  * Token hygiene is preserved end-to-end: values only ever flow through
- * `withGitCredentials` (askpass tmp file), never into any message/note/error.
+ * `withGitCredentials` (askpass tmp file) or a one-way hash, never into any
+ * message/note/error.
  */
 
 /** True when the token was resolved from the per-project secrets tier (the shadowing slot). */
@@ -38,13 +43,13 @@ export function isPerProjectToken(t: ResolvedToken | null | undefined): boolean 
 export interface TokenFallbackDeps {
   withGitCredentials: typeof withGitCredentials;
   readGlobalGitHubToken: typeof readGlobalGitHubToken;
-  removeProjectGitHubToken: typeof removeProjectGitHubToken;
+  demoteProjectGitHubToken: typeof demoteProjectGitHubToken;
 }
 
 const defaultTokenFallbackDeps: TokenFallbackDeps = {
   withGitCredentials,
   readGlobalGitHubToken,
-  removeProjectGitHubToken,
+  demoteProjectGitHubToken,
 };
 
 export class BrainSyncTokenSession {
@@ -62,7 +67,7 @@ export class BrainSyncTokenSession {
     this.active = initial;
   }
 
-  /** True once the stale per-project token was replaced by the global one AND removed from disk. */
+  /** True once the stale per-project token was replaced by the global one AND demoted (kept on disk). */
   get healedStaleProjectToken(): boolean {
     return this.healed;
   }
@@ -94,15 +99,18 @@ export class BrainSyncTokenSession {
         throw err;
       }
 
-      // Retry succeeded: the per-project token was the stale culprit. Switch the
-      // rest of the run to the global token and delete the stale project token.
+      // Retry succeeded: the per-project token was the stale culprit for THIS
+      // origin. Switch the rest of the run to the global token and demote the
+      // project token (machine-local hash marker) — never delete it: it may be
+      // the task backend's own credential.
+      const stale = this.active;
       this.active = global;
       this.healed = true;
       try {
-        this.deps.removeProjectGitHubToken(this.projectRoot);
+        this.deps.demoteProjectGitHubToken(this.projectRoot, stale.token);
       } catch {
-        // Best-effort: a read-only secrets file must never turn a recovered sync
-        // into a failure. Worst case the stale token is removed on a later run.
+        // Best-effort: an unwritable state dir must never turn a recovered sync
+        // into a failure. Worst case the token is demoted on a later run.
       }
       return result;
     }

@@ -39,7 +39,7 @@ export const SAFE_TRANSPORT_ARGS = ['-c', 'protocol.ext.allow=never'];
 function run(
   cwd: string,
   args: string[],
-  opts?: { env?: NodeJS.ProcessEnv },
+  opts?: { env?: NodeJS.ProcessEnv; timeoutMs?: number },
 ): string {
   try {
     return execFileSync('git', args, {
@@ -47,9 +47,21 @@ function run(
       encoding: 'utf-8',
       env: opts?.env,
       stdio: ['ignore', 'pipe', 'pipe'],
+      // Networked callers pass a ceiling so a stalled network / wedged remote can
+      // never hang the caller forever (the sync engine and dashboard routes await
+      // these synchronously). SIGKILL: a mid-transfer git may shrug off SIGTERM.
+      ...(opts?.timeoutMs ? { timeout: opts.timeoutMs, killSignal: 'SIGKILL' as const } : {}),
     }).toString();
   } catch (err) {
-    const e = err as { stderr?: Buffer | string; stdout?: Buffer | string; message?: string };
+    const e = err as { stderr?: Buffer | string; stdout?: Buffer | string; message?: string; code?: string; signal?: string };
+    // A timeout kill surfaces as ETIMEDOUT (or our kill signal). Name it
+    // explicitly — failure classification maps ETIMEDOUT to the retryable
+    // `network` kind with "check your connection and retry" recovery copy.
+    if (opts?.timeoutMs && (e.code === 'ETIMEDOUT' || e.signal === 'SIGKILL')) {
+      throw new GitSyncError(
+        `git ${args.join(' ')} timed out after ${Math.round(opts.timeoutMs / 1000)}s (ETIMEDOUT)`,
+      );
+    }
     const stderr = e.stderr !== undefined ? String(e.stderr) : '';
     const stdout = e.stdout !== undefined ? String(e.stdout) : '';
     // git writes some "expected" outcomes (e.g. `commit`'s "nothing to commit,
@@ -59,6 +71,11 @@ function run(
     throw new GitSyncError(`git ${args.join(' ')} failed: ${detail}`, stderr || undefined);
   }
 }
+
+/** Ceiling for one networked fetch/ls-remote — bounded, never a hung dashboard. */
+export const NETWORK_OP_TIMEOUT_MS = 2 * 60 * 1000;
+/** Pushes move more data — a higher ceiling, still bounded. */
+export const PUSH_TIMEOUT_MS = 5 * 60 * 1000;
 
 export function gitAvailable(): boolean {
   try {
@@ -159,7 +176,7 @@ export function hasGitIdentity(cwd: string): boolean {
 
 /** Networked. Must be called with the env from `withGitCredentials`. */
 export function fetch(cwd: string, remote: string, branch: string, env: NodeJS.ProcessEnv): void {
-  run(cwd, [...CREDENTIAL_HELPER_DISABLE_ARGS, 'fetch', remote, branch], { env });
+  run(cwd, [...CREDENTIAL_HELPER_DISABLE_ARGS, 'fetch', remote, branch], { env, timeoutMs: NETWORK_OP_TIMEOUT_MS });
 }
 
 /**
@@ -169,13 +186,13 @@ export function fetch(cwd: string, remote: string, branch: string, env: NodeJS.P
  * failure (an unreachable remote is NOT "empty").
  */
 export function remoteBranchExists(cwd: string, remote: string, branch: string, env: NodeJS.ProcessEnv): boolean {
-  const out = run(cwd, [...CREDENTIAL_HELPER_DISABLE_ARGS, 'ls-remote', '--heads', remote, branch], { env });
+  const out = run(cwd, [...CREDENTIAL_HELPER_DISABLE_ARGS, 'ls-remote', '--heads', remote, branch], { env, timeoutMs: NETWORK_OP_TIMEOUT_MS });
   return out.trim().length > 0;
 }
 
 /** Networked. Must be called with the env from `withGitCredentials`. */
 export function push(cwd: string, remote: string, branch: string, env: NodeJS.ProcessEnv): void {
-  run(cwd, [...CREDENTIAL_HELPER_DISABLE_ARGS, 'push', remote, `HEAD:${branch}`], { env });
+  run(cwd, [...CREDENTIAL_HELPER_DISABLE_ARGS, 'push', remote, `HEAD:${branch}`], { env, timeoutMs: PUSH_TIMEOUT_MS });
 }
 
 /**
@@ -187,7 +204,7 @@ export function push(cwd: string, remote: string, branch: string, env: NodeJS.Pr
  * here, so a raw team-writable string never lands on this argv.
  */
 export function clone(url: string, dest: string, env: NodeJS.ProcessEnv): void {
-  run(process.cwd(), [...CREDENTIAL_HELPER_DISABLE_ARGS, ...SAFE_TRANSPORT_ARGS, 'clone', '--', url, dest], { env });
+  run(process.cwd(), [...CREDENTIAL_HELPER_DISABLE_ARGS, ...SAFE_TRANSPORT_ARGS, 'clone', '--', url, dest], { env, timeoutMs: CLONE_TIMEOUT_MS });
 }
 
 /** Safety ceiling for a full clone — big repos over slow links, not runaway hangs. */
