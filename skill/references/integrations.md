@@ -70,15 +70,27 @@ The mirror, sync ledger, and conflict files are derived and gitignored — never
 
 #### Gotchas (#184 — learned the hard way)
 
-**One list per project.** A ClickUp list shared by two dreamcontext projects has no
-per-project scoping: each project pulls the other's tasks into its own brain as
-ordinary local tasks — same frontmatter, nothing recording whose work they describe.
-A `completed` task then reads as proof that THIS project has the capability when the
-work actually landed in a sibling repo. This is not hypothetical: a sleep specialist
-read one and concluded "already done", nearly dropping a whole work group. The tell
-was PR numbers in the changelog that were impossible for the repo.
-`dreamcontext doctor` now warns when two registered projects point at the same list —
-but the fix is to give each project its own.
+**Prefer one list per project — but a shared list is now survivable (#177).** A ClickUp
+list shared by two dreamcontext projects pulls the other's tasks into your brain. A
+foreign `completed` task then reads as proof that THIS project has the capability when
+the work actually landed in a sibling repo — a sleep specialist once read one and
+concluded "already done", nearly dropping a whole work group. Three layers now guard
+against it:
+
+- **Provenance stamp.** Every pushed row is stamped with an invisible `dcproject:<id>`
+  tag identifying the owning project. On pull, a row whose stamp names *another* project
+  is recorded with a `source_project:` frontmatter field and shown `⚠ FOREIGN` in the
+  SessionStart snapshot and `⚠ foreign:<id>` in `tasks list`, so it is visibly foreign.
+  The id is derived from `projectId` in `.config.json`, else the first `linkedRepos` URL,
+  else the project folder name; unstamped rows (created in the ClickUp UI, or pushed
+  before this shipped) are always treated as native, so there are no false positives.
+- **Scope filter.** Set `clickup.scope: "project"` in `.config.json` to *skip importing*
+  foreign rows entirely (unstamped rows are still pulled — we never silently drop a row
+  we can't prove is foreign). Default `"all"` keeps every row (marked, not dropped).
+- **`dreamcontext doctor`** warns when two registered projects point at the same list.
+
+The fix is still ideally one list per project; the above makes a shared list safe when
+that isn't possible.
 
 **Set the list's statuses in the ClickUp UI BEFORE the first sync to a new list.**
 ClickUp API v2 cannot write folder/list statuses (`PUT /folder/{id}` with

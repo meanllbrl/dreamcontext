@@ -173,6 +173,8 @@ dreamcontext tasks status <slug> in_review "Needs your eyes — <the specific th
 
 The single test: **would the user actually want to look at this before it's closed?** If yes → `in_review`. If it's done and there's nothing to second-guess → `completed`. When you're genuinely unsure, prefer `in_review`. Only the never-done categories below (superseded / abandoned / obsoleted) ever go to `in_review` *for closing* — that's handing the user a close decision, not a completion.
 
+**Foreign tasks are NOT evidence (#177).** A task synced from a SHARED remote container (a ClickUp list two projects both sync) carries a `source_project:` frontmatter field, and the SessionStart snapshot flags it `⚠ FOREIGN`. That row describes work in ANOTHER repo. **Never treat a foreign `completed` task as proof that the corresponding work is done HERE** — it once nearly dropped a whole local work group because a sibling repo's finished task read as "already done". Do not reconcile, re-status, or close a native task on the strength of a foreign one; verify against THIS project's own source (its code, its changelog, its PRs) first. When in doubt, leave the native task as-is and flag the ambiguity in your report. A shared list is a data hazard — surface it (`dreamcontext doctor` warns when two registered projects share one list) rather than silently trusting it.
+
 ### 5. Version readiness signal (no auto-release)
 
 After bumping statuses, check if the active planning version is now release-ready:
