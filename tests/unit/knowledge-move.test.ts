@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { moveKnowledgeFile } from '../../src/lib/knowledge-move.js';
+import { moveKnowledgeFile, moveKnowledgeDir } from '../../src/lib/knowledge-move.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -208,5 +208,160 @@ describe('knowledge-move', () => {
       '',
       'Tail [[group/topic]].',
     ].join('\n'));
+  });
+});
+
+// ─── Board / context directory moves ───────────────────────────────────────────
+
+const BOARD = (name: string) =>
+  ['---', `name: ${name}`, 'description: a board', '---', '', '## Text Elements', '', 'Node A', 'Node B'].join('\n');
+
+describe('knowledge-move (board directory)', () => {
+  let root: string;
+
+  beforeEach(() => { root = makeRoot(); });
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  it('carries a board directory (board + tooling siblings) into a context folder', () => {
+    writeMd(root, 'knowledge/diagrams/recall/recall.excalidraw.md', BOARD('recall'));
+    writeFileSync(join(root, 'knowledge/diagrams/recall/recall.board.cjs'), '// generator', 'utf-8');
+    writeFileSync(join(root, 'knowledge/diagrams/recall/recall.json'), '{}', 'utf-8');
+
+    const r = moveKnowledgeDir(root, 'diagrams/recall', 'system');
+
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.oldSlug).toBe('diagrams/recall');
+    expect(r.newSlug).toBe('system/recall');
+    expect(r.oldPath).toBe('knowledge/diagrams/recall');
+    expect(r.newPath).toBe('knowledge/system/recall');
+
+    // The whole unit moved — board AND its dark tooling siblings.
+    expect(existsSync(join(root, 'knowledge/diagrams/recall'))).toBe(false);
+    expect(existsSync(join(root, 'knowledge/system/recall/recall.excalidraw.md'))).toBe(true);
+    expect(existsSync(join(root, 'knowledge/system/recall/recall.board.cjs'))).toBe(true);
+    expect(existsSync(join(root, 'knowledge/system/recall/recall.json'))).toBe(true);
+  });
+
+  it('rewrites inbound path-based [[wikilinks]] to the board at its new slug', () => {
+    writeMd(root, 'knowledge/diagrams/recall/recall.excalidraw.md', BOARD('recall'));
+    writeMd(root, 'knowledge/overview.md', [
+      '---', 'name: overview', '---', '',
+      'See [[diagrams/recall/recall.excalidraw]].',
+      'Aliased [[diagrams/recall/recall.excalidraw|Recall Flow]].',
+    ].join('\n'));
+
+    const r = moveKnowledgeDir(root, 'diagrams/recall', 'system');
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.wikilinksRewritten.length).toBe(1);
+
+    const overview = read(root, 'knowledge/overview.md');
+    expect(overview).toContain('[[system/recall/recall.excalidraw]]');
+    expect(overview).toContain('[[system/recall/recall.excalidraw|Recall Flow]]');
+    expect(overview).not.toContain('[[diagrams/recall/recall.excalidraw]]');
+  });
+
+  it('remaps a co-located teardown companion .md too', () => {
+    writeMd(root, 'knowledge/diagrams/acme/acme.excalidraw.md', BOARD('acme'));
+    writeMd(root, 'knowledge/diagrams/acme/acme.teardown.md', KNOWLEDGE('acme-teardown'));
+    writeMd(root, 'knowledge/linker.md', [
+      '---', 'name: linker', '---', '',
+      'Board [[diagrams/acme/acme.excalidraw]] and teardown [[diagrams/acme/acme.teardown]].',
+    ].join('\n'));
+
+    const r = moveKnowledgeDir(root, 'diagrams/acme', 'products');
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    // Two indexed .md files → two slug remaps.
+    expect(r.slugRemaps.map((m) => m.from).sort()).toEqual([
+      'diagrams/acme/acme.excalidraw',
+      'diagrams/acme/acme.teardown',
+    ]);
+
+    const linker = read(root, 'knowledge/linker.md');
+    expect(linker).toContain('[[products/acme/acme.excalidraw]]');
+    expect(linker).toContain('[[products/acme/acme.teardown]]');
+  });
+
+  it('reports the slug remaps needed to migrate access-decay keys', () => {
+    writeMd(root, 'knowledge/diagrams/recall/recall.excalidraw.md', BOARD('recall'));
+    const r = moveKnowledgeDir(root, 'diagrams/recall', 'system');
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.slugRemaps).toEqual([
+      { from: 'diagrams/recall/recall.excalidraw', to: 'system/recall/recall.excalidraw' },
+    ]);
+  });
+
+  it('refuses a directory that is not a board directory', () => {
+    writeMd(root, 'knowledge/system/notes.md', KNOWLEDGE('notes'));
+    const r = moveKnowledgeDir(root, 'system', 'archive');
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.code).toBe('not-a-board-dir');
+    // Nothing moved.
+    expect(existsSync(join(root, 'knowledge/system/notes.md'))).toBe(true);
+  });
+
+  it('fails (not-found) when the source directory does not exist', () => {
+    const r = moveKnowledgeDir(root, 'diagrams/ghost', 'system');
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.code).toBe('not-found');
+  });
+
+  it('never clobbers an existing destination directory', () => {
+    writeMd(root, 'knowledge/diagrams/recall/recall.excalidraw.md', BOARD('recall'));
+    writeMd(root, 'knowledge/system/recall/recall.excalidraw.md', BOARD('recall-existing'));
+
+    const r = moveKnowledgeDir(root, 'diagrams/recall', 'system');
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.code).toBe('dest-exists');
+    // Source untouched, existing destination untouched.
+    expect(existsSync(join(root, 'knowledge/diagrams/recall/recall.excalidraw.md'))).toBe(true);
+    expect(read(root, 'knowledge/system/recall/recall.excalidraw.md')).toContain('recall-existing');
+  });
+
+  it('rejects moving a directory into itself or a descendant', () => {
+    writeMd(root, 'knowledge/diagrams/recall/recall.excalidraw.md', BOARD('recall'));
+    const r = moveKnowledgeDir(root, 'diagrams/recall', 'diagrams/recall/sub');
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.code).toBe('nested-into-self');
+    expect(existsSync(join(root, 'knowledge/diagrams/recall/recall.excalidraw.md'))).toBe(true);
+  });
+
+  it('rejects path-traversal in the destination folder', () => {
+    writeMd(root, 'knowledge/diagrams/recall/recall.excalidraw.md', BOARD('recall'));
+    const r = moveKnowledgeDir(root, 'diagrams/recall', '../../etc');
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.code).toBe('unsafe-folder');
+    expect(existsSync(join(root, 'knowledge/diagrams/recall/recall.excalidraw.md'))).toBe(true);
+  });
+
+  it('fails (already-there) when the board dir is already in the target folder', () => {
+    writeMd(root, 'knowledge/system/recall/recall.excalidraw.md', BOARD('recall'));
+    const r = moveKnowledgeDir(root, 'system/recall', 'system');
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.code).toBe('already-there');
+  });
+
+  it('does not touch bare-filename [[wikilinks]], which survive relocation', () => {
+    writeMd(root, 'knowledge/diagrams/recall/recall.excalidraw.md', BOARD('recall'));
+    writeMd(root, 'knowledge/overview.md', [
+      '---', 'name: overview', '---', '',
+      'Bare link [[recall.excalidraw.md]] resolves by filename.',
+    ].join('\n'));
+
+    const r = moveKnowledgeDir(root, 'diagrams/recall', 'system');
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    // No path-based link existed, so nothing was rewritten — bare link intact.
+    expect(r.wikilinksRewritten.length).toBe(0);
+    expect(read(root, 'knowledge/overview.md')).toContain('[[recall.excalidraw.md]]');
   });
 });

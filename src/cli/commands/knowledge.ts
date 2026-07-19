@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import chalk from 'chalk';
 import { input } from '@inquirer/prompts';
@@ -8,7 +8,7 @@ import { writeFrontmatter } from '../../lib/frontmatter.js';
 import { generateId, slugify, today } from '../../lib/id.js';
 import { success, error, info, header } from '../../lib/format.js';
 import { buildKnowledgeIndex, STANDARD_TAGS } from '../../lib/knowledge-index.js';
-import { moveKnowledgeFile } from '../../lib/knowledge-move.js';
+import { moveKnowledgeFile, moveKnowledgeDir } from '../../lib/knowledge-move.js';
 import { mergeKnowledgeFiles } from '../../lib/knowledge-merge.js';
 import { readSleepState, writeSleepState, bumpKnowledgeAccess, migrateKnowledgeAccessKey } from './sleep.js';
 
@@ -130,11 +130,50 @@ export function registerKnowledgeCommand(program: Command): void {
   // Move (group into a topical subfolder)
   knowledge
     .command('move')
-    .argument('<slug>', 'Knowledge file slug (path relative to knowledge/, without .md)')
-    .argument('<folder>', 'Destination folder relative to knowledge/ (free-form topical grouping, e.g. "fitness" or "fitness/wellbeing")')
-    .description('Move a knowledge file into a topical subfolder, rewriting inbound [[wikilinks]] atomically')
+    .argument('<slug>', 'Knowledge file slug OR board directory (path relative to knowledge/, without .md)')
+    .argument('<folder>', 'Destination folder relative to knowledge/ (free-form topical grouping, e.g. "fitness" or "system")')
+    .description('Move a knowledge file — or a whole Excalidraw board directory (board + its tooling siblings) — into a topical subfolder, rewriting inbound [[wikilinks]] atomically')
     .action((slug: string, folder: string) => {
       const root = ensureContextRoot();
+
+      // Disambiguate file vs. directory. A slug that resolves to `<slug>.md`
+      // is a single file (the historical behaviour). Otherwise, if it resolves
+      // to a directory, treat it as a board-directory move so the board and its
+      // same-named tooling siblings travel together instead of splitting.
+      const filePath = join(root, 'knowledge', `${slug.replace(/\.md$/i, '')}.md`);
+      const dirPath = join(root, 'knowledge', slug.replace(/\.md$/i, ''));
+      const isDir =
+        !existsSync(filePath) &&
+        existsSync(dirPath) &&
+        statSync(dirPath).isDirectory();
+
+      if (isDir) {
+        const result = moveKnowledgeDir(root, slug, folder);
+        if (!result.ok) {
+          error(result.message);
+          return;
+        }
+
+        // Migrate the decay key for every indexed file the directory carried,
+        // so no board or co-located teardown loses its access history.
+        // Best-effort — a failure here must never undo the on-disk move.
+        for (const remap of result.slugRemaps) {
+          try {
+            migrateKnowledgeAccessKey(root, remap.from, remap.to);
+          } catch {
+            /* access tracking is best-effort; the move already succeeded */
+          }
+        }
+
+        success(`Moved ${result.oldPath}/ → ${result.newPath}/ (board directory)`);
+        if (result.wikilinksRewritten.length > 0) {
+          info(`Rewrote inbound [[wikilinks]] in ${result.wikilinksRewritten.length} file(s).`);
+        } else {
+          info('No path-based inbound [[wikilinks]] needed rewriting.');
+        }
+        return;
+      }
+
       const result = moveKnowledgeFile(root, slug, folder);
 
       if (!result.ok) {

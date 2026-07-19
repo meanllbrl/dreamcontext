@@ -1,6 +1,8 @@
-import { existsSync, mkdirSync, renameSync } from 'node:fs';
+import { existsSync, mkdirSync, renameSync, statSync } from 'node:fs';
 import { join, basename, resolve, sep } from 'node:path';
+import fg from 'fast-glob';
 import { rewriteWikilinks, WikilinkRemap } from './wikilink-rewrite.js';
+import { EXCALIDRAW_SUFFIX } from './excalidraw-text.js';
 
 export type KnowledgeMoveFailure =
   | 'unsafe-slug'
@@ -8,6 +10,8 @@ export type KnowledgeMoveFailure =
   | 'not-found'
   | 'already-there'
   | 'dest-exists'
+  | 'not-a-board-dir'
+  | 'nested-into-self'
   | 'move-failed';
 
 export interface KnowledgeMoveSuccess {
@@ -174,6 +178,191 @@ export function moveKnowledgeFile(
     newSlug,
     oldPath: `knowledge/${slug}.md`,
     newPath: `knowledge/${newSlug}.md`,
+    wikilinksRewritten,
+  };
+}
+
+// ─── Board / context directory move ─────────────────────────────────────────
+
+export interface KnowledgeDirMoveSuccess {
+  ok: true;
+  /** Source directory slug (path relative to knowledge/). */
+  oldSlug: string;
+  /** Destination directory slug (`<folder>/<basename>`). */
+  newSlug: string;
+  /** Source path relative to contextRoot (e.g. `knowledge/diagrams/recall`). */
+  oldPath: string;
+  /** Destination path relative to contextRoot (e.g. `knowledge/system/recall`). */
+  newPath: string;
+  /**
+   * Per-file slug remaps applied — one entry for every indexed `.md` file the
+   * directory carried (board `.excalidraw.md` + any `name:`-fronted companions).
+   * The caller migrates each `knowledge_access` decay key from `from`→`to`.
+   */
+  slugRemaps: WikilinkRemap[];
+  /** Absolute paths of files whose inbound [[wikilinks]] were rewritten. */
+  wikilinksRewritten: string[];
+}
+
+export type KnowledgeDirMoveResult = KnowledgeDirMoveSuccess | KnowledgeMoveError;
+
+/** True when `dir` contains at least one `*.excalidraw.md` board at any depth. */
+function containsBoard(dir: string): boolean {
+  return (
+    fg.sync(`**/*${EXCALIDRAW_SUFFIX}`, { cwd: dir, absolute: false }).length > 0
+  );
+}
+
+/**
+ * Move a board (or board-bearing context) DIRECTORY into another context folder:
+ *   `knowledge/<srcSlug>/…` → `knowledge/<folder>/<basename(srcSlug)>/…`
+ *
+ * This is the directory counterpart to {@link moveKnowledgeFile}. An Excalidraw
+ * board lives in its own `<title>/` wrapper folder alongside dark tooling
+ * siblings (`<title>.board.cjs`, spec `.json`, helper `.md`) — a unit that a
+ * single-file move splits in half (relocating the rendered `.excalidraw.md` but
+ * silently orphaning its generator). This carries the WHOLE directory atomically
+ * (one `renameSync` of the folder) and rewrites inbound [[wikilinks]] for every
+ * indexed `.md` file it contains, so the board — and any co-located teardown —
+ * stays first-class in index/recall/snapshot/dashboard at its new slug.
+ *
+ * The source is gated on actually being a board directory (contains an
+ * `.excalidraw.md`) so an accidental slug collision with a large context folder
+ * can never sweep an unrelated tree; move plain-`.md` knowledge with
+ * {@link moveKnowledgeFile} instead.
+ *
+ * Ordering mirrors {@link moveKnowledgeFile}: rewrite links while the directory
+ * is still at its old path (non-destructive — a crash before the rename leaves
+ * the board where it was, a re-run's rewrite is a no-op, and the move completes).
+ */
+export function moveKnowledgeDir(
+  contextRoot: string,
+  rawSource: string,
+  rawFolder: string,
+): KnowledgeDirMoveResult {
+  const knowledgeDir = join(contextRoot, 'knowledge');
+  const knowledgeDirResolved = resolve(knowledgeDir);
+
+  const srcSlug = normalizeSlug(rawSource);
+  const folder = normalizeFolder(rawFolder);
+
+  // --- validate source slug ---
+  if (!srcSlug || hasUnsafeSegment(srcSlug)) {
+    return {
+      ok: false,
+      code: 'unsafe-slug',
+      message: `Invalid knowledge directory: "${rawSource}"`,
+    };
+  }
+
+  // --- validate folder ---
+  if (!folder || hasUnsafeSegment(folder)) {
+    return {
+      ok: false,
+      code: 'unsafe-folder',
+      message: `Invalid destination folder: "${rawFolder}". Use a relative path under knowledge/ with no "..".`,
+    };
+  }
+
+  const base = basename(srcSlug);
+  const newSlug = `${folder}/${base}`;
+
+  // No-op guard: already in the target folder.
+  if (newSlug === srcSlug) {
+    return {
+      ok: false,
+      code: 'already-there',
+      message: `"${srcSlug}/" is already in "${folder}/".`,
+    };
+  }
+
+  const srcDir = join(knowledgeDir, srcSlug);
+  const destParent = join(knowledgeDir, folder);
+  const destDir = join(destParent, base);
+
+  // --- source must exist and be a directory ---
+  if (!existsSync(srcDir) || !statSync(srcDir).isDirectory()) {
+    return {
+      ok: false,
+      code: 'not-found',
+      message: `Knowledge directory not found: ${srcSlug}/`,
+    };
+  }
+
+  // --- source must actually be a board directory ---
+  if (!containsBoard(srcDir)) {
+    return {
+      ok: false,
+      code: 'not-a-board-dir',
+      message: `"${srcSlug}/" is not a board directory (no *.excalidraw.md inside). Move plain knowledge files with a file slug instead.`,
+    };
+  }
+
+  // --- containment: dest must resolve strictly under knowledge/ ---
+  const destDirResolved = resolve(destDir);
+  if (
+    destDirResolved !== join(knowledgeDirResolved, newSlug) ||
+    !destDirResolved.startsWith(knowledgeDirResolved + sep)
+  ) {
+    return {
+      ok: false,
+      code: 'unsafe-folder',
+      message: `Destination escapes knowledge/: "${folder}"`,
+    };
+  }
+
+  // --- never move a directory into itself or one of its own descendants ---
+  const srcDirResolved = resolve(srcDir);
+  if (
+    destDirResolved === srcDirResolved ||
+    destDirResolved.startsWith(srcDirResolved + sep)
+  ) {
+    return {
+      ok: false,
+      code: 'nested-into-self',
+      message: `Cannot move "${srcSlug}/" into itself ("${newSlug}/").`,
+    };
+  }
+
+  // --- never clobber an existing directory ---
+  if (existsSync(destDir)) {
+    return {
+      ok: false,
+      code: 'dest-exists',
+      message: `Destination already exists: ${newSlug}/`,
+    };
+  }
+
+  // Build one wikilink remap per indexed `.md` file the directory carries.
+  // Every such file's slug is `<srcSlug>/<rel-without-.md>` and becomes
+  // `<newSlug>/<rel-without-.md>` after the folder rename — a pure prefix swap.
+  const mdFiles = fg.sync('**/*.md', { cwd: srcDir, absolute: false });
+  const remaps: WikilinkRemap[] = mdFiles.map((rel) => {
+    const relSlug = rel.replace(/\.md$/i, '');
+    return { from: `${srcSlug}/${relSlug}`, to: `${newSlug}/${relSlug}` };
+  });
+
+  // Rewrite inbound [[wikilinks]] BEFORE moving (crash-safe — see doc comment).
+  const wikilinksRewritten = rewriteWikilinks(contextRoot, remaps);
+
+  try {
+    mkdirSync(destParent, { recursive: true });
+    renameSync(srcDir, destDir);
+  } catch (e) {
+    return {
+      ok: false,
+      code: 'move-failed',
+      message: `Failed to move ${srcSlug}/ → ${newSlug}/: ${(e as Error).message}`,
+    };
+  }
+
+  return {
+    ok: true,
+    oldSlug: srcSlug,
+    newSlug,
+    oldPath: `knowledge/${srcSlug}`,
+    newPath: `knowledge/${newSlug}`,
+    slugRemaps: remaps,
     wikilinksRewritten,
   };
 }
