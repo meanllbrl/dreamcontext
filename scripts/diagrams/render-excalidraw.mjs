@@ -1,4 +1,4 @@
-// Headless renderer: .excalidraw.md (Obsidian board) → PNG for docs (README / DEEP-DIVE).
+// Headless renderer: .excalidraw.md (Obsidian board) → PNG for docs (README / deep-dive wiki).
 // Parses the plain-JSON scene from the board's `## Drawing` block and exports it via
 // @excalidraw/excalidraw's exportToBlob in a headless Chromium (Playwright).
 //

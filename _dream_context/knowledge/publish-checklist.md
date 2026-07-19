@@ -16,21 +16,24 @@ in-session update nudge only activate after the publish + merge steps are comple
 
 ## 0. Docs & diagrams are current — DO THIS FIRST
 
-**README.md and DEEP-DIVE.md MUST reflect what this release ships.** Before building or
+**README.md and the deep-dive wiki (github.com/meanllbrl/dreamcontext/wiki — its own git repo, dreamcontext.wiki.git) MUST reflect what this release ships.** Before building or
 publishing anything:```bash
 npm run diagrams   # rebuild every Excalidraw board → re-render public/image/diagram-*.png```Then review and update:
 
 - **README.md** — How It Works / Memory Recall figures, command surface, skill-pack
   table, and any version-specific copy.
-- **DEEP-DIVE.md** — the section figures (problem · architecture · sleep · neuroscience ·
-  council · recall) and any new mechanics.
+- **Deep-dive wiki** — the section figures (problem · architecture · sleep · neuroscience ·
+  council · recall) and any new mechanics. The wiki carries its own copies of the
+  rendered PNGs under `images/` — after `npm run diagrams`, re-copy changed PNGs
+  into the wiki clone and push it (it is a separate git repo; local checkout at
+  `~/projects/dreamcontext-wiki`).
 
 The figures are generated from editable Excalidraw boards at
 `_dream_context/knowledge/diagrams/**/*.board.cjs` (house-style via the `excalidraw` skill).
 `npm run diagrams` re-runs each board spec (writing the `.excalidraw.md` you can open in
 Obsidian) and re-renders the PNGs the docs embed, via `scripts/diagrams/build-all.mjs`
 (headless `@excalidraw/excalidraw`). If a mechanism changed, edit the board spec, re-run,
-and the README/DEEP-DIVE figures update in place (same filenames). **Do not publish with
+and the README figures update in place (same filenames; sync the wiki copies). **Do not publish with
 stale docs or diagrams.**
 
 ## 1. Build and test```bash
@@ -87,4 +90,4 @@ resolves from the GitHub Release (the binary is published separately from npm).
 - The seeded `.version-check.json` fixture tests are offline-only and pass before
   publish; the live nudge path is exercised in production.
 - As of v0.6.0 the package ships Apache-2.0. Ensure `package.json` `license` field reads `Apache-2.0` and `NOTICE` is in the `files` array.
-- **Don't "quick bump" without running this workflow.** v0.10.0/v0.10.1/v0.10.2 were each published to npm as a bare version-bump-and-publish (no diagram rebuild, no README/DEEP-DIVE refresh, no `RELEASES.json` entry) — discovered 3 versions later (2026-06-30) as an undocumented gap that had to be backfilled by reconstructing `git log v0.9.2..HEAD` and auditing README/DEEP-DIVE against the actual shipped code. Every version bump that reaches npm should run this full checklist, even a "trivial" patch — the alternative is a multi-version documentation debt that's much more expensive to reconstruct later than to write down at the time.
+- **Don't "quick bump" without running this workflow.** v0.10.0/v0.10.1/v0.10.2 were each published to npm as a bare version-bump-and-publish (no diagram rebuild, no README/DEEP-DIVE refresh, no `RELEASES.json` entry) — discovered 3 versions later (2026-06-30) as an undocumented gap that had to be backfilled by reconstructing `git log v0.9.2..HEAD` and auditing README/deep-dive wiki against the actual shipped code. Every version bump that reaches npm should run this full checklist, even a "trivial" patch — the alternative is a multi-version documentation debt that's much more expensive to reconstruct later than to write down at the time.

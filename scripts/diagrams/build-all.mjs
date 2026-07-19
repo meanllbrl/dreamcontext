@@ -1,6 +1,6 @@
 // Rebuild every documentation diagram: run each Excalidraw board spec (writes the
 // editable .excalidraw.md into the vault) then render it to a PNG under public/image/.
-// This is the single command the pre-release workflow runs so README + DEEP-DIVE
+// This is the single command the pre-release workflow runs so README + deep-dive wiki
 // figures are always current.
 //
 //   node scripts/diagrams/build-all.mjs
@@ -34,6 +34,10 @@ function findUnder(dir, name) {
 // name → { board spec (.cjs), rendered png, scale }. PNG basenames are the public
 // contract the docs reference; keep them stable.
 const DIAGRAMS = [
+  { board: 'loop.board.cjs', png: 'diagram-loop.png', scale: 2 },
+  { board: 'memory-mechanism.board.cjs', png: 'diagram-memory.png', scale: 2 },
+  { board: 'surfaces.board.cjs', png: 'diagram-surfaces.png', scale: 2 },
+  { board: 'deep-dive-banner.board.cjs', png: 'banner-deepdive.png', scale: 2 },
   { board: 'how-it-works.board.cjs', png: 'diagram-howitworks.png', scale: 2 },
   { board: 'sleep.board.cjs', png: 'diagram-sleep.png', scale: 2 },
   { board: 'recall.board.cjs', png: 'diagram-recall.png', scale: 2 },
@@ -41,7 +45,7 @@ const DIAGRAMS = [
   { board: 'architecture.board.cjs', png: 'diagram-architecture.png', scale: 2 },
   { board: 'neuroscience.board.cjs', png: 'diagram-neuroscience.png', scale: 2 },
   { board: 'council.board.cjs', png: 'diagram-council.png', scale: 2 },
-  // Federation also emits a standalone PDF (linkable from DEEP-DIVE).
+  // Federation also emits a standalone PDF (linkable from the deep-dive wiki).
   { board: 'federation.board.cjs', png: 'diagram-federation.png', pdf: 'diagram-federation.pdf', scale: 2 },
 ];
 

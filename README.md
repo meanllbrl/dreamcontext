@@ -1,74 +1,63 @@
 <p align="center">
-  <img src="dashboard/public/favicon.svg" alt="dreamcontext" width="96" />
+  <img src="dashboard/public/logo.png" alt="dreamcontext" width="128" />
 </p>
 
 <h1 align="center">dream<span>context</span></h1>
 
 <p align="center">
-  dreamcontext is the persistent brain for your AI agents — and for you.<br/>
-  It remembers every decision you made, knows how your project is structured,<br/>
-  and is learning to act on that knowledge so that every session starts ready instead of blind.<br/>
-  Built for founders and builders, technical or not, who are tired of watching their agent<br/>
-  re-discover context it already had.
+  <strong>Run your whole project through your agents.</strong>
 </p>
 
 <p align="center">
-  <strong>Meet Sleepy</strong> — ask your project's brain in plain language, or search it instantly.<br/>
-  Ranked hits, grounded answers, jump-to-source. <strong>Local · instant · no tokens.</strong>
+  <em>You, your team, and your agents — all seeing the same big picture.</em>
+</p>
+
+<p align="center">
+  dreamcontext is the layer where your project actually lives — structured knowledge,<br/>
+  product features and PRDs, tasks and roadmap, live metrics — in files both humans<br/>
+  and agents read, and agents keep true.
+</p>
+
+<p align="center">
+  <sub>Works with <strong>Claude Code</strong> today. Built agent-agnostic.</sub>
 </p>
 
 <p align="center">
   <a href="#why">Why</a> &nbsp;&middot;&nbsp;
-  <a href="#how-it-works">How It Works</a> &nbsp;&middot;&nbsp;
+  <a href="#it-starts-with-memory">It Starts with Memory</a> &nbsp;&middot;&nbsp;
   <a href="#quick-start">Quick Start</a> &nbsp;&middot;&nbsp;
-  <a href="#skills">Skills</a> &nbsp;&middot;&nbsp;
-  <a href="#staying-up-to-date">Updating</a> &nbsp;&middot;&nbsp;
-  <a href="#sleepy--search--ask-your-brain">Sleepy</a> &nbsp;&middot;&nbsp;
+  <a href="#the-cli">CLI</a> &nbsp;&middot;&nbsp;
   <a href="#dashboard">Dashboard</a> &nbsp;&middot;&nbsp;
-  <a href="#desktop-app">Desktop App</a> &nbsp;&middot;&nbsp;
-  <a href="#council">Council</a> &nbsp;&middot;&nbsp;
-  <a href="#memory-recall">Memory Recall</a> &nbsp;&middot;&nbsp;
-  <a href="#lab-insights">Lab</a> &nbsp;&middot;&nbsp;
-  <a href="#federation">Federation</a> &nbsp;&middot;&nbsp;
-  <a href="#brain-cloud-sync">Brain Sync</a> &nbsp;&middot;&nbsp;
-  <a href="#linked-repos">Linked Repos</a> &nbsp;&middot;&nbsp;
-  <a href="#commands">Commands</a> &nbsp;&middot;&nbsp;
-  <a href="DEEP-DIVE.md">Deep Dive</a>
+  <a href="#desktop-app">Mac App</a> &nbsp;&middot;&nbsp;
+  <a href="#built-for-teams">Teams</a> &nbsp;&middot;&nbsp;
+  <a href="#skills">Skills</a> &nbsp;&middot;&nbsp;
+  <a href="#cli-reference">Reference</a> &nbsp;&middot;&nbsp;
+  <a href="#why-its-built-this-way">Deep Dive</a>
 </p>
 
 <p align="center">
-  <img src="public/image/landing-hero.png" alt="dreamcontext — the persistent brain for your AI agents" width="860" />
+  <img src="public/image/diagram-loop.png" alt="The loop — Work with your agents, agents Gather more through connectors, Sleep consolidates everything into human-readable files, Sync carries the picture to your team — all feeding one shared big picture" width="880" />
 </p>
 
 <p align="center">
-  <sub>The built-in <strong>“What is this?”</strong> page, served live by <code>dreamcontext dashboard</code>.</sub>
+  <sub>The loop: you <strong>work</strong> with agents · agents <strong>gather</strong> more through connectors · <strong>sleep</strong> consolidates it into the single source of truth · <strong>sync</strong> carries it to your team. Repeat.</sub>
 </p>
 
 > **Under active development.** APIs and commands may change before v1.0.
 
 ---
 
-## Sleepy — search & ask your brain
-
-**Sleepy** is the front door to your project's brain — the first thing you see in the dashboard. It turns the structured context dreamcontext maintains into something you can interrogate directly:
-
-- **Search** — type a query and get instantly-ranked hits across your knowledge, features, tasks, core and memory. Each hit shows the most relevant chunk and jumps straight to the source.
-- **Ask** — pose a question in plain language and Sleepy answers from your own brain, with the source documents cited inline.
-- **Chat** — go deeper with a real, multi-turn conversation: Sleepy runs a **Claude Code** session *inside your vault*, streamed live, so it can read across the whole project to answer follow-ups. It's **read-only by design** — planning permission mode plus disallowed action tools and a guard prompt mean it can never write, edit, or run commands — and you pick the depth: **normal** for fast answers, **intelligent** for harder questions.
-
-Search and the extractive Ask run on the same field-weighted **BM25** recall engine as `dreamcontext memory recall` — entirely **local, instant, and zero-token**; nothing is sent to an external model and the answer is grounded in your own files. Chat is the one surface that calls a model, and even then it only ever **reads** your project. The idle view shows your context "in orbit" — knowledge, features, tasks, core and memory circling the dream gem — so you can focus a single type or just start typing.
-
----
-
 ## Why
 
-AI coding agents are powerful, but they make real mistakes. They fetch entire collections instead of filtering at the query level. They write serverless functions with infinite loop potential. They optimize for making the test pass, not making the system correct.
+Every project has the same two problems — and they are secretly one problem.
 
-A human needs to be steering. But steering only works when both you and the agent are looking at the same context: what decisions were made, what is in progress, what rules to follow.
+**Your agent forgets.** Every session starts from scratch: it greps for a decision it already made yesterday, reads a few files, searches again, and burns thousands of tokens re-discovering context it already had. By the time it says "Ok, I understand the codebase," you haven't started working yet. And an agent without the full picture doesn't just waste tokens — it makes real mistakes: fetching whole collections instead of filtering at the query level, optimizing for making the test pass instead of making the system correct.
 
-And every session starts from scratch. Your agent greps for a decision it already made yesterday. Reads a few files. Searches again. Pieces together context it already had. By the time it says "Ok, I understand the codebase," you haven't started working yet. This happens every session, and it gets worse as your project grows.
+**Your team's docs rot.** The PRD is three sprints old. The metric in the deck was pasted in last May. The architecture doc describes the system you *used* to have. Everyone knows the docs are stale, so nobody trusts them — and nobody updates what nobody reads.
 
-`dreamcontext` fixes both problems. It gives your agent structured, pre-loaded context before the first message, and gives you readable files you can open, audit, and correct. **Context that both you and your agent can act on.**
+Same root cause: **context that nobody maintains.** dreamcontext fixes both at once by making the maintenance the agents' job. The agent gets structured, pre-loaded context before its first message. You and your team get readable files you can open, audit, and correct. **One picture everyone — human or agent — can act on.**
+
+These two are just the headline. Metrics scattered across five dashboards, roadmaps that turn into unreachable abstractions, platforms that make you work their way, knowledge that leaves when a teammate does, embedded AI you can't audit — the full problem catalog, with what each one became, is in the **[deep dive &rarr;](https://github.com/meanllbrl/dreamcontext/wiki/The-Problem-In-Depth)**.
 
 <table>
 <tr>
@@ -83,14 +72,25 @@ And every session starts from scratch. Your agent greps for a decision it alread
 </tr>
 </table>
 
-> **Want the full story?** Philosophy, architecture, and every design tradeoff explained. **[Read the deep dive &rarr;](DEEP-DIVE.md)**
+## It Starts with Memory
 
-## How It Works
-
-Every session, a hook pre-loads your project's whole brain — identity, decisions, active work, the knowledge index — into the agent with **zero tool calls**. It works with the full picture instead of re-discovering it; a multi-agent **RemSleep** cycle then consolidates what changed and feeds it back. (This is the same diagram the built-in **“What is this?”** page animates live.)
+An agent can only run your project if it *remembers* your project. Everything in dreamcontext stands on one mechanism, modeled on how a real brain works:
 
 <p align="center">
-  <img src="public/image/diagram-howitworks.png" alt="A SessionStart hook fans out into eight context categories — soul, user, memory, knowledge, state, data-structures, skills, sub-agents — that converge into the agent; RemSleep parallel specialists consolidate and feed back" width="820" />
+  <img src="public/image/diagram-memory.png" alt="The memory mechanism: Capture (hooks and bookmarks record decisions while you work) → Sleep (agents fan out, distill sessions into human-readable knowledge) → Start ready (the next session opens with the full picture pre-loaded) — every session sharpens the next" width="880" />
+</p>
+
+- **Capture** — while you work, hooks and bookmarks record what matters — decisions, constraints, discoveries — with zero effort from you. Seven hooks do it automatically: Stop records what happened, SessionStart injects everything before the first message, SubagentStart briefs sub-agents, PreToolUse blocks blind exploration when curated context exists, UserPromptSubmit surfaces sleep debt and relevant memories on every message, PostToolUse auto-formats and type-checks edited files, PreCompact saves state before context compaction. Bookmarks tag the important moments with salience levels; critical ones trigger immediate consolidation advisories.
+- **Sleep** — a brain doesn't file raw experience; it consolidates during sleep. So does dreamcontext: when enough has happened, agents fan out in parallel — reading bookmarks first, distilling transcripts for high-signal content, extracting recurring patterns, promoting learnings, cleaning stale entries — and fold it all back into human-readable files. The single source of truth, refreshed.
+- **Start ready** — the next session opens with the full picture already loaded: identity, decisions, active work, the knowledge index. Zero tool calls. Anything deeper is one recall away — instant, local, zero tokens.
+
+**Remember → learn → start ready.** Every surface below — knowledge, PRDs, roadmap, insights, team sync — is this mechanism wearing a different face.
+
+<p align="center">
+  <img src="public/image/diagram-sleep.png" alt="Sleep consolidation: accumulated debt triggers sleep start, which fans out to three parallel specialists — sleep-tasks, sleep-state, sleep-product — whose reports converge into one updated summary, then sleep done resets the debt" width="660" />
+</p>
+<p align="center">
+  <sub><strong>Sleep consolidation</strong> — when debt crosses a threshold, three specialists fold what changed back into the brain in parallel, then the meter resets.</sub>
 </p>
 
 <details>
@@ -143,18 +143,22 @@ flowchart LR
 
 </details>
 
-- **Seven hooks capture context automatically.** Stop hook records what happened. SessionStart injects everything before the first message. SubagentStart briefs sub-agents. PreToolUse blocks blind exploration when curated context exists. UserPromptSubmit reminds about sleep debt on every user message. PostToolUse auto-formats and type-checks edited files. PreCompact saves state before context compaction.
-- **Bookmarks tag important moments.** During active work, the agent bookmarks decisions, constraints, and discoveries with salience levels. Critical bookmarks trigger immediate consolidation advisories.
-- **Files are structured by purpose.** Identity, preferences, decisions, knowledge, and active work each live in their own file with their own format.
-- **Sleep cycles consolidate knowledge.** A RemSleep cycle — the agent fanning out to three specialist sub-agents in parallel — reads bookmarks first, distills transcripts for high-signal content, extracts recurring patterns, promotes learnings, creates contextual triggers, cleans stale entries, and resets debt.
-- **Everything is local markdown and JSON.** Readable, editable, git-tracked, owned by you.
+> Why memory works this way — the neuroscience behind bookmarks and sleep, and every design tradeoff — is in the **[deep dive &rarr;](https://github.com/meanllbrl/dreamcontext/wiki)**
+
+## One Engine, Many Faces
+
+The same memory mechanism powers every surface of the project. Files are structured by purpose — everything is local markdown and JSON: readable, editable, git-tracked, owned by you.
 
 <p align="center">
-  <img src="public/image/diagram-sleep.png" alt="Sleep consolidation: accumulated debt triggers sleep start, which fans out to three parallel specialists — sleep-tasks, sleep-state, sleep-product — whose reports converge into one updated summary, then sleep done resets the debt" width="660" />
+  <img src="public/image/diagram-surfaces.png" alt="One engine, many faces: the _dream_context/ memory engine at the center, surrounded by Knowledge, Features & PRDs, Tasks & Roadmap, Lab insights, Council, and Team sync" width="880" />
 </p>
-<p align="center">
-  <sub><strong>Sleep consolidation</strong> — when debt crosses a threshold, three specialists fold what changed back into the brain in parallel, then the meter resets.</sub>
-</p>
+
+- **Knowledge** — curated, tagged, wikilinked docs; always current, never a dump. Open the folder in Obsidian and it's a knowledge graph.
+- **Features & PRDs** — living product specs with freshness tracking, tied to real tasks and releases.
+- **Tasks & Roadmap** — a full task lifecycle (kanban, sprints, custom fields) plus PO-authored [objectives](#roadmap-objectives--the-okr-board) with dependency-aware forecast and slip detection.
+- **[Lab insights](#lab-insights)** — live metrics from your analytics, Stripe, or any API — curated, cached in the brain, visible to every session.
+- **[Council](#council)** — multi-persona debates for the hard calls, synthesized into cited verdicts.
+- **[Team sync](#built-for-teams)** — the whole picture reaches your team: git-backed brain sync, ClickUp / GitHub task backends, cross-project federation.
 
 ## Quick Start
 
@@ -254,7 +258,7 @@ your-project/
 │   │   ├── sleep-product.md     #   these three in parallel
 │   │   ├── sleep-federation.md  # disabled (read-only federation; copy-sync parked on roadmap)
 │   │   └── sleep-migration.md   # conditional: when a migration is pending
-│   └── settings.json           # 7 hooks (see Commands → System)
+│   └── settings.json           # 7 hooks (see CLI Reference → System)
 ```
 
 ### Opening the context directory in Obsidian
@@ -271,6 +275,242 @@ dreamcontext install-instructions --platforms claude
 
 This writes managed fenced blocks into `CLAUDE.md` at the project root, preserving existing non-managed content.
 
+## The CLI
+
+The `dreamcontext` binary is the backbone of everything — the dashboard, the desktop app, the hooks, and the agents all drive the same CLI. **Humans and agents share the same verbs**, which is exactly why the picture stays shared: there is no agent-only API and no human-only UI, just one command surface over plain files.
+
+The design rule is **CLI for structure, native edits for content.** Making an agent edit a structured file (frontmatter, LIFO logs, JSON schemas) costs five operations — read, understand the format, reason where the edit goes, edit, verify. The CLI collapses that to one call:
+
+```bash
+dreamcontext tasks log auth-refactor "JWT rotation done, refresh tokens left"
+dreamcontext memory remember "Chose BM25 over mem0 — simpler, zero deps"
+dreamcontext memory recall "how did we decide on the sleep fan-out"
+dreamcontext knowledge create payment-flow
+dreamcontext sleep status
+```
+
+Rewriting a paragraph of prose is still the agent's native Read/Edit — the agent is good at content, wasteful at structure.
+
+A few properties worth knowing:
+
+- **Interactive mode.** Run `dreamcontext` with no arguments for a visual menu over every command, with multiline inputs, that stays open until you close it.
+- **Non-interactive by default.** Every command takes flags, so agents, git hooks, and cron can drive it headless — task sync, for example, talks to ClickUp/GitHub REST directly (no MCP) precisely so it works where no agent is running.
+- **Self-checking.** `dreamcontext doctor` validates the whole structure; `dreamcontext snapshot --tokens` shows exactly what a session pre-loads and what it costs.
+- **Owned output.** Everything the CLI writes is markdown and JSON in your repo — diffable, reviewable, greppable.
+
+The complete command surface is in the [CLI Reference](#cli-reference) below; commands that belong to a specific capability (teams, Council, Lab) appear in their sections.
+
+## Dashboard
+
+```bash
+dreamcontext dashboard                   # Open at localhost:4173
+dreamcontext dashboard --port 8080       # Custom port
+dreamcontext dashboard --no-open         # Start without opening browser
+```
+
+A local web UI over the same files the CLI writes — React 19 on a zero-dependency Node HTTP server, shipped in the npm package. No accounts, no external services, no separate database.
+
+**Search & ask.** The front door is a search bar over your whole picture: instantly-ranked hits across knowledge, features, tasks, core, and memory, each jumping straight to its source — plus a plain-language **Ask** that answers from your own files with sources cited inline. Both run on the same local BM25 engine as `memory recall`: instant, zero tokens, nothing leaves your machine. A **Chat** mode goes deeper by running a read-only Claude Code session inside your vault (planning permission mode, action tools disallowed — it can never write or run commands), streamed live, with a normal/intelligent depth toggle.
+
+**Tasks.** A drag-and-drop Kanban with saved views (each with its own persisted filter, sort, and grouping), two-pane include/exclude filters, a sprint-aware Versions popover with Current / Backlog / Completed buckets and inline set-current / mark-complete actions, per-card property badges (due date, RICE score, multi-assignee avatars), and an At-Risk alert for past-due or blocked work. The same tasks render along the time axis as a **Timeline (Gantt)**, a **Calendar**, an **Activity heatmap**, an **Eisenhower matrix**, and a **RICE** prioritization view. A Notion-style detail panel edits everything inline — status, dates, custom fields, changelog entries.
+
+**Memory surfaces.** A split-pane **Core editor** with live preview; a **Knowledge manager** with search and pin/unpin; a **Feature PRD viewer**; SQL ER-diagram previews for data structures; a **Brain graph** that renders the whole corpus as an interactive network (explicit and inferred links, node drawer, layout filters); **Council Hall** for browsing debates (overview, per-persona transcripts, persona × round matrix); a **Roadmap page** with a draggable forecast timeline where dependents slide and redden live when an objective slips; and a **Version manager** for planning, releasing, renaming, and deleting versions safely.
+
+**Agent surfaces.** Every task can open its own **Task Manager** Claude session, pinned inside the task view, which *maintains* the document (revise, split, reconcile criteria) rather than building it — with **anchored doc comments**: select any span of the rendered task, drop a 💬, and send the batch to the session as one message; anchors are quotes, not offsets, so they survive live rewrites, and a git-style session diff shows what moved. **Delegate to Claude** hands a task card to a real coding session straight from the board. A **living agent dock** tracks every session with screen-true status — a session that stops to ask you something shakes, chimes, and jumps the queue as "Needs you."
+
+**Ops.** A **Sleep tracker** (debt gauge, session history, every manual dashboard change); **change tracking** that records your edits to `.sleep.json` so agents consolidate them at the next sleep; and **Settings** for cloud-task tokens (gitignored, masked, never echoed), preview-then-provision custom fields, task-format overrides, and linked repos.
+
+Light and dark mode with system detection; violet brand anchored by the dream-gem mark.
+
+## Desktop App
+
+> **macOS beta.** A native **Tauri 2** app that wraps the same dashboard server — one window for *every* project instead of a localhost tab per repo. Ships via the desktop release and the macOS one-line installer, not the npm package.
+
+```bash
+dreamcontext app install      # Install to ~/Applications (no admin, no quarantine prompt)
+dreamcontext app update       # Update the installed app to the latest release
+dreamcontext app status       # Show installed app version and state
+```
+
+**One window over all your projects.** The launcher lists every registered [vault](#federation) and opens each project in its own window — multi-vault is multi-window over one shared Node server, each window pinned to its vault. Per-project status dots (green up-to-date / yellow needs-update / red folder-gone) let you update from the UI.
+
+**Onboarding without a terminal.** A quiz-style wizard creates a new project (native folder picker), initializes an existing folder, or clones one from GitHub — sign in, search your repos, clone as a cancelable background job with live progress — then scaffolds `_dream_context/`, runs `setup`, and best-effort installs the global CLI. Deterministic and LLM-free; the success screen hands you a prompt to paste into your agent for the rich enrichment pass.
+
+**A real agent terminal, in-app** _(beta)_. Drive Claude Code sessions inside any vault from a split-pane, multi-session terminal — per-pane tabs, ⌘D drag-to-split, ⌘T/⌘W, minimize-to-corner dock; sessions live in a detached DOM so the PTY never remounts. Drop an image to inject it into the vault; jump anywhere with the **⌘K command palette** (live BM25 recall + intelligent toggle). The dock is **screen-true** — status is read from the visible terminal buffer, not byte-flow, so a session waiting on you surfaces as "Needs you" (shake, chime, queue-jump) instead of flapping between ready and working.
+
+**Sleepy — notch quick-capture** _(beta, off by default)_. A global-hotkey companion that drops a transparent notch panel over whatever you're doing, with an animated mascot whose mood follows your sleep debt. Pick a vault, type a thought, choose a mode: **Learn** (save to project memory, then enrich), **Ask** (one-shot Q&A, nothing saved), or **Sleep** (trigger a full consolidation for that vault from the notch). Enable in dashboard Settings → Sleepy.
+
+**Federation, drawn.** The launcher renders your projects as an interactive board where you wire a **reads** relationship by clicking source → target — a violet wire means one project reads another's canonical memory live during recall (a reference, never a copy), gated by the target being Readable. An always-on Connections list spells out who reads whom in plain language.
+
+**Cloud sync without git knowledge.** GitHub device-flow login (PAT fallback), a Settings toggle for whole-project sync, a team-updates badge when teammates push, one-click **"Resolve with AI"** for deferred prose merges — and if the project has no `origin`, the panel creates a private repo (or connects an existing one) and does the first push for you.
+
+**Always current, no notarization wait.** Delivery is CLI/curl-driven, so Gatekeeper's notarization check never fires (ad-hoc signing satisfies Apple Silicon). The app prefers your globally-installed, auto-upgrading CLI over its bundled copy, so ~95% of changes ride the normal CLI upgrade with no app rebuild. Downloaded artifacts require a matching `.sha256` or the install refuses.
+
+> A working local beta — not yet Apple-signed/notarized, so first launch may need a right-click → Open. Windows/Linux are nice-to-have for later.
+
+## Built for Teams
+
+The loop's last stage: the picture reaches everyone. Four pieces, each doing one job — one brain shared by a team, tasks living where your team already works, one brain reading its siblings, and one brain governing bare code repos.
+
+### Brain Cloud Sync
+
+Lets a whole team work on the *same* brain. When you turn it on, dreamcontext syncs the **whole project** — your code, `.claude/`, and the brain under `_dream_context/` — to the project's own GitHub repo, so tasks, knowledge, and features are pushed, pulled, merged, and reviewed the way you already collaborate on code. Local-first the entire time: the brain stays plain markdown and JSON on disk; git is only the transport, not a new database.
+
+```bash
+dreamcontext brain enable    # Turn cloud sync on — whole project → its GitHub origin (needs an origin)
+dreamcontext brain status    # Mode (full-repo | in-tree), remote, and current sync state
+dreamcontext brain sync      # Manual fetch → merge → commit → push, outside a sleep cycle
+dreamcontext brain disable   # Turn it off (the brain stays committed locally, never pushed)
+```
+
+- **Sync rides sleep.** Every `sleep done` runs fetch → merge → commit → push against `origin`, so teammates' consolidated context reaches you with no extra step. A sync failure never fails the sleep.
+- **Deterministic files merge themselves; prose defers to an agent; code goes to you.** JSON and task status/changelog merge by rule (changelogs union, the furthest status wins). When two people edit the same *prose* section, the conflict goes to a semantic **merge agent** (the `/dream-sync` skill) that reads base/ours/theirs and writes the real merge. A real **code** conflict is left for your editor with native git markers — never mangled by an agent.
+- **Two modes.** `full-repo` (cloud sync on) syncs the whole project on the current branch; **`in-tree`** (the safe default) commits the brain locally on sleep and **never auto-pushes**.
+- **Nothing secret or machine-local is ever pushed.** A **scrub gate** blocks secrets and absolute local paths before every commit and push; the machine-local excludes are force-written into `.gitignore` before every stage; the auth token rides `GIT_ASKPASS` with a `0600` temp file — never the remote URL, the environment, or a process argument. Per-machine indexes, caches, and embeddings are gitignored and rebuilt locally.
+- **Personal attribution, no per-person forks.** Attribution rides `person:<slug>` tags and changelog authors, not per-person file copies.
+
+The [desktop app](#desktop-app) wraps the whole flow terminal-free — login, toggle, team-updates badge, AI conflict resolution, and origin creation.
+
+### Remote Task Backends — ClickUp or GitHub Issues
+
+Tasks default to local markdown files. Optionally they live in a **ClickUp** list or **GitHub Issues** instead — same CLI verbs, same dashboard, same recall and snapshot behavior, backed by a gitignored local mirror.
+
+```bash
+# ClickUp
+dreamcontext config task-backend clickup            # switch backend (gitignores mirror/sync files, installs git triggers)
+dreamcontext config clickup-list <teamId> <spaceId> <listId>
+dreamcontext config clickup-token [--user <name>]   # stored in a gitignored secrets file (0600), never in .config.json
+
+# GitHub Issues
+dreamcontext config task-backend github             # switch backend (same gitignored mirror + git triggers)
+dreamcontext config github-repo <owner> <repo>      # target repo (the switch flow also auto-discovers repos your token can see)
+echo "$GITHUB_TOKEN" | dreamcontext config github-token   # stored in the gitignored secrets file (0600), never in .config.json
+
+# Either backend — same verbs:
+dreamcontext tasks sync [push|pull|both]            # manual two-way sync
+dreamcontext tasks sync pull --reconcile            # heal assignees + version that sit BELOW the watermark
+dreamcontext tasks sync --refresh-meta              # force-refresh cached statuses/members/fields (skip the hourly throttle)
+dreamcontext tasks sync-hooks install               # best-effort post-commit/pre-push triggers (can never fail git)
+```
+
+- Both backends talk to the provider's REST API directly (no MCP) — so sync works headless in git hooks, post-sleep consolidation, and cron.
+- **GitHub** maps each task to an issue: the issue body holds the task, changelog entries become comments, `todo` / `in_progress` / `in_review` ride `dc:*` labels, and priority / urgency / tags / version ride reserved-prefix labels. Only `completed` closes the issue; a delete soft-closes as `not_planned`.
+- **Local task images render on GitHub**: a locally-embedded image is uploaded to a dedicated `dreamcontext-assets` branch — content-sniffed by magic bytes, size-gated, content-addressed for dedupe — and linked by its hosted URL on the wire, while the local task keeps its canonical path.
+- Sync is watermark-based on server time: one field-level `PUT` per task under the rate limit, changelog entries union-merge as comments, prose merges 3-way against the last synced base.
+- **Conflicts are never silently lost**: when the remote wins, the local copy is preserved under `state/.conflicts/` and surfaced in the sync report and dashboard. Offline edits queue in `state/.tasks-queue.json` and replay idempotently.
+- **Assignees resolve to real members**: tag a task `person:<slug>` (or `--person <name>`) and the name resolves against the live roster — fuzzy, diacritic-folded; ambiguous names abort, unmatched names warn. Assignments are never silently dropped or reassigned to the token owner. Tags and assignee changes push as per-item deltas.
+- **Custom fields round-trip**: the recommended RICE/meta fields plus anything you declare in `overrides/task.md` are provisioned and synced — `select` as a ClickUp drop-down / GitHub label, the rest as native fields / body blocks. `tasks provision` reuses existing remote fields by name.
+- **One list per project.** Two projects sharing one ClickUp list pull each other's tasks in as their own; `dreamcontext doctor` warns when two registered projects point at the same container. Set the list's statuses in the ClickUp UI **before** first sync.
+- **Docs**: illustrated guide → [docs/clickup.md](docs/clickup.md); technical reference → [docs/remote-task-setup.md](docs/remote-task-setup.md).
+
+### Federation
+
+Most people end up with more than one dreamcontext project. **Federation** lets those projects discover each other and recall across each other **live** — each vault stays the single source of truth for its own knowledge and sees its peers' canonical knowledge by reference at query time. All opt-in, all local, no server in the middle, and **nothing is ever copied between vaults**.
+
+```bash
+dreamcontext vaults add <name> <path>               # Register a project directory as a vault
+dreamcontext vaults discover ~/projects --register   # Find + register every _dream_context/ project (idempotent)
+dreamcontext vaults list / remove <name>             # Inspect / unregister
+
+dreamcontext config shareable on                     # Allow this vault to be recalled by peers
+dreamcontext connect <vault> --direction out --topics api,auth   # Connect to read a peer (out = read)
+dreamcontext connections / disconnect <vault>        # Inspect / remove connections
+dreamcontext federation peers                        # Compact summary of readable peers
+dreamcontext federation status                       # Connections + any leftover federated copies
+dreamcontext federation purge --all                  # Remove leftover copies from the old sync path
+
+dreamcontext memory recall "<query>" --vault other-project   # Also search a named vault (repeatable)
+dreamcontext memory recall "<query>" --connected             # Span this vault + its out/both connections
+dreamcontext memory recall "<query>" --all-vaults            # Span this vault + every shareable vault
+```
+
+**Connections are live read edges.** Connect to a peer and your recall (and the per-prompt recall hook) surfaces that peer's canonical docs *as they are in the source* — always current, no stale duplicate left behind. A peer is readable when your connection is `out`/`both`, it isn't stale, **and** it has opted in with `config shareable on`. A transitive-leak guard keeps a third vault from seeing what merely passed through this one.
+
+> **Copy-based sync is parked on the roadmap.** Earlier builds pushed lossy digests into peers at sleep; copies went stale and bred duplicates, so those verbs are now inert no-ops (`federation purge` clears leftovers). A redesigned opt-in offline-mirror mode may return — its one genuine advantage is surviving a peer going offline, which live read can't.
+
+### Linked Repos
+
+One brain can **govern the bare code repos it points at** — products or services in their *own* GitHub repos, with no `_dream_context/` of their own, cloned to different paths on each teammate's machine (or not cloned at all). The brain becomes a control tower over a family of repos, decoupled from where any of them physically lives.
+
+```bash
+dreamcontext link add app-b ../app-b     # Govern a repo — URL derived from its git origin (no clone/push happens)
+dreamcontext links                       # List them: ✓ present (local path) / ✗ missing here (--json)
+dreamcontext link clone app-c            # Fetch a missing one to this machine — one-way, trust-gated clone
+dreamcontext link rm app-b               # Stop governing it (the machine-local path mapping is kept)
+```
+
+Linking is a **pointer, not a pipe** — it records a **shared** `{name, gitRemoteUrl}` in `.config.json` (travels with the team) and a **machine-local** `url → path` mapping in `~/.dreamcontext/linked-repos.json` (never leaves your machine). Each session's snapshot shows a Linked-repos glance — present repos hand their resolved path to the agent so it can read and edit the governed code; missing ones show a one-line `link clone` hint. Manageable from **Settings → Cloud sync → Linked repos**. GitHub-only for now, and the clone path is hardened so a team-writable URL can never turn into code execution.
+
+## Council
+
+**Multi-persona debates for hard decisions.** When a question is too load-bearing for a single model pass — architecture calls, hiring reviews, risk-heavy migrations, brand critiques — a council convenes N personas through N rounds of structured deliberation and synthesizes a verdict that cites the contributing voices.
+
+Each persona gets its own sub-agent with a scoped prompt, model choice, and aspects it advocates for. Between rounds, personas see a cross-context panel summarizing what everyone else said, so responses sharpen rather than repeat. A synthesizer writes the final report.
+
+```bash
+dreamcontext council create "Should we migrate from Postgres to Firestore?" --rounds 2
+dreamcontext council agent create migration-risk-auditor --model sonnet \
+  --aspects operational-risk,rollback-readiness,team-readiness
+dreamcontext council agent create dx-champion --model opus --aspects developer-experience,feature-velocity
+
+dreamcontext council round start 1 && dreamcontext council round end 1   # …repeat per round
+dreamcontext council synthesize && dreamcontext council complete
+dreamcontext council promote --to knowledge/migration-decision            # Verdict → knowledge
+```
+
+Each debate stores its full state under `_dream_context/council/<id>/` (debate, round log, final report, per-persona folders with reports and research). The dashboard's **Council Hall** renders it all as a searchable grid and detail view. Ships as the `council` skill pack with the `council-persona` / `council-synthesizer` sub-agents; `council list / show / report / research` subcommands cover inspection.
+
+## Memory Recall
+
+Recall and remember across your project's curated context. BM25 ranking over knowledge files, feature PRDs, task files, `2.memory.md` sections, and `CHANGELOG.json` entries — deterministic, instant, no setup: no daemon, no API keys, the corpus is rebuilt in memory on every call (under 100ms on a 40-doc corpus).
+
+<p align="center">
+  <img src="public/image/diagram-recall.png" alt="Memory recall pipeline: your prompt → BM25F keyword match (field-weighted, stemming, synonyms) → Haiku recall (smallest cloud agent, 0-3 docs, BM25 fallback) → SessionStart snapshot (warm + cold knowledge, features, index, pinned)" width="860" />
+</p>
+
+```bash
+dreamcontext memory recall "how did we decide on the sleep fan-out"      # top-5 hits with snippets
+dreamcontext memory recall "auth flow" --types knowledge,feature          # filter by corpus type
+dreamcontext memory remember "Chose BM25 over mem0 after 3-reviewer review"   # quick-capture → CHANGELOG entry
+```
+
+**Why not a vector DB or mem0.** dreamcontext content is already curated atomic facts. The LLM-extraction step a mem0-style stack provides solves a problem this system already solved; BM25 over the live corpus gives ~80% of the value at 1% of the complexity. (The full reasoning → [deep dive](https://github.com/meanllbrl/dreamcontext/wiki).)
+
+**Hybrid recall _(experimental, opt-in)_.** For the remaining ~20% — paraphrased and cross-lingual queries (a Turkish question whose answer lives in an English doc) — an optional **local embedding layer** fuses on top of BM25. Fully offline after a one-time model download (`multilingual-e5-small`, ~113 MB), incremental content-hash cache (gitignored), confidence-gated fusion so exact-term queries stay byte-identical to BM25. On the benchmark: Turkish recall@1 2×, English paraphrase recall@1 +17 pts, zero regressed categories. Off by default:
+
+```bash
+dreamcontext recall hybrid       # switch recall mode to BM25 + dense fusion
+dreamcontext embed refresh       # prewarm / refresh the embedding index
+dreamcontext embed status        # cache size, model, vector count
+dreamcontext embed dedup --title "..." --stdin   # semantic near-duplicate check for a candidate doc
+```
+
+Freshness is automatic (lazy per-query refresh + an eager re-check at `sleep done`); if the model isn't installed, hybrid silently falls back to plain BM25. The same index powers a **near-duplicate gate during sleep**: before a specialist creates a doc, `embed dedup` scores the candidate against the corpus and advises **MERGE / REVIEW / CREATE** — advisory only, and a no-op on vaults with no embedding cache.
+
+**Hook injection is ON by default**: top hits are auto-surfaced to the agent on every non-trivial prompt via the UserPromptSubmit hook (`DREAMCONTEXT_MEMORY_HOOK=0` to opt out). The snapshot's recent-CHANGELOG block is tiered — top 3 detailed, next 10 titles-only — and everything older stays reachable via `memory recall --types changelog`.
+
+## Lab (Insights)
+
+The numbers that tell you whether the project is working — weekly active users, conversion, revenue, error rate — live in external systems. Getting them into the shared picture used to mean pasting a figure into a note, stale the moment you typed it. **Lab** closes the loop: define a named **insight** — a *curated* metric, never a raw dump — backed by any HTTP JSON API or a local script, and dreamcontext fetches it, rolls it up, caches it **in the brain**, and surfaces it to every session.
+
+```bash
+dreamcontext lab create weekly-active-users --title "Weekly Active Users" \
+  --render line --adapter http --group growth --ttl 1440
+dreamcontext lab credentials set analytics_token   # gitignored, 0600, never printed (list shows names only)
+dreamcontext lab sync --all                        # refresh every insight (skips fresh unless --force)
+dreamcontext lab show weekly-active-users --json   # cached series only — never re-fetches
+dreamcontext lab tweak weekly-active-users range 90d   # adjust a declared tweak, e.g. the time range
+dreamcontext lab bind weekly-active-users increase-retention-20   # feed an objective's Key Result
+```
+
+- **Insights, not raw dumps.** A hard cap of **62 points per series** is structural: over ~180 days rolls up monthly, 45–180 days weekly, under 45 daily. Lab delivers curated metrics to agents and dashboards; it is not a BI tool.
+- **Every session sees the latest value.** Cached snapshots ride the SessionStart snapshot and are recallable by meaning — `memory recall "weekly active users" --types insight` — without knowing the slug.
+- **Measured roadmap progress.** Bind an insight to an objective's Key Result and `lab sync` writes `metric.current`, so the [forecast cascade](#roadmap-objectives--the-okr-board) reflects *measured* progress instead of asserted numbers. An objective has exactly one feeder; binding a new insight unbinds the previous one, loudly.
+- **A source is either** the generic **HTTP** adapter (any JSON API — endpoint, headers, and body may reference `{{tweak:…}}` and `{{cred:…}}` placeholders, with a JSON-path `extract`) **or a custom `.mjs` script** under `lab/scripts/` — which runs locally with your credentials, so Lab prints a loud change notice before a modified script runs again.
+- **No silent half-sync.** A failed fetch keeps the prior cached series intact, surfaces the error loudly, and exits non-zero. **Sleep never runs lab sync** (credential exposure, latency, non-determinism).
+
+The dashboard's **Lab page** groups insights by category with number / line / pie / raw renders (hand-rolled SVG), per-insight and sync-all refresh, inline tweak editing, and a "feeds &lt;objective&gt;" provenance chip on bound insights.
+
 ## Skills
 
 The core `dreamcontext` skill (installed by `install-skill`) teaches your agent the context system itself. On top of that, dreamcontext ships **curated skill packs and standalone skills** that give your agent domain expertise — loaded on demand, only when the work calls for it, so they cost nothing the rest of the time.
@@ -278,26 +518,15 @@ The core `dreamcontext` skill (installed by `install-skill`) teaches your agent 
 Four more skills install with the core (no pack needed) and run only when the moment calls for them:
 
 - **`initializer`** — interactive brain **bootstrap**. It recognizes a missing or sparse `_dream_context/` (or that you're migrating notes from another folder, or loading a large docs export into an existing brain) and ingests whatever you have — a docs folder, an Obsidian/Notion export, ADRs, an old wiki, or just the codebase — into the proper knowledge / feature / task hierarchy (scout → confirm → ingest → verify).
-- **`curator`** — interactive brain **refactor**: the periodic re-organization the conservative sleep cycle won't do. It can MOVE, MERGE, SPLIT, RENAME, RE-TYPE, and RETIRE content to conform the whole brain to current conventions — deduping near-duplicate knowledge (`dreamcontext knowledge merge`), enforcing single-source-of-truth, and normalizing tags (audit → confirm plan → execute → verify).
-- **`dreamcontext-deep-research`** — the heavy, iterative counterpart to the fast `dreamcontext-explore` searcher, for **large / multi-project / federated** brains. When one explore pass comes back thin, the main agent fans out parallel `dreamcontext-explore` searchers across the whole curated corpus **and connected peer vaults**, loops to close gaps, **adversarially verifies** the load-bearing claims, and synthesizes a **cited** report — not raw hits (`/dreamcontext-deep-research`). Read-only; it researches *your brain* the way the generic deep-research skill researches the open web.
-- **`task-manager`** — a **task-scoped** session that *maintains* one task document rather than implementing it: revise, summarize, split a task that holds two jobs, reconcile its status and acceptance criteria with what is actually true, and log what changed. It never writes product code — that's the delegate flow's job. Loaded automatically by the dashboard's **Task Manager** pane, which names the task in its first message.
+- **`curator`** — interactive brain **refactor**: the periodic re-organization the conservative sleep cycle won't do. It can MOVE, MERGE, SPLIT, RENAME, RE-TYPE, and RETIRE content to conform the whole brain to current conventions — deduping near-duplicate knowledge, enforcing single-source-of-truth, and normalizing tags (audit → confirm plan → execute → verify).
+- **`dreamcontext-deep-research`** — the heavy, iterative counterpart to the fast `dreamcontext-explore` searcher, for **large / multi-project / federated** brains: fans out parallel searchers across the whole curated corpus **and connected peer vaults**, loops to close gaps, **adversarially verifies** load-bearing claims, and synthesizes a **cited** report — not raw hits. Read-only.
+- **`task-manager`** — a **task-scoped** session that *maintains* one task document rather than implementing it: revise, summarize, split, reconcile status and criteria with what is actually true. Loaded automatically by the dashboard's Task Manager pane.
 
 ```bash
-# Browse and install interactively (terminal checkbox UI)
-dreamcontext install-skill --packs
-
-# Install specific packs directly
-dreamcontext install-skill --packs engineering design
-
-# Install one orchestration pack (council, multi-review, goal-skill)
-dreamcontext install-skill --packs goal-skill
-
-# Install a single sub-skill or standalone skill
-dreamcontext install-skill --skill firebase-firestore
-dreamcontext install-skill --skill system-prompts
-
-# See everything available
-dreamcontext install-skill --list
+dreamcontext install-skill --packs                   # Browse and install interactively (terminal checkbox UI)
+dreamcontext install-skill --packs engineering design # Install specific packs directly
+dreamcontext install-skill --skill firebase-firestore # Install a single sub-skill or standalone skill
+dreamcontext install-skill --list                     # See everything available
 ```
 
 **Skill packs** (a base skill + on-demand sub-skills or sub-agents):
@@ -320,14 +549,14 @@ dreamcontext install-skill --list
 | **business-idea-validation** | Demand testing via landing page + waitlist, quick validation loops |
 | **meta-marketing** | Meta / Facebook / Instagram ad campaigns end to end |
 | **system-prompts** | Prompt engineering, cognitive architecture, agent design |
-| **excalidraw** | Pass **data** to ~44 ready-made deterministic builders — charts (line/bar/compare/stacked/gantt/quadrant/donut/heatmap/table/timeline/KPI/sparkline), wireframes and real-proportion device mockups (iPhone/iPad/Mac), shapes, arrows, frames, lanes — and get a valid Obsidian Excalidraw board at near-zero token cost. Works from JS **or** a pure JSON spec; a 3-check audit catches overlaps, buried labels, and over-long lines before the board ships. |
-| **video-watching** | Turn a video into a time-mapped transcript with on-screen visuals described inline (whisper.cpp + ffmpeg), then reason about it |
+| **excalidraw** | ~44 deterministic builders — charts, wireframes, real-proportion device mockups — that turn data into valid Obsidian Excalidraw boards at near-zero token cost, with a 3-check render audit |
+| **video-watching** | Turn a video into a time-mapped transcript with on-screen visuals described inline, then reason about it |
 
-_Always-on_ packs apply their base principles to every relevant task; the rest load only when the work matches. Packs install to `.claude/skills/{pack}/` (+ agents in `.claude/agents/`). Cross-pack dependencies are warned at install time.
+_Always-on_ packs apply their base principles to every relevant task; the rest load only when the work matches. Packs install to `.claude/skills/{pack}/` (+ agents in `.claude/agents/`); cross-pack dependencies warn at install time.
 
 ## Staying Up to Date
 
-dreamcontext tells you when a new version ships, and updating is one command. There are two distinct things to update: the **CLI** (the `dreamcontext` binary) and your **project's installed files** (the skill, agents, and hooks copied into `.claude/` or `.agents/`).
+Two distinct things update: the **CLI** (the `dreamcontext` binary) and your **project's installed files** (the skill, agents, and hooks in `.claude/`).
 
 ```bash
 dreamcontext upgrade            # Upgrade the CLI to the latest published version
@@ -335,458 +564,61 @@ dreamcontext upgrade --check    # Just print "current: X  latest: Y" and exit
 dreamcontext update             # Refresh this project's skill/agent/hook files to match the CLI
 ```
 
-Or re-run the one-command installer — it detects an existing `_dream_context/` and updates in place:
+Or re-run the one-command installer — it detects an existing `_dream_context/` and updates in place. **In-session update nudge**: when a newer version ships, your agent sees a one-line notice at the top of its loaded context — checked at most once every 24 hours, never in the context-loading hot path, silent if npm is unreachable (`DREAMCONTEXT_VERSION_CHECK=0` to opt out).
 
-```bash
-curl -fsSL https://cdn.jsdelivr.net/npm/dreamcontext/install.sh | sh
-```
+## CLI Reference
 
-**In-session update nudge.** When a newer version is published, your agent sees a single-line nudge at the top of its loaded context — so you find out while you're working, not months later. The version check is deliberately unobtrusive: it runs **at most once every 24 hours**, never during the context-loading hot path (so session start is never slowed or blocked), and fails silent if npm is unreachable. Opt out entirely with `DREAMCONTEXT_VERSION_CHECK=0`.
+The command groups below are the ones not already covered in their feature sections above ([Teams](#built-for-teams) holds brain / federation / link / task-backend commands; [Council](#council), [Memory Recall](#memory-recall), and [Lab](#lab-insights) hold theirs).
 
-## Dashboard
-
-```bash
-dreamcontext dashboard                   # Open at localhost:4173
-dreamcontext dashboard --port 8080       # Custom port
-dreamcontext dashboard --no-open         # Start without opening browser
-```
-
-A local web UI for managing agent context visually. Built with React 19, served by a zero-dependency Node HTTP server. Ships in the npm package.
-
-It also ships a built-in **“What is this?”** explainer page — a full landing experience with a spotlight that reveals each faculty's live diagram, and a layered map of how the brain is organized:
-
-<p align="center">
-  <img src="public/image/landing-spotlight.png" alt="Feature spotlight — pick a faculty to see its live diagram" width="840" />
-</p>
-<p align="center">
-  <img src="public/image/landing-architecture.png" alt="Memory, organized like a mind — the layered brain-region map" width="840" />
-</p>
-
-<table>
-<tr>
-<td width="50%">
-
-**Tasks board** — a drag-and-drop Kanban with **saved views** (each carrying its own persisted filter, sort, and grouping), a two-pane **include/exclude filter** menu (status, priority, tags, version, assignee) with type-ahead search, a **Versions popover** (with **Current / Backlog / Completed** smart buckets) to scope to one or more planning versions, toggleable card **Properties** badges (due date, RICE score, and a per-person-hued multi-assignee **AvatarStack**), and an **At-Risk alert** surfacing past-due or blocked tasks. View preferences persist two ways — shared and team-versioned in `overrides/board.json`, or private to your machine in `state/board.local.json` — so they survive the desktop app's per-launch port change. A **sprint-aware version filter** distinguishes current, planning, and released sprints, with set-current / mark-complete actions inline. The same tasks also render along the time axis: a **Timeline (Gantt)** of start→due ranges, a **Calendar**, an **Activity heatmap** of completion cadence, an **Eisenhower matrix** for priority-urgency quadrant planning, and a **RICE** prioritization view. Create tasks, update status, edit start/due dates and custom fields, and add changelog entries from a Notion-style detail panel.
-
-</td>
-<td width="50%">
-
-**Core editor** with split-pane markdown editing and live preview. Knowledge manager with search and pin/unpin. Feature PRD viewer. SQL ER diagram preview. **Version manager** for planning, releasing, **renaming, and deleting** versions — a rename re-points every task on that version and moves the active-sprint pointer; a delete warns and clears references first. **Settings** for cloud-task config — enter the ClickUp/GitHub token (stored gitignored, masked, never echoed), preview-then-provision custom fields, and edit the project's task-format override and custom-field schema.
-
-</td>
-</tr>
-<tr>
-<td width="50%">
-
-**Sleep tracker** showing debt gauge, session history timeline, and a list of every manual change made through the dashboard.
-
-</td>
-<td width="50%">
-
-**Change tracking** records every dashboard action to `.sleep.json` so the agent knows what you changed between sessions and consolidates it during sleep.
-
-</td>
-</tr>
-<tr>
-<td width="50%">
-
-**Task Manager** — a task's own Claude Code session, pinned inside the task view. It *maintains* the document (revise, summarize, split, reconcile status against acceptance criteria) rather than building it, and loads the `task-manager` skill automatically. Opt-in everywhere: it opens only from its button, in the drawer (which widens to fit a usable terminal) or full-page. Bypass-permissions is on by default — its writes are scoped to the task in view — with an Auto toggle to opt out before the session spawns. Desktop app only; if the Claude CLI or `node-pty` is missing, the pane renders the one-click prerequisite installer and flips to the live session in place.
-
-</td>
-<td width="50%">
-
-**Anchored doc comments & session diff** — select any span of the rendered task document, drop a 💬 comment, batch them as pending chips, and one **Send** delivers the whole batch to that task's Task Manager session as a single message. Anchors are **quotes, not offsets**, so they survive the agent rewriting the doc live; comments are ephemeral — the agent's edits and the task changelog are the record. The doc refreshes live as the agent edits it, and a git-style **"changes this session"** diff shows exactly what moved.
-
-</td>
-</tr>
-<tr>
-<td width="50%">
-
-**Delegate to Claude from the board** — hand a task card straight to a real Claude Code session: a composer takes the prompt, the tab title, and whether to arm bypass. From the board it backgrounds to a corner chip so you can keep triaging; from a task's full-page view it reveals the live session instead.
-
-</td>
-<td width="50%">
-
-**Living agent dock** — session tiles whose *figure* is the status (a per-state Sleepy face on agent tiles, a blinking prompt glyph on shells), with a six-kind taxonomy classified from the visible screen rather than byte-flow. A session that **stops to ask you something** shakes, wears a "?" bubble, chimes, and jumps the queue; the anchor mirrors the most urgent row.
-
-</td>
-</tr>
-<tr>
-<td width="50%">
-
-**Brain graph** visualizes your knowledge as an interactive network. Nodes are memory, knowledge, features, and decisions; edges are explicit and inferred links. Node drawer for full content, settings panel for layout and filters.
-
-</td>
-<td width="50%">
-
-**Council Hall** shows every multi-persona debate as a searchable card grid. Open a debate into a full-page detail view with three tabs: **Overview** (problem + synthesized final report + citation chips), **Agents** (per-persona transcripts with search), **Matrix** (persona × round grid with inline cell expansion).
-
-</td>
-</tr>
-</table>
-
-The sidebar groups every page into four job-based sections — **Workspace**, **Memory**, **Brain**, and **Control Panel** — under a single dream-gem brand lockup. Light and dark mode with system preference detection. Brand palette: violet, anchored by the folded-diamond dream-gem logo and a two-tone wordmark. Visby CF font with system font fallback.
-
-## Desktop App
-
-> **macOS beta.** A native **Tauri 2** app that wraps the same dashboard server, so you manage every project from one window instead of a localhost tab per repo. Ships via the desktop release (and the macOS one-line installer), not the npm package.
-
-```bash
-dreamcontext app install      # Install to ~/Applications (no admin, no quarantine prompt)
-dreamcontext app update       # Update the installed app to the latest release
-dreamcontext app status       # Show installed app version and state
-```
-
-- **Multi-vault launcher.** The app lists every registered [vault](#federation) and opens each project in its **own window** — multi-vault is multi-window over one shared Node server, with each window pinned to its vault via a request header. A per-project status dot (green up-to-date / yellow needs-update / red folder-gone) lets you run `update` from the UI.
-- **Federation network view.** The launcher also renders your projects as an interactive board (Excalidraw-style cards) where you wire a **reads** relationship by clicking source → target: a violet wire means one project reads another's canonical memory **live** during recall (a reference, never a copy), gated by the target being Readable. A node panel and an always-on "Connections" list spell out in plain language who reads whom, each removable with one click. (Copy-based "sync" is parked on the roadmap — federation only reads, live.)
-- **In-app onboarding, no terminal.** A quiz-style wizard creates a brand-new project (native folder picker), initializes an existing folder, or **clones one from GitHub** (sign in, search your repos, and clone into a local folder as a cancelable background job with live git progress) — then scaffolds `_dream_context/`, runs `setup`, and best-effort installs the global CLI. It's deterministic and LLM-free; the success screen hands you a prompt to paste into Claude Code for the rich enrichment pass.
-- **In-app Agent terminal & command palette _(beta)_.** Drive a real Claude Code session inside any vault from a split-pane, multi-session terminal surface — per-pane tab bars, ⌘D drag-to-split, ⌘T/⌘W, and a minimize-to-corner dock; sessions live in a detached DOM so the PTY never remounts. Drop an image to inject it straight into the vault, and jump anywhere with a **⌘K command palette** (live BM25 recall + intelligent toggle). A first-run prerequisite installer reports and one-click-installs the Claude CLI / node-pty. The dock is **screen-true**: status is read from the visible terminal buffer, not byte-flow, so a session that stops to ask you a question surfaces as **"Needs you"** — shaking, chiming, and jumping the queue — instead of flapping between ready and working during silent tool calls.
-- **Sleepy — notch quick-capture _(beta)_.** Off by default — enable it in dashboard Settings → Sleepy. A global-hotkey companion that drops a transparent notch panel over whatever you're doing, with an animated mascot whose mood follows your sleep debt. Pick a vault, type a thought, and choose a mode:
-  - **Learn** — saves the note to project memory, then enriches it.
-  - **Ask** — one-shot Q&A about the project; nothing is saved.
-  - **Sleep** — triggers a full consolidation cycle for that vault from the notch.
-- **Continuous updates without Apple notarization.** The whole delivery path is CLI/curl-driven, so Gatekeeper's notarization check never fires (ad-hoc signing satisfies Apple Silicon). The app prefers your globally-installed, auto-upgrading CLI over its bundled copy, so ~95% of changes ride the normal CLI upgrade with no app rebuild. Downloaded artifacts require a matching `.sha256` or the install refuses.
-
-> The desktop app is a working local beta — not yet Apple-signed/notarized, so first launch may need a right-click → Open. Windows/Linux are nice-to-have for later.
-
-## Council
-
-**Multi-persona debates for hard decisions.** When a question is too load-bearing for a single model pass — architecture calls, hiring reviews, risk-heavy migrations, brand critiques — a council lets you convene N personas, run them through N rounds of structured deliberation, and synthesize a verdict that cites the contributing voices.
-
-Each persona gets its own sub-agent with a scoped prompt, model choice, and aspects it advocates for. Between rounds, personas see a cross-context panel summarizing what everyone else said, so responses sharpen rather than repeat. A synthesizer produces the final report.
-
-```bash
-# Start a debate
-dreamcontext council create "Should we migrate from Postgres to Firestore?" \
-  --rounds 2
-
-# Add personas (each gets a sub-agent and persona file)
-dreamcontext council agent create migration-risk-auditor --model sonnet \
-  --aspects operational-risk,rollback-readiness,team-readiness
-dreamcontext council agent create dx-champion --model opus \
-  --aspects developer-experience,feature-velocity
-dreamcontext council agent create user-advocate --model haiku \
-  --aspects end-user-impact,reliability-perception
-
-# Drive rounds (the CLI orchestrates sub-agent dispatch; reports append as they return)
-dreamcontext council round start 1
-dreamcontext council round end 1              # Injects cross-context for R2+
-dreamcontext council round start 2
-dreamcontext council round end 2
-
-# Synthesize the final report
-dreamcontext council synthesize
-dreamcontext council complete
-
-# Optionally promote the verdict into knowledge
-dreamcontext council promote --to knowledge/migration-decision
-```
-
-Each debate stores its state in `_dream_context/council/<id>/` with `debate.md`, `round-log.md`, `final-report.md`, and per-persona folders containing `context-and-persona.md`, `report.md`, and `researches/`. The dashboard's **Council Hall** page renders this data as a searchable grid and full-page detail view.
-
-Ships with two sub-agents (`council-persona`, `council-synthesizer`) and a dedicated skill pack at `skill-packs/council/`.
-
-## Memory Recall
-
-Recall and remember across your project's curated context. BM25 ranking over knowledge files, feature PRDs, task files, `2.memory.md` sections, and `CHANGELOG.json` entries — deterministic, instant, no setup.
-
-<p align="center">
-  <img src="public/image/diagram-recall.png" alt="Memory recall pipeline: your prompt → BM25F keyword match (field-weighted, stemming, synonyms) → Haiku recall (smallest cloud agent, 0-3 docs, BM25 fallback) → SessionStart snapshot (warm + cold knowledge, features, index, pinned)" width="860" />
-</p>
-
-```bash
-# Ask a question, get top-5 hits with snippets
-dreamcontext memory recall "how did we decide on the sleep fan-out"
-
-# Filter by corpus type (knowledge | feature | task | memory | changelog)
-dreamcontext memory recall "auth flow" --types knowledge,feature
-dreamcontext memory recall "deprecated" --types changelog
-
-# Machine-readable output for scripts
-dreamcontext memory recall "rice prioritization" --json --top 3
-
-# Quick-capture a decision or note — writes a CHANGELOG entry (type=note, scope=quick)
-dreamcontext memory remember "Chose BM25 over mem0 after 3-reviewer review"
-
-# Inspect the corpus
-dreamcontext memory status
-```
-
-**Why not a vector DB or mem0.** dreamcontext content is already curated atomic facts — knowledge docs, feature PRDs, closed tasks, memory entries, CHANGELOG entries. The LLM-extraction step a mem0-style stack provides solves a problem this system already solved. BM25 over the live corpus gives ~80% of the value at 1% of the complexity: no Python, no Ollama, no API keys, no daemon, version-controllable. Cold start is under 100ms on a 40-doc corpus; the index is rebuilt in memory on every call.
-
-**Hybrid recall _(experimental, opt-in)_.** For the remaining ~20% — paraphrased questions and cross-lingual queries (e.g. a Turkish question whose answer lives in an English doc) — an optional **local embedding layer** can be fused on top of BM25. Fully offline after a one-time model download (`multilingual-e5-small`, ~113 MB, no API keys, vectors never leave your machine), incremental content-hash cache under `_dream_context/.embeddings/` (gitignored), and confidence-gated fusion so exact-term queries stay byte-identical to BM25. On the benchmark it lifted Turkish recall@1 2× and English paraphrase recall@1 by +17 pts with zero regressed categories. **Off by default** — BM25 behavior is unchanged unless you enable it:
-
-```bash
-dreamcontext recall hybrid       # switch recall mode to BM25 + dense fusion
-dreamcontext embed refresh       # prewarm / refresh the embedding index (first run indexes the corpus)
-dreamcontext embed status        # cache size, model, vector count
-dreamcontext embed dedup --title "..." --stdin   # semantic near-duplicate check for a candidate doc
-```
-
-Freshness is automatic: recall refreshes changed chunks lazily per query, and `sleep done` runs an eager full re-check. If the model isn't installed, hybrid mode silently falls back to plain BM25.
-
-**Semantic near-duplicate gate (sleep).** The embedding index has a second consumer: before a sleep specialist creates a knowledge or feature doc, `dreamcontext embed dedup` embeds the **candidate** and scores it against the existing corpus by cosine similarity — max over every (candidate-chunk × doc-chunk) pair, so one duplicated section is caught even when the rest differs. It returns the nearest docs plus a verdict: **MERGE** (near-verbatim twin — extend the named file), **REVIEW** (same-topic band — apply the sharp-vs-soft rubric), **CREATE** (no near-duplicate). It **advises only** — the fold-in is the agent's `knowledge merge`. `--if-present` makes it a no-op when the vault has no embedding cache, so sleep never triggers a first-time model download and always falls back to keyword recall.
-
-Hook injection is **ON by default**: top hits are auto-surfaced to the agent on every non-trivial user prompt via the UserPromptSubmit hook. Opt out with `DREAMCONTEXT_MEMORY_HOOK=0` if you want raw prompts without context augmentation.
-
-**Recent CHANGELOG in the snapshot is tiered**: top 3 entries detailed (summary + ~300 char body), next 10 titles-only under an "Older" subheading. Everything older still lives in `CHANGELOG.json` and is reachable through `memory recall --types changelog`.
-
-## Lab (Insights)
-
-The numbers that tell you whether the project is working — weekly active users, conversion, revenue, error rate — live in external systems: a product-analytics API, Stripe, a database, a Google Sheet. Getting them into your brain used to mean pasting a figure into a task note, where it went stale the moment you typed it. **Lab** closes that loop. You (or an agent) define a named **insight** — a *curated* metric, never a raw data dump — backed by any HTTP JSON API or a local script, and dreamcontext fetches it, rolls it up, caches the result **in the brain**, and surfaces it to every session.
-
-An insight declares what to fetch (a generic **HTTP** adapter or a custom **script**), how to render it (`number` / `line` / `pie` / `raw`), a refresh **TTL**, and optional **tweaks** such as a time range. One command refreshes the cached snapshots:
-
-```bash
-dreamcontext lab create weekly-active-users --title "Weekly Active Users" \
-  --render line --adapter http --group growth
-dreamcontext lab credentials set analytics_token        # gitignored, 0600, never printed
-dreamcontext lab sync --all                              # refresh every insight (skips fresh unless --force)
-dreamcontext lab show weekly-active-users --json         # cached series only — never re-fetches
-```
-
-- **Insights, not raw dumps.** A hard cap of **62 points per series** is structural — a year of daily data rolls up to monthly buckets, a month may stay daily. Lab delivers curated metrics to agents and dashboards; it is not a BI tool.
-- **Every session sees the latest value.** Cached snapshots live in the brain, so an insight's latest value and staleness ride the SessionStart snapshot and are recallable by meaning — `dreamcontext memory recall "weekly active users" --types insight` — without knowing the slug.
-- **Measured roadmap progress.** Bind an insight to a roadmap objective's Key Result — `dreamcontext lab bind <insight> <objective>`, or search-and-connect it right in the dashboard's objective dialogs — and `lab sync` writes `metric.current` for you, so the [forecast cascade](#roadmap-objectives--the-okr-board) reflects *measured* progress instead of PO-asserted numbers. Connecting seeds the current value from the cached snapshot immediately, and an objective has exactly one feeder: binding a new insight unbinds the previous one, loudly.
-- **Credentials are gitignore-first.** API keys and tokens are written only through `lab credentials set`, stored gitignored at mode `0600`, and structurally redacted — never logged, never returned by a route, and never printed by `credentials list` (names only).
-- **Custom scripts run locally, with a tripwire.** A `.mjs` script insight executes on your machine with your credentials — the same trust level as the repo itself — so if the script changes, Lab prints a loud change notice *before* it runs again.
-- **No silent half-sync.** When a fetch fails the prior cached series is kept intact, the error is surfaced loudly, and the sync exits non-zero. **Sleep does not run lab sync** (credential exposure, latency, non-determinism) — a bound insight feeds a Key Result through its own `lab sync` instead.
-
-The dashboard turns this into a **Lab page**: insights grouped by category, a **number / line / pie / raw** render per insight (hand-rolled SVG, no chart library), per-insight and **sync-all** refresh with live success/error feedback, and inline **tweak editing** to change an insight's range and watch it re-fetch and coarsen granularity. An insight bound to an objective shows a "feeds &lt;objective&gt;" provenance chip.
-
-## Federation
-
-Most people end up with more than one dreamcontext project. **Federation** lets those projects discover each other and recall across each other **live** — each vault stays the single source of truth for its own knowledge, and sees its peers' canonical knowledge by reference at query time. All opt-in, all local, no server in the middle, and **nothing is ever copied between vaults**.
-
-It starts with a **global vault registry** — every project you register is a *vault* the CLI (and the [desktop app](#desktop-app)) can address by name.
-
-```bash
-dreamcontext vaults add <name> <path>     # Register a project directory as a vault
-dreamcontext vaults discover [root]        # Find every _dream_context/ project under a tree
-dreamcontext vaults discover ~/projects --register  # …and register the new ones (idempotent)
-dreamcontext vaults list                   # List all registered vaults
-dreamcontext vaults remove <name>          # Unregister a vault
-```
-
-**Cross-vault recall.** Point a recall at other vaults and it spans them, returning hits tagged with their source vault. Only vaults you've marked shareable are reachable.
-
-```bash
-dreamcontext config shareable on                      # Allow this vault to be recalled by peers
-dreamcontext memory recall "<query>" --vault other-project   # Also search a named vault (repeatable)
-dreamcontext memory recall "<query>" --connected             # Span this vault + its out/both connections
-dreamcontext memory recall "<query>" --all-vaults            # Span this vault + every shareable vault
-```
-
-**Connections = a live read edge.** Connect to a peer and your recall (and the per-prompt recall hook) surfaces that peer's **canonical** docs live — a reference, never a copy. A decision made in one repo shows up in a sibling repo's recall *as it is in the source*, always current, with no stale duplicate left behind.
-
-```bash
-dreamcontext connect <vault> --direction out --topics api,auth   # Connect to read a peer (out = read)
-dreamcontext connections                  # Inspect this vault's federation connections
-dreamcontext disconnect <vault>           # Remove a connection
-dreamcontext federation peers             # Compact summary of readable peers (ambient awareness)
-dreamcontext federation status            # Connections + any leftover federated copies
-dreamcontext federation purge --all       # Remove leftover federated:true copies from the old sync path
-```
-
-A peer is readable when your connection to it is `out`/`both`, it isn't stale, **and** it has opted in with `config shareable on`. Reads happen live at recall time; the transitive-leak guard keeps a third vault from seeing what merely passed through this one.
-
-> **Note — copy-based sync is parked on the roadmap.** Earlier builds pushed a lossy, truncated *digest* into peers at sleep (`federation sync`) and ingested it as `federated: true` copies (`federation drain`). That broke single-source-of-truth: copies went stale the moment the source changed and re-edits bred duplicates. Those verbs are now **inert no-ops** and the `sleep-federation` specialist is no longer dispatched. If a vault still holds old copies, clear them with `federation purge`. A redesigned opt-in offline-mirror mode may return later — its one genuine advantage is surviving a peer going offline, which live read can't.
-
-## Brain Cloud Sync
-
-Federation lets separate projects read each other. **Brain Cloud Sync** is the other half of team collaboration: it lets a whole team work on the *same* brain. When you turn it on, dreamcontext syncs the **whole project** — your code, `.claude/`, and the brain nested under `_dream_context/` — to the project's own GitHub repo, so tasks, knowledge, and features are pushed, pulled, merged, and reviewed the way you already collaborate on code. It stays local-first the entire time: the brain is still plain markdown and JSON on disk, and git is only the sync transport, not a new database.
-
-```bash
-dreamcontext brain enable    # Turn cloud sync on — whole project → its GitHub origin (needs an origin)
-dreamcontext brain status    # Mode, remote, and current sync state
-dreamcontext brain sync      # Manual fetch → merge → commit → push, outside a sleep cycle
-dreamcontext brain disable   # Turn it off (the brain stays committed locally, never pushed)
-```
-
-- **Sync rides sleep.** Every `dreamcontext sleep done` automatically runs fetch → merge → commit → push against the project's `origin`, so your teammates' consolidated context reaches you and yours reaches them with no extra step. A sync failure never fails the sleep.
-- **Deterministic files merge themselves; prose defers to an agent; code goes to you.** JSON (changelog, releases, config) and task status/changelog merge automatically (task changelogs union, the furthest status wins). When two people edit the same *prose* section of a knowledge or feature file, the conflict is handed to a semantic **merge agent** — the `/dream-sync` skill — which reads base/ours/theirs and writes the real merge, then hands back to commit and push. A real **code** conflict is left for your editor with native git markers — never mangled by a merge agent.
-- **Two modes.** `full-repo` (cloud sync on) syncs the whole project to its own `origin` on the current branch; **`in-tree`** (the safe default, cloud sync off) commits the brain inside the code repo but **never auto-pushes**. The scrub gate applies to both. Because `.claude/` and `_dream_context/` already live in the code repo, they travel together — no separate brain repo, no symlink layer.
-- **Nothing secret or machine-local is ever pushed.** A **scrub gate** runs before every commit and push and blocks secrets and absolute local paths, and the project-root `.gitignore` is force-written with the machine-local brain excludes before every whole-project stage. The auth token is never written into the remote URL — git network calls use `GIT_ASKPASS` with a `0600` temp file, so the token never lands in `.git/config`, the environment, or a process argument. Per-machine indexes, caches, and embeddings are gitignored and rebuilt locally, so derived state never causes merge noise.
-- **Personal attribution, no per-person forks.** Attribution rides the existing multi-people awareness (`person:<slug>` tags, changelog authors) rather than per-person file forks.
-
-From the desktop **Launcher** the whole flow is terminal-free: **GitHub device-flow login** (with a personal-access-token fallback), a Settings **"Cloud sync"** toggle that turns whole-project sync on/off, a **team-updates badge** that tells you when teammates have pushed, and a one-click **"Resolve with AI"** for a deferred prose merge. If the project has no `origin` yet, the Cloud sync panel offers **Create new** (a fresh private-by-default GitHub repo wired as `origin`) or **Connect existing** (an existing repo URL), then enables sync and does the first push for you — no `git remote add` by hand.
-
-## Linked Repos
-
-Federation reads across brains; Brain Cloud Sync shares one brain. **Linked Repos** is the third piece: it lets one brain **govern the bare code repos it points at** — the products or services that live in their *own* GitHub repos, with no `_dream_context/` of their own, cloned to different local paths on each teammate's machine (or not cloned at all). The brain becomes a control tower over a family of repos, decoupled from where any of them physically lives.
-
-Linking is a **pointer, not a pipe** — it never clones, pushes, pulls, or commits the target repo. It records two things: a **shared** `{name, gitRemoteUrl}` in `.config.json` that travels with the team so everyone knows the repo exists, and a **machine-local** `url → path` mapping in `~/.dreamcontext/linked-repos.json` that says where it lives on *this* machine and **never leaves it**.
-
-```bash
-dreamcontext link add app-b ../app-b     # Govern a repo — URL derived from its git origin (no clone/push happens)
-dreamcontext links                       # List them: ✓ present (local path) / ✗ missing here
-dreamcontext link clone app-c            # Fetch a missing one to this machine — one-way, trust-gated clone
-dreamcontext link rm app-b               # Stop governing it (the machine-local path mapping is kept)
-```
-
-Each session's context snapshot shows a **Linked repos** glance — present repos hand their resolved local path to the agent so it can read and edit the governed code directly; missing ones show a one-line `link clone` hint. It's fully manageable from the dashboard (**Settings → Cloud sync → Linked repos**), with a native folder picker to bind a checkout and a trust-gated **Clone** for missing repos. GitHub-only for now, and the clone path is hardened so a team-writable URL can never turn into code execution.
-
-## Commands
-
-### Core
+### Core (changelog & releases)
 
 ```bash
 dreamcontext core changelog add           # Add changelog entry
 dreamcontext core releases add            # Create release with auto-discovery
 dreamcontext core releases add --yes      # Non-interactive, include all unreleased items
 dreamcontext core releases add --ver v0.2.0 --summary "..." --status planning  # Planning version
-dreamcontext core releases list           # List recent releases
-dreamcontext core releases show <version> # Show release details
+dreamcontext core releases list / show <version>
 ```
 
-Release creation auto-discovers unreleased tasks, features, and changelog entries. Back-populates `released_version` on included features. Use `--status planning` to create a version placeholder without auto-discovery. Tasks can be assigned to planning versions, and the version manager in the dashboard provides a "Release" action to transition from planning to released.
+Release creation auto-discovers unreleased tasks, features, and changelog entries and back-populates `released_version` on included features. Use `--status planning` for a version placeholder; the dashboard's version manager provides the planning → released transition.
 
 ### Tasks
 
 ```bash
-dreamcontext tasks list                   # List active tasks (excludes completed)
-dreamcontext tasks list --all             # List all tasks
-dreamcontext tasks list --status in_progress  # Filter by status
-dreamcontext tasks create <name>          # Create a task
-dreamcontext tasks create <name> --priority high --status in_progress --tags "api,auth" --urgency high --version v0.2.0
-dreamcontext tasks create <name> --start 2026-06-25 --due 2026-07-01      # planned date range
-dreamcontext tasks start <name> 2026-06-25  # set/clear the planned start (range start)
-dreamcontext tasks due <name> 2026-07-01    # set/clear the due/end (range end)
-dreamcontext tasks version <name> [version] # print / set / clear the version (sprint) a task belongs to
-dreamcontext tasks field <name> team platform  # set/clear a user-declared custom field
-dreamcontext tasks log <name> <content>   # Log progress (newest first)
-dreamcontext tasks insert <name> <section> <content>  # Insert into a named section
-dreamcontext tasks complete <name>        # Mark completed
+dreamcontext tasks list [--all] [--status in_progress] [--objective <slug>]
+dreamcontext tasks create <name> [--priority high] [--status in_progress] [--tags "api,auth"] \
+  [--urgency high] [--version v0.2.0] [--start 2026-06-25] [--due 2026-07-01] [--objectives a,b] [--field key=value]
+dreamcontext tasks start <name> <date|clear>     # set/clear the planned start
+dreamcontext tasks due <name> <date|clear>       # set/clear the due/end
+dreamcontext tasks version <name> [version|clear] # print / set / clear the sprint a task rides
+dreamcontext tasks field <name> <key> [value|clear] # user-declared custom fields
+dreamcontext tasks tag <name> <tags…> [--remove]
+dreamcontext tasks log <name> <content>          # Log progress (newest first)
+dreamcontext tasks insert <name> <section> <content>
+dreamcontext tasks complete <name>
 ```
 
-All flags (`--description`, `--priority`, `--status`, `--tags`, `--why`, `--urgency`, `--version`, `--start`, `--due`, `--field key=value`) are optional. Defaults to medium priority/urgency and todo status, so the command works non-interactively for agent use.
+All flags are optional (medium priority/urgency, todo status by default), so every command works non-interactively for agent use.
 
-- **Roadmap objectives.** Link tasks to PO-authored roadmap objectives with `--objectives a,b` on create or `tasks objectives <name> a,b|clear`, and filter with `tasks list --objective <slug>`. The field is many-to-many and **local-only** (never synced to a remote backend). See the Roadmap section below.
-- **Date ranges.** A task has an optional planned `start` and a `due`/end — set or clear either end independently (`tasks start`/`tasks due` accept a `clear` sentinel). Start must be on or before due; an inverted range is rejected. Setting any date removes the `backlog` tag, and the first move to `in_progress` auto-stamps `start_date` with today if it is still unset (a planned start is never overwritten). Both dates render in the dashboard Timeline (Gantt) and Calendar views, and sync to ClickUp (native start/due fields) and GitHub (a `<!-- dc:dates -->` issue-body block).
-- **Version (sprint) on an existing task.** `tasks version <name> <version|clear>` sets or clears the sprint a task rides, folding the value against `RELEASES.json` so a lowercased round-trip from a cloud backend (or a typed `s5`) resolves to the canonical spelling instead of writing a second near-identical version string. An unregistered version is accepted but warns — it will not match a sprint bucket on the board.
-- **User-declared custom fields.** Drop an optional `_dream_context/overrides/task.md` to declare your own task fields (`text` / `number` / `select` / `date`) and override the scaffolded task template. Set values with `--field key=value` on create or `tasks field <name> <key> [value|clear]`; values are validated against the schema and sync to both backends — `select` as a ClickUp drop-down / GitHub `key:value` label, the rest as a ClickUp custom field / GitHub `<!-- dc:fields -->` body block. `tasks provision` creates any missing remote fields and reuses ones that already exist by name. Absent the override file, tasks behave exactly as the defaults (zero regression). Full schema → [skill reference](skill/references/tasks-and-features.md).
+- **Date ranges**: start must be on or before due; setting any date removes the `backlog` tag, and the first move to `in_progress` auto-stamps `start_date` if unset. Dates render in Timeline/Calendar and sync natively to both remote backends.
+- **Version folding**: `tasks version` folds against `RELEASES.json`, so a lowercased round-trip or a typed `s5` resolves to the canonical spelling instead of minting a near-duplicate version string.
+- **Custom fields**: declare them in `_dream_context/overrides/task.md` (`text` / `number` / `select` / `date`); values validate against the schema and sync to both backends. Absent the override file, tasks behave exactly as the defaults.
 
 ### Roadmap (objectives — the OKR board)
 
-A product-owner-authored board of **objectives** (outcomes like "increase retention 20%" or "ship v0.2.3") — not a derived shadow of tasks, not a list of releases. Objectives live one file each in `core/objectives/<slug>.md`; tasks link to them **many-to-many** via `objectives:` frontmatter; the computed assist layer does the math: progress rollups, a **full-DAG dependency forecast cascade** (a slip upstream moves every transitive dependent), and **target vs forecast** slip detection. Active objectives are injected into every session snapshot and are recallable (`memory recall --types objective`), so agents always know what the project is driving toward.
+A product-owner-authored board of **objectives** (outcomes like "increase retention 20%") — not a derived shadow of tasks. Objectives live one file each in `core/objectives/<slug>.md`; tasks link many-to-many via `objectives:` frontmatter; a computed assist layer does the math: progress rollups, a **full-DAG dependency forecast cascade** (a slip upstream moves every transitive dependent), and **target vs forecast** slip detection. Active objectives ride every session snapshot and are recallable (`memory recall --types objective`), so agents always know what the project is driving toward.
 
 ```bash
-dreamcontext roadmap                                  # text board + regenerate knowledge/roadmap/board.md
-dreamcontext roadmap --json                           # the typed RoadmapModel (queryable, no writes)
+dreamcontext roadmap [--json]                         # text board + regenerate knowledge/roadmap/board.md
 dreamcontext roadmap objective create increase-retention-20 --title "Increase retention by 20%" --target 2026-09-30
 dreamcontext roadmap objective depend launch-mobile increase-retention-20   # write-time circular-dep guard
 dreamcontext roadmap objective show increase-retention-20                   # members + "if this slips, so do: …"
 dreamcontext tasks create "Retention email drip" --objectives increase-retention-20
 ```
 
-- 🟢 done · 🔵 active · 🟡 review · ⚪ not started — rolled up from the real member-task statuses; a manual `--status` override (the PO's call) wins.
-- 🔴 **SLIPPING** = computed forecast lands after the PO's target date — surfaced on the board, in `objective show`, and in the session snapshot before the deadline.
-- An objective with no dated member tasks is **unforecastable** (null) and never constrains its dependents; circular dependencies are rejected at write time.
-- During sleep consolidation, agents propose `objectives:` links for unlabeled tasks (never overwriting a non-empty list) and the board is regenerated automatically.
-
-The dashboard turns this board into a live, editable **Roadmap page**. A **forecast timeline** lays objectives on a month-gridded axis — gradient status bars span each computed forecast window, dotted diamonds mark the PO's target, and red hatching flags a target overshoot; bezier connectors trace dependencies and redden when a slip cascades through them. **Drag a bar** to reschedule and every dependent's forecast bar slides and reddens live (only the dragged objective's dates persist); **drag from a node** to link a dependency, hover-✕ to unlink. A **Board view** groups objectives into status columns, and a slide-over **detail panel** edits everything inline — title, status (with clear-override), committed start/target via a date-range picker, Impact × Effort, and dependencies — persisting each change immediately. Backed by `GET /api/roadmap`, `PATCH /api/objectives/:slug`, and `POST`/`DELETE /api/objectives/:slug/dependencies` (cycle-guarded).
-
-#### Remote Task Backends — ClickUp or GitHub Issues
-
-Tasks default to local markdown files. Optionally they can live in a remote
-backend instead — a **ClickUp** list or **GitHub Issues** — with the same CLI
-verbs, the same dashboard, the same recall/snapshot behavior, backed by a
-gitignored local mirror:
-
-```bash
-# ClickUp
-dreamcontext config task-backend clickup            # switch backend (gitignores mirror/sync files, installs git triggers)
-dreamcontext config clickup-list <teamId> <spaceId> <listId>
-dreamcontext config clickup-token [--user <name>]   # stored in a gitignored secrets file (0600), never in .config.json
-
-# GitHub Issues
-dreamcontext config task-backend github             # switch backend (same gitignored mirror + git triggers)
-dreamcontext config github-repo <owner> <repo>      # target repo (the switch flow also auto-discovers repos your token can see)
-echo "$GITHUB_TOKEN" | dreamcontext config github-token   # stored in the gitignored secrets file (0600), never in .config.json
-
-# Either backend — same verbs:
-dreamcontext tasks sync [push|pull|both]            # manual two-way sync
-dreamcontext tasks sync pull --reconcile            # heal assignees + version that sit BELOW the watermark
-dreamcontext tasks sync --refresh-meta              # force-refresh cached statuses/members/fields (skip the hourly throttle)
-dreamcontext tasks sync-hooks install               # best-effort post-commit/pre-push triggers (can never fail git)
-```
-
-- Both backends talk to the provider's REST API directly (no MCP) — so sync
-  works headless in git hooks, post-sleep consolidation, and cron.
-- **GitHub** maps each task to an issue: the issue body holds the task and
-  changelog entries become comments; `todo` / `in_progress` / `in_review` ride
-  `dc:*` labels and priority / urgency / tags / version ride reserved-prefix
-  labels. Only `completed` closes the issue, and a delete soft-closes it as
-  `not_planned` (the REST API can't hard-delete). It reuses the same pluggable
-  adapter and sync engine as ClickUp ([issue #11](https://github.com/meanllbrl/dreamcontext/issues/11)).
-- **Local task images render on GitHub**: an image embedded by a local path
-  (e.g. an agent-drop screenshot) is uploaded to a dedicated
-  `dreamcontext-assets` branch — content-sniffed by magic bytes (never a trusted
-  extension), size-gated, and content-addressed so re-pushes dedupe — then linked
-  by its hosted URL on the wire, while the local task keeps its canonical path so
-  the reference never churns on pull.
-- Sync is watermark-based on ClickUp **server time**: one field-level `PUT`
-  per task under the ~100 req/min rate limit, changelog entries become
-  comments (union-merged), prose merges 3-way against the last synced base.
-- Conflicts are never silently lost: when ClickUp wins, the local copy is
-  preserved under `state/.conflicts/` and surfaced in the sync report and
-  dashboard.
-- Offline edits queue in `state/.tasks-queue.json` and replay idempotently.
-- Tokens resolve env (`CLICKUP_TOKEN`, or a per-person `tokenEnv`) → secrets
-  file; `config show` only ever prints a masked token.
-- **Assignees resolve to real members**: each sync caches the list's members;
-  `dreamcontext tasks members` shows them with their slugs. Tag a task
-  `person:<slug>` (or pass `--person <name>`) and on a cloud backend the name is
-  resolved against the live roster — an exact or fuzzy match (display name /
-  first name, diacritic-folded) canonicalizes to the member's slug, an
-  **ambiguous** name aborts so you can be more specific, and an unmatched name is
-  recorded but **warns** it won't sync until that person is a member. Assignments
-  are never silently dropped or reassigned to the token owner. The full
-  `assignees[]` set round-trips bidirectionally; `config clickup-member` stays
-  available as an explicit override.
-- **Tags edit anywhere**: `dreamcontext tasks tag <name> <tags…> [--remove]`
-  edits tags on existing tasks; changed tags push through ClickUp's per-tag
-  endpoints (its PUT carries none), and assignee handovers/removals push as
-  add/rem deltas.
-- **Date ranges**: `tasks create --start … --due …` / `tasks start <name> <date|clear>`
-  / `tasks due <name> <date|clear>` — planned start + due/end, validated start≤due,
-  synced natively to ClickUp's start/due fields and to a `<!-- dc:dates -->` block
-  in the GitHub issue body.
-- **Custom-field bridge**: the recommended RICE/meta fields (Urgency / Summary /
-  Reach / Impact / Confidence / Effort / Score / Feature / Version) plus any
-  fields you declare in `overrides/task.md` are provisioned and round-tripped
-  automatically — `select` fields as a ClickUp drop-down / GitHub label, others as
-  a native ClickUp field / GitHub body block. `tasks provision` reuses existing
-  remote fields by name instead of duplicating them.
-- **One list per project.** A ClickUp list shared by two dreamcontext projects has
-  no per-project scoping — each pulls the other's tasks in as ordinary local tasks,
-  and a `completed` task then reads as proof *this* project has the capability.
-  `dreamcontext doctor` now warns when two registered projects point at the same
-  task container; the fix is a list per project. Set the list's statuses in the
-  ClickUp UI **before** the first sync (API v2 cannot write them), or every task
-  lands in the list's first open status.
-- **Docs**: illustrated user guide → [docs/clickup.md](docs/clickup.md);
-  technical reference → [docs/remote-task-setup.md](docs/remote-task-setup.md).
-
-### Lab (insights)
-
-```bash
-dreamcontext lab list [--json]                        # List insights with latest value + staleness
-dreamcontext lab show <slug> [--json]                 # Show one insight's cached series (never re-fetches)
-dreamcontext lab sync [slug] [--all] [--force]        # Refresh cached snapshots (skips fresh unless --force)
-dreamcontext lab create <slug> --title "..." --render number|line|pie|raw --adapter http|script [--group <g>] [--ttl <min>]
-dreamcontext lab tweak <slug> <key> <value>           # Adjust a declared tweak (e.g. a time range)
-dreamcontext lab bind <slug> <objective> [--value latest|series:<n>] [--clear]  # Feed an objective's Key Result
-dreamcontext lab credentials set <key>                # Store a source credential (hidden prompt or --value)
-dreamcontext lab credentials list                     # List credential names only — values are never printed
-```
-
-- Insights are **curated metrics, not raw data** — a structural cap of 62 points per series rolls a year of daily data up to monthly buckets. Granularity derives from the resolved range: over 180 days is monthly, 45–180 days weekly, 45 or fewer daily.
-- A source is either the generic **HTTP** adapter (any JSON API — endpoint, method, headers, and body may reference `{{tweak:…}}` and `{{cred:…}}` placeholders, with a JSON-path `extract`) or a **custom `.mjs` script** under `lab/scripts/`. Ready-made PostHog / Sheets adapters are not shipped; the generic HTTP adapter and scripts cover the same ground.
-- `lab sync` caches to the brain, writes a bound objective's `metric.current` when the insight declares a binding, keeps the prior series on failure, and exits non-zero if any insight failed. **Sleep never runs lab sync.**
-- Credentials live in a gitignored `lab/credentials.json` (mode `0600`) written only through `lab credentials set`; `doctor` warns when a manifest names a credential you haven't set and fails if the file exists but isn't gitignored.
-
-See the [Lab (Insights)](#lab-insights) section above for the full workflow.
+- 🟢 done · 🔵 active · 🟡 review · ⚪ not started — rolled up from real member-task statuses; a manual `--status` override (the PO's call) wins. 🔴 **SLIPPING** = computed forecast lands after the PO's target date.
+- An objective with no dated member tasks is unforecastable (null) and never constrains its dependents; circular dependencies are rejected at write time. During sleep, agents propose `objectives:` links for unlabeled tasks (never overwriting a non-empty list).
+- The dashboard's [Roadmap page](#dashboard) makes the board live and editable — draggable forecast bars, dependency wiring, inline detail editing.
 
 ### Features
 
@@ -796,220 +628,103 @@ dreamcontext features insert <name> <section> <content>
 dreamcontext features doctor              # Audit PRD freshness (stale / orphaned / dangling refs)
 ```
 
-Feature PRDs track freshness the same way knowledge does. `features doctor` reports which PRDs have gone stale, which have no linked task or release, and which reference things that no longer exist — so the sleep cycle (and you) can keep them in step with the code.
+Feature PRDs track freshness the same way knowledge does: `features doctor` reports which PRDs went stale, which have no linked task or release, and which reference things that no longer exist.
 
 ### Knowledge
 
 ```bash
 dreamcontext knowledge create <name>      # Create a knowledge doc
-dreamcontext knowledge index              # List all with descriptions + tags
-dreamcontext knowledge index --tag api    # Filter by tag
+dreamcontext knowledge index [--tag api]  # List all with descriptions + tags
 dreamcontext knowledge tags               # List standard tags
 dreamcontext knowledge touch <slug>       # Record access (staleness tracking)
 
 dreamcontext taxonomy vocab               # Canonical faceted tag vocabulary
-dreamcontext taxonomy audit               # Surface non-canonical / orphan tags (read-only)
-dreamcontext taxonomy audit --fix         # Bulk-normalize alias/normalizable tags → canonical (--dry-run to preview)
+dreamcontext taxonomy audit [--fix]       # Surface / bulk-normalize non-canonical tags (--dry-run to preview)
 ```
 
-Set `pinned: true` in frontmatter to auto-load a knowledge file in every snapshot. Knowledge files not accessed in 30+ days are flagged as stale. Recently accessed files appear in a "warm knowledge" tier with first-paragraph previews.
+Set `pinned: true` in frontmatter to auto-load a file in every snapshot. Files not accessed in 30+ days flag as stale; recently accessed ones ride a "warm knowledge" tier with first-paragraph previews.
 
 ### Memory
 
 ```bash
-dreamcontext memory recall <query...>                # BM25 search over knowledge + features + tasks + memory + changelog
-dreamcontext memory recall <query...> --top 10       # Number of hits (1-50, default 5)
-dreamcontext memory recall <query...> --types knowledge,task,changelog
-dreamcontext memory recall <query...> --vault other    # Also search a named vault (repeatable)
-dreamcontext memory recall <query...> --connected      # Span this vault + its connected peers
-dreamcontext memory recall <query...> --all-vaults     # Span every shareable registered vault
-dreamcontext memory recall <query...> --json         # Machine-readable
-dreamcontext memory recall <query...> --plain        # No ANSI colors
-dreamcontext memory remember "<text>"                # Writes a CHANGELOG entry (type=note, scope=quick by default)
-dreamcontext memory remember "<text>" --type fix --scope api --summary "..." --references commit:abc,task:auth-refactor
-dreamcontext memory update <slug> --description "..." --tags a,b --append "..."
-dreamcontext memory update <slug> --pin              # or --unpin
+dreamcontext memory recall <query...> [--top 10] [--types knowledge,task,changelog] [--json] [--plain]
+dreamcontext memory recall <query...> [--vault other] [--connected] [--all-vaults]   # federation-aware
+dreamcontext memory remember "<text>" [--type fix] [--scope api] [--summary "..."] [--references commit:abc,task:auth]
+dreamcontext memory update <slug> [--description "..."] [--tags a,b] [--append "..."] [--pin|--unpin]
 dreamcontext memory delete <slug> --force
-dreamcontext memory list                              # List indexed docs
-dreamcontext memory list --types feature,task
-dreamcontext memory status                           # Corpus stats by type
+dreamcontext memory list [--types feature,task]
+dreamcontext memory status                # Corpus stats by type
 ```
 
-`memory remember` writes a CHANGELOG entry instead of appending to a LIFO section in `2.memory.md` (the LIFO section was removed in 2026-05-23 — `2.memory.md` now holds Decisions + Known Issues only). The new CHANGELOG schema supports optional `summary` (≤200 char soft cap), `references[]` (prefixed: `commit:|file:|knowledge:|feature:|task:|url:`), and `supersedes` (entry-id pointer).
+`memory remember` writes a CHANGELOG entry (with optional `summary`, prefixed `references[]`, and `supersedes`) — `2.memory.md` holds Decisions + Known Issues only.
 
-Recall has no setup step — no init, no daemon, no API keys. The corpus is rebuilt in memory on every call (under 100ms on a 40-doc corpus). UserPromptSubmit hook injection of top hits is **ON by default**; set `DREAMCONTEXT_MEMORY_HOOK=0` to opt out.
-
-### Bookmarks
-
-Tag important moments during active work. Inspired by the brain's awake sharp-wave ripples that bookmark memories for consolidation during sleep.
+### Bookmarks & Triggers
 
 ```bash
-dreamcontext bookmark add "<message>" -s 2    # Bookmark with salience (1-3)
-dreamcontext bookmark list                     # Show all bookmarks
-dreamcontext bookmark clear                    # Clear all bookmarks
+dreamcontext bookmark add "<message>" -s 2    # Bookmark with salience 1-3 (3 = critical)
+dreamcontext bookmark list / clear
+
+dreamcontext trigger add "<when>" "<remind>"  # Prospective memory: "remind about X when working on Y"
+dreamcontext trigger list / remove <id>
 ```
 
-Salience levels: 1 = notable, 2 = significant, 3 = critical. Critical bookmarks trigger immediate consolidation advisories regardless of debt level.
+Bookmarks are the brain's awake sharp-wave ripples: tag important moments during work; critical ones trigger immediate consolidation advisories. Triggers match active task names, tags, and bookmark text, and auto-expire after a configurable number of fires (default 3).
 
-### Triggers
-
-Contextual reminders that fire when matching tasks are active. The brain's prospective memory: "remind me about X when working on Y."
+### Sleep & Transcript
 
 ```bash
-dreamcontext trigger add "<when>" "<remind>"   # Create a trigger
-dreamcontext trigger list                       # Show active triggers
-dreamcontext trigger remove <id>                # Remove a trigger
+dreamcontext sleep status / history / debt    # Debt level, consolidation log, raw number for scripts
+dreamcontext sleep add <score> <desc>         # Add debt manually
+dreamcontext sleep start                      # Mark consolidation epoch
+dreamcontext sleep done <summary>             # Complete consolidation, reset
+
+dreamcontext transcript distill <session_id>  # Structural filter of a session transcript (pure Node, no AI)
 ```
 
-Triggers match against active task names, tags, and bookmark text. Auto-expire after a configurable number of fires (default 3).
-
-### Sleep
-
-Sleep debt is tracked automatically via hooks. The UserPromptSubmit hook reminds about debt on every user message, so the agent cannot dismiss the reminder. Consolidation rhythm advisory fires after 3+ sessions since last sleep, even at low debt.
-
-```bash
-dreamcontext sleep status                # Debt level, sessions, last sleep
-dreamcontext sleep history               # Consolidation log
-dreamcontext sleep add <score> <desc>    # Add debt manually
-dreamcontext sleep start                 # Mark consolidation epoch
-dreamcontext sleep done <summary>        # Complete consolidation, reset
-dreamcontext sleep debt                  # Raw number (for scripts)
-```
-
-### Transcript
-
-```bash
-dreamcontext transcript distill <session_id>   # Structural filter of session transcript
-```
-
-Extracts high-signal content from raw JSONL transcripts: user messages, agent decisions, code changes, errors, bookmarks. Discards noise (Read results, Glob output, tool metadata). Pure Node.js, no AI. Used by the RemSleep specialists for selective deep analysis of important sessions.
-
-### Council
-
-```bash
-dreamcontext council create <topic> [--rounds N]     # Open a new debate
-dreamcontext council list                             # List all debates
-dreamcontext council show <id>                        # Show a debate's current state
-dreamcontext council agent create <slug> --model <m> --aspects a,b,c
-dreamcontext council round start <n>                  # Dispatch round n to all personas
-dreamcontext council round end <n>                    # Close round n, inject cross-context for n+1
-dreamcontext council round round-context <n>          # Preview what personas will see at round n
-dreamcontext council report append <slug> <n> <path>  # Append a persona report from file
-dreamcontext council report summaries <n>             # Summaries of all reports in round n
-dreamcontext council research add <slug> <topic> <path>  # Persist a persona's research note
-dreamcontext council research list <slug>
-dreamcontext council synthesize                       # Produce the final synthesized report
-dreamcontext council complete                         # Mark the debate complete
-dreamcontext council promote --to <knowledge-slug>    # Promote verdict to knowledge
-```
-
-See the [Council](#council) section above for the full workflow.
-
-### Vaults & Federation
-
-```bash
-dreamcontext vaults add <name> <path>    # Register a project as a vault
-dreamcontext vaults discover [root]      # Find every _dream_context/ project under a tree
-dreamcontext vaults discover [root] --register  # …and register the new ones
-dreamcontext vaults list                 # List registered vaults
-dreamcontext vaults remove <name>        # Unregister a vault
-dreamcontext config shareable <on|off>   # Allow/deny this vault being recalled by peers
-dreamcontext connect <vault> [--direction out|in|both] [--topics a,b]  # Connect to read a peer (out = read)
-dreamcontext connections                 # Inspect federation connections
-dreamcontext disconnect <vault>          # Remove a connection
-dreamcontext federation peers            # Compact summary of readable peers
-dreamcontext federation status           # Connections + any leftover federated copies
-dreamcontext federation purge --all      # Remove leftover federated:true copies (old sync path)
-# federation sync / drain are inert no-ops — copy-based sync is parked on the roadmap
-```
-
-See the [Federation](#federation) section above for the full workflow.
-
-### Brain (cloud sync)
-
-```bash
-dreamcontext brain enable                # Turn cloud sync on — whole project → its GitHub origin (full-repo)
-dreamcontext brain status                # Show mode (full-repo | in-tree), remote, and sync state
-dreamcontext brain sync                  # Manual fetch → merge → commit → push outside a sleep cycle
-dreamcontext brain disable               # Turn cloud sync off (the brain stays committed locally)
-```
-
-- `full-repo` mode (cloud sync on) syncs the whole project to its own `origin` with full post-`sleep done` auto-sync; **`in-tree`** (the safe default, cloud sync off) commits the brain in the code repo on sleep and never auto-pushes.
-- Every `sleep done` runs fetch → merge → commit → push; a scrub gate blocks secrets and absolute paths before every push, and the token is supplied via `GIT_ASKPASS` (never in the remote URL). Prose conflicts defer to the `/dream-sync` merge agent; JSON and task status merge automatically; real code conflicts go to your editor.
-- Device-flow GitHub login and a Settings "Cloud sync" toggle are available from the desktop Launcher.
-
-See the [Brain Cloud Sync](#brain-cloud-sync) section above for the full workflow.
-
-### Linked Repos
-
-```bash
-dreamcontext link add <name> <path>      # Govern a bare code repo (URL from its origin, or --url); no clone/push happens
-dreamcontext links                       # List governed repos: ✓ present / ✗ missing on this machine (--json)
-dreamcontext link clone <name>           # Clone a missing repo here — one-way, trust-gated (--dir, --yes)
-dreamcontext link rm <name>              # Drop it from the shared config (local path mapping kept; alias: unlink)
-```
-
-- A **pointer, not a sync**: `link add` records only `{name, url}` (shared) + a machine-local `url → path` (never synced). Only the explicit `link clone` touches the network.
-- The session-start snapshot surfaces present/missing and hands resolved paths to the agent; also manageable from **Settings → Cloud sync → Linked repos**.
-
-See the [Linked Repos](#linked-repos) section above.
-
-### Desktop App (macOS)
-
-```bash
-dreamcontext app install                 # Install the desktop app to ~/Applications
-dreamcontext app update                  # Update the installed app
-dreamcontext app status                  # Show installed app version and state
-```
-
-### Dashboard
-
-```bash
-dreamcontext dashboard                   # Start the web dashboard
-```
+Sleep debt is tracked automatically via hooks; the UserPromptSubmit hook reminds on every user message, so the agent cannot dismiss it. `transcript distill` extracts high-signal content (user messages, decisions, code changes, errors, bookmarks) for the RemSleep specialists' selective deep analysis.
 
 ### System
 
 ```bash
-dreamcontext hook session-start          # SessionStart hook output
-dreamcontext hook stop                   # Stop hook: capture + score
-dreamcontext hook subagent-start         # SubagentStart hook output
-dreamcontext hook pre-tool-use           # PreToolUse hook: block default Explorer
-dreamcontext hook user-prompt-submit     # UserPromptSubmit hook: sleep debt reminder
-dreamcontext hook post-tool-use          # PostToolUse hook: auto-format + tsc check
-dreamcontext hook pre-compact            # PreCompact hook: save state before compaction
-dreamcontext snapshot                    # Snapshot only (no hook processing)
-dreamcontext snapshot --tokens           # Estimated token count
+dreamcontext hook session-start | stop | subagent-start | pre-tool-use \
+  | user-prompt-submit | post-tool-use | pre-compact     # The seven hooks
+dreamcontext snapshot [--tokens]         # The compiled context snapshot (+ estimated token count)
 dreamcontext doctor                      # Validate structure
-dreamcontext upgrade                     # Upgrade the CLI to the latest published version
-dreamcontext upgrade --check             # Print current vs latest version, no install
-dreamcontext update                      # Refresh installed skill/agent/hook files to match the CLI
-dreamcontext install-skill               # Install core integration for selected platforms
-dreamcontext install-skill --platforms claude  # Explicit platform selection
-dreamcontext install-skill --packs       # Interactive skill pack browser
-dreamcontext install-skill --packs engineering design  # Install specific packs
-dreamcontext install-skill --skill <name>  # Install a single sub-skill
-dreamcontext install-skill --list        # Show available skill packs
-dreamcontext install-instructions --platforms claude  # Write managed root instruction blocks
-dreamcontext install-claude-md           # Legacy alias: CLAUDE.md only
+dreamcontext setup [--platforms claude --defaults]       # One-shot project setup
+dreamcontext install-skill [--platforms claude] [--packs …] [--skill <name>] [--list]
+dreamcontext install-instructions --platforms claude     # Managed root instruction blocks only
+dreamcontext upgrade [--check] / update  # CLI upgrade / refresh installed project files
 ```
 
 ## Design Principles
 
+- **One picture, two readers** -- every file is written for humans and loaded by agents
 - **Structure over volume** -- organized context beats more context
 - **Pre-loaded, not searched** -- memory injected before the first message
 - **Consolidation built in** -- sleep cycles keep context sharp, not bloated
-- **Agent-native** -- designed for how LLMs consume context
 - **Owned by you** -- plain markdown and JSON in your repo
 
 ## Works With
 
-- **Claude Code**: full support via skill, core sub-agents (the **initializer** and **curator** skill families, explore, the iterative `dreamcontext-deep-research` synthesis skill, the three primary RemSleep specialists — sleep-tasks, sleep-state, sleep-product — plus conditional sleep-federation and sleep-migration specialists), 7 hooks, plus optional pack sub-agents (council persona/synthesizer, multi-review specialists, goal-skill orchestrators)
-- **Desktop app (macOS beta)**: native Tauri 2 multi-vault launcher with in-app onboarding and the Sleepy notch quick-capture companion — wraps the same dashboard server (`dreamcontext app install`)
-- **Web Dashboard**: local UI with an in-app **Agent surface** (multi-session terminals, a living status dock, ⌘K command palette), a Tasks board with time-axis views (Timeline/Calendar/Activity heatmap), **per-task Task Manager sessions and anchored doc comments**, Core editor, Knowledge, Features, Brain graph, Sleep tracker, and Council Hall (ships in the package)
-- **Obsidian**: `_dream_context/` can be opened as an Obsidian vault; the directory is scaffolded with curated vault settings at `dreamcontext init` time
+- **Claude Code** — full support: the skill, seven hooks, and the core sub-agent families (initializer, curator, explore, deep-research, the RemSleep specialists), plus optional pack sub-agents.
+- **Web Dashboard & Desktop App** — ship with the package / desktop release ([Dashboard](#dashboard), [Desktop App](#desktop-app)).
+- **Obsidian** — `_dream_context/` opens as a vault with curated graph settings scaffolded at init.
 
-More agents coming soon.
+More agents coming soon — the brain is platform-neutral; only the thin hook/skill layer is per-platform.
+
+## Why It's Built This Way
+
+<p align="center">
+  <img src="public/image/banner-deepdive.png" alt="Why it's built this way: why files not a database, why agents sleep, why BM25 not a vector store — the reasoning lives in the deep-dive wiki" width="840" />
+</p>
+
+The README tells you what dreamcontext does. The deep dive tells you **why** — the philosophy, the neuroscience, and every design tradeoff, argued honestly:
+
+- **Why files, not a database** — what plain markdown buys you (auditability, git, ownership) that no store can.
+- **Why agents sleep** — the two-stage memory model borrowed from hippocampal research, and why consolidation beats logging.
+- **Why BM25, not a vector store** — when curated context makes embeddings the wrong default, and where the hybrid layer earns its keep.
+
+**[Read the full story &rarr;](https://github.com/meanllbrl/dreamcontext/wiki)**
 
 ## License
 
