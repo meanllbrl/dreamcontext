@@ -74,14 +74,31 @@ Builders are spawned and driven via the `claude` CLI, not the Agent tool:
 
 3. **Fork an implementer from the planner session** (Phase 4, once per task in a wave):
    ```
-   claude -p --resume <plannerId> --fork-session "<task Tn from the dep map>" --output-format json --model sonnet < /dev/null
+   claude -p --resume <plannerId> --fork-session "<task Tn from the dep map>" \
+     --permission-mode acceptEdits --allowedTools "Write" "Edit" "Bash" \
+     --output-format json --model sonnet < /dev/null
    ```
    `--fork-session` mints a **new** session id that inherits the planner's full context;
    the planner's original session is untouched and stays resumable. Capture the new id
    into the registry under `impl-<taskId>`.
 
+   **The permission flags are not optional.** A headless `-p` session has no interactive
+   permission prompt: an implementer forked without them stalls at its first Write with a
+   "please approve" final message and ZERO files changed (observed 2026-07-18 calendar
+   run — cost a wasted spawn + an extra resume round). Builders that must write always
+   get `--permission-mode acceptEdits --allowedTools "Write" "Edit" "Bash"` at fork time.
+   The planner and its revision resumes stay read-only — never give them write flags.
+
 4. **Re-fork on repeated failure** (same finding twice): fork fresh from the planner
    again rather than continuing to resume a session that is arguing with itself.
+
+5. **Verify on disk before trusting any builder report.** After every implementer
+   run/resume returns, check `git status --porcelain` on its owned files BEFORE gating,
+   reviewing, or updating the registry. A confident report plus an empty diff means the
+   session never actually built — permission stall, role drift back to planner, or a
+   silent error. Resume or re-fork it; never let the report stand in for the work.
+   (Both failure modes are real: the 2026-07-18 permission stall and the earlier 7-lane
+   role-binding drift were each caught exactly this way.)
 
 **Fork base = the PLANNER session, never the orchestrator's own chat.** The
 orchestrator's Claude Code conversation is not CLI-resumable — builders always branch
@@ -286,6 +303,9 @@ Wave execution rules (mirrors the dependency map exactly):
   what makes the parallel waves safe.
 - **Build + test gate between waves.** A gate FAIL routes back to `--resume` on the
   **specific owning implementer** for that file — not a broader re-implement.
+- **Report ≠ work.** Before running the gate, verify each implementer's owned files
+  actually changed on disk (`git status --porcelain` — mechanics rule 5). Empty diff +
+  confident report = the fork stalled or drifted; resume/re-fork before anything else.
 - **You are the single writer of the task doc and dependency map.** Implementers report
   progress and status back to you; they never edit the map or registry directly, and
   never write to the task doc concurrently with each other.
@@ -330,14 +350,14 @@ command + output).
   timestamps. Only leave it in `in_review` instead if the validation surfaced something
   a human should still eyeball before closing.
 
-## Live status strip (statusline) + viewer
+## Live run state + viewer
 
-The goal-skill pack ships two renderers of the same live state (installed by
-`dreamcontext setup`/`update` along with a `statusLine` registration in
-`.claude/settings.json`):
+The goal-skill pack maintains one live state file that two surfaces render:
 
-- `.claude/statusline-goalskill.cjs` — the terminal strip above the prompt.
-- `.claude/goal-skill-viewer.cjs` — the rich Excalidraw-style browser graph.
+- `.claude/goal-skill-viewer.cjs` — the rich Excalidraw-style browser graph
+  (installed by `dreamcontext setup`/`update`).
+- The dreamcontext app's native live panel above the composer + dock badge
+  (reads the same file via the dashboard server; nothing to install).
 
 **At run start (right after the goal is confirmed, before Phase 1):**
 
@@ -349,8 +369,7 @@ The goal-skill pack ships two renderers of the same live state (installed by
      || (node .claude/goal-skill-viewer.cjs >/dev/null 2>&1 &)
    ```
    (the `curl` probe keeps it idempotent — an already-running viewer is reused)
-3. Tell the user: `Canlı takip: http://localhost:4747 — statusline şeridi de prompt
-   üstünde akacak.` (in their language).
+3. Tell the user: `Canlı takip: http://localhost:4747` (in their language).
 
 You (the orchestrator, single writer) then maintain
 `_dream_context/tmp/.goal-skill-live.json` at **every** phase transition, loop-back,
@@ -366,26 +385,26 @@ EOF
 ```
 
 - `session`: ALWAYS include it exactly as above (the shell expands
-  `$CLAUDE_CODE_SESSION_ID`). It scopes the strip to YOUR session — other Claude Code
-  sessions open on the same project stay clean. Without it the strip leaks into every
-  session of the project.
+  `$CLAUDE_CODE_SESSION_ID`). It scopes the live surfaces to YOUR session — other
+  Claude Code sessions open on the same project stay clean. Without it the run state
+  leaks into every session of the project.
 
 - `phase`: `plan | review | task | impl | codereview | validate | done`.
-- `iters.<phase>`: loop count for that phase — the strip glows hotter the more it looped
-  (×2 yellow, ×3 bright, ≥4 red).
+- `iters.<phase>`: loop count for that phase — the renderers glow hotter the more it
+  looped (×2 yellow, ×3 bright, ≥4 red).
 - `impl.forks[].s`: `run | done | wait | fail` — one dot per implementer fork;
   `wave`/`waves` show wave progress.
 - Set `"phase":"done"` on Phase-6 PASS, then **delete the file** (`rm -f`) after the
   final report (also delete on escalation). A file older than 3h is treated as
-  abandoned and ignored by the renderer.
-- Helpers missing (older install) → these writes are harmless no-ops, but tell the
-  user once: `dreamcontext update` will install the strip + viewer. Never let strip
+  abandoned and ignored by the renderers.
+- Viewer helper missing (older install) → these writes are harmless no-ops, but tell
+  the user once: `dreamcontext update` will install the viewer. Never let live-state
   upkeep block a phase; it is telemetry, not a gate.
 - The viewer serves `http://localhost:4747` — phase nodes with arrows, loop-back arcs
   that glow hotter per iteration, implementer forks as satellite dots around IMPL, wave
   counter. Same JSON, no extra upkeep. It shows "waiting" when no run is active.
 - `node .claude/goal-skill-demo.cjs` drives a fake run through every phase — useful to
-  demo the strip + viewer without spawning agents.
+  demo the viewer without spawning agents.
 
 ## Convergence rules (how the loops end)
 
@@ -415,6 +434,7 @@ EOF
 | "I'll fork a judge so it doesn't have to re-read the diff." | Never fork a judge — inherited framing produces a rubber stamp, not a verdict. |
 | "Two implementers can both touch the task doc, I'll sort it out after." | You are the single writer. Implementers report to you; they never write the map/registry. |
 | "I'll mark it complete because I *think* it's done." | Done is defined by Phase 6 validation passing with evidence — not by your hunch. |
+| "The implementer's report says it built everything — on to review." | Reports lie when forks stall (permission gate) or drift (role-binding). `git status` its owned files first; empty diff = nothing happened. |
 
 ## Rationalization table
 
