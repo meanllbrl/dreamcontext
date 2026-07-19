@@ -18,6 +18,7 @@ import { SaveScopeDialog } from './SaveScopeDialog';
 import { TaskDetailPanel } from './TaskDetailPanel';
 import { TaskCreateModal } from './TaskCreateModal';
 import { DelegateComposer } from './DelegateComposer';
+import { AuthorTaskComposer } from './AuthorTaskComposer';
 import { useAgentCapabilities, isSleepAgentReady } from '../../hooks/useAgentCapabilities';
 import { readAgentSettings, AGENT_SETTINGS_EVENT } from '../../lib/agentSettings';
 import { SparkIcon } from '../sleepy/TypeIcons';
@@ -66,6 +67,7 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
   const [delegateTask, setDelegateTask] = useState<Task | null>(null);
   const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [showAuthor, setShowAuthor] = useState(false);
   const [pendingSave, setPendingSave] = useState<PendingSave>(null);
   const [dismissedAlert, setDismissedAlert] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -241,6 +243,8 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
         openMenu={openMenu}
         setOpenMenu={setOpenMenu}
         onNewTask={() => setShowCreate(true)}
+        onAuthorWithAgent={() => setShowAuthor(true)}
+        agentReady={agentReady}
         flash={flash}
       />
 
@@ -361,6 +365,12 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
 
       {selectedTask && <TaskDetailPanel task={selectedTask} onClose={() => setSelectedSlug(null)} />}
       {showCreate && <TaskCreateModal onClose={() => setShowCreate(false)} />}
+      {showAuthor && (
+        <AuthorTaskComposer
+          onClose={() => setShowAuthor(false)}
+          onStarted={() => flash('Authoring agent started — it works in the corner')}
+        />
+      )}
       {pendingSave && <SaveScopeDialog title={pendingTitle} defaultScope={pendingDefaultScope} onPick={handlePickScope} onCancel={() => setPendingSave(null)} />}
 
       {toast && (

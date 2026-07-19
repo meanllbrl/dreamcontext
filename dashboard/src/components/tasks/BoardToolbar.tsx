@@ -3,6 +3,7 @@ import type { Task } from '../../hooks/useTasks';
 import { useSyncStatus, useSyncTasks } from '../../hooks/useTasks';
 import type { BoardState } from '../../hooks/useBoard';
 import { VersionsPopover } from './VersionsPopover';
+import { SparkIcon } from '../sleepy/TypeIcons';
 import {
   type BoardFilters, type CardProps, type Dim, type DueFilter, type Layout, type SortKey,
   DIMS, DIM_LABEL, PRIO_ORDER, SORT_LABEL, STATUS_ORDER, STATUS_META, URG_ORDER,
@@ -10,7 +11,7 @@ import {
   dimGet, levelLabel, prioColor, taskAssignees, taskVersion, urgColor,
 } from './boardModel';
 
-export type MenuKey = 'filter' | 'viewtype' | 'group' | 'sort' | 'versions' | 'props' | null;
+export type MenuKey = 'filter' | 'viewtype' | 'group' | 'sort' | 'versions' | 'props' | 'newtask' | null;
 
 interface AssigneeOpt { value: string; label: string; color: string }
 
@@ -27,6 +28,11 @@ interface BoardToolbarProps {
   openMenu: MenuKey;
   setOpenMenu: (m: MenuKey) => void;
   onNewTask: () => void;
+  /** Open the "Author with agent" composer. Offered only when {@link agentReady}. */
+  onAuthorWithAgent: () => void;
+  /** Desktop + Agents-enabled: reveals the "Author with agent" path in the New-task split
+   *  button. When false the button is the plain manual-create button it has always been (A6). */
+  agentReady: boolean;
   flash: (msg: string) => void;
 }
 
@@ -73,7 +79,7 @@ const excBtn = (on: boolean): CSSProperties => ({ flex: '0 0 auto', width: 22, h
 
 interface FieldOpt { value: string; label: string; color: string | null; count: number }
 
-export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilter, activeVersion, releasedVersions, openMenu, setOpenMenu, onNewTask, flash }: BoardToolbarProps) {
+export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilter, activeVersion, releasedVersions, openMenu, setOpenMenu, onNewTask, onAuthorWithAgent, agentReady, flash }: BoardToolbarProps) {
   const [filterPane, setFilterPane] = useState<keyof BoardFilters | null>(null);
   const f = s.filters;
   const toggle = (m: MenuKey) => { setOpenMenu(openMenu === m ? null : m); if (m !== 'filter') setFilterPane(null); };
@@ -466,8 +472,39 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
         </div>
       )}
 
-      {/* new task */}
-      <div onClick={onNewTask} className="bd-chip" style={{ display: 'flex', alignItems: 'center', gap: 6, height: 34, padding: '0 14px', borderRadius: 9, cursor: 'pointer', background: 'var(--color-accent)', color: '#fff', fontSize: 12.5, fontWeight: 600, boxShadow: '0 4px 12px -4px var(--color-accent)', flex: '0 0 auto' }}>+ New Task</div>
+      {/* new task — plain button on web; a split button on desktop where an agent can author.
+          The primary click always opens the manual form (least surprise, A1); the caret reveals
+          the "Author with agent" power path alongside it. */}
+      {agentReady ? (
+        <div style={{ position: 'relative', flex: '0 0 auto' }}>
+          <div style={{ display: 'flex', alignItems: 'stretch', height: 34, borderRadius: 9, overflow: 'hidden', boxShadow: '0 4px 12px -4px var(--color-accent)' }}>
+            <div onClick={onNewTask} className="bd-chip" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '0 13px', cursor: 'pointer', background: 'var(--color-accent)', color: '#fff', fontSize: 12.5, fontWeight: 600 }}>+ New Task</div>
+            <div onClick={() => toggle('newtask')} title="More ways to create a task" className="bd-chip" style={{ display: 'flex', alignItems: 'center', padding: '0 8px', cursor: 'pointer', background: 'var(--color-accent)', color: '#fff', borderLeft: '1px solid rgba(255,255,255,0.28)' }}>
+              <span style={{ fontSize: 9, opacity: 0.9, transform: openMenu === 'newtask' ? 'rotate(180deg)' : 'none', transition: 'transform .12s' }}>▼</span>
+            </div>
+          </div>
+          {openMenu === 'newtask' && (
+            <div className="bd-pop" style={{ ...popBase, right: 0, width: 246 }}>
+              <div className="bd-row" onClick={() => { setOpenMenu(null); onNewTask(); }} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px', borderRadius: 8, cursor: 'pointer', fontSize: 13, color: 'var(--color-text-secondary)' }}>
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" style={{ flex: '0 0 auto' }}><path d="M14 3v4a1 1 0 0 0 1 1h4M5 3h9l5 5v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" /></svg>
+                <span style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                  <span style={{ fontWeight: 500, color: 'var(--color-text)' }}>Blank form</span>
+                  <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>Fill in the fields yourself</span>
+                </span>
+              </div>
+              <div className="bd-row" onClick={() => { setOpenMenu(null); onAuthorWithAgent(); }} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px', borderRadius: 8, cursor: 'pointer', fontSize: 13, color: 'var(--color-accent)' }}>
+                <span style={{ display: 'inline-flex', flex: '0 0 auto' }}><SparkIcon size={15} /></span>
+                <span style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                  <span style={{ fontWeight: 600 }}>Author with agent</span>
+                  <span style={{ fontSize: 11, color: 'var(--color-text-tertiary)' }}>Describe it; Claude specs &amp; creates it</span>
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div onClick={onNewTask} className="bd-chip" style={{ display: 'flex', alignItems: 'center', gap: 6, height: 34, padding: '0 14px', borderRadius: 9, cursor: 'pointer', background: 'var(--color-accent)', color: '#fff', fontSize: 12.5, fontWeight: 600, boxShadow: '0 4px 12px -4px var(--color-accent)', flex: '0 0 auto' }}>+ New Task</div>
+      )}
     </div>
   );
 }
