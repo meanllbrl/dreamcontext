@@ -1,6 +1,24 @@
 [
   {
     "date": "2026-07-19",
+    "type": "docs",
+    "scope": "readme",
+    "description": "Complete README rewrite on a new messaging spine: hero + tagline focusing on project-wide agent orchestration (not just memory), the dreamcontext loop diagram, 'It Starts with Memory' reasoning, One Engine Many Faces (CLI/Dashboard/Mac app), Built for Teams, consolidated CLI Reference section (removed duplication). Four new Excalidraw product diagrams ship (loop, memory mechanism, surfaces, deep-dive banner) via the existing render pipeline. DEEP-DIVE.md is fully removed from the repo; its 21 pages now live in the isolated GitHub wiki (dreamcontext.wiki.git). All internal references repointed (skill references, publish checklist). This closes the long-standing 'DEEP-DIVE is too dense for the repo landing page' issue and surfaces the product's breadth (orchestration, not just memory) in the README.",
+    "breaking": false,
+    "summary": "README repositioned around 'run your whole project through your agents'; DEEP-DIVE → GitHub wiki",
+    "references": [
+      "commit:b6e51bb",
+      "file:README.md",
+      "file:_dream_context/knowledge/diagrams/product/loop/loop.excalidraw.md",
+      "file:_dream_context/knowledge/diagrams/product/surfaces/surfaces.excalidraw.md",
+      "file:_dream_context/knowledge/diagrams/system/memory-mechanism/memory-mechanism.excalidraw.md",
+      "file:public/image/diagram-loop.png",
+      "file:public/image/diagram-surfaces.png",
+      "file:public/image/diagram-memory.png"
+    ]
+  },
+  {
+    "date": "2026-07-19",
     "type": "refactor",
     "scope": "skill-packs",
     "description": "Remove the statusline-goalskill.cjs asset and its settings.statusLine block from the goal-skill pack catalog entry. The statusline was an early live-tracking experiment that the pack no longer uses; goal-skill-viewer.cjs and goal-skill-demo.cjs remain as the pack's shipped assets. This cleanup prevents install-packs from copying a dead file and configuring a stale statusLine command.",
