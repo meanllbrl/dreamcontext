@@ -165,6 +165,16 @@ function AboutIcon() {
   );
 }
 
+/** Announcements — a megaphone: what's new, said out loud. */
+function AnnouncementsIcon() {
+  return (
+    <Svg>
+      <path d="M3 11 21 6v12L3 14z" />
+      <path d="M11.6 16.8a3 3 0 1 1-5.8-1.6" />
+    </Svg>
+  );
+}
+
 /** Page → icon. Sleepy is handled separately (its animated eyes mark). */
 const ICONS: Partial<Record<Page, () => React.ReactElement>> = {
   tasks: TasksIcon,
@@ -176,6 +186,7 @@ const ICONS: Partial<Record<Page, () => React.ReactElement>> = {
   taxonomy: TaxonomyIcon,
   brain: BrainIcon,
   sleep: SleepIcon,
+  announcements: AnnouncementsIcon,
   packs: PacksIcon,
   settings: SettingsIcon,
   about: AboutIcon,

@@ -4,6 +4,7 @@ import { BrandMark } from '../brand/BrandMark';
 import { NavIcon } from './NavIcons';
 import { GitHubMark } from '../brain/GitHubLogin';
 import { useAuthStatus, useBrainStatus } from '../../hooks/useBrainStatus';
+import { useAnnouncementInbox } from '../../hooks/useAnnouncements';
 import { BrainSyncControl } from '../brain/BrainSyncControl';
 import './Sidebar.css';
 
@@ -17,7 +18,7 @@ function readVaultLabel(): string {
   }
 }
 
-export type Page = 'tasks' | 'roadmap' | 'lab' | 'core' | 'knowledge' | 'sleep' | 'brain' | 'council' | 'settings' | 'packs' | 'about' | 'taxonomy';
+export type Page = 'tasks' | 'roadmap' | 'lab' | 'core' | 'knowledge' | 'sleep' | 'brain' | 'council' | 'settings' | 'packs' | 'about' | 'taxonomy' | 'announcements';
 
 interface SidebarProps {
   activePage: Page;
@@ -69,6 +70,8 @@ const NAV_GROUPS: NavGroup[] = [
       { page: 'packs', labelKey: 'nav.packs' },
       { page: 'settings', labelKey: 'nav.settings' },
       // 'about' entry ("What is this?") intentionally not in the rail — page/logic kept, just unlinked.
+      // 'announcements' is pinned to the footer (below), not this rail — it's an
+      // announcement of dreamcontext itself, not a per-project surface.
     ],
   },
 ];
@@ -105,6 +108,7 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
 
   const { data: authStatus } = useAuthStatus();
   const { data: brainStatus } = useBrainStatus();
+  const { unread } = useAnnouncementInbox();
   const vaultLabel = readVaultLabel();
 
   // 3-state cloud-sync CTA: not signed in → invite sign-in; signed in but no
@@ -174,6 +178,9 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
                   >
                     <span className="sidebar-icon"><NavIcon page={page} /></span>
                     <span className="sidebar-label">{label}</span>
+                    {page === 'announcements' && unread.length > 0 && (
+                      <span className="sidebar-badge">{unread.length}</span>
+                    )}
                     {lab && <span className="sidebar-lab-tag">{t('nav.lab')}</span>}
                     {beta && <span className="sidebar-lab-tag sidebar-beta-tag">{t('nav.beta')}</span>}
                   </button>
@@ -184,11 +191,24 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
         </div>
       ))}
 
-      {/* Pinned to the bottom: the cloud-sync control. Not connected → a single
-          connect/set-up button. Connected → the sync row: the big button SYNCS
+      {/* Pinned to the bottom. Announcements sits here (not in a nav group)
+          because it's an announcement of dreamcontext itself, not a per-project
+          surface. Below it: the cloud-sync control — not connected → a single
+          connect/set-up button; connected → the sync row: the big button SYNCS
           on click (label shows live status), the gear opens Settings, and a
           teammate-conflict surfaces as a one-click "Resolve with AI" banner. */}
       <div className="sidebar-footer">
+        <button
+          className={`sidebar-item sidebar-item--announcements ${activePage === 'announcements' ? 'sidebar-item--active' : ''}`}
+          onClick={() => onNavigate('announcements')}
+          title={t('nav.announcements')}
+          aria-current={activePage === 'announcements' ? 'page' : undefined}
+        >
+          <span className="sidebar-icon"><NavIcon page="announcements" /></span>
+          <span className="sidebar-label">{t('nav.announcements')}</span>
+          {unread.length > 0 && <span className="sidebar-badge">{unread.length}</span>}
+        </button>
+
         {signedIn && hasRemote ? (
           <BrainSyncControl onOpenSettings={openGithubSync} />
         ) : (

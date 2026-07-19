@@ -272,6 +272,49 @@
   50% { transform: translateY(-4px); }
 }
 
+/* ─── Unread-count badge (Announcements) ─────────────────────────────────── */
+/* Distinct from the first-run nudge above: the nudge marks a surface that has
+   never been opened and repaints the whole row for as long as that's true;
+   this badge marks a genuine unread COUNT, sits quietly at the trailing edge,
+   and disappears the moment the inbox is marked read (see useAnnouncementInbox)
+   without touching the row's color or motion. */
+.sidebar-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 5px;
+  margin-left: auto;
+  flex-shrink: 0;
+  border-radius: var(--radius-full);
+  background: var(--color-accent);
+  color: var(--color-bg);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: var(--font-weight-bold);
+  line-height: 16px;
+}
+
+/* Collapsed rail hides the label (and with it, the pill's trailing anchor) —
+   reposition as a small corner dot on the icon button instead. Geometry
+   borrowed from .sidebar-item--nudge::after above; the count itself is
+   dropped (font-size: 0) since a two-digit pill has no room on an icon-only
+   button. */
+.sidebar--collapsed .sidebar-badge {
+  position: absolute;
+  top: 5px;
+  right: 8px;
+  min-width: 6px;
+  width: 6px;
+  height: 6px;
+  padding: 0;
+  overflow: hidden;
+  font-size: 0;
+  line-height: 0;
+  box-shadow: var(--shadow-glow);
+}
+
 .sidebar--collapsed {
   width: var(--sidebar-width-collapsed);
 }

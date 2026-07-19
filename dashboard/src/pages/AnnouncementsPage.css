@@ -1,0 +1,113 @@
+/* A top-to-bottom feed where each entry is a wide, landscape announcement
+   board (landing-page style) — so the column is wide enough to give the board
+   room to breathe, not the narrow reading measure a text feed would use. */
+.announcements-page {
+  max-width: 1040px;
+  margin: 0 auto;
+}
+
+.announcements-header {
+  margin-bottom: var(--space-6);
+}
+
+.announcements-header .page-title {
+  margin-bottom: var(--space-2);
+}
+
+.announcements-subtitle {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.announcements-empty {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+  padding: var(--space-8);
+  text-align: center;
+}
+
+.announcements-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.announcement-card {
+  position: relative;
+  padding: var(--space-5);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+/* Unread affordance: a small accent dot at the top-right corner, same
+   geometry family as the sidebar's first-run nudge dot (Sidebar.css
+   .sidebar-item--nudge::after) so "something new" reads consistently
+   across the app. */
+.announcement-card--unread::after {
+  content: '';
+  position: absolute;
+  top: var(--space-4);
+  right: var(--space-4);
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--color-accent);
+  box-shadow: var(--shadow-glow);
+}
+
+.announcement-card-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+}
+
+.announcement-card-date {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.announcement-card-version {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-full);
+  white-space: nowrap;
+}
+
+.announcement-card-title {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+  margin-bottom: var(--space-2);
+}
+
+/* The board strip: a wide landscape stage; ExcalidrawPreview (canvas) fits the
+   whole board to this box and re-fits on resize, so the full landing page is
+   always visible without scrolling the card. */
+.announcement-card-board {
+  margin-top: var(--space-3);
+  height: 460px;
+}
+
+.announcement-card-board .excalidraw-preview {
+  min-height: 0;
+}
+
+/* Shared by the page strip (460px) and the modal hero (360px) — fills whichever
+   board slot contains it, so it must not pin its own height. */
+.announcement-board-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}

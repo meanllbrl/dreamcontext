@@ -1,0 +1,38 @@
+[
+  {
+    "id": "visual-announcements",
+    "date": "2026-07-19",
+    "version": "0.19.0",
+    "title": "Announcements, redrawn — What's New is now a wall of landing pages",
+    "summary": "What's New is no longer a wall of text: every update is a git-tracked Excalidraw board rendered right in the dashboard, pinned to the foot of the sidebar. Ships alongside the 0.19 highlights — agent-authored tasks, board-folder moves, and steadier cloud sync.",
+    "tags": ["dashboard", "announcements", "excalidraw"],
+    "board": "visual-announcements.excalidraw.md"
+  },
+  {
+    "id": "task-manager",
+    "date": "2026-07-17",
+    "version": "0.18.0",
+    "title": "The Task Manager — every task gets its own live Claude session",
+    "summary": "Open a task and a dedicated Claude Code session is pinned right inside the task view — it maintains the document for you: revises, summarizes, splits, and reconciles status against what actually happened.",
+    "tags": ["tasks", "task-manager", "agent"],
+    "board": "task-manager.excalidraw.md"
+  },
+  {
+    "id": "dashboard-highlights-0-17-0-18",
+    "date": "2026-07-16",
+    "version": "0.18.0",
+    "title": "A living dock, a smarter sleep, and one-click task delegation",
+    "summary": "Recent quality-of-life drops across the dashboard and launcher: minimized agent sessions live in a dock, sleep consolidation stopped duplicating knowledge, tasks can be handed to Claude straight from the board, and new projects can be cloned from GitHub inside the onboarding wizard.",
+    "tags": ["dashboard", "launcher", "sleep"],
+    "board": "dashboard-highlights-0-17-0-18.excalidraw.md"
+  },
+  {
+    "id": "goal-skill-v2",
+    "date": "2026-07-18",
+    "version": "0.18.0",
+    "title": "Goal-Skill v2 — fork the builders, keep the judges clean",
+    "summary": "The goal orchestrator was rewritten end to end: builder sessions now fork and resume instead of re-exploring, review and validation stay independent, and ceremony scales to the size of the goal.",
+    "tags": ["goal-skill", "orchestration"],
+    "board": "goal-skill-v2.excalidraw.md"
+  }
+]

@@ -25,6 +25,8 @@ import { SettingsPage } from './pages/SettingsPage';
 import { PacksPage } from './pages/PacksPage';
 import { AboutPage } from './pages/AboutPage';
 import { TaxonomyPage } from './pages/TaxonomyPage';
+import { AnnouncementsPage } from './pages/AnnouncementsPage';
+import { AnnouncementsModal } from './components/layout/AnnouncementsModal';
 import type { Page } from './components/layout/Sidebar';
 import './styles/global.css';
 
@@ -112,6 +114,8 @@ function PageRouter({ nav }: { nav: ShellNavigation }) {
       return <TaxonomyPage />;
     case 'about':
       return <AboutPage />;
+    case 'announcements':
+      return <AnnouncementsPage />;
   }
 }
 
@@ -221,7 +225,12 @@ export function App() {
               <UpgradeRelaunchBanner />
               <StaleServerBanner />
               <Shell>
-                {(nav) => <PageRouter nav={nav} />}
+                {(nav) => (
+                  <>
+                    <PageRouter nav={nav} />
+                    <AnnouncementsModal onOpenPage={() => nav.navigate('announcements', null)} />
+                  </>
+                )}
               </Shell>
               {/* Mounted ONCE, outside the page switch: the global Agent floater (a
                   bottom-right FAB that expands to a fullscreen overlay) keeps its
