@@ -9,7 +9,7 @@ export function registerDashboardCommand(program: Command): void {
     .command('dashboard')
     .description('Open the web dashboard in your browser')
     .option('-p, --port <port>', 'Port number', '4173')
-    .option('--host <host>', 'Interface to bind (default loopback). Use 0.0.0.0 to expose on your network.', '127.0.0.1')
+    .option('--host <host>', 'Interface to bind (default loopback). Use 0.0.0.0 to expose on your network — non-loopback access then requires the token URL printed at startup.', '127.0.0.1')
     .option('--no-open', 'Do not open browser automatically')
     .option('--vault <path>', 'Open a specific vault by registered name or path')
     .option('--launcher', 'Boot vault-agnostic (launcher mode); vault is resolved per-request')

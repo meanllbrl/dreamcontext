@@ -21,7 +21,7 @@ export interface CatalogSubSkill {
 
 /**
  * A runtime helper file a pack ships into the consumer project's platform dir
- * (e.g. `.claude/statusline-goalskill.cjs`). `file` is relative to the pack's
+ * (e.g. `.claude/goal-skill-viewer.cjs`). `file` is relative to the pack's
  * source dir inside skill-packs/; `dest` is relative to the platform dir
  * (`.claude/`) and must resolve strictly inside it.
  */

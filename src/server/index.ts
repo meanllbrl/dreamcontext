@@ -1,9 +1,11 @@
 import { createServer, type IncomingMessage } from 'node:http';
+import { networkInterfaces } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { exec } from 'node:child_process';
 import { Router } from './router.js';
 import { handleCors, isCrossSiteWrite, sendError } from './middleware.js';
+import { checkNetworkAuth, generateNetworkToken } from './network-auth.js';
 import { serveStatic } from './static.js';
 import { handleHealthGet } from './routes/health.js';
 import { handleTasksList, handleTasksCreate, handleTasksGet, handleTasksUpdate, handleTasksChangelog, handleTasksInsert, handleTasksSyncStatus, handleTasksSync, handleTasksSyncTest, handleTasksDelete, handleTasksMembers, handleTasksContainers, handleTasksProvision, handleTasksTokenStatus, handleTasksSetToken, handleTaskOverrides, handleTaskOverrideDocGet, handleTaskOverrideDocSave, handleTaskOverrideAddField, handleTaskOverrideRemoveField } from './routes/tasks.js';
@@ -443,14 +445,39 @@ function openBrowser(url: string): void {
   exec(`${cmd} ${url}`);
 }
 
+/**
+ * Hosts to print in the tokenized-URL banner for a network-exposed bind.
+ * A wildcard bind enumerates the machine's external IPv4 addresses so the
+ * printed URLs are actually reachable from another device; a specific bind
+ * is shown as-is.
+ */
+function listNetworkHosts(host: string): string[] {
+  if (host !== '0.0.0.0' && host !== '::') return [host];
+  const hosts: string[] = [];
+  for (const addrs of Object.values(networkInterfaces())) {
+    for (const addr of addrs ?? []) {
+      if (addr.family === 'IPv4' && !addr.internal) hosts.push(addr.address);
+    }
+  }
+  return hosts.length > 0 ? hosts : [host];
+}
+
 export function startDashboardServer(options: ServerOptions): Promise<void> {
   const { port, contextRoot, open, host = '127.0.0.1' } = options;
   const router = buildRouter();
   const dashboardDir = getDashboardDir();
 
+  // Network exposure (--host beyond loopback) is opt-in; when it's on, gate
+  // every non-loopback request behind a per-process token so LAN neighbors
+  // (shared wifi, offices, cafés) can't reach the unauthenticated API.
+  const loopbackBind = host === '127.0.0.1' || host === 'localhost' || host === '::1';
+  const networkToken = loopbackBind ? null : generateNetworkToken();
+
   return new Promise((resolvePromise, reject) => {
     const server = createServer(async (req, res) => {
       try {
+        if (networkToken && !checkNetworkAuth(req, res, networkToken)) return;
+
         // Handle CORS preflight
         if (handleCors(req, res)) return;
 
@@ -515,8 +542,13 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
       const shownHost = host === '127.0.0.1' ? 'localhost' : host;
       const url = `http://${shownHost}:${port}`;
       console.log(`\n  Dashboard: ${url}\n`);
-      if (host !== '127.0.0.1') {
-        console.log(`  WARNING: bound to ${host} — the dashboard API is reachable from your network.\n`);
+      if (networkToken) {
+        console.log(`  WARNING: bound to ${host} — the dashboard is reachable from your network.`);
+        console.log('  Other devices must use a tokenized URL (sets a cookie on first visit):');
+        for (const lanHost of listNetworkHosts(host)) {
+          console.log(`    http://${lanHost}:${port}/?token=${networkToken}`);
+        }
+        console.log('');
       }
       console.log('  Press Ctrl+C to stop.\n');
 

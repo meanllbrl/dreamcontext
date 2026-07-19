@@ -248,10 +248,6 @@
       ],
       "assets": [
         {
-          "file": "assets/statusline-goalskill.cjs",
-          "dest": "statusline-goalskill.cjs"
-        },
-        {
           "file": "assets/goal-skill-viewer.cjs",
           "dest": "goal-skill-viewer.cjs"
         },
@@ -259,14 +255,7 @@
           "file": "assets/goal-skill-demo.cjs",
           "dest": "goal-skill-demo.cjs"
         }
-      ],
-      "settings": {
-        "statusLine": {
-          "type": "command",
-          "command": "node .claude/statusline-goalskill.cjs",
-          "padding": 0
-        }
-      }
+      ]
     }
   ],
   "standalone": [

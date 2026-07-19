@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Live Excalidraw-style viewer for a goal-skill v2 run.
 // Serves a hand-drawn animated graph of _dream_context/tmp/.goal-skill-live.json
-// (the same state file the statusline strip uses — single writer: the orchestrator).
+// (the same state file the app's live panel reads — single writer: the orchestrator).
 //   node .claude/goal-skill-viewer.cjs [port]     default port 4747
 const http = require('http');
 const fs = require('fs');

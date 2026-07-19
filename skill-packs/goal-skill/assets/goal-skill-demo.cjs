@@ -40,7 +40,7 @@ function step() {
   }
   const [hold, phase, iters, impl] = BEATS[i];
   const st = { goal: 'demo-dummy-goal', started, updated: new Date().toISOString(), phase, iters };
-  // Scope the demo strip to the launching session (if any) — same contract as a real run.
+  // Scope the demo run to the launching session (if any) — same contract as a real run.
   if (process.env.CLAUDE_CODE_SESSION_ID) st.session = process.env.CLAUDE_CODE_SESSION_ID;
   if (impl) st.impl = impl;
   fs.writeFileSync(FILE, JSON.stringify(st));
