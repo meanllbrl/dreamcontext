@@ -2,8 +2,8 @@
 id: feat_Sx4EmLgP
 status: in_progress
 created: '2026-07-04'
-updated: '2026-07-14'
-released_version: v0.17.0
+updated: '2026-07-19'
+released_version: v0.19.0
 tags:
   - 'topic:github'
   - 'topic:cli'
@@ -17,6 +17,8 @@ related_tasks:
     brain-portability-dashboard-controls-platform-layer-lab-credentials-example-sync-refresh-button-recall-mode-settings
   - cloud-sync-origin-setup-create-attach-github-repo-ui
   - cloud-sync-stale-per-project-token-shadowing-auto-heal-fallback-to-global
+  - >-
+    cloud-reliability-package-origin-setup-state-refresh-dependency-doctor-with-one-click-install-stop-api-key-self-deletion
 type: feature
 name: brain-repo-sync
 description: ''
@@ -86,6 +88,13 @@ existing local dashboard. The two could coexist later but ship independently.
 - [ ] **Phase P3 (full sync):** fetch → semantic merge agent on conflict → commit →
   push as a standing post-sleep step, plus issue-sync onboarding for teams already
   using the GitHub Issues task backend.
+
+## Acceptance Criteria (continued from frontmatter)
+
+### Cloud Reliability Package (v0.19.0)
+- [x] Origin setup (`POST /api/brain/origin-setup`) responds within 15 seconds with a background first sync: the route wires the origin, enables cloud sync, and responds; a slow first push runs in the background without blocking the HTTP response.
+- [x] All git network operations have hard timeouts: `git fetch` / `git ls-remote` timeout at 2 minutes, `git push` at 5 minutes. Timeouts surface as clear "network" failures with retry actions.
+- [x] Brain-sync self-heal now demotes (never deletes) the per-project GitHub token: when a sync fails with an auth error AND the error is attributed to a per-project token that differs from the global signed-in token, the engine retries with the global token; on success, a hash marker in machine-local state tells cloud sync to prefer the global sign-in while leaving the per-project key on disk untouched (so entering a new key automatically restores its priority). Your API key can never be removed by sync again.
 
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->

@@ -2,8 +2,8 @@
 id: feat_LDQn2Bi8
 status: in_review
 created: '2026-02-25'
-updated: '2026-07-08'
-released_version: 0.1.0
+updated: '2026-07-19'
+released_version: v0.19.0
 tags:
   - backend
   - architecture
@@ -18,6 +18,9 @@ related_tasks:
     per-project-format-rule-overrides-for-specialist-agents-task-feature-knowledge
   - github-sync-upload-local-task-images-so-they-resolve-in-issues
   - task-feature-objective-links-validated-assignment-bidirectional-maintenance
+  - clickup-sync-integrity-provenance-version-round-trip-consolidates-177-178-179
+  - >-
+    repointing-the-task-backend-at-a-different-list-silently-deletes-every-local-task-mirror
 type: feature
 name: task-management
 description: ''
@@ -119,6 +122,19 @@ Work spans multiple sessions, and agents need a structured way to track what is 
 - [x] Active planning version: `state/.active-version.json` holds `{ active_planning_version: string | null }`; re-validated against RELEASES.json on read (cleared if the version is no longer `planning`). CLI: `dreamcontext core releases active` / `dreamcontext core releases set-active <version>` / `dreamcontext core releases clear-active`. Dashboard: `GET/PUT /api/releases/active`.
 - [x] `CustomFieldDef` supports `ask?: boolean`. When `ask: true`, `renderOverrideBriefing()` tags the field `[ASK THE USER]` in the briefing and emits an `ASK-FIRST:` rule block — agent asks the user for the value before creating the task (in interactive sessions) and leaves the field unset with a note in no-user contexts (sleep, autonomous reconcile). No CLI hard-fail for `ask` fields (leaving unset in no-user context is valid). Dashboard: `AddCustomFieldForm` has an "Ask me" toggle; `POST /api/task-overrides/fields` carries `ask` boolean. Architecture rationale: `[[decisions/decision-task-format-override-and-custom-fields]]`.
 - [x] `related_feature` (single-valued canonical slug) links a task to its feature PRD; `tasks create --feature`, `tasks feature <task> <ref|clear>` (mirrors `tasks objectives`); CLI nudges when a link is unset at creation time and features exist; server PATCH validates feature references (400 on unknown/ambiguous) and writes through to the feature's `related_tasks`; graph.ts draws task→feature edges by slug; snapshot renders each task's Feature inline.
+
+### ClickUp Sync Provenance (v0.19.0, #177)
+- [x] Project provenance on synced tasks: every ClickUp-pushed row is stamped with a `dcproject:<id>` tag (stable slug-safe project identity: explicit `projectId` → first `linkedRepos` URL → folder basename); self-heals onto rows pushed before this shipped.
+- [x] On pull, a row whose stamp names ANOTHER project lands with a `source_project` frontmatter field; unstamped/own rows stay native (zero false positives on legacy data, nothing to migrate).
+- [x] Visibly foreign: `tasks list` shows `⚠ foreign:<id>`; SessionStart snapshot shows `⚠ FOREIGN … do NOT treat its status as work done here`.
+- [x] Scope filter: new `clickup.scope: "project"` config skips importing foreign rows entirely (unstamped rows are never dropped; default `"all"` marks-not-drops).
+- [x] sleep-tasks brief tells specialists never to treat a foreign `completed` task as evidence.
+- [x] Docs (skill/references/integrations.md) rewrote the shared-list gotcha around the three new guard layers.
+
+### Container Remap Safety (v0.19.0)
+- [x] Repointing the task backend at a different list (ClickUp or GitHub) no longer silently deletes every local task file. The sync distinguishes "task was really deleted" from "we just switched lists": a task missing from the new list is KEPT (not deleted), its stale mapping is dropped, and the task is re-created in the new list on the same sync. Genuinely moved tasks (same id already in the new list) keep their mapping untouched.
+- [x] The switch is remembered on disk (`pendingContainerRemap` semantics) so even if the sync crashes halfway, a later sync still won't mistake it for a mass deletion.
+- [x] Warns loudly ("mirrors KEPT, never deleted") instead of silently destroying data. Applied to both ClickUp and GitHub backends with regression tests.
 
 - [ ] `tasks rename <name> <new-name>`: rewrites `name:` in frontmatter, renames the `.md` file, migrates the ledger slug in `.tasks-map.json` (preserving `dcId`/`remoteId`/base snapshot), and pushes a name update to the active remote backend.
 - [ ] `reconcileRenamedTasks(ledger, liveTasks)` (provider-agnostic pre-pass in `sync-state.ts`): before pull+push, detects any task whose current file slug differs from the map slug for its `dcId` and calls `migrateSlug` — non-destructive and idempotent; genuine deletions and already-migrated entries are left alone.

@@ -2,8 +2,8 @@
 id: feat_jI0huqeH
 status: active
 created: '2026-02-25'
-updated: '2026-07-08'
-released_version: 0.1.0
+updated: '2026-07-19'
+released_version: v0.19.0
 tags:
   - architecture
   - backend
@@ -14,6 +14,8 @@ related_tasks:
     desktop-co-located-board-folder-renders-wrong-tree-splits-the-folder-excalidraw-embedded-images-don-t-load
   - >-
     knowledge-support-topical-subfolders-for-grouping-beyond-data-structures-diagrams-products
+  - >-
+    knowledge-move-cannot-relocate-a-board-directory-with-its-companion-files-across-context-folders
 type: feature
 name: knowledge-base
 description: ''
@@ -68,6 +70,7 @@ Core context files have a ~200 line limit to stay lightweight. When deep researc
 - [x] The board builder (`build_excalidraw.js`) refuses to write a board with ANY dangling embedded-image reference — a pre-flight collects every missing asset across the whole spec and fails once with the complete list, rather than throwing on the first missing image mid-build (which could leave a partially-written board with silent gaps).
 - [x] Knowledge supports arbitrary topical subfolders — `buildKnowledgeIndex()` globs `knowledge/**/*.md` recursively (not just the flat root), and slugs are basename-only (not full relative path) so recall keys stay short and wikilinks stay portable across moves.
 - [x] Features support topical/product subfolders — `dreamcontext features create <name> --folder <product>` writes to `features/<product>/<name>.md`; `dreamcontext features move <name> <folder>` (or `.` for root) moves + rewrites inbound `[[wikilinks]]` atomically; nested features stay first-class everywhere (snapshot, recall, graph, releases, dashboard tree). The **top-level folder IS the feature's product** (single source of truth, derived from path — no stored `product:` field that can drift).
+- [x] `dreamcontext knowledge move <slug> <folder>` now auto-detects Excalidraw board DIRECTORIES (wrapper folder + companions: `.excalidraw.md`, `.board.cjs`, `.board.json`, etc.) and relocates the entire directory atomically with inbound `[[wikilink]]` rewrite + decay-key migration (v0.19.0). File-vs-directory dispatch is transparent; boards in per-title wrappers move as one unit without manual bundling.
 
 ## Constraints & Decisions
 

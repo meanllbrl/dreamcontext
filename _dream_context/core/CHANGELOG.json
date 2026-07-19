@@ -1,5 +1,211 @@
 [
   {
+    "date": "2026-07-19",
+    "type": "refactor",
+    "scope": "skill-packs",
+    "description": "Remove the statusline-goalskill.cjs asset and its settings.statusLine block from the goal-skill pack catalog entry. The statusline was an early live-tracking experiment that the pack no longer uses; goal-skill-viewer.cjs and goal-skill-demo.cjs remain as the pack's shipped assets. This cleanup prevents install-packs from copying a dead file and configuring a stale statusLine command.",
+    "breaking": false,
+    "summary": "goal-skill pack: remove deprecated statusline asset and settings block",
+    "references": [
+      "file:skill-packs/catalog.json",
+      "file:skill-packs/goal-skill/assets/statusline-goalskill.cjs"
+    ]
+  },
+  {
+    "date": "2026-07-19",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "Add a full announcements subsystem for shipping product updates to users. AnnouncementsPage renders a feed of hand-picked announcements (title, date, version, description, optional Excalidraw diagram); AnnouncementsModal (mounted globally, shown on session start) displays unread items as a dismissible popup; useAnnouncements hook tracks read/unread state in localStorage. The sidebar nav gained an 'announcements' entry with an unread-count badge. announcements.json ships with 4 announcements (each with an embedded Excalidraw visual) covering v0.17-0.18 dashboard highlights, goal-skill v2, task manager, and visual announcements. I18n translations added for all UI copy. In review — packaged-app manual check pending.",
+    "breaking": false,
+    "summary": "Announcements: What's New page + modal popup + sidebar unread badge",
+    "references": [
+      "task:announcements-whats-new",
+      "file:dashboard/src/pages/AnnouncementsPage.tsx",
+      "file:dashboard/src/components/layout/AnnouncementsModal.tsx",
+      "file:dashboard/src/hooks/useAnnouncements.ts",
+      "file:dashboard/public/announcements.json"
+    ]
+  },
+  {
+    "date": "2026-07-19",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "Add cloud reliability package addressing three recurring pain points: (1) origin-setup/connect routes now respond within a 15s budget with background first-sync + hard git network timeouts (fetch/ls-remote 2min, push 5min) — fixes 'repo created but app says not connected until restart'; (2) brain-sync self-heal now DEMOTES instead of DELETES the per-project GitHub token in .secrets.json (hash marker in machine-local state; re-entering a key restores priority) — fixes the recurring 'API key keeps deleting' bug; (3) new Settings→System dependency doctor: per-feature software checks (git via CLT, Claude CLI/node-pty via npm) with one-click install. 3,243 unit tests green, runtime-verified on LAN.",
+    "breaking": false,
+    "summary": "Cloud reliability package: 15s origin-connect budget + self-heal demote-not-delete + dependency doctor",
+    "references": [
+      "file:dashboard/src/components/brain/OriginSetup.tsx",
+      "file:src/lib/git-sync/token-fallback.ts",
+      "file:dashboard/src/components/settings/SystemDependencies.tsx",
+      "file:src/lib/git-sync/git.ts",
+      "file:tests/unit/git-sync-token-fallback.test.ts"
+    ]
+  },
+  {
+    "date": "2026-07-19",
+    "type": "feat",
+    "scope": "cloud-sync",
+    "description": "ClickUp sync now stamps every pushed task with a dcproject: tag encoding the vault name (src/lib/task-backend/provenance.ts). Foreign rows (tasks created in ClickUp but belonging to a different dreamcontext project) are marked with source_project frontmatter + ⚠ foreign in lists/snapshot. New clickup.scope: 'project' config option filters foreign imports so multi-project teams sharing one ClickUp list can partition by vault. sleep-tasks brief updated to never trust foreign completed tasks for release-readiness (they're another project's work). 15 new regression tests; suite 3610 passing.",
+    "breaking": false,
+    "summary": "ClickUp sync provenance: dcproject: tag stamps every pushed row + foreign-row marking + scope filter",
+    "references": [
+      "file:src/lib/task-backend/provenance.ts",
+      "file:src/lib/task-backend/clickup.ts",
+      "file:tests/unit/clickup-project-provenance.test.ts",
+      "task:clickup-sync-provenance"
+    ]
+  },
+  {
+    "date": "2026-07-19",
+    "type": "feat",
+    "scope": "cloud-sync",
+    "description": "Repointing the task backend at a different ClickUp list or GitHub repo no longer mass-deletes local task mirrors. New pendingContainerRemap flag is persisted in the sync ledger; both ClickUp and GitHub backends gained a remap-instead-of-delete branch that marks local tasks as 'remapped from old container' rather than treating them as cloud-side deletes. mirrorRemapped counter surfaced in sync summary. This closes the long-standing footgun where switching repos would wipe local tasks. 48 targeted tests pass.",
+    "breaking": false,
+    "summary": "Task-backend container remap safety: repointing at a different list/repo no longer mass-deletes local mirrors",
+    "references": [
+      "file:src/lib/task-backend/sync-state.ts",
+      "file:src/lib/task-backend/clickup.ts",
+      "file:src/lib/task-backend/github.ts",
+      "file:tests/unit/git-sync-sync-engine.test.ts"
+    ]
+  },
+  {
+    "date": "2026-07-19",
+    "type": "feat",
+    "scope": "knowledge",
+    "description": "moveKnowledgeDir() now relocates an Excalidraw board's wrapper folder (the board .md, .board.cjs, spec json, helper md) atomically with inbound wikilink rewrite and decay-key migration. The CLI auto-dispatches file vs directory based on the source path. This completes the knowledge move feature for both flat files and board directories. 24 tests pass.",
+    "breaking": false,
+    "summary": "knowledge move: board-directory support — atomically relocate Excalidraw board folders with wikilink rewrite",
+    "references": [
+      "commit:fbbbc8c",
+      "file:src/cli/commands/knowledge.ts",
+      "file:src/lib/catalog.ts"
+    ]
+  },
+  {
+    "date": "2026-07-19",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "The board's New-task button gained an 'Author with agent' split-button path that spawns a delegate agent to draft the task (title, description, Why, acceptance criteria, RICE, tags) from a user prompt. authorTaskAgent.ts builds the prompt; AuthorTaskComposer modal rides the delegate spawn rail with minimized session start. The agent drafts the task in JSON, the modal presents it for review, and the user confirms to commit or cancels. In review — packaged-app manual check pending.",
+    "breaking": false,
+    "summary": "Author a task via agent: New-task button gained a split-button 'Author with agent' path",
+    "references": [
+      "commit:1926f5c",
+      "file:dashboard/src/components/tasks/BoardToolbar.tsx",
+      "file:dashboard/src/components/sleepy/agentSession.ts",
+      "task:author-a-task-via-agent"
+    ]
+  },
+  {
+    "date": "2026-07-19",
+    "type": "feat",
+    "scope": "skill-packs",
+    "description": "Ported 3 verified edits into skill-packs/goal-skill/SKILL.md to harden the shipped pack: (1) headless fork permission flags (--permission-mode acceptEdits + allowedTools whitelist) so delegated agents can write without re-prompting, (2) 'verify on disk before trusting builder reports' rule to catch silent no-ops, (3) report≠work red-flag row in the orchestrator's self-check table. These edits landed in production use over several sessions and are now consolidated into the canonical pack. install-packs tests 22/22 green.",
+    "breaking": false,
+    "summary": "goal-skill pack hardening: headless permission flags + report-vs-work gate + on-disk verify rule",
+    "references": [
+      "commit:318e236",
+      "file:skill-packs/goal-skill/SKILL.md",
+      "file:tests/unit/install-packs.test.ts"
+    ]
+  },
+  {
+    "date": "2026-07-18",
+    "type": "feat",
+    "scope": "security",
+    "description": "When the dashboard server binds to a non-loopback address (--host 0.0.0.0 or a LAN IP), it now generates a per-process 256-bit random token and gates every non-loopback request behind it — closing the long-deferred \"add auth token later\" gap from the original dashboard security work. New src/server/network-auth.ts provides checkNetworkAuth middleware: loopback peers (127.0.0.1, ::1, ::ffff:127.0.0.1) bypass the gate so CLI/hooks/local browser keep working unchanged; other devices must present the token via the ?token= URL printed in the startup banner (which sets an HttpOnly; SameSite=Strict cookie on first visit) or the cookie itself thereafter. Token comparison is timingSafeEqual with a length guard. Everything else gets 401 before CORS/routing runs. The banner enumerates external IPv4 interface addresses for a wildcard bind so the printed URLs are actually reachable from another device. On the default loopback bind no token exists and behavior is identical to before. 11 new unit tests in tests/unit/network-auth.test.ts; full suite 3210 green. Live curl verification over LAN of 6 scenarios (tokenless 401, correct token 200+cookie, cookie 200, wrong token 401, loopback exempt, tokenless PUT 401). Updated _dream_context/knowledge/dashboard-server-security.md with this fourth mitigation and the anti-regression rule.",
+    "breaking": false,
+    "summary": "Dashboard network-auth: Jupyter-style token gate for non-loopback binds (closes the --host 0.0.0.0 café scenario)",
+    "references": [
+      "file:src/server/network-auth.ts",
+      "file:src/server/index.ts",
+      "file:tests/unit/network-auth.test.ts",
+      "knowledge:dashboard-server-security"
+    ]
+  },
+  {
+    "date": "2026-07-18",
+    "type": "fix",
+    "scope": "sleep",
+    "description": "collectBrainDirty in src/lib/brain-dirty.ts now verifies projectRoot is its own git repository top-level before trusting git status output. When a scratch vault sits nested inside an enclosing checkout (no .git of its own), git status would walk up to the enclosing repo and report that repo's uncommitted _dream_context files as if they belonged to projectRoot — a false loud warning listing another project's files. Added topLevelImpl option (defaults to repoToplevel from git-sync/git.ts) that resolves the work-tree root git would actually operate on; if it throws, returns null, or resolves to a path that doesn't match projectRoot, returns {paths: [], unavailable: true} immediately. Only when topLevel === projectRoot does it proceed to the existing statusImpl call. Extended tests/unit/brain-dirty.test.ts with 5 new test cases (repo-root-match, nested-non-repo, rev-parse failure/throwing, production-wiring smoke). Full suite 23/23 passed (brain-dirty.test.ts 15 tests, sleep-done-hygiene.test.ts 8 tests untouched and green).",
+    "breaking": false,
+    "summary": "AC5 brain-dirty check now verifies projectRoot is its own git top-level before trusting git status",
+    "references": [
+      "task:improve-sleep-quality",
+      "file:src/lib/brain-dirty.ts",
+      "file:tests/unit/brain-dirty.test.ts",
+      "commit:52ab061"
+    ]
+  },
+  {
+    "date": "2026-07-18",
+    "type": "chore",
+    "scope": "quality",
+    "description": "Ran the documented Layer-2 measurement protocol against a live scratch fixture: real sleep-state and sleep-tasks specialist subagent fan-out, then hand-verified every claim against the files those agents actually wrote. Filled eval/sleep-quality/RESULTS.md with honest scores: dedup discipline 100% on the measurable half (bookmark pairs), capture→promote 100% on the named target (GraphQL decision), 50% on the broader set (rate-limiting requirement conservatively left unpromoted). BEFORE column marked not-reproducible with explicit reason (would require stashing 60+ uncommitted files and re-running a second live fan-out mid-consolidation). Layer-1 baseline tests remain 11/11 green, OVERALL 100.0 (≥ frozen baseline 57.1). One incidental finding flagged for the brain-dirty fix (AC5 warning leaking enclosing repo status when scratch dir is not its own repo).",
+    "breaking": false,
+    "summary": "AC7 Layer-2 sleep-quality eval executed and scored — real specialist fan-out, honest metrics in RESULTS.md",
+    "references": [
+      "task:improve-sleep-quality",
+      "file:eval/sleep-quality/RESULTS.md"
+    ]
+  },
+  {
+    "date": "2026-07-18",
+    "type": "refactor",
+    "scope": "goal-skill",
+    "description": "The statusline strip previously leaked into EVERY Claude Code session because of a duplicate artifact. Deleted skill-packs/goal-skill/assets/statusline-goalskill.cjs (was a duplicate; the properly session-scoped version ships via the pack's asset distribution). Updated catalog.json + SKILL.md + viewer/demo assets to reflect the single-strip model. Follow-up to commit 98ed9a7 (goal-skill live panel + sleepy dock badge). UNCOMMITTED.",
+    "breaking": false,
+    "summary": "Removed duplicate statusline strip artifact (statusline-goalskill.cjs deleted from pack)",
+    "references": [
+      "file:skill-packs/goal-skill/assets/statusline-goalskill.cjs",
+      "file:skill-packs/catalog.json",
+      "file:skill-packs/goal-skill/SKILL.md",
+      "commit:98ed9a7"
+    ]
+  },
+  {
+    "date": "2026-07-18",
+    "type": "docs",
+    "scope": "agents",
+    "description": "Updated agents/sleep-state.md with C1 archive-before-delete ceiling-vs-promotion authority (extract oldest Decisions to knowledge archive when a core file sits at ceiling AND a promotion is blocked), new C3 recidivism-flag reporting, report section + rules 12/13. agents/sleep-tasks.md extended with grooming (e) act-on-escalated-flags + flag-spec reporting, report bullets, rule 10. agents/sleep-product.md acknowledges knowledge/archive/ is off-limits. skill/references/sleep.md ownership table notes the archive carve-out, step 10 documents --flag (repeatable, single-value), step 11 requires dedup digest line + escalation/curator surfacing. UNCOMMITTED.",
+    "breaking": false,
+    "summary": "Sleep specialist agents updated with new ceiling/escalation/hygiene contracts",
+    "references": [
+      "task:improve-sleep-quality",
+      "file:agents/sleep-state.md",
+      "file:agents/sleep-tasks.md",
+      "file:skill/references/sleep.md"
+    ]
+  },
+  {
+    "date": "2026-07-18",
+    "type": "feat",
+    "scope": "cli",
+    "description": "New transcript-locate.ts lib resolves transcript paths with graceful fallback: probes <projectDir>/<sessionId>.jsonl first (flat layout), then <sessionDir>/ with DIR_LAYOUT_MAIN_CANDIDATES ([<sessionId>.jsonl, transcript.jsonl, main.jsonl]) — so a future transcript location change degrades gracefully instead of silently zeroing capture. transcript distill --subagents flag merges subagent transcripts (agent-*.jsonl from <sessionDir>/subagents/, newest-mtime-first, capped at SUBAGENT_HARVEST_CAP=20) into the main distilled section, with [subagent:<id>] prefix only on agentDecisions. Closes memory-engine-360 Wave 3.3 sub-agent harvest. New transcript-locate.test.ts (19 tests), extended transcript-distill.test.ts (+19 tests). UNCOMMITTED.",
+    "breaking": false,
+    "summary": "Transcript distill supports directory layout and subagent harvest",
+    "references": [
+      "task:improve-sleep-quality",
+      "file:src/lib/transcript-locate.ts",
+      "file:src/cli/commands/transcript.ts"
+    ]
+  },
+  {
+    "date": "2026-07-18",
+    "type": "feat",
+    "scope": "sleep",
+    "description": "Comprehensive sleep quality improvement package addressing the end-to-end audit findings (session 94568c29). Effective debt = persisted debt + provisional pending-session estimate, so consolidation directives track reality instead of lagging hours behind transcript flush. Catchup-cap safety: when ≥50% of current debt arrived in one catch-up batch, base depth caps at standard (never auto-authorizes deep for bulk backlog). Transcript-less sessions get floor score 1 (not 0) when last_assistant_message is non-empty, closing the lazy-flush blind spot. Five hygiene gates in sleep done: recidivism escalation (≥3 consecutive cycles surfaces decision ask + priority bump), orphan-tag curator trigger (≥150 orphans auto-creates/refreshes curator task), dedup-log cycle digest, brain-dirty warning (lists uncommitted _dream_context/** with ready command when brain sync is off), digest GC. New libs: sleep-flags, brain-dirty, dedup-log, transcript-locate (layout fallback), session-digest GC. GitHub sync: 1s min write interval to avoid secondary rate limits. Sleep-state gains archive-before-delete ceiling authority when promotion and ceiling collide. 10+ new test files. UNCOMMITTED — full working tree.",
+    "breaking": false,
+    "summary": "Sleep quality improvements: effective debt accounting, catchup-cap safety, hygiene gates (escalation, curator, dedup digest, brain-dirty warning), transcript floor score, GitHub write spacing",
+    "references": [
+      "task:improve-sleep-quality",
+      "file:src/lib/sleep-consolidation.ts",
+      "file:src/lib/sleep-flags.ts",
+      "file:src/cli/commands/sleep.ts",
+      "file:src/cli/commands/hook.ts"
+    ]
+  },
+  {
     "date": "2026-07-18",
     "type": "feat",
     "scope": "app",

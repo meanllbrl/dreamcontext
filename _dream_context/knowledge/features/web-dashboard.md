@@ -2,8 +2,8 @@
 id: feat_O7LODr7O
 status: active
 created: '2026-02-25'
-updated: '2026-07-17'
-released_version: 0.12.0
+updated: '2026-07-19'
+released_version: v0.19.0
 tags:
   - frontend
   - architecture
@@ -18,6 +18,10 @@ related_tasks:
   - board-version-filter-smart-buckets
   - >-
     collapse-the-feature-entity-into-typed-knowledge-knowledge-features-type-feature
+  - announcements-whats-new
+  - >-
+    cloud-reliability-package-origin-setup-state-refresh-dependency-doctor-with-one-click-install-stop-api-key-self-deletion
+  - author-a-task-via-a-claude-agent-from-the-new-task-button
 type: feature
 name: web-dashboard
 description: ''
@@ -105,7 +109,23 @@ Users need a visual interface to manage agent context without using the terminal
 - [x] As a user, while the Task Manager pane is open the task document auto-refreshes every 2.5 seconds so I can see the agent's edits live, and a "± Changes" toggle appears to show me a git-style unified diff of everything that changed this session (dual line numbers, +/- tinting, hunk headers).
 - [x] As a user, the session diff is ephemeral by design — closing the pane discards the baseline snapshot — because the agent's committed edits and the task's changelog are the durable record, not a transient diff UI.
 
+- [x] As a user, I can discover newly shipped features through an "Announcements / What's New" page in the dashboard, so I never miss flagship releases like goal-skill v2.
+- [x] As a user, I see an unread-count badge on the Announcements sidebar entry when hand-authored product news exists that I haven't read yet, so new features surface without me hunting through the changelog.
+- [x] As a user, a centered modal popup appears on dashboard load when unread announcements exist, showing all unread items as rendered Excalidraw landing pages, so I'm immediately aware of what's new without navigating.
+- [x] As a user, dismissing the announcements popup (via "Got it", "See all", Escape, or backdrop click) marks all shown announcements as read and clears the sidebar badge, so the notification never nags after I've seen it.
+- [x] As a user, announcements content ships with the npm package (in `dashboard/public/announcements.json` + `dashboard/public/announcements/*.excalidraw.md` boards) and refreshes on every `dreamcontext upgrade`, so I receive product news without the dashboard needing a server route or per-vault storage.
+
 ## Acceptance Criteria
+
+### Origin Setup & Cloud Sync (v0.19.0)
+- [x] Origin setup (`POST /api/brain/origin-setup`) responds within 15 seconds even when the first full sync is slow: the route wires the origin, enables cloud sync, and responds with a success banner; a slow first push runs in the background and the sidebar status picks up the result without blocking the HTTP response.
+- [x] All git network operations have hard timeouts: `git fetch` and `git ls-remote` timeout at 2 minutes, `git push` at 5 minutes. A timeout surfaces as a clear "network" failure with a retry action instead of an eternal spinner.
+- [x] The OriginSetup.tsx UI shows the "created!" outcome banner AND the connected-repo card together (not just the banner), and the status cache refreshes even when the request errors mid-flight, so the truth always lands without a restart.
+
+### Settings → System Dependency Doctor (v0.19.0)
+- [x] New Settings → System section lists every feature (Cloud sync, Cloud tasks, Sleep agent, Agent terminal) with the software it needs on this machine, a live installed/missing check, and a fix action.
+- [x] One-click Install where possible: git via Apple's CLT installer on macOS, Claude CLI and node-pty via npm. Copyable command shown otherwise.
+- [x] Cloud tasks correctly shows it needs NO extra software (just your API key). Cloud sync panel checks for git before showing the create/connect form — if missing you get an install button, not a doomed flow.
 
 ### Kanban Board
 - [x] Board shows four columns: To Do, In Progress, In Review (purple), Completed
@@ -178,6 +198,25 @@ Users need a visual interface to manage agent context without using the terminal
 - [x] Full-page parameters rail: left-fixed sticky rail (220px, scrollable), holds status/priority/urgency/version/assignee/dates/RICE/custom fields, shows below the TM toggle/bypass controls. Goes responsive (220→180px) when the TM pane is open.
 - [x] Composer goes responsive when TM pane is open: 220px min-width breakpoint (@container query) — stacks the input above the buttons at narrow widths.
 - [x] `TaskDetailPanel` tracks `taskManagerOpen` state and gates the doc-refresh poll (`refetchInterval: open ? 2500 : false`) and the session diff baseline; `SessionDiff` derives the unified diff via `diffLines()` and renders hunks with `+`/`-` tinting, dual-gutter line numbers, and omitted-line breaks (`...`).
+
+### Author Task with Agent (v0.19.0)
+- [x] Dashboard board's New-task button is a split button: primary action creates a blank task form (existing behavior), secondary "Author with agent" action opens an AuthorTaskComposer modal.
+- [x] AuthorTaskComposer modal rides the delegate-spawn rail (authorTaskAgent.ts): spawns a Claude Code agent session with a specialized prompt to author the task doc interactively, then creates the task file via the API when complete.
+- [x] The agent session runs inside the modal with bypass mode on (task authoring is the explicit intent), scoped to the task document being authored.
+
+### Announcements / What's New (v0.19.0)
+- [x] `dashboard/public/announcements.json` ships with the npm package (vite `publicDir` → `dashboard/dist/` → `dist/dashboard/` → served at `/announcements.json`) as a bare JSON array; hand-authored product news only, never generated from CHANGELOG. Announcements are landing-page-style Excalidraw boards (not markdown), referenced via `board` field.
+- [x] `dashboard/public/announcements/*.excalidraw.md` boards are git-tracked static assets, one per announcement, rendered by `ExcalidrawPreview` component. Seeded with 4 boards: visual-announcements (v0.19.0), task-manager (v0.18.0), dashboard-highlights-0-17-0-18, goal-skill-v2.
+- [x] `dashboard/src/lib/announcements.ts` exports pure logic (React-free, Vitest-importable): `Announcement` interface (`id`, `date`, `title`, `summary`, `board`, optional `version`/`tags`), `parseAnnouncements(raw)` (validates/drops malformed/de-dupes by id/sorts date descending), `unreadAnnouncements(all, seen)`, `readSeenIds()`/`writeSeenIds()`/`markAllSeen()` (localStorage-backed seen-id set at key `dreamcontext.dashboard.announcementsSeen`).
+- [x] `dashboard/src/hooks/useAnnouncements.ts` exports `useAnnouncements()` (TanStack Query over raw `fetch(\`/announcements.json?v=${__DC_VERSION__}\`)` — cache-busted with build version, NOT `/api` prefix; `staleTime: Infinity`), `useAnnouncementBoard(board)` (fetches the `.excalidraw.md` board text), and `useAnnouncementInbox()` (`{ all, unread, loading, markAllRead }`; subscribes to custom event `dreamcontext-announcements-read` + `storage` for cross-component sync).
+- [x] `AnnouncementsPage` (`dashboard/src/pages/AnnouncementsPage.tsx/.css`) renders a newest-first grid of announcement cards, each showing the Excalidraw board via `ExcalidrawPreview`; unread cards carry visual indicator; mount `useEffect` calls `markAllRead()` (opening the page is the read signal).
+- [x] `AnnouncementsModal` (`dashboard/src/components/layout/AnnouncementsModal.tsx/.css`) is a centered modal that renders when `unread.length > 0` on mount; shows all unread announcements with rendered Excalidraw boards in scrollable body; dismiss (×, backdrop, Escape, "Got it", "See all") calls `markAllRead()`; registers with `lib/overlayStack.ts` (`pushOverlay('announcements-modal')` on mount, acts on Escape only when `isTopOverlay`).
+- [x] Sidebar (`dashboard/src/components/layout/Sidebar.tsx/.css`) widens `Page` union to include `'announcements'`, adds nav item pinned to footer (below the main rail, above the "What is this?" landing-page entry), renders `<span className="sidebar-badge">{unread.length}</span>` when `unread.length > 0`; badge is a count pill matching the existing nudge-dot geometry but sized for numerals.
+- [x] `NavIcons.tsx` adds `AnnouncementsIcon()` megaphone built with `<Svg>` wrapper + `STROKE` constants, registered in `ICONS` map as `announcements: AnnouncementsIcon`.
+- [x] `Shell.tsx` adds `'announcements'` to `VALID_PAGES`; `App.tsx` adds `case 'announcements': return <AnnouncementsPage />;` to `PageRouter` and mounts `<AnnouncementsModal onOpenPage={() => nav.navigate('announcements', null)} />` inside vault `Shell` render prop only (not launcher branch).
+- [x] `I18nContext.tsx` adds to `translations.en`: `nav.announcements`, `announcements.title`, `announcements.subtitle`, `announcements.empty`, `announcements.new`, `announcements.whatsNew`, `announcements.gotIt`, `announcements.seeAll`, `announcements.dismiss`, `announcements.shippedIn`, `announcements.moreUnread`.
+- [x] `tests/unit/announcements.test.ts` (root Vitest) covers `parseAnnouncements` (valid/non-array/malformed drop/duplicate-id/sort), `unreadAnnouncements`, and `readSeenIds`/`writeSeenIds`/`markAllSeen` against stubbed/throwing localStorage.
+- [x] Seeded with 4 announcements: visual-announcements (v0.19.0 self-demonstrating the feature itself), task-manager (v0.18.0), dashboard-highlights-0-17-0-18, goal-skill-v2 — all as hand-drawn Excalidraw landing pages.
 
 ### Tasks Board Redesign — Saved Views + Shared/Local Preferences (v0.10.x)
 - [x] Board rebuilt to the violet design language (from `Board.dc.html`): saved-view tab bar, a combined two-pane Filter menu (per-field include `✓` / exclude `✕`), View-type chip, Group + sub-group chip, Sort chip + direction, Versions **popover** (popup, not a dropdown), and a card Properties chip (toggle which fields show on cards).
@@ -293,6 +332,7 @@ Users need a visual interface to manage agent context without using the terminal
 - [x] Command: `dreamcontext dashboard` starts HTTP server on localhost:4173 (configurable with --port)
 - [x] Server: Node.js native http module, zero new runtime dependencies
 - [x] Server binds to `127.0.0.1` by default (loopback only); a `--host` flag allows overriding with a visible warning.
+- [x] Network-exposure token gate: when bound to a non-loopback host, the server generates a per-process 256-bit token; loopback peers bypass the gate, other devices must open a tokenized URL (printed in startup banner) that sets an HttpOnly cookie; 401 before CORS/routing for unauthorized non-loopback requests (v0.18.0+).
 - [x] Mutating endpoints (`POST/PUT/PATCH/DELETE`) reject requests whose `Origin` header is present but not a loopback origin — CSRF defense.
 - [x] CORS reflects only loopback origins (never `*`).
 - [x] All filesystem paths built from request input go through `safeChildPath()` — path-traversal guard.
@@ -329,6 +369,9 @@ Users need a visual interface to manage agent context without using the terminal
 ## Constraints & Decisions
 <!-- LIFO: newest decision at top -->
 
+- **[2026-07-18]** **Announcements content location and distribution.** `dashboard/public/announcements.json` ships as a static build asset (vite `publicDir` → `dist/dashboard/`) in the npm package, refreshed on every `dreamcontext upgrade`. A vault-local path (`_dream_context/core/ANNOUNCEMENTS.json`) would ship to NO npm user and is not scaffolded by `init` — all existing installs would see a permanently empty page. The public/ location means announcements are dreamcontext product news (goal-skill v2, major features) accessible to all installs, not per-vault team news. Fetch is cache-busted with `?v=__DC_VERSION__` (build-time constant) because the static server sets `Cache-Control: immutable, max-age=31536000` — without the query param a browser would freeze content for a year.
+- **[2026-07-18]** **Announcements unread state via seen-id set, not watermark.** localStorage holds the set of `id`s the user has seen (`dreamcontext.dashboard.announcementsSeen`). Ids are stable and dates can be backdated; a watermark (`lastSeenId`) would silently mis-count when a past announcement is added out of chronological order. The set costs ~5 extra lines and is exactly correct. Unread state is per-browser-profile (localStorage), not synced across machines or via the brain — matches the established flag pattern in `Sidebar.tsx`.
+- **[2026-07-18]** **Announcements pure logic in React-free module.** All unread/parse/seen-id logic lives in `dashboard/src/lib/announcements.ts` (no React, no `.css`, no `api/client` import) so root Vitest (`tests/unit/announcements.test.ts`) can import and test it. Dashboard tests are excluded by `vitest.config.ts` (`exclude: ['dashboard']`) and the dashboard has no jsdom/testing-library, so rendering logic in a `.tsx` component would be untestable without adding a whole dashboard test harness.
 - **[2026-07-04]** **One-click upgrade is a singleton background job, not a request/response call.** `dreamcontext upgrade --yes` can take minutes (npm install + app download + refreshing every registered project), so `POST /api/launcher/upgrade` starts it and returns immediately; the badge polls `GET /api/launcher/upgrade/status` on a 1.2s interval. In-memory `upgradeRun` is intentionally a single module-level variable (not per-session) — a second concurrent upgrade would race the same global npm install and the same shared `.app` bundle, so any window's poll sees the one true state. State is lost on server restart by design; the on-disk result is what matters, and a restart-then-repoll simply reports `idle`.
 - **[2026-07-04]** **Relaunch escapes the reap via a detached process, not an in-process restart.** Closing the last window quits the app, which tears down the very server handling the relaunch request — so the relauncher can't just `exec` the new bundle from inside itself. `POST /api/launcher/relaunch` spawns `sleep 2 && open <app>` `detached` + `unref`'d into its own process group, which survives the parent app's death (would otherwise be caught by the existing parent-death watchdog / Rust process-group reap documented in `desktop-beta-tauri-multivault.md`). The frontend calls relaunch, THEN closes its own window — never the reverse, or the detached process races the still-alive window's teardown.
 - **[2026-06-29]** **Assignee reading from `person:` tags (board model unification).** The board model previously read only the legacy scalar `assignee` field; tasks whose assignee was stored exclusively as `person:<slug>` tags appeared as Unassigned in filter/group-by/properties/gantt (though the detail panel showed them correctly, since it reads tags directly). Fix: `boardModel.taskAssignees(task)` derives all assignees from `person:` tags with legacy scalar fallback; `taskAssignee()` returns the primary. All board views (filter counts, group-by, card avatars, Gantt labels) now flow through this derivation. Multi-assign is modeled: group-by places a task under each of its assignees. `KanbanBoard` builds the assignee option list from every referenced person in the task set.
@@ -548,6 +591,14 @@ All mutating endpoints call recordDashboardChange() except `PATCH /api/config` (
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-07-18 — Announcements / What's New (UNCOMMITTED as of consolidation)
+- **Announcements page + on-load modal**: hand-authored product news in `dashboard/public/announcements.json` (ships with npm package, refreshed on upgrade), `AnnouncementsPage` with newest-first cards (date/version/title/summary/markdown body), `AnnouncementsModal` centered on-load popup when unread announcements exist, sidebar badge showing unread count, localStorage-tracked seen-id set (`dreamcontext.dashboard.announcementsSeen`), dismiss marks all read.
+- **Pure logic in React-free module**: `dashboard/src/lib/announcements.ts` exports `Announcement` interface, `parseAnnouncements` (validates/drops malformed/de-dupes/sorts), `unreadAnnouncements`, localStorage helpers `readSeenIds`/`writeSeenIds`/`markAllSeen`. No React imports so root Vitest can test it (`tests/unit/announcements.test.ts`).
+- **Data layer**: `useAnnouncements()` hook fetches raw from `/announcements.json?v=${__DC_VERSION__}` (cache-busted with build version, not `/api` prefix; `staleTime: Infinity`), `useAnnouncementInbox()` hook provides `{all, unread, loading, markAllRead}` with custom-event + storage subscriptions for cross-component sync.
+- **Wiring**: Sidebar `Page` union widened to include `'announcements'`, nav entry first in Control Panel group above Packs, megaphone icon in `NavIcons`, `Shell.tsx` adds to `VALID_PAGES`, `App.tsx` PageRouter case + modal mount in vault Shell, i18n strings in `I18nContext`.
+- **Seeded content**: one announcement (`id: "goal-skill-v2"`, version `"0.19.0"`) summarizing goal-skill v2 rewrite (fork/resume builders, clean judges, tier router, convergence-by-signal). English-only via t() keys.
+- Status: implemented across 10 waves (T1–T10), build + tests green, uncommitted (task `announcements-whats-new` in_progress).
 
 ### 2026-07-17 — Task Manager — In-task agent sessions with anchored comments and session diff (commits ef0ebf7→ee957c2, desktop-only)
 - **Task Manager v2**: opt-in everywhere (explicit button, never auto-spawn), bypass ON by default, full-page task view is a PAGE below the real app header (parameters in a sticky left rail, document beside, TM pane right), drawer widens when TM opens. Desktop-gated; prereq install steps shown when Claude Code or node-pty missing.

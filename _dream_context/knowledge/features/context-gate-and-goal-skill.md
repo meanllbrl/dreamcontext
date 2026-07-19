@@ -2,8 +2,8 @@
 id: feat_rL12JiTu
 status: active
 created: '2026-05-31'
-updated: '2026-07-18'
-released_version: v0.18.0
+updated: '2026-07-19'
+released_version: v0.19.0
 tags:
   - 'topic:skills'
   - 'topic:cli'
@@ -11,6 +11,7 @@ tags:
   - architecture
 related_tasks:
   - goal-skill-v2-fork-resume
+  - goal-skill-pack-headless-permission-flags-and-report-vs-work-gate
 type: feature
 name: context-gate-and-goal-skill
 description: ''
@@ -91,6 +92,14 @@ Both are inspired by the `superpowers` project pattern of behavioral bootstrappi
 - `loadSkillDocs(skillsRoot: string): CorpusDoc[]` — scans `<skillsRoot>/*/SKILL.md`, reads frontmatter, excludes `alwaysApply: true`, returns docs with `type: 'skill'` and `slug = frontmatter.name`.
 - `'skill'` is NOT in the default `buildCorpus` types. Callers must pass `{ types: ['skill'] }` explicitly, keeping haikuRecall behavior unchanged.
 
+**Skill pack distribution (v0.19.0+, commit 4b06c29)**:
+- **Problem solved:** consumer projects previously received ONLY `.md` files via `dreamcontext install-skill --packs`; pack runtime helpers (`.cjs` scripts) and settings registrations had NO distribution path. goal-skill's live statusline strip and Excalidraw viewer existed only on the dev machine, never on user installs.
+- **Catalog schema extension (`skill-packs/catalog.json`):** per-pack and standalone entries gain optional `assets: Array<{file, dest}>` (each asset's source file path + install destination, dest bounded strictly inside `.claude/` via `safeChildPath`) and `settings: {statusLine?: {script, label}}` for Claude Code statusline registration.
+- **Manifest tracking:** new `'pack-asset'` ManagedFileKind in `.claude/manifest.json` — install/update refreshes and prunes pack assets; `update --core-only` preserves the pack-asset partition (doesn't uninstall packs).
+- **Claude settings integration (`src/lib/claude-settings.ts`):** `applyClaudeStatusLine(script, label)` with ownership policy — installs when absent, refreshes if owned by the same script basename, NEVER clobbers a foreign statusLine (warns instead); `removeClaudeStatusLine(script)` for uninstall removes ONLY our statusLine registration.
+- **Install flow (`src/lib/install-packs.ts`):** `installEntryAssets(entry, contextRoot)` shared by packs and standalone installs — copies each asset from source to dest, tracks in manifest; uninstall removes assets and unregisters only our statusLine.
+- **goal-skill runtime assets (`skill-packs/goal-skill/assets/`):** ships `goal-skill-viewer.cjs` (Excalidraw board viewer for the dep-map) and `goal-skill-demo.cjs` (demo helper). SKILL.md v2 auto-starts the viewer at orchestrator run start. **[v0.19.0 cleanup]** The terminal statusline strip (`statusline-goalskill.cjs` + its `settings.statusLine` catalog registration) shipped briefly in v0.18.0 and was REMOVED (2026-07-18) — it duplicated the desktop app's native GoalLivePanel above the composer, and the user had rejected the terminal strip as a UI surface. The `settings.statusLine` catalog capability + `claude-settings.ts` ownership machinery remain (no pack currently declares one). The live-file contract is unchanged — the orchestrator still writes `_dream_context/tmp/.goal-skill-live.json`, rendered by the app panel + browser viewer.
+
 **goal-skill pack (v2 as of v0.18.0)**:
 - `skill-packs/goal-skill/SKILL.md` — v2 orchestration skill with: 6-phase flowchart (Phase 0 Ask → Phase 1 PLAN builder → Phase 2 PLAN REVIEW judges → Phase 3 TASK DOC → Phase 4 IMPLEMENT waves → Phase 5 CODE REVIEW judge → Phase 6 VALIDATE judge), two-lane model (builders fork/resume, judges clean/fresh), tier router (S/M/L + hot-path), commitment ritual (announce + TodoWrite), convergence rules (signal-based + valve 8), Red Flags table, hard rules (single writer, builders fork/resume, judges clean, full review once, convergence by signal).
 - Builder session mechanics: `claude -p --output-format json` spawn, `--resume <id>` for revisions (~10 delta tokens), `--resume <plannerId> --fork-session` for implementers, session registry block (literal format: `planner: <id>`, `impl-<taskId>: <id>`, `planner-refork: <id | —>`) in task doc's `technical_details`.
@@ -103,6 +112,12 @@ Both are inspired by the `superpowers` project pattern of behavioral bootstrappi
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-07-19 - goal-skill pack hardening
+- SKILL.md hardened with headless fork permission flags, report≠work verification gate, and red-flags row. Orchestrator reminded to check for actual code changes (not just reports) before proceeding through phases, and to require explicit permission before forking builder sessions in headless/autonomous contexts. Session a8f96107, commit 318e236.
+
+### 2026-07-18 - v0.19.0 cleanup — statusline strip removed
+- Terminal statusline strip (`statusline-goalskill.cjs` + its `settings.statusLine` catalog registration, shipped briefly in v0.18.0) REMOVED (2026-07-18). Duplication rationale: the desktop app's native GoalLivePanel above the composer already rendered the orchestrator's live state; the terminal strip duplicated that surface without adding value, and the user had explicitly rejected it. The pack-asset distribution mechanism + Claude settings integration machinery remain unchanged — no pack currently declares a statusLine. The live-file contract is unchanged — orchestrator writes `_dream_context/tmp/.goal-skill-live.json`, rendered by the app panel + browser viewer. Asset list now: `goal-skill-viewer.cjs`, `goal-skill-demo.cjs`. Catalog + SKILL.md unchanged (documented in v0.18.0 entry).
 
 ### 2026-07-18 - Updated to v2
 - Reconciled to v2 as-built architecture (shipped v0.18.0 via task `goal-skill-v2-fork-resume`). Added v2 user stories, acceptance criteria, constraints, and technical details. Updated frontmatter: `updated: '2026-07-18'`, `released_version: v0.18.0`, `related_tasks: [goal-skill-v2-fork-resume]`. v2 changes: fork/resume builder sessions (planner + implementers as CLI sessions, judges clean+fresh), session registry, tier router (S/M/L + hot-path), dependency map + wave-parallel implementation, convergence by signal + valve 8 (removed hard caps). Verified against working tree: `skill-packs/goal-skill/SKILL.md`, `skill-packs/agents/goal-*.md`, `skill-packs/catalog.json`.

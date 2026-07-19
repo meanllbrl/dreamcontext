@@ -2,15 +2,16 @@
 id: know_C9fbD0LE
 name: dashboard-server-security
 description: >-
-  Threat model and three mitigations for the local dreamcontext dashboard HTTP
-  server: loopback binding, Origin/Host CSRF check, and path-traversal guard.
+  Threat model and four mitigations for the local dreamcontext dashboard HTTP
+  server: loopback binding, network-exposure token gate, Origin/Host CSRF check,
+  and path-traversal guard.
 tags:
   - security
   - backend
   - decisions
   - architecture
 pinned: false
-date: '2026-05-31'
+date: '2026-07-18'
 ---
 
 ## Why This Exists
@@ -64,6 +65,18 @@ export function safeChildPath(baseDir: string, child: string): string | null {
   return target;
 }```Every route handler that builds a filesystem path from request input now calls `safeChildPath(dir, filename)` and returns 400 on null. This covers `GET /api/core/:filename`, `PUT /api/core/:filename`, `GET /api/knowledge/:slug`, and `PATCH /api/knowledge/:slug`.
 
+### 4. Network-exposure token gate (`src/server/network-auth.ts`, 2026-07-18)
+
+Threat 1's residual gap: a user who *deliberately* runs `--host 0.0.0.0` (e.g. to view the dashboard from a phone) exposed the fully unauthenticated read/write API to everyone on the same wifi — the café scenario. Now, whenever the bind host is not loopback, the server generates a per-process 256-bit token (`generateNetworkToken`) and `checkNetworkAuth` gates **every** request from a non-loopback peer:
+
+- Loopback peers (`127.0.0.1`, `::1`, `::ffff:127.0.0.1`) bypass the gate — the CLI, hooks (`hook.ts` health/shutdown calls), and local browser keep working unchanged.
+- Other devices must open the tokenized URL printed in the startup banner (`?token=...`), which sets an `HttpOnly; SameSite=Strict` cookie; subsequent requests authenticate via the cookie. Token comparison is `timingSafeEqual` with a length guard.
+- Everything else gets 401 before CORS/routing runs.
+- The banner enumerates external IPv4 interface addresses for a wildcard bind so the printed URLs are actually reachable from another device.
+- The agent terminal WebSocket remains hard-gated to loopback peers regardless (`attachAgentTerminal`), token or not.
+
+On the default loopback bind no token exists and behavior is identical to before. Tests: `tests/unit/network-auth.test.ts`; e2e smoke-verified via LAN-IP curl (401 bare / 200+cookie with token / 200 with cookie / 401 wrong token / 200 loopback).
+
 ## Tests
 
 `tests/unit/server-security.test.ts` covers: `isCrossSiteWrite` for GET/POST/PUT with various Origin values; `handleCors` with loopback vs cross-site origins; `safeChildPath` for `..` traversal, absolute paths, null bytes, and valid relative paths.
@@ -74,6 +87,7 @@ export function safeChildPath(baseDir: string, child: string): string | null {
 - Never change the default `host` back to `0.0.0.0` or remove the check.
 - Any new mutating route must call `isCrossSiteWrite` (it's enforced at the server level in `createServer`, so new routes inherit this automatically — but this must stay at the server level, not be moved per-route).
 - Any new route that constructs a filesystem path from request input MUST use `safeChildPath`.
+- The network token gate runs at the server level in `createServer` (before CORS and routing) — keep it there so new routes inherit it. Never allow a non-loopback peer through without the token, and never widen `isLoopbackAddress`.
 
 ## Related occurrences of this containment pattern elsewhere in the codebase
 
@@ -89,4 +103,4 @@ This threat model is specific to the dashboard HTTP server, but the SAME lexical
 
 ## Last Verified
 
-2026-05-31 — code shipped in commit `0f3965f` as part of v0.5.0. (2026-07-01 — reviewed for drift; core threat model unchanged, added pointers to sibling containment-pattern instances above.)
+2026-07-18 — network-exposure token gate (mitigation 4) shipped in v0.18.0+. Original three mitigations (loopback bind, CSRF check, path-traversal guard) shipped in commit `0f3965f` as part of v0.5.0. (2026-07-01 — reviewed for drift; core threat model unchanged, added pointers to sibling containment-pattern instances.)
