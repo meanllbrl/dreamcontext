@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useI18n } from '../../context/I18nContext';
 import { useAnnouncementInbox, useAnnouncementBoard } from '../../hooks/useAnnouncements';
+import type { Announcement } from '../../lib/announcements';
 import { ExcalidrawPreview } from '../core/ExcalidrawPreview';
 import { pushOverlay, popOverlay, isTopOverlay } from '../../lib/overlayStack';
 import './AnnouncementsModal.css';
@@ -25,18 +26,35 @@ interface Props {
  * what the ref is read on. A plain boolean check on `unread.length === 0` would
  * already cover the same case once that re-render lands, but the ref makes the
  * dismissal a hard one-way latch for this mount regardless of any later data change.
+ *
+ * Being *shown* the popup — not clicking a button in it — is what counts as
+ * "seen": the newest unread announcements are snapshotted into `pinned` and
+ * marked read the instant the popup first becomes eligible. A user who reads the
+ * popup and simply closes the window (never touching "Got it"/✕/Esc) must not be
+ * shown the same announcement on the next launch. Pinning the snapshot keeps the
+ * popup rendered for its whole lifetime even though `markAllRead` empties the
+ * live `unread` on the same tick — otherwise it would flash and vanish.
  */
 export function AnnouncementsModal({ onOpenPage }: Props) {
   const { t } = useI18n();
   const { unread, loading, markAllRead } = useAnnouncementInbox();
   const dismissed = useRef(false);
-  const show = !loading && unread.length > 0 && !dismissed.current;
+  const [pinned, setPinned] = useState<Announcement[] | null>(null);
 
-  // The popup is a single-board hero: the newest unread announcement (unread is
+  useEffect(() => {
+    if (pinned === null && !loading && unread.length > 0 && !dismissed.current) {
+      setPinned(unread);
+      markAllRead();
+    }
+  }, [pinned, loading, unread, markAllRead]);
+
+  const show = pinned !== null && pinned.length > 0 && !dismissed.current;
+
+  // The popup is a single-board hero: the newest pinned announcement (pinned is
   // sorted newest-first). Deeper ones are reached via "See all". Rendering one
   // read-only canvas on load stays light; a stack of them would not. The board
-  // hook is called unconditionally (disabled on '' when there's nothing unread).
-  const hero = unread[0];
+  // hook is called unconditionally (disabled on '' when there's nothing pinned).
+  const hero = pinned?.[0];
   const { data: heroBoard, isLoading: heroLoading } = useAnnouncementBoard(hero?.board ?? '');
 
   const dismiss = useCallback(() => {
@@ -69,7 +87,7 @@ export function AnnouncementsModal({ onOpenPage }: Props) {
     };
   }, [show, dismiss]);
 
-  if (!show) return null;
+  if (!show || !hero) return null;
 
   return (
     <>
@@ -102,9 +120,9 @@ export function AnnouncementsModal({ onOpenPage }: Props) {
                   {t('announcements.shippedIn').replace('{version}', hero.version)}
                 </span>
               )}
-              {unread.length > 1 && (
+              {pinned.length > 1 && (
                 <span className="announcements-modal-entry-more">
-                  {t('announcements.moreUnread').replace('{count}', String(unread.length - 1))}
+                  {t('announcements.moreUnread').replace('{count}', String(pinned.length - 1))}
                 </span>
               )}
             </div>
