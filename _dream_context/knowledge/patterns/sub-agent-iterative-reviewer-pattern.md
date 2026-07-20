@@ -4,7 +4,7 @@ name: "Sub-Agent with Iterative Reviewer Pattern"
 description: "Pattern for orchestrating parallel sub-agent workstreams with a holistic reviewer sub-agent doing final sign-off. Used in v0.4 multi-workstream session to catch cross-domain regressions and scope creep."
 tags: ["architecture", "decisions"]
 pinned: false
-date: "2026-05-22"
+date: "2026-07-20"
 ---
 
 ## Why This Exists
@@ -59,4 +59,4 @@ Skip when:
 
 ## Last Verified
 
-2026-05-22 (pattern derived from this session's execution).
+2026-07-20 — pattern still valid; `/multi-review` (productized evolution) remains distinct from this in-session multi-workstream orchestration pattern.

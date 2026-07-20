@@ -8,7 +8,7 @@ tags:
   - domain:knowledge
   - database
 pinned: false
-date: "2026-06-09"
+date: "2026-07-20"
 ---
 
 ## Why This Exists
@@ -76,4 +76,4 @@ Every data-structures file body MUST be a single `\`\`\`sql` fenced block. Write
 
 ## Last Verified
 
-2026-06-09
+2026-07-20 — migration complete; `knowledge/data-structures/` is the canonical location; sleep-product owns writes via Pass B6.

@@ -1,5 +1,44 @@
 [
   {
+    "date": "2026-07-20",
+    "type": "feat",
+    "scope": "learning",
+    "description": "Add first-class falsifiable theses subsystem for systematic learning across consolidation cycles. A thesis is a falsifiable claim ('X improves Y') validated or invalidated through an evidence ledger — confidence is DERIVED from observations (confirmatory/contradictory/neutral), never asserted. Core implementation: types (Thesis with claim/status/created/updated/confidence/relations/metadata), store (file-backed CRUD in theses/<slug>.md with Outcome enum draft|testing|validated|invalidated|retired), confidence-derivation algorithm (Bayesian-style accumulation from evidence ledger), and promotion path (draft→testing when evidence threshold met). CLI: dreamcontext theses create/list/show/add-evidence/update/delete with offer-and-confirm protocol and recall-dedup at create. Recall integration: theses indexed into BM25 corpus (searchable via memory recall --types thesis). Doctor + snapshot: theses count, status distribution, low-confidence warnings. Dashboard: full Hypotheses page (HypothesesPage.tsx) with kanban-style board (ThesisBoard), create modal, detail modal with evidence ledger and relation chips, confidence bar component, i18n tokens. Server: /api/theses routes (list/show/create/update/delete/add-evidence). LearningConfig opt-in: theses subsystem is OFF until dreamcontext theses enable (setup-config thesesEnabled flag). Sleep-learn specialist: agents/sleep-learn.md processes theses during consolidation (scans bookmarks/changelog/knowledge for evidence, updates confidence, promotes draft→testing when warranted, flags stale/low-confidence theses). Test coverage: 7 unit test files (theses-store, confidence, recall, doctor, server routes, promotion) + smoke script (scripts/smoke-theses.mjs). Built via goal-skill v2 orchestrated run (planner → CRITIC review → wave T1-T12 implementation → quality gate → validation; 3682 tests green). ALL UNCOMMITTED on main — working-tree output only, awaiting commit decision.",
+    "breaking": false,
+    "summary": "Proactive learning layer: falsifiable theses with derived confidence and evidence-based validation",
+    "references": [
+      "file:src/lib/theses/types.ts",
+      "file:src/lib/theses/store.ts",
+      "file:src/lib/theses/confidence.ts",
+      "file:src/cli/commands/theses.ts",
+      "file:src/server/routes/theses.ts",
+      "file:dashboard/src/pages/HypothesesPage.tsx",
+      "file:dashboard/src/components/theses/ThesisBoard.tsx",
+      "file:dashboard/src/hooks/useTheses.ts",
+      "file:agents/sleep-learn.md",
+      "file:scripts/smoke-theses.mjs",
+      "file:tests/unit/theses-store.test.ts",
+      "file:tests/unit/theses-confidence.test.ts",
+      "file:tests/unit/theses-recall.test.ts",
+      "file:tests/unit/theses-doctor.test.ts",
+      "file:tests/unit/server-theses-routes.test.ts",
+      "file:tests/unit/theses-promotion.test.ts",
+      "file:tests/unit/learning-config.test.ts"
+    ]
+  },
+  {
+    "date": "2026-07-20",
+    "type": "fix",
+    "scope": "dashboard",
+    "description": "The dashboard announcements modal tracked 'shown' announcements in localStorage but did not mark them as 'seen' unless explicitly dismissed. Closing the modal window (via X button or outside click) without hitting 'Got it' on each card meant the same announcement would re-appear on the next dashboard launch. Fix: snapshot unread announcements into pinned knowledge on first eligibility check, and run markAllRead() immediately after showing the modal — so 'shown' now equals 'seen'. A user closing the window has seen the content; re-showing it is noise.",
+    "breaking": false,
+    "summary": "Announcements popup 'shown = seen' bug — closing without dismissing re-shows announcement",
+    "references": [
+      "commit:35a7a4f",
+      "file:dashboard/src/components/layout/AnnouncementsModal.tsx"
+    ]
+  },
+  {
     "date": "2026-07-19",
     "type": "docs",
     "scope": "readme",

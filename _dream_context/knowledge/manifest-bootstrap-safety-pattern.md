@@ -4,7 +4,7 @@ name: "Manifest Bootstrap First-Run Safety Pattern"
 description: "Never delete on the first encounter of a manifest-tracked file: bootstrap a baseline, flag candidates, let the user review before any destructive action. Applies to any system that introduces retroactive file ownership tracking."
 tags: ["architecture", "decisions", "devops"]
 pinned: false
-date: "2026-05-22"
+date: "2026-07-20"
 ---
 
 ## Why This Exists
@@ -51,4 +51,4 @@ The pattern is also applicable outside file deletion: any "destructive migration
 
 ## Last Verified
 
-2026-05-22 (code shipped in v0.4 session).
+2026-07-20 — pattern still in use; `update.ts` `pruneStaleFiles()` and `manifest.ts` `bootstrapManifestFromScan()` unchanged since v0.4.

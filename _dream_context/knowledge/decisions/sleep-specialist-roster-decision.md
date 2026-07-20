@@ -1,9 +1,9 @@
 ---
 id: sleep-specialist-roster-decision
 name: "Sleep Specialist Roster Decision (issue #9 WS3)"
-description: "Evidence-based decision on whether to add a dedicated sleep-features specialist to the 3-specialist sleep roster. Measured feature-doc upkeep health (stale ratio, churn) and concluded: KEEP 3 + mandatory feature-upkeep self-report line."
+description: "Evidence-based decision on whether to add a dedicated sleep-features specialist to the 3-specialist sleep roster. Measured feature-doc upkeep health (stale ratio, churn) and concluded: KEEP 3 + mandatory feature-upkeep self-report line. (v0.19.0 note: a 4th specialist sleep-learn was later added, but for a different domain — theses/learning layer, not features.)"
 tags: ["decisions", "topic:agents", "topic:sleep"]
-date: "2026-06-14"
+date: "2026-07-20"
 ---
 
 ## Why this exists
@@ -59,9 +59,17 @@ feature-signals reporting cover the "did feature upkeep get considered?" audit n
 agent. If a future cycle measures stale ratio climbing past ~40% with a falling churn ratio, this
 decision should be revisited with the same script.
 
+## Postscript: 4th specialist added, but for a different domain (2026-07-20)
+
+This decision answered the question "do we need a dedicated sleep-features specialist?" with NO — the evidence showed `sleep-product` was keeping feature PRDs healthy (9% stale ratio, 0.229 churn ratio). That conclusion holds.
+
+However, v0.19.0 DID add a 4th specialist — `sleep-learn` (`agents/sleep-learn.md`) — but for a **different domain**: the proactive learning layer (`_dream_context/theses/*.md`). This specialist re-tests theses, derives confidence, flips validated/invalidated, and appends understanding changelog. It is conditionally dispatched (only when `learning.enabled` AND fresh evidence exists OR cadence due), no-op cheap otherwise, and never touches features/knowledge/tasks.
+
+The 3-vs-4 count changed, but the **decision** (don't split features out of sleep-product) remains correct. The new specialist solved a different problem (learning layer upkeep) and owns a different file domain. See [sleep-fanout-architecture](../sleep-fanout-architecture.md) and [proactive-learning-layer](../proactive-learning-layer.md) for the full design.
+
 ## Sources
 
 - `scripts/feature-upkeep-evidence.ts` (the reproducible measurement)
 - `src/lib/feature-freshness.ts` (`analyzeFeatures`)
 - Issue #9 plan: `docs/issue-9-sleep-plan.md` (WS3)
-- Last verified: 2026-06-14
+- Last verified: 2026-07-20

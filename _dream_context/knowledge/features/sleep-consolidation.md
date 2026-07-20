@@ -2,7 +2,7 @@
 id: feat_9qLM-gY_
 status: active
 created: '2026-02-25'
-updated: '2026-07-18'
+updated: '2026-07-20'
 released_version: 0.1.0
 tags:
   - architecture
@@ -11,6 +11,7 @@ tags:
 related_tasks:
   - enforce-mutual-exclusion-on-sleep-consolidation-lock
   - improve-sleep-quality
+  - proactive-learning-layer
 type: feature
 name: sleep-consolidation
 description: ''
@@ -76,6 +77,7 @@ Agents accumulate knowledge and make decisions across many sessions, but that kn
 
 ## Constraints & Decisions
 
+- **[2026-07-20]** sleep-learn specialist added (v0.19.0, proactive learning layer). Fourth conditional specialist (`agents/sleep-learn.md`) joins the roster, dispatched only when `learning.enabled` AND (open/draft theses have fresh evidence OR ≥2 sleeps cadence due). Owns `_dream_context/theses/*.md` exclusively — re-tests theses, derives confidence, flips validated/invalidated, appends understanding changelog. No-op cheap when nothing is due. See [proactive-learning-layer](proactive-learning-layer.md) and [sleep-fanout-architecture](sleep-fanout-architecture.md) PRDs.
 - **[2026-07-18]** v0.19.0 quality improvements (improve-sleep-quality task). End-to-end sleep audit surfaced 9 gaps: Claude Code's lazy transcript flush broke capture (auto-salience yield Jun 1.85 → Jul 0.44 bm/session; 16/89 cycles started at Must-Sleep with auto-deep authority from bulk catch-up debt); late debt = automatic destructive authority; recidivism never escalated (208 orphan tags carried "for a future curator pass" for months); uncommitted brain output fragile. Fixes: AC1 pending-session provisional debt (estimate gap, never persisted); AC2 transcript-less salience floor (detect over `last_assistant_message` + 7-day floor score 1); AC3 layout fallback resolver (`transcript-locate.ts`); AC4 catch-up depth cap (≥50% catch-up debt caps auto-deep to standard, one-way); AC5 loud brain-dirty warning post-sleep; AC6 recidivism escalation (≥3 cycles → decision ask + priority bump; sleep-state archive authority; ≥150 orphan curator); AC7 Layer-2 eval run + dedup digest in cycle report; AC8 subagent harvest + session→task links; AC9 digest GC + GitHub write-spacing. Provisional debt lives in directive/display layer only (state.debt untouched, frozen eval regression guard preserved). AC5 default = loud warning only (no auto-commit — user decision). Agent prose contracts edited in canonical locations (`agents/`, `skill/references/`) then propagated via `npm run build`. Related prior: `fix-transcript-lazy-flush`, memory-engine-360 Wave 3.3, sleep-360-quality eval harness.
 - **[2026-06-29]** Mutual-exclusion lock for sleep consolidation. `sleep start` acquires an O_EXCL atomic stamp lock via `src/lib/file-lock.ts`; a concurrent caller loses the race and receives `SleepLockStatus.HELD`. The launcher returns HTTP 409 "Sleep already running" when a live lock is held. `inspectSleepLock(state, nowMs)` exposes lock status with a 30-minute stale TTL (auto-broken and re-raced after expiry). `sleep_started_at` in `SleepState` serves as both the epoch stamp (`markSleepStart()`) and the lock's on-state timestamp. Reuses the O_EXCL pattern from `SyncLedger.acquireSyncLock`, generalized into a shared primitive. Rationale: an advisory check-then-write on a JSON field cannot prevent two processes from both passing the check before either writes.
 - **[2026-06-29]** Debt scale rescaled ×2 and centralized. Levels are now Alert 0–7 · Drowsy 8–13 · Sleepy 14–19 · **Must Sleep 20+** (was 10+); directives fire at debt ≥8 (offer) / ≥14 (recommended) / ≥20 (required), and the rhythm reminder at **5** sessions-since-last-sleep (was 3). Per-session scoring is unchanged (max +3), so the consolidation cadence roughly doubles. All thresholds now live as named constants (`DEBT_DROWSY=8`, `DEBT_SLEEPY=14`, `DEBT_MUST_SLEEP=20`, `RHYTHM_SESSIONS=5`) in `sleep-consolidation.ts` — `sleepinessLevel`/`sleepinessRange`/`depthFromDebt` and every hook directive derive from them, so the scale can't drift across files again. Supersedes the 2026-03-01 tightening below.

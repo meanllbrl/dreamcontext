@@ -2,12 +2,13 @@
 id: feat_I4gU7kKs
 status: active
 created: '2026-05-09'
-updated: '2026-07-08'
+updated: '2026-07-20'
 released_version: v0.8.7
 tags:
   - 'topic:agents'
   - 'topic:sleep'
-related_tasks: []
+related_tasks:
+  - proactive-learning-layer
 type: feature
 name: sleep-fanout-architecture
 description: ''
@@ -21,11 +22,12 @@ The original `dreamcontext-rem-sleep` agent was monolithic — one sub-agent han
 
 Fan-out fixes this by splitting the work into focused specialists, each owning a non-overlapping file domain. The design launched with 5 specialists and was subsequently collapsed to 3 when overhead analysis showed that parallel agents help wall-clock time only to the slowest (sleep-tasks); collapsing always-fire non-overlapping domains reduces launch overhead without slowing the consolidation floor.
 
-**Current design — 3 specialists**:
+**Current design — 4 specialists** (3 always-fire + 1 conditional):
 
 - `sleep-tasks` → `_dream_context/state/*.md` (always)
 - `sleep-state` → `_dream_context/core/0.soul.md`, `1.user.md`, `2.memory.md`, `CHANGELOG.json`, `RELEASES.json` (always; merged from old sleep-core + sleep-changelog)
 - `sleep-product` → `_dream_context/knowledge/` + `_dream_context/core/features/*.md` (conditional; merged from old sleep-knowledge + sleep-features)
+- `sleep-learn` → `_dream_context/theses/*.md` (conditional; **v0.19.0** — proactive learning layer specialist; dispatched only when `learning.enabled` AND (open/draft theses have fresh evidence OR ≥2 sleeps cadence due); no-op cheap otherwise)
 
 Each specialist runs with its own narrow context, owns one domain, and cannot stomp on another. Nothing falls through.
 
@@ -40,8 +42,8 @@ Each specialist runs with its own narrow context, owns one domain, and cannot st
 
 ## Acceptance Criteria
 
-- [x] Three specialist agent files exist under `agents/`: `sleep-tasks.md`, `sleep-state.md`, `sleep-product.md`.
-- [x] Three specialist agent files are mirrored to `.codex/agents/prompts/` and `.codex/agents/*.toml`. `dreamcontext-rem-sleep.md`, `sleep-changelog.md`, `sleep-core.md`, `sleep-knowledge.md`, `sleep-features.md` were all removed.
+- [x] Four specialist agent files exist under `agents/`: `sleep-tasks.md`, `sleep-state.md`, `sleep-product.md`, `sleep-learn.md` (v0.19.0).
+- [x] Four specialist agent files are mirrored to `.codex/agents/prompts/` and `.codex/agents/*.toml`. `dreamcontext-rem-sleep.md`, `sleep-changelog.md`, `sleep-core.md`, `sleep-knowledge.md`, `sleep-features.md` were all removed.
 - [x] `skill/SKILL.md` "Sleep" section instructs the main agent to fan out — dispatching `sleep-tasks` and `sleep-state` always in parallel from a single message.
 - [x] `skill/SKILL.md` documents conditional dispatch rules for `sleep-product` (union of old sleep-knowledge + sleep-features signals) based on signals from `.sleep.json` and `git status`.
 - [x] Each specialist owns a non-overlapping file domain, enforced by design (specialists' own protocols name only their domain paths).
@@ -77,12 +79,14 @@ Each specialist runs with its own narrow context, owns one domain, and cannot st
 - `agents/sleep-tasks.md` — domain: `_dream_context/state/*.md`. Logs progress, bumps statuses (max `in_review`, never `completed`), reconciles task bodies to current truth, updates Mermaid Workflow nodes. **Always fire.**
 - `agents/sleep-state.md` — domain: `_dream_context/core/0.soul.md`, `1.user.md`, `2.memory.md`, `CHANGELOG.json`, `RELEASES.json`. Surgical core-file updates, anti-bloat sweep, changelog entries, planning-version readiness. Merged from old sleep-core + sleep-changelog. **Always fire.**
 - `agents/sleep-product.md` — domain: `_dream_context/knowledge/` + `_dream_context/core/features/*.md`. Creates/updates knowledge files, staleness sweep, updates and creates feature PRDs. Merged from old sleep-knowledge + sleep-features. **Conditional dispatch.**
-- `.codex/agents/prompts/` + `.codex/agents/*.toml` — mirror of the 3 specialist agent files for the codex harness.
+- `agents/sleep-learn.md` (v0.19.0) — domain: `_dream_context/theses/*.md`. Re-tests open theses against fresh evidence, derives confidence, flips validated/invalidated with prediction checks, appends understanding changelog. **Conditional dispatch** (only when `learning.enabled` AND (fresh evidence OR cadence due)). No-op cheap otherwise.
+- `.codex/agents/prompts/` + `.codex/agents/*.toml` — mirror of the 4 specialist agent files for the codex harness.
 
 **Dispatch signals** (built by the main agent from the brief, evaluated against `cat _dream_context/state/.sleep.json` and `git status --short`):
 
 - **Always fire**: `sleep-tasks`, `sleep-state`.
 - **Fire `sleep-product` if** (union of old knowledge + features signals): `last_assistant_message` mentions research/analysis/decision; a `knowledge_access` entry hasn't been touched in 30+ days; a research bookmark exists; a task slug matches an existing feature PRD filename; `git status` shows changes under `_dream_context/core/features/`; user hint mentions knowledge or a feature; a session advanced ≥1 acceptance criterion OR introduced a buildable concept with ≥2 acceptance criteria OR user named something "a feature" OR a task has `feature:` frontmatter pointing to a non-existent PRD. When unsure, over-fire — sleep-product no-ops cheaply.
+- **Fire `sleep-learn` if** (v0.19.0): `learning.enabled` in `.config.json` is true AND (open/draft theses exist AND fresh evidence arrived (insight synced, objective moved, task completed, connector digest) OR ≥2 sleeps since last thesis check OR user hint mentions theses/learning). No-op cheap when nothing is due.
 
 **Brief contents** (small text passed in each specialist's prompt):
 - Sleep epoch (from `sleep start`)
@@ -105,6 +109,9 @@ Each specialist runs with its own narrow context, owns one domain, and cannot st
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-07-20 - sleep-learn specialist added (v0.19.0, proactive learning layer)
+- Fourth specialist `sleep-learn.md` added to the roster (conditional dispatch, only when `learning.enabled`). Owns `_dream_context/theses/*.md` exclusively — re-tests open theses against fresh evidence (Lab insights, roadmap, task outcomes, changelog), derives confidence, flips validated/invalidated with prediction checks, appends understanding changelog. Dispatched when learning is enabled AND (fresh evidence OR ≥2 sleeps cadence due). No-op cheap when nothing is due. See [proactive-learning-layer](proactive-learning-layer.md) for the full feature.
 
 ### 2026-06-09 - Data-structures ownership transferred to sleep-product (issue #12)
 - `sleep-state` B0b no longer routes schema writes to `core/data-structures/*` (retired path).
