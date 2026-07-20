@@ -135,10 +135,13 @@ dreamcontext theses enable    # learning.enabled = true
 dreamcontext theses disable   # learning.enabled = false
 ```
 
+The switch is user-flippable from three places: the CLI (`theses enable|disable`), the dashboard **Settings → Memory → Learning layer** toggle, and the Enable CTA on the off-state Hypotheses page.
+
 Gates, hard, on this flag:
 - `sleep-learn` dispatch (sleep.md skips it entirely when off — no speculative dispatch).
 - The SessionStart snapshot's theses section (omitted, not just demoted, when off).
 - The dashboard nav item + `hypotheses` page (nav item hidden; the page itself renders a "the layer is off" state with an Enable CTA when reached directly).
+- **Agent behavior (awake capture): when `learning.enabled` is off, do NOT propose, extract, or capture theses** — no offer-and-confirm prompts, no "anything worth testing?" suggestions, no candidate staging from source material. If the user explicitly asks for a thesis while the layer is off, tell them the layer is disabled and offer `dreamcontext theses enable` first; never work around the switch.
 
 **Not** gated: the `theses` CLI verbs themselves stay callable when off (a dim `⚗ Learning layer is off — run 'dreamcontext theses enable' to turn it on.` hint prints, then the command proceeds) — this keeps CLI scripting and doctor checks simple and consistent rather than special-casing every verb. Recall indexing is likewise ungated (naturally a no-op when `theses/` is empty).
 

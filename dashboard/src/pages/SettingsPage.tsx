@@ -11,6 +11,7 @@ import { SETTINGS_ICONS } from '../components/settings/SettingsIcons';
 import { useAgentCapabilities } from '../hooks/useAgentCapabilities';
 import { useBrainSettings, useUpdateBrainSettings } from '../hooks/useBrainStatus';
 import { useSleep, useUpdateSleep, type RecallMode } from '../hooks/useSleep';
+import { useTheses, useSetLearningEnabled } from '../hooks/useTheses';
 import { GitHubLogin } from '../components/brain/GitHubLogin';
 import { OriginSetup } from '../components/brain/OriginSetup';
 import { SystemDependencies } from '../components/settings/SystemDependencies';
@@ -188,6 +189,12 @@ export function SettingsPage({ focus }: SettingsPageProps) {
   const { data: sleepState } = useSleep();
   const updateSleep = useUpdateSleep();
   const recallMode: RecallMode = sleepState?.recall_mode ?? 'haiku';
+
+  // Learning layer (Hypotheses) switch — applied immediately via the dedicated
+  // /api/learning endpoints, independent of the config save flow below.
+  const { data: thesesData } = useTheses();
+  const learningEnabled = thesesData?.enabled === true;
+  const setLearningEnabled = useSetLearningEnabled();
 
   // In-page section nav: only one settings group is shown at a time so a
   // specific setting is quick to find instead of buried in one long scroll.
@@ -774,6 +781,23 @@ export function SettingsPage({ focus }: SettingsPageProps) {
             <span>{t('settings.native_memory.label')}</span>
           </label>
           <p className="settings-field-hint">{t('settings.native_memory.hint')}</p>
+        </div>
+
+        <div className="settings-subsection">
+          <h3 className="settings-nav-label">{t('settings.learning.title')}</h3>
+          <div className="settings-checkboxes">
+            <label className="settings-checkbox-label">
+              <input
+                type="checkbox"
+                className="settings-checkbox"
+                checked={learningEnabled}
+                disabled={setLearningEnabled.isPending}
+                onChange={() => setLearningEnabled.mutate(!learningEnabled)}
+              />
+              <span>{t('settings.learning.label')}</span>
+            </label>
+            <p className="settings-field-hint">{t('settings.learning.hint')}</p>
+          </div>
         </div>
 
         <div className="settings-subsection">

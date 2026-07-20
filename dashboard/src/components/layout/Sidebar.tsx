@@ -46,7 +46,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { page: 'tasks', labelKey: 'nav.tasks' },
       { page: 'roadmap', labelKey: 'nav.roadmap', beta: true },
-      { page: 'hypotheses', labelKey: 'nav.hypotheses', beta: true },
+      { page: 'hypotheses', labelKey: 'nav.hypotheses', lab: true },
       { page: 'lab', labelKey: 'nav.labpage', lab: true },
       { page: 'council', labelKey: 'nav.council', lab: true },
     ],

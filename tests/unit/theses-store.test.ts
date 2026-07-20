@@ -312,6 +312,20 @@ describe('understanding changelog — parse/serialize round-trip + LIFO cap', ()
     expect(parseChangelog(serialized)).toEqual(entries);
   });
 
+  it('round-trips an entry whose text contains markdown H3 lines (no silent truncation)', () => {
+    const entries: ChangelogEntry[] = [
+      {
+        cycle: 7,
+        condensed: false,
+        when: '2026-07-20',
+        text: 'Investigated the regression.\n### Root cause\nRewrote the batching logic.\n### Fix applied\nAll green.',
+      },
+      { cycle: 6, condensed: false, when: '2026-07-19', text: 'Earlier note.' },
+    ];
+    const serialized = serializeChangelog(entries);
+    expect(parseChangelog(serialized)).toEqual(entries);
+  });
+
   it('an empty entries list serializes to nothing and parses back to nothing', () => {
     expect(serializeChangelog([])).toBe('');
     expect(parseChangelog('')).toEqual([]);

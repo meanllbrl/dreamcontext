@@ -143,8 +143,11 @@ export function parseChangelog(body: string): ChangelogEntry[] {
   const idx = body.indexOf(CHANGELOG_HEADING);
   if (idx === -1) return [];
   const afterHeading = body.slice(idx + CHANGELOG_HEADING.length);
+  // Split ONLY on the three known entry headers — a `### ` line inside an
+  // entry's own free text (agents paste markdown) must not open a new block,
+  // or the tail of that entry would be silently dropped as "unrecognised".
   const blocks = afterHeading
-    .split(/\n(?=### )/)
+    .split(/\n(?=### (?:CYCLE \d+|MANUAL|CONDENSED) · \d{4}-\d{2}-\d{2}[ \t]*(?:\n|$))/)
     .map((b) => b.trim())
     .filter(Boolean);
   const entries: ChangelogEntry[] = [];
