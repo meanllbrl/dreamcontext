@@ -3,57 +3,12 @@ id: knowledge_desktop_beta_tauri_multivault
 name: desktop-beta-tauri-multivault
 description: >-
   How dreamcontext-beta (the Tauri 2 macOS app) wraps the existing React+Node
-  dashboard for multi-vault / multi-window use: multi-window architecture, five
-  non-obvious gotchas (CLI bundling, Tauri ACL + shell:allow-open for external links,
-  relative URLs, build/sign, v0.8.6 DnD handler must be disabled via
-  drag_drop_enabled(false) for HTML5 DnD to work),
-  the in-app quiz-style project onboarding (scaffold endpoints, child-spawn
-  pattern, auto-CLI-install, hasContext skip-quiz for pre-initialized folders),
-  the Faz 1 GitHub Actions release pipeline (E2E verified v0.8.3+), the
-  homebrew-vs-nvm CLI resolution gotcha, the Sleepy notch quick-capture companion
-  (global hotkey; non-activating NSPanel via tauri-nspanel v2; hover-to-open via
-  Rust CoreGraphics cursor poll; coded SleepyMascot.tsx replacing animated WebP;
-  PanelEnabled opt-in default false; Learn/Ask/Sleep mode toggle; Sonnet enrichment
-  with Markdown rendering; interactive-login-shell claude PATH fix; tracked
-  enrichment status UI; dead-vault filtering; focus/blur UX), the in-app Agent
-  terminal — AgentSurface.tsx/agentSession.ts (xterm.js DOM renderer — the WebGL
-  addon was REMOVED 2026-07-01 for native macOS anti-aliasing — + node-pty WS bridge;
-  session persistence via display:none hoist; bypassPermissions opt-in; drag-to-split;
-  2026-07-01 readability polish: minimumContrastRatio 4.5→3 + softened foreground,
-  JetBrains Mono as the actually-loaded --font-mono primary with real 400/500/700
-  weights (the intended Sometype Mono was NEVER loaded), 14.5px/1.65 line-height,
-  encoding-safe beep-free copy/cut, always-visible selection, no inactive-pane
-  dimming, cursor-targeted any-file drag-drop; in-app prereq
-  installer: GET /api/agent/capabilities + POST /api/agent/install; dev-workflow: only
-  Rust/lib.rs changes need tauri build, dashboard changes just need npm run build +
-  app relaunch), find_global_cli -ilc fix SHIPPED v0.10.0 (note: global was a
-  separate installed copy until this session re-ran npm link; see dev footgun note),
-  the Launcher per-project
-  status indicator (green/yellow/red, upgrade-vs-update distinction), the
-  content-scoped drift nag, the ensure-dashboard app-installed auto-open suppression,
-  the interactive federation graph (react-force-graph-2d, read-only violet edges,
-  drag-to-connect, active-edge particles), brain-settings server persistence
-  (vault-scoped .brain-settings.json), the Federation Settings panel redesign
-  (plain-language explainers, direction labels), and the 2026-06-30 agent-surface
-  UX redesign: global FAB+overlay replacing SleepyPage, per-pane tab bars,
-  minimize-to-corner AgentDock (MUST be DOM sibling of .agent-surface — contain:layout
-  paint creates a new containing block for fixed children; .agent-surface > * forces
-  width:100%; sibling + z-index 25 is the fix), WKWebView DnD dragend-not-drop rule
-  (drop event NOT delivered to mid-drag-mounted targets even though dragover fires;
-  custom-MIME getData() empty on drop; carry session id in React ref on dragstart;
-  record hovered target on dragover; execute on source dragend), auto-resume transcript
-  check (--resume errors if JSONL absent; fall back to --session-id), ⌘K command
-  palette (BM25 + Haiku toggle; recallNav + useFocusTarget wired PageRouter→pages),
-  and the 2026-06-30 orphaned-dashboard-server root-cause fix (server-side
-  parent-death watchdog in src/server/lifecycle.ts — the Rust RunEvent::ExitRequested
-  handler alone missed force-quit/crash/dev-rebuild teardown paths, leaking ~25
-  launcher servers reparented to PID 1; fixed via a parent-liveness poll inside
-  the Node server itself, a PTY child-reaping registry, and Rust SIGTERM->SIGKILL
-  process-group hardening), and the 2026-07-09 desktop auto-relaunch on upgrade
-  (macOS self-heal): the app detects version drift at startup (dashboard reports
-  a newer version than the app's own VERSION → sets upgradeReady flag), displays
-  an upgrade banner, and auto-relaunches itself to heal the skew — the root cause
-  was stale-server self-exit + health handshake gaps (commit 51a2c66, v0.17.0).
+  dashboard for multi-vault / multi-window use. Covers: multi-window architecture
+  + Launcher, the Sleepy notch companion, the in-app Agent terminal, project
+  onboarding, the release CI + app install/update path, and the accumulated
+  platform gotchas (CLI resolution, DnD/WKWebView, orphaned-server watchdog,
+  upgrade self-heal). Details live in the body sections — read before touching
+  desktop/.
 type: knowledge
 tags:
   - architecture

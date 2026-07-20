@@ -137,6 +137,10 @@
   color: var(--color-text-tertiary);
   line-height: var(--line-height-normal);
   margin-bottom: var(--space-2);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
+  overflow: hidden;
 }
 
 .knowledge-card-tags {
