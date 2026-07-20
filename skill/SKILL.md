@@ -96,6 +96,7 @@ dreamcontext is **more than memory files**. Every capability below is real and s
 | **Council** | Structured multi-persona debates with a synthesized verdict | [integrations.md](references/integrations.md) |
 | **Marketing (`mk`)** | Meta marketing skill: cohorts, campaigns, competitor ingest | [integrations.md](references/integrations.md) |
 | **Versions / releases** | Planning versions and releases unify in RELEASES.json | [tasks-and-features.md](references/tasks-and-features.md) |
+| **Proactive learning (Hypotheses)** | Falsifiable **theses** validated/invalidated across sleep cycles: derived confidence from an evidence ledger, pre-registered predictions, understanding changelog, relations to insights/objectives/tasks, dashboard "Hypotheses" board. Opt-in — off until `dreamcontext theses enable` | [learning.md](references/learning.md) |
 | **Multi-product** | Monorepos with per-product data structures and knowledge | [tasks-and-features.md](references/tasks-and-features.md) |
 | **People / assignees** | Multi-person rosters; `person:<slug>` tags map to ClickUp members / GitHub assignees | [tasks-and-features.md](references/tasks-and-features.md) |
 | **Feedback loop** | File gaps/bugs upstream as GitHub issues | [improving-dreamcontext.md](references/improving-dreamcontext.md) |
@@ -107,7 +108,7 @@ dreamcontext is **more than memory files**. Every capability below is real and s
 
 ## Entity Router — create the RIGHT thing (past sessions got this wrong)
 
-dreamcontext has **eight distinct entity types**, each with ONE home and ONE creation path. When the user says "create/add/track X", route by what X **is** — never by the nearest command you happen to remember. The canonical mistake: user says *"create an insight"* and the agent runs `knowledge create`. An insight is not knowledge.
+dreamcontext has **nine distinct entity types**, each with ONE home and ONE creation path. When the user says "create/add/track X", route by what X **is** — never by the nearest command you happen to remember. The canonical mistake: user says *"create an insight"* and the agent runs `knowledge create`. An insight is not knowledge.
 
 Two routing rules that override surface reading:
 
@@ -118,6 +119,7 @@ Two routing rules that override surface reading:
 |---|---|---|---|
 | "create an insight", "track MRR / WAU / signups", "add a metric", "I want to see X every session", **or the problem-shape:** "a chart/number that refreshes itself from Notion/Stripe/an API", "I don't want to ask you to re-fetch it every time", "same data, different views/date ranges" | **Insight** — `lab/insights/<slug>.md` | A curated analytics **metric backed by an external source** (HTTP API or script) — a number/series that re-syncs. Has a manifest, cache, TTL, adapters, tweaks, dashboard renders with a refresh button, optional KR binding (`lab bind <insight> <objective>`) | `dreamcontext lab create <slug> --title "…"` (offer-and-confirm protocol → [tasks-and-features.md](references/tasks-and-features.md)) |
 | "add an objective / goal / OKR", "put it on the roadmap", "we want X by Q4" | **Objective** — `core/objectives/<slug>.md` | A PO-authored **outcome** with target date, dependency DAG, optional Key-Result metric | `dreamcontext roadmap objective create` (ASK first — objectives are PO-owned) |
+| "I have a thesis: X improves Y", "track this hypothesis", "anything worth testing in these notes?" | **Thesis** — `theses/<slug>.md` | A falsifiable claim validated/invalidated across cycles; confidence is DERIVED from an evidence ledger, never asserted | `dreamcontext theses create "<claim>"` (offer-and-confirm, recall-dedup first, default draft → [learning.md](references/learning.md)) |
 | "document this", "write up the research / decision / how X works" | **Knowledge** — `knowledge/…` | Durable **prose**: research, decisions, rationale, domain context. It doesn't refresh itself and it isn't work to do | `dreamcontext knowledge create <name>` |
 | "the X feature", what a shipped capability is | **Feature PRD** — `knowledge/features/` | Retrospective **product doc** (user stories + acceptance criteria) | Sleep agent ONLY — never during active work |
 | any work over ~5 minutes, "let's build / fix X" | **Task** — `state/<slug>.md` | A **working document** with lifecycle, changelog, criteria | `dreamcontext tasks create` (check for an existing one first) |
@@ -130,6 +132,7 @@ Two routing rules that override surface reading:
 - Is it an **outcome with a committed date**? → objective (`roadmap`).
 - Is it **prose you write once and maintain**? → knowledge.
 - Is it **work to do**? → task.
+- Is it a **falsifiable claim actively being proven/disproven**? → thesis (not knowledge).
 
 **Don't rebuild what the brain already has.** Before proposing to scaffold ANY new app, script, page, or external service for the user's need, check whether a dreamcontext subsystem already covers it: a self-refreshing metric/chart → **Lab insight** (the dashboard's Lab page IS the refreshable view — adapters, tweaks, renders included); OKR/goal tracking → **roadmap objectives**; "remind me when…" → **triggers**; kanban/board views → the **dashboard**. The second canonical mistake (a real past failure): the user described "a debt number that refreshes from Notion, with tweakable views" and the agent designed a brand-new Vercel dashboard — when `lab create` + a script adapter was the whole answer. Propose external builds only when no subsystem fits, and say why it doesn't.
 

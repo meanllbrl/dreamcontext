@@ -96,6 +96,31 @@ Curated metrics synced from HTTP APIs or local scripts into `_dream_context/lab/
 
 ---
 
+## Theses (Hypotheses)
+
+Opt-in proactive learning layer (`learning.enabled`, default OFF). Falsifiable claims validated/invalidated across sleep cycles in `_dream_context/theses/`; dashboard label is "Hypotheses", code/CLI say theses throughout. Commands stay callable when the layer is off (a dim hint prints first). See [learning.md](learning.md) for the full lifecycle, derived-confidence formula, and sleep-learn contract.
+
+| Command | Description |
+|---|---|
+| `theses list` | List theses (excludes retired by default). `--status draft\|open\|validated\|invalidated\|retired`, `--kind observational\|experimental`, `--objective <slug>`, `--blocked` (instrumentation-blocked only), `--all` (include retired), `--json`. |
+| `theses show <slug>` | Claim, status, derived confidence, predictions with standings, evidence ledger (oldest first), links, understanding changelog. `--json`. |
+| `theses create <claim...>` | Scaffold `theses/<slug>.md` (default status `draft`). `--slug <slug>` (default: derived from claim), `--kind observational\|experimental` (default observational), `--prediction <text>` (repeatable), `--insight <slug>` / `--objective <slug>` / `--task <slug>` (each repeatable, initial links), `--open` (promote straight to open — requires ≥1 `--prediction`), `--by user\|sleep-learn` (default user). |
+| `theses predict <slug> <text...>` | Add a pre-registered falsifiable prediction. |
+| `theses evidence <slug>` | Append a discrete evidence event (recomputes derived confidence). `--verdict supports\|contradicts\|no-signal` (required), `--source insight\|task\|objective\|changelog\|external` (required), `--ref <slug\|url>`, `--note <text>`, `--cycle <n>`, `--quantitative` (numeric series/metric-delta — feeds the workflow-rule promotion threshold), `--date <YYYY-MM-DD>` (default today). |
+| `theses status <slug> <status>` | Flip status. `draft→open` needs ≥1 prediction; a manual flip to `validated`/`invalidated` needs ≥1 `--cite <index>` (repeatable, 0-based evidence index) unless `--force` (the agent/data-driven path). `--prediction <id>=<standing>` (repeatable) records a prediction check in the same call. |
+| `theses link <slug>` | Link to exactly one of `--insight <slug>` / `--objective <slug>` / `--task <slug>` per call. |
+| `theses unlink <slug>` | Remove a link — same one-of-three flag shape as `link`. |
+| `theses changelog <slug> <text...>` | Append a per-cycle understanding-changelog entry (LIFO, newest 10 kept, older condensed). `--cycle <n>` (omit for a manual/awake entry), `--condensed` (rare — normally computed). |
+| `theses block <slug> <metric...>` | Mark blocked on instrumentation — needs a metric nobody tracks yet. |
+| `theses unblock <slug>` | Clear the instrumentation-blocked flag. |
+| `theses promote <slug>` | Record that a validated/invalidated thesis was promoted into a knowledge doc. `--knowledge <path>` (required, relative to context root), `--retire` (also retire, leaving a pointer). |
+| `theses retire <slug>` | Retire a thesis (promoted pointer, or kept as anti-knowledge). |
+| `theses restore <slug>` | Restore a retired thesis back to `draft`. |
+| `theses enable` / `theses disable` | The one-command switch — flips `learning.enabled` in `.config.json`. Gates sleep-learn dispatch, the snapshot section, and the dashboard nav/page; the CLI itself stays callable either way. |
+| `theses candidates [file]` | Stage meeting-note candidate claims for the dashboard review flow (`theses/.candidates.json`). `<file>` is JSON `{ note?, items: string[] }`. `--clear` clears staged candidates instead. |
+
+---
+
 ## Features
 
 | Command | Description |
