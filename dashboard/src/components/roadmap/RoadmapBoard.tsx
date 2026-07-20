@@ -9,6 +9,7 @@ import type { RoadmapFilterField } from './RoadmapToolbar';
 import { buildForecasts } from './roadmap-forecast';
 import { useRoadmapPrefs } from '../../hooks/useRoadmapPrefs';
 import { useRoadmapItems } from '../../hooks/useRoadmapItems';
+import type { Page } from '../layout/Sidebar';
 import '../tasks/Board.css';
 import './RoadmapBoard.css';
 
@@ -27,7 +28,15 @@ function passField(value: string, f: RoadmapFilterField): boolean {
   return true;
 }
 
-export function RoadmapBoard() {
+interface RoadmapBoardProps {
+  /** Cross-page navigation for the objective detail's Learning section (open a
+   *  thesis's detail modal, or the Hypotheses board pre-filtered to this
+   *  objective). Optional — ObjectiveDetailPanel no-ops the Learning section's
+   *  navigation callbacks when this isn't wired. */
+  onNavigate?: (page: Page, id?: string) => void;
+}
+
+export function RoadmapBoard({ onNavigate }: RoadmapBoardProps = {}) {
   const { prefs, setSearch, setSort, toggleSortDir, setLayout, toggleCardProp, cycleFilter, clearAllFilters } = useRoadmapPrefs();
   const { search, sortBy, sortDir, layout, cardProps, filters } = prefs;
   const [openMenu, setOpenMenu] = useState<RoadmapMenuKey>(null);
@@ -128,6 +137,8 @@ export function RoadmapBoard() {
           onOpen={setSelected}
           onClose={() => setSelected(null)}
           onToast={flash}
+          onOpenThesis={(slug) => onNavigate?.('hypotheses', slug)}
+          onOpenHypothesisBoard={(objectiveSlug) => onNavigate?.('hypotheses', `objective:${objectiveSlug}`)}
         />
       )}
 

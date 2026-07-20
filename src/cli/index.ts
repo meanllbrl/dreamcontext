@@ -8,6 +8,7 @@ import { registerKnowledgeCommand } from './commands/knowledge.js';
 import { registerTasksCommand } from './commands/tasks.js';
 import { registerRoadmapCommand } from './commands/roadmap.js';
 import { registerLabCommand } from './commands/lab.js';
+import { registerThesesCommand } from './commands/theses.js';
 import { registerInstallSkillCommand } from './commands/install-skill.js';
 import { registerInstallClaudeMdCommand, registerInstallInstructionsCommand } from './commands/install-claude-md.js';
 import { registerUpdateCommand } from './commands/update.js';
@@ -136,6 +137,7 @@ export function createProgram(): Command {
   registerTasksCommand(program);
   registerRoadmapCommand(program);
   registerLabCommand(program);
+  registerThesesCommand(program);
   registerInstallSkillCommand(program);
   registerInstallInstructionsCommand(program);
   registerInstallClaudeMdCommand(program);

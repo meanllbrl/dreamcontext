@@ -39,6 +39,17 @@ function TasksIcon() {
   );
 }
 
+/** Hypotheses — a flask: the falsifiable-claim validation loop. */
+function HypothesesIcon() {
+  return (
+    <Svg>
+      <path d="M9.5 3h5" />
+      <path d="M10.5 3v5.4L5.8 17a2 2 0 0 0 1.8 2.9h8.8a2 2 0 0 0 1.8-2.9L13.5 8.4V3" />
+      <path d="M7.8 14.5h8.4" />
+    </Svg>
+  );
+}
+
 /** Roadmap — a horizontal timeline of objective bars stacked left→right, with a
    dashed "today" marker: the PO board reduced to its silhouette. */
 function RoadmapIcon() {
@@ -179,6 +190,7 @@ function AnnouncementsIcon() {
 const ICONS: Partial<Record<Page, () => React.ReactElement>> = {
   tasks: TasksIcon,
   roadmap: RoadmapIcon,
+  hypotheses: HypothesesIcon,
   lab: LabIcon,
   council: CouncilIcon,
   core: CoreIcon,

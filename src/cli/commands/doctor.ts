@@ -11,10 +11,13 @@ import { auditFeatureLinks, reconcileFeatureLinks, type LinkAudit } from '../../
 import { buildRoadmapModel } from '../../lib/roadmap-model.js';
 import { listVaults, type Vault } from '../../lib/vaults.js';
 import { dirname } from 'node:path';
-import { listInsights, isSafeInsightSlug } from '../../lib/lab/store.js';
+import { listInsights, isSafeInsightSlug, getInsight } from '../../lib/lab/store.js';
 import { RENDERS } from '../../lib/lab/types.js';
 import { gitignoreCovers } from '../../lib/gitignore.js';
-import { readSetupConfig } from '../../lib/setup-config.js';
+import { readSetupConfig, isLearningEnabled } from '../../lib/setup-config.js';
+import { readFrontmatter } from '../../lib/frontmatter.js';
+import { listTheses, isSafeThesisSlug, thesesDir } from '../../lib/theses/store.js';
+import { THESIS_STATUSES, THESIS_KINDS, EVIDENCE_VERDICTS, EVIDENCE_SOURCES } from '../../lib/theses/types.js';
 
 /**
  * Remove content that represents documented mentions of placeholder syntax
@@ -402,6 +405,118 @@ export function checkLab(root: string): CheckResult[] {
   return results;
 }
 
+/**
+ * Validate the OPTIONAL theses (proactive learning layer) store. Silent when
+ * the layer is disabled AND `theses/` has never been created — a fresh
+ * project makes zero doctor noise for an opt-in layer nobody has touched yet.
+ * Once files exist on disk (even with the layer since toggled off), their
+ * referential integrity is still worth catching — data doesn't vanish when
+ * the switch flips. Warn-never-fatal, mirroring `checkLab`: a malformed or
+ * hand-edited thesis degrades to a warning, never breaks `doctor`.
+ */
+export function checkTheses(root: string): CheckResult[] {
+  const results: CheckResult[] = [];
+  const enabled = isLearningEnabled(readSetupConfig(dirname(root)));
+  if (!enabled && !existsSync(thesesDir(root))) return results;
+
+  const theses = listTheses(root);
+  if (theses.length === 0) return results;
+
+  for (const m of theses) {
+    if (!isSafeThesisSlug(m.slug)) {
+      results.push({ name: 'Theses', status: 'warn', message: `Thesis slug not kebab-case: ${m.slug}` });
+    }
+
+    // Raw frontmatter — the store's LENIENT reader silently coerces a bad
+    // status/kind to a safe default and drops an unrecognised evidence
+    // verdict, so a hand-edited/malformed value never surfaces via the
+    // parsed manifest. Read it directly here to catch those cases.
+    let raw: Record<string, unknown> = {};
+    try {
+      raw = readFrontmatter<Record<string, unknown>>(m.path).data;
+    } catch {
+      results.push({ name: 'Theses', status: 'warn', message: `Thesis ${m.slug}: frontmatter unreadable` });
+      continue;
+    }
+
+    const rawStatus = typeof raw.status === 'string' ? raw.status.trim() : '';
+    if (rawStatus && !(THESIS_STATUSES as readonly string[]).includes(rawStatus)) {
+      results.push({
+        name: 'Theses',
+        status: 'warn',
+        message: `Thesis ${m.slug}: status "${rawStatus}" is not one of ${THESIS_STATUSES.join('|')} — treated as draft`,
+      });
+    }
+    const rawKind = typeof raw.kind === 'string' ? raw.kind.trim() : '';
+    if (rawKind && !(THESIS_KINDS as readonly string[]).includes(rawKind)) {
+      results.push({
+        name: 'Theses',
+        status: 'warn',
+        message: `Thesis ${m.slug}: kind "${rawKind}" is not one of ${THESIS_KINDS.join('|')} — treated as observational`,
+      });
+    }
+
+    for (const slug of m.insights) {
+      if (!getInsight(root, slug)) {
+        results.push({ name: 'Theses', status: 'warn', message: `Thesis ${m.slug}: linked insight "${slug}" does not resolve` });
+      }
+    }
+    for (const slug of m.objectives) {
+      if (!getObjective(root, slug)) {
+        results.push({ name: 'Theses', status: 'warn', message: `Thesis ${m.slug}: linked objective "${slug}" does not resolve` });
+      }
+    }
+    for (const slug of m.related_tasks) {
+      if (!existsSync(join(root, 'state', `${slug}.md`))) {
+        results.push({ name: 'Theses', status: 'warn', message: `Thesis ${m.slug}: linked task "${slug}" does not resolve` });
+      }
+    }
+
+    const rawEvidence = Array.isArray(raw.evidence) ? raw.evidence : [];
+    for (const e of rawEvidence) {
+      if (!e || typeof e !== 'object' || Array.isArray(e)) continue;
+      const r = e as Record<string, unknown>;
+      const verdict = typeof r.verdict === 'string' ? r.verdict.trim() : '';
+      if (verdict && !(EVIDENCE_VERDICTS as readonly string[]).includes(verdict)) {
+        results.push({
+          name: 'Theses',
+          status: 'warn',
+          message: `Thesis ${m.slug}: evidence verdict "${verdict}" is not one of ${EVIDENCE_VERDICTS.join('|')} — entry dropped from the derived ledger`,
+        });
+      }
+      const source = typeof r.source === 'string' ? r.source.trim() : '';
+      if (source && !(EVIDENCE_SOURCES as readonly string[]).includes(source)) {
+        results.push({
+          name: 'Theses',
+          status: 'warn',
+          message: `Thesis ${m.slug}: evidence source "${source}" is not one of ${EVIDENCE_SOURCES.join('|')} — treated as external`,
+        });
+      }
+    }
+
+    const rawConfidence = typeof raw.confidence === 'number' ? raw.confidence : null;
+    if (rawConfidence !== null && Math.abs(rawConfidence - m.confidence) > 0.001) {
+      results.push({
+        name: 'Theses',
+        status: 'warn',
+        message: `Thesis ${m.slug}: persisted confidence ${rawConfidence.toFixed(3)} drifted from the evidence-derived ${m.confidence.toFixed(3)} — self-heals on the next store write (evidence was likely hand-edited)`,
+      });
+    }
+
+    if (m.status === 'open' && m.predictions.length === 0) {
+      results.push({ name: 'Theses', status: 'warn', message: `Thesis ${m.slug}: status is open with zero pre-registered predictions` });
+    }
+    if (m.blocked_on_instrumentation && !m.blocked_metric) {
+      results.push({ name: 'Theses', status: 'warn', message: `Thesis ${m.slug}: blocked_on_instrumentation is set but blocked_metric is empty` });
+    }
+  }
+
+  if (results.length === 0) {
+    results.push({ name: 'Theses', status: 'ok', message: `theses/ (${theses.length} thesis(es))` });
+  }
+  return results;
+}
+
 
 /**
  * Task↔feature link integrity: every `task.related_feature` must resolve to a
@@ -551,6 +666,7 @@ export function registerDoctorCommand(program: Command): void {
         ...checkTaskFeatureLinks(root),
         ...checkSharedTaskContainer(root),
         ...checkLab(root),
+        ...checkTheses(root),
 
         // Taxonomy vocabulary (non-fatal: absent means DEFAULT_VOCABULARY used)
         ...(!existsSync(join(root, 'core', 'taxonomy.json'))

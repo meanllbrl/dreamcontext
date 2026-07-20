@@ -19,7 +19,7 @@ import { loadProjectVocabulary, aliasGroups } from '../../lib/taxonomy.js';
 import { readFrontmatter, writeFrontmatter, updateFrontmatterFields } from '../../lib/frontmatter.js';
 import { today } from '../../lib/id.js';
 
-const TYPE_LABELS: Record<CorpusType, string> = {
+export const TYPE_LABELS: Record<CorpusType, string> = {
   knowledge: 'knowledge',
   feature: 'feature',
   task: 'task',
@@ -27,6 +27,7 @@ const TYPE_LABELS: Record<CorpusType, string> = {
   changelog: 'changelog',
   objective: 'objective',
   insight: 'insight',
+  thesis: 'thesis',
   skill: 'skill', // never produced by buildCorpus; present only to satisfy the Record type
 };
 
@@ -35,9 +36,9 @@ function collectVault(value: string, previous: string[]): string[] {
   return [...previous, value];
 }
 
-function parseTypes(value: string | undefined): CorpusType[] | undefined {
+export function parseTypes(value: string | undefined): CorpusType[] | undefined {
   if (!value) return undefined;
-  const valid: CorpusType[] = ['knowledge', 'feature', 'task', 'memory', 'changelog', 'objective', 'insight'];
+  const valid: CorpusType[] = ['knowledge', 'feature', 'task', 'memory', 'changelog', 'objective', 'insight', 'thesis'];
   const parts = value
     .split(',')
     .map((s) => s.trim().toLowerCase())
@@ -468,11 +469,12 @@ export function registerMemoryCommand(program: Command): void {
         changelog: [],
         objective: [],
         insight: [],
+        thesis: [],
         skill: [], // never produced by buildCorpus; present only to satisfy the Record type
       };
       for (const doc of corpus) byType[doc.type].push(doc);
       console.log(header(`Memory Corpus (${corpus.length} docs)`));
-      for (const t of ['knowledge', 'feature', 'task', 'memory', 'changelog', 'objective', 'insight'] as CorpusType[]) {
+      for (const t of ['knowledge', 'feature', 'task', 'memory', 'changelog', 'objective', 'insight', 'thesis'] as CorpusType[]) {
         if (byType[t].length === 0) continue;
         console.log(`\n  ${chalk.cyan(TYPE_LABELS[t])} (${byType[t].length}):`);
         for (const doc of byType[t]) {
@@ -497,6 +499,7 @@ export function registerMemoryCommand(program: Command): void {
         changelog: 0,
         objective: 0,
         insight: 0,
+        thesis: 0,
         skill: 0, // never produced by buildCorpus; present only to satisfy the Record type
       };
       let totalTokens = 0;
@@ -512,6 +515,7 @@ export function registerMemoryCommand(program: Command): void {
       console.log(`  ${chalk.magentaBright('changelog')}  ${counts.changelog} entries`);
       console.log(`  ${chalk.magentaBright('objective')}  ${counts.objective} objectives`);
       console.log(`  ${chalk.magentaBright('insight')}    ${counts.insight} insights`);
+      console.log(`  ${chalk.magentaBright('thesis')}     ${counts.thesis} theses`);
       console.log('');
       console.log(`  ${chalk.dim(`${corpus.length} docs · ${totalTokens.toLocaleString()} tokens indexed (in-memory, ephemeral)`)}`);
     });

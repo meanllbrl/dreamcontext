@@ -15,6 +15,7 @@ import { ProjectSwitcher } from './components/search/ProjectSwitcher';
 import { AgentSurface } from './components/sleepy/AgentSurface';
 import { TasksPage } from './pages/TasksPage';
 import { RoadmapPage } from './pages/RoadmapPage';
+import { HypothesesPage } from './pages/HypothesesPage';
 import { LabPage } from './pages/LabPage';
 import { SleepPage } from './pages/SleepPage';
 import { CorePage } from './pages/CorePage';
@@ -95,7 +96,9 @@ function PageRouter({ nav }: { nav: ShellNavigation }) {
     case 'tasks':
       return <TasksPage focus={focus} />;
     case 'roadmap':
-      return <RoadmapPage />;
+      return <RoadmapPage onNavigate={(page, id) => nav.navigate(page, id ?? null)} />;
+    case 'hypotheses':
+      return <HypothesesPage focus={focus} />;
     case 'lab':
       return <LabPage />;
     case 'sleep':

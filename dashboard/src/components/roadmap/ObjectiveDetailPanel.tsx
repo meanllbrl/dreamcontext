@@ -8,6 +8,7 @@ import { useLabInsights, useUpdateBinding } from '../../hooks/useLab';
 import { DateRangePicker } from './DateRangePicker';
 import { DependencyPicker } from './DependencyPicker';
 import { InsightPicker } from './InsightPicker';
+import { LearningSection } from '../theses/LearningSection';
 import './ObjectiveDetailPanel.css';
 
 /**
@@ -27,13 +28,22 @@ interface Props {
   onOpen: (slug: string) => void;
   onClose: () => void;
   onToast: (msg: string) => void;
+  /** Open a thesis's detail modal (Hypotheses board). Optional — the Learning
+   *  section no-ops when the host page hasn't wired the board's navigation yet. */
+  onOpenThesis?: (slug: string) => void;
+  /** Navigate to the Hypotheses board pre-filtered to this objective. Optional. */
+  onOpenHypothesisBoard?: (objectiveSlug: string) => void;
 }
 
 const STATUS_KEYS = ['not_started', 'active', 'review', 'done'] as const;
 const IMPACT_LABEL: Record<number, string> = { 1: 'Minimal', 2: 'Low', 3: 'Medium', 4: 'High', 5: 'Massive' };
 const EFFORT_PRESETS = [1, 2, 4, 8, 12];
 
-export function ObjectiveDetailPanel({ item, forecast, itemsBySlug, forecasts, onOpen, onClose, onToast }: Props) {
+export function ObjectiveDetailPanel({
+  item, forecast, itemsBySlug, forecasts, onOpen, onClose, onToast,
+  onOpenThesis = () => {},
+  onOpenHypothesisBoard = () => {},
+}: Props) {
   const update = useUpdateObjective();
   const addDep = useAddDependency();
   const removeDep = useRemoveDependency();
@@ -393,6 +403,12 @@ export function ObjectiveDetailPanel({ item, forecast, itemsBySlug, forecasts, o
               })}
             </div>
           )}
+
+          <LearningSection
+            objectiveSlug={item.slug}
+            onOpenThesis={onOpenThesis}
+            onOpenBoard={onOpenHypothesisBoard}
+          />
         </div>
 
         <div className="odp-foot">

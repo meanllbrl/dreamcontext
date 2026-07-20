@@ -1,0 +1,77 @@
+/*
+ * Thesis (Hypotheses) subsystem — semantic colors pinned by the PO's captured
+ * design (Hypothesis.dc.html): status colors, kind accent, blocked/review
+ * amber, and the CTA gradient. Scoped as thesis-* custom properties (distinct
+ * from the shared --color-* DS tokens) since these exact hexes are the
+ * design's fixed semantic palette, not derived from the theme ramp. Values are
+ * intentionally identical in light/dark (the design specifies one set of
+ * accents for both) — the [data-theme='dark'] block is kept as the seam to
+ * adjust contrast later without touching consumers.
+ */
+
+:root {
+  --thesis-draft: #7c8396;
+  --thesis-open: #4aa8ff;
+  --thesis-validated: #3fb950;
+  --thesis-invalidated: #f0616d;
+  --thesis-retired: #6b7186;
+  --thesis-amber: #e3b341;
+  --thesis-violet: #9d8cff;
+  --thesis-cta-gradient: linear-gradient(150deg, #8b7bff, #6f5ce0);
+}
+
+[data-theme='dark'] {
+  --thesis-draft: #7c8396;
+  --thesis-open: #4aa8ff;
+  --thesis-validated: #3fb950;
+  --thesis-invalidated: #f0616d;
+  --thesis-retired: #6b7186;
+  --thesis-amber: #e3b341;
+  --thesis-violet: #9d8cff;
+  --thesis-cta-gradient: linear-gradient(150deg, #8b7bff, #6f5ce0);
+}
+
+/* Status → color lookup as classes, so consumers can do
+   className={`thesis-status--${status}`} instead of inline style branching. */
+.thesis-status--draft { color: var(--thesis-draft); }
+.thesis-status--open { color: var(--thesis-open); }
+.thesis-status--validated { color: var(--thesis-validated); }
+.thesis-status--invalidated { color: var(--thesis-invalidated); }
+.thesis-status--retired { color: var(--thesis-retired); }
+
+.thesis-cta {
+  background: var(--thesis-cta-gradient);
+  color: #fff;
+  border: none;
+}
+
+/* ─── ConfidenceBar ─────────────────────────────────────────────────────── */
+
+.thesis-confidence { display: flex; align-items: center; gap: 8px; }
+.thesis-confidence--mini { gap: 6px; }
+
+.thesis-confidence-track {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 36px;
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--color-bg-tertiary);
+  display: flex;
+}
+.thesis-confidence--mini .thesis-confidence-track { height: 4px; min-width: 28px; }
+
+.thesis-confidence-fill { height: 100%; }
+.thesis-confidence-fill--support { background: var(--thesis-validated); }
+.thesis-confidence-fill--contradict { background: var(--thesis-invalidated); }
+
+.thesis-confidence-label {
+  flex: 0 0 auto;
+  min-width: 32px;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.thesis-confidence--mini .thesis-confidence-label { min-width: 28px; font-size: 10px; }

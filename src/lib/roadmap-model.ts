@@ -9,6 +9,8 @@ import {
   type ObjectiveMetric,
   type ObjectiveStatus,
 } from './objectives-store.js';
+import { listTheses } from './theses/store.js';
+import type { ThesisStatus, ThesisKind } from './theses/types.js';
 
 /**
  * Roadmap model builder — the computed "assist layer" under the PO-authored
@@ -86,6 +88,17 @@ export interface RoadmapObjective {
   slip_upstream: string[];
   /** Member tasks (every task whose `objectives` list contains this slug). */
   tasks: RoadmapTaskRef[];
+  /** Theses whose `objectives` list contains this slug (computed reverse edges). */
+  related_theses: ThesisRef[];
+}
+
+/** A thesis linked to an objective — the "what did we try, what did we learn" surface. */
+export interface ThesisRef {
+  slug: string;
+  claim: string;
+  status: ThesisStatus;
+  confidence: number;
+  kind: ThesisKind;
 }
 
 export interface RoadmapModel {
@@ -310,6 +323,24 @@ export function buildRoadmapModel(contextRoot: string): RoadmapModel {
     }
   }
 
+  // Theses linked to objectives (many-to-many, `objectives:` on the thesis) —
+  // computed reverse edges, same one-way-storage rule as dependents/tasks
+  // above (the thesis owns `objectives:`; this side is never persisted).
+  // `listTheses` tolerates a missing `theses/` dir (proactive learning layer
+  // disabled/unused) by returning [], so this never throws either way.
+  const thesesOf = new Map<string, ThesisRef[]>();
+  for (const thesis of listTheses(contextRoot)) {
+    for (const slug of thesis.objectives) {
+      if (!knownSlugs.has(slug)) {
+        warnings.push(`Thesis "${thesis.slug}" references unknown objective "${slug}".`);
+        continue;
+      }
+      const arr = thesesOf.get(slug) ?? [];
+      arr.push({ slug: thesis.slug, claim: thesis.claim, status: thesis.status, confidence: thesis.confidence, kind: thesis.kind });
+      thesesOf.set(slug, arr);
+    }
+  }
+
   // Forecast cascade — topo order guarantees each dependency is resolved first.
   const forecastEndOf = new Map<string, string | null>();
   const out: RoadmapObjective[] = [];
@@ -416,6 +447,7 @@ export function buildRoadmapModel(contextRoot: string): RoadmapModel {
       slip_days: slipDays,
       slip_upstream: slipUpstream,
       tasks,
+      related_theses: (thesesOf.get(o.slug) ?? []).sort((a, b) => a.slug.localeCompare(b.slug)),
     });
   }
 

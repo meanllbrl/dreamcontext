@@ -69,6 +69,22 @@ import {
   handleLabCredentialsGet,
   handleLabCredentialsSet,
 } from './routes/lab.js';
+import {
+  handleThesesList,
+  handleThesesCreate,
+  handleThesesShow,
+  handleThesesUpdate,
+  handleThesesDelete,
+  handleThesesAddPrediction,
+  handleThesesAddEvidence,
+  handleThesesSetStatus,
+  handleThesesLink,
+  handleThesesUnlink,
+  handleThesesChangelog,
+  handleThesesPromote,
+  handleLearningEnable,
+  handleLearningDisable,
+} from './routes/theses.js';
 import { handleBoardGet, handleBoardSharedPut, handleBoardLocalPut } from './routes/board.js';
 import {
   handleSleepyChatSend,
@@ -369,6 +385,28 @@ function buildRouter(): Router {
   router.get('/api/lab/:slug', handleLabShow);
   router.patch('/api/lab/:slug/tweaks', handleLabTweaks);
   router.patch('/api/lab/:slug/binding', handleLabBinding);
+
+  // Theses (proactive learning layer, opt-in via learning.enabled). Read
+  // routes (list/show) work regardless of the flag — they surface `enabled`
+  // so the dashboard renders the off-state. Sub-resource paths under
+  // `/:slug/...` are distinct segment-count SHAPES from the bare `/:slug`
+  // routes (Router matches full-pattern regex, not prefix), so registration
+  // order between the two groups is not load-bearing — still listed
+  // most-specific-first for readability, mirroring the lab/objectives discipline.
+  router.get('/api/theses', handleThesesList);
+  router.post('/api/theses', handleThesesCreate);
+  router.post('/api/theses/:slug/predictions', handleThesesAddPrediction);
+  router.post('/api/theses/:slug/evidence', handleThesesAddEvidence);
+  router.post('/api/theses/:slug/status', handleThesesSetStatus);
+  router.post('/api/theses/:slug/links', handleThesesLink);
+  router.delete('/api/theses/:slug/links/:kind/:target', handleThesesUnlink);
+  router.post('/api/theses/:slug/changelog', handleThesesChangelog);
+  router.post('/api/theses/:slug/promote', handleThesesPromote);
+  router.get('/api/theses/:slug', handleThesesShow);
+  router.patch('/api/theses/:slug', handleThesesUpdate);
+  router.delete('/api/theses/:slug', handleThesesDelete);
+  router.post('/api/learning/enable', handleLearningEnable);
+  router.post('/api/learning/disable', handleLearningDisable);
 
   // Tasks-board preferences (saved views) — split persistence:
   //   shared → overrides/board.json (version-controlled, "save for all")

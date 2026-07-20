@@ -1,0 +1,136 @@
+/*
+ * Objective-detail "Learning" panel — embedded in ObjectiveDetailPanel between
+ * Member tasks and the footer. Mirrors the odp-section-label / odp-* rhythm of
+ * its host so it reads as one panel, not a bolted-on block.
+ */
+
+.ls {
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.ls-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ls-flask {
+  color: var(--thesis-violet);
+  font-size: 15px;
+  line-height: 1;
+}
+
+.ls-title {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+}
+
+.ls-intro {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+  margin-bottom: var(--space-1);
+}
+
+.ls-section-label {
+  margin-top: var(--space-2);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.ls-empty {
+  padding: var(--space-3) 0;
+  font-size: 12.5px;
+  color: var(--color-text-tertiary);
+}
+
+.ls-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ls-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 11px;
+  border-radius: 9px;
+  border-left: 3px solid var(--color-border);
+  background: var(--color-bg-tertiary);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+.ls-card:hover { background: var(--color-bg-secondary); }
+
+.ls-card--draft { border-left-color: var(--thesis-draft); }
+.ls-card--open { border-left-color: var(--thesis-open); }
+.ls-card--validated { border-left-color: var(--thesis-validated); }
+.ls-card--invalidated { border-left-color: var(--thesis-invalidated); }
+.ls-card--retired { border-left-color: var(--thesis-retired); }
+
+.ls-card-claim {
+  font-size: 13px;
+  color: var(--color-text);
+  line-height: 1.4;
+}
+
+.ls-card-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.ls-card-status {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.ls-insight-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ls-insight-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: var(--color-bg-tertiary);
+  font-size: 11.5px;
+  color: var(--color-text-secondary);
+}
+.ls-insight-chip-icon { color: var(--color-accent); font-size: 10px; }
+.ls-insight-chip-label { color: var(--color-text); }
+.ls-insight-chip-value { font-family: var(--font-mono); color: var(--color-text-tertiary); }
+
+.ls-footer-btn {
+  margin-top: var(--space-2);
+  width: 100%;
+  padding: 9px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid color-mix(in srgb, var(--thesis-violet) 30%, transparent);
+  background: color-mix(in srgb, var(--thesis-violet) 10%, transparent);
+  color: var(--thesis-violet);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  text-align: center;
+  transition: background var(--transition-fast);
+}
+.ls-footer-btn:hover { background: color-mix(in srgb, var(--thesis-violet) 18%, transparent); }

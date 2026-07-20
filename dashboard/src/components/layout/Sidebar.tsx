@@ -5,6 +5,7 @@ import { NavIcon } from './NavIcons';
 import { GitHubMark } from '../brain/GitHubLogin';
 import { useAuthStatus, useBrainStatus } from '../../hooks/useBrainStatus';
 import { useAnnouncementInbox } from '../../hooks/useAnnouncements';
+import { useTheses } from '../../hooks/useTheses';
 import { BrainSyncControl } from '../brain/BrainSyncControl';
 import './Sidebar.css';
 
@@ -18,7 +19,7 @@ function readVaultLabel(): string {
   }
 }
 
-export type Page = 'tasks' | 'roadmap' | 'lab' | 'core' | 'knowledge' | 'sleep' | 'brain' | 'council' | 'settings' | 'packs' | 'about' | 'taxonomy' | 'announcements';
+export type Page = 'tasks' | 'roadmap' | 'hypotheses' | 'lab' | 'core' | 'knowledge' | 'sleep' | 'brain' | 'council' | 'settings' | 'packs' | 'about' | 'taxonomy' | 'announcements';
 
 interface SidebarProps {
   activePage: Page;
@@ -45,6 +46,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { page: 'tasks', labelKey: 'nav.tasks' },
       { page: 'roadmap', labelKey: 'nav.roadmap', beta: true },
+      { page: 'hypotheses', labelKey: 'nav.hypotheses', beta: true },
       { page: 'lab', labelKey: 'nav.labpage', lab: true },
       { page: 'council', labelKey: 'nav.council', lab: true },
     ],
@@ -109,6 +111,11 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
   const { data: authStatus } = useAuthStatus();
   const { data: brainStatus } = useBrainStatus();
   const { unread } = useAnnouncementInbox();
+  // The Hypotheses nav item is hidden entirely while the learning layer is
+  // off — `enabled` is undefined until the query resolves, so it's kept
+  // hidden until we positively know it's on (no flash-then-hide).
+  const { data: thesesData } = useTheses();
+  const learningEnabled = thesesData?.enabled === true;
   const vaultLabel = readVaultLabel();
 
   // 3-state cloud-sync CTA: not signed in → invite sign-in; signed in but no
@@ -163,7 +170,7 @@ export function Sidebar({ activePage, onNavigate, collapsed }: SidebarProps) {
         <div key={group.labelKey} className="sidebar-group">
           <span className="sidebar-group-label">{t(group.labelKey)}</span>
           <ul className="sidebar-nav">
-            {group.items.map(({ page, labelKey, lab, beta }) => {
+            {group.items.filter(({ page }) => page !== 'hypotheses' || learningEnabled).map(({ page, labelKey, lab, beta }) => {
               staggerIndex += 1;
               const label = t(labelKey);
               const tag = lab ? t('nav.lab') : beta ? t('nav.beta') : null;

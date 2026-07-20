@@ -70,6 +70,18 @@ export interface SetupConfig {
    * `projectScopeId`. Slug-safe; provenance slugifies it either way.
    */
   projectId?: string;
+  /**
+   * Proactive learning layer (thesis lifecycle + sleep-learn specialist).
+   * Gates sleep dispatch, CLI/snapshot noise, and the dashboard Hypotheses
+   * nav item + page. Default OFF: absent ⇒ disabled (opt-in per project,
+   * enabled via `dreamcontext theses enable`).
+   */
+  learning?: LearningConfig;
+}
+
+/** Proactive learning layer switch (see `SetupConfig.learning`). */
+export interface LearningConfig {
+  enabled: boolean;
 }
 
 /** A governed CODE repo, SHARED across the team — name (per-project label) + canonical GitHub URL. NEVER a path. */
@@ -212,6 +224,13 @@ function sanitizeBrainRepo(raw: unknown): BrainRepoConfig | undefined {
   return out;
 }
 
+function sanitizeLearning(raw: unknown): LearningConfig | undefined {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const o = raw as Record<string, unknown>;
+  if (typeof o.enabled !== 'boolean') return undefined;
+  return { enabled: o.enabled };
+}
+
 /**
  * Keep ONLY `{name, gitRemoteUrl}` (both non-empty strings) per entry — a
  * hand-injected `path` (or any other stray key) is DROPPED, so a local path can
@@ -291,6 +310,7 @@ export function readSetupConfig(projectRoot: string): SetupConfig | null {
       // Absent / blank / non-string ⇒ undefined (identity is derived downstream).
       projectId:
         typeof parsed.projectId === 'string' && parsed.projectId.trim() ? parsed.projectId.trim() : undefined,
+      learning: sanitizeLearning(parsed.learning),
     };
   } catch {
     return null;
@@ -334,9 +354,19 @@ export function updateSetupConfig(
     brainRepo: patch.brainRepo ?? existing.brainRepo,
     linkedRepos: patch.linkedRepos ?? existing.linkedRepos,
     projectId: patch.projectId ?? existing.projectId,
+    learning: patch.learning ?? existing.learning,
   };
   writeSetupConfig(projectRoot, next);
   return next;
+}
+
+/**
+ * Proactive learning layer gate. Default OFF: absent config, absent
+ * `learning`, or `enabled !== true` all resolve to disabled — the layer is
+ * opt-in per project (see `SetupConfig.learning`).
+ */
+export function isLearningEnabled(config: SetupConfig | null | undefined): boolean {
+  return config?.learning?.enabled === true;
 }
 
 // ─── Brain-local state (machine-local, gitignored — never tracked) ──────────

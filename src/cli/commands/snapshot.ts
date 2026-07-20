@@ -13,7 +13,7 @@ import { countPendingSessions } from '../../lib/sleep-consolidation.js';
 import { buildKnowledgeIndex } from '../../lib/knowledge-index.js';
 import { buildCoreIndex } from '../../lib/core-index.js';
 import { buildMarketingSnapshot } from '../../lib/marketing/snapshot.js';
-import { readSetupConfig, isMultiPerson } from '../../lib/setup-config.js';
+import { readSetupConfig, isMultiPerson, isLearningEnabled, type SetupConfig } from '../../lib/setup-config.js';
 import { loadTaskOverride, renderOverrideBriefing } from '../../lib/overrides.js';
 import { isSkillInstalled } from '../../lib/catalog.js';
 import { readVersionCache, isCacheFresh, buildNudge, readAutoUpgradeMarker, shouldSuppressCliNudge } from '../../lib/version-check.js';
@@ -25,6 +25,8 @@ import { featuresDir, featureSlug } from '../../lib/features-path.js';
 import { pendingInboxCount } from '../../lib/federation-inbox.js';
 import { buildRoadmapModel, type RoadmapObjective } from '../../lib/roadmap-model.js';
 import { listInsights, readCache } from '../../lib/lab/store.js';
+import { listTheses } from '../../lib/theses/store.js';
+import type { ThesisManifest } from '../../lib/theses/types.js';
 import { readPeerSummaryCache } from '../../lib/federation-peer-summary.js';
 import { resolveLinkedRepos } from '../../lib/linked-repos.js';
 import {
@@ -649,6 +651,59 @@ function renderLabSection(root: string): { full: string; demotions: string[] } |
   }
 }
 
+/** One open thesis's snapshot line: claim + derived confidence %. */
+function thesisSnapshotLine(t: ThesisManifest): string {
+  const pct = Math.round(t.confidence * 100);
+  return `- ${t.claim} (${pct}% confidence)`;
+}
+
+/**
+ * Proactive learning layer (theses) section: open count, theses flipped
+ * (validated/invalidated) in the last 7 days, awaiting-instrumentation count,
+ * and the top 3 open claims ranked by distance from undecided (0.5). Hard-
+ * gated on `learning.enabled` — an opt-in layer stays completely silent in
+ * the snapshot while off, regardless of what's on disk. Cache-only reads;
+ * must NEVER crash the snapshot on a malformed manifest — every failure
+ * degrades to `null` (section omitted), mirroring `renderLabSection`.
+ */
+function buildThesesSection(root: string, config: SetupConfig | null): BudgetSection | null {
+  if (!isLearningEnabled(config)) return null;
+  try {
+    const theses = listTheses(root);
+    if (theses.length === 0) return null;
+
+    const open = theses.filter((t) => t.status === 'open');
+    const cutoff = Date.now() - 7 * 86_400_000;
+    const recentFlips = theses.filter((t) => {
+      if (t.status !== 'validated' && t.status !== 'invalidated') return false;
+      const updated = Date.parse(t.updated_at);
+      return !Number.isNaN(updated) && updated >= cutoff;
+    });
+    const blocked = theses.filter((t) => t.blocked_on_instrumentation);
+    const topOpen = [...open]
+      .sort((a, b) => Math.abs(b.confidence - 0.5) - Math.abs(a.confidence - 0.5))
+      .slice(0, 3);
+
+    const headerLines = ['## Learning (Hypotheses)\n', ''];
+    const summaryLines = [
+      `- ${open.length} open`,
+      `- ${recentFlips.length} flipped this week`,
+      `- ${blocked.length} awaiting instrumentation`,
+    ];
+    const topLines = topOpen.length > 0
+      ? ['', 'Top open:', ...topOpen.map(thesisSnapshotLine)]
+      : [];
+    const footer = ['', 'Board: `dreamcontext theses list` · dashboard: Hypotheses.', ''];
+
+    const fullText = [...headerLines, ...summaryLines, ...topLines, ...footer].join('\n');
+    const level1 = `⚗ Learning: ${open.length} open · ${recentFlips.length} flipped · ${blocked.length} blocked`;
+
+    return { id: 'theses', text: fullText, demotions: [level1] };
+  } catch {
+    return null; // the snapshot must never crash on a malformed manifest
+  }
+}
+
 /**
  * Output a plain-text context snapshot to stdout.
  * Designed for SessionStart hook consumption — no chalk, no interactivity.
@@ -1011,6 +1066,13 @@ export function generateSnapshot(rootOverride?: string): string {
       text: labSection.full,
       demotions: labSection.demotions,
     });
+  }
+
+  // 7.8 Learning (proactive learning layer — theses) — hard-gated on
+  // `learning.enabled`; a disabled project sees zero snapshot noise.
+  const thesesSection = buildThesesSection(root, readSetupConfig(dirname(root)));
+  if (thesesSection) {
+    sections.push(thesesSection);
   }
 
   // 8. Features summary (with Why, related tasks, and latest changelog).

@@ -15,7 +15,7 @@ import {
 
 // 'skill' docs are produced ONLY by loadSkillDocs (called directly by the hook);
 // intentionally excluded from buildCorpus defaults to avoid polluting haikuRecall.
-export type CorpusType = 'knowledge' | 'feature' | 'task' | 'memory' | 'changelog' | 'skill' | 'objective' | 'insight';
+export type CorpusType = 'knowledge' | 'feature' | 'task' | 'memory' | 'changelog' | 'skill' | 'objective' | 'insight' | 'thesis';
 
 export interface CorpusDoc {
   type: CorpusType;
@@ -334,7 +334,9 @@ function loadMarkdownDocs(
       if (isDarkDiagramSibling(file, boardDirs, isIndexableKnowledge)) continue;
 
       const slug = basename(file, '.md');
-      const title = String(data.name ?? data.title ?? slug);
+      // `claim` is the thesis identity field (theses/<slug>.md have no name/title) —
+      // additive fallback so a thesis indexes under its claim text.
+      const title = String(data.name ?? data.title ?? data.claim ?? slug);
       const description = String(data.description ?? data.summary ?? '');
       const tags = Array.isArray(data.tags) ? data.tags.map(String) : [];
       // For Excalidraw boards: extract only Text Elements text for the BM25
@@ -586,7 +588,7 @@ export function buildCorpus(
   contextRoot: string,
   opts: BuildCorpusOptions = {},
 ): CorpusDoc[] {
-  const types = new Set(opts.types ?? ['knowledge', 'feature', 'task', 'memory', 'changelog', 'objective', 'insight']);
+  const types = new Set(opts.types ?? ['knowledge', 'feature', 'task', 'memory', 'changelog', 'objective', 'insight', 'thesis']);
   const docs: CorpusDoc[] = [];
   if (types.has('knowledge')) {
     // Exclude knowledge/features/** — features are their own corpus type and are
@@ -606,6 +608,12 @@ export function buildCorpus(
     // first-class recall so "what do we measure / what does <metric> mean"
     // surfaces the curated insight, not raw numbers.
     docs.push(...loadMarkdownDocs(join(contextRoot, 'lab', 'insights'), 'insight', contextRoot));
+  }
+  if (types.has('thesis')) {
+    // Proactive-learning-layer theses (theses/<slug>.md) — the claim prose is
+    // first-class recall so "what are we testing / do we have a thesis about X"
+    // surfaces the hypothesis, not just its downstream evidence.
+    docs.push(...loadMarkdownDocs(join(contextRoot, 'theses'), 'thesis', contextRoot));
   }
   if (types.has('task')) {
     docs.push(...loadMarkdownDocs(join(contextRoot, 'state'), 'task', contextRoot));
