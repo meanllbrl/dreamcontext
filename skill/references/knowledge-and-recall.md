@@ -8,6 +8,7 @@ Deep, durable docs the agent should recall in future sessions (research, design 
 
 ```bash
 dreamcontext knowledge create <name> -d "description" -t architecture,api -c "body"
+# description = card/index summary, max ~5 lines (~400 chars) — details go in the body, never the description
 dreamcontext knowledge index [--tag <tag>] [--plain]
 dreamcontext knowledge tags
 dreamcontext knowledge touch <slug>     # record access AFTER reading — powers staleness + warm loading
@@ -115,6 +116,16 @@ Recall feeds two read surfaces — pick by how much synthesis the question needs
 - **`dreamcontext-deep-research` skill** (iterative, multi-agent): when a question needs **synthesis across a large or multi-project / federated corpus** and one explore pass comes back thin. The main agent decomposes the question, fans out parallel `dreamcontext-explore` searchers across the corpus **and connected peer vaults**, loops to close gaps, **adversarially verifies** the load-bearing claims, then writes a **synthesized, cited** report. Invoke via `/dreamcontext-deep-research`. **Escalation rule:** start with explore; escalate only when one pass and one answer leave a cross-corpus question half-answered. It is read-only — synthesis, not mutation.
 
 ---
+
+## Patterns (`knowledge/patterns/`)
+
+A **pattern** is a reusable engineering/design solution shape — "we solve this class of problem THIS way" (e.g. `multi-reviewer-pattern`, `fork-resume-builder-sessions`). Litmus vs neighbors: a **fact/decision** is plain knowledge; behavior-binding **steps + rules** consulted before acting are a workflow (`knowledge/workflows/`, planned); a portable **how-to-build shape** is a pattern.
+
+- **Write them AWAKE, in-session** — when an approach worked twice, or the user teaches one, offer-and-confirm and write `knowledge/patterns/<slug>.md` (normal knowledge frontmatter; good `description` + tags so recall surfaces it). Never defer to sleep.
+- **Sleep consolidates**: `sleep-product` owns the lifecycle (create from recurring-practice signals, update/condense, retire stale — archive-before-delete). `sleep-state` reports the recurring signals that seed them.
+- **MANDATORY meta-pattern**: when you add or substantially change a FEATURE, apply `knowledge/patterns/feature-integration-pattern.md` — the checklist that wires the feature into SKILL.md (capabilities + Entity Router), a reference section, sleep docs, sub-agent contracts, and the shipped skill packs. A feature the skill doesn't describe is invisible to every future session.
+- Patterns are indexed for recall and ride brain sync like all knowledge; keep each under the ~150-line discipline.
+- **Browse/load surface**: the `patterns` core skill (auto-installed to `.claude/skills/patterns/` by setup/update, canonical source `skill-patterns/SKILL.md`) is the drift-free bridge — `/patterns` lists the project's patterns live from `knowledge/patterns/`, `/patterns <slug or keywords>` loads one. It carries no pattern content itself, so a project without the folder degrades to "no patterns yet". Per-pattern `/` shims arrive with the planned knowledge-workflows mechanism.
 
 ## Root-cause analysis pattern
 

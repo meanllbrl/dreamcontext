@@ -804,6 +804,28 @@ export async function installCoreForPlatform(
     installed.push(platformPrefixed(platform, taskManagerSkillRel));
   }
 
+  // Copy the `patterns` core skill (the drift-free browse/load bridge to
+  // `_dream_context/knowledge/patterns/`): "/patterns" lists the project's
+  // documented patterns, "/patterns <slug>" loads one. Foundational, not an
+  // optional pack: patterns are plain knowledge files with no "/" surface of
+  // their own, so without this skill they are invisible to slash-command
+  // discovery — the exact gap that produced ad-hoc project-local copies. The
+  // skill carries NO pattern content (it reads the live files), so a project
+  // without `knowledge/patterns/` degrades gracefully to "no patterns yet".
+  // Shipped at repo root in `skill-patterns/` (package.json `files`),
+  // mirroring the curator/task-manager pattern. Recorded 'core' so `update`
+  // refreshes it. Non-fatal if absent (older/partial packages still install
+  // the rest).
+  const patternsSkillSource = findPackageFile('skill-patterns', 'SKILL.md');
+  if (patternsSkillSource) {
+    const patternsDestDir = join(skillRoot, 'patterns');
+    mkdirSync(patternsDestDir, { recursive: true });
+    writeFileSync(join(patternsDestDir, 'SKILL.md'), readFileSync(patternsSkillSource, 'utf-8'), 'utf-8');
+    const patternsSkillRel = `${skillRootRel}/patterns/SKILL.md`;
+    recordIfManifest(manifest, patternsSkillRel, 'core');
+    installed.push(platformPrefixed(platform, patternsSkillRel));
+  }
+
   const agentsSourceDir = findPackageDir('agents');
   if (agentsSourceDir) {
     const agentFiles = readdirSync(agentsSourceDir).filter((f) => f.endsWith('.md'));

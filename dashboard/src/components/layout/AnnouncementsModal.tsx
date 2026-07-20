@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useI18n } from '../../context/I18nContext';
 import { useAnnouncementInbox, useAnnouncementBoard } from '../../hooks/useAnnouncements';
-import type { Announcement } from '../../lib/announcements';
+import { readSeenIds, unreadAnnouncements, type Announcement } from '../../lib/announcements';
 import { ExcalidrawPreview } from '../core/ExcalidrawPreview';
 import { pushOverlay, popOverlay, isTopOverlay } from '../../lib/overlayStack';
 import './AnnouncementsModal.css';
@@ -39,13 +39,30 @@ export function AnnouncementsModal({ onOpenPage }: Props) {
   const { t } = useI18n();
   const { unread, loading, markAllRead } = useAnnouncementInbox();
   const dismissed = useRef(false);
+  // One-way latch for the pin effect below. Idempotency invariant: the
+  // pin+markAllRead body runs at most once per mount. The `pinned === null`
+  // check alone doesn't guarantee that — React 18 StrictMode double-invokes
+  // the effect on dev mount before the setPinned re-render lands, so both
+  // invocations would still see `pinned === null` and call markAllRead twice.
+  const pinLatched = useRef(false);
   const [pinned, setPinned] = useState<Announcement[] | null>(null);
 
   useEffect(() => {
-    if (pinned === null && !loading && unread.length > 0 && !dismissed.current) {
-      setPinned(unread);
-      markAllRead();
+    if (pinLatched.current || pinned !== null || loading || unread.length === 0 || dismissed.current) {
+      return;
     }
+    // Same-vault multi-window TOCTOU guard: another window sharing this
+    // origin's localStorage may have pinned + marked these read after our
+    // `unread` state was computed but before the cross-window `storage` sync
+    // (useAnnouncementInbox) lands. Synchronously re-read the persisted seen
+    // ids and keep only the genuinely-unseen entries; if none remain, the
+    // other window already showed them — bail without latching so a later
+    // genuine unread (e.g. seen-set cleared elsewhere) can still pin.
+    const fresh = unreadAnnouncements(unread, readSeenIds());
+    if (fresh.length === 0) return;
+    pinLatched.current = true;
+    setPinned(fresh);
+    markAllRead();
   }, [pinned, loading, unread, markAllRead]);
 
   const show = pinned !== null && pinned.length > 0 && !dismissed.current;
@@ -57,6 +74,10 @@ export function AnnouncementsModal({ onOpenPage }: Props) {
   const hero = pinned?.[0];
   const { data: heroBoard, isLoading: heroLoading } = useAnnouncementBoard(hero?.board ?? '');
 
+  // The markAllRead calls below look redundant — the pin effect already marked
+  // everything read — but they are load-bearing: markAllRead is what forces the
+  // re-render on which the `dismissed` ref is read (see the component comment).
+  // Dropping them would set the ref and then leave the modal on screen.
   const dismiss = useCallback(() => {
     dismissed.current = true;
     markAllRead();

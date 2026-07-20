@@ -141,7 +141,7 @@ You're scanning for **recurring** signals, not one-off events:
 - A new constraint or non-negotiable.
 - A bug or footgun that bit and was solved.
 
-Be conservative. The default is **no change**. Only update when a pattern is recurring or load-bearing. One observation is data; two is a pattern.
+Be conservative. The default is **no change**. Only update when a pattern is recurring or load-bearing. One observation is data; two is a pattern. When a recurring practice is a reusable SOLUTION SHAPE (not a preference/decision), don't write it into core files — report it as a pattern signal for `sleep-product`, which owns `knowledge/patterns/*.md`.
 
 **LIFO removal (2026-05-23, Option E).** The old `2.memory.md` LIFO ship-narrative section is gone. Ship events now live exclusively in `CHANGELOG.json`, which `memory recall` indexes. `2.memory.md` is reduced to **Technical Decisions** (long-lived architectural choices referenced repeatedly) and **Known Issues** (open bugs/footguns). Do NOT re-create a LIFO/session-log section here — write a CHANGELOG entry instead (see Pass A0 below).
 

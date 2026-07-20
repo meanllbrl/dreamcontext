@@ -467,6 +467,7 @@ EOF
 - **Full code review runs once**, after the last wave — per-wave gates are build+test
   only.
 - **Every implementer loads the engineering skill.** Non-negotiable.
+- **Feature goals end with integration wiring.** When the goal ships a new feature/subsystem, the plan and the final wave MUST apply the project's `knowledge/patterns/feature-integration-pattern.md` checklist (skill docs, Entity Router, reference section, sleep docs, sub-agent contracts, skill-pack scan) — a feature the skill doesn't describe is invisible to future sessions.
 - **Use the `dreamcontext` skill** throughout — the task doc is the source of truth.
 
 ## Relationship to other orchestration surfaces
