@@ -130,7 +130,7 @@ describe('parseFunnelSet (contract validation)', () => {
     expect(notices.some((n) => n.includes('duplicate funnel id'))).toBe(true);
   });
 
-  it('caps funnels and steps with notices', () => {
+  it('caps funnels and steps with notices — the FINAL step always survives', () => {
     const many = {
       kind: 'funnel-set/v1',
       funnels: Array.from({ length: MAX_FUNNELS + 5 }, (_, i) => ({
@@ -141,8 +141,11 @@ describe('parseFunnelSet (contract validation)', () => {
     const { set, notices } = parseFunnelSet(many);
     expect(set.funnels).toHaveLength(MAX_FUNNELS);
     expect(set.funnels[0].steps).toHaveLength(MAX_STEPS);
+    // Keep-first-and-last: the funnel's outcome step is never dropped.
+    expect(set.funnels[0].steps[MAX_STEPS - 1].key).toBe(`s${MAX_STEPS + 3}`);
+    expect(set.funnels[0].steps[MAX_STEPS - 2].key).toBe(`s${MAX_STEPS - 2}`);
     expect(notices.some((n) => n.includes(`kept the first ${MAX_FUNNELS}`))).toBe(true);
-    expect(notices.some((n) => n.includes(`kept the first ${MAX_STEPS}`))).toBe(true);
+    expect(notices.some((n) => n.includes(`the final step "s${MAX_STEPS + 3}"`))).toBe(true);
   });
 
   it('collapses over-cap dimension values into "Other" (top-N by users kept)', () => {

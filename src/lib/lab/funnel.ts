@@ -33,7 +33,9 @@ export const FUNNEL_SET_KIND = 'funnel-set/v1';
 
 // ─── Caps (structural — enforced, not advised; every hit produces a notice) ──
 export const MAX_FUNNELS = 40;
-export const MAX_STEPS = 30;
+/** Real quiz funnels run 40-60 steps — the cap exists to bound pathological
+ *  payloads, not to truncate legitimate long funnels. */
+export const MAX_STEPS = 64;
 export const MAX_DIMENSIONS = 8;
 /** Per dimension: values beyond the top-N (by users) collapse into "Other". */
 export const MAX_DIMENSION_VALUES = 8;
@@ -239,8 +241,12 @@ function parseFunnel(raw: unknown, index: number, dimensions: FunnelDimension[],
     return null;
   }
   if (steps.length > MAX_STEPS) {
-    notices.push(`funnel ${id}: ${steps.length} steps — kept the first ${MAX_STEPS}.`);
-    steps.length = MAX_STEPS;
+    // Keep the first MAX-1 AND the last step: the final step (Finish) carries
+    // the funnel's outcome — dropping it would fabricate a different funnel.
+    const last = steps[steps.length - 1];
+    notices.push(`funnel ${id}: ${steps.length} steps — kept the first ${MAX_STEPS - 1} + the final step "${last.key}".`);
+    steps.length = MAX_STEPS - 1;
+    steps.push(last);
   }
 
   const metrics: Record<string, FunnelMetricValue> = {};

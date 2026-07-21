@@ -258,7 +258,10 @@
   color: var(--color-error);
 }
 
-.funnel-arc-detail {
+/* The chip popover (counts + per-segment table) reveals on hover OR keyboard
+   focus — pinned chips stay one line each so several arcs never collide. */
+.funnel-arc-pop {
+  display: none;
   position: absolute;
   top: calc(100% + 4px);
   left: 50%;
@@ -268,10 +271,27 @@
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-md);
   padding: var(--space-2);
-  display: flex;
   flex-direction: column;
   gap: 2px;
-  z-index: 6;
+  z-index: 12;
+}
+
+.funnel-arc-chip:hover,
+.funnel-arc-chip:focus-within,
+.funnel-arc-chip:focus {
+  z-index: 11;
+}
+
+.funnel-arc-chip:hover .funnel-arc-pop,
+.funnel-arc-chip:focus-within .funnel-arc-pop,
+.funnel-arc-chip:focus .funnel-arc-pop {
+  display: flex;
+}
+
+.funnel-arc-pop-total {
+  font-weight: 700;
+  padding-bottom: 2px;
+  border-bottom: 1px solid var(--color-border);
 }
 
 .funnel-arc-detail-row {

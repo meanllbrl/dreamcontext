@@ -95,6 +95,16 @@ export function FunnelLane({
 
   const usersByKey = useMemo(() => new Map(rows.map((r) => [r.key, r.users])), [rows]);
 
+  // Arc stacking level by SPAN (narrowest closest to the lane, widest on top) —
+  // pin ORDER keeps the color, span keeps the geometry nested instead of crossing.
+  const levelOf = useMemo(() => {
+    const spans = arcs.map((arc, i) => ({
+      i,
+      span: Math.abs((centers.get(arc.to) ?? 0) - (centers.get(arc.from) ?? 0)),
+    }));
+    return new Map(spans.sort((a, b) => a.span - b.span).map((e, rank) => [e.i, rank]));
+  }, [arcs, centers]);
+
   return (
     <div className={`funnel-lane${compact ? ' funnel-lane--compact' : ''}${fit ? ' funnel-lane--fit' : ''}`}>
       {manySteps && !compact && (
@@ -135,7 +145,8 @@ export function FunnelLane({
                 const x2 = centers.get(arc.to);
                 if (x1 === undefined || x2 === undefined) return null;
                 const y = arcSpace - 6;
-                const hy = arcSpace - ARC_SPACE_BASE - i * ARC_STEP + 18;
+                const level = levelOf.get(i) ?? i;
+                const hy = arcSpace - ARC_SPACE_BASE - level * ARC_STEP + 18;
                 return (
                   <path
                     key={i}
@@ -157,34 +168,45 @@ export function FunnelLane({
             const toUsers = usersByKey.get(arc.to) ?? 0;
             const conv = fromUsers > 0 ? (toUsers / fromUsers) * 100 : null;
             const mid = (x1 + x2) / 2;
-            const top = arcSpace - ARC_SPACE_BASE - i * ARC_STEP + 2;
+            const level = levelOf.get(i) ?? i;
+            const top = arcSpace - ARC_SPACE_BASE - level * ARC_STEP + 2;
             const detail = arcDetail?.(arc) ?? null;
+            const counts = `${fromUsers.toLocaleString('en-US')} → ${toUsers.toLocaleString('en-US')} (−${Math.max(0, fromUsers - toUsers).toLocaleString('en-US')})`;
+            // Dense chips (many arcs) keep only the % inline; counts + the
+            // per-segment table live in the hover/focus popover — pinned arcs
+            // must never occlude each other or the connector labels.
+            const dense = arcs.length >= 3;
             return (
               <div
                 key={`chip-${i}`}
-                className="funnel-arc-chip"
+                className={`funnel-arc-chip${dense ? ' funnel-arc-chip--dense' : ''}`}
                 style={{ left: mid, top, borderColor: FUNNEL_COLORS[i % FUNNEL_COLORS.length] }}
+                tabIndex={0}
+                aria-label={`Arc ${arc.from} to ${arc.to}: ${conv === null ? 'no rate' : `${conv.toFixed(1)}% conversion`}, ${counts}`}
               >
                 <span className="funnel-arc-text">
                   {conv === null ? '—' : `${conv.toFixed(conv >= 10 ? 0 : 1)}%`}
-                  <span className="funnel-arc-counts"> · {fromUsers.toLocaleString('en-US')} → {toUsers.toLocaleString('en-US')} (−{Math.max(0, fromUsers - toUsers).toLocaleString('en-US')})</span>
+                  {!dense && <span className="funnel-arc-counts"> · {counts}</span>}
                 </span>
                 <button
                   className="funnel-arc-x"
                   onClick={() => onArcRemove?.(i)}
                   aria-label={`Remove arc ${arc.from} to ${arc.to}`}
                 >✕</button>
-                {detail && detail.length > 0 && (
-                  <div className="funnel-arc-detail">
-                    {detail.map((d) => (
-                      <div key={d.value} className="funnel-arc-detail-row">
-                        <span className="funnel-arc-detail-name">{d.value}</span>
-                        <span>{d.from > 0 ? `${((d.to / d.from) * 100).toFixed(1)}%` : '—'}</span>
-                        <span className="funnel-arc-counts">{d.from.toLocaleString('en-US')} → {d.to.toLocaleString('en-US')}</span>
-                      </div>
-                    ))}
+                <div className="funnel-arc-pop" role="tooltip">
+                  <div className="funnel-arc-detail-row funnel-arc-pop-total">
+                    <span className="funnel-arc-detail-name">total</span>
+                    <span>{conv === null ? '—' : `${conv.toFixed(1)}%`}</span>
+                    <span className="funnel-arc-counts">{counts}</span>
                   </div>
-                )}
+                  {(detail ?? []).map((d) => (
+                    <div key={d.value} className="funnel-arc-detail-row">
+                      <span className="funnel-arc-detail-name">{d.value}</span>
+                      <span>{d.from > 0 ? `${((d.to / d.from) * 100).toFixed(1)}%` : '—'}</span>
+                      <span className="funnel-arc-counts">{d.from.toLocaleString('en-US')} → {d.to.toLocaleString('en-US')}</span>
+                    </div>
+                  ))}
+                </div>
               </div>
             );
           })}
