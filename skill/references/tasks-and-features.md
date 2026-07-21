@@ -162,10 +162,10 @@ An **insight** is a named, curated **metric backed by an external source** — "
 
 **Where it lives:** manifest at `_dream_context/lab/insights/<slug>.md` (frontmatter config + a `## Meaning` prose section that makes it recallable), cached series at `lab/cache/<slug>.json`, custom scripts at `lab/scripts/<slug>.mjs`, secrets in gitignored `lab/credentials.json`. Manifests + caches sync in the brain repo; only credentials stay local.
 
-**How agents see it:** the SessionStart snapshot renders a **Lab** section (title / latest value / staleness / group) — answer "what's our MRR?" from it without tool calls. Deeper: `dreamcontext lab show <slug>` (cache only, no fetch) and `memory recall "<meaning phrase>" --types insight`. The dashboard has a Lab page (number/line/pie/raw cards, per-insight refresh, sync-all, tweak editing).
+**How agents see it:** the SessionStart snapshot renders a **Lab** section (title / latest value / staleness / group) — answer "what's our MRR?" from it without tool calls. Deeper: `dreamcontext lab show <slug>` (cache only, no fetch) and `memory recall "<meaning phrase>" --types insight`. The dashboard has a Lab page (number/line/pie/raw cards + funnel mini-table cards, per-insight refresh, sync-all, tweak editing).
 
 ```bash
-dreamcontext lab create <slug> --title "Weekly Active Users" [--render number|line|pie|raw] [--adapter http|script] [--group <section>] [--unit users] [--ttl 1440]
+dreamcontext lab create <slug> --title "Weekly Active Users" [--render number|line|pie|raw|funnel] [--adapter http|script] [--group <section>] [--unit users] [--ttl 1440]
 dreamcontext lab sync <slug> [--force]      # one insight (TTL-fresh is skipped unless --force)
 dreamcontext lab sync --all [--force]       # every insight; exits non-zero if any fail
 dreamcontext lab list [--json]              # all insights with latest value + staleness
@@ -181,6 +181,33 @@ dreamcontext lab credentials list           # key NAMES only — values are neve
 **Key-Result binding (insight → objective):** a manifest `binding: {objective: <slug>, value: latest}` makes every successful sync write the objective's KR `metric.current` automatically — upgrading the roadmap from PO-asserted numbers to measured ones. Offer this whenever an insight measures an existing objective's outcome. Set it via `lab bind` (or the dashboard's objective create modal / detail panel, which search insights by name); binding is ONE feeder per objective — connecting a new insight unbinds the previous one loudly, and connecting immediately seeds `metric.current` from the cached latest.
 
 **Sync semantics:** TTL staleness (default 1440 min) — fresh insights are skipped and reported, `--force` refetches; on failure the prior series is KEPT and the error is loud (never a silent half-sync). **Sleep does NOT run lab sync** — refresh is always an explicit user/agent action.
+
+### Funnel insights (`render: funnel` — the first multi-page insight)
+
+For funnel analysis (comparative across funnels + sequential across steps), an insight can render as a **routed multi-page view** instead of a card+slide-over: the Lab card shows a top-N mini-table and opens `/lab/<slug>` (all-funnels comparison table: metric columns from the payload, sort/search, date-range presets via the `range` tweak, Δ-vs-previous-period chips, low-sample de-emphasis, multi-select→compare) and `/lab/<slug>/f/<funnelId>` (the step lane: rounded nodes left→right, drop badges, a two-click A→B conversion-arrow gesture, dimension filters, one-dimension breakdown as stacked bands or small-multiple lanes, an accessible step-table twin). Filters, breakdown, compare set, pinned arcs, and sort all live in the URL — a copied link reproduces the exact view.
+
+**Payload contract (`funnel-set/v1`):** instead of `Series[]`, the adapter (script or HTTP) returns ONE object:
+
+```jsonc
+{ "kind": "funnel-set/v1",
+  "primary": "users",                    // metric driving the card value + default sort (optional)
+  "low_sample_threshold": 30,            // rows under this top-step n render de-emphasized (optional)
+  "benchmarks": { "finish_rate": { "floor": 1, "target": 3 } },   // cell tinting, off when absent (optional)
+  "dimensions": [                        // filter/breakdown declarations
+    { "key": "language", "label": "Language", "mode": "client" },            // segments below carry the data
+    { "key": "country",  "label": "Country",  "mode": "refetch", "tweak": "country" }  // value → tweak + re-sync
+  ],
+  "funnels": [{
+    "id": "516", "name": "en-start-516",
+    "meta": { "url": "…", "hypothesis": "…" },                    // free-form, shown in the detail rail
+    "metrics": { "users": { "v": 33, "format": "count", "prev": 40 } },  // format: count|pct|usd|x|seconds|number; prev optional
+    "steps": [ { "key": "session_start", "label": "session_start", "users": 33 } ],  // ORDER = step order; key aligns across funnels/periods
+    "segments": [ { "dims": { "language": "en" }, "users": 21, "steps": [ { "key": "session_start", "users": 21 } ] } ]  // DISJOINT cells, optional
+  }]
+}
+```
+
+The engine validates + caps the payload (max 40 funnels, 30 steps, 8 dimensions; per-dimension values beyond the top 8 collapse into "Other"; 64 segment cells; 400 KB — every cap is a loud notice, never silent), synthesizes legacy `series` from step users (so `latest`, KR binding, and the snapshot keep working), and records a bounded per-sync snapshot trail. **Δ vs previous period:** an adapter-provided `prev` wins; otherwise the engine compares against the best equal-length history snapshot ending at/before the current window — and shows NOTHING when no honest comparison exists. `lab create <slug> --render funnel --adapter script` scaffolds the `range` tweak (7d/28d/90d presets) plus a fully documented script template; `lab show <slug>` prints per-funnel step tables with the worst drop highlighted. Legacy `Series[]` payloads under `render: funnel` still render (compact bar list). Data FEEDING stays out of Lab scope — sleep never syncs funnels either.
 
 ### Insight capture (in-session — ASK, never auto-create)
 

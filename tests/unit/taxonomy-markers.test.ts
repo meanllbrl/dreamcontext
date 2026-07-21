@@ -64,6 +64,20 @@ describe('skill/SKILL.md markers', () => {
     expect(content).toContain('dreamcontext lab create');
   });
 
+  // Theses are a creatable entity with the same failure shape as the v0.11.0
+  // Lab incident: no router row → agents shadow-build the capture as knowledge.
+  it('has a Proactive learning capabilities row', () => {
+    expect(content).toContain('**Proactive learning (Hypotheses)**');
+  });
+
+  it('names the theses create command in the Entity Router', () => {
+    expect(content).toContain('dreamcontext theses create');
+  });
+
+  it('routes thesis capture through the opt-in gate', () => {
+    expect(content).toContain('theses enable');
+  });
+
   // A real session routed "insight oluşturalım" (Turkish) to a prose analysis and
   // then designed an external dashboard for what `lab create` already covers.
   // These markers pin the two router rules that prevent that.
@@ -88,6 +102,16 @@ describe('skill/references lab doc markers', () => {
   it('tasks-and-features.md has the insight-capture protocol', () => {
     const content = readFileSync(join(ROOT, 'skill', 'references', 'tasks-and-features.md'), 'utf-8');
     expect(content).toContain('Insight capture (in-session — ASK, never auto-create)');
+  });
+
+  it('documents the funnel-set payload contract (render: funnel)', () => {
+    const tf = readFileSync(join(ROOT, 'skill', 'references', 'tasks-and-features.md'), 'utf-8');
+    expect(tf).toContain('funnel-set/v1');
+    expect(tf).toContain('Funnel insights (`render: funnel`');
+    const cli = readFileSync(join(ROOT, 'skill', 'references', 'cli-reference.md'), 'utf-8');
+    expect(cli).toContain('--render funnel');
+    const skill = readFileSync(join(ROOT, 'skill', 'SKILL.md'), 'utf-8');
+    expect(skill).toContain('Funnel analytics');
   });
 });
 

@@ -83,10 +83,10 @@ Curated metrics synced from HTTP APIs or local scripts into `_dream_context/lab/
 
 | Command | Description |
 |---|---|
-| `lab create <slug>` | Scaffold `lab/insights/<slug>.md`. `--title <str>` (required), `--group <section>`, `--render number\|line\|pie\|raw` (default number), `--adapter http\|script` (default http), `--unit <str>`, `--ttl <minutes>` (default 1440). Edit the manifest afterwards to set the real endpoint/extract (or script) config, then sync. |
+| `lab create <slug>` | Scaffold `lab/insights/<slug>.md`. `--title <str>` (required), `--group <section>`, `--render number\|line\|pie\|raw\|funnel` (default number), `--adapter http\|script` (default http), `--unit <str>`, `--ttl <minutes>` (default 1440). Edit the manifest afterwards to set the real endpoint/extract (or script) config, then sync. `--render funnel --adapter script` also scaffolds the `range` tweak (7d/28d/90d) + a documented `funnel-set/v1` script template (payload contract → tasks-and-features.md § Funnel insights). |
 | `lab sync [slug]` | Sync one insight, or every insight with `--all`. `--force` refetches even when the cache is within TTL (fresh insights are otherwise skipped and reported). On failure the prior series is kept, the error is loud, and the exit code is non-zero — never a silent half-sync. A changed custom script prints a loud tripwire notice before executing. |
 | `lab list` | All insights with latest value, unit, staleness. `--json`. |
-| `lab show <slug>` | Manifest + cached series — **cache only, never fetches**. `--json`. |
+| `lab show <slug>` | Manifest + cached series — **cache only, never fetches**. `--json`. Funnel insights additionally print per-funnel step tables (users, % of top, % of prev, drop) with the worst drop highlighted. |
 | `lab tweak <slug> <key> <value>` | Set one declared tweak (typed `enum\|date\|string`; a relative range is an enum tweak keyed `range`). |
 | `lab bind <slug> [objective]` | Connect an insight to an objective's Key Result (`--value latest\|series:<name>`; `--clear` disconnects). Enforces ONE feeder per objective (a previous feeder is unbound loudly) and immediately seeds `metric.current` from the cached latest. The dashboard equivalent lives in the objective create modal / detail panel (Key Result section). |
 | `lab credentials set <key>` | Store a secret for `{{cred:key}}` placeholders — hidden prompt (`--value` works but is shell-history-risky). Gitignore-first, mode 0600. **The only supported way to create `lab/credentials.json`.** |
