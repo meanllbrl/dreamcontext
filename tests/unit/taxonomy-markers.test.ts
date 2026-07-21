@@ -112,6 +112,10 @@ describe('skill/references lab doc markers', () => {
     expect(cli).toContain('--render funnel');
     const skill = readFileSync(join(ROOT, 'skill', 'SKILL.md'), 'utf-8');
     expect(skill).toContain('Funnel analytics');
+    // Entity Router: funnel phrases must route to lab create --render funnel,
+    // never to a hand-built dashboard/board (the v0.11.0 shadow-build lesson).
+    expect(skill).toContain('which funnel is underperforming');
+    expect(skill).toContain('Funnel analysis is an insight too');
   });
 });
 
