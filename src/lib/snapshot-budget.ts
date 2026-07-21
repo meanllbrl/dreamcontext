@@ -38,7 +38,16 @@ export function estimateTokens(s: string): number {
   return Math.ceil(s.length / 4);
 }
 
-export const DEFAULT_SNAPSHOT_BUDGET_TOKENS = 10_000;
+/**
+ * Measured on Claude Code 2.1.216: hook stdout past 20,000 CHARS is persisted
+ * to a tool-results file and only the first 2,000 chars reach the agent as a
+ * blind positional preview. The budget default targets comfortably below the
+ * persist limit (4,500 tok ≈ 18K chars) so the snapshot lands inline in full.
+ */
+export const HARNESS_PERSIST_CHAR_LIMIT = 20_000;
+export const HARNESS_PREVIEW_CHARS = 2_000;
+
+export const DEFAULT_SNAPSHOT_BUDGET_TOKENS = 4_500;
 
 /**
  * Resolve the active budget from DREAMCONTEXT_SNAPSHOT_BUDGET:
