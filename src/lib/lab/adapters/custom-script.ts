@@ -1,7 +1,7 @@
 import { dirname, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { redactSecrets } from '../credentials.js';
-import { LabError, type AdapterContext, type InsightManifest, type LabAdapter, type RawSeries, type SeriesPoint } from '../types.js';
+import { isRawFunnelSet, LabError, type AdapterContext, type AdapterResult, type InsightManifest, type LabAdapter, type RawSeries, type SeriesPoint } from '../types.js';
 
 /**
  * Custom-script adapter — the escape hatch for anything the declarative HTTP
@@ -35,7 +35,7 @@ export function scriptFilePath(manifest: InsightManifest): string {
 
 function coerceSeries(result: unknown): RawSeries[] {
   if (!Array.isArray(result)) {
-    throw new LabError('Custom script must return an array of { name, points } series.');
+    throw new LabError('Custom script must return an array of { name, points } series, or a { kind: "funnel-set/v1", … } funnel payload for `render: funnel`.');
   }
   return result.map((s, i) => {
     const r = s as { name?: unknown; points?: unknown };
@@ -52,7 +52,7 @@ function coerceSeries(result: unknown): RawSeries[] {
 }
 
 export const customScriptAdapter: LabAdapter = {
-  async fetch(ctx: AdapterContext): Promise<RawSeries[]> {
+  async fetch(ctx: AdapterContext): Promise<AdapterResult> {
     const abs = scriptFilePath(ctx.manifest);
     const secretValues = Object.values(ctx.credentials);
     try {
@@ -66,6 +66,9 @@ export const customScriptAdapter: LabAdapter = {
         throw new LabError(`Script ${ctx.manifest.source && 'file' in ctx.manifest.source ? ctx.manifest.source.file : ''} must export a default async function.`);
       }
       const result = await (fn as (c: AdapterContext) => Promise<unknown>)(ctx);
+      // A funnel-set payload passes through raw — the ENGINE validates + caps it
+      // (parseFunnelSet), keeping the trust/validation boundary in one place.
+      if (isRawFunnelSet(result)) return result;
       return coerceSeries(result);
     } catch (err) {
       if (err instanceof LabError) throw new LabError(redactSecrets(err.message, secretValues));

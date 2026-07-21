@@ -1,6 +1,6 @@
 import { ApiAdapter, ApiError } from '../../task-backend/api-adapter.js';
 import { resolvePlaceholders, redactSecrets } from '../credentials.js';
-import { LabError, type AdapterContext, type ExtractConfig, type HttpSource, type LabAdapter, type RawSeries, type SeriesPoint } from '../types.js';
+import { isRawFunnelSet, LabError, type AdapterContext, type AdapterResult, type ExtractConfig, type HttpSource, type LabAdapter, type RawSeries, type SeriesPoint } from '../types.js';
 
 /**
  * Generic-HTTP adapter — declarative JSON API → RawSeries[]. Reuses the shared
@@ -57,7 +57,7 @@ function extractSeries(json: unknown, extract: ExtractConfig): RawSeries[] {
 }
 
 export const genericHttpAdapter: LabAdapter = {
-  async fetch(ctx: AdapterContext): Promise<RawSeries[]> {
+  async fetch(ctx: AdapterContext): Promise<AdapterResult> {
     const source = ctx.manifest.source;
     if (!source || source.adapter !== 'http') {
       throw new LabError('Generic-HTTP adapter requires an `http` source.');
@@ -115,6 +115,13 @@ export const genericHttpAdapter: LabAdapter = {
       // Message is built ONLY from the redacted endpoint + status — never err.message.
       throw new LabError(redactSecrets(`HTTP ${method} ${redactedEndpoint} failed${status}`, secretValues));
     }
+
+    // Funnel-set passthrough: when the response (or the object at
+    // `extract.seriesPath`) IS a funnel-set payload, hand it to the engine raw —
+    // parseFunnelSet validates + caps it there. `extract.x/y` don't apply.
+    if (isRawFunnelSet(json)) return json;
+    const atPath = http.extract.seriesPath ? getPath(json, http.extract.seriesPath) : undefined;
+    if (isRawFunnelSet(atPath)) return atPath;
 
     return extractSeries(json, http.extract);
   },

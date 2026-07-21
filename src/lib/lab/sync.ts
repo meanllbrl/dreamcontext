@@ -7,9 +7,20 @@ import { getInsight, listInsights, readCache, writeCache, writeInsightBinding } 
 import { resolveTweaks } from './tweaks.js';
 import { rollupSeries } from './rollup.js';
 import {
+  appendFunnelHistory,
+  funnelLatest,
+  funnelToSeries,
+  makeFunnelSnapshot,
+  parseFunnelSet,
+} from './funnel.js';
+import {
+  isRawFunnelSet,
   LabError,
   type Agg,
   type Binding,
+  type FunnelCacheEntry,
+  type FunnelSnapshot,
+  type Granularity,
   type InsightCache,
   type InsightManifest,
   type Series,
@@ -209,14 +220,42 @@ export async function syncInsight(
 
   try {
     const adapter = getAdapter(manifest);
-    const rawSeries = await adapter.fetch({
+    const result = await adapter.fetch({
       manifest,
       resolvedTweaks,
       credentials,
       fetchImpl: opts.fetchImpl,
     });
-    const { series, granularity } = rollupSeries(rawSeries, resolvedTweaks.spanDays, aggFor(manifest));
-    const latest = computeLatest(series, manifest.binding);
+
+    let series: Series[];
+    let granularity: Granularity;
+    let latest: number | null;
+    let funnel: FunnelCacheEntry | undefined;
+    let funnelHistory: FunnelSnapshot[] | undefined;
+
+    if (isRawFunnelSet(result)) {
+      // ── Funnel-set payload: validate + cap; NO time rollup (steps aren't a
+      // time series). Legacy series are synthesized from step users so every
+      // series consumer (latest, snapshot, binding) keeps working. ──
+      if (manifest.render !== 'funnel') {
+        console.warn(`[lab] ${slug}: adapter returned a funnel-set but render is "${manifest.render}" — set \`render: funnel\` in the manifest for the full funnel UI.`);
+      }
+      const parsed = parseFunnelSet(result);
+      for (const notice of parsed.notices) console.warn(`[lab] ${slug}: ${notice}`);
+      series = funnelToSeries(parsed.set);
+      granularity = 'daily';
+      latest = funnelLatest(parsed.set);
+      funnel = { set: parsed.set, notices: parsed.notices, range: resolvedTweaks.range };
+      funnelHistory = appendFunnelHistory(
+        prior?.funnelHistory,
+        makeFunnelSnapshot(parsed.set, resolvedTweaks.range, new Date(nowMs).toISOString()),
+      );
+    } else {
+      const rolled = rollupSeries(result, resolvedTweaks.spanDays, aggFor(manifest));
+      series = rolled.series;
+      granularity = rolled.granularity;
+      latest = computeLatest(series, manifest.binding);
+    }
 
     const cache: InsightCache = {
       slug,
@@ -238,6 +277,10 @@ export async function syncInsight(
         error: null,
       }),
     };
+    if (funnel) {
+      cache.funnel = funnel;
+      cache.funnelHistory = funnelHistory;
+    }
     writeCache(contextRoot, slug, cache);
 
     if (manifest.binding) writeBinding(contextRoot, slug, manifest.binding, latest);
@@ -270,6 +313,9 @@ export async function syncInsight(
         error: message,
       }),
     };
+    // Preserve the prior funnel snapshot + trail — same keep-prior contract as series.
+    if (prior?.funnel) failCache.funnel = prior.funnel;
+    if (prior?.funnelHistory) failCache.funnelHistory = prior.funnelHistory;
     writeCache(contextRoot, slug, failCache);
 
     return { slug, status: 'failed', error: message };

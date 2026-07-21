@@ -221,6 +221,83 @@ export function writeCache(contextRoot: string, slug: string, cache: InsightCach
 
 // ─── Create / edit ──────────────────────────────────────────────────────────
 
+/** The documented funnel-payload script scaffold (`lab create --render funnel --adapter script`). */
+export function funnelScriptTemplate(slug: string): string {
+  return `/**
+ * Funnel-set adapter for the "${slug}" insight.
+ *
+ * Return ONE \`funnel-set/v1\` object (not Series[]). The engine validates it,
+ * applies caps (funnels/steps/segment cardinality/bytes — over-cap data is
+ * collapsed into "Other" or dropped with a loud notice), synthesizes legacy
+ * series from step users, and records a per-sync snapshot for Δ-vs-previous-
+ * period. Runs LOCALLY with your credentials (ctx.credentials) — same trust
+ * level as the repo; the script-hash tripwire warns when this file changes.
+ *
+ * ctx = { manifest, resolvedTweaks: { values, range: { fromISO, toISO }, spanDays },
+ *         credentials }
+ * Use ctx.resolvedTweaks.range to scope your query — the dashboard's date-range
+ * control writes the \`range\` tweak and re-syncs.
+ */
+export default async function fetchFunnels(ctx) {
+  const { fromISO, toISO } = ctx.resolvedTweaks.range;
+  void fromISO; void toISO; // scope your real query with these
+
+  return {
+    kind: 'funnel-set/v1',
+
+    // Declared breakdowns/filters. mode 'client' = segments below carry the
+    // data (instant filtering); 'refetch' = the chosen value is written into
+    // the tweak named by \`tweak\` (default: the dimension key) and re-synced.
+    dimensions: [
+      { key: 'language', label: 'Language', mode: 'client' },
+      // { key: 'country', label: 'Country', mode: 'refetch', tweak: 'country' },
+    ],
+
+    // Optional: metric key driving the card value, default sort, and preview.
+    primary: 'users',
+    // Optional: rows with first-step users below this render de-emphasized (default 30).
+    low_sample_threshold: 30,
+    // Optional: per-metric thresholds that tint cells (omit = benchmarks off).
+    // benchmarks: { finish_rate: { floor: 1, target: 3 } },
+
+    funnels: [
+      {
+        id: '516',
+        name: 'en-start-516',
+        meta: { url: 'https://example.com/f/516', hypothesis: 'shorter intro' },
+        // Overview-table columns. format: count | pct | usd | x | seconds | number.
+        // prev (optional) = previous equal-length period value — wins over the
+        // engine's history-derived delta.
+        metrics: {
+          users: { v: 33, format: 'count' },
+          spend: { v: 831, format: 'usd' },
+          finish_rate: { v: 3.03, format: 'pct' },
+        },
+        // ORDER = step order; \`key\` aligns steps across funnels and periods.
+        steps: [
+          { key: 'session_start', label: 'session_start', users: 33 },
+          { key: 'email_input', label: 'Step 01 email_input', users: 23 },
+          { key: 'finish', label: 'Finish', users: 1 },
+        ],
+        // Optional DISJOINT cells for client-mode filter/breakdown.
+        segments: [
+          {
+            dims: { language: 'en' },
+            users: 21,
+            steps: [
+              { key: 'session_start', users: 21 },
+              { key: 'email_input', users: 15 },
+              { key: 'finish', users: 1 },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+}
+`;
+}
+
 export interface CreateInsightInput {
   slug: string;
   title: string;
@@ -262,6 +339,7 @@ export function createInsight(contextRoot: string, input: CreateInsightInput): I
   if (existsSync(path)) throw new LabError(`Insight already exists: ${slug}`);
 
   const adapter = input.adapter ?? 'http';
+  const render = input.render ?? 'number';
   const source: Record<string, unknown> = adapter === 'script'
     ? { adapter: 'script', script: { file: `scripts/${slug}.mjs` } }
     : {
@@ -275,15 +353,27 @@ export function createInsight(contextRoot: string, input: CreateInsightInput): I
         },
       };
 
+  // Funnel insights ship with the overview date-range control pre-declared —
+  // the presets the dashboard's range picker offers (custom = from/to tweaks).
+  const tweaks: TweakDecl[] = render === 'funnel'
+    ? [{
+        key: 'range',
+        type: 'enum',
+        label: 'Date range',
+        options: ['last_7_days', 'last_28_days', 'last_90_days'],
+        default: 'last_28_days',
+      }]
+    : [];
+
   const frontmatter: Record<string, unknown> = {
     title: input.title,
     description: input.description ?? null,
     group: input.group ?? null,
-    render: input.render ?? 'number',
+    render,
     unit: input.unit ?? null,
     source,
     refresh: { ttl_minutes: input.ttl_minutes ?? DEFAULT_TTL_MINUTES },
-    tweaks: [],
+    tweaks,
     binding: null,
     credentials_used: [],
     created_at: today(),
@@ -300,6 +390,15 @@ export function createInsight(contextRoot: string, input: CreateInsightInput): I
 
   mkdirSync(insightsDir(contextRoot), { recursive: true });
   writeFrontmatter(path, frontmatter, body);
+  // Funnel + script: scaffold a documented payload template so the author starts
+  // from the contract, not a blank file. Never overwrites an existing script.
+  if (render === 'funnel' && adapter === 'script') {
+    const scriptPath = join(labDir(contextRoot), 'scripts', `${slug}.mjs`);
+    if (!existsSync(scriptPath)) {
+      mkdirSync(join(labDir(contextRoot), 'scripts'), { recursive: true });
+      writeFileSync(scriptPath, funnelScriptTemplate(slug), 'utf-8');
+    }
+  }
   // Keep the tracked lab/credentials.example.json current with the new
   // manifest's required keys (best-effort — the insight itself is written).
   try { writeCredentialsExample(contextRoot); } catch { /* never fail the create */ }

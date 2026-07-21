@@ -11,7 +11,8 @@ import { auditFeatureLinks, reconcileFeatureLinks, type LinkAudit } from '../../
 import { buildRoadmapModel } from '../../lib/roadmap-model.js';
 import { listVaults, type Vault } from '../../lib/vaults.js';
 import { dirname } from 'node:path';
-import { listInsights, isSafeInsightSlug, getInsight } from '../../lib/lab/store.js';
+import { listInsights, isSafeInsightSlug, getInsight, readCache } from '../../lib/lab/store.js';
+import { parseFunnelSet, FUNNEL_HISTORY_MAX } from '../../lib/lab/funnel.js';
 import { RENDERS } from '../../lib/lab/types.js';
 import { gitignoreCovers } from '../../lib/gitignore.js';
 import { readSetupConfig, isLearningEnabled } from '../../lib/setup-config.js';
@@ -382,6 +383,25 @@ export function checkLab(root: string): CheckResult[] {
       const objective = getObjective(root, m.binding.objective);
       if (!objective) {
         results.push({ name: 'Lab', status: 'warn', message: `Insight ${m.slug}: binding.objective "${m.binding.objective}" does not resolve` });
+      }
+    }
+    // Funnel cache shape: a synced funnel insight's cache.funnel must re-validate
+    // cleanly. Cap violations in a STORED set mean the cache was hand-edited or
+    // written by an older build — warn so the next sync (which re-caps) is run.
+    if (m.render === 'funnel') {
+      const cache = readCache(root, m.slug);
+      if (cache?.funnel) {
+        try {
+          const reparsed = parseFunnelSet(cache.funnel.set);
+          for (const notice of reparsed.notices) {
+            results.push({ name: 'Lab', status: 'warn', message: `Insight ${m.slug}: funnel cache violates a cap — ${notice} Re-run \`dreamcontext lab sync ${m.slug} --force\`.` });
+          }
+        } catch (err) {
+          results.push({ name: 'Lab', status: 'warn', message: `Insight ${m.slug}: funnel cache is not a valid funnel-set (${(err as Error).message})` });
+        }
+        if (Array.isArray(cache.funnelHistory) && cache.funnelHistory.length > FUNNEL_HISTORY_MAX) {
+          results.push({ name: 'Lab', status: 'warn', message: `Insight ${m.slug}: funnelHistory has ${cache.funnelHistory.length} snapshots (cap ${FUNNEL_HISTORY_MAX})` });
+        }
       }
     }
     // A manifest that declares credentials_used but whose key is absent from

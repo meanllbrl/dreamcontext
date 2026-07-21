@@ -8,7 +8,8 @@ import { createInsight, getInsight, listInsights, readCache, writeInsightTweaks 
 import { bindInsight, syncInsight, syncAll } from '../../lib/lab/sync.js';
 import { writeCredential, listCredentialNames } from '../../lib/lab/credentials.js';
 import { gitignoreCovers } from '../../lib/gitignore.js';
-import { LabError, type Render } from '../../lib/lab/types.js';
+import { computeFunnelPrev, computeStepRows, worstDropIndex } from '../../lib/lab/funnel.js';
+import { LabError, type FunnelCacheEntry, type InsightCache, type Render } from '../../lib/lab/types.js';
 
 /**
  * `dreamcontext lab` — the analytics-insights subsystem CLI. Mirrors `roadmap`:
@@ -19,6 +20,44 @@ import { LabError, type Render } from '../../lib/lab/types.js';
 /** Resolve the project root that holds `_dream_context/` (secrets file location). */
 function projectRootFor(contextRoot: string): string {
   return dirname(contextRoot);
+}
+
+/** Render `n` as a fixed-width table cell. */
+function cell(v: string, width: number): string {
+  return v.length >= width ? v : v + ' '.repeat(width - v.length);
+}
+
+function fmtPct(v: number | null): string {
+  return v === null ? '—' : `${v.toFixed(v >= 10 ? 0 : 1)}%`;
+}
+
+/** `lab show` funnel view: per-funnel step table with the worst drop highlighted. */
+function printFunnelSet(funnel: FunnelCacheEntry, history: InsightCache['funnelHistory']): void {
+  const { set, notices, range } = funnel;
+  const prev = computeFunnelPrev(funnel, history);
+  console.log(`  range: ${range.fromISO} → ${range.toISO}`);
+  if (prev.source) console.log(chalk.dim(`  Δ vs snapshot ${prev.source.range.fromISO} → ${prev.source.range.toISO}`));
+  for (const notice of notices) warn(notice);
+
+  for (const f of set.funnels) {
+    console.log();
+    console.log(`  ${chalk.magentaBright(f.id)} — ${f.name}`);
+    const metricBits = Object.entries(f.metrics).map(([key, m]) => {
+      const v = m.v === null ? '—' : m.format === 'pct' ? `${m.v}%` : m.format === 'usd' ? `$${m.v}` : String(m.v);
+      return `${m.label ?? key}=${v}`;
+    });
+    if (metricBits.length > 0) console.log(chalk.dim(`    ${metricBits.join(' · ')}`));
+
+    const rows = computeStepRows(f.steps);
+    const worst = worstDropIndex(rows);
+    const labelWidth = Math.min(36, Math.max(8, ...rows.map((r) => r.label.length)));
+    console.log(chalk.dim(`    ${cell('step', labelWidth)}  ${cell('users', 8)}  ${cell('of top', 8)}  ${cell('of prev', 8)}  drop`));
+    rows.forEach((row, i) => {
+      const drop = row.drop === null ? '—' : row.drop < 0 ? `↑${-row.drop}` : `−${row.drop}`;
+      const line = `    ${cell(row.label.slice(0, labelWidth), labelWidth)}  ${cell(String(row.users), 8)}  ${cell(fmtPct(row.ofTop), 8)}  ${cell(fmtPct(row.ofPrev), 8)}  ${drop}`;
+      console.log(i === worst ? chalk.red(`${line}  ◄ worst drop`) : line);
+    });
+  }
 }
 
 function handleLabError(err: unknown): void {
@@ -132,6 +171,7 @@ export function registerLabCommand(program: Command): void {
         console.log(`  granularity: ${cache.granularity}`);
         console.log(`  fetchedAt: ${cache.fetchedAt || '(never)'}`);
         if (cache.error) console.log(chalk.red(`  error: ${cache.error}`));
+        if (cache.funnel) printFunnelSet(cache.funnel, cache.funnelHistory);
       } else {
         console.log(chalk.dim('  (no cache yet — run `dreamcontext lab sync ' + slug + '`)'));
       }

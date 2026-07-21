@@ -8,6 +8,7 @@ import {
   writeInsightTweaks,
 } from '../../lib/lab/store.js';
 import { resolveTweaks } from '../../lib/lab/tweaks.js';
+import { computeFunnelPrev } from '../../lib/lab/funnel.js';
 import { bindInsight, syncInsight, syncAll } from '../../lib/lab/sync.js';
 import { readCredentials, redactSecrets, writeCredential } from '../../lib/lab/credentials.js';
 import { requiredCredentialKeys } from '../../lib/lab/required-credentials.js';
@@ -113,11 +114,16 @@ export async function handleLabShow(
       return;
     }
     const cache = readCache(contextRoot, params.slug);
+    // Funnel insights: previous-period values (adapter `prev` wins, else the
+    // best equal-length history snapshot) are computed HERE so the dashboard
+    // and `lab show` share one delta implementation.
+    const funnelPrev = cache?.funnel ? computeFunnelPrev(cache.funnel, cache.funnelHistory) : null;
     sendJson(res, 200, {
       insight: toPublicManifest(manifest),
       meaning: manifest.body,
       resolvedTweaks: resolveTweaks(manifest).values,
       cache: cache ?? null,
+      funnelPrev,
     });
   } catch (err) {
     console.error('[lab] show failed:', err);
