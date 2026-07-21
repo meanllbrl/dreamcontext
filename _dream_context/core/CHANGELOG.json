@@ -1,5 +1,26 @@
 [
   {
+    "date": "2026-07-21",
+    "type": "feat",
+    "scope": "lab",
+    "description": "Add end-to-end funnel analytics to Lab insights. Adapters (script + HTTP) may now return a funnel-set/v1 payload for render:funnel insights; the engine validates and caps it (funnels/steps/dimension cardinality→top-N+Other/segment cells/byte cap — every cap surfaces as a notice), synthesizes legacy series from step users, computes latest from the primary metric, and maintains a bounded per-sync snapshot trail for Δ-vs-previous-period comparisons (adapter prev wins over equal-length-guarded history fallback). Dashboard gains first multi-page insight routing contract (labRoute.ts): /lab/<slug> overview + /lab/<slug>/f/<funnelId> detail with real history entries, breadcrumbs, back/forward, and full view state (filters, breakdown, compare set, pinned arcs, sort, range) in the URL. Overview page: payload-driven metric columns with format hints, stable keyboard-accessible sort, search, range presets via the range tweak, Δ-vs-previous-period chips, low-sample de-emphasis, benchmark tinting, row→detail navigation, 2-4 row multi-select→compare, per-row kebab (deep link / Markdown). Detail page: Excalidraw-style node lane with severity-tinted drop badges, two-click A→B arc gesture (stacked colored arcs, ✕/pair-reclick/Esc removal, auto-swap backwards picks), step-table twin for accessibility, client+refetch dimension filters, one-dimension breakdown as stacked node bands or aligned small-multiple lanes, compact bar fallback below 560px. Compare mode: step-key aligned parallel grid with ghosted unmatched steps + per-step delta chips. Funnel cards show a top-N mini-table preview and route to page 1. CLI: lab create --render funnel scaffolds the range tweak + documented script template; lab show prints the step table with worst drop highlighted; doctor re-validates funnel caches. Skill surfaces (SKILL.md Lab capabilities row, tasks-and-features.md funnel section, cli-reference.md --render funnel + funnel-aware lab show) updated with marker-test coverage.",
+    "breaking": false,
+    "summary": "Funnel analytics: multi-page insights with comparison tables, node lanes, arc gestures, filters, breakdowns, and compare",
+    "references": [
+      "commit:4cf4ec8",
+      "commit:8a1bf63",
+      "commit:16c0c3f",
+      "file:src/lib/lab/funnel.ts",
+      "file:src/lib/lab/types.ts",
+      "file:dashboard/src/components/lab/funnel/FunnelOverviewPage.tsx",
+      "file:dashboard/src/components/lab/funnel/FunnelDetailPage.tsx",
+      "file:dashboard/src/components/lab/funnel/funnelModel.ts",
+      "file:dashboard/src/components/lab/funnel/labRoute.ts",
+      "file:tests/unit/lab-funnel.test.ts",
+      "task:lab-funnel-analytics"
+    ]
+  },
+  {
     "date": "2026-07-20",
     "type": "feat",
     "scope": "learning",

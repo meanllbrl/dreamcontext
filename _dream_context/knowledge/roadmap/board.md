@@ -7,12 +7,12 @@ tags:
   - 'topic:roadmap'
   - 'topic:pm'
 pinned: false
-date: '2026-07-20'
+date: '2026-07-21'
 ---
 
 # Roadmap Board
 
-> Auto-generated 2026-07-20 by `dreamcontext roadmap`. Objectives live in `core/objectives/`; task links live in each task's `objectives:` frontmatter.
+> Auto-generated 2026-07-21 by `dreamcontext roadmap`. Objectives live in `core/objectives/`; task links live in each task's `objectives:` frontmatter.
 
 ### ⚪ **improve-recall-mechanism** — Improve Recall Mechanism · 4/5 done (80%) · target 2026-08-16 · forecast 2026-08-16 ✓ on track
   Unblocks: hello-world-pr, make-it-a-business
