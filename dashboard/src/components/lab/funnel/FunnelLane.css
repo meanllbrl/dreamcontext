@@ -115,6 +115,24 @@
   font-variant-numeric: tabular-nums;
 }
 
+.funnel-node-arrow {
+  color: var(--color-text-tertiary);
+  font-weight: 400;
+  font-size: 14px;
+}
+
+.funnel-node-groupchip {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 1px 7px;
+  border-radius: var(--radius-full);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  white-space: nowrap;
+}
+
 .funnel-node-oftop {
   font-size: 11px;
   color: var(--color-text-tertiary);

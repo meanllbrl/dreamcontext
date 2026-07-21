@@ -5,6 +5,7 @@ import {
   applyClientFilters,
   breakdownLanes,
   clientFilters,
+  collapseSteps,
   computeStepRows,
   formatDelta,
   formatMetricValue,
@@ -80,8 +81,27 @@ export function FunnelDetailPage({ slug, funnelId, onBack, onBackToBoard, onToas
   const steps = filtered?.steps ?? funnel?.steps.map((s) => ({ key: s.key, label: s.label, users: s.users })) ?? [];
   const filtersUnavailable = filtersActive && filtered === null;
 
-  // ── Pinned arcs: validate against present steps; swap so from = earlier. ──
-  const stepOrder = useMemo(() => new Map(steps.map((s, i) => [s.key, i])), [steps]);
+  // ── Significant-change collapse (user-set threshold, URL `clt`): runs of
+  // sub-threshold change fold into one node showing start → end + a count. ──
+  const displaySteps = useMemo(
+    () => view.collapse !== null ? collapseSteps(steps, view.collapse) : steps.map((s) => ({ ...s, collapsed: null })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [JSON.stringify(steps), view.collapse],
+  );
+  const laneSteps = useMemo(
+    () => displaySteps.map((s) => ({ key: s.key, label: s.label, users: s.users })),
+    [displaySteps],
+  );
+  const collapsedInfo = useMemo(() => {
+    const map = new Map<string, { count: number; startUsers: number }>();
+    for (const s of displaySteps) {
+      if (s.collapsed) map.set(s.key, { count: s.collapsed.count, startUsers: s.collapsed.startUsers });
+    }
+    return map.size > 0 ? map : undefined;
+  }, [displaySteps]);
+
+  // ── Pinned arcs: validate against DISPLAYED steps; swap so from = earlier. ──
+  const stepOrder = useMemo(() => new Map(laneSteps.map((s, i) => [s.key, i])), [laneSteps]);
   const arcs: LaneArc[] = useMemo(
     () => view.arcs
       .filter(([a, b]) => stepOrder.has(a) && stepOrder.has(b))
@@ -103,6 +123,10 @@ export function FunnelDetailPage({ slug, funnelId, onBack, onBackToBoard, onToas
     }
     setAnchor(null);
   };
+
+  // Toggling/adjusting collapse changes which step keys exist — an anchor on a
+  // now-hidden step would silently arc from the wrong node.
+  useEffect(() => { setAnchor(null); }, [view.collapse]);
 
   // Esc: first press disarms the anchor, next clears every pinned arc (A7).
   useEffect(() => {
@@ -258,6 +282,31 @@ export function FunnelDetailPage({ slug, funnelId, onBack, onBackToBoard, onToas
             >Lanes</button>
           </div>
         )}
+        <div className="funnel-det-collapsectl" role="group" aria-label="Collapse insignificant steps">
+          <button
+            className="funnel-det-action"
+            aria-pressed={view.collapse !== null}
+            title="Merge runs of steps whose change vs the previous step is below the threshold"
+            onClick={() => setView({ ...view, collapse: view.collapse === null ? 5 : null })}
+          >Collapse</button>
+          {view.collapse !== null && (
+            <label className="funnel-det-collapse-thresh">
+              &lt;
+              <input
+                type="number"
+                min={0.5}
+                max={50}
+                step={0.5}
+                value={view.collapse}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  if (Number.isFinite(v) && v > 0) setView({ ...view, collapse: Math.min(50, v) });
+                }}
+                aria-label="Collapse threshold in percent"
+              />%
+            </label>
+          )}
+        </div>
         <button className="funnel-det-action" onClick={() => setShowTable((v) => !v)} aria-pressed={showTable} aria-expanded={showTable}>
           {showTable ? 'Hide table' : 'Step table'}
         </button>
@@ -283,7 +332,7 @@ export function FunnelDetailPage({ slug, funnelId, onBack, onBackToBoard, onToas
 
       <div className="funnel-det-body" ref={bodyRef}>
         {narrow ? (
-          <FunnelBars steps={steps} />
+          <FunnelBars steps={laneSteps} />
         ) : breakdownDim && view.breakdownMode === 'lanes' && lanes.length > 0 ? (
           <div className="funnel-det-multiples">
             {lanes.map((lane, i) => (
@@ -295,7 +344,7 @@ export function FunnelDetailPage({ slug, funnelId, onBack, onBackToBoard, onToas
                 </div>
                 <FunnelLane
                   compact
-                  steps={funnel.steps.map((s) => ({ key: s.key, label: s.label, users: lane.steps.get(s.key) ?? 0 }))}
+                  steps={laneSteps.map((s) => ({ key: s.key, label: s.label, users: lane.steps.get(s.key) ?? 0 }))}
                   volumeMax={laneMax}
                 />
               </div>
@@ -303,13 +352,14 @@ export function FunnelDetailPage({ slug, funnelId, onBack, onBackToBoard, onToas
           </div>
         ) : (
           <FunnelLane
-            steps={steps}
+            steps={laneSteps}
             arcs={arcs}
             anchor={anchor}
             onNodeClick={handleNodeClick}
             onArcRemove={(i) => setView({ ...view, arcs: view.arcs.filter((_, idx) => idx !== i) })}
             bands={view.breakdownMode === 'stack' ? bands : null}
             bandLegend={legend}
+            collapsedInfo={collapsedInfo}
             arcDetail={arcDetail}
           />
         )}

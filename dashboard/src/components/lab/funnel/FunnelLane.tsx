@@ -39,6 +39,7 @@ export function FunnelLane({
   bandLegend = null,
   compact = false,
   volumeMax,
+  collapsedInfo,
   arcDetail,
 }: {
   steps: { key: string; label: string; users: number }[];
@@ -56,6 +57,9 @@ export function FunnelLane({
   /** Shared volume scale (small multiples): volume bars = users / volumeMax
    *  instead of % of this lane's own top, so lanes are visually comparable. */
   volumeMax?: number;
+  /** Significant-change collapse: per step key, the group this node stands for
+   *  (start → end users + member count). Key = the group's LAST member. */
+  collapsedInfo?: Map<string, { count: number; startUsers: number }>;
   /** Per-segment A→B rows shown inside an arc chip (breakdown mode). */
   arcDetail?: (arc: LaneArc) => { value: string; from: number; to: number }[] | null;
 }) {
@@ -248,14 +252,37 @@ export function FunnelLane({
                   ].filter(Boolean).join(' ')}
                   onClick={() => onNodeClick?.(row.key)}
                   aria-pressed={isAnchor}
-                  aria-label={`${row.label}: ${row.users.toLocaleString('en-US')} users${row.ofTop !== null ? `, ${row.ofTop.toFixed(1)}% of top` : ''}${isAnchor ? ' (arc anchor — pick a second step)' : ''}`}
+                  aria-label={(() => {
+                    const group = collapsedInfo?.get(row.key);
+                    const base = group
+                      ? `${row.label}: ${group.count} collapsed steps, ${group.startUsers.toLocaleString('en-US')} users in, ${row.users.toLocaleString('en-US')} out`
+                      : `${row.label}: ${row.users.toLocaleString('en-US')} users`;
+                    return `${base}${row.ofTop !== null ? `, ${row.ofTop.toFixed(1)}% of top` : ''}${isAnchor ? ' (arc anchor — pick a second step)' : ''}`;
+                  })()}
                   title={isAnchor ? 'Anchor set — click another step to draw the arrow' : 'Click, then click another step to draw a conversion arrow'}
                 >
                   <span className="funnel-node-label">{row.label}</span>
                   {bands ? (
                     <NodeBands bands={bands.get(row.key) ?? []} total={row.users} legend={bandLegend ?? []} />
                   ) : null}
-                  <span className="funnel-node-users">{row.users.toLocaleString('en-US')}</span>
+                  {(() => {
+                    const group = collapsedInfo?.get(row.key);
+                    if (!group) {
+                      return <span className="funnel-node-users">{row.users.toLocaleString('en-US')}</span>;
+                    }
+                    // A collapsed run shows BOTH ends — many small drops adding
+                    // up to a big one must stay visible, never hidden.
+                    return (
+                      <>
+                        <span className="funnel-node-users">
+                          {group.startUsers.toLocaleString('en-US')} <span className="funnel-node-arrow" aria-hidden>→</span> {row.users.toLocaleString('en-US')}
+                        </span>
+                        <span className="funnel-node-groupchip" title={`${group.count} steps collapsed — each adjacent change below the threshold`}>
+                          {group.count} steps
+                        </span>
+                      </>
+                    );
+                  })()}
                   <span className="funnel-node-oftop">{row.ofTop === null ? '—' : `${row.ofTop.toFixed(row.ofTop >= 10 ? 0 : 1)}% of top`}</span>
                   <span className="funnel-node-volume" aria-hidden>
                     <span

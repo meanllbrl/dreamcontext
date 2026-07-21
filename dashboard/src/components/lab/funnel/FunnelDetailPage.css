@@ -102,6 +102,31 @@
   background: var(--color-accent-soft);
 }
 
+.funnel-det-collapsectl {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.funnel-det-collapse-thresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.funnel-det-collapse-thresh input {
+  width: 52px;
+  font-size: 12px;
+  padding: 3px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+}
+
 .funnel-det-warn {
   font-size: 12px;
   color: var(--color-warning);

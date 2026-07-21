@@ -372,6 +372,69 @@ export function breakdownLanes(funnel: FunnelDef, dimKey: string, topN: number =
   return lanes;
 }
 
+// ─── Significant-change collapse (user-set threshold) ───────────────────────
+
+export interface CollapsedStep {
+  /** The LAST member's key — the group's boundary state; arcs anchor here. */
+  key: string;
+  label: string;
+  /** Users LEAVING the group (last member's users). */
+  users: number;
+  /** Present only for a real group (2+ members). */
+  collapsed: {
+    count: number;
+    /** Users ENTERING the group (first member's users) — shown as start → end. */
+    startUsers: number;
+    firstLabel: string;
+    lastLabel: string;
+    memberKeys: string[];
+  } | null;
+}
+
+/**
+ * Collapse runs of INSIGNIFICANT change: a step joins the previous group when
+ * its relative user change vs the previous step is below `thresholdPct`
+ * (absolute — an insignificant increase collapses too). A significant change
+ * starts a new node. Group nodes carry start → end users so a long run of
+ * small drops that ADD UP to a big one stays visible, never hidden.
+ */
+export function collapseSteps(
+  steps: { key: string; label: string; users: number }[],
+  thresholdPct: number,
+): CollapsedStep[] {
+  const plain = (s: { key: string; label: string; users: number }): CollapsedStep =>
+    ({ key: s.key, label: s.label, users: s.users, collapsed: null });
+  if (!Number.isFinite(thresholdPct) || thresholdPct <= 0 || steps.length === 0) {
+    return steps.map(plain);
+  }
+  const groups: { key: string; label: string; users: number }[][] = [];
+  for (let i = 0; i < steps.length; i++) {
+    if (i === 0) { groups.push([steps[0]]); continue; }
+    const prev = steps[i - 1].users;
+    const cur = steps[i].users;
+    const change = prev > 0 ? Math.abs(1 - cur / prev) * 100 : cur === prev ? 0 : 100;
+    if (change < thresholdPct) groups[groups.length - 1].push(steps[i]);
+    else groups.push([steps[i]]);
+  }
+  return groups.map((members) => {
+    if (members.length === 1) return plain(members[0]);
+    const first = members[0];
+    const last = members[members.length - 1];
+    return {
+      key: last.key,
+      label: `${first.label} … ${last.label}`,
+      users: last.users,
+      collapsed: {
+        count: members.length,
+        startUsers: first.users,
+        firstLabel: first.label,
+        lastLabel: last.label,
+        memberKeys: members.map((m) => m.key),
+      },
+    };
+  });
+}
+
 // ─── Compare (align steps by KEY across funnels) ────────────────────────────
 
 /** Union of step keys: first funnel's order, then unseen keys from the rest in
@@ -399,6 +462,8 @@ export interface FunnelViewState {
   /** Pinned arcs: [fromStepKey, toStepKey] pairs. */
   arcs: [string, string][];
   sort: { key: string; dir: 'asc' | 'desc' } | null;
+  /** Significant-change collapse threshold in % (null = mode off). */
+  collapse: number | null;
 }
 
 export const EMPTY_VIEW_STATE: FunnelViewState = {
@@ -408,6 +473,7 @@ export const EMPTY_VIEW_STATE: FunnelViewState = {
   compare: [],
   arcs: [],
   sort: null,
+  collapse: null,
 };
 
 const enc = encodeURIComponent;
@@ -433,6 +499,10 @@ export function writeViewState(params: URLSearchParams, state: FunnelViewState):
 
   if (state.sort) params.set('sort', `${state.sort.dir === 'desc' ? '-' : ''}${state.sort.key}`);
   else params.delete('sort');
+
+  if (state.collapse !== null && Number.isFinite(state.collapse) && state.collapse > 0) {
+    params.set('clt', String(state.collapse));
+  } else params.delete('clt');
 
   return params;
 }
@@ -471,6 +541,7 @@ export function readViewState(params: URLSearchParams): FunnelViewState {
   }
 
   const rawCmp = params.get('cmp');
+  const rawClt = Number(params.get('clt'));
   return {
     filters,
     breakdown: params.get('bd'),
@@ -478,6 +549,7 @@ export function readViewState(params: URLSearchParams): FunnelViewState {
     compare: rawCmp ? rawCmp.split(',').map((s) => { try { return dec(s); } catch { return ''; } }).filter(Boolean) : [],
     arcs,
     sort,
+    collapse: Number.isFinite(rawClt) && rawClt > 0 ? Math.min(50, rawClt) : null,
   };
 }
 
