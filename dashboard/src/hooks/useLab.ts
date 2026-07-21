@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
+import type { FunnelCacheEntry, FunnelPrev, FunnelSnapshot } from '../components/lab/funnel/funnelModel';
 
 /** Tweak kinds. No `range` type — a relative range is an `enum` tweak keyed `range`. */
 export type TweakType = 'enum' | 'date' | 'string';
@@ -13,7 +14,7 @@ export interface PublicTweak {
   value: string | null;
 }
 
-export type Render = 'number' | 'line' | 'pie' | 'raw';
+export type Render = 'number' | 'line' | 'pie' | 'raw' | 'funnel';
 
 export interface Binding {
   objective: string;
@@ -64,6 +65,10 @@ export interface InsightCache {
   scriptHash: string | null;
   /** Oldest→newest, bounded. Absent on caches written before history shipped. */
   history?: SyncEvent[];
+  /** Funnel-set snapshot (`render: funnel` with a funnel-set payload only). */
+  funnel?: FunnelCacheEntry;
+  /** Bounded per-sync funnel snapshots (deltas/trends), oldest→newest. */
+  funnelHistory?: FunnelSnapshot[];
 }
 
 export interface PublicManifest {
@@ -86,6 +91,9 @@ export interface InsightDetail {
   meaning: string;
   resolvedTweaks: Record<string, string>;
   cache: InsightCache | null;
+  /** Previous-period values (server-computed: adapter `prev` wins, else the
+   *  best equal-length history snapshot). Null for non-funnel insights. */
+  funnelPrev?: FunnelPrev | null;
 }
 
 export interface SyncResult {

@@ -1,0 +1,324 @@
+.funnel-lane {
+  width: 100%;
+  position: relative;
+}
+
+.funnel-lane-tools {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: var(--space-1);
+}
+
+.funnel-lane-fit {
+  font-size: 12px;
+  padding: 3px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.funnel-lane-scroll {
+  overflow-x: auto;
+  overflow-y: visible;
+  padding-bottom: var(--space-2);
+}
+
+/* Edge fade on long, scrollable lanes so the cut-off is legible. */
+.funnel-lane-scroll--fade {
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 20px, #000 calc(100% - 20px), transparent 100%);
+  mask-image: linear-gradient(to right, transparent 0, #000 20px, #000 calc(100% - 20px), transparent 100%);
+}
+
+.funnel-lane-row {
+  display: flex;
+  align-items: stretch;
+  position: relative;
+  min-width: max-content;
+  width: 100%;
+}
+
+.funnel-lane-arcsvg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+
+.funnel-lane-cell {
+  display: flex;
+  align-items: stretch;
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+/* ── Node card: the Excalidraw-board look — rounded, soft border, hand-drawn
+   weight via a slightly thicker border and generous radius. ── */
+.funnel-node {
+  flex: 1 1 auto;
+  min-width: 116px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-start;
+  text-align: left;
+  padding: var(--space-3);
+  background: var(--color-bg-secondary);
+  border: 1.5px solid var(--color-border);
+  border-radius: 14px;
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast);
+  color: var(--color-text);
+}
+
+.funnel-node:hover {
+  border-color: var(--color-border-hover);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+
+.funnel-node:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.funnel-node--anchor {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px var(--color-accent-soft), var(--shadow-md);
+}
+
+.funnel-node--linked {
+  border-style: dashed;
+}
+
+.funnel-node--worst {
+  border-color: var(--color-error);
+}
+
+.funnel-node-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.funnel-node-users {
+  font-family: var(--font-family-display);
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.funnel-node-oftop {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.funnel-node-volume {
+  width: 100%;
+  height: 5px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-tertiary);
+  overflow: hidden;
+  margin-top: 2px;
+}
+
+.funnel-node-volume-fill {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius-full);
+  background: var(--color-accent);
+}
+
+/* Breakdown bands stacked inside the node. */
+.funnel-node-bands {
+  display: flex;
+  width: 100%;
+  height: 10px;
+  border-radius: var(--radius-full);
+  overflow: hidden;
+  background: var(--color-bg-tertiary);
+}
+
+.funnel-node-band {
+  display: block;
+  height: 100%;
+  min-width: 1px;
+}
+
+/* ── Connector between nodes: rate above, line, drop badge below. ── */
+.funnel-conn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 0 var(--space-2);
+  min-width: 72px;
+}
+
+.funnel-conn-rate {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.funnel-conn-line {
+  width: 100%;
+  min-width: 40px;
+  height: 0;
+  border-top: 2px solid var(--color-border);
+  position: relative;
+}
+
+.funnel-conn-line::after {
+  content: '';
+  position: absolute;
+  right: -1px;
+  top: -5px;
+  border: 4px solid transparent;
+  border-left-color: var(--color-border);
+}
+
+/* ── The drop badge: first-class, severity-tinted, never color-only (the −n
+   text carries the meaning too). ── */
+.funnel-drop {
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  white-space: nowrap;
+}
+
+.funnel-drop--low {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+}
+
+.funnel-drop--mid {
+  background: var(--color-warning-subtle);
+  color: var(--color-warning);
+}
+
+.funnel-drop--high {
+  background: var(--color-error-subtle);
+  color: var(--color-error);
+}
+
+.funnel-drop--up {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+}
+
+/* ── Arc label chips (HTML, focusable — the SVG only draws paths). ── */
+.funnel-arc-chip {
+  position: absolute;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  font-size: 11px;
+  background: var(--color-bg-secondary);
+  border: 1.5px solid;
+  border-radius: var(--radius-full);
+  box-shadow: var(--shadow-sm);
+  white-space: nowrap;
+  z-index: 5;
+}
+
+.funnel-arc-text {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.funnel-arc-counts {
+  font-weight: 400;
+  color: var(--color-text-tertiary);
+}
+
+.funnel-arc-x {
+  border: none;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0 2px;
+}
+
+.funnel-arc-x:hover {
+  color: var(--color-error);
+}
+
+.funnel-arc-detail {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  padding: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  z-index: 6;
+}
+
+.funnel-arc-detail-row {
+  display: grid;
+  grid-template-columns: minmax(64px, auto) auto auto;
+  gap: var(--space-2);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.funnel-arc-detail-name {
+  color: var(--color-text-secondary);
+}
+
+/* ── Compact (small-multiple) + zoom-to-fit variants. ── */
+.funnel-lane--compact .funnel-node {
+  min-width: 84px;
+  padding: var(--space-2);
+  border-radius: 10px;
+}
+
+.funnel-lane--compact .funnel-node-users {
+  font-size: 15px;
+}
+
+.funnel-lane--compact .funnel-conn {
+  min-width: 40px;
+  padding: 0 var(--space-1);
+}
+
+.funnel-lane--fit .funnel-node {
+  min-width: 64px;
+  padding: var(--space-2);
+}
+
+.funnel-lane--fit .funnel-node-label {
+  font-size: 10px;
+}
+
+.funnel-lane--fit .funnel-node-users {
+  font-size: 14px;
+}
+
+.funnel-lane--fit .funnel-conn {
+  min-width: 36px;
+}
+
+.funnel-lane--fit .funnel-lane-row {
+  min-width: 0;
+}

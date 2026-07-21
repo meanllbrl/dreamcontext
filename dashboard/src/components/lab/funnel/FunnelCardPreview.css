@@ -1,0 +1,57 @@
+.funnel-preview {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.funnel-preview th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px var(--space-2) 4px 0;
+  border-bottom: 1px solid var(--color-border);
+  white-space: nowrap;
+}
+
+.funnel-preview th:not(:first-child),
+.funnel-preview-num {
+  text-align: right;
+}
+
+.funnel-preview td {
+  padding: 3px var(--space-2) 3px 0;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text);
+}
+
+.funnel-preview tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.funnel-preview-name {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-secondary);
+}
+
+.funnel-preview-num {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.funnel-preview-more {
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  padding-top: var(--space-1);
+}
+
+.funnel-preview-empty {
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+  padding: var(--space-4) 0;
+}

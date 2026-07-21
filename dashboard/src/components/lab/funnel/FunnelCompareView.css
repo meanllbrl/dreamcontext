@@ -1,0 +1,152 @@
+.funnel-cmp {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.funnel-cmp-state {
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+  padding: var(--space-6);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.funnel-cmp-close {
+  padding: 4px 12px;
+  font-size: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.funnel-cmp-note {
+  font-size: 12px;
+  color: var(--color-warning);
+  background: var(--color-warning-subtle);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+}
+
+.funnel-cmp-scroll {
+  overflow-x: auto;
+}
+
+.funnel-cmp-grid {
+  border-collapse: collapse;
+  min-width: 100%;
+  font-size: 13px;
+}
+
+.funnel-cmp-grid th,
+.funnel-cmp-grid td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.funnel-cmp-grid thead th {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+}
+
+.funnel-cmp-head-funnel {
+  min-width: 160px;
+}
+
+.funnel-cmp-num {
+  text-align: right !important;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.funnel-cmp-step {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.funnel-cmp-name {
+  font-weight: 500;
+}
+
+.funnel-cmp-open {
+  border: none;
+  background: transparent;
+  color: var(--color-accent);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+  text-align: left;
+}
+
+.funnel-cmp-open:hover {
+  text-decoration: underline;
+}
+
+.funnel-cmp-id {
+  display: block;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+}
+
+.funnel-cmp-cell {
+  min-width: 88px;
+}
+
+.funnel-cmp-cell--ghost {
+  color: var(--color-text-tertiary);
+  text-align: center !important;
+  opacity: 0.5;
+}
+
+.funnel-cmp-users {
+  display: block;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.funnel-cmp-oftop {
+  display: block;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.funnel-cmp-bar {
+  display: block;
+  width: 100%;
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-tertiary);
+  overflow: hidden;
+  margin-top: 2px;
+}
+
+.funnel-cmp-barfill {
+  display: block;
+  height: 100%;
+  background: var(--color-accent);
+  border-radius: var(--radius-full);
+}
+
+.funnel-cmp-row--low .funnel-cmp-cell,
+.funnel-cmp-row--low .funnel-cmp-num {
+  opacity: 0.55;
+}
+
+.funnel-cmp-legendnote {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  margin: 0;
+}

@@ -10,6 +10,13 @@ const VALID_PAGES: readonly Page[] = ['tasks', 'roadmap', 'hypotheses', 'lab', '
 
 function readStoredPage(): Page {
   if (typeof window === 'undefined') return 'tasks';
+  // A `/lab/<slug>` deep link (multi-page insights — funnel overview/detail)
+  // must land on the Lab page regardless of the remembered page.
+  try {
+    if (window.location.pathname.startsWith('/lab/')) return 'lab';
+  } catch {
+    // fall through
+  }
   // An explicit `?page=<page>` deep-link wins over the remembered page, so a URL
   // can land directly on a section (used by the launcher and for sharing links).
   try {

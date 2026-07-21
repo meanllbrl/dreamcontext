@@ -3,6 +3,7 @@ import { useLabInsights, useSyncAll } from '../../hooks/useLab';
 import { useLabPrefs } from '../../hooks/useLabPrefs';
 import { InsightCard } from './InsightCard';
 import { InsightDetailPanel } from './InsightDetailPanel';
+import { pushLabPath } from './funnel/labRoute';
 import { LabCredentialsBanner } from './LabCredentialsBanner';
 import { LabEmptyState } from './LabEmptyState';
 import './LabBoard.css';
@@ -59,6 +60,14 @@ export function LabBoard() {
       [group, applyOrder(items, prefs.order[group])] as const,
     );
   }, [insights, prefs.order]);
+
+  // Multi-page insights (funnel) route to their overview page — the card is
+  // page 1's entry. Everything else opens the detail slide-over as before.
+  const openInsight = useCallback((slug: string) => {
+    const summary = (insights ?? []).find((s) => s.slug === slug);
+    if (summary?.render === 'funnel') pushLabPath(slug, null);
+    else setOpenSlug(slug);
+  }, [insights]);
   // Re-derive the open summary from the live list so the panel header (staleness,
   // latest, error) refreshes after a sync instead of showing a stale snapshot.
   const openSummary = openSlug ? (insights ?? []).find((s) => s.slug === openSlug) ?? null : null;
@@ -178,7 +187,7 @@ export function LabBoard() {
                       key={summary.slug}
                       summary={summary}
                       onToast={setToast}
-                      onOpen={setOpenSlug}
+                      onOpen={openInsight}
                       dragging={drag?.slug === summary.slug}
                       dropTarget={dragOverSlug === summary.slug && drag?.slug !== summary.slug}
                       onDragStart={(e) => {

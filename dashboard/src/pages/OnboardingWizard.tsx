@@ -791,6 +791,9 @@ export function OnboardingWizard({ onClose, onReady }: Props) {
       className="wiz-overlay"
       role="dialog"
       aria-modal="true"
+      // The Launcher page background is a window-drag handle; a modal (and its
+      // click-to-dismiss scrim) must never start a window drag.
+      data-no-drag
       onClick={cloneRun ? undefined : onClose}
     >
       <div className="wiz-modal" onClick={(e) => e.stopPropagation()}>

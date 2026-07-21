@@ -1,0 +1,414 @@
+.funnel-ovw {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  height: 100%;
+  overflow-y: auto;
+  padding: var(--space-4);
+}
+
+/* ── Breadcrumbs (shared with the detail page). ── */
+.funnel-crumbs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 13px;
+}
+
+.funnel-crumb-link {
+  border: none;
+  background: transparent;
+  color: var(--color-accent);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.funnel-crumb-link:hover {
+  text-decoration: underline;
+}
+
+.funnel-crumb-sep {
+  color: var(--color-text-tertiary);
+}
+
+.funnel-crumb-here {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+/* ── Toolbar. ── */
+.funnel-ovw-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.funnel-ovw-toolbar-spacer {
+  flex: 1;
+}
+
+.funnel-ovw-ranges {
+  display: inline-flex;
+  gap: 2px;
+  background: var(--color-bg-tertiary);
+  border-radius: var(--radius-full);
+  padding: 2px;
+}
+
+.funnel-ovw-range {
+  border: none;
+  background: transparent;
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.funnel-ovw-range--on {
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  box-shadow: var(--shadow-sm);
+  font-weight: 600;
+}
+
+.funnel-ovw-custom {
+  position: relative;
+}
+
+.funnel-ovw-custom-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 30;
+  display: flex;
+  gap: var(--space-2);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  padding: var(--space-2);
+}
+
+.funnel-ovw-custom-pop input,
+.funnel-ovw-custom-pop button {
+  font-size: 12px;
+  padding: 3px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+.funnel-ovw-window {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.funnel-ovw-search {
+  font-size: 13px;
+  padding: 5px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  min-width: 180px;
+}
+
+.funnel-ovw-action {
+  font-size: 12px;
+  padding: 4px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.funnel-ovw-action:hover {
+  border-color: var(--color-border-hover);
+  color: var(--color-text);
+}
+
+.funnel-ovw-filterrow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.funnel-ovw-compare {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 14px;
+  border: none;
+  border-radius: var(--radius-full);
+  background: var(--color-accent);
+  color: #fff;
+  cursor: pointer;
+}
+
+.funnel-ovw-notices {
+  font-size: 12px;
+  color: var(--color-warning);
+  background: var(--color-warning-subtle);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.funnel-ovw-deltasrc {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+
+/* ── States. ── */
+.funnel-ovw-state {
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+  padding: var(--space-6);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.funnel-ovw-syncbtn,
+.funnel-det-linkbtn {
+  font-size: 12px;
+  padding: 4px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+/* ── Table. ── */
+.funnel-ovw-tablewrap {
+  overflow-x: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-secondary);
+}
+
+.funnel-ovw-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.funnel-ovw-table thead th {
+  border-bottom: 1px solid var(--color-border);
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+  white-space: nowrap;
+  position: sticky;
+  top: 0;
+  background: var(--color-bg-secondary);
+  z-index: 2;
+}
+
+.funnel-ovw-th-num {
+  text-align: right !important;
+}
+
+.funnel-ovw-sort {
+  border: none;
+  background: transparent;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.funnel-ovw-sort--on {
+  color: var(--color-text);
+}
+
+.funnel-ovw-sort-arrow {
+  font-size: 10px;
+}
+
+.funnel-ovw-row {
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.funnel-ovw-row:hover,
+.funnel-ovw-row:focus-visible {
+  background: var(--color-bg-tertiary);
+}
+
+.funnel-ovw-row:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
+.funnel-ovw-table td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  vertical-align: middle;
+}
+
+.funnel-ovw-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.funnel-ovw-td-check,
+.funnel-ovw-th-check {
+  width: 32px;
+}
+
+.funnel-ovw-td-name {
+  min-width: 180px;
+}
+
+.funnel-ovw-name {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.funnel-ovw-id {
+  margin-left: var(--space-2);
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+}
+
+.funnel-ovw-lowchip {
+  margin-left: var(--space-2);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 1px 7px;
+  border-radius: var(--radius-full);
+  background: var(--color-warning-subtle);
+  color: var(--color-warning);
+  white-space: nowrap;
+}
+
+.funnel-ovw-td-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.funnel-ovw-cell--low {
+  color: var(--color-text-tertiary);
+}
+
+.funnel-ovw-cell--unfiltered {
+  opacity: 0.55;
+}
+
+.funnel-ovw-cell--floor {
+  background: var(--color-error-subtle);
+}
+
+.funnel-ovw-cell--target {
+  background: var(--color-success-subtle);
+}
+
+/* ── Delta chips (shared with detail + compare). ── */
+.funnel-delta {
+  margin-left: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  padding: 1px 5px;
+  border-radius: var(--radius-full);
+  white-space: nowrap;
+}
+
+.funnel-delta--up {
+  background: var(--color-success-subtle);
+  color: var(--color-success);
+}
+
+.funnel-delta--down {
+  background: var(--color-error-subtle);
+  color: var(--color-error);
+}
+
+.funnel-delta--flat {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-tertiary);
+}
+
+/* ── Kebab menu. ── */
+.funnel-ovw-td-kebab {
+  width: 36px;
+  position: relative;
+}
+
+.funnel-ovw-kebab {
+  border: none;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: 15px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: var(--radius-md);
+}
+
+.funnel-ovw-kebab:hover {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
+
+.funnel-ovw-menu {
+  position: absolute;
+  right: var(--space-2);
+  top: calc(100% - 4px);
+  z-index: 20;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  display: flex;
+  flex-direction: column;
+  min-width: 180px;
+  padding: var(--space-1);
+}
+
+.funnel-ovw-menu button {
+  border: none;
+  background: transparent;
+  text-align: left;
+  font-size: 12px;
+  padding: 6px 10px;
+  border-radius: var(--radius-md);
+  color: var(--color-text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.funnel-ovw-menu button:hover {
+  background: var(--color-bg-tertiary);
+}
+
+/* Screen-reader-only helper (scoped fallback if globals lack it). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}

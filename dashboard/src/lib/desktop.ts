@@ -22,6 +22,23 @@ function isDragExempt(target: EventTarget | null): boolean {
 }
 
 /**
+ * Cached `@tauri-apps/api/window` module. The drag gesture is latency-critical:
+ * `startDragging()` only works while the mouse button is still down, and on a
+ * quick flick the button is up within ~100ms — a cold dynamic import can lose
+ * that race, making the drag silently do nothing. `startTitleBarDrag` warms this
+ * on mousedown so the threshold-crossing call resolves from cache.
+ */
+let windowApiPromise: Promise<typeof import('@tauri-apps/api/window')> | null = null;
+function windowApi(): Promise<typeof import('@tauri-apps/api/window')> {
+  if (!windowApiPromise) {
+    windowApiPromise = import('@tauri-apps/api/window');
+    // A failed load must not poison every future gesture — retry next time.
+    windowApiPromise.catch(() => { windowApiPromise = null; });
+  }
+  return windowApiPromise;
+}
+
+/**
  * Start dragging the current window from a title-bar mousedown.
  *
  * Why this exists instead of `data-tauri-drag-region`: our windows are created
@@ -38,7 +55,7 @@ export async function startWindowDrag(target: EventTarget | null): Promise<void>
   // Never hijack a click meant for a control (buttons, inputs, links, etc.).
   if (isDragExempt(target)) return;
   try {
-    const { getCurrentWindow } = await import('@tauri-apps/api/window');
+    const { getCurrentWindow } = await windowApi();
     await getCurrentWindow().startDragging();
   } catch { /* ACL / non-desktop — ignore */ }
 }
@@ -52,7 +69,7 @@ export async function startWindowDrag(target: EventTarget | null): Promise<void>
 export async function closeCurrentWindow(): Promise<void> {
   if (!isDesktop()) return;
   try {
-    const { getCurrentWindow } = await import('@tauri-apps/api/window');
+    const { getCurrentWindow } = await windowApi();
     await getCurrentWindow().close();
   } catch { /* ACL / non-desktop — ignore */ }
 }
@@ -100,9 +117,14 @@ interface DragMouseEvent {
  * (and anything marked `[data-no-drag]`) never start a drag. No-op off-desktop.
  */
 export function startTitleBarDrag(e: DragMouseEvent): void {
+  if (!isDesktop()) return;
   if (e.button !== 0) return;
   const target = e.target;
   if (isDragExempt(target)) return;
+  // Warm the Tauri module NOW, while the pointer is still inside the 4px
+  // threshold — by the time the drag actually starts the import is a cache hit,
+  // so a fast flick can't out-race the module load.
+  void windowApi().catch(() => { /* retried on next gesture */ });
   const sx = e.clientX;
   const sy = e.clientY;
   const onMove = (me: MouseEvent) => {
@@ -124,7 +146,7 @@ export async function toggleMaximizeWindow(target: EventTarget | null): Promise<
   if (!isDesktop()) return;
   if (isDragExempt(target)) return;
   try {
-    const { getCurrentWindow } = await import('@tauri-apps/api/window');
+    const { getCurrentWindow } = await windowApi();
     await getCurrentWindow().toggleMaximize();
   } catch { /* ACL / non-desktop — ignore */ }
 }

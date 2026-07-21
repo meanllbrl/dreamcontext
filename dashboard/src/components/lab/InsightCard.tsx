@@ -6,6 +6,7 @@ import { LineChart } from './LineChart';
 import { PieChart } from './PieChart';
 import { RawDataView } from './RawDataView';
 import { TweakEditor } from './TweakEditor';
+import { FunnelCardPreview } from './funnel/FunnelCardPreview';
 import './InsightCard.css';
 
 /** Staleness badge: fresh / stale(Nh) / never synced / error. */
@@ -79,12 +80,12 @@ export function InsightCard({
       role="button"
       tabIndex={0}
       onKeyDown={(e) => { if (e.key === 'Enter') onOpen(summary.slug); }}
-      title="Open details, history & interactive chart"
       draggable
       onDragStart={onDragStart}
       onDragOver={onDragOver}
       onDrop={onDrop}
       onDragEnd={onDragEnd}
+      title={summary.render === 'funnel' ? 'Open the funnel table' : 'Open details, history & interactive chart'}
     >
       <div className="lab-card-header">
         <div className="lab-card-title-row">
@@ -117,6 +118,7 @@ export function InsightCard({
             <RawDataView series={series} />
           </div>
         )}
+        {summary.render === 'funnel' && <FunnelCardPreview cache={cache} />}
       </div>
 
       {summary.tweaks.length > 0 && (

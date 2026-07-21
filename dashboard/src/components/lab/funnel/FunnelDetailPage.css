@@ -1,0 +1,260 @@
+.funnel-det {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 260px;
+  grid-template-rows: auto auto auto 1fr;
+  gap: var(--space-3);
+  height: 100%;
+  overflow-y: auto;
+  padding: var(--space-4);
+  align-content: start;
+}
+
+.funnel-det > .funnel-crumbs,
+.funnel-det > .funnel-det-toolbar,
+.funnel-det > .funnel-det-warn,
+.funnel-det > .funnel-det-hint {
+  grid-column: 1 / -1;
+}
+
+.funnel-det-state {
+  grid-column: 1 / -1;
+  color: var(--color-text-tertiary);
+  font-size: 13px;
+  padding: var(--space-6);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+}
+
+.funnel-det-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.funnel-det-toolbar-spacer {
+  flex: 1;
+}
+
+.funnel-det-bd {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.funnel-det-bd select {
+  font-size: 12px;
+  padding: 3px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+}
+
+.funnel-det-bdmode {
+  display: inline-flex;
+  gap: 2px;
+  background: var(--color-bg-tertiary);
+  border-radius: var(--radius-full);
+  padding: 2px;
+}
+
+.funnel-det-mode {
+  border: none;
+  background: transparent;
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.funnel-det-mode--on {
+  background: var(--color-bg-secondary);
+  color: var(--color-text);
+  box-shadow: var(--shadow-sm);
+  font-weight: 600;
+}
+
+.funnel-det-action {
+  font-size: 12px;
+  padding: 4px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.funnel-det-action:hover {
+  border-color: var(--color-border-hover);
+  color: var(--color-text);
+}
+
+.funnel-det-action[aria-pressed='true'] {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
+}
+
+.funnel-det-warn {
+  font-size: 12px;
+  color: var(--color-warning);
+  background: var(--color-warning-subtle);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+}
+
+.funnel-det-hint {
+  font-size: 12px;
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+}
+
+.funnel-det-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.funnel-det-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.funnel-det-legenditem {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.funnel-det-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  display: inline-block;
+}
+
+.funnel-det-multiples {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.funnel-det-multiple-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+  margin-bottom: var(--space-1);
+}
+
+.funnel-det-multiple-n {
+  font-weight: 400;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+
+.funnel-det-tablewrap {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-secondary);
+  padding: var(--space-3);
+  overflow-x: auto;
+}
+
+/* ── Right rail. ── */
+.funnel-det-rail {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-secondary);
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-self: start;
+  position: sticky;
+  top: 0;
+}
+
+.funnel-det-railtitle {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-tertiary);
+  margin: 0;
+}
+
+.funnel-det-metrics,
+.funnel-det-meta {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.funnel-det-metric,
+.funnel-det-metarow {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: 12px;
+}
+
+.funnel-det-metric dt,
+.funnel-det-metarow dt {
+  color: var(--color-text-secondary);
+}
+
+.funnel-det-metric dd,
+.funnel-det-metarow dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--color-text);
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.funnel-det-metarow dd {
+  font-weight: 400;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.funnel-det-metarow a {
+  color: var(--color-accent);
+}
+
+.funnel-det-window {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 900px) {
+  .funnel-det {
+    grid-template-columns: 1fr;
+  }
+
+  .funnel-det-rail {
+    position: static;
+  }
+}

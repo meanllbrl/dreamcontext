@@ -116,14 +116,19 @@ export function LauncherPage() {
   }
 
   return (
-    <div className="launcher">
+    <div
+      className="launcher"
+      // The Launcher window uses TitleBarStyle::Overlay (traffic lights float
+      // over the content) and has no native title bar, so without this the
+      // window is only draggable from the tiny native strip. The ENTIRE page
+      // background is the drag handle (same threshold gesture as the vault
+      // Header) — the top bar alone is mostly filled with controls, leaving
+      // only a sliver to grab. Cards, the graph board, and the wizard opt out
+      // via data-no-drag so their own interactions are never hijacked.
+      onMouseDown={startTitleBarDrag}
+    >
       <header
         className="launcher-bar"
-        // The Launcher window uses TitleBarStyle::Overlay (traffic lights float
-        // over the content) and has no native title bar, so without this the
-        // window is only draggable from the tiny native strip. Make the whole
-        // top bar a drag handle — same threshold gesture as the vault Header.
-        onMouseDown={startTitleBarDrag}
         onDoubleClick={(e) => void toggleMaximizeWindow(e.target)}
       >
         <div className="launcher-actions">
@@ -192,6 +197,9 @@ export function LauncherPage() {
                 <div
                   key={vault.name}
                   className={`launcher-card${vault.exists ? '' : ' launcher-card--gone'}`}
+                  // Cards keep normal pointer behaviour (text selection on the
+                  // path, hover states) — only the empty background drags.
+                  data-no-drag
                 >
                   <div className="launcher-card-head">
                     <VaultDot

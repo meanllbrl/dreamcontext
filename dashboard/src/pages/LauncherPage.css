@@ -15,9 +15,9 @@
   gap: var(--space-4);
   flex-wrap: wrap;
   margin-bottom: var(--space-4);
-  /* Doubles as the window's title bar (drag handle). A generous height and the
-     left inset (clearing the floating traffic lights) give a big, obvious grab
-     zone — the controls sit right-aligned, leaving the whole left side draggable. */
+  /* Part of the page-wide window-drag handle (see LauncherPage.tsx — the whole
+     background drags). The left inset clears the floating traffic lights; the
+     controls sit right-aligned so the bar's left side stays grabbable too. */
   min-height: 34px;
   padding-left: 72px;
   user-select: none;

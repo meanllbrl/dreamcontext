@@ -695,7 +695,9 @@ export function FederationBoard({ variant = 'full' }: FederationBoardProps = {})
     dragging || pendingSource ? 'crosshair' : hoverTarget || hoverLink ? 'pointer' : 'grab';
 
   return (
-    <div className={`lgraph${embedded ? ' lgraph--embedded' : ''}`}>
+    // data-no-drag: the board owns its pointer gestures (card drag-to-wire,
+    // canvas pan) — the Launcher's window-drag handle must never see them.
+    <div className={`lgraph${embedded ? ' lgraph--embedded' : ''}`} data-no-drag>
       <div className="lgraph-toolbar">
         <button type="button" className="lgraph-help" onClick={() => setShowGuide(true)}>
           {t('federation.map.help')}

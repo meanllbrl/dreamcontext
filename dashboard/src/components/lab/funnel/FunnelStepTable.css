@@ -1,0 +1,47 @@
+.funnel-steptable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.funnel-steptable th,
+.funnel-steptable td {
+  padding: 6px var(--space-3) 6px 0;
+  border-bottom: 1px solid var(--color-border);
+  text-align: left;
+  color: var(--color-text);
+}
+
+.funnel-steptable thead th {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-tertiary);
+}
+
+.funnel-steptable tbody th {
+  font-weight: 500;
+  color: var(--color-text-secondary);
+}
+
+.funnel-steptable-num {
+  text-align: right !important;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.funnel-steptable-row--worst td,
+.funnel-steptable-row--worst th {
+  background: var(--color-error-subtle);
+}
+
+.funnel-steptable-worst {
+  color: var(--color-error);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.funnel-steptable-up {
+  color: var(--color-accent);
+}

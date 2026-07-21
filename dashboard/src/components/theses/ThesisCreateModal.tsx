@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   useCreateThesis,
   useAppendChangelog,
@@ -254,9 +255,14 @@ export function ThesisCreateModal({ mode, candidates, initialObjective = null, o
       ? 'Zero predictions saves as a draft · add at least one to open it directly.'
       : 'Ready — save as a draft, or open it now to start the validation loop.';
 
-  return (
+  // Portaled to <body>: the board root applies `zoom: var(--zoom)` with
+  // `position: relative; overflow: hidden`, which WKWebView treats as the
+  // containing block for `position: fixed` descendants — rendered inline, the
+  // overlay loses its scrim, anchors to the board, and the footer clips
+  // off-screen with no way to scroll to it.
+  return createPortal(
     <div className="tcm-overlay" onClick={onClose}>
-      <div className="tcm-modal" role="dialog" aria-modal="true" aria-label={mode === 'review' ? 'Review extracted hypotheses' : 'New hypothesis'} onClick={(e) => e.stopPropagation()}>
+      <div className="tcm-modal bd-scroll" role="dialog" aria-modal="true" aria-label={mode === 'review' ? 'Review extracted hypotheses' : 'New hypothesis'} onClick={(e) => e.stopPropagation()}>
         <div className="tcm-head">
           <div className="tcm-head-row">
             <h2 className="tcm-title">{mode === 'review' ? 'Review extracted hypotheses' : 'New hypothesis'}</h2>
@@ -281,11 +287,11 @@ export function ThesisCreateModal({ mode, candidates, initialObjective = null, o
         </div>
 
         {mode === 'review' && reviewCandidates.length === 0 ? (
-          <div className="tcm-body bd-scroll">
+          <div className="tcm-body">
             <div className="tcm-empty">No candidates to review.</div>
           </div>
         ) : (
-          <div className="tcm-body bd-scroll">
+          <div className="tcm-body">
             <label className="tcm-field">
               <span className="tcm-field-label">Claim*</span>
               <textarea
@@ -402,6 +408,7 @@ export function ThesisCreateModal({ mode, candidates, initialObjective = null, o
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
