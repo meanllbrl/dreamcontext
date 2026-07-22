@@ -183,7 +183,7 @@ export function registerLabCommand(program: Command): void {
     .description('Scaffold a new insight manifest in lab/insights/<slug>.md')
     .requiredOption('--title <title>', 'Insight title')
     .option('--group <group>', 'Dashboard section this insight groups under')
-    .option('--render <render>', 'number|line|pie|raw (default number)')
+    .option('--render <render>', 'number|line|pie|raw|funnel (default number)')
     .option('--adapter <adapter>', 'http|script (default http)')
     .option('--unit <unit>', 'Display unit (e.g. "users")')
     .option('--ttl <minutes>', 'Cache TTL in minutes (default 1440)')

@@ -1,13 +1,45 @@
 [
   {
-    "id": "rel_HH_LQdLz",
-    "version": "0.19.0",
+    "id": "rel_9Sqv5iCd",
+    "version": "0.21.0",
     "date": "",
-    "summary": "Sync integrity (repoint/watermark/provenance), release-infra fixes, recall beta closeout, task-authoring UX",
+    "summary": "Next planning bucket: sleep connectors, embedding beta rollout, changelog/releases array-shape init fix",
     "breaking": false,
     "status": "planning",
     "features": [],
     "tasks": [],
+    "changelog": []
+  },
+  {
+    "id": "rel_HH_LQdLz",
+    "version": "0.20.0",
+    "date": "2026-07-22",
+    "summary": "Proactive learning layer (Hypotheses): falsifiable theses with pre-registered predictions, a cited evidence ledger, arithmetic-derived confidence, and per-sleep-cycle re-testing by the sleep-learn specialist (opt-in via `theses enable`). Funnel analytics in Lab: `--render funnel` + funnel-set/v1 payloads give a routed multi-page view — all-funnels comparison table, per-funnel step lane with drop badges, click-two-steps A→B conversion, filters, breakdowns, compare — plus a significant-change collapse mode that folds insignificant steps on long funnels. Task-sync integrity closeout (#204): `tasks dedup` heals duplicate -N mirror families (LOCAL-ONLY, dry-run-first), deterministic `.tasks-map.json` union merging in semantic-merge, strict corrupt-ledger reads that refuse loudly instead of clobbering, and a base_snapshot-guarded pull fallback that re-links orphaned mirrors instead of duplicating. Around it: Announcements (What's New page + on-load popup + sidebar unread badge), the patterns core skill (/patterns browse-and-load), linked-repo paths surfaced in the session snapshot, multi-person sync watermark fix, and a new troubleshooting skill reference.",
+    "breaking": false,
+    "status": "released",
+    "features": [
+      "proactive-learning-layer",
+      "lab-analytics-insights",
+      "task-management"
+    ],
+    "tasks": [
+      "proactive-learning-layer",
+      "announcements-whats-new",
+      "patterns-first-class",
+      "knowledge-workflows",
+      "author-a-task-via-a-claude-agent-from-the-new-task-button",
+      "cloud-reliability-package-origin-setup-state-refresh-dependency-doctor-with-one-click-install-stop-api-key-self-deletion",
+      "feat-app-goal-skill-live-panel-above-the-agent-composer-sleepy-team-dock-chip",
+      "multi-person-sync-my-own-push-advances-my-pull-watermark-silently-hiding-a-teammate-s-earlier-task-forever",
+      "clickup-sync-integrity-provenance-version-round-trip-consolidates-177-178-179",
+      "dashboard-network-auth-jupyter-token-gate-for-non-loopback-binds",
+      "fix-distribution-skill-packs-ship-all-assets-cjs-helpers-statusline-registration-via-setup-update",
+      "goal-skill-pack-headless-permission-flags-and-report-vs-work-gate",
+      "goal-skill-v2-fork-resume",
+      "improve-sleep-quality",
+      "knowledge-move-cannot-relocate-a-board-directory-with-its-companion-files-across-context-folders",
+      "repointing-the-task-backend-at-a-different-list-silently-deletes-every-local-task-mirror"
+    ],
     "changelog": []
   },
   {

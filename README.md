@@ -509,18 +509,37 @@ dreamcontext lab bind weekly-active-users increase-retention-20   # feed an obje
 - **A source is either** the generic **HTTP** adapter (any JSON API — endpoint, headers, and body may reference `{{tweak:…}}` and `{{cred:…}}` placeholders, with a JSON-path `extract`) **or a custom `.mjs` script** under `lab/scripts/` — which runs locally with your credentials, so Lab prints a loud change notice before a modified script runs again.
 - **No silent half-sync.** A failed fetch keeps the prior cached series intact, surfaces the error loudly, and exits non-zero. **Sleep never runs lab sync** (credential exposure, latency, non-determinism).
 
-The dashboard's **Lab page** groups insights by category with number / line / pie / raw renders (hand-rolled SVG), per-insight and sync-all refresh, inline tweak editing, and a "feeds &lt;objective&gt;" provenance chip on bound insights.
+The dashboard's **Lab page** groups insights by category with number / line / pie / raw / funnel renders (hand-rolled SVG), per-insight and sync-all refresh, inline tweak editing, and a "feeds &lt;objective&gt;" provenance chip on bound insights.
+
+**Funnel analytics** (`--render funnel`): an insight whose adapter returns a `funnel-set/v1` payload gets its own routed multi-page view — an all-funnels comparison table, then a per-funnel step lane with drop badges, a click-two-steps A→B conversion gesture, filters, breakdowns, and period compare. Long funnels can fold statistically insignificant steps into a single collapsed node via a user-set significant-change threshold, so the lane shows the shape that matters.
+
+## Proactive Learning (Hypotheses)
+
+Memory remembers what happened; the learning layer tests what the project *believes*. A **thesis** is a falsifiable claim the brain actively tries to validate or invalidate across sleep cycles: an observation forms a hunch, predictions get **pre-registered** (written down before the evidence that will judge them arrives), evidence accumulates as discrete cited events, and **confidence is derived from the ledger by arithmetic — never asserted by an agent on vibes**.
+
+```bash
+dreamcontext theses enable                                 # opt-in — the layer is OFF by default
+dreamcontext theses create "Onboarding drop-off is caused by the email-verify step"
+dreamcontext theses predict <slug> "Removing the step lifts D1 activation ≥10%"
+dreamcontext theses evidence <slug> --source insight --ref signup-funnel --verdict supports --note "..."
+dreamcontext theses list                                   # board: draft → open → validated | invalidated → retired
+```
+
+- **Lifecycle gates, enforced everywhere:** `draft → open` requires ≥1 pre-registered falsifiable prediction; a `validated`/`invalidated` flip requires ≥3 evidence events **and** an explicit prediction check — so a thesis can't be quietly redefined to fit whatever happened.
+- **Sleep re-tests it.** The `sleep-learn` specialist re-checks open theses against fresh evidence each cycle, recomputes confidence, flips statuses when the gates are met, and appends a per-cycle **understanding changelog** — the brain's record of *why* it changed its mind.
+- **Wired into everything else:** theses link to Lab insights, objectives, and tasks; a validated thesis promotes into knowledge (an invalidated one is kept as anti-knowledge — "we tried X, it didn't work" is a learning too). Recallable via `memory recall --types thesis`; the dashboard shows the board as **Hypotheses**.
 
 ## Skills
 
 The core `dreamcontext` skill (installed by `install-skill`) teaches your agent the context system itself. On top of that, dreamcontext ships **curated skill packs and standalone skills** that give your agent domain expertise — loaded on demand, only when the work calls for it, so they cost nothing the rest of the time.
 
-Four more skills install with the core (no pack needed) and run only when the moment calls for them:
+Five more skills install with the core (no pack needed) and run only when the moment calls for them:
 
 - **`initializer`** — interactive brain **bootstrap**. It recognizes a missing or sparse `_dream_context/` (or that you're migrating notes from another folder, or loading a large docs export into an existing brain) and ingests whatever you have — a docs folder, an Obsidian/Notion export, ADRs, an old wiki, or just the codebase — into the proper knowledge / feature / task hierarchy (scout → confirm → ingest → verify).
 - **`curator`** — interactive brain **refactor**: the periodic re-organization the conservative sleep cycle won't do. It can MOVE, MERGE, SPLIT, RENAME, RE-TYPE, and RETIRE content to conform the whole brain to current conventions — deduping near-duplicate knowledge, enforcing single-source-of-truth, and normalizing tags (audit → confirm plan → execute → verify).
 - **`dreamcontext-deep-research`** — the heavy, iterative counterpart to the fast `dreamcontext-explore` searcher, for **large / multi-project / federated** brains: fans out parallel searchers across the whole curated corpus **and connected peer vaults**, loops to close gaps, **adversarially verifies** load-bearing claims, and synthesizes a **cited** report — not raw hits. Read-only.
 - **`task-manager`** — a **task-scoped** session that *maintains* one task document rather than implementing it: revise, summarize, split, reconcile status and criteria with what is actually true. Loaded automatically by the dashboard's Task Manager pane.
+- **`patterns`** — the drift-free bridge to your project's documented patterns (`_dream_context/knowledge/patterns/`): `/patterns` lists them, `/patterns <slug>` loads one — so the agent reaches for a documented pattern before rebuilding something the project already solved.
 
 ```bash
 dreamcontext install-skill --packs                   # Browse and install interactively (terminal checkbox UI)
@@ -596,6 +615,7 @@ dreamcontext tasks tag <name> <tags…> [--remove]
 dreamcontext tasks log <name> <content>          # Log progress (newest first)
 dreamcontext tasks insert <name> <section> <content>
 dreamcontext tasks complete <name>
+dreamcontext tasks dedup [--dry-run] [--yes]     # Heal duplicate -N task-mirror families (LOCAL-ONLY; dry-run first, always)
 ```
 
 All flags are optional (medium priority/urgency, todo status by default), so every command works non-interactively for agent use.
@@ -657,6 +677,20 @@ dreamcontext memory status                # Corpus stats by type
 ```
 
 `memory remember` writes a CHANGELOG entry (with optional `summary`, prefixed `references[]`, and `supersedes`) — `2.memory.md` holds Decisions + Known Issues only.
+
+### Theses (proactive learning — opt-in)
+
+```bash
+dreamcontext theses enable                        # The layer is OFF by default
+dreamcontext theses create "<falsifiable claim>" [--kind observational|experimental]
+dreamcontext theses predict <slug> "<prediction>" # Pre-registered — before the evidence arrives
+dreamcontext theses evidence <slug> --verdict supports|contradicts|no-signal --source insight|task|objective|changelog|external [--ref <slug|url>] [--note "..."]
+dreamcontext theses status <slug> <status>        # draft→open needs ≥1 prediction; validated/invalidated flips are gated
+dreamcontext theses link <slug> --insight <s> | --objective <s> | --task <s>
+dreamcontext theses list [--status open] / show <slug> / retire / restore / promote
+```
+
+Confidence is **derived** from the evidence ledger (recency-weighted, recomputed on every read) — never hand-set. The `sleep-learn` specialist re-tests open theses each sleep cycle.
 
 ### Bookmarks & Triggers
 

@@ -2,6 +2,19 @@
   {
     "date": "2026-07-22",
     "type": "docs",
+    "scope": "release",
+    "description": "Shipped v0.20.0 (renamed from planning bucket 0.19.0 per PO decision; 16 shipped tasks attached, 3 unfinished repointed to new 0.21.0 planning bucket). New skill/references/troubleshooting.md (symptom→cause→careful-fix: tasks dedup for duplicate families, corrupt_ledger refusal, awaiting-agent brain sync, doctor, version drift) wired into SKILL.md. README gains Proactive Learning (Hypotheses) section, funnel analytics in Lab, patterns core skill, theses + tasks dedup CLI reference. lab create --render help text now includes funnel. Versions bumped in package.json, desktop/package.json, tauri.conf.json, Cargo.toml, Cargo.lock.",
+    "breaking": false,
+    "summary": "v0.20.0 release prep: troubleshooting skill reference, README learning-layer + funnel + patterns docs, all five version surfaces bumped",
+    "references": [
+      "file:skill/references/troubleshooting.md",
+      "file:README.md",
+      "task:proactive-learning-layer"
+    ]
+  },
+  {
+    "date": "2026-07-22",
+    "type": "docs",
     "scope": "skill",
     "description": "Entity Router table in SKILL.md gains a litmus line for duplicate task families (slug-N mirrors or tasks list showing the same task 2-4×) routing to dreamcontext tasks dedup, with a 'repair, don't recreate' explicit note. capabilities-table row added cross-linking to integrations.md. integrations.md gains a new 'Healing duplicate task families (tasks dedup) — backend-generic' subsection at the close of the Cloud/remote task management section, covering when to run it (conflicted/corrupted .tasks-map.json, post-team-merge), the LOCAL-ONLY guarantee, --dry-run-first workflow, and --yes requirement. cli-reference.md tasks command table gains a tasks dedup row. All three skill-doc updates pinned by marker tests (taxonomy-markers.test.ts extended blocks).",
     "breaking": false,
