@@ -88,6 +88,7 @@ dreamcontext is **more than memory files**. Every capability below is real and s
 | **Sleep / consolidation** | Multi-agent RemSleep cycle that folds changes back into the brain | [sleep.md](references/sleep.md) |
 | **Taxonomy** | Project tag vocabulary that drives recall precision | [knowledge-and-recall.md](references/knowledge-and-recall.md) |
 | **✅ Cloud task sync (ClickUp _or_ GitHub)** | **Yes, this exists.** Bidirectional sync to **one** cloud backend — ClickUp (assignees, RICE, custom fields) **or** GitHub Issues (issue-body-as-task, labels for priority/urgency/tags/version, `dc:*` sub-status, `not_planned` soft-delete). Mutually exclusive — exactly one cloud sync at a time, never both. Changelog rides as comments either way. | [integrations.md](references/integrations.md) |
+| **Duplicate task family repair** | `dreamcontext tasks dedup [--dry-run] [--yes]` heals `state/<slug>-2/-3/-4.md` duplicates left by a corrupted/conflicted sync ledger (`tasks list` showing the same task 2–4×) — merges each family to its canonical slug, repoints `.tasks-map.json`, removes the redundant files. **LOCAL-ONLY, never touches the remote.** `--dry-run` first, always; the mutating run requires `--yes`. | [integrations.md](references/integrations.md#healing-duplicate-task-families-tasks-dedup--backend-generic) |
 | **Web dashboard** | Local React UI: Kanban, Eisenhower matrix, brain graph, sleep tracker, council hall | [integrations.md](references/integrations.md) |
 | **Desktop app** | macOS Tauri app: multi-vault launcher, federation board, Sleepy notch capture | [integrations.md](references/integrations.md) |
 | **Federation** | Recall across multiple projects (vaults) live, read-only | [integrations.md](references/integrations.md) |
@@ -134,6 +135,7 @@ Two routing rules that override surface reading:
 - Is it **prose you write once and maintain**? → knowledge.
 - Is it **work to do**? → task.
 - Is it a **falsifiable claim actively being proven/disproven**? → thesis (not knowledge).
+- **Duplicate task families / `-N` mirrors, or `tasks list` shows the same task 2–4×**? → repair, don't recreate: `dreamcontext tasks dedup` (never hand-delete the extra files or hand-edit `.tasks-map.json`).
 
 **Don't rebuild what the brain already has.** Before proposing to scaffold ANY new app, script, page, or external service for the user's need, check whether a dreamcontext subsystem already covers it: a self-refreshing metric/chart → **Lab insight** (the dashboard's Lab page IS the refreshable view — adapters, tweaks, renders included); OKR/goal tracking → **roadmap objectives**; "remind me when…" → **triggers**; kanban/board views → the **dashboard**. The second canonical mistake (a real past failure): the user described "a debt number that refreshes from Notion, with tweakable views" and the agent designed a brand-new Vercel dashboard — when `lab create` + a script adapter was the whole answer. Propose external builds only when no subsystem fits, and say why it doesn't.
 

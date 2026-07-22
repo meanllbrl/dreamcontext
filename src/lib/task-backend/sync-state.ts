@@ -2,6 +2,9 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { CONFLICTS_DIR_REL, TASKS_LOCK_REL, TASKS_MAP_REL, TASKS_QUEUE_REL, TASKS_SYNC_REL } from './paths.js';
+import { TaskBackendError } from './types.js';
+import { splitConflictMarkers } from './conflict-markers.js';
+import { foldAscii } from '../fold-ascii.js';
 
 /**
  * Ledger split — issue #11 (backend-neutral names):
@@ -119,6 +122,36 @@ function readJson<T>(path: string, fallback: T): T {
   }
 }
 
+/**
+ * Strict read for the COMMITTED id-map only (`readJson` above stays lenient —
+ * it backs the gitignored per-machine caches, where falling back to a default
+ * on a corrupt read is harmless). The committed map is different: a two-machine
+ * git conflict on it can leave literal `<<<<<<<` markers in the checked-out
+ * bytes, and `JSON.parse` on marker text either throws or — worse — parses far
+ * enough to look like a small, "valid" array. Either way, silently returning an
+ * empty/partial map here is the exact failure that let a conflict-markered map
+ * get clobbered with only-new entries (#204). So this throws instead of falling
+ * back — see the `readMap()` doc below for the full contract.
+ */
+function readMapStrict(path: string): TaskMapEntry[] {
+  if (!existsSync(path)) return [];
+  const raw = readFileSync(path, 'utf-8');
+  if (raw.trim() === '') return [];
+  if (splitConflictMarkers(raw) !== null) {
+    throw new TaskBackendError(
+      'corrupt_ledger',
+      `${TASKS_MAP_REL} has unresolved merge conflict markers — run \`dreamcontext tasks dedup\` to heal, or resolve the markers manually.`,
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new TaskBackendError('corrupt_ledger', `${TASKS_MAP_REL} is not valid JSON: ${(err as Error).message}`);
+  }
+  return Array.isArray(parsed) ? (parsed as TaskMapEntry[]) : [];
+}
+
 function writeJson(path: string, data: unknown): void {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, JSON.stringify(data, null, 2) + '\n', 'utf-8');
@@ -126,6 +159,69 @@ function writeJson(path: string, data: unknown): void {
 
 export function hashContent(content: string): string {
   return createHash('sha256').update(content, 'utf-8').digest('hex');
+}
+
+/** Total order used to pick a canonical entry deterministically, independent of side order. */
+function entryOrderKey(e: TaskMapEntry): string {
+  return `${e.slug}|${JSON.stringify(e)}`;
+}
+
+/**
+ * Order-independent, LOSSLESS union of two (or more) committed-map sides — the
+ * merge primitive behind `mergeTasksMapJson` (git-sync/semantic-merge.ts) and
+ * `healConflictedMap` below. Byte-stable regardless of which side is passed
+ * first: same input set, same output, always.
+ *
+ * Three passes:
+ *  1. Collapse to ONE entry per `remoteId` (a rename/relabel of the same real
+ *     remote task never gets two rows) — the canonical survivor is picked by
+ *     `entryOrderKey`, not "whichever side came first".
+ *  2. Resolve `slug` collisions across entries that now carry DISTINCT
+ *     `remoteId`s — two genuinely different real remote tasks that transiently
+ *     share a name-derived slug. Neither is dropped: the walk is ordered by
+ *     `dcId` ascending (tiebreak `remoteId`) — the SAME total order
+ *     `mergeTaskMd` uses to pick its keeper for the matching `state/<slug>.md`
+ *     add/add (git-sync/semantic-merge.ts) — so the map's bare-slug winner and
+ *     the file's keeper agree by construction, with no cross-file lookup
+ *     needed. The loser(s) are re-slugged to `<slug>-2`, `<slug>-3`, … (first
+ *     free), which the next pull's vanished-mirror branch materializes as a
+ *     real file rather than a lost mapping. An entry missing `dcId` (only
+ *     possible via external corruption — `recordMapping` always writes one)
+ *     sorts by `remoteId` alone so the walk stays deterministic.
+ *  3. Sort the result by `slug` for a stable committed file.
+ */
+export function unionTaskMap(sides: TaskMapEntry[][]): TaskMapEntry[] {
+  const byRemoteId = new Map<string, TaskMapEntry>();
+  for (const side of sides) {
+    for (const entry of side) {
+      const existing = byRemoteId.get(entry.remoteId);
+      if (!existing || entryOrderKey(entry) < entryOrderKey(existing)) {
+        byRemoteId.set(entry.remoteId, entry);
+      }
+    }
+  }
+
+  const ordered = [...byRemoteId.values()].sort((a, b) => {
+    const ak = a.dcId || '';
+    const bk = b.dcId || '';
+    if (ak !== bk) return ak.localeCompare(bk);
+    return a.remoteId.localeCompare(b.remoteId);
+  });
+
+  const used = new Set<string>();
+  const resolved: TaskMapEntry[] = [];
+  for (const entry of ordered) {
+    let slug = entry.slug;
+    let n = 1;
+    while (used.has(slug)) {
+      n += 1;
+      slug = `${entry.slug}-${n}`;
+    }
+    used.add(slug);
+    resolved.push(slug === entry.slug ? entry : { ...entry, slug });
+  }
+
+  return resolved.sort((a, b) => a.slug.localeCompare(b.slug));
 }
 
 export class SyncLedger {
@@ -138,8 +234,24 @@ export class SyncLedger {
   conflictsDir(): string { return join(this.contextRoot, CONFLICTS_DIR_REL); }
 
   // ── id-map (committed) ──
+  /**
+   * Read the committed id-map. STRICT: a parse failure or unresolved conflict
+   * markers throws `TaskBackendError('corrupt_ledger', …)` rather than
+   * silently returning an empty map. A silent `[]` here is exactly what let
+   * `recordMapping` (below) rewrite a conflict-markered map as valid JSON
+   * containing only new entries, permanently orphaning every canonical
+   * mapping (#204). A missing file is NOT corruption — a project mid-first-
+   * sync has no map yet — so that case still returns `[]`.
+   *
+   * PRECONDITION every `.find()`-based lookup below (`remoteIdFor`,
+   * `slugForRemoteId`, `entryForDcId`) assumes: no two entries share a `slug`.
+   * `readMap` does not enforce this itself — the map can only violate it after
+   * external corruption (hand-edit, a double-push race) — `tasks dedup` is the
+   * repair path that restores it, via `rewriteMap` (one whole-map write, never
+   * a sequence of per-entry writes that could leave the violation half-fixed).
+   */
   readMap(): TaskMapEntry[] {
-    return readJson<TaskMapEntry[]>(this.mapPath, []);
+    return readMapStrict(this.mapPath);
   }
 
   remoteIdFor(slug: string): string | null {
@@ -208,6 +320,46 @@ export class SyncLedger {
     if (queue.some((q) => q.slug === oldSlug)) {
       writeJson(this.queuePath, queue.map((q) => (q.slug === oldSlug ? { ...q, slug: newSlug } : q)));
     }
+  }
+
+  /**
+   * If the committed map carries git conflict markers, parse both
+   * reconstructed sides (tolerantly — a side that fails to parse contributes
+   * nothing rather than aborting the heal) and rewrite marker-free JSON: the
+   * lossless union of both sides, never a clobber. Returns `true` iff it
+   * healed; `false` when the file is absent or already marker-free (no-op).
+   * LOCAL ONLY — never touches the remote.
+   */
+  healConflictedMap(): boolean {
+    if (!existsSync(this.mapPath)) return false;
+    const raw = readFileSync(this.mapPath, 'utf-8');
+    const split = splitConflictMarkers(raw);
+    if (split === null) return false;
+    const parseSide = (s: string): TaskMapEntry[] => {
+      try {
+        const parsed = JSON.parse(s || '[]');
+        return Array.isArray(parsed) ? (parsed as TaskMapEntry[]) : [];
+      } catch {
+        return [];
+      }
+    };
+    this.rewriteMap(unionTaskMap([parseSide(split.ours), parseSide(split.theirs)]));
+    return true;
+  }
+
+  /**
+   * Replace the ENTIRE committed map in ONE write, sorted by slug. The
+   * loss-safe primitive for multi-entry repairs (e.g. `tasks dedup`'s
+   * dcId↔remoteId cross-wiring fix): callers compute the fully-repaired array
+   * in memory and hand it over in one call, so no intermediate write can
+   * clobber a sibling entry the way incremental `recordMapping`/`migrateSlug`
+   * calls could (each filters by ONE slug and would dangle or delete another
+   * entry mid-sequence for a multi-entry repair). "Atomic" here means one
+   * whole-array write — not crash-atomic (no fsync/rename); same durability
+   * semantics as the existing `writeJson`.
+   */
+  rewriteMap(entries: TaskMapEntry[]): void {
+    writeJson(this.mapPath, [...entries].sort((a, b) => a.slug.localeCompare(b.slug)));
   }
 
   removeTaskSync(slug: string): void {
@@ -561,4 +713,45 @@ export function reconcileRenamedTasks(
     migrations.push({ from: entry.slug, to: newSlug });
   }
   return migrations;
+}
+
+/** The `{ slug, dcId, name }` a pull-side match needs from a live local task file. */
+export interface LocalTaskDescriptor {
+  slug: string;
+  dcId: string;
+  name: string;
+}
+
+/** The `{ remoteId, name }` a pull-side match needs from the incoming remote task. */
+export interface RemoteMatchInput {
+  remoteId: string;
+  name: string;
+}
+
+/**
+ * Re-link an incoming remote task to an existing local mirror when the
+ * committed map lost the entry (e.g. after a team-merge conflict on
+ * `.tasks-map.json`) — the pull-side fallback that stops a missing mapping
+ * from minting a fresh `-N` duplicate mirror (#204). Matches by fold-ascii
+ * exact name equality against tasks NOT already claimed by a DIFFERENT
+ * `remoteId` in the map — a local task whose name genuinely collides with a
+ * different remote task must still fall through to the caller's normal `-N`
+ * creation, never be silently re-linked to the wrong remote id. Deterministic
+ * on ties: the lexicographically-smallest candidate slug.
+ */
+export function matchLocalTaskForRemote(
+  ledger: SyncLedger,
+  liveTasks: LocalTaskDescriptor[],
+  remote: RemoteMatchInput,
+): LocalTaskDescriptor | null {
+  const claimed = new Set(
+    ledger.readMap()
+      .filter((e) => e.remoteId !== remote.remoteId)
+      .map((e) => e.slug),
+  );
+  const target = foldAscii(remote.name);
+  const candidates = liveTasks
+    .filter((t) => foldAscii(t.name) === target && !claimed.has(t.slug))
+    .sort((a, b) => a.slug.localeCompare(b.slug));
+  return candidates[0] ?? null;
 }

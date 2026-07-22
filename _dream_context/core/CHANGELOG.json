@@ -3,6 +3,77 @@
     "date": "2026-07-22",
     "type": "docs",
     "scope": "skill",
+    "description": "Entity Router table in SKILL.md gains a litmus line for duplicate task families (slug-N mirrors or tasks list showing the same task 2-4×) routing to dreamcontext tasks dedup, with a 'repair, don't recreate' explicit note. capabilities-table row added cross-linking to integrations.md. integrations.md gains a new 'Healing duplicate task families (tasks dedup) — backend-generic' subsection at the close of the Cloud/remote task management section, covering when to run it (conflicted/corrupted .tasks-map.json, post-team-merge), the LOCAL-ONLY guarantee, --dry-run-first workflow, and --yes requirement. cli-reference.md tasks command table gains a tasks dedup row. All three skill-doc updates pinned by marker tests (taxonomy-markers.test.ts extended blocks).",
+    "breaking": false,
+    "summary": "Skill docs updated for tasks dedup — Entity Router, integrations reference, CLI reference, marker tests",
+    "references": [
+      "file:skill/SKILL.md",
+      "file:skill/references/integrations.md",
+      "file:skill/references/cli-reference.md",
+      "file:tests/unit/taxonomy-markers.test.ts"
+    ]
+  },
+  {
+    "date": "2026-07-22",
+    "type": "feat",
+    "scope": "task-backend",
+    "description": "Add dreamcontext tasks dedup — a LOCAL-ONLY repair command that detects and heals duplicate task families (slug-N mirrors) arising from a conflicted or corrupted .tasks-map.json. NEW readEffectiveMap() reads the raw map file; when splitConflictMarkers detects git conflict markers it computes the healed union in memory via unionTaskMap (zero writes) — clean files still go through the ledger's strict readMap(). planDedup() calls readEffectiveMap() for zero-write planning/dry-run; the physical heal write happens ONLY on apply (via ledger.healConflictedMap(), the sole site). --dry-run first, --yes to apply. NO cloud adapter ever constructed — backend-generic but strictly local-execution. Skill docs added (SKILL.md Entity Router + capabilities row, integrations.md tasks-dedup subsection, cli-reference.md tasks row) with marker-test coverage.",
+    "breaking": false,
+    "summary": "dreamcontext tasks dedup repair command — heals duplicate task families from conflicted/corrupted .tasks-map.json",
+    "references": [
+      "file:src/lib/task-backend/dedup.ts",
+      "file:src/lib/task-backend/conflict-markers.ts",
+      "file:src/cli/commands/tasks.ts",
+      "file:tests/unit/tasks-dedup.test.ts",
+      "file:skill/SKILL.md",
+      "file:skill/references/integrations.md",
+      "file:skill/references/cli-reference.md",
+      "file:tests/unit/taxonomy-markers.test.ts"
+    ]
+  },
+  {
+    "date": "2026-07-22",
+    "type": "fix",
+    "scope": "task-backend",
+    "description": "Guard the pull-fallback name/id match in clickup.ts and github.ts with this.ledger.taskSync(match.slug)?.base_snapshot — a never-synced local creation is no longer misread as a #204 map-corruption orphan. base_snapshot presence is the clean discriminator: sync runs pull-before-push, so a fresh local task has no map entry AND no .tasks-sync.json history; a genuine orphan (committed map corrupted, machine-local ledger intact) has base_snapshot set because every updateTaskSync call in both backends writes it alongside last_synced_at. This closes the root cause of false duplicates during initial sync: a local task without history is now correctly identified as 'never synced' and matched or created accordingly, not treated as a corrupted orphan requiring a new -2 sibling.",
+    "breaking": false,
+    "summary": "Pull-fallback name/id match now guarded by base_snapshot presence — fixes never-synced-vs-orphan false duplicate",
+    "references": [
+      "file:src/lib/task-backend/clickup.ts",
+      "file:src/lib/task-backend/github.ts",
+      "file:tests/unit/pull-fallback-match.test.ts"
+    ]
+  },
+  {
+    "date": "2026-07-22",
+    "type": "fix",
+    "scope": "task-backend",
+    "description": "Change entryOrderKey's separator in sync-state.ts from a literal NUL byte (\\x00) to | — total-order semantics unchanged (still slug|JSON.stringify(entry) compared lexicographically; | can't appear in a slug so no ambiguity introduced). A NUL byte flips git to a binary diff; the printable separator keeps the map file human-readable and git-diffable. The map is already excluded from the generic semantic-merge rule and handled deterministically by the tasks-map-json class, but a text diff remains valuable for manual review and agent-driven sync conflict resolution.",
+    "breaking": false,
+    "summary": "entryOrderKey separator changed from NUL byte to | so .tasks-map.json stays a text diff in git",
+    "references": [
+      "file:src/lib/task-backend/sync-state.ts",
+      "file:tests/unit/conflict-markers.test.ts",
+      "file:tests/unit/sync-match-remote.test.ts",
+      "file:tests/unit/sync-ledger-corrupt-map.test.ts"
+    ]
+  },
+  {
+    "date": "2026-07-22",
+    "type": "feat",
+    "scope": "git-sync",
+    "description": "Add 'tasks-map-json' MergeClass to semantic-merge's classifyPath routing table. When both sides of a merge modify state/.tasks-map.json, mergeTasksMapJson parses both sides tolerantly, unions via unionTaskMap (imported from task-backend/sync-state, where the map-merge contract lives), and re-serializes the deterministic union — never deferred to the agent, no conflict markers survive. Add/add task-md guard: when the same slug is created on both sides with DIFFERENT dcIds (base is empty, both have string id: fields that differ), mergeTaskMd keeps BOTH — the smaller dcId's text verbatim, the larger written to a <slug>-N sibling via reslugSiblingPath (next free suffix). Task-md paths are reordered ascending before the main loop (reorderTaskMdFirst) so multi-family sibling assignment is independent of input order.",
+    "breaking": false,
+    "summary": "Semantic-merge deterministically resolves .tasks-map.json conflicts (union merge) + add/add task-md sibling split on same-slug/distinct-dcId collision",
+    "references": [
+      "file:src/lib/git-sync/semantic-merge.ts",
+      "file:tests/unit/git-sync-semantic-merge.test.ts"
+    ]
+  },
+  {
+    "date": "2026-07-22",
+    "type": "docs",
+    "scope": "skill",
     "description": "Entity Router table in SKILL.md now routes funnel-analysis asks ('funnel analizi', 'which funnel is underperforming', 'where does my funnel leak', live-funnel-dashboard problem-shape) to lab create --render funnel, with an explicit never-shadow-build note. tasks-and-features.md funnel section covers the significant-change collapse mode and long-funnel handling. Marker tests pin both updates.",
     "breaking": false,
     "summary": "Entity Router and funnel reference docs updated for funnel analytics",

@@ -54,6 +54,7 @@ Every command and flag, grouped. All commands are prefixed with `dreamcontext`. 
 | `tasks members` | People with access to the remote list (assignee candidates). `--json`. |
 | `tasks provision` | Create recommended + override-declared custom fields on the remote backend (ClickUp list fields / GitHub labels). Reuses any that already exist by name. |
 | `tasks sync-hooks install\|uninstall` | Manage best-effort git sync triggers (post-commit, pre-push). |
+| `tasks dedup` | Heal duplicate `-N` task-file families (e.g. `state/<slug>-2.md`) left behind by a corrupted/conflicted sync ledger — merges each family into its canonical slug, repoints `.tasks-map.json`, removes the redundant files. **LOCAL-ONLY**: never calls the remote backend. `--dry-run` prints the plan without mutating; the mutating run **requires `--yes`** (refuses non-interactively without it, like `tasks delete`). See [integrations.md](integrations.md#healing-duplicate-task-families-tasks-dedup--backend-generic). |
 
 Sections for `tasks insert`: `why`, `user_stories`, `acceptance_criteria`, `constraints`, `technical_details`, `notes`, `changelog`. See [tasks-and-features.md](tasks-and-features.md) for the full protocol.
 

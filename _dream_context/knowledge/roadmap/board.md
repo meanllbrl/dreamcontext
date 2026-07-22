@@ -23,8 +23,11 @@ date: '2026-07-22'
 ### ⚪ **include-codex-opencode-support** — Include Codex&OpenCode Support · no tasks yet · target 2026-08-23 · forecast 2026-08-23 ✓ on track
   Unblocks: hello-world-pr, make-it-a-business
 
-### ⚪ **make-dreamcontext-team-ready** — Make Dreamcontext, Team Ready · no tasks yet · target 2026-07-12 · forecast 2026-07-12 ✓ on track
+### 🟡 **make-dreamcontext-team-ready** — Make Dreamcontext, Team Ready · 1/3 done (33%) · target 2026-07-12 · forecast 2026-07-12 ✓ on track
   Unblocks: make-it-a-business
+  - clickup-task-sync-creates-duplicate-local-tasks-2-3-4-suffix-instead-of-matching-existing-task-by-name-id (in_review) · 0.19.0
+  - fix-clickup-sync-duplicate-tasks-204 (completed) · 0.19.0 · 2026-07-22 → …
+  - untrack-legacy-tracked-task-mirrors-remote-backend (todo) · 0.19.0
 
 ### ⚪ **simplified-ux** — Simplified UX · no tasks yet · target 2026-07-31 · forecast 2026-08-01 🔴 SLIPPING
   Unblocks: hello-world-pr, make-it-a-business
