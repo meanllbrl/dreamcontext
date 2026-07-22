@@ -21,6 +21,7 @@ import {
   type TaskSummary,
   type UpdateFieldsOptions,
 } from './types.js';
+import type { LocalTaskDescriptor } from './sync-state.js';
 
 /**
  * Pure path-safety check for task slugs (no fs). Mirrors the semantics of
@@ -325,6 +326,24 @@ export class LocalTaskBackend implements TaskBackend {
       try {
         const { data } = readFrontmatter<{ id?: string }>(file);
         if (data.id) out.push({ slug: basename(file, '.md'), dcId: data.id });
+      } catch { /* skip unreadable */ }
+    }
+    return out;
+  }
+
+  /**
+   * Like `liveTaskIdentities`, but also carries each task's `name` — what the
+   * pull-side fallback matcher (`matchLocalTaskForRemote`, #204) needs to
+   * re-link an incoming remote task whose `.tasks-map.json` entry was lost
+   * (e.g. to a team-merge conflict), instead of minting a fresh `-N`
+   * duplicate mirror.
+   */
+  protected liveTaskDescriptors(): LocalTaskDescriptor[] {
+    const out: LocalTaskDescriptor[] = [];
+    for (const file of this.taskFiles()) {
+      try {
+        const { data } = readFrontmatter<{ id?: string; name?: string }>(file);
+        if (data.id && data.name) out.push({ slug: basename(file, '.md'), dcId: data.id, name: data.name });
       } catch { /* skip unreadable */ }
     }
     return out;

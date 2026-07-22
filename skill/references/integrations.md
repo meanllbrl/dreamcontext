@@ -155,6 +155,25 @@ Priority/urgency/status as first-class **board fields** would need GitHub **Proj
 
 **Key mental model:** local markdown is canonical; the cloud provider is a sync *target*, and only ONE is ever active. A user on the local backend has both ClickUp **and** GitHub *available*, just not *enabled* — point them to `dreamcontext config task-backend <clickup|github>`.
 
+### Healing duplicate task families (`tasks dedup`) — backend-generic
+
+**When to run it:** the committed sync ledger (`state/.tasks-map.json`) is the ONE file that travels with a team-shared brain (full-repo mode) while every other cloud-sync artifact stays per-machine and gitignored (`state/*.md` mirrors, `state/.tasks-sync.json`, the op queue). A team merge that conflicts on that ledger — or any corruption of it — can leave a pull unable to match an incoming remote task back to its existing local mirror, so it mints a fresh one instead: `state/<slug>-2.md`, `-3.md`, `-4.md`, each a new dcId pointing at the SAME remote task. Symptoms:
+- `dreamcontext tasks list` shows what looks like the same task **2–4 times**, usually with a numeric suffix on the name/slug.
+- A teammate reports their `state/` directory has grown far beyond the real task count after a brain sync.
+- A recent full-repo team-merge resolved (or silently ignored a conflict on) `.tasks-map.json`.
+
+Run it: `dreamcontext tasks dedup`. Never hand-delete the extra `state/<slug>-N.md` files or hand-edit `.tasks-map.json` to "fix" this — that's exactly the ledger every sync command trusts, and a wrong hand-edit can re-orphan the mapping instead of healing it.
+
+**LOCAL-ONLY guarantee:** `tasks dedup` never talks to ClickUp or GitHub — no adapter is ever constructed, so it cannot create, update, or delete anything remote. It heals only local state: it merges each duplicate family down to one canonical file (keeping the newest body, unioning changelogs), repoints the sync ledger to that canonical slug (keeping the newest `remoteId` mapping), and removes the now-redundant mirror files. Safe to run even without cloud sync configured.
+
+**`--dry-run` first, always.** `tasks dedup --dry-run` prints the exact plan — every duplicate family, which slug survives, which files get removed — without touching anything on disk. Read the plan before applying it, especially on a brain you didn't create the duplicates in.
+
+**`--yes` is required to actually mutate.** A non-dry-run run without `--yes` prints the plan and, in a non-interactive session, refuses and exits non-zero rather than guessing (same idiom as `tasks delete`). Apply with:
+```bash
+dreamcontext tasks dedup --dry-run   # inspect the plan first — always
+dreamcontext tasks dedup --yes       # apply: merge families, repoint the ledger, remove the -N files
+```
+
 ---
 
 ## Web Dashboard

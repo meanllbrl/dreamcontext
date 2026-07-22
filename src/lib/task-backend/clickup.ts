@@ -48,7 +48,7 @@ import { foreignProjectOf, projectScopeId, projectTag } from './provenance.js';
 import { writeClickUpToken, resolveClickUpToken, maskToken } from './secrets.js';
 import { BACKLOG_TAG, LocalTaskBackend } from './local.js';
 import { merge3Bodies, mergeScalar, planAssigneeHeal, unionChangelog } from './merge.js';
-import { SyncLedger, hashContent, reconcileRenamedTasks } from './sync-state.js';
+import { SyncLedger, hashContent, reconcileRenamedTasks, matchLocalTaskForRemote } from './sync-state.js';
 import type {
   AddChangelogOptions,
   AssigneeDrift,
@@ -1249,6 +1249,40 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     ].sort();
 
     let slug = this.ledger.slugForRemoteId(remote.id);
+
+    // FALLBACK MATCH (#204) — the map entry for this remote task is missing
+    // (e.g. a team-merge conflict on `.tasks-map.json`), but the local mirror
+    // may still exist. Re-link by exact name before falling through to the
+    // create-new path, so a lost mapping re-links instead of duplicating.
+    //
+    // GUARD: `pull` runs BEFORE `push` (see `sync()`), so a freshly-created,
+    // never-synced local task has no map entry either — the matcher's only
+    // exclusion (claimed by a DIFFERENT remoteId) can't see it. Without this
+    // guard, an unrelated remote task that merely shares its name would get
+    // re-linked to it, 3-way-merging two unrelated tasks' content (base null)
+    // and binding future pushes to the wrong remote. A genuine #204 orphan
+    // corrupts the COMMITTED `.tasks-map.json` but leaves the machine-local
+    // `.tasks-sync.json` intact, so only accept the match when the candidate
+    // has PRIOR sync history on this machine (`taskSync().base_snapshot` set)
+    // — a never-synced creation has none and safely falls through to `-N`.
+    if (!slug) {
+      const match = matchLocalTaskForRemote(this.ledger, this.liveTaskDescriptors(), {
+        remoteId: remote.id,
+        name: remote.name,
+      });
+      if (match && this.ledger.taskSync(match.slug)?.base_snapshot) {
+        slug = match.slug;
+        this.ledger.recordMapping({ slug: match.slug, dcId: match.dcId, backend: this.name, remoteId: remote.id });
+        try {
+          recordDashboardChange(this.contextRoot, {
+            entity: 'task',
+            action: 'update',
+            target: `state/${slug}.md`,
+            summary: `Re-linked orphaned mirror '${slug}' to remote task (${this.name}) — .tasks-map.json entry was missing`,
+          });
+        } catch { /* the journal must never break a sync */ }
+      }
+    }
 
     if (!slug || !existsSync(this.taskPath(slug))) {
       // NEW remote task (or vanished mirror) → create the mirror file.

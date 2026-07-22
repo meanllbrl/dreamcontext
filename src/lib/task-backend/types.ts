@@ -394,7 +394,8 @@ export class TaskBackendError extends Error {
       | 'already_exists'
       | 'invalid_input'
       | 'write_error'
-      | 'remote_error',
+      | 'remote_error'
+      | 'corrupt_ledger',
     message: string,
   ) {
     super(message);

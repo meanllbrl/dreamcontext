@@ -88,6 +88,17 @@ describe('skill/SKILL.md markers', () => {
   it("has the 'don't rebuild what the brain already has' rule", () => {
     expect(content).toContain("Don't rebuild what the brain already has.");
   });
+
+  // Issue #204: duplicate -N task mirrors from a corrupted sync ledger must
+  // route to the repair verb, not a hand-rolled fix or a fresh task recreate.
+  it('has the tasks dedup capabilities row', () => {
+    expect(content).toContain('**Duplicate task family repair**');
+    expect(content).toContain('dreamcontext tasks dedup');
+  });
+
+  it('routes duplicate task families to tasks dedup in the litmus tests', () => {
+    expect(content).toContain('Duplicate task families / `-N` mirrors');
+  });
 });
 
 // ── skill/references lab markers ─────────────────────────────────────────────
@@ -173,6 +184,40 @@ describe('skill/references/brain-sync.md markers', () => {
   it('has the silent-failure troubleshooting playbook', () => {
     expect(content).toContain('When sync is');
     expect(content).toContain('brain sync --push-only');
+  });
+});
+
+// ── skill/references tasks dedup markers (#204) ──────────────────────────────
+// Duplicate task families from a corrupted/conflicted sync ledger produced 220
+// duplicate files out of 425 for one reporter. These markers pin the repair
+// verb's documentation so it doesn't silently drop out of the skill docs.
+
+describe('skill/references/integrations.md tasks dedup markers', () => {
+  const content = readFileSync(join(ROOT, 'skill', 'references', 'integrations.md'), 'utf-8');
+
+  it('documents the tasks dedup command', () => {
+    expect(content).toContain('dreamcontext tasks dedup');
+  });
+
+  it('documents the --dry-run-first workflow', () => {
+    expect(content).toContain('--dry-run');
+  });
+
+  it('documents the --yes requirement for the mutating run', () => {
+    expect(content).toContain('--yes');
+  });
+
+  it('states the LOCAL-ONLY guarantee (never touches the remote)', () => {
+    expect(content).toContain('LOCAL-ONLY guarantee');
+  });
+});
+
+describe('skill/references/cli-reference.md tasks dedup markers', () => {
+  const content = readFileSync(join(ROOT, 'skill', 'references', 'cli-reference.md'), 'utf-8');
+
+  it('has a tasks dedup row', () => {
+    expect(content).toContain('`tasks dedup`');
+    expect(content).toContain('LOCAL-ONLY');
   });
 });
 

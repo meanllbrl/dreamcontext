@@ -24,6 +24,7 @@ import {
   TaskBackendError,
   type TaskBackend,
 } from '../../lib/task-backend/index.js';
+import { planDedup, applyDedup, type DedupPlan } from '../../lib/task-backend/dedup.js';
 import {
   GROUP_BY_FIELDS,
   collectTags,
@@ -1401,6 +1402,69 @@ export function registerTasksCommand(program: Command): void {
         }
       }
     });
+
+  // Heal duplicate -N mirror families + dcId↔remoteId map cross-wiring (#204).
+  // LOCAL ONLY — never writes to the remote task backend; every fix is a
+  // file/ledger operation on this machine. Mirrors the `delete` confirmation idiom.
+  tasks
+    .command('dedup')
+    .description('Heal duplicate task-mirror files (-2/-3 suffixes) from a lost sync mapping — LOCAL ONLY, never writes to the remote backend')
+    .option('--dry-run', 'Report what would change without writing anything')
+    .option('--yes', 'Skip the confirmation prompt')
+    .action(async (opts: { dryRun?: boolean; yes?: boolean }) => {
+      const root = ensureContextRoot();
+      const plan = planDedup(root);
+      printDedupPlan(plan);
+
+      if (opts.dryRun) return;
+
+      if (!opts.yes) {
+        if (!process.stdin.isTTY) {
+          error('Refusing to dedup without --yes in a non-interactive session.');
+          process.exitCode = 1;
+          return;
+        }
+        const answer = (await promptInput({ message: 'Apply this dedup plan? Type "yes" to confirm:' })).trim().toLowerCase();
+        if (answer !== 'yes') {
+          error('Confirmation did not match — nothing changed.');
+          return;
+        }
+      }
+
+      const result = applyDedup(root, plan);
+      success(`Dedup: merged ${result.merged} famil${result.merged === 1 ? 'y' : 'ies'}, removed ${result.filesRemoved} duplicate file(s).`);
+    });
+}
+
+function printDedupPlan(plan: DedupPlan): void {
+  console.log(header('Task dedup plan'));
+  if (plan.mapHealed) {
+    console.log(chalk.yellow('  state/.tasks-map.json has unresolved conflict markers — the union of both sides will be committed when applied.'));
+  }
+  const active = plan.families.filter((f) => !f.skippedReason);
+  const skipped = plan.families.filter((f) => f.skippedReason);
+  if (active.length === 0 && skipped.length === 0 && plan.mapRepairs.length === 0) {
+    console.log(chalk.dim('  No duplicate families or map cross-wiring found.'));
+    return;
+  }
+  for (const f of active) {
+    console.log(
+      `  ${chalk.green('merge')}   ${f.members.join(', ')} → ${f.canonicalSlug} ` +
+      `(keep body: ${f.keptBodyFrom}${f.keepRemoteId ? `, remoteId ${f.keepRemoteId}` : ', unmapped'})`,
+    );
+  }
+  for (const f of skipped) {
+    console.log(`  ${chalk.yellow('skip')}    ${f.members.join(', ')} — ${f.skippedReason} (distinct real remote tasks; left untouched)`);
+  }
+  for (const r of plan.mapRepairs) {
+    if (r.disposition === 'repaired') {
+      console.log(`  ${chalk.cyan('repoint')} dcId ${r.dcId}: ${r.fromSlug} → ${r.toSlug}`);
+    } else if (r.disposition === 'unrepairable') {
+      console.log(`  ${chalk.red('flag')}    dcId ${r.dcId} at ${r.fromSlug} — no live file matches this dcId; left as-is`);
+    } else {
+      console.log(`  ${chalk.red('flag')}    dcId ${r.dcId} collides at ${r.fromSlug} — shared by ≥2 map entries with distinct remoteIds; left as-is`);
+    }
+  }
 }
 
 function checkWorkflow(file: string): string[] {
