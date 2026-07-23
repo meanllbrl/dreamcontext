@@ -390,6 +390,7 @@ echo "$GITHUB_TOKEN" | dreamcontext config github-token   # stored in the gitign
 dreamcontext tasks sync [push|pull|both]            # manual two-way sync
 dreamcontext tasks sync pull --reconcile            # heal assignees + version that sit BELOW the watermark
 dreamcontext tasks sync --refresh-meta              # force-refresh cached statuses/members/fields (skip the hourly throttle)
+dreamcontext tasks hard-refresh                     # wipe local mirrors + ledger (backed up first) and re-pull EVERYTHING from the remote
 dreamcontext tasks sync-hooks install               # best-effort post-commit/pre-push triggers (can never fail git)
 ```
 

@@ -1,5 +1,37 @@
 [
   {
+    "id": "rel_NYi00gm4",
+    "version": "0.20.1",
+    "date": "2026-07-23",
+    "summary": "Patch release: task sync at scale — bulk first-sync (inline custom fields + changelog backfill skip), live progress (CLI bar + dashboard background jobs), sync lock ownership hardening, and tasks hard-refresh.",
+    "breaking": false,
+    "status": "released",
+    "features": [
+      "task-management"
+    ],
+    "tasks": [
+      "task_qfU1JsNK"
+    ],
+    "changelog": [
+      {
+        "date": "2026-07-23",
+        "type": "feat",
+        "scope": "sync",
+        "description": "Connecting a ClickUp/GitHub backend to a mature brain (100s of tasks) now works at scale: bulk bootstrap (>=20 never-synced tasks) sends ClickUp custom_fields inline on the create call (400/422-gated fallback) and keeps pre-existing changelog history local on both adapters (no comment/notification flood) — per-task cost drops from ~5-8 requests to ~1. SyncOptions.onProgress + a dependency-free ProgressBar give tasks sync and post-sleep sync a live TTY bar with ETA. The sync lock gained per-engine ownership tokens + a heartbeat: long syncs can no longer be stale-broken mid-run, and a stalled engine can neither stomp nor delete the rival that legitimately took over (push/pull abort safely). New: dreamcontext tasks hard-refresh (staged atomic backup, ledger wipe, full re-pull, loud failure gating) and dashboard background sync jobs (POST /api/tasks/sync-jobs + polling SyncChip with live phase/N-of-total progress, keyboard+ARIA) that survive navigation. Shipped through a full multi-review cycle: final gate PASS, 17 new tests, suite 3491 green.",
+        "breaking": false,
+        "summary": "Bulk first-sync at scale: live progress bar, inline ClickUp custom fields, lock ownership tokens, tasks hard-refresh + dashboard background sync jobs",
+        "references": [
+          "commit:2f1af6d",
+          "task:feat-sync-bulk-first-sync-progress-bar-inline-custom-fields-changelog-backfill-skip-lock-heartbeat",
+          "feature:task-management"
+        ],
+        "authors": [
+          "mehmet"
+        ]
+      }
+    ]
+  },
+  {
     "id": "rel_9Sqv5iCd",
     "version": "0.21.0",
     "date": "",

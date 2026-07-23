@@ -3,10 +3,10 @@ id: feat_u_OAkGJy
 type: feature
 name: proactive-learning-layer
 description: >-
-  First-class proactive learning layer: THESIS entity (draft → open →
-  validated | invalidated → retired) with derived confidence, per-cycle
-  understanding changelog, insight instrumentation, and structural relations to
-  roadmap objectives, insights, and tasks. A dedicated smart sleep specialist
+  First-class proactive learning layer: THESIS entity (draft → open → validated
+  | invalidated → retired) with derived confidence, per-cycle understanding
+  changelog, insight instrumentation, and structural relations to roadmap
+  objectives, insights, and tasks. A dedicated smart sleep specialist
   (sleep-learn) forms and re-tests theses during sleep; validated/invalidated
   theses promote into knowledge. Fully disableable. Opt-in via `dreamcontext
   theses enable`.
@@ -14,8 +14,8 @@ pinned: false
 date: '2026-07-20'
 status: in_review
 created: '2026-07-20'
-updated: '2026-07-20'
-released_version: null
+updated: '2026-07-23'
+released_version: 0.20.0
 tags:
   - 'topic:sleep'
   - 'topic:agents'
