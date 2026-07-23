@@ -1,6 +1,11 @@
 .fullscreen-overlay {
   position: fixed;
   inset: 0;
+  /* Full-page is a PAGE, not a modal (same call as .detail-overlay--fullscreen):
+     the app's real top bar (sticky, --header-height, z-index 30) stays visible
+     above it. inset: 0 swallowed the chrome — in the desktop shell the overlay's
+     own header then collided with the traffic lights / window tab strip. */
+  top: var(--header-height);
   /* Above every page-level layer (PacksPage modal uses 1000). */
   z-index: 1100;
   display: flex;

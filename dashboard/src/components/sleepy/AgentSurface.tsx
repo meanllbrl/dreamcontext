@@ -1275,19 +1275,22 @@ export function AgentSurface() {
   }, [agentSettings.enabled, expanded]);
 
   // ── Auto-title: name a tab from its first user message (Settings → Agents) ────────
-  // Fires when a live AGENT session completes a turn (a busy→idle edge). The server reads
-  // that session's first user message from its transcript and returns a Haiku-generated
-  // title; we apply it ONLY if the tab still carries its default "Agent N" name (a tab you
-  // renamed is never overwritten). It settles to at most ONE successful Haiku call per tab,
-  // but a call that finds nothing yet (an interrupted or not-yet-flushed first turn) leaves
-  // the tab RETRYABLE — so the tab you actually worked on gets named on its next completed
-  // turn, instead of permanently losing its title to a slower, older tab's late rename.
+  // Fires on BOTH busy edges of a live AGENT session. The idle→busy edge (turn START) is
+  // the fast path: the UserPromptSubmit hook has usually already captured the first prompt
+  // into the tab's session-map entry, so the server can title the tab seconds after the
+  // user types — no waiting for the whole first turn to finish. The busy→idle edge (turn
+  // COMPLETE) is the safety net for tabs the hook missed (the transcript exists by then).
+  // The title is applied ONLY if the tab still carries its default "Agent N" name (a tab
+  // you renamed is never overwritten). It settles to at most ONE successful Haiku call per
+  // tab, but a call that finds nothing yet (a not-yet-written hook entry or an unflushed
+  // transcript) leaves the tab RETRYABLE — so the tab you actually worked on gets named on
+  // its next edge, instead of permanently losing its title to a slower tab's late rename.
   useEffect(() => {
     if (!agentSettings.enabled || !agentSettings.autoTitle) return;
     sessions.current.forEach((s, id) => {
       const wasBusy = busyPrevRef.current.get(id) ?? false;
       busyPrevRef.current.set(id, s.busy);
-      if (!(wasBusy && !s.busy)) return;          // fire on every turn-complete edge…
+      if (wasBusy === s.busy) return;             // fire on every busy edge (start + complete)…
       // …but skip if already named, ineligible, or a request is already outstanding.
       if (s.kind !== 'agent' || autoTitledRef.current.has(id) || titleInFlightRef.current.has(id)) return;
       const meta = sessionList.find((m) => m.id === id);

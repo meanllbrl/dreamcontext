@@ -1,7 +1,10 @@
 .funnel-det {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 260px;
-  grid-template-rows: auto auto auto 1fr;
+  /* Rows stay content-sized: the warn/hint rows are conditional, so a
+     positional 1fr would land on whichever row happens to be fourth
+     (e.g. the arc-anchor hint) and balloon it to fill the viewport. */
+  grid-auto-rows: min-content;
   gap: var(--space-3);
   height: 100%;
   overflow-y: auto;

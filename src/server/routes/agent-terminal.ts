@@ -621,22 +621,80 @@ function sanitizeTitle(raw: string): string | null {
   return t.length >= 2 ? t : null;
 }
 
-/** One-shot Haiku call that returns a short tab title for `message`, or null. Runs
- *  headless (`claude --model haiku -p`) in `cwd`; `$0` is a positional (no injection). */
-function generateTitle(message: string, cwd: string): Promise<string | null> {
-  return new Promise((resolve) => {
+/** Login-shell resolution of the `claude` binary + PATH, done ONCE per server process.
+ *  The interactive login shell (sourcing the user's whole zshrc) is the single most
+ *  expensive part of a titling call after the model itself — cache its result so every
+ *  title after the first spawns the binary directly, no shell at all. A failed
+ *  resolution is NOT cached (claude may get installed/fixed later). */
+let titleCliCache: Promise<{ bin: string; path: string } | null> | null = null;
+function resolveTitleCli(): Promise<{ bin: string; path: string } | null> {
+  if (titleCliCache) return titleCliCache;
+  titleCliCache = new Promise<{ bin: string; path: string } | null>((resolve) => {
     const shell = process.env.SHELL || '/bin/zsh';
-    const prompt =
-      'You name terminal tabs so a user can tell many open tabs apart at a glance. ' +
-      'Read the user\'s first request to a coding agent and reply with ONLY a tab title in Title Case that is specific and clearly describes the actual task — name the concrete thing being worked on, not a vague category. ' +
-      '3 to 6 words, no quotes, no punctuation, no trailing period, max 48 characters.\n\nRequest:\n' +
-      message;
     let out = '';
     let settled = false;
-    const child = spawn(shell, ['-ilc', 'exec claude --model haiku -p "$0"', prompt], {
-      cwd,
+    const child = spawn(shell, ['-ilc', 'command -v claude; printf "%s" "$PATH"'], {
       stdio: ['ignore', 'pipe', 'ignore'],
     });
+    const done = (v: { bin: string; path: string } | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { child.kill(); } catch { /* gone */ }
+      resolve(v);
+    };
+    const timer = setTimeout(() => done(null), 10_000);
+    child.stdout?.on('data', (c: Buffer) => { out += c.toString('utf-8'); });
+    child.on('error', () => done(null));
+    child.on('close', () => {
+      const nl = out.indexOf('\n');
+      const bin = nl > 0 ? out.slice(0, nl).trim() : '';
+      const path = nl > 0 ? out.slice(nl + 1).trim() : '';
+      done(bin ? { bin, path: path || process.env.PATH || '' } : null);
+    });
+  }).then((v) => {
+    if (!v) titleCliCache = null;
+    return v;
+  });
+  return titleCliCache;
+}
+
+/** One-shot Haiku call that returns a short tab title for `message`, or null. Spawns
+ *  the resolved binary directly (no shell — the prompt is a plain argv element, so no
+ *  injection surface) with lean flags: `--setting-sources ''` skips the user's
+ *  settings/plugins/hooks, `--strict-mcp-config` skips every MCP server boot, and
+ *  `--no-session-persistence` avoids writing a throwaway transcript per title. The
+ *  title is generated in the SAME language as the user's message — Turkish prompt,
+ *  Turkish tab. */
+function generateTitle(message: string, cwd: string): Promise<string | null> {
+  const prompt =
+    'You name terminal tabs so a user can tell many open tabs apart at a glance. ' +
+    'Read the user\'s first request to a coding agent and reply with ONLY a short tab title that is specific and clearly describes the actual task — name the concrete thing being worked on, not a vague category. ' +
+    'Write the title in the SAME language as the request (e.g. a Turkish request gets a Turkish title), capitalized the way a title normally is in that language. ' +
+    '3 to 6 words, no quotes, no punctuation, no trailing period, max 48 characters.\n\nRequest:\n' +
+    message;
+  const args = [
+    '--model', 'haiku',
+    '--setting-sources', '',
+    '--strict-mcp-config',
+    '--no-session-persistence',
+    '-p', prompt,
+  ];
+  return resolveTitleCli().then((cli) => new Promise((resolve) => {
+    let out = '';
+    let settled = false;
+    // Direct spawn with the cached login-shell PATH (so `#!/usr/bin/env node` shebangs
+    // resolve); if resolution failed, fall back to the old one-shot login shell.
+    const child = cli
+      ? spawn(cli.bin, args, {
+          cwd,
+          stdio: ['ignore', 'pipe', 'ignore'],
+          env: { ...process.env, PATH: cli.path },
+        })
+      : spawn(process.env.SHELL || '/bin/zsh', ['-ilc', 'exec claude "$@"', 'claude', ...args], {
+          cwd,
+          stdio: ['ignore', 'pipe', 'ignore'],
+        });
     const done = (v: string | null) => {
       if (settled) return;
       settled = true;
@@ -648,7 +706,7 @@ function generateTitle(message: string, cwd: string): Promise<string | null> {
     child.stdout?.on('data', (c: Buffer) => { out = (out + c.toString('utf-8')).slice(0, 500); });
     child.on('error', () => done(null));
     child.on('close', (code) => done(code === 0 ? sanitizeTitle(out) : null));
-  });
+  }));
 }
 
 /**
