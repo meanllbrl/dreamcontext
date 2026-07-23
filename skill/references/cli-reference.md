@@ -84,7 +84,7 @@ Curated metrics synced from HTTP APIs or local scripts into `_dream_context/lab/
 
 | Command | Description |
 |---|---|
-| `lab create <slug>` | Scaffold `lab/insights/<slug>.md`. `--title <str>` (required), `--group <section>`, `--render number\|line\|pie\|raw\|funnel` (default number), `--adapter http\|script` (default http), `--unit <str>`, `--ttl <minutes>` (default 1440). Edit the manifest afterwards to set the real endpoint/extract (or script) config, then sync. `--render funnel --adapter script` also scaffolds the `range` tweak (7d/28d/90d) + a documented `funnel-set/v1` script template (payload contract → tasks-and-features.md § Funnel insights). |
+| `lab create <slug>` | Scaffold `lab/insights/<slug>.md`. `--title <str>` (required), `--category <tab>` (top-level dashboard side-menu tab, e.g. "Marketing"), `--group <section>`, `--render number\|line\|pie\|raw\|funnel` (default number), `--adapter http\|script` (default http), `--unit <str>`, `--ttl <minutes>` (default 1440). Edit the manifest afterwards to set the real endpoint/extract (or script) config, then sync. `--render funnel --adapter script` also scaffolds the `range` tweak (7d/28d/90d) + a documented `funnel-set/v1` script template (payload contract → tasks-and-features.md § Funnel insights). |
 | `lab sync [slug]` | Sync one insight, or every insight with `--all`. `--force` refetches even when the cache is within TTL (fresh insights are otherwise skipped and reported). On failure the prior series is kept, the error is loud, and the exit code is non-zero — never a silent half-sync. A changed custom script prints a loud tripwire notice before executing. |
 | `lab list` | All insights with latest value, unit, staleness. `--json`. |
 | `lab show <slug>` | Manifest + cached series — **cache only, never fetches**. `--json`. Funnel insights additionally print per-funnel step tables (users, % of top, % of prev, drop) with the worst drop highlighted. |
@@ -267,7 +267,11 @@ The SessionStart snapshot shows a cheap **Linked repos** glance (present → the
 
 ## Council (see [integrations.md](integrations.md))
 
-`council create`, `council agent create`, `council round start\|end`, `council synthesize`, `council complete`, `council promote`, `council list`, `council show`. Plus sub-agent helpers (`round-context`, `report append`, `summaries`, `research add\|list`).
+Orchestrator commands: `council create` (`--rounds N`, `--interrupt`, `--options "A=..,B=.."` to register named decision options), `council agent create`, `council round start|end`, `council board <id>` (`--round N`, `--plain`; chamber board with stances, conviction bars, convergence), `council timeline <id>` (`--json`; per-round stance+conviction table), `council inject <id> <fact...>` (mid-debate fact into Constraints & Known Facts), `council question <id> <slug> <question...>` (queue a directive/cross-examination for one persona), `council synthesize`, `council complete`, `council promote`, `council list`, `council show`, `council live clear` (delete the live panel file), `council demo-live` (`--phase <p>`; fake live state for previewing the app panel).
+
+Persona helpers: `round-context` (now includes verdict landscape + injected facts + pending directives), `council verdict <id> <slug> <round> --stance <s> --conviction <n> --headline "<h>" [--concession "<c>"]` (submit BEFORE `report append`; idempotent per round+slug), `report append` (warns when the round's verdict is missing; accepts an optional `### Cross-examination` subsection), `summaries` (appends per-persona stance/conviction lines), `research add|list`.
+
+The CLI writes `_dream_context/tmp/.council-live.json` automatically on state-changing commands; the app's live chamber panel renders from it. No browser viewer.
 
 ---
 

@@ -1,0 +1,219 @@
+/* Council live panel — compact strip above the composer + chamber-view popup.
+   Dark-surface styling matching GoalLivePanel to sit flush with the agent
+   terminal chrome; stance colors flow in via the --stance-c custom property. */
+
+/* ── Compact strip ───────────────────────────────────────────────────────── */
+
+.council-live-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 12px;
+  border: 0;
+  border-top: 1px solid rgba(34, 211, 238, 0.22);
+  background: linear-gradient(180deg, rgba(34, 211, 238, 0.08), rgba(34, 211, 238, 0.03));
+  color: #d6d3e3;
+  font: 500 11.5px/1.4 var(--font-mono, ui-monospace, monospace);
+  cursor: pointer;
+  text-align: left;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.council-live-bar:hover { background: linear-gradient(180deg, rgba(34, 211, 238, 0.14), rgba(34, 211, 238, 0.06)); }
+
+.council-live-mark { color: #66e0f0; font-weight: 700; }
+.council-live-topic { color: #8b8898; overflow: hidden; text-overflow: ellipsis; max-width: 22ch; flex-shrink: 1; }
+
+.council-live-round { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.council-live-round-dots { display: inline-flex; align-items: center; gap: 3px; }
+.council-live-round-dots b {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #3a3a44;
+}
+.council-live-round-dots b[data-state='done'] { background: #40c057; }
+.council-live-round-dots b[data-state='active'] { background: #22d3ee; animation: council-live-pulse 1.4s ease-in-out infinite; }
+
+.council-live-phase { color: #66e0f0; font-weight: 700; }
+.council-live-phase[data-phase='interlude'] { color: #ffd43b; }
+.council-live-phase[data-phase='synthesis'] { color: #b197fc; }
+.council-live-phase[data-phase='done'] { color: #51cf66; }
+
+/* Persona dots: colored per stance (--stance-c), dimmed=wait, pulse=think, solid=done. */
+.council-live-personas { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.council-live-personas b {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--stance-c, #5c5f66);
+}
+.council-live-personas b[data-s='wait'] { opacity: 0.35; }
+.council-live-personas b[data-s='think'] { animation: council-live-pulse 1.4s ease-in-out infinite; }
+
+/* Convergence meter + leading option key. */
+.council-live-conv { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; flex-shrink: 0; }
+.council-live-conv-track {
+  width: 56px;
+  height: 5px;
+  border-radius: 3px;
+  background: #2b2b33;
+  overflow: hidden;
+}
+.council-live-conv-fill { display: block; height: 100%; border-radius: 3px; background: #22d3ee; }
+.council-live-conv-num { color: #a9a6b6; }
+.council-live-conv-lead { font-weight: 700; }
+
+.council-live-expand { color: #8b8898; flex-shrink: 0; }
+.council-live-bar:hover .council-live-expand { color: #66e0f0; }
+
+@keyframes council-live-pulse {
+  50% { opacity: 0.35; }
+}
+
+/* Narrow pane (container query context = agentpane): drop the topic so the
+   round/persona/convergence readouts keep room. */
+@container agentpane (max-width: 560px) {
+  .council-live-topic { display: none; }
+  .council-live-conv-track { display: none; }
+}
+
+/* ── Chamber view popup ──────────────────────────────────────────────────── */
+
+.council-live-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(8, 8, 12, 0.55);
+  backdrop-filter: blur(3px);
+}
+.council-live-popup {
+  background: #17171c;
+  border: 1px solid rgba(34, 211, 238, 0.3);
+  border-radius: 14px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+  max-width: min(860px, calc(100vw - 48px));
+  max-height: calc(100vh - 64px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  color: #e8e8ec;
+}
+.council-live-popup header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 14px 18px 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.council-live-popup h3 { margin: 0; font-size: 15px; color: #66e0f0; }
+.council-live-popup-topic { color: #a9a6b6; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+.council-live-popup-meta { color: #8b8898; font-size: 12px; font-family: var(--font-mono, monospace); flex-shrink: 0; }
+.council-live-close {
+  border: 0;
+  background: transparent;
+  color: #8b8898;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 6px;
+  align-self: center;
+}
+.council-live-close:hover { color: #fff; background: rgba(255, 255, 255, 0.08); }
+
+/* Responsive: the chamber table keeps its natural width and scrolls
+   horizontally when the viewport is narrower than its columns. */
+.council-live-chamber-scroll { overflow: auto; padding: 6px 10px; }
+
+.council-live-chamber {
+  border-collapse: collapse;
+  width: 100%;
+  font: 500 12.5px/1.5 var(--font-mono, ui-monospace, monospace);
+}
+.council-live-chamber td { padding: 6px 10px; white-space: nowrap; vertical-align: middle; }
+.council-live-chamber tr + tr td { border-top: 1px solid rgba(255, 255, 255, 0.04); }
+.council-live-chamber tr[data-s='wait'] { opacity: 0.55; }
+
+.council-live-cell-name { color: #d6d3e3; }
+.council-live-cell-name b {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 7px;
+  background: var(--stance-c, #5c5f66);
+  vertical-align: 1px;
+}
+.council-live-cell-name b[data-s='wait'] { opacity: 0.35; }
+.council-live-cell-name b[data-s='think'] { animation: council-live-pulse 1.4s ease-in-out infinite; }
+
+.council-live-stance-chip {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 9px;
+  border: 1px solid var(--stance-c, #5c5f66);
+  color: var(--stance-c, #5c5f66);
+  font-weight: 700;
+}
+.council-live-stance-none { color: #5c5f66; font-style: italic; }
+
+/* 10-cell conviction bar. */
+.council-live-cbar { display: inline-flex; align-items: center; gap: 2px; }
+.council-live-cbar i {
+  width: 7px;
+  height: 11px;
+  border-radius: 2px;
+  background: #2b2b33;
+}
+.council-live-cbar em { font-style: normal; color: #a9a6b6; margin-left: 6px; min-width: 2.5ch; text-align: right; }
+
+.council-live-shift { font-weight: 600; }
+.council-live-shift[data-kind='none'] { color: #5c5f66; }
+.council-live-shift[data-kind='stable'] { color: #8b8898; }
+.council-live-shift[data-kind='stance'] { color: #ffd43b; }
+.council-live-shift[data-kind='up'] { color: #51cf66; }
+.council-live-shift[data-kind='down'] { color: #fa5252; }
+
+.council-live-cell-headline { color: #8b8898; max-width: 34ch; }
+.council-live-cell-headline span {
+  display: inline-block;
+  max-width: 34ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+}
+
+/* Options tally footer. */
+.council-live-tally {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 10px 18px 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  font: 500 12px/1.4 var(--font-mono, ui-monospace, monospace);
+  color: #a9a6b6;
+}
+.council-live-tally-label { color: #5c5f66; font-weight: 700; letter-spacing: 0.06em; }
+.council-live-tally-item { display: inline-flex; align-items: center; gap: 6px; }
+.council-live-tally-item b { width: 8px; height: 8px; border-radius: 50%; }
+.council-live-tally-item strong { color: #d6d3e3; }
+.council-live-tally-item[data-leading] strong { color: #fff; }
+.council-live-tally-conv { margin-left: auto; color: #66e0f0; }
+
+/* ── Dock badge (minimized chip) ─────────────────────────────────────────── */
+
+.council-live-dock-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+  font: 600 10px/1.2 var(--font-mono, monospace);
+  color: #66e0f0;
+  white-space: nowrap;
+}
+.council-live-dock-badge strong { font-weight: 700; }

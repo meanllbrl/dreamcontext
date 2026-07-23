@@ -1,5 +1,6 @@
 import { AgentComposerBar } from './AgentComposerBar';
 import { GoalLivePanel } from './GoalLivePanel';
+import { CouncilLivePanel } from './CouncilLivePanel';
 import { useAgentSessionStats } from '../../hooks/useAgentCapabilities';
 import type { ModelConfig } from '../../lib/agentComposer';
 
@@ -33,6 +34,9 @@ export function PaneComposer({
       {/* Goal-skill live panel — renders only while THIS pane's conversation runs the
           orchestrator (server-side session scoping); sits directly above the composer. */}
       <GoalLivePanel claudeId={claudeId} enabled={isAgent && isLiveAgent} />
+      {/* Council live panel — same session scoping; independent of the goal panel,
+          stacked below it when both runs are live in this conversation. */}
+      <CouncilLivePanel claudeId={claudeId} enabled={isAgent && isLiveAgent} />
       <AgentComposerBar
       onInsert={onInsert}
       onPickFiles={onPickFiles}

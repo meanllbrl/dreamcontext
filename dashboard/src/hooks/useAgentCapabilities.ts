@@ -3,6 +3,7 @@ import { api } from '../api/client';
 import type { Capabilities } from '../components/sleepy/agentSession';
 import { FALLBACK_MODEL_CONFIG, type ModelConfig, type SessionStats } from '../lib/agentComposer';
 import type { GoalLiveResponse } from '../lib/goalLive';
+import type { CouncilLiveResponse } from '../lib/councilLive';
 
 /**
  * Agent prerequisite probe (`GET /api/agent/capabilities`) — desktop gate + node-pty
@@ -85,5 +86,26 @@ export function useAgentGoalLive(claudeId: string | undefined, enabled: boolean)
     staleTime: 1_500,
     retry: false,
     placeholderData: GOAL_LIVE_INACTIVE,
+  });
+}
+
+const COUNCIL_LIVE_INACTIVE: CouncilLiveResponse = { active: false };
+
+/**
+ * The vault's council debate live state for THIS pane (`GET /api/agent/council-live`),
+ * polled while a live agent backs the pane. Same session scoping as goal-live: a run
+ * stamped for another conversation returns `{active:false}` here, so the chamber
+ * panel only renders above the orchestrator's own composer. Shared query key → the
+ * panel and the dock badge dedupe into one poll per conversation.
+ */
+export function useAgentCouncilLive(claudeId: string | undefined, enabled: boolean) {
+  return useQuery({
+    queryKey: ['agent-council-live', claudeId],
+    queryFn: () => api.get<CouncilLiveResponse>(`/agent/council-live?claudeId=${encodeURIComponent(claudeId!)}`),
+    enabled: enabled && !!claudeId,
+    refetchInterval: enabled ? 2_000 : false,
+    staleTime: 1_500,
+    retry: false,
+    placeholderData: COUNCIL_LIVE_INACTIVE,
   });
 }

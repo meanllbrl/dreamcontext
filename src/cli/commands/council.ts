@@ -7,6 +7,7 @@ import { readFrontmatter, writeFrontmatter, updateFrontmatterFields } from '../.
 import { generateId, slugify, today } from '../../lib/id.js';
 import { readJsonArray, writeJsonArray, insertToJsonArray } from '../../lib/json-file.js';
 import { success, error, warn, info, header } from '../../lib/format.js';
+import { insertToSection } from '../../lib/markdown.js';
 import {
   getCouncilDir,
   getDebateDir,
@@ -22,9 +23,25 @@ import {
   getPersonaRoundSummary,
   parseReportRounds,
   readStdin,
+  readVerdicts,
+  writeVerdicts,
+  withVerdictsLock,
+  parseOptionsSpec,
+  resolveStanceKey,
+  leadingStance,
+  convergence,
+  updateCouncilLive,
+  clearCouncilLive,
+  writeCouncilLiveRaw,
+  COUNCIL_LIVE_PHASES,
+  CouncilLivePhase,
+  CouncilLiveState,
   DebateFrontmatter,
   PersonaFrontmatter,
+  RoundVerdicts,
+  VerdictsFile,
 } from '../../lib/council.js';
+import { renderChamberBoard, shiftMarker } from '../../lib/council-board.js';
 
 const VALID_MODELS = ['opus', 'sonnet', 'haiku'];
 
@@ -58,6 +75,32 @@ export function registerCouncilCommand(program: Command): void {
   registerPromote(council);
   registerList(council);
   registerShow(council);
+  registerVerdict(council);
+  registerBoard(council);
+  registerTimeline(council);
+  registerInject(council);
+  registerQuestion(council);
+  registerLive(council);
+  registerDemoLive(council);
+}
+
+// ─── Verdict helpers (v2) ───────────────────────────────────────────────────
+
+function hasRegisteredOptions(data: DebateFrontmatter): boolean {
+  return Array.isArray(data.options) && data.options.length > 0;
+}
+
+/** Highest round number present in verdicts.rounds, or null when none. */
+function latestVerdictRound(verdicts: VerdictsFile): number | null {
+  const rounds = Object.keys(verdicts.rounds)
+    .map(Number)
+    .filter((n) => Number.isInteger(n) && n > 0 && Object.keys(verdicts.rounds[String(n)] ?? {}).length > 0);
+  if (rounds.length === 0) return null;
+  return Math.max(...rounds);
+}
+
+function roundVerdictsOf(verdicts: VerdictsFile, round: number): RoundVerdicts {
+  return verdicts.rounds[String(round)] ?? {};
 }
 
 // ─── council create ─────────────────────────────────────────────────────────
@@ -69,8 +112,9 @@ function registerCreate(council: Command): void {
     .option('-r, --rounds <n>', 'Number of rounds planned', '2')
     .option('--interrupt', 'Pause for user input between rounds', false)
     .option('--no-interrupt', 'Do not pause between rounds')
+    .option('--options <spec>', 'Decision options, e.g. "A=Keep sync,B=Drop it"')
     .description('Create a new debate folder and debate.md')
-    .action((topicParts: string[], opts: { rounds: string; interrupt: boolean }) => {
+    .action((topicParts: string[], opts: { rounds: string; interrupt: boolean; options?: string }) => {
       try {
         ensureContextRoot();
         ensureCouncilDir();
@@ -86,6 +130,8 @@ function registerCreate(council: Command): void {
           error('--rounds must be an integer between 1 and 10.');
           process.exit(1);
         }
+
+        const options = opts.options ? parseOptionsSpec(opts.options) : null;
 
         const id = generateId('council');
         const dir = getDebateDir(id);
@@ -106,6 +152,12 @@ function registerCreate(council: Command): void {
           'utf-8',
         );
 
+        if (options) {
+          // Options live in verdicts.json AND mirrored into debate.md frontmatter.
+          writeVerdicts(id, { options, rounds: {} });
+          updateFrontmatterFields(join(dir, 'debate.md'), { options });
+        }
+
         upsertCouncilIndex({
           id,
           topic,
@@ -117,9 +169,14 @@ function registerCreate(council: Command): void {
           updated_at: today(),
         });
 
+        updateCouncilLive(id, { phase: 'setup' });
+
         success(`Debate created: ${id}`);
         console.log(chalk.dim(`  dir: _dream_context/council/${id}/`));
         console.log(chalk.dim(`  rounds: ${rounds}  interrupt: ${opts.interrupt ? 'yes' : 'no'}`));
+        if (options) {
+          console.log(chalk.dim(`  options: ${options.map((o) => `${o.key}=${o.label}`).join(', ')}`));
+        }
         // Print ID alone on final line for easy scripting
         console.log(id);
       } catch (err: any) {
@@ -206,6 +263,8 @@ function registerAgent(council: Command): void {
           personas,
           updated_at: today(),
         });
+
+        updateCouncilLive(debateId, { setPersona: { [slug]: 'wait' } });
 
         success(`Persona created: ${slug} (${opts.model})`);
       } catch (err: any) {
@@ -302,6 +361,8 @@ function registerRound(council: Command): void {
           updated_at: today(),
         });
 
+        updateCouncilLive(debateId, { phase: 'debate', setAll: 'think' });
+
         success(`Round ${n} started for ${debateId} (${personas.length} personas).`);
         if (n >= 2) {
           info(`Cross-context from round ${n - 1} injected into each persona.`);
@@ -356,6 +417,8 @@ function registerRound(council: Command): void {
           updated_at: today(),
         });
 
+        updateCouncilLive(debateId, { phase: 'interlude', setAll: 'wait' });
+
         success(`Round ${n} complete for ${debateId}.`);
       } catch (err: any) {
         error(err.message);
@@ -404,6 +467,56 @@ function registerRoundContext(council: Command): void {
           console.log('\n## Constraints & Known Facts\n');
           console.log(constraintsMatch[1].trim());
         }
+
+        // ── v2: verdict landscape of the last completed round ──
+        const verdicts = readVerdicts(debateId);
+        const landscapeRound = ((): number | null => {
+          const rounds = Object.keys(verdicts.rounds)
+            .map(Number)
+            .filter(
+              (r) =>
+                Number.isInteger(r) &&
+                r > 0 &&
+                r < data.current_round &&
+                Object.keys(verdicts.rounds[String(r)] ?? {}).length > 0,
+            );
+          return rounds.length > 0 ? Math.max(...rounds) : null;
+        })();
+        if (landscapeRound !== null) {
+          const rv = roundVerdictsOf(verdicts, landscapeRound);
+          console.log(`\n## Verdict landscape (round ${landscapeRound})\n`);
+          console.log('| Persona | Stance | Conviction | Headline |');
+          console.log('| --- | --- | --- | --- |');
+          for (const [slug, v] of Object.entries(rv)) {
+            console.log(`| ${slug} | ${v.stance} | ${v.conviction} | ${v.headline.replace(/\|/g, '\\|')} |`);
+          }
+          const lead = leadingStance(rv);
+          console.log(`\nLeading: ${lead ?? '(none)'} · Convergence: ${convergence(rv)}%`);
+        }
+
+        // ── v2: facts injected since the last round (interlude injections) ──
+        if (constraintsMatch) {
+          const newFacts = constraintsMatch[1]
+            .split('\n')
+            .filter((line) => {
+              const m = line.match(/\*\*\[Interlude R(\d+)\]\*\*/);
+              return m !== null && Number(m[1]) >= data.current_round - 1;
+            });
+          if (newFacts.length > 0) {
+            console.log('\n## New facts since last round\n');
+            for (const line of newFacts) console.log(line);
+          }
+        }
+
+        // ── v2: pending directives for THIS persona, this round ──
+        const directivesMatch = personaContent.match(
+          new RegExp(`^##\\s+Round\\s+${data.current_round}\\s+—\\s+Directives\\s*\\n([\\s\\S]*?)(?=\\n##\\s|$)`, 'm'),
+        );
+        if (directivesMatch && directivesMatch[1].trim()) {
+          console.log(`\n## Pending directives for you (round ${data.current_round})\n`);
+          console.log(directivesMatch[1].trim());
+          console.log('\nAnswer directives in a `### Cross-examination` subsection of this round\'s report.');
+        }
       } catch (err: any) {
         error(err.message);
         process.exit(1);
@@ -438,7 +551,11 @@ function registerReport(council: Command): void {
           process.exit(1);
         }
 
-        const body = opts.body ?? (await readStdin());
+        let body = opts.body ?? (await readStdin());
+        // The CLI owns the `## Round N` heading (added below). Personas sometimes
+        // include their own copy at the top of the body; strip it so the round
+        // doesn't end up with a duplicate heading and an empty first entry.
+        body = body.trim().replace(/^##\s+Round\s+\d+[^\n]*\n+/i, '');
         if (!body.trim()) {
           error('Report body is empty.', 'Pass --body "..." or pipe markdown via stdin.');
           process.exit(1);
@@ -453,6 +570,15 @@ function registerReport(council: Command): void {
           process.exit(1);
         }
         for (const w of validation.warnings) warn(w);
+
+        // v2: a verdict is expected before the report (warn, never fail —
+        // v1 debates without verdicts.json keep working).
+        const verdicts = readVerdicts(debateId);
+        if (!roundVerdictsOf(verdicts, round)[personaSlug]) {
+          warn(
+            `No verdict submitted for round ${round}. Run \`council verdict ${debateId} ${personaSlug} ${round} --stance <s> --conviction <0-100> --headline "..."\` — the chamber board will not show this persona otherwise.`,
+          );
+        }
 
         const reportFile = join(getPersonaDir(debateId, personaSlug), 'report.md');
         const { data: reportData, content } = readFrontmatter<{ persona: string; rounds_completed: number }>(reportFile);
@@ -507,6 +633,9 @@ function registerSummaries(council: Command): void {
         const n = Number(nRaw);
         const data = readDebateFrontmatter(debateId);
         const personas = data.personas ?? [];
+        const verdicts = readVerdicts(debateId);
+        const cur = roundVerdictsOf(verdicts, n);
+        const prev = roundVerdictsOf(verdicts, n - 1);
 
         console.log(`# Round ${n} executive summaries — ${data.topic}`);
         console.log('');
@@ -516,6 +645,11 @@ function registerSummaries(council: Command): void {
           console.log(`## ${persona}`);
           console.log('');
           console.log(summary ?? '_(no report for this round)_');
+          const v = cur[persona];
+          if (v) {
+            console.log('');
+            console.log(`stance=${v.stance} conviction=${v.conviction} (${shiftMarker(prev[persona], v)})`);
+          }
           console.log('');
         }
       } catch (err: any) {
@@ -667,8 +801,14 @@ function registerSynthesize(council: Command): void {
           }
         }
 
+        updateCouncilLive(debateId, { phase: 'synthesis', setAll: 'wait' });
+
         console.log('# Synthesizer manifest — read every file below, then write final-report.md\n');
         for (const p of manifest) console.log(p);
+        if (existsSync(join(getDebateDir(debateId), 'verdicts.json'))) {
+          console.log(`_dream_context/council/${debateId}/verdicts.json`);
+          console.log(`\nAlso run: dreamcontext council timeline ${debateId} — embed the table verbatim in ## Position timeline.`);
+        }
         console.log(`\nTarget output: _dream_context/council/${debateId}/final-report.md`);
       } catch (err: any) {
         error(err.message);
@@ -710,6 +850,8 @@ function registerComplete(council: Command): void {
           updated_at: today(),
         });
 
+        updateCouncilLive(debateId, { phase: 'done', setAll: 'done' });
+
         success(`Debate ${debateId} marked complete.`);
         console.log(chalk.dim(`  final-report: _dream_context/council/${debateId}/final-report.md`));
       } catch (err: any) {
@@ -744,13 +886,24 @@ function registerPromote(council: Command): void {
 
         const { data: frData, content: frContent } = readFrontmatter(finalReport);
 
-        // Trim: keep Verdict, Why, Minority views. Skip What was debated and Appendix.
+        // Trim to report v2 sections 1,2,3,6,7: Verdict, Decision card, Why,
+        // Minority view & revisit conditions, Open risks. Each entry lists
+        // fallbacks so v1 reports (e.g. "Minority views") still promote.
         const sections = extractSections(frContent);
-        const keep = ['Verdict', 'Why', 'Minority views', 'Open risks'];
+        const keep: string[][] = [
+          ['Verdict'],
+          ['Decision card'],
+          ['Why'],
+          ['Minority view & revisit conditions', 'Minority views'],
+          ['Open risks'],
+        ];
         const kept = keep
-          .map((name) => {
-            const sec = sections.find((s) => normalize(s.name) === normalize(name));
-            return sec ? `## ${sec.name}\n\n${sec.body.trim()}` : null;
+          .map((names) => {
+            for (const name of names) {
+              const sec = sections.find((s) => normalize(s.name) === normalize(name));
+              if (sec) return `## ${sec.name}\n\n${sec.body.trim()}`;
+            }
+            return null;
           })
           .filter(Boolean)
           .join('\n\n');
@@ -868,6 +1021,356 @@ function registerShow(council: Command): void {
           console.log('\n' + chalk.dim('─── Round log ───'));
           console.log(readFileSync(logFile, 'utf-8'));
         }
+      } catch (err: any) {
+        error(err.message);
+        process.exit(1);
+      }
+    });
+}
+
+// ─── council verdict ────────────────────────────────────────────────────────
+
+function registerVerdict(council: Command): void {
+  council
+    .command('verdict')
+    .argument('<debate_id>')
+    .argument('<persona_slug>')
+    .argument('<round>')
+    .requiredOption('--stance <stance>', 'Option key (registered options) or free-form stance')
+    .requiredOption('--conviction <n>', 'Conviction 0-100')
+    .requiredOption('--headline <headline>', 'One-line position')
+    .option('--concession <concession>', 'Strongest opposing point you accept')
+    .description('(sub-agent) Record a structured verdict for a round. Idempotent per (round, persona) — last write wins.')
+    .action(async (
+      debateId: string,
+      personaSlug: string,
+      roundRaw: string,
+      opts: { stance: string; conviction: string; headline: string; concession?: string },
+    ) => {
+      try {
+        const data = readDebateFrontmatter(debateId);
+        ensurePersonaExists(debateId, personaSlug);
+
+        const round = Number(roundRaw);
+        if (!Number.isInteger(round) || round < 1) {
+          error('Round must be a positive integer.');
+          process.exit(1);
+        }
+
+        const conviction = Number(opts.conviction);
+        if (!Number.isInteger(conviction) || conviction < 0 || conviction > 100) {
+          error('--conviction must be an integer between 0 and 100.');
+          process.exit(1);
+        }
+
+        const headline = opts.headline.trim();
+        if (!headline) {
+          error('--headline is required.');
+          process.exit(1);
+        }
+
+        // Personas submit verdicts in PARALLEL — the whole read→mutate→write
+        // (including dynamic-option minting) must run under the verdicts lock,
+        // or a concurrent writer silently drops a sibling's verdict.
+        const { key, replacing } = await withVerdictsLock(debateId, () => {
+          const verdicts = readVerdicts(debateId);
+          const resolved = resolveStanceKey(
+            verdicts,
+            hasRegisteredOptions(data),
+            opts.stance,
+          );
+          if (resolved.addedOption) verdicts.options.push(resolved.addedOption);
+
+          const roundKey = String(round);
+          if (!verdicts.rounds[roundKey]) verdicts.rounds[roundKey] = {};
+          const replaced = Boolean(verdicts.rounds[roundKey][personaSlug]);
+          verdicts.rounds[roundKey][personaSlug] = {
+            stance: resolved.key,
+            conviction,
+            headline,
+            ...(opts.concession?.trim() ? { concession: opts.concession.trim() } : {}),
+            at: new Date().toISOString(),
+          };
+          writeVerdicts(debateId, verdicts);
+          return { key: resolved.key, replacing: replaced };
+        });
+
+        updateCouncilLive(debateId, { setPersona: { [personaSlug]: 'done' } });
+
+        success(
+          `Verdict recorded: ${personaSlug} R${round} → ${key} (conviction ${conviction})${replacing ? ' [replaced]' : ''}`,
+        );
+      } catch (err: any) {
+        error(err.message);
+        process.exit(1);
+      }
+    });
+}
+
+// ─── council board ──────────────────────────────────────────────────────────
+
+function registerBoard(council: Command): void {
+  council
+    .command('board')
+    .argument('<debate_id>')
+    .option('--round <n>', 'Round to render (default: latest round with verdicts)')
+    .option('--plain', 'Disable colors (auto when output is not a TTY)', false)
+    .description('Render the chamber board: convergence, per-persona stances, shifts, options tally.')
+    .action((debateId: string, opts: { round?: string; plain: boolean }) => {
+      try {
+        const data = readDebateFrontmatter(debateId);
+        const verdicts = readVerdicts(debateId);
+
+        let round: number;
+        if (opts.round !== undefined) {
+          round = Number(opts.round);
+          if (!Number.isInteger(round) || round < 1) {
+            error('--round must be a positive integer.');
+            process.exit(1);
+          }
+        } else {
+          round = latestVerdictRound(verdicts) ?? data.current_round;
+        }
+        if (round < 1) {
+          info('No rounds yet — nothing to render.');
+          return;
+        }
+
+        const previous = round > 1 ? roundVerdictsOf(verdicts, round - 1) : {};
+        const board = renderChamberBoard(
+          {
+            debateId,
+            topic: data.topic,
+            round,
+            roundsPlanned: data.rounds_planned,
+            phase: data.status,
+            options: verdicts.options,
+            roster: data.personas ?? [],
+            current: roundVerdictsOf(verdicts, round),
+            previous: Object.keys(previous).length > 0 ? previous : null,
+          },
+          { plain: opts.plain || !process.stdout.isTTY },
+        );
+        console.log(board);
+      } catch (err: any) {
+        error(err.message);
+        process.exit(1);
+      }
+    });
+}
+
+// ─── council timeline ───────────────────────────────────────────────────────
+
+function registerTimeline(council: Command): void {
+  council
+    .command('timeline')
+    .argument('<debate_id>')
+    .option('--json', 'Machine-readable output', false)
+    .description('Per-round stance + conviction table across all personas (markdown or --json).')
+    .action((debateId: string, opts: { json: boolean }) => {
+      try {
+        const data = readDebateFrontmatter(debateId);
+        const verdicts = readVerdicts(debateId);
+        const roundNumbers = Object.keys(verdicts.rounds)
+          .map(Number)
+          .filter((n) => Number.isInteger(n) && n > 0 && Object.keys(verdicts.rounds[String(n)] ?? {}).length > 0)
+          .sort((a, b) => a - b);
+
+        if (opts.json) {
+          const payload = {
+            options: verdicts.options,
+            rounds: roundNumbers.map((n) => {
+              const rv = roundVerdictsOf(verdicts, n);
+              return {
+                round: n,
+                verdicts: Object.fromEntries(
+                  Object.entries(rv).map(([slug, v]) => [
+                    slug,
+                    { stance: v.stance, conviction: v.conviction, headline: v.headline },
+                  ]),
+                ),
+                convergence: convergence(rv),
+                leading: leadingStance(rv),
+              };
+            }),
+          };
+          console.log(JSON.stringify(payload, null, 2));
+          return;
+        }
+
+        if (roundNumbers.length === 0) {
+          console.log('_(no verdicts recorded)_');
+          return;
+        }
+
+        // Persona rows: roster order first, then any extra slugs seen in verdicts.
+        const slugs: string[] = [...(data.personas ?? [])];
+        for (const n of roundNumbers) {
+          for (const slug of Object.keys(roundVerdictsOf(verdicts, n))) {
+            if (!slugs.includes(slug)) slugs.push(slug);
+          }
+        }
+
+        const headerCells = ['Persona', ...roundNumbers.map((n) => `R${n}`)];
+        console.log(`| ${headerCells.join(' | ')} |`);
+        console.log(`| ${headerCells.map(() => '---').join(' | ')} |`);
+        for (const slug of slugs) {
+          const cells = roundNumbers.map((n) => {
+            const v = roundVerdictsOf(verdicts, n)[slug];
+            return v ? `${v.stance} ${v.conviction}` : '—';
+          });
+          console.log(`| ${slug} | ${cells.join(' | ')} |`);
+        }
+        const convCells = roundNumbers.map((n) => {
+          const rv = roundVerdictsOf(verdicts, n);
+          const lead = leadingStance(rv);
+          return `${convergence(rv)}%${lead ? ` → ${lead}` : ''}`;
+        });
+        console.log(`| _convergence_ | ${convCells.join(' | ')} |`);
+      } catch (err: any) {
+        error(err.message);
+        process.exit(1);
+      }
+    });
+}
+
+// ─── council inject ─────────────────────────────────────────────────────────
+
+function registerInject(council: Command): void {
+  council
+    .command('inject')
+    .argument('<debate_id>')
+    .argument('<fact...>', 'Fact to add to Constraints & Known Facts')
+    .description('(interlude) Inject a new fact into the debate. Personas see it via round-context next round.')
+    .action((debateId: string, factParts: string[]) => {
+      try {
+        const data = readDebateFrontmatter(debateId);
+        const fact = factParts.join(' ').trim();
+        if (!fact) {
+          error('Fact is required.');
+          process.exit(1);
+        }
+
+        const debateFile = join(getDebateDir(debateId), 'debate.md');
+        insertToSection(
+          debateFile,
+          'Constraints & Known Facts',
+          `- **[Interlude R${data.current_round}]** ${fact}`,
+          'bottom',
+          true,
+        );
+        updateFrontmatterFields(debateFile, { updated_at: today() });
+
+        updateCouncilLive(debateId);
+
+        success(`Fact injected (interlude after round ${data.current_round}).`);
+      } catch (err: any) {
+        error(err.message);
+        process.exit(1);
+      }
+    });
+}
+
+// ─── council question ───────────────────────────────────────────────────────
+
+function registerQuestion(council: Command): void {
+  council
+    .command('question')
+    .argument('<debate_id>')
+    .argument('<persona_slug>')
+    .argument('<question...>', 'Directive / cross-examination question for the persona')
+    .description('(interlude) Queue a directive for a persona. Surfaced by round-context next round.')
+    .action((debateId: string, personaSlug: string, questionParts: string[]) => {
+      try {
+        const data = readDebateFrontmatter(debateId);
+        ensurePersonaExists(debateId, personaSlug);
+        const question = questionParts.join(' ').trim();
+        if (!question) {
+          error('Question is required.');
+          process.exit(1);
+        }
+
+        const nextRound = data.current_round + 1;
+        const personaFile = join(getPersonaDir(debateId, personaSlug), 'context-and-persona.md');
+        insertToSection(
+          personaFile,
+          `Round ${nextRound} — Directives`,
+          `- ${question}`,
+          'bottom',
+          true,
+        );
+
+        updateCouncilLive(debateId);
+
+        success(`Directive queued for ${personaSlug} (round ${nextRound}).`);
+      } catch (err: any) {
+        error(err.message);
+        process.exit(1);
+      }
+    });
+}
+
+// ─── council live ───────────────────────────────────────────────────────────
+
+function registerLive(council: Command): void {
+  const live = council.command('live').description('Live chamber state file operations');
+
+  live
+    .command('clear')
+    .description('Delete _dream_context/tmp/.council-live.json')
+    .action(() => {
+      try {
+        ensureContextRoot();
+        clearCouncilLive();
+        success('Council live state cleared.');
+      } catch (err: any) {
+        error(err.message);
+        process.exit(1);
+      }
+    });
+}
+
+// ─── council demo-live ──────────────────────────────────────────────────────
+
+function registerDemoLive(council: Command): void {
+  council
+    .command('demo-live')
+    .option('--phase <phase>', `Phase: ${COUNCIL_LIVE_PHASES.join(' | ')}`, 'debate')
+    .description('(dev) Write a plausible fake .council-live.json for testing the app panel.')
+    .action((opts: { phase: string }) => {
+      try {
+        ensureContextRoot();
+        if (!COUNCIL_LIVE_PHASES.includes(opts.phase as CouncilLivePhase)) {
+          error(`--phase must be one of: ${COUNCIL_LIVE_PHASES.join(', ')}`);
+          process.exit(1);
+        }
+        const phase = opts.phase as CouncilLivePhase;
+        const now = new Date().toISOString();
+        const state: CouncilLiveState = {
+          debate: 'council_demo',
+          topic: 'Should we drop ClickUp sync?',
+          session: process.env.CLAUDE_CODE_SESSION_ID ?? '',
+          started: now,
+          updated: now,
+          phase,
+          round: 2,
+          rounds: 3,
+          options: [
+            { key: 'A', label: 'Keep ClickUp sync' },
+            { key: 'B', label: 'Drop it' },
+          ],
+          personas: [
+            { slug: 'migration-risk-auditor', model: 'sonnet', state: 'done', stance: 'B', conviction: 82, headline: 'sync debt compounds weekly', prevStance: 'A', prevConviction: 64 },
+            { slug: 'growth-cfo', model: 'sonnet', state: 'done', stance: 'B', conviction: 71, headline: 'cost cut pays for itself', prevStance: 'B', prevConviction: 66 },
+            { slug: 'user-advocate', model: 'opus', state: 'think', stance: 'A', conviction: 45, headline: 'users still rely on it', prevStance: 'A', prevConviction: 78 },
+            { slug: 'platform-architect', model: 'haiku', state: 'wait' },
+          ],
+          convergence: 68,
+          leading: 'B',
+        };
+        writeCouncilLiveRaw(state);
+        success(`Demo live state written (phase: ${phase}).`);
+        console.log(chalk.dim('  path: _dream_context/tmp/.council-live.json'));
       } catch (err: any) {
         error(err.message);
         process.exit(1);

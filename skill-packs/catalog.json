@@ -164,21 +164,22 @@
     },
     {
       "name": "council",
-      "description": "Load when the user wants to debate a non-trivial decision, asks for a second opinion, says 'help me decide', 'run this by council', or invokes /council. Orchestrates 3–10 persona sub-agents across multiple rounds, then a synthesizer writes a final decision report.",
+      "description": "Load when the user wants to debate a non-trivial decision, asks for a second opinion, says 'help me decide', 'run this by council', or invokes /council. Orchestrates 3–10 persona CLI sessions across multiple rounds with structured verdicts, a live chamber board, and interactive interludes, then a clean synthesizer writes a final decision report.",
       "tags": [
         "council",
         "debate",
         "decision",
         "sub-agents",
-        "orchestration"
+        "orchestration",
+        "verdicts"
       ],
       "alwaysApply": false,
-      "base": "Structured multi-agent debate: orchestrator dispatches persona sub-agents in parallel rounds, reads only exec summaries, then dispatches a synthesizer for the final report. File-based IPC keeps the main agent's context light.",
+      "base": "Structured multi-agent debate v2: orchestrator spawns persona CLI sessions (resumed per round), each submits a stance+conviction verdict; the chamber board and the app's live panel render convergence in real time; interlude cards let the user inject facts, cross-examine, steelman-swap, add wildcards, or call the vote; a clean synthesizer writes the verdict + decision card report. File-based IPC keeps the main agent's context light.",
       "subSkills": [
         {
           "name": "debate-protocol",
           "file": "debate-protocol.md",
-          "description": "Detailed CLI protocol reference: 14 sub-commands, required report subsections, failure modes, file layout, context-budget discipline."
+          "description": "Detailed CLI protocol reference: full v2 command table (verdict, board, timeline, inject, question, live clear), conviction rubric, required report subsections, failure modes, file layout, context-budget discipline."
         }
       ],
       "relatedAgents": [
@@ -437,7 +438,7 @@
       "name": "council-persona",
       "file": "agents/council-persona.md",
       "pack": "council",
-      "description": "A persona sub-agent in a council debate. Loads persona + peer cross-context via CLI, thinks from the assigned perspective, writes a structured round report. Dispatched in parallel, one per persona per round.",
+      "description": "A persona debater in a council debate. Loads persona + peer cross-context + verdict landscape via CLI, thinks from the assigned perspective, submits a stance+conviction verdict before its structured round report, and answers cross-examination and steelman directives. Runs as a resumable CLI session (Agent-tool fallback), in parallel per round.",
       "tags": [
         "council",
         "debate",
@@ -450,7 +451,7 @@
       "name": "council-synthesizer",
       "file": "agents/council-synthesizer.md",
       "pack": "council",
-      "description": "Reads every report + persona + research in a council debate and writes the final decision report with traced Whys, position-shift timeline, and minority views.",
+      "description": "Reads every report + persona + research + verdicts.json in a council debate and writes the final decision report: verdict with vote tally, decision card, traced Whys, embedded position timeline, minority view with observable revisit conditions, open risks. Always dispatched clean, never forked or resumed.",
       "tags": [
         "council",
         "debate",

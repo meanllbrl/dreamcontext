@@ -17,4 +17,8 @@ updated_at: "{{DATE}}"
 
 ## Constraints & Known Facts
 
-(Main agent captures what the user said up front. User interruptions between rounds are appended here.)
+(Main agent captures what the user said up front. User interruptions between rounds are appended here. Interlude injections land here as `- **[Interlude RN]** fact` bullets via `council inject`.)
+
+## Session registry
+
+(Orchestrator-maintained. One line per persona CLI session: `- <slug> · <model> · session <session_id>`. The orchestrator is the single writer of this section.)
