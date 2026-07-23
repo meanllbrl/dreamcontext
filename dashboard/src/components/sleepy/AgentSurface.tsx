@@ -8,6 +8,8 @@ import {
   createSession, currentZoom,
   type Capabilities, type Session, type SessionKind,
 } from './agentSession';
+import { createChatSession, type ChatSession } from './chatSession';
+import { ChatPane } from './ChatPane';
 import {
   initAgentSettingsFromServer, readAgentSettings, matchesAccel,
   doubleTapToken, createDoubleTapMatcher,
@@ -100,11 +102,15 @@ interface PaneState {
 let paneSeq = 0;
 const nextPaneId = () => `pane-${++paneSeq}`;
 
-/** Default title for a fresh session: "Terminal N" for a shell, "Agent N" for an agent
- *  (N is the global session counter baked into the session id). */
-function titleFor(s: Session): string {
-  const num = s.id.replace('agent-', '');
-  return s.kind === 'shell' ? `Terminal ${num}` : `Agent ${num}`;
+/** Default title for a fresh session: "Terminal N" for a shell, "Agent N" for an agent,
+ *  "Chat N" for a chat (BETA). Terminal sessions (agent + shell) share one `agent-N` id
+ *  sequence (agentSession.ts's single `sessionSeq`); chat sessions have their own `chat-N`
+ *  sequence (chatSession.ts's `chatSessionSeq`) — strip whichever prefix is present. */
+function titleFor(s: Session | ChatSession): string {
+  const num = s.id.replace(/^(?:agent|chat)-/, '');
+  if (s.kind === 'shell') return `Terminal ${num}`;
+  if (s.kind === 'chat') return `Chat ${num}`;
+  return `Agent ${num}`;
 }
 
 /** Where a tab will land when the drag ends, recorded during dragover (the `drop` event
@@ -197,7 +203,7 @@ export function AgentSurface() {
   const [sessionModel, setSessionModel] = useState<Record<string, string>>({});
   const [sessionEffort, setSessionEffort] = useState<Record<string, string>>({});
 
-  const sessions = useRef<Map<string, Session>>(new Map());
+  const sessions = useRef<Map<string, Session | ChatSession>>(new Map());
   const garageRef = useRef<HTMLDivElement | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
   // The session id of the tab currently being dragged. The DnD payload is ALSO written to
@@ -268,7 +274,13 @@ export function AgentSurface() {
   // if the user turned "Reopen past tabs" OFF, we mark hydrated and skip the restore
   // entirely (a clean start), while still enabling the persist effect below.
   useEffect(() => {
-    if (hydratedRef.current || !caps?.embeddedTerminal || !settingsReady) return;
+    // Chat (BETA) needs only the claude CLI, not node-pty (agent-terminal.ts's `embeddedTerminal`
+    // gate) — a saved chat tab must still restore on a node-pty-broken machine, so this gate
+    // matches the same loosened predicate the body/menu/empty-state gates below use. Gated on
+    // `agentSettings.chatView` too: the beta flag being OFF must mean claudeCli alone can NEVER
+    // widen this gate — otherwise a plain terminal user on a pty-broken machine would get
+    // agent tabs auto-restored into doomed WS connections instead of the Prereqs panel.
+    if (hydratedRef.current || !(caps?.embeddedTerminal || (caps?.claudeCli && agentSettings.chatView)) || !settingsReady) return;
     if (!agentSettings.restoreTabs) { hydratedRef.current = true; return; }
     let cancelled = false;
     (async () => {
@@ -277,7 +289,7 @@ export function AgentSurface() {
         // Terminals are never remembered — drop any shell entry, plus any legacy roster
         // row still named "Terminal N" (a stale shell saved before we stopped persisting
         // them; auto-title only ever renames AGENTS, so that default name is a reliable
-        // shell marker). What's left is agents only.
+        // shell marker). What's left is agents + chats.
         const saved = Array.isArray(res.sessions)
           ? res.sessions.filter((m) => m.kind !== 'shell' && !/^Terminal \d+$/.test((m.title ?? '').trim()))
           : [];
@@ -287,13 +299,16 @@ export function AgentSurface() {
           // tab without one restores DORMANT (manual Resume). Spawn happens here, once —
           // and only on the non-cancelled invocation, so StrictMode can't double-spawn.
           const restored: SessionMeta[] = saved.map((m, i) => {
-            const kind: SessionKind = m.kind === 'shell' ? 'shell' : 'agent';
-            // An agent tab with a pinned conversation auto-RESUMES its real Claude session on
-            // launch. A shell has nothing to resume, and auto-spawning shells on launch is
-            // surprising — so shells (and legacy agent tabs without a conversation id) restore
+            // 3-way: shell / chat / agent (a roster row with no `kind` — or an unrecognized
+            // one, e.g. from a build that predates Chat — defaults to 'agent', same as before).
+            const kind: SessionKind = m.kind === 'shell' ? 'shell' : m.kind === 'chat' ? 'chat' : 'agent';
+            // An agent OR chat tab with a pinned conversation auto-RESUMES its real Claude
+            // session on launch (both spawn a real `claude` against the same conversation
+            // UUID). A shell has nothing to resume, and auto-spawning shells on launch is
+            // surprising — so shells (and legacy tabs without a conversation id) restore
             // DORMANT, spawning a fresh session only on an explicit Resume click.
-            if (kind === 'agent' && m.sessionId) {
-              const s = spawn(m.bypass, m.sessionId, true, 'agent');
+            if ((kind === 'agent' || kind === 'chat') && m.sessionId) {
+              const s = spawn(m.bypass, m.sessionId, true, kind);
               return { id: s.id, title: m.title, kind, bypass: m.bypass, claudeId: m.sessionId };
             }
             return { id: `restored-${i}`, title: m.title, kind, bypass: m.bypass, claudeId: newClaudeId(), dormant: true };
@@ -307,20 +322,20 @@ export function AgentSurface() {
       finally { if (!cancelled) hydratedRef.current = true; }
     })();
     return () => { cancelled = true; };
-  }, [caps, settingsReady, agentSettings.restoreTabs]);
+  }, [caps, settingsReady, agentSettings.restoreTabs, agentSettings.chatView]);
 
-  // Persist on every roster change (post-hydrate), debounced. Only AGENTS are remembered —
-  // plain TERMINALS are session-local and never reopened on launch (the server also can't
-  // resume a shell, and a stale `claude --resume` on a shell's id would wrongly reopen it as
-  // an agent). Saves both dormant and live agent metas so a renamed live agent is captured
-  // too. `minimized`/`size` are inert defaults kept only for persisted-format compatibility.
-  // Best-effort: a failed PUT just means this change isn't mirrored.
+  // Persist on every roster change (post-hydrate), debounced. AGENTS and CHATS are
+  // remembered — plain TERMINALS are session-local and never reopened on launch (the server
+  // also can't resume a shell, and a stale `claude --resume` on a shell's id would wrongly
+  // reopen it as an agent). Saves both dormant and live metas so a renamed live session is
+  // captured too. `minimized`/`size` are inert defaults kept only for persisted-format
+  // compatibility. Best-effort: a failed PUT just means this change isn't mirrored.
   useEffect(() => {
     if (!hydratedRef.current) return;
     const handle = setTimeout(() => {
       const payload = {
         sessions: sessionList
-          .filter((m) => m.kind === 'agent')
+          .filter((m) => m.kind !== 'shell')
           .map((m) => ({
             title: m.title, kind: m.kind, bypass: m.bypass, minimized: false, size: 1, sessionId: m.claudeId,
           })),
@@ -336,7 +351,18 @@ export function AgentSurface() {
   // `promptToken` carries an initial prompt too large for the upgrade URL — mint it with
   // `preparePrompt` (lib/agentPrompt.ts) BEFORE calling spawn, so spawn itself stays
   // synchronous (the delegate ACK in lib/delegateAgent.ts depends on that).
-  const spawn = useCallback((bp: boolean, claudeId?: string, resume = false, kind: SessionKind = 'agent', initialPrompt = '', model = '', submitInitial = true, promptToken = '', deferPrompt = false) => {
+  const spawn = useCallback((bp: boolean, claudeId?: string, resume = false, kind: SessionKind = 'agent', initialPrompt = '', model = '', submitInitial = true, promptToken = '', deferPrompt = false, effort = '') => {
+    if (kind === 'chat') {
+      // Chat (BETA) is a headless stream-json engine, not a PTY — createChatSession has its
+      // own factory (chatSession.ts), takes `effort` at spawn (the terminal only ever
+      // switches it live via `/effort`, so its own createSession has no such param), and has
+      // no `submitInitial` concept (an initial prompt is always delivered server-side; see
+      // chatSession.ts's header note).
+      const cs = createChatSession(bp, bumpStatus, claudeId ?? newClaudeId(), resume, model, effort, initialPrompt, promptToken, deferPrompt);
+      cs.applyZoom(currentZoom());
+      sessions.current.set(cs.id, cs);
+      return cs;
+    }
     // A shell has no permission model, so bypass is meaningless for it — force it off.
     const s = createSession(kind === 'shell' ? false : bp, bumpStatus, claudeId ?? newClaudeId(), resume, kind, initialPrompt, model, submitInitial, promptToken, deferPrompt);
     s.applyZoom(currentZoom());
@@ -406,11 +432,11 @@ export function AgentSurface() {
   const resumeSession = useCallback((sid: string) => {
     const meta = sessionList.find((m) => m.id === sid);
     if (!meta?.dormant) return;
-    // Agent → resume the EXACT prior Claude conversation (`--resume <claudeId>`). Shell →
+    // Agent/chat → resume the EXACT prior Claude conversation (`--resume <claudeId>`). Shell →
     // there is no conversation to resume, so just open a fresh vault-scoped login shell.
     const s = meta.kind === 'shell'
       ? spawn(meta.bypass, undefined, false, 'shell')
-      : spawn(meta.bypass, meta.claudeId, true, 'agent');
+      : spawn(meta.bypass, meta.claudeId, true, meta.kind);
     setSessionList((prev) => prev.map((m) => (m.id === sid ? { ...m, id: s.id, bypass: s.bypass, claudeId: s.claudeId, dormant: false } : m)));
     setPanes((prev) => prev.map((p) => ({
       ...p,
@@ -419,10 +445,52 @@ export function AgentSurface() {
     })));
   }, [spawn, sessionList]);
 
+  // ── Chat ↔ Terminal conversion (AC7's two directions, BETA) ──────────────────────
+  //
+  // chat→terminal: "Continue in Terminal view" (the AskUserQuestion degrade escape hatch,
+  // and ChatPane's own affordance) — dispose the chat session and resume the SAME
+  // conversation UUID as a terminal agent, in place (same id-swap idiom as resumeSession).
+  const resumeChatInTerminal = useCallback((cs: ChatSession) => {
+    try { cs.dispose(); } catch { /* best-effort */ }
+    sessions.current.delete(cs.id);
+    const s = spawn(cs.bypass, cs.claudeId, true, 'agent');
+    setSessionList((prev) => prev.map((m) => (m.id === cs.id ? { ...m, id: s.id, kind: 'agent', bypass: s.bypass, claudeId: s.claudeId } : m)));
+    setPanes((prev) => prev.map((p) => ({
+      ...p,
+      tabs: p.tabs.map((t) => (t === cs.id ? s.id : t)),
+      active: p.active === cs.id ? s.id : p.active,
+    })));
+  }, [spawn]);
+
+  // terminal→chat: the per-tab "Open in Chat (BETA)" action (AgentTabs). CLOSE-FIRST
+  // semantics — the chat route keeps its OWN `liveConversations` guard Set (server-side,
+  // per-route; it cannot see the terminal route's hold on this conversation), so disposing
+  // the terminal session BEFORE spawning the chat resume avoids a live dual-attach on one
+  // transcript. Works for both a LIVE and a DORMANT agent tab (dispose is a no-op on a
+  // dormant tab; the saved claudeId still resumes as chat either way). Conversation identity
+  // (the UUID) is preserved via --resume; if the terminal's transcript hadn't flushed yet at
+  // dispose time, the chat resume fresh-pins the same UUID exactly as the terminal's own
+  // fresh-fallback (agent-terminal.ts:1234) — continuity of identity, not in-memory
+  // scrollback (see the plan's scope call H).
+  const openAgentInChat = useCallback((sid: string) => {
+    const meta = sessionList.find((m) => m.id === sid);
+    if (!meta || meta.kind !== 'agent') return;
+    try { sessions.current.get(sid)?.dispose(); } catch { /* best-effort */ }
+    sessions.current.delete(sid);
+    const cs = spawn(meta.bypass, meta.claudeId, true, 'chat');
+    setSessionList((prev) => prev.map((m) => (m.id === sid ? { ...m, id: cs.id, kind: 'chat', bypass: cs.bypass, claudeId: cs.claudeId, dormant: false } : m)));
+    setPanes((prev) => prev.map((p) => ({
+      ...p,
+      tabs: p.tabs.map((t) => (t === sid ? cs.id : t)),
+      active: p.active === sid ? cs.id : p.active,
+    })));
+    setExpanded(true);
+  }, [sessionList, spawn]);
+
   // Focus a session's terminal + clear its attention badge.
   const focusTerm = useCallback((sid: string) => {
     const s = sessions.current.get(sid);
-    if (s) { if (s.attention) { s.attention = false; bumpStatus(); } s.term.focus(); }
+    if (s) { if (s.attention) { s.attention = false; bumpStatus(); } s.focus(); }
   }, []);
 
   // Focus AFTER the layout effect has (re)appended the container into its new slot.
@@ -750,7 +818,7 @@ export function AgentSurface() {
   }, []);
   const tmInsert = useCallback((sid: string, text: string) => {
     const s = tmLiveAgent(sid);
-    if (s && text) { s.sendText(text); s.term.focus(); }
+    if (s && text) { s.sendText(text); s.focus(); }
   }, [tmLiveAgent]);
   const tmPickPaths = useCallback(async (sid: string, kind: 'files' | 'folders') => {
     const paths = kind === 'folders' ? await pickFolders() : await pickFiles();
@@ -776,17 +844,19 @@ export function AgentSurface() {
   // input line (Claude Code's readline). Model/effort target the FOCUSED agent via the live
   // `/model` and `/effort` slash commands.
 
-  // The live (non-closed) session behind a roster id, if any.
-  const liveSession = useCallback((sid: string): Session | undefined => {
+  // The live (non-closed) session behind a roster id, if any. No kind filter — this CAN
+  // return a live Chat session (its callers, e.g. injectToSession, are shared with chat panes).
+  const liveSession = useCallback((sid: string): Session | ChatSession | undefined => {
     const meta = sessionList.find((m) => m.id === sid);
     if (!meta || meta.dormant) return undefined;
     const s = sessions.current.get(sid);
     return s && s.status !== 'closed' ? s : undefined;
   }, [sessionList]);
 
-  // A live CLAUDE AGENT (not a shell) — model/effort only apply to agents, so `/model`
-  // /`/effort` are never injected into a plain shell.
-  const liveAgent = useCallback((sid: string): Session | undefined => {
+  // A live CLAUDE AGENT (not a shell, not a chat) — model/effort only apply this way to
+  // TERMINAL agents (chat's model/effort pickers go through changeChatModelFor/EffortFor
+  // below), so `/model`/`/effort` are never injected into a plain shell or a chat pane.
+  const liveAgent = useCallback((sid: string): Session | ChatSession | undefined => {
     const meta = sessionList.find((m) => m.id === sid);
     return meta?.kind === 'agent' ? liveSession(sid) : undefined;
   }, [sessionList, liveSession]);
@@ -802,7 +872,7 @@ export function AgentSurface() {
       const liveMeta = sessionList.find((m) => liveSession(m.id));
       if (liveMeta) { target = liveSession(liveMeta.id); focusSession(liveMeta.id); }
     }
-    if (target) { target.sendText(text); target.term.focus(); return; }
+    if (target) { target.sendText(text); target.focus(); return; }
     if (!(caps?.embeddedTerminal && caps.claudeCli)) return;
     const s = spawn(bypass, undefined, false, 'agent', text, '', false);
     setSessionList((prev) => [...prev, { id: s.id, title: titleFor(s), kind: 'agent', bypass: s.bypass, claudeId: s.claudeId }]);
@@ -817,7 +887,7 @@ export function AgentSurface() {
   const injectToSession = useCallback((sid: string, text: string) => {
     if (!text) return;
     const target = liveSession(sid);
-    if (target) { setExpanded(true); target.sendText(text); target.term.focus(); return; }
+    if (target) { setExpanded(true); target.sendText(text); target.focus(); return; }
     injectToTerminal(text);
   }, [liveSession, injectToTerminal]);
 
@@ -832,7 +902,7 @@ export function AgentSurface() {
     const target = liveAgent(sid);
     if (!target || !id) return;
     target.sendText(`/model ${id}\r`);
-    target.term.focus();
+    target.focus();
     setSessionModel((prev) => ({ ...prev, [sid]: id }));
   }, [liveAgent]);
 
@@ -840,9 +910,23 @@ export function AgentSurface() {
     const target = liveAgent(sid);
     if (!target || !level) return;
     target.sendText(`/effort ${level}\r`);
-    target.term.focus();
+    target.focus();
     setSessionEffort((prev) => ({ ...prev, [sid]: level }));
   }, [liveAgent]);
+
+  // Chat (BETA) has no live `/model`/`/effort` slash-command switch (it sets both at spawn
+  // via `--model`/`--effort` — see chatSession.ts's header note and the plan's scope call C).
+  // These just update the picker state so the choice applies the NEXT time this chat is
+  // resumed, mirroring changeModelFor/changeEffortFor's state shape but without sending
+  // anything live.
+  const changeChatModelFor = useCallback((sid: string, id: string) => {
+    if (!id) return;
+    setSessionModel((prev) => ({ ...prev, [sid]: id }));
+  }, []);
+  const changeChatEffortFor = useCallback((sid: string, level: string) => {
+    if (!level) return;
+    setSessionEffort((prev) => ({ ...prev, [sid]: level }));
+  }, []);
 
   // Read each visible pane's agent CURRENT model from its transcript when the layout or
   // roster changes (a mid-session `/model` switch — ours or the user's own — is reflected
@@ -1345,7 +1429,7 @@ export function AgentSurface() {
         // (read bytes → POST), so the user may start typing before it resolves; grabbing
         // focus here guarantees the follow-up prompt goes to the session that got the file.
         const s = sessions.current.get(sid);
-        if (path && s) { s.sendText(quoteIfNeeded(path) + ' '); s.term.focus(); }
+        if (path && s) { s.sendText(quoteIfNeeded(path) + ' '); s.focus(); }
       } catch { /* best-effort: a failed drop just doesn't inject */ }
     }
   }, []);
@@ -1365,7 +1449,10 @@ export function AgentSurface() {
     if (files.length === 0) return;
     e.preventDefault();
     e.stopPropagation();
-    if (!(caps?.embeddedTerminal && started)) return;
+    // Matches the body-render gate below — a chat pane also has a live session that can
+    // receive an injected file path, but only when the beta flag is actually on (claudeCli
+    // alone must never widen this while chatView is off).
+    if (!(started && (caps?.embeddedTerminal || (caps?.claudeCli && agentSettings.chatView)))) return;
     // Route by cursor position: the pane slot the drop landed in owns the target session;
     // fall back to the action-focused session if the point isn't over any pane.
     const at = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
@@ -1419,6 +1506,16 @@ export function AgentSurface() {
     .map((id) => dockRows.find((r) => r.id === id))
     .filter((r): r is SessionRow => !!r);
 
+  // Every LIVE chat session — portaled into its own detached container below (mirrors the
+  // Task Manager composer's tmComposerHosts portal loop), unconditionally (not gated on
+  // minimized/expanded): the container itself is homed/garaged by the layout effect exactly
+  // like a terminal's xterm container, so ChatPane never unmounts while its session lives
+  // (see ChatPane.tsx's composer-draft note for why that matters).
+  const chatPanes: ChatSession[] = sessionList
+    .filter((m) => m.kind === 'chat' && !m.dormant)
+    .map((m) => sessions.current.get(m.id))
+    .filter((s): s is ChatSession => !!s && s.kind === 'chat');
+
   // ── Body ──────────────────────────────────────────────────────────────────────
   let body: React.ReactNode;
   if (capsError) {
@@ -1434,7 +1531,13 @@ export function AgentSurface() {
       <h2 style={titleStyle}>Agent runs in the desktop app</h2>
       <p style={subStyle}>The in-app Claude Code agent is a desktop-only feature — it runs a real, interactive Claude Code session scoped to this project. Use <strong>Ask</strong> here for read-only questions.</p>
     </Centered>;
-  } else if (started && caps.embeddedTerminal) {
+  } else if (started && (caps.embeddedTerminal || (caps.claudeCli && agentSettings.chatView))) {
+    // Chat (BETA) needs only the claude CLI — this pane body must render even on a
+    // node-pty-broken machine (agent-terminal.ts:37-40's real failure mode), or a spawned
+    // chat session would have nowhere to portal into. Gated on chatView too: claudeCli alone
+    // must never widen this while the beta flag is off (a plain terminal-only user on a
+    // pty-broken machine must still get the Prereqs recovery panel below, not a rendered
+    // tabs/panes UI with no working session behind it).
     body = (
       <div className="agent-term" onDragOver={onTermDragOver} onDrop={onTermDrop}>
         {/* Drop a PNG/JPG/GIF/WebP anywhere on a terminal to hand the focused Claude
@@ -1472,9 +1575,11 @@ export function AgentSurface() {
                     onTabDragEnd={handleTabDragEnd}
                     onReorderHover={setReorderTarget}
                     onGroupHover={setGroupTarget}
+                    chatConvertEnabled={!!agentSettings.chatView && !!caps?.claudeCli}
+                    onOpenInChat={openAgentInChat}
                   />
                 )}
-                composer={!activeMeta?.dormant && (
+                composer={!activeMeta?.dormant && activeMeta?.kind !== 'chat' && (
                   <PaneComposer
                     claudeId={activeMeta?.claudeId}
                     isAgent={activeMeta?.kind === 'agent'}
@@ -1518,22 +1623,40 @@ export function AgentSurface() {
           // The AGENT needs BOTH its renderer (node-pty) AND the `claude` binary it spawns.
           // A plain TERMINAL needs only the renderer — no `claude` — so it can start even
           // when the CLI is missing. Missing the renderer → show the in-app Setup panel.
+          // Chat (BETA) needs only the claude CLI + the Settings → Agents toggle — it can
+          // start on a node-pty-broken machine where neither of the above can.
           const agentReady = caps.embeddedTerminal && caps.claudeCli;
           const terminalReady = caps.embeddedTerminal;
+          const chatReady = caps.claudeCli && agentSettings.chatView;
           return (
             <>
               <div style={{ display: 'flex', gap: '12px', marginTop: '22px', flexWrap: 'wrap', justifyContent: 'center' }}>
                 {agentReady && (
                   <button onClick={() => addSession('agent')} style={primaryBtn}>▸ Start agent in app</button>
                 )}
+                {chatReady && (
+                  <button onClick={() => addSession('chat')} style={agentReady ? secondaryBtn : primaryBtn}>💬 Start chat (beta)</button>
+                )}
                 {terminalReady && (
-                  <button onClick={() => addSession('shell')} style={agentReady ? secondaryBtn : primaryBtn}>&gt;_ Start terminal</button>
+                  <button onClick={() => addSession('shell')} style={(agentReady || chatReady) ? secondaryBtn : primaryBtn}>&gt;_ Start terminal</button>
                 )}
                 {caps.openTerminal && (
                   <button onClick={openExternal} style={secondaryBtn}>↗ Open in Terminal</button>
                 )}
               </div>
-              {!terminalReady && <Prereqs caps={caps} onRefresh={refreshCaps} />}
+              {!terminalReady && (
+                <>
+                  {/* Coexistence: on a node-pty-broken machine with Chat ready, don't let the
+                      terminal's install panel read as "the whole surface is unavailable" —
+                      chat is already usable above; the terminal needs one more piece. */}
+                  {chatReady && (
+                    <p style={{ ...subStyle, marginTop: '18px', color: 'var(--color-text-tertiary)' }}>
+                      Chat is ready to use above. The embedded terminal needs one more piece:
+                    </p>
+                  )}
+                  <Prereqs caps={caps} onRefresh={refreshCaps} />
+                </>
+              )}
             </>
           );
         })()}
@@ -1561,24 +1684,29 @@ export function AgentSurface() {
           >–</button>
           <span className="agent-overlay-title">Agent</span>
           <div className="agent-overlay-controls">
-            {started && caps?.embeddedTerminal && (
+            {/* Chat (BETA) needs only the claude CLI (+ the Settings → Agents toggle), not
+                node-pty — loosened so the whole control cluster (including the bypass
+                default, which applies to every creatable kind) is reachable on a
+                node-pty-broken machine that can still run Chat. */}
+            {started && (caps?.embeddedTerminal || (caps?.claudeCli && agentSettings.chatView)) && (
               <>
                 <BypassPill bypass={bypass} setBypass={setBypass} />
-                {/* Split button: the main face opens a Claude agent (the common case); the
-                    caret opens a menu to pick Agent vs Terminal. ⌘T / ⌃` shortcut the two. */}
+                {/* Split button: the main face opens the best-available kind (a Claude agent
+                    when the embedded terminal is ready; Chat when only that's ready); the
+                    caret opens a menu to pick any kind. ⌘T / ⌃` shortcut the terminal kinds. */}
                 <div className="agent-new-split" ref={newSplitRef}>
                   <button
                     className="agent-add-btn"
-                    title="New agent (⌘T) · side-by-side: ⌘D agent, ⌘⇧D terminal"
-                    aria-label="New agent"
-                    onClick={() => { setNewMenuOpen(false); addSession('agent'); }}
+                    title={caps?.embeddedTerminal ? 'New agent (⌘T) · side-by-side: ⌘D agent, ⌘⇧D terminal' : 'New chat (BETA)'}
+                    aria-label={caps?.embeddedTerminal ? 'New agent' : 'New chat'}
+                    onClick={() => { setNewMenuOpen(false); addSession(caps?.embeddedTerminal ? 'agent' : 'chat'); }}
                   >
                     <span className="agent-add-btn-icon" aria-hidden>＋</span>
                     <span>New</span>
                   </button>
                   <button
                     className="agent-add-caret"
-                    title="Choose agent or terminal"
+                    title="Choose a session type"
                     aria-label="Choose new session type"
                     aria-haspopup="menu"
                     aria-expanded={newMenuOpen}
@@ -1586,24 +1714,38 @@ export function AgentSurface() {
                   >▾</button>
                   {newMenuOpen && (
                     <div className="agent-new-menu" role="menu">
-                      <button
-                        className="agent-new-menu-item"
-                        role="menuitem"
-                        onClick={() => { setNewMenuOpen(false); addSession('agent'); }}
-                      >
-                        <span className="agent-new-menu-glyph" aria-hidden>◇</span>
-                        <span className="agent-new-menu-label">New agent</span>
-                        <kbd className="agent-new-menu-kbd">⌘T</kbd>
-                      </button>
-                      <button
-                        className="agent-new-menu-item"
-                        role="menuitem"
-                        onClick={() => { setNewMenuOpen(false); addSession('shell'); }}
-                      >
-                        <span className="agent-new-menu-glyph" aria-hidden>&gt;_</span>
-                        <span className="agent-new-menu-label">New terminal</span>
-                        <kbd className="agent-new-menu-kbd">⌃`</kbd>
-                      </button>
+                      {caps?.embeddedTerminal && (
+                        <button
+                          className="agent-new-menu-item"
+                          role="menuitem"
+                          onClick={() => { setNewMenuOpen(false); addSession('agent'); }}
+                        >
+                          <span className="agent-new-menu-glyph" aria-hidden>◇</span>
+                          <span className="agent-new-menu-label">New agent</span>
+                          <kbd className="agent-new-menu-kbd">⌘T</kbd>
+                        </button>
+                      )}
+                      {caps?.claudeCli && agentSettings.chatView && (
+                        <button
+                          className="agent-new-menu-item"
+                          role="menuitem"
+                          onClick={() => { setNewMenuOpen(false); addSession('chat'); }}
+                        >
+                          <span className="agent-new-menu-glyph" aria-hidden>💬</span>
+                          <span className="agent-new-menu-label">New chat (BETA)</span>
+                        </button>
+                      )}
+                      {caps?.embeddedTerminal && (
+                        <button
+                          className="agent-new-menu-item"
+                          role="menuitem"
+                          onClick={() => { setNewMenuOpen(false); addSession('shell'); }}
+                        >
+                          <span className="agent-new-menu-glyph" aria-hidden>&gt;_</span>
+                          <span className="agent-new-menu-label">New terminal</span>
+                          <kbd className="agent-new-menu-kbd">⌃`</kbd>
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1677,6 +1819,24 @@ export function AgentSurface() {
           `tm-composer-${slug}`,
         );
       })}
+      {/* Chat (BETA) panes — portaled into each live chat session's own detached container
+          (see chatPanes above). Model/effort here don't live-switch (chat has no
+          `/model`/`/effort` slash path — chatChangeModelFor/EffortFor just update the picker
+          state for the NEXT resume; see the plan's scope call C). */}
+      {chatPanes.map((cs) => createPortal(
+        <ChatPane
+          key={cs.id}
+          session={cs}
+          modelConfig={modelConfig}
+          model={sessionModel[cs.id] ?? cs.model ?? modelConfig.defaultModel}
+          effort={sessionEffort[cs.id] ?? cs.effort ?? modelConfig.defaultEffort}
+          onModelChange={(id) => changeChatModelFor(cs.id, id)}
+          onEffortChange={(level) => changeChatEffortFor(cs.id, level)}
+          onContinueInTerminal={() => resumeChatInTerminal(cs)}
+        />,
+        cs.container,
+        `chat-${cs.id}`,
+      ))}
     </>
   );
 }

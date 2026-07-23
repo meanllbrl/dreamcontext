@@ -193,7 +193,7 @@ A SessionStart hook auto-opens it when a session starts and no server is running
 The sidebar is grouped into **Workspace** (Sleepy, Tasks, Council), **Memory** (Core, Knowledge, Features, Taxonomy), **Brain** (Map, Sleep Cycle), and **Control** (Packs, Settings), plus a "What is this?" page.
 
 **What's in it:**
-- **Sleepy** (Workspace) — the dashboard's Search + Ask surface: a scoped recall widget that runs the same engine as the CLI (empty query = browse; typing = live debounced BM25; "Intelligent" = a Haiku intent pass), plus an in-app **interactive Claude Code** agent (multi-session tabs, split panes; desktop-gated, read-only by default). This is the dashboard twin of the desktop Sleepy notch.
+- **Sleepy** (Workspace) — the dashboard's Search + Ask surface: a scoped recall widget that runs the same engine as the CLI (empty query = browse; typing = live debounced BM25; "Intelligent" = a Haiku intent pass), plus an in-app **interactive Claude Code** agent (multi-session tabs, split panes; desktop-gated, read-only by default) with an optional **Chat view (BETA)** — see below. This is the dashboard twin of the desktop Sleepy notch.
 - **Tasks board** — drag-and-drop Kanban with **saved views** (each carrying its own persisted filter/sort/grouping), a two-pane **include/exclude** filter (status/priority/tags/version/assignee) with type-ahead, a **Versions** popover, toggleable card **Properties** badges, and an **At-Risk alert**; view prefs persist shared (`overrides/board.json`) or local (`state/board.local.json`). Notion-style task detail panel to create tasks, change status, edit start/due dates and custom fields, add changelog entries. The **version filter is sprint-aware** — current / planning / released sprints with set-current + mark-complete actions (backed by `state/.active-version.json`).
 - **Eisenhower matrix** — priority×urgency quadrant planning; **Scatter view** uses RICE scores.
 - **Time-axis task views** — **Timeline (Gantt)** rendering each task's start→due range, a **Calendar**, and an **Activity heatmap** of completion cadence (all driven by the same `start_date`/`due_date` range).
@@ -209,6 +209,15 @@ The sidebar is grouped into **Workspace** (Sleepy, Tasks, Council), **Memory** (
 - **"What is this?"** explainer page with live faculty diagrams.
 
 Light/dark with system detection.
+
+### Agent Chat view (BETA)
+
+An alternate, settings-gated renderer for the SAME embedded agent: instead of xterm.js drawing Claude Code's raw TUI, a headless `claude -p --output-format stream-json` conversation is rendered as native app UI — streaming markdown bubbles, collapsible tool cards with status/duration, and Claude's permission prompts / `AskUserQuestion` as clickable cards (options + multiSelect) instead of a numbered-list readline prompt. It is the **same engine, different renderer** — same `claude` binary, same permission model (no-bypass → Auto/`acceptEdits`, bypass → `bypassPermissions`), same per-vault agent-session-map identity registry, same SessionStart/Stop hooks (brain preload, sleep debt all fire normally).
+
+- **Discovery:** off by default; Settings → Agents → **"Chat view (BETA)"** toggle (`chatView` in `agent-ui.json`). Once on, **＋ New** and the empty state offer "New chat" alongside the existing Agent/Terminal choices.
+- **Resume interop:** a chat and a terminal session both pin/resume by the SAME Claude conversation UUID, so either surface can pick up a conversation the other started — a chat pane offers "Continue in Terminal view" (e.g. if question-routing isn't available), and a terminal tab offers "Open in Chat (BETA)" to reopen its conversation natively.
+- **Interrupt:** a Stop button sends the CLI's `interrupt_receipt_v1` control request; a short watchdog escalates to SIGINT→kill if the turn doesn't wind down.
+- **Beta limitations** (by design, not oversights): the chat WS route tracks its own live-conversation set separate from the terminal route's — a chat and a terminal resuming the exact same conversation concurrently is a known (rare) double-writer edge, not guarded against; model/effort are fixed at spawn time (no live `/model` switch mid-chat); the context strip's linked-task chip only renders when a task slug is supplied, which no entry point does yet (Task-Manager-launches-chat is deferred).
 
 ---
 

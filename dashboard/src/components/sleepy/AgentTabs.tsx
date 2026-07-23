@@ -65,6 +65,7 @@ export function AgentTabs({
   onSelect, onClose, onMinimize,
   onStartRename, onCommitRename, onCancelRename,
   onTabDragStart, onTabDragEnd, onReorderHover, onGroupHover,
+  chatConvertEnabled = false, onOpenInChat = () => {},
 }: {
   pane: PaneVM;
   isActivePane: boolean;
@@ -84,6 +85,13 @@ export function AgentTabs({
   onReorderHover: (targetPaneId: string, beforeSid: string) => void;
   /** Hovering a pane's tab-group padding → record "combine the dragged session into it". */
   onGroupHover: (targetPaneId: string) => void;
+  /** Gate for the per-tab "Open in Chat (BETA)" action (Settings → Agents chatView ON
+   *  and the Claude CLI present) — optional/defaulted so a caller written before this
+   *  prop existed keeps compiling and simply never shows the action. */
+  chatConvertEnabled?: boolean;
+  /** Convert this AGENT tab's conversation into a Chat pane (terminal→chat, AC7's second
+   *  direction) — only ever called for an `agent`-kind tab (the button only renders then). */
+  onOpenInChat?: (sid: string) => void;
 }) {
   const stop = (e: React.MouseEvent) => e.stopPropagation();
   const allowTabDrop = (e: React.DragEvent): boolean => {
@@ -142,9 +150,13 @@ export function AgentTabs({
                 <span
                   className="agent-tab-kind"
                   data-session-kind={tab.sessionKind}
-                  title={tab.sessionKind === 'shell' ? 'Terminal (login shell)' : 'Claude Code agent'}
+                  title={
+                    tab.sessionKind === 'shell' ? 'Terminal (login shell)'
+                      : tab.sessionKind === 'chat' ? 'Claude Code chat (beta)'
+                        : 'Claude Code agent'
+                  }
                   aria-hidden
-                >{tab.sessionKind === 'shell' ? '>_' : '◇'}</span>
+                >{tab.sessionKind === 'shell' ? '>_' : tab.sessionKind === 'chat' ? '💬' : '◇'}</span>
                 {renaming ? (
                   <input
                     className="agent-tab-rename"
@@ -171,6 +183,17 @@ export function AgentTabs({
                 )}
                 {tab.bypass && <span className="agent-tab-bypass" title="Bypass permissions is ON for this session" aria-hidden>⚡</span>}
                 {tab.attention && <span className="agent-tab-badge" aria-label="Waiting for you" />}
+                {tab.sessionKind === 'agent' && chatConvertEnabled && (
+                  <button
+                    type="button"
+                    className="agent-tab-btn open-in-chat"
+                    tabIndex={-1}
+                    title="Open in Chat (BETA) — reopens this conversation as a native chat pane"
+                    aria-label={`Open ${tab.title} in Chat`}
+                    onMouseDown={stop}
+                    onClick={(e) => { e.stopPropagation(); onOpenInChat(tab.id); }}
+                  >💬</button>
+                )}
                 <button
                   type="button"
                   className="agent-tab-btn minimize"

@@ -224,6 +224,8 @@ const translations: Record<string, Record<string, string>> = {
     'settings.agents.agent.claude': 'Claude Code',
     'settings.agents.auto_title': 'Auto-name tabs from your first message',
     'settings.agents.auto_title_hint': 'Off by default. When on, after a new agent session\'s first turn a fast Haiku model reads your opening message and renames the tab to a short, descriptive title. Only tabs still named “Agent N” are renamed — tabs you\'ve renamed yourself are never touched.',
+    'settings.agents.chat_view': 'Chat view',
+    'settings.agents.chat_view_hint': 'Off by default. When on, the ＋ New menu offers a Chat session that renders the conversation as native bubbles, tool cards, and clickable question/permission cards — instead of the raw terminal.',
     'settings.agents.hotkey': 'Quick open/close hotkey',
     'settings.agents.hotkey_hint': 'Press this anywhere in the app to open or close the Agents view. Default ⌃A. Click the field and press a new combo to rebind — or double-tap a single modifier (Ctrl, Option, ⌘, or Shift) to bind it as ⌃⌃-style two-taps. Backspace clears it. A chord yields to a focused terminal (close it with Esc or the collapse button); a double-tap toggles from anywhere, even inside a terminal.',
     'settings.agents.hotkey_capturing': 'Press a combo, or double-tap a modifier…',

@@ -32,8 +32,9 @@ export interface Capabilities {
 }
 
 export type TermStatus = 'connecting' | 'open' | 'closed';
-/** What a session runs: the real Claude Code agent, or a plain vault-scoped login shell. */
-export type SessionKind = 'agent' | 'shell';
+/** What a session runs: the real Claude Code agent (terminal), a plain vault-scoped login
+ *  shell, or a headless stream-json Chat session (beta — see chatSession.ts). */
+export type SessionKind = 'agent' | 'shell' | 'chat';
 export const ACCENT = '#8b7bff';
 
 // Base xterm font size at 100% zoom. Multiplied by the app's `--zoom` so terminal
@@ -169,6 +170,10 @@ export interface Session {
   applyZoom: (zoom: number) => void;
   /** Write arbitrary text to the PTY (used to inject a dropped image's path). */
   sendText: (data: string) => void;
+  /** Move keyboard focus to this session's input surface (the xterm here; a chat
+   *  session's composer for the ChatSession peer) — the kind-agnostic call sites in
+   *  AgentSurface use this instead of reaching into `.term` directly. */
+  focus: () => void;
   dispose: () => void;
 }
 
@@ -313,7 +318,7 @@ export function createSession(bypass: boolean, notify: () => void, claudeId: str
     id, bypass, kind, claudeId, container, term, fit, ws,
     status: 'connecting', opened: false,
     busy: false, asking: false, attention: false, minimized: false,
-    ensureOpen, fitAndResize, applyZoom, sendText, dispose,
+    ensureOpen, fitAndResize, applyZoom, sendText, focus: () => term.focus(), dispose,
   };
 
   function setStatus(s: TermStatus) { session.status = s; notify(); }
