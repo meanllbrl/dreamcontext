@@ -21,6 +21,12 @@ export const AGENT_SETTINGS_EVENT = 'dreamcontext-agent-settings';
  *  step, not a magic string. */
 export type DefaultAgent = 'claude';
 
+/** How xterm paints the terminal. `webgl` = GPU renderer: full frame rate under
+ *  Claude's heavy TUI streams (the smoothness path), glyphs from a canvas atlas.
+ *  `dom` = real text nodes with native macOS font smoothing: the softest glyph
+ *  edges, but the renderer can stutter when output redraws fast. */
+export type AgentRenderer = 'webgl' | 'dom';
+
 export interface AgentSettings {
   /** Show the Agents surface at all (FAB / dock / overlay). Off → fully hidden. */
   enabled: boolean;
@@ -33,6 +39,9 @@ export interface AgentSettings {
   autoTitle: boolean;
   /** In-app accelerator that toggles the Agents overlay, e.g. "Ctrl+A". */
   hotkey: string;
+  /** Terminal renderer. Default `webgl` (smoothness); `dom` opts back into the
+   *  native-text comfort rendering. Applied live to open sessions. */
+  renderer: AgentRenderer;
 }
 
 export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
@@ -41,6 +50,7 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   defaultAgent: 'claude',
   autoTitle: false,
   hotkey: 'Ctrl+A',
+  renderer: 'webgl',
 };
 
 /** Coerce an arbitrary blob to a valid AgentSettings (defaults fill gaps). `enabled`
@@ -55,6 +65,9 @@ export function coerceAgentSettings(raw: Partial<AgentSettings> | null | undefin
     defaultAgent: r.defaultAgent === 'claude' ? 'claude' : DEFAULT_AGENT_SETTINGS.defaultAgent,
     autoTitle: r.autoTitle === true,
     hotkey: typeof r.hotkey === 'string' && r.hotkey.trim() ? r.hotkey.trim() : DEFAULT_AGENT_SETTINGS.hotkey,
+    // Only an explicit 'dom' opts back into comfort rendering; anything else
+    // (absent key, old blob, garbage) lands on the smooth GPU default.
+    renderer: r.renderer === 'dom' ? 'dom' : DEFAULT_AGENT_SETTINGS.renderer,
   };
 }
 

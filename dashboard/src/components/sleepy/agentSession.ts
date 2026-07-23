@@ -1,10 +1,14 @@
 import { Terminal, type ITheme } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
+import { WebglAddon } from '@xterm/addon-webgl';
 import '@xterm/xterm/css/xterm.css';
 import { getActiveVault } from '../../api/client';
 import { copyPreservingUnicode } from '../../lib/clipboard';
 import { playAskChime } from '../../lib/chime';
+import {
+  readAgentSettings, AGENT_SETTINGS_EVENT, type AgentSettings, type AgentRenderer,
+} from '../../lib/agentSettings';
 
 /**
  * The imperative session engine behind {@link AgentSurface} — one `node-pty` ↔
@@ -224,6 +228,39 @@ export function createSession(bypass: boolean, notify: () => void, claudeId: str
   term.loadAddon(fit);
   term.loadAddon(new WebLinksAddon());
 
+  // ── Renderer (GPU vs native text) ────────────────────────────────────────────
+  // Default is the WebGL addon: Claude's Ink TUI redraws most of the viewport every
+  // frame while streaming, which the DOM renderer (real text nodes, layout + GC per
+  // frame) cannot hold at frame rate in WKWebView — the residual stutter after the
+  // transport fixes. 'dom' remains the opt-in comfort path (native macOS font
+  // smoothing; the 2026-07-01 preference). Swappable LIVE via Settings → Agents:
+  // loading the addon upgrades an open terminal in place, disposing it drops xterm
+  // back to the DOM renderer. On WebGL context loss (WKWebView reclaims contexts
+  // under pressure) we dispose and fall back to DOM instead of showing a dead canvas.
+  let webgl: WebglAddon | null = null;
+  function applyRenderer(mode: AgentRenderer) {
+    if (!session.opened) return; // ensureOpen applies the current setting on open
+    if (mode === 'webgl' && !webgl) {
+      try {
+        const addon = new WebglAddon();
+        addon.onContextLoss(() => {
+          try { addon.dispose(); } catch { /* already down */ }
+          if (webgl === addon) webgl = null;
+        });
+        term.loadAddon(addon);
+        webgl = addon;
+      } catch { webgl = null; /* GPU unavailable → DOM renderer stays */ }
+    } else if (mode === 'dom' && webgl) {
+      try { webgl.dispose(); } catch { /* mid-init */ }
+      webgl = null;
+    }
+  }
+  const onSettingsChange = (e: Event) => {
+    const cfg = (e as CustomEvent<AgentSettings>).detail;
+    if (cfg?.renderer) applyRenderer(cfg.renderer);
+  };
+  window.addEventListener(AGENT_SETTINGS_EVENT, onSettingsChange);
+
   const themeObserver = new MutationObserver(() => { term.options.theme = readXtermTheme(); });
   themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class'] });
   themeObserver.observe(document.body, { attributes: true, attributeFilter: ['data-theme', 'class'] });
@@ -267,6 +304,10 @@ export function createSession(bypass: boolean, notify: () => void, claudeId: str
   const deferParam = serverSubmitsPrompt && deferPrompt ? '&deferPrompt=1' : '';
   const url = `${proto}://${location.host}/api/agent/terminal?vault=${encodeURIComponent(vault ?? '')}&bypass=${bypassParam}&theme=${theme}${idParam}${kindParam}${modelParam}${promptParam}${deferParam}`;
   const ws = new WebSocket(url);
+  // Binary frames are the server's control channel (hook-reported turn state);
+  // arraybuffer (not the default Blob) so they can be decoded synchronously in
+  // onmessage. Terminal output always arrives as text frames.
+  ws.binaryType = 'arraybuffer';
 
   const session: Session = {
     id, bypass, kind, claudeId, container, term, fit, ws,
@@ -326,6 +367,29 @@ export function createSession(bypass: boolean, notify: () => void, claudeId: str
       return lines.join('\n');
     } catch { return ''; }
   }
+  // ── Hook-reported turn state ────────────────────────────────────────────────
+  // The dreamcontext hooks inside the session report the turn lifecycle itself
+  // (UserPromptSubmit → working, Stop → ready), relayed by the server as binary WS
+  // frames. That is ground truth the screen heuristic can only approximate — the
+  // heuristic read every quiet gap whose tail missed WORKING_RE as "ready" while
+  // Claude was still mid-turn. Once a frame has arrived the hook signal owns the
+  // busy/ready split; the screen heuristic still owns `asking` (permission prompts
+  // fire no hook) and takes back over after a user interrupt (Esc/Ctrl+C — Claude
+  // Code fires no Stop for an interrupted turn) or in hook-less vaults.
+  let hookState: '' | 'working' | 'ready' = '';
+  let hookSuspended = false;
+  function onHookState(state: 'working' | 'ready') {
+    hookState = state;
+    hookSuspended = false;
+    if (state === 'working') {
+      if (!session.busy || session.asking) { session.busy = true; session.asking = false; notify(); }
+      armSettle(IDLE_MS);
+    } else {
+      // Don't flip busy here — arm a short fuse and let onSettle classify the quiet
+      // screen (asking? attention badge?) through the one transition bookkeeper.
+      armSettle(200);
+    }
+  }
   // Output went quiet → decide what the quiet MEANS from what's actually on screen.
   function onSettle() {
     idleTimer = undefined;
@@ -346,9 +410,19 @@ export function createSession(bypass: boolean, notify: () => void, claudeId: str
       notify();
       return;
     }
-    if (WORKING_RE.test(tail)) {
+    // A live hook `ready` overrides leftover spinner text (the Stop already fired —
+    // the turn IS over, whatever the last redraw still shows).
+    if (WORKING_RE.test(tail) && hookState !== 'ready') {
       // Still mid-turn, just streaming nothing (a silent tool call) — hold "working"
       // and re-check, so the chip never flaps to "ready" while Claude is busy.
+      if (!session.busy || session.asking) { session.busy = true; session.asking = false; notify(); }
+      armSettle(RECHECK_MS);
+      return;
+    }
+    if (hookState === 'working' && !hookSuspended) {
+      // The hooks say the turn is still LIVE — a quiet, spinner-less screen here is a
+      // redraw gap or a WORKING_RE miss, not "done". Hold working and re-check; only
+      // the Stop hook (or an interrupt suspension above) ends the turn.
       if (!session.busy || session.asking) { session.busy = true; session.asking = false; notify(); }
       armSettle(RECHECK_MS);
       return;
@@ -387,12 +461,45 @@ export function createSession(bypass: boolean, notify: () => void, claudeId: str
   // notification badge on an already-ended session.
   const stopOnClose = () => {
     if (idleTimer) { clearTimeout(idleTimer); idleTimer = undefined; }
+    hookState = '';
+    hookSuspended = false;
     session.busy = false;
     session.asking = false;
     setStatus('closed');
   };
-  ws.onopen = () => { setStatus('open'); fitAndResize(); };
-  ws.onmessage = (ev) => { const d = typeof ev.data === 'string' ? ev.data : ''; if (d) { term.write(d); markActivity(); armInitialPrompt(); } };
+  // ── Flow-control acks ────────────────────────────────────────────────────────
+  // The server coalesces PTY chunks and PAUSES the PTY above a high-water mark of
+  // un-acked output (agent-terminal.ts createOutputPump) — the guard that keeps a huge
+  // burst from ballooning xterm's write buffer into a multi-second freeze. Confirm
+  // processed chars back on a coarse cadence via xterm's write callback (fires after
+  // the chunk is parsed, even for a hidden/parked pane). The n=0 ack on open declares
+  // the capability — the server never pauses for a client that has not acked. Both
+  // sides count JS string length, so the metric can never drift.
+  const ACK_EVERY_CHARS = 32 * 1024;
+  let unackedChars = 0;
+  const sendAck = (n: number) => {
+    if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'ack', n }));
+  };
+  ws.onopen = () => { setStatus('open'); fitAndResize(); sendAck(0); };
+  ws.onmessage = (ev) => {
+    // Binary frame = server control channel (hook-reported turn state). Never
+    // terminal output, which always arrives as text frames.
+    if (ev.data instanceof ArrayBuffer) {
+      try {
+        const msg = JSON.parse(new TextDecoder().decode(ev.data)) as { type?: string; state?: string };
+        if (msg.type === 'status' && (msg.state === 'working' || msg.state === 'ready')) onHookState(msg.state);
+      } catch { /* malformed control frame — ignore */ }
+      return;
+    }
+    const d = typeof ev.data === 'string' ? ev.data : '';
+    if (!d) return;
+    term.write(d, () => {
+      unackedChars += d.length;
+      if (unackedChars >= ACK_EVERY_CHARS) { const n = unackedChars; unackedChars = 0; sendAck(n); }
+    });
+    markActivity();
+    armInitialPrompt();
+  };
   ws.onclose = stopOnClose;
   ws.onerror = stopOnClose;
 
@@ -430,7 +537,17 @@ export function createSession(bypass: boolean, notify: () => void, claudeId: str
   // without a TDZ; `sendInput` is only dereferenced at call time (long after init).
   function sendText(data: string) { sendInput(data); }
 
-  const dataSub = term.onData(sendInput);
+  const dataSub = term.onData((d) => {
+    // Esc/Ctrl+C while the hooks say "working" is the one turn-ending path that
+    // fires NO Stop hook (Claude Code skips it on user interrupts) — hand the
+    // busy/ready split back to the screen heuristic until the next hook event.
+    // A lone Esc arrives as exactly '\x1b' (arrow keys etc. are longer sequences).
+    if (hookState === 'working' && (d === '\x1b' || d === '\x03')) {
+      hookSuspended = true;
+      armSettle(IDLE_MS);
+    }
+    sendInput(d);
+  });
 
   // macOS line-editing gestures → the control bytes Claude Code's prompt already
   // honors. xterm doesn't emit these on its own (⌘ combos are swallowed, and a bare
@@ -486,6 +603,9 @@ export function createSession(bypass: boolean, notify: () => void, claudeId: str
       if (session.opened || !container.isConnected || container.offsetParent === null) return;
       term.open(container);
       session.opened = true;
+      // The renderer preference applies only to an OPENED terminal (the WebGL addon
+      // needs the DOM/canvas in place), so this is its single entry point.
+      applyRenderer(readAgentSettings().renderer);
       fitAndResize();
       // One more recompute next frame: the first paint can latch a stale (fallback-font)
       // cell width, making text look thin/stretched. Re-applying the font + refit forces
@@ -520,6 +640,9 @@ export function createSession(bypass: boolean, notify: () => void, claudeId: str
     // atlas still initialising — can throw `_isDisposed` deep in addon teardown; an
     // un-caught throw here would abort the caller (closeSessionById) before it removes
     // the row, leaving a zombie "ended" tab. Swallow per-step so cleanup always finishes.
+    try { window.removeEventListener(AGENT_SETTINGS_EVENT, onSettingsChange); } catch { /* gone */ }
+    try { webgl?.dispose(); } catch { /* atlas mid-init */ }
+    webgl = null;
     try { themeObserver.disconnect(); } catch { /* gone */ }
     try { dataSub.dispose(); } catch { /* gone */ }
     try { bellSub.dispose(); } catch { /* gone */ }

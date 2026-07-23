@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { readFileSync, existsSync, statSync, rmSync } from 'node:fs';
+import { readFileSync, existsSync, statSync, rmSync, writeFileSync, renameSync } from 'node:fs';
 import { execFileSync, execSync, spawn } from 'node:child_process';
 import { get as httpGet, request as httpRequest } from 'node:http';
 import { dirname, resolve, join, extname, basename, relative } from 'node:path';
@@ -642,6 +642,32 @@ export function consumeDeferredPrompt(envPath: string | undefined): string {
 }
 
 /**
+ * Report the embedded tab's turn state to the dashboard — the hook half of the
+ * live-status contract with `agent-terminal.ts`. The terminal exports
+ * `DREAMCONTEXT_AGENT_STATUS_FILE=<tmpdir>/dreamcontext-agent-status-<uuid>.json`
+ * into its PTY env (inherited by the hooks through `claude`); UserPromptSubmit
+ * writes `working` and Stop writes `ready`, the server watches the file and pushes
+ * each transition to the dashboard over the session's WebSocket. This makes the
+ * status chip reflect the TURN LIFECYCLE itself instead of guessing from stream
+ * activity — which read every long silent tool call as "ready".
+ *
+ * Atomic write (tmp + rename) so the server's watcher can never read a torn file.
+ * The basename-prefix guard mirrors `consumeDeferredPrompt`: a mangled/hostile env
+ * value must not make a hook overwrite an arbitrary file. Returns whether a state
+ * was written. Exported for tests.
+ */
+export function writeAgentTurnState(envPath: string | undefined, state: 'working' | 'ready'): boolean {
+  const target = envPath ?? '';
+  if (!target || !basename(target).startsWith('dreamcontext-agent-status-')) return false;
+  try {
+    const tmp = `${target}.${process.pid}.tmp`;
+    writeFileSync(tmp, JSON.stringify({ state, ts: Date.now() }), { encoding: 'utf-8', mode: 0o600 });
+    renameSync(tmp, target);
+    return true;
+  } catch { return false; }
+}
+
+/**
  * Pure one-line debt reminder for the UserPromptSubmit hook. Returns the line to
  * emit, or null to stay silent. Extracted from the full handler (which also does
  * recall injection, marketing nudge, version check, etc.) so the debt-threshold
@@ -884,6 +910,17 @@ export function registerHookCommand(program: Command): void {
         process.exit(0);
       }
 
+      // ── Live turn state → dashboard status chip ──────────────────────────
+      // Stop means the turn ENDED — flip the embedded tab's chip to "ready" via the
+      // status-file contract (see writeAgentTurnState). Before the root check: the
+      // chip must update even when a brain is missing. Nested-guarded so a `claude
+      // -p` the agent ran via Bash can't mark the still-working outer turn done.
+      try {
+        if (process.env.DREAMCONTEXT_AGENT_STATUS_FILE && !isNestedClaudeHook()) {
+          writeAgentTurnState(process.env.DREAMCONTEXT_AGENT_STATUS_FILE, 'ready');
+        }
+      } catch { /* status is best-effort — the chip falls back to the screen heuristic */ }
+
       const root = resolveContextRoot();
       if (!root) process.exit(0);
 
@@ -991,7 +1028,15 @@ export function registerHookCommand(program: Command): void {
   // ONE `ps` snapshot walked in memory (this runs on every SessionStart AND Stop hook;
   // one exec per hop cost ~4-8 sequential spawns per hook fire). POSIX-only (`ps`); on
   // Windows or any error we fail OPEN (record), preserving pre-guard behavior.
+  // Memoized per hook invocation (each fire is a fresh process, and ancestry can't
+  // change mid-fire) — the Stop path now asks twice (turn state + session map), and
+  // caching keeps that at one `ps` exec.
+  let nestedClaudeCache: boolean | undefined;
   function isNestedClaudeHook(): boolean {
+    if (nestedClaudeCache !== undefined) return nestedClaudeCache;
+    return (nestedClaudeCache = isNestedClaudeHookUncached());
+  }
+  function isNestedClaudeHookUncached(): boolean {
     if (process.platform === 'win32') return false;
     try {
       const out = execFileSync('ps', ['-axo', 'pid=,ppid=,command='], {
@@ -1344,6 +1389,17 @@ export function registerHookCommand(program: Command): void {
         const deferred = consumeDeferredPrompt(process.env.DREAMCONTEXT_DEFERRED_PROMPT);
         if (deferred) console.log(deferred);
       } catch { /* best-effort — a lost injection degrades to an unpinned session */ }
+
+      // ── Live turn state → dashboard status chip ──────────────────────────
+      // A user prompt means a turn is STARTING — flip the embedded tab's chip to
+      // "working" via the status-file contract (see writeAgentTurnState). Before
+      // the root check for the same reason as the Stop side; nested-guarded so a
+      // `claude -p` the agent runs via Bash can't re-flip the outer tab's state.
+      try {
+        if (process.env.DREAMCONTEXT_AGENT_STATUS_FILE && !isNestedClaudeHook()) {
+          writeAgentTurnState(process.env.DREAMCONTEXT_AGENT_STATUS_FILE, 'working');
+        }
+      } catch { /* status is best-effort — the chip falls back to the screen heuristic */ }
 
       const root = resolveContextRoot();
       if (!root) process.exit(0);

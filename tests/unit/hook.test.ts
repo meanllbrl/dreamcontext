@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync, existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer, type Server } from 'node:http';
 import {
   analyzeTranscript, scoreFromChangeCount, scoreFromToolCount, scoreFromSubstance,
   isJsTsFile, findFormatterConfig, findTsconfig, findProjectConfig,
-  resolveDashboardPort, isDashboardUp, consumeDeferredPrompt,
+  resolveDashboardPort, isDashboardUp, consumeDeferredPrompt, writeAgentTurnState,
 } from '../../src/cli/commands/hook.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -536,6 +536,56 @@ describe('consumeDeferredPrompt', () => {
   it('consumes an empty file silently (still single-use)', () => {
     const path = parkFile(dir, 'dreamcontext-deferred-empty.txt', '   ');
     expect(consumeDeferredPrompt(path)).toBe('');
+    expect(existsSync(path)).toBe(false);
+  });
+});
+
+describe('writeAgentTurnState', () => {
+  // The live-status contract with agent-terminal.ts: the server exports
+  // DREAMCONTEXT_AGENT_STATUS_FILE under this exact basename prefix; UserPromptSubmit
+  // writes `working`, Stop writes `ready`, and the server's watcher pushes the
+  // transition to the dashboard chip.
+  let dir: string;
+  beforeEach(() => { dir = makeTmpDir(); });
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+
+  it('writes {state, ts} JSON to the target path', () => {
+    const path = join(dir, 'dreamcontext-agent-status-abc.json');
+    expect(writeAgentTurnState(path, 'working')).toBe(true);
+    const parsed = JSON.parse(readFileSync(path, 'utf-8'));
+    expect(parsed.state).toBe('working');
+    expect(typeof parsed.ts).toBe('number');
+  });
+
+  it('overwrites with the latest state (working → ready)', () => {
+    const path = join(dir, 'dreamcontext-agent-status-abc.json');
+    writeAgentTurnState(path, 'working');
+    writeAgentTurnState(path, 'ready');
+    expect(JSON.parse(readFileSync(path, 'utf-8')).state).toBe('ready');
+  });
+
+  it('leaves no tmp file behind (atomic tmp+rename)', () => {
+    const path = join(dir, 'dreamcontext-agent-status-abc.json');
+    writeAgentTurnState(path, 'working');
+    expect(readdirSync(dir)).toEqual(['dreamcontext-agent-status-abc.json']);
+  });
+
+  it('returns false for undefined / empty env', () => {
+    expect(writeAgentTurnState(undefined, 'ready')).toBe(false);
+    expect(writeAgentTurnState('', 'ready')).toBe(false);
+  });
+
+  it('refuses a path without the status basename prefix, writing nothing', () => {
+    const path = join(dir, 'settings.json');
+    expect(writeAgentTurnState(path, 'ready')).toBe(false);
+    expect(existsSync(path)).toBe(false);
+  });
+
+  it('prefix check is on the basename, not the directory', () => {
+    const nested = join(dir, 'dreamcontext-agent-status-dir');
+    mkdirSync(nested, { recursive: true });
+    const path = join(nested, 'other.json');
+    expect(writeAgentTurnState(path, 'working')).toBe(false);
     expect(existsSync(path)).toBe(false);
   });
 });

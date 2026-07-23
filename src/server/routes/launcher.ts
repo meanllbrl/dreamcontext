@@ -844,12 +844,16 @@ export async function handleSleepyConfigSet(
 // preferences, so every project window shares them. Vault-agnostic route.
 
 type AgentUiDefaultAgent = 'claude';
+type AgentUiRenderer = 'webgl' | 'dom';
 interface AgentUiSettings {
   enabled: boolean;
   restoreTabs: boolean;
   defaultAgent: AgentUiDefaultAgent;
   autoTitle: boolean;
   hotkey: string;
+  /** Terminal renderer: 'webgl' (GPU, smooth under heavy streams — default) or
+   *  'dom' (native-text comfort rendering). Mirrors dashboard/src/lib/agentSettings. */
+  renderer: AgentUiRenderer;
 }
 const AGENT_UI_DEFAULTS: AgentUiSettings = {
   enabled: true,
@@ -857,6 +861,7 @@ const AGENT_UI_DEFAULTS: AgentUiSettings = {
   defaultAgent: 'claude',
   autoTitle: false,
   hotkey: 'Ctrl+A',
+  renderer: 'webgl',
 };
 
 function agentSettingsPath(): string {
@@ -874,6 +879,8 @@ function coerceAgentSettings(raw: Record<string, unknown>): AgentUiSettings {
     // Opt-in flag: default FALSE, only an explicit `true` enables tab auto-naming.
     autoTitle: raw.autoTitle === true,
     hotkey: typeof raw.hotkey === 'string' && raw.hotkey.trim() ? raw.hotkey.trim() : AGENT_UI_DEFAULTS.hotkey,
+    // Only an explicit 'dom' opts back into comfort rendering; anything else → GPU default.
+    renderer: raw.renderer === 'dom' ? 'dom' : AGENT_UI_DEFAULTS.renderer,
   };
 }
 

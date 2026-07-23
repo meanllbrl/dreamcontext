@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { basename, dirname, join } from 'node:path';
-import { existsSync, readdirSync, statSync, chmodSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync, readdirSync, statSync, chmodSync, readFileSync, writeFileSync, rmSync, watchFile, unwatchFile } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { sendJson, sendError } from '../middleware.js';
 import { isDesktop } from '../desktop.js';
@@ -193,7 +193,8 @@ export async function handleOpenTerminal(
   // `cd <cwd> && exec claude [flags]` — cwd is a real on-disk path (validated by the
   // vault resolver upstream), single-quoted so spaces are safe. Run via login shell so
   // a Finder-launched terminal still finds `claude` on PATH.
-  const flag = bypass ? ' --permission-mode bypassPermissions' : '';
+  // Same two-mode contract as the embedded terminal: bypass, else auto (acceptEdits).
+  const flag = bypass ? ' --permission-mode bypassPermissions' : ' --permission-mode acceptEdits';
   const shellCmd = `cd '${cwd.replace(/'/g, `'\\''`)}' && exec claude${flag}`;
   const appleScript = `tell application "Terminal"\n  activate\n  do script "${escapeForAppleScript(shellCmd)}"\nend tell`;
 
@@ -402,6 +403,78 @@ interface PtyLike {
   write(data: string): void;
   resize(cols: number, rows: number): void;
   kill(): void;
+  /** node-pty flow control (socket pause/resume) — optional so a stub PTY still fits. */
+  pause?(): void;
+  resume?(): void;
+}
+
+// ─── Output pump: PTY→WS coalescing + client-acked flow control ───────────────
+// Claude Code's TUI emits hundreds of tiny PTY chunks per second while streaming
+// (spinner frames, per-token redraws). Forwarding each chunk as its own WS frame made
+// the client run a message event + xterm write + activity-timer cycle PER CHUNK — the
+// dominant transport overhead behind terminal stutter. The pump coalesces chunks in a
+// short window into one frame, and applies xterm's canonical flow-control contract:
+// the client acks processed chars (same string-length metric on both sides), and above
+// a high-water mark of un-acked output the PTY is PAUSED — so a huge burst (a dumped
+// file, a verbose tool result) backpressures the producer instead of ballooning
+// xterm's write buffer into a multi-second freeze. Pausing is armed only after the
+// client's first ack (sent on socket open), so a client that never acks keeps the old
+// fire-and-forget behavior instead of stalling the PTY forever.
+
+const PUMP_FLUSH_MS = 5;             // coalesce window — small enough to keep echo imperceptible
+const PUMP_MAX_BUFFER = 64 * 1024;   // flush immediately at this size (don't sit on a burst)
+const PUMP_HIGH_WATER = 512 * 1024;  // un-acked chars → pause the PTY
+const PUMP_LOW_WATER = 128 * 1024;   // acked back below this → resume
+
+export interface OutputPump {
+  /** PTY produced output — buffered, then sent as one coalesced frame. */
+  data(chunk: string): void;
+  /** Client confirmed `n` chars processed (n=0 on open just declares the capability). */
+  ack(n: number): void;
+  /** Force-send anything buffered now (keeps output-before-exit-message ordering). */
+  flush(): void;
+  dispose(): void;
+}
+
+export function createOutputPump(
+  io: { send: (chunk: string) => void; pause?: () => void; resume?: () => void },
+  opts: { flushMs?: number; maxBuffer?: number; highWater?: number; lowWater?: number } = {},
+): OutputPump {
+  const flushMs = opts.flushMs ?? PUMP_FLUSH_MS;
+  const maxBuffer = opts.maxBuffer ?? PUMP_MAX_BUFFER;
+  const highWater = opts.highWater ?? PUMP_HIGH_WATER;
+  const lowWater = opts.lowWater ?? PUMP_LOW_WATER;
+  let buf = '';
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let unacked = 0;
+  let ackSeen = false;
+  let paused = false;
+  const flush = () => {
+    if (timer) { clearTimeout(timer); timer = null; }
+    if (!buf) return;
+    const chunk = buf;
+    buf = '';
+    unacked += chunk.length;
+    io.send(chunk);
+    if (ackSeen && !paused && unacked > highWater && io.pause) { paused = true; io.pause(); }
+  };
+  return {
+    data(chunk) {
+      buf += chunk;
+      if (buf.length >= maxBuffer) { flush(); return; }
+      if (!timer) timer = setTimeout(flush, flushMs);
+    },
+    ack(n) {
+      ackSeen = true;
+      if (Number.isFinite(n) && n > 0) unacked = Math.max(0, unacked - n);
+      if (paused && unacked <= lowWater) { paused = false; io.resume?.(); }
+    },
+    flush,
+    dispose() {
+      if (timer) { clearTimeout(timer); timer = null; }
+      buf = '';
+    },
+  };
 }
 
 /**
@@ -1125,7 +1198,12 @@ function startPtySession(
   deferPrompt = false,
 ): void {
   const shell = process.env.SHELL || '/bin/zsh';
-  const flag = bypass ? ' --permission-mode bypassPermissions' : '';
+  // Permission mode — the surface has exactly TWO modes (owner decision 2026-07-23:
+  // "if no bypass that means it is auto", never plain manual):
+  //  • bypass armed → bypassPermissions: skip ALL approval prompts (explicit opt-in,
+  //    standing warning in the UI).
+  //  • otherwise → acceptEdits: file edits auto-approved; commands/tools still ask.
+  const flag = bypass ? ' --permission-mode bypassPermissions' : ' --permission-mode acceptEdits';
   // `--model <id>` / `--effort <level>` when picked (both whitelist-sanitized upstream, so
   // shell-safe). Agent-only — a shell has neither a model nor an effort.
   const modelFlag = model ? ` --model ${model}` : '';
@@ -1198,6 +1276,49 @@ function startPtySession(
       } catch { /* degrade to promptless boot */ }
     }
   }
+  // ── Live turn-state channel (hooks → dashboard status chip) ──────────────────
+  // The status chip must reflect the TURN lifecycle, not stream activity — the old
+  // screen/stream heuristic read every quiet gap (a long silent tool call) as
+  // "ready" while Claude was still mid-turn. Contract: mint a per-session tmp file,
+  // export its path to the PTY env (inherited by the dreamcontext hooks through
+  // `claude`; UserPromptSubmit writes `working`, Stop writes `ready` — see
+  // hook.ts writeAgentTurnState), watch the file, and push each transition to the
+  // client as a BINARY WS frame ({type:'status', state}). Output is always text
+  // frames, so the two channels can never be confused — and an older client
+  // silently ignores binary frames. A vault without dreamcontext hooks (or an older
+  // CLI) simply never writes the file, and the client keeps its screen heuristic.
+  let statusEnv: Record<string, string> = {};
+  let stopStatusWatch = () => { /* nothing watched */ };
+  if (kind === 'agent') {
+    const statusPath = join(tmpdir(), `dreamcontext-agent-status-${randomUUID()}.json`);
+    statusEnv = { DREAMCONTEXT_AGENT_STATUS_FILE: statusPath };
+    // Dedup on the RAW file content, not the state value: every hook write carries a
+    // fresh `ts`, so a re-write of the SAME state (turn B's `working` after turn A was
+    // interrupted — an interrupt fires no Stop, so the file still said `working`) is
+    // still pushed. The client needs that re-push: it's what lifts the post-interrupt
+    // heuristic suspension and hands authority back to the hooks.
+    let lastRaw = '';
+    const pushState = () => {
+      let raw = '';
+      try { raw = readFileSync(statusPath, 'utf-8'); } catch { return; } // not written yet
+      if (!raw || raw === lastRaw) return;
+      let state = '';
+      try {
+        state = String((JSON.parse(raw) as { state?: unknown }).state ?? '');
+      } catch { return; } // torn/garbled content — the hook's write is atomic (tmp+rename)
+      if (state !== 'working' && state !== 'ready') return;
+      lastRaw = raw;
+      if (ws.readyState === ws.OPEN) {
+        try { ws.send(Buffer.from(JSON.stringify({ type: 'status', state }))); } catch { /* closing */ }
+      }
+    };
+    watchFile(statusPath, { persistent: false, interval: 300 }, pushState);
+    stopStatusWatch = () => {
+      stopStatusWatch = () => { /* once */ };
+      unwatchFile(statusPath, pushState);
+      try { rmSync(statusPath, { force: true }); } catch { /* tmp cleanup */ }
+    };
+  }
   // COLORFGBG hints the terminal's light/dark to TUI apps that read it: the trailing
   // field is the background (0 = dark, 15 = light). Combined with the webview's OSC
   // 10/11 colour replies, this lets Claude Code theme to our surface at spawn.
@@ -1241,7 +1362,7 @@ function startPtySession(
       cols: 80,
       rows: 24,
       cwd: projectRoot,
-      env: { ...process.env, TERM: 'xterm-256color', COLORFGBG: colorfgbg, ...tabEnv, ...deferredEnv } as Record<string, string>,
+      env: { ...process.env, TERM: 'xterm-256color', COLORFGBG: colorfgbg, ...tabEnv, ...deferredEnv, ...statusEnv } as Record<string, string>,
     }) as unknown as PtyLike;
   } catch (err) {
     // pty.spawn can throw synchronously (documented posix_spawnp failure when the
@@ -1250,6 +1371,7 @@ function startPtySession(
     // permanently un-resumable) and the throw would escape the WS upgrade callback
     // as an unhandled rejection.
     releaseHeld();
+    stopStatusWatch();
     try { ws.send(`\r\n\x1b[31m[failed to start ${kind === 'shell' ? 'shell' : 'claude'}: ${(err as Error)?.message ?? String(err)}]\x1b[0m\r\n`); } catch { /* closing */ }
     try { ws.close(); } catch { /* already closed */ }
     return;
@@ -1259,37 +1381,49 @@ function startPtySession(
   // Reap this PTY's `claude` process if the whole server shuts down (parent-death
   // watchdog / SIGTERM) — otherwise it would orphan to launchd. Untracked on exit.
   const untrack = trackChild(() => { try { term.kill(); } catch { /* gone */ } });
-  term.onData((data) => { if (ws.readyState === ws.OPEN) ws.send(data); });
+  // All PTY output flows through the coalescing/flow-control pump (see createOutputPump
+  // above) instead of one WS frame per chunk.
+  const pump = createOutputPump({
+    send: (chunk) => { if (ws.readyState === ws.OPEN) ws.send(chunk); },
+    pause: typeof term.pause === 'function' ? () => term.pause?.() : undefined,
+    resume: typeof term.resume === 'function' ? () => term.resume?.() : undefined,
+  });
+  term.onData((data) => pump.data(data));
   term.onExit(({ exitCode }) => {
     alive = false;
     untrack();
     releaseHeld();
     cleanupDeferred();
+    stopStatusWatch();
     if (ws.readyState === ws.OPEN) {
+      // Drain any coalesced output first so the exit line lands AFTER the final bytes.
+      pump.flush();
       const what = kind === 'shell' ? 'shell' : 'claude';
       try { ws.send(`\r\n\x1b[2m[${what} exited with code ${exitCode}]\x1b[0m\r\n`); } catch { /* closing */ }
       ws.close();
     }
+    pump.dispose();
   });
 
   ws.on('message', (raw: Buffer | string) => {
     if (!alive) return;
     const str = typeof raw === 'string' ? raw : raw.toString('utf-8');
-    // Control frames are JSON ({type:'input'|'resize'}); anything else is raw input.
+    // Control frames are JSON ({type:'input'|'resize'|'ack'}); anything else is raw input.
     if (str.startsWith('{')) {
       try {
-        const msg = JSON.parse(str) as { type?: string; data?: string; cols?: number; rows?: number };
+        const msg = JSON.parse(str) as { type?: string; data?: string; cols?: number; rows?: number; n?: number };
         if (msg.type === 'resize' && typeof msg.cols === 'number' && typeof msg.rows === 'number') {
           term.resize(Math.max(1, msg.cols | 0), Math.max(1, msg.rows | 0));
           return;
         }
         if (msg.type === 'input' && typeof msg.data === 'string') { term.write(msg.data); return; }
+        if (msg.type === 'ack' && typeof msg.n === 'number') { pump.ack(msg.n); return; }
       } catch { /* not control JSON — fall through to raw */ }
     }
     term.write(str);
   });
 
-  const teardown = () => { if (alive) { alive = false; releaseHeld(); cleanupDeferred(); try { term.kill(); } catch { /* already dead */ } } };
+  const teardown = () => { if (alive) { alive = false; releaseHeld(); cleanupDeferred(); stopStatusWatch(); pump.dispose(); try { term.kill(); } catch { /* already dead */ } } };
   ws.on('close', teardown);
   ws.on('error', teardown);
 }
