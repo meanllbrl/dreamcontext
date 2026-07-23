@@ -1,16 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useI18n } from '../../context/I18nContext';
-import { useAnnouncementInbox, useAnnouncementBoard } from '../../hooks/useAnnouncements';
+import { useAnnouncementInbox } from '../../hooks/useAnnouncements';
 import { readSeenIds, unreadAnnouncements, type Announcement } from '../../lib/announcements';
-import { ExcalidrawPreview } from '../core/ExcalidrawPreview';
+import { AnnouncementBoardPreview } from '../announcements/AnnouncementBoardPreview';
 import { pushOverlay, popOverlay, isTopOverlay } from '../../lib/overlayStack';
 import './AnnouncementsModal.css';
 
 const OVERLAY_ID = 'announcements-modal';
 
 interface Props {
-  /** Navigate to the full Announcements page (called alongside markAllRead). */
-  onOpenPage: () => void;
+  /**
+   * Navigate to the Announcements page (called alongside markAllRead). When an
+   * announcement id is given, the page opens that story in the full reader.
+   */
+  onOpenPage: (announcementId?: string) => void;
 }
 
 /**
@@ -34,6 +37,10 @@ interface Props {
  * shown the same announcement on the next launch. Pinning the snapshot keeps the
  * popup rendered for its whole lifetime even though `markAllRead` empties the
  * live `unread` on the same tick — otherwise it would flash and vanish.
+ *
+ * The body is content-first: headline + summary carry the message in text; the
+ * board is an inert teaser (no scroll trap inside the modal) that opens the
+ * full-screen reader on the Announcements page, where it's actually readable.
  */
 export function AnnouncementsModal({ onOpenPage }: Props) {
   const { t } = useI18n();
@@ -67,12 +74,10 @@ export function AnnouncementsModal({ onOpenPage }: Props) {
 
   const show = pinned !== null && pinned.length > 0 && !dismissed.current;
 
-  // The popup is a single-board hero: the newest pinned announcement (pinned is
-  // sorted newest-first). Deeper ones are reached via "See all". Rendering one
-  // read-only canvas on load stays light; a stack of them would not. The board
-  // hook is called unconditionally (disabled on '' when there's nothing pinned).
+  // The popup is a single-story hero: the newest pinned announcement (pinned is
+  // sorted newest-first). Deeper ones are listed under "Also new" and open the
+  // page reader directly.
   const hero = pinned?.[0];
-  const { data: heroBoard, isLoading: heroLoading } = useAnnouncementBoard(hero?.board ?? '');
 
   // The markAllRead calls below look redundant — the pin effect already marked
   // everything read — but they are load-bearing: markAllRead is what forces the
@@ -83,11 +88,14 @@ export function AnnouncementsModal({ onOpenPage }: Props) {
     markAllRead();
   }, [markAllRead]);
 
-  const seeAll = useCallback(() => {
-    dismissed.current = true;
-    onOpenPage();
-    markAllRead();
-  }, [markAllRead, onOpenPage]);
+  const openStory = useCallback(
+    (id?: string) => {
+      dismissed.current = true;
+      onOpenPage(id);
+      markAllRead();
+    },
+    [markAllRead, onOpenPage],
+  );
 
   // Esc closes — topmost-only (overlay stack), same contract as CommandModal /
   // InsightDetailPanel. Registers only while `show` is true, mirroring how those
@@ -133,38 +141,50 @@ export function AnnouncementsModal({ onOpenPage }: Props) {
         </header>
 
         <div className="announcements-modal-body">
-          <article className="announcements-modal-entry">
-            <div className="announcements-modal-entry-meta">
-              <span className="announcements-modal-entry-date">{hero.date}</span>
-              {hero.version && (
-                <span className="announcements-modal-entry-version">
-                  {t('announcements.shippedIn').replace('{version}', hero.version)}
-                </span>
-              )}
-              {pinned.length > 1 && (
-                <span className="announcements-modal-entry-more">
-                  {t('announcements.moreUnread').replace('{count}', String(pinned.length - 1))}
-                </span>
-              )}
+          <div className="announcements-modal-meta">
+            <span className="announcements-modal-date">{hero.date}</span>
+            {hero.version && (
+              <span className="announcements-modal-version">
+                {t('announcements.shippedIn').replace('{version}', hero.version)}
+              </span>
+            )}
+          </div>
+          <h3 className="announcements-modal-headline">{hero.title}</h3>
+          <p className="announcements-modal-summary">{hero.summary}</p>
+
+          <AnnouncementBoardPreview board={hero.board} label={hero.title} onOpen={() => openStory(hero.id)} />
+
+          {pinned.length > 1 && (
+            <div className="announcements-modal-also">
+              <span className="announcements-modal-also-label">{t('announcements.alsoNew')}</span>
+              {pinned.slice(1).map((a) => (
+                <button
+                  key={a.id}
+                  type="button"
+                  className="announcements-modal-also-row"
+                  onClick={() => openStory(a.id)}
+                >
+                  <span className="announcements-modal-also-date">{a.date}</span>
+                  <span className="announcements-modal-also-title">{a.title}</span>
+                  <span className="announcements-modal-also-arrow" aria-hidden="true">→</span>
+                </button>
+              ))}
             </div>
-            <h3 className="announcements-modal-entry-title">{hero.title}</h3>
-            <div className="announcements-modal-board">
-              {heroLoading ? (
-                <div className="announcement-board-loading">{t('common.loading')}</div>
-              ) : (
-                <ExcalidrawPreview content={heroBoard ?? ''} />
-              )}
-            </div>
-          </article>
+          )}
         </div>
 
         <footer className="announcements-modal-foot">
-          <button type="button" className="announcements-modal-btn-secondary" onClick={seeAll}>
+          <button type="button" className="announcements-modal-btn-ghost" onClick={() => openStory()}>
             {t('announcements.seeAll')}
           </button>
-          <button type="button" className="announcements-modal-btn" onClick={dismiss}>
-            {t('announcements.gotIt')}
-          </button>
+          <div className="announcements-modal-foot-main">
+            <button type="button" className="announcements-modal-btn-secondary" onClick={dismiss}>
+              {t('announcements.gotIt')}
+            </button>
+            <button type="button" className="announcements-modal-btn" onClick={() => openStory(hero.id)}>
+              {t('announcements.readStory')}
+            </button>
+          </div>
         </footer>
       </div>
     </>

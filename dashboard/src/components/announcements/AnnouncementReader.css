@@ -1,0 +1,99 @@
+/* The article view — a meta strip + summary above a board stage that takes
+   every remaining pixel of the overlay. */
+.announcement-reader {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.announcement-reader-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: var(--font-weight-bold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+}
+
+.announcement-reader-version {
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+}
+
+.announcement-reader-tag {
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-tertiary);
+}
+
+.announcement-reader-summary {
+  margin: 0;
+  max-width: 880px;
+  font-size: var(--font-size-sm);
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+}
+
+.announcement-reader-board {
+  flex: 1;
+  min-height: 0;
+}
+
+.announcement-reader-board .excalidraw-preview {
+  min-height: 0;
+}
+
+.announcement-reader-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+/* Newer / Older pager in the overlay header. */
+.announcement-reader-pager {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.announcement-reader-pager-btn {
+  padding: 5px var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.announcement-reader-pager-btn:hover:not(:disabled) {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.announcement-reader-pager-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.announcement-reader-pager-pos {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+}

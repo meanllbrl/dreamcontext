@@ -10,7 +10,10 @@ interface Props {
   theme: 'light' | 'dark';
 }
 
-type ExcalidrawAPI = { scrollToContent: (target?: unknown, opts?: unknown) => void };
+type ExcalidrawAPI = {
+  scrollToContent: (target?: unknown, opts?: unknown) => void;
+  refresh?: () => void;
+};
 
 /**
  * Read-only Excalidraw board rendered with the real (canvas) editor in view mode.
@@ -48,16 +51,50 @@ export default function ExcalidrawCanvas({ elements, files, appState, theme }: P
   // settles, and on every container resize (e.g. entering full-screen).
   useEffect(() => {
     const fit = () => {
-      try { apiRef.current?.scrollToContent(undefined, { fitToContent: true, animate: false }); }
-      catch { /* api not ready yet */ }
+      try {
+        // Re-measure the container offsets first: Excalidraw samples them at
+        // mount, and a host positioned with a transform (the What's New modal
+        // is translate(-50%,-50%)-centered) settles AFTER that sample — the
+        // stale offsets skew scrollToContent's centering, cropping the board.
+        apiRef.current?.refresh?.();
+        apiRef.current?.scrollToContent(undefined, { fitToContent: true, animate: false });
+      } catch { /* api not ready yet */ }
     };
     const timers = [60, 250, 600].map((ms) => window.setTimeout(fit, ms));
+    // First-ever load: the handwriting font arrives AFTER the 600ms timer, the
+    // text bounding boxes grow, and the already-fitted board overflows its box
+    // (seen as a cropped teaser in the on-load What's New popup). Re-fit once
+    // all pending fonts settle; cancelled on unmount via the flag.
+    let cancelled = false;
+    document.fonts?.ready?.then(() => { if (!cancelled) fit(); });
     let ro: ResizeObserver | null = null;
+    // scrollToContent computes against Excalidraw's INTERNAL appState.width/height,
+    // not the DOM box. When the board mounts inside a container Excalidraw
+    // mis-measures on first paint (the on-load popup), every timer fit above uses
+    // the stale dimensions; Excalidraw later corrects itself — resizing the canvas
+    // element but keeping the (now wrong) zoom/scroll. The canvas width/height
+    // attributes are written from appState, so watching them re-fits at exactly
+    // the moment the internal correction lands. No loop: fit changes zoom/scroll
+    // only, never the canvas size.
+    // Guarded by the actual dims: React re-renders re-set the attributes with
+    // IDENTICAL values (still a mutation), and an unguarded fit() here would
+    // re-render again — an infinite mutation loop that never lets the page
+    // settle. Only a real size change may re-fit.
+    let lastDims = '';
+    const mo = new MutationObserver(() => {
+      const dims = Array.from(wrapRef.current?.querySelectorAll('canvas') ?? [])
+        .map((c) => `${c.width}x${c.height}`)
+        .join(',');
+      if (dims === lastDims) return;
+      lastDims = dims;
+      fit();
+    });
     if (wrapRef.current) {
       ro = new ResizeObserver(() => fit());
       ro.observe(wrapRef.current);
+      mo.observe(wrapRef.current, { subtree: true, attributes: true, attributeFilter: ['width', 'height'] });
     }
-    return () => { timers.forEach(clearTimeout); ro?.disconnect(); };
+    return () => { cancelled = true; timers.forEach(clearTimeout); ro?.disconnect(); mo.disconnect(); };
   }, []);
 
   return (

@@ -1,8 +1,7 @@
-/* A top-to-bottom feed where each entry is a wide, landscape announcement
-   board (landing-page style) — so the column is wide enough to give the board
-   room to breathe, not the narrow reading measure a text feed would use. */
+/* News-index layout: one hero story (with an inert board teaser) followed by
+   compact headline rows. Nothing in the scroll path captures the wheel. */
 .announcements-page {
-  max-width: 1040px;
+  max-width: 1080px;
   margin: 0 auto;
 }
 
@@ -26,88 +25,135 @@
   text-align: center;
 }
 
-.announcements-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-5);
-}
+/* ─── Shared meta strip (hero + rows) ─── */
 
-.announcement-card {
-  position: relative;
-  padding: var(--space-5);
-  background: var(--color-bg-secondary);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
-}
-
-/* Unread affordance: a small accent dot at the top-right corner, same
-   geometry family as the sidebar's first-run nudge dot (Sidebar.css
-   .sidebar-item--nudge::after) so "something new" reads consistently
-   across the app. */
-.announcement-card--unread::after {
-  content: '';
-  position: absolute;
-  top: var(--space-4);
-  right: var(--space-4);
-  width: 8px;
-  height: 8px;
-  border-radius: var(--radius-full);
-  background: var(--color-accent);
-  box-shadow: var(--shadow-glow);
-}
-
-.announcement-card-meta {
+.announcement-meta {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
-  margin-bottom: var(--space-2);
-}
-
-.announcement-card-date {
-  font-size: var(--font-size-xs);
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: var(--font-weight-bold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--color-text-tertiary);
 }
 
-.announcement-card-version {
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
-  color: var(--color-accent);
-  background: var(--color-accent-soft);
-  padding: var(--space-1) var(--space-2);
+.announcement-meta-version {
+  padding: 2px 8px;
   border-radius: var(--radius-full);
-  white-space: nowrap;
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
 }
 
-.announcement-card-title {
-  font-size: var(--font-size-lg);
-  font-weight: var(--font-weight-semibold);
-  color: var(--color-text);
-  margin-bottom: var(--space-2);
+.announcement-meta-new {
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: var(--color-accent);
+  color: var(--color-accent-text);
+  box-shadow: var(--shadow-glow);
 }
 
-/* The board strip: a wide landscape stage; ExcalidrawPreview (canvas) fits the
-   whole board to this box and re-fits on resize, so the full landing page is
-   always visible without scrolling the card. */
-.announcement-card-board {
-  margin-top: var(--space-3);
-  height: 460px;
-}
+/* ─── Hero: the latest story ─── */
 
-.announcement-card-board .excalidraw-preview {
-  min-height: 0;
-}
-
-/* Shared by the page strip (460px) and the modal hero (360px) — fills whichever
-   board slot contains it, so it must not pin its own height. */
-.announcement-board-loading {
+.announcements-hero {
   display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-6);
+  margin-bottom: var(--space-6);
   background: var(--color-bg-secondary);
-  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-sm);
+  --board-preview-h: clamp(360px, 48vh, 520px);
+}
+
+.announcements-hero-title {
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  font-family: var(--font-family-display);
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: -0.01em;
+  line-height: 1.25;
+  color: var(--color-text);
+  transition: color var(--transition-fast);
+}
+
+.announcements-hero-title:hover {
+  color: var(--color-accent);
+}
+
+.announcements-hero-summary {
+  margin: 0;
+  max-width: 760px;
   font-size: var(--font-size-sm);
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+}
+
+/* ─── Archive: older stories as headline rows ─── */
+
+.announcements-archive {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.announcement-row {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-4) var(--space-5);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.announcement-row:hover,
+.announcement-row:focus-visible {
+  border-color: var(--color-accent);
+  box-shadow: var(--shadow-md);
+}
+
+.announcement-row-title {
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
+  line-height: 1.35;
+  color: var(--color-text);
+}
+
+.announcement-row-summary {
+  font-size: var(--font-size-sm);
+  line-height: 1.55;
+  color: var(--color-text-secondary);
+  /* Rows are teasers — clamp the summary so the archive scans like headlines. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.announcement-row-open {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-accent);
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+
+.announcement-row:hover .announcement-row-open,
+.announcement-row:focus-visible .announcement-row-open {
+  opacity: 1;
 }

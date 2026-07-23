@@ -118,7 +118,7 @@ function PageRouter({ nav }: { nav: ShellNavigation }) {
     case 'about':
       return <AboutPage />;
     case 'announcements':
-      return <AnnouncementsPage />;
+      return <AnnouncementsPage focus={focus} />;
   }
 }
 
@@ -231,7 +231,7 @@ export function App() {
                 {(nav) => (
                   <>
                     <PageRouter nav={nav} />
-                    <AnnouncementsModal onOpenPage={() => nav.navigate('announcements', null)} />
+                    <AnnouncementsModal onOpenPage={(id) => nav.navigate('announcements', id ?? null)} />
                   </>
                 )}
               </Shell>

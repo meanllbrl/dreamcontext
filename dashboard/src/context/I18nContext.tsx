@@ -34,7 +34,10 @@ const translations: Record<string, Record<string, string>> = {
     'announcements.seeAll': 'See all announcements',
     'announcements.dismiss': 'Dismiss',
     'announcements.shippedIn': 'Shipped in v{version}',
-    'announcements.moreUnread': '+{count} more',
+    'announcements.readStory': 'Read the full story',
+    'announcements.alsoNew': 'Also new',
+    'announcements.newer': 'Newer',
+    'announcements.older': 'Older',
     // ─── Lab (Insights) — missing-credentials banner ─────────────────────────
     'lab.credentials.title': '{n} credential(s) missing — some insights can’t sync',
     'lab.credentials.hint': 'Paste each value below, or run `dreamcontext lab credentials set <key>` from the CLI. Values are stored gitignored and never shown again.',

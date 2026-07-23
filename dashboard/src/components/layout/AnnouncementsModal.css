@@ -14,9 +14,9 @@
   left: 50%;
   transform: translate(-50%, -50%);
   z-index: 71;
-  width: 780px;
-  max-width: 92vw;
-  max-height: 84vh;
+  width: 880px;
+  max-width: 94vw;
+  max-height: 88vh;
   display: flex;
   flex-direction: column;
   background: var(--color-bg-elevated);
@@ -32,17 +32,17 @@
   justify-content: space-between;
   gap: var(--space-2);
   flex-shrink: 0;
-  padding: var(--space-6) var(--space-6) var(--space-4);
-  border-bottom: 1px solid var(--color-border);
+  padding: var(--space-5) var(--space-6) var(--space-3);
 }
 
 .announcements-modal-title {
   margin: 0;
-  font-family: var(--font-family-display);
-  font-size: var(--font-size-lg);
+  font-family: var(--font-mono);
+  font-size: 11px;
   font-weight: var(--font-weight-bold);
-  letter-spacing: -0.01em;
-  color: var(--color-text);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--color-accent);
 }
 
 .announcements-modal-close {
@@ -61,29 +61,20 @@
   background: var(--color-bg-tertiary);
 }
 
-/* ─── Body — the newest unread announcement as a landing-page board hero ─── */
+/* ─── Body — content-first: headline + summary, then an inert board teaser ─── */
 
 .announcements-modal-body {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: var(--space-5);
-  padding: var(--space-5) var(--space-6);
+  gap: var(--space-3);
+  padding: 0 var(--space-6) var(--space-5);
+  --board-preview-h: clamp(260px, 36vh, 400px);
 }
 
-.announcements-modal-entry {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-
-.announcements-modal-entry + .announcements-modal-entry {
-  padding-top: var(--space-5);
-  border-top: 1px solid var(--color-border);
-}
-
-.announcements-modal-entry-meta {
+.announcements-modal-meta {
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -95,44 +86,93 @@
   color: var(--color-text-tertiary);
 }
 
-.announcements-modal-entry-version {
+.announcements-modal-version {
   padding: 2px 8px;
   border-radius: var(--radius-full);
   background: var(--color-accent-soft);
   color: var(--color-accent);
 }
 
-/* "+N more" hint when several announcements are unread — the hero shows the
-   newest, the rest are one click away via "See all". */
-.announcements-modal-entry-more {
-  padding: 2px 8px;
-  border-radius: var(--radius-full);
-  background: var(--color-bg-tertiary);
-  color: var(--color-text-tertiary);
-}
-
-/* The hero board: a landscape stage that fits the whole landing-page board. */
-.announcements-modal-board {
-  margin-top: var(--space-2);
-  height: 360px;
-}
-
-.announcements-modal-board .excalidraw-preview {
-  min-height: 0;
-}
-
-.announcements-modal-entry-title {
+.announcements-modal-headline {
   margin: 0;
-  font-size: var(--font-size-base);
-  font-weight: var(--font-weight-semibold);
+  font-family: var(--font-family-display);
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: -0.01em;
+  line-height: 1.25;
   color: var(--color-text);
 }
 
-.announcements-modal-entry-summary {
+.announcements-modal-summary {
   margin: 0;
   font-size: var(--font-size-sm);
-  line-height: 1.55;
+  line-height: 1.6;
   color: var(--color-text-secondary);
+}
+
+/* ─── "Also new" — the other unread stories, one click from their reader ─── */
+
+.announcements-modal-also {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+}
+
+.announcements-modal-also-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: var(--font-weight-bold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  margin-bottom: var(--space-1);
+}
+
+.announcements-modal-also-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.announcements-modal-also-row:hover,
+.announcements-modal-also-row:focus-visible {
+  background: var(--color-bg-secondary);
+  border-color: var(--color-border);
+}
+
+.announcements-modal-also-date {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.announcements-modal-also-title {
+  flex: 1;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.announcements-modal-also-arrow {
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
+}
+
+.announcements-modal-also-row:hover .announcements-modal-also-arrow {
+  color: var(--color-accent);
 }
 
 /* ─── Footer actions ─── */
@@ -143,8 +183,14 @@
   justify-content: space-between;
   gap: var(--space-3);
   flex-shrink: 0;
-  padding: var(--space-4) var(--space-6) var(--space-6);
+  padding: var(--space-4) var(--space-6) var(--space-5);
   border-top: 1px solid var(--color-border);
+}
+
+.announcements-modal-foot-main {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
 }
 
 .announcements-modal-btn {
@@ -175,6 +221,21 @@
 
 .announcements-modal-btn-secondary:hover {
   border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.announcements-modal-btn-ghost {
+  padding: 8px 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: color var(--transition-fast);
+}
+
+.announcements-modal-btn-ghost:hover {
   color: var(--color-accent);
 }
 
