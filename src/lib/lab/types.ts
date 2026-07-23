@@ -103,6 +103,8 @@ export interface InsightManifest {
   slug: string;
   title: string;
   description: string | null;
+  /** Top-level dashboard category (side-menu tab, e.g. "Marketing"), or null. */
+  category: string | null;
   /** Dashboard section grouping, or null (renders under "Ungrouped"). */
   group: string | null;
   render: Render;

@@ -9,25 +9,87 @@ import { LabEmptyState } from './LabEmptyState';
 import './LabBoard.css';
 
 const UNGROUPED = 'Ungrouped';
+/** Side-menu bucket for insights with no manifest `category`. */
+const OTHER = 'Other';
 
-/** Group insight summaries by manifest `group` (null → "Ungrouped"), preserving
- *  the API's slug-sorted order within each section. */
-function groupInsights<T extends { group: string | null }>(insights: T[]): [string, T[]][] {
+interface Section<T> {
+  /** Prefs key (order/collapse). Categorized: "<category> / <group>";
+   *  uncategorized keeps the bare group name so pre-category prefs survive. */
+  key: string;
+  /** Display name — the bare group. */
+  title: string;
+  items: T[];
+}
+
+interface Block<T> {
+  /** Category headline shown in the "All" view; null when the board has no
+   *  categories at all (single anonymous block — pre-category layout). */
+  category: string | null;
+  sections: Section<T>[];
+}
+
+/** Apply the persisted manual tab order to the category blocks: listed names
+ *  first (in saved order), unlisted ones (new categories) after, in the
+ *  default order (alphabetical, "Other" last). */
+function applyCatOrder<T>(blocks: Block<T>[], order: string[]): Block<T>[] {
+  if (order.length === 0 || blocks.some((b) => b.category === null)) return blocks;
+  const pos = new Map(order.map((c, i) => [c, i]));
+  return blocks
+    .map((block, idx) => ({ block, key: pos.get(block.category!) ?? order.length + idx }))
+    .sort((a, b) => a.key - b.key)
+    .map((e) => e.block);
+}
+
+/** Group one category's insights by manifest `group` (null → "Ungrouped"),
+ *  preserving the API's slug-sorted order within each section. */
+function groupSections<T extends { group: string | null }>(
+  items: T[],
+  keyPrefix: string | null,
+): Section<T>[] {
   const byGroup = new Map<string, T[]>();
-  for (const insight of insights) {
-    const key = insight.group ?? UNGROUPED;
-    const bucket = byGroup.get(key);
+  for (const insight of items) {
+    const title = insight.group ?? UNGROUPED;
+    const bucket = byGroup.get(title);
     if (bucket) bucket.push(insight);
-    else byGroup.set(key, [insight]);
+    else byGroup.set(title, [insight]);
   }
   // Named groups first (alphabetical), Ungrouped last.
   const named = [...byGroup.keys()].filter((k) => k !== UNGROUPED).sort();
   const ordered = byGroup.has(UNGROUPED) ? [...named, UNGROUPED] : named;
-  return ordered.map((g) => [g, byGroup.get(g)!]);
+  return ordered.map((title) => ({
+    key: keyPrefix ? `${keyPrefix} / ${title}` : title,
+    title,
+    items: byGroup.get(title)!,
+  }));
 }
 
-/** Apply a persisted manual order to one group's items: listed slugs first (in
- *  saved order), unlisted ones (new insights) after, in API order. */
+/** Partition insights into category blocks (named categories alphabetical,
+ *  "Other" last). A board with zero categorized insights returns one anonymous
+ *  block — the pre-category layout, no side menu, no headlines. */
+function buildBlocks<T extends { category: string | null; group: string | null }>(
+  insights: T[],
+): Block<T>[] {
+  const byCat = new Map<string, T[]>();
+  for (const insight of insights) {
+    const cat = insight.category ?? OTHER;
+    const bucket = byCat.get(cat);
+    if (bucket) bucket.push(insight);
+    else byCat.set(cat, [insight]);
+  }
+  const named = [...byCat.keys()].filter((c) => c !== OTHER).sort();
+  if (named.length === 0) {
+    return [{ category: null, sections: groupSections(insights, null) }];
+  }
+  const ordered = byCat.has(OTHER) ? [...named, OTHER] : named;
+  return ordered.map((cat) => ({
+    category: cat,
+    // "Other" sections keep bare-group keys so pre-category prefs still apply.
+    sections: groupSections(byCat.get(cat)!, cat === OTHER ? null : cat),
+  }));
+}
+
+/** Apply a persisted manual order to one section's items: listed slugs first
+ *  (in saved order), unlisted ones (new insights) after, in API order. */
 function applyOrder<T extends { slug: string }>(items: T[], order: string[] | undefined): T[] {
   if (!order || order.length === 0) return items;
   const pos = new Map(order.map((slug, i) => [slug, i]));
@@ -40,14 +102,17 @@ function applyOrder<T extends { slug: string }>(items: T[], order: string[] | un
 export function LabBoard() {
   const { data: insights, isLoading, isError, error } = useLabInsights();
   const syncAll = useSyncAll();
-  const { prefs, toggleCollapsed, setGroupOrder } = useLabPrefs();
+  const { prefs, toggleCollapsed, setGroupOrder, setCategory, setCategoryOrder } = useLabPrefs();
   const [toast, setToast] = useState<string | null>(null);
   const [openSlug, setOpenSlug] = useState<string | null>(null);
-  // Card being dragged (with its group — reordering is within-group only) and
-  // the card it currently hovers. Cleared on drop/dragend, never on dragleave
-  // (per-item dragleave flickers in WKWebView — see KanbanBoard).
-  const [drag, setDrag] = useState<{ slug: string; group: string } | null>(null);
+  // Card being dragged (with its section — reordering is within-section only)
+  // and the card it currently hovers. Cleared on drop/dragend, never on
+  // dragleave (per-item dragleave flickers in WKWebView — see KanbanBoard).
+  const [drag, setDrag] = useState<{ slug: string; section: string } | null>(null);
   const [dragOverSlug, setDragOverSlug] = useState<string | null>(null);
+  // Category tab being dragged (tab-bar reorder) and the tab it hovers.
+  const [tabDrag, setTabDrag] = useState<string | null>(null);
+  const [tabDragOver, setTabDragOver] = useState<string | null>(null);
 
   useEffect(() => {
     if (!toast) return;
@@ -55,11 +120,21 @@ export function LabBoard() {
     return () => clearTimeout(t);
   }, [toast]);
 
-  const grouped = useMemo(() => {
-    return groupInsights(insights ?? []).map(([group, items]) =>
-      [group, applyOrder(items, prefs.order[group])] as const,
-    );
-  }, [insights, prefs.order]);
+  const blocks = useMemo(() => {
+    const built = buildBlocks(insights ?? []).map((block) => ({
+      ...block,
+      sections: block.sections.map((s) => ({ ...s, items: applyOrder(s.items, prefs.order[s.key]) })),
+    }));
+    return applyCatOrder(built, prefs.catOrder);
+  }, [insights, prefs.order, prefs.catOrder]);
+
+  // The side menu exists only once at least one insight declares a category.
+  const hasCategories = blocks.some((b) => b.category !== null);
+  // A stale persisted selection (category renamed/emptied) falls back to All.
+  const activeCategory = hasCategories && blocks.some((b) => b.category === prefs.category)
+    ? prefs.category
+    : null;
+  const visibleBlocks = activeCategory ? blocks.filter((b) => b.category === activeCategory) : blocks;
 
   // Multi-page insights (funnel) route to their overview page — the card is
   // page 1's entry. Everything else opens the detail slide-over as before.
@@ -77,13 +152,28 @@ export function LabBoard() {
     setDragOverSlug(null);
   }, []);
 
+  const endTabDrag = useCallback(() => {
+    setTabDrag(null);
+    setTabDragOver(null);
+  }, []);
+
+  /** Drop the dragged tab at `target`'s position (or at the end when null). */
+  const dropTab = useCallback((target: string | null) => {
+    if (!tabDrag || tabDrag === target) { endTabDrag(); return; }
+    const cats = blocks.map((b) => b.category!).filter((c) => c !== tabDrag);
+    const at = target === null ? cats.length : cats.indexOf(target);
+    cats.splice(at === -1 ? cats.length : at, 0, tabDrag);
+    setCategoryOrder(cats);
+    endTabDrag();
+  }, [tabDrag, blocks, setCategoryOrder, endTabDrag]);
+
   /** Drop the dragged card at `targetSlug`'s position (or at the end when null). */
-  const dropInGroup = useCallback((group: string, displayed: { slug: string }[], targetSlug: string | null) => {
-    if (!drag || drag.group !== group) { endDrag(); return; }
+  const dropInSection = useCallback((section: string, displayed: { slug: string }[], targetSlug: string | null) => {
+    if (!drag || drag.section !== section) { endDrag(); return; }
     const slugs = displayed.map((s) => s.slug).filter((s) => s !== drag.slug);
     const at = targetSlug === null ? slugs.length : slugs.indexOf(targetSlug);
     slugs.splice(at === -1 ? slugs.length : at, 0, drag.slug);
-    setGroupOrder(group, slugs);
+    setGroupOrder(section, slugs);
     endDrag();
   }, [drag, setGroupOrder, endDrag]);
 
@@ -140,81 +230,158 @@ export function LabBoard() {
       <LabCredentialsBanner onToast={setToast} />
 
       {/* No page title — the sidebar already names the active page. The toolbar
-          keeps only the Sync-all action, aligned right. */}
+          holds the category tab bar (left, only when categories exist) and the
+          Sync-all action (right). Tabs drag-reorder; the order persists. */}
       <div className="lab-board-toolbar">
+        {hasCategories && (
+          <nav
+            className="lab-cat-tabs"
+            aria-label="Insight categories"
+            // Bar-level drop = move the dragged tab to the end (fires only in
+            // the gaps — tabs stop propagation of their own drops).
+            onDragOver={(e) => {
+              if (!tabDrag) return;
+              e.preventDefault();
+              e.dataTransfer.dropEffect = 'move';
+            }}
+            onDrop={(e) => {
+              if (!tabDrag) return;
+              e.preventDefault();
+              dropTab(null);
+            }}
+          >
+            <button
+              className={`lab-cat-tab ${activeCategory === null ? 'lab-cat-tab--active' : ''}`}
+              onClick={() => setCategory(null)}
+            >
+              All
+              <span className="lab-cat-tab-count">{insights.length}</span>
+            </button>
+            {blocks.map((b) => (
+              <button
+                key={b.category!}
+                draggable
+                className={[
+                  'lab-cat-tab',
+                  activeCategory === b.category ? 'lab-cat-tab--active' : '',
+                  tabDrag === b.category ? 'lab-cat-tab--dragging' : '',
+                  tabDragOver === b.category && tabDrag !== b.category ? 'lab-cat-tab--drop' : '',
+                ].filter(Boolean).join(' ')}
+                onClick={() => setCategory(b.category)}
+                onDragStart={(e) => {
+                  setTabDrag(b.category!);
+                  try { e.dataTransfer.effectAllowed = 'move'; } catch { /* noop */ }
+                }}
+                onDragOver={(e) => {
+                  if (!tabDrag) return;
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = 'move';
+                  setTabDragOver(b.category);
+                }}
+                onDrop={(e) => {
+                  if (!tabDrag) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  dropTab(b.category);
+                }}
+                onDragEnd={endTabDrag}
+              >
+                {b.category}
+                <span className="lab-cat-tab-count">
+                  {b.sections.reduce((n, s) => n + s.items.length, 0)}
+                </span>
+              </button>
+            ))}
+          </nav>
+        )}
         <button className="lab-board-sync-all" onClick={handleSyncAll} disabled={syncAll.isPending}>
           {syncAll.isPending ? 'Syncing…' : 'Sync all'}
         </button>
       </div>
 
       <div className="lab-board-sections">
-        {grouped.map(([group, items]) => {
-          const collapsed = prefs.collapsed.includes(group);
-          return (
-            <section key={group} className="lab-board-section">
-              <button
-                className="lab-board-section-header"
-                onClick={() => toggleCollapsed(group)}
-                aria-expanded={!collapsed}
-              >
-                <svg
-                  className={`lab-board-section-chevron ${collapsed ? '' : 'lab-board-section-chevron--open'}`}
-                  width="10" height="10" viewBox="0 0 10 10" fill="none"
+          {visibleBlocks.map((block) => (
+            <div key={block.category ?? '(all)'} className="lab-board-block">
+              {/* Category headline only in the "All" view — in a filtered view
+                  the side menu already names it. */}
+              {block.category !== null && activeCategory === null && (
+                <button
+                  className="lab-board-cat-header"
+                  onClick={() => setCategory(block.category)}
+                  title={`Show only ${block.category}`}
                 >
-                  <path d="M3 2L7 5L3 8" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-                <span className="lab-board-section-title">{group}</span>
-                <span className="lab-board-section-count">{items.length}</span>
-              </button>
-              {!collapsed && (
-                <div
-                  className="lab-board-grid"
-                  // Grid-level drop = append to the end of this group (fires only
-                  // in the gaps — cards stop propagation of their own drops).
-                  onDragOver={(e) => {
-                    if (drag?.group !== group) return;
-                    e.preventDefault();
-                    e.dataTransfer.dropEffect = 'move';
-                  }}
-                  onDrop={(e) => {
-                    if (drag?.group !== group) return;
-                    e.preventDefault();
-                    dropInGroup(group, items, null);
-                  }}
-                >
-                  {items.map((summary) => (
-                    <InsightCard
-                      key={summary.slug}
-                      summary={summary}
-                      onToast={setToast}
-                      onOpen={openInsight}
-                      dragging={drag?.slug === summary.slug}
-                      dropTarget={dragOverSlug === summary.slug && drag?.slug !== summary.slug}
-                      onDragStart={(e) => {
-                        setDrag({ slug: summary.slug, group });
-                        try { e.dataTransfer.effectAllowed = 'move'; } catch { /* noop */ }
-                      }}
-                      onDragOver={(e) => {
-                        if (drag?.group !== group) return;
-                        e.preventDefault();
-                        e.dataTransfer.dropEffect = 'move';
-                        setDragOverSlug(summary.slug);
-                      }}
-                      onDrop={(e) => {
-                        if (drag?.group !== group) return;
-                        e.preventDefault();
-                        e.stopPropagation();
-                        dropInGroup(group, items, summary.slug);
-                      }}
-                      onDragEnd={endDrag}
-                    />
-                  ))}
-                </div>
+                  {block.category}
+                </button>
               )}
-            </section>
-          );
-        })}
-      </div>
+              {block.sections.map(({ key, title, items }) => {
+                const collapsed = prefs.collapsed.includes(key);
+                return (
+                  <section key={key} className="lab-board-section">
+                    <button
+                      className="lab-board-section-header"
+                      onClick={() => toggleCollapsed(key)}
+                      aria-expanded={!collapsed}
+                    >
+                      <svg
+                        className={`lab-board-section-chevron ${collapsed ? '' : 'lab-board-section-chevron--open'}`}
+                        width="10" height="10" viewBox="0 0 10 10" fill="none"
+                      >
+                        <path d="M3 2L7 5L3 8" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                      <span className="lab-board-section-title">{title}</span>
+                      <span className="lab-board-section-count">{items.length}</span>
+                    </button>
+                    {!collapsed && (
+                      <div
+                        className="lab-board-grid"
+                        // Grid-level drop = append to the end of this section (fires only
+                        // in the gaps — cards stop propagation of their own drops).
+                        onDragOver={(e) => {
+                          if (drag?.section !== key) return;
+                          e.preventDefault();
+                          e.dataTransfer.dropEffect = 'move';
+                        }}
+                        onDrop={(e) => {
+                          if (drag?.section !== key) return;
+                          e.preventDefault();
+                          dropInSection(key, items, null);
+                        }}
+                      >
+                        {items.map((summary) => (
+                          <InsightCard
+                            key={summary.slug}
+                            summary={summary}
+                            onToast={setToast}
+                            onOpen={openInsight}
+                            dragging={drag?.slug === summary.slug}
+                            dropTarget={dragOverSlug === summary.slug && drag?.slug !== summary.slug}
+                            onDragStart={(e) => {
+                              setDrag({ slug: summary.slug, section: key });
+                              try { e.dataTransfer.effectAllowed = 'move'; } catch { /* noop */ }
+                            }}
+                            onDragOver={(e) => {
+                              if (drag?.section !== key) return;
+                              e.preventDefault();
+                              e.dataTransfer.dropEffect = 'move';
+                              setDragOverSlug(summary.slug);
+                            }}
+                            onDrop={(e) => {
+                              if (drag?.section !== key) return;
+                              e.preventDefault();
+                              e.stopPropagation();
+                              dropInSection(key, items, summary.slug);
+                            }}
+                            onDragEnd={endDrag}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </section>
+                );
+              })}
+            </div>
+          ))}
+        </div>
 
       {openSummary && (
         <InsightDetailPanel

@@ -135,13 +135,17 @@
   opacity: 0.55;
 }
 
-/* Sync-all is the toolbar's only child now (the page title is gone), so it
-   right-aligns via flex-end — space-between would park it on the left. */
+/* Toolbar: category tab bar left (when categories exist), Sync-all pinned
+   right via margin-left:auto — it also right-aligns when it's the only child. */
 .lab-board-toolbar {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  gap: var(--space-3);
   margin-bottom: var(--space-4);
+}
+
+.lab-board-sync-all {
+  margin-left: auto;
 }
 
 .lab-board-sync-all {
@@ -167,10 +171,97 @@
   text-align: center;
 }
 
+/* ────────────────────────────────────────
+   Category tab bar
+   Appears only when at least one insight declares a manifest `category`.
+   Compact pills in the toolbar row — no reserved width. Tabs drag-reorder;
+   the order persists in lab prefs.
+   ──────────────────────────────────────── */
+
+.lab-cat-tabs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+
+.lab-cat-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid transparent;
+  background: none;
+  border-radius: var(--radius-full);
+  padding: 4px 12px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.lab-cat-tab:hover {
+  background: var(--color-bg-tertiary);
+}
+
+.lab-cat-tab--active {
+  background: var(--color-accent-soft);
+  border-color: color-mix(in srgb, var(--color-accent) 25%, transparent);
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.lab-cat-tab--dragging {
+  opacity: 0.4;
+}
+
+/* Drop indicator: the dragged tab will land BEFORE this one. */
+.lab-cat-tab--drop {
+  box-shadow: -3px 0 0 var(--color-accent);
+}
+
+.lab-cat-tab-count {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--color-text-tertiary);
+}
+
+.lab-cat-tab--active .lab-cat-tab-count {
+  color: inherit;
+  opacity: 0.75;
+}
+
 .lab-board-sections {
   display: flex;
   flex-direction: column;
   gap: var(--space-6);
+}
+
+.lab-board-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+/* Category headline in the "All" view — clicking it filters to that category. */
+.lab-board-cat-header {
+  align-self: flex-start;
+  border: none;
+  background: none;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  font-family: var(--font-family-display);
+  font-size: 16px;
+  font-weight: var(--font-weight-bold);
+  color: var(--color-text);
+  border-bottom: 2px solid color-mix(in srgb, var(--color-accent) 45%, transparent);
+  padding-bottom: 3px;
+}
+
+.lab-board-cat-header:hover {
+  color: var(--color-accent);
 }
 
 /* Whole header is the collapse toggle (chevron + title + count). */

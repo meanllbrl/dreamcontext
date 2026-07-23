@@ -41,6 +41,7 @@ function toPublicManifest(m: InsightManifest) {
     slug: m.slug,
     title: m.title,
     description: m.description,
+    category: m.category,
     group: m.group,
     render: m.render,
     unit: m.unit,
@@ -68,6 +69,7 @@ function toSummary(contextRoot: string, m: InsightManifest) {
   return {
     slug: m.slug,
     title: m.title,
+    category: m.category,
     group: m.group,
     render: m.render,
     unit: m.unit,

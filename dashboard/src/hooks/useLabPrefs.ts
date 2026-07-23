@@ -15,16 +15,24 @@ import { api } from '../api/client';
  */
 
 export interface LabPrefs {
-  /** Manual card order per group: group name → slug list. Slugs not listed
-   *  (new insights) render after the ordered ones, in API order. */
+  /** Manual card order per section: section key → slug list. Slugs not listed
+   *  (new insights) render after the ordered ones, in API order. Categorized
+   *  sections key as "<category> / <group>", uncategorized as the bare group. */
   order: Record<string, string[]>;
-  /** Group section names currently collapsed. */
+  /** Section keys currently collapsed. */
   collapsed: string[];
+  /** Active category tab, or null for "All". */
+  category: string | null;
+  /** Manual tab order: category names first (in saved order), unlisted ones
+   *  (new categories) after, alphabetical. */
+  catOrder: string[];
 }
 
 export const DEFAULT_LAB_PREFS: LabPrefs = {
   order: {},
   collapsed: [],
+  category: null,
+  catOrder: [],
 };
 
 /** Merge a (possibly partial) blob over the defaults, dropping malformed keys. */
@@ -38,7 +46,11 @@ function mergePrefs(blob: Partial<LabPrefs>): LabPrefs {
   const collapsed = Array.isArray(blob.collapsed)
     ? blob.collapsed.filter((g) => typeof g === 'string')
     : [];
-  return { order, collapsed };
+  const category = typeof blob.category === 'string' && blob.category ? blob.category : null;
+  const catOrder = Array.isArray(blob.catOrder)
+    ? blob.catOrder.filter((c) => typeof c === 'string')
+    : [];
+  return { order, collapsed, category, catOrder };
 }
 
 interface LabPrefsResponse {
@@ -105,5 +117,13 @@ export function useLabPrefs() {
     update((p) => ({ ...p, order: { ...p.order, [group]: slugs } }));
   }, [update]);
 
-  return { prefs, toggleCollapsed, setGroupOrder };
+  const setCategory = useCallback((category: string | null) => {
+    update((p) => ({ ...p, category }));
+  }, [update]);
+
+  const setCategoryOrder = useCallback((catOrder: string[]) => {
+    update((p) => ({ ...p, catOrder }));
+  }, [update]);
+
+  return { prefs, toggleCollapsed, setGroupOrder, setCategory, setCategoryOrder };
 }

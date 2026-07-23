@@ -25,6 +25,8 @@ export interface Binding {
 export interface InsightSummary {
   slug: string;
   title: string;
+  /** Top-level side-menu category (e.g. "Marketing"), or null. */
+  category: string | null;
   group: string | null;
   render: Render;
   unit: string | null;
@@ -75,6 +77,7 @@ export interface PublicManifest {
   slug: string;
   title: string;
   description: string | null;
+  category: string | null;
   group: string | null;
   render: Render;
   unit: string | null;

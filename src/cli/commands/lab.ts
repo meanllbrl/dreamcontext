@@ -165,6 +165,7 @@ export function registerLabCommand(program: Command): void {
       console.log(header(`Insight: ${slug}`));
       console.log(`  title: ${manifest.title}`);
       console.log(`  render: ${manifest.render}`);
+      console.log(`  category: ${manifest.category ?? '(none)'}`);
       console.log(`  group: ${manifest.group ?? '(none)'}`);
       if (cache) {
         console.log(`  latest: ${cache.latest ?? '—'}${manifest.unit ? ` ${manifest.unit}` : ''}`);
@@ -182,17 +183,19 @@ export function registerLabCommand(program: Command): void {
     .argument('<slug>', 'Kebab-case insight slug (e.g. weekly-active-users)')
     .description('Scaffold a new insight manifest in lab/insights/<slug>.md')
     .requiredOption('--title <title>', 'Insight title')
+    .option('--category <category>', 'Top-level dashboard category (side-menu tab, e.g. "Marketing")')
     .option('--group <group>', 'Dashboard section this insight groups under')
     .option('--render <render>', 'number|line|pie|raw|funnel (default number)')
     .option('--adapter <adapter>', 'http|script (default http)')
     .option('--unit <unit>', 'Display unit (e.g. "users")')
     .option('--ttl <minutes>', 'Cache TTL in minutes (default 1440)')
-    .action((slug: string, opts: { title: string; group?: string; render?: string; adapter?: string; unit?: string; ttl?: string }) => {
+    .action((slug: string, opts: { title: string; category?: string; group?: string; render?: string; adapter?: string; unit?: string; ttl?: string }) => {
       const root = ensureContextRoot();
       try {
         const m = createInsight(root, {
           slug,
           title: opts.title,
+          category: opts.category ?? null,
           group: opts.group ?? null,
           render: (opts.render as Render) ?? 'number',
           adapter: (opts.adapter as 'http' | 'script') ?? 'http',

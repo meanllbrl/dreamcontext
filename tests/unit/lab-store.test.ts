@@ -37,6 +37,15 @@ describe('lab store — create/list/get', () => {
     expect(existsSync(insightPath(root, 'wau'))).toBe(true);
   });
 
+  it('persists category + group and reads them back (default: both null)', () => {
+    const m = createInsight(root, { slug: 'signups', title: 'Signups', category: 'Marketing', group: 'Acquisition' });
+    expect(m.category).toBe('Marketing');
+    expect(m.group).toBe('Acquisition');
+    const plain = createInsight(root, { slug: 'wau', title: 'WAU' });
+    expect(plain.category).toBeNull();
+    expect(plain.group).toBeNull();
+  });
+
   it('lab list shows a created insight', () => {
     createInsight(root, { slug: 'wau', title: 'WAU' });
     const insights = listInsights(root);

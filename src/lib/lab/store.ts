@@ -158,6 +158,7 @@ export function readInsightFile(filePath: string): InsightManifest {
     slug,
     title: typeof data.title === 'string' && data.title.trim() ? data.title : slug,
     description: strOrNull(data.description),
+    category: strOrNull(data.category),
     group: strOrNull(data.group),
     render: toRender(data.render),
     source: parseSource(data.source),
@@ -303,6 +304,7 @@ export interface CreateInsightInput {
   title: string;
   render?: Render;
   adapter?: 'http' | 'script';
+  category?: string | null;
   group?: string | null;
   description?: string | null;
   unit?: string | null;
@@ -368,6 +370,7 @@ export function createInsight(contextRoot: string, input: CreateInsightInput): I
   const frontmatter: Record<string, unknown> = {
     title: input.title,
     description: input.description ?? null,
+    category: input.category ?? null,
     group: input.group ?? null,
     render,
     unit: input.unit ?? null,
