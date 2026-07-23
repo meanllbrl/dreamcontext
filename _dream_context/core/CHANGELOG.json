@@ -2,6 +2,22 @@
   {
     "date": "2026-07-23",
     "type": "feat",
+    "scope": "announcements",
+    "description": "The old surface squeezed every landscape landing-page board into a 460px page strip and a 360px popup box (unreadable), and each live canvas ate the wheel so the page wouldn't scroll. New surface: AnnouncementsPage → news index (hero card for the latest story + compact headline rows; every story opens fullscreen), AnnouncementReader → FullscreenOverlay article view (the board gets the whole viewport, interactive pan/zoom, Newer/Older pager, deep-link focus via nav focus id), AnnouncementBoardPreview → pointer-events-none teaser (wheel always scrolls the page, click opens the reader, all Excalidraw chrome hidden including the mobile bottom toolbar), AnnouncementsModal → content-first (date/version meta, headline, summary previously never shown, clickable teaser, Also new unread list, Got it / Read the full story CTAs). ExcalidrawCanvas: re-fit on fonts.ready, container offset refresh, and a dims-guarded canvas-attr MutationObserver (no re-render loops). Verified end-to-end with Playwright against the built dist: popup, reader, pager, Esc, page scroll over teasers, seen-state persistence, clean console.",
+    "breaking": false,
+    "summary": "News-style What's New: index + fullscreen reader, content-first popup, ExcalidrawCanvas scroll-trap fix",
+    "references": [
+      "commit:82aa8e5",
+      "file:dashboard/src/components/announcements/AnnouncementBoardPreview.tsx",
+      "file:dashboard/src/components/announcements/AnnouncementReader.tsx",
+      "file:dashboard/src/components/layout/AnnouncementsModal.tsx",
+      "file:dashboard/src/pages/AnnouncementsPage.tsx",
+      "file:dashboard/src/components/core/ExcalidrawCanvas.tsx"
+    ]
+  },
+  {
+    "date": "2026-07-23",
+    "type": "feat",
     "scope": "council",
     "description": "Council debates gained structured verdict tracking and a live chamber board. The orchestrator registers decision options (--options 'A=Keep sync,B=Drop it') at create time; personas submit verdicts via 'dreamcontext council verdict <debate> <persona> <round> <stance>' (the skill handles this automatically); 'council board <debate>' renders the ASCII chamber board (persona rows × round columns, stance markers, convergence stats). New CLI commands: 'council timeline' (turn-by-turn event log), 'council inject' (mid-debate constraint edits), 'council question' (orchestrator prompts personas), 'council live' / 'council demo-live' (server live-state management for the dashboard panel). Dashboard: CouncilLivePanel.tsx polls GET /api/agent/council-live (2s interval, scoped by session like goal-live) and renders the chamber board + phase + persona states above the orchestrator's composer. Skill v2 rewrite: SKILL.md gained commitment ritual (TodoWrite tracking), depth router (Quick/Standard/Deep), structured verdict protocol, and interlude/examination phases. Backend: src/lib/council.ts gained verdict read/write/convergence helpers, council-board.ts renders the ASCII board with stance markers, councilLive.ts manages session-scoped live state. Tests: council-verdicts.test.ts (verdict parsing + convergence), council-board.test.ts (board rendering), council-live-route.test.ts (server route + scoping). Suite green. Catalog updated (council v2.1.0). The orchestrator now stays light (never reads full persona reports, only summaries/board/timeline) while personas build compounding on-disk context via the CLI.",
     "breaking": false,
