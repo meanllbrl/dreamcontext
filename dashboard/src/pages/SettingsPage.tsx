@@ -980,6 +980,19 @@ export function SettingsPage({ focus }: SettingsPageProps) {
                   </label>
                   <p className="settings-field-hint">{t('settings.agents.auto_title_hint')}</p>
 
+                  {/* Chat view (BETA) — native chat UI instead of the raw terminal. */}
+                  <label className="settings-checkbox-label">
+                    <input
+                      type="checkbox"
+                      className="settings-checkbox"
+                      checked={agentCfg.chatView}
+                      onChange={() => updateAgentCfg({ ...agentCfg, chatView: !agentCfg.chatView })}
+                    />
+                    <span>{t('settings.agents.chat_view')}</span>
+                    <span className="settings-beta-badge">BETA</span>
+                  </label>
+                  <p className="settings-field-hint">{t('settings.agents.chat_view_hint')}</p>
+
                   {/* Quick open/close hotkey (in-app; default Ctrl+A). */}
                   <div className="settings-field-row">
                     <label>{t('settings.agents.hotkey')}</label>

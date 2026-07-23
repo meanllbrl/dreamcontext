@@ -854,6 +854,9 @@ interface AgentUiSettings {
   /** Terminal renderer: 'webgl' (GPU, smooth under heavy streams — default) or
    *  'dom' (native-text comfort rendering). Mirrors dashboard/src/lib/agentSettings. */
   renderer: AgentUiRenderer;
+  /** BETA — render Claude sessions as native chat UI. Off by default; discoverable
+   *  only via Settings → Agents. Mirrors dashboard/src/lib/agentSettings. */
+  chatView: boolean;
 }
 const AGENT_UI_DEFAULTS: AgentUiSettings = {
   enabled: true,
@@ -862,6 +865,7 @@ const AGENT_UI_DEFAULTS: AgentUiSettings = {
   autoTitle: false,
   hotkey: 'Ctrl+A',
   renderer: 'webgl',
+  chatView: false,
 };
 
 function agentSettingsPath(): string {
@@ -881,6 +885,8 @@ function coerceAgentSettings(raw: Record<string, unknown>): AgentUiSettings {
     hotkey: typeof raw.hotkey === 'string' && raw.hotkey.trim() ? raw.hotkey.trim() : AGENT_UI_DEFAULTS.hotkey,
     // Only an explicit 'dom' opts back into comfort rendering; anything else → GPU default.
     renderer: raw.renderer === 'dom' ? 'dom' : AGENT_UI_DEFAULTS.renderer,
+    // Opt-in flag: default FALSE, only an explicit `true` enables the beta chat view.
+    chatView: raw.chatView === true,
   };
 }
 

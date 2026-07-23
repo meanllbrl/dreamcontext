@@ -32,14 +32,16 @@ function readCollapsed(): boolean {
 /** The status figure: Sleepy's per-state face for agents, a mini prompt glyph with a
  *  blinking cursor for shells, plus the "?" bubble when the session is asking. */
 function ChipFigure({ row, size = 26 }: { row: SessionRow; size?: number }) {
+  // A shell is a plain terminal with no agent behind it → the prompt glyph. Both other
+  // kinds (agent, chat) are Claude Code sessions and wear Sleepy's per-state face.
   return (
     <span className="agent-dock-chip-figure" aria-hidden>
-      {row.kind === 'agent' ? (
+      {row.kind === 'shell' ? (
+        <span className="agent-dock-chip-glyph" data-kind={row.info.kind}>❯<i /></span>
+      ) : (
         <span className="agent-dock-chip-figure-clip">
           <SleepyMascot mood={row.info.mood} size={size} compact />
         </span>
-      ) : (
-        <span className="agent-dock-chip-glyph" data-kind={row.info.kind}>❯<i /></span>
       )}
       {row.info.kind === 'asking' && <span className="agent-dock-chip-q">?</span>}
     </span>
@@ -98,9 +100,9 @@ export function AgentDock({ rows, focusedId, onOpen, onClose, className }: {
                     {row.info.label}
                     {busyish && <span className="agent-dock-chip-dots" aria-hidden><i /><i /><i /></span>}
                   </span>
-                  {/* Sleepy-team line: a minimized agent running a goal-skill cycle
-                      shows its live phase + implementer dots right on the chip. */}
-                  {row.kind === 'agent' && (
+                  {/* Sleepy-team line: a minimized agent (or chat) running a goal-skill
+                      or council cycle shows its live phase + dots right on the chip. */}
+                  {row.kind !== 'shell' && (
                     <>
                       <GoalDockBadge claudeId={row.claudeId} enabled={!!row.claudeId} />
                       <CouncilDockBadge claudeId={row.claudeId} enabled={!!row.claudeId} />

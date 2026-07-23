@@ -42,6 +42,10 @@ export interface AgentSettings {
   /** Terminal renderer. Default `webgl` (smoothness); `dom` opts back into the
    *  native-text comfort rendering. Applied live to open sessions. */
   renderer: AgentRenderer;
+  /** BETA — render Claude sessions as native chat UI (markdown bubbles, tool
+   *  cards, question/permission cards) instead of the raw terminal. Off by
+   *  default; discoverable only via Settings → Agents. */
+  chatView: boolean;
 }
 
 export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
@@ -51,6 +55,7 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   autoTitle: false,
   hotkey: 'Ctrl+A',
   renderer: 'webgl',
+  chatView: false,
 };
 
 /** Coerce an arbitrary blob to a valid AgentSettings (defaults fill gaps). `enabled`
@@ -68,6 +73,8 @@ export function coerceAgentSettings(raw: Partial<AgentSettings> | null | undefin
     // Only an explicit 'dom' opts back into comfort rendering; anything else
     // (absent key, old blob, garbage) lands on the smooth GPU default.
     renderer: r.renderer === 'dom' ? 'dom' : DEFAULT_AGENT_SETTINGS.renderer,
+    // Opt-in flag: default FALSE, only an explicit `true` enables the beta chat view.
+    chatView: r.chatView === true,
   };
 }
 

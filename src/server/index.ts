@@ -106,6 +106,7 @@ import {
   handleAgentCouncilLive,
   attachAgentTerminal,
 } from './routes/agent-terminal.js';
+import { attachAgentChat } from './routes/agent-chat.js';
 import { handleAgentDrop } from './routes/agent-drop.js';
 import { handleAgentSessionsGet, handleAgentSessionsPut } from './routes/agent-sessions.js';
 import { handleConnectionsList, handleConnectionsCreate, handleConnectionsDelete } from './routes/connections.js';
@@ -569,6 +570,9 @@ export function startDashboardServer(options: ServerOptions): Promise<void> {
     // Agent terminal: bridge a WebSocket to a node-pty running real Claude Code.
     // Self-gates (desktop + loopback + node-pty present); a no-op otherwise.
     attachAgentTerminal(server);
+    // Agent Chat (beta): bridge a WebSocket to a headless stream-json `claude` process.
+    // Self-gates (desktop + loopback); a no-op otherwise.
+    attachAgentChat(server);
 
     server.on('error', (err: NodeJS.ErrnoException) => {
       if (err.code === 'EADDRINUSE') {
