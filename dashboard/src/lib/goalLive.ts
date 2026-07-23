@@ -1,8 +1,9 @@
 /**
  * Types + phase model for the goal-skill live run state
- * (`_dream_context/tmp/.goal-skill-live.json`, served by GET /api/agent/goal-live).
- * Single writer is the goal-skill orchestrator; the panel above the composer and the
- * dock badge are read-only renderers of this state.
+ * (`_dream_context/tmp/.goal-skill-live*.json` — one file per orchestrator session,
+ * served by GET /api/agent/goal-live, which picks the run matching the pane).
+ * Each orchestrator is the single writer of its own file; the panel above the
+ * composer and the dock badge are read-only renderers of this state.
  */
 
 export type GoalForkState = 'run' | 'done' | 'wait' | 'fail';

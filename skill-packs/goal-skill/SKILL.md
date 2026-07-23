@@ -268,7 +268,10 @@ is the single source of truth from here on (no parallel doc), and **you are its 
 writer**:
 
 ```bash
-dreamcontext tasks create <slug> -p high -w "<why>"
+# Name = a short plain sentence describing the goal (never a slug — the file
+# slug derives from it). -w is mandatory; new tasks scaffold lean (Why +
+# Changelog only) and each insert below creates its section on first use.
+dreamcontext tasks create "<sentence-style goal name>" -p high -w "<why>"
 dreamcontext tasks insert <slug> acceptance_criteria "<criterion>"   # one per criterion
 dreamcontext tasks insert <slug> acceptance_criteria "Validation method: <user choice>"
 dreamcontext tasks insert <slug> technical_details "<file-by-file plan + dependency-map table>"
@@ -352,31 +355,26 @@ command + output).
 
 ## Live run state + viewer
 
-The goal-skill pack maintains one live state file that two surfaces render:
+The goal-skill pack maintains one live state file **per orchestrator session** —
+concurrent runs in different sessions each get their own file and never clobber each
+other. **The primary surface is the dreamcontext app**: the native live panel above the
+agent pane's composer + the dock chip render your run automatically (via the dashboard
+server) — nothing to start, nothing to announce.
 
-- `.claude/goal-skill-viewer.cjs` — the rich Excalidraw-style browser graph
-  (installed by `dreamcontext setup`/`update`).
-- The dreamcontext app's native live panel above the composer + dock badge
-  (reads the same file via the dashboard server; nothing to install).
+**At run start (right after the goal is confirmed, before Phase 1):** write the initial
+live file (snippet below) with `"phase":"plan"`. That's it — the app picks it up on its
+own. Do NOT start the standalone viewer or point the user at localhost unless they
+explicitly ask for a browser view outside the app (then:
+`node .claude/goal-skill-viewer.cjs` → `http://localhost:4747`).
 
-**At run start (right after the goal is confirmed, before Phase 1):**
-
-1. Write the initial live file (snippet below) with `"phase":"plan"`.
-2. **Start the viewer in the background** — do not skip this; the visual IS the
-   product surface for a run:
-   ```bash
-   curl -s -o /dev/null --max-time 1 http://127.0.0.1:4747 \
-     || (node .claude/goal-skill-viewer.cjs >/dev/null 2>&1 &)
-   ```
-   (the `curl` probe keeps it idempotent — an already-running viewer is reused)
-3. Tell the user: `Canlı takip: http://localhost:4747` (in their language).
-
-You (the orchestrator, single writer) then maintain
-`_dream_context/tmp/.goal-skill-live.json` at **every** phase transition, loop-back,
-and implementer state change:
+You (the orchestrator, single writer of YOUR run's file) then maintain
+`_dream_context/tmp/.goal-skill-live.${CLAUDE_CODE_SESSION_ID}.json` at **every**
+phase transition, loop-back, and implementer state change:
 
 ```bash
-mkdir -p _dream_context/tmp && cat > _dream_context/tmp/.goal-skill-live.json <<EOF
+mkdir -p _dream_context/tmp \
+  && find _dream_context/tmp -name '.goal-skill-live*.json' -mmin +180 -delete 2>/dev/null \
+  ; cat > "_dream_context/tmp/.goal-skill-live.${CLAUDE_CODE_SESSION_ID:-solo}.json" <<EOF
 {"goal":"<slug>","session":"${CLAUDE_CODE_SESSION_ID:-}",
  "started":"<run-start ISO8601>","updated":"<now ISO8601>",
  "phase":"impl","iters":{"plan":2,"review":2},
@@ -384,6 +382,14 @@ mkdir -p _dream_context/tmp && cat > _dream_context/tmp/.goal-skill-live.json <<
 EOF
 ```
 
+(the `find … -delete` opportunistically sweeps abandoned runs older than 3h; it is
+best-effort — never let it block a write)
+
+- **Per-session filename**: the file is named by YOUR `$CLAUDE_CODE_SESSION_ID`, so
+  two goal-skill runs in two different Claude Code sessions of the same project each
+  keep their own live state — both renderers scan every `.goal-skill-live*.json` in
+  `_dream_context/tmp/` and pick the run matching the viewing session. (The legacy
+  unsuffixed `.goal-skill-live.json` is still read for back-compat.)
 - `session`: ALWAYS include it exactly as above (the shell expands
   `$CLAUDE_CODE_SESSION_ID`). It scopes the live surfaces to YOUR session — other
   Claude Code sessions open on the same project stay clean. Without it the run state
@@ -394,17 +400,19 @@ EOF
   looped (×2 yellow, ×3 bright, ≥4 red).
 - `impl.forks[].s`: `run | done | wait | fail` — one dot per implementer fork;
   `wave`/`waves` show wave progress.
-- Set `"phase":"done"` on Phase-6 PASS, then **delete the file** (`rm -f`) after the
-  final report (also delete on escalation). A file older than 3h is treated as
-  abandoned and ignored by the renderers.
-- Viewer helper missing (older install) → these writes are harmless no-ops, but tell
-  the user once: `dreamcontext update` will install the viewer. Never let live-state
-  upkeep block a phase; it is telemetry, not a gate.
-- The viewer serves `http://localhost:4747` — phase nodes with arrows, loop-back arcs
-  that glow hotter per iteration, implementer forks as satellite dots around IMPL, wave
-  counter. Same JSON, no extra upkeep. It shows "waiting" when no run is active.
+- Set `"phase":"done"` on Phase-6 PASS, then **delete YOUR file** after the final
+  report (also delete on escalation):
+  `rm -f "_dream_context/tmp/.goal-skill-live.${CLAUDE_CODE_SESSION_ID:-solo}.json"`
+  — never `rm` the whole glob; another session's run may be live. A file older than
+  3h is treated as abandoned and ignored by the renderers.
+- Never let live-state upkeep block a phase; it is telemetry, not a gate.
+- **Optional standalone viewer** (on request only): `.claude/goal-skill-viewer.cjs`
+  serves `http://localhost:4747` — phase nodes with arrows, loop-back arcs that glow
+  hotter per iteration, implementer forks as satellite dots around IMPL, wave counter,
+  and a run-switcher chip row when more than one session has a live run. Same JSON, no
+  extra upkeep. Useful when the user works outside the dreamcontext app.
 - `node .claude/goal-skill-demo.cjs` drives a fake run through every phase — useful to
-  demo the viewer without spawning agents.
+  demo the live surfaces without spawning agents.
 
 ## Convergence rules (how the loops end)
 

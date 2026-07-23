@@ -1,7 +1,9 @@
 #!/usr/bin/env node
-// Live Excalidraw-style viewer for a goal-skill v2 run.
-// Serves a hand-drawn animated graph of _dream_context/tmp/.goal-skill-live.json
-// (the same state file the app's live panel reads — single writer: the orchestrator).
+// Live Excalidraw-style viewer for goal-skill v2 runs.
+// Serves a hand-drawn animated graph of _dream_context/tmp/.goal-skill-live*.json
+// (the same per-session state files the app's live panel reads — one file per
+// orchestrator session, so concurrent runs each keep their own state; a chip row
+// switches between runs when more than one is live).
 //   node .claude/goal-skill-viewer.cjs [port]     default port 4747
 const http = require('http');
 const fs = require('fs');
@@ -9,7 +11,30 @@ const path = require('path');
 const { exec } = require('child_process');
 
 const PORT = Number(process.argv[2]) || 4747;
-const STATE = path.join(process.cwd(), '_dream_context', 'tmp', '.goal-skill-live.json');
+const TMP = path.join(process.cwd(), '_dream_context', 'tmp');
+const LIVE_RE = /^\.goal-skill-live(?:\..+)?\.json$/;
+const MAX_AGE_MS = 3 * 3600 * 1000;
+
+/** Every fresh live run, freshest first. `_key` identifies a run across ticks
+ *  (its session stamp, else its filename for unstamped/legacy files). */
+function readRuns() {
+  const runs = [];
+  let names = [];
+  try { names = fs.readdirSync(TMP); } catch { return runs; }
+  for (const name of names) {
+    if (!LIVE_RE.test(name)) continue;
+    try {
+      const st = JSON.parse(fs.readFileSync(path.join(TMP, name), 'utf8'));
+      const upd = Date.parse(st.updated || st.started || 0);
+      if (!upd || Date.now() - upd > MAX_AGE_MS) continue;
+      st._key = (typeof st.session === 'string' && st.session) || name;
+      st._upd = upd;
+      runs.push(st);
+    } catch { /* malformed file — skip */ }
+  }
+  runs.sort((a, b) => b._upd - a._upd);
+  return runs;
+}
 
 const HTML = `<!doctype html><html><head><meta charset="utf-8"><title>goal-skill live</title>
 <style>
@@ -44,10 +69,15 @@ const HTML = `<!doctype html><html><head><meta charset="utf-8"><title>goal-skill
   @keyframes blink { 50%{ opacity:.35; } }
   .wave { fill:#66d9e8; font-size:14px; }
   #idle { color:#555; font-size:18px; margin-top:8px; display:none; }
+  #runs { display:none; gap:8px; margin-top:10px; flex-wrap:wrap; justify-content:center; }
+  .runtab { background:#1d1d24; color:#aaa; border:1px solid #4a4a55; border-radius:999px;
+            padding:4px 14px; font-family:inherit; font-size:13px; cursor:pointer; }
+  .runtab.on { background:#2b2338; color:#d0bfff; border-color:#b197fc; }
   .rough { filter:url(#rough); }
   #donebanner { fill:#2f9e44; font-size:30px; font-weight:800; display:none; }
 </style></head><body>
 <header><span class="mark">&#9068; goal-skill live</span><span class="goal" id="goal"></span><span class="clock" id="clock"></span></header>
+<div id="runs"></div>
 <div id="idle">no active goal-skill run &mdash; waiting&hellip;</div>
 <div id="wrap"><svg viewBox="0 0 1400 430">
 <defs>
@@ -146,23 +176,34 @@ function render(st){
     ?('wave '+(st.impl.wave||1)+' / '+st.impl.waves):'wave forks';
   doneT.style.display=st.phase==='done'?'block':'none';
 }
+let sel=null;
+function renderTabs(runs){
+  const bar=document.getElementById('runs');
+  if(runs.length<2){ bar.style.display='none'; bar.innerHTML=''; return; }
+  bar.style.display='flex'; bar.innerHTML='';
+  runs.forEach(r=>{ const b=document.createElement('button');
+    b.className='runtab'+(r._key===sel?' on':'');
+    b.textContent=(r.goal||'run')+' \\u00B7 '+String(r._key).slice(0,8);
+    b.onclick=()=>{ sel=r._key; tick(); };
+    bar.appendChild(b); });
+}
 async function tick(){ try{ const r=await fetch('/state',{cache:'no-store'});
-    render(r.ok?await r.json():null); }catch(e){ render(null); } }
+    if(!r.ok){ renderTabs([]); return render(null); }
+    const runs=await r.json();
+    if(!runs.length){ renderTabs([]); return render(null); }
+    if(!runs.find(x=>x._key===sel)) sel=runs[0]._key;
+    renderTabs(runs);
+    render(runs.find(x=>x._key===sel));
+  }catch(e){ renderTabs([]); render(null); } }
 tick(); setInterval(tick,800);
 </script></body></html>`;
 
 const server = http.createServer((req, res) => {
   if (req.url.startsWith('/state')) {
-    try {
-      const raw = fs.readFileSync(STATE, 'utf8');
-      const st = JSON.parse(raw);
-      const upd = Date.parse(st.updated || st.started || 0);
-      if (!upd || Date.now() - upd > 3 * 3600 * 1000) throw new Error('stale');
-      res.writeHead(200, { 'content-type': 'application/json' });
-      return res.end(raw);
-    } catch {
-      res.writeHead(404); return res.end();
-    }
+    const runs = readRuns();
+    if (!runs.length) { res.writeHead(404); return res.end(); }
+    res.writeHead(200, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify(runs));
   }
   res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
   res.end(HTML);

@@ -1301,14 +1301,18 @@ const GOAL_LIVE_INACTIVE = { active: false } as const;
 /** A live file older than this is an abandoned run — same contract as the CLI strip. */
 const GOAL_LIVE_MAX_AGE_MS = 3 * 3600 * 1000;
 
+/** Live files: legacy `.goal-skill-live.json` plus per-session `.goal-skill-live.<id>.json`
+ *  — one file per concurrent orchestrator session, so parallel runs never clobber each other. */
+const GOAL_LIVE_FILE_RE = /^\.goal-skill-live(?:\..+)?\.json$/;
+
 /** GET /api/agent/goal-live?claudeId=<uuid> — the vault's goal-skill live run state
- *  (`_dream_context/tmp/.goal-skill-live.json`) for the in-app panel above the composer.
+ *  (`_dream_context/tmp/.goal-skill-live*.json`) for the in-app panel above the composer.
  *
- *  Session scoping (same contract as the terminal statusline): the orchestrator stamps
- *  its CURRENT conversation id into the file as `session`. A pane matches when its
- *  pinned tab id OR its map-resolved current conversation id equals that stamp. A
- *  stamped file that matches neither → inactive for this pane. An UNSTAMPED file (an
- *  older skill wrote it) stays visible to every pane — back-compat over silence.
+ *  Session scoping (same contract as the terminal statusline): each orchestrator stamps
+ *  its CURRENT conversation id into its own file as `session`. Every fresh live file is
+ *  scanned; a pane gets the run whose stamp equals its pinned tab id OR its map-resolved
+ *  current conversation id. No stamped match → an UNSTAMPED file (an older skill wrote
+ *  it) stays visible to every pane — back-compat over silence; otherwise inactive.
  *  Vault-scoped (contextRoot from the vault header); no desktop gate — the plain
  *  browser dashboard renders the panel the same way. */
 export async function handleAgentGoalLive(
@@ -1321,22 +1325,76 @@ export async function handleAgentGoalLive(
   const url = new URL(req.url || '/', `http://${req.headers.host}`);
   const claudeId = sanitizeUuid(url.searchParams.get('claudeId'));
 
+  const runs: Array<{ state: Record<string, unknown>; stamp: string; upd: number }> = [];
+  try {
+    const dir = join(contextRoot, 'tmp');
+    for (const name of readdirSync(dir)) {
+      if (!GOAL_LIVE_FILE_RE.test(name)) continue;
+      try {
+        const state = JSON.parse(readFileSync(join(dir, name), 'utf-8')) as Record<string, unknown>;
+        const upd = Date.parse(String(state?.updated ?? state?.started ?? ''));
+        if (!upd || Date.now() - upd > GOAL_LIVE_MAX_AGE_MS) continue; // abandoned run
+        runs.push({ state, stamp: typeof state.session === 'string' ? state.session : '', upd });
+      } catch { /* malformed file — skip it, not the whole scan */ }
+    }
+  } catch { /* no tmp dir → no active run */ }
+  if (runs.length === 0) { sendJson(res, 200, GOAL_LIVE_INACTIVE); return; }
+  runs.sort((a, b) => b.upd - a.upd);
+
+  if (claudeId) {
+    const direct = runs.find((r) => r.stamp === claudeId);
+    if (direct) { sendJson(res, 200, { active: true, state: direct.state }); return; }
+    const current = resolveAgentSession(contextRoot, claudeId);
+    const mapped = current ? runs.find((r) => r.stamp === current) : undefined;
+    if (mapped) { sendJson(res, 200, { active: true, state: mapped.state }); return; }
+    const unstamped = runs.find((r) => !r.stamp);
+    sendJson(res, 200, unstamped ? { active: true, state: unstamped.state } : GOAL_LIVE_INACTIVE);
+    return;
+  }
+  // No pane id → freshest run (legacy callers).
+  sendJson(res, 200, { active: true, state: runs[0].state });
+}
+
+// ─── Council live state (in-app chamber panel) ────────────────────────────────
+
+const COUNCIL_LIVE_INACTIVE = { active: false } as const;
+
+/** GET /api/agent/council-live?claudeId=<uuid> — the vault's council debate live state
+ *  (`_dream_context/tmp/.council-live.json`) for the in-app chamber panel above the
+ *  composer. Same contract as {@link handleAgentGoalLive}: 3h staleness via
+ *  `updated|started`, session scoping via the file's `session` stamp matching the
+ *  pane's pinned tab id OR its map-resolved current conversation id, unstamped files
+ *  visible to every pane (back-compat over silence), `{active:false}` on any failure.
+ *  Single-file (the CLI is the only writer; one debate live at a time per vault). */
+export async function handleAgentCouncilLive(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string | null,
+): Promise<void> {
+  if (!contextRoot) { sendJson(res, 200, COUNCIL_LIVE_INACTIVE); return; }
+  const url = new URL(req.url || '/', `http://${req.headers.host}`);
+  const claudeId = sanitizeUuid(url.searchParams.get('claudeId'));
+
   let state: Record<string, unknown>;
   try {
-    state = JSON.parse(readFileSync(join(contextRoot, 'tmp', '.goal-skill-live.json'), 'utf-8'));
-  } catch {
-    sendJson(res, 200, GOAL_LIVE_INACTIVE); return; // no active run
-  }
-  const upd = Date.parse(String(state?.updated ?? state?.started ?? ''));
-  if (!upd || Date.now() - upd > GOAL_LIVE_MAX_AGE_MS) {
-    sendJson(res, 200, GOAL_LIVE_INACTIVE); return; // abandoned run
-  }
+    const parsed: unknown = JSON.parse(readFileSync(join(contextRoot, 'tmp', '.council-live.json'), 'utf-8'));
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      sendJson(res, 200, COUNCIL_LIVE_INACTIVE);
+      return;
+    }
+    state = parsed as Record<string, unknown>;
+  } catch { sendJson(res, 200, COUNCIL_LIVE_INACTIVE); return; } // missing/malformed → inactive
+
+  const upd = Date.parse(String(state.updated ?? state.started ?? ''));
+  if (!upd || Date.now() - upd > GOAL_LIVE_MAX_AGE_MS) { sendJson(res, 200, COUNCIL_LIVE_INACTIVE); return; } // abandoned debate
 
   const stamp = typeof state.session === 'string' ? state.session : '';
-  if (stamp && claudeId && stamp !== claudeId) {
+  if (claudeId && stamp && stamp !== claudeId) {
+    // Stamped for another conversation — visible only if this pane's CURRENT
+    // conversation (session map) is the writer; otherwise scoped out.
     const current = resolveAgentSession(contextRoot, claudeId);
-    if (stamp !== current) { sendJson(res, 200, GOAL_LIVE_INACTIVE); return; }
+    if (!current || stamp !== current) { sendJson(res, 200, COUNCIL_LIVE_INACTIVE); return; }
   }
-
   sendJson(res, 200, { active: true, state });
 }

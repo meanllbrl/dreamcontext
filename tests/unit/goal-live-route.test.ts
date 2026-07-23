@@ -29,9 +29,9 @@ const OTHER = '99999999-8888-7777-6666-555555555555';
 
 let ctxRoot: string;
 
-function writeLive(state: Record<string, unknown>): void {
+function writeLive(state: Record<string, unknown>, file = '.goal-skill-live.json'): void {
   mkdirSync(join(ctxRoot, 'tmp'), { recursive: true });
-  writeFileSync(join(ctxRoot, 'tmp', '.goal-skill-live.json'), JSON.stringify(state), 'utf-8');
+  writeFileSync(join(ctxRoot, 'tmp', file), JSON.stringify(state), 'utf-8');
 }
 
 function freshState(extra: Record<string, unknown> = {}): Record<string, unknown> {
@@ -100,5 +100,60 @@ describe('GET /api/agent/goal-live', () => {
     const { res, body } = makeRes();
     await handleAgentGoalLive(makeReq(), res, {}, ctxRoot);
     expect(body()).toEqual({ active: false });
+  });
+
+  // ── Concurrent runs: one per-session file each ─────────────────────────────
+
+  it('two concurrent stamped runs → each pane sees its OWN run', async () => {
+    writeLive(freshState({ goal: 'run-a', session: ORCH }), `.goal-skill-live.${ORCH}.json`);
+    writeLive(freshState({ goal: 'run-b', session: OTHER, phase: 'plan' }), `.goal-skill-live.${OTHER}.json`);
+
+    const a = makeRes();
+    await handleAgentGoalLive(makeReq(`?claudeId=${ORCH}`), a.res, {}, ctxRoot);
+    expect(a.body().active).toBe(true);
+    expect(a.body().state.goal).toBe('run-a');
+
+    const b = makeRes();
+    await handleAgentGoalLive(makeReq(`?claudeId=${OTHER}`), b.res, {}, ctxRoot);
+    expect(b.body().active).toBe(true);
+    expect(b.body().state.goal).toBe('run-b');
+  });
+
+  it('two stamped runs + unrelated pane → inactive', async () => {
+    writeLive(freshState({ session: ORCH }), `.goal-skill-live.${ORCH}.json`);
+    writeLive(freshState({ session: OTHER }), `.goal-skill-live.${OTHER}.json`);
+    const third = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+    const { res, body } = makeRes();
+    await handleAgentGoalLive(makeReq(`?claudeId=${third}`), res, {}, ctxRoot);
+    expect(body()).toEqual({ active: false });
+  });
+
+  it('stamped mismatch falls back to a fresh UNSTAMPED legacy file', async () => {
+    writeLive(freshState({ goal: 'mine', session: ORCH }), `.goal-skill-live.${ORCH}.json`);
+    writeLive(freshState({ goal: 'legacy' }));
+    const { res, body } = makeRes();
+    await handleAgentGoalLive(makeReq(`?claudeId=${OTHER}`), res, {}, ctxRoot);
+    expect(body().active).toBe(true);
+    expect(body().state.goal).toBe('legacy');
+  });
+
+  it('stale per-session file is skipped; the fresh one still matches', async () => {
+    const old = new Date(Date.now() - 4 * 3600 * 1000).toISOString();
+    writeLive({ goal: 'dead', session: OTHER, started: old, updated: old, phase: 'impl' }, `.goal-skill-live.${OTHER}.json`);
+    writeLive(freshState({ goal: 'alive', session: ORCH }), `.goal-skill-live.${ORCH}.json`);
+    const { res, body } = makeRes();
+    await handleAgentGoalLive(makeReq(`?claudeId=${ORCH}`), res, {}, ctxRoot);
+    expect(body().active).toBe(true);
+    expect(body().state.goal).toBe('alive');
+  });
+
+  it('no pane id + multiple runs → freshest run wins', async () => {
+    const older = new Date(Date.now() - 60_000).toISOString();
+    writeLive({ goal: 'older', session: ORCH, started: older, updated: older, phase: 'plan' }, `.goal-skill-live.${ORCH}.json`);
+    writeLive(freshState({ goal: 'newest', session: OTHER }), `.goal-skill-live.${OTHER}.json`);
+    const { res, body } = makeRes();
+    await handleAgentGoalLive(makeReq(), res, {}, ctxRoot);
+    expect(body().active).toBe(true);
+    expect(body().state.goal).toBe('newest');
   });
 });
