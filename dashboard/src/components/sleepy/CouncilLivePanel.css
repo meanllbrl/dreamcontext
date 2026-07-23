@@ -12,7 +12,9 @@
   padding: 6px 12px;
   border: 0;
   border-top: 1px solid rgba(34, 211, 238, 0.22);
-  background: linear-gradient(180deg, rgba(34, 211, 238, 0.08), rgba(34, 211, 238, 0.03));
+  /* Opaque base layer under the tint: the strip overlays the terminal for a beat
+     before the slot refits, and a translucent bg lets the TUI text bleed through. */
+  background: linear-gradient(180deg, rgba(34, 211, 238, 0.08), rgba(34, 211, 238, 0.03)), #17171c;
   color: #d6d3e3;
   font: 500 11.5px/1.4 var(--font-mono, ui-monospace, monospace);
   cursor: pointer;
@@ -20,7 +22,7 @@
   overflow: hidden;
   white-space: nowrap;
 }
-.council-live-bar:hover { background: linear-gradient(180deg, rgba(34, 211, 238, 0.14), rgba(34, 211, 238, 0.06)); }
+.council-live-bar:hover { background: linear-gradient(180deg, rgba(34, 211, 238, 0.14), rgba(34, 211, 238, 0.06)), #17171c; }
 
 .council-live-mark { color: #66e0f0; font-weight: 700; }
 .council-live-topic { color: #8b8898; overflow: hidden; text-overflow: ellipsis; max-width: 22ch; flex-shrink: 1; }

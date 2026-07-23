@@ -1120,6 +1120,12 @@ export function AgentSurface() {
       timer = setTimeout(() => { timer = undefined; fitVisible(); }, 150);
     });
     ro.observe(host);
+    // The pane SLOTS must be observed too: a live strip (goal/council panel) mounting
+    // above the composer shrinks the slot with NO host resize, and without a refit the
+    // xterm keeps its stale row grid — the TUI's bottom rows slide under the strip.
+    // Slots are re-queried per effect run; `fitVisible`'s deps include `panes`, so a
+    // pane add/remove re-arms the observer over the current slot set.
+    host.querySelectorAll<HTMLElement>('.agent-pane-slot[data-pane]').forEach((el) => ro.observe(el));
     return () => { ro.disconnect(); if (timer) clearTimeout(timer); };
   }, [expanded, fitVisible]);
 

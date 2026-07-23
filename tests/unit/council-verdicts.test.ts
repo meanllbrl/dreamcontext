@@ -450,6 +450,22 @@ describe('.council-live.json lifecycle', () => {
     expect(readCouncilLive()!.session).toBe('');
   });
 
+  it('preserves the creator session stamp when a persona session writes later', () => {
+    scaffoldDebate(id, { personas: ['auditor'] });
+    updateCouncilLive(id, { phase: 'setup' });
+    expect(readCouncilLive()!.session).toBe('test-session-uuid');
+    // A persona `verdict submit` runs under ITS OWN session id — the stamp
+    // must stay the orchestrator's or the chamber panel vanishes mid-round.
+    process.env.CLAUDE_CODE_SESSION_ID = 'persona-session-uuid';
+    updateCouncilLive(id, { setPersona: { auditor: 'done' } });
+    expect(readCouncilLive()!.session).toBe('test-session-uuid');
+    // A NEW debate re-stamps from the current environment.
+    const id2 = 'council_live_next';
+    scaffoldDebate(id2, { personas: ['auditor'] });
+    updateCouncilLive(id2, { phase: 'setup' });
+    expect(readCouncilLive()!.session).toBe('persona-session-uuid');
+  });
+
   it('re-creates the tmp dir when missing', () => {
     scaffoldDebate(id, { personas: ['auditor'] });
     rmSync(join(root, '_dream_context', 'tmp'), { recursive: true, force: true });

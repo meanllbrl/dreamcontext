@@ -11,7 +11,9 @@
   padding: 6px 12px;
   border: 0;
   border-top: 1px solid rgba(139, 92, 246, 0.25);
-  background: linear-gradient(180deg, rgba(139, 92, 246, 0.10), rgba(139, 92, 246, 0.04));
+  /* Opaque base layer under the tint — same reason as .council-live-bar: never let
+     the terminal's bottom rows bleed through while the slot refit settles. */
+  background: linear-gradient(180deg, rgba(139, 92, 246, 0.10), rgba(139, 92, 246, 0.04)), #17171c;
   color: #d6d3e3;
   font: 500 11.5px/1.4 var(--font-mono, ui-monospace, monospace);
   cursor: pointer;
@@ -19,7 +21,7 @@
   overflow: hidden;
   white-space: nowrap;
 }
-.goal-live-bar:hover { background: linear-gradient(180deg, rgba(139, 92, 246, 0.16), rgba(139, 92, 246, 0.07)); }
+.goal-live-bar:hover { background: linear-gradient(180deg, rgba(139, 92, 246, 0.16), rgba(139, 92, 246, 0.07)), #17171c; }
 
 .goal-live-mark { color: #b197fc; font-weight: 700; }
 .goal-live-goal { color: #8b8898; overflow: hidden; text-overflow: ellipsis; max-width: 18ch; flex-shrink: 1; }

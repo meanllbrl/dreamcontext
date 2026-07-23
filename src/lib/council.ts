@@ -700,7 +700,9 @@ export interface CouncilLiveUpdate {
 /**
  * Refresh _dream_context/tmp/.council-live.json from the debate on disk.
  * Stance/conviction come from the debate's current round in verdicts.json,
- * prev* from the round before. Session stamp from CLAUDE_CODE_SESSION_ID.
+ * prev* from the round before. Session stamp from CLAUDE_CODE_SESSION_ID on the
+ * debate's FIRST write only; subsequent writes for the same debate preserve it
+ * (persona sessions write too, under their own session ids).
  * ALL failures are swallowed — the live file must never gate a command.
  */
 export function updateCouncilLive(debateId: string, update: CouncilLiveUpdate = {}): void {
@@ -752,7 +754,11 @@ export function updateCouncilLive(debateId: string, update: CouncilLiveUpdate = 
     const state: CouncilLiveState = {
       debate: debateId,
       topic: data.topic,
-      session: process.env.CLAUDE_CODE_SESSION_ID ?? '',
+      // The stamp is the ORCHESTRATOR's conversation id and must survive every
+      // later write: persona sessions run `verdict submit` with their OWN
+      // CLAUDE_CODE_SESSION_ID, and re-stamping here would scope the chamber
+      // panel out of the orchestrator's pane mid-round.
+      session: sameDebate ? (prev.session ?? '') : (process.env.CLAUDE_CODE_SESSION_ID ?? ''),
       started: sameDebate && prev.started ? prev.started : now,
       updated: now,
       phase: update.phase ?? (sameDebate ? prev.phase : 'setup'),
