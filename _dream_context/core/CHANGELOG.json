@@ -2,6 +2,156 @@
   {
     "date": "2026-07-23",
     "type": "feat",
+    "scope": "council",
+    "description": "Council debates gained structured verdict tracking and a live chamber board. The orchestrator registers decision options (--options 'A=Keep sync,B=Drop it') at create time; personas submit verdicts via 'dreamcontext council verdict <debate> <persona> <round> <stance>' (the skill handles this automatically); 'council board <debate>' renders the ASCII chamber board (persona rows × round columns, stance markers, convergence stats). New CLI commands: 'council timeline' (turn-by-turn event log), 'council inject' (mid-debate constraint edits), 'council question' (orchestrator prompts personas), 'council live' / 'council demo-live' (server live-state management for the dashboard panel). Dashboard: CouncilLivePanel.tsx polls GET /api/agent/council-live (2s interval, scoped by session like goal-live) and renders the chamber board + phase + persona states above the orchestrator's composer. Skill v2 rewrite: SKILL.md gained commitment ritual (TodoWrite tracking), depth router (Quick/Standard/Deep), structured verdict protocol, and interlude/examination phases. Backend: src/lib/council.ts gained verdict read/write/convergence helpers, council-board.ts renders the ASCII board with stance markers, councilLive.ts manages session-scoped live state. Tests: council-verdicts.test.ts (verdict parsing + convergence), council-board.test.ts (board rendering), council-live-route.test.ts (server route + scoping). Suite green. Catalog updated (council v2.1.0). The orchestrator now stays light (never reads full persona reports, only summaries/board/timeline) while personas build compounding on-disk context via the CLI.",
+    "breaking": false,
+    "summary": "Council v2 'Chamber': verdict tracking, live debate board, structured decision options, new CLI commands (verdict/board/timeline/inject/question), dashboard live panel, skill v2 rewrite",
+    "references": [
+      "commit:pending",
+      "file:src/lib/council.ts",
+      "file:src/lib/council-board.ts",
+      "file:src/cli/commands/council.ts",
+      "file:dashboard/src/components/sleepy/CouncilLivePanel.tsx",
+      "file:dashboard/src/lib/councilLive.ts",
+      "file:skill-packs/council/SKILL.md",
+      "file:tests/unit/council-verdicts.test.ts",
+      "file:tests/unit/council-board.test.ts",
+      "file:tests/unit/council-live-route.test.ts",
+      "feature:council-skill"
+    ]
+  },
+  {
+    "date": "2026-07-23",
+    "type": "chore",
+    "scope": "lab",
+    "description": "Added demo-funnels insight as a throwaway fixture (demo- prefix) to exercise the funnel UI end-to-end without a real data source: _dream_context/lab/insights/demo-funnels.md (manifest: category Product, group Engagement, render funnel, script adapter, 7d/28d/90d range tweak) and _dream_context/lab/scripts/demo-funnels.mjs (deterministic funnel-set/v1 generator). Payload includes 5 funnel variants (onb-a-classic baseline, onb-b-short winner with +Δ, onb-c-video regressing at the video step, onb-d-paywall-first with hard trial drop, tr-516 low-sample chip trigger), Δ vs previous period on all metrics/steps (adapter-provided prev values), language × device client-mode segment cells that reconcile to step totals, aligned step keys for compare mode (video_watch ghosted step in non-video funnels), and benchmark tinting (finish_rate / trial_rate). Numbers scale with the resolved range tweak's spanDays so the date-range control genuinely changes the data. Not real data — exists solely to let the funnel UI (overview table with deltas + low-sample chip, detail node lane with drop badges + A→B arc gesture, client filters + breakdowns + compare) be fully verified. Synced successfully, cache and lab show output validated.",
+    "breaking": false,
+    "summary": "Demo funnel insight: demo-funnels.md + demo-funnels.mjs (5 funnel variants, deltas, filters, breakdowns)",
+    "references": [
+      "commit:pending",
+      "file:_dream_context/lab/insights/demo-funnels.md",
+      "file:_dream_context/lab/scripts/demo-funnels.mjs"
+    ],
+    "authors": [
+      "mehmet"
+    ]
+  },
+  {
+    "date": "2026-07-23",
+    "type": "fix",
+    "scope": "goal-skill",
+    "description": "The goal-skill live state file is now per-session: _dream_context/tmp/.goal-skill-live.${CLAUDE_CODE_SESSION_ID}.json instead of a single .goal-skill-live.json. Two concurrent goal-skill runs in different Claude Code sessions of the same project each maintain their own live state — the orchestrator writes to its own file, both renderers (goal-skill-viewer.cjs on localhost:4747 and the in-viewer panel) scan every .goal-skill-live*.json in _dream_context/tmp/ and pick the run matching the viewing session. The legacy unsuffixed .goal-skill-live.json is still read for back-compat. Orchestrators now opportunistically sweep abandoned runs older than 3h (find ... -mmin +180 -delete) before writing; the sweep is best-effort and never blocks. Skill doc (skill-packs/goal-skill/SKILL.md) updated with the per-session protocol, concurrent-run note, and delete-your-own-file-only rule. goal-skill-viewer.cjs and the in-viewer panel updated to scan the glob and show a run-switcher chip row when multiple sessions have live runs.",
+    "breaking": false,
+    "summary": "Per-session live state: concurrent goal-skill runs no longer clobber each other, old abandoned runs auto-swept (3h TTL)",
+    "references": [
+      "commit:pending",
+      "file:skill-packs/goal-skill/SKILL.md",
+      "file:skill-packs/goal-skill/assets/goal-skill-viewer.cjs"
+    ],
+    "authors": [
+      "mehmet"
+    ]
+  },
+  {
+    "date": "2026-07-23",
+    "type": "feat",
+    "scope": "settings",
+    "description": "The Settings → Agents panel now offers a Terminal rendering dropdown: Smooth (GPU) — the WebGL renderer that keeps Claude's heavy TUI output at full frame rate by drawing glyphs from a canvas atlas — vs Comfort (native text) — the DOM renderer with real text nodes and native macOS font smoothing for the softest glyph edges, but which can stutter under heavy streams. (1) AgentSettings type extended: new renderer field (webgl | dom), default webgl. coerceAgentSettings() coerces: only an explicit 'dom' opts back into comfort rendering; anything else (absent key, old blob, garbage) lands on the smooth GPU default. (2) Settings UI: new dropdown row (label + hint i18n strings added to I18nContext.tsx: settings.agents.renderer, renderer.webgl, renderer.dom, renderer_hint). updateAgentCfg() emits the AGENT_SETTINGS_EVENT so open agent sessions pick up the change live — you can switch renderers and compare without closing the terminal. (3) agentSession.ts listens for the event and hot-swaps the xterm renderer (disposables cleanup + new addon load + redraw). Skill docs describe the trade (smoothness vs comfort). Full build completed.",
+    "breaking": false,
+    "summary": "Agent terminal renderer toggle: Settings page dropdown (Smooth GPU / Comfort native text), applies live to open sessions",
+    "references": [
+      "commit:pending",
+      "file:dashboard/src/lib/agentSettings.ts",
+      "file:dashboard/src/pages/SettingsPage.tsx",
+      "file:dashboard/src/context/I18nContext.tsx",
+      "file:dashboard/src/components/sleepy/agentSession.ts",
+      "file:tests/unit/agent-settings.test.ts"
+    ],
+    "authors": [
+      "mehmet"
+    ]
+  },
+  {
+    "date": "2026-07-23",
+    "type": "feat",
+    "scope": "tasks",
+    "description": "Task creation quality gates tightened and the dashboard create flow refined. (1) Why field now required in TaskCreateModal: the textarea carries required attribute, the submit button disables when why.trim() is empty, and handleSubmit early-returns if Why is blank — a task without a reason is incomplete by definition. (2) TaskDetailPanel Summary field changed from single-line input to textarea (3 rows, placeholder 'Short summary of the task'): summaries are sentences/paragraphs, and the old input made anything past ~40 chars unreadable. onKeyDown Enter-to-blur removed (multi-line editing needs Enter). (3) Task template (src/templates/task.md) now scaffolds lean: new tasks contain ONLY ## Why and ## Changelog at birth. Every other section (User Stories, Acceptance Criteria, Workflow, Constraints & Decisions, Technical Details, Notes) is created on first insert — via tasks insert <task> <section> — and slots into canonical position (before Changelog). A task that has nothing to say in a section shouldn't carry an empty placeholder. (4) Backend support: insertToSection() in src/lib/markdown.ts now detects when a new section should slot before Changelog (when createIfMissing=true and sectionName != 'Changelog') and splices it in, preserving Changelog as the last section; blank/comment-only sections (a scaffolded section with no content yet) no longer cause the insert to land glued to the next section's header. section-insert.ts SECTION_MAP gains workflow. Skill docs updated (SKILL.md task creation convention + lean-scaffold note, tasks-and-features.md Create subsection). Tests: task-backend-golden.test.ts fixtures updated (golden-alpha.md, golden-beta.md), CLI integration tests reflect the new shape, suite 3872 green.",
+    "breaking": false,
+    "summary": "Task authoring UX: Why field required (UI + validation), Summary changed to textarea (3 rows), lean scaffold (only Why + Changelog at birth)",
+    "references": [
+      "commit:pending",
+      "file:dashboard/src/components/tasks/TaskCreateModal.tsx",
+      "file:dashboard/src/components/tasks/TaskDetailPanel.tsx",
+      "file:src/templates/task.md",
+      "file:src/lib/markdown.ts",
+      "file:src/lib/section-insert.ts",
+      "file:skill/SKILL.md",
+      "file:skill/references/tasks-and-features.md",
+      "file:tests/fixtures/task-backend-golden/golden-alpha.md",
+      "file:tests/fixtures/task-backend-golden/golden-beta.md"
+    ],
+    "authors": [
+      "mehmet"
+    ]
+  },
+  {
+    "date": "2026-07-23",
+    "type": "fix",
+    "scope": "dashboard",
+    "description": "Fixed the Hypotheses create-modal appearing in the bottom corner instead of centered. Root cause: a CSS comment in ThesisCreateModal.css contained the substring odp-*/ (a reference to the odp-/dep-/inp- naming pattern) — the */ pair terminated the comment early, leaving the rest of the line (dep-... theses.css. */) to be parsed as part of the .tcm-overlay rule's selector. The invalid selector caused the browser to discard the entire .tcm-overlay { position: fixed; inset: 0; display: flex; ... } rule, so the overlay never received its fixed-position full-screen layout and fell into static flow at the body's end (bottom corner). Fix: rewrote the reference as odp- / dep- / inp- (spaces around the slash) and added a warning comment about the */ trap. Verified via Playwright reproduce script (scratch vault + full dashboard build): overlay position: static pre-fix, position: fixed + centered modal post-fix. No other CSS file in the repo contains this pattern.",
+    "breaking": false,
+    "summary": "ThesisCreateModal CSS comment termination fix: modal now centers (was bottom corner due to selector-swallowing comment)",
+    "references": [
+      "commit:pending",
+      "file:dashboard/src/components/theses/ThesisCreateModal.css",
+      "feature:proactive-learning-layer"
+    ],
+    "authors": [
+      "mehmet"
+    ]
+  },
+  {
+    "date": "2026-07-23",
+    "type": "fix",
+    "scope": "agent-terminal",
+    "description": "The in-app agent terminal no longer freezes under heavy TUI output. Root cause identified: (1) the server yelled every PTY chunk as a separate WebSocket frame (term.onData → ws.send, zero batching) — Claude's verbose tool output produced hundreds of tiny frames per second, each triggering a client-side message event + xterm write + timer setup, and (2) no flow control: a large output burst (long file dump, verbose tool trace) ballooned xterm's write queue unbounded, freezing the WKWebView DOM renderer for seconds. Fix: new createOutputPump() in src/server/routes/agent-terminal.ts batches PTY chunks into one frame per 5ms window (64KB early flush) — message count drops 10-50x — and applies canonical xterm flow control: the client acks every 32KB processed; the server pauses the PTY when 512KB are unacked and resumes below 128KB, converting unbounded flooding into backpressure at the source. Old clients (no ack) never pause (backward compatible). Visual output unchanged; only the transport is fixed. New tests: tests/unit/agent-terminal-pump.test.ts (8 specs); suite 3872 green. The PRD in-app-agent-terminal.md updated with the pump decision + AC. Full build completed.",
+    "breaking": false,
+    "summary": "Root-caused terminal hang: output pump batches PTY frames (5ms window, 64KB early flush) + canonical xterm flow control (32KB ack, 512KB pause)",
+    "references": [
+      "commit:pending",
+      "file:src/server/routes/agent-terminal.ts",
+      "file:dashboard/src/components/sleepy/agentSession.ts",
+      "file:tests/unit/agent-terminal-pump.test.ts",
+      "feature:in-app-agent-terminal"
+    ],
+    "authors": [
+      "mehmet"
+    ]
+  },
+  {
+    "date": "2026-07-23",
+    "type": "feat",
+    "scope": "lab",
+    "description": "Lab insights gained a first-class category field for dashboard organization: insight manifests carry an optional category (Marketing, Business, Product, etc.) — a top-level grouping above the existing within-category group sections. The dashboard Insights page now renders a sticky side menu when ANY insight declares a category: All (full corpus), named category tabs (alphabetic), and Other (uncategorized insights). Clicking a tab filters the board to that category's groups only; the All view renders categories as section headers, and clicking a header filters to that category. Selection is persisted (labPrefs localStorage + server write-through) so the page reopens to your last-viewed category. Fully backward compatible: projects without categories see no side menu, and the board renders exactly as before. CLI: lab create --category <tab> sets it at scaffold time; lab list/show surface it. API: POST /api/lab/:slug accepts it; GET /api/lab reads it. Types: InsightManifest.category, LabPrefs.selectedCategory. Demo insights categorized (demo-traffic-sources/demo-broken-api/demo-raw-events → Marketing; demo-dau/demo-signups/demo-funnels → Product; demo-mrr → Business). Skill docs updated (cli-reference.md lab create, tasks-and-features.md lab create invocation). Tests: lab-store.test.ts extended, suite 3872 green.",
+    "breaking": false,
+    "summary": "Insights category side menu: first-class category field, dashboard tabs (All/Business/Marketing/Product/Other), prefs-persisted selection, backward compatible",
+    "references": [
+      "commit:pending",
+      "file:dashboard/src/components/lab/LabBoard.tsx",
+      "file:dashboard/src/components/lab/LabBoard.css",
+      "file:dashboard/src/hooks/useLabPrefs.ts",
+      "file:src/lib/lab/types.ts",
+      "file:src/cli/commands/lab.ts",
+      "file:src/server/routes/lab.ts",
+      "feature:lab-analytics-insights"
+    ],
+    "authors": [
+      "mehmet"
+    ]
+  },
+  {
+    "date": "2026-07-23",
+    "type": "feat",
     "scope": "sync",
     "description": "Connecting a ClickUp/GitHub backend to a mature brain (100s of tasks) now works at scale: bulk bootstrap (>=20 never-synced tasks) sends ClickUp custom_fields inline on the create call (400/422-gated fallback) and keeps pre-existing changelog history local on both adapters (no comment/notification flood) — per-task cost drops from ~5-8 requests to ~1. SyncOptions.onProgress + a dependency-free ProgressBar give tasks sync and post-sleep sync a live TTY bar with ETA. The sync lock gained per-engine ownership tokens + a heartbeat: long syncs can no longer be stale-broken mid-run, and a stalled engine can neither stomp nor delete the rival that legitimately took over (push/pull abort safely). New: dreamcontext tasks hard-refresh (staged atomic backup, ledger wipe, full re-pull, loud failure gating) and dashboard background sync jobs (POST /api/tasks/sync-jobs + polling SyncChip with live phase/N-of-total progress, keyboard+ARIA) that survive navigation. Shipped through a full multi-review cycle: final gate PASS, 17 new tests, suite 3491 green.",
     "breaking": false,

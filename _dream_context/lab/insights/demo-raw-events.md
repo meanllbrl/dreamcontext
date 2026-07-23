@@ -1,7 +1,8 @@
 ---
 title: 'Demo: Raw Event Log'
 description: null
-group: Marketing
+category: Marketing
+group: Events
 render: raw
 unit: null
 source:

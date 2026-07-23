@@ -1,6 +1,7 @@
 ---
 title: 'Demo: Daily Signups'
 description: null
+category: Product
 group: Engagement
 render: number
 unit: signups

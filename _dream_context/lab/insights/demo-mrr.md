@@ -1,7 +1,8 @@
 ---
 title: 'Demo: MRR (bound to make-it-a-business)'
 description: null
-group: Business
+category: Business
+group: Revenue
 render: number
 unit: $
 source:

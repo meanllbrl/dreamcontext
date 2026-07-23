@@ -17,6 +17,8 @@ related_tasks:
   - feat-desktop-basic-terminal-mode-in-agent-surface
   - in-app-task-detail-inline-agent-curate-to-task-manager
   - delegate-a-task-to-the-agent-and-track-progress-inline
+  - >-
+    agent-chat-view-beta-render-claude-sessions-as-native-app-ui-with-captured-questions
 type: feature
 name: in-app-agent-terminal
 description: ''

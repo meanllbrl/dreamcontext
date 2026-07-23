@@ -1,6 +1,7 @@
 ---
 title: 'Demo: Daily Active Users'
 description: null
+category: Product
 group: Engagement
 render: line
 unit: users

@@ -1,7 +1,8 @@
 ---
 title: 'Demo: Broken API (expected to fail)'
 description: null
-group: Marketing
+category: Marketing
+group: Diagnostics
 render: number
 unit: requests
 source:

@@ -2,8 +2,8 @@
 id: feat_lab_insights
 status: in_review
 created: '2026-07-05'
-updated: '2026-07-21'
-released_version: v0.13.1
+updated: '2026-07-23'
+released_version: v0.21.0
 tags:
   - 'topic:lab'
   - 'topic:cli'
@@ -14,16 +14,18 @@ tags:
 related_tasks:
   - feat-lab-analytics-insights-subsystem
   - lab-funnel-analytics
+  - insights-category-side-menu-on-the-lab-board
 type: feature
 name: lab-analytics-insights
 description: >-
   Lab (dashboard: "Insights") — curated analytics metrics synced from external
   sources (generic HTTP or custom script) into the brain: manifest + bounded
-  cache with sync history, TTL sync, secret-redacting credential layer,
-  roadmap KR binding, SessionStart/recall surfacing, dashboard Lab page with
-  interactive charts (number/line/pie/raw renders) and InsightDetailPanel slide-over.
-  NEW (in_review): funnel analytics — multi-page routed insights with comparison tables,
-  node lanes, arc gestures, filters, breakdowns, and multi-funnel compare.
+  cache with sync history, TTL sync, secret-redacting credential layer, roadmap
+  KR binding, SessionStart/recall surfacing, dashboard Lab page with interactive
+  charts (number/line/pie/raw renders) and InsightDetailPanel slide-over. NEW
+  (in_review): funnel analytics — multi-page routed insights with comparison
+  tables, node lanes, arc gestures, filters, breakdowns, and multi-funnel
+  compare.
 pinned: false
 date: '2026-07-05'
 ---
@@ -54,6 +56,7 @@ This is NOT a BI tool. Lab is a **metrics delivery** subsystem: it captures WHAT
 - [x] As a user, I can connect an insight to a roadmap objective's Key Result from either the insight card (dashboard Lab page) or the objective detail panel, so `lab sync` automatically updates the objective's measured progress. *(Shipped v0.13.0: `lab bind` CLI + dashboard InsightPicker in create modal + detail panel KR section)*
 - [x] As a user, insights are grouped on the dashboard Lab page with collapsible sections, and I can drag cards to reorder them within their group with preferences persisted per-machine. *(Shipped v0.13.0: collapsible groups + HTML5 drag-drop + useLabPrefs persistence to `.lab-prefs.json`)*
 - [x] As a user, clicking an insight card opens a detail panel with a large interactive chart, the insight's Meaning prose, sync history, and inline tweak editing. *(Shipped v0.13.0: InsightDetailPanel slide-over + bounded sync history)*
+- [x] As a user with many insights, I can organize them by top-level category (Marketing, Revenue, etc.) with a side-menu tab bar that collapses whole categories out of view, so a growing board stays navigable. *(Shipped v0.21.0: manifest `category` field + LabBoard category side menu)*
 
 ### Funnel analytics (multi-page insights, in_review)
 
@@ -96,6 +99,16 @@ This is NOT a BI tool. Lab is a **metrics delivery** subsystem: it captures WHAT
 - [x] The SessionStart snapshot renders a budget-demotable Lab section (title / latest / staleness / group) and never crashes on malformed manifest.
 - [x] HTTP: `GET /api/lab` lists summaries; `GET /api/lab/:slug` returns full series; `POST /api/lab/sync {all:true}` runs same engine and returns `failed[]`; `PATCH /api/lab/:slug/tweaks` persists. No route ever returns a credential value.
 - [x] Full existing test suite stays green; `npm run build` clean.
+
+### Category organization (v0.21.0)
+
+- [x] `category: string|null` is a first-class manifest frontmatter field (`InsightManifest` in types.ts, read/create in store.ts, exposed via `/api/lab` summary + public manifest).
+- [x] `dreamcontext lab create --category <name>` sets the category at creation; editing the manifest changes it live.
+- [x] Dashboard LabBoard renders a sticky category side menu ONLY when ≥1 insight declares a category (zero-category boards keep the exact pre-category layout for backward compat).
+- [x] Side menu: **All** (default) + alphabetical named categories + **Other** (uncategorized insights); clicking a category collapses all other categories' sections out of view.
+- [x] "All" view shows clickable category headlines that filter to that category.
+- [x] Active category persists in lab prefs (localStorage + `/api/lab-prefs` write-through); stale selection (category deleted) falls back to All.
+- [x] Section prefs (collapse/order) key categorized sections as `<category> / <group>`, uncategorized as bare `<group>` — pre-category prefs survive.
 
 ### Validation (M1 definition-of-done)
 
@@ -157,7 +170,7 @@ This is NOT a BI tool. Lab is a **metrics delivery** subsystem: it captures WHAT
 
 **Architecture (plan v3, converged 2026-07-05 — 3 reviewers SOLID).** Lab mirrors the objectives subsystem (the load-bearing precedent). Markdown-first storage: manifest per insight at `_dream_context/lab/insights/<slug>.md` (frontmatter config + `## Meaning` prose, recall-indexed), cache snapshot at `_dream_context/lab/cache/<slug>.json` (post-rollup series + `fetchedAt` + `scriptHash`), gitignored `_dream_context/lab/credentials.json` written ONLY via gitignore-first CLI. Pure store reads/writes manifests; sync engine resolves tweaks → adapter (generic-HTTP | custom-script) → granularity-capped rollup → cache write → optional bound-objective `metric.current` write via existing `updateObjectiveMetric`. CLI and `/api/lab*` routes call the same engine. Agents: SessionStart snapshot section + `insight` recall corpus type + `lab show --json` (cache only, no fetch). Dashboard: Lab page with number/line/pie/raw renders, per-insight + sync-all refresh, generic typed tweak editing, manifest-declared grouping. Sleep does NOT run lab sync. Three security nets: gitignore-first credential writes + doctor FAIL self-heal, end-to-end secret redaction of every error/log/cache string, script-hash change tripwire.
 
-**Manifest frontmatter schema:** `title` (req), `description`, `group` (string|null → dashboard section), `render: number|line|pie|raw|funnel` (req), `source.adapter: http|script`; `source.http`: `endpoint` (may contain `{{tweak:key}}`/`{{cred:key}}`), `method: GET|POST` (default GET), `headers` (values may contain `{{cred:key}}`), `body` (string template, MUST resolve to valid JSON for POST, null for GET), `extract: {seriesPath, seriesKey|null (A/B multi-series split), x, y, agg: last|sum|mean|max}`; `source.script.file` (`scripts/<slug>.mjs` relative to lab/, exports default async fn); `refresh: {ttl_minutes}` (default 1440); `tweaks[]` typed `enum|date|string` ONLY (relative range = enum tweak, explicit range = two date tweaks from/to; there is NO range type); `binding: {objective: <slug>, value: latest|series:<name>}` (optional); `credentials_used: [key...]` (doctor WARNS on missing); `unit` (string|null).
+**Manifest frontmatter schema:** `title` (req), `description`, `category` (string|null → top-level side-menu tab, v0.21.0), `group` (string|null → dashboard section within a category), `render: number|line|pie|raw|funnel` (req), `source.adapter: http|script`; `source.http`: `endpoint` (may contain `{{tweak:key}}`/`{{cred:key}}`), `method: GET|POST` (default GET), `headers` (values may contain `{{cred:key}}`), `body` (string template, MUST resolve to valid JSON for POST, null for GET), `extract: {seriesPath, seriesKey|null (A/B multi-series split), x, y, agg: last|sum|mean|max}`; `source.script.file` (`scripts/<slug>.mjs` relative to lab/, exports default async fn); `refresh: {ttl_minutes}` (default 1440); `tweaks[]` typed `enum|date|string` ONLY (relative range = enum tweak, explicit range = two date tweaks from/to; there is NO range type); `binding: {objective: <slug>, value: latest|series:<name>}` (optional); `credentials_used: [key...]` (doctor WARNS on missing); `unit` (string|null).
 
 **Cache JSON:** `{slug, fetchedAt, tweaks, granularity, unit, series[{name, points[{t,v}]}], latest, error, errorAt, scriptHash, history?}`. No `sourceHash` (cut — staleness is TTL-only; `scriptHash` exists for the tripwire consumer). `history` is a bounded sync log, oldest→newest, of `SyncEvent {at, status: 'ok'|'failed', latest: number|null, granularity: Granularity|null, error: string|null}`: real runs only — TTL "fresh" skips do NOT append (nothing changed); capped at HISTORY_MAX=50 events AND per-event `error` truncated at 300 chars (HISTORY_ERROR_MAX) — count cap + size cap, both required. Optional field: absent on caches written pre-history; `appendHistory` tolerates a malformed prior cache (non-array `history`).
 
@@ -245,6 +258,9 @@ This is NOT a BI tool. Lab is a **metrics delivery** subsystem: it captures WHAT
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-07-23 — Category side menu shipped (v0.21.0)
+- Extended PRD to document category organization (top-level side-menu tabs above existing group sections): new user story, 7 acceptance criteria (all shipped), manifest schema update (`category` field), CLI (`--category` flag), and LabBoard rendering (sticky side menu with All/Other views, clickable headlines in All view, prefs-persisted selection, backward-compatible zero-category layout). Shipped in v0.21.0. Task `insights-category-side-menu-on-the-lab-board` completed. PRD `updated` → 2026-07-23, `released_version` → v0.21.0, `related_tasks` += insights-category-side-menu-on-the-lab-board.
 
 ### 2026-07-21 - Funnel analytics shipped (in_review, pending visual QA)
 - Extended PRD to document funnel analytics (multi-page routed insights): new user stories (9), acceptance criteria F1-F14 (F1-F13 shipped, F14 partial — benchmarks + copy-as-Markdown done, PNG export slipped), technical details (funnel-set/v1 contract, engine caps, dashboard pages, CLI scaffold/show/doctor), and constraints/decisions (Δ-precedence, multi-page routing, client-filter dimming, Excalidraw visual language). Shipped across commits 4cf4ec8 (engine), 8a1bf63 (dashboard), 16c0c3f (skill docs). 30 new unit tests, full suite 3773 green. Task `lab-funnel-analytics` status in_review — visual browser QA pending. PRD status `completed` → `in_review` to reflect new in-flight work; `updated` → 2026-07-21, `related_tasks` += lab-funnel-analytics.

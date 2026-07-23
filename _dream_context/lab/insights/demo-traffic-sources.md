@@ -1,7 +1,8 @@
 ---
 title: 'Demo: Traffic Sources'
 description: null
-group: Marketing
+category: Marketing
+group: Channels
 render: pie
 unit: null
 source:
