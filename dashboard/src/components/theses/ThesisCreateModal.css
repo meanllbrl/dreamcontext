@@ -2,8 +2,10 @@
  * Thesis create/review modal (design §Create). Presented like the roadmap's
  * New Objective popup (ocm-*): blurred backdrop, top-anchored spring-in panel
  * that scrolls as a whole (no nested scroll region). Scoped `tcm-*` classes —
- * mirrors the odp-*/dep-*/inp-* naming convention used by the roadmap
- * components this embeds alongside. Uses the shared --color-* DS tokens plus
+ * mirrors the odp- / dep- / inp- naming convention used by the roadmap
+ * components this embeds alongside. (NB: never write "-*" followed by "/" in
+ * this comment — the "* /" pair terminates the CSS comment early and the
+ * leftover text swallows the first rule below.) Uses the shared --color-* DS tokens plus
  * the thesis-* semantic tokens from theses.css.
  */
 

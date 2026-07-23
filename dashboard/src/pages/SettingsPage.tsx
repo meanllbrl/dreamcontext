@@ -953,6 +953,21 @@ export function SettingsPage({ focus }: SettingsPageProps) {
                   </div>
                   <p className="settings-field-hint">{t('settings.agents.default_agent_hint')}</p>
 
+                  {/* Terminal renderer: GPU smoothness vs native-text comfort. Applies
+                      live to open sessions (agentSession listens for the settings event). */}
+                  <div className="settings-field-row">
+                    <label>{t('settings.agents.renderer')}</label>
+                    <select
+                      className="settings-text-input"
+                      value={agentCfg.renderer}
+                      onChange={(e) => updateAgentCfg({ ...agentCfg, renderer: e.target.value as AgentSettings['renderer'] })}
+                    >
+                      <option value="webgl">{t('settings.agents.renderer.webgl')}</option>
+                      <option value="dom">{t('settings.agents.renderer.dom')}</option>
+                    </select>
+                  </div>
+                  <p className="settings-field-hint">{t('settings.agents.renderer_hint')}</p>
+
                   {/* Auto-title: Haiku names the tab from the first message. */}
                   <label className="settings-checkbox-label">
                     <input
