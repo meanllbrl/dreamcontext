@@ -108,4 +108,4 @@ The v0.6 control-panel shipped three slices, each validated by goal-skill orches
 
 ## Last verified
 
-2026-06-01 (v0.6.0 shipped; all pre-implementation findings confirmed prevented by the review cycle).
+2026-07-24 (sleep consolidation — pattern remains in active use; council v2 and goal-skill continue to use parallel pragmatist/critic/security reviewers).

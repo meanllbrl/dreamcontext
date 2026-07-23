@@ -22,22 +22,22 @@ date: '2026-07-23'
   - feat-embedding-spike-pick-multilingual-model-validate-latency-and-token-type-ids (completed) · v0.14.0
   - feat-hybrid-recall-fusion-bm25-plus-dense-via-rrf-behind-flag (completed) · v0.14.0
 
-### 🔵 **improve-sleep-quality** — Improve sleep quality · 4/8 done (50%) · target 2026-08-02 · forecast 2026-08-02 ✓ on track
+### 🔵 **improve-sleep-quality** — Improve sleep quality · 6/8 done (75%) · target 2026-08-02 · forecast 2026-08-02 ✓ on track
   Unblocks: hello-world-pr, make-it-a-business
   - automations-scheduled-headless-claude-jobs (todo) · 0.21.0
   - feat-sleep-semantic-dedup-nearest-neighbor-merge-instead-of-duplicate (completed) · 0.18.0
   - goal-skill-pack-headless-permission-flags-and-report-vs-work-gate (completed) · 0.20.0
   - improve-sleep-quality (completed) · 0.20.0 · 2026-07-18 → …
   - knowledge-move-cannot-relocate-a-board-directory-with-its-companion-files-across-context-folders (completed) · 0.20.0
-  - knowledge-workflows (in_review) · 0.20.0
-  - proactive-learning-layer (in_review) · 0.20.0
+  - knowledge-workflows (completed) · 0.20.0
+  - proactive-learning-layer (completed) · 0.20.0
   - sleep-connectors (in_progress) · 0.21.0
 
 ### ⚪ **include-codex-opencode-support** — Include Codex&OpenCode Support · 0/1 done (0%) · target 2026-08-23 · forecast 2026-08-23 ✓ on track
   Unblocks: hello-world-pr, make-it-a-business
   - spike-codex-opencode-re-addition-scoping (todo) · BACKLOG
 
-### 🟡 **make-dreamcontext-team-ready** — Make Dreamcontext, Team Ready · 12/13 done (92%) · target 2026-07-12 · forecast 2026-07-12 ✓ on track
+### 🟢 **make-dreamcontext-team-ready** — Make Dreamcontext, Team Ready · 13/13 done (100%) · target 2026-07-12 · forecast 2026-07-12 ✓ on track
   Unblocks: make-it-a-business
   - brain-portability-dashboard-controls-platform-layer-lab-credentials-example-sync-refresh-button-recall-mode-settings (completed) · v0.14.1
   - clickup-sync-integrity-provenance-version-round-trip-consolidates-177-178-179 (completed) · 0.20.0
@@ -50,22 +50,23 @@ date: '2026-07-23'
   - feat-okr-key-result-metric-outcome-based-progress (completed) · 0.10.7
   - github-cloud-collaboration-brain-repo-sync (completed) · v0.13.0 · 2026-07-04 → …
   - interactive-roadmap-dashboard-forecast-timeline-cascade-editable-detail-panel (completed) · v0.10.5
-  - multi-person-sync-my-own-push-advances-my-pull-watermark-silently-hiding-a-teammate-s-earlier-task-forever (in_review) · 0.20.0
+  - multi-person-sync-my-own-push-advances-my-pull-watermark-silently-hiding-a-teammate-s-earlier-task-forever (completed) · 0.20.0
   - repointing-the-task-backend-at-a-different-list-silently-deletes-every-local-task-mirror (completed) · 0.20.0
 
-### 🟡 **simplified-ux** — Simplified UX · 19/30 done (63%) · target 2026-07-31 · forecast 2026-07-31 ✓ on track
+### 🟡 **simplified-ux** — Simplified UX · 27/31 done (87%) · target 2026-07-31 · forecast 2026-07-31 ✓ on track
   Unblocks: hello-world-pr, make-it-a-business
-  - agent-chat-view-beta-render-claude-sessions-as-native-app-ui-with-captured-questions (todo) · 0.21.0
+  - agent-chat-view-beta-render-claude-sessions-as-native-app-ui-with-captured-questions (in_review) · 0.21.0 · 2026-07-23 → …
   - agent-composer-add-folder-picker-to-files-button (completed) · 0.18.0
-  - announcements-whats-new (in_review) · 0.20.0 · 2026-07-18 → …
-  - author-a-task-via-a-claude-agent-from-the-new-task-button (in_review) · 0.20.0
+  - announcements-whats-new (completed) · 0.20.0 · 2026-07-18 → …
+  - author-a-task-via-a-claude-agent-from-the-new-task-button (completed) · 0.20.0
   - changelog-json-and-releases-json-initialized-as-key-object-but-cli-requires-a-bare-array (todo) · 0.21.0
-  - cloud-reliability-package-origin-setup-state-refresh-dependency-doctor-with-one-click-install-stop-api-key-self-deletion (in_review) · 0.20.0
+  - cloud-reliability-package-origin-setup-state-refresh-dependency-doctor-with-one-click-install-stop-api-key-self-deletion (completed) · 0.20.0
   - collapse-features-into-typed-knowledge (completed) · 0.10.7 · 2026-07-05 → …
+  - council-v2-the-chamber (completed) · 0.21.0 · 2026-07-23 → …
   - delegate-a-task-to-a-claude-agent-from-the-board (completed) · 0.18.0
   - desktop-launcher-ux-drag-fix-cmd-p-project-switcher (completed) · 0.10.7 · 2026-07-04 → …
   - desktop-settings-agents-panel-hotkey-reopen-tabs-auto-title (completed) · 0.10.7 · 2026-07-04 → …
-  - feat-app-goal-skill-live-panel-above-the-agent-composer-sleepy-team-dock-chip (in_review) · 0.20.0
+  - feat-app-goal-skill-live-panel-above-the-agent-composer-sleepy-team-dock-chip (completed) · 0.20.0
   - feat-sleepy-agent-surface-ux-redesign (completed) · v0.10.5
   - feat-tasks-present-version-as-cycle-ui-cli-relabel-version-stays-canonical (todo) · BACKLOG
   - fix-171-agent-terminal-utf-8-copy-mojibake-regression-tauri-native-clipboard (completed) · 0.17.2
@@ -73,16 +74,16 @@ date: '2026-07-23'
   - fix-desktop-auto-relaunch-on-version-drift-macos-self-heal-upgradeready-flag-auto-relaunch-banner (completed) · 0.17.0
   - fix-sleepy-agent-auto-submit-timing-race-plus-composer-skill-browser-ux (completed) · v0.13.0
   - fix-tauri-acl-shell-allow-open-for-external-links (completed) · v0.13.0
-  - in-app-agent-terminal-output-pump-fixes-terminal-freeze-during-long-tool-calls (in_review) · 0.21.0
+  - in-app-agent-terminal-output-pump-fixes-terminal-freeze-during-long-tool-calls (completed) · 0.21.0
   - in-app-task-detail-inline-agent-curate-the-task-via-anchored-comments-revise-summarize-split-status-with-real-time-refresh (completed) · 0.18.0
-  - lab-funnel-analytics (in_review)
+  - lab-funnel-analytics (completed) · 0.19.0
   - launcher-clone-from-github-sign-in-search-repos-clone-locally-dreamcontext-ready (completed) · 0.17.2 · 2026-07-10 → …
   - launcher-cross-project-multi-vault-task-view-for-portfolio-planning (todo) · BACKLOG
   - launcher-federation-board-modeless-direct-manipulation-ux (completed) · 0.18.0
   - pack-badge-false-positive-declined-optional-packs-show-as-new-forever (completed) · 0.17.2
   - roadmap-forecast-accuracy-effort-aware-envelope-clamped-cascade (completed) · 2026-07-08 → …
   - roadmap-timeline-start-only-dated-tasks-collapse-the-committed-window-bar-to-a-point (completed) · 0.17.2
-  - task-creation-scaffolds-lean-and-every-task-says-why-it-exists (in_review) · 0.21.0
+  - task-creation-scaffolds-lean-and-every-task-says-why-it-exists (completed) · 0.21.0
   - task-feature-objective-links-validated-assignment-bidirectional-maintenance (completed) · 2026-07-08 → …
   - task-manager-show-the-agent-s-document-edits-as-a-git-style-diff (completed) · 0.18.0 · 2026-07-17 → …
 

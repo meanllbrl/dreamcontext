@@ -176,6 +176,9 @@ Design lessons: final report above fold, dense layout, no gamified decoration; l
 
 ## Changelog
 
+### 2026-07-24 — Production validation (first real dogfood debate)
+- First real council v2 debate ran end-to-end (session 1ba2fac2): 3 personas as parallel CLI sessions, structured verdicts written to verdicts.json, chamber board convergence metrics, live state updates, synthesizer final report. All v2 surfaces validated in production use. Topic: publish timing decision (0.20.2 release). Verdict: publish now after checklist completion, convergence 67% (2×A vs 1×B).
+
 ### 2026-07-23 — Council v2 ("The Chamber") shipped — structured verdicts, convergence metrics, live panel, interludes, depth router, persona sessions
 
 Complete rewrite to goal-skill-v2 rigor. Council v1 was a flat prose debate with no structured state, no visualization, no interactivity between rounds, and a report that buried the decision. v2 brings:

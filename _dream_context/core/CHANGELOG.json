@@ -1,6 +1,60 @@
 [
   {
     "date": "2026-07-23",
+    "type": "fix",
+    "scope": "council",
+    "description": "Two defects surfaced by the first real v2 council dogfood debate (session 1ba2fac2) and fixed in one commit. (1) The live chamber panel vanished mid-round: updateCouncilLive re-stamped the session field from CLAUDE_CODE_SESSION_ID on every write, so when a persona subprocess (running under its own session id) submitted a verdict, the stamp switched and the dashboard scoped the panel out of the orchestrator's pane. Now the creator's session stamp survives all later writes for the same debate; only a NEW debate gets a fresh stamp. (2) Terminal text bled through the strip: the overlay's ResizeObserver watched only the host container, so when a live strip (council/goal) mounted above the composer and shrank the pane slot, xterm never refitted — the TUI's bottom rows slid under the strip. Now the observer watches every .agent-pane-slot too, triggering a 150ms debounced refit when strips open/close. Both council and goal strips also gained an opaque base layer (the prior 8% translucent gradient let terminal text bleed through during the refit beat). Includes a unit test confirming session stamp preservation across persona writes.",
+    "breaking": false,
+    "summary": "Live chamber panel visibility + terminal overlap fixes: session stamp preservation and ResizeObserver slot watching",
+    "references": [
+      "commit:2efe0eb",
+      "file:src/lib/council.ts",
+      "file:tests/unit/council-verdicts.test.ts",
+      "file:dashboard/src/components/sleepy/AgentSurface.tsx",
+      "file:dashboard/src/components/sleepy/CouncilLivePanel.css",
+      "file:dashboard/src/components/sleepy/GoalLivePanel.css"
+    ]
+  },
+  {
+    "date": "2026-07-23",
+    "type": "fix",
+    "scope": "dashboard",
+    "description": "User correction: Claude CLI has an explicit 'auto' permission mode, and the no-flag default is 'manual' (not auto). The agent spawn routes (both embedded PTY and Terminal.app) now pass --permission-mode auto when bypass is off, replacing the prior incorrect assumptions (first attempt: no flag, which landed in manual; second: acceptEdits, which booted the TUI with 'accept edits on'). The pill and setup tooltips updated to 'claude's auto permission mode'. This ensures bypass-off sessions run in the intended auto mode where file edits are auto-approved and commands still prompt.",
+    "breaking": false,
+    "summary": "Permission-mode correction: bypass-off now passes --permission-mode auto explicitly",
+    "references": [
+      "file:src/server/routes/agent-terminal.ts",
+      "file:dashboard/src/components/sleepy/AgentSetup.tsx"
+    ]
+  },
+  {
+    "date": "2026-07-23",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "The agent spawn permission controls now present a two-state contract instead of a three-way choice: bypass OFF spawns sessions in auto mode (the new behavior after user correction — passes --permission-mode auto explicitly, since the CLI's no-flag default is manual); bypass ON skips all prompts (bypassPermissions). The setup panel checkbox and the pill tooltip both clarify this contract. The intermediate 'manual' mode is not exposed in the UI — the app's agent sessions are either auto (edits approved, commands ask) or bypass (no prompts).",
+    "breaking": false,
+    "summary": "Auto/bypass two-state permission contract: bypass OFF = auto mode, bypass ON = skip all prompts",
+    "references": [
+      "commit:229b8f7",
+      "file:dashboard/src/components/sleepy/AgentSetup.tsx",
+      "file:src/server/routes/agent-terminal.ts"
+    ]
+  },
+  {
+    "date": "2026-07-23",
+    "type": "feat",
+    "scope": "agent",
+    "description": "The fullscreen agent surface gained macOS-style zoom-in/zoom-out animations. When opened via the FAB, the overlay grows from the bottom-right corner with scale + opacity keyframes (320ms cubic-bezier ease matching Apple's window animation); when closed it shrinks back to the same corner with a 280ms animation. The closing state keeps the surface rendered during the shrink (onAnimationEnd cleanup), transform-origin anchors to the dock/FAB position, and prefers-reduced-motion users get an instant toggle. Transform + opacity-only animations prevent xterm canvas reflow mid-flight.",
+    "breaking": false,
+    "summary": "macOS-style zoom animation: agent overlay grows from bottom-right dock corner and shrinks back on close",
+    "references": [
+      "commit:c172c36",
+      "file:dashboard/src/components/sleepy/AgentSurface.tsx",
+      "file:dashboard/src/components/sleepy/AgentTerminal.css"
+    ]
+  },
+  {
+    "date": "2026-07-23",
     "type": "feat",
     "scope": "announcements",
     "description": "The old surface squeezed every landscape landing-page board into a 460px page strip and a 360px popup box (unreadable), and each live canvas ate the wheel so the page wouldn't scroll. New surface: AnnouncementsPage → news index (hero card for the latest story + compact headline rows; every story opens fullscreen), AnnouncementReader → FullscreenOverlay article view (the board gets the whole viewport, interactive pan/zoom, Newer/Older pager, deep-link focus via nav focus id), AnnouncementBoardPreview → pointer-events-none teaser (wheel always scrolls the page, click opens the reader, all Excalidraw chrome hidden including the mobile bottom toolbar), AnnouncementsModal → content-first (date/version meta, headline, summary previously never shown, clickable teaser, Also new unread list, Got it / Read the full story CTAs). ExcalidrawCanvas: re-fit on fonts.ready, container offset refresh, and a dims-guarded canvas-attr MutationObserver (no re-render loops). Verified end-to-end with Playwright against the built dist: popup, reader, pager, Esc, page scroll over teasers, seen-state persistence, clean console.",

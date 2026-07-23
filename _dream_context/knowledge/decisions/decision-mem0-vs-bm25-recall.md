@@ -102,4 +102,4 @@ This decision should be re-opened ONLY if:
 
 ## Last verified
 
-2026-05-26.
+2026-07-24 (sleep consolidation — decision remains canonical, BM25 with Haiku mode is the shipped recall engine).

@@ -1,5 +1,16 @@
 [
   {
+    "id": "rel_j-6iKPHL",
+    "version": "0.20.2",
+    "date": "",
+    "summary": "Patch release: Council v2 dogfooding closeout — live chamber panel fixes (session stamp preservation + ResizeObserver slot watching), permission-mode auto correction, macOS-style zoom animation for agent overlay",
+    "breaking": false,
+    "status": "planning",
+    "features": [],
+    "tasks": [],
+    "changelog": []
+  },
+  {
     "id": "rel_NYi00gm4",
     "version": "0.20.1",
     "date": "2026-07-23",
