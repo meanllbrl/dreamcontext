@@ -620,6 +620,13 @@ export class SyncLedger {
   private get lockPath(): string { return join(this.contextRoot, TASKS_LOCK_REL); }
 
   /**
+   * This engine's lock identity. A pid is not enough: in tests two "engines"
+   * share one pid, and after a stale-break + pid reuse a pid check could lie.
+   * The token makes ownership checks (touch/release) exact.
+   */
+  private readonly lockToken: string = `${process.pid.toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+
+  /**
    * SYNC LOCK — at most one sync engine per project at a time. Sync fires
    * from several places (manual CLI, git hooks, post-sleep, the dashboard
    * button); the ledger files are read-modify-write JSON, so two concurrent
@@ -632,7 +639,7 @@ export class SyncLedger {
     mkdirSync(dirname(this.lockPath), { recursive: true });
     const tryCreate = (): boolean => {
       try {
-        writeFileSync(this.lockPath, JSON.stringify({ pid: process.pid, at: nowMs }) + '\n', { flag: 'wx' });
+        writeFileSync(this.lockPath, JSON.stringify({ pid: process.pid, at: nowMs, token: this.lockToken }) + '\n', { flag: 'wx' });
         return true;
       } catch {
         return false;
@@ -660,7 +667,40 @@ export class SyncLedger {
     return tryCreate();
   }
 
+  /**
+   * Refresh the held lock's timestamp — the long-sync heartbeat. A bulk first
+   * sync of hundreds of tasks runs far past the staleness window; without a
+   * heartbeat, any concurrent trigger (git hook, dashboard button) would judge
+   * the lock stale mid-run, break it, and a second engine would re-create every
+   * still-unmapped task as a remote duplicate.
+   *
+   * Returns false when OWNERSHIP WAS LOST: if this engine stalled past
+   * LOCK_STALE_MS (laptop sleep, GC pause), a rival legitimately broke the
+   * stale lock and now holds it — stomping the rival's lock here would put two
+   * engines on one ledger, the exact corruption the lock exists to prevent.
+   * The caller must abort its loop on false.
+   */
+  touchSyncLock(nowMs: number): boolean {
+    try {
+      let owner: { token?: string } | null = null;
+      try {
+        owner = JSON.parse(readFileSync(this.lockPath, 'utf-8')) as { token?: string };
+      } catch { owner = null; /* missing/corrupt — nobody provably holds it */ }
+      if (owner?.token !== undefined && owner.token !== this.lockToken) return false;
+      writeFileSync(this.lockPath, JSON.stringify({ pid: process.pid, at: nowMs, token: this.lockToken }) + '\n');
+      return true;
+    } catch {
+      return true; // fs hiccup — keep going; worst case is the pre-heartbeat behavior
+    }
+  }
+
   releaseSyncLock(): void {
+    // Only delete OUR lock: after a stale-break, deleting the rival's fresh
+    // lock would invite a third engine in.
+    try {
+      const owner = JSON.parse(readFileSync(this.lockPath, 'utf-8')) as { token?: string };
+      if (owner?.token !== undefined && owner.token !== this.lockToken) return;
+    } catch { /* missing/corrupt — fall through and clear it */ }
     try { rmSync(this.lockPath, { force: true }); } catch { /* already gone */ }
   }
 

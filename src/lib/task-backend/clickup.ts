@@ -49,18 +49,20 @@ import { writeClickUpToken, resolveClickUpToken, maskToken } from './secrets.js'
 import { BACKLOG_TAG, LocalTaskBackend } from './local.js';
 import { merge3Bodies, mergeScalar, planAssigneeHeal, unionChangelog } from './merge.js';
 import { SyncLedger, hashContent, reconcileRenamedTasks, matchLocalTaskForRemote } from './sync-state.js';
-import type {
-  AddChangelogOptions,
-  AssigneeDrift,
-  CreateTaskInput,
-  InsertSectionOptions,
-  RemoteMember,
-  SyncDirection,
-  SyncOptions,
-  SyncReport,
-  TaskData,
-  TokenStatus,
-  UpdateFieldsOptions,
+import {
+  BOOTSTRAP_PUSH_THRESHOLD,
+  type AddChangelogOptions,
+  type AssigneeDrift,
+  type CreateTaskInput,
+  type InsertSectionOptions,
+  type RemoteMember,
+  type SyncDirection,
+  type SyncOptions,
+  type SyncProgressEvent,
+  type SyncReport,
+  type TaskData,
+  type TokenStatus,
+  type UpdateFieldsOptions,
 } from './types.js';
 
 // ─── person:<slug> tags ↔ assignees bridge ──────────────────────────────────
@@ -328,6 +330,9 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
   private static readonly RECONCILE_MS = 2 * 60 * 1000;
   /** A sync lock older than this belongs to a dead process — break it. */
   private static readonly LOCK_STALE_MS = 3 * 60 * 1000;
+
+  /** Progress sink for the CURRENT sync() run only — see SyncOptions.onProgress. */
+  protected progress: ((ev: SyncProgressEvent) => void) | null = null;
 
   /**
    * Best-effort meta refresh (members + statuses + field defs = 3 GETs).
@@ -622,6 +627,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       report.watermark = this.ledger.readSyncState().watermark;
       return report;
     }
+    this.progress = opts.onProgress ?? null;
 
     try {
       // Heal renamed tasks FIRST (#77): re-key the ledger from any stale slug to
@@ -688,6 +694,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       // hooks and post-sleep depend on sync being unable to break the caller.
       report.errors.push((err as Error).message ?? String(err));
     } finally {
+      this.progress = null;
       this.ledger.releaseSyncLock();
     }
 
@@ -735,15 +742,43 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
       if (!entry?.localHash || entry.localHash !== hash) candidates.add(slug);
     }
 
-    for (const slug of [...candidates].sort()) {
+    const sorted = [...candidates].sort();
+    // Bulk first sync (connecting a backend to a mature brain): with this many
+    // never-synced tasks, pushTask switches to its low-request-count shape —
+    // fields inline on the create, pre-existing changelog history kept local.
+    const neverSynced = sorted.filter((s) => !this.ledger.remoteIdFor(s)).length;
+    const bootstrap = neverSynced >= BOOTSTRAP_PUSH_THRESHOLD;
+    if (bootstrap) {
+      report.warnings.push(
+        `bulk first sync: ${neverSynced} never-synced task(s) — custom fields ride each create call, and ` +
+        `pre-existing changelog history stays local (entries written from now on sync as comments normally).`,
+      );
+    }
+    this.progress?.({ phase: 'push', current: 0, total: sorted.length, bootstrap });
+    let done = 0;
+    for (const slug of sorted) {
+      // Heartbeat: a bulk push runs far past LOCK_STALE_MS — keep the lock
+      // visibly alive so concurrent triggers yield instead of breaking it. A
+      // false return means a rival broke our stale lock while we stalled —
+      // abort rather than run two engines on one ledger; unpushed tasks stay
+      // drifted and re-sync next run.
+      if (!this.ledger.touchSyncLock(this.nowMs())) {
+        const remaining = sorted.slice(done);
+        report.failedPushes.push(...remaining);
+        report.errors.push(
+          `push aborted: sync lock ownership lost mid-run (this process stalled and another sync took over) — ${remaining.length} task(s) left for the next sync.`,
+        );
+        break;
+      }
       try {
-        await this.pushTask(slug, adapter, listId, report);
+        await this.pushTask(slug, adapter, listId, report, bootstrap);
       } catch (err) {
         // The task stays drifted (no last_synced bump) and will be re-selected
         // next run — but record it so callers never read a partial push as done.
         report.failedPushes.push(slug);
         report.errors.push(`push ${slug}: ${(err as Error).message ?? err}`);
       }
+      this.progress?.({ phase: 'push', current: ++done, total: sorted.length, slug, bootstrap });
     }
   }
 
@@ -752,6 +787,7 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     adapter: ApiAdapter,
     listId: string,
     report: SyncReport,
+    bootstrap = false,
   ): Promise<void> {
     const path = this.taskPath(slug);
     if (!existsSync(path)) return;
@@ -840,22 +876,54 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
         remoteId = byDcId.remoteId;
       }
     }
+    // Mapped at call start = a previous push already created the remote task.
+    // If its base_snapshot is missing, that push died between the create and
+    // the ledger write — its changelog history predates the mapping, so it
+    // must stay local (backfilling NOW would flood/duplicate comments).
+    const wasMapped = remoteId !== null && remoteId !== undefined;
     let serverTime: number | null = null;
     // Tag/field endpoints bump date_updated without returning it — refetch
     // once at the end so the watermark covers our own writes (no echo pull).
     let needsTimestampRefetch = false;
+    const bindings = this.fieldBindings();
+    // True once a CREATE carried its custom fields inline — the per-field
+    // fallback loop below must then skip them (they're already on the task).
+    let fieldsInlined = false;
 
     if (!remoteId) {
-      // CREATE: one POST carries everything (fields + tags + assignees).
-      const created = await adapter.request<ClickUpTask>('POST', `/list/${listId}/task`, {
-        body: {
-          ...fields,
-          // person: tags stay local — the remote has real assignees.
-          // dcproject: stamps the row so a shared-list pull can tell it apart (#177).
-          tags: this.withProjectStamp(tagsToClickUp(stripPersonTags(task.tags), task.version)),
-          assignees: assigneeIds,
-        },
-      });
+      // CREATE: one POST carries everything — fields + tags + assignees + the
+      // bound custom-field values inline (`custom_fields: [{id, value}]`, which
+      // POST /list/:id/task accepts). Inlining collapses what used to be one
+      // request per field plus a timestamp refetch into the single create call —
+      // the difference between a bulk first sync fitting the rate budget or not.
+      const inlineFields = bindings
+        .map((b) => ({ id: b.field.id, value: encodeFieldValue(b, localFieldValue(task.raw, b.key)) }))
+        .filter((f) => f.value !== null && f.value !== undefined);
+      const createBody = {
+        ...fields,
+        // person: tags stay local — the remote has real assignees.
+        // dcproject: stamps the row so a shared-list pull can tell it apart (#177).
+        tags: this.withProjectStamp(tagsToClickUp(stripPersonTags(task.tags), task.version)),
+        assignees: assigneeIds,
+      };
+      let created: ClickUpTask;
+      try {
+        created = await adapter.request<ClickUpTask>('POST', `/list/${listId}/task`, {
+          body: { ...createBody, ...(inlineFields.length > 0 ? { custom_fields: inlineFields } : {}) },
+        });
+        fieldsInlined = inlineFields.length > 0;
+      } catch (err) {
+        // A list can reject inline values (e.g. a field deleted since the meta
+        // cache refresh) — the task itself must still be created, so retry once
+        // WITHOUT them and let the per-field loop below settle what it can.
+        // ONLY on a validation reject (400/422): any other failure (timeout,
+        // exhausted 429/5xx retries) must propagate to failedPushes — a blind
+        // re-POST after a timeout whose first attempt actually landed would
+        // create a remote duplicate (multi-review Major).
+        const status = (err as { status?: number }).status;
+        if (inlineFields.length === 0 || (status !== 400 && status !== 422)) throw err;
+        created = await adapter.request<ClickUpTask>('POST', `/list/${listId}/task`, { body: createBody });
+      }
       remoteId = created.id;
       this.ledger.recordMapping({ slug, dcId: task.id, backend: this.name, remoteId });
       serverTime = serverTimeMs(created.date_updated);
@@ -936,9 +1004,9 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
 
     // Custom-field deltas (urgency, summary, RICE, feature, …): write only
     // the keys whose value moved vs the base snapshot — and only for fields
-    // that actually EXIST on the list.
-    const bindings = this.fieldBindings();
-    if (bindings.length > 0) {
+    // that actually EXIST on the list. Skipped entirely when the create above
+    // already carried the values inline.
+    if (bindings.length > 0 && !fieldsInlined) {
       const baseFmFields = entry?.base_snapshot
         ? (matter(entry.base_snapshot.body).data as Record<string, unknown>)
         : null;
@@ -960,13 +1028,23 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     }
 
     if (needsTimestampRefetch) {
-      const fresh = await adapter.request<ClickUpTask>('GET', `/task/${remoteId}`);
-      serverTime = serverTimeMs(fresh.date_updated) ?? serverTime;
+      // Watermark hygiene only — an echo pull merges to a no-op via
+      // base_snapshot, so a failed refetch must never fail the whole push
+      // (which would strand the task drifted with its create already done).
+      try {
+        const fresh = await adapter.request<ClickUpTask>('GET', `/task/${remoteId}`);
+        serverTime = serverTimeMs(fresh.date_updated) ?? serverTime;
+      } catch { /* keep the last known serverTime */ }
     }
 
     // Changelog → comments (union-merged remotely; only entries the remote
-    // hasn't seen yet, so re-runs post nothing).
-    for (const entryText of newEntries) {
+    // hasn't seen yet, so re-runs post nothing). Bulk first sync keeps a
+    // never-synced task's pre-existing history LOCAL: posting months of entries
+    // as comments floods the remote (and every assignee's notifications) and
+    // multiplies the request count. base_snapshot below absorbs them, so only
+    // entries written after this sync become comments.
+    const backfillChangelog = !(!entry?.base_snapshot && (bootstrap || wasMapped));
+    for (const entryText of backfillChangelog ? newEntries : []) {
       const comment = await adapter.request<{ id: string; date?: string }>(
         'POST',
         `/task/${remoteId}/comment`,
@@ -1046,13 +1124,24 @@ export class ClickUpTaskBackend extends LocalTaskBackend {
     }
 
     const pendingDeletes = this.ledger.pendingDeleteRemoteIds();
+    this.progress?.({ phase: 'pull', current: 0, total: remoteTasks.length });
+    let pullDone = 0;
     for (const remote of remoteTasks) {
-      if (pendingDeletes.has(remote.id)) continue; // deleted locally — do not resurrect
-      try {
-        await this.applyRemoteTask(remote, adapter, report);
-      } catch (err) {
-        report.errors.push(`pull ${remote.id}: ${(err as Error).message ?? err}`);
+      // Long-pull heartbeat (see pushLocal). Aborting on lost ownership is
+      // safe here: the watermark advances per APPLIED task, so unprocessed
+      // tasks stay above it and re-fetch on the next delta pull.
+      if (!this.ledger.touchSyncLock(this.nowMs())) {
+        report.errors.push('pull aborted: sync lock ownership lost mid-run (this process stalled and another sync took over) — remaining tasks re-fetch next pull.');
+        break;
       }
+      if (!pendingDeletes.has(remote.id)) { // deleted locally — do not resurrect
+        try {
+          await this.applyRemoteTask(remote, adapter, report);
+        } catch (err) {
+          report.errors.push(`pull ${remote.id}: ${(err as Error).message ?? err}`);
+        }
+      }
+      this.progress?.({ phase: 'pull', current: ++pullDone, total: remoteTasks.length });
     }
 
     // ── Remote-deletion reconciliation ──────────────────────────────────────

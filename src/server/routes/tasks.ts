@@ -2,6 +2,7 @@ import { IncomingMessage, ServerResponse } from 'node:http';
 import { dirname } from 'node:path';
 import { today } from '../../lib/id.js';
 import { parseJsonBody, sendJson, sendError } from '../middleware.js';
+import { currentSyncJob, startSyncJob } from '../sync-job.js';
 import { recordDashboardChange, buildFieldSummary } from '../change-tracker.js';
 import type { FieldChange } from '../change-tracker.js';
 import { mergeRice, validateRiceInput, type RiceFields, type RiceInput } from '../../lib/rice.js';
@@ -378,6 +379,45 @@ export async function handleTasksSync(
   }
   const report = await getTaskBackend(contextRoot).sync(direction as 'push' | 'pull' | 'both');
   sendJson(res, 200, { report });
+}
+
+/**
+ * POST /api/tasks/sync-jobs — start a BACKGROUND sync job (body: `direction`,
+ * and `hard: true` for a hard refresh: wipe local mirrors + ledger, full
+ * re-pull from the remote). Returns the job immediately; a job already running
+ * is adopted (`started: false`), never doubled. The job survives navigation —
+ * it belongs to the server process and runs until it settles.
+ */
+export async function handleTasksSyncJobStart(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  const body = (await parseJsonBody(req)) ?? {};
+  const direction = (body.direction as string) ?? 'both';
+  if (!['push', 'pull', 'both'].includes(direction)) {
+    sendError(res, 400, 'invalid_direction', 'direction must be push, pull, or both.');
+    return;
+  }
+  const backend = getTaskBackend(contextRoot);
+  if (backend.name === 'local') {
+    sendError(res, 400, 'no_remote_backend', 'No remote task backend configured — nothing to sync.');
+    return;
+  }
+  const kind = body.hard === true ? 'hard-refresh' : 'sync';
+  const { job, started } = startSyncJob(contextRoot, kind, direction as 'push' | 'pull' | 'both');
+  sendJson(res, 200, { job, started });
+}
+
+/** GET /api/tasks/sync-jobs/current — poll the latest job's live state. */
+export async function handleTasksSyncJobStatus(
+  _req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  sendJson(res, 200, { job: currentSyncJob(contextRoot) });
 }
 
 /**

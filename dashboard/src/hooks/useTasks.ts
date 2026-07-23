@@ -209,13 +209,48 @@ export interface SyncReport {
   errors: string[];
 }
 
-export function useSyncTasks() {
+/**
+ * Background sync job — the server-owned counterpart of useSyncTasks. A bulk
+ * first sync (or a hard refresh) runs for minutes; the job lives in the server
+ * process, so it keeps running when the user navigates away, and this poll
+ * re-adopts it (with live progress) whenever the Tasks page is back.
+ */
+export interface SyncJob {
+  id: string;
+  kind: 'sync' | 'hard-refresh';
+  status: 'running' | 'success' | 'error';
+  phase: 'push' | 'pull' | null;
+  current: number;
+  total: number;
+  bootstrap: boolean;
+  attempt: number;
+  startedAt: number;
+  finishedAt: number | null;
+  report: SyncReport | null;
+  error: string | null;
+  backupDir: string | null;
+}
+
+export function useSyncJob() {
+  return useQuery({
+    queryKey: ['tasks-sync-job'],
+    queryFn: () => api.get<{ job: SyncJob | null }>('/tasks/sync-jobs/current'),
+    select: (d) => d.job,
+    // Poll fast while a job runs so the progress bar is live; idle otherwise.
+    refetchInterval: (query) => (query.state.data?.job?.status === 'running' ? 800 : false),
+    refetchOnWindowFocus: true,
+  });
+}
+
+export function useStartSyncJob() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: () => api.post<{ report: SyncReport }>('/tasks/sync', { direction: 'both' }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['tasks'] });
-      queryClient.invalidateQueries({ queryKey: ['tasks-sync-status'] });
+    mutationFn: (vars?: { hard?: boolean }) =>
+      api.post<{ job: SyncJob; started: boolean }>('/tasks/sync-jobs', { direction: 'both', hard: !!vars?.hard }),
+    onSuccess: (d) => {
+      // Seed the poll cache so the bar appears immediately (no 800ms gap).
+      queryClient.setQueryData(['tasks-sync-job'], { job: d.job });
+      queryClient.invalidateQueries({ queryKey: ['tasks-sync-job'] });
     },
   });
 }

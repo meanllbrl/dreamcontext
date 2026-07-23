@@ -46,18 +46,20 @@ import { resolveGitHubToken, writeGitHubToken, maskToken } from './secrets.js';
 import { BACKLOG_TAG, LocalTaskBackend } from './local.js';
 import { merge3Bodies, mergeScalar, planAssigneeHeal, unionChangelog } from './merge.js';
 import { SyncLedger, hashContent, reconcileRenamedTasks, matchLocalTaskForRemote } from './sync-state.js';
-import type {
-  AddChangelogOptions,
-  AssigneeDrift,
-  CreateTaskInput,
-  InsertSectionOptions,
-  RemoteMember,
-  SyncDirection,
-  SyncOptions,
-  SyncReport,
-  TaskData,
-  TokenStatus,
-  UpdateFieldsOptions,
+import {
+  BOOTSTRAP_PUSH_THRESHOLD,
+  type AddChangelogOptions,
+  type AssigneeDrift,
+  type CreateTaskInput,
+  type InsertSectionOptions,
+  type RemoteMember,
+  type SyncDirection,
+  type SyncOptions,
+  type SyncProgressEvent,
+  type SyncReport,
+  type TaskData,
+  type TokenStatus,
+  type UpdateFieldsOptions,
 } from './types.js';
 
 // ─── person:<slug> tags ↔ assignees bridge ──────────────────────────────────
@@ -334,6 +336,9 @@ export class GitHubTaskBackend extends LocalTaskBackend {
   private static readonly RECONCILE_MS = 2 * 60 * 1000;
   private static readonly LOCK_STALE_MS = 3 * 60 * 1000;
 
+  /** Progress sink for the CURRENT sync() run only — see SyncOptions.onProgress. */
+  protected progress: ((ev: SyncProgressEvent) => void) | null = null;
+
   /** GitHub's hard cap on an issue body (chars) — a longer POST/PATCH 422s. */
   private static readonly MAX_ISSUE_BODY_CHARS = 65_536;
 
@@ -564,6 +569,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       report.watermark = this.ledger.readSyncState().watermark;
       return report;
     }
+    this.progress = opts.onProgress ?? null;
 
     try {
       // Heal renamed tasks FIRST (#77): re-key the ledger from any stale slug to
@@ -615,6 +621,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     } catch (err) {
       report.errors.push((err as Error).message ?? String(err));
     } finally {
+      this.progress = null;
       this.ledger.releaseSyncLock();
     }
 
@@ -659,13 +666,41 @@ export class GitHubTaskBackend extends LocalTaskBackend {
       if (!entry?.localHash || entry.localHash !== hash) candidates.add(slug);
     }
 
-    for (const slug of [...candidates].sort()) {
+    const sorted = [...candidates].sort();
+    // Bulk first sync (connecting a repo to a mature brain): with this many
+    // never-synced tasks, pushTask keeps pre-existing changelog history local —
+    // months of entries as issue comments would flood every subscriber's
+    // notifications and multiply the request count under GitHub's write limits.
+    const neverSynced = sorted.filter((s) => !this.ledger.remoteIdFor(s)).length;
+    const bootstrap = neverSynced >= BOOTSTRAP_PUSH_THRESHOLD;
+    if (bootstrap) {
+      report.warnings.push(
+        `bulk first sync: ${neverSynced} never-synced task(s) — pre-existing changelog history stays local ` +
+        `(entries written from now on sync as comments normally).`,
+      );
+    }
+    this.progress?.({ phase: 'push', current: 0, total: sorted.length, bootstrap });
+    let done = 0;
+    for (const slug of sorted) {
+      // Heartbeat: a bulk push runs far past LOCK_STALE_MS — keep the lock
+      // visibly alive so concurrent triggers yield instead of breaking it. A
+      // false return means a rival broke our stale lock while we stalled —
+      // abort rather than run two engines on one ledger (see ClickUp adapter).
+      if (!this.ledger.touchSyncLock(this.nowMs())) {
+        const remaining = sorted.slice(done);
+        report.failedPushes.push(...remaining);
+        report.errors.push(
+          `push aborted: sync lock ownership lost mid-run (this process stalled and another sync took over) — ${remaining.length} task(s) left for the next sync.`,
+        );
+        break;
+      }
       try {
-        await this.pushTask(slug, adapter, owner, repo, report);
+        await this.pushTask(slug, adapter, owner, repo, report, bootstrap);
       } catch (err) {
         report.failedPushes.push(slug);
         report.errors.push(`push ${slug}: ${(err as Error).message ?? err}`);
       }
+      this.progress?.({ phase: 'push', current: ++done, total: sorted.length, slug, bootstrap });
     }
   }
 
@@ -675,6 +710,7 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     owner: string,
     repo: string,
     report: SyncReport,
+    bootstrap = false,
   ): Promise<void> {
     const path = this.taskPath(slug);
     if (!existsSync(path)) return;
@@ -766,6 +802,11 @@ export class GitHubTaskBackend extends LocalTaskBackend {
         remoteId = byDcId.remoteId;
       }
     }
+    // Mapped at call start = a previous push already created the issue. A
+    // missing base_snapshot then means that push died before its ledger write —
+    // the changelog history predates the mapping and must stay local (see the
+    // matching rule in the ClickUp adapter).
+    const wasMapped = remoteId !== null && remoteId !== undefined;
     let serverTime: number | null = null;
 
     if (!remoteId) {
@@ -822,8 +863,11 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     }
 
     // Changelog → issue comments (union-merged remotely; only entries the remote
-    // hasn't seen yet, so re-runs post nothing).
-    for (const entryText of newEntries) {
+    // hasn't seen yet, so re-runs post nothing). Bulk first sync keeps a
+    // never-synced task's pre-existing history LOCAL (see pushLocal) —
+    // base_snapshot below absorbs it, so only future entries become comments.
+    const backfillChangelog = !(!entry?.base_snapshot && (bootstrap || wasMapped));
+    for (const entryText of backfillChangelog ? newEntries : []) {
       const comment = await adapter.request<GitHubComment>(
         'POST',
         `${this.issuesPath(owner, repo)}/${remoteId}/comments`,
@@ -1078,13 +1122,23 @@ export class GitHubTaskBackend extends LocalTaskBackend {
     }
 
     const pendingDeletes = this.ledger.pendingDeleteRemoteIds();
+    this.progress?.({ phase: 'pull', current: 0, total: remoteIssues.length });
+    let pullDone = 0;
     for (const issue of remoteIssues) {
-      if (pendingDeletes.has(String(issue.number))) continue; // deleted locally
-      try {
-        await this.applyRemoteIssue(issue, adapter, owner, repo, report);
-      } catch (err) {
-        report.errors.push(`pull #${issue.number}: ${(err as Error).message ?? err}`);
+      // Long-pull heartbeat; abort on lost ownership — watermark advances per
+      // APPLIED issue, so remaining issues re-fetch on the next delta pull.
+      if (!this.ledger.touchSyncLock(this.nowMs())) {
+        report.errors.push('pull aborted: sync lock ownership lost mid-run (this process stalled and another sync took over) — remaining issues re-fetch next pull.');
+        break;
       }
+      if (!pendingDeletes.has(String(issue.number))) { // deleted locally — skip
+        try {
+          await this.applyRemoteIssue(issue, adapter, owner, repo, report);
+        } catch (err) {
+          report.errors.push(`pull #${issue.number}: ${(err as Error).message ?? err}`);
+        }
+      }
+      this.progress?.({ phase: 'pull', current: ++pullDone, total: remoteIssues.length });
     }
 
     await this.reconcileRemoteDeletions(adapter, owner, repo, pendingDeletes, report, fullSetIds);

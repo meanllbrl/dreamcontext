@@ -8,6 +8,8 @@ import { today } from '../../lib/id.js';
 import { header, success, error, warn, info } from '../../lib/format.js';
 import { migrateDataStructures, fenceExistingDataStructures } from '../../lib/data-structures-migration.js';
 import { getTaskBackend } from '../../lib/task-backend/index.js';
+import { ProgressBar } from '../../lib/progress.js';
+import type { SyncOptions } from '../../lib/task-backend/types.js';
 import { runMigrations } from '../../lib/migration-runner.js';
 import { readSetupConfig, readBrainLocal, writeBrainLocal } from '../../lib/setup-config.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
@@ -616,14 +618,26 @@ export function registerSleepCommand(program: Command): void {
       try {
         const backend = getTaskBackend(root);
         if (backend.name !== 'local') {
-          let report = await backend.sync('both');
-          // Any task that still failed to push leaves the local→remote state
-          // incomplete. Retry the whole sync ONCE — the failed tasks are still
-          // drift-flagged, so they get re-selected, and the rate window has
-          // advanced. One extra pass, not a loop.
-          if (report.failedPushes.length > 0) {
-            warn(`Task sync: ${report.failedPushes.length} task(s) did not push — retrying once…`);
-            report = await backend.sync('both');
+          // The consolidation touches every reconciled task, so this sync can
+          // run for minutes — show live progress instead of going silent.
+          const bar = new ProgressBar();
+          const syncOpts: SyncOptions = {
+            onProgress: (ev) => bar.update(`task sync (${ev.phase})`, ev.current, ev.total),
+          };
+          let report;
+          try {
+            report = await backend.sync('both', syncOpts);
+            // Any task that still failed to push leaves the local→remote state
+            // incomplete. Retry the whole sync ONCE — the failed tasks are still
+            // drift-flagged, so they get re-selected, and the rate window has
+            // advanced. One extra pass, not a loop.
+            if (report.failedPushes.length > 0) {
+              bar.done();
+              warn(`Task sync: ${report.failedPushes.length} task(s) did not push — retrying once…`);
+              report = await backend.sync('both', syncOpts);
+            }
+          } finally {
+            bar.done();
           }
           if (report.conflicts.length > 0) {
             warn(`Task sync: ${report.conflicts.length} conflict(s) preserved under state/.conflicts/ — review them.`);

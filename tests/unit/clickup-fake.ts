@@ -177,7 +177,12 @@ export function makeFakeClickUp(opts: { serverStart?: number } = {}): FakeClickU
           date_updated: String(serverTime),
           start_date: body.start_date !== undefined && body.start_date !== null ? String(body.start_date) : null,
           due_date: body.due_date !== undefined && body.due_date !== null ? String(body.due_date) : null,
-          custom_fields: fake.customFields.map((f) => ({ ...f })),
+          // Real ClickUp accepts `custom_fields: [{id, value}]` inline on create —
+          // apply the sent values so the bulk-first-sync path is honestly tested.
+          custom_fields: fake.customFields.map((f) => {
+            const sent = (body.custom_fields ?? []).find((cf: { id: string }) => cf.id === f.id);
+            return { ...f, ...(sent ? { value: sent.value } : {}) };
+          }),
         };
         tasks.set(id, task);
         return jsonResponse(200, task);

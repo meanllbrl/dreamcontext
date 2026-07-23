@@ -25,6 +25,9 @@ import {
   type TaskBackend,
 } from '../../lib/task-backend/index.js';
 import { planDedup, applyDedup, type DedupPlan } from '../../lib/task-backend/dedup.js';
+import { ProgressBar } from '../../lib/progress.js';
+import { hardRefreshTasks } from '../../lib/task-backend/hard-refresh.js';
+import type { SyncOptions } from '../../lib/task-backend/types.js';
 import {
   GROUP_BY_FIELDS,
   collectTags,
@@ -1176,7 +1179,19 @@ export function registerTasksCommand(program: Command): void {
         error('Direction must be one of: push, pull, both');
         return;
       }
-      const syncOpts = { reconcile: !!opts.reconcile, refreshMeta: !!opts.refreshMeta };
+      const syncOpts: SyncOptions = { reconcile: !!opts.reconcile, refreshMeta: !!opts.refreshMeta };
+      // Live progress for interactive runs — a bulk first sync pushes hundreds
+      // of tasks over many minutes, and silence reads as "sync is broken".
+      const bar = !opts.hook && !opts.json ? new ProgressBar() : null;
+      if (bar) {
+        syncOpts.onProgress = (ev) => {
+          if (ev.current === 0 && ev.bootstrap && ev.total > 0) {
+            bar.done();
+            console.log(chalk.cyan(`  First sync: pushing ${ev.total} task(s) in bulk — this can take a few minutes.`));
+          }
+          bar.update(ev.phase, ev.current, ev.total);
+        };
+      }
       try {
         const root = ensureContextRoot();
         const backend = getTaskBackend(root);
@@ -1189,6 +1204,7 @@ export function registerTasksCommand(program: Command): void {
               }),
             ])
           : await backend.sync(dir, syncOpts);
+        bar?.done();
         if (report === null) {
           // Hook-mode timeout: report and exit clean — git must never block.
           console.log(chalk.dim('tasks sync: timed out (hook mode) — skipped.'));
@@ -1234,12 +1250,77 @@ export function registerTasksCommand(program: Command): void {
           console.log(chalk.yellow(`  warning: ${w}`));
         }
       } catch (err) {
+        bar?.done();
         if (opts.hook) {
           // Best-effort: a sync failure must NEVER fail the git operation.
           console.log(chalk.dim(`tasks sync: skipped (${(err as Error).message ?? err})`));
           return;
         }
         error(`Sync failed: ${(err as Error).message ?? err}`);
+        process.exitCode = 1;
+      }
+    });
+
+  // Hard refresh — wipe locally derived cloud-task state, re-pull from remote
+  tasks
+    .command('hard-refresh')
+    .description('Cloud tasks: back up local mirrors, wipe the sync ledger, and re-pull EVERYTHING from the remote (remote is the source of truth)')
+    .option('-y, --yes', 'Skip the confirmation prompt')
+    .action(async (opts: { yes?: boolean }) => {
+      try {
+        const root = ensureContextRoot();
+        const backend = getTaskBackend(root);
+        if (backend.name === 'local') {
+          error('No remote task backend configured — with the local backend, state/ already is the source of truth.');
+          process.exitCode = 1;
+          return;
+        }
+        if (!opts.yes) {
+          const { confirm } = await import('@inquirer/prompts');
+          const go = await confirm({
+            message: `Hard refresh from ${backend.name}: local task mirrors are moved to a backup folder, the sync ledger is wiped, and everything is re-pulled. Local-only edits that never synced will NOT be on the remote. Continue?`,
+            default: false,
+          }).catch(() => false);
+          if (!go) { console.log(chalk.dim('Aborted.')); return; }
+        }
+        const bar = new ProgressBar();
+        let result;
+        try {
+          result = await hardRefreshTasks(backend, root, {
+            onProgress: (ev) => bar.update(ev.phase, ev.current, ev.total),
+          });
+        } finally {
+          bar.done();
+        }
+        const { report } = result;
+        // The wipe has ALREADY happened by now — a re-pull that moved nothing
+        // and errored (auth/offline) or got lock-skipped must be loud, exit
+        // non-zero, and must NOT clear the session-start sync advisory: a green
+        // banner here would leave the user with zero mirrors and no nag to
+        // retry (multi-review Critical).
+        const movedNothing =
+          report.pushed + report.pulled + report.created + report.deleted +
+          report.commentsAdded + report.reconciled + report.mirrorDeleted + report.mirrorRemapped === 0;
+        if (report.skipped === 'locked' || (report.errors.length > 0 && movedNothing)) {
+          error(
+            `Hard refresh INCOMPLETE: local task state was wiped but the re-pull did not complete — ` +
+            `fix the issue below and re-run \`dreamcontext tasks hard-refresh\`.`,
+          );
+          if (result.backupDir) console.log(chalk.yellow(`  Your previous mirrors are safe in ${result.backupDir}`));
+          if (report.skipped === 'locked') console.log(chalk.red('  error: another sync is holding the lock — try again in a moment.'));
+          for (const e of report.errors) console.log(chalk.red(`  error: ${e}`));
+          process.exitCode = 1;
+          return;
+        }
+        success(`Hard refresh: pulled ${report.pulled}, mirrors rebuilt from ${backend.name}.`);
+        if (result.movedMirrors > 0) {
+          console.log(chalk.dim(`  Previous mirrors (${result.movedMirrors}) backed up to ${result.backupDir}`));
+        }
+        for (const e of report.errors) console.log(chalk.red(`  error: ${e}`));
+        for (const w of report.warnings) console.log(chalk.yellow(`  warning: ${w}`));
+        writeBrainLocal(dirname(root), { needsTaskSync: false });
+      } catch (err) {
+        error(`Hard refresh failed: ${(err as Error).message ?? err}`);
         process.exitCode = 1;
       }
     });

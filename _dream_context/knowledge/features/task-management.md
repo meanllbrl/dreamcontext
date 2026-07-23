@@ -2,7 +2,7 @@
 id: feat_LDQn2Bi8
 status: in_review
 created: '2026-02-25'
-updated: '2026-07-19'
+updated: '2026-07-22'
 released_version: v0.19.0
 tags:
   - backend
@@ -18,9 +18,13 @@ related_tasks:
     per-project-format-rule-overrides-for-specialist-agents-task-feature-knowledge
   - github-sync-upload-local-task-images-so-they-resolve-in-issues
   - task-feature-objective-links-validated-assignment-bidirectional-maintenance
-  - clickup-sync-integrity-provenance-version-round-trip-consolidates-177-178-179
+  - >-
+    clickup-sync-integrity-provenance-version-round-trip-consolidates-177-178-179
   - >-
     repointing-the-task-backend-at-a-different-list-silently-deletes-every-local-task-mirror
+  - >-
+    feat-sync-bulk-first-sync-progress-bar-inline-custom-fields-changelog-backfill-skip-lock-heartbeat
+  - fix-sync-pre-existing-pull-watermark-poison-pill-tag-retry-semantics
 type: feature
 name: task-management
 description: ''

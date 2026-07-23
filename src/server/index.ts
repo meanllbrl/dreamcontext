@@ -8,7 +8,7 @@ import { handleCors, isCrossSiteWrite, sendError } from './middleware.js';
 import { checkNetworkAuth, generateNetworkToken } from './network-auth.js';
 import { serveStatic } from './static.js';
 import { handleHealthGet } from './routes/health.js';
-import { handleTasksList, handleTasksCreate, handleTasksGet, handleTasksUpdate, handleTasksChangelog, handleTasksInsert, handleTasksSyncStatus, handleTasksSync, handleTasksSyncTest, handleTasksDelete, handleTasksMembers, handleTasksContainers, handleTasksProvision, handleTasksTokenStatus, handleTasksSetToken, handleTaskOverrides, handleTaskOverrideDocGet, handleTaskOverrideDocSave, handleTaskOverrideAddField, handleTaskOverrideRemoveField } from './routes/tasks.js';
+import { handleTasksList, handleTasksCreate, handleTasksGet, handleTasksUpdate, handleTasksChangelog, handleTasksInsert, handleTasksSyncStatus, handleTasksSync, handleTasksSyncJobStart, handleTasksSyncJobStatus, handleTasksSyncTest, handleTasksDelete, handleTasksMembers, handleTasksContainers, handleTasksProvision, handleTasksTokenStatus, handleTasksSetToken, handleTaskOverrides, handleTaskOverrideDocGet, handleTaskOverrideDocSave, handleTaskOverrideAddField, handleTaskOverrideRemoveField } from './routes/tasks.js';
 import { handleSleepGet, handleSleepUpdate } from './routes/sleep.js';
 import { handleEmbeddingModelStatus, handleEmbeddingModelDownload, handleEmbeddingIndexStatus, handleEmbeddingIndexBuild } from './routes/embeddings.js';
 import { handleCoreList, handleCoreGet, handleCoreUpdate } from './routes/core.js';
@@ -169,6 +169,8 @@ function buildRouter(): Router {
   // Sync routes are registered BEFORE :slug — first match wins.
   router.get('/api/tasks/sync-status', handleTasksSyncStatus);
   router.post('/api/tasks/sync', handleTasksSync);
+  router.post('/api/tasks/sync-jobs', handleTasksSyncJobStart);
+  router.get('/api/tasks/sync-jobs/current', handleTasksSyncJobStatus);
   router.post('/api/tasks/sync-test', handleTasksSyncTest);
   router.get('/api/tasks/members', handleTasksMembers);
   router.get('/api/tasks/containers', handleTasksContainers);

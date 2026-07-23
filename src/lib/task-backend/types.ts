@@ -194,7 +194,37 @@ export interface SyncOptions {
    * No-op for the local backend.
    */
   refreshMeta?: boolean;
+
+  /**
+   * Called as the sync processes tasks, so interactive callers can render a
+   * progress bar instead of going silent — a bulk first sync of a mature brain
+   * runs for many minutes, and silence reads as "sync is broken". Fired once at
+   * each phase start (`current: 0`) and once per task processed. Never fired by
+   * the local backend.
+   */
+  onProgress?: (event: SyncProgressEvent) => void;
 }
+
+/** One tick of sync progress — see {@link SyncOptions.onProgress}. */
+export interface SyncProgressEvent {
+  phase: 'push' | 'pull';
+  /** Tasks processed so far in this phase (0 on the phase-start event). */
+  current: number;
+  /** Total tasks this phase will process. */
+  total: number;
+  /** Slug of the task just processed (absent on the phase-start event and on pull). */
+  slug?: string;
+  /** True when this push is a bulk first sync (≥ threshold never-synced tasks). */
+  bootstrap?: boolean;
+}
+
+/**
+ * A push with at least this many never-synced tasks is a BULK FIRST SYNC
+ * (connecting a backend to an already-mature brain): creates carry their custom
+ * fields inline and the pre-existing changelog history stays local instead of
+ * flooding the remote as comments.
+ */
+export const BOOTSTRAP_PUSH_THRESHOLD = 20;
 
 /** A task whose remote assignees differ from its local `person:<slug>` tags (#78). */
 export interface AssigneeDrift {

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useLayoutEffect, type CSSProperties } from 'react';
 import type { Task } from '../../hooks/useTasks';
-import { useSyncStatus, useSyncTasks } from '../../hooks/useTasks';
+import { HardRefreshChip, SyncChip, useCloudSync } from './SyncChip';
 import type { BoardState } from '../../hooks/useBoard';
 import { VersionsPopover } from './VersionsPopover';
 import { SparkIcon } from '../sleepy/TypeIcons';
@@ -85,22 +85,9 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
   const toggle = (m: MenuKey) => { setOpenMenu(openMenu === m ? null : m); if (m !== 'filter') setFilterPane(null); };
 
   // ── cloud sync (only surfaces when a remote task backend is configured) ──
-  const { data: syncStatus } = useSyncStatus();
-  const syncTasks = useSyncTasks();
-  const cloudEnabled = !!syncStatus && syncStatus.backend !== 'local';
-  const syncing = syncTasks.isPending;
-  const runSync = () => {
-    if (syncing) return;
-    syncTasks.mutate(undefined, {
-      onSuccess: ({ report }) => {
-        const bits = [report.pushed && `${report.pushed} pushed`, report.pulled && `${report.pulled} pulled`].filter(Boolean);
-        if (report.conflicts.length) flash(`Synced · ${report.conflicts.length} conflict${report.conflicts.length > 1 ? 's' : ''} to resolve`);
-        else if (report.errors.length) flash(`Sync finished with ${report.errors.length} error${report.errors.length > 1 ? 's' : ''}`);
-        else flash(bits.length ? `Synced · ${bits.join(' · ')}` : 'Already up to date');
-      },
-      onError: () => flash('Sync failed — check your connection'),
-    });
-  };
+  // Wiring + chips live in SyncChip.tsx (background job, live progress).
+  const cloudSync = useCloudSync(flash);
+  const { syncStatus, cloudEnabled } = cloudSync;
 
   const countBy = (dim: Dim, val: string) => allTasks.filter((t) => dimGet(t, dim) === val).length;
   // Assignee is multi-valued (a task may carry several person tags), so it can't
@@ -430,14 +417,10 @@ export function BoardToolbar({ s, allTasks, allTags, assignees, versionsForFilte
 
       {/* cloud sync — only when a remote task backend is configured */}
       {cloudEnabled && (
-        <div className="bd-chip" onClick={runSync} title={syncing ? 'Syncing…' : `Sync tasks with ${syncStatus!.backend}${syncStatus!.pendingPush ? ` · ${syncStatus!.pendingPush} pending` : ''}`}
-          style={{ ...chipTrigger(syncStatus!.pendingPush > 0 || syncStatus!.conflicts > 0), cursor: syncing ? 'progress' : 'pointer', opacity: syncing ? 0.7 : 1 }}>
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ flex: '0 0 auto', animation: syncing ? 'bd_spin .8s linear infinite' : undefined }}><path d="M21 12a9 9 0 0 1-9 9 9 9 0 0 1-6.7-3M3 12a9 9 0 0 1 9-9 9 9 0 0 1 6.7 3" /><path d="M21 3v6h-6M3 21v-6h6" /></svg>
-          <span>{syncing ? 'Syncing…' : 'Sync'}</span>
-          {!syncing && syncStatus!.pendingPush > 0 && <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 20, background: 'var(--color-accent)', color: '#fff' }}>{syncStatus!.pendingPush}</span>}
-          {!syncing && syncStatus!.conflicts > 0 && <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 700, padding: '1px 6px', borderRadius: 20, background: 'var(--color-error)', color: '#fff' }}>{syncStatus!.conflicts}!</span>}
-        </div>
+        <SyncChip cs={cloudSync} chipStyle={chipTrigger((syncStatus?.pendingPush ?? 0) > 0 || (syncStatus?.conflicts ?? 0) > 0)} />
       )}
+      {/* hard refresh — wipe local mirrors + ledger, re-pull everything from the remote */}
+      {cloudEnabled && !cloudSync.syncing && <HardRefreshChip cs={cloudSync} chipStyle={chipTrigger(false)} />}
 
       {/* collapsible controls — View / Group / Versions / Properties.
           Whatever doesn't fit moves into the "More" menu (see below). */}
