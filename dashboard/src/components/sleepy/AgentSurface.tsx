@@ -157,6 +157,18 @@ export function AgentSurface() {
   // a fullscreen overlay by this local flag. Sessions live in the detached-DOM garage
   // either way, so toggling `expanded` NEVER remounts xterm/WebSocket/PTY.
   const [expanded, setExpanded] = useState(false);
+  // macOS-style zoom: when `expanded` flips false the surface stays rendered with a
+  // `closing` class so the shrink-to-dock animation can play; `onAnimationEnd` (plus a
+  // safety timeout for reduced-motion, where no animation event fires) then hides it.
+  const [closing, setClosing] = useState(false);
+  const wasExpanded = useRef(false);
+  useEffect(() => {
+    if (expanded) { setClosing(false); wasExpanded.current = true; return; }
+    if (!wasExpanded.current) return;
+    setClosing(true);
+    const t = window.setTimeout(() => setClosing(false), 400);
+    return () => window.clearTimeout(t);
+  }, [expanded]);
   const [caps, setCaps] = useState<Capabilities | null>(null);
   const [capsError, setCapsError] = useState(false);
   const [bypass, setBypass] = useState(false); // default for NEW sessions
@@ -1545,7 +1557,8 @@ export function AgentSurface() {
     <>
       <div
         ref={hostRef}
-        className={`agent-surface${expanded ? ' expanded' : ''}`}
+        className={`agent-surface${expanded ? ' expanded' : closing ? ' closing' : ''}`}
+        onAnimationEnd={(e) => { if (e.target === e.currentTarget && closing) setClosing(false); }}
         /* The minimized-sessions dock floats over our bottom-right corner — flag it so the
            corner pane's composer can clear its anchor chip (model/effort stay visible). */
         data-dock-floating={caps?.desktop && expanded && minimizedRows.length > 0 ? 'true' : undefined}

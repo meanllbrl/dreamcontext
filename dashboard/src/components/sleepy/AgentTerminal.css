@@ -29,6 +29,36 @@
   display: flex;
   top: var(--header-height);
   left: var(--app-content-left);
+  /* macOS-style zoom in: grow out of the bottom-right dock/FAB corner. Transform +
+     opacity only — no layout work, so xterm's canvas never reflows mid-flight.
+     `backwards` (not `both`): once it lands the element must return to transform:none,
+     or the lingering scale(1) layer keeps the canvas on a resampled composite. */
+  animation: agent-surface-zoom-in 320ms cubic-bezier(0.32, 0.72, 0, 1) backwards;
+  transform-origin: calc(100% - 72px) calc(100% - 48px);
+}
+/* Closing: stays rendered (display:flex keeps the same content-area rect) while it
+   shrinks back into the corner; the component removes the class on animationend. */
+.agent-surface.closing {
+  display: flex;
+  top: var(--header-height);
+  left: var(--app-content-left);
+  animation: agent-surface-zoom-out 280ms cubic-bezier(0.32, 0.72, 0, 1) forwards;
+  transform-origin: calc(100% - 72px) calc(100% - 48px);
+  pointer-events: none;
+}
+@keyframes agent-surface-zoom-in {
+  from { transform: scale(0.28) translateY(24px); opacity: 0; border-radius: var(--radius-xl, 16px); }
+  60%  { opacity: 1; }
+  to   { transform: scale(1) translateY(0); opacity: 1; border-radius: 0; }
+}
+@keyframes agent-surface-zoom-out {
+  from { transform: scale(1) translateY(0); opacity: 1; border-radius: 0; }
+  40%  { opacity: 1; }
+  to   { transform: scale(0.22) translateY(28px); opacity: 0; border-radius: var(--radius-xl, 16px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-surface.expanded { animation: none; }
+  .agent-surface.closing { display: none; animation: none; }
 }
 .agent-surface > * {
   flex: 1 1 auto;
@@ -204,6 +234,8 @@
 }
 .agent-term-pill:hover { color: var(--color-text-secondary); background: var(--color-bg-tertiary); }
 .agent-term-pill.on { color: var(--color-error); border-color: color-mix(in srgb, var(--color-error) 38%, transparent); }
+/* Auto (the no-bypass default): calm accent tint so the mode is visible without alarm. */
+.agent-term-pill.auto { color: var(--color-accent); border-color: color-mix(in srgb, var(--color-accent) 32%, transparent); }
 .agent-term-pill input { accent-color: var(--color-error); width: 13px; height: 13px; }
 .agent-term-pill:focus-within { outline: none; box-shadow: 0 0 0 2px var(--color-accent-soft); }
 
