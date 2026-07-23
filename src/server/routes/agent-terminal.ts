@@ -193,8 +193,10 @@ export async function handleOpenTerminal(
   // `cd <cwd> && exec claude [flags]` — cwd is a real on-disk path (validated by the
   // vault resolver upstream), single-quoted so spaces are safe. Run via login shell so
   // a Finder-launched terminal still finds `claude` on PATH.
-  // Same two-mode contract as the embedded terminal: bypass, else auto (acceptEdits).
-  const flag = bypass ? ' --permission-mode bypassPermissions' : ' --permission-mode acceptEdits';
+  // Same two-mode contract as the embedded terminal: bypass, else auto. `auto` must be
+  // passed explicitly — the CLI's no-flag default is `manual` (and `acceptEdits` would
+  // boot the TUI with "accept edits on").
+  const flag = bypass ? ' --permission-mode bypassPermissions' : ' --permission-mode auto';
   const shellCmd = `cd '${cwd.replace(/'/g, `'\\''`)}' && exec claude${flag}`;
   const appleScript = `tell application "Terminal"\n  activate\n  do script "${escapeForAppleScript(shellCmd)}"\nend tell`;
 
@@ -1202,8 +1204,10 @@ function startPtySession(
   // "if no bypass that means it is auto", never plain manual):
   //  • bypass armed → bypassPermissions: skip ALL approval prompts (explicit opt-in,
   //    standing warning in the UI).
-  //  • otherwise → acceptEdits: file edits auto-approved; commands/tools still ask.
-  const flag = bypass ? ' --permission-mode bypassPermissions' : ' --permission-mode acceptEdits';
+  //  • otherwise → auto: the CLI's auto permission mode. Must be passed explicitly —
+  //    the no-flag default is `manual`, and `acceptEdits` would boot the TUI with
+  //    "accept edits on".
+  const flag = bypass ? ' --permission-mode bypassPermissions' : ' --permission-mode auto';
   // `--model <id>` / `--effort <level>` when picked (both whitelist-sanitized upstream, so
   // shell-safe). Agent-only — a shell has neither a model nor an effort.
   const modelFlag = model ? ` --model ${model}` : '';

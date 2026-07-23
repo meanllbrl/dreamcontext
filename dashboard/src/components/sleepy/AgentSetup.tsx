@@ -61,16 +61,16 @@ export function ConfirmDialog({ req, onConfirm, onCancel }: {
 
 // ── Bypass UI ─────────────────────────────────────────────────────────────────
 
-// There is no plain "manual" mode (owner decision 2026-07-23): bypass OFF means AUTO —
-// new sessions run `--permission-mode acceptEdits` (file edits auto-approved, commands
-// still ask); bypass ON skips every prompt. The controls below present that two-state
-// contract instead of a bare on/off checkbox.
+// Two-state contract: bypass OFF means AUTO — new sessions run `--permission-mode auto`
+// (the CLI's auto mode; its no-flag default would be `manual`); bypass ON skips every
+// prompt. The controls below present that two-state contract instead of a bare on/off
+// checkbox.
 export function BypassToggle({ bypass, setBypass }: { bypass: boolean; setBypass: (b: boolean) => void }) {
   return (
     <div style={{ marginTop: '24px', width: '100%', maxWidth: '440px' }}>
       <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', userSelect: 'none' }}>
         <input type="checkbox" checked={bypass} onChange={e => setBypass(e.target.checked)} style={{ accentColor: 'var(--color-error)', width: '16px', height: '16px' }} />
-        <span style={{ fontSize: '13.5px', color: 'var(--color-text-secondary)' }}>Bypass permissions <span style={{ color: 'var(--color-text-tertiary)' }}>— off = Auto: edits auto-approved, commands still ask</span></span>
+        <span style={{ fontSize: '13.5px', color: 'var(--color-text-secondary)' }}>Bypass permissions <span style={{ color: 'var(--color-text-tertiary)' }}>— off = Auto: claude's auto permission mode</span></span>
       </label>
       {bypass && (
         <div style={bannerStyle}>
@@ -86,7 +86,7 @@ export function BypassPill({ bypass, setBypass }: { bypass: boolean; setBypass: 
     <label
       title={bypass
         ? 'Bypass: new sessions skip ALL approval prompts (each pane shows ⚡ while armed). Click for Auto.'
-        : 'Auto: new sessions auto-accept file edits; commands still ask. Click to arm Bypass.'}
+        : 'Auto: new sessions run in claude’s auto permission mode. Click to arm Bypass.'}
       className={'agent-term-pill' + (bypass ? ' on' : ' auto')}
     >
       <input type="checkbox" checked={bypass} onChange={e => setBypass(e.target.checked)} />
