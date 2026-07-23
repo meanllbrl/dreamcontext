@@ -1110,14 +1110,16 @@ export function TaskDetailPanel({ task, onClose, initialRiceExpanded }: TaskDeta
               </TaskField>
 
               <TaskField label="Summary" htmlFor="tf-summary">
-                <input
+                {/* A paragraph, not a one-liner: summaries are sentences, and a
+                    single-line input made anything past ~40 chars unreadable. */}
+                <textarea
                   id="tf-summary"
-                  className="prop-text-input"
+                  className="prop-text-input prop-textarea"
                   defaultValue={task.description}
                   key={`desc-${task.slug}-${task.description}`}
-                  placeholder="One-line summary"
+                  placeholder="Short summary of the task"
+                  rows={3}
                   onBlur={e => { if (e.target.value.trim() && e.target.value.trim() !== task.description) handleTextField('description', e.target.value); }}
-                  onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
                 />
               </TaskField>
               {/* The old "Description" row rendered `task.description` a SECOND time, read-only,

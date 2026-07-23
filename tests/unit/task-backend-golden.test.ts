@@ -123,7 +123,7 @@ async function route(
 async function runOperationScript(): Promise<void> {
   // ── CLI verbs ──
   await cli('tasks', 'create', 'Golden Alpha', '-d', 'First golden task', '-w', 'Because golden bytes matter', '-t', 'alpha,golden', '-v', '0.7.1');
-  await cli('tasks', 'create', 'Golden Beta', '--priority', 'high', '--urgency', 'low', '-s', 'in_progress', '--reach', '5', '--impact', '4', '--confidence', '75', '--effort', '2');
+  await cli('tasks', 'create', 'Golden Beta', '-w', 'Golden coverage of the rice create branch', '--priority', 'high', '--urgency', 'low', '-s', 'in_progress', '--reach', '5', '--impact', '4', '--confidence', '75', '--effort', '2');
   await cli('tasks', 'insert', 'golden-alpha', 'acceptance_criteria', 'Criterion one is met');
   await cli('tasks', 'insert', 'golden-alpha', 'user_stories', 'As a dev, I can replay golden ops, so that refactors are provably safe');
   await cli('tasks', 'insert', 'golden-alpha', 'notes', 'A working note');

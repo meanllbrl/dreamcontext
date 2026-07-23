@@ -278,7 +278,7 @@ describe('multi-people awareness', () => {
     it('when multiPerson, the responsible person is recorded as a person:<name> tag in task frontmatter', async () => {
       writeSetupConfig(fx.projectRoot, baseConfig({ people: ['mehmet', 'ada'] }));
       await runCli(registerTasksCommand, [
-        'tasks', 'create', 'Ship rostering', '--person', 'Ada',
+        'tasks', 'create', 'Ship rostering', '-w', 'test why', '--person', 'Ada',
       ]);
       const taskMd = readFileSync(join(fx.contextRoot, 'state', 'ship-rostering.md'), 'utf-8');
       expect(taskMd).toMatch(/tags:[^\n]*person:ada/);
@@ -286,8 +286,8 @@ describe('multi-people awareness', () => {
 
     it('tasks list can filter/group by person:<name> tag (reuses existing tag handling)', async () => {
       writeSetupConfig(fx.projectRoot, baseConfig({ people: ['mehmet', 'ada'] }));
-      await runCli(registerTasksCommand, ['tasks', 'create', 'Task A', '--person', 'Ada']);
-      await runCli(registerTasksCommand, ['tasks', 'create', 'Task B', '--person', 'Mehmet']);
+      await runCli(registerTasksCommand, ['tasks', 'create', 'Task A', '-w', 'test why', '--person', 'Ada']);
+      await runCli(registerTasksCommand, ['tasks', 'create', 'Task B', '-w', 'test why', '--person', 'Mehmet']);
 
       // --tag person:ada filters via the EXISTING task-query tag handling (the
       // tag was injected into the generic tags array — task-query.ts unchanged).
@@ -311,7 +311,7 @@ describe('multi-people awareness', () => {
     it('single-person projects do not get person tags injected', async () => {
       writeSetupConfig(fx.projectRoot, baseConfig()); // no roster ⇒ single-person
       await runCli(registerTasksCommand, [
-        'tasks', 'create', 'Solo task', '--person', 'Ada',
+        'tasks', 'create', 'Solo task', '-w', 'test why', '--person', 'Ada',
       ]);
       const taskMd = readFileSync(join(fx.contextRoot, 'state', 'solo-task.md'), 'utf-8');
       expect(taskMd).not.toContain('person:');

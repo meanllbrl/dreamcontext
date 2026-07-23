@@ -9,6 +9,7 @@ export const SECTION_MAP: Record<string, string> = {
   user_stories: 'User Stories',
   acceptance_criteria: 'Acceptance Criteria',
   why: 'Why',
+  workflow: 'Workflow',
 };
 
 export interface PreparedInsert {

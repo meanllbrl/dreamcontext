@@ -177,8 +177,21 @@ export function insertToSection(
 
   if (!section) {
     if (createIfMissing) {
-      // Append a new ## section at the end of the file body, then re-locate it.
-      lines.push('', `## ${sectionName}`);
+      // Sections are scaffolded on first insert (lean template). Keep Changelog
+      // as the last section: new sections slot in right before it when present,
+      // else append at the end of the file body. Re-locate after the splice.
+      const changelog = sectionName === 'Changelog'
+        ? null
+        : findSection(parseSections(lines.join('\n')), 'Changelog');
+      if (changelog) {
+        const insertion = [`## ${sectionName}`, ''];
+        if (changelog.startLine > 0 && (lines[changelog.startLine - 1]?.trim() ?? '') !== '') {
+          insertion.unshift('');
+        }
+        lines.splice(changelog.startLine, 0, ...insertion);
+      } else {
+        lines.push('', `## ${sectionName}`);
+      }
       section = findSection(parseSections(lines.join('\n')), sectionName);
     } else {
       throw new Error(`Section "${sectionName}" not found in ${filePath}`);
@@ -202,6 +215,10 @@ export function insertToSection(
     ) {
       insertAt++;
     }
+    // Blank/comment-only body (a section created on first insert): the scan
+    // ran off the section's end — go back under the header, else the content
+    // lands glued to the NEXT section's `##` line.
+    if (insertAt > section.endLine) insertAt = section.startLine + 1;
     lines.splice(insertAt, 0, '', ...contentLines);
   } else {
     // Insert after the last non-blank content line of the section.

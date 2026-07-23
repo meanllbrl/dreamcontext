@@ -49,7 +49,7 @@ live outside the file. Hand-rewriting the markdown breaks those silently. So:
 | Record what you did | `dreamcontext tasks log <slug> "<note>"` |
 | Move the lifecycle | `dreamcontext tasks status <slug> <status> "<reason>"` |
 | Finish it | `dreamcontext tasks complete <slug> "<summary>"` |
-| Split out a child | `dreamcontext tasks create "<name>" …` then set `parent_task` on the child |
+| Split out a child | `dreamcontext tasks create "<sentence-style name>" -w "<why>" …` (why is mandatory; names are plain sentences, not slugs) then set `parent_task` on the child |
 | Retitle | `dreamcontext tasks rename <slug> "<new name>"` (keeps file + slug + remote mapping aligned) |
 | Tags / dates / version / feature / objectives / RICE / custom fields | `dreamcontext tasks tag \| start \| due \| version \| feature \| objectives \| rice \| field` |
 
@@ -60,6 +60,8 @@ hand; there is a command for every field.
 **Always finish with `dreamcontext tasks doctor <slug>`.** It verifies the Workflow flowchart is
 still in sync with the Acceptance Criteria. If you added, removed, or reworded a criterion, the
 mermaid needs a matching node — doctor is how you find out you broke it. Green, or keep going.
+The Workflow section is **opt-in** (lean tasks are born without it — doctor passes silently
+then); if the task has one, keep it in sync, and never add an empty flowchart just to have one.
 
 ## The four moves
 

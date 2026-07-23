@@ -507,7 +507,14 @@ export function registerTasksCommand(program: Command): void {
           if (!tags.includes(personTag)) tags.push(personTag);
         }
       }
-      const why = opts.why || '';
+      // Every task records why it exists (created_at covers the "when") — a
+      // task whose reason is missing is unreadable months later, so an empty
+      // scaffold cannot be created.
+      const why = (opts.why ?? '').trim();
+      if (!why) {
+        error('Every task must say why it exists — pass -w/--why "<reason>".');
+        return;
+      }
       const version = opts.version || getActivePlanningVersion();
 
       const riceInput: RiceInput = {};
@@ -1019,7 +1026,7 @@ export function registerTasksCommand(program: Command): void {
     .argument('<name>')
     .argument(
       '<section>',
-      'Section: why, user_stories, acceptance_criteria, constraints, technical_details, notes, changelog',
+      'Section: why, user_stories, acceptance_criteria, workflow, constraints, technical_details, notes, changelog (created on first insert)',
     )
     .argument('[content...]', 'Content to insert')
     .description('Insert content into a task section')
@@ -1552,7 +1559,8 @@ function checkWorkflow(file: string): string[] {
   const issues: string[] = [];
   const workflow = readSection(file, 'Workflow');
   if (workflow === null) {
-    issues.push('Missing `## Workflow` section.');
+    // Lean scaffold: the Workflow flowchart is opt-in. No section → nothing to
+    // be out of sync with the Acceptance Criteria.
     return issues;
   }
   if (!/```mermaid[\s\S]*?```/.test(workflow)) {

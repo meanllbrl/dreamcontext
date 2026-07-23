@@ -317,8 +317,12 @@ For non-file-change work (decisions, architecture talk): `dreamcontext sleep add
 
 Tasks are your **working documents**: all context, decisions, user stories, acceptance criteria, constraints, notes, and progress go in the task body. The auto-loaded snapshot already lists active tasks — answer "what am I working on?" from it.
 
+**Naming: a task name is a short plain sentence saying what the task does** — "Fix the login redirect loop", "Dashboard renders the summary as a paragraph". Never a type-prefixed slug (`feat-x-y`, `fix-login-redirect`) — the slug is derived automatically from the name; you never write slug-style names yourself.
+
+**`-w/--why` is mandatory** — creation fails without it. New tasks scaffold lean: only `## Why` and `## Changelog` exist at birth; every other section appears when you first `tasks insert` into it. Never insert placeholder content to "fill out" a task — a section with nothing to say shouldn't exist.
+
 ```bash
-dreamcontext tasks create <name> -d "..." -p high -w "Why this matters"   # create
+dreamcontext tasks create "Readable sentence name" -d "..." -p high -w "Why this matters"   # create (-w REQUIRED)
 dreamcontext tasks list --status todo --tag backend                       # filter (composable)
 dreamcontext tasks insert <name> acceptance_criteria "API returns 200…"   # enrich a section
 dreamcontext tasks log <name> "Implemented pagination"                    # progress (MANDATORY)
@@ -326,7 +330,7 @@ dreamcontext tasks status <name> in_review "Ready for review"             # bump
 dreamcontext tasks complete <name> "summary"                             # done
 ```
 
-Status: `todo → in_progress → in_review → completed`. Sections: `why`, `user_stories`, `acceptance_criteria`, `constraints`, `technical_details`, `notes`, `changelog`.
+Status: `todo → in_progress → in_review → completed`. Sections: `why`, `user_stories`, `acceptance_criteria`, `workflow`, `constraints`, `technical_details`, `notes`, `changelog` — created on first insert, slotted before Changelog.
 
 **Custom fields (if this project declares them).** When `_dream_context/overrides/task.md` exists, every task carries project-defined custom fields. Their **values are surfaced to you inline** — in the snapshot's Active Tasks block and in `dreamcontext tasks list --long` — so you can see them without opening the file; unset **required** fields show as `⚠ UNSET (required)`. When you create or reconcile a task, **set every declared field** (`dreamcontext tasks field <slug> <key> <value>` or `tasks create --field key=value`). **REQUIRED fields are mandatory — never create or complete a task with a required field left empty.** Fields marked **[ASK THE USER]** (`ask: true`) capture a human judgment (e.g. a time estimate) — **ask the user for the value when creating the task instead of guessing it.** The full schema + sync behavior → [tasks-and-features.md](references/tasks-and-features.md).
 

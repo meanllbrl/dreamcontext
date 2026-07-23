@@ -168,7 +168,10 @@ const CATEGORIES: MenuCategory[] = [
         name: 'Create task',
         description: 'Create a new task',
         argv: ['tasks', 'create'],
-        args: [{ name: 'Task name', type: 'input' }],
+        args: [
+          { name: 'Task name (a short plain sentence)', type: 'input' },
+          { name: 'Why is this task needed?', type: 'input', flag: '-w' },
+        ],
       },
       {
         emoji: '\u{1F4DD}',

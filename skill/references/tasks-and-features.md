@@ -14,11 +14,15 @@ The sleep agent picks the status that matches reality: `completed` for work that
 
 ### Create
 ```bash
-dreamcontext tasks create <name> \
+dreamcontext tasks create "Readable sentence name" \
   --description "..." --priority medium --why "What this accomplishes" \
   [--version v0.9.0] [--person "Ada"] [--due 2026-07-01] [--tags backend,api]
 ```
 Defaults: `priority=medium`, `status=todo`. A task created without `--version` auto-attaches to the **active planning version** (see Versioning).
+
+- **Name = a short plain sentence** describing what the task does ("Fix the login redirect loop"). Never a type-prefixed slug (`feat-x-y`) — the file slug is derived from the name automatically.
+- **`--why` is mandatory.** Creation fails without a non-empty reason; `created_at` covers the "when". A task must be readable months later on its Why alone.
+- **Lean scaffold.** New tasks contain only `## Why` and `## Changelog`. Every other section (`user_stories`, `acceptance_criteria`, `workflow`, `constraints`, `technical_details`, `notes`) is created on first `tasks insert` — in canonical position, before Changelog. Never insert placeholders to "complete" the shape; a section with nothing to say shouldn't exist.
 
 ### Enrich (insert into any section during active work)
 ```bash
@@ -29,7 +33,7 @@ dreamcontext tasks insert <name> technical_details "Key file: src/api/tasks.ts (
 dreamcontext tasks insert <name> notes "Edge case: empty results return [] not null"
 dreamcontext tasks insert <name> changelog "Implemented pagination for /api/tasks"
 ```
-Sections: `why`, `user_stories`, `acceptance_criteria`, `constraints`, `technical_details`, `notes`, `changelog`.
+Sections: `why`, `user_stories`, `acceptance_criteria`, `workflow`, `constraints`, `technical_details`, `notes`, `changelog`. A missing section is created on first insert (before Changelog); `workflow` holds the mermaid flowchart — add it only when the task is big enough to need one (`tasks doctor` validates it against the criteria once present).
 
 ### Lifecycle commands
 ```bash
@@ -165,7 +169,7 @@ An **insight** is a named, curated **metric backed by an external source** — "
 **How agents see it:** the SessionStart snapshot renders a **Lab** section (title / latest value / staleness / group) — answer "what's our MRR?" from it without tool calls. Deeper: `dreamcontext lab show <slug>` (cache only, no fetch) and `memory recall "<meaning phrase>" --types insight`. The dashboard has a Lab page (number/line/pie/raw cards + funnel mini-table cards, per-insight refresh, sync-all, tweak editing).
 
 ```bash
-dreamcontext lab create <slug> --title "Weekly Active Users" [--render number|line|pie|raw|funnel] [--adapter http|script] [--group <section>] [--unit users] [--ttl 1440]
+dreamcontext lab create <slug> --title "Weekly Active Users" [--render number|line|pie|raw|funnel] [--adapter http|script] [--category <tab>] [--group <section>] [--unit users] [--ttl 1440]
 dreamcontext lab sync <slug> [--force]      # one insight (TTL-fresh is skipped unless --force)
 dreamcontext lab sync --all [--force]       # every insight; exits non-zero if any fail
 dreamcontext lab list [--json]              # all insights with latest value + staleness
@@ -215,7 +219,7 @@ Mirrors proactive objective capture. When the user states or implies a recurring
 
 1. **Dedup first.** `dreamcontext memory recall "<metric>" --types insight` and `dreamcontext lab list`. If one covers it, offer to update/re-sync it instead.
 2. **Offer it.** *"Want me to track this as a Lab insight so every session sees the current value?"* Never create without a yes.
-3. **Agree the shape.** Slug, title, render (number/line/pie/raw), group, unit — and write a real `## Meaning` section (it powers recall).
+3. **Agree the shape.** Slug, title, render (number/line/pie/raw), category (top-level dashboard tab, e.g. "Marketing"), group (section within it), unit — and write a real `## Meaning` section (it powers recall).
 4. **Pick the source.** HTTP endpoint (+ extract path) or a custom script. Secrets go in via `dreamcontext lab credentials set <key>` — never inline in the manifest.
 5. **Declare tweaks** the user will want to adjust (typed `enum`/`date`/`string`; a relative range is an enum tweak keyed `range`).
 6. **Scaffold + first sync.** `lab create`, edit the manifest, `lab sync <slug>`, confirm the value looks right.

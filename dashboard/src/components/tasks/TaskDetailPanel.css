@@ -1109,6 +1109,15 @@
   border-color: var(--color-accent);
 }
 
+/* Multi-line variant (Summary): reads as a paragraph, grows vertically only. */
+.prop-textarea {
+  max-width: none;
+  min-height: calc(var(--font-size-sm) * 1.5 * 3);
+  line-height: 1.5;
+  resize: vertical;
+  font-family: inherit;
+}
+
 .prop-danger-row {
   margin-top: var(--space-4);
   padding-top: var(--space-3);

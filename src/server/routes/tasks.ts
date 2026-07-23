@@ -262,7 +262,13 @@ export async function handleTasksCreate(
   const priority = (body.priority as string) ?? 'medium';
   const urgency = (body.urgency as string) ?? 'medium';
   const tags = Array.isArray(body.tags) ? body.tags as string[] : [];
-  const why = (body.why as string) ?? '';
+  // Every task records why it exists (created_at covers the "when") — reject
+  // empty scaffolds from the dashboard the same way the CLI does.
+  const why = typeof body.why === 'string' ? body.why.trim() : '';
+  if (!why) {
+    sendError(res, 400, 'missing_why', 'Every task must say why it exists — provide a non-empty "why".');
+    return;
+  }
   const version = (body.version as string) ?? null;
 
   const validPriorities = ['critical', 'high', 'medium', 'low'];

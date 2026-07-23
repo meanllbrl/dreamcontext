@@ -77,34 +77,35 @@ describe('CLI commands (integration)', () => {
     });
 
     it('creates a task', () => {
-      const output = run('tasks create my-task --description "Do the thing" --priority high', tmpDir);
+      const output = run('tasks create my-task --description "Do the thing" --priority high -w "test why"', tmpDir);
       expect(output).toContain('created');
       expect(existsSync(join(tmpDir, '_dream_context', 'state', 'my-task.md'))).toBe(true);
     });
 
-    it('creates a task with rich template sections', () => {
-      run('tasks create rich-task --description "Test rich" --priority medium --why "Testing rich templates"', tmpDir);
-      const content = readFileSync(join(tmpDir, '_dream_context', 'state', 'rich-task.md'), 'utf-8');
+    it('creates a task with the lean scaffold (Why + Changelog only)', () => {
+      run('tasks create lean-task --description "Test lean" --priority medium --why "Testing the lean scaffold"', tmpDir);
+      const content = readFileSync(join(tmpDir, '_dream_context', 'state', 'lean-task.md'), 'utf-8');
       expect(content).toContain('## Why');
-      expect(content).toContain('Testing rich templates');
-      expect(content).toContain('## User Stories');
-      expect(content).toContain('## Acceptance Criteria');
-      expect(content).toContain('## Constraints & Decisions');
-      expect(content).toContain('## Technical Details');
-      expect(content).toContain('## Notes');
+      expect(content).toContain('Testing the lean scaffold');
       expect(content).toContain('## Changelog');
       expect(content).toContain('related_feature: null');
+      // Empty sections are not scaffolded — they appear on first insert.
+      expect(content).not.toContain('## User Stories');
+      expect(content).not.toContain('## Acceptance Criteria');
+      expect(content).not.toContain('## Workflow');
+      expect(content).not.toContain('## Constraints & Decisions');
+      expect(content).not.toContain('## Technical Details');
+      expect(content).not.toContain('## Notes');
     });
 
-    it('creates a task without --why and uses default', () => {
-      run('tasks create no-why --description "No why" --priority low', tmpDir);
-      const content = readFileSync(join(tmpDir, '_dream_context', 'state', 'no-why.md'), 'utf-8');
-      expect(content).toContain('## Why');
-      expect(content).toContain('(To be defined)');
+    it('refuses to create a task without --why', () => {
+      const output = run('tasks create no-why --description "No why" --priority low', tmpDir);
+      expect(output).toContain('why it exists');
+      expect(existsSync(join(tmpDir, '_dream_context', 'state', 'no-why.md'))).toBe(false);
     });
 
     it('inserts into task user_stories section', () => {
-      run('tasks create ins-test --description "Test" --priority low', tmpDir);
+      run('tasks create ins-test --description "Test" --priority low -w "test why"', tmpDir);
       const output = run('tasks insert ins-test user_stories "As a user, I want to test inserts"', tmpDir);
       expect(output).toContain('Inserted');
       const content = readFileSync(join(tmpDir, '_dream_context', 'state', 'ins-test.md'), 'utf-8');
@@ -112,21 +113,21 @@ describe('CLI commands (integration)', () => {
     });
 
     it('inserts into task acceptance_criteria section', () => {
-      run('tasks create ac-test --description "Test" --priority low', tmpDir);
+      run('tasks create ac-test --description "Test" --priority low -w "test why"', tmpDir);
       run('tasks insert ac-test acceptance_criteria "Tests pass with 100% coverage"', tmpDir);
       const content = readFileSync(join(tmpDir, '_dream_context', 'state', 'ac-test.md'), 'utf-8');
       expect(content).toContain('Tests pass with 100% coverage');
     });
 
     it('inserts into task constraints with auto-date', () => {
-      run('tasks create ct-test --description "Test" --priority low', tmpDir);
+      run('tasks create ct-test --description "Test" --priority low -w "test why"', tmpDir);
       run('tasks insert ct-test constraints "No external dependencies"', tmpDir);
       const content = readFileSync(join(tmpDir, '_dream_context', 'state', 'ct-test.md'), 'utf-8');
       expect(content).toMatch(/\*\*\[\d{4}-\d{2}-\d{2}\]\*\* No external dependencies/);
     });
 
     it('inserts into task changelog with auto-date header', () => {
-      run('tasks create cl-test --description "Test" --priority low', tmpDir);
+      run('tasks create cl-test --description "Test" --priority low -w "test why"', tmpDir);
       run('tasks insert cl-test changelog "Added pagination support"', tmpDir);
       const content = readFileSync(join(tmpDir, '_dream_context', 'state', 'cl-test.md'), 'utf-8');
       expect(content).toContain('Added pagination support');
@@ -134,7 +135,7 @@ describe('CLI commands (integration)', () => {
     });
 
     it('rejects unknown task section', () => {
-      run('tasks create uk-test --description "Test" --priority low', tmpDir);
+      run('tasks create uk-test --description "Test" --priority low -w "test why"', tmpDir);
       const output = run('tasks insert uk-test invalid_section "content"', tmpDir);
       expect(output).toContain('Unknown section');
     });
@@ -169,14 +170,14 @@ parent_task: null
     });
 
     it('logs progress to a task', () => {
-      run('tasks create log-test --description "Test" --priority low', tmpDir);
+      run('tasks create log-test --description "Test" --priority low -w "test why"', tmpDir);
       run('tasks log log-test "Implemented feature X"', tmpDir);
       const content = readFileSync(join(tmpDir, '_dream_context', 'state', 'log-test.md'), 'utf-8');
       expect(content).toContain('Implemented feature X');
     });
 
     it('completes a task without a summary in non-interactive mode (no hang)', () => {
-      run('tasks create no-summary --description "Test" --priority low', tmpDir);
+      run('tasks create no-summary --description "Test" --priority low -w "test why"', tmpDir);
       // `run` invokes via execSync with no TTY; the bare form must not block on a prompt.
       const output = run('tasks complete no-summary', tmpDir);
       expect(output).toContain('completed');
@@ -186,15 +187,15 @@ parent_task: null
     });
 
     it('completes a task', () => {
-      run('tasks create done-task --description "Test" --priority low', tmpDir);
+      run('tasks create done-task --description "Test" --priority low -w "test why"', tmpDir);
       run('tasks complete done-task "All done"', tmpDir);
       const content = readFileSync(join(tmpDir, '_dream_context', 'state', 'done-task.md'), 'utf-8');
       expect(content).toContain('status: completed');
       expect(content).toContain('All done');
     });
 
-    it('creates a task with no flags (uses defaults, no prompts)', () => {
-      const output = run('tasks create defaults-test', tmpDir);
+    it('creates a task with only --why (uses defaults, no prompts)', () => {
+      const output = run('tasks create defaults-test -w "test why"', tmpDir);
       expect(output).toContain('created');
       const content = readFileSync(join(tmpDir, '_dream_context', 'state', 'defaults-test.md'), 'utf-8');
       expect(content).toContain('priority: "medium"');
@@ -204,7 +205,7 @@ parent_task: null
     });
 
     it('creates a task with --status and --tags flags', () => {
-      run('tasks create flagged-task -d "Flagged" -p high -s in_progress -t "backend,api"', tmpDir);
+      run('tasks create flagged-task -d "Flagged" -p high -s in_progress -t "backend,api" -w "test why"', tmpDir);
       const content = readFileSync(join(tmpDir, '_dream_context', 'state', 'flagged-task.md'), 'utf-8');
       expect(content).toContain('status: "in_progress"');
       expect(content).toContain('priority: "high"');
@@ -213,31 +214,31 @@ parent_task: null
     });
 
     it('creates a task with --status completed', () => {
-      run('tasks create completed-task -d "Done from start" -s completed', tmpDir);
+      run('tasks create completed-task -d "Done from start" -s completed -w "test why"', tmpDir);
       const content = readFileSync(join(tmpDir, '_dream_context', 'state', 'completed-task.md'), 'utf-8');
       expect(content).toContain('status: "completed"');
     });
 
     it('creates a task with --status in_review', () => {
-      run('tasks create review-task -d "Needs review" -s in_review', tmpDir);
+      run('tasks create review-task -d "Needs review" -s in_review -w "test why"', tmpDir);
       const content = readFileSync(join(tmpDir, '_dream_context', 'state', 'review-task.md'), 'utf-8');
       expect(content).toContain('status: "in_review"');
     });
 
     it('rejects invalid status', () => {
-      const output = run('tasks create bad-status -s done', tmpDir);
+      const output = run('tasks create bad-status -s done -w "test why"', tmpDir);
       expect(output).toContain('Status must be one of');
     });
 
     it('rejects invalid priority', () => {
-      const output = run('tasks create bad-prio -p urgent', tmpDir);
+      const output = run('tasks create bad-prio -p urgent -w "test why"', tmpDir);
       expect(output).toContain('Priority must be one of');
     });
 
     it('lists non-completed tasks by default', () => {
-      run('tasks create active-one -d "Active" -p high -s in_progress', tmpDir);
-      run('tasks create backlog-one -d "Backlog" -p low', tmpDir);
-      run('tasks create done-one -d "Done" -s completed', tmpDir);
+      run('tasks create active-one -d "Active" -p high -s in_progress -w "test why"', tmpDir);
+      run('tasks create backlog-one -d "Backlog" -p low -w "test why"', tmpDir);
+      run('tasks create done-one -d "Done" -s completed -w "test why"', tmpDir);
       const output = run('tasks list', tmpDir);
       expect(output).toContain('active-one');
       expect(output).toContain('backlog-one');
@@ -245,39 +246,39 @@ parent_task: null
     });
 
     it('lists all tasks with --all flag', () => {
-      run('tasks create list-all-active -d "A" -p low', tmpDir);
-      run('tasks create list-all-done -d "D" -s completed', tmpDir);
+      run('tasks create list-all-active -d "A" -p low -w "test why"', tmpDir);
+      run('tasks create list-all-done -d "D" -s completed -w "test why"', tmpDir);
       const output = run('tasks list --all', tmpDir);
       expect(output).toContain('list-all-active');
       expect(output).toContain('list-all-done');
     });
 
     it('filters by status with --status flag', () => {
-      run('tasks create status-todo -d "Todo" -p low -s todo', tmpDir);
-      run('tasks create status-ip -d "IP" -p low -s in_progress', tmpDir);
+      run('tasks create status-todo -d "Todo" -p low -s todo -w "test why"', tmpDir);
+      run('tasks create status-ip -d "IP" -p low -s in_progress -w "test why"', tmpDir);
       const output = run('tasks list -s in_progress', tmpDir);
       expect(output).toContain('status-ip');
       expect(output).not.toContain('status-todo');
     });
 
     it('shows no active tasks message when all completed', () => {
-      run('tasks create only-done -d "D" -s completed', tmpDir);
+      run('tasks create only-done -d "D" -s completed -w "test why"', tmpDir);
       const output = run('tasks list', tmpDir);
       expect(output).toContain('No active tasks');
     });
 
     it('filters by --tag with AND semantics', () => {
-      run('tasks create tag-both -d "x" -t memoryos,backend', tmpDir);
-      run('tasks create tag-one -d "x" -t memoryos', tmpDir);
+      run('tasks create tag-both -d "x" -t memoryos,backend -w "test why"', tmpDir);
+      run('tasks create tag-one -d "x" -t memoryos -w "test why"', tmpDir);
       const output = run('tasks list --tag memoryos --tag backend', tmpDir);
       expect(output).toContain('tag-both');
       expect(output).not.toContain('tag-one');
     });
 
     it('filters by --any-tag with OR semantics', () => {
-      run('tasks create any-a -d "x" -t backend', tmpDir);
-      run('tasks create any-b -d "x" -t frontend', tmpDir);
-      run('tasks create any-c -d "x" -t docs', tmpDir);
+      run('tasks create any-a -d "x" -t backend -w "test why"', tmpDir);
+      run('tasks create any-b -d "x" -t frontend -w "test why"', tmpDir);
+      run('tasks create any-c -d "x" -t docs -w "test why"', tmpDir);
       const output = run('tasks list --any-tag backend --any-tag frontend', tmpDir);
       expect(output).toContain('any-a');
       expect(output).toContain('any-b');
@@ -285,8 +286,8 @@ parent_task: null
     });
 
     it('filters by --version and --priority', () => {
-      run('tasks create v-s5 -d "x" -v S5 -p critical', tmpDir);
-      run('tasks create v-backlog -d "x" -v BACKLOG -p low', tmpDir);
+      run('tasks create v-s5 -d "x" -v S5 -p critical -w "test why"', tmpDir);
+      run('tasks create v-backlog -d "x" -v BACKLOG -p low -w "test why"', tmpDir);
       expect(run('tasks list --version S5', tmpDir)).toContain('v-s5');
       expect(run('tasks list --version S5', tmpDir)).not.toContain('v-backlog');
       expect(run('tasks list --priority critical', tmpDir)).toContain('v-s5');
@@ -294,15 +295,15 @@ parent_task: null
     });
 
     it('groups output with --group-by version', () => {
-      run('tasks create g-a -d "x" -v S5', tmpDir);
-      run('tasks create g-b -d "x" -v S6', tmpDir);
+      run('tasks create g-a -d "x" -v S5 -w "test why"', tmpDir);
+      run('tasks create g-b -d "x" -v S6 -w "test why"', tmpDir);
       const output = run('tasks list --group-by version', tmpDir);
       expect(output).toMatch(/S5 \(1\)/);
       expect(output).toMatch(/S6 \(1\)/);
     });
 
     it('emits JSON with --json', () => {
-      run('tasks create json-task -d "A JSON task" -t memoryos -v S5 -p high', tmpDir);
+      run('tasks create json-task -d "A JSON task" -t memoryos -v S5 -p high -w "test why"', tmpDir);
       const output = run('tasks list --tag memoryos --json', tmpDir);
       const parsed = JSON.parse(output);
       expect(Array.isArray(parsed)).toBe(true);
@@ -314,15 +315,15 @@ parent_task: null
     });
 
     it('lists distinct tags with counts via `tasks tags`', () => {
-      run('tasks create tags-a -d "x" -t memoryos,backend', tmpDir);
-      run('tasks create tags-b -d "x" -t memoryos', tmpDir);
+      run('tasks create tags-a -d "x" -t memoryos,backend -w "test why"', tmpDir);
+      run('tasks create tags-b -d "x" -t memoryos -w "test why"', tmpDir);
       const output = run('tasks tags', tmpDir);
       expect(output).toMatch(/memoryos\s+2/);
       expect(output).toMatch(/backend\s+1/);
     });
 
     it('rejects an invalid --group-by field', () => {
-      run('tasks create gb-bad -d "x"', tmpDir);
+      run('tasks create gb-bad -d "x" -w "test why"', tmpDir);
       const output = run('tasks list --group-by nonsense', tmpDir);
       expect(output).toContain('--group-by must be one of');
     });
@@ -740,7 +741,7 @@ parent_task: null
 
     it('returns full context after init and task creation', () => {
       run('init --yes --name "Snapshot Test" --description "d" --stack "Node" --priority "p"', tmpDir);
-      run('tasks create my-task --description "Do stuff" --priority high', tmpDir);
+      run('tasks create my-task --description "Do stuff" --priority high -w "test why"', tmpDir);
       const output = run('snapshot', tmpDir);
       expect(output).toContain('# Agent Context');
       expect(output).toContain('Snapshot Test');
@@ -1041,8 +1042,8 @@ parent_task: null
     });
 
     it('errors on ambiguous task prefix match', () => {
-      run('tasks create auth-ui --description "UI" --priority low', tmpDir);
-      run('tasks create auth-backend --description "Backend" --priority low', tmpDir);
+      run('tasks create auth-ui --description "UI" --priority low -w "test why"', tmpDir);
+      run('tasks create auth-backend --description "Backend" --priority low -w "test why"', tmpDir);
       const output = run('tasks log auth- "Some progress"', tmpDir);
       expect(output).toContain('Ambiguous');
       expect(output).toContain('auth-ui');
@@ -1059,8 +1060,8 @@ parent_task: null
     });
 
     it('resolves exact match without ambiguity', () => {
-      run('tasks create auth --description "Auth" --priority low', tmpDir);
-      run('tasks create auth-ui --description "UI" --priority low', tmpDir);
+      run('tasks create auth --description "Auth" --priority low -w "test why"', tmpDir);
+      run('tasks create auth-ui --description "UI" --priority low -w "test why"', tmpDir);
       const output = run('tasks log auth "Exact match works"', tmpDir);
       expect(output).toContain('Log entry added');
     });
@@ -1072,7 +1073,7 @@ parent_task: null
       run('init --yes --name "E2E" --description "End to end test" --stack "TypeScript" --priority "v1"', tmpDir);
 
       // Create task
-      run('tasks create implement-auth --description "Build authentication" --priority high', tmpDir);
+      run('tasks create implement-auth --description "Build authentication" --priority high -w "test why"', tmpDir);
 
       // Log progress
       run('tasks log implement-auth "Added JWT middleware"', tmpDir);
@@ -1118,7 +1119,7 @@ parent_task: null
     });
 
     it('auto-discovers completed tasks', () => {
-      run('tasks create auth -d "Build auth" -p high', tmpDir);
+      run('tasks create auth -d "Build auth" -p high -w "test why"', tmpDir);
       run('tasks complete auth "Done"', tmpDir);
       const output = run('core releases add --ver 1.0.0 --summary "Auth release" --yes', tmpDir);
       expect(output).toContain('1 tasks');
@@ -1152,7 +1153,7 @@ parent_task: null
     });
 
     it('does not re-include already-released items', () => {
-      run('tasks create task1 -d "T1" -p low', tmpDir);
+      run('tasks create task1 -d "T1" -p low -w "test why"', tmpDir);
       run('tasks complete task1 "Done"', tmpDir);
       run('features create feat1 --why "Why"', tmpDir);
 

@@ -113,48 +113,12 @@ related_feature: null
 version: {{VERSION}}
 ---
 
-## Workflow
-<!-- The shape of this task at a glance. One node per acceptance criterion, grouped under milestone subgraphs. Update node classes as work progresses: \`:::done\` (green), \`:::active\` (amber), \`:::todo\` (gray), \`:::blocked\` (red). Run \`dreamcontext tasks doctor\` to verify sync. -->
-
-\`\`\`mermaid
-flowchart TD
-  subgraph M1 ["Milestone 1 — rename me"]
-    A1[First criterion]:::todo
-  end
-
-  classDef done fill:#86efac,stroke:#15803d,color:#052e16
-  classDef active fill:#fde68a,stroke:#b45309,color:#451a03
-  classDef todo fill:#e5e7eb,stroke:#6b7280,color:#111827
-  classDef blocked fill:#fecaca,stroke:#b91c1c,color:#450a0a
-\`\`\`
-
 ## Why
 <!-- What problem does this solve? What breaks if we don't do it? Be concrete — name the user, the friction, the cost. -->
 
 {{WHY}}
 
-## User Stories
-<!-- As a <role>, I can <action>, so that <outcome>. Tick when demonstrably true in the running system. -->
-
-- [ ] As a [role], I can [action], so that [outcome]
-
-## Acceptance Criteria
-<!-- The contract. Each line is testable and gets a node in the Workflow flowchart above. -->
-
-- [ ] First criterion (matches node A1 in Workflow)
-
-## Constraints & Decisions
-<!-- LIFO: newest at top. Capture the why, not just the what. -->
-
-## Technical Details
-<!-- Where the work lives. Files, services, key functions to reuse. Body is current truth — update in place; don't append. -->
-
-(Key files, services, dependencies, implementation approach.)
-
-## Notes
-<!-- Loose ends, edge cases, open questions. -->
-
-(Working notes, edge cases, open questions.)
+<!-- Other sections (User Stories, Acceptance Criteria, Workflow, Constraints & Decisions, Technical Details, Notes) are created on first insert — \`dreamcontext tasks insert <task> <section> "…"\`. A section that has nothing to say doesn't exist. -->
 
 ## Changelog
 <!-- LIFO: newest at top. Auto-prepended by \`dreamcontext tasks log\`. -->
@@ -460,25 +424,6 @@ version: ${versionYaml}${riceYaml}
 ## Why
 
 ${input.why || '(To be defined)'}
-
-## User Stories
-
-- [ ] As a [user], I want [action] so that [outcome]
-
-## Acceptance Criteria
-
-- (Specific, testable conditions for this task to be complete)
-
-## Constraints & Decisions
-<!-- LIFO: newest decision at top -->
-
-## Technical Details
-
-(Key files, services, dependencies, implementation approach.)
-
-## Notes
-
-(Working notes, edge cases, open questions.)
 
 ## Changelog
 <!-- LIFO: newest entry at top -->

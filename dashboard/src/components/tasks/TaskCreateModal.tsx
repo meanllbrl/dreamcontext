@@ -25,7 +25,7 @@ export function TaskCreateModal({ onClose }: TaskCreateModalProps) {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim()) return;
+    if (!name.trim() || !why.trim()) return;
 
     const tags = tagsInput.split(',').map(t => t.trim()).filter(Boolean);
     const filledFields = Object.fromEntries(
@@ -36,7 +36,7 @@ export function TaskCreateModal({ onClose }: TaskCreateModalProps) {
       {
         name: name.trim(), description, priority, tags,
         urgency: urgency !== 'medium' ? urgency : undefined,
-        why: why.trim() || undefined,
+        why: why.trim(),
         version: version || undefined,
         custom_fields: Object.keys(filledFields).length > 0 ? filledFields : undefined,
       },
@@ -108,6 +108,7 @@ export function TaskCreateModal({ onClose }: TaskCreateModalProps) {
               onChange={e => setWhy(e.target.value)}
               placeholder="Why is this task needed?"
               rows={2}
+              required
             />
           </label>
           <label className="field">
@@ -133,7 +134,7 @@ export function TaskCreateModal({ onClose }: TaskCreateModalProps) {
             <button type="button" className="btn btn--ghost" onClick={onClose}>
               {t('tasks.cancel')}
             </button>
-            <button type="submit" className="btn btn--primary" disabled={!name.trim() || createTask.isPending}>
+            <button type="submit" className="btn btn--primary" disabled={!name.trim() || !why.trim() || createTask.isPending}>
               {createTask.isPending ? '...' : t('tasks.save')}
             </button>
           </div>

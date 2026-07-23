@@ -117,29 +117,34 @@ describe('create from override — custom body shape', () => {
     writeOverride(['---', 'custom_fields:', '  - { name: "Sprint", type: text }', '---', ''].join('\n'));
     const backend = new LocalTaskBackend(stateDir);
     const task = await backend.create({ name: 'No Body', variant: 'cli' });
-    // Shipped shape (override declared fields only, no custom body).
-    expect(task.sections).toContain('User Stories');
-    expect(task.sections).toContain('Acceptance Criteria');
+    // Shipped shape (override declared fields only, no custom body): the lean
+    // scaffold — Why + Changelog only, other sections appear on first insert.
+    expect(task.sections).toContain('Why');
+    expect(task.sections).toContain('Changelog');
+    expect(task.sections).not.toContain('User Stories');
     expect(task.custom_fields).toEqual({ sprint: null });
   });
 });
 
 describe('no override — surfaces stay on the shipped shape', () => {
-  it('cli create uses the shipped full template (Workflow + User Stories)', async () => {
+  it('cli create uses the shipped lean template (Why + Changelog only)', async () => {
     const backend = new LocalTaskBackend(stateDir);
     const task = await backend.create({ name: 'Plain CLI', variant: 'cli' });
-    expect(task.sections).toContain('User Stories');
-    expect(rawTask(task.slug)).toContain('## Workflow');
+    expect(task.sections).toContain('Why');
+    expect(task.sections).toContain('Changelog');
+    expect(task.sections).not.toContain('User Stories');
+    expect(rawTask(task.slug)).not.toContain('## Workflow');
     expect(task.custom_fields).toEqual({});
   });
 
   it('dashboard create uses the compact skeleton, unchanged', async () => {
     const backend = new LocalTaskBackend(stateDir);
     const task = await backend.create({ name: 'Plain Dash', variant: 'dashboard' });
-    // The compact skeleton's exact user-story line — proves the no-override
-    // dashboard path was not disturbed by the override branch.
-    expect(rawTask(task.slug)).toContain('As a [user], I want [action] so that [outcome]');
+    // The compact skeleton is lean too — no placeholder sections.
+    expect(rawTask(task.slug)).toContain('## Why');
+    expect(rawTask(task.slug)).not.toContain('As a [user], I want [action] so that [outcome]');
     expect(rawTask(task.slug)).not.toContain('## Workflow');
+    expect(rawTask(task.slug)).not.toContain('## User Stories');
     expect(task.custom_fields).toEqual({});
   });
 });

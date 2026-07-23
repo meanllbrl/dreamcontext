@@ -26,7 +26,7 @@ This project uses **dreamcontext** — persistent memory for AI agents.
 - Memory recall is auto-injected on prompts (UserPromptSubmit hook, top-3 hits over knowledge + features + tasks + memory + CHANGELOG). Opt-out: `DREAMCONTEXT_MEMORY_HOOK=0`. `memory remember "<note>"` appends a `type=note` CHANGELOG entry — not a LIFO section.
 - Sleep debt is auto-tracked. When prompted, run the sleep flow per the `dreamcontext` skill (parallel fan-out: dispatch `sleep-tasks`, `sleep-state`, and conditionally `sleep-product`). Do not ignore consolidation prompts.
 - Use `dreamcontext-explore` for codebase exploration.
-- All non-trivial work needs a task. Check existing first; create if missing.
+- All non-trivial work needs a task. Check existing first; create if missing: `tasks create "<short sentence name>" -w "<why>"` — the why is mandatory, names are plain sentences (never slugs), and tasks scaffold lean (sections appear on first `tasks insert`; no placeholders).
 </dreamcontext>
 
 <coding>

@@ -93,10 +93,14 @@ dreamcontext core releases active
 # If empty:
 dreamcontext core releases add --ver vX.Y.Z --status planning --summary "<theme>" --yes
 
-# Create the task — auto-attaches to the active planning version
-dreamcontext tasks create "<descriptive-slug>" --status in_progress --priority medium \
-  --description "<one-line scope>"
+# Create the task — auto-attaches to the active planning version.
+# Name = a short plain sentence describing the outcome (never a slug — the file
+# slug derives from the name). -w is MANDATORY: create refuses an empty why.
+dreamcontext tasks create "<short sentence describing the work>" --status in_progress --priority medium \
+  --description "<one-line scope>" -w "<why this work exists>"
 ```
+
+New tasks scaffold lean — only `## Why` and `## Changelog` exist at birth. Add other sections via `tasks insert` only when there is real content for them; **never insert placeholder content to fill out a task's shape** (Lean Task Authoring Pattern).
 
 Untracked, genuinely-separate work is invisible to future sessions — always link it. But a smaller slice of existing work belongs *inside* that task, never in a duplicate.
 
