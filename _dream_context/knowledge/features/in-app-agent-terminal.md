@@ -2,7 +2,7 @@
 id: feat_nM4EnT8k
 status: in_review
 created: '2026-06-28'
-updated: '2026-07-23'
+updated: '2026-07-24'
 tags:
   - 'topic:desktop'
   - 'topic:agents'
@@ -19,6 +19,7 @@ related_tasks:
   - delegate-a-task-to-the-agent-and-track-progress-inline
   - >-
     agent-chat-view-beta-render-claude-sessions-as-native-app-ui-with-captured-questions
+  - agent-chat-redesign-12-state-native-chat-ui-per-corrected-design-brief
 type: feature
 name: in-app-agent-terminal
 description: ''

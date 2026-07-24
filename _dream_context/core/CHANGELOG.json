@@ -1,5 +1,73 @@
 [
   {
+    "date": "2026-07-24",
+    "type": "change",
+    "scope": "agent",
+    "description": "Wave 2 improvements building on the beta foundation (in-progress, uncommitted working tree). chatSession.ts gained reducer arms for sub-agent lifecycle (task-started/updated/notification with status/summary/usage tracking, tool-result correlation stamping resultContent onto SubAgentRun by toolUseId), retry/rewind with pendingRetries set (retry walks history to find the nearest preceding user item and rewinds it as a retry — no draft/draftEpoch write, send(prefill) directly), and alwaysAllow sessionAllow set for permission-request auto-answer (consulted only in permission-request case, never affects question events). New routes: GET /api/agent/file (project-root-scoped file reader with safeChildPath traversal guard, 512KB cap, text/markdown dispatch, raw image bytes for png/jpe?g/gif/webp, SVG always served as text, X-Content-Type-Options:nosniff; desktop-gated; 15 tests), and handleAgentChatHistory extended with optional subagent query param (derives sub-agent sidechain transcript path server-side, parseTranscriptHistory reused verbatim; 13 tests). SkillPickerPopover.tsx extracted from AgentComposerBar.tsx for reuse by chat composer. AgentSettings.chatPermissionMode:'auto'|'bypass' added (default 'auto', coerce x==='bypass'?'bypass':'auto' client+server). Settings page: 'Agent Screen' is now a mutually-exclusive setting (Terminal vs Chat) replacing the 'Chat view' checkbox. New chat/ entity components (chatEntities.ts: toolGlyph, classifyReference, parseEditDiff, SubAgentRun helpers, useCopyableCodeBlocks), lineShadow.ts lib, and 28 new tests across agent-chat-history.test.ts, agent-file-read.test.ts, agent-line-shadow.test.ts, chat-entities.test.ts. Owner-approved 12-state design from Claude Design project, corrected by owner voice instructions 2026-07-24.",
+    "breaking": false,
+    "summary": "Chat view wave 2 (uncommitted): 12-state reducer, sub-agent tracking, file reader, history query, skill picker extraction",
+    "references": [
+      "file:dashboard/src/components/sleepy/chatSession.ts",
+      "file:src/server/routes/agent-chat.ts",
+      "file:dashboard/src/components/sleepy/SkillPickerPopover.tsx",
+      "file:dashboard/src/components/sleepy/chat/chatEntities.ts",
+      "file:dashboard/src/lib/lineShadow.ts",
+      "file:dashboard/src/lib/agentSettings.ts",
+      "file:dashboard/src/pages/SettingsPage.tsx",
+      "file:tests/unit/agent-chat-history.test.ts",
+      "file:tests/unit/agent-file-read.test.ts",
+      "file:tests/unit/chat-entities.test.ts",
+      "task:agent-chat-view-beta-render-claude-sessions-as-native-app-ui-with-captured-questions"
+    ]
+  },
+  {
+    "date": "2026-07-24",
+    "type": "fix",
+    "scope": "agent",
+    "description": "Corrected the bypass-off spawn behavior. The prior implementation used acceptEdits (which booted the TUI with 'accept edits on'), but the intended contract is auto mode (edits approved, commands ask). Both handleOpenTerminal and startPtySession now pass --permission-mode auto explicitly when bypass is off. AgentSetup panel copy updated to clarify the two-state contract. Committed as a snapshot of uncommitted local edits before merging the chat-view branch to allow a clean 3-way merge.",
+    "breaking": false,
+    "summary": "Terminal no-bypass mode: explicit --permission-mode auto instead of acceptEdits",
+    "references": [
+      "commit:da33dfb",
+      "file:src/server/routes/agent-terminal.ts",
+      "file:dashboard/src/components/sleepy/AgentSetup.tsx"
+    ]
+  },
+  {
+    "date": "2026-07-24",
+    "type": "feat",
+    "scope": "agent",
+    "description": "Auto-title now fires on BOTH busy edges: idle→busy uses the session-map entry the UserPromptSubmit hook wrote (title appears seconds after typing the prompt), busy→idle stays as the transcript-based safety net (unchanged fallback). Login-shell claude/PATH resolution is done once per server process instead of per title call (cached in module scope after the first resolve, ~200ms saved on every subsequent title). Plus CSS touch-ups: FunnelDetailPage layout fix, FullscreenOverlay position:fixed inset:0 ensuring announcements reader overlays the topbar (no 60px gap at top). Also includes the fix for desktop app serving stale bundled dist (global CLI -lc nvm resolution issue) — the app now picks up rebuilt dashboard code after npm run build + ⌘Q+reopen.",
+    "breaking": false,
+    "summary": "Agent tabs auto-title on turn start: hook-captured prompt + cached login-shell claude resolution",
+    "references": [
+      "commit:415c0de",
+      "file:src/server/routes/agent-terminal.ts",
+      "file:dashboard/src/components/sleepy/AgentSurface.tsx",
+      "file:dashboard/src/components/lab/funnel/FunnelDetailPage.css",
+      "file:dashboard/src/components/layout/FullscreenOverlay.css",
+      "task:fix-desktop-app-serves-stale-bundled-dist-global-cli-lc-nvm-resolution"
+    ]
+  },
+  {
+    "date": "2026-07-24",
+    "type": "feat",
+    "scope": "agent",
+    "description": "Settings-gated SessionKind 'chat' ships as a beta alternative to the terminal view. Same Claude Code engine (claude -p stream-json), rendered as native React UI instead of xterm. New WS route (agent-chat.ts) spawns the headless engine with a bidirectional control channel — permission requests and AskUserQuestion arrive as structured control_request frames and are answered from native cards (PermissionCard, QuestionCard). Interrupt verified against CLI 2.1.218. Trust primitives extracted to agent-spawn-shared.ts (shared with the PTY bridge, behavior-preserving). Client: chatProtocol.ts (pure NDJSON→ChatEvent parser), chatSession.ts (Session-parity state surface with sub-agent tracking, retry/rewind, alwaysAllow set), ChatPane (markdown bubbles, tool cards, question/permission cards, Stop button, context strip). Chat↔terminal resume both directions via the existing conversation-UUID session map. Default OFF — Settings → Agents → Chat view (BETA); zero behavior change while off. 42 new unit tests (coercion, parser fixtures from empirical spike frames, permission mapping); full suite 3925/0; builds clean.",
+    "breaking": false,
+    "summary": "Chat view (beta): native UI renderer over headless Claude stream-json engine with bidirectional control channel",
+    "references": [
+      "commit:13351e6",
+      "commit:0d84484",
+      "feature:in-app-agent-terminal",
+      "file:src/server/routes/agent-chat.ts",
+      "file:dashboard/src/components/sleepy/ChatPane.tsx",
+      "file:dashboard/src/lib/chatProtocol.ts",
+      "file:dashboard/src/components/sleepy/chatSession.ts",
+      "file:tests/unit/chat-protocol.test.ts"
+    ]
+  },
+  {
     "date": "2026-07-23",
     "type": "fix",
     "scope": "council",
