@@ -59,13 +59,18 @@ export interface ChatUserItem {
 }
 export interface ChatTextItem { kind: 'text'; id: string; index: number; text: string; done: boolean; ts: number }
 export interface ChatThinkingItem { kind: 'thinking'; id: string; index: number; text: string; done: boolean; ts: number }
+/** A tool call THIS conversation's agent made. There is deliberately no `parentToolUseId`
+ *  field: a sub-agent's tool calls never become items at all (the reducer drops every frame
+ *  carrying one), so the transcript is main-agent-only by construction. The field used to
+ *  exist here and was never populated — `parent_tool_use_id` lives on the FRAME, not the
+ *  content block the parser was reading — which made the leak look handled while every
+ *  sub-agent Read/Bash rendered as if the main agent had run it. */
 export interface ChatToolItem {
   kind: 'tool';
   id: string;
   toolUseId: string;
   name: string;
   input: unknown;
-  parentToolUseId?: string;
   status: 'running' | 'done' | 'error';
   startedAt: number;
   endedAt?: number;
@@ -145,13 +150,15 @@ export interface ConversationModel {
    *  exit/rotation — so the stream is the only source, and this is what the composer's
    *  meter reads. Undefined until the first turn reports usage. */
   context?: { used: number; limit: number; pct: number };
-  /** Sub-agent runs reduced from the `task-started`/`task-updated`/`task-notification`
-   *  ChatEvents (contract C7, state 9) — the ONLY channel that carries sub-agent activity:
-   *  a dispatched sub-agent's own text/thinking is never streamed to the parent, and
-   *  `parent_tool_use_id` never appears on a text/thinking content block (spike-verified).
-   *  Rendered by `SubAgentCard`; the spawning tool's own `ChatToolItem` is suppressed by
-   *  the UI via `subAgentToolUseIds` (chatEntities.ts), keyed by `toolUseId` — not by tool
-   *  name, since the CLI streams the tool as `Agent` (aliased with `Task`). */
+  /** Sub-agent runs reduced from the `task-started`/`task-progress`/`task-updated`/
+   *  `task-notification` ChatEvents (contract C7, state 9) — the ONLY channel that carries a
+   *  sub-agent's NARRATIVE: its own text/thinking is never streamed to the parent
+   *  (spike-verified). Its TOOL CALLS are streamed to the parent, stamped with a top-level
+   *  `parent_tool_use_id`, and are dropped rather than rendered — a run is represented here
+   *  by one row whose live `activity` says what it is doing, with the step-by-step behind the
+   *  drill-in. Rendered by `SubAgentCard`; the spawning tool's own `ChatToolItem` is
+   *  suppressed by the UI via `subAgentToolUseIds` (chatEntities.ts), keyed by `toolUseId` —
+   *  not by tool name, since the CLI streams the tool as `Agent` (aliased with `Task`). */
   subAgents: SubAgentRun[];
   /** When the CURRENT turn went in flight (`Date.now()` at the `busy` false→true edge, or
    *  at construction for a server-submitted prompt), cleared when it settles. `busy` alone
@@ -505,12 +512,17 @@ export function createChatSession(
         } else if (ev.blockType === 'tool_use') {
           // Authoritative name/input arrives via `assistant-tool-use` (see file header) —
           // this only opens a running placeholder if one doesn't already exist.
+          // A sub-agent's block never reaches here today (chatProtocol drops sidechain
+          // stream_events whole, because `index` is per-message and would collide), but the
+          // guard is repeated so the "no sub-agent tool in the parent transcript" invariant
+          // holds in the reducer itself, not only upstream.
+          if (ev.parentToolUseId) return;
           const toolUseId = ev.toolUseId ?? nextItemId();
           const existingPos = toolCardPos.get(toolUseId);
           if (existingPos === undefined) {
             const item: ChatToolItem = {
               kind: 'tool', id: nextItemId(), toolUseId, name: ev.toolName ?? '', input: ev.toolInput,
-              parentToolUseId: ev.parentToolUseId, status: 'running', startedAt: Date.now(),
+              status: 'running', startedAt: Date.now(),
             };
             openBlocksByIndex.set(ev.index, conv.items.length);
             toolCardPos.set(toolUseId, conv.items.length);
@@ -547,18 +559,25 @@ export function createChatSession(
       }
       case 'assistant-tool-use': {
         session.busy = true;
+        // A SUB-AGENT's own tool call. The CLI streams these to the parent (spike-verified),
+        // but they are the sub-agent's work, not this conversation's: the run is already
+        // represented by ONE `SubAgentCard` row whose live `activity` says what it is doing,
+        // and its step-by-step is what drilling in shows. Rendering them here put three
+        // parallel agents' Reads and Bashes into the main transcript with nothing marking
+        // whose they were — the isolation the user dispatched them for, undone in the UI.
+        if (ev.parentToolUseId) return;
         const existingPos = toolCardPos.get(ev.toolUseId);
         if (existingPos !== undefined) {
           const items = conv.items.slice();
           const cur = items[existingPos];
           if (cur && cur.kind === 'tool') {
-            items[existingPos] = { ...cur, name: ev.name, input: ev.input, parentToolUseId: ev.parentToolUseId ?? cur.parentToolUseId };
+            items[existingPos] = { ...cur, name: ev.name, input: ev.input };
             conv = { ...conv, items };
           }
         } else {
           const item: ChatToolItem = {
             kind: 'tool', id: nextItemId(), toolUseId: ev.toolUseId, name: ev.name, input: ev.input,
-            parentToolUseId: ev.parentToolUseId, status: 'running', startedAt: Date.now(),
+            status: 'running', startedAt: Date.now(),
           };
           toolCardPos.set(ev.toolUseId, conv.items.length);
           conv = { ...conv, items: [...conv.items, item] };
@@ -718,21 +737,30 @@ export function createChatSession(
         return;
       }
       case 'tool-result': {
-        const pos = toolCardPos.get(ev.toolUseId);
-        const cur = pos !== undefined ? conv.items[pos] : undefined;
-        if (cur && cur.kind === 'tool') {
-          const items = conv.items.slice();
-          items[pos!] = { ...cur, status: ev.isError ? 'error' : 'done', result: ev.content, endedAt: Date.now() };
-          conv = { ...conv, items };
-        } else {
-          // A result with no known card (shouldn't happen per the spike's observed frame
-          // ordering, but never silently drop a result) — surface a minimal closed card.
-          const item: ChatToolItem = {
-            kind: 'tool', id: nextItemId(), toolUseId: ev.toolUseId, name: '', input: undefined,
-            status: ev.isError ? 'error' : 'done', startedAt: Date.now(), endedAt: Date.now(), result: ev.content,
-          };
-          toolCardPos.set(ev.toolUseId, conv.items.length);
-          conv = { ...conv, items: [...conv.items, item] };
+        // The card half is skipped for a SUB-AGENT's result (its tool_use was never carded —
+        // see the `assistant-tool-use` note). Load-bearing that this skips the whole block and
+        // not just the update arm: the `else` below MATERIALIZES a card for an unknown
+        // tool_use_id, so suppressing only the tool_use would have turned every sub-agent
+        // result into a nameless card holding its raw output — a worse leak than the one it
+        // fixed. The correlation below still runs: the parent's own Agent-call result carries
+        // no parent_tool_use_id, and a nested dispatch's accounting is still worth stamping.
+        if (!ev.parentToolUseId) {
+          const pos = toolCardPos.get(ev.toolUseId);
+          const cur = pos !== undefined ? conv.items[pos] : undefined;
+          if (cur && cur.kind === 'tool') {
+            const items = conv.items.slice();
+            items[pos!] = { ...cur, status: ev.isError ? 'error' : 'done', result: ev.content, endedAt: Date.now() };
+            conv = { ...conv, items };
+          } else {
+            // A result with no known card (shouldn't happen per the spike's observed frame
+            // ordering, but never silently drop a result) — surface a minimal closed card.
+            const item: ChatToolItem = {
+              kind: 'tool', id: nextItemId(), toolUseId: ev.toolUseId, name: '', input: undefined,
+              status: ev.isError ? 'error' : 'done', startedAt: Date.now(), endedAt: Date.now(), result: ev.content,
+            };
+            toolCardPos.set(ev.toolUseId, conv.items.length);
+            conv = { ...conv, items: [...conv.items, item] };
+          }
         }
         // Sub-agent correlation (state 9): the spawning tool's own final tool-result is
         // keyed by `toolUseId`, same as any other tool — stamp it onto the matching run

@@ -115,11 +115,15 @@ export type ChatEvent =
    *  comes from `task-updated`/`task-notification`. */
   | { kind: 'background-tasks'; tasks: BackgroundTaskEntry[] }
   /** A `Task`/`Agent`-tool sub-agent was dispatched. Empirically verified on CLI
-   *  2.1.218 (a real Task-tool spike, task_nQb0y85X round 3): the sub-agent's own
-   *  assistant text/thinking is NEVER streamed to the parent, and `parent_tool_use_id`
-   *  never appears on a text/thinking content block — so sub-agent activity can ONLY
-   *  be reconstructed from this frame + `task-updated`/`task-notification` below, not
-   *  from block-level attribution. */
+   *  2.1.218/2.1.220 (real Agent-tool spikes): the sub-agent's own assistant text/thinking
+   *  is NEVER streamed to the parent, so its NARRATIVE can only be reconstructed from this
+   *  frame + `task-updated`/`task-progress`/`task-notification` below.
+   *
+   *  Its TOOL CALLS, however, ARE streamed to the parent — as ordinary `assistant`
+   *  tool_use frames (and `user` tool_result frames) carrying a top-level
+   *  `parent_tool_use_id`. Those are deliberately dropped from the parent transcript
+   *  (see {@link frameParent}) rather than rendered: this card is the sub-agent's
+   *  representation here, and its step-by-step belongs in the drill-in. */
   | { kind: 'task-started'; taskId: string; toolUseId?: string; description: string; subagentType?: string; taskType?: string; prompt?: string }
   /** A lifecycle status patch for an already-started task (e.g. `status:'completed'`). */
   | { kind: 'task-updated'; taskId: string; status?: string; endTime?: number }
@@ -158,7 +162,10 @@ export type ChatEvent =
    *  (also verified) — the OAuth flow only exists in the interactive TUI. The UI turns this
    *  into a sign-in card that opens a terminal session instead of showing the user a dead end. */
   | { kind: 'auth-required'; text: string }
-  | { kind: 'tool-result'; toolUseId: string; content: unknown; isError: boolean; agentResult?: SubAgentResult }
+  /** `parentToolUseId` present ⇒ this is a result for a tool a SUB-AGENT called, not the
+   *  main agent (the parent's own final Agent-tool result carries none — spike-verified),
+   *  so the parent transcript must not open or close a card for it. */
+  | { kind: 'tool-result'; toolUseId: string; content: unknown; isError: boolean; agentResult?: SubAgentResult; parentToolUseId?: string }
   /** A `control_response` ack for a control request WE sent (set_model / rewind_conversation).
    *  `payload` is the CLI's nested `response` object when present (e.g. rewind's
    *  `{rewound, prefillText, precedingAssistantUuid, error?}`). */
@@ -256,15 +263,19 @@ function fromSystemInit(obj: Record<string, unknown>): ChatEvent {
 
 // ─── system:task_* (sub-agent lifecycle — state 9) ─────────────────────────────────
 //
-// Empirically verified on CLI 2.1.218 (a real Task-tool spike, task_nQb0y85X round 3):
-// a dispatched sub-agent's stream carries `system:task_started` → a top-level `user`
-// frame (parent_tool_use_id + prompt echo, intentionally NOT surfaced as its own event
-// — the delegated prompt is already carried on `task-started.prompt`) →
-// `system:task_updated` → `system:task_notification` → a final `user` tool_result
-// (already handled by `fromUserFrame`/`fromAssistant` as an ordinary `tool-result`,
-// correlated client-side by `toolUseId`). A missing `task_id` (or, for task_started,
-// a missing `description`) degrades to `ignored` rather than emitting a half-formed
-// event nothing downstream can key by.
+// Empirically verified on CLI 2.1.218 (task_nQb0y85X round 3) and re-spiked whole on
+// 2.1.220: a dispatched sub-agent's stream carries `system:task_started` → a top-level
+// `user` frame (parent_tool_use_id + prompt echo, intentionally NOT surfaced as its own
+// event — the delegated prompt is already carried on `task-started.prompt`) → the
+// sub-agent's OWN tool_use/tool_result frames, each stamped with the same top-level
+// `parent_tool_use_id` and dropped from the parent transcript (see {@link frameParent}) →
+// `system:task_progress` (one per tool use — the live heartbeat that legitimately reports
+// what it is doing) → `system:task_updated` → `system:task_notification` → a final `user`
+// tool_result with NO parent_tool_use_id: the parent's own Agent-call result (handled by
+// `fromUserFrame`/`fromAssistant` as an ordinary `tool-result`, correlated client-side by
+// `toolUseId`). A missing `task_id` (or, for task_started, a missing `description`)
+// degrades to `ignored` rather than emitting a half-formed event nothing downstream can
+// key by.
 
 function fromTaskStarted(obj: Record<string, unknown>): ChatEvent {
   const taskId = str(obj.task_id);
@@ -360,6 +371,25 @@ function fromTaskNotification(obj: Record<string, unknown>): ChatEvent {
   };
 }
 
+// ─── Sub-agent attribution (`parent_tool_use_id`) ─────────────────────────────────
+//
+// WHERE THE FIELD ACTUALLY LIVES: on the FRAME, never on the content block. Verified on
+// CLI 2.1.220 by spiking a real Agent dispatch and dumping every frame — a sub-agent's
+// tool call arrives as an ordinary `assistant` frame with top-level
+// `parent_tool_use_id: <the Agent call's id>` while its `content[0].parent_tool_use_id` is
+// absent. Reading the block was the bug that leaked every sub-agent tool call into the
+// parent transcript: the extraction always came back undefined, so nothing downstream
+// could tell a sub-agent's Read/Bash from the main agent's own.
+//
+// The block-level read is kept as a fallback (a future CLI may mirror it there) but the
+// frame is authoritative.
+
+/** The spawning `Agent`/`Task` call's `tool_use_id` when this FRAME belongs to a
+ *  sub-agent's own turn, else undefined. The single gate for "is this the main agent?". */
+function frameParent(frame: Record<string, unknown>): string | undefined {
+  return str(frame.parent_tool_use_id);
+}
+
 // ─── stream_event (raw Anthropic SSE event) ────────────────────────────────────────
 
 /**
@@ -407,6 +437,16 @@ function fromStreamEvent(obj: Record<string, unknown>): ChatEvent {
   const event = isRecord(obj.event) ? obj.event : null;
   if (!event) return ignored('stream_event:missing_event');
   const type = str(event.type) ?? '';
+  const parent = frameParent(obj);
+  // A SUB-AGENT's partial messages are dropped WHOLE, not attributed. Two reasons, both
+  // structural: this surface represents a sub-agent by its `SubAgentCard` (its transcript is
+  // read by drilling in), and `index` is scoped to the emitting message — a sidechain's
+  // block 0 and the main agent's block 0 are different blocks, so letting them share the
+  // reducer's `openBlocksByIndex` map would splice a sub-agent's deltas into the parent's own
+  // text bubble. The CLI does not stream sidechain partials today (spike-verified on 2.1.220:
+  // only whole `assistant` frames arrive); this keeps that from becoming a corruption bug the
+  // day it does.
+  if (parent) return ignored('stream_event:subagent');
   switch (type) {
     case 'content_block_start':
       return fromContentBlockStart(event);
@@ -458,7 +498,7 @@ function n(v: unknown): number {
  */
 function usageOf(frame: Record<string, unknown>, message: Record<string, unknown>): TurnUsage | undefined {
   if (message.role !== 'assistant' || message.model === '<synthetic>') return undefined;
-  if (typeof frame.parent_tool_use_id === 'string' && frame.parent_tool_use_id) return undefined;
+  if (frameParent(frame)) return undefined;
   const u = message.usage;
   if (!isRecord(u)) return undefined;
   const input = n(u.input_tokens);
@@ -532,13 +572,17 @@ function fromAssistant(obj: Record<string, unknown>): ChatEvent {
   if (!block) return ignored('assistant:no_content');
   const blockType = str(block.type);
   const turnUsage = usageOf(obj, message);
+  // FRAME first, block as fallback — see the `frameParent` note. This is what tells a
+  // sub-agent's own Read/Bash from the main agent's; reading only the block (which never
+  // carries it) is what leaked every sub-agent tool call into the parent transcript.
+  const parentToolUseId = frameParent(obj) ?? str(block.parent_tool_use_id);
   if (blockType === 'tool_use' && typeof block.name === 'string' && typeof block.id === 'string') {
     return {
       kind: 'assistant-tool-use',
       toolUseId: block.id,
       name: block.name,
       input: 'input' in block ? block.input : undefined,
-      parentToolUseId: str(block.parent_tool_use_id),
+      parentToolUseId,
       turnUsage,
     };
   }
@@ -549,6 +593,7 @@ function fromAssistant(obj: Record<string, unknown>): ChatEvent {
       content: 'content' in block ? block.content : undefined,
       isError: bool(block.is_error),
       agentResult: fromToolUseResult(obj),
+      parentToolUseId,
     };
   }
   if (blockType === 'text' && typeof block.text === 'string' && block.text) {

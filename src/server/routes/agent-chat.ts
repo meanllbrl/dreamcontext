@@ -630,8 +630,13 @@ function truncateValue(v: unknown): unknown {
  * append-only log written by a different program version than ours, so unknown shapes are
  * the NORM, not an error. Filters what a human never typed: meta/synthetic entries and
  * `<`-wrapped command/reminder stubs (same rule as agent-terminal.ts's firstUserMessage).
+ *
+ * `opts.sidechain` says WHICH transcript this is, because the same parser reads both and the
+ * `isSidechain` marker means opposite things in each: in a PARENT transcript it marks another
+ * agent's turns (drop them — see the guard below), while in a SUB-AGENT's own file every entry
+ * carries it and dropping them would empty the drill-in. Default false = parent.
  */
-export function parseTranscriptHistory(raw: string): ChatHistoryItem[] {
+export function parseTranscriptHistory(raw: string, opts: { sidechain?: boolean } = {}): ChatHistoryItem[] {
   const items: ChatHistoryItem[] = [];
   const toolPos = new Map<string, number>(); // tool_use_id -> index in items
   for (const line of raw.split('\n')) {
@@ -639,10 +644,22 @@ export function parseTranscriptHistory(raw: string): ChatHistoryItem[] {
     if (!s) continue;
     let obj: {
       type?: unknown; uuid?: unknown; isMeta?: unknown; isSynthetic?: unknown;
+      isSidechain?: unknown;
       message?: { role?: unknown; content?: unknown };
     };
     try { obj = JSON.parse(s); } catch { continue; }
     if (!obj || typeof obj !== 'object') continue;
+
+    // A SUB-AGENT's turn, not this conversation's. CLI 2.1.220 keeps sub-agent turns in a
+    // separate `<uuid>/subagents/agent-<taskId>.jsonl` (verified across 15 real transcripts:
+    // zero `isSidechain` entries in the main file, and every entry of a sampled subagent file
+    // carries it), so this guards conversations written by an OLDER CLI that inlined them —
+    // resuming one would replay every sub-agent Read/Bash into the parent transcript, the same
+    // leak the live path had. `isSidechain` is the only discriminant confirmed present on real
+    // sidechain entries, and the one this repo's usage accounting already trusts
+    // (agent-terminal.ts's `isSidechain !== true`). Skipped when READING a sidechain file:
+    // there the marker is on every entry and is not a foreign-turn signal at all.
+    if (!opts.sidechain && obj.isSidechain === true) continue;
 
     if (obj.type === 'user') {
       if (obj.isMeta === true || obj.isSynthetic === true) continue;
@@ -749,7 +766,9 @@ export async function handleAgentChatHistory(
     if (!subPath || !existsSync(subPath)) { sendJson(res, 200, { items: [] }); return; }
     let subRaw = '';
     try { subRaw = readFileSync(subPath, 'utf-8'); } catch { sendJson(res, 200, { items: [] }); return; }
-    sendJson(res, 200, { items: parseTranscriptHistory(subRaw) });
+    // `sidechain: true` — this file IS the sub-agent's own transcript, so its universal
+    // `isSidechain` marker is what we came for, not a foreign turn to filter out.
+    sendJson(res, 200, { items: parseTranscriptHistory(subRaw, { sidechain: true }) });
     return;
   }
 

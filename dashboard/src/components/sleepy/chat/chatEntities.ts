@@ -270,10 +270,15 @@ export function classifyOutputLine(line: string): OutputTone {
 //
 // The type lives here (pure, unit-testable); the reduced STATE lives in
 // chatSession.ts's ConversationModel.subAgents (T4) — built from the `task-started`/
-// `task-updated`/`task-notification` ChatEvents (see chatProtocol.ts below), which is
-// the only channel the spike proved carries sub-agent activity: a dispatched
-// sub-agent's own text/thinking is never streamed to the parent, and
-// `parent_tool_use_id` never appears on text/thinking content blocks.
+// `task-progress`/`task-updated`/`task-notification` ChatEvents (see chatProtocol.ts
+// below), which is the only channel the spike proved carries a sub-agent's narrative: its
+// own text/thinking is never streamed to the parent.
+//
+// "NOT parentToolUseId-driven" is about how a RUN is assembled, and must not be read as
+// "parent_tool_use_id is irrelevant": the sub-agent's tool calls DO reach the parent stream
+// carrying it, and that field is exactly what keeps them out of the parent transcript
+// (chatProtocol's `frameParent`). Both halves are needed — the frames build the row, the
+// field suppresses the noise.
 
 export interface SubAgentRun {
   taskId: string;

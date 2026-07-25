@@ -56,6 +56,23 @@ describe('parseTranscriptHistory', () => {
     expect(parseTranscriptHistory(raw)).toEqual([{ kind: 'user', uuid: U1, text: 'a real question' }]);
   });
 
+  it("skips a SUB-AGENT's inlined turns (isSidechain) — a resumed chat must not replay another agent's tool calls as its own", () => {
+    // CLI 2.1.220 keeps sub-agent turns in `<uuid>/subagents/agent-<taskId>.jsonl`, so a
+    // current main transcript has none of these; an OLDER CLI inlined them, and replaying one
+    // would reproduce on resume exactly the leak the live stream path had.
+    const raw = jsonl([
+      { type: 'user', uuid: U1, message: { role: 'user', content: 'audit the repo with 3 agents' } },
+      { type: 'assistant', isSidechain: true, message: { role: 'assistant', content: [{ type: 'text', text: "I'll start by listing the files." }] } },
+      { type: 'assistant', isSidechain: true, message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_sub', name: 'Bash', input: { command: 'ls' } }] } },
+      { type: 'user', isSidechain: true, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_sub', content: 'a.ts' }] } },
+      { type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'All three agents finished.' }] } },
+    ]);
+    expect(parseTranscriptHistory(raw)).toEqual([
+      { kind: 'user', uuid: U1, text: 'audit the repo with 3 agents' },
+      { kind: 'text', text: 'All three agents finished.' },
+    ]);
+  });
+
   it('tolerates foreign entry types, malformed lines, and blank lines (an append-only log written by another program)', () => {
     const raw = [
       JSON.stringify({ type: 'summary', summary: 'A chat about x', leafUuid: 'x' }),

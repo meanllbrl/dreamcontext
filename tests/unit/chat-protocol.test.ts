@@ -294,6 +294,66 @@ describe('parseChatLine — system:task_* (sub-agent lifecycle, state 9)', () =>
     expect(parseChatLine(SYSTEM_TASK_STARTED_NO_ID)).toEqual({ kind: 'ignored', rawType: 'system:task_started' });
   });
 
+  // ── Sub-agent tool attribution. The frames below are the ACTUAL shapes captured from a
+  //    real Agent dispatch on CLI 2.1.220 (one sub-agent, one Bash inside it). The load-
+  //    bearing detail: `parent_tool_use_id` is on the FRAME, and `content[0]` has NONE. The
+  //    parser used to read only the block, so the extraction always came back undefined and
+  //    every sub-agent tool call rendered in the PARENT transcript as if the main agent had
+  //    run it — with 3 sub-agents going, the user saw a stream of Reads and Bashes nothing in
+  //    the UI attributed to anyone.
+  it("a sub-agent's tool_use is attributed from the FRAME's parent_tool_use_id, not the content block (which never carries it)", () => {
+    const frame = JSON.stringify({
+      type: 'assistant',
+      parent_tool_use_id: AGENT_TOOL_USE_ID,
+      message: {
+        role: 'assistant',
+        model: 'claude-haiku-4-5-20251001',
+        content: [{ type: 'tool_use', id: 'toolu_01SUBBASH', name: 'Bash', input: { command: 'ls' } }],
+      },
+    });
+    expect(parseChatLine(frame)).toMatchObject({
+      kind: 'assistant-tool-use',
+      toolUseId: 'toolu_01SUBBASH',
+      name: 'Bash',
+      parentToolUseId: AGENT_TOOL_USE_ID,
+    });
+  });
+
+  it("a sub-agent's tool_result carries the same frame-level attribution, so the reducer can refuse to card it", () => {
+    const frame = JSON.stringify({
+      type: 'user',
+      parent_tool_use_id: AGENT_TOOL_USE_ID,
+      message: {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 'toolu_01SUBBASH', content: 'a.ts\nb.ts' }],
+      },
+    });
+    expect(parseChatLine(frame)).toMatchObject({
+      kind: 'tool-result',
+      toolUseId: 'toolu_01SUBBASH',
+      parentToolUseId: AGENT_TOOL_USE_ID,
+    });
+  });
+
+  it("the PARENT's own Agent-call result carries NO parent_tool_use_id — so gating on it never suppresses the main agent's own cards", () => {
+    const frame = JSON.stringify({
+      type: 'user',
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: AGENT_TOOL_USE_ID, content: 'done' }] },
+    });
+    const ev = parseChatLine(frame);
+    expect(ev).toMatchObject({ kind: 'tool-result', toolUseId: AGENT_TOOL_USE_ID });
+    expect((ev as { parentToolUseId?: string }).parentToolUseId).toBeUndefined();
+  });
+
+  it("a sidechain stream_event is dropped WHOLE — its block `index` is per-message and would splice a sub-agent's deltas into the parent's own text block", () => {
+    const frame = JSON.stringify({
+      type: 'stream_event',
+      parent_tool_use_id: AGENT_TOOL_USE_ID,
+      event: { type: 'content_block_start', index: 0, content_block: { type: 'text' } },
+    });
+    expect(parseChatLine(frame)).toEqual({ kind: 'ignored', rawType: 'stream_event:subagent' });
+  });
+
   it('a wholly unrecognized system subtype still degrades to ignored (task_* are additions, not a rewrite of the noise-tolerance contract)', () => {
     expect(parseChatLine(SYSTEM_UNKNOWN_SUBTYPE)).toEqual({ kind: 'ignored', rawType: 'system:some_future_subtype' });
   });
