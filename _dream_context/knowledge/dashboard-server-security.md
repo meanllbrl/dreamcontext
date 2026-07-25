@@ -95,6 +95,88 @@ This threat model is specific to the dashboard HTTP server, but the SAME lexical
 - `GET /api/knowledge-assets/:slug` (board embedded-image resolution) — see `[[dashboard-knowledge-rendering]]`.
 - GitHub task-image bridge (`isInsideRoot`, resolving image paths referenced from a REMOTE issue body) — see the Constraints & Decisions section of `core/features/task-management.md`. This one additionally needed a stat-gate-before-read for the size cap, since the input here is attacker-influenced (a synced GitHub issue), not just a URL param.
 
+### Desktop-gated OS handoff (Agent Chat file access, 2026-07-25)
+
+The Agent Chat view (`/api/agent/chat` WebSocket bridge + read surfaces) extends the containment pattern with a TWO-GATE model for files OUTSIDE the project root — a second occurrence of the narrow-allowlist shape:
+
+**Gate 1: Explicit user grants** (`POST /api/agent/grant`, `GET /api/agent/file` with `resolveServablePath`)
+- `GET /api/agent/file` serves files under the project root via `safeChildPath` (existing traversal guard); any path OUTSIDE the project root returns 403 `needs_grant` instead of a refusal.
+- `POST /api/agent/grant` records ONE absolute file path per vault in `_dream_context/state/.file-grants.json` (max 500) on an explicit user click. **Files only** — a granted directory would widen into everything beneath it; nothing in the transcript needs that.
+- Sibling files in the same folder still denied (each file is a separate grant).
+- Traversal-hostile input (`..`, null bytes, non-absolute paths) rejected before touching the filesystem.
+
+**Gate 2: Reveal-vs-open decision** (`POST /api/agent/reveal`)
+- A file named in the transcript that cannot be shown inline is handed to the OS: **folders + view-harmless types** (media + `REVEAL_SAFE_DOC_EXT` documents: `.pdf`, `.txt`, `.md`, `.json`, etc.) are opened in the default app; **anything else** (`.sh`, `.command`, `.pkg`, `.app`, extension-less files) is **revealed in the file manager** (macOS `-R`, Windows `/select,`, Linux parent directory) instead of launched.
+- A click in a chat bubble must never execute a script or installer.
+- Desktop-gated, argv form (no shell interpretation), file existence verified before opener call.
+
+**Constraints:**
+- Never widen the `REVEAL_SAFE_DOC_EXT` allowlist casually — it is a small set of types a viewer displays rather than executes. A denylist is one unknown installer format away from launching something.
+- Grants are vault-scoped (recorded per `contextRoot`), not app-global. A file granted in one project does not become accessible in another.
+- The 500-grant cap prevents unbounded ledger growth from a long-running vault; the truncation is FIFO (oldest grants discarded first).
+
+**Tests:** `tests/unit/agent-reveal-grant.test.ts` (17 tests) — desktop gate, body/existence guards, open-vs-reveal decision per type (a `.sh` is never handed to the opener bare), grant semantics end-to-end (refused → granted → served, sibling still refused), idempotency.
+
+## Desktop-gated OS handoff (2026-07-25, Agent Chat view)
+
+A second occurrence of the narrow-allowlist containment pattern shipped with the Chat view's file-opening surfaces. Three routes (`GET /api/agent/file`, `POST /api/agent/grant`, `POST /api/agent/reveal`) all apply project-root scoping and careful type-based gating to ensure a click in a transcript can never launch arbitrary code. All three are desktop-gated (`DREAMCONTEXT_DESKTOP=1`) and loopback-only.
+
+### `/api/agent/file` — project-scoped read surface
+
+Key file: `src/server/routes/agent-chat.ts`, `handleAgentFile()`.
+
+Returns one of three answers depending on what the path resolves to (all under the **active vault's project root**, never `_dream_context/` alone — that's `graph/content`'s job):
+
+1. **Text/markdown preview** — `{type:'markdown'|'text', content}`, 512 KB cap. The whole body goes into JSON so Chat can render it inline.
+2. **Directory listing** — `{type:'dir', files:[]}`, folders first, 300 entries, then `truncated:true`. A folder named in a transcript is something to browse, not an error.
+3. **Raw media bytes** with `?raw=1` — images (PNG/JPEG/GIF/WebP), video (mp4/m4v/webm/mov/ogv), audio (mp3/m4a/wav/oga/ogg/flac). Streamed with `Accept-Ranges` + correct `206 Partial Content` so `<video>`/`<audio>` can seek (a 200-with-everything makes clips unseekable in Safari). Capped at 2 GB.
+
+**Security posture:**
+- Traversal guard refuses any resolved path outside the project root (the same `safeChildPath` pattern used elsewhere).
+- `X-Content-Type-Options: nosniff` on every response — the browser must honor the declared MIME, not sniff content.
+- **SVG is always served as text preview, never as `image/svg+xml`**, because SVG can embed `<script>` and `<foreignObject>` — an attacker-controlled SVG rendered natively in the browser is XSS.
+
+**Outside-root files:** instead of a dead refusal, an outside-root path returns **403 with `error:'needs_grant'`**. The Chat card offers *Allow access* → `POST /api/agent/grant` (below).
+
+### `/api/agent/grant` — explicit single-file consent
+
+Key file: `src/server/routes/agent-chat.ts`, `handleAgentGrant()`.
+
+Records **ONE absolute file path per vault** in `state/.file-grants.json` (max 500, files only — never a directory, never a pattern). The consent is always a real user click on a named file: the agent cannot grant on its own behalf.
+
+**Containment rules:**
+- Files only, not directories (a `stat` check enforces this).
+- `..` paths are rejected (`invalid_path`) — no traversal tricks.
+- **One grant never widens to a folder** — the sibling file in the same folder still returns `needs_grant` until separately granted.
+
+After a grant, `/api/agent/file` for that path succeeds.
+
+### `/api/agent/reveal` — OS opener, allowlist-gated
+
+Key file: `src/server/routes/agent-chat.ts`, `handleAgentReveal()`.
+
+Hands a path to the OS, and the **two modes ARE the safety story**:
+
+| Path type | Action |
+|---|---|
+| Folder | Open in file manager |
+| Media file (image/video/audio) | Open in default app |
+| Inert document (`.pdf .txt .md .markdown .json .yaml .yml .toml .csv .tsv .log .rtf .html .htm .xml .svg`) | Open in default app |
+| **Anything else** | **Reveal in file manager** (`open -R` / `explorer /select,` / `xdg-open <dir>`), never launch |
+
+A `.sh`, `.command`, `.pkg`, `.app`, or extension-less file named in a transcript can **never be executed** by a click in a chat bubble, while the user still gets to it in one step.
+
+**Deliberately an allowlist of what's inert to view, not a denylist of what's dangerous.** A denylist is one unknown installer format away from launching something.
+
+Requires:
+- Desktop-gated (same as the other two)
+- Argv form (no shell)
+- File must exist (`existsSync` check)
+
+### Tests
+
+`tests/unit/agent-reveal-grant.test.ts` (17 tests) covers: the desktop gate, body/existence guards, the open-vs-reveal decision per type (a `.sh` is never handed to the opener bare), reaching a file outside the project root (the route's whole purpose), and grant semantics end-to-end — refused → granted → served, with the sibling file still refused, plus idempotency.
+
 ## Sources
 
 - Session `f007d91a-b861-47c2-8154-033cf8899871` — security review + DECISION to pull hardening into v0.5.0
@@ -103,4 +185,4 @@ This threat model is specific to the dashboard HTTP server, but the SAME lexical
 
 ## Last Verified
 
-2026-07-18 — network-exposure token gate (mitigation 4) shipped in v0.18.0+. Original three mitigations (loopback bind, CSRF check, path-traversal guard) shipped in commit `0f3965f` as part of v0.5.0. (2026-07-01 — reviewed for drift; core threat model unchanged, added pointers to sibling containment-pattern instances.)
+2026-07-25 — Desktop-gated OS handoff (Agent Chat file access: `/api/agent/grant`, `/api/agent/reveal`, `GET /api/agent/file` outside-root handling) added as a second occurrence of the narrow-allowlist containment pattern. Network-exposure token gate (mitigation 4) shipped in v0.18.0+. Original three mitigations (loopback bind, CSRF check, path-traversal guard) shipped in commit `0f3965f` as part of v0.5.0.

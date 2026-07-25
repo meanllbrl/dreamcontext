@@ -1,6 +1,72 @@
 [
   {
     "date": "2026-07-25",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "New announcement board native-agent-chat.excalidraw.md generated from its spec in dashboard/scripts/announcements/generate.cjs, registered in dashboard/public/announcements.json as v0.21.0 / 2026-07-25. The board tells the story of the agent surface's terminal-to-chat redesign across three acts: Problem (terminal in a window, flattened ANSI scrollback, froze under load), Solution (Chat view — 12 designed states, headless stream-json to native React; Cards you can act on — permission/question/sub-agent/diff/board/image each a card; One unified chrome — 44px tabs/mode/composer, slash menu, inline images), Proof (12 designed states streaming→stream-error, 10-50× fewer terminal frames per burst, chat↔terminal resume bidirectionally). The summary notes the rest of this cycle's work (Council v2 chamber, lean task authoring, terminal hang fix) in one sentence. Generator audit clean (overlaps/buriedText/longLines = 0), announcements.test.ts 28/28, other 4 boards byte-stable.",
+    "breaking": false,
+    "summary": "Native agent chat announcement board (v0.21.0) telling the story as problem → solution → proof",
+    "references": [
+      "file:dashboard/public/announcements/native-agent-chat.excalidraw.md",
+      "file:dashboard/scripts/announcements/generate.cjs",
+      "file:dashboard/public/announcements.json"
+    ]
+  },
+  {
+    "date": "2026-07-25",
+    "type": "fix",
+    "scope": "dashboard",
+    "description": "Announcements are hand-authored between releases (add an entry, regenerate a board), so the manifest and its boards change bytes while keeping the same URL. Serving them Cache-Control: immutable pinned the pre-authoring copy in the browser for a year — a new announcement stayed invisible until the next version bump, even across a hard reload (an immutable response is never revalidated). Fix: src/server/static.ts cacheControlFor() now returns no-cache for /announcements.json and /announcements/* paths (content-hashed build assets still immutable), and dashboard/src/hooks/useAnnouncements.ts dropped the ?v= query string (the server revalidates, so version-keying is no longer needed). The fix includes 5 regression tests in tests/unit/server-static.test.ts verifying announcements are never cached immutable, content-hashed assets still are, and lookalike paths outside the announcements root are unchanged.",
+    "breaking": false,
+    "summary": "Announcements served no-cache so new entries appear without version bump",
+    "references": [
+      "file:src/server/static.ts",
+      "file:dashboard/src/hooks/useAnnouncements.ts",
+      "file:tests/unit/server-static.test.ts"
+    ]
+  },
+  {
+    "date": "2026-07-25",
+    "type": "fix",
+    "scope": "agent",
+    "description": "Pressing 'Run sleep agent' with the Chat view as the active agent screen submitted the sleep prompt server-side but the chat transcript never rendered it — chat has no visible readline the way the terminal does, so it read to the user as 'the sleep message never got sent'. Fix: a new server _meta prompt_echo frame (src/server/routes/agent-chat.ts) echoing the auto-submitted opening prompt back to the client, parsed in dashboard/src/lib/chatProtocol.ts as prompt-echo, reduced into a first user item + busy=true in dashboard/src/components/sleepy/chatSession.ts. Also isSleepAgentReady(caps, chatView) (dashboard/src/hooks/useAgentCapabilities.ts) no longer demands node-pty when the Chat view is active — the chat bridge is headless and has no PTY (3 call sites updated). A surface that submits input on the user's behalf must echo that input back into its own transcript — the server is the right layer for the echo, because with a promptToken the client never sees the text at all.",
+    "breaking": false,
+    "summary": "Sleep agent prompt now echoes in Chat view so user sees their message was submitted",
+    "references": [
+      "file:src/server/routes/agent-chat.ts",
+      "file:dashboard/src/lib/chatProtocol.ts",
+      "file:dashboard/src/components/sleepy/chatSession.ts",
+      "file:dashboard/src/hooks/useAgentCapabilities.ts"
+    ]
+  },
+  {
+    "date": "2026-07-25",
+    "type": "fix",
+    "scope": "agent",
+    "description": "The auto-title effect skipped chat sessions twice over: it gated on s.kind !== 'agent' (terminal-only check), and its default-name test was /^Agent \\d+$/ while chat tabs are born \"Chat N\" — so even past the first gate they'd have been read as user-renamed and marked permanently ineligible. Nothing about the server route was terminal-specific (chat spawns already export DREAMCONTEXT_TAB_SESSION, so their UserPromptSubmit hook writes firstPrompt into the same .agent-session-map entry /api/agent/title reads). Client-side fix: skip shells instead of non-agents, and share one kind-agnostic DEFAULT_TAB_TITLE_RE between the eligibility check and the apply-time re-check. Kind-agnostic is deliberate: openAgentInChat / resumeChatInTerminal keep the pre-swap roster title, so a converted tab must stay eligible.",
+    "breaking": false,
+    "summary": "Chat tabs now auto-title on first turn, matching terminal behavior",
+    "references": [
+      "commit:8732892",
+      "file:dashboard/src/components/sleepy/AgentSurface.tsx",
+      "task:agent-chat-redesign-12-state-native-chat-ui-per-corrected-design-brief"
+    ]
+  },
+  {
+    "date": "2026-07-25",
+    "type": "fix",
+    "scope": "agent",
+    "description": "The auto-title effect (Settings → Agents → Auto-name tabs) skipped chat sessions twice over: it gated on s.kind !== 'agent' (chat sessions are kind:'chat', so the effect never entered), and its default-name regex was /^Agent \\d+$/ while chat tabs are born 'Chat N' — so even past the first gate they'd have been read as user-renamed and marked permanently ineligible. Chat tabs sat at 'Chat N' forever. Nothing about the server route was terminal-specific — chat spawns already export DREAMCONTEXT_TAB_SESSION so their UserPromptSubmit hook writes firstPrompt into the same .agent-session-map entry /api/agent/title reads. The fix is client-side only (dashboard/src/components/sleepy/AgentSurface.tsx): skip shells instead of non-agents, and share one kind-agnostic DEFAULT_TAB_TITLE_RE between the eligibility check and the apply-time re-check. Kind-agnostic is deliberate — openAgentInChat / resumeChatInTerminal keep the pre-swap roster title, so a converted tab must stay eligible.",
+    "breaking": false,
+    "summary": "Chat tabs now auto-title from first prompt, not stuck at 'Chat N' forever",
+    "references": [
+      "commit:8732892",
+      "file:dashboard/src/components/sleepy/AgentSurface.tsx",
+      "task:agent-chat-view-beta-render-claude-sessions-as-native-app-ui-with-captured-questions"
+    ]
+  },
+  {
+    "date": "2026-07-25",
     "type": "docs",
     "scope": "agent",
     "description": "Applied the feature-integration-pattern checklist to the agent Chat view work before calling it done, awake rather than deferring to sleep. skill/references/integrations.md § Agent Chat view (BETA) gained: the slash menu (/ opens the SAME shared SkillPickerPopover the terminal uses, so skills are discoverable in chat), inline media (images inline + lightbox, project-internal video/audio streamed with seek, and the open-↗ fallback for anything outside the project root), and an accurate rewrite of the server-surface block — GET /api/agent/file now answers text previews (512KB cap), directory listings (300 entries, folders first) and range-streamed image/video/audio bytes (2GB ceiling, correct 206 so clips can seek), still project-root-scoped with nosniff everywhere and SVG always as text; POST /api/agent/grant documented as the consent half of needs_grant (one absolute file path per vault in state/.file-grants.json, max 500, files only, only ever on a real user click); POST /api/agent/reveal documented with its actual two-mode behavior and why the allowlist is of what is inert to VIEW rather than a denylist of what is dangerous. The Web Dashboard section notes the unified 44px chrome and the mono glyph set (◇ agent / ◆ chat / >_ shell). README gained a Chat view paragraph next to the agent-terminal one. The in-app-agent-terminal feature PRD gained a 2026-07-25 changelog entry covering the redesign, the polish pass, the new read surfaces and the validation numbers. SKILL.md's capabilities row already named the Chat view and needed no change; sub-agent contracts and shipped skill packs were scanned and have no touchpoints (sleep owns no chat artifacts; the packs are surface-agnostic) — recorded as considered rather than padding the docs.",

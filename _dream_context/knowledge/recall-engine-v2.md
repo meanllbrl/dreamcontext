@@ -171,6 +171,25 @@ No category regressed. 1063 tests passing (post-build).
 
 **Caveats**: 60-query gold set is one author's view of realistic queries on one corpus. The +16.7 pt overall r@1 is a strong signal, not a proof of identical gains on every project. Continuous capture (C1–C4) is NOT reflected in these percentages — it grows the corpus over time; the benchmark measures a fixed committed snapshot.
 
+### Gold Set Maintenance — archival safety constraint
+
+The gold sets (`eval/gold.jsonl`, `eval/gold-heldout.jsonl`) are living regression locks that reference specific knowledge files as expected targets. **Before archiving a knowledge file, check whether it's a gold-set target** — archiving a file that queries still point to silently breaks recall-eval and hides recall regressions.
+
+**When a target must be archived:**
+1. Identify which gold queries reference it (grep the `.jsonl` for the slug).
+2. Repoint those queries to the surviving successor doc (the file the archived content was merged into, or the nearest topical match).
+3. Update both `gold.jsonl` and `gold-heldout.jsonl` if the slug appears in both.
+4. Run `npm test -- tests/unit/recall-eval.test.ts` to verify the suite is still green.
+
+**Example (2026-07-25):** the curator archived `knowledge/decision-link-aware-vs-embedding-recall.md` (merged into `decision-embedding-layer.md` and `recall-engine-v2.md`). Four queries (q043, q055, q056, h020) had named it as their target. Archiving it without repointing silently reddened recall-eval for a day. Fixed by repointing: q043/q055/q056 → `decision-embedding-layer`, h020 → `recall-engine-v2`. Suite green, recall@3 86.7% over the 60-query gold set restored.
+
+The same check applies to any file that might be referenced:
+- Gold-set targets (the eval suite)
+- Wikilink targets (other knowledge files that `[[link]]` to it)
+- Task frontmatter references (`related_tasks`, feature links)
+
+`dreamcontext doctor` (as of v0.21.0) detects broken task↔feature links; it does NOT yet validate gold-set targets — that check remains manual.
+
 ## Decision Document Status Updates
 
 - **[[decisions/decision-mem0-vs-bm25-recall]]**: still canonical. The gold-set now EXISTS and validates the BM25 path. The "conditions to revisit" criteria (corpus >500 docs + recall@5 <85%) have not been met.
