@@ -11,7 +11,7 @@ import { ItemView } from './chat/TranscriptItem';
 import { SurveyCard } from './chat/SurveyCard';
 import { PermissionCard } from './chat/PermissionCard';
 import { BypassNoticeCard } from './chat/BypassNoticeCard';
-import { SubAgentCard } from './chat/SubAgentCard';
+import { SubAgentCard, SubAgentRail } from './chat/SubAgentCard';
 import { BackgroundShellsTray } from './chat/BackgroundShellsTray';
 import { SlideOver } from './chat/SlideOver';
 import { Lightbox } from './chat/Lightbox';
@@ -57,6 +57,14 @@ const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home
  *  gesture and the scroll it produces, plus the gaps inside trackpad momentum (which keeps
  *  emitting wheel events that refresh it). */
 const GESTURE_MS = 500;
+
+/** How far below the transcript's top edge a rail jump parks its target — the pinned rail's
+ *  own height plus its top offset plus a little air, so the row it scrolled to lands just
+ *  under the rail instead of behind it. */
+const RAIL_CLEARANCE = 64;
+
+/** How long a jumped-to sub-agent row stays flashed. */
+const FLASH_MS = 1600;
 
 function safeStringify(v: unknown): string {
   if (v === undefined) return '';
@@ -329,6 +337,70 @@ export function ChatPane({
 
   useEffect(() => { if (stickRef.current) scrollToBottom(); }, [conv, scrollToBottom]);
 
+  // ── Sub-agent rail: the group card, pinned once you have scrolled past it ────────────
+  //
+  // The card renders WHERE THE FAN-OUT WAS SPAWNED, so a run that takes minutes disappears
+  // under the output that keeps arriving above it — the exact moment you most want to see
+  // how the agents are doing. Once its top edge crosses the transcript's, the same group
+  // reappears as a pinned strip of chips, and clicking one scrolls back to that row.
+  //
+  // Measured on scroll (two rects, no observer) rather than watched with an
+  // IntersectionObserver: the trigger is "the card's HEADER has gone", which for a card
+  // taller than the viewport is not an intersection change at all.
+  const [subAgentCardEl, setSubAgentCardEl] = useState<HTMLDivElement | null>(null);
+  const [railPinned, setRailPinned] = useState(false);
+  /** The run a rail chip last jumped to. `n` makes a repeat click on the SAME chip a new
+   *  state value, so the flash replays instead of silently doing nothing. */
+  const [jumped, setJumped] = useState<{ id: string | null; n: number } | null>(null);
+
+  const syncRail = useCallback(() => {
+    const scroller = scrollRef.current;
+    if (!scroller || !subAgentCardEl || scroller.clientHeight === 0) { setRailPinned(false); return; }
+    setRailPinned(subAgentCardEl.getBoundingClientRect().top < scroller.getBoundingClientRect().top);
+  }, [subAgentCardEl]);
+
+  // Re-measure when the card mounts/unmounts (`syncRail` identity follows `subAgentCardEl`)
+  // and on every event this session applied — a card whose rows grow, or a group that
+  // finishes, both move the edge this reads without any scroll of its own.
+  useEffect(() => { syncRail(); }, [syncRail, conv]);
+
+  /**
+   * Scroll the transcript to a sub-agent's row (or, for `null`, the card as a whole) and
+   * flash it. Clicking a chip is explicit intent to go LOOK at something above, so it also
+   * releases stick-to-bottom — otherwise the next streamed token would yank the view
+   * straight back down over the row just asked for. "Latest" is the way back.
+   */
+  const jumpToSubAgent = useCallback((taskId: string | null) => {
+    const scroller = scrollRef.current;
+    if (!scroller || !subAgentCardEl) return;
+    const rows = Array.from(subAgentCardEl.querySelectorAll<HTMLElement>('[data-subagent-row]'));
+    const target = (taskId && rows.find((r) => r.dataset.subagentRow === taskId)) || subAgentCardEl;
+    setStick(false);
+    // Scrolled by delta against OUR scroller rather than `scrollIntoView`, which would also
+    // walk (and scroll) every ancestor — this pane is portaled into a host that has its own.
+    const delta = target.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+    scroller.scrollTo({ top: scroller.scrollTop + delta - RAIL_CLEARANCE, behavior: 'smooth' });
+    setJumped((prev) => ({ id: taskId, n: (prev?.n ?? 0) + 1 }));
+  }, [subAgentCardEl, setStick]);
+
+  useEffect(() => {
+    if (!jumped) return;
+    const t = setTimeout(() => setJumped(null), FLASH_MS);
+    return () => clearTimeout(t);
+  }, [jumped]);
+
+  /** A wheel gesture that starts over the pinned rail scrolls the transcript, as it would
+   *  have if the rail weren't in the way — an overlay is not in the scroller's ancestor
+   *  chain, so the browser would otherwise scroll nothing at all. Deltas arrive in three
+   *  units depending on the device (pixels, lines, pages); only pixels can be applied raw. */
+  const forwardWheelToTranscript = useCallback((e: React.WheelEvent<HTMLElement>) => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const step = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? el.clientHeight : 1;
+    markGesture();
+    el.scrollTop += e.deltaY * step;
+  }, [markGesture]);
+
   // Height changes React never rendered: an image or clip finishing its load, a tool card
   // expanding, the composer growing a line (which SHRINKS the scroller), a split or window
   // resize, and the container being re-homed into another pane's slot — a re-parent resets
@@ -337,11 +409,16 @@ export function ChatPane({
     const el = scrollRef.current;
     const content = contentRef.current;
     if (!el || !content || typeof ResizeObserver === 'undefined') return;
-    const ro = new ResizeObserver(() => { if (stickRef.current) scrollToBottom(); });
+    const ro = new ResizeObserver(() => {
+      if (stickRef.current) scrollToBottom();
+      // Content growing ABOVE an unpinned view moves the card without a scroll event of
+      // its own — the rail would otherwise still be showing a card that is back in view.
+      syncRail();
+    });
     ro.observe(el);
     ro.observe(content);
     return () => ro.disconnect();
-  }, [scrollToBottom]);
+  }, [scrollToBottom, syncRail]);
 
   // ── State 3/4: a clicked file reference either opens the Lightbox (an image) or the
   //    file SlideOver (everything else, including a board — no rasterizer exists, so a
@@ -404,7 +481,7 @@ export function ChatPane({
       if (suppressedToolUseIds.has(item.toolUseId)) {
         if (subAgentCardShown) return null; // already represented by the one combined card
         subAgentCardShown = true;
-        return <SubAgentCard key={`subagents-${item.id}`} runs={conv.subAgents} onDrillIn={handleDrillIn} />;
+        return <SubAgentCard key={`subagents-${item.id}`} runs={conv.subAgents} onDrillIn={handleDrillIn} rootRef={setSubAgentCardEl} highlightRunId={jumped?.id ?? null} />;
       }
       // A tool that touched a board shows the BOARD, not a card about it — the same live
       // canvas an answer's own `![](x.excalidraw.md)` renders, so "I drew this" and "I
@@ -449,7 +526,7 @@ export function ChatPane({
   // edge case in raw frame ordering) still needs its card SOMEWHERE — append it once, after
   // the live transcript, rather than silently dropping the whole group.
   const trailingSubAgentCard = !subAgentCardShown && conv.subAgents.length > 0
-    ? <SubAgentCard key="subagents-trailing" runs={conv.subAgents} onDrillIn={handleDrillIn} />
+    ? <SubAgentCard key="subagents-trailing" runs={conv.subAgents} onDrillIn={handleDrillIn} rootRef={setSubAgentCardEl} highlightRunId={jumped?.id ?? null} />
     : null;
 
   // A real process exit (`meta-exit`) OR the WS having dropped — either way the composer
@@ -510,6 +587,7 @@ export function ChatPane({
               userDriven: userDriving(),
             }));
             prevTopRef.current = el.scrollTop;
+            syncRail();
           }}
           onWheel={markGesture}
           onTouchMove={markGesture}
@@ -553,6 +631,16 @@ export function ChatPane({
             )}
           </div>
         </div>
+        {/* Pinned OVER the transcript's top edge (never inside the scroller — see the
+            "jump to latest" note above, which holds for the same reasons). It renders
+            nothing at all unless a run is still going. */}
+        {railPinned && (
+          <SubAgentRail
+            runs={conv.subAgents}
+            onJump={jumpToSubAgent}
+            onWheel={forwardWheelToTranscript}
+          />
+        )}
         {!pinned && (
           <button
             type="button"

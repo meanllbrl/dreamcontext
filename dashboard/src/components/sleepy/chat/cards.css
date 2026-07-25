@@ -597,6 +597,133 @@
 .chat-subagents-row:hover .chat-subagents-row-open,
 .chat-subagents-row:focus-visible .chat-subagents-row-open { opacity: 1; }
 
+/* The row a rail chip just jumped to. Declared AFTER :hover so the flash wins while it
+   runs — the pointer is nowhere near a row the keyboard or a chip scrolled you to. */
+.chat-subagents-row[data-flash='1'] {
+  box-shadow: inset 3px 0 0 var(--color-accent);
+  animation: chat-subagents-flash 1.6s ease-out;
+}
+@keyframes chat-subagents-flash {
+  0%, 45% { background: var(--color-accent-soft); }
+  100% { background: transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-subagents-row[data-flash='1'] { animation: none; background: var(--color-accent-soft); }
+}
+
+/* ── Sub-agent rail — the same group, pinned once you have scrolled past the card ───
+   An overlay child of `.chat-transcript`, NOT of the scroller, for exactly the reason the
+   "jump to latest" pill is (see ChatPane.css): an absolute child of `.chat-scroll` scrolls
+   away with the content it is meant to outlive. The host spans the transcript so the strip
+   can be laid out against its edges, and passes pointer events THROUGH everywhere except
+   the rail itself — the transcript underneath stays clickable. */
+.chat-subagents-rail-host {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 3;
+  display: flex;
+  padding: var(--space-3) var(--space-6) 0;
+  pointer-events: none;
+}
+
+.chat-subagents-rail {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  max-width: var(--chat-card-width, min(680px, 100%));
+  padding: 4px 6px 4px var(--space-3);
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-border);
+  /* OPAQUE, not a tint: the transcript scrolls directly under this strip, and at a
+     translucent 92% the line passing beneath it read straight through the chips. */
+  background: var(--color-bg-elevated, var(--color-bg-secondary));
+  box-shadow: var(--shadow-md, var(--shadow-sm));
+  animation: chat-rail-in 140ms ease-out;
+}
+@keyframes chat-rail-in { from { opacity: 0; transform: translateY(-6px); } }
+@media (prefers-reduced-motion: reduce) { .chat-subagents-rail { animation: none; } }
+
+/* The group's own summary — the card's header, compressed to a pill you can click to get
+   back to it. */
+.chat-subagents-rail-summary {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: none;
+  background: none;
+  font-family: inherit;
+  cursor: pointer;
+}
+.chat-subagents-rail-glyph { color: var(--color-warning); font-size: var(--font-size-sm); }
+.chat-subagents-rail-count {
+  color: var(--color-text);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-bold);
+  white-space: nowrap;
+}
+.chat-subagents-rail-summary:hover .chat-subagents-rail-count { color: var(--color-accent); }
+.chat-subagents-rail-summary:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; border-radius: var(--radius-sm); }
+.chat-subagents-rail .chat-subagents-elapsed { font-size: 10.5px; }
+
+/* One chip per run. The strip scrolls sideways rather than wrapping: the rail is a fixed
+   40px band over the transcript, and a fan-out of ten agents must not grow it into a wall. */
+.chat-subagents-rail-chips {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.chat-subagents-rail-chips::-webkit-scrollbar { display: none; }
+/* Fades the last chip at the edge so an overflowing strip (a wide fan-out, or a narrow
+   split pane) LOOKS scrollable rather than clipped. Only when it actually overflows —
+   the strip shrink-wraps its chips, so an unconditional mask would dim the last chip of
+   a group that fits perfectly well. */
+.chat-subagents-rail-chips[data-overflow='1'] {
+  mask-image: linear-gradient(to right, #000 calc(100% - 20px), transparent);
+}
+
+.chat-subagents-rail-chip {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px 3px 4px;
+  border: none;
+  border-radius: var(--radius-full);
+  background: transparent;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+.chat-subagents-rail-chip:hover { background: var(--color-accent-soft); }
+.chat-subagents-rail-chip:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; }
+.chat-subagents-rail-chip-label {
+  max-width: 130px;
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-subagents-rail-chip[data-status='running'] .chat-subagents-rail-chip-label { color: var(--color-text); }
+/* A finished run stays on the rail — it is part of the group you are watching — but recedes
+   until you look for it. */
+.chat-subagents-rail-chip:not([data-status='running']) .chat-a-avatar { opacity: 0.55; }
+.chat-subagents-rail-chip-mark { font-size: 10px; color: var(--color-text-tertiary); }
+.chat-subagents-rail-chip-mark[data-status='running'] { color: var(--color-accent); }
+.chat-subagents-rail-chip-mark[data-status='completed'] { color: var(--color-success); }
+.chat-subagents-rail-chip-mark[data-status='error'] { color: var(--color-error); }
+
 /* ── Board preview card (state 4) ─────────────────────────────────────────────────── */
 
 /* A board is DRAWN in the transcript (BoardEmbed), so it is sized like something you look
