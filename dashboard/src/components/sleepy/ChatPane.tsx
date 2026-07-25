@@ -5,7 +5,8 @@ import { api } from '../../api/client';
 import type { ModelConfig } from '../../lib/agentComposer';
 import {
   classifyReference, subAgentToolUseIds, isGuardedCommand, turnHasVisibleProgress,
-  nextStickToBottom, type SubAgentRun,
+  nextStickToBottom, wheelIntent, keyIntent, touchIntent,
+  type SubAgentRun, type ScrollIntent,
 } from './chat/chatEntities';
 import { ItemView } from './chat/TranscriptItem';
 import { SurveyCard } from './chat/SurveyCard';
@@ -48,14 +49,10 @@ import './ChatPane.css';
 
 const WATCHDOG_MS = 4000;
 
-/** Keys that scroll the transcript — the keyboard half of "the user is driving" (see the
- *  gesture window in ChatPane). Space is deliberately absent: it only scrolls a focused
- *  scroller, and every Space that reaches this pane is being typed into the composer. */
-const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End']);
-
-/** How long a gesture keeps ownership of the scroller. Covers the frame or two between the
- *  gesture and the scroll it produces, plus the gaps inside trackpad momentum (which keeps
- *  emitting wheel events that refresh it). */
+/** How long an UPWARD gesture keeps ownership of the scroller. Covers the frame or two
+ *  between the gesture and the scroll it produces, plus the gaps inside trackpad momentum
+ *  (which keeps emitting wheel events that refresh it). A DOWNWARD gesture doesn't open a
+ *  window at all — it closes any open one; see `markIntent`. */
 const GESTURE_MS = 500;
 
 /** How far below the transcript's top edge a rail jump parks its target — the pinned rail's
@@ -290,10 +287,12 @@ export function ChatPane({
   const stickRef = useRef(true);
   /** `scrollTop` at the last scroll event — the direction signal `nextStickToBottom` reads. */
   const prevTopRef = useRef(0);
-  /** When the user last drove this scroller — the other half of that signal. See below. */
-  const gestureAtRef = useRef(-Infinity);
+  /** When the user last asked to move UP — the other half of that signal. See below. */
+  const upIntentAtRef = useRef(-Infinity);
   /** A scrollbar drag holds the gesture open: its scroll events span the whole press. */
   const draggingRef = useRef(false);
+  /** The last touch Y, so a touch drag's direction can be read off consecutive moves. */
+  const touchYRef = useRef(0);
   /** Render mirror of `stickRef`, for the "jump to latest" affordance only. */
   const [pinned, setPinned] = useState(true);
 
@@ -313,9 +312,21 @@ export function ChatPane({
 
   // A scroll event carries no hint of what caused it, and the transcript is a surface whose
   // content moves on its own constantly — so `nextStickToBottom` is told, per event, whether
-  // the user is at the wheel. Outside a live gesture nothing may unpin the view.
-  const markGesture = useCallback(() => { gestureAtRef.current = performance.now(); }, []);
-  const userDriving = () => draggingRef.current || performance.now() - gestureAtRef.current < GESTURE_MS;
+  // the user asked to go UP. Nothing else may unpin the view.
+  //
+  // DIRECTION is the whole point. Tracking "a gesture happened" was not enough: the browser
+  // clamps `scrollTop` when a block shrinks under a pinned view, and that clamp reaches the
+  // scroll handler looking exactly like a scroll up (see nextStickToBottom's rule 2). Since
+  // flicking DOWN to follow a streaming answer emits trackpad momentum for the rest of the
+  // turn, the direction-blind window was open at precisely the moment the turn's cards
+  // collapsed — so the view unpinned and stranded mid-transcript. A downward gesture now
+  // CLOSES the window instead of refreshing it: following the answer can never license
+  // leaving it.
+  const markIntent = useCallback((intent: ScrollIntent) => {
+    if (intent === 'up') upIntentAtRef.current = performance.now();
+    else if (intent === 'down') upIntentAtRef.current = -Infinity;
+  }, []);
+  const userDriving = () => draggingRef.current || performance.now() - upIntentAtRef.current < GESTURE_MS;
 
   // Pressing the scrollbar gutter is a scroll gesture; pressing a card is not — clicking one
   // open changes the content height, and counting that as "the user scrolled" would unpin
@@ -323,11 +334,11 @@ export function ChatPane({
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     const el = e.currentTarget;
     if (e.clientX - el.getBoundingClientRect().left <= el.clientWidth) return;
+    // A drag is unambiguous — it is the one gesture whose direction the scroll metrics can be
+    // trusted for, because the pointer owns the scroller for the whole press.
     draggingRef.current = true;
-    markGesture();
     const release = () => {
       draggingRef.current = false;
-      markGesture();
       window.removeEventListener('pointerup', release);
       window.removeEventListener('pointercancel', release);
     };
@@ -397,9 +408,9 @@ export function ChatPane({
     const el = scrollRef.current;
     if (!el) return;
     const step = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? el.clientHeight : 1;
-    markGesture();
+    markIntent(wheelIntent(e.deltaY));
     el.scrollTop += e.deltaY * step;
-  }, [markGesture]);
+  }, [markIntent]);
 
   // Height changes React never rendered: an image or clip finishing its load, a tool card
   // expanding, the composer growing a line (which SHRINKS the scroller), a split or window
@@ -419,6 +430,21 @@ export function ChatPane({
     ro.observe(content);
     return () => ro.disconnect();
   }, [scrollToBottom, syncRail]);
+
+  // The one height change the observer above CANNOT see: a re-home. `appendChild`-ing the
+  // session's container into another slot zeroes `scrollTop` on every scroller inside it
+  // without necessarily changing any box — two panes of the same size swapping, a tab
+  // switching in place, the overlay re-expanding. AgentSurface calls `fitAndResize` on every
+  // foreground session a frame after it re-homes them (its terminals refit their grid there);
+  // for a chat, that IS this. Cheap and idempotent, so firing on a move that changed nothing
+  // costs one assignment.
+  useEffect(() => {
+    session.setTranscriptRepin(() => {
+      if (stickRef.current) scrollToBottom();
+      syncRail();
+    });
+    return () => session.setTranscriptRepin(null);
+  }, [session, scrollToBottom, syncRail]);
 
   // ── State 3/4: a clicked file reference either opens the Lightbox (an image) or the
   //    file SlideOver (everything else, including a board — no rasterizer exists, so a
@@ -589,10 +615,15 @@ export function ChatPane({
             prevTopRef.current = el.scrollTop;
             syncRail();
           }}
-          onWheel={markGesture}
-          onTouchMove={markGesture}
+          onWheel={(e) => markIntent(wheelIntent(e.deltaY))}
+          onTouchStart={(e) => { touchYRef.current = e.touches[0]?.clientY ?? 0; }}
+          onTouchMove={(e) => {
+            const y = e.touches[0]?.clientY ?? touchYRef.current;
+            markIntent(touchIntent(y - touchYRef.current));
+            touchYRef.current = y;
+          }}
           onPointerDown={handlePointerDown}
-          onKeyDown={(e) => { if (SCROLL_KEYS.has(e.key)) markGesture(); }}
+          onKeyDown={(e) => markIntent(keyIntent(e.key))}
           onClick={(e) => {
             // Click-to-focus, mirroring how clicking anywhere in an xterm focuses its input:
             // without this a click on the transcript parks focus on <body>, killing the

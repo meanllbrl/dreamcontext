@@ -285,6 +285,19 @@ export interface ChatSession {
    *  container lives in the garage), and a DOM event needs a listener wired on mount anyway
    *  — a plain ref-registration hook is simpler, type-safe, and needs no event bus. */
   setFocusTarget: (el: HTMLElement | null) => void;
+  /** Register (or clear, with `null`) the transcript's "re-measure yourself" hook, which
+   *  `fitAndResize` calls — the chat analogue of a terminal refitting its grid. AgentSurface
+   *  fires `fitAndResize` on every foreground session after ANY layout move (split, combine,
+   *  tab switch, overlay expand, Task Manager slot mount), one frame after the container has
+   *  been re-appended into its slot.
+   *
+   *  Load-bearing for a re-home specifically: `appendChild`-ing the container into a new slot
+   *  resets `scrollTop` on every scroller inside it to 0, and if the new slot happens to
+   *  MEASURE the same as the old one, the pane's ResizeObserver never fires — so nothing
+   *  would ever put the transcript back at the bottom. That is the "opening a window threw
+   *  the transcript somewhere in the middle" report; a size-change-triggered observer cannot
+   *  cover it, because the defining property of this case is that no size changed. */
+  setTranscriptRepin: (fn: (() => void) | null) => void;
 }
 
 // ─── Session factory ────────────────────────────────────────────────────────────────
@@ -374,6 +387,7 @@ export function createChatSession(
   };
 
   let focusTarget: HTMLElement | null = null;
+  let transcriptRepin: (() => void) | null = null;
   let disposed = false;
 
   const session: ChatSession = {
@@ -389,7 +403,9 @@ export function createChatSession(
     model,
     effort,
     ensureOpen: () => { /* no DOM-open step — the AgentSurface portal mount IS "open" */ },
-    fitAndResize: () => { /* no terminal grid to refit */ },
+    // No terminal grid to refit — the transcript's equivalent is "you were just moved or
+    // resized; put the view back where it belongs" (see `setTranscriptRepin`).
+    fitAndResize: () => { transcriptRepin?.(); },
     applyZoom,
     sendText,
     syncDraft,
@@ -410,6 +426,7 @@ export function createChatSession(
     alwaysAllow,
     clearAttention,
     setFocusTarget: (el) => { focusTarget = el; },
+    setTranscriptRepin: (fn) => { transcriptRepin = fn; },
   };
 
   // ── Coarse-transition notification (see file header) ──────────────────────────────

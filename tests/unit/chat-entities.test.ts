@@ -12,6 +12,7 @@ import {
   deriveDiffStartLine, estimateTokens, formatTokenCount, formatDuration, classifyOutputLine,
   formatClock, splitInlineCode, isGuardedCommand, avatarHue,
   turnHasVisibleProgress, nextStickToBottom, BOTTOM_SLACK,
+  wheelIntent, keyIntent, touchIntent,
   isAgentRun, runDurationMs, formatModelName, runMetaChips,
   isRunFinished, runGroupPhase, isGroupOpen, groupOutcomeNote,
   type SubAgentRun, type ProgressProbe,
@@ -608,14 +609,42 @@ describe('turnHasVisibleProgress', () => {
   });
 });
 
+// ─── Scroll intent (which way the user asked the transcript to move) ─────────────
+
+describe('scroll intent', () => {
+  it('reads a wheel notch\'s direction, in every delta mode (only the sign matters)', () => {
+    expect(wheelIntent(-3)).toBe('up');
+    expect(wheelIntent(-0.5)).toBe('up');
+    expect(wheelIntent(120)).toBe('down');
+    // A horizontal-only wheel says nothing about vertical intent — it must neither open the
+    // window nor close one a real upward flick just opened.
+    expect(wheelIntent(0)).toBeNull();
+  });
+
+  it('reads a key\'s direction and ignores everything else', () => {
+    for (const k of ['ArrowUp', 'PageUp', 'Home']) expect(keyIntent(k)).toBe('up');
+    for (const k of ['ArrowDown', 'PageDown', 'End']) expect(keyIntent(k)).toBe('down');
+    // Space is deliberately not a scroll key here: every Space reaching the pane is typing.
+    for (const k of [' ', 'a', 'Enter', 'Escape', 'ArrowLeft']) expect(keyIntent(k)).toBeNull();
+  });
+
+  it('inverts a touch drag: the finger moving DOWN scrolls the transcript UP', () => {
+    expect(touchIntent(24)).toBe('up');
+    expect(touchIntent(-24)).toBe('down');
+    expect(touchIntent(0)).toBeNull();
+  });
+});
+
 // ─── nextStickToBottom (transcript auto-scroll) ──────────────────────────────────
 
 describe('nextStickToBottom', () => {
-  /** A user-driven scroll event — wheel, drag, touch, or a scroll key. */
+  /** A scroll event with an UPWARD user gesture behind it — wheel/touch/key up, or a live
+   *  scrollbar drag (whose direction the metrics supply). */
   const at = (scrollTop: number, prevScrollTop = scrollTop) => ({
     scrollTop, scrollHeight: 2000, clientHeight: 500, prevScrollTop, userDriven: true,
   });
-  /** The same event with no gesture behind it: the content moved, not the user. */
+  /** The same event with no upward gesture behind it: the content moved, not the user —
+   *  or the user was moving DOWN, which never licenses leaving the bottom. */
   const churn = (scrollTop: number, prevScrollTop = scrollTop) => ({
     ...at(scrollTop, prevScrollTop), userDriven: false,
   });
@@ -653,6 +682,16 @@ describe('nextStickToBottom', () => {
 
   it('re-sticks when the user scrolls back down to the bottom', () => {
     expect(nextStickToBottom(false, at(1490, 1000))).toBe(true);
+  });
+
+  it('keeps sticking when the turn ends under a reader who was scrolling DOWN', () => {
+    // Owner report 07-25 (second pass): "when the agent finishes, the scroll jumps to
+    // somewhere in the middle". Following the answer means flicking DOWN, whose trackpad
+    // momentum used to hold the direction-blind gesture window open for the whole turn — so
+    // the turn-end collapse's clamp arrived LOOKING user-driven and unpinned the view, and
+    // the re-pin never came because scroll events fire before ResizeObserver callbacks.
+    // A downward gesture now leaves `userDriven` false, so the clamp is churn again.
+    expect(nextStickToBottom(true, churn(900, 1400))).toBe(true);
   });
 
   it('keeps the previous state for an unmeasurable (detached) scroller', () => {
