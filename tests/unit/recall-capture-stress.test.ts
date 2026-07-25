@@ -16,6 +16,16 @@ import { loadGold, evaluateAsync, type GoldQuery } from '../../eval/harness.js';
 // worker's reporter heartbeat (the "Timeout calling onTaskUpdate" RPC guard).
 const tick = (): Promise<void> => new Promise((r) => setImmediate(r));
 
+// Per-test budget for the two flood measurements. These sweep the REAL shipping
+// corpus at three flood sizes, so their cost grows with the brain — and they run
+// in a worker sharing CPU with the rest of the suite, which costs far more than
+// the isolated timing suggests (~70s alone vs. over 90s under full parallelism:
+// the old budget passed solo and failed in the suite). Budgeted generously on
+// purpose: this guard exists to catch a PRECISION regression, and a timeout that
+// fires on machine load rather than on recall quality is a false alarm that
+// trains people to ignore it.
+const FLOOD_MEASUREMENT_TIMEOUT_MS = 240_000;
+
 // ── Locate the worktree's real committed corpus + gold set (same resolution as
 //    recall-eval.test.ts so we stress against the EXACT shipping corpus). ──
 const here = dirname(fileURLToPath(import.meta.url));
@@ -203,7 +213,7 @@ describe('continuous-capture precision stress (STEP 1 measurement)', () => {
     // cannot and should not "fix" a real-doc-vs-real-doc reorder; the named
     // risk (captures out-ranking knowledge) is fully neutralised.
     expect(dropR3).toBeLessThanOrEqual(3.5);
-  }, 90_000);
+  }, FLOOD_MEASUREMENT_TIMEOUT_MS);
 
   it('GUARD PROOF: a capture flood never knocks a real gold target out of the top-3', async () => {
     // The named precision-decay risk is "mediocre auto-captures crowd real
@@ -257,5 +267,5 @@ describe('continuous-capture precision stress (STEP 1 measurement)', () => {
     // Load-bearing guarantee: at the worst-case flood, zero real top-3 knowledge
     // is crowded out by captures.
     expect(await trueDisplacementsAt(200)).toEqual([]);
-  }, 90_000);
+  }, FLOOD_MEASUREMENT_TIMEOUT_MS);
 });

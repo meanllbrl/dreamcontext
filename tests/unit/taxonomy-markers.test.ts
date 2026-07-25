@@ -99,6 +99,15 @@ describe('skill/SKILL.md markers', () => {
   it('routes duplicate task families to tasks dedup in the litmus tests', () => {
     expect(content).toContain('Duplicate task families / `-N` mirrors');
   });
+
+  // "claude: command not found" while claude IS installed is the single most
+  // misdiagnosed setup failure (it installs to ~/.local/bin, off every default
+  // PATH). Without this pointer an agent concludes "not installed" and walks the
+  // user through a reinstall that changes nothing.
+  it('routes a missing-on-PATH claude to Fix PATH instead of a reinstall', () => {
+    expect(content).toContain('claude: command not found');
+    expect(content).toContain('Fix PATH');
+  });
 });
 
 // ── skill/references lab markers ─────────────────────────────────────────────
@@ -232,5 +241,22 @@ describe('skill/references/sleep.md brain-sync step', () => {
   const content = readFileSync(join(ROOT, 'skill', 'references', 'sleep.md'), 'utf-8');
   it('documents that sleep done runs brain sync', () => {
     expect(content).toContain('Brain sync also fires here');
+  });
+});
+
+// ── skill/references agent-surface prerequisite markers ──────────────────────
+
+describe('skill/references integrations.md — claude PATH prerequisite', () => {
+  const content = readFileSync(join(ROOT, 'skill', 'references', 'integrations.md'), 'utf-8');
+
+  // The full protocol behind SKILL.md's pointer: the agent must be able to name
+  // the capability flag and the exact install target, not just "there's a button".
+  it('documents the capabilities flag and the one-click fix target', () => {
+    expect(content).toContain('claudePathBroken');
+    expect(content).toContain("target:'claude-path'");
+  });
+
+  it('names the install directory that is on no default PATH', () => {
+    expect(content).toContain('~/.local/bin');
   });
 });
