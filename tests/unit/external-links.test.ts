@@ -10,7 +10,9 @@
  * written duck-typed precisely so this logic is testable without a browser.
  */
 import { describe, it, expect } from 'vitest';
-import { externalHref, externalUrlForClick } from '../../dashboard/src/lib/externalLinks.js';
+import {
+  externalHref, externalUrlForClick, isContainedHref, shouldContainClick,
+} from '../../dashboard/src/lib/externalLinks.js';
 
 /** A click on an anchor carrying `href`, or on no anchor at all when href is null. */
 function clickOn(href: string | null, over: Partial<{ type: string; button: number; defaultPrevented: boolean }> = {}) {
@@ -116,5 +118,74 @@ describe('externalUrlForClick', () => {
   it('leaves an in-app link to the router', () => {
     expect(externalUrlForClick(clickOn('/tasks'))).toBeNull();
     expect(externalUrlForClick(clickOn('src/server/index.ts'))).toBeNull();
+  });
+});
+
+// ─── isContainedHref / shouldContainClick ───────────────────────────────────────
+//
+// The other half of the same rule. `externalHref` decides what LEAVES for the browser;
+// this decides what must not be followed AT ALL. The gap between them is what killed the
+// app on 07-25: a chat answer wrote `[watch](_dream_context/…/reel-sfx.mp4)`, the href was
+// relative so nothing claimed it, the webview navigated to a URL the router doesn't serve,
+// and every open session went with it.
+
+describe('isContainedHref', () => {
+  it('contains a document-relative file path — the markdown form that killed the app', () => {
+    expect(isContainedHref('_dream_context/social/posts/odev-sistemi-reel-v1/export/reel-sfx.mp4')).toBe(true);
+    expect(isContainedHref('docs/shot.png')).toBe(true);
+    expect(isContainedHref('./notes.md')).toBe(true);
+    expect(isContainedHref('../sibling/clip.mov')).toBe(true);
+    expect(isContainedHref('src/server/index.ts')).toBe(true);
+  });
+
+  it('contains absolute schemes the OS must never be handed either', () => {
+    // `externalHref` refuses to OPEN these; without containment the webview follows them.
+    expect(isContainedHref('file:///Users/me/clip.mp4')).toBe(true);
+    expect(isContainedHref('data:text/html,<script>x</script>')).toBe(true);
+  });
+
+  it('leaves root-relative hrefs alone — app routes and download endpoints', () => {
+    expect(isContainedHref('/tasks')).toBe(false);
+    expect(isContainedHref('/api/agent/file?path=x&raw=1')).toBe(false);
+  });
+
+  it('leaves in-page fragments to the browser', () => {
+    expect(isContainedHref('#top')).toBe(false);
+  });
+
+  it('leaves external links to externalHref, which sends them to the OS', () => {
+    expect(isContainedHref('https://github.com/meanllbrl/dreamcontext')).toBe(false);
+    expect(isContainedHref('mailto:mehmet@nuraydin.com')).toBe(false);
+    expect(isContainedHref('//example.com/x')).toBe(false);
+  });
+
+  it('has nothing to contain when there is no href', () => {
+    expect(isContainedHref(null)).toBe(false);
+    expect(isContainedHref(undefined)).toBe(false);
+    expect(isContainedHref('   ')).toBe(false);
+  });
+});
+
+describe('shouldContainClick', () => {
+  it('claims a left click on a relative file link', () => {
+    expect(shouldContainClick(clickOn('_dream_context/export/reel-sfx.mp4'))).toBe(true);
+  });
+
+  it('claims a middle click too — a new-tab request on a file path is just as fatal', () => {
+    expect(shouldContainClick(clickOn('clip.mp4', { type: 'auxclick', button: 1 }))).toBe(true);
+  });
+
+  it('leaves a right click to the context menu', () => {
+    expect(shouldContainClick(clickOn('clip.mp4', { type: 'auxclick', button: 2 }))).toBe(false);
+  });
+
+  it('defers to a handler that already claimed the click', () => {
+    expect(shouldContainClick(clickOn('clip.mp4', { defaultPrevented: true }))).toBe(false);
+  });
+
+  it('does not claim external or in-app links', () => {
+    expect(shouldContainClick(clickOn('https://example.com/x'))).toBe(false);
+    expect(shouldContainClick(clickOn('/tasks'))).toBe(false);
+    expect(shouldContainClick(clickOn(null))).toBe(false);
   });
 });

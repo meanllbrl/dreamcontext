@@ -465,22 +465,47 @@ function isVaultAgnostic(pathname: string): boolean {
 }
 
 /**
- * STRICT per-request vault resolver. Reads the `X-Dreamcontext-Vault` header and
- * resolves it to a context root WITHOUT any filesystem-path fallback.
+ * Which vault a request is ASKING for, by name — before the registry is consulted.
+ *
+ * The header is the normal channel, but a whole class of request can't send one: a
+ * subresource the BROWSER fetches. `<img src>`, `<video src>` and `<audio src>` carry no
+ * custom headers, so in launcher mode (nothing pinned server-side) every inline image and
+ * every clip in Chat answered 400 `no_vault` — the media was never missing, the request
+ * just had no way to say where to look. A `?vault=<name>` query param on GET closes that
+ * gap, the same way the chat/terminal WebSocket upgrade already carries its vault (the
+ * browser's WS API can't set headers either).
+ *
+ * GET only, and deliberately so: a query param rides along on any cross-site navigation or
+ * form post, so letting one pick the vault for a MUTATING request would hand out the vault
+ * selector for free. Reads stay safe because the value is never used as a path — see
+ * {@link resolveRequestVault}, which accepts an exact registered NAME and nothing else.
+ */
+export function requestedVaultName(req: Pick<IncomingMessage, 'headers' | 'method' | 'url'>): string | null {
+  const h = req.headers['x-dreamcontext-vault'];
+  if (typeof h === 'string' && h) return h;
+  if ((req.method || 'GET').toUpperCase() !== 'GET') return null;
+  try {
+    return new URL(req.url || '/', 'http://localhost').searchParams.get('vault') || null;
+  } catch { return null; }
+}
+
+/**
+ * STRICT per-request vault resolver. Reads the vault NAME ({@link requestedVaultName})
+ * and resolves it to a context root WITHOUT any filesystem-path fallback.
  *
  * Deliberately does NOT call `resolveVaultContextRoot`, which `resolve()`s an
  * unknown arg as a path — a traversal vector when the value comes off a header.
  * Here only an EXACT registered vault NAME is accepted; anything path-shaped or
  * unknown returns 'INVALID' so the caller can answer 400.
  *
- * - no/empty header  → null  (fall back to the server's pinned contextRoot)
+ * - no/empty name    → null  (fall back to the server's pinned contextRoot)
  * - path-shaped name → 'INVALID'
  * - unknown name     → 'INVALID'
  * - registered name  → join(vault.path, '_dream_context')
  */
 function resolveRequestVault(req: IncomingMessage): string | null | 'INVALID' {
-  const h = req.headers['x-dreamcontext-vault'];
-  if (!h || typeof h !== 'string') return null;
+  const h = requestedVaultName(req);
+  if (!h) return null;
   // Reject anything path-shaped or containing null bytes / dots.
   if (/[/\\:.\x00]/.test(h)) return 'INVALID';
   const v = listVaults().find((x) => x.name === h);

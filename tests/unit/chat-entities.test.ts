@@ -11,7 +11,7 @@ import {
   toolGlyph, classifyReference, parseEditDiff, summarizeSubAgents, subAgentToolUseIds,
   deriveDiffStartLine, estimateTokens, formatTokenCount, formatDuration, classifyOutputLine,
   formatClock, splitInlineCode, isGuardedCommand, avatarHue,
-  turnHasVisibleProgress, nextStickToBottom, BOTTOM_SLACK,
+  turnHasVisibleProgress, nextStickToBottom, nextRestoreTop, BOTTOM_SLACK,
   wheelIntent, keyIntent, touchIntent,
   isAgentRun, runDurationMs, formatModelName, runMetaChips,
   isRunFinished, runGroupPhase, isGroupOpen, groupOutcomeNote,
@@ -700,5 +700,54 @@ describe('nextStickToBottom', () => {
     };
     expect(nextStickToBottom(true, detached)).toBe(true);
     expect(nextStickToBottom(false, detached)).toBe(false);
+  });
+});
+
+// ─── nextRestoreTop (what a re-home puts back for a view that is NOT at the bottom) ──
+
+describe('nextRestoreTop', () => {
+  const at = (scrollTop: number, prevScrollTop = scrollTop) => ({
+    scrollTop, scrollHeight: 2000, clientHeight: 500, prevScrollTop, userDriven: true,
+  });
+  const churn = (scrollTop: number, prevScrollTop = scrollTop) => ({
+    ...at(scrollTop, prevScrollTop), userDriven: false,
+  });
+
+  it('follows the reader wherever they scroll', () => {
+    expect(nextRestoreTop(0, at(900, 1400))).toBe(900);
+    expect(nextRestoreTop(900, at(1200, 900))).toBe(1200);
+  });
+
+  it('records a clamp too — the content moved the reader, and that IS where they are now', () => {
+    // A tool card collapsing under the view genuinely relocates it; coming back to the
+    // pre-clamp offset would scroll past content that no longer exists.
+    expect(nextRestoreTop(1400, churn(900, 1400))).toBe(900);
+  });
+
+  it('records a deliberate scroll to the very top', () => {
+    // The reader asked for the top (upward intent), so 0 is a real reading position.
+    expect(nextRestoreTop(900, at(0, 400))).toBe(0);
+  });
+
+  it('ignores a jump to 0 that no gesture asked for — that is a re-home reset', () => {
+    // `appendChild`-ing the session container into another slot zeroes `scrollTop`. Chromium
+    // dispatches no scroll event for it, but an engine that does must not be allowed to
+    // overwrite the reader's offset with the reset, or the restore would put back 0.
+    expect(nextRestoreTop(1441, churn(0, 1441))).toBe(1441);
+  });
+
+  it('keeps the last known offset for an unmeasurable (garaged) scroller', () => {
+    // A backgrounded tab's container is detached: 0 there means "cannot be measured", not
+    // "the reader is at the top". This is the state the whole restore exists to survive.
+    const garaged = {
+      scrollTop: 0, scrollHeight: 0, clientHeight: 0, prevScrollTop: 0, userDriven: false,
+    };
+    expect(nextRestoreTop(1441, garaged)).toBe(1441);
+  });
+
+  it('accepts 0 from a scroller whose content simply fits', () => {
+    // Short transcript, nothing to scroll: 0 is the only honest offset, and `prevScrollTop`
+    // being 0 keeps it out of the re-home guard.
+    expect(nextRestoreTop(1441, { scrollTop: 0, scrollHeight: 400, clientHeight: 500, prevScrollTop: 0, userDriven: false })).toBe(0);
   });
 });

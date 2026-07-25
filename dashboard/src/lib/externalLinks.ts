@@ -11,8 +11,10 @@
  * documents, announcements, the About page all inherit it with no per-surface wiring,
  * which matters because the markdown surfaces render links the app never authored.
  *
- * Relative links are left alone: they are in-app routes and download endpoints, and
- * the router owns them.
+ * Root-relative links are left alone: they are in-app routes and download endpoints, and
+ * the router owns them. DOCUMENT-relative ones are not — a markdown file reference is not
+ * a route, and following one in place is the same app-ending navigation by another name.
+ * See {@link isContainedHref}.
  */
 
 import { openExternalUrl } from './desktop';
@@ -79,13 +81,61 @@ export function externalUrlForClick(e: LinkClick): string | null {
 }
 
 /**
- * Route every external link on the page to the default browser. Returns a teardown
+ * Would following this href IN PLACE destroy the app? True for a DOCUMENT-RELATIVE href —
+ * `_dream_context/clip.mp4`, `docs/shot.png`, `./notes.md`, or an absolute `file:` URL.
+ *
+ * These are the ones markdown produces and the app never authors. An answer that writes
+ * `[watch](clip.mp4)`, or a knowledge doc that links a sibling file, renders an `<a>` whose
+ * href is a FILESYSTEM path; clicking it navigates the one webview to a URL the router
+ * doesn't serve, the SPA reboots at the Launcher, and every open session is gone with no
+ * back button to return by (owner report 07-25: "tüm Dream Context'den koptum").
+ *
+ * The chat surface already rewrites its own file references into pictures, players and
+ * clickable chips — but that is a per-message DOM effect, and a per-message effect is the
+ * wrong place for the one rule that decides whether the app survives a click. This is that
+ * rule, in one document-level place, for every markdown surface (chat, knowledge, tasks,
+ * core, announcements) at once.
+ *
+ * NOT contained, deliberately:
+ *   • `#frag`      — an in-page anchor, the browser's own business;
+ *   • `/anything`  — root-relative: an app route or a download endpoint, both of which the
+ *                    app authored and the router owns;
+ *   • absolute http/https/mailto/tel — {@link externalHref} already sends those to the OS.
+ */
+export function isContainedHref(href: string | null | undefined): boolean {
+  const raw = (href ?? '').trim();
+  if (!raw) return false;
+  if (raw.startsWith('#') || raw.startsWith('/')) return false;
+  return externalHref(raw) === null;
+}
+
+/** Whether this click is on a link that must not be followed in place — see
+ *  {@link isContainedHref}. Same event shape and same button rules as
+ *  {@link externalUrlForClick}, so both decisions read one anchor the same way. */
+export function shouldContainClick(e: LinkClick): boolean {
+  if (e.defaultPrevented) return false;
+  if (e.type === 'auxclick' ? e.button !== 1 : e.button !== 0) return false;
+  if (!isAnchorLike(e.target)) return false;
+  const anchor = e.target.closest('a[href]');
+  return !!anchor && isContainedHref(anchor.getAttribute('href'));
+}
+
+/**
+ * Route every external link on the page to the default browser, and stop every
+ * document-relative one from navigating the app away at all. Returns a teardown
  * function; call once at startup.
  */
 export function installExternalLinkHandler(doc: Document = document): () => void {
   const onClick = (e: Event): void => {
-    const url = externalUrlForClick(e as unknown as LinkClick);
-    if (!url) return;
+    const click = e as unknown as LinkClick;
+    const url = externalUrlForClick(click);
+    if (!url) {
+      // Only the DEFAULT is cancelled — propagation is left alone on purpose, so a surface
+      // that gives its own file links a meaning (the chat transcript opens them in the
+      // slide-over) still receives the click and acts on it.
+      if (shouldContainClick(click)) e.preventDefault();
+      return;
+    }
     e.preventDefault();
     void openExternalUrl(url);
   };

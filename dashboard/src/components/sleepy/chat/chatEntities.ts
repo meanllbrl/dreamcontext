@@ -1,4 +1,5 @@
 import { useEffect, useState, type RefObject } from 'react';
+import { agentFileUrl } from '../../../api/client';
 
 /**
  * Pure, framework-light logic shared by the Agent Chat (beta) redesign's card
@@ -641,17 +642,64 @@ export function nextStickToBottom(prev: boolean, m: ScrollMetrics): boolean {
   return prev;
 }
 
+/**
+ * Where the reader is, so a re-home can put them back — the counterpart to
+ * {@link nextStickToBottom}, which only ever describes the PINNED case.
+ *
+ * `appendChild`-ing a session's container into another slot zeroes `scrollTop` on every
+ * scroller inside it and dispatches NO scroll event for it (measured in Chromium: garaging a
+ * chat tab takes the transcript 1441 → 0 with the handler never firing). So the offset has to
+ * be remembered while the view is still homed; the re-pin hook restores it. Without it a
+ * reader who had scrolled up came back to the TOP of the conversation, because the only
+ * restore that existed was "if you were stuck, go to the bottom" — the owner-reported
+ * "renaming a tab breaks the other sessions' scroll" (renaming double-clicks a tab, and the
+ * click half SELECTS it, which garages whatever was on screen).
+ *
+ * Two rules:
+ * 1. A scroller that measures nothing is parked in the detached garage — unmeasurable, not
+ *    "at the top". Keep the last offset we could actually trust.
+ * 2. A jump to exactly 0 that no gesture asked for is a re-home reset arriving as a scroll
+ *    event (engines differ on whether one is dispatched), never a reading position. Reaching
+ *    the top deliberately always carries upward intent, so this can't swallow a real one.
+ */
+export function nextRestoreTop(prev: number, m: ScrollMetrics): number {
+  if (m.clientHeight === 0) return prev;
+  if (m.scrollTop === 0 && m.prevScrollTop > 0 && !m.userDriven) return prev;
+  return m.scrollTop;
+}
+
+// ─── Decorating the rendered markdown (copy bars, media, path chips) ──────────────
+//
+// The three hooks below all do the same kind of work: walk the HTML `MarkdownPreview` just
+// wrote and turn parts of it into something better — a code block with a Copy bar, a media
+// reference into the picture or the player itself, a path into a chip you can click.
+//
+// They run after EVERY render, deliberately, and that is not the same as running once. The
+// markdown subtree is written with `dangerouslySetInnerHTML`, which React re-writes from
+// scratch whenever it commits an update to that element — every child, and with it every
+// decoration these hooks added, is thrown away and replaced by the raw markup again. Keying
+// them to the message's own text (which is what they used to do) meant a re-render driven by
+// ANYTHING ELSE — another message streaming, a slide-over opening, the working indicator
+// ticking — silently reverted a whole answer to raw markdown with no effect left to notice.
+// A `<video>` became a bare `<a href="…mp4">` again, and following one of those in a window
+// with no back button IS the app closing (owner report 07-25).
+//
+// `MarkdownPreview` no longer rewrites on an unchanged render (it passes a stable
+// `dangerouslySetInnerHTML` object), so in practice these passes are cheap no-ops: every one
+// of them is guarded by a marker attribute, so a subtree that is already decorated costs
+// two `querySelectorAll` calls and nothing else. Running every time is what makes the
+// decoration self-healing rather than a one-shot that can be lost without a trace.
+
 // ─── Copyable code blocks (state 2 — fenced-code Copy button + language bar) ──────
 
 /**
  * Chat-local effect: injects a small header bar (language label + Copy button) above
  * every `pre > code` block inside `ref.current` that hasn't already been processed.
- * Scoped to this directory — `MarkdownPreview` itself is unchanged, so every OTHER
- * page that renders markdown (tasks, knowledge, core) is unaffected. Marks each
- * processed `pre` with `data-chat-copy` so re-renders (a still-streaming assistant
- * message re-running this effect on every token) never double-wrap it.
+ * Scoped to this directory — every OTHER page that renders markdown (tasks, knowledge,
+ * core) is unaffected. Marks each processed `pre` with `data-chat-copy` so the pass on
+ * every render (see this section's header) never double-wraps one.
  */
-export function useCopyableCodeBlocks(ref: RefObject<HTMLElement | null>, deps: unknown[]): void {
+export function useCopyableCodeBlocks(ref: RefObject<HTMLElement | null>): void {
   useEffect(() => {
     const root = ref.current;
     if (!root) return;
@@ -687,7 +735,7 @@ export function useCopyableCodeBlocks(ref: RefObject<HTMLElement | null>, deps: 
 
       pre.insertBefore(bar, pre.firstChild);
     });
-  }, deps); // eslint-disable-line react-hooks/exhaustive-deps
+  }); // every render — see this section's header
 }
 
 // ─── Clickable file paths in an answer ───────────────────────────────────────────────
@@ -714,12 +762,11 @@ export function looksLikePath(text: string): boolean {
  * have to go copy. Free for the agent — it is already how paths get written.
  *
  * Only INLINE code spans (never a `<pre>` block, where a path is part of a command or a
- * snippet and clicking it would be nonsense). Marks each processed node so the re-render on
- * every streamed token never double-binds one, exactly like the sibling effects here.
+ * snippet and clicking it would be nonsense). Marks each processed node so the pass on every
+ * render never double-binds one, exactly like the sibling effects here.
  */
 export function useClickablePaths(
   ref: RefObject<HTMLElement | null>,
-  deps: unknown[],
   onOpenPath: (path: string) => void,
 ): void {
   useEffect(() => {
@@ -739,7 +786,7 @@ export function useClickablePaths(
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpenPath(text); }
       });
     });
-  }, deps); // eslint-disable-line react-hooks/exhaustive-deps
+  }); // every render — see this section's header
 }
 
 // ─── Inline media in an answer ───────────────────────────────────────────────────────
@@ -762,8 +809,11 @@ function isLocalRef(href: string): boolean {
   return !!href && !/^(https?:|data:|blob:|mailto:|#)/i.test(href) && !href.startsWith('/api/');
 }
 
+/** Bytes for a referenced path. Built through the api client, NOT by hand: the vault has to
+ *  ride in the URL because the browser fetches an element `src` itself and sends no headers
+ *  (see `agentFileUrl`). Hand-building this is what made every clip 400 in launcher mode. */
 function rawUrl(path: string): string {
-  return `/api/agent/file?path=${encodeURIComponent(path)}&raw=1`;
+  return agentFileUrl(path, { raw: true });
 }
 
 function basenameOf(path: string): string {
@@ -788,13 +838,11 @@ function basenameOf(path: string): string {
  *   3. opens — if it still can't be shown (a format browsers won't play, a grant declined),
  *      one click hands it to the OS.
  *
- * Marks each processed node so the re-render on every streamed token never double-wraps one.
- * Scoped to this directory: `MarkdownPreview` is unchanged, so knowledge and task pages are
- * unaffected.
+ * Marks each processed node so the pass on every render never double-wraps one. Scoped to
+ * this directory, so knowledge and task pages are unaffected.
  */
 export function useInlineMedia(
   ref: RefObject<HTMLElement | null>,
-  deps: unknown[],
   handlers: {
     /** Open an image full-size (the existing lightbox). */
     onOpen?: (path: string) => void;
@@ -873,7 +921,11 @@ export function useInlineMedia(
         void fetch(rawUrl(path), { headers: { Range: 'bytes=0-0' } })
           .then((r): 'grant' | 'open' => (r.status === 403 ? 'grant' : 'open'))
           .catch((): 'grant' | 'open' => 'open')
-          .then((reason) => el.replaceWith(buildFallback(path, reason)));
+          // The probe is async, and a still-streaming message re-renders in the meantime —
+          // `dangerouslySetInnerHTML` throws the whole subtree away on every token. Swapping
+          // a DETACHED element does nothing except drop the fallback on the floor, so only
+          // replace one that is still on the page; the re-render's own pass rebuilds it.
+          .then((reason) => { if (el.isConnected) el.replaceWith(buildFallback(path, reason)); });
       }, { once: true });
       el.src = rawUrl(path);
       return el;
@@ -883,7 +935,6 @@ export function useInlineMedia(
     // rewrite even for images.
     root.querySelectorAll<HTMLImageElement>('img:not([data-chat-media])').forEach((img) => {
       const path = img.getAttribute('src') ?? '';
-      img.setAttribute('data-chat-media', '1');
       if (!isLocalRef(path)) return;
       img.replaceWith(buildMedia(path));
     });
@@ -893,11 +944,18 @@ export function useInlineMedia(
     // beside it: its href is a filesystem path, so following it would navigate the view to
     // a route that doesn't exist and take the conversation with it. Absolute URLs are left
     // untouched — `installExternalLinkHandler` sends those to the default browser.
+    //
+    // The marker goes on only where this pass actually TOOK the node over. Marking first and
+    // deciding after — which is what this used to do — permanently blacklists any node the
+    // pass declined, and the pass runs against a half-written message on every streamed
+    // token: one look at an href that wasn't finished yet and the finished link could never
+    // be reconsidered, leaving a live `<a href="_dream_context/…">` in the transcript. In a
+    // window with no back button, following one of those IS the app closing.
     root.querySelectorAll<HTMLAnchorElement>('a:not([data-chat-media])').forEach((a) => {
       const href = a.getAttribute('href') ?? '';
-      a.setAttribute('data-chat-media', '1');
       if (!isLocalRef(href)) return;
       if (inlineMediaKind(href)) { a.replaceWith(buildMedia(href)); return; }
+      a.setAttribute('data-chat-media', '1');
       a.classList.add('chat-md-path');
       a.title = `Open ${href}`;
       a.addEventListener('click', (e) => {
@@ -905,5 +963,5 @@ export function useInlineMedia(
         handlers.onOpen?.(href);
       });
     });
-  }, deps); // eslint-disable-line react-hooks/exhaustive-deps
+  }); // every render — see this section's header
 }

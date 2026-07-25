@@ -102,9 +102,13 @@ function AssistantMessage({
   // hides a half-written fence rather than flashing raw JSON.
   const { body, actions, boards } = useMemo(() => parseChatActions(item.text), [item.text]);
 
-  useCopyableCodeBlocks(bodyRef, [body, item.done]);
-  useInlineMedia(bodyRef, [body, item.done], { onOpen: onOpenFile, onReveal: revealFile, onGrant: grantFile });
-  useClickablePaths(bodyRef, [body, item.done], (path) => onOpenFile?.(path));
+  // No dependency list on purpose: these decorate the HTML `MarkdownPreview` wrote, and that
+  // subtree can be re-written out from under them by any commit. See the section header in
+  // chatEntities.ts — keying them to the message's own text is what let a whole answer revert
+  // to raw markdown, `<a href="…mp4">` and all, on somebody else's re-render.
+  useCopyableCodeBlocks(bodyRef);
+  useInlineMedia(bodyRef, { onOpen: onOpenFile, onReveal: revealFile, onGrant: grantFile });
+  useClickablePaths(bodyRef, (path) => onOpenFile?.(path));
 
   // Nothing left to show: an empty finished text block, or one that was ONLY a fence/board
   // reference whose rendering is handled below.

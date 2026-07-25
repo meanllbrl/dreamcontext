@@ -1,11 +1,11 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react';
 import { GoalLivePanel } from './GoalLivePanel';
 import { CouncilLivePanel } from './CouncilLivePanel';
-import { api } from '../../api/client';
+import { api, agentFileUrl } from '../../api/client';
 import type { ModelConfig } from '../../lib/agentComposer';
 import {
   classifyReference, subAgentToolUseIds, isGuardedCommand, turnHasVisibleProgress,
-  nextStickToBottom, wheelIntent, keyIntent, touchIntent,
+  nextStickToBottom, nextRestoreTop, wheelIntent, keyIntent, touchIntent,
   type SubAgentRun, type ScrollIntent,
 } from './chat/chatEntities';
 import { ItemView } from './chat/TranscriptItem';
@@ -293,6 +293,10 @@ export function ChatPane({
   const draggingRef = useRef(false);
   /** The last touch Y, so a touch drag's direction can be read off consecutive moves. */
   const touchYRef = useRef(0);
+  /** Where the reader is, for the re-home hook to put back — see `nextRestoreTop`. Held apart
+   *  from `prevTopRef`, which is a raw per-event direction sample and is deliberately allowed
+   *  to record positions (a clamp, a re-home's 0) that are nobody's reading position. */
+  const restoreTopRef = useRef(0);
   /** Render mirror of `stickRef`, for the "jump to latest" affordance only. */
   const [pinned, setPinned] = useState(true);
 
@@ -303,6 +307,7 @@ export function ChatPane({
     if (!el || el.clientHeight === 0) return;
     el.scrollTop = el.scrollHeight;
     prevTopRef.current = el.scrollTop;
+    restoreTopRef.current = el.scrollTop;
   }, []);
 
   const setStick = useCallback((next: boolean) => {
@@ -447,9 +452,26 @@ export function ChatPane({
   // foreground session a frame after it re-homes them (its terminals refit their grid there);
   // for a chat, that IS this. Cheap and idempotent, so firing on a move that changed nothing
   // costs one assignment.
+  //
+  // Being at the bottom is only HALF the state a re-home destroys, and restoring only that
+  // half is what the owner hit on 07-25: renaming a tab wrecked the other sessions' scroll.
+  // A rename is a double-click, and the click half SELECTS that tab — which garages whatever
+  // was on screen. The garaged transcript's `scrollTop` goes to 0 silently (measured: no
+  // scroll event is dispatched for it, so nothing here can even notice), and a reader who had
+  // scrolled up came back to the TOP of the conversation with nothing to put them back. So an
+  // UNSTUCK view is restored to the offset it was last read at, not left where the re-parent
+  // dropped it — and never yanked to the bottom, which would lose the same position twice.
   useEffect(() => {
     session.setTranscriptRepin(() => {
+      const el = scrollRef.current;
       if (stickRef.current) scrollToBottom();
+      // Guarded on the value actually differing so a `fitAndResize` for a move that scrolled
+      // nothing (the common case — it fires on every layout change, not just re-homes) writes
+      // nothing at all.
+      else if (el && el.clientHeight > 0 && el.scrollTop !== restoreTopRef.current) {
+        el.scrollTop = restoreTopRef.current;
+        prevTopRef.current = el.scrollTop;
+      }
       syncRail();
     });
     return () => session.setTranscriptRepin(null);
@@ -462,7 +484,7 @@ export function ChatPane({
   const handleOpenFile = (path: string) => {
     const ref = classifyReference(path);
     if (ref.isImage) {
-      setLightbox({ src: `/api/agent/file?path=${encodeURIComponent(path)}&raw=1`, caption: ref.label });
+      setLightbox({ src: agentFileUrl(path, { raw: true }), caption: ref.label });
       return;
     }
     setSlideOver({ mode: 'file', path });
@@ -614,13 +636,15 @@ export function ChatPane({
           ref={scrollRef}
           onScroll={(e) => {
             const el = e.currentTarget;
-            setStick(nextStickToBottom(stickRef.current, {
+            const metrics = {
               scrollTop: el.scrollTop,
               scrollHeight: el.scrollHeight,
               clientHeight: el.clientHeight,
               prevScrollTop: prevTopRef.current,
               userDriven: userDriving(),
-            }));
+            };
+            setStick(nextStickToBottom(stickRef.current, metrics));
+            restoreTopRef.current = nextRestoreTop(restoreTopRef.current, metrics);
             prevTopRef.current = el.scrollTop;
             syncRail();
           }}

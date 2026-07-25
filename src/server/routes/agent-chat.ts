@@ -3,7 +3,7 @@ import type { Server } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { join, dirname, basename, extname } from 'node:path';
+import { join, dirname, basename, extname, isAbsolute } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
   writeFileSync, rmSync, readFileSync, existsSync, statSync, readdirSync, createReadStream,
@@ -1213,6 +1213,8 @@ export async function handleAgentGrant(
 export async function handleAgentReveal(
   req: IncomingMessage,
   res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
 ): Promise<void> {
   if (!isDesktop()) { sendError(res, 403, 'desktop_only', 'Available only in the desktop app.'); return; }
 
@@ -1225,6 +1227,18 @@ export async function handleAgentReveal(
   } catch { /* invalid body → the empty-path guard below */ }
 
   if (!target) { sendError(res, 400, 'missing_path', 'A "path" is required.'); return; }
+
+  // A transcript names files the way the agent writes them: PROJECT-RELATIVE. Handing that
+  // straight to `statSync` resolved it against the SERVER's cwd — which for the desktop-
+  // spawned process is not the project — so every relative path 404'd and the last-resort
+  // "Open ↗" opened nothing. Relative paths are contained under the project root (traversal
+  // rejected); an absolute one is passed through, which is this route's entire purpose: it
+  // is the escape hatch for a file that lives outside the project and can never be served.
+  if (!isAbsolute(target)) {
+    const inProject = safeChildPath(projectRootOf(contextRoot), target);
+    if (!inProject) { sendError(res, 400, 'invalid_path', 'Path escapes the project root.'); return; }
+    target = inProject;
+  }
   let st: ReturnType<typeof statSync>;
   try { st = statSync(target); } catch { sendError(res, 404, 'not_found', `Not found: ${target}`); return; }
 

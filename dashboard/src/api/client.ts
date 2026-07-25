@@ -26,6 +26,25 @@ export function getActiveVault(): string | null {
   return activeVault;
 }
 
+/**
+ * The URL for one project file, ready to hand to the BROWSER rather than to `fetch`.
+ *
+ * `<img src>`, `<video src>` and `<audio src>` are fetched by the browser itself, which
+ * sends no custom headers — so the vault has to travel in the URL or the server has no way
+ * to know which project the path belongs to. In launcher mode (nothing pinned server-side)
+ * that was the entire failure: every inline picture and every clip in Chat came back 400
+ * `no_vault`, and the transcript showed a can't-load card for a file sitting right there.
+ * Anything that reaches the file endpoint as an element `src` must be built here.
+ *
+ * `raw` asks for the bytes (range-streamed, so video seeks); without it the endpoint
+ * answers the JSON text preview that `api.get` reads.
+ */
+export function agentFileUrl(path: string, opts: { raw?: boolean } = {}): string {
+  const raw = opts.raw ? '&raw=1' : '';
+  const vault = activeVault ? `&vault=${encodeURIComponent(activeVault)}` : '';
+  return `${BASE_URL}/agent/file?path=${encodeURIComponent(path)}${raw}${vault}`;
+}
+
 class ApiClient {
   private async request<T>(path: string, options?: RequestInit): Promise<T> {
     const headers: Record<string, string> = {

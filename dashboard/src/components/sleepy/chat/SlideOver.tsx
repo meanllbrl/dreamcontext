@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
-import { api } from '../../../api/client';
+import { api, agentFileUrl } from '../../../api/client';
 import { MarkdownPreview } from '../../core/MarkdownPreview';
 import { ItemView } from './TranscriptItem';
 import { BoardCanvas } from './BoardEmbed';
-import type { Reference, SubAgentRun } from './chatEntities';
+import { inlineMediaKind, type Reference, type SubAgentRun } from './chatEntities';
 import type { ChatItem } from '../chatSession';
 
 /**
@@ -59,6 +59,35 @@ function NumberedText({ content }: { content: string }) {
   );
 }
 
+/**
+ * The file itself, playing or drawn, at the panel's full width. Bytes come from the raw
+ * endpoint (range-streamed), so a clip seeks and a 40MB capture is never buffered whole.
+ *
+ * `onError` is the only honest failure story a media element gives us — no status code, no
+ * reason — so the message names what to do next rather than guessing why. A file OUTSIDE
+ * the project root is the common case and needs consent; the transcript's own inline card
+ * is where that consent is asked, so this points back at it instead of duplicating it.
+ */
+function MediaPreview({ path, kind }: { path: string; kind: 'image' | 'video' | 'audio' }) {
+  const [failed, setFailed] = useState(false);
+  const src = agentFileUrl(path, { raw: true });
+  if (failed) {
+    return (
+      <p className="chat-slideover-status error">
+        Couldn't play this file — it may live outside the project (allow it from the card in
+        the chat), or be in a format this window can't decode.
+      </p>
+    );
+  }
+  if (kind === 'video') {
+    return <video className="chat-slideover-media" src={src} controls preload="metadata" onError={() => setFailed(true)} />;
+  }
+  if (kind === 'audio') {
+    return <audio className="chat-slideover-media" src={src} controls preload="metadata" onError={() => setFailed(true)} />;
+  }
+  return <img className="chat-slideover-media" src={src} alt={path} onError={() => setFailed(true)} />;
+}
+
 function FileSlideOver({ path, reference, onClose, onNavApp }: SlideOverFileProps) {
   const [state, setState] = useState<{ loading: boolean; data: FileContent | null; error: string | null }>(
     { loading: true, data: null, error: null },
@@ -67,16 +96,21 @@ function FileSlideOver({ path, reference, onClose, onNavApp }: SlideOverFileProp
   // text/markdown preview below would show the source rather than the picture. BoardCanvas
   // owns its own fetch, so skip this one entirely for a board.
   const isBoard = reference.kind === 'board';
+  // A clip PLAYS here and a picture is SHOWN here. Asking the text endpoint for a 44-second
+  // video answered "File exceeds the preview size cap" — technically true of the JSON text
+  // preview, useless as an answer to "open the reel" (owner report 07-25). Media never goes
+  // through that branch: it streams from the raw endpoint, with byte ranges, so it seeks.
+  const mediaKind = isBoard ? null : inlineMediaKind(path);
 
   useEffect(() => {
-    if (isBoard) return;
+    if (isBoard || mediaKind) return;
     let cancelled = false;
     setState({ loading: true, data: null, error: null });
     api.get<FileContent>(`/agent/file?path=${encodeURIComponent(path)}`)
       .then((data) => { if (!cancelled) setState({ loading: false, data, error: null }); })
       .catch((err: Error) => { if (!cancelled) setState({ loading: false, data: null, error: err.message || 'Failed to load file.' }); });
     return () => { cancelled = true; };
-  }, [path, isBoard]);
+  }, [path, isBoard, mediaKind]);
 
   const copyPath = () => { void navigator.clipboard?.writeText(path).catch(() => {}); };
 
@@ -101,8 +135,10 @@ function FileSlideOver({ path, reference, onClose, onNavApp }: SlideOverFileProp
           <span aria-hidden>⧉</span> Copy path
         </button>
       </div>
-      <div className="chat-slideover-body" data-board={isBoard || undefined}>
-        {isBoard ? <BoardCanvas path={path} /> : (
+      <div className="chat-slideover-body" data-board={isBoard || undefined} data-media={mediaKind ?? undefined}>
+        {isBoard ? <BoardCanvas path={path} /> : mediaKind ? (
+          <MediaPreview path={path} kind={mediaKind} />
+        ) : (
           <>
             {state.loading && <p className="chat-slideover-status">Loading…</p>}
             {state.error && <p className="chat-slideover-status error">Couldn't load this file — {state.error}</p>}

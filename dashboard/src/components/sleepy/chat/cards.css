@@ -56,7 +56,11 @@
 }
 .chat-md-media:hover { border-color: var(--color-border-hover); }
 .chat-md-image { max-height: 420px; width: auto; height: auto; object-fit: contain; cursor: zoom-in; }
-.chat-md-video { max-height: 460px; width: 100%; background: #000; }
+/* Sized by the CLIP, not by the column. `width: 100%` made every video a landscape box, so a
+   portrait reel — the shape most of them are — played as a thin strip between two slabs of
+   black. Letting the intrinsic aspect drive the box within the two caps gives a tall clip a
+   tall player and a wide one the full measure. */
+.chat-md-video { max-height: 460px; width: auto; height: auto; background: #000; }
 /* An audio player has no natural width — without this it stretches edge to edge and reads
    as a broken element rather than a small control. */
 .chat-md-audio { width: min(420px, 100%); border: none; background: transparent; }
