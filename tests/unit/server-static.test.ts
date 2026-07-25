@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { serveStatic } from '../../src/server/static.js';
+import { serveStatic, cacheControlFor } from '../../src/server/static.js';
 
 let staticDir: string;
 
@@ -76,5 +76,34 @@ describe('serveStatic — SPA fallback vs missing-asset MIME bug', () => {
     const r = run('/tasks', '');
     expect(r.status).toBe(200);
     expect(String(r.headers?.['Content-Type'])).toMatch(/text\/html/);
+  });
+});
+
+// Root cause regression: announcements are HAND-AUTHORED between releases, so
+// the manifest and its boards change bytes while keeping the same URL. Serving
+// them `immutable` pinned the pre-authoring copy in the browser for a year — a
+// new announcement stayed invisible until the next version bump, even across a
+// hard reload (an immutable response is never revalidated).
+describe('serveStatic — cache-control for authored content vs hashed assets', () => {
+  it('keeps immutable caching for content-hashed build assets', () => {
+    expect(cacheControlFor('/assets/index-CURRENT.js', '.js')).toMatch(/immutable/);
+    const r = run('/assets/index-CURRENT.js');
+    expect(String(r.headers?.['Cache-Control'])).toMatch(/immutable/);
+  });
+
+  it('never caches the announcements manifest as immutable', () => {
+    expect(cacheControlFor('/announcements.json', '.json')).toBe('no-cache');
+  });
+
+  it('never caches an announcement board as immutable', () => {
+    expect(cacheControlFor('/announcements/native-agent-chat.excalidraw.md', '.md')).toBe('no-cache');
+  });
+
+  it('still serves index.html with no-cache', () => {
+    expect(cacheControlFor('/index.html', '.html')).toBe('no-cache');
+  });
+
+  it('does not treat a lookalike path outside the announcements root as authored content', () => {
+    expect(cacheControlFor('/assets/announcements-CURRENT.js', '.js')).toMatch(/immutable/);
   });
 });

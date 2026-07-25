@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { summarizeSubAgents, formatClock, type SubAgentRun } from './chatEntities';
+import { summarizeSubAgents, formatClock, runMetaChips, isAgentRun, type SubAgentRun } from './chatEntities';
 import { AgentAvatar, TypeBadge, ProgressTrack } from './atoms';
 import { CardHeader } from './molecules';
 

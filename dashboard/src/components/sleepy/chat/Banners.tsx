@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { BotMark } from '../AgentSetup';
 import { AlertIcon } from './atoms';
 
@@ -10,8 +11,8 @@ function reasonSentence(message: string): string {
 }
 
 /**
- * Empty state (1), stream-error (12), reconnecting chip (12), session-ended (12).
- * No "idle" status word anywhere (redesign rule 6).
+ * Empty state (1), working indicator, stream-error (12), reconnecting chip (12),
+ * session-ended (12). No "idle" status word anywhere (redesign rule 6).
  */
 
 export function EmptyState() {
@@ -20,6 +21,37 @@ export function EmptyState() {
       <BotMark />
       <h3 className="chat-banner-empty-title">Say something to start</h3>
       <p className="chat-banner-empty-sub">Ask a question, hand off a task, or just say hi.</p>
+    </div>
+  );
+}
+
+/**
+ * The turn is running but has nothing on screen yet — the gap between sending a message and
+ * the CLI's first frame (process spawn + SessionStart brain preload: seconds on the first
+ * turn), and every later gap between a tool result and the next block. Without it the pane
+ * looks idle while it is working, which is how a live session reads as a hung one.
+ *
+ * The elapsed clock is the point: it is the difference between "waiting" and "stuck". Ticks
+ * only while mounted, and mounts only during those gaps.
+ */
+export function WorkingIndicator({ label, startedAt }: { label: string; startedAt?: number }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  // No `startedAt` (a turn that was already running when this view attached) → the clock
+  // starts from mount rather than showing a number that would be a guess.
+  const [base] = useState(() => startedAt ?? Date.now());
+  const seconds = Math.max(0, Math.floor((now - (startedAt ?? base)) / 1000));
+
+  return (
+    <div className="chat-working" role="status" aria-live="polite">
+      <span className="chat-working-dots" aria-hidden>
+        <span /><span /><span />
+      </span>
+      <span className="chat-working-label">{label}</span>
+      {seconds > 0 && <span className="chat-working-elapsed">{seconds}s</span>}
     </div>
   );
 }

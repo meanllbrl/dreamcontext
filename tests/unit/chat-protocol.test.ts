@@ -446,6 +446,18 @@ describe('parseChatLine — _meta (server-relay lifecycle frames)', () => {
   it('error → meta-error with the message', () => {
     expect(parseChatLine(META_ERROR)).toEqual({ kind: 'meta-error', message: "Couldn't start claude: spawn ENOENT" });
   });
+
+  it('prompt_echo → prompt-echo carrying the server-submitted opening prompt (the transcript has no other way to show it)', () => {
+    const line = JSON.stringify({ type: '_meta', subtype: 'prompt_echo', text: 'Run a full dreamcontext memory consolidation' });
+    expect(parseChatLine(line)).toEqual({ kind: 'prompt-echo', text: 'Run a full dreamcontext memory consolidation' });
+  });
+
+  it('prompt_echo with an empty/missing text → ignored (never an empty user bubble)', () => {
+    expect(parseChatLine(JSON.stringify({ type: '_meta', subtype: 'prompt_echo', text: '' })))
+      .toEqual({ kind: 'ignored', rawType: '_meta:prompt_echo' });
+    expect(parseChatLine(JSON.stringify({ type: '_meta', subtype: 'prompt_echo' })))
+      .toEqual({ kind: 'ignored', rawType: '_meta:prompt_echo' });
+  });
 });
 
 describe('parseChatLine — malformed / empty lines', () => {

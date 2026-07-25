@@ -14,6 +14,15 @@ interface Props {
   content: string;
   /** Knowledge slug — enables resolving the board's externally-referenced images. */
   slug?: string;
+  /** Embedded images the CALLER resolved, for a board that isn't a knowledge file (the
+   *  Chat transcript draws boards from anywhere in the project via `/agent/board-assets`).
+   *  Supplying either this or {@link assetsLoading} takes ownership of the asset fetch and
+   *  skips the knowledge-slug query entirely. */
+  assets?: Record<string, { mimeType: string; dataURL: string }>;
+  /** Caller's asset fetch is still in flight — gates the mount the same way the internal
+   *  query's `isLoading` does (the canvas freezes `initialData` at mount, so the files map
+   *  has to be final before it goes up; see this file's history). */
+  assetsLoading?: boolean;
 }
 
 const Spinner = () => (
@@ -33,18 +42,23 @@ const Spinner = () => (
  * {elements, files} to the canvas. The canvas mounts once per board (keyed by
  * slug) so panning/zooming never re-renders or reloads it.
  */
-export function ExcalidrawPreview({ content, slug }: Props) {
+export function ExcalidrawPreview({ content, slug, assets, assetsLoading }: Props) {
   const { resolved } = useTheme();
 
   const scene = useMemo(() => extractExcalidrawScene(content), [content]);
 
   const hasEmbedded = useMemo(() => content.includes('## Embedded Files'), [content]);
-  const assetsQuery = useKnowledgeAssets(slug ?? '', !!slug && hasEmbedded);
-  const assetFiles = assetsQuery.data;
+  // A caller that supplies its own assets owns the fetch — don't also run the knowledge
+  // query (there is no knowledge slug behind a chat-referenced board to run it against).
+  const callerOwnsAssets = assets !== undefined || assetsLoading !== undefined;
+  const assetsQuery = useKnowledgeAssets(slug ?? '', !callerOwnsAssets && !!slug && hasEmbedded);
+  const assetFiles = callerOwnsAssets ? assets : assetsQuery.data;
   // Only block on the FIRST load. Once the query settles — success OR error — mount
   // the board: on error we render it without embedded images rather than wedging it
   // behind a permanent spinner (the scene itself parsed fine).
-  const waitingForAssets = !!slug && hasEmbedded && assetsQuery.isLoading;
+  const waitingForAssets = callerOwnsAssets
+    ? !!assetsLoading
+    : (!!slug && hasEmbedded && assetsQuery.isLoading);
 
   // Merge the resolved (full-quality) embedded images into the scene files map.
   const files = useMemo(() => {

@@ -1,8 +1,11 @@
-import { Fragment, useEffect, useReducer, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { GoalLivePanel } from './GoalLivePanel';
 import { api } from '../../api/client';
 import type { ModelConfig } from '../../lib/agentComposer';
-import { classifyReference, subAgentToolUseIds, isGuardedCommand, type SubAgentRun } from './chat/chatEntities';
+import {
+  classifyReference, subAgentToolUseIds, isGuardedCommand, turnHasVisibleProgress,
+  nextStickToBottom, type SubAgentRun,
+} from './chat/chatEntities';
 import { ItemView } from './chat/TranscriptItem';
 import { SurveyCard } from './chat/SurveyCard';
 import { PermissionCard } from './chat/PermissionCard';
@@ -10,8 +13,11 @@ import { BypassNoticeCard } from './chat/BypassNoticeCard';
 import { SubAgentCard } from './chat/SubAgentCard';
 import { SlideOver } from './chat/SlideOver';
 import { Lightbox } from './chat/Lightbox';
-import { BoardPreviewCard } from './chat/BoardPreviewCard';
-import { EmptyState, StreamErrorBanner, ReconnectingChip, SessionEndedBanner } from './chat/Banners';
+import { BoardEmbed } from './chat/BoardEmbed';
+import type { ChatAction } from './chat/chatActions';
+import {
+  EmptyState, StreamErrorBanner, ReconnectingChip, SessionEndedBanner, WorkingIndicator,
+} from './chat/Banners';
 import { Composer } from './chat/Composer';
 import './chat/cards.css';
 import './chat/overlays.css';
@@ -56,7 +62,7 @@ function bashCommand(item: ChatToolItem): string | null {
 /** The tool's primary path/file argument, if it has one — mirrors `ToolCard.tsx`'s private
  *  `primaryPath` (not exported; that file is frozen T5 ownership) so this orchestrator can
  *  decide, WITHOUT duplicating ToolCard's own rendering, whether a tool item references an
- *  Excalidraw board and should render as a {@link BoardPreviewCard} instead. */
+ *  Excalidraw board and should render as a {@link BoardEmbed} instead. */
 function primaryToolPath(input: unknown): string | null {
   if (!input || typeof input !== 'object') return null;
   const obj = input as Record<string, unknown>;
@@ -227,12 +233,51 @@ export function ChatPane({
   const [lightbox, setLightbox] = useState<LightboxState | null>(null);
   const [replyQuote, setReplyQuote] = useState<string | null>(null);
 
+  // ── Transcript scroll: one scroller, one session, one stick-to-bottom state ──────────
+  //
+  // Every mounted ChatPane re-renders whenever AgentSurface re-renders — which happens on
+  // ANY session's busy/asking edge — so a scroll write that ran "after every render" meant
+  // sending a message in one chat yanked its split neighbour's transcript around (owner
+  // report 07-25). The auto-scroll below therefore keys on this session's CONVERSATION MODEL
+  // identity: `conv` is a fresh object on every event THIS session applied, and the same
+  // object for every render caused by anything else.
   const scrollRef = useRef<HTMLDivElement | null>(null);
-  const stickBottomRef = useRef(true);
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const stickRef = useRef(true);
+  /** `scrollTop` at the last scroll event — the direction signal `nextStickToBottom` reads. */
+  const prevTopRef = useRef(0);
+  /** Render mirror of `stickRef`, for the "jump to latest" affordance only. */
+  const [pinned, setPinned] = useState(true);
+
+  const scrollToBottom = useCallback(() => {
+    const el = scrollRef.current;
+    // A minimized pane's container is parked in the detached garage: it measures 0 and
+    // cannot be scrolled. The observer below re-runs this the moment it is re-homed.
+    if (!el || el.clientHeight === 0) return;
+    el.scrollTop = el.scrollHeight;
+    prevTopRef.current = el.scrollTop;
+  }, []);
+
+  const setStick = useCallback((next: boolean) => {
+    stickRef.current = next;
+    setPinned((prev) => (prev === next ? prev : next));
+  }, []);
+
+  useEffect(() => { if (stickRef.current) scrollToBottom(); }, [conv, scrollToBottom]);
+
+  // Height changes React never rendered: an image or clip finishing its load, a tool card
+  // expanding, the composer growing a line (which SHRINKS the scroller), a split or window
+  // resize, and the container being re-homed into another pane's slot — a re-parent resets
+  // `scrollTop` to 0, which is the "splitting jumped the transcript to the top" symptom.
   useEffect(() => {
     const el = scrollRef.current;
-    if (el && stickBottomRef.current) el.scrollTop = el.scrollHeight;
-  });
+    const content = contentRef.current;
+    if (!el || !content || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => { if (stickRef.current) scrollToBottom(); });
+    ro.observe(el);
+    ro.observe(content);
+    return () => ro.disconnect();
+  }, [scrollToBottom]);
 
   // ── State 3/4: a clicked file reference either opens the Lightbox (an image) or the
   //    file SlideOver (everything else, including a board — no rasterizer exists, so a
@@ -253,10 +298,33 @@ export function ChatPane({
     onOpenAppPage?.(page, id);
   };
 
+  // ── The buttons an answer asked for (`dream-actions`). Every one of them lands on a
+  //    surface this pane ALREADY owns — the slide-over, the lightbox, the app's navigation,
+  //    the composer — so an answer can never reach further than the user already could by
+  //    clicking around this same view. `ask` deliberately LOADS the composer instead of
+  //    sending: the agent proposes the follow-up, the user still sends it. ────────────────
+  const handleAction = (action: ChatAction) => {
+    switch (action.action) {
+      case 'task': case 'knowledge': case 'core':
+        handleNavApp(action.action === 'task' ? 'tasks' : action.action, action.id!);
+        break;
+      case 'file': case 'board':
+        handleOpenFile(action.path!);
+        break;
+      case 'reveal':
+        void api.post('/agent/reveal', { path: action.path }).catch(() => { /* not desktop, or gone */ });
+        break;
+      case 'ask':
+        session.sendText(action.text!);
+        session.focus();
+        break;
+    }
+  };
+
   // ── Transcript pass: skip the spawning Agent/Task tool's OWN card (state 9 — it's
   //    already represented by ONE combined SubAgentCard, rendered at the position of the
   //    EARLIEST such tool item so it reads in-place rather than always trailing); swap a
-  //    board-referencing tool item for a BoardPreviewCard (state 4); render everything
+  //    board-referencing tool item for the DRAWN board (BoardEmbed, state 4); render everything
   //    else through the shared ItemView dispatcher (state 2/11). ─────────────────────────
   const suppressedToolUseIds = subAgentToolUseIds(conv.subAgents);
   // The mode this conversation is ACTUALLY running in, as the CLI itself reported it
@@ -272,9 +340,13 @@ export function ChatPane({
         subAgentCardShown = true;
         return <SubAgentCard key={`subagents-${item.id}`} runs={conv.subAgents} onDrillIn={handleDrillIn} />;
       }
+      // A tool that touched a board shows the BOARD, not a card about it — the same live
+      // canvas an answer's own `![](x.excalidraw.md)` renders, so "I drew this" and "I
+      // edited this" look alike. Only once the call has finished: a board mid-write is
+      // half a scene.
       const path = primaryToolPath(item.input);
-      if (path && classifyReference(path).kind === 'board') {
-        return <BoardPreviewCard key={item.id} path={path} onOpenBoard={handleOpenBoard} />;
+      if (path && classifyReference(path).kind === 'board' && item.status !== 'running') {
+        return <BoardEmbed key={item.id} path={path} onOpenBoard={handleOpenBoard} />;
       }
     }
     const view = (
@@ -283,6 +355,8 @@ export function ChatPane({
         item={item}
         session={session}
         onOpenFile={handleOpenFile}
+        onOpenBoard={handleOpenBoard}
+        onAction={handleAction}
         onQuote={(text) => setReplyQuote(text)}
       />
     );
@@ -312,11 +386,31 @@ export function ChatPane({
     ? <SubAgentCard key="subagents-trailing" runs={conv.subAgents} onDrillIn={handleDrillIn} />
     : null;
 
-  const isEmpty = conv.history.length === 0 && conv.items.length === 0 && conv.pending.length === 0;
   // A real process exit (`meta-exit`) OR the WS having dropped — either way the composer
   // is replaced by the Session-ended banner (state 12); `status==='connecting'` never
   // reaches here (that's the ReconnectingChip's own condition, below).
   const ended = session.status === 'closed' || !!conv.exited;
+
+  // The turn is in flight but the transcript has nothing to show for it yet — before the
+  // CLI's first frame (spawn + SessionStart brain preload), or in a gap between a tool
+  // result and the next block. Without this the pane looks idle while it is working.
+  const working = !ended && session.busy
+    && !turnHasVisibleProgress(conv.items, conv.pending.length);
+  const isEmpty = !working
+    && conv.history.length === 0 && conv.items.length === 0 && conv.pending.length === 0;
+
+  const lastUserItem = [...conv.items].reverse().find((it): it is ChatUserItem => it.kind === 'user');
+
+  // Sending is unambiguous intent to watch the answer, so it re-arms sticking: a reply that
+  // streams in off-screen because you had scrolled up is a bug, not a feature. Keyed on the
+  // newest user message instead of plumbed through the composer, so EVERY send path counts —
+  // composer submit, retry, a dropped file's re-issue, a delegated prompt.
+  const lastUserItemId = lastUserItem?.id;
+  useEffect(() => {
+    if (!lastUserItemId) return;
+    setStick(true);
+    scrollToBottom();
+  }, [lastUserItemId, setStick, scrollToBottom]);
 
   // Stream-interrupted retry (state 12): resend the last user message. There is no
   // reconnect-and-resume machinery in this engine (see the plan's resolved risk) — for a
@@ -324,48 +418,74 @@ export function ChatPane({
   // this covers a `lastError` that leaves the session itself still open (a failed rewind/
   // model-switch, or a relay error the process survived).
   const retryLastMessage = () => {
-    const lastUser = [...conv.items].reverse().find((it): it is ChatUserItem => it.kind === 'user');
-    if (lastUser) session.send(lastUser.text);
+    if (lastUserItem) session.send(lastUserItem.text);
   };
 
   return (
     <div className="chat-pane" data-status={session.status}>
       <ChatContextStrip session={session} taskSlug={taskSlug} />
       {session.status === 'connecting' && <ReconnectingChip />}
-      <div
-        className="chat-scroll"
-        ref={scrollRef}
-        onScroll={(e) => {
-          const el = e.currentTarget;
-          stickBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
-        }}
-        onClick={(e) => {
-          // Click-to-focus, mirroring how clicking anywhere in an xterm focuses its input:
-          // without this a click on the transcript parks focus on <body>, killing the
-          // surface-level ⌘D/⌘T/⌘W chords (they listen inside the overlay host). Text
-          // selection and real controls keep working — only a plain click refocuses.
-          if (!window.getSelection()?.isCollapsed) return;
-          if ((e.target as Element).closest('button, select, textarea, input, a')) return;
-          session.focus();
-        }}
-      >
-        {isEmpty && <EmptyState />}
-        {conv.history.length > 0 && (
-          <>
-            {historyNodes}
-            <div className="chat-history-divider" aria-hidden>earlier conversation ↑ · resumed</div>
-          </>
+      <div className="chat-transcript">
+        <div
+          className="chat-scroll"
+          ref={scrollRef}
+          onScroll={(e) => {
+            const el = e.currentTarget;
+            setStick(nextStickToBottom(stickRef.current, {
+              scrollTop: el.scrollTop,
+              scrollHeight: el.scrollHeight,
+              clientHeight: el.clientHeight,
+              prevScrollTop: prevTopRef.current,
+            }));
+            prevTopRef.current = el.scrollTop;
+          }}
+          onClick={(e) => {
+            // Click-to-focus, mirroring how clicking anywhere in an xterm focuses its input:
+            // without this a click on the transcript parks focus on <body>, killing the
+            // surface-level ⌘D/⌘T/⌘W chords (they listen inside the overlay host). Text
+            // selection and real controls keep working — only a plain click refocuses.
+            if (!window.getSelection()?.isCollapsed) return;
+            if ((e.target as Element).closest('button, select, textarea, input, a')) return;
+            session.focus();
+          }}
+        >
+          {/* One wrapper the ResizeObserver can watch: the scroller's own box never changes
+              when its content grows, so content height needs an element of its own. */}
+          <div className="chat-scroll-inner" ref={contentRef}>
+            {isEmpty && <EmptyState />}
+            {conv.history.length > 0 && (
+              <>
+                {historyNodes}
+                <div className="chat-history-divider" aria-hidden>earlier conversation ↑ · resumed</div>
+              </>
+            )}
+            {liveNodes}
+            {trailingSubAgentCard}
+            {conv.pending
+              .filter((p): p is PendingPermission => p.kind === 'permission')
+              .map((p) => <PermissionCard key={p.requestId} item={p} session={session} permissionMode={permissionMode} />)}
+            {conv.pending
+              .filter((p): p is PendingQuestion => p.kind === 'question')
+              .map((p) => <SurveyCard key={p.requestId} item={p} session={session} />)}
+            {stuckQuestion && <DegradedQuestionCard item={stuckQuestion} onContinueInTerminal={onContinueInTerminal} />}
+            {conv.lastError && <StreamErrorBanner message={conv.lastError} onRetry={retryLastMessage} />}
+            {working && (
+              <WorkingIndicator
+                label={session.opened ? 'Working…' : 'Starting Claude…'}
+                startedAt={conv.turnStartedAt}
+              />
+            )}
+          </div>
+        </div>
+        {!pinned && (
+          <button
+            type="button"
+            className="chat-jump"
+            onClick={() => { setStick(true); scrollToBottom(); }}
+          >
+            <span aria-hidden>↓</span> Latest
+          </button>
         )}
-        {liveNodes}
-        {trailingSubAgentCard}
-        {conv.pending
-          .filter((p): p is PendingPermission => p.kind === 'permission')
-          .map((p) => <PermissionCard key={p.requestId} item={p} session={session} permissionMode={permissionMode} />)}
-        {conv.pending
-          .filter((p): p is PendingQuestion => p.kind === 'question')
-          .map((p) => <SurveyCard key={p.requestId} item={p} session={session} />)}
-        {stuckQuestion && <DegradedQuestionCard item={stuckQuestion} onContinueInTerminal={onContinueInTerminal} />}
-        {conv.lastError && <StreamErrorBanner message={conv.lastError} onRetry={retryLastMessage} />}
       </div>
       {ended ? (
         <SessionEndedBanner onResume={onResume} />

@@ -102,6 +102,32 @@ function storyBoard({ chipText, headline, hook, problem, solution, proof }) {
 
 const SPECS = [
   {
+    id: 'native-agent-chat',
+    name: 'Announcement — Your agent, as an app',
+    description: 'The in-app agent stopped being a terminal: the Chat view renders Claude Code as native UI, told as problem → solution → proof.',
+    build: () => storyBoard({
+      chipText: 'v0.21.0  ·  2026-07-25',
+      headline: 'Your agent, as an app',
+      hook: 'Same Claude Code engine, rendered as real app UI. Every turn, question and permission is now a card you can act on.',
+      problem: [
+        { title: 'A terminal in a window', text: 'Questions, permissions and sub-agent runs all flattened into the same wall of ANSI scrollback.' },
+        { title: 'And it froze under load', text: 'One verbose tool trace flooded the renderer and the session locked up mid-turn.' },
+      ],
+      solution: [
+        { title: 'The Chat view', text: 'The headless stream-json engine renders as native React across 12 designed states. No ANSI left.', color: 'purple' },
+        { title: 'Cards you can act on', text: 'Permission asks, questions, sub-agent groups, diffs, boards and images each get their own card.' },
+        { title: 'One unified chrome', text: '44px holds the tabs, mode pill and composer. Slash opens the skill menu, images render inline.' },
+      ],
+      proof: [
+        { kind: 'kpis', tiles: [
+          { label: 'Designed states', value: '12', delta: 'streaming to stream error' },
+          { label: 'Terminal frames', value: '10-50×', delta: 'fewer per burst', color: 'mint' },
+        ] },
+        { title: '✓ Switch without losing your place', text: 'Chat and terminal resume the same conversation both ways. Stay on Terminal and nothing changes.', color: 'mint', minH: 130 },
+      ],
+    }),
+  },
+  {
     id: 'visual-announcements',
     name: 'Announcement — Announcements, redrawn',
     description: "What's New became a wall of git-tracked Excalidraw landing pages that tell a problem → solution → proof story.",

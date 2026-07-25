@@ -74,6 +74,32 @@ const queryClient = new QueryClient({
   },
 });
 
+/**
+ * The listener half of the agent surface's "open this in the app" bridge.
+ *
+ * `AgentSurface` is mounted OUTSIDE `Shell` (so its PTY/scrollback survives navigation), which
+ * leaves it with no handle on Shell's navigation state — it fires a
+ * `dreamcontext-agent-open-page` window event instead. Until this existed nothing listened,
+ * so the chat's "Open in app ↗" collapsed the overlay onto whatever page happened to be
+ * underneath. This closes that loop, and is what makes the transcript's `task`/`knowledge`/
+ * `core` action buttons actually land on the item.
+ *
+ * Rendered inside Shell's children, so it has `nav`; renders nothing.
+ */
+function AgentPageNavBridge({ nav }: { nav: ShellNavigation }) {
+  useEffect(() => {
+    const onOpen = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { page?: unknown; id?: unknown } | undefined;
+      const page = detail?.page;
+      if (page !== 'tasks' && page !== 'knowledge' && page !== 'core') return;
+      nav.navigate(page, typeof detail?.id === 'string' && detail.id ? detail.id : null);
+    };
+    window.addEventListener('dreamcontext-agent-open-page', onOpen);
+    return () => window.removeEventListener('dreamcontext-agent-open-page', onOpen);
+  }, [nav]);
+  return null;
+}
+
 function PageRouter({ nav }: { nav: ShellNavigation }) {
   const handleBrainNavigate = (target: BrainNavigatePage, nodeId: string) => {
     const pageMap: Record<BrainNavigatePage, Page> = {
@@ -231,6 +257,7 @@ export function App() {
                 {(nav) => (
                   <>
                     <PageRouter nav={nav} />
+                    <AgentPageNavBridge nav={nav} />
                     <AnnouncementsModal onOpenPage={(id) => nav.navigate('announcements', id ?? null)} />
                   </>
                 )}

@@ -153,6 +153,12 @@ export interface ConversationModel {
    *  the UI via `subAgentToolUseIds` (chatEntities.ts), keyed by `toolUseId` — not by tool
    *  name, since the CLI streams the tool as `Agent` (aliased with `Task`). */
   subAgents: SubAgentRun[];
+  /** When the CURRENT turn went in flight (`Date.now()` at the `busy` false→true edge, or
+   *  at construction for a server-submitted prompt), cleared when it settles. `busy` alone
+   *  says a turn is running; this says for how long — what the working indicator's elapsed
+   *  readout reads while the transcript has nothing to show yet (the CLI can take seconds
+   *  to spawn + run SessionStart hooks before its first frame). */
+  turnStartedAt?: number;
   /** Set by the `meta-exit` relay frame (the child process actually exited) — distinct
    *  from a network drop (`ws.onclose`/`onerror`, which never populate this), so the UI
    *  can show a "Session ended" + Resume banner only for a real process exit. */
@@ -338,6 +344,9 @@ export function createChatSession(
 
   let conv: ConversationModel = {
     items: [], history: [], pending: [], draft: '', draftEpoch: 0, capabilities: [], subAgents: [],
+    // A server-submitted prompt (delegation, promptToken, sleep/brain spawns) means a turn is
+    // ALREADY in flight before this client sends anything — see `busy` below.
+    turnStartedAt: serverSubmitsPrompt ? Date.now() : undefined,
   };
 
   const subscribers = new Set<() => void>();
@@ -352,7 +361,11 @@ export function createChatSession(
     id, bypass, kind: 'chat', claudeId, container,
     status: 'connecting',
     opened: false,
-    busy: false, asking: false, attention: false, minimized: false,
+    // Busy from the first instant when the SERVER submits the opening prompt: the turn is
+    // running before any frame arrives, so the working indicator, the dock chip and the
+    // "don't inject into a busy session" guards must all see it (a spawn with no prompt
+    // stays idle — it is genuinely waiting for the user).
+    busy: serverSubmitsPrompt, asking: false, attention: false, minimized: false,
     capabilities: [],
     model,
     effort,
@@ -386,6 +399,12 @@ export function createChatSession(
   function applyAndNotify(mutate: () => void): void {
     const before = snapshot();
     mutate();
+    // The turn clock starts on the busy edge and stops when the turn settles. Derived here
+    // rather than in each reducer arm so EVERY path that flips busy (send, block-start, an
+    // assistant frame with no deltas, result, exit, error, socket close) gets it for free.
+    if (before.busy !== session.busy) {
+      conv = { ...conv, turnStartedAt: session.busy ? Date.now() : undefined };
+    }
     fireSubscribers();
     const after = snapshot();
     if (before.busy !== after.busy || before.asking !== after.asking
@@ -597,6 +616,26 @@ export function createChatSession(
         conv = { ...conv, subAgents: runs };
         return;
       }
+      case 'task-progress': {
+        // The live heartbeat: what the run is doing now + running usage totals. Its
+        // `activity` NEVER touches `name` — the row's title is what the task was dispatched
+        // as, not the step it happens to be on.
+        const idx = conv.subAgents.findIndex((r) => r.taskId === ev.taskId);
+        if (idx === -1) return; // progress for a task we never saw start — drop safely
+        const runs = conv.subAgents.slice();
+        const cur = runs[idx];
+        runs[idx] = {
+          ...cur,
+          toolUseId: cur.toolUseId ?? ev.toolUseId,
+          subagentType: cur.subagentType ?? ev.subagentType,
+          activity: ev.activity ?? cur.activity,
+          lastToolName: ev.lastToolName ?? cur.lastToolName,
+          summary: ev.summary ?? cur.summary,
+          usage: ev.usage ?? cur.usage,
+        };
+        conv = { ...conv, subAgents: runs };
+        return;
+      }
       case 'task-notification': {
         // Final (or progress) report for a sub-agent run: status, summary, usage.
         // `outputFile` is deliberately NOT consumed here (contract C7) — the drill-in
@@ -638,10 +677,37 @@ export function createChatSession(
         // keyed by `toolUseId`, same as any other tool — stamp it onto the matching run
         // too, best-effort (the notification's `summary` already carries the human-facing
         // outcome; this is the raw content for the drill-in's degrade path).
-        const subIdx = conv.subAgents.findIndex((r) => r.toolUseId === ev.toolUseId);
+        //
+        // The frame's `tool_use_result` sibling rides along here as `agentResult`, and it is
+        // the ONLY carrier of the run's model. It arrives on BOTH dispatch modes: for a
+        // backgrounded agent (the default) it lands right after `task_started`, so the row
+        // gets its model while the run is still going; for a synchronous one it lands at the
+        // end with the full accounting. `agentId` is the same value as `task_id`, which is
+        // what lets a result find its run even when the tool_use_id didn't match.
+        const agentId = ev.agentResult?.agentId;
+        const subIdx = conv.subAgents.findIndex((r) => (
+          (!!ev.toolUseId && r.toolUseId === ev.toolUseId) || (!!agentId && r.taskId === agentId)
+        ));
         if (subIdx !== -1) {
           const runs = conv.subAgents.slice();
-          runs[subIdx] = { ...runs[subIdx], resultContent: ev.content };
+          const cur = runs[subIdx];
+          const res = ev.agentResult;
+          runs[subIdx] = {
+            ...cur,
+            resultContent: ev.content,
+            model: res?.resolvedModel ?? cur.model,
+            modelsUsed: res?.modelsUsed ?? cur.modelsUsed,
+            // Only the `completed` shape carries totals, and a live `task-progress` frame may
+            // already have reported further — so each field defers to whatever is already
+            // known rather than overwriting it with an absent value.
+            usage: res && (res.totalTokens != null || res.totalToolUseCount != null || res.totalDurationMs != null)
+              ? {
+                totalTokens: res.totalTokens ?? cur.usage?.totalTokens,
+                toolUses: res.totalToolUseCount ?? cur.usage?.toolUses,
+                durationMs: res.totalDurationMs ?? cur.usage?.durationMs,
+              }
+              : cur.usage,
+          };
           conv = { ...conv, subAgents: runs };
         }
         return;
@@ -688,6 +754,22 @@ export function createChatSession(
         // Finished while minimized (not looking at it) -> flag the dock's attention badge,
         // mirroring agentSession.ts's onSettle (no chime here — only a fresh question chimes).
         if (session.minimized && !session.attention) session.attention = true;
+        return;
+      }
+      case 'prompt-echo': {
+        // The server auto-submitted an opening prompt for us (sleep / brain-resolve /
+        // delegate). Render it as the first user message so the transcript shows what the
+        // agent was actually asked — chat has no visible readline the way the terminal does,
+        // so without this the run looks like it started from nothing. Idempotent: a repeat
+        // echo (reconnect) that matches the item we already hold is dropped rather than
+        // stacking a duplicate bubble.
+        const last = conv.items[conv.items.length - 1];
+        if (last?.kind === 'user' && last.text === ev.text) return;
+        const echoed: ChatUserItem = { kind: 'user', id: nextItemId(), text: ev.text, ts: Date.now() };
+        conv = { ...conv, items: [...conv.items, echoed] };
+        // The turn is already in flight server-side — keep the working indicator honest even
+        // if the CLI's first frame is still seconds away (hooks, spawn).
+        session.busy = true;
         return;
       }
       case 'meta-exit': {

@@ -99,7 +99,7 @@ export function SleepDebtTracker({ onOpen }: SleepDebtTrackerProps) {
   const pct = sleeping ? 100 : Math.min(100, (debt / SLEEP_DEBT_MAX) * 100);
   const level = t(`sleep.${levelKey}`);
 
-  const agentReady = isSleepAgentReady(caps) && agentSettings.enabled;
+  const agentReady = isSleepAgentReady(caps, agentSettings.chatView) && agentSettings.enabled;
 
   const runAgent = () => {
     setMenuOpen(false);

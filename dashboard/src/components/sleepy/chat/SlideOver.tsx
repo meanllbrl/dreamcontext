@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../../../api/client';
 import { MarkdownPreview } from '../../core/MarkdownPreview';
 import { ItemView } from './TranscriptItem';
+import { BoardCanvas } from './BoardEmbed';
 import type { Reference, SubAgentRun } from './chatEntities';
 import type { ChatItem } from '../chatSession';
 
@@ -54,15 +55,20 @@ function FileSlideOver({ path, reference, onClose, onNavApp }: SlideOverFileProp
   const [state, setState] = useState<{ loading: boolean; data: FileContent | null; error: string | null }>(
     { loading: true, data: null, error: null },
   );
+  // A board is DRAWN here, not dumped: its file body is a scene JSON blob, so the generic
+  // text/markdown preview below would show the source rather than the picture. BoardCanvas
+  // owns its own fetch, so skip this one entirely for a board.
+  const isBoard = reference.kind === 'board';
 
   useEffect(() => {
+    if (isBoard) return;
     let cancelled = false;
     setState({ loading: true, data: null, error: null });
     api.get<FileContent>(`/agent/file?path=${encodeURIComponent(path)}`)
       .then((data) => { if (!cancelled) setState({ loading: false, data, error: null }); })
       .catch((err: Error) => { if (!cancelled) setState({ loading: false, data: null, error: err.message || 'Failed to load file.' }); });
     return () => { cancelled = true; };
-  }, [path]);
+  }, [path, isBoard]);
 
   const copyPath = () => { void navigator.clipboard?.writeText(path).catch(() => {}); };
 
@@ -87,13 +93,17 @@ function FileSlideOver({ path, reference, onClose, onNavApp }: SlideOverFileProp
           <span aria-hidden>⧉</span> Copy path
         </button>
       </div>
-      <div className="chat-slideover-body">
-        {state.loading && <p className="chat-slideover-status">Loading…</p>}
-        {state.error && <p className="chat-slideover-status error">Couldn't load this file — {state.error}</p>}
-        {state.data && (
-          state.data.type === 'markdown'
-            ? <MarkdownPreview content={state.data.content} />
-            : <NumberedText content={state.data.content} />
+      <div className="chat-slideover-body" data-board={isBoard || undefined}>
+        {isBoard ? <BoardCanvas path={path} /> : (
+          <>
+            {state.loading && <p className="chat-slideover-status">Loading…</p>}
+            {state.error && <p className="chat-slideover-status error">Couldn't load this file — {state.error}</p>}
+            {state.data && (
+              state.data.type === 'markdown'
+                ? <MarkdownPreview content={state.data.content} />
+                : <NumberedText content={state.data.content} />
+            )}
+          </>
         )}
       </div>
     </>

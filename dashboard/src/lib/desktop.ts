@@ -318,3 +318,28 @@ export async function openLauncherHome(): Promise<void> {
 export async function goToProject(name: string): Promise<void> {
   await openVaultWindow(name);
 }
+
+/**
+ * Hand a URL to the user's default browser.
+ *
+ * In the desktop app this MUST leave the webview: the shell has no address bar, no
+ * back button and no tabs, so a URL opened in-place replaces the app with a web page
+ * the user cannot navigate back from. `plugin:shell|open` is the OS-level opener
+ * (`shell:allow-open` is granted in `capabilities/default.json`); its Tauri-side
+ * validator accepts `http`, `https`, `mailto` and `tel` only, so no `file://` or
+ * `javascript:` URL can reach the OS through it.
+ *
+ * Invoked directly rather than through `@tauri-apps/plugin-shell` because the Rust
+ * plugin is already a dependency while its JS wrapper is not — and the wrapper does
+ * exactly this call. In a browser it opens a new tab, which is the same intent.
+ */
+export async function openExternalUrl(url: string): Promise<void> {
+  if (isDesktop()) {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('plugin:shell|open', { path: url });
+      return;
+    } catch { /* plugin/ACL unavailable — fall through to the web behaviour */ }
+  }
+  window.open(url, '_blank', 'noopener,noreferrer');
+}

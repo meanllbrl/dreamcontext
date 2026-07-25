@@ -49,13 +49,13 @@ export function KanbanBoard({ focus }: { focus?: FocusTarget } = {}) {
   // header's Sleep tracker uses, plus the live `enabled` flag (kept in sync via the same
   // event the Settings page broadcasts on save).
   const { data: agentCaps } = useAgentCapabilities();
-  const [agentEnabled, setAgentEnabled] = useState(() => readAgentSettings().enabled);
+  const [agentSettings, setAgentSettings] = useState(() => readAgentSettings());
   useEffect(() => {
-    const onChange = () => setAgentEnabled(readAgentSettings().enabled);
+    const onChange = () => setAgentSettings(readAgentSettings());
     window.addEventListener(AGENT_SETTINGS_EVENT, onChange);
     return () => window.removeEventListener(AGENT_SETTINGS_EVENT, onChange);
   }, []);
-  const agentReady = isSleepAgentReady(agentCaps) && agentEnabled;
+  const agentReady = isSleepAgentReady(agentCaps, agentSettings.chatView) && agentSettings.enabled;
 
   const [openMenu, setOpenMenu] = useState<MenuKey>(null);
   const [viewMenuId, setViewMenuId] = useState<string | null>(null);

@@ -19,18 +19,21 @@ const ANNOUNCEMENTS_READ_EVENT = 'dreamcontext-announcements-read';
  *
  * Raw `fetch`, not `api.get` — `api.get` hard-prefixes `/api`, but this file
  * is a static build asset served at the SPA root (dashboard/public/announcements.json).
- * The static server sends `Cache-Control: immutable, max-age=1y` for non-HTML
- * files, so the request is cache-busted with the build's own version; a new
- * build ships a new query string and the browser is forced to refetch.
- * `staleTime: Infinity` + `refetchInterval: false` override the app-wide 15s
- * poll (App.tsx) — this is a static asset, not live server state.
+ * NOT cache-busted by the app version: announcements are authored BETWEEN
+ * releases, so a version-keyed query string pins the pre-authoring copy behind
+ * the static server's `immutable` header until the next version bump. The
+ * server sends `no-cache` for this path instead (see server/static.ts
+ * `cacheControlFor`), so the browser revalidates and picks up a new entry
+ * on the next app load. `staleTime: Infinity` + `refetchInterval: false`
+ * override the app-wide 15s poll (App.tsx) — this is a static asset, not live
+ * server state.
  */
 export function useAnnouncements(): UseQueryResult<Announcement[], Error> {
   return useQuery({
     queryKey: ['announcements'],
     queryFn: async () => {
       try {
-        const res = await fetch(`/announcements.json?v=${__DC_VERSION__}`);
+        const res = await fetch('/announcements.json');
         if (!res.ok) return [];
         const raw: unknown = await res.json();
         return parseAnnouncements(raw);
@@ -46,16 +49,18 @@ export function useAnnouncements(): UseQueryResult<Announcement[], Error> {
 /**
  * Fetch a single announcement board's raw `.excalidraw.md` text so
  * ExcalidrawPreview can render it. Same static-asset contract as
- * useAnnouncements: raw `fetch` (not `api.get`), cache-busted by the build
- * version, and never live-polled. Returns '' (not an error) on any failure so
- * the caller renders a graceful empty state rather than throwing.
+ * useAnnouncements: raw `fetch` (not `api.get`), server-revalidated rather than
+ * version-keyed (a board is regenerated from its spec in place, so its URL
+ * never changes when its bytes do), and never live-polled. Returns '' (not an
+ * error) on any failure so the caller renders a graceful empty state rather
+ * than throwing.
  */
 export function useAnnouncementBoard(board: string): UseQueryResult<string, Error> {
   return useQuery({
     queryKey: ['announcement-board', board],
     queryFn: async () => {
       try {
-        const res = await fetch(`/announcements/${board}?v=${__DC_VERSION__}`);
+        const res = await fetch(`/announcements/${board}`);
         if (!res.ok) return '';
         return await res.text();
       } catch {

@@ -20,6 +20,23 @@ const MIME_TYPES: Record<string, string> = {
 };
 
 /**
+ * Hand-authored content assets that ship under the SPA root but are NOT
+ * content-hashed build artifacts: the announcements manifest and its boards.
+ * They are authored between releases (add an entry, regenerate a board), so
+ * their URL stays byte-identical while their bytes change — `immutable` would
+ * pin a stale copy in the browser for a year with no way to revalidate.
+ */
+function isAuthoredContent(pathname: string): boolean {
+  return pathname === '/announcements.json' || pathname.startsWith('/announcements/');
+}
+
+/** Long-lived immutable caching is only correct for content-hashed assets. */
+export function cacheControlFor(pathname: string, ext: string): string {
+  if (ext === '.html' || isAuthoredContent(pathname)) return 'no-cache';
+  return 'public, max-age=31536000, immutable';
+}
+
+/**
  * Serve static files from a directory. Falls back to index.html for SPA routing.
  */
 export function serveStatic(
@@ -50,7 +67,7 @@ export function serveStatic(
     res.writeHead(200, {
       'Content-Type': contentType,
       'Content-Length': content.length,
-      'Cache-Control': ext === '.html' ? 'no-cache' : 'public, max-age=31536000, immutable',
+      'Cache-Control': cacheControlFor(url.pathname, ext),
     });
     res.end(content);
     return;

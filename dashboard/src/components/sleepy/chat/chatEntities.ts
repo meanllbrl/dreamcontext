@@ -281,24 +281,113 @@ export interface SubAgentRun {
    *  suppress that tool's own card from the main transcript (see
    *  {@link subAgentToolUseIds}) and to correlate the final `tool-result`. */
   toolUseId?: string;
-  /** Display name — the task's `description` field. */
+  /** Display name — the task's `description` field, as it was at START. Never overwritten
+   *  by a progress frame's own `description` (that is {@link SubAgentRun.activity}). */
   name: string;
   subagentType?: string;
+  /** `local_agent` (a real sub-agent), `local_bash` (a shell command the CLI auto-
+   *  backgrounded), or `local_workflow`. Drives {@link isAgentRun} — a bash task has no
+   *  model and no token accounting, and must not be labelled an "agent". */
   taskType?: string;
   prompt?: string;
   status: 'running' | 'completed' | 'error';
   startedAt: number;
   endedAt?: number;
   summary?: string;
+  /** What the task is doing RIGHT NOW, from the latest `task-progress` frame. */
+  activity?: string;
+  /** Tool the task last reached for, from the latest `task-progress` frame. */
+  lastToolName?: string;
   resultContent?: unknown;
   usage?: { totalTokens?: number; toolUses?: number; durationMs?: number };
+  /** Full model id the run actually used (`resolvedModel` off the Agent tool's own result).
+   *  Absent for a bash/workflow task, and for a sub-agent whose result hasn't landed yet. */
+  model?: string;
+  /** Ordered distinct models, when the run swapped models mid-flight (length > 1). */
+  modelsUsed?: string[];
 }
 
-/** Header data for the "N agents running" group card. */
-export function summarizeSubAgents(runs: SubAgentRun[]): { running: number; total: number; earliestStart?: number } {
+/** Is this a real dispatched sub-agent, as opposed to a shell command the CLI auto-
+ *  backgrounded? `local_bash` tasks ride the exact same `task_*` frames (verified on CLI
+ *  2.1.220: a sub-agent's own `sleep 20` produced its own task_started/task_notification
+ *  pair), so the type tag — not the mere presence of a run — is what may call something an
+ *  agent. A run with no `taskType` at all is treated as an agent: that is the shape every
+ *  pre-2.1.220 spike recorded, and under-reporting a real agent is the worse error. */
+export function isAgentRun(run: SubAgentRun): boolean {
+  return run.taskType !== 'local_bash';
+}
+
+/** Header data for the "N agents running" group card. `agents` counts only true sub-agent
+ *  runs, so the header can name what it is actually showing. */
+export function summarizeSubAgents(runs: SubAgentRun[]): {
+  running: number; total: number; agents: number; earliestStart?: number;
+} {
   const running = runs.filter((r) => r.status === 'running').length;
   const earliestStart = runs.length ? Math.min(...runs.map((r) => r.startedAt)) : undefined;
-  return { running, total: runs.length, earliestStart };
+  return { running, total: runs.length, agents: runs.filter(isAgentRun).length, earliestStart };
+}
+
+/**
+ * How long a run has been going, in ms. Prefers the CLI's OWN `usage.durationMs` (it
+ * measures the agent's runtime, and it keeps ticking correctly for a task that was queued
+ * before it actually started) and falls back to wall-clock from `startedAt`. `now` is passed
+ * in rather than read from the clock so this stays pure and testable; a finished run ignores
+ * it entirely.
+ */
+export function runDurationMs(run: SubAgentRun, now: number): number {
+  if (run.usage?.durationMs != null) return run.usage.durationMs;
+  const end = run.status === 'running' ? now : run.endedAt ?? now;
+  return Math.max(0, end - run.startedAt);
+}
+
+/**
+ * A model id → a short human label: `claude-haiku-4-5-20251001` → `Haiku 4.5`,
+ * `claude-opus-5` → `Opus 5`. The trailing 8-digit date stamp is dropped (it is a build
+ * date, not a version anyone reads), and the remaining version segments join on a dot.
+ *
+ * An id from a family we don't know is returned VERBATIM rather than relabelled or blanked —
+ * a raw id the user can read beats a dash that says nothing, and beats claiming a model ran
+ * that didn't. Same rule `modelLabelFor` follows in agentComposer.ts.
+ */
+const MODEL_FAMILIES = ['opus', 'sonnet', 'haiku', 'fable'] as const;
+
+export function formatModelName(model: string): string {
+  const id = model.trim();
+  if (!id) return '';
+  const lower = id.toLowerCase();
+  const family = MODEL_FAMILIES.find((f) => lower.includes(f));
+  if (!family) return id;
+  const after = lower.slice(lower.indexOf(family) + family.length);
+  const version = after
+    .split('-')
+    .filter((part) => /^\d+$/.test(part) && part.length < 8)
+    .join('.');
+  const label = family.charAt(0).toUpperCase() + family.slice(1);
+  return version ? `${label} ${version}` : label;
+}
+
+/**
+ * The compact meta line under a run's name — duration, model, tokens, tool uses — as an
+ * ordered list of already-formatted chips. Pure, so the exact readout for any run state is
+ * unit-testable without rendering.
+ *
+ * Only what is KNOWN is emitted: a bash task contributes duration alone, a sub-agent whose
+ * result hasn't landed yet has no model chip. Nothing here is inferred. Reasoning effort is
+ * absent by necessity, not by omission — see `fromToolUseResult` in chatProtocol.ts for the
+ * four channels that were checked and don't carry it.
+ */
+export function runMetaChips(run: SubAgentRun, now: number): string[] {
+  const chips: string[] = [formatDuration(runDurationMs(run, now))];
+  if (run.model) {
+    // A mid-run model swap is the interesting case, so say so instead of silently showing
+    // only the final one.
+    const swapped = (run.modelsUsed?.length ?? 0) > 1;
+    chips.push(swapped ? `${formatModelName(run.model)} +${run.modelsUsed!.length - 1}` : formatModelName(run.model));
+  }
+  if (run.usage?.totalTokens) chips.push(formatTokenCount(run.usage.totalTokens));
+  const tools = run.usage?.toolUses;
+  if (tools) chips.push(`${tools} tool${tools === 1 ? '' : 's'}`);
+  return chips;
 }
 
 /**
@@ -309,6 +398,77 @@ export function summarizeSubAgents(runs: SubAgentRun[]): { running: number; tota
  */
 export function subAgentToolUseIds(runs: SubAgentRun[]): Set<string> {
   return new Set(runs.map((r) => r.toolUseId).filter((id): id is string => !!id));
+}
+
+// ─── Turn progress (the working indicator's condition) ────────────────────────────
+//
+// `session.busy` says a turn is in flight; it does NOT say the transcript is showing it.
+// Between sending a message and the CLI's first frame (process spawn + SessionStart hooks:
+// seconds on the first turn), and again in every gap between a tool result and the next
+// block, the view has nothing live on it — which reads as "nothing is happening".
+
+/** The subset of a transcript item {@link turnHasVisibleProgress} reads. Declared
+ *  structurally on purpose: this module's invariant is zero dependency on chatSession.ts
+ *  (`ChatItem[]` satisfies it). */
+export interface ProgressProbe {
+  kind: string;
+  done?: boolean;
+  text?: string;
+  status?: string;
+}
+
+/**
+ * Whether the transcript ALREADY shows that the turn is alive — a streaming text block (it
+ * renders an ellipsis bubble even before its first delta), a thinking pill that has text to
+ * show, a running tool card, or a card awaiting an answer. False means the turn is running
+ * with nothing on screen: the window the working indicator exists to fill.
+ *
+ * A thinking block with no text yet does NOT count (`ThinkingBlock` renders null until it
+ * has something to disclose), and a suppressed sub-agent-spawning tool still does (the
+ * `SubAgentCard` that replaces its card carries its own running progress track).
+ */
+export function turnHasVisibleProgress(items: ProgressProbe[], pendingCount = 0): boolean {
+  if (pendingCount > 0) return true;
+  return items.some((it) => (
+    (it.kind === 'text' && it.done === false)
+    || (it.kind === 'thinking' && it.done === false && !!it.text)
+    || (it.kind === 'tool' && it.status === 'running')
+  ));
+}
+
+// ─── Stick-to-bottom (transcript auto-scroll) ─────────────────────────────────────
+
+/** How far from the bottom still counts as "at the bottom" — one short line of slack, so a
+ *  token that lands between a scroll and its handler never reads as the user leaving. */
+export const BOTTOM_SLACK = 48;
+
+export interface ScrollMetrics {
+  scrollTop: number;
+  scrollHeight: number;
+  clientHeight: number;
+  /** `scrollTop` at the previous scroll event — the direction signal. */
+  prevScrollTop: number;
+}
+
+/**
+ * The next stick-to-bottom state for a scroll event. Two rules, in this order:
+ *
+ * 1. At (or within {@link BOTTOM_SLACK} of) the bottom → stick. Covers arriving back by any
+ *    means: wheel, drag, keyboard, or our own programmatic scroll.
+ * 2. Otherwise only an UPWARD move unsticks. This is what makes it robust: content growing
+ *    under a pinned view pushes the bottom away without ever moving `scrollTop` backwards,
+ *    so a fast stream can no longer be mistaken for the user scrolling off (the bug that
+ *    made auto-scroll die mid-answer and never recover).
+ *
+ * A zero-height scroller is not measurable — a minimized pane's container is detached from
+ * the document, and treating that as "scrolled away" would strand the view at the top when
+ * it comes back. Keep the previous state.
+ */
+export function nextStickToBottom(prev: boolean, m: ScrollMetrics): boolean {
+  if (m.clientHeight === 0) return prev;
+  if (m.scrollHeight - m.scrollTop - m.clientHeight <= BOTTOM_SLACK) return true;
+  if (m.scrollTop < m.prevScrollTop - 1) return false;
+  return prev;
 }
 
 // ─── Copyable code blocks (state 2 — fenced-code Copy button + language bar) ──────
@@ -356,6 +516,58 @@ export function useCopyableCodeBlocks(ref: RefObject<HTMLElement | null>, deps: 
       bar.appendChild(button);
 
       pre.insertBefore(bar, pre.firstChild);
+    });
+  }, deps); // eslint-disable-line react-hooks/exhaustive-deps
+}
+
+// ─── Clickable file paths in an answer ───────────────────────────────────────────────
+
+/**
+ * Does this backticked span look like a path worth opening? Deliberately narrow, because a
+ * false positive is a button that opens nothing: it must contain a directory separator, no
+ * whitespace, no URL scheme, and either end in a short extension or in `/` (a folder, which
+ * the file endpoint answers with a listing). That covers the way an answer actually names a
+ * file — `src/server/routes/agent-chat.ts` — while leaving `npm run build`, `a/b` branch
+ * names and prose alone.
+ */
+const PATH_LIKE_RE = /^(?:\.\/)?(?:[\w.@+-]+\/)+(?:[\w.@+-]+\.[A-Za-z0-9]{1,8}|)$/;
+
+export function looksLikePath(text: string): boolean {
+  const t = text.trim();
+  if (!t || t.length > 200 || /\s/.test(t) || t.includes('://')) return false;
+  return PATH_LIKE_RE.test(t);
+}
+
+/**
+ * Chat-local effect: turns a path the answer wrote in backticks into something you can
+ * click, so `src/server/routes/agent-chat.ts` opens that file instead of being a string you
+ * have to go copy. Free for the agent — it is already how paths get written.
+ *
+ * Only INLINE code spans (never a `<pre>` block, where a path is part of a command or a
+ * snippet and clicking it would be nonsense). Marks each processed node so the re-render on
+ * every streamed token never double-binds one, exactly like the sibling effects here.
+ */
+export function useClickablePaths(
+  ref: RefObject<HTMLElement | null>,
+  deps: unknown[],
+  onOpenPath: (path: string) => void,
+): void {
+  useEffect(() => {
+    const root = ref.current;
+    if (!root) return;
+    root.querySelectorAll<HTMLElement>('code:not([data-chat-path])').forEach((code) => {
+      code.setAttribute('data-chat-path', '1');
+      if (code.closest('pre')) return;
+      const text = (code.textContent ?? '').trim();
+      if (!looksLikePath(text)) return;
+      code.classList.add('chat-md-path');
+      code.setAttribute('role', 'button');
+      code.setAttribute('tabindex', '0');
+      code.title = `Open ${text}`;
+      code.addEventListener('click', () => onOpenPath(text));
+      code.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpenPath(text); }
+      });
     });
   }, deps); // eslint-disable-line react-hooks/exhaustive-deps
 }
@@ -507,12 +719,21 @@ export function useInlineMedia(
     });
 
     // `[x](clip.mp4)` — markdown has no video syntax, so a LINK is how a clip is written.
-    // Only media links are upgraded; every other link is left exactly as the author wrote it.
+    // A link to any OTHER local file opens it in the app, the same as the backticked paths
+    // beside it: its href is a filesystem path, so following it would navigate the view to
+    // a route that doesn't exist and take the conversation with it. Absolute URLs are left
+    // untouched — `installExternalLinkHandler` sends those to the default browser.
     root.querySelectorAll<HTMLAnchorElement>('a:not([data-chat-media])').forEach((a) => {
       const href = a.getAttribute('href') ?? '';
       a.setAttribute('data-chat-media', '1');
-      if (!isLocalRef(href) || !inlineMediaKind(href)) return;
-      a.replaceWith(buildMedia(href));
+      if (!isLocalRef(href)) return;
+      if (inlineMediaKind(href)) { a.replaceWith(buildMedia(href)); return; }
+      a.classList.add('chat-md-path');
+      a.title = `Open ${href}`;
+      a.addEventListener('click', (e) => {
+        e.preventDefault();
+        handlers.onOpen?.(href);
+      });
     });
   }, deps); // eslint-disable-line react-hooks/exhaustive-deps
 }

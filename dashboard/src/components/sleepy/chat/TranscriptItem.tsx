@@ -1,7 +1,10 @@
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { MarkdownPreview } from '../../core/MarkdownPreview';
 import { api } from '../../../api/client';
-import { useCopyableCodeBlocks, useInlineMedia, estimateTokens } from './chatEntities';
+import { useCopyableCodeBlocks, useInlineMedia, useClickablePaths, estimateTokens } from './chatEntities';
+import { parseChatActions, type ChatAction } from './chatActions';
+import { ActionRow } from './ActionRow';
+import { BoardEmbed } from './BoardEmbed';
 import { IconButton } from './atoms';
 import { HoverActions, ConfirmPrompt, ThinkingPill } from './molecules';
 import { ToolCard } from './ToolCard';
@@ -77,29 +80,49 @@ function UserMessage({
 // ─── Assistant message (full-width, NO avatar) ─────────────────────────────────────
 
 function AssistantMessage({
-  item, session, onQuote, onOpenFile, readOnly,
+  item, session, onQuote, onOpenFile, onOpenBoard, onAction, readOnly,
 }: {
   item: ChatTextItem;
   session?: ChatSession;
   onQuote?: (text: string) => void;
   /** Click-through for an inline image the answer rendered — same lightbox a tool
-   *  card's image reference opens. */
+   *  card's image reference opens. Also backs the clickable backticked paths. */
   onOpenFile?: (path: string) => void;
+  /** Open a board's own full-height panel (the "bigger" affordance under an embed). */
+  onOpenBoard?: (path: string) => void;
+  /** Run one of the buttons the answer asked for — `ChatPane` decides what each does. */
+  onAction?: (action: ChatAction) => void;
   readOnly: boolean;
 }) {
   const [confirming, setConfirming] = useState(false);
   const bodyRef = useRef<HTMLDivElement | null>(null);
-  useCopyableCodeBlocks(bodyRef, [item.text, item.done]);
-  useInlineMedia(bodyRef, [item.text, item.done], { onOpen: onOpenFile, onReveal: revealFile, onGrant: grantFile });
 
-  if (!item.text && item.done) return null; // an empty finished text block carries nothing to show
+  // What the answer asked the view to render (buttons, boards) versus what it asked it to
+  // READ. Re-derived per token while streaming — parseChatActions is pure and cheap, and
+  // hides a half-written fence rather than flashing raw JSON.
+  const { body, actions, boards } = useMemo(() => parseChatActions(item.text), [item.text]);
+
+  useCopyableCodeBlocks(bodyRef, [body, item.done]);
+  useInlineMedia(bodyRef, [body, item.done], { onOpen: onOpenFile, onReveal: revealFile, onGrant: grantFile });
+  useClickablePaths(bodyRef, [body, item.done], (path) => onOpenFile?.(path));
+
+  // Nothing left to show: an empty finished text block, or one that was ONLY a fence/board
+  // reference whose rendering is handled below.
+  if (!item.text && item.done) return null;
+  if (item.done && !body && !actions.length && !boards.length) return null;
 
   return (
     <div className="chat-msg-assistant-row" data-done={item.done}>
       <div className="chat-msg-assistant-body" ref={bodyRef}>
-        <MarkdownPreview content={item.text || '…'} />
+        <MarkdownPreview content={body || (item.done ? '' : '…')} />
         {!item.done && <span className="chat-msg-caret" aria-hidden />}
       </div>
+      {/* Drawn, not linked: the board the answer just made, in the conversation. Only once
+          it has stopped streaming — a path still being typed points at nothing. */}
+      {item.done && onOpenBoard && boards.map((path) => (
+        <BoardEmbed key={path} path={path} onOpenBoard={onOpenBoard} />
+      ))}
+      {onAction && <ActionRow actions={actions} onAction={onAction} />}
       {!readOnly && (
         <HoverActions>
           <IconButton label="Copy" onClick={() => copyText(item.text)}>⧉</IconButton>
@@ -141,13 +164,18 @@ function ThinkingBlock({ item }: { item: ChatThinkingItem }) {
 // ─── Dispatcher ─────────────────────────────────────────────────────────────────────
 
 export function ItemView({
-  item, session, onOpenFile, onQuote, readOnly = false,
+  item, session, onOpenFile, onOpenBoard, onAction, onQuote, readOnly = false,
 }: {
   item: ChatItem;
   /** The live session backing this item — omitted for a read-only drill-in transcript
    *  (SlideOver's `mode:'subagent'`), which has no session of its own to mutate. */
   session?: ChatSession;
   onOpenFile: (path: string) => void;
+  /** Open a board's own panel. Omitted (the drill-in) means boards stay as plain text —
+   *  a read-only sidechain has no pane to open one into. */
+  onOpenBoard?: (path: string) => void;
+  /** Run a `dream-actions` button. Omitted (the drill-in) means the row isn't offered. */
+  onAction?: (action: ChatAction) => void;
   onQuote?: (text: string) => void;
   /** Suppresses the mutating hover actions (edit/retry/quote) — Copy always stays,
    *  since it never mutates anything. Used by the sub-agent drill-in. */
@@ -157,7 +185,17 @@ export function ItemView({
     case 'user':
       return <UserMessage item={item} session={session} onQuote={onQuote} readOnly={readOnly} />;
     case 'text':
-      return <AssistantMessage item={item} session={session} onQuote={onQuote} onOpenFile={onOpenFile} readOnly={readOnly} />;
+      return (
+        <AssistantMessage
+          item={item}
+          session={session}
+          onQuote={onQuote}
+          onOpenFile={onOpenFile}
+          onOpenBoard={onOpenBoard}
+          onAction={onAction}
+          readOnly={readOnly}
+        />
+      );
     case 'thinking':
       return <ThinkingBlock item={item} />;
     case 'tool':

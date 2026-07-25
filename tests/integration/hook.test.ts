@@ -1586,7 +1586,13 @@ describe('hook post-tool-use (integration)', () => {
       expect(parsed.hookSpecificOutput.additionalContext).toContain('bad.ts');
     }
     // Test passes regardless if tsc is not installed (graceful skip)
-  });
+    //
+    // The explicit timeout is load-bearing, not padding: the hook spawns a REAL tsc with its
+    // own 30s budget (hook.ts's post-tool-use tsc call), and `runWithStdin` blocks until that
+    // returns. Under vitest's 5s default the test died on the harness timeout BEFORE the
+    // graceful-skip guard above could run — the exact flake this test says it tolerates. The
+    // budget must therefore sit above the hook's own, not above a guess at tsc's speed.
+  }, 45_000);
 });
 
 // ─── hook pre-compact ───────────────────────────────────────────────────────

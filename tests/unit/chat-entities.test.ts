@@ -11,7 +11,8 @@ import {
   toolGlyph, classifyReference, parseEditDiff, summarizeSubAgents, subAgentToolUseIds,
   deriveDiffStartLine, estimateTokens, formatTokenCount, formatDuration, classifyOutputLine,
   formatClock, splitInlineCode, isGuardedCommand, avatarHue,
-  type SubAgentRun,
+  turnHasVisibleProgress, nextStickToBottom, BOTTOM_SLACK,
+  type SubAgentRun, type ProgressProbe,
 } from '../../dashboard/src/components/sleepy/chat/chatEntities.js';
 
 // ─── toolGlyph ──────────────────────────────────────────────────────────────────
@@ -144,7 +145,7 @@ function run(overrides: Partial<SubAgentRun>): SubAgentRun {
 
 describe('summarizeSubAgents', () => {
   it('empty list → zero running/total, no earliestStart', () => {
-    expect(summarizeSubAgents([])).toEqual({ running: 0, total: 0, earliestStart: undefined });
+    expect(summarizeSubAgents([])).toEqual({ running: 0, total: 0, agents: 0, earliestStart: undefined });
   });
 
   it('counts running vs total, and reports the earliest startedAt across all runs', () => {
@@ -153,12 +154,12 @@ describe('summarizeSubAgents', () => {
       run({ taskId: 'b', status: 'completed', startedAt: 1000, endedAt: 1500 }),
       run({ taskId: 'c', status: 'running', startedAt: 3000 }),
     ];
-    expect(summarizeSubAgents(runs)).toEqual({ running: 2, total: 3, earliestStart: 1000 });
+    expect(summarizeSubAgents(runs)).toEqual({ running: 2, total: 3, agents: 3, earliestStart: 1000 });
   });
 
   it('an all-completed set still reports total + earliestStart with running:0', () => {
     const runs = [run({ status: 'completed', startedAt: 500 }), run({ status: 'error', startedAt: 700 })];
-    expect(summarizeSubAgents(runs)).toEqual({ running: 0, total: 2, earliestStart: 500 });
+    expect(summarizeSubAgents(runs)).toEqual({ running: 0, total: 2, agents: 2, earliestStart: 500 });
   });
 });
 
@@ -373,5 +374,74 @@ describe('avatarHue', () => {
   it('separates similar names instead of collapsing them into one color', () => {
     expect(avatarHue('goal-planner')).not.toBe(avatarHue('goal-plan-reviewer'));
     expect(avatarHue('reviewer')).not.toBe(avatarHue('review'));
+  });
+});
+
+// ─── turnHasVisibleProgress (the working indicator's condition) ──────────────────
+
+describe('turnHasVisibleProgress', () => {
+  const user: ProgressProbe = { kind: 'user', text: 'hi' };
+  const doneText: ProgressProbe = { kind: 'text', text: 'answer', done: true };
+  const doneTool: ProgressProbe = { kind: 'tool', status: 'done' };
+
+  it('is false when the transcript only holds settled entries', () => {
+    expect(turnHasVisibleProgress([])).toBe(false);
+    expect(turnHasVisibleProgress([user])).toBe(false);
+    expect(turnHasVisibleProgress([user, doneText, doneTool])).toBe(false);
+  });
+
+  it('sees a streaming text block even before its first delta', () => {
+    // AssistantMessage renders an ellipsis bubble for an empty streaming block.
+    expect(turnHasVisibleProgress([{ kind: 'text', text: '', done: false }])).toBe(true);
+  });
+
+  it('sees a thinking block only once it has text to disclose', () => {
+    // ThinkingBlock renders null while the pill would have nothing in it.
+    expect(turnHasVisibleProgress([{ kind: 'thinking', text: '', done: false }])).toBe(false);
+    expect(turnHasVisibleProgress([{ kind: 'thinking', text: 'hm', done: false }])).toBe(true);
+  });
+
+  it('sees a running tool card', () => {
+    expect(turnHasVisibleProgress([{ kind: 'tool', status: 'running' }])).toBe(true);
+    expect(turnHasVisibleProgress([{ kind: 'tool', status: 'error' }])).toBe(false);
+  });
+
+  it('sees a card awaiting an answer', () => {
+    expect(turnHasVisibleProgress([user], 1)).toBe(true);
+  });
+});
+
+// ─── nextStickToBottom (transcript auto-scroll) ──────────────────────────────────
+
+describe('nextStickToBottom', () => {
+  const at = (scrollTop: number, prevScrollTop = scrollTop) => ({
+    scrollTop, scrollHeight: 2000, clientHeight: 500, prevScrollTop,
+  });
+
+  it('sticks at the bottom and within the slack window', () => {
+    expect(nextStickToBottom(false, at(1500))).toBe(true);
+    expect(nextStickToBottom(false, at(1500 - BOTTOM_SLACK))).toBe(true);
+  });
+
+  it('unsticks only on an upward move', () => {
+    expect(nextStickToBottom(true, at(900, 1400))).toBe(false);
+  });
+
+  it('keeps sticking while growing content pushes the bottom away', () => {
+    // The scroll event that a token lands in: position unchanged (or moved DOWN by our own
+    // programmatic scroll), distance suddenly > slack. This is the case that used to kill
+    // auto-scroll mid-answer.
+    expect(nextStickToBottom(true, at(900, 900))).toBe(true);
+    expect(nextStickToBottom(true, at(1200, 900))).toBe(true);
+  });
+
+  it('re-sticks when the user scrolls back down to the bottom', () => {
+    expect(nextStickToBottom(false, at(1490, 1000))).toBe(true);
+  });
+
+  it('keeps the previous state for an unmeasurable (detached) scroller', () => {
+    const detached = { scrollTop: 0, scrollHeight: 0, clientHeight: 0, prevScrollTop: 1400 };
+    expect(nextStickToBottom(true, detached)).toBe(true);
+    expect(nextStickToBottom(false, detached)).toBe(false);
   });
 });

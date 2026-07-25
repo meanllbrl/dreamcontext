@@ -55,6 +55,43 @@ export interface TurnUsage {
   model?: string;
 }
 
+/** Running totals the CLI reports for a task, on both `task_progress` (live, once per tool
+ *  use) and `task_notification` (final). `durationMs` is the CLI's own measure of how long
+ *  the task ran — preferred over any wall-clock the client could compute. */
+export interface TaskUsage {
+  totalTokens?: number;
+  toolUses?: number;
+  durationMs?: number;
+}
+
+/**
+ * The Agent tool's OWN structured result, lifted off the `tool_use_result` sibling that
+ * rides alongside `message` on the top-level `user` tool_result frame. This is the only
+ * channel that reports which model a sub-agent actually ran on — no `task_*` frame carries
+ * it (verified against CLI 2.1.220's own zod schemas and a live spike; see
+ * {@link fromToolUseResult}).
+ *
+ * Two shapes arrive, and both are handled because both are real:
+ *   • `async_launched` — the default (agents run in the background), so this lands
+ *     IMMEDIATELY after `task_started` and gives the row its model while it is still
+ *     running. Carries `resolvedModel` only.
+ *   • `completed` — a `run_in_background:false` dispatch, landing at the very end with the
+ *     full accounting: `resolvedModel`, `totalDurationMs`, `totalTokens`,
+ *     `totalToolUseCount` (and `modelsUsed` when the run swapped models mid-flight).
+ */
+export interface SubAgentResult {
+  /** The CLI's own agent id — identical to `task_id` on the `task_*` frames (verified), so
+   *  it correlates a result back to its run even without a `tool_use_id`. */
+  agentId?: string;
+  /** Full model id the sub-agent actually ran on, e.g. `claude-haiku-4-5-20251001`. */
+  resolvedModel?: string;
+  /** Ordered distinct models used; length > 1 means the run swapped models mid-flight. */
+  modelsUsed?: string[];
+  totalDurationMs?: number;
+  totalTokens?: number;
+  totalToolUseCount?: number;
+}
+
 export type ChatEvent =
   | { kind: 'init'; sessionId: string; model?: string; permissionMode?: string; capabilities?: string[]; version?: string; slashCommands?: string[] }
   /** A `Task`/`Agent`-tool sub-agent was dispatched. Empirically verified on CLI
@@ -66,12 +103,18 @@ export type ChatEvent =
   | { kind: 'task-started'; taskId: string; toolUseId?: string; description: string; subagentType?: string; taskType?: string; prompt?: string }
   /** A lifecycle status patch for an already-started task (e.g. `status:'completed'`). */
   | { kind: 'task-updated'; taskId: string; status?: string; endTime?: number }
+  /** Live progress for a still-running task, emitted once per tool use (verified on CLI
+   *  2.1.220: 7 frames over a ~68s run). The ONLY channel that reports what a sub-agent is
+   *  doing right now — `activity` is a fresh description of the current step ("Running List
+   *  directory contents of /usr/share"), NOT the task's static name — plus running usage
+   *  totals. `usage.durationMs` here is the CLI's own measure of the run so far. */
+  | { kind: 'task-progress'; taskId: string; toolUseId?: string; activity?: string; subagentType?: string; lastToolName?: string; summary?: string; usage?: TaskUsage }
   /** The sub-agent's own run finished (or reported progress): final status, a short
    *  summary, and usage totals. `outputFile` (the sub-agent's own transcript path) is
    *  carried through but is NOT trusted/used client-side — the drill-in transcript is
    *  fetched via the server-derived `?subagent=` history route instead (see
    *  agent-chat.ts), never from this client-visible path. */
-  | { kind: 'task-notification'; taskId: string; toolUseId?: string; status?: string; outputFile?: string; summary?: string; usage?: { totalTokens?: number; toolUses?: number; durationMs?: number } }
+  | { kind: 'task-notification'; taskId: string; toolUseId?: string; status?: string; outputFile?: string; summary?: string; usage?: TaskUsage }
   | { kind: 'block-start'; index: number; blockType: 'text' | 'thinking' | 'tool_use'; toolName?: string; toolUseId?: string; toolInput?: unknown; parentToolUseId?: string }
   | { kind: 'text-delta'; index: number; text: string }
   | { kind: 'thinking-delta'; index: number; text: string }
@@ -84,7 +127,7 @@ export type ChatEvent =
    *  like "Set effort level to low", creates) the transcript item. */
   | { kind: 'assistant-text'; text: string; synthetic: boolean; turnUsage?: TurnUsage }
   | { kind: 'assistant-thinking'; text: string; turnUsage?: TurnUsage }
-  | { kind: 'tool-result'; toolUseId: string; content: unknown; isError: boolean }
+  | { kind: 'tool-result'; toolUseId: string; content: unknown; isError: boolean; agentResult?: SubAgentResult }
   /** A `control_response` ack for a control request WE sent (set_model / rewind_conversation).
    *  `payload` is the CLI's nested `response` object when present (e.g. rewind's
    *  `{rewound, prefillText, precedingAssistantUuid, error?}`). */
@@ -95,6 +138,10 @@ export type ChatEvent =
   /** The server's cached slash-command list for this project, sent at connect. Carries the
    *  same payload `init.slashCommands` does; whichever arrives later wins. */
   | { kind: 'slash-commands'; commands: string[] }
+  /** The opening prompt the SERVER auto-submitted for us (a sleep / brain-resolve / delegate
+   *  spawn), echoed back so the transcript can render it as the first user message — the
+   *  client never types it, and with `promptToken` never even sees it. */
+  | { kind: 'prompt-echo'; text: string }
   | { kind: 'meta-exit'; code: number | null }
   | { kind: 'meta-error'; message: string }
   | { kind: 'ignored'; rawType: string };
@@ -206,17 +253,43 @@ function fromTaskUpdated(obj: Record<string, unknown>): ChatEvent {
   };
 }
 
+/** `{total_tokens, tool_uses, duration_ms}` → {@link TaskUsage}. Shared by the progress and
+ *  notification frames, which carry the identical shape. */
+function taskUsageOf(obj: Record<string, unknown>): TaskUsage | undefined {
+  const raw = isRecord(obj.usage) ? obj.usage : undefined;
+  if (!raw) return undefined;
+  return {
+    totalTokens: typeof raw.total_tokens === 'number' ? raw.total_tokens : undefined,
+    toolUses: typeof raw.tool_uses === 'number' ? raw.tool_uses : undefined,
+    durationMs: typeof raw.duration_ms === 'number' ? raw.duration_ms : undefined,
+  };
+}
+
+/**
+ * `system:task_progress` — the live heartbeat for a running task. Its `description` is the
+ * CURRENT step, not the task's name, so it is mapped to `activity` rather than being allowed
+ * anywhere near the row's title (overwriting the title with it would make a run rename itself
+ * on every tool call).
+ */
+function fromTaskProgress(obj: Record<string, unknown>): ChatEvent {
+  const taskId = str(obj.task_id);
+  if (!taskId) return ignored('system:task_progress');
+  return {
+    kind: 'task-progress',
+    taskId,
+    toolUseId: str(obj.tool_use_id),
+    activity: str(obj.description),
+    subagentType: str(obj.subagent_type),
+    lastToolName: str(obj.last_tool_name),
+    summary: str(obj.summary),
+    usage: taskUsageOf(obj),
+  };
+}
+
 function fromTaskNotification(obj: Record<string, unknown>): ChatEvent {
   const taskId = str(obj.task_id);
   if (!taskId) return ignored('system:task_notification');
-  const usageRaw = isRecord(obj.usage) ? obj.usage : undefined;
-  const usage = usageRaw
-    ? {
-      totalTokens: typeof usageRaw.total_tokens === 'number' ? usageRaw.total_tokens : undefined,
-      toolUses: typeof usageRaw.tool_uses === 'number' ? usageRaw.tool_uses : undefined,
-      durationMs: typeof usageRaw.duration_ms === 'number' ? usageRaw.duration_ms : undefined,
-    }
-    : undefined;
+  const usage = taskUsageOf(obj);
   return {
     kind: 'task-notification',
     taskId,
@@ -338,6 +411,44 @@ function usageOf(frame: Record<string, unknown>, message: Record<string, unknown
   return { input, cacheCreation, cacheRead, output, total, model: str(message.model) };
 }
 
+/**
+ * The `tool_use_result` SIBLING of `message` on a top-level `user` tool_result frame →
+ * {@link SubAgentResult}, when it is an Agent-tool result. Empirically verified on CLI
+ * 2.1.220 (both dispatch modes spiked):
+ *
+ *   async  → `{isAsync, status:'async_launched', agentId, description, resolvedModel,
+ *             prompt, outputFile, canReadOutputFile}`
+ *   sync   → `{status:'completed', agentId, agentType, content, resolvedModel,
+ *             totalDurationMs, totalTokens, totalToolUseCount, usage, toolStats}`
+ *
+ * Gated on `agentId`, which every Agent-tool result carries and no other tool's result does
+ * — so a Bash or Read result's own `tool_use_result` (a completely different shape) can
+ * never be mistaken for a sub-agent's accounting. Returns undefined for everything else.
+ *
+ * NOTE: reasoning effort is deliberately absent — it appears on NO channel the CLI exposes
+ * (not `task_*`, not here, not the sub-agent's own sidechain transcript, not the
+ * SubagentStart hook payload), and the Agent tool has no `effort` parameter. A run's effort
+ * is therefore unknowable client-side and is never displayed rather than guessed from the
+ * parent session's level.
+ */
+function fromToolUseResult(obj: Record<string, unknown>): SubAgentResult | undefined {
+  const raw = isRecord(obj.tool_use_result) ? obj.tool_use_result : undefined;
+  if (!raw) return undefined;
+  const agentId = str(raw.agentId);
+  if (!agentId) return undefined;
+  const modelsUsed = Array.isArray(raw.modelsUsed)
+    ? raw.modelsUsed.filter((m): m is string => typeof m === 'string' && !!m)
+    : undefined;
+  return {
+    agentId,
+    resolvedModel: str(raw.resolvedModel),
+    modelsUsed: modelsUsed?.length ? modelsUsed : undefined,
+    totalDurationMs: typeof raw.totalDurationMs === 'number' ? raw.totalDurationMs : undefined,
+    totalTokens: typeof raw.totalTokens === 'number' ? raw.totalTokens : undefined,
+    totalToolUseCount: typeof raw.totalToolUseCount === 'number' ? raw.totalToolUseCount : undefined,
+  };
+}
+
 function fromAssistant(obj: Record<string, unknown>): ChatEvent {
   const message = isRecord(obj.message) ? obj.message : {};
   const content = message.content;
@@ -362,6 +473,7 @@ function fromAssistant(obj: Record<string, unknown>): ChatEvent {
       toolUseId: block.tool_use_id,
       content: 'content' in block ? block.content : undefined,
       isError: bool(block.is_error),
+      agentResult: fromToolUseResult(obj),
     };
   }
   if (blockType === 'text' && typeof block.text === 'string' && block.text) {
@@ -493,6 +605,11 @@ function fromMeta(obj: Record<string, unknown>): ChatEvent {
       : [];
     return commands.length ? { kind: 'slash-commands', commands } : ignored('_meta:slash_commands');
   }
+  // The opening prompt the server submitted on our behalf (see agent-chat.ts's echo note).
+  if (subtype === 'prompt_echo') {
+    const text = str(obj.text);
+    return text ? { kind: 'prompt-echo', text } : ignored('_meta:prompt_echo');
+  }
   return ignored('_meta:' + (subtype ?? 'unknown'));
 }
 
@@ -503,6 +620,7 @@ function fromSystem(obj: Record<string, unknown>): ChatEvent {
   if (subtype === 'init') return fromSystemInit(obj);
   if (subtype === 'task_started') return fromTaskStarted(obj);
   if (subtype === 'task_updated') return fromTaskUpdated(obj);
+  if (subtype === 'task_progress') return fromTaskProgress(obj);
   if (subtype === 'task_notification') return fromTaskNotification(obj);
   // hook_started / hook_response / status / thinking_tokens / any other subtype —
   // observed or future noise the parser must tolerate (global hooks + status pings

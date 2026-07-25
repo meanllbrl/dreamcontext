@@ -21,9 +21,17 @@ export function useAgentCapabilities() {
   });
 }
 
-/** The agent can be spawned in-app only when it's desktop AND both prerequisites are met. */
-export function isSleepAgentReady(caps: Capabilities | undefined): boolean {
-  return !!(caps?.desktop && caps.embeddedTerminal && caps.claudeCli);
+/**
+ * The agent can be spawned in-app only when it's desktop AND the prerequisites of the
+ * ACTIVE agent screen are met. The terminal needs node-pty; the Chat view is a headless
+ * stream-json bridge with no PTY at all, so `embeddedTerminal` is not its prerequisite —
+ * gating on it would grey out "Run sleep agent" on a machine where node-pty failed to
+ * build even though chat spawns fine. Mirrors AgentSurface's own `claudeReady`, which is
+ * what actually decides whether the spawn goes through.
+ */
+export function isSleepAgentReady(caps: Capabilities | undefined, chatView = false): boolean {
+  if (!(caps?.desktop && caps.claudeCli)) return false;
+  return chatView || !!caps.embeddedTerminal;
 }
 
 /**

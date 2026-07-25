@@ -1,5 +1,14 @@
 [
   {
+    "id": "native-agent-chat",
+    "date": "2026-07-25",
+    "version": "0.21.0",
+    "title": "Your agent, as an app — the in-app agent is no longer a terminal",
+    "summary": "The Chat view renders the same Claude Code engine as native app UI instead of scrollback: permission asks, questions, sub-agent groups, diffs and images each become a card you can act on, and chat and terminal resume the same conversation both ways. Ships alongside the rest of the cycle: the Council v2 chamber, lean task authoring, and the root-caused terminal hang.",
+    "tags": ["agent", "chat", "dashboard"],
+    "board": "native-agent-chat.excalidraw.md"
+  },
+  {
     "id": "visual-announcements",
     "date": "2026-07-19",
     "version": "0.19.0",

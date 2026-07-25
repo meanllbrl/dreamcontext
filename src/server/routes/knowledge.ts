@@ -186,15 +186,67 @@ export async function handleKnowledgeGet(
 }
 
 /**
- * GET /api/knowledge-assets/:slug - Resolve an Excalidraw board's embedded images.
+ * Resolve every image an Excalidraw board embeds, as `{ <fileId>: { mimeType, dataURL } }`
+ * for the renderer to merge into the scene's `files` map.
  *
- * Obsidian boards reference images by an external wikilink (`## Embedded Files`)
- * rather than inlining base64 into the scene, so the dashboard renderer has no
- * pixels to draw. This returns `{ files: { <fileId>: { mimeType, dataURL } } }`
- * for every image the board references, which the renderer merges into the scene
- * `files` map before exporting. Security: only the board's OWN referenced paths
- * are served, each resolved with a containment guard (never escapes the vault),
- * and only image extensions are returned.
+ * Obsidian boards reference images by an external wikilink (`## Embedded Files`) rather
+ * than inlining base64 into the scene, so a non-Obsidian renderer has no pixels to draw.
+ *
+ * Security: ONLY the paths the board itself names are read, each one resolved against the
+ * caller's `searchRoots` through `safeChildPath` (so a wikilink can never escape a root it
+ * was offered), and only image extensions are returned. `searchRoots` is therefore the whole
+ * containment story for a caller — hand it the narrowest set that can resolve the board's
+ * own links, never a parent "just in case".
+ *
+ * Shared by `handleKnowledgeAssets` (a knowledge board) and agent-chat's `board-assets`
+ * (a board anywhere in the project, drawn inline in the Chat transcript) so both surfaces
+ * resolve, compress, cap and cache embeds identically.
+ */
+export async function resolveBoardAssets(
+  content: string,
+  searchRoots: string[],
+  label: string,
+): Promise<Record<string, { mimeType: string; dataURL: string }>> {
+  const embedded = parseEmbeddedFiles(content);
+
+  // Scale compression to the board's image count.
+  const imageCount = embedded.filter(e => IMAGE_MIME[extname(e.path).toLowerCase()]).length;
+  const { maxDim, quality } = compressionFor(imageCount);
+
+  const files: Record<string, { mimeType: string; dataURL: string }> = {};
+  let total = 0;
+  let dropped = 0;
+  for (const { fileId, path } of embedded) {
+    if (!IMAGE_MIME[extname(path).toLowerCase()]) continue; // images only
+    // Each root is tried both with the link verbatim (handles `assets/x.png`) and with just
+    // its basename (handles a bare `[[x.png]]`, which in Obsidian only resolves through the
+    // vault-wide index).
+    const candidates = searchRoots.flatMap((root) => [
+      safeChildPath(root, path),
+      safeChildPath(root, basename(path)),
+    ]);
+    const abs = candidates.find((c): c is string => c !== null && existsSync(c));
+    if (!abs) continue;
+    const loaded = await loadAssetDataURL(abs, maxDim, quality);
+    if (!loaded) continue;
+    if (total + loaded.bytes > MAX_ASSETS_BYTES) { dropped++; continue; }
+    total += loaded.bytes;
+    files[fileId] = { mimeType: loaded.mimeType, dataURL: loaded.dataURL };
+  }
+  if (dropped > 0) {
+    // Don't fail silently: a screenshot-heavy board past the cap renders with
+    // blank images, so make the truncation explainable in the server log.
+    console.warn(
+      `[board-assets] ${label}: payload cap (${MAX_ASSETS_BYTES} bytes) reached — ` +
+      `${dropped} image(s) omitted; board will render with missing images.`,
+    );
+  }
+  return files;
+}
+
+/**
+ * GET /api/knowledge-assets/:slug - Resolve an Excalidraw board's embedded images.
+ * See {@link resolveBoardAssets} for the resolution + security model.
  */
 export async function handleKnowledgeAssets(
   _req: IncomingMessage,
@@ -208,52 +260,23 @@ export async function handleKnowledgeAssets(
   if (!existsSync(filePath)) { sendError(res, 404, 'not_found', `Knowledge file not found: ${slug}`); return; }
 
   const { content } = readFrontmatter<Record<string, unknown>>(filePath);
-  const embedded = parseEmbeddedFiles(content);
 
-  // Wikilinks are vault-root-relative (the vault root is the parent of the
-  // context root, e.g. `<project>/` for `<project>/_dream_context`). Try that
-  // first, then context-root-relative, then the board's own folder — both the
-  // bare path and an `assets/` or `Attachments/` subfolder — covering how
-  // different Obsidian path settings store the link. The `assets/` case is the
-  // self-contained board-folder convention (`<board>/assets/<img>.png`) where a
-  // bare `[[img.png]]` wikilink only resolves via Obsidian's vault-wide index;
-  // without it every embed in a co-located board folder renders blank (Bug B).
-  const vaultRoot = dirname(contextRoot);
+  // Wikilinks are vault-root-relative (the vault root is the parent of the context root,
+  // e.g. `<project>/` for `<project>/_dream_context`). Try that first, then
+  // context-root-relative, then the board's own folder — plus its `assets/` and
+  // `Attachments/` subfolders, covering how different Obsidian path settings store the
+  // link. The `assets/` case is the self-contained board-folder convention
+  // (`<board>/assets/<img>.png`) where a bare `[[img.png]]` wikilink only resolves via
+  // Obsidian's vault-wide index; without it every embed in a co-located board folder
+  // renders blank (Bug B).
   const boardDir = dirname(filePath);
-
-  // Scale compression to the board's image count.
-  const imageCount = embedded.filter(e => IMAGE_MIME[extname(e.path).toLowerCase()]).length;
-  const { maxDim, quality } = compressionFor(imageCount);
-
-  const files: Record<string, { mimeType: string; dataURL: string }> = {};
-  let total = 0;
-  let dropped = 0;
-  for (const { fileId, path } of embedded) {
-    if (!IMAGE_MIME[extname(path).toLowerCase()]) continue; // images only
-    const candidates = [
-      safeChildPath(vaultRoot, path),
-      safeChildPath(contextRoot, path),
-      safeChildPath(boardDir, path), // path relative to the board (handles `assets/x.png` wikilinks)
-      safeChildPath(boardDir, basename(path)),
-      safeChildPath(boardDir, join('assets', basename(path))), // co-located self-contained board folder
-      safeChildPath(boardDir, join('Attachments', basename(path))),
-    ];
-    const abs = candidates.find((c): c is string => c !== null && existsSync(c));
-    if (!abs) continue;
-    const loaded = await loadAssetDataURL(abs, maxDim, quality);
-    if (!loaded) continue;
-    if (total + loaded.bytes > MAX_ASSETS_BYTES) { dropped++; continue; }
-    total += loaded.bytes;
-    files[fileId] = { mimeType: loaded.mimeType, dataURL: loaded.dataURL };
-  }
-  if (dropped > 0) {
-    // Don't fail silently: a screenshot-heavy board past the cap renders with
-    // blank images, so make the truncation explainable in the server log.
-    console.warn(
-      `[knowledge-assets] ${slug}: payload cap (${MAX_ASSETS_BYTES} bytes) reached — ` +
-      `${dropped} image(s) omitted; board will render with missing images.`,
-    );
-  }
+  const files = await resolveBoardAssets(content, [
+    dirname(contextRoot),
+    contextRoot,
+    boardDir,
+    join(boardDir, 'assets'),
+    join(boardDir, 'Attachments'),
+  ], slug);
 
   sendJson(res, 200, { files });
 }

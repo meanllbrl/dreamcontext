@@ -11,6 +11,8 @@ import { isDesktop } from '../desktop.js';
 import { trackChild } from '../lifecycle.js';
 import { resolveAgentSession } from '../../lib/agent-session-map.js';
 import { safeChildPath } from '../safe-path.js';
+import { CHAT_SURFACE_BRIEFING } from '../chat-surface.js';
+import { resolveBoardAssets } from './knowledge.js';
 import {
   isLoopback, rejectUpgrade, resolveVaultProjectRoot, projectRootOf,
   sanitizeUuid, sanitizeModel, sanitizeEffort, sanitizePrompt,
@@ -85,6 +87,14 @@ const liveConversations = new Set<string>();
  *  unit-testable in isolation (AC11's permission-mode mapping test). */
 export function permissionModeFor(bypass: boolean): 'bypassPermissions' | 'acceptEdits' {
   return bypass ? 'bypassPermissions' : 'acceptEdits';
+}
+
+/** Whether a path may be interpolated into the login-shell command string the spawn builds
+ *  (`exec claude "…" "…"`). Conservative allowlist — letters, digits and the handful of
+ *  punctuation a real temp path uses — so nothing a shell would interpret (quote, `$`,
+ *  backtick, `\`, `;`, whitespace) can reach the command line. Exported pure for tests. */
+export function isShellSafePath(p: string): boolean {
+  return /^[A-Za-z0-9/._-]+$/.test(p);
 }
 
 /** Client-generated control-request id gate (setModel/rewind acks are matched client-side
@@ -214,6 +224,25 @@ function startChatSession(
     }
   }
 
+  // Tell the agent it is rendering into the Chat view. Without this it writes for a TTY —
+  // it finishes a board and names the path instead of drawing it — because a chat-spawned
+  // `claude` is otherwise byte-identical to a terminal-spawned one. Handed over as a FILE
+  // (see chat-surface.ts) so the login-shell argv stays free of prose; a failed write
+  // degrades to the un-briefed agent we had before, never to a failed spawn.
+  let briefingArg: string[] = [];
+  let cleanupBriefing = () => { /* nothing written */ };
+  try {
+    const brief = join(tmpdir(), `dreamcontext-chat-surface-${randomUUID()}.md`);
+    // Our own filename, but `tmpdir()` comes from TMPDIR — the one argv element below that
+    // isn't a fixed literal or a whitelist-sanitized token. Hold it to the same standard
+    // (see the quoting note on `script`): a tmpdir carrying a shell metacharacter drops the
+    // briefing rather than reaching the command line.
+    if (!isShellSafePath(brief)) throw new Error('unsafe tmpdir');
+    writeFileSync(brief, CHAT_SURFACE_BRIEFING, { encoding: 'utf-8', mode: 0o600 });
+    briefingArg = ['--append-system-prompt-file', brief];
+    cleanupBriefing = () => { try { rmSync(brief, { force: true }); } catch { /* tmp cleanup */ } };
+  } catch { /* no briefing this session — the chat still works, just terminal-flavoured */ }
+
   const argv = [
     '-p',
     '--input-format', 'stream-json',
@@ -222,6 +251,7 @@ function startChatSession(
     '--include-partial-messages',
     '--permission-prompt-tool', 'stdio',
     '--permission-mode', permissionModeFor(bypass),
+    ...briefingArg,
     ...idArg,
     ...(model ? ['--model', model] : []),
     ...(effort ? ['--effort', effort] : []),
@@ -293,6 +323,16 @@ function startChatSession(
   const cachedSlash = readSlashCache(contextRoot);
   if (cachedSlash) sendMeta({ subtype: 'slash_commands', commands: cachedSlash });
 
+  // Echo the auto-submitted opening prompt back to the client so the chat transcript SHOWS
+  // it as the first user message. The terminal surface gets this for free (the prompt is
+  // literally typed into the visible readline); chat writes it straight to the child's
+  // stdin, so without this echo a spawn-with-prompt (sleep, brain-resolve, delegate) opened
+  // a transcript with nothing in it and read as "the message never got sent". The echo is
+  // the server's job, not the client's: with `promptToken` the client never sees the text at
+  // all, and a deferred prompt (`deferPrompt`, "the user speaks first") must NOT be echoed —
+  // `submitPrompt` is already empty in that case, so both fall out of this one condition.
+  if (submitPrompt) sendMeta({ subtype: 'prompt_echo', text: submitPrompt });
+
   const teardown = (): void => {
     if (!alive) return;
     alive = false;
@@ -300,6 +340,7 @@ function startChatSession(
     untrack();
     releaseHeld();
     cleanupDeferred();
+    cleanupBriefing();
   };
 
   // ── claude stdout → ws (verbatim NDJSON relay) ─────────────────────────────────────
@@ -886,6 +927,65 @@ function serveMedia(req: IncomingMessage, res: ServerResponse, abs: string, size
   // than reading the rest of a large file into a socket nobody is listening to.
   res.on('close', () => stream.destroy());
   stream.pipe(res);
+}
+
+/**
+ * GET /api/agent/board-assets?path=<board> — the images an Excalidraw board named in the
+ * transcript embeds, so the Chat view can DRAW the board instead of linking to it.
+ *
+ * The board itself already comes down through `GET /agent/file` (markdown), but an Obsidian
+ * board stores its screenshots as wikilinks in `## Embedded Files` rather than base64 in the
+ * scene — so without this the board renders with every image blank. `/api/knowledge-assets`
+ * does exactly this job already, but only for boards under `knowledge/`; a board can live
+ * anywhere in the project (`dashboard/public/announcements/*.excalidraw.md`, a board beside
+ * its generator), which is what this covers.
+ *
+ * Two independent containment layers, same as everything else that builds a path from
+ * request input: `resolveServablePath` decides whether we may read the BOARD at all (project
+ * root, or a path the user explicitly granted), and the roots handed to `resolveBoardAssets`
+ * decide where its wikilinks may resolve — the project root plus the board's own folder and
+ * the two conventional image subfolders, never a parent of either. Images only, by
+ * extension, and the same payload cap the knowledge route uses.
+ */
+export async function handleAgentBoardAssets(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  if (!isDesktop()) { sendError(res, 403, 'desktop_only', 'Available only in the desktop app.'); return; }
+
+  const url = new URL(req.url || '/', `http://${req.headers.host}`);
+  const rawPath = url.searchParams.get('path');
+  if (!rawPath) { sendError(res, 400, 'missing_path', 'Query parameter "path" is required.'); return; }
+
+  const resolved = resolveServablePath(contextRoot, rawPath);
+  if ('deny' in resolved) {
+    if (resolved.deny === 'needs_grant') {
+      sendError(res, 403, 'needs_grant', 'Outside the project — allow access to view this board.');
+    } else {
+      sendError(res, 400, 'invalid_path', 'Path escapes the project root.');
+    }
+    return;
+  }
+  const abs = resolved.abs;
+  let content: string;
+  try {
+    if (!statSync(abs).isFile()) throw new Error('not a file');
+    content = readFileSync(abs, 'utf-8');
+  } catch { sendError(res, 404, 'not_found', `Board not found: ${rawPath}`); return; }
+
+  const projectRoot = projectRootOf(contextRoot);
+  const boardDir = dirname(abs);
+  const files = await resolveBoardAssets(content, [
+    projectRoot,
+    contextRoot,
+    boardDir,
+    join(boardDir, 'assets'),
+    join(boardDir, 'Attachments'),
+  ], rawPath);
+
+  sendJson(res, 200, { files });
 }
 
 /**

@@ -23,6 +23,13 @@
   /* The transcript's measure: full-width organisms (tool cards, assistant answers)
      stretch to it so long lines stay readable on a wide pane. */
   --chat-line-width: min(960px, 100%);
+  /* The transcript's READING size — one notch under the app's 16px body token, which reads
+     oversized in a dense conversation column (owner call 07-25, same "calmer over sharper"
+     bias as the embedded terminal's 14.5px). Interpolated on the token scale exactly like
+     --font-size-lg, and still multiplied by --zoom so the window's `- 100% +` control keeps
+     working. Every transcript surface that carries prose reads THIS, so the chat's reading
+     size stays tunable from one place. */
+  --chat-text: calc(15px * var(--zoom, 1));
 }
 
 /* ── Context strip — linked task chip + GoalLivePanel only (stats moved to Composer) ── */
@@ -68,6 +75,16 @@
 
 /* ── Transcript scroll ────────────────────────────────────────────────────────────── */
 
+/* Positioning context for the "jump to latest" pill — it must float over the transcript's
+   bottom edge WITHOUT joining the scrolled content (an absolute child of the scroller would
+   scroll away with it, and a flow child would shift the transcript as it appears). */
+.chat-transcript {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+
 .chat-scroll {
   flex: 1 1 auto;
   min-height: 0;
@@ -75,13 +92,48 @@
   padding: var(--space-5) var(--space-6) var(--space-3);
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
   scrollbar-color: var(--color-border-hover) transparent;
+}
+/* The content column, and the ONE element the pane's ResizeObserver can watch for content
+   height (the scroller's own box never changes when its content grows). `flex: 1 0 auto`
+   makes it fill a short transcript so the empty state's `margin: auto` still centres. */
+.chat-scroll-inner {
+  flex: 1 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
 }
 /* Flex children shrink by default — in a scrolling column that squashes tall entries
    (a long diff, a terminal block) into each other instead of scrolling them. Every
    transcript entry keeps its natural height and the column scrolls. */
-.chat-scroll > * { flex: 0 0 auto; }
+.chat-scroll-inner > * { flex: 0 0 auto; }
+
+/* ── Jump to latest (shown only while the view is NOT stuck to the bottom) ─────────── */
+
+.chat-jump {
+  position: absolute;
+  bottom: var(--space-3);
+  left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 14px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-elevated, var(--color-bg-secondary));
+  color: var(--color-text-secondary);
+  box-shadow: var(--shadow-md, var(--shadow-sm));
+  font-family: inherit;
+  font-size: var(--font-size-xs, 12px);
+  font-weight: 600;
+  cursor: pointer;
+  animation: chat-jump-in 140ms ease-out;
+}
+.chat-jump:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
+.chat-jump:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
+@keyframes chat-jump-in { from { opacity: 0; transform: translate(-50%, 6px); } }
+@media (prefers-reduced-motion: reduce) { .chat-jump { animation: none; } }
 
 .chat-scroll::-webkit-scrollbar { width: 10px; }
 .chat-scroll::-webkit-scrollbar-track { background: transparent; }

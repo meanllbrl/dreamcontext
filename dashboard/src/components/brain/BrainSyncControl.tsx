@@ -61,7 +61,10 @@ export function BrainSyncControl({ onOpenSettings }: BrainSyncControlProps) {
 
   // The in-app agent can drive `/dream-sync` only in the desktop app with the agent
   // prerequisites met AND the agent surface enabled. Otherwise we fall back to a copyable command.
-  const canRunAgent = isSleepAgentReady(caps) && readAgentSettings().enabled;
+  const canRunAgent = (() => {
+    const s = readAgentSettings();
+    return isSleepAgentReady(caps, s.chatView) && s.enabled;
+  })();
 
   const mergeKind = brainStatus?.mergeKind ?? null;
   const codeConflicts = brainStatus?.codeConflicts ?? [];

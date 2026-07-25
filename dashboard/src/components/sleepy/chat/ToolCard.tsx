@@ -84,9 +84,11 @@ function GenericBody({ item }: { item: ChatToolItem }) {
 }
 
 export function ToolCard({ item, onOpenFile }: { item: ChatToolItem; onOpenFile: (path: string) => void }) {
-  // A card whose body carries the signal (a command's output, an edit's diff) opens on
-  // its own; a plain read stays a one-line receipt. `null` means "no explicit choice
-  // yet" so the default can still resolve as the tool's input streams in — an early
+  // Only an EDIT opens on its own: what changed in your files is the one tool body you
+  // always want to see. Everything else — Bash above all — stays a one-line receipt you
+  // can open (owner call 07-25: an agent turn is mostly shell calls, and their expanded
+  // terminal blocks pushed the actual answer off the screen). `null` means "no explicit
+  // choice yet" so the default can still resolve as the tool's input streams in — an early
   // `useState(defaultOpen)` would freeze on the pre-input value.
   const [override, setOverride] = useState<boolean | null>(null);
 
@@ -106,7 +108,7 @@ export function ToolCard({ item, onOpenFile }: { item: ChatToolItem; onOpenFile:
     ? <DiffStat added={diff.addedN} removed={diff.removedN} />
     : (duration != null ? <Duration ms={duration} /> : (item.status === 'running' ? <MetaText>running</MetaText> : null));
 
-  const open = override ?? (isBash || !!diff);
+  const open = override ?? !!diff;
 
   return (
     <div className="chat-toolcard" data-status={item.status} data-open={open || undefined}>

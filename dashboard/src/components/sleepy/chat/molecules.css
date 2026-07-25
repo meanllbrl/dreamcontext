@@ -60,7 +60,7 @@
 .chat-m-cardhead-title {
   min-width: 0;
   color: var(--color-text);
-  font-size: var(--font-size-base);
+  font-size: var(--chat-text, var(--font-size-base));
   font-weight: var(--font-weight-bold);
   letter-spacing: var(--letter-spacing-body);
 }
