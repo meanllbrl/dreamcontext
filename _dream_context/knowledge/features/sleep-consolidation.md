@@ -2,7 +2,7 @@
 id: feat_9qLM-gY_
 status: active
 created: '2026-02-25'
-updated: '2026-07-20'
+updated: '2026-07-25'
 released_version: 0.1.0
 tags:
   - architecture
@@ -11,7 +11,6 @@ tags:
 related_tasks:
   - enforce-mutual-exclusion-on-sleep-consolidation-lock
   - improve-sleep-quality
-  - proactive-learning-layer
 type: feature
 name: sleep-consolidation
 description: ''

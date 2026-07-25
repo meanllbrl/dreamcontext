@@ -2,7 +2,7 @@
 id: feat_O7LODr7O
 status: active
 created: '2026-02-25'
-updated: '2026-07-19'
+updated: '2026-07-25'
 released_version: v0.19.0
 tags:
   - frontend
@@ -19,8 +19,6 @@ related_tasks:
   - >-
     collapse-the-feature-entity-into-typed-knowledge-knowledge-features-type-feature
   - announcements-whats-new
-  - >-
-    cloud-reliability-package-origin-setup-state-refresh-dependency-doctor-with-one-click-install-stop-api-key-self-deletion
   - author-a-task-via-a-claude-agent-from-the-new-task-button
 type: feature
 name: web-dashboard

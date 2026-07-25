@@ -1,11 +1,43 @@
 [
   {
     "date": "2026-07-25",
+    "type": "docs",
+    "scope": "agent",
+    "description": "Applied the feature-integration-pattern checklist to the agent Chat view work before calling it done, awake rather than deferring to sleep. skill/references/integrations.md § Agent Chat view (BETA) gained: the slash menu (/ opens the SAME shared SkillPickerPopover the terminal uses, so skills are discoverable in chat), inline media (images inline + lightbox, project-internal video/audio streamed with seek, and the open-↗ fallback for anything outside the project root), and an accurate rewrite of the server-surface block — GET /api/agent/file now answers text previews (512KB cap), directory listings (300 entries, folders first) and range-streamed image/video/audio bytes (2GB ceiling, correct 206 so clips can seek), still project-root-scoped with nosniff everywhere and SVG always as text; POST /api/agent/grant documented as the consent half of needs_grant (one absolute file path per vault in state/.file-grants.json, max 500, files only, only ever on a real user click); POST /api/agent/reveal documented with its actual two-mode behavior and why the allowlist is of what is inert to VIEW rather than a denylist of what is dangerous. The Web Dashboard section notes the unified 44px chrome and the mono glyph set (◇ agent / ◆ chat / >_ shell). README gained a Chat view paragraph next to the agent-terminal one. The in-app-agent-terminal feature PRD gained a 2026-07-25 changelog entry covering the redesign, the polish pass, the new read surfaces and the validation numbers. SKILL.md's capabilities row already named the Chat view and needed no change; sub-agent contracts and shipped skill packs were scanned and have no touchpoints (sleep owns no chat artifacts; the packs are surface-agnostic) — recorded as considered rather than padding the docs.",
+    "breaking": false,
+    "summary": "Skill docs + README wired for the Chat view surface per feature-integration-pattern",
+    "references": [
+      "file:skill/references/integrations.md",
+      "file:README.md",
+      "knowledge:patterns/feature-integration-pattern",
+      "feature:in-app-agent-terminal",
+      "task:agent-chat-redesign-12-state-native-chat-ui-per-corrected-design-brief"
+    ]
+  },
+  {
+    "date": "2026-07-25",
+    "type": "test",
+    "scope": "agent",
+    "description": "Pre-commit hardening pass over the uncommitted agent-surface work, before handing the machine over for live testing. (1) POST /api/agent/reveal and POST /api/agent/grant — the two most consequential new surfaces (an OS opener and a persisted consent record) — shipped with zero tests; tests/unit/agent-reveal-grant.test.ts adds 17: desktop gate, missing/unparseable body, 404, the open-vs-reveal decision per type (image/doc/folder open in the default app; .sh, extension-less files and everything else are only revealed in the file manager, asserted platform-agnostically), reach-outside-the-project (the route's whole purpose), and grant semantics end-to-end — needs_grant refused, granted, then served, with the sibling file in the same folder STILL refused, plus idempotency. (2) handleAgentReveal's docstring still described the first draft of the route ('IMAGE extensions only ... a script gets a 400, not a launch'), which the shipped code no longer implements; rewritten to the real two-mode contract so the next reader isn't misled about a security boundary. (3) eval/gold.jsonl q043/q055/q056 + eval/gold-heldout.jsonl h020 pointed at knowledge/decision-link-aware-vs-embedding-recall, which the 2026-07-24 curator run archived — the recall-eval harness had been failing ever since. Repointed to the surviving successors (decision-embedding-layer for the embedding-deferral queries, recall-engine-v2 for the link-aware/gold-set-first queries); suite back to fully green, overall recall@3 86.7% over the 60-query gold set. (4) dreamcontext doctor's 12 deterministic task<->feature link warnings healed via --heal-links, and the 2 remaining multi-claim ambiguities assigned an owning feature (cloud-reliability package -> brain-repo-sync, proactive-learning-layer -> proactive-learning-layer): 19 ok / 0 warnings. (5) Emoji audit of the agent surface found the empty-state chat button still on 💬; now ◆. Full gate: root npm run build clean, root + dashboard tsc --noEmit clean, npm test -- run 4152 passed / 0 failed.",
+    "breaking": false,
+    "summary": "Reveal/grant test coverage, corrected reveal contract, recall-eval gold repoint, doctor link heal",
+    "references": [
+      "file:tests/unit/agent-reveal-grant.test.ts",
+      "file:src/server/routes/agent-chat.ts",
+      "file:eval/gold.jsonl",
+      "file:eval/gold-heldout.jsonl",
+      "file:dashboard/src/components/sleepy/AgentSurface.tsx",
+      "feature:in-app-agent-terminal",
+      "task:agent-surface-polish-unified-chrome-composer-redesign-slash-menu-inline-images-reveal-endpoint"
+    ]
+  },
+  {
+    "date": "2026-07-25",
     "type": "refactor",
     "scope": "agent",
     "description": "ChatPane refactored as a thin orchestrator over the chat/ component tree from waves 1–3. Bypass resolution centralized inside spawn() — kind === 'chat' now always resolves bypass from agentSettings.chatPermissionMode, overriding caller-passed value. Every chat-spawn call site (addSession, addSplitSession, openAgentInChat, dormant resume, runSleepAgent, runBrainResolveAgent, delegateAgent, skill-insert fallback, and new resumeChatSession) inherits it automatically without edits. resumeChatSession added (mirrors resumeChatInTerminal's dispose-then-respawn idiom, staying in 'chat'). Sub-agent card placement: one combined SubAgentCard rendered at earliest spawning tool item position (suppressed via subAgentToolUseIds), trailing-append fallback if no match. Board wiring: small local primaryToolPath mirrors ToolCard's private extraction (frozen file) so ChatPane can swap .excalidraw-classified tool item for BoardPreviewCard; \"Open board\" degrades to file SlideOver text preview (no board-rendering route exists). Image wiring: handleOpenFile routes images to Lightbox, everything else to file SlideOver. Context strip kept (task-link + GoalLivePanel, still-live feature) but stats readout removed (Composer now owns it, avoids duplicate). onOpenTaskPicker no-op documented (no picker mechanism exists; Composer frozen by T6); onOpenAppPage collapses overlay and fires forward-compatible dreamcontext-agent-open-page window event (unconsumed today, ready for future Shell listener). skill/references/integrations.md extended with chat/ tree, sub-agent system:task_* handling, GET /api/agent/file security, chatPermissionMode, Known limitations. Validation: dashboard tsc clean, npm run build clean, tests/unit/chat-protocol.test.ts + chat-entities.test.ts + agent-settings.test.ts 79 tests green.",
     "breaking": false,
-    "summary": "Chat view integration wiring: bypass centralization + ChatPane orchestrator (uncommitted)",
+    "summary": "Chat view integration wiring: bypass centralization + ChatPane orchestrator",
     "references": [
       "file:dashboard/src/components/sleepy/ChatPane.tsx",
       "file:dashboard/src/components/sleepy/ChatPane.css",
@@ -20,7 +52,7 @@
     "scope": "agent",
     "description": "Agent chat surface gained three capabilities. (1) Slash-command menu: SkillPickerPopover.tsx extracted from AgentComposerBar for reuse by chat composer, with skill cache. (2) Inline images: project-internal images render in-place; external images show an \"open ↗\" button (tooltip shows full path + why not drawable). (3) New POST /api/agent/reveal endpoint (desktop-gated): opens a file path in the OS default viewer on explicit user click. Security posture is narrow by design: image extensions only (png/jpg/jpeg/gif/webp — script/app paths rejected with 400); file must exist and be a regular file (not directory); argv-form spawn with no shell (path never interpreted as command); user-gesture-only (no auto-open). Platform dispatch: macOS open, Linux xdg-open, Windows start. Four rejection paths curl-verified (not_an_image, not_found, missing_path, \"Not a file\"). Also includes settings-write bug fix and terminal line-shadow strip (dashboard/src/lib/lineShadow.ts). Suite: 3748 passed, 1 known recall-eval failure.",
     "breaking": false,
-    "summary": "Chat slash-command menu, inline images, and desktop-gated image reveal (uncommitted)",
+    "summary": "Chat slash-command menu, inline images, and desktop-gated image reveal",
     "references": [
       "file:dashboard/src/components/sleepy/SkillPickerPopover.tsx",
       "file:src/server/routes/agent-chat.ts",
@@ -34,7 +66,7 @@
     "scope": "agent",
     "description": "Wave 4+ of the 12-state chat redesign integrated three reference designs 1:1, verified visually in light + dark. (1) Stream-error card (state 12): full-width banner with outline alert icon, red bold title \"The model stream was interrupted\", reason + \"Your message is safe.\", red-outlined Retry pill. (2) Permission + Bypass + mode menu (state 6): permission card uses new shared CardHeader (icon + title + tool badge + hairline); inline code backticks render as code (no markdown parser); dark terminal block for command; Deny/Allow pills; mode description below. New BypassNoticeCard (amber) for guarded commands only (rm -rf, force-push, sudo, pipe-to-shell, publish, chmod 777, dd/mkfs/kill, DROP TABLE; plain git push deliberately excluded to avoid alert fatigue). Mode menu shows identity colors (purple Auto / amber Bypass) with role=menuitemradio aria-checked (color not sole signal). (3) Sub-agent group card (state 9): CardHeader + elapsed timer + name-derived color avatars + type badge + live line + progress bar. Bar uses sweeping animation when no percentage available (never invents a percentage). Shared atoms: ToolBadge, TypeBadge, AgentAvatar, ProgressTrack, AlertIcon, CodeSentence. Shared molecule: CardHeader (used by all three cards). Two rendering bugs fixed: MarkdownPreview document surface drew box-in-box inside assistant cards (flattened); assistant card now hugs content (one-line reply not empty slab). Validation: tsc clean both roots, npm run build clean, npm test 4121 passing (one documented recall-eval gold-drift failure).",
     "breaking": false,
-    "summary": "Chat view wave 4+ (uncommitted): 12-state native cards with atomic design layer — stream error, permission/bypass/mode menu, sub-agent group",
+    "summary": "Chat view wave 4+: 12-state native cards with atomic design layer — stream error, permission/bypass/mode menu, sub-agent group",
     "references": [
       "file:dashboard/src/components/sleepy/chat/",
       "task:agent-chat-redesign-12-state-native-chat-ui-per-corrected-design-brief"
@@ -44,9 +76,9 @@
     "date": "2026-07-24",
     "type": "change",
     "scope": "agent",
-    "description": "Wave 2 improvements building on the beta foundation (in-progress, uncommitted working tree). chatSession.ts gained reducer arms for sub-agent lifecycle (task-started/updated/notification with status/summary/usage tracking, tool-result correlation stamping resultContent onto SubAgentRun by toolUseId), retry/rewind with pendingRetries set (retry walks history to find the nearest preceding user item and rewinds it as a retry — no draft/draftEpoch write, send(prefill) directly), and alwaysAllow sessionAllow set for permission-request auto-answer (consulted only in permission-request case, never affects question events). New routes: GET /api/agent/file (project-root-scoped file reader with safeChildPath traversal guard, 512KB cap, text/markdown dispatch, raw image bytes for png/jpe?g/gif/webp, SVG always served as text, X-Content-Type-Options:nosniff; desktop-gated; 15 tests), and handleAgentChatHistory extended with optional subagent query param (derives sub-agent sidechain transcript path server-side, parseTranscriptHistory reused verbatim; 13 tests). SkillPickerPopover.tsx extracted from AgentComposerBar.tsx for reuse by chat composer. AgentSettings.chatPermissionMode:'auto'|'bypass' added (default 'auto', coerce x==='bypass'?'bypass':'auto' client+server). Settings page: 'Agent Screen' is now a mutually-exclusive setting (Terminal vs Chat) replacing the 'Chat view' checkbox. New chat/ entity components (chatEntities.ts: toolGlyph, classifyReference, parseEditDiff, SubAgentRun helpers, useCopyableCodeBlocks), lineShadow.ts lib, and 28 new tests across agent-chat-history.test.ts, agent-file-read.test.ts, agent-line-shadow.test.ts, chat-entities.test.ts. Owner-approved 12-state design from Claude Design project, corrected by owner voice instructions 2026-07-24.",
+    "description": "Wave 2 improvements building on the beta foundation (landed 2026-07-25). chatSession.ts gained reducer arms for sub-agent lifecycle (task-started/updated/notification with status/summary/usage tracking, tool-result correlation stamping resultContent onto SubAgentRun by toolUseId), retry/rewind with pendingRetries set (retry walks history to find the nearest preceding user item and rewinds it as a retry — no draft/draftEpoch write, send(prefill) directly), and alwaysAllow sessionAllow set for permission-request auto-answer (consulted only in permission-request case, never affects question events). New routes: GET /api/agent/file (project-root-scoped file reader with safeChildPath traversal guard, 512KB cap, text/markdown dispatch, raw image bytes for png/jpe?g/gif/webp, SVG always served as text, X-Content-Type-Options:nosniff; desktop-gated; 15 tests), and handleAgentChatHistory extended with optional subagent query param (derives sub-agent sidechain transcript path server-side, parseTranscriptHistory reused verbatim; 13 tests). SkillPickerPopover.tsx extracted from AgentComposerBar.tsx for reuse by chat composer. AgentSettings.chatPermissionMode:'auto'|'bypass' added (default 'auto', coerce x==='bypass'?'bypass':'auto' client+server). Settings page: 'Agent Screen' is now a mutually-exclusive setting (Terminal vs Chat) replacing the 'Chat view' checkbox. New chat/ entity components (chatEntities.ts: toolGlyph, classifyReference, parseEditDiff, SubAgentRun helpers, useCopyableCodeBlocks), lineShadow.ts lib, and 28 new tests across agent-chat-history.test.ts, agent-file-read.test.ts, agent-line-shadow.test.ts, chat-entities.test.ts. Owner-approved 12-state design from Claude Design project, corrected by owner voice instructions 2026-07-24.",
     "breaking": false,
-    "summary": "Chat view wave 2 (uncommitted): 12-state reducer, sub-agent tracking, file reader, history query, skill picker extraction",
+    "summary": "Chat view wave 2: 12-state reducer, sub-agent tracking, file reader, history query, skill picker extraction",
     "references": [
       "file:dashboard/src/components/sleepy/chatSession.ts",
       "file:src/server/routes/agent-chat.ts",

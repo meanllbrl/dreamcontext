@@ -40,7 +40,7 @@
 {"id":"q040","query":"latest memory recall design — are we on haiku now","expected":["knowledge/haiku-recall-architecture"],"alt":["knowledge/decision-mem0-vs-bm25-recall","feature/memory-recall-bm25"],"category":"recency","lang":"en"}
 {"id":"q041","query":"current sleep fan-out — how many specialists now","expected":["feature/sleep-fanout-architecture"],"alt":["knowledge/sleep-specialist-roster-decision"],"category":"recency","lang":"en"}
 {"id":"q042","query":"the in-progress memory uplift work right now","expected":["feature/memory-recall-bm25"],"alt":["knowledge/recall-engine-v2"],"category":"recency","lang":"en"}
-{"id":"q043","query":"latest decision on improving BM25 recall — link-aware or embeddings","expected":["knowledge/decision-link-aware-vs-embedding-recall"],"alt":["knowledge/decision-mem0-vs-bm25-recall"],"category":"recency","lang":"en"}
+{"id":"q043","query":"latest decision on improving BM25 recall — link-aware or embeddings","expected":["knowledge/decision-embedding-layer"],"alt":["knowledge/recall-engine-v2","knowledge/decision-mem0-vs-bm25-recall"],"category":"recency","lang":"en"}
 {"id":"q044","query":"current multi-review pattern — is there still a coordinator agent","expected":["knowledge/multi-reviewer-pattern"],"alt":["feature/multi-review-skill"],"category":"recency","lang":"en"}
 {"id":"q045","query":"what we're actively building for the control panel polish slice","expected":["feature/control-panel"],"alt":["knowledge/desktop-beta-tauri-multivault"],"category":"recency","lang":"en"}
 {"id":"q046","query":"newest pack install work in the dashboard","expected":["feature/optional-skill-packs"],"alt":["feature/control-panel"],"category":"recency","lang":"en"}
@@ -52,8 +52,8 @@
 {"id":"q052","query":"manifest based install update","expected":["feature/manifest-based-install-update"],"alt":["knowledge/manifest-bootstrap-safety-pattern"],"category":"field-match","lang":"en"}
 {"id":"q053","query":"server security hardening task","expected":["knowledge/dashboard-server-security"],"alt":["knowledge/control-plane-api"],"category":"field-match","lang":"en"}
 {"id":"q054","query":"multi-product support tags onboarding domain","expected":["feature/multi-product-support"],"alt":[],"category":"field-match","lang":"en"}
-{"id":"q055","query":"the gold-set-first rule for deciding when to improve recall","expected":["knowledge/decision-link-aware-vs-embedding-recall"],"alt":["knowledge/decision-mem0-vs-bm25-recall"],"category":"topical-adjacency","lang":"en"}
-{"id":"q056","query":"wikilink traversal to boost related docs in BM25","expected":["knowledge/decision-link-aware-vs-embedding-recall"],"alt":["knowledge/decision-mem0-vs-bm25-recall"],"category":"topical-adjacency","lang":"en"}
+{"id":"q055","query":"the gold-set-first rule for deciding when to improve recall","expected":["knowledge/recall-engine-v2"],"alt":["knowledge/decision-embedding-layer","knowledge/decision-mem0-vs-bm25-recall"],"category":"topical-adjacency","lang":"en"}
+{"id":"q056","query":"wikilink traversal to boost related docs in BM25","expected":["knowledge/recall-engine-v2"],"alt":["knowledge/decision-embedding-layer","knowledge/decision-mem0-vs-bm25-recall"],"category":"topical-adjacency","lang":"en"}
 {"id":"q057","query":"why the sleep finalizer agent would have undone the 5 to 3 collapse","expected":["knowledge/decision-mem0-vs-bm25-recall"],"alt":["feature/sleep-fanout-architecture"],"category":"topical-adjacency","lang":"en"}
 {"id":"q058","query":"keeping inquirer prompts out of the dashboard server bundle","expected":["knowledge/control-plane-api"],"alt":["feature/control-panel"],"category":"topical-adjacency","lang":"en"}
 {"id":"q059","query":"the neuroscience paper behind bookmarks and consolidation competition","expected":["feature/sleep-consolidation"],"alt":[],"category":"topical-adjacency","lang":"en"}
