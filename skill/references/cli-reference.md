@@ -271,7 +271,7 @@ Orchestrator commands: `council create` (`--rounds N`, `--interrupt`, `--options
 
 Persona helpers: `round-context` (now includes verdict landscape + injected facts + pending directives), `council verdict <id> <slug> <round> --stance <s> --conviction <n> --headline "<h>" [--concession "<c>"]` (submit BEFORE `report append`; idempotent per round+slug), `report append` (warns when the round's verdict is missing; accepts an optional `### Cross-examination` subsection), `summaries` (appends per-persona stance/conviction lines), `research add|list`.
 
-The CLI writes `_dream_context/tmp/.council-live.json` automatically on state-changing commands; the app's live chamber panel renders from it. No browser viewer.
+The CLI writes `_dream_context/tmp/.council-live.json` automatically on state-changing commands; the app's live chamber panel renders from it, in BOTH agent renderers — above the composer in Terminal view, on the live rail in Chat view (the panel is scoped to the conversation that started the debate, so it only appears in the orchestrator's own pane). No browser viewer.
 
 ---
 

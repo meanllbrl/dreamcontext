@@ -92,13 +92,6 @@ const NODE_GAP = 26;
 const GRAPH_PAD = 28;
 const GRAPH_W = GRAPH_PAD * 2 + GOAL_PHASES.length * NODE_W + (GOAL_PHASES.length - 1) * NODE_GAP;
 const NODE_Y = 96;
-const HEAT_COLORS = ['', '#e6b31780', '#e6b317', '#fa5252'];
-const FORK_COLORS: Record<string, string> = {
-  done: '#40c057',
-  run: '#fab005',
-  wait: '#5c5f66',
-  fail: '#fa5252',
-};
 
 function GoalLiveOverlay({ state, onClose }: { state: GoalLiveState; onClose: () => void }) {
   useEffect(() => {
@@ -151,16 +144,17 @@ function GoalLiveOverlay({ state, onClose }: { state: GoalLiveState; onClose: ()
               const ti = GOAL_PHASES.indexOf(to);
               const x1 = nodeX(fi) + NODE_W / 2;
               const x2 = nodeX(ti) + NODE_W / 2;
-              const heat = HEAT_COLORS[goalHeatTier(state.iters, from)];
+              // The tier is an ATTRIBUTE, not a color: the group's `color` (and therefore
+              // the arc's stroke, the label's fill, and the hot arrowhead's currentColor)
+              // resolves in CSS, so the heat palette themes with everything else.
               return (
-                <g key={`${from}-${to}`}>
+                <g key={`${from}-${to}`} className="goal-live-arcg" data-heat={goalHeatTier(state.iters, from)}>
                   <path
                     d={`M ${x1} ${NODE_Y - 6} Q ${(x1 + x2) / 2} ${NODE_Y - 64} ${x2} ${NODE_Y - 6}`}
                     className="goal-live-arc"
-                    style={{ stroke: heat }}
                     markerEnd="url(#goal-live-arrow-hot)"
                   />
-                  <text x={(x1 + x2) / 2} y={NODE_Y - 66} className="goal-live-arc-label" style={{ fill: heat }}>
+                  <text x={(x1 + x2) / 2} y={NODE_Y - 66} className="goal-live-arc-label">
                     ×{n}
                   </text>
                 </g>
@@ -185,11 +179,10 @@ function GoalLiveOverlay({ state, onClose }: { state: GoalLiveState; onClose: ()
               return (
                 <g key={k}>
                   <line x1={ix} y1={NODE_Y + NODE_H} x2={ix + spread} y2={NODE_Y + NODE_H + 34} className="goal-live-sat-line" />
-                  <circle cx={ix + spread} cy={NODE_Y + NODE_H + 42} r={8} fill={FORK_COLORS[f.s] ?? FORK_COLORS.wait}>
-                    {f.s === 'run' && (
-                      <animate attributeName="opacity" values="1;0.35;1" dur="1.4s" repeatCount="indefinite" />
-                    )}
-                  </circle>
+                  {/* Fill + the running pulse are CSS (`.goal-live-sat[data-s]`), so the
+                      satellites match the compact bar's dots and honour reduced-motion —
+                      an SVG <animate> element does neither. */}
+                  <circle className="goal-live-sat" data-s={f.s} cx={ix + spread} cy={NODE_Y + NODE_H + 42} r={8} />
                 </g>
               );
             })}

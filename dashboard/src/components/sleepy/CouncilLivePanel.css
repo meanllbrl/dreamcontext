@@ -1,6 +1,28 @@
-/* Council live panel — compact strip above the composer + chamber-view popup.
-   Dark-surface styling matching GoalLivePanel to sit flush with the agent
-   terminal chrome; stance colors flow in via the --stance-c custom property. */
+/* Council live panel — compact strip above the composer (terminal) or on the chat's live
+   rail, plus the chamber-view popup. Stance colors flow in via the `--stance-c` custom
+   property (the categorical palette in `lib/councilLive.ts` — data encoding, deliberately
+   theme-invariant so a stance keeps its colour across rounds and themes).
+
+   Everything else is themed: like GoalLivePanel.css this file used to hardcode a
+   terminal-dark palette, which rendered as a dark slab in light mode on both surfaces.
+   Namespaced `--council-live-*` properties exist only where the DS ramp has no token for
+   the thing (the chamber's own hue) — same convention as `theses.css`. */
+
+:root {
+  --council-live-accent: #0091ff;
+  --council-live-done: var(--color-success);
+  --council-live-idle: var(--color-text-tertiary);
+  --council-live-edge: color-mix(in srgb, var(--council-live-accent) 30%, transparent);
+  /* Opaque by construction — see GoalLivePanel.css's note: a translucent strip lets the
+     terminal's bottom rows bleed through for the beat before the pane slot refits. */
+  --council-live-tint: color-mix(in srgb, var(--council-live-accent) 6%, var(--color-bg-secondary));
+  --council-live-tint-hover: color-mix(in srgb, var(--council-live-accent) 12%, var(--color-bg-secondary));
+}
+
+[data-theme='dark'] {
+  /* Electric blue has no dark lift in the ramp and reads muddy on the navy canvas. */
+  --council-live-accent: #4dabf7;
+}
 
 /* ── Compact strip ───────────────────────────────────────────────────────── */
 
@@ -11,21 +33,21 @@
   width: 100%;
   padding: 6px 12px;
   border: 0;
-  border-top: 1px solid rgba(34, 211, 238, 0.22);
-  /* Opaque base layer under the tint: the strip overlays the terminal for a beat
-     before the slot refits, and a translucent bg lets the TUI text bleed through. */
-  background: linear-gradient(180deg, rgba(34, 211, 238, 0.08), rgba(34, 211, 238, 0.03)), #17171c;
-  color: #d6d3e3;
+  border-top: 1px solid var(--council-live-edge);
+  background: var(--council-live-tint);
+  color: var(--color-text);
   font: 500 11.5px/1.4 var(--font-mono, ui-monospace, monospace);
   cursor: pointer;
   text-align: left;
   overflow: hidden;
   white-space: nowrap;
+  transition: background var(--transition-fast);
 }
-.council-live-bar:hover { background: linear-gradient(180deg, rgba(34, 211, 238, 0.14), rgba(34, 211, 238, 0.06)), #17171c; }
+.council-live-bar:hover { background: var(--council-live-tint-hover); }
+.council-live-bar:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; }
 
-.council-live-mark { color: #66e0f0; font-weight: 700; }
-.council-live-topic { color: #8b8898; overflow: hidden; text-overflow: ellipsis; max-width: 22ch; flex-shrink: 1; }
+.council-live-mark { color: var(--council-live-accent); font-weight: 700; }
+.council-live-topic { color: var(--color-text-secondary); overflow: hidden; text-overflow: ellipsis; max-width: 22ch; flex-shrink: 1; }
 
 .council-live-round { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }
 .council-live-round-dots { display: inline-flex; align-items: center; gap: 3px; }
@@ -33,15 +55,15 @@
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #3a3a44;
+  background: var(--color-border-hover);
 }
-.council-live-round-dots b[data-state='done'] { background: #40c057; }
-.council-live-round-dots b[data-state='active'] { background: #22d3ee; animation: council-live-pulse 1.4s ease-in-out infinite; }
+.council-live-round-dots b[data-state='done'] { background: var(--council-live-done); }
+.council-live-round-dots b[data-state='active'] { background: var(--council-live-accent); animation: council-live-pulse 1.4s ease-in-out infinite; }
 
-.council-live-phase { color: #66e0f0; font-weight: 700; }
-.council-live-phase[data-phase='interlude'] { color: #ffd43b; }
-.council-live-phase[data-phase='synthesis'] { color: #b197fc; }
-.council-live-phase[data-phase='done'] { color: #51cf66; }
+.council-live-phase { color: var(--council-live-accent); font-weight: 700; }
+.council-live-phase[data-phase='interlude'] { color: var(--color-warning); }
+.council-live-phase[data-phase='synthesis'] { color: var(--color-accent); }
+.council-live-phase[data-phase='done'] { color: var(--council-live-done); }
 
 /* Persona dots: colored per stance (--stance-c), dimmed=wait, pulse=think, solid=done. */
 .council-live-personas { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; }
@@ -49,7 +71,7 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--stance-c, #5c5f66);
+  background: var(--stance-c, var(--council-live-idle));
 }
 .council-live-personas b[data-s='wait'] { opacity: 0.35; }
 .council-live-personas b[data-s='think'] { animation: council-live-pulse 1.4s ease-in-out infinite; }
@@ -60,18 +82,23 @@
   width: 56px;
   height: 5px;
   border-radius: 3px;
-  background: #2b2b33;
+  background: var(--color-bg-tertiary);
   overflow: hidden;
 }
-.council-live-conv-fill { display: block; height: 100%; border-radius: 3px; background: #22d3ee; }
-.council-live-conv-num { color: #a9a6b6; }
+.council-live-conv-fill { display: block; height: 100%; border-radius: 3px; background: var(--council-live-accent); }
+.council-live-conv-num { color: var(--color-text-secondary); }
 .council-live-conv-lead { font-weight: 700; }
 
-.council-live-expand { color: #8b8898; flex-shrink: 0; }
-.council-live-bar:hover .council-live-expand { color: #66e0f0; }
+.council-live-expand { color: var(--color-text-secondary); flex-shrink: 0; }
+.council-live-bar:hover .council-live-expand { color: var(--council-live-accent); }
 
 @keyframes council-live-pulse {
   50% { opacity: 0.35; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .council-live-round-dots b[data-state='active'],
+  .council-live-personas b[data-s='think'],
+  .council-live-cell-name b[data-s='think'] { animation: none; }
 }
 
 /* Narrow pane (container query context = agentpane): drop the topic so the
@@ -83,6 +110,8 @@
 
 /* ── Chamber view popup ──────────────────────────────────────────────────── */
 
+/* The scrim stays a fixed dark wash in BOTH themes — same convention as the chat's own
+   slide-over/lightbox scrims (overlays.css). */
 .council-live-backdrop {
   position: fixed;
   inset: 0;
@@ -94,38 +123,38 @@
   backdrop-filter: blur(3px);
 }
 .council-live-popup {
-  background: #17171c;
-  border: 1px solid rgba(34, 211, 238, 0.3);
-  border-radius: 14px;
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+  background: var(--color-bg-elevated, var(--color-bg-secondary));
+  border: 1px solid var(--council-live-edge);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-xl);
   max-width: min(860px, calc(100vw - 48px));
   max-height: calc(100vh - 64px);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  color: #e8e8ec;
+  color: var(--color-text);
 }
 .council-live-popup header {
   display: flex;
   align-items: baseline;
   gap: 10px;
   padding: 14px 18px 10px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid var(--color-border);
 }
-.council-live-popup h3 { margin: 0; font-size: 15px; color: #66e0f0; }
-.council-live-popup-topic { color: #a9a6b6; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
-.council-live-popup-meta { color: #8b8898; font-size: 12px; font-family: var(--font-mono, monospace); flex-shrink: 0; }
+.council-live-popup h3 { margin: 0; font-size: 15px; color: var(--council-live-accent); }
+.council-live-popup-topic { color: var(--color-text-secondary); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+.council-live-popup-meta { color: var(--color-text-secondary); font-size: 12px; font-family: var(--font-mono, monospace); flex-shrink: 0; }
 .council-live-close {
   border: 0;
   background: transparent;
-  color: #8b8898;
+  color: var(--color-text-secondary);
   font-size: 14px;
   cursor: pointer;
   padding: 2px 6px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   align-self: center;
 }
-.council-live-close:hover { color: #fff; background: rgba(255, 255, 255, 0.08); }
+.council-live-close:hover { color: var(--color-text); background: var(--color-bg-tertiary); }
 
 /* Responsive: the chamber table keeps its natural width and scrolls
    horizontally when the viewport is narrower than its columns. */
@@ -137,17 +166,17 @@
   font: 500 12.5px/1.5 var(--font-mono, ui-monospace, monospace);
 }
 .council-live-chamber td { padding: 6px 10px; white-space: nowrap; vertical-align: middle; }
-.council-live-chamber tr + tr td { border-top: 1px solid rgba(255, 255, 255, 0.04); }
+.council-live-chamber tr + tr td { border-top: 1px solid var(--color-border); }
 .council-live-chamber tr[data-s='wait'] { opacity: 0.55; }
 
-.council-live-cell-name { color: #d6d3e3; }
+.council-live-cell-name { color: var(--color-text); }
 .council-live-cell-name b {
   display: inline-block;
   width: 8px;
   height: 8px;
   border-radius: 50%;
   margin-right: 7px;
-  background: var(--stance-c, #5c5f66);
+  background: var(--stance-c, var(--council-live-idle));
   vertical-align: 1px;
 }
 .council-live-cell-name b[data-s='wait'] { opacity: 0.35; }
@@ -156,12 +185,12 @@
 .council-live-stance-chip {
   display: inline-block;
   padding: 1px 8px;
-  border-radius: 9px;
-  border: 1px solid var(--stance-c, #5c5f66);
-  color: var(--stance-c, #5c5f66);
+  border-radius: var(--radius-full);
+  border: 1px solid var(--stance-c, var(--council-live-idle));
+  color: var(--stance-c, var(--council-live-idle));
   font-weight: 700;
 }
-.council-live-stance-none { color: #5c5f66; font-style: italic; }
+.council-live-stance-none { color: var(--council-live-idle); font-style: italic; }
 
 /* 10-cell conviction bar. */
 .council-live-cbar { display: inline-flex; align-items: center; gap: 2px; }
@@ -169,18 +198,18 @@
   width: 7px;
   height: 11px;
   border-radius: 2px;
-  background: #2b2b33;
+  background: var(--color-bg-tertiary);
 }
-.council-live-cbar em { font-style: normal; color: #a9a6b6; margin-left: 6px; min-width: 2.5ch; text-align: right; }
+.council-live-cbar em { font-style: normal; color: var(--color-text-secondary); margin-left: 6px; min-width: 2.5ch; text-align: right; }
 
 .council-live-shift { font-weight: 600; }
-.council-live-shift[data-kind='none'] { color: #5c5f66; }
-.council-live-shift[data-kind='stable'] { color: #8b8898; }
-.council-live-shift[data-kind='stance'] { color: #ffd43b; }
-.council-live-shift[data-kind='up'] { color: #51cf66; }
-.council-live-shift[data-kind='down'] { color: #fa5252; }
+.council-live-shift[data-kind='none'] { color: var(--council-live-idle); }
+.council-live-shift[data-kind='stable'] { color: var(--color-text-secondary); }
+.council-live-shift[data-kind='stance'] { color: var(--color-warning); }
+.council-live-shift[data-kind='up'] { color: var(--color-success); }
+.council-live-shift[data-kind='down'] { color: var(--color-error); }
 
-.council-live-cell-headline { color: #8b8898; max-width: 34ch; }
+.council-live-cell-headline { color: var(--color-text-secondary); max-width: 34ch; }
 .council-live-cell-headline span {
   display: inline-block;
   max-width: 34ch;
@@ -196,16 +225,16 @@
   flex-wrap: wrap;
   gap: 8px 16px;
   padding: 10px 18px 12px;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: 1px solid var(--color-border);
   font: 500 12px/1.4 var(--font-mono, ui-monospace, monospace);
-  color: #a9a6b6;
+  color: var(--color-text-secondary);
 }
-.council-live-tally-label { color: #5c5f66; font-weight: 700; letter-spacing: 0.06em; }
+.council-live-tally-label { color: var(--council-live-idle); font-weight: 700; letter-spacing: 0.06em; }
 .council-live-tally-item { display: inline-flex; align-items: center; gap: 6px; }
 .council-live-tally-item b { width: 8px; height: 8px; border-radius: 50%; }
-.council-live-tally-item strong { color: #d6d3e3; }
-.council-live-tally-item[data-leading] strong { color: #fff; }
-.council-live-tally-conv { margin-left: auto; color: #66e0f0; }
+.council-live-tally-item strong { color: var(--color-text-secondary); }
+.council-live-tally-item[data-leading] strong { color: var(--color-text); }
+.council-live-tally-conv { margin-left: auto; color: var(--council-live-accent); }
 
 /* ── Dock badge (minimized chip) ─────────────────────────────────────────── */
 
@@ -215,7 +244,7 @@
   gap: 4px;
   margin-top: 2px;
   font: 600 10px/1.2 var(--font-mono, monospace);
-  color: #66e0f0;
+  color: var(--council-live-accent);
   white-space: nowrap;
 }
 .council-live-dock-badge strong { font-weight: 700; }

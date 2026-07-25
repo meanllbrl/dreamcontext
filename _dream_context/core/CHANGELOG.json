@@ -1,6 +1,21 @@
 [
   {
     "date": "2026-07-25",
+    "type": "fix",
+    "scope": "agent",
+    "description": "Council's live chamber panel was mounted only by the terminal renderer (PaneComposer) — a /council debate driven from a Chat tab rendered nothing, though GET /api/agent/council-live scopes by conversation id identically for both pane kinds. ChatPane's context strip became a live rail (task chip + GoalLivePanel + CouncilLivePanel, collapsed via :empty when nothing is live); previously the goal bar rendered unwrapped and full-bleed whenever no task was linked, which is always in beta. Both panel stylesheets also hardcoded a terminal-dark palette and rendered as dark slabs in light mode on BOTH surfaces; every value is now a DS token or a namespaced --goal-live-* / --council-live-* property with a dark lift, and the goal graph's heat/fork hex maps moved from inline JS style into CSS attributes (which also gave the fork satellites prefers-reduced-motion). Terminal keeps the flush strip; the chat rail renders the same components as bordered cards.",
+    "breaking": false,
+    "summary": "Chat view now renders goal-skill AND council live panels; both theme correctly in light mode",
+    "references": [
+      "feature:in-app-agent-terminal",
+      "task:agent-chat-redesign-12-state-native-chat-ui-per-corrected-design-brief",
+      "file:dashboard/src/components/sleepy/ChatPane.tsx",
+      "file:dashboard/src/components/sleepy/GoalLivePanel.css",
+      "file:dashboard/src/components/sleepy/CouncilLivePanel.css"
+    ]
+  },
+  {
+    "date": "2026-07-25",
     "type": "feat",
     "scope": "dashboard",
     "description": "New announcement board native-agent-chat.excalidraw.md generated from its spec in dashboard/scripts/announcements/generate.cjs, registered in dashboard/public/announcements.json as v0.21.0 / 2026-07-25. The board tells the story of the agent surface's terminal-to-chat redesign across three acts: Problem (terminal in a window, flattened ANSI scrollback, froze under load), Solution (Chat view — 12 designed states, headless stream-json to native React; Cards you can act on — permission/question/sub-agent/diff/board/image each a card; One unified chrome — 44px tabs/mode/composer, slash menu, inline images), Proof (12 designed states streaming→stream-error, 10-50× fewer terminal frames per burst, chat↔terminal resume bidirectionally). The summary notes the rest of this cycle's work (Council v2 chamber, lean task authoring, terminal hang fix) in one sentence. Generator audit clean (overlaps/buriedText/longLines = 0), announcements.test.ts 28/28, other 4 boards byte-stable.",

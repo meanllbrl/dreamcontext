@@ -89,10 +89,15 @@ export function councilStanceIndex(options: CouncilOption[] | undefined, stance:
   return Math.abs(h) % COUNCIL_STANCE_PALETTE.length;
 }
 
-/** Color for a stance — a neutral grey when the persona has no stance yet. */
+/**
+ * Color for a stance. The palette itself is a DATA encoding (a stance must keep its
+ * colour across rounds and across themes), but the no-stance case is UI chrome, so it
+ * resolves to the theme's tertiary text token rather than a fixed grey that only read
+ * correctly on the old dark-only panel.
+ */
 export function councilStanceColor(options: CouncilOption[] | undefined, stance: string | undefined): string {
   const i = councilStanceIndex(options, stance);
-  return i < 0 ? '#5c5f66' : COUNCIL_STANCE_PALETTE[i];
+  return i < 0 ? 'var(--color-text-tertiary)' : COUNCIL_STANCE_PALETTE[i];
 }
 
 /** Whole minutes since the debate started, or null when unknown. */

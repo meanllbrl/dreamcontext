@@ -357,9 +357,9 @@ command + output).
 
 The goal-skill pack maintains one live state file **per orchestrator session** —
 concurrent runs in different sessions each get their own file and never clobber each
-other. **The primary surface is the dreamcontext app**: the native live panel above the
-agent pane's composer + the dock chip render your run automatically (via the dashboard
-server) — nothing to start, nothing to announce.
+other. **The primary surface is the dreamcontext app**: the native live panel (above the
+composer in Terminal view, on the live rail in Chat view) + the dock chip render your run
+automatically (via the dashboard server) — nothing to start, nothing to announce.
 
 **At run start (right after the goal is confirmed, before Phase 1):** write the initial
 live file (snippet below) with `"phase":"plan"`. That's it — the app picks it up on its

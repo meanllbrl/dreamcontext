@@ -1,8 +1,8 @@
 /* Agent Chat view (beta) — 12-state redesign (plan rev.3, task T7). This file owns ONLY
    the pane shell, the shared `--chat-card-width` token every interactive card reads (rule
-   7 — survey/permission/sub-agent cards share ONE width), the trimmed context strip (task
-   chip + GoalLivePanel — the context/cost readout moved into Composer, see ChatPane.tsx's
-   header), the resumed-transcript divider, the permission-mode dropdown's top-right anchor,
+   7 — survey/permission/sub-agent cards share ONE width), the live rail (task chip +
+   goal-skill + council bars — the context/cost readout moved into Composer, see
+   ChatPane.tsx's header), the resumed-transcript divider, the permission-mode anchor,
    and the degraded-question fallback card. Every other visual (bubbles, tool cards, survey/
    permission cards, sub-agent group, slide-over, lightbox, board card, banners, composer) is
    owned by `chat/cards.css` + `chat/overlays.css` + `chat/composer.css`, imported by
@@ -32,19 +32,36 @@
   --chat-text: calc(15px * var(--zoom, 1));
 }
 
-/* ── Context strip — linked task chip + GoalLivePanel only (stats moved to Composer) ── */
+/* ── Live rail — linked task chip + goal-skill / council live bars ──────────────────
+   Ambient run state for this conversation, pinned above the transcript so it never
+   scrolls away while the run it describes is still going. Each child renders nothing
+   while its own run is inactive, so the rail is genuinely childless in the common case
+   and `:empty` collapses it — no bordered strip above a plain conversation. */
 
-.chat-context-strip {
+.chat-live-rail {
   flex: 0 0 auto;
   display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
+  flex-direction: column;
+  gap: 6px;
   padding: 8px 14px;
   border-bottom: 1px solid var(--color-border);
   background: var(--color-bg-secondary);
   font-size: var(--font-size-xs, 11.5px);
 }
+.chat-live-rail:empty { display: none; }
+
+/* The terminal renders these two bars FLUSH against the composer (a full-bleed strip
+   with a hairline top edge is the right treatment against an xterm grid). On the chat
+   rail they are cards, like every other chat surface — so the shared components keep one
+   set of colors and only their edge treatment differs per host. `--goal-live-edge` /
+   `--council-live-edge` are published by the panels' own CSS files. */
+.chat-live-rail .goal-live-bar,
+.chat-live-rail .council-live-bar {
+  padding: 7px 11px;
+  border-radius: var(--radius-md);
+}
+.chat-live-rail .goal-live-bar { border: 1px solid var(--goal-live-edge); }
+.chat-live-rail .council-live-bar { border: 1px solid var(--council-live-edge); }
 .chat-context-task {
   display: flex;
   align-items: center;
@@ -64,7 +81,10 @@
   padding: 2px 8px;
   border-radius: var(--radius-full);
   background: var(--color-accent-soft, color-mix(in srgb, var(--color-accent) 16%, transparent));
-  color: var(--color-accent-text, var(--color-accent));
+  /* Accent ON a tint of itself — `--color-accent-text` is white (it belongs on a SOLID accent
+     fill), and over this tint it rendered the label invisible. Same fix as composer.css's
+     slash row and skill chip. */
+  color: var(--color-accent);
   font-size: 10.5px;
   white-space: nowrap;
 }

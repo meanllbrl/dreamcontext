@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useReducer, useRef, useState } from 'react';
 import { GoalLivePanel } from './GoalLivePanel';
+import { CouncilLivePanel } from './CouncilLivePanel';
 import { api } from '../../api/client';
 import type { ModelConfig } from '../../lib/agentComposer';
 import {
@@ -73,13 +74,21 @@ function primaryToolPath(input: unknown): string | null {
   return null;
 }
 
-// ─── Context strip — linked task chip + GoalLivePanel only ─────────────────────────
+// ─── Live rail — linked task chip + this conversation's live orchestration bars ─────
 //
 // The context/cost readout AC9 originally put here now lives in the redesigned
 // `Composer` (task T6) — the brief's "implementer picks the cleanest of the two"
-// decision landed there, so showing it here too would just duplicate the number. The
-// task-link chip and GoalLivePanel are a DIFFERENT, still-live feature (goal-skill
-// orchestration progress) the redesign never asked to remove, so they stay.
+// decision landed there, so showing it here too would just duplicate the number. What
+// stays is AMBIENT RUN STATE: the linked task, plus the two skill orchestrations that
+// report live progress for THIS conversation — goal-skill's phase run and council's
+// debate chamber. Both feeds are session-scoped server-side (`?claudeId=`) identically
+// for chat and terminal panes, but only the goal one was ever mounted here: a `/council`
+// driven from a Chat tab rendered nothing at all, while the same debate from a terminal
+// tab showed the chamber strip (owner report 07-25). Both are mounted now.
+//
+// Each child renders NOTHING while its own state is inactive, so the rail has no element
+// children at all in the common case and `:empty` hides it — a plain conversation gets no
+// stray bordered strip above its transcript.
 
 interface TaskLinkInfo { name: string; objectiveLabels: string[] }
 
@@ -110,23 +119,24 @@ function useTaskLink(taskSlug?: string): TaskLinkInfo | null {
   return info;
 }
 
-function ChatContextStrip({ session, taskSlug }: { session: ChatSession; taskSlug?: string }) {
+function ChatLiveRail({ session, taskSlug }: { session: ChatSession; taskSlug?: string }) {
   const link = useTaskLink(taskSlug);
-  if (!link) {
-    // Still mount GoalLivePanel — it renders nothing unless a run is active for this
-    // conversation, and must poll regardless of whether a task is linked.
-    return <GoalLivePanel claudeId={session.claudeId} enabled={session.status === 'open'} />;
-  }
+  // Both panels poll regardless of whether a task is linked — a run is a property of the
+  // conversation, not of the task chip that may or may not sit beside it.
+  const live = session.status === 'open';
   return (
-    <div className="chat-context-strip">
-      <div className="chat-context-task">
-        <span className="chat-context-task-glyph" aria-hidden>📋</span>
-        <span className="chat-context-task-name">{link.name}</span>
-        {link.objectiveLabels.map((o) => (
-          <span key={o} className="chat-context-objective">{o}</span>
-        ))}
-      </div>
-      <GoalLivePanel claudeId={session.claudeId} enabled={session.status === 'open'} />
+    <div className="chat-live-rail">
+      {link && (
+        <div className="chat-context-task">
+          <span className="chat-context-task-glyph" aria-hidden>📋</span>
+          <span className="chat-context-task-name">{link.name}</span>
+          {link.objectiveLabels.map((o) => (
+            <span key={o} className="chat-context-objective">{o}</span>
+          ))}
+        </div>
+      )}
+      <GoalLivePanel claudeId={session.claudeId} enabled={live} />
+      <CouncilLivePanel claudeId={session.claudeId} enabled={live} />
     </div>
   );
 }
@@ -200,7 +210,7 @@ export function ChatPane({
   onModelChange: (id: string) => void;
   onEffortChange: (level: string) => void;
   /** Task Manager sessions are `kind:'agent'` in beta (no caller ever sets this yet — the
-   *  ChatContextStrip mechanism is built and dormant). */
+   *  ChatLiveRail's task chip is built and dormant). */
   taskSlug?: string;
   onContinueInTerminal: () => void;
   /** The REMEMBERED permission-mode default (`agentSettings.chatPermissionMode`) — the
@@ -423,7 +433,7 @@ export function ChatPane({
 
   return (
     <div className="chat-pane" data-status={session.status}>
-      <ChatContextStrip session={session} taskSlug={taskSlug} />
+      <ChatLiveRail session={session} taskSlug={taskSlug} />
       {session.status === 'connecting' && <ReconnectingChip />}
       <div className="chat-transcript">
         <div

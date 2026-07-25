@@ -312,9 +312,10 @@ complete). Your only live-state duties:
 2. **Run `dreamcontext council live clear` after the final report** (or after an
    abandoned debate).
 
-The dreamcontext app renders a live chamber panel above the composer automatically
-from the same file: round dots, persona stance dots, convergence meter, click for
-the full chamber view. **There is no browser viewer to start**; do not launch one.
+The dreamcontext app renders a live chamber panel automatically from the same file —
+above the composer in Terminal view, on the live rail in Chat view: round dots, persona
+stance dots, convergence meter, click for the full chamber view. **There is no browser
+viewer to start**; do not launch one.
 Live-file writes are telemetry, never a gate: a failed write never blocks a round.
 `dreamcontext council demo-live` fakes a live state to preview the panel.
 

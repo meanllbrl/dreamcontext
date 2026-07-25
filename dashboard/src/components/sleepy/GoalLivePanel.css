@@ -1,5 +1,36 @@
-/* Goal-skill live panel — compact bar above the composer + expanded popup.
-   Dark-surface styling to sit flush with the agent terminal chrome. */
+/* Goal-skill live panel — compact bar above the composer (terminal) or on the chat's
+   live rail, plus the expanded phase-graph popup.
+
+   Themed, not dark-only. The original pass hardcoded a terminal-dark palette (#17171c
+   canvas, #d6d3e3 text) on the premise that this only ever sat flush against the xterm
+   chrome — but that chrome is itself token-driven, so the strip rendered as a dark slab
+   in light mode, and the Chat view (a fully tokenized surface) made it obvious. Every
+   value below is a DS token or one of the namespaced `--goal-live-*` properties, so both
+   themes are automatic. Namespaced properties exist only where the theme ramp has no
+   token that means the thing (the RUNNING hue, and the three loop-heat tiers, which must
+   stay distinguishable from both done-green and fail-red) — same convention as
+   `theses.css`. */
+
+:root {
+  --goal-live-accent: var(--color-accent);
+  --goal-live-run: #0091ff;
+  --goal-live-done: var(--color-success);
+  --goal-live-idle: var(--color-text-tertiary);
+  --goal-live-heat-1: color-mix(in srgb, var(--color-warning) 62%, var(--color-text-tertiary));
+  --goal-live-heat-2: var(--color-warning);
+  --goal-live-heat-3: var(--color-error);
+  --goal-live-edge: color-mix(in srgb, var(--color-accent) 30%, transparent);
+  /* Opaque by construction (the accent is mixed INTO an opaque surface token): the strip
+     overlays the terminal for a beat before the pane slot refits, and a translucent
+     background lets the TUI's bottom rows bleed through. */
+  --goal-live-tint: color-mix(in srgb, var(--color-accent) 7%, var(--color-bg-secondary));
+  --goal-live-tint-hover: color-mix(in srgb, var(--color-accent) 14%, var(--color-bg-secondary));
+}
+
+[data-theme='dark'] {
+  /* Electric blue has no dark lift in the ramp and reads muddy on the navy canvas. */
+  --goal-live-run: #4dabf7;
+}
 
 /* ── Compact bar ─────────────────────────────────────────────────────────── */
 
@@ -10,21 +41,21 @@
   width: 100%;
   padding: 6px 12px;
   border: 0;
-  border-top: 1px solid rgba(139, 92, 246, 0.25);
-  /* Opaque base layer under the tint — same reason as .council-live-bar: never let
-     the terminal's bottom rows bleed through while the slot refit settles. */
-  background: linear-gradient(180deg, rgba(139, 92, 246, 0.10), rgba(139, 92, 246, 0.04)), #17171c;
-  color: #d6d3e3;
+  border-top: 1px solid var(--goal-live-edge);
+  background: var(--goal-live-tint);
+  color: var(--color-text);
   font: 500 11.5px/1.4 var(--font-mono, ui-monospace, monospace);
   cursor: pointer;
   text-align: left;
   overflow: hidden;
   white-space: nowrap;
+  transition: background var(--transition-fast);
 }
-.goal-live-bar:hover { background: linear-gradient(180deg, rgba(139, 92, 246, 0.16), rgba(139, 92, 246, 0.07)), #17171c; }
+.goal-live-bar:hover { background: var(--goal-live-tint-hover); }
+.goal-live-bar:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; }
 
-.goal-live-mark { color: #b197fc; font-weight: 700; }
-.goal-live-goal { color: #8b8898; overflow: hidden; text-overflow: ellipsis; max-width: 18ch; flex-shrink: 1; }
+.goal-live-mark { color: var(--goal-live-accent); font-weight: 700; }
+.goal-live-goal { color: var(--color-text-secondary); overflow: hidden; text-overflow: ellipsis; max-width: 18ch; flex-shrink: 1; }
 
 .goal-live-phases {
   display: flex;
@@ -39,14 +70,14 @@
   align-items: center;
   gap: 3px;
   flex-shrink: 0;
-  color: #5c5f66;
+  color: var(--goal-live-idle);
 }
 .goal-live-chip i { font-style: normal; }
-.goal-live-chip[data-state='done'] { color: #51cf66; }
-.goal-live-chip[data-state='active'] { color: #22d3ee; font-weight: 700; }
-.goal-live-chip em { font-style: normal; color: #e6b317; }
-.goal-live-chip[data-heat='2'] em { color: #ffd43b; }
-.goal-live-chip[data-heat='3'] em { color: #fa5252; }
+.goal-live-chip[data-state='done'] { color: var(--goal-live-done); }
+.goal-live-chip[data-state='active'] { color: var(--goal-live-run); font-weight: 700; }
+.goal-live-chip em { font-style: normal; color: var(--goal-live-heat-1); }
+.goal-live-chip[data-heat='2'] em { color: var(--goal-live-heat-2); }
+.goal-live-chip[data-heat='3'] em { color: var(--goal-live-heat-3); }
 
 .goal-live-forks { display: inline-flex; align-items: center; gap: 3px; margin-left: 4px; }
 .goal-live-forks b,
@@ -54,21 +85,26 @@
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #5c5f66;
+  background: var(--goal-live-idle);
 }
-.goal-live-forks b[data-s='done'], .goal-live-dock-forks b[data-s='done'] { background: #40c057; }
-.goal-live-forks b[data-s='run'], .goal-live-dock-forks b[data-s='run'] { background: #fab005; animation: goal-live-pulse 1.4s ease-in-out infinite; }
-.goal-live-forks b[data-s='fail'], .goal-live-dock-forks b[data-s='fail'] { background: #fa5252; }
-.goal-live-forks u { text-decoration: none; color: #4dabf7; margin-left: 3px; }
+.goal-live-forks b[data-s='done'], .goal-live-dock-forks b[data-s='done'] { background: var(--goal-live-done); }
+.goal-live-forks b[data-s='run'], .goal-live-dock-forks b[data-s='run'] { background: var(--goal-live-heat-2); animation: goal-live-pulse 1.4s ease-in-out infinite; }
+.goal-live-forks b[data-s='fail'], .goal-live-dock-forks b[data-s='fail'] { background: var(--goal-live-heat-3); }
+.goal-live-forks u { text-decoration: none; color: var(--goal-live-run); margin-left: 3px; }
 
 .goal-live-tail { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; flex-shrink: 0; }
-.goal-live-done { color: #51cf66; font-weight: 700; }
-.goal-live-mins { color: #8b8898; }
-.goal-live-expand { color: #8b8898; }
-.goal-live-bar:hover .goal-live-expand { color: #b197fc; }
+.goal-live-done { color: var(--goal-live-done); font-weight: 700; }
+.goal-live-mins { color: var(--color-text-secondary); }
+.goal-live-expand { color: var(--color-text-secondary); }
+.goal-live-bar:hover .goal-live-expand { color: var(--goal-live-accent); }
 
 @keyframes goal-live-pulse {
   50% { opacity: 0.35; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .goal-live-forks b[data-s='run'],
+  .goal-live-dock-forks b[data-s='run'],
+  .goal-live-sat[data-s='run'] { animation: none; }
 }
 
 /* Narrow pane (container query context = agentpane): drop the goal name so phases keep room. */
@@ -79,6 +115,9 @@
 
 /* ── Expanded popup ──────────────────────────────────────────────────────── */
 
+/* The scrim stays a fixed dark wash in BOTH themes — same convention as the chat's own
+   slide-over/lightbox scrims (overlays.css): a scrim dims the page behind a modal, it
+   doesn't participate in the surface ramp. */
 .goal-live-backdrop {
   position: fixed;
   inset: 0;
@@ -90,61 +129,73 @@
   backdrop-filter: blur(3px);
 }
 .goal-live-popup {
-  background: #17171c;
-  border: 1px solid rgba(139, 92, 246, 0.35);
-  border-radius: 14px;
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5);
+  background: var(--color-bg-elevated, var(--color-bg-secondary));
+  border: 1px solid var(--goal-live-edge);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-xl);
   max-width: min(960px, calc(100vw - 48px));
   max-height: calc(100vh - 64px);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  color: #e8e8ec;
+  color: var(--color-text);
 }
 .goal-live-popup header {
   display: flex;
   align-items: baseline;
   gap: 10px;
   padding: 14px 18px 10px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  border-bottom: 1px solid var(--color-border);
 }
-.goal-live-popup h3 { margin: 0; font-size: 15px; color: #b197fc; }
-.goal-live-popup-goal { color: #a9a6b6; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
-.goal-live-popup-meta { color: #8b8898; font-size: 12px; font-family: var(--font-mono, monospace); flex-shrink: 0; }
+.goal-live-popup h3 { margin: 0; font-size: 15px; color: var(--goal-live-accent); }
+.goal-live-popup-goal { color: var(--color-text-secondary); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
+.goal-live-popup-meta { color: var(--color-text-secondary); font-size: 12px; font-family: var(--font-mono, monospace); flex-shrink: 0; }
 .goal-live-close {
   border: 0;
   background: transparent;
-  color: #8b8898;
+  color: var(--color-text-secondary);
   font-size: 14px;
   cursor: pointer;
   padding: 2px 6px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   align-self: center;
 }
-.goal-live-close:hover { color: #fff; background: rgba(255, 255, 255, 0.08); }
+.goal-live-close:hover { color: var(--color-text); background: var(--color-bg-tertiary); }
 
 /* Responsive: the graph keeps its natural size and scrolls horizontally when the
    viewport is narrower than the six-node row. */
 .goal-live-graph-scroll { overflow-x: auto; padding: 8px 8px 14px; }
 
-.goal-live-edge { stroke: #4a4a55; stroke-width: 2; }
-.goal-live-arrowhead { fill: #4a4a55; }
-.goal-live-arc { fill: none; stroke-width: 2; stroke-dasharray: 6 5; color: inherit; }
-.goal-live-arc-label { font: 700 12px var(--font-mono, monospace); text-anchor: middle; }
+.goal-live-edge { stroke: var(--color-border-hover); stroke-width: 2; }
+.goal-live-arrowhead { fill: var(--color-border-hover); }
 
-.goal-live-node rect { fill: #232329; stroke: #5c5f66; stroke-width: 1.6; }
+/* Loop-back heat arcs. The tier drives `color` on the group, and both the arc and its
+   label inherit it — so the hex tiers that used to be JS constants passed through inline
+   `style` (invisible to the theme) now live here with everything else. */
+.goal-live-arcg { color: var(--goal-live-heat-1); }
+.goal-live-arcg[data-heat='2'] { color: var(--goal-live-heat-2); }
+.goal-live-arcg[data-heat='3'] { color: var(--goal-live-heat-3); }
+.goal-live-arc { fill: none; stroke: currentColor; stroke-width: 2; stroke-dasharray: 6 5; }
+.goal-live-arc-label { fill: currentColor; font: 700 12px var(--font-mono, monospace); text-anchor: middle; }
+
+.goal-live-node rect { fill: var(--color-bg-tertiary); stroke: var(--color-border-hover); stroke-width: 1.6; }
 .goal-live-node text {
-  fill: #8b8898;
+  fill: var(--color-text-secondary);
   font: 600 13px var(--font-mono, monospace);
   text-anchor: middle;
 }
-.goal-live-node[data-state='done'] rect { fill: rgba(64, 192, 87, 0.14); stroke: #40c057; }
-.goal-live-node[data-state='done'] text { fill: #69db7c; }
-.goal-live-node[data-state='active'] rect { fill: rgba(34, 211, 238, 0.14); stroke: #22d3ee; stroke-width: 2.4; }
-.goal-live-node[data-state='active'] text { fill: #66e0f0; }
+.goal-live-node[data-state='done'] rect { fill: color-mix(in srgb, var(--goal-live-done) 16%, transparent); stroke: var(--goal-live-done); }
+.goal-live-node[data-state='done'] text { fill: var(--goal-live-done); }
+.goal-live-node[data-state='active'] rect { fill: color-mix(in srgb, var(--goal-live-run) 16%, transparent); stroke: var(--goal-live-run); stroke-width: 2.4; }
+.goal-live-node[data-state='active'] text { fill: var(--goal-live-run); }
 
-.goal-live-sat-line { stroke: #3a3a44; stroke-width: 1.4; }
-.goal-live-wave { fill: #4dabf7; font: 600 12px var(--font-mono, monospace); text-anchor: middle; }
+.goal-live-sat-line { stroke: var(--color-border); stroke-width: 1.4; }
+/* Implementer fork satellites — same four states as the compact bar's dots. */
+.goal-live-sat { fill: var(--goal-live-idle); }
+.goal-live-sat[data-s='done'] { fill: var(--goal-live-done); }
+.goal-live-sat[data-s='run'] { fill: var(--goal-live-heat-2); animation: goal-live-pulse 1.4s ease-in-out infinite; }
+.goal-live-sat[data-s='fail'] { fill: var(--goal-live-heat-3); }
+.goal-live-wave { fill: var(--goal-live-run); font: 600 12px var(--font-mono, monospace); text-anchor: middle; }
 
 /* ── Dock badge (minimized chip) ─────────────────────────────────────────── */
 
@@ -154,7 +205,7 @@
   gap: 4px;
   margin-top: 2px;
   font: 600 10px/1.2 var(--font-mono, monospace);
-  color: #b197fc;
+  color: var(--goal-live-accent);
   white-space: nowrap;
 }
 .goal-live-dock-forks { display: inline-flex; gap: 2px; margin-left: 2px; }
