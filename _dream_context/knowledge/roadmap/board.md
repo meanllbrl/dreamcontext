@@ -53,7 +53,7 @@ date: '2026-07-25'
   - multi-person-sync-my-own-push-advances-my-pull-watermark-silently-hiding-a-teammate-s-earlier-task-forever (completed) · 0.20.0
   - repointing-the-task-backend-at-a-different-list-silently-deletes-every-local-task-mirror (completed) · 0.20.0
 
-### 🟡 **simplified-ux** — Simplified UX · 28/35 done (80%) · target 2026-07-31 · forecast 2026-07-31 ✓ on track
+### 🟡 **simplified-ux** — Simplified UX · 32/37 done (86%) · target 2026-07-31 · forecast 2026-07-31 ✓ on track
   Unblocks: hello-world-pr, make-it-a-business
   - agent-chat-redesign-12-state-native-chat-ui-per-corrected-design-brief (in_review) · 0.21.0 · 2026-07-24 → …
   - agent-chat-view-beta-render-claude-sessions-as-native-app-ui-with-captured-questions (completed) · 0.21.0 · 2026-07-23 → …
@@ -62,8 +62,10 @@ date: '2026-07-25'
   - announcements-whats-new (completed) · 0.20.0 · 2026-07-18 → …
   - author-a-task-via-a-claude-agent-from-the-new-task-button (completed) · 0.20.0
   - changelog-json-and-releases-json-initialized-as-key-object-but-cli-requires-a-bare-array (todo) · 0.21.0
-  - chat-view-renders-what-the-agent-makes-inline-boards-media-clickable-paths-action-buttons (in_review) · 0.21.0
-  - chat-view-shows-background-shells-read-live-output-and-stop-them (in_review) · 0.21.0
+  - chat-view-a-sub-agent-s-tool-calls-must-not-leak-into-the-main-transcript (completed) · 0.21.0
+  - chat-view-polish-board-zoom-fullscreen-collapsed-background-agents-autogrow-composer (completed) · 0.21.0 · 2026-07-25 → …
+  - chat-view-renders-what-the-agent-makes-inline-boards-media-clickable-paths-action-buttons (completed) · 0.21.0
+  - chat-view-shows-background-shells-read-live-output-and-stop-them (completed) · 0.21.0
   - cloud-reliability-package-origin-setup-state-refresh-dependency-doctor-with-one-click-install-stop-api-key-self-deletion (completed) · 0.20.0
   - collapse-features-into-typed-knowledge (completed) · 0.10.7 · 2026-07-05 → …
   - council-v2-the-chamber (completed) · 0.21.0 · 2026-07-23 → …

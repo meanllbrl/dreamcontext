@@ -23,7 +23,7 @@ Two architectural gaps in the sync engine were discovered together and fixed in
 PR #79 (issues #77 and #78). This file records the decisions so future sessions
 do not re-derive them or revert the architecture.
 
-**STATUS: IN REVIEW.** PR #79 open as of 2026-06-24. Fix targeted v0.10.0.
+**STATUS: SHIPPED.** PR #79 (`fix/77-rename-sync-dcid`) merged 2026-06-24 (commit 275aeb8).
 Feature impact captured in `core/features/task-management.md`.
 
 ---

@@ -2,6 +2,66 @@
   {
     "date": "2026-07-25",
     "type": "feat",
+    "scope": "dashboard",
+    "description": "Chat surface polishing round. Excalidraw board embeds now maintain per-instance viewport state (ExcalidrawCanvas and ExcalidrawPreview track their own zoom/pan via a new excalidrawPinch.ts pinch-zoom helper), so opening the same board in multiple places or navigating away and back no longer resets the view. The composer autogrows as you type (new composerHeight.ts calculates min/max bounds and applies them via ResizeObserver). Group collapse state is now phase-stamped (useGroupCollapse in chatEntities.ts): a plain sticky boolean gets it wrong in both directions (stays collapsed when new work starts / re-expands when the user wanted it shut), so the collapse override is stamped with the phase it was made in and only applies when that phase is still active. Also: BackgroundShellsTray, BoardEmbed, SubAgentCard, and molecules refinements, plus 4 test files (2 new: chat-composer-height.test.ts, excalidraw-board-instance.test.ts).",
+    "breaking": false,
+    "summary": "Chat-view polish: per-instance Excalidraw board viewport, autogrow composer, phase-stamped group collapse",
+    "references": [
+      "file:dashboard/src/components/core/ExcalidrawCanvas.tsx",
+      "file:dashboard/src/components/core/ExcalidrawPreview.tsx",
+      "file:dashboard/src/lib/excalidraw.ts",
+      "file:dashboard/src/lib/excalidrawPinch.ts",
+      "file:dashboard/src/components/sleepy/chat/composerHeight.ts",
+      "file:dashboard/src/components/sleepy/chat/chatEntities.ts",
+      "file:tests/unit/chat-composer-height.test.ts",
+      "file:tests/unit/excalidraw-board-instance.test.ts"
+    ]
+  },
+  {
+    "date": "2026-07-25",
+    "type": "feat",
+    "scope": "agent",
+    "description": "A long sub-agent fan-out scrolls its group card off the top of the transcript, so the one surface telling you what the fleet is doing disappears exactly when it matters. Once the card leaves view it now reappears as a pinned strip of chips at the top of the viewport; clicking one scrolls that run's row back into view (with RAIL_CLEARANCE to avoid hiding it under the rail) and flashes it, so the eye lands on the right row instead of hunting for it. SubAgentRail extracted alongside SubAgentCard; ChatPane measures the card's root via a callback ref to decide when to pin. Repeat clicks on the same chip re-trigger the flash (counter-keyed). The rail is an overlay outside the scroller's ancestor chain, so wheel gestures starting over it are forwarded to the transcript.",
+    "breaking": false,
+    "summary": "Sub-agent rail pins to the top of Chat once scrolled past; chips jump back and flash the row",
+    "references": [
+      "commit:fbdbb8f",
+      "file:dashboard/src/components/sleepy/ChatPane.tsx",
+      "file:dashboard/src/components/sleepy/chat/SubAgentCard.tsx",
+      "file:dashboard/src/components/sleepy/chat/cards.css"
+    ]
+  },
+  {
+    "date": "2026-07-25",
+    "type": "fix",
+    "scope": "release",
+    "description": "The v0.21.0 release commit rewrote RELEASES.json with 1-space indent, turning a 3-line content edit into a 6,700-line diff and setting up churn on the next core releases write (writeJsonArray uses 2 spaces). Content was never affected — this is a re-indent only; the diff against the previous commit is now exactly the two summaries plus the 0.20.2 status flip. Root cause: a tool (likely an editor's auto-format or a non-CLI write path) reformatted the file with different spacing. The CLI's canonical indent for RELEASES.json is 2 spaces — never hand-write or reformat it with other tooling.",
+    "breaking": false,
+    "summary": "RELEASES.json restored to CLI's canonical 2-space indent after a tool rewrote it with 1-space",
+    "references": [
+      "commit:86840b9",
+      "file:_dream_context/core/RELEASES.json"
+    ]
+  },
+  {
+    "date": "2026-07-25",
+    "type": "release",
+    "scope": "cli",
+    "description": "Version 0.21.0 cut and locally verified, NOT yet published to npm (npm latest is still 0.20.1) — the CLI is npm-linked to this repo and the desktop app is installed to ~/Applications, so the local machine runs 0.21.0 while the registry does not. The release stays in planning until `npm publish` runs. The agent surface becomes a first-class app view: Chat view leaves preview with a 12-state native renderer (transcript hover actions, bordered tool cards with real diffs, permission/survey cards, sub-agent drill-in), plus sub-agent rows with live duration/model/usage and a pinned rail to jump back to any run. Agents know which surface they're in, so boards render on a live canvas, media plays, backticked paths become chips, and dream-actions fences become real buttons. Background shells are visible (read live output, stop them without spending a turn). Sign in to Claude from Chat, with sign-in treated as a real prerequisite. Claude CLI PATH repair: an install in ~/.local/bin no longer reads as \"not installed\" (Settings → System → Fix PATH). Folds in the never-published v0.20.2 payload (Council v2 dogfooding closeout). All 5 version sources bumped (root package.json, desktop/package.json, tauri.conf.json, Cargo.toml, Cargo.lock). Test suite 4383 tests green across 304 files.",
+    "breaking": false,
+    "summary": "v0.21.0 cut and locally verified (not yet on npm): in-app agent Chat leaves preview, Claude CLI PATH repair, Council v2 payload folded in",
+    "references": [
+      "commit:2b45069",
+      "file:package.json",
+      "file:desktop/package.json",
+      "file:desktop/src-tauri/tauri.conf.json",
+      "file:desktop/src-tauri/Cargo.toml",
+      "file:_dream_context/core/RELEASES.json"
+    ]
+  },
+  {
+    "date": "2026-07-25",
+    "type": "feat",
     "scope": "cli",
     "description": "New findClaudeBin() in src/lib/claude-path.ts resolves the claude binary in two passes: direct PATH lookup (fast, ~5ms), then a login-shell probe (spawns bash/zsh -lc 'which claude', ~600ms, 5min memo). The login-shell pass catches installs in /usr/local/bin or ~/.local/bin that aren't on the non-login shell PATH the dashboard server inherits. The resolution is cached per boot and deduped in-flight so concurrent auth-status probes don't spawn redundant shells. If both passes fail, the resolution returns null and any spawn falls back to 'claude' (lets the OS try, graceful failure). The dashboard's System Dependencies panel now shows a 'Claude Code CLI: Not on PATH' warning when the direct lookup fails but the login-shell probe succeeds, with a one-click 'Fix PATH' action that copies the resolved path and opens the shell profile for manual append. Settings also surfaces the sign-in row from the auth probe (covered in a separate entry). This closes the failure mode where the dashboard couldn't spawn claude because the macOS launchd environment lacks the shell's PATH additions.",
     "breaking": false,
