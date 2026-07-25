@@ -1,10 +1,11 @@
-import { getActiveVault } from '../../api/client';
+import { api, getActiveVault } from '../../api/client';
 import { playAskChime } from '../../lib/chime';
 import {
   parseChatLine, buildQuestionAnswer,
   type ChatEvent, type QuestionSpec, type ClientControl,
 } from '../../lib/chatProtocol';
 import type { TermStatus } from './agentSession';
+import type { SubAgentRun } from './chat/chatEntities';
 
 /**
  * The imperative engine behind a Chat session (beta) — the headless stream-json peer of
@@ -46,7 +47,16 @@ import type { TermStatus } from './agentSession';
 
 // ─── Conversation model ─────────────────────────────────────────────────────────────
 
-export interface ChatUserItem { kind: 'user'; id: string; text: string; ts: number }
+export interface ChatUserItem {
+  kind: 'user';
+  id: string;
+  text: string;
+  ts: number;
+  /** The message's transcript uuid (`~/.claude/projects/<slug>/<uuid>.jsonl` entry) — the
+   *  rewind anchor. Present on history-seeded items immediately; backfilled onto live-sent
+   *  items from the transcript after each turn (the protocol never echoes them back). */
+  uuid?: string;
+}
 export interface ChatTextItem { kind: 'text'; id: string; index: number; text: string; done: boolean; ts: number }
 export interface ChatThinkingItem { kind: 'thinking'; id: string; index: number; text: string; done: boolean; ts: number }
 export interface ChatToolItem {
@@ -101,6 +111,12 @@ export interface ChatResultInfo {
  *  consumer holding a stale reference never sees it mutate out from under it. */
 export interface ConversationModel {
   items: ChatItem[];
+  /** Items replayed from the on-disk transcript when this session RESUMED an existing
+   *  conversation (`--resume` never re-emits past frames, so without this a resumed chat
+   *  opens blank). Kept SEPARATE from `items` so the async fetch can land at any time
+   *  without shifting the positions `openBlocksByIndex`/`toolCardPos` recorded for live
+   *  items. Rendered above `items` behind an "earlier conversation" divider. */
+  history: ChatItem[];
   pending: PendingItem[];
   lastResult?: ChatResultInfo;
   /** Set by a `_meta/error` relay frame (e.g. the child failed to spawn). Not cleared
@@ -111,9 +127,36 @@ export interface ConversationModel {
    *  '' is the CALLER's job (see `send`'s own draft-clear below) — ChatPane reads this to
    *  seed/restore the textarea when a session is minimized then reopened. */
   draft: string;
+  /** Bumped whenever the SESSION (not the composer) replaces `draft` wholesale — today only
+   *  a successful rewind, which prefills the rewound message for re-editing. The composer's
+   *  textarea state is local (see ChatPane's composer note); it watches this epoch to know
+   *  when to adopt `draft` instead of its own text. */
+  draftEpoch: number;
   capabilities: string[];
   model?: string;
   permissionMode?: string;
+  /** Every user-invocable slash command THIS session offers (no leading slash), as reported
+   *  by `system:init` — built-ins, the project's own `.claude/commands/`, and plugin/skill
+   *  commands. Feeds the composer's `/` autocomplete. Empty until the handshake lands. */
+  slashCommands?: string[];
+  /** How full the context window is, reduced from every assistant frame's `message.usage`
+   *  (see chatProtocol's {@link TurnUsage}). The server's `/agent/session-stats` cannot
+   *  supply this for a LIVE chat — Claude Code ≥2.1.x flushes the transcript only on
+   *  exit/rotation — so the stream is the only source, and this is what the composer's
+   *  meter reads. Undefined until the first turn reports usage. */
+  context?: { used: number; limit: number; pct: number };
+  /** Sub-agent runs reduced from the `task-started`/`task-updated`/`task-notification`
+   *  ChatEvents (contract C7, state 9) — the ONLY channel that carries sub-agent activity:
+   *  a dispatched sub-agent's own text/thinking is never streamed to the parent, and
+   *  `parent_tool_use_id` never appears on a text/thinking content block (spike-verified).
+   *  Rendered by `SubAgentCard`; the spawning tool's own `ChatToolItem` is suppressed by
+   *  the UI via `subAgentToolUseIds` (chatEntities.ts), keyed by `toolUseId` — not by tool
+   *  name, since the CLI streams the tool as `Agent` (aliased with `Task`). */
+  subAgents: SubAgentRun[];
+  /** Set by the `meta-exit` relay frame (the child process actually exited) — distinct
+   *  from a network drop (`ws.onclose`/`onerror`, which never populate this), so the UI
+   *  can show a "Session ended" + Resume banner only for a real process exit. */
+  exited?: { code: number | null };
 }
 
 // ─── Public session API (contract C4) ──────────────────────────────────────────────
@@ -143,9 +186,14 @@ export interface ChatSession {
   applyZoom: (zoom: number) => void;
   /** Append text to the composer draft WITHOUT submitting (skill trigger / dropped file
    *  path) — mirrors agentSession.ts's terminal `sendText`, but there is no PTY to write
-   *  into: this appends to `ConversationModel.draft` and fires the fine-grained subscribers
-   *  so the composer's textarea can pick it up. */
+   *  into: this appends to `ConversationModel.draft` and bumps `draftEpoch` so the
+   *  composer's textarea adopts the appended value (see {@link ChatSession.syncDraft}). */
   sendText: (data: string) => void;
+  /** Mirror the composer's CURRENT textarea content into `ConversationModel.draft` on
+   *  every keystroke. Free typing is composer-local state; without this mirror, an
+   *  external `sendText` (file drop, page-level skill insert) would append to a STALE
+   *  model draft and the epoch adoption would clobber what the user had typed. */
+  syncDraft: (text: string) => void;
   /** Focus the composer's input element, if `setFocusTarget` has registered one (a no-op
    *  before the pane mounts, or after it unmounts — same as focusing a not-yet-open
    *  terminal). See {@link ChatSession.setFocusTarget} for why this is a ref-registration
@@ -168,6 +216,43 @@ export interface ChatSession {
   answerQuestion: (requestId: string, questions: QuestionSpec[], picked: Record<string, string>) => void;
   /** Ask the server to interrupt the in-flight turn (Stop button while busy). */
   interrupt: () => void;
+  /** Live model switch (`set_model` control request — verified on CLI 2.1.218). Applies to
+   *  the NEXT turn; the CLI re-emits `system:init` with the new model, which updates
+   *  `session.model`/`conv.model`, and the `control-ack` confirms or surfaces an error. */
+  setModel: (model: string) => void;
+  /** Live effort switch (a `/effort <level>` user frame — no effort control request exists
+   *  on 2.1.218). The CLI answers with a synthetic "Set effort level to <level>" bubble. */
+  setEffort: (level: string) => void;
+  /** Flip THIS running conversation between Auto (`acceptEdits`) and Bypass
+   *  (`bypassPermissions`) without restarting it — a `set_permission_mode` control request
+   *  (present on CLI 2.1.220's headless engine; the CLI validates the mode string and acks).
+   *
+   *  `onFail` fires when the switch demonstrably did NOT land: the socket is closed, or the
+   *  CLI rejected the request (an older CLI that never registered the handler answers
+   *  "set_permission_mode is not supported in this context"). The caller's fallback is to
+   *  respawn this SAME conversation id with `--resume` under the new mode — see
+   *  AgentSurface's `changeChatPermissionMode`. It is never called on success, so a caller
+   *  that respawns unconditionally would be throwing away a working live switch. */
+  setPermissionMode: (mode: 'auto' | 'bypass', onFail?: () => void) => void;
+  /** Rewind the conversation to just BEFORE this user item (transcript-uuid anchored;
+   *  fetches/refreshes the uuid mapping first if the item hasn't one yet). On success the
+   *  transcript truncates locally and the rewound message prefills the composer draft —
+   *  UNLESS `asRetry` is true (contract C7; see {@link ChatSession.retry}), in which case
+   *  the prefill is resent immediately instead of being left in the composer for the user
+   *  to re-edit. CONVERSATION-ONLY: files changed after that point are NOT restored. */
+  rewind: (itemId: string, asRetry?: boolean) => Promise<void>;
+  /** Retry an assistant turn (state 11's hover ⟳ Retry): rewinds to just before the
+   *  message's immediately preceding user item and immediately resends its text — a
+   *  rewind-and-resend, not a plain rewind. Internally `rewind(userItemId, true)`
+   *  (contract C7); a no-op if no preceding user item exists (e.g. the very first turn,
+   *  or the assistant item id is unknown). */
+  retry: (assistantItemId: string) => Promise<void>;
+  /** Session-scoped "Always allow this session" (state 6's permission card checkbox):
+   *  every future permission request for this EXACT tool name auto-allows without ever
+   *  pushing a card. Client-side only — no protocol change. Never applies to an
+   *  AskUserQuestion `question` event, which is parsed as a wholly distinct `ChatEvent`
+   *  kind and never reaches the `permission-request` gate this consults. */
+  alwaysAllow: (toolName: string) => void;
   clearAttention: () => void;
   /** Register (or clear, with `null`) the composer's focusable element so `focus()` has a
    *  target. Chosen over dispatching a CustomEvent on `container`: `container` isn't
@@ -236,7 +321,24 @@ export function createChatSession(
   // frame created it first.
   const toolCardPos = new Map<string, number>();
 
-  let conv: ConversationModel = { items: [], pending: [], draft: '', capabilities: [] };
+  // Control requests THIS client sent and is awaiting a control-ack for, keyed by the
+  // client-generated request id (contract: the server echoes it into the CLI frame).
+  let ctrlSeq = 0;
+  const pendingRewinds = new Map<string, string>(); // requestId -> user item id
+  const pendingModels = new Map<string, string>();  // requestId -> requested model
+  // requestId -> the requested permission mode + the caller's respawn fallback, run only if
+  // the CLI rejects the switch (see ChatSession.setPermissionMode).
+  const pendingModes = new Map<string, { mode: 'auto' | 'bypass'; onFail?: () => void }>();
+  // requestIds from `rewind(itemId, true)` (i.e. called by `retry`) — a matching ack must
+  // truncate-then-resend instead of leaving the prefill sitting in the composer (C7).
+  const pendingRetries = new Set<string>();
+  // "Always allow this session" (state 6) — tool names the user has session-scoped
+  // auto-allowed; consulted ONLY by the `permission-request` reducer arm.
+  const sessionAllow = new Set<string>();
+
+  let conv: ConversationModel = {
+    items: [], history: [], pending: [], draft: '', draftEpoch: 0, capabilities: [], subAgents: [],
+  };
 
   const subscribers = new Set<() => void>();
   const fireSubscribers = () => {
@@ -258,6 +360,7 @@ export function createChatSession(
     fitAndResize: () => { /* no terminal grid to refit */ },
     applyZoom,
     sendText,
+    syncDraft,
     focus: () => { focusTarget?.focus(); },
     dispose,
     subscribe,
@@ -266,6 +369,12 @@ export function createChatSession(
     answer,
     answerQuestion,
     interrupt,
+    setModel,
+    setEffort,
+    setPermissionMode,
+    rewind,
+    retry,
+    alwaysAllow,
     clearAttention,
     setFocusTarget: (el) => { focusTarget = el; },
   };
@@ -296,12 +405,38 @@ export function createChatSession(
 
   function sendText(data: string): void {
     if (!data) return;
-    conv = { ...conv, draft: conv.draft + data };
+    // Bumping draftEpoch makes the composer ADOPT the appended draft — an external insert
+    // (file drop, page-level skill chip) reaches the visible textarea, not just the model.
+    // Safe because `syncDraft` keeps the model mirroring the textarea on every keystroke,
+    // so append-then-adopt can never lose free-typed text.
+    conv = { ...conv, draft: conv.draft + data, draftEpoch: conv.draftEpoch + 1 };
     fireSubscribers();
+  }
+
+  function syncDraft(text: string): void {
+    // Mirror only — no subscriber fire (a per-keystroke transcript re-render buys nothing)
+    // and no epoch bump (the textarea already shows this text; adoption would be a no-op).
+    conv = { ...conv, draft: text };
+  }
+
+  /** Which context window the running model has. Mirrors the server's rule
+   *  (agent-terminal.ts's `computeSessionStats`): 200K unless the model id carries the `1m`
+   *  marker, and promoted to 1M the moment the observed footprint outgrows 200K — a session
+   *  cannot be at 130% of its window, so exceeding it IS the evidence of the larger one. */
+  function contextLimitFor(usedTokens: number, modelId: string | undefined): number {
+    return /1m/i.test(modelId ?? '') || usedTokens > 200_000 ? 1_000_000 : 200_000;
   }
 
   // ── Reducer: one parsed ChatEvent → conversation model + derived-state mutation ────
   function applyEvent(ev: ChatEvent): void {
+    // Every assistant frame restates the whole turn's token footprint, so the LAST one to
+    // arrive is how full the window is right now — reduced here, before the per-kind arms,
+    // so all three assistant event kinds feed the meter without repeating themselves.
+    const usage = 'turnUsage' in ev ? ev.turnUsage : undefined;
+    if (usage) {
+      const limit = contextLimitFor(usage.total, usage.model ?? session.model);
+      conv = { ...conv, context: { used: usage.total, limit, pct: Math.min(100, Math.round((usage.total / limit) * 100)) } };
+    }
     switch (ev.kind) {
       case 'init': {
         session.opened = true;
@@ -312,7 +447,17 @@ export function createChatSession(
           capabilities: ev.capabilities ?? conv.capabilities,
           model: ev.model ?? conv.model,
           permissionMode: ev.permissionMode ?? conv.permissionMode,
+          // Kept from the PREVIOUS init if this one omits it: the CLI re-emits `system:init`
+          // after a live `set_model`, and dropping the command list on that re-emit would
+          // silently kill the composer's `/` menu mid-conversation.
+          slashCommands: ev.slashCommands ?? conv.slashCommands,
         };
+        return;
+      }
+      case 'slash-commands': {
+        // The server's cached list, replayed at connect. A real `init` later in this stream
+        // carries the same field and overwrites it — same source either way.
+        conv = { ...conv, slashCommands: ev.commands };
         return;
       }
       case 'block-start': {
@@ -388,6 +533,90 @@ export function createChatSession(
         }
         return;
       }
+      case 'assistant-text':
+      case 'assistant-thinking': {
+        // The authoritative full-block echo (see chatProtocol.ts's fromAssistant note): the
+        // CLI can emit NO deltas at all for a short block, so the still-streaming item is
+        // upgraded to the complete text here. If no item of this kind is open (a synthetic
+        // local-command reply, or a spawn without partial messages), append a finished one —
+        // unless the last finished item of this kind already carries this exact text (the
+        // echo raced AFTER block-stop; appending would duplicate the streamed bubble).
+        const kind = ev.kind === 'assistant-text' ? 'text' : 'thinking';
+        if (!(ev.kind === 'assistant-text' && ev.synthetic)) session.busy = true;
+        let pos = -1;
+        for (let i = conv.items.length - 1; i >= 0; i--) {
+          const it = conv.items[i];
+          if (it.kind === kind) { pos = it.done ? -1 : i; break; }
+        }
+        if (pos >= 0) {
+          const items = conv.items.slice();
+          const cur = items[pos] as ChatTextItem | ChatThinkingItem;
+          items[pos] = { ...cur, text: ev.text };
+          conv = { ...conv, items };
+        } else {
+          const last = [...conv.items].reverse().find((it) => it.kind === kind);
+          if (last && (last as ChatTextItem | ChatThinkingItem).text === ev.text) return;
+          const item: ChatTextItem | ChatThinkingItem = {
+            kind, id: nextItemId(), index: -1, text: ev.text, done: true, ts: Date.now(),
+          };
+          conv = { ...conv, items: [...conv.items, item] };
+        }
+        return;
+      }
+      case 'control-ack': {
+        applyControlAck(ev);
+        return;
+      }
+      case 'task-started': {
+        // A dispatched sub-agent (state 9) — the ONLY frame that carries its start (its
+        // own text/thinking is never streamed to the parent; see the file header note).
+        session.busy = true;
+        const run: SubAgentRun = {
+          taskId: ev.taskId,
+          toolUseId: ev.toolUseId,
+          name: ev.description,
+          subagentType: ev.subagentType,
+          taskType: ev.taskType,
+          prompt: ev.prompt,
+          status: 'running',
+          startedAt: Date.now(),
+        };
+        conv = { ...conv, subAgents: [...conv.subAgents, run] };
+        return;
+      }
+      case 'task-updated': {
+        const idx = conv.subAgents.findIndex((r) => r.taskId === ev.taskId);
+        if (idx === -1) return; // a status patch for a task we never saw start — drop safely
+        const runs = conv.subAgents.slice();
+        const cur = runs[idx];
+        runs[idx] = {
+          ...cur,
+          status: ev.status === 'completed' ? 'completed' : ev.status === 'error' || ev.status === 'failed' ? 'error' : cur.status,
+          endedAt: ev.endTime ?? cur.endedAt,
+        };
+        conv = { ...conv, subAgents: runs };
+        return;
+      }
+      case 'task-notification': {
+        // Final (or progress) report for a sub-agent run: status, summary, usage.
+        // `outputFile` is deliberately NOT consumed here (contract C7) — the drill-in
+        // transcript is fetched via the server-derived `?subagent=` history route, never
+        // from this client-visible path.
+        const idx = conv.subAgents.findIndex((r) => r.taskId === ev.taskId);
+        if (idx === -1) return;
+        const runs = conv.subAgents.slice();
+        const cur = runs[idx];
+        runs[idx] = {
+          ...cur,
+          toolUseId: cur.toolUseId ?? ev.toolUseId,
+          status: ev.status === 'completed' ? 'completed' : ev.status === 'error' || ev.status === 'failed' ? 'error' : cur.status,
+          summary: ev.summary ?? cur.summary,
+          usage: ev.usage ?? cur.usage,
+          endedAt: cur.endedAt ?? Date.now(),
+        };
+        conv = { ...conv, subAgents: runs };
+        return;
+      }
       case 'tool-result': {
         const pos = toolCardPos.get(ev.toolUseId);
         const cur = pos !== undefined ? conv.items[pos] : undefined;
@@ -405,9 +634,26 @@ export function createChatSession(
           toolCardPos.set(ev.toolUseId, conv.items.length);
           conv = { ...conv, items: [...conv.items, item] };
         }
+        // Sub-agent correlation (state 9): the spawning tool's own final tool-result is
+        // keyed by `toolUseId`, same as any other tool — stamp it onto the matching run
+        // too, best-effort (the notification's `summary` already carries the human-facing
+        // outcome; this is the raw content for the drill-in's degrade path).
+        const subIdx = conv.subAgents.findIndex((r) => r.toolUseId === ev.toolUseId);
+        if (subIdx !== -1) {
+          const runs = conv.subAgents.slice();
+          runs[subIdx] = { ...runs[subIdx], resultContent: ev.content };
+          conv = { ...conv, subAgents: runs };
+        }
         return;
       }
       case 'permission-request': {
+        if (sessionAllow.has(ev.toolName)) {
+          // "Always allow this session" (state 6) — auto-answer, no card ever pushed.
+          // This gate lives ONLY on this arm: a `question` event is a structurally
+          // distinct ChatEvent kind (its own case below) and never reaches here.
+          answer(ev.requestId, { behavior: 'allow', updatedInput: ev.input });
+          return;
+        }
         const pending = conv.pending.filter((p) => p.requestId !== ev.requestId);
         const entry: PendingPermission = {
           kind: 'permission', requestId: ev.requestId, toolName: ev.toolName, displayName: ev.displayName,
@@ -446,6 +692,9 @@ export function createChatSession(
       }
       case 'meta-exit': {
         session.busy = false;
+        // Distinguishes a real process exit from a network drop (ws.onclose/onerror never
+        // set this) so the Session-ended banner shows only for the former.
+        conv = { ...conv, exited: { code: ev.code } };
         return;
       }
       case 'meta-error': {
@@ -470,6 +719,8 @@ export function createChatSession(
     // neither notification channel — nothing changed, so nothing re-renders.
     if (!ev || ev.kind === 'ignored') return;
     applyAndNotify(() => applyEvent(ev));
+    // The turn just flushed to the transcript — backfill rewind-anchor uuids while idle.
+    if (ev.kind === 'result') void syncTranscriptUuids();
   };
   const stopOnClose = () => {
     applyAndNotify(() => { session.busy = false; session.asking = false; session.status = 'closed'; });
@@ -510,6 +761,245 @@ export function createChatSession(
     try { ws.send(JSON.stringify({ type: 'interrupt' } as ClientControl)); } catch { /* best-effort */ }
   }
 
+  // ── Live model / effort switches ────────────────────────────────────────────────────
+  function sendControl(frame: ClientControl): boolean {
+    if (ws.readyState !== WebSocket.OPEN) return false;
+    try { ws.send(JSON.stringify(frame)); return true; } catch { return false; }
+  }
+
+  function setModel(model: string): void {
+    if (!model) return;
+    const requestId = `sm-${id}-${++ctrlSeq}`;
+    // Registered before the send, for the same reason as `setPermissionMode` above.
+    pendingModels.set(requestId, model);
+    if (!sendControl({ type: 'setModel', requestId, model })) pendingModels.delete(requestId);
+  }
+
+  function setPermissionMode(mode: 'auto' | 'bypass', onFail?: () => void): void {
+    const requestId = `pm-${id}-${++ctrlSeq}`;
+    // Register BEFORE sending. An ack can only be matched against an entry that already
+    // exists, and registering afterwards leaves a window in which a same-tick delivery finds
+    // an empty map and silently drops the response.
+    pendingModes.set(requestId, { mode, onFail });
+    if (!sendControl({ type: 'setPermissionMode', requestId, mode })) {
+      pendingModes.delete(requestId);
+      onFail?.();
+    }
+  }
+
+  function setEffort(level: string): void {
+    if (!level || !sendControl({ type: 'setEffort', effort: level })) return;
+    // No queryable effort state exists (unlike model, which the re-emitted init reports) —
+    // reflect the choice optimistically; the CLI's synthetic "Set effort level to <level>"
+    // bubble is the visible confirmation.
+    session.effort = level;
+  }
+
+  // ── Rewind (conversation-only, transcript-uuid anchored) ──────────────────────────
+  function applyControlAck(ev: { requestId: string; ok: boolean; payload?: Record<string, unknown>; error?: string }): void {
+    const modeReq = pendingModes.get(ev.requestId);
+    if (modeReq !== undefined) {
+      pendingModes.delete(ev.requestId);
+      if (ev.ok) {
+        // The live switch landed: this conversation is now genuinely running under the new
+        // mode, so the session's own flag must agree — a later resume/"continue in terminal"
+        // reads `bypass` from here, and a stale value would silently downgrade the mode.
+        session.bypass = modeReq.mode === 'bypass';
+        conv = { ...conv, permissionMode: modeReq.mode === 'bypass' ? 'bypassPermissions' : 'acceptEdits' };
+        return;
+      }
+      // Rejected (an older CLI with no `set_permission_mode` handler). Say nothing in the
+      // transcript — the caller's fallback respawns this conversation under the new mode,
+      // and an error banner for something the app immediately fixes is just noise.
+      modeReq.onFail?.();
+      return;
+    }
+    const modelReq = pendingModels.get(ev.requestId);
+    if (modelReq !== undefined) {
+      pendingModels.delete(ev.requestId);
+      if (ev.ok) session.model = modelReq; // the re-emitted system:init confirms/normalizes it
+      else conv = { ...conv, lastError: `Model switch failed: ${ev.error ?? 'rejected by the CLI'}` };
+      return;
+    }
+    const itemId = pendingRewinds.get(ev.requestId);
+    if (itemId === undefined) return; // an ack we don't track (e.g. the server's interrupt)
+    pendingRewinds.delete(ev.requestId);
+    // Set.delete returns whether the id was present — one step to both check AND clear.
+    const isRetry = pendingRetries.delete(ev.requestId);
+    const rewound = ev.ok && ev.payload?.rewound === true;
+    if (!rewound) {
+      const reason = ev.error
+        ?? (typeof ev.payload?.error === 'string' ? ev.payload.error : 'the CLI rejected it');
+      conv = { ...conv, lastError: `Rewind failed: ${reason}` };
+      return;
+    }
+    const prefillRaw = ev.payload?.prefillText;
+    // The rewound user message (and everything after it) leaves the transcript; its text
+    // prefills the composer for re-editing — exactly the TUI rewind's behavior (or, for a
+    // retry, is resent immediately instead — see below).
+    const inItems = conv.items.findIndex((it) => it.id === itemId);
+    const target = inItems >= 0
+      ? conv.items[inItems]
+      : conv.history.find((it) => it.id === itemId);
+    const prefill = typeof prefillRaw === 'string' && prefillRaw
+      ? prefillRaw
+      : (target?.kind === 'user' ? target.text : '');
+    if (inItems >= 0) {
+      conv = { ...conv, items: conv.items.slice(0, inItems) };
+    } else {
+      const inHist = conv.history.findIndex((it) => it.id === itemId);
+      if (inHist >= 0) conv = { ...conv, history: conv.history.slice(0, inHist), items: [] };
+    }
+    openBlocksByIndex.clear();
+    toolCardPos.clear(); // positions may now be stale — future results fall back to fresh cards
+    session.busy = false;
+    session.asking = false;
+    if (isRetry) {
+      // Retry (contract C7): truncate exactly like any rewind, but write NEITHER `draft`
+      // NOR bump `draftEpoch` — the composer's local textarea (which only adopts a new
+      // `draft` on an epoch bump) must never show this prefill. `send()` resends it
+      // immediately instead, which sets `draft` back to '' itself (a no-op, since we never
+      // wrote it here) and appends the fresh user item — so the composer stays empty.
+      conv = { ...conv, pending: [], lastResult: undefined, lastError: undefined };
+      send(prefill);
+      return;
+    }
+    conv = { ...conv, pending: [], lastResult: undefined, lastError: undefined, draft: prefill, draftEpoch: conv.draftEpoch + 1 };
+  }
+
+  /**
+   * @param asRetry When true (only `retry()` passes this), a successful ack truncates and
+   *   then immediately RESENDS the prefill instead of leaving it in the composer — see
+   *   `applyControlAck`'s `isRetry` branch. Internal-facing; ordinary callers (the hover
+   *   "Rewind" affordance) omit it.
+   */
+  async function rewind(itemId: string, asRetry = false): Promise<void> {
+    const find = (): ChatUserItem | undefined => {
+      const it = conv.items.find((x) => x.id === itemId) ?? conv.history.find((x) => x.id === itemId);
+      return it?.kind === 'user' ? it : undefined;
+    };
+    let target = find();
+    if (!target) return;
+    if (!target.uuid) {
+      await syncTranscriptUuids();
+      target = find();
+    }
+    if (!target?.uuid) {
+      applyAndNotify(() => {
+        conv = { ...conv, lastError: 'Rewind unavailable: this message has not reached the transcript yet — try again in a moment.' };
+      });
+      return;
+    }
+    const requestId = `rw-${id}-${++ctrlSeq}`;
+    if (sendControl({ type: 'rewind', requestId, targetUuid: target.uuid })) {
+      pendingRewinds.set(requestId, itemId);
+      if (asRetry) pendingRetries.add(requestId);
+    }
+  }
+
+  /** Retry (state 11): rewind to just before the nearest preceding user item, then resend
+   *  it — see `rewind`'s `asRetry` param and `applyControlAck`'s `isRetry` branch for the
+   *  no-stale-prefill mechanics (contract C7). Searches `history` then `items` in that
+   *  order (chronological — history is always the earlier segment) so it works whether
+   *  the assistant turn being retried is from a resumed session's replay or a live one. */
+  async function retry(assistantItemId: string): Promise<void> {
+    const all: ChatItem[] = [...conv.history, ...conv.items];
+    const idx = all.findIndex((it) => it.id === assistantItemId);
+    if (idx < 0) return;
+    let userItem: ChatUserItem | undefined;
+    for (let i = idx - 1; i >= 0; i--) {
+      const it = all[i];
+      if (it.kind === 'user') { userItem = it; break; }
+    }
+    if (!userItem) return; // no preceding user message (e.g. the very first turn) — no-op
+    await rewind(userItem.id, true);
+  }
+
+  /** "Always allow this session" (state 6) — session-scoped, client-side only. */
+  function alwaysAllow(toolName: string): void {
+    if (toolName) sessionAllow.add(toolName);
+  }
+
+  // ── Transcript history (resume replay + rewind-anchor uuids) ───────────────────────
+
+  interface HistoryEntry {
+    kind: 'user' | 'text' | 'thinking' | 'tool';
+    uuid?: string;
+    text?: string;
+    toolUseId?: string;
+    name?: string;
+    input?: unknown;
+    status?: 'done' | 'error';
+    result?: unknown;
+  }
+
+  async function fetchTranscriptHistory(): Promise<HistoryEntry[]> {
+    try {
+      const r = await api.get<{ items: HistoryEntry[] }>(`/agent/chat-history?claudeId=${encodeURIComponent(claudeId)}`);
+      return Array.isArray(r?.items) ? r.items : [];
+    } catch { return []; }
+  }
+
+  function toChatItem(h: HistoryEntry): ChatItem | null {
+    const idStr = `hist-${++itemSeq}`;
+    if (h.kind === 'user' && typeof h.text === 'string') {
+      return { kind: 'user', id: idStr, text: h.text, ts: 0, uuid: h.uuid };
+    }
+    if (h.kind === 'text' && typeof h.text === 'string') {
+      return { kind: 'text', id: idStr, index: -1, text: h.text, done: true, ts: 0 };
+    }
+    if (h.kind === 'thinking' && typeof h.text === 'string') {
+      return { kind: 'thinking', id: idStr, index: -1, text: h.text, done: true, ts: 0 };
+    }
+    if (h.kind === 'tool' && typeof h.toolUseId === 'string') {
+      return {
+        kind: 'tool', id: idStr, toolUseId: h.toolUseId, name: h.name ?? '', input: h.input,
+        status: h.status === 'error' ? 'error' : 'done', startedAt: 0, endedAt: 0, result: h.result,
+      };
+    }
+    return null;
+  }
+
+  /** Resume replay: `--resume` never re-emits past frames, so a resumed chat would open
+   *  blank without this. Lands in `conv.history` (never `items`) so the async arrival can't
+   *  shift positions the live reducer bookkeeping recorded. */
+  async function seedHistory(): Promise<void> {
+    const entries = await fetchTranscriptHistory();
+    if (disposed || !entries.length) return;
+    const items = entries.map(toChatItem).filter((x): x is ChatItem => !!x);
+    if (!items.length) return;
+    applyAndNotify(() => { conv = { ...conv, history: items }; });
+  }
+
+  /** Backfill transcript uuids onto live-sent user items (the protocol never echoes them),
+   *  matching text from the END of both sequences — the live items are always the
+   *  transcript's tail. Called lazily after each turn and before an anchor-less rewind. */
+  let uuidSyncInFlight: Promise<void> | null = null;
+  function syncTranscriptUuids(): Promise<void> {
+    if (uuidSyncInFlight) return uuidSyncInFlight;
+    uuidSyncInFlight = (async () => {
+      try {
+        const entries = (await fetchTranscriptHistory()).filter((h) => h.kind === 'user' && h.uuid);
+        if (disposed || !entries.length) return;
+        const items = conv.items.slice();
+        let changed = false;
+        let e = entries.length - 1;
+        for (let i = items.length - 1; i >= 0 && e >= 0; i--) {
+          const it = items[i];
+          if (it.kind !== 'user') continue;
+          while (e >= 0 && entries[e].text !== it.text) e--;
+          if (e < 0) break;
+          if (!it.uuid) { items[i] = { ...it, uuid: entries[e].uuid }; changed = true; }
+          e--;
+        }
+        if (changed) applyAndNotify(() => { conv = { ...conv, items }; });
+      } finally {
+        uuidSyncInFlight = null;
+      }
+    })();
+    return uuidSyncInFlight;
+  }
+
   function clearAttention(): void {
     if (!session.attention) return;
     applyAndNotify(() => { session.attention = false; });
@@ -521,6 +1011,10 @@ export function createChatSession(
     try { ws.close(); } catch { /* already closing */ }
     try { container.remove(); } catch { /* already detached */ }
   }
+
+  // A resumed conversation replays its transcript into `conv.history` (fire-and-forget —
+  // an empty/missing transcript just leaves history empty, exactly like a fresh session).
+  if (resume) void seedHistory();
 
   return session;
 }

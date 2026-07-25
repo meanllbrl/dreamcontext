@@ -42,10 +42,21 @@ export interface AgentSettings {
   /** Terminal renderer. Default `webgl` (smoothness); `dom` opts back into the
    *  native-text comfort rendering. Applied live to open sessions. */
   renderer: AgentRenderer;
-  /** BETA — render Claude sessions as native chat UI (markdown bubbles, tool
-   *  cards, question/permission cards) instead of the raw terminal. Off by
-   *  default; discoverable only via Settings → Agents. */
+  /** The "Agent screen" preference (Settings → Agents): which surface a Claude session
+   *  opens as. `false` = Terminal (the classic embedded TUI, the default); `true` = Chat
+   *  (BETA) — the SAME engine rendered as native chat UI (markdown bubbles, tool cards,
+   *  question/permission cards). Mutually exclusive by design: the chosen surface takes
+   *  over every Claude entry point (＋ New, ⌘T/⌘D, tab restore/resume, Sleep/delegate
+   *  spawns); running sessions keep their surface. Key name kept from the original beta
+   *  checkbox for agent-ui.json compatibility. */
   chatView: boolean;
+  /** Remembered default permission mode for Chat (BETA) sessions (redesign task
+   *  agent-chat-view-beta-…, state 6's top-right dropdown): `'auto'` maps to the CLI's
+   *  `acceptEdits` mode, `'bypass'` to `bypassPermissions` — identical mapping to
+   *  `permissionModeFor` in `src/server/routes/agent-chat.ts`. Selecting a mode here
+   *  applies to the NEXT chat session spawned (new, split, resume, sleep/brain/delegate,
+   *  skill-insert fallback) — a running session keeps the mode it started with. */
+  chatPermissionMode: 'auto' | 'bypass';
 }
 
 export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
@@ -56,6 +67,7 @@ export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   hotkey: 'Ctrl+A',
   renderer: 'webgl',
   chatView: false,
+  chatPermissionMode: 'auto',
 };
 
 /** Coerce an arbitrary blob to a valid AgentSettings (defaults fill gaps). `enabled`
@@ -75,6 +87,9 @@ export function coerceAgentSettings(raw: Partial<AgentSettings> | null | undefin
     renderer: r.renderer === 'dom' ? 'dom' : DEFAULT_AGENT_SETTINGS.renderer,
     // Opt-in flag: default FALSE, only an explicit `true` enables the beta chat view.
     chatView: r.chatView === true,
+    // Only an explicit 'bypass' opts into the caution mode; anything else (absent key,
+    // old blob, garbage) lands on the safer 'auto' default.
+    chatPermissionMode: r.chatPermissionMode === 'bypass' ? 'bypass' : 'auto',
   };
 }
 
@@ -101,6 +116,24 @@ export function writeAgentSettings(cfg: AgentSettings): void {
   writeLocal(cfg);
   void api.post('/launcher/agent-settings', cfg).catch(() => {});
   try { window.dispatchEvent(new CustomEvent<AgentSettings>(AGENT_SETTINGS_EVENT, { detail: cfg })); } catch { /* SSR/none */ }
+}
+
+/**
+ * Change SOME settings, leaving the rest exactly as they are on disk right now.
+ *
+ * Use this, not `writeAgentSettings({ ...snapshot, one: value })`, whenever a control owns a
+ * single field. The whole-object form silently rewrites every OTHER field from whatever the
+ * caller's React render captured — and a component that rendered before
+ * `initAgentSettingsFromServer` resolved is holding DEFAULTS, so flipping one toggle can
+ * quietly revert unrelated ones (observed: changing the chat permission mode reset
+ * `chatView` to its default `false`, which silently moved every new session back to the
+ * terminal surface). Merging against the freshest persisted value at write time removes the
+ * whole class of bug.
+ */
+export function patchAgentSettings(patch: Partial<AgentSettings>): AgentSettings {
+  const next = coerceAgentSettings({ ...readAgentSettings(), ...patch });
+  writeAgentSettings(next);
+  return next;
 }
 
 /**

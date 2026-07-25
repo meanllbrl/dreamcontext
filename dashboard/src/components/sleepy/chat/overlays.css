@@ -1,0 +1,283 @@
+/* Agent Chat (beta) redesign — overlays & top-of-pane controls (task T5). Tokens only. */
+
+/* ── Slide-over (states 3 + 9's drill-in) ─────────────────────────────────────────── */
+
+.chat-slideover-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(10, 10, 16, 0.32);
+  display: flex;
+  justify-content: flex-end;
+  z-index: 20;
+  animation: chat-scrim-in var(--transition-normal, 240ms ease);
+}
+@keyframes chat-scrim-in { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .chat-slideover-scrim { animation: none; } }
+
+.chat-slideover-panel {
+  width: min(440px, 92%);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg-elevated, var(--color-bg-secondary));
+  border-left: 1px solid var(--color-border);
+  box-shadow: var(--shadow-xl);
+  animation: chat-slideover-in var(--transition-normal, 240ms ease);
+}
+@keyframes chat-slideover-in { from { transform: translateX(24px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .chat-slideover-panel { animation: none; } }
+
+.chat-slideover-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--color-border);
+}
+.chat-slideover-head-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.chat-slideover-name { font-weight: 700; color: var(--color-text); font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-slideover-path { font-family: var(--font-mono); font-size: 11px; color: var(--color-text-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-slideover-close {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+}
+.chat-slideover-close:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
+
+.chat-slideover-breadcrumb {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: none;
+  background: transparent;
+  color: var(--color-text);
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 0;
+}
+.chat-slideover-breadcrumb:hover { color: var(--color-accent); }
+.chat-slideover-subagent-meta { display: flex; align-items: center; gap: 8px; }
+.chat-slideover-subagent-badge {
+  padding: 1px 8px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+.chat-slideover-subagent-status {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  text-transform: capitalize;
+}
+.chat-slideover-subagent-status[data-status='completed'] { color: var(--color-success); }
+.chat-slideover-subagent-status[data-status='error'] { color: var(--color-error); }
+.chat-slideover-subagent-status[data-status='running'] { color: var(--color-warning); }
+
+.chat-slideover-actions { flex: 0 0 auto; display: flex; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--color-border); }
+.chat-slideover-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 14px 16px; }
+.chat-slideover-status { color: var(--color-text-tertiary); font-size: 12.5px; }
+.chat-slideover-status.error { color: var(--color-error); }
+
+.chat-slideover-numbered { font-family: var(--font-mono); font-size: 11.5px; }
+.chat-slideover-line { display: flex; gap: 12px; }
+.chat-slideover-lineno { flex: 0 0 32px; text-align: right; color: var(--color-text-tertiary); user-select: none; }
+.chat-slideover-linetext { white-space: pre-wrap; word-break: break-word; color: var(--color-text); }
+
+.chat-slideover-transcript { display: flex; flex-direction: column; gap: 10px; }
+.chat-slideover-fallback { display: flex; flex-direction: column; gap: 10px; }
+.chat-slideover-usage { margin: 0; color: var(--color-text-tertiary); font-size: 11.5px; font-family: var(--font-mono); }
+
+/* ── Lightbox (state 4) ───────────────────────────────────────────────────────────── */
+
+.chat-lightbox-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(6, 6, 10, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 30;
+  animation: chat-scrim-in var(--transition-normal, 240ms ease);
+}
+.chat-lightbox-frame { position: relative; max-width: 90%; max-height: 90%; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.chat-lightbox-img { max-width: 100%; max-height: 78vh; border-radius: var(--radius-md); box-shadow: var(--shadow-xl); }
+.chat-lightbox-caption { color: #f0f0f5; font-size: 12px; }
+.chat-lightbox-close {
+  position: absolute;
+  top: -34px;
+  right: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  cursor: pointer;
+}
+.chat-lightbox-close:hover { background: rgba(255, 255, 255, 0.22); }
+
+/* ── Permission-mode dropdown (left end of the composer toolbar) ─────────────────────
+   A checkbox-style chip, not a pill: the box reads as "is the leash off?" at a glance and
+   the caret says it still opens a menu. Sits in `.chat-cmp-toolbar`, so it borrows that
+   row's height and stays borderless like its Skills/＋ neighbours. */
+
+.chat-permmode-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 6px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs, 12px);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+.chat-permmode-chip:hover, .chat-permmode-chip.open { background: var(--color-bg-tertiary); }
+.chat-permmode-box {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  /* Literal 4px, not --radius-sm (6px): on a 15px box that token reads as a circle, and a
+     circle reads as a radio (pick one of many) rather than a checkbox (on/off). */
+  border-radius: 4px;
+  border: 1.5px solid var(--color-border-hover);
+  font-size: 10px;
+  line-height: 1;
+  color: transparent;
+}
+.chat-permmode-name { text-transform: lowercase; }
+.chat-permmode-caret { font-size: 9px; opacity: 0.55; }
+/* Bypass is the state worth SEEING from across the room — checked + warning-colored. */
+.chat-permmode-chip[data-mode='bypass'] { color: var(--color-warning); }
+.chat-permmode-chip[data-mode='bypass'] .chat-permmode-box {
+  border-color: var(--color-warning);
+  background: var(--color-warning);
+  color: #fff;
+}
+
+.chat-permmode-menu {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 280px;
+  max-width: 320px;
+  padding: var(--space-1);
+  /* The shared popover shell is the terminal's (AgentTerminal.css) and speaks mono —
+     this menu is prose about a setting, so it speaks the UI font. */
+  font-family: var(--font-family-text);
+}
+.chat-permmode-menu-title {
+  padding: var(--space-1) var(--space-2);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-bold);
+}
+.chat-permmode-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-start;
+  padding: var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+/* Each mode carries its own identity color, selected or not — you should be able to read
+   "the amber one is the dangerous one" before reading a word. Selection then shows as
+   that identity filled in (bg + border), so it survives without relying on color alone
+   (aria-checked names it for assistive tech). */
+.chat-permmode-row[data-mode='auto'] .chat-permmode-row-label { color: var(--color-accent); }
+.chat-permmode-row[data-mode='bypass'] { border-color: color-mix(in srgb, var(--color-warning) 55%, transparent); }
+.chat-permmode-row[data-mode='bypass'] .chat-permmode-row-label { color: var(--color-warning); }
+.chat-permmode-row:hover { background: var(--color-bg-tertiary); }
+.chat-permmode-row.on[data-mode='auto'] { background: var(--color-accent-soft); border-color: var(--color-accent); }
+.chat-permmode-row.on[data-mode='bypass'] { background: var(--color-warning-subtle); border-color: var(--color-warning); }
+.chat-permmode-row-label { font-size: var(--font-size-sm); font-weight: var(--font-weight-bold); }
+.chat-permmode-row-desc { font-size: var(--font-size-sm); color: var(--color-text-secondary); line-height: 1.4; }
+
+/* ── Banners (empty / error / reconnecting / ended) ───────────────────────────────── */
+
+.chat-banner-empty {
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 4px;
+  padding: 24px;
+}
+.chat-banner-empty-title { margin: 0; font-family: var(--font-family-display); font-size: var(--font-size-xl, 22px); color: var(--color-text); }
+.chat-banner-empty-sub { margin: 0; color: var(--color-text-tertiary); font-size: var(--font-size-sm, 13px); }
+
+.chat-banner-error {
+  align-self: stretch;
+  width: 100%;
+  max-width: var(--chat-line-width, 100%);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-lg);
+  background: var(--color-error-subtle);
+  border: 1px solid var(--color-error);
+}
+.chat-banner-error-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.chat-banner-error-title {
+  color: var(--color-error);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-bold);
+}
+.chat-banner-error-sub { margin: 0; color: var(--color-text-secondary); font-size: var(--font-size-sm); }
+.chat-banner-error .chat-btn { margin-left: auto; flex: 0 0 auto; }
+
+.chat-banner-reconnecting {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+  background: var(--color-warning-subtle);
+  color: var(--color-warning);
+  font-size: 11px;
+}
+.chat-banner-reconnecting-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: chat-pulse-soft 1.1s ease-in-out infinite;
+}
+@keyframes chat-pulse-soft { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+@media (prefers-reduced-motion: reduce) { .chat-banner-reconnecting-dot { animation: none; } }
+
+.chat-banner-ended {
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 6px;
+  padding: 20px;
+}
+.chat-banner-ended-mark { font-size: 30px; opacity: 0.7; }
+.chat-banner-ended-title { margin: 0; font-family: var(--font-family-display); font-size: var(--font-size-lg, 18px); color: var(--color-text); }
+.chat-banner-ended-sub { margin: 0 0 4px; max-width: 380px; color: var(--color-text-tertiary); font-size: var(--font-size-sm, 13px); }

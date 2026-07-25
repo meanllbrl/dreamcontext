@@ -857,6 +857,10 @@ interface AgentUiSettings {
   /** BETA — render Claude sessions as native chat UI. Off by default; discoverable
    *  only via Settings → Agents. Mirrors dashboard/src/lib/agentSettings. */
   chatView: boolean;
+  /** Remembered default permission mode for Chat (BETA) sessions: 'auto' (acceptEdits)
+   *  or 'bypass' (bypassPermissions) — same mapping as permissionModeFor in
+   *  agent-chat.ts. Mirrors dashboard/src/lib/agentSettings. */
+  chatPermissionMode: 'auto' | 'bypass';
 }
 const AGENT_UI_DEFAULTS: AgentUiSettings = {
   enabled: true,
@@ -866,6 +870,7 @@ const AGENT_UI_DEFAULTS: AgentUiSettings = {
   hotkey: 'Ctrl+A',
   renderer: 'webgl',
   chatView: false,
+  chatPermissionMode: 'auto',
 };
 
 function agentSettingsPath(): string {
@@ -887,6 +892,8 @@ function coerceAgentSettings(raw: Record<string, unknown>): AgentUiSettings {
     renderer: raw.renderer === 'dom' ? 'dom' : AGENT_UI_DEFAULTS.renderer,
     // Opt-in flag: default FALSE, only an explicit `true` enables the beta chat view.
     chatView: raw.chatView === true,
+    // Only an explicit 'bypass' opts into the caution mode; anything else → 'auto' default.
+    chatPermissionMode: raw.chatPermissionMode === 'bypass' ? 'bypass' : 'auto',
   };
 }
 

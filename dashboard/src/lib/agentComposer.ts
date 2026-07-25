@@ -185,6 +185,80 @@ export const FALLBACK_MODEL_CONFIG: ModelConfig = {
   defaultEffort: 'high',
 };
 
+/**
+ * What to print on a model picker for `model`, which reaches us in three different shapes
+ * and must never degrade to a bare "—":
+ *   • a picker alias  (`opus`)                        → the option's own label,
+ *   • a full CLI id   (`claude-opus-4-5-20251101`)    → the same label, matched by family
+ *     (this is what `system:init` reports for a chat session, and it is NOT in `models`),
+ *   • empty           (before the first init frame)   → the user's default model's label.
+ * A genuinely unknown id is returned verbatim — better a raw id the user can read than a
+ * dash that says nothing.
+ */
+export function modelLabelFor(config: ModelConfig, model: string): string {
+  const resolve = (id: string): string | undefined => {
+    if (!id) return undefined;
+    const exact = config.models.find((m) => m.id === id);
+    if (exact) return exact.label;
+    // Family match — mirrors the server's `modelAlias` (agent-terminal.ts).
+    const s = id.toLowerCase();
+    const family = ['opus', 'sonnet', 'haiku', 'fable'].find((f) => s.includes(f));
+    return family ? config.models.find((m) => m.id === family)?.label ?? family : undefined;
+  };
+  // The default stands in ONLY for "not reported yet". An id we simply don't recognize must
+  // print as itself: relabelling it as the default would claim a model is running that
+  // isn't.
+  if (!model) return resolve(config.defaultModel) ?? config.defaultModel;
+  return resolve(model) ?? model;
+}
+
+/** Context-window usage at/above which a readout goes caution-coloured (and, in the chat
+ *  composer, offers `/compact`). Shared by BOTH composers so the terminal strip and the
+ *  chat card can never disagree about when a session is running out of room. */
+export const CONTEXT_TIGHT_PCT = 90;
+
+// ── Slash-command autocomplete ──────────────────────────────────────────────────────
+
+/**
+ * The `/command` token currently being typed at `caret`, WITHOUT its slash — or null when
+ * the caret isn't in one. Returns `''` for a bare `/`, which is a real state (offer every
+ * command), so callers must test for `null`, not falsiness.
+ *
+ * Anchored at index 0 on purpose: Claude Code treats a slash command as the WHOLE message,
+ * not something you can drop mid-sentence, so a `/` typed after any other text is just a
+ * slash. Once the user types a space the command name is settled and the menu closes —
+ * arguments are the command's business, not the picker's.
+ */
+export function slashQueryAt(text: string, caret: number): string | null {
+  const before = text.slice(0, Math.max(0, caret));
+  const m = /^\/([^\s]*)$/.exec(before);
+  return m ? m[1] : null;
+}
+
+/**
+ * `commands` filtered by `query`, prefix matches first (what the user is most likely
+ * reaching for) then the rest of the substring matches, each group keeping the CLI's own
+ * ordering. Case-insensitive; an empty query returns everything.
+ */
+export function filterSlashCommands(commands: string[], query: string): string[] {
+  const q = query.toLowerCase();
+  if (!q) return [...commands];
+  const prefix: string[] = [];
+  const contains: string[] = [];
+  for (const c of commands) {
+    const lc = c.toLowerCase();
+    if (lc.startsWith(q)) prefix.push(c);
+    else if (lc.includes(q)) contains.push(c);
+  }
+  return [...prefix, ...contains];
+}
+
+/** Replace the `/…` token at the caret with `/<command> `, and report the new caret. */
+export function applySlashCommand(text: string, caret: number, command: string): { text: string; caret: number } {
+  const head = `/${command} `;
+  return { text: head + text.slice(Math.max(0, caret)), caret: head.length };
+}
+
 /** Title-case an effort level for display ("high" → "High"). */
 export function effortLabel(level: string): string {
   return level ? level.charAt(0).toUpperCase() + level.slice(1) : level;

@@ -1,0 +1,253 @@
+/* Agent Chat — ATOMS (atomic-design layer 1; see atoms.tsx's header).
+   Design tokens only: spacing on the 4px grid (--space-*), type from the shared scale
+   (--font-size-xs/sm/base), colors from --color-*. No literal color anywhere in this
+   file — light/dark follows the theme for free. */
+
+/* ── Status ──────────────────────────────────────────────────────────────────────── */
+
+.chat-a-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--color-text-tertiary);
+}
+.chat-a-dot[data-status='running'] {
+  background: var(--color-warning);
+  animation: chat-a-pulse 1.2s ease-in-out infinite;
+}
+.chat-a-dot[data-status='done'] { background: var(--color-success); }
+.chat-a-dot[data-status='error'] { background: var(--color-error); }
+@keyframes chat-a-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) {
+  .chat-a-dot[data-status='running'] { animation: none; }
+}
+
+.chat-a-statusword {
+  color: var(--color-error);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+}
+
+/* ── Tool identity ───────────────────────────────────────────────────────────────── */
+
+.chat-a-glyph {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  line-height: 1;
+  opacity: 0.85;
+}
+
+.chat-a-toolname {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.chat-a-pathchip {
+  min-width: 0;
+  max-width: 44ch;
+  padding: 2px var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+.chat-a-pathchip:hover { border-color: var(--color-accent); }
+.chat-a-pathchip:active { transform: scale(0.98); }
+.chat-a-pathchip:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 1px; }
+
+/* ── Meta readouts ───────────────────────────────────────────────────────────────── */
+
+.chat-a-meta {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+}
+.chat-a-meta[data-mono] { font-family: var(--font-mono); }
+
+.chat-a-duration {
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.chat-a-tokens {
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+}
+
+.chat-a-diffstat {
+  display: inline-flex;
+  gap: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+.chat-a-diffstat-add { color: var(--color-success); }
+.chat-a-diffstat-rem { color: var(--color-error); }
+
+.chat-a-pilldivider {
+  flex: 0 0 auto;
+  width: 1px;
+  height: 14px;
+  background: var(--color-border);
+}
+
+.chat-a-caret {
+  flex: 0 0 auto;
+  display: inline-block;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  transition: transform var(--transition-fast);
+}
+.chat-a-caret[data-open] { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) {
+  .chat-a-caret { transition: none; }
+}
+
+/* ── Actions ─────────────────────────────────────────────────────────────────────── */
+
+.chat-a-copy {
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+}
+.chat-a-copy:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
+.chat-a-copy:active { transform: scale(0.97); }
+.chat-a-copy:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 1px; }
+.chat-a-copy[data-copied] { color: var(--color-success); border-color: var(--color-success); }
+
+/* On the always-dark shell surface the button borrows the terminal palette its parent
+   block defines (molecules.css `.chat-m-terminal`), so it stays legible in both themes. */
+.chat-a-copy[data-tone='dark'] {
+  border-color: var(--term-border, transparent);
+  background: var(--term-chip, transparent);
+  color: var(--term-dim, inherit);
+}
+.chat-a-copy[data-tone='dark']:hover { color: var(--term-fg, inherit); }
+.chat-a-copy[data-tone='dark'][data-copied] { color: var(--term-ok, inherit); }
+
+/* ── Identity & progress ─────────────────────────────────────────────────────────── */
+
+.chat-a-toolbadge {
+  flex: 0 0 auto;
+  padding: 2px var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  color: var(--color-text-secondary);
+  font-family: var(--font-family-text);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+}
+.chat-a-toolbadge[data-tone='caution'] { border-color: var(--color-warning); color: var(--color-warning); }
+
+.chat-a-typebadge {
+  flex: 0 0 auto;
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
+
+.chat-a-avatar {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-full);
+  /* Hue comes from the agent's name (atoms.tsx `AgentAvatar`); saturation/lightness are
+     fixed so every avatar carries the same weight next to the row's text. */
+  background: linear-gradient(
+    140deg,
+    hsl(var(--avatar-hue) 74% 66%),
+    hsl(calc(var(--avatar-hue) + 22) 68% 54%)
+  );
+  color: var(--color-text-on-brand);
+}
+
+.chat-a-progress {
+  flex: 0 0 auto;
+  display: block;
+  width: var(--space-16);
+  height: var(--space-1);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-tertiary);
+  overflow: hidden;
+}
+.chat-a-progress-fill {
+  display: block;
+  height: 100%;
+  width: 100%;
+  border-radius: inherit;
+  background: var(--color-success);
+}
+.chat-a-progress[data-status='error'] .chat-a-progress-fill { background: var(--color-error); }
+/* No percentage exists for a live run — sweep instead of inventing one. */
+.chat-a-progress[data-status='running'] .chat-a-progress-fill {
+  width: 40%;
+  background: var(--color-accent);
+  animation: chat-a-sweep 1.4s ease-in-out infinite;
+}
+/* Travels edge to edge WITHOUT leaving the track — a bar that spends half its cycle
+   off-screen reads as broken rather than busy. */
+@keyframes chat-a-sweep {
+  from { transform: translateX(0); }
+  to { transform: translateX(150%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-a-progress[data-status='running'] .chat-a-progress-fill { animation: none; width: 100%; opacity: 0.5; }
+}
+
+.chat-a-alerticon { flex: 0 0 auto; color: var(--color-text); }
+
+.chat-a-inlinecode {
+  padding: 1px 4px;
+  border-radius: var(--radius-sm);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}
+
+.chat-a-iconbtn {
+  width: var(--space-6);
+  height: var(--space-6);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.chat-a-iconbtn:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
+.chat-a-iconbtn:active { transform: scale(0.94); }
+.chat-a-iconbtn:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -1px; }

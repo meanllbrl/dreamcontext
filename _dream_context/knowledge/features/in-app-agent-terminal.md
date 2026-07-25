@@ -2,7 +2,7 @@
 id: feat_nM4EnT8k
 status: in_review
 created: '2026-06-28'
-updated: '2026-07-24'
+updated: '2026-07-25'
 tags:
   - 'topic:desktop'
   - 'topic:agents'
@@ -15,8 +15,6 @@ related_tasks:
   - feat-sleepy-agent-surface-ux-redesign
   - agent-terminal-rendering-readability-polish
   - feat-desktop-basic-terminal-mode-in-agent-surface
-  - in-app-task-detail-inline-agent-curate-to-task-manager
-  - delegate-a-task-to-the-agent-and-track-progress-inline
   - >-
     agent-chat-view-beta-render-claude-sessions-as-native-app-ui-with-captured-questions
   - agent-chat-redesign-12-state-native-chat-ui-per-corrected-design-brief
@@ -168,6 +166,14 @@ Key files summary (post-2026-07-01 readability polish; 2026-07-04 basic-terminal
 
 ## Changelog
 <!-- LIFO: newest entry at top -->
+
+### 2026-07-25 — Chat view: 12-state native redesign + shared surface chrome (committed)
+- **Chat view is now a full alternate renderer, not a bubble preview** (task `agent-chat-redesign-12-state-native-chat-ui-per-corrected-design-brief`). The renderer moved into an atomic `dashboard/src/components/sleepy/chat/` tree (atoms → molecules → organism cards) with `ChatPane.tsx` reduced to a view-only orchestrator: transcript items with no avatars anywhere and hover actions (copy / rewind-as-edit / quote, plus retry on assistant turns), bordered tool cards with numbered diffs derived from the CLI's own `cat -n` echo (never invented) and full-bleed terminal blocks, survey + permission cards at one shared `--chat-card-width`, a `BypassNoticeCard` raised only for `isGuardedCommand()` matches, sub-agent runs grouped from `system:task_started`/`task_updated`/`task_notification` into one live card that drills into the REAL sidechain transcript, and stream-error / reconnecting / session-ended banners. Permission mode is a remembered top-right dropdown (`chatPermissionMode` in `agent-ui.json`) resolved centrally inside the surface's one `spawn()` for every chat-kind entry point.
+- **Surface polish, shared by both renderers** (task `agent-surface-polish-...`): the overlay header and tab strip merged into a single 44px chrome (was 82px), emoji replaced by mono glyphs (`◇` agent / `◆` chat / `>_` shell), tab groups aligned with their panes, and the chat composer rebuilt per the reference (CONTEXT meter above a bordered card, Send/model/effort clustered right). `/` in the chat composer opens the SAME skill picker as the terminal — extracted verbatim into `SkillPickerPopover.tsx`, so the terminal composer's markup/behavior is byte-unchanged.
+- **New read surfaces** (`src/server/routes/agent-chat.ts`): `GET /api/agent/file` now answers text previews (512 KB cap), directory listings (300 entries), and range-streamed image/video/audio bytes (2 GB ceiling) — still project-root-scoped, `nosniff` on every response, SVG always as text. An outside-root path returns 403 `needs_grant` instead of a dead refusal; `POST /api/agent/grant` records that ONE absolute file path per vault in `state/.file-grants.json` (max 500, files only) on a real user click. `POST /api/agent/reveal` hands folders/media/inert documents to the default app and REVEALS anything else in the file manager, so a `.sh`/`.pkg`/`.app` named in a transcript can never be launched from a chat bubble.
+- Skill docs wired in the same cycle per `[[patterns/feature-integration-pattern]]`: `skill/references/integrations.md` § Agent Chat view (slash menu, inline media, all three server surfaces, the 44px chrome) + a README paragraph. Sleep specialists and skill packs were scanned — no touchpoints (the packs are surface-agnostic; sleep owns no chat artifacts).
+- Closed a test gap found in this pass: `reveal` and `grant` (the two most consequential new surfaces — an OS opener and a consent record) shipped with zero coverage. `tests/unit/agent-reveal-grant.test.ts` (17 tests) now pins the desktop gate, the body/existence guards, the open-vs-reveal decision (a `.sh` is never handed to the opener bare), and grant semantics end-to-end: refused → granted → served, with the sibling file still refused.
+- Validation: root `npm run build` clean, both `tsc --noEmit` clean, `npm test -- run` 4152 passed / 0 failed (the recall-eval gold drift that had been red since the 2026-07-24 curator archive was repointed to the surviving `decision-embedding-layer` / `recall-engine-v2` docs), `dreamcontext doctor` 19 ok / 0 warnings.
 
 ### 2026-07-24 — macOS zoom animation + ResizeObserver pane-slot refit (working tree)
 - **macOS-style zoom for overlay open/close** (commit c172c36): The fullscreen agent surface now zooms out of (and shrinks back into) the bottom-right dock/FAB corner instead of snapping `display:none ↔ flex`. Transform/opacity-only keyframes with Apple's window easing (`cubic-bezier(0.32, 0, 0.67, 0)` shrink, `(0.33, 1, 0.68, 1)` expand), `closing` state keeps the surface rendered during the shrink animation, transform cleared after landing so xterm canvas stays crisp, `prefers-reduced-motion` falls back to instant toggle. Touched: `AgentSurface.tsx`, `AgentTerminal.css`.

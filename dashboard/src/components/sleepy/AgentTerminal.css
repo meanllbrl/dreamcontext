@@ -74,20 +74,35 @@
 }
 
 /* ── Fullscreen overlay header ─────────────────────────────────────────────────
-   The top bar of the expanded overlay: collapse `[—]`, the "Agent" title, and (once a
-   terminal is live) the cross-cutting controls — the bypass default for new sessions
-   and the new-session +. Replaces the controls that used to portal into SleepyPage. */
+   The top bar of the expanded overlay, and the ONLY chrome row: collapse `[—]`, the
+   session TABS themselves (one group per pane — see `.agent-overlay-tabs` below), and
+   the new-session split button. There is no "Agent" title: the tabs name the surface,
+   and folding them in here buys back the 38px the separate tab bar used to cost. */
 .agent-overlay-head {
+  /* The tab strip must span the row EDGE TO EDGE so each pane's tab group can line up
+     with its pane below (see `.agent-overlay-tabs`) — so the two chrome buttons FLOAT
+     over the ends instead of taking flow space, and the strip reserves room for them
+     with the two clearances below (12px inset + the button + an 8px gap). */
+  position: relative;
   flex: 0 0 auto;
   display: flex;
   align-items: center;
-  gap: var(--space-2);
   height: 44px;
-  padding: 0 var(--space-3);
   border-bottom: 1px solid var(--color-border);
   background: linear-gradient(180deg, color-mix(in srgb, var(--color-accent) 6%, var(--color-bg)), var(--color-bg));
+  /* Width each chrome button needs from the strip's own ends. The group's base 8px side
+     padding is the breathing gap on top of these, so they are just inset + button width. */
+  --head-clear-start: 40px;   /* 12px inset + 28px collapse */
+  --head-clear-end: 102px;    /* 12px inset + 90px "＋ New ▾" */
 }
 .agent-overlay-collapse {
+  position: absolute;
+  left: var(--space-3);
+  top: 50%;
+  transform: translateY(-50%);
+  /* MUST beat `.agent-pane-tabbar`'s z-index 7: the strip spans the whole row, so the end
+     groups' boxes lie OVER these two buttons and would otherwise eat every click on them. */
+  z-index: 10;
   display: inline-flex; align-items: center; justify-content: center;
   flex: 0 0 auto;
   width: 28px; height: 28px;
@@ -102,14 +117,27 @@
 }
 .agent-overlay-collapse:hover { background: var(--color-bg-tertiary); color: var(--color-text); border-color: var(--color-border-hover); }
 .agent-overlay-collapse:focus-visible { outline: none; border-color: var(--color-accent); box-shadow: 0 0 0 2px var(--color-accent-soft); }
-.agent-overlay-title {
-  font-family: var(--font-family-display, var(--font-mono));
-  font-weight: 700;
-  font-size: var(--font-size-sm);
-  color: var(--color-text);
+/* The tab strip, IN the header — one `.agent-pane-tabbar` child per pane. It spans the
+   FULL header width and each group is `flex: 1 1 0`, exactly like `.agent-panes > .agent-pane`
+   below it: group N therefore sits directly above pane N, edge for edge, and the hairline
+   between groups falls on the pane divider. That alignment is the whole point — the tabs
+   still belong to their pane, they just moved up into the one chrome row.
+   See the `.agent-overlay-tabs > .agent-pane-tabbar` overrides in the tabs section. */
+.agent-overlay-tabs {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  align-self: stretch;   /* full header height, so a group's fill reads as its pane's bar */
+  display: flex;
+  align-items: center;
+  overflow: hidden;      /* each group scrolls on its own — it can't grow past its pane */
 }
 .agent-overlay-controls {
-  margin-left: auto;
+  position: absolute;
+  right: var(--space-3);
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 10;   /* over the tab strip — see `.agent-overlay-collapse` */
   display: flex;
   align-items: center;
   gap: 6px;
@@ -674,10 +702,10 @@
 :is(.agent-tab, .agent-tab-dot)[data-kind="ready"]    { --kind-color: var(--color-accent); }
 :is(.agent-tab, .agent-tab-dot)[data-kind="ended"]    { --kind-color: var(--color-error); }
 
-/* Per-pane tab bar — sits at the TOP of each pane (not in a shared header) so a session's
-   tab is directly above the terminal it controls. Horizontally scrollable; the active
-   pane's bar carries a faint accent fill + a bottom border that reads as the active edge.
-   z-index 7 keeps the tabs clickable/droppable ABOVE the split drop overlay (z-index 6). */
+/* Per-pane tab GROUP. It lives in the overlay header (`.agent-overlay-tabs`) — these
+   base rules are the standalone-bar form; the overrides right below flatten it for the
+   header. z-index 7 keeps the tabs clickable/droppable ABOVE the split drop overlay
+   (z-index 6) in case a group is ever rendered inside a pane again. */
 .agent-pane-tabbar {
   position: relative;
   z-index: 7;
@@ -697,6 +725,48 @@
 .agent-pane-tabbar.active {
   background: color-mix(in srgb, var(--color-accent) 7%, var(--color-bg));
   border-bottom-color: color-mix(in srgb, var(--color-accent) 45%, var(--color-border));
+}
+
+/* …in the header: ONE PANE'S SHARE of the row, matching `.agent-panes > .agent-pane`'s
+   `flex: 1 1 0` below, so the group sits exactly above the pane it drives. It keeps its
+   own scroller (it cannot grow past its pane) and drops the standalone bar's fill/border
+   — the header already draws the row. The first and last groups inset their content to
+   clear the collapse button and the "＋ New ▾" cluster floating over the row's ends; the
+   group BOX still spans the full pane width, so the alignment holds. */
+.agent-overlay-tabs > .agent-pane-tabbar {
+  flex: 1 1 0;
+  min-width: 0;
+  align-self: stretch;
+  height: auto;
+  border-bottom: none;
+  background: transparent;
+}
+/* The clearances are flex SPACERS inside the end groups, never padding on them: flex
+   distributes free space equally and then adds each item's padding, so padding here would
+   make the first and last groups wider than the rest and drift every divider off its pane
+   edge (border-box does not change that — flex-basis: 0 floors at the padding). */
+.agent-overlay-tabs > .agent-pane-tabbar:first-child::before {
+  content: '';
+  flex: 0 0 var(--head-clear-start);
+}
+.agent-overlay-tabs > .agent-pane-tabbar:last-child::after {
+  content: '';
+  flex: 0 0 var(--head-clear-end);
+}
+/* SPLIT — with several groups the row reads as one bar per pane again: a hairline on the
+   pane divider, and the action-focused pane's group carrying the accent fill + bottom rail
+   the standalone bar used to have. Single-pane is left untinted: its group spans the whole
+   header, so "active" there would just repaint the header for no information. */
+.agent-overlay-tabs[data-split] > .agent-pane-tabbar + .agent-pane-tabbar::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 1px;
+  background: var(--color-border);
+}
+.agent-overlay-tabs[data-split] > .agent-pane-tabbar.active {
+  background: color-mix(in srgb, var(--color-accent) 7%, transparent);
+  box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--color-accent) 50%, transparent);
 }
 
 .agent-tab {
@@ -738,8 +808,8 @@
 .agent-tab-dot[data-kind="working"],
 .agent-tab-dot[data-kind="starting"] { animation: agentDotPulse 1.2s ease-in-out infinite; }
 
-/* Session-type glyph: ◇ = Claude agent, >_ = plain shell. A quiet monospace mark so a
-   pane holding both a terminal and an agent is legible at a glance. */
+/* Session-type glyph: ◇ = Claude agent, ◆ = Claude chat, >_ = plain shell. A quiet
+   monospace mark (never an emoji) so a pane holding several kinds reads at a glance. */
 .agent-tab-kind {
   flex: 0 0 auto;
   font-family: var(--font-mono);
@@ -808,7 +878,8 @@
 .agent-tab.active .agent-tab-btn,
 .agent-tab-btn:focus-visible { opacity: 1; }
 .agent-tab-btn:hover { background: var(--color-bg-tertiary); color: var(--color-text); border-color: var(--color-border-hover); }
-.agent-tab-btn.minimize:hover { background: var(--color-accent-soft); color: var(--color-accent); border-color: color-mix(in srgb, var(--color-accent) 40%, transparent); }
+.agent-tab-btn.minimize:hover,
+.agent-tab-btn.open-in-chat:hover { background: var(--color-accent-soft); color: var(--color-accent); border-color: color-mix(in srgb, var(--color-accent) 40%, transparent); }
 .agent-tab-btn.close:hover { background: color-mix(in srgb, var(--color-error) 18%, transparent); border-color: color-mix(in srgb, var(--color-error) 42%, transparent); color: var(--color-error); }
 .agent-tab-btn:focus-visible { outline: none; opacity: 1; border-color: var(--color-accent); box-shadow: 0 0 0 2px var(--color-accent-soft); }
 
@@ -1474,8 +1545,29 @@
 .agent-composer-stat-glyph { font-size: 12px; opacity: 0.7; }
 .agent-composer-stat-val { overflow: hidden; text-overflow: ellipsis; }
 .agent-composer-stat-dim { color: var(--color-text-tertiary); }
-/* Context nearly full → warn. */
+/* The percentage carries the answer, so it gets the strip's full ink; the raw counts stay
+   dim beside it. Matches the chat composer's readout — same order, same emphasis. */
+.agent-composer-stat-pct { color: var(--term-fg); flex: 0 0 auto; }
+/* Slim gauge, sized in `ch` so it keeps the strip's mono rhythm at any zoom. */
+.agent-composer-gauge {
+  flex: 0 0 auto;
+  width: 3.5ch;
+  height: 3px;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--term-fg) 18%, transparent);
+  overflow: hidden;
+}
+.agent-composer-gauge-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--color-accent);
+  transition: width var(--transition-normal, 240ms) ease;
+}
+/* Context nearly full → warn (threshold shared with the chat composer: CONTEXT_TIGHT_PCT). */
 .agent-composer-stat[data-hot="true"] { color: var(--color-warning); }
+.agent-composer-stat[data-hot="true"] .agent-composer-stat-pct { color: var(--color-warning); }
+.agent-composer-stat[data-hot="true"] .agent-composer-gauge-fill { background: var(--color-warning); }
 .agent-composer-stat[data-hot="true"] .agent-composer-stat-dim { color: color-mix(in srgb, var(--color-warning) 60%, transparent); }
 
 /* Model / effort selects — same terminal-word treatment as the trigger buttons. */
@@ -1533,8 +1625,10 @@
       still names them on hover);
    2. tighten the model/effort selects — the two pieces of live state we always keep. */
 @container agentpane (max-width: 560px) {
-  /* Tight: drop the context "/limit" denominator, keep the used-tokens + cost figures. */
-  .agent-composer-stat-dim { display: none; }
+  /* Tight: drop the raw token counts entirely and keep the gauge + percentage, which say
+     the same thing in a third of the width. (Before the percentage existed this rule had to
+     keep `44k` and drop only the `/200k`; now the counts are the redundant half.) */
+  .agent-composer-stat-val { display: none; }
 }
 @container agentpane (max-width: 500px) {
   .agent-composer { padding: 0 8px 4px; }

@@ -980,18 +980,22 @@ export function SettingsPage({ focus }: SettingsPageProps) {
                   </label>
                   <p className="settings-field-hint">{t('settings.agents.auto_title_hint')}</p>
 
-                  {/* Chat view (BETA) — native chat UI instead of the raw terminal. */}
-                  <label className="settings-checkbox-label">
-                    <input
-                      type="checkbox"
-                      className="settings-checkbox"
-                      checked={agentCfg.chatView}
-                      onChange={() => updateAgentCfg({ ...agentCfg, chatView: !agentCfg.chatView })}
-                    />
-                    <span>{t('settings.agents.chat_view')}</span>
-                    <span className="settings-beta-badge">BETA</span>
-                  </label>
-                  <p className="settings-field-hint">{t('settings.agents.chat_view_hint')}</p>
+                  {/* Agent screen — Terminal vs Chat (BETA), a mutually-exclusive surface
+                      preference: the chosen one takes over every Claude entry point (＋ New,
+                      ⌘T/⌘D, reopened tabs, Sleep/delegate spawns). Stored as the same
+                      `chatView` boolean the beta checkbox used (agent-ui.json compat). */}
+                  <div className="settings-field-row">
+                    <label>{t('settings.agents.screen')}</label>
+                    <select
+                      className="settings-text-input"
+                      value={agentCfg.chatView ? 'chat' : 'terminal'}
+                      onChange={(e) => updateAgentCfg({ ...agentCfg, chatView: e.target.value === 'chat' })}
+                    >
+                      <option value="terminal">{t('settings.agents.screen.terminal')}</option>
+                      <option value="chat">{t('settings.agents.screen.chat')}</option>
+                    </select>
+                  </div>
+                  <p className="settings-field-hint">{t('settings.agents.screen_hint')}</p>
 
                   {/* Quick open/close hotkey (in-app; default Ctrl+A). */}
                   <div className="settings-field-row">

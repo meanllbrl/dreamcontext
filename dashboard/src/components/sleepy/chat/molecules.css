@@ -1,0 +1,273 @@
+/* Agent Chat — MOLECULES (atomic-design layer 2; see molecules.tsx's header).
+   Tokens only, with ONE documented exception: `.chat-m-terminal` pins a dark shell
+   palette in both themes (same rationale and precedent as AgentTerminal.css — a shell
+   block must read as a shell). That palette is declared once, on the block itself, and
+   the atoms that sit on it (`.chat-a-copy[data-tone='dark']`) inherit it from there. */
+
+/* ── Tool card header ────────────────────────────────────────────────────────────── */
+
+.chat-m-toolhead {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--space-10);
+  padding: var(--space-2) var(--space-4);
+  border-radius: inherit;
+}
+/* Stretched hit area: the whole row toggles from ONE control, and everything else in the
+   row is pointer-transparent so the click always lands on it — except the path chip,
+   which re-enables itself below. */
+.chat-m-toolhead-hit {
+  position: absolute;
+  inset: 0;
+  border: none;
+  border-radius: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+.chat-m-toolhead-hit:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; }
+.chat-m-toolhead > *:not(.chat-m-toolhead-hit) { position: relative; pointer-events: none; }
+.chat-m-toolhead .chat-a-pathchip { pointer-events: auto; }
+
+.chat-m-toolhead-sub {
+  min-width: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-m-toolhead-meta {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-left: var(--space-2);
+}
+
+/* ── Card header ─────────────────────────────────────────────────────────────────── */
+
+.chat-m-cardhead {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+}
+.chat-m-cardhead-glyph { flex: 0 0 auto; font-size: var(--font-size-base); line-height: 1; }
+.chat-m-cardhead-title {
+  min-width: 0;
+  color: var(--color-text);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: var(--letter-spacing-body);
+}
+.chat-m-cardhead-aside {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.chat-m-cardhead[data-tone='caution'] { border-bottom-color: color-mix(in srgb, var(--color-warning) 45%, transparent); }
+.chat-m-cardhead[data-tone='caution'] .chat-m-cardhead-title { color: var(--color-warning); }
+
+/* ── Terminal block ──────────────────────────────────────────────────────────────── */
+
+.chat-m-terminal {
+  /* The one fixed (theme-independent) palette in chat — see the file header. */
+  --term-bg: #12141a;
+  --term-fg: #e6e8ef;
+  --term-dim: #8b90a0;
+  --term-ok: #4ade80;
+  --term-err: #ff7b72;
+  --term-prompt: #a78bfa;
+  --term-chip: rgba(255, 255, 255, 0.06);
+  --term-border: rgba(255, 255, 255, 0.12);
+
+  position: relative;
+  background: var(--term-bg);
+  color: var(--term-fg);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.chat-m-terminal-copy {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  z-index: 1;
+}
+
+.chat-m-terminal-body {
+  padding: var(--space-3) var(--space-4);
+  max-height: 320px;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  line-height: 1.7;
+  scrollbar-color: var(--term-border) transparent;
+}
+
+.chat-m-terminal-line {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.chat-m-terminal-line[data-tone='ok'] { color: var(--term-ok); }
+.chat-m-terminal-line[data-tone='error'] { color: var(--term-err); }
+.chat-m-terminal-line[data-tone='dim'] { color: var(--term-dim); }
+
+.chat-m-terminal-cmd { color: var(--term-fg); font-weight: var(--font-weight-medium); }
+.chat-m-terminal-prompt { color: var(--term-prompt); margin-right: var(--space-2); }
+
+/* ── Diff ────────────────────────────────────────────────────────────────────────── */
+
+.chat-m-diff {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  line-height: 1.8;
+  overflow-x: auto;
+}
+
+.chat-m-diff-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: 0 var(--space-4) 0 0;
+}
+.chat-m-diff-row[data-tone='rem'] { background: var(--color-error-subtle); }
+.chat-m-diff-row[data-tone='add'] { background: var(--color-success-subtle); }
+
+.chat-m-diff-gutter {
+  flex: 0 0 auto;
+  width: var(--space-11);
+  padding-right: var(--space-2);
+  text-align: right;
+  color: var(--color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+.chat-m-diff-sign {
+  flex: 0 0 auto;
+  width: var(--space-2);
+  user-select: none;
+}
+.chat-m-diff-row[data-tone='rem'] .chat-m-diff-sign { color: var(--color-error); }
+.chat-m-diff-row[data-tone='add'] .chat-m-diff-sign { color: var(--color-success); }
+
+.chat-m-diff-text {
+  white-space: pre;
+  color: var(--color-text);
+}
+
+.chat-m-diff-more {
+  display: block;
+  width: 100%;
+  padding: var(--space-2) var(--space-4);
+  border: none;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  font-family: var(--font-family-text);
+  font-size: var(--font-size-xs);
+  text-align: left;
+  cursor: pointer;
+}
+.chat-m-diff-more:hover { color: var(--color-text); }
+
+/* ── Thinking pill ───────────────────────────────────────────────────────────────── */
+
+.chat-m-thinking { align-self: flex-start; max-width: 100%; }
+
+.chat-m-thinking-head {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px dashed var(--color-border-hover);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-text);
+  font-family: var(--font-family-text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+.chat-m-thinking-head:hover { background: var(--color-bg-tertiary); border-color: var(--color-text-tertiary); }
+.chat-m-thinking-head:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 1px; }
+.chat-m-thinking-glyph { font-size: var(--font-size-sm); line-height: 1; }
+
+.chat-m-thinking[data-streaming] .chat-m-thinking-label {
+  background: linear-gradient(90deg, var(--color-text-tertiary) 0%, var(--color-text) 50%, var(--color-text-tertiary) 100%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: chat-m-shimmer 1.6s linear infinite;
+}
+@keyframes chat-m-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-m-thinking-label { animation: none !important; }
+}
+
+.chat-m-thinking-body {
+  margin-top: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+  white-space: pre-wrap;
+}
+
+/* ── Message chrome ──────────────────────────────────────────────────────────────── */
+
+.chat-m-hoverbar {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-elevated);
+  box-shadow: var(--shadow-md);
+  opacity: 0;
+  transform: translateY(-2px);
+  transition: opacity var(--transition-fast), transform var(--transition-fast);
+  pointer-events: none;
+}
+.chat-msg-user-row:hover .chat-m-hoverbar,
+.chat-msg-assistant-row:hover .chat-m-hoverbar,
+.chat-m-hoverbar:focus-within {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-m-hoverbar { transition: none; }
+}
+
+.chat-m-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-width: 420px;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-secondary);
+}
+.chat-m-confirm-note {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
+}
+.chat-m-confirm-actions { display: flex; justify-content: flex-end; gap: var(--space-2); }

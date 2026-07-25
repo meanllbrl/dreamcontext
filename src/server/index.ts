@@ -106,7 +106,7 @@ import {
   handleAgentCouncilLive,
   attachAgentTerminal,
 } from './routes/agent-terminal.js';
-import { attachAgentChat } from './routes/agent-chat.js';
+import { attachAgentChat, handleAgentChatHistory, handleAgentFile, handleAgentReveal, handleAgentGrant } from './routes/agent-chat.js';
 import { handleAgentDrop } from './routes/agent-drop.js';
 import { handleAgentSessionsGet, handleAgentSessionsPut } from './routes/agent-sessions.js';
 import { handleConnectionsList, handleConnectionsCreate, handleConnectionsDelete } from './routes/connections.js';
@@ -317,6 +317,14 @@ function buildRouter(): Router {
   router.get('/api/agent/model-config', handleAgentModelConfig);
   router.get('/api/agent/session-model', handleAgentSessionModel);
   router.get('/api/agent/session-stats', handleAgentSessionStats);
+  router.get('/api/agent/chat-history', handleAgentChatHistory);
+  // Chat (BETA) file preview: read one file under the active vault's PROJECT root (never
+  // `_dream_context/`-scoped like `graph/content`) — the slide-over/lightbox surfaces.
+  router.get('/api/agent/file', handleAgentFile);
+  // Hand a file the transcript can't render (outside the project root) to the OS.
+  router.post('/api/agent/reveal', handleAgentReveal);
+  // The user allowing ONE named file outside the project root to be shown inline.
+  router.post('/api/agent/grant', handleAgentGrant);
   router.get('/api/agent/goal-live', handleAgentGoalLive);
   router.get('/api/agent/council-live', handleAgentCouncilLive);
   router.post('/api/agent/open-terminal', handleOpenTerminal);

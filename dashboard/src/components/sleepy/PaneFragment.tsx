@@ -4,8 +4,9 @@ import { AGENT_TAB_MIME } from './AgentTabs';
 /**
  * One PANE of the expanded overlay — the terminal slot for that pane's ACTIVE session,
  * plus the dormant "Session saved → Resume" card. The session's identity + per-session
- * controls now live on its TAB in the top bar ({@link AgentTabs}); a pane is just the
- * terminal surface.
+ * controls live on its TAB, and every pane's tab group now sits in the overlay HEADER
+ * ({@link AgentTabs} inside `.agent-overlay-tabs`) — a pane is just the terminal surface
+ * plus its composer.
  *
  * The detached xterm container is appended into `.agent-pane-slot[data-pane=<id>]`
  * imperatively by AgentSurface's layout effect (never React-rendered), so switching the
@@ -21,12 +22,9 @@ import { AGENT_TAB_MIME } from './AgentTabs';
 type Zone = 'left' | 'center' | 'right';
 
 export function PaneFragment({
-  paneId, active, dormant, dragging, tabbar, composer, onZoneTarget, onResume, onClose, onActivate,
+  paneId, active, dormant, dragging, composer, onZoneTarget, onResume, onClose, onActivate,
 }: {
   paneId: string;
-  /** This pane's own tab bar (rendered at the top of the pane so tabs sit directly above
-   *  the terminal they drive). Built by AgentSurface and passed in. */
-  tabbar?: React.ReactNode;
   /** This pane's OWN composer strip (files + skills + this agent's live model/effort),
    *  pinned to the bottom of the pane so every agent gets its own bar. Built by
    *  AgentSurface and passed in; omitted for a dormant pane. */
@@ -81,7 +79,6 @@ export function PaneFragment({
       className={'agent-pane' + (active ? ' active' : '')}
       onMouseDownCapture={() => onActivate?.()}
     >
-      {tabbar}
       <div className="agent-pane-slot" data-pane={paneId} />
       {/* This pane's own bottom strip — files/skills + THIS agent's live model & effort. */}
       {composer}

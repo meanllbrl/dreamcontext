@@ -34,17 +34,67 @@ export interface QuestionSpec {
   multiSelect?: boolean;
 }
 
+/**
+ * One assistant turn's token footprint, straight off the `assistant` frame's
+ * `message.usage`. `total` is the sum the CONTEXT WINDOW actually holds — fresh input +
+ * both cache buckets + the output just produced — which is the same arithmetic the server
+ * does over a flushed transcript (agent-terminal.ts's `computeSessionStats`).
+ *
+ * Why the client needs its own copy: Claude Code ≥2.1.x flushes a live session's transcript
+ * only on exit/rotation, so `GET /api/agent/session-stats` reports nulls for the entire life
+ * of a chat — the stream is the ONLY live source of these numbers.
+ */
+export interface TurnUsage {
+  input: number;
+  cacheCreation: number;
+  cacheRead: number;
+  output: number;
+  /** input + cacheCreation + cacheRead + output — how full the window is after this turn. */
+  total: number;
+  /** The model that ran the turn, for picking the 200K vs 1M window. */
+  model?: string;
+}
+
 export type ChatEvent =
-  | { kind: 'init'; sessionId: string; model?: string; permissionMode?: string; capabilities?: string[]; version?: string }
+  | { kind: 'init'; sessionId: string; model?: string; permissionMode?: string; capabilities?: string[]; version?: string; slashCommands?: string[] }
+  /** A `Task`/`Agent`-tool sub-agent was dispatched. Empirically verified on CLI
+   *  2.1.218 (a real Task-tool spike, task_nQb0y85X round 3): the sub-agent's own
+   *  assistant text/thinking is NEVER streamed to the parent, and `parent_tool_use_id`
+   *  never appears on a text/thinking content block — so sub-agent activity can ONLY
+   *  be reconstructed from this frame + `task-updated`/`task-notification` below, not
+   *  from block-level attribution. */
+  | { kind: 'task-started'; taskId: string; toolUseId?: string; description: string; subagentType?: string; taskType?: string; prompt?: string }
+  /** A lifecycle status patch for an already-started task (e.g. `status:'completed'`). */
+  | { kind: 'task-updated'; taskId: string; status?: string; endTime?: number }
+  /** The sub-agent's own run finished (or reported progress): final status, a short
+   *  summary, and usage totals. `outputFile` (the sub-agent's own transcript path) is
+   *  carried through but is NOT trusted/used client-side — the drill-in transcript is
+   *  fetched via the server-derived `?subagent=` history route instead (see
+   *  agent-chat.ts), never from this client-visible path. */
+  | { kind: 'task-notification'; taskId: string; toolUseId?: string; status?: string; outputFile?: string; summary?: string; usage?: { totalTokens?: number; toolUses?: number; durationMs?: number } }
   | { kind: 'block-start'; index: number; blockType: 'text' | 'thinking' | 'tool_use'; toolName?: string; toolUseId?: string; toolInput?: unknown; parentToolUseId?: string }
   | { kind: 'text-delta'; index: number; text: string }
   | { kind: 'thinking-delta'; index: number; text: string }
   | { kind: 'block-stop'; index: number }
-  | { kind: 'assistant-tool-use'; toolUseId: string; name: string; input: unknown; parentToolUseId?: string }
+  | { kind: 'assistant-tool-use'; toolUseId: string; name: string; input: unknown; parentToolUseId?: string; turnUsage?: TurnUsage }
+  /** The full-message echo of a text/thinking content block on an `assistant` frame. LOAD-
+   *  BEARING for short replies: the CLI often emits NO `text_delta` at all for a brief text
+   *  block (observed empirically — "pong" arrived only in the assistant frame), so the echo
+   *  is the AUTHORITATIVE full text that upgrades (or, for synthetic local-command replies
+   *  like "Set effort level to low", creates) the transcript item. */
+  | { kind: 'assistant-text'; text: string; synthetic: boolean; turnUsage?: TurnUsage }
+  | { kind: 'assistant-thinking'; text: string; turnUsage?: TurnUsage }
   | { kind: 'tool-result'; toolUseId: string; content: unknown; isError: boolean }
+  /** A `control_response` ack for a control request WE sent (set_model / rewind_conversation).
+   *  `payload` is the CLI's nested `response` object when present (e.g. rewind's
+   *  `{rewound, prefillText, precedingAssistantUuid, error?}`). */
+  | { kind: 'control-ack'; requestId: string; ok: boolean; payload?: Record<string, unknown>; error?: string }
   | { kind: 'permission-request'; requestId: string; toolName: string; displayName?: string; input: unknown; description?: string; suggestions?: unknown[]; toolUseId?: string }
   | { kind: 'question'; requestId: string; toolName: string; questions: QuestionSpec[] }
   | { kind: 'result'; success: boolean; text?: string; costUsd?: number; usage?: Record<string, unknown>; numTurns?: number; permissionDenials?: unknown[] }
+  /** The server's cached slash-command list for this project, sent at connect. Carries the
+   *  same payload `init.slashCommands` does; whichever arrives later wins. */
+  | { kind: 'slash-commands'; commands: string[] }
   | { kind: 'meta-exit'; code: number | null }
   | { kind: 'meta-error'; message: string }
   | { kind: 'ignored'; rawType: string };
@@ -54,7 +104,25 @@ export type ChatEvent =
 export type ClientControl =
   | { type: 'user'; text: string }
   | { type: 'answer'; requestId: string; behavior: 'allow' | 'deny'; updatedInput?: unknown; message?: string }
-  | { type: 'interrupt' };
+  | { type: 'interrupt' }
+  /** Live model switch — the server translates this into a `set_model` control_request
+   *  (verified on CLI 2.1.218: accepts aliases AND full ids, re-emits `system:init` with
+   *  the new model). `requestId` is CLIENT-generated so the `control-ack` can be matched. */
+  | { type: 'setModel'; requestId: string; model: string }
+  /** Live effort switch — the server translates this into a `/effort <level>` user frame
+   *  (no `set_reasoning_effort` control exists on 2.1.218; the slash command works headlessly
+   *  and yields a synthetic assistant "Set effort level to <level>" echo). */
+  | { type: 'setEffort'; effort: string }
+  /** Live permission-mode switch — the server translates this into a `set_permission_mode`
+   *  control_request (`mode: 'acceptEdits' | 'bypassPermissions'`). Present on CLI 2.1.220's
+   *  headless engine; the ack (matched by this CLIENT-generated `requestId`) is what tells
+   *  the caller whether the switch actually landed, so a rejection can fall back to
+   *  respawning the same conversation in the new mode. */
+  | { type: 'setPermissionMode'; requestId: string; mode: 'auto' | 'bypass' }
+  /** Rewind the conversation to just BEFORE the user message with this transcript uuid —
+   *  translated into a `rewind_conversation` control_request (`interrupt_if_running: true`).
+   *  Conversation-only: the CLI does NOT restore files through this channel. */
+  | { type: 'rewind'; requestId: string; targetUuid: string };
 
 // ─── Small object-shape helpers (kept local — this module takes no dependencies) ───
 
@@ -81,13 +149,82 @@ function fromSystemInit(obj: Record<string, unknown>): ChatEvent {
   const capabilities = Array.isArray(obj.capabilities)
     ? obj.capabilities.filter((c): c is string => typeof c === 'string')
     : undefined;
+  // The CLI's own list of user-invocable commands, WITHOUT the leading slash — built-ins,
+  // project commands and plugin/skill commands alike, exactly what its TUI menu offers. It
+  // is per-session (a project's `.claude/commands/` differs from the next one's), so it can
+  // only come from this frame; there is no static list to hardcode against.
+  const slashCommands = Array.isArray(obj.slash_commands)
+    ? obj.slash_commands.filter((c): c is string => typeof c === 'string' && !!c)
+    : undefined;
   return {
     kind: 'init',
     sessionId,
+    slashCommands,
     model: str(obj.model),
     permissionMode: str(obj.permissionMode),
     capabilities,
     version: str(obj.claude_code_version),
+  };
+}
+
+// ─── system:task_* (sub-agent lifecycle — state 9) ─────────────────────────────────
+//
+// Empirically verified on CLI 2.1.218 (a real Task-tool spike, task_nQb0y85X round 3):
+// a dispatched sub-agent's stream carries `system:task_started` → a top-level `user`
+// frame (parent_tool_use_id + prompt echo, intentionally NOT surfaced as its own event
+// — the delegated prompt is already carried on `task-started.prompt`) →
+// `system:task_updated` → `system:task_notification` → a final `user` tool_result
+// (already handled by `fromUserFrame`/`fromAssistant` as an ordinary `tool-result`,
+// correlated client-side by `toolUseId`). A missing `task_id` (or, for task_started,
+// a missing `description`) degrades to `ignored` rather than emitting a half-formed
+// event nothing downstream can key by.
+
+function fromTaskStarted(obj: Record<string, unknown>): ChatEvent {
+  const taskId = str(obj.task_id);
+  const description = str(obj.description);
+  if (!taskId || !description) return ignored('system:task_started');
+  return {
+    kind: 'task-started',
+    taskId,
+    toolUseId: str(obj.tool_use_id),
+    description,
+    subagentType: str(obj.subagent_type),
+    taskType: str(obj.task_type),
+    prompt: str(obj.prompt),
+  };
+}
+
+function fromTaskUpdated(obj: Record<string, unknown>): ChatEvent {
+  const taskId = str(obj.task_id);
+  if (!taskId) return ignored('system:task_updated');
+  const patch = isRecord(obj.patch) ? obj.patch : {};
+  return {
+    kind: 'task-updated',
+    taskId,
+    status: str(patch.status),
+    endTime: typeof patch.end_time === 'number' ? patch.end_time : undefined,
+  };
+}
+
+function fromTaskNotification(obj: Record<string, unknown>): ChatEvent {
+  const taskId = str(obj.task_id);
+  if (!taskId) return ignored('system:task_notification');
+  const usageRaw = isRecord(obj.usage) ? obj.usage : undefined;
+  const usage = usageRaw
+    ? {
+      totalTokens: typeof usageRaw.total_tokens === 'number' ? usageRaw.total_tokens : undefined,
+      toolUses: typeof usageRaw.tool_uses === 'number' ? usageRaw.tool_uses : undefined,
+      durationMs: typeof usageRaw.duration_ms === 'number' ? usageRaw.duration_ms : undefined,
+    }
+    : undefined;
+  return {
+    kind: 'task-notification',
+    taskId,
+    toolUseId: str(obj.tool_use_id),
+    status: str(obj.status),
+    outputFile: str(obj.output_file),
+    summary: str(obj.summary),
+    usage,
   };
 }
 
@@ -167,11 +304,40 @@ function fromStreamEvent(obj: Record<string, unknown>): ChatEvent {
  * `assistant-tool-use` — the fallback path for tool calls that don't arrive via
  * `content_block_start` (mirrors sleepy-chat.ts's belt-and-suspenders handling). A
  * `tool_result` block (present on a USER-role frame echoing a tool's output back to the
- * model) surfaces as `tool-result`. Only the FIRST recognized block in the array is
- * translated — Claude Code's one-block-per-frame contract means a second block, if ever
- * present, would need its own frame; translating just the first keeps this a 1:1 mapping
- * and avoids silently dropping a caller that expects one event per line.
+ * model) surfaces as `tool-result`. A text/thinking block surfaces as
+ * `assistant-text`/`assistant-thinking` — the AUTHORITATIVE full-block echo (the CLI can
+ * skip `text_delta`s entirely for short replies, so this is not a duplicate: it is the
+ * only guaranteed carrier of the block's complete text). Only the FIRST recognized block
+ * in the array is translated — Claude Code's one-block-per-frame contract means a second
+ * block, if ever present, would need its own frame; translating just the first keeps this
+ * a 1:1 mapping and avoids silently dropping a caller that expects one event per line.
  */
+function n(v: unknown): number {
+  return typeof v === 'number' && Number.isFinite(v) ? v : 0;
+}
+
+/**
+ * `message.usage` off an ASSISTANT frame → {@link TurnUsage}. Returns undefined for
+ * anything else, which is what keeps a user frame's tool_result echo (routed through the
+ * same block extraction) and a `<synthetic>` local-command reply from being mistaken for a
+ * real turn. A frame carrying `parent_tool_use_id` is a SUB-AGENT's turn: its tokens live
+ * in that sub-agent's own window, not the conversation's, so it is skipped too — the same
+ * distinction the server makes with the transcript's `isSidechain`.
+ */
+function usageOf(frame: Record<string, unknown>, message: Record<string, unknown>): TurnUsage | undefined {
+  if (message.role !== 'assistant' || message.model === '<synthetic>') return undefined;
+  if (typeof frame.parent_tool_use_id === 'string' && frame.parent_tool_use_id) return undefined;
+  const u = message.usage;
+  if (!isRecord(u)) return undefined;
+  const input = n(u.input_tokens);
+  const cacheCreation = n(u.cache_creation_input_tokens);
+  const cacheRead = n(u.cache_read_input_tokens);
+  const output = n(u.output_tokens);
+  const total = input + cacheCreation + cacheRead + output;
+  if (total <= 0) return undefined;
+  return { input, cacheCreation, cacheRead, output, total, model: str(message.model) };
+}
+
 function fromAssistant(obj: Record<string, unknown>): ChatEvent {
   const message = isRecord(obj.message) ? obj.message : {};
   const content = message.content;
@@ -179,6 +345,7 @@ function fromAssistant(obj: Record<string, unknown>): ChatEvent {
   const block = content.find((c) => isRecord(c)) as Record<string, unknown> | undefined;
   if (!block) return ignored('assistant:no_content');
   const blockType = str(block.type);
+  const turnUsage = usageOf(obj, message);
   if (blockType === 'tool_use' && typeof block.name === 'string' && typeof block.id === 'string') {
     return {
       kind: 'assistant-tool-use',
@@ -186,6 +353,7 @@ function fromAssistant(obj: Record<string, unknown>): ChatEvent {
       name: block.name,
       input: 'input' in block ? block.input : undefined,
       parentToolUseId: str(block.parent_tool_use_id),
+      turnUsage,
     };
   }
   if (blockType === 'tool_result' && typeof block.tool_use_id === 'string') {
@@ -196,9 +364,27 @@ function fromAssistant(obj: Record<string, unknown>): ChatEvent {
       isError: bool(block.is_error),
     };
   }
-  // A plain text/thinking block on an `assistant` frame duplicates the stream_event
-  // deltas already rendering it — nothing new for the UI here.
+  if (blockType === 'text' && typeof block.text === 'string' && block.text) {
+    // `<synthetic>` marks a locally-generated reply (e.g. `/effort`'s "Set effort level to
+    // low") — no stream deltas ever accompany it, so the reducer appends it as a done item.
+    return { kind: 'assistant-text', text: block.text, synthetic: message.model === '<synthetic>', turnUsage };
+  }
+  if (blockType === 'thinking' && typeof block.thinking === 'string' && block.thinking) {
+    return { kind: 'assistant-thinking', text: block.thinking, turnUsage };
+  }
   return ignored('assistant:' + (blockType ?? 'unknown'));
+}
+
+/**
+ * A top-level `user` frame carries either a tool_result echo (rendered — routed through
+ * the same block extraction as `assistant`), or local-command/synthetic chatter
+ * (`<local-command-stdout>…` strings, `isSynthetic` continuation nudges) that the UI does
+ * not render. Critically, a user frame's TEXT block must NOT surface as `assistant-text` —
+ * so this wrapper only lets tool_result extractions through.
+ */
+function fromUserFrame(obj: Record<string, unknown>): ChatEvent {
+  const ev = fromAssistant(obj);
+  return ev.kind === 'tool-result' ? ev : ignored('user:non_tool_result');
 }
 
 // ─── control_request (permission prompts + AskUserQuestion) ───────────────────────
@@ -251,6 +437,28 @@ function fromControlRequest(obj: Record<string, unknown>): ChatEvent {
   };
 }
 
+// ─── control_response (ack for a control request WE sent) ──────────────────────────
+
+/**
+ * `{"type":"control_response","response":{"subtype":"success"|"error","request_id":…,
+ *  "response":{…}?, "error":…?}}` — the CLI's ack envelope for `set_model` /
+ * `rewind_conversation` / `interrupt` control requests (verified on 2.1.218). Surfaced so
+ * chatSession can match its own client-generated request ids; acks for requests we don't
+ * track (e.g. the server's interrupt) are simply never matched and fall through harmlessly.
+ */
+function fromControlResponse(obj: Record<string, unknown>): ChatEvent {
+  const resp = isRecord(obj.response) ? obj.response : {};
+  const requestId = str(resp.request_id) ?? '';
+  if (!requestId) return ignored('control_response:no_request_id');
+  return {
+    kind: 'control-ack',
+    requestId,
+    ok: str(resp.subtype) === 'success',
+    payload: isRecord(resp.response) ? resp.response : undefined,
+    error: str(resp.error),
+  };
+}
+
 // ─── result (final turn summary) ───────────────────────────────────────────────────
 
 function fromResult(obj: Record<string, unknown>): ChatEvent {
@@ -276,6 +484,15 @@ function fromMeta(obj: Record<string, unknown>): ChatEvent {
   if (subtype === 'error') {
     return { kind: 'meta-error', message: str(obj.message) ?? 'Unknown error' };
   }
+  // The server replaying this project's LAST known command list at connect time, because
+  // the CLI withholds `system:init` until a turn starts — without it, `/` would do nothing
+  // on the first message of every session. See agent-chat.ts's slash-cache note.
+  if (subtype === 'slash_commands') {
+    const commands = Array.isArray(obj.commands)
+      ? obj.commands.filter((c): c is string => typeof c === 'string' && !!c)
+      : [];
+    return commands.length ? { kind: 'slash-commands', commands } : ignored('_meta:slash_commands');
+  }
   return ignored('_meta:' + (subtype ?? 'unknown'));
 }
 
@@ -284,8 +501,12 @@ function fromMeta(obj: Record<string, unknown>): ChatEvent {
 function fromSystem(obj: Record<string, unknown>): ChatEvent {
   const subtype = str(obj.subtype);
   if (subtype === 'init') return fromSystemInit(obj);
-  // hook_started / hook_response / status / thinking_tokens — observed noise the
-  // parser must tolerate (global hooks + status pings fire during a headless run).
+  if (subtype === 'task_started') return fromTaskStarted(obj);
+  if (subtype === 'task_updated') return fromTaskUpdated(obj);
+  if (subtype === 'task_notification') return fromTaskNotification(obj);
+  // hook_started / hook_response / status / thinking_tokens / any other subtype —
+  // observed or future noise the parser must tolerate (global hooks + status pings
+  // fire during a headless run).
   return ignored('system:' + (subtype ?? 'unknown'));
 }
 
@@ -308,13 +529,16 @@ export function toChatEvent(obj: Record<string, unknown>): ChatEvent {
       return fromAssistant(obj);
     // A `tool_result` content block is echoed back to the model on a top-level
     // `type:'user'` frame (Messages API convention — confirmed against this repo's
-    // own transcript parser at agent-terminal.ts:591). `fromAssistant` already
-    // extracts tool_result blocks from `message.content`; route user frames through
-    // the same path so those results actually reach the tool card.
+    // own transcript parser at agent-terminal.ts:591). `fromUserFrame` routes user
+    // frames through the same block extraction but lets ONLY tool_result through —
+    // a user frame's text (synthetic nudges, `<local-command-stdout>`) must never
+    // render as an assistant bubble.
     case 'user':
-      return fromAssistant(obj);
+      return fromUserFrame(obj);
     case 'control_request':
       return fromControlRequest(obj);
+    case 'control_response':
+      return fromControlResponse(obj);
     case 'result':
       return fromResult(obj);
     case '_meta':

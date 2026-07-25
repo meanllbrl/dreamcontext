@@ -1,18 +1,20 @@
-import type { IncomingMessage } from 'node:http';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Server } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { join } from 'node:path';
+import { join, dirname, basename, extname } from 'node:path';
 import { tmpdir } from 'node:os';
-import { writeFileSync, rmSync } from 'node:fs';
+import { writeFileSync, rmSync, readFileSync, existsSync, statSync, readdirSync, createReadStream } from 'node:fs';
+import { sendJson, sendError } from '../middleware.js';
 import { isDesktop } from '../desktop.js';
 import { trackChild } from '../lifecycle.js';
 import { resolveAgentSession } from '../../lib/agent-session-map.js';
+import { safeChildPath } from '../safe-path.js';
 import {
   isLoopback, rejectUpgrade, resolveVaultProjectRoot, projectRootOf,
   sanitizeUuid, sanitizeModel, sanitizeEffort, sanitizePrompt,
-  claudeConversationExists, redeemPromptToken,
+  claudeConversationExists, redeemPromptToken, findFirstTranscriptPath,
 } from './agent-spawn-shared.js';
 
 /**
@@ -37,6 +39,38 @@ import {
 // ─── Live-conversation guard (chat's OWN set — see agent-chat.ts's dependency-map row:
 //    this does NOT share agent-terminal.ts's Set, a documented beta limitation) ────────
 
+// ─── Slash-command list cache (per project) ──────────────────────────────────────────
+//
+// `claude -p --input-format stream-json` emits `system:init` — the frame carrying
+// `slash_commands` — only AFTER its first stdin USER frame, not at process start
+// (empirically verified on 2.1.220: a `control_request` gets a `control_response` but no
+// init). So a freshly-opened chat has no command list until the user has already sent a
+// message — exactly backwards for a `/` autocomplete, which is most wanted on the FIRST
+// message.
+//
+// The fix is a cache, never a hardcoded list: whatever the CLI reported for this project
+// last time is replayed to a new session immediately, and every real init overwrites it.
+// Worst case it is one session stale (a command added since the last turn); cold start on a
+// project that has never run a turn simply has no menu, which is honest.
+
+const SLASH_CACHE_FILE = '.slash-commands.json';
+
+function slashCachePath(contextRoot: string): string {
+  return join(contextRoot, 'state', SLASH_CACHE_FILE);
+}
+
+function readSlashCache(contextRoot: string): string[] | null {
+  try {
+    const raw = JSON.parse(readFileSync(slashCachePath(contextRoot), 'utf-8')) as { commands?: unknown };
+    const list = Array.isArray(raw.commands) ? raw.commands.filter((c): c is string => typeof c === 'string' && !!c) : [];
+    return list.length ? list : null;
+  } catch { return null; }
+}
+
+function writeSlashCache(contextRoot: string, commands: string[]): void {
+  try { writeFileSync(slashCachePath(contextRoot), JSON.stringify({ commands }), 'utf-8'); } catch { /* best-effort */ }
+}
+
 /** Conversation ids currently attached to a live chat process in THIS server. Prevents
  *  two chat sessions from double-attaching the same conversation (a Claude conversation
  *  must have at most one writer). Does NOT know about the terminal route's own Set —
@@ -51,6 +85,13 @@ const liveConversations = new Set<string>();
  *  unit-testable in isolation (AC11's permission-mode mapping test). */
 export function permissionModeFor(bypass: boolean): 'bypassPermissions' | 'acceptEdits' {
   return bypass ? 'bypassPermissions' : 'acceptEdits';
+}
+
+/** Client-generated control-request id gate (setModel/rewind acks are matched client-side
+ *  by this id, so it must round-trip verbatim): short token charset only, else '' (the
+ *  caller substitutes a server-side randomUUID, losing only the client's ack matching). */
+export function sanitizeControlId(v: unknown): string {
+  return typeof v === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(v) ? v : '';
 }
 
 // ─── WS upgrade ─────────────────────────────────────────────────────────────────────
@@ -154,9 +195,10 @@ function startChatSession(
 
   // Deferred initial prompt (Task Manager contract — "the user speaks first"): mirrors
   // agent-terminal.ts's parking pattern exactly. A non-deferred prompt is instead sent as
-  // the first USER stdin frame once `system:init` is observed (see the stdout handler
-  // below) — there is no shell positional/argv equivalent in stream-json input mode, so
-  // this is chat's version of the terminal's auto-submit-on-boot.
+  // the first USER stdin frame IMMEDIATELY after spawn — empirically (CLI 2.1.218), in
+  // stream-json input mode the CLI emits `system:init` only AFTER the first stdin frame
+  // arrives, so gating the prompt on init deadlocks a delegated session forever (stdin
+  // frames queue safely pre-init; sleepy-chat.ts has always written first, same as here).
   let submitPrompt = initialPrompt;
   let deferredEnv: Record<string, string> = {};
   let cleanupDeferred = () => { /* nothing parked */ };
@@ -209,12 +251,21 @@ function startChatSession(
   // answer/interrupt frame arriving after the child has exited must never throw on a
   // destroyed stdin stream.
   let alive = true;
-  let sawInit = false;
-  let initPromptSent = false;
   let interruptWatchdog: ReturnType<typeof setTimeout> | null = null;
   let interruptKillTimer: ReturnType<typeof setTimeout> | null = null;
 
   const untrack = trackChild(child);
+
+  // Auto-submit the (non-deferred) initial prompt as the first stdin frame — see the
+  // deferred-prompt note above for why this must NOT wait for `system:init`.
+  if (submitPrompt) {
+    try {
+      child.stdin.write(JSON.stringify({
+        type: 'user',
+        message: { role: 'user', content: [{ type: 'text', text: submitPrompt }] },
+      }) + '\n');
+    } catch { /* child died at spawn — the close handler reports it */ }
+  }
 
   const clearInterruptTimers = () => {
     if (interruptWatchdog) { clearTimeout(interruptWatchdog); interruptWatchdog = null; }
@@ -234,6 +285,13 @@ function startChatSession(
       try { ws.send(JSON.stringify({ type: '_meta', ...frame })); } catch { /* closing */ }
     }
   };
+
+  // Hand the client this project's known slash commands right away, so `/` autocompletes on
+  // the very FIRST message instead of only after the CLI has emitted its own `system:init`
+  // (which it withholds until a turn has started — see the cache's header note). A real init
+  // later in this stream carries the same field and simply supersedes this.
+  const cachedSlash = readSlashCache(contextRoot);
+  if (cachedSlash) sendMeta({ subtype: 'slash_commands', commands: cachedSlash });
 
   const teardown = (): void => {
     if (!alive) return;
@@ -260,25 +318,25 @@ function startChatSession(
       }
 
       // Light local parse (type/subtype only — full typed parsing is the CLIENT's job,
-      // chatProtocol.ts) so the server knows WHEN to send the initial prompt and when an
-      // interrupt has actually resolved. Never throws on non-JSON/partial lines.
+      // chatProtocol.ts) so the server knows when an interrupt has actually resolved.
+      // Never throws on non-JSON/partial lines.
       let obj: Record<string, unknown> | null = null;
       try { obj = JSON.parse(trimmed) as Record<string, unknown>; } catch { /* partial line */ }
       if (!obj) continue;
-
-      if (!sawInit && obj.type === 'system' && obj.subtype === 'init') {
-        sawInit = true;
-        if (submitPrompt && !initPromptSent) {
-          initPromptSent = true;
-          writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: submitPrompt }] } });
-        }
-      }
 
       // An interrupt resolves either as a `result` frame or the CLI's own control_response
       // acking the interrupt request — either is "the turn is winding down", so disarm the
       // escalation watchdog (the child's own exit is still tracked separately below).
       if (interruptWatchdog && (obj.type === 'result' || obj.type === 'control_response')) {
         clearInterruptTimers();
+      }
+
+      // Refresh the project's slash-command cache from the authoritative source every time
+      // the CLI reports one, so a NEW session can be handed the list before its first turn
+      // (see the cache's header note for why the stream alone can't do that).
+      if (obj.type === 'system' && obj.subtype === 'init' && Array.isArray(obj.slash_commands)) {
+        const list = obj.slash_commands.filter((c): c is string => typeof c === 'string' && !!c);
+        if (list.length) writeSlashCache(contextRoot, list);
       }
     }
   });
@@ -305,11 +363,70 @@ function startChatSession(
   ws.on('message', (raw: Buffer | string) => {
     if (!alive) return;
     const str = typeof raw === 'string' ? raw : raw.toString('utf-8');
-    let msg: { type?: string; text?: string; requestId?: string; behavior?: string; updatedInput?: unknown; message?: string };
+    let msg: {
+      type?: string; text?: string; requestId?: string; behavior?: string; updatedInput?: unknown;
+      message?: string; model?: string; effort?: string; targetUuid?: string; mode?: string;
+    };
     try { msg = JSON.parse(str); } catch { return; } // malformed control frame — ignore
 
     if (msg.type === 'user' && typeof msg.text === 'string' && msg.text) {
       writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: msg.text }] } });
+      return;
+    }
+
+    // Live model switch → `set_model` control_request (empirically verified on 2.1.218:
+    // accepts aliases and full ids, acks with control_response, re-emits system:init with
+    // the new model). The CLIENT generates the request id so it can match the ack; it is
+    // whitelist-checked here before echoing into the CLI frame.
+    if (msg.type === 'setModel' && typeof msg.model === 'string') {
+      const model = sanitizeModel(msg.model);
+      const requestId = sanitizeControlId(msg.requestId) || randomUUID();
+      if (model) {
+        writeStdin({ type: 'control_request', request_id: requestId, request: { subtype: 'set_model', model } });
+      }
+      return;
+    }
+
+    // Live permission-mode switch → `set_permission_mode` control_request. The CLI (2.1.220)
+    // validates the mode string against its own list and acks; both modes we can ask for
+    // (`acceptEdits`/`bypassPermissions`) are on it. This is what lets Auto↔Bypass take
+    // effect on the RUNNING conversation instead of only on the next spawn — the client
+    // falls back to resuming the same conversation id if the ack comes back rejected (an
+    // older CLI answers "not supported in this context").
+    if (msg.type === 'setPermissionMode' && (msg.mode === 'auto' || msg.mode === 'bypass')) {
+      const requestId = sanitizeControlId(msg.requestId) || randomUUID();
+      writeStdin({
+        type: 'control_request',
+        request_id: requestId,
+        request: { subtype: 'set_permission_mode', mode: permissionModeFor(msg.mode === 'bypass') },
+      });
+      return;
+    }
+
+    // Live effort switch → a `/effort <level>` user frame (no effort control_request exists
+    // on 2.1.218; the slash command is handled locally by the CLI, which replies with a
+    // synthetic "Set effort level to <level>" assistant frame — also empirically verified).
+    if (msg.type === 'setEffort' && typeof msg.effort === 'string') {
+      const effort = sanitizeEffort(msg.effort);
+      if (effort) {
+        writeStdin({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: `/effort ${effort}` }] } });
+      }
+      return;
+    }
+
+    // Conversation rewind → `rewind_conversation` control_request (verified on 2.1.218:
+    // acks {rewound, prefillText, precedingAssistantUuid}; conversation-only — file state
+    // is NOT restored). `interrupt_if_running` lets a rewind land mid-turn.
+    if (msg.type === 'rewind' && typeof msg.targetUuid === 'string') {
+      const target = sanitizeUuid(msg.targetUuid);
+      const requestId = sanitizeControlId(msg.requestId) || randomUUID();
+      if (target) {
+        writeStdin({
+          type: 'control_request',
+          request_id: requestId,
+          request: { subtype: 'rewind_conversation', target_message_uuid: target, interrupt_if_running: true },
+        });
+      }
       return;
     }
 
@@ -352,4 +469,521 @@ function startChatSession(
 
   ws.on('close', teardown);
   ws.on('error', teardown);
+}
+
+// ─── Transcript history (GET /api/agent/chat-history) ─────────────────────────────────
+//
+// `claude --resume` never re-emits past frames over stream-json, so a RESUMED chat session
+// would open onto a blank transcript. This route replays the on-disk transcript
+// (`~/.claude/projects/<slug>/<uuid>.jsonl`) as a flat item list the chat UI can seed its
+// history from — and, because each user entry carries its transcript `uuid`, it doubles as
+// the rewind-anchor source (rewind_conversation targets a user message's uuid).
+
+/** One replayed transcript item — the wire shape of `chat-history`'s `items`, mirroring the
+ *  client's ChatItem vocabulary (chatSession.ts) minus live-only bookkeeping. */
+export interface ChatHistoryItem {
+  kind: 'user' | 'text' | 'thinking' | 'tool';
+  uuid?: string;
+  text?: string;
+  toolUseId?: string;
+  name?: string;
+  input?: unknown;
+  status?: 'done' | 'error';
+  result?: unknown;
+}
+
+/** Ceiling on replayed items — a months-old conversation can hold thousands of entries;
+ *  the tail is what a returning user needs (and rewind targets live there too). */
+const HISTORY_MAX_ITEMS = 500;
+/** Per-value ceiling for tool inputs/results (a single Read result can be hundreds of KB —
+ *  pointless over the seed payload; the collapsible card shows the head + a truncation mark). */
+const HISTORY_MAX_VALUE_CHARS = 4000;
+
+function truncateValue(v: unknown): unknown {
+  if (v === undefined || v === null) return v;
+  if (typeof v === 'string') {
+    return v.length > HISTORY_MAX_VALUE_CHARS ? v.slice(0, HISTORY_MAX_VALUE_CHARS) + '\n… [truncated]' : v;
+  }
+  try {
+    const s = JSON.stringify(v);
+    if (s.length <= HISTORY_MAX_VALUE_CHARS) return v;
+    return s.slice(0, HISTORY_MAX_VALUE_CHARS) + '… [truncated]';
+  } catch { return String(v); }
+}
+
+/**
+ * Parse a Claude Code transcript JSONL into replayable history items. Exported pure for
+ * unit tests. Tolerates every foreign entry type (`summary`, `file-history-snapshot`,
+ * queued-command stubs, …) and malformed lines by skipping them — a transcript is an
+ * append-only log written by a different program version than ours, so unknown shapes are
+ * the NORM, not an error. Filters what a human never typed: meta/synthetic entries and
+ * `<`-wrapped command/reminder stubs (same rule as agent-terminal.ts's firstUserMessage).
+ */
+export function parseTranscriptHistory(raw: string): ChatHistoryItem[] {
+  const items: ChatHistoryItem[] = [];
+  const toolPos = new Map<string, number>(); // tool_use_id -> index in items
+  for (const line of raw.split('\n')) {
+    const s = line.trim();
+    if (!s) continue;
+    let obj: {
+      type?: unknown; uuid?: unknown; isMeta?: unknown; isSynthetic?: unknown;
+      message?: { role?: unknown; content?: unknown };
+    };
+    try { obj = JSON.parse(s); } catch { continue; }
+    if (!obj || typeof obj !== 'object') continue;
+
+    if (obj.type === 'user') {
+      if (obj.isMeta === true || obj.isSynthetic === true) continue;
+      const content = obj.message?.content;
+      const uuid = typeof obj.uuid === 'string' ? obj.uuid : undefined;
+      if (typeof content === 'string') {
+        const text = content.trim();
+        if (text && !text.startsWith('<')) items.push({ kind: 'user', uuid, text });
+        continue;
+      }
+      if (!Array.isArray(content)) continue;
+      const texts: string[] = [];
+      for (const block of content) {
+        if (!block || typeof block !== 'object') continue;
+        const b = block as { type?: unknown; text?: unknown; tool_use_id?: unknown; content?: unknown; is_error?: unknown };
+        if (b.type === 'tool_result' && typeof b.tool_use_id === 'string') {
+          const pos = toolPos.get(b.tool_use_id);
+          if (pos !== undefined) {
+            items[pos] = {
+              ...items[pos],
+              status: b.is_error === true ? 'error' : 'done',
+              result: truncateValue(b.content),
+            };
+          }
+        } else if (b.type === 'text' && typeof b.text === 'string') {
+          const t = b.text.trim();
+          if (t && !t.startsWith('<')) texts.push(t);
+        }
+      }
+      const text = texts.join('\n').trim();
+      if (text) items.push({ kind: 'user', uuid, text });
+      continue;
+    }
+
+    if (obj.type === 'assistant') {
+      const content = obj.message?.content;
+      if (!Array.isArray(content)) continue;
+      for (const block of content) {
+        if (!block || typeof block !== 'object') continue;
+        const b = block as { type?: unknown; text?: unknown; thinking?: unknown; id?: unknown; name?: unknown; input?: unknown };
+        if (b.type === 'text' && typeof b.text === 'string' && b.text.trim()) {
+          items.push({ kind: 'text', text: b.text });
+        } else if (b.type === 'thinking' && typeof b.thinking === 'string' && b.thinking.trim()) {
+          items.push({ kind: 'thinking', text: b.thinking });
+        } else if (b.type === 'tool_use' && typeof b.id === 'string' && typeof b.name === 'string') {
+          toolPos.set(b.id, items.length);
+          items.push({ kind: 'tool', toolUseId: b.id, name: b.name, input: truncateValue(b.input), status: 'done' });
+        }
+      }
+      continue;
+    }
+    // Every other entry type (system, summary, file-history-snapshot, …) — not transcript UI.
+  }
+  return items.length > HISTORY_MAX_ITEMS ? items.slice(-HISTORY_MAX_ITEMS) : items;
+}
+
+/** Strict sub-agent task-id gate for chat-history's `subagent` query param — same
+ *  whitelist-before-filesystem precedent as `sanitizeControlId` above and
+ *  agent-spawn-shared.ts's sanitizeUuid/sanitizeModel family. A `task_id` observed on
+ *  CLI 2.1.218 is a short hex/hyphen token; anything outside `[a-z0-9-]` (or oversized)
+ *  is rejected to '' before it ever reaches a path — `handleAgentChatHistory` additionally
+ *  runs the derived path through `safeChildPath` as a second, independent containment
+ *  layer (see `[[dashboard-server-security]]`'s defense-in-depth guidance). */
+export function sanitizeSubagentId(v: string | null): string {
+  return v && v.length <= 128 && /^[a-z0-9-]+$/i.test(v) ? v : '';
+}
+
+/** GET /api/agent/chat-history?claudeId=<uuid>[&subagent=<taskId>] — the replayable
+ *  transcript of a chat session's conversation (empty when no transcript exists yet,
+ *  exactly like a fresh session). Live-id resolution mirrors agent-terminal.ts's
+ *  liveTranscriptPath: prefer the tab-session map's CURRENT conversation, fall back to
+ *  the pinned id.
+ *
+ *  With `subagent` present, replays a SUB-AGENT's own sidechain transcript instead of the
+ *  parent conversation's — state 9's drill-in. Claude Code writes each dispatched sub-agent's
+ *  turns to `~/.claude/projects/<slug>/<conversationUuid>/subagents/agent-<taskId>.jsonl`
+ *  (empirically verified, CLI 2.1.218: `task_notification`'s `output_file` is a symlink to
+ *  exactly this path). The path is DERIVED here from the already-resolved parent transcript's
+ *  own filename (`<conversationUuid>` = its basename) plus the sanitized `taskId` — the client
+ *  never supplies a path, and `output_file` itself is never read or trusted. This is a
+ *  read-only extension of the SAME transcript channel the base route already uses; it does
+ *  NOT widen `/api/agent/file` (which stays project-root-scoped and cannot reach a path under
+ *  `~/.claude/projects/`, outside the project root, at all). Same tail/truncation discipline
+ *  (`parseTranscriptHistory`, reused verbatim) and the same empty-array degrade on a transcript
+ *  that hasn't flushed yet — the client falls back to a static run summary in that case. */
+export async function handleAgentChatHistory(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string | null,
+): Promise<void> {
+  if (!isDesktop()) { sendJson(res, 200, { items: [] }); return; }
+  const url = new URL(req.url || '/', `http://${req.headers.host}`);
+  const id = sanitizeUuid(url.searchParams.get('claudeId'));
+  if (!id) { sendJson(res, 200, { items: [] }); return; }
+  const liveId = contextRoot ? resolveAgentSession(contextRoot, id) : '';
+  const path = findFirstTranscriptPath([liveId, id]);
+  if (!path) { sendJson(res, 200, { items: [] }); return; }
+
+  const subagent = sanitizeSubagentId(url.searchParams.get('subagent'));
+  if (subagent) {
+    const subagentsDir = join(dirname(path), basename(path, '.jsonl'), 'subagents');
+    const subPath = safeChildPath(subagentsDir, `agent-${subagent}.jsonl`);
+    if (!subPath || !existsSync(subPath)) { sendJson(res, 200, { items: [] }); return; }
+    let subRaw = '';
+    try { subRaw = readFileSync(subPath, 'utf-8'); } catch { sendJson(res, 200, { items: [] }); return; }
+    sendJson(res, 200, { items: parseTranscriptHistory(subRaw) });
+    return;
+  }
+
+  let raw = '';
+  try { raw = readFileSync(path, 'utf-8'); } catch { sendJson(res, 200, { items: [] }); return; }
+  sendJson(res, 200, { items: parseTranscriptHistory(raw) });
+}
+
+// ─── Project-root file reader (GET /api/agent/file) ────────────────────────────────
+//
+// State 3's slide-over / state 4's lightbox need to read arbitrary PROJECT files (not just
+// `_dream_context/`, which `GET /api/graph/content` already covers) — e.g. a `src/*.ts` path
+// referenced by a Read/Edit tool card. This route is intentionally scoped to the project root
+// ONLY and is never widened: a sub-agent's sidechain transcript lives under
+// `~/.claude/projects/...`, well outside the project root, and is served instead by the
+// `subagent` param on `handleAgentChatHistory` above (a derived path through the existing
+// transcript channel, never a client-supplied one) — see that handler's docstring.
+
+/** Text/markdown response size cap, in bytes — matches `graph/content`'s spirit (a preview
+ *  surface, not a bulk file transfer) but is stricter since project files can be large
+ *  generated artifacts a chat reference should never pull whole into the UI. Also gates raw
+ *  image bytes so a huge PNG can't be requested through this endpoint either. */
+const AGENT_FILE_MAX_BYTES = 512 * 1024;
+
+/** Extensions servable as raw image bytes via `?raw=1`. SVG is deliberately EXCLUDED — an SVG
+ *  can embed `<script>`/`foreignObject`, so it is only ever returned as a TEXT preview (falls
+ *  through to the text branch below), never as `image/svg+xml`, even with `raw=1`. */
+const AGENT_FILE_IMAGE_CONTENT_TYPE: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+};
+
+/** Everything the transcript can play or draw in place: the images above plus video and
+ *  audio. Served STREAMED with byte-range support (see `serveMedia`) — a 40MB screen capture
+ *  must never be buffered into memory, and `<video>` seeking is range requests, so without
+ *  them a clip either refuses to play or can only be watched from the start. */
+const AGENT_FILE_MEDIA_CONTENT_TYPE: Record<string, string> = {
+  ...AGENT_FILE_IMAGE_CONTENT_TYPE,
+  '.mp4': 'video/mp4',
+  '.m4v': 'video/mp4',
+  '.webm': 'video/webm',
+  '.mov': 'video/quicktime',
+  '.ogv': 'video/ogg',
+  '.mp3': 'audio/mpeg',
+  '.m4a': 'audio/mp4',
+  '.wav': 'audio/wav',
+  '.oga': 'audio/ogg',
+  '.ogg': 'audio/ogg',
+  '.flac': 'audio/flac',
+};
+
+/** Media is STREAMED, so the 512KB preview cap (which exists to stop a huge generated file
+ *  being pulled whole into the UI as text) doesn't apply — but a ceiling still does, so a
+ *  mistyped path at a 40GB disk image can't tie up a socket indefinitely. */
+const AGENT_MEDIA_MAX_BYTES = 2 * 1024 * 1024 * 1024;
+
+/** Non-media types `/agent/reveal` may hand to the DEFAULT app rather than merely revealing
+ *  in the file manager: documents and plain text, which viewers display rather than execute.
+ *  Deliberately a small allowlist, not a denylist of dangerous extensions — a denylist is one
+ *  unknown installer format away from launching something. */
+const REVEAL_SAFE_DOC_EXT = new Set([
+  '.pdf', '.txt', '.md', '.markdown', '.json', '.yaml', '.yml', '.toml', '.csv', '.tsv', '.log',
+  '.rtf', '.html', '.htm', '.xml', '.svg',
+]);
+
+// ─── Access grants (paths OUTSIDE the project root) ──────────────────────────────────
+//
+// `/agent/file` is deliberately confined to the project root, so a transcript that names a
+// file elsewhere — a screen recording in a temp dir, a design in another repo — cannot be
+// shown. Refusing outright is safe but useless: the user can SEE the file exists and is
+// simply told no.
+//
+// So: outside paths are refused with `needs_grant` until the user explicitly allows THAT
+// EXACT path from the card in the transcript. A grant is one absolute file path, recorded
+// per vault, never a directory and never a pattern — clicking "Allow" on one video cannot
+// hand the page a folder. The consent is a real click on a named file; nothing here grants
+// itself, and the agent cannot grant on the user's behalf.
+
+const FILE_GRANTS_FILE = '.file-grants.json';
+const MAX_FILE_GRANTS = 500;
+
+function grantsPath(contextRoot: string): string {
+  return join(contextRoot, 'state', FILE_GRANTS_FILE);
+}
+
+function readGrants(contextRoot: string): string[] {
+  try {
+    const raw = JSON.parse(readFileSync(grantsPath(contextRoot), 'utf-8')) as { paths?: unknown };
+    return Array.isArray(raw.paths) ? raw.paths.filter((p): p is string => typeof p === 'string' && !!p) : [];
+  } catch { return []; }
+}
+
+function addGrant(contextRoot: string, abs: string): void {
+  const list = readGrants(contextRoot).filter((p) => p !== abs);
+  list.push(abs);
+  try {
+    writeFileSync(grantsPath(contextRoot), JSON.stringify({ paths: list.slice(-MAX_FILE_GRANTS) }), 'utf-8');
+  } catch { /* best-effort */ }
+}
+
+/**
+ * Where `rawPath` really lives, and whether we may serve it.
+ *   • inside the project root → allowed (the long-standing rule, via `safeChildPath`)
+ *   • absolute + explicitly granted by the user → allowed
+ *   • absolute, not granted → `needs_grant`, which the UI turns into an "Allow access" card
+ *   • anything else (traversal, null byte, relative escape) → `invalid`
+ */
+function resolveServablePath(
+  contextRoot: string,
+  rawPath: string,
+): { abs: string } | { deny: 'invalid' | 'needs_grant' } {
+  const inProject = safeChildPath(projectRootOf(contextRoot), rawPath);
+  if (inProject) return { abs: inProject };
+  // Only a clean absolute path can be granted — never something that had to be resolved
+  // against a root to mean anything, which is where traversal tricks live.
+  if (!rawPath.startsWith('/') || rawPath.includes('\0') || rawPath.includes('/../') || rawPath.endsWith('/..')) {
+    return { deny: 'invalid' };
+  }
+  return readGrants(contextRoot).includes(rawPath) ? { abs: rawPath } : { deny: 'needs_grant' };
+}
+
+/** GET /api/agent/file?path=<relative>[&raw=1] — read one file under the ACTIVE vault's
+ *  PROJECT root (parent of `_dream_context`, via `projectRootOf` — never `_dream_context/`-
+ *  scoped like `graph/content`). Desktop-gated; `contextRoot` arrives already resolved from
+ *  the request's `X-Dreamcontext-Vault` header by the router (same per-request resolution
+ *  every other non-vault-agnostic GET route gets — see index.ts's dispatch), so this needs no
+ *  separate `?vault=` param the way the chat WS UPGRADE does (which can't send headers).
+ *  `path` is contained under the project root via `safeChildPath` — anything that escapes
+ *  (`..`, an absolute path, a null byte) is rejected with 400, per
+ *  `[[dashboard-server-security]]`'s "any new route that builds a filesystem path from
+ *  request input MUST use safeChildPath" rule. Every response — success or error — carries
+ *  `X-Content-Type-Options: nosniff` (set once, up front, so every exit path inherits it via
+ *  Node's setHeader/writeHead merge). Never widened for sub-agent transcripts — see this
+ *  section's header comment. */
+export async function handleAgentFile(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  if (!isDesktop()) { sendError(res, 403, 'desktop_only', 'Available only in the desktop app.'); return; }
+
+  const url = new URL(req.url || '/', `http://${req.headers.host}`);
+  const rawPath = url.searchParams.get('path');
+  if (!rawPath) { sendError(res, 400, 'missing_path', 'Query parameter "path" is required.'); return; }
+
+  const resolved = resolveServablePath(contextRoot, rawPath);
+  if ('deny' in resolved) {
+    if (resolved.deny === 'needs_grant') {
+      // NOT a refusal the UI should render as an error: it is the prompt to ask the user.
+      sendError(res, 403, 'needs_grant', 'Outside the project — allow access to view this file.');
+    } else {
+      sendError(res, 400, 'invalid_path', 'Path escapes the project root.');
+    }
+    return;
+  }
+  const abs = resolved.abs;
+  if (!existsSync(abs)) { sendError(res, 404, 'not_found', `File not found: ${rawPath}`); return; }
+
+  let st: ReturnType<typeof statSync>;
+  try { st = statSync(abs); } catch { sendError(res, 404, 'not_found', `File not found: ${rawPath}`); return; }
+
+  // A DIRECTORY answers with its listing — a folder named in the transcript is something to
+  // look inside, not an error.
+  if (st.isDirectory()) { sendDirListing(res, rawPath, abs); return; }
+  if (!st.isFile()) { sendError(res, 404, 'not_found', `Not a file: ${rawPath}`); return; }
+
+  const ext = extname(abs).toLowerCase();
+  const mediaType = AGENT_FILE_MEDIA_CONTENT_TYPE[ext];
+  const wantsRaw = url.searchParams.get('raw') === '1';
+
+  if (wantsRaw && mediaType) {
+    if (st.size > AGENT_MEDIA_MAX_BYTES) { sendError(res, 413, 'too_large', 'File is too large to stream.'); return; }
+    serveMedia(req, res, abs, st.size, mediaType);
+    return;
+  }
+
+  // Text preview keeps the tight cap: this branch reads the whole file into a JSON body.
+  if (st.size > AGENT_FILE_MAX_BYTES) { sendError(res, 413, 'too_large', 'File exceeds the preview size cap.'); return; }
+  let content: string;
+  try { content = readFileSync(abs, 'utf-8'); } catch { sendError(res, 500, 'read_failed', 'Failed to read file.'); return; }
+  sendJson(res, 200, { path: rawPath, type: ext === '.md' ? 'markdown' : 'text', content });
+}
+
+/** One directory's entries (capped), newest-looking first: folders, then files by name. */
+function sendDirListing(res: ServerResponse, rawPath: string, abs: string): void {
+  const MAX_ENTRIES = 300;
+  let names: string[];
+  try { names = readdirSync(abs); } catch { sendError(res, 500, 'read_failed', 'Failed to read the folder.'); return; }
+  const entries = names.slice(0, MAX_ENTRIES).map((name) => {
+    try {
+      const s = statSync(join(abs, name));
+      return { name, kind: s.isDirectory() ? 'dir' as const : 'file' as const, size: s.isDirectory() ? null : s.size };
+    } catch {
+      return { name, kind: 'file' as const, size: null };  // a broken symlink still deserves a row
+    }
+  });
+  entries.sort((a, b) => (a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === 'dir' ? -1 : 1));
+  sendJson(res, 200, { path: rawPath, type: 'dir', entries, truncated: names.length > MAX_ENTRIES, total: names.length });
+}
+
+/**
+ * Stream `abs` with byte-range support. `<video>`/`<audio>` seek by issuing Range requests,
+ * and a server that answers 200-with-everything makes a clip unseekable (Safari refuses to
+ * play at all) — so `Accept-Ranges` and a correct 206 are load-bearing here, not an
+ * optimisation. Streaming also keeps a 40MB capture off the heap.
+ */
+function serveMedia(req: IncomingMessage, res: ServerResponse, abs: string, size: number, contentType: string): void {
+  const common = { 'Content-Type': contentType, 'Accept-Ranges': 'bytes', 'Cache-Control': 'no-store' };
+  const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range ?? '');
+
+  let start = 0;
+  let end = size - 1;
+  if (range) {
+    const [, rawStart, rawEnd] = range;
+    if (rawStart === '' && rawEnd === '') { sendError(res, 416, 'bad_range', 'Malformed Range header.'); return; }
+    if (rawStart === '') {
+      // `bytes=-N` — the trailing N bytes.
+      start = Math.max(0, size - Number(rawEnd));
+    } else {
+      start = Number(rawStart);
+      if (rawEnd !== '') end = Math.min(end, Number(rawEnd));
+    }
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start > end || start >= size) {
+      res.writeHead(416, { ...common, 'Content-Range': `bytes */${size}` });
+      res.end();
+      return;
+    }
+  }
+
+  const length = end - start + 1;
+  res.writeHead(range ? 206 : 200, {
+    ...common,
+    'Content-Length': length,
+    ...(range ? { 'Content-Range': `bytes ${start}-${end}/${size}` } : {}),
+  });
+  if (req.method === 'HEAD') { res.end(); return; }
+
+  const stream = createReadStream(abs, { start, end });
+  stream.on('error', () => { res.destroy(); });
+  // A viewer that seeks away (or a closed pane) aborts the response — release the fd rather
+  // than reading the rest of a large file into a socket nobody is listening to.
+  res.on('close', () => stream.destroy());
+  stream.pipe(res);
+}
+
+/**
+ * POST /api/agent/grant — the user allowing ONE named file outside the project root.
+ *
+ * The consent half of `resolveServablePath`'s `needs_grant`: reached only from an explicit
+ * click on a card naming the file, and it records that exact absolute path, never its
+ * directory and never a pattern. Files only — a granted directory would quietly widen into
+ * everything beneath it, and nothing in the transcript needs that.
+ */
+export async function handleAgentGrant(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string,
+): Promise<void> {
+  if (!isDesktop()) { sendError(res, 403, 'desktop_only', 'Available only in the desktop app.'); return; }
+
+  let target = '';
+  try {
+    const chunks: Buffer[] = [];
+    for await (const c of req) chunks.push(c as Buffer);
+    const body = JSON.parse(Buffer.concat(chunks).toString('utf-8')) as { path?: unknown };
+    if (typeof body.path === 'string') target = body.path;
+  } catch { /* invalid body → the guard below */ }
+
+  if (!target.startsWith('/') || target.includes('\0') || target.includes('/../') || target.endsWith('/..')) {
+    sendError(res, 400, 'invalid_path', 'An absolute, literal file path is required.');
+    return;
+  }
+  let st: ReturnType<typeof statSync>;
+  try { st = statSync(target); } catch { sendError(res, 404, 'not_found', `File not found: ${target}`); return; }
+  if (!st.isFile()) { sendError(res, 400, 'not_a_file', 'Only a file can be granted, not a folder.'); return; }
+
+  addGrant(contextRoot, target);
+  sendJson(res, 200, { granted: true, path: target });
+}
+
+/**
+ * POST /api/agent/reveal — hand a path to the OS: open it, or show the user where it sits.
+ *
+ * The escape hatch for something the chat transcript cannot draw itself: `GET /agent/file`
+ * serves nothing outside the project root without an explicit grant, so a file living
+ * elsewhere (a system temp dir, a sibling repo) may never reach the page as bytes. Rather
+ * than leaving the user with a dead chip, this reaches it the way double-clicking in Finder
+ * would.
+ *
+ * "Run the OS opener on a path" is a real capability, so the two modes ARE the safety story:
+ *   • desktop-only, like every other agent route;
+ *   • a FOLDER, or a type that viewers DISPLAY rather than execute (media + the small
+ *     `REVEAL_SAFE_DOC_EXT` document allowlist) → handed to the default app, which is what
+ *     "just open it" means;
+ *   • anything else → REVEALED in the file manager instead. A `.sh`, `.command`, `.pkg` or
+ *     `.app` named in a transcript must never be launched by a click in a chat bubble;
+ *     showing the user where it sits gives the same reach with none of the risk;
+ *   • the file must already exist;
+ *   • argv form (no shell), so nothing in the path can be interpreted as a command.
+ * It is also only ever reached from an explicit user click on a named file.
+ */
+export async function handleAgentReveal(
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  if (!isDesktop()) { sendError(res, 403, 'desktop_only', 'Available only in the desktop app.'); return; }
+
+  let target = '';
+  try {
+    const chunks: Buffer[] = [];
+    for await (const c of req) chunks.push(c as Buffer);
+    const body = JSON.parse(Buffer.concat(chunks).toString('utf-8')) as { path?: unknown };
+    if (typeof body.path === 'string') target = body.path;
+  } catch { /* invalid body → the empty-path guard below */ }
+
+  if (!target) { sendError(res, 400, 'missing_path', 'A "path" is required.'); return; }
+  let st: ReturnType<typeof statSync>;
+  try { st = statSync(target); } catch { sendError(res, 404, 'not_found', `Not found: ${target}`); return; }
+
+  // Two modes, and the distinction is the whole safety story:
+  //   • a FOLDER, or a file type we know is inert to view (media + plain text/docs) → hand it
+  //     to the default app, which is what the user means by "just open it";
+  //   • anything else → REVEAL it in the file manager instead of opening it. A `.sh`,
+  //     `.command`, `.pkg` or `.app` named in a transcript must never be launched by a click
+  //     in a chat bubble; showing the user where it sits gives them the same reach with none
+  //     of the risk.
+  const ext = extname(target).toLowerCase();
+  const inertToView = !!AGENT_FILE_MEDIA_CONTENT_TYPE[ext] || REVEAL_SAFE_DOC_EXT.has(ext);
+  const openDirectly = st.isDirectory() || inertToView;
+
+  const opener = process.platform === 'darwin'
+    ? { cmd: 'open', args: openDirectly ? [target] : ['-R', target] }
+    : process.platform === 'win32'
+      ? { cmd: 'explorer', args: openDirectly ? [target] : [`/select,${target}`] }
+      : { cmd: 'xdg-open', args: [openDirectly ? target : dirname(target)] };
+  try {
+    spawn(opener.cmd, opener.args, { detached: true, stdio: 'ignore' }).unref();
+  } catch {
+    sendError(res, 500, 'open_failed', 'The system opener could not be started.');
+    return;
+  }
+  sendJson(res, 200, { opened: true });
 }

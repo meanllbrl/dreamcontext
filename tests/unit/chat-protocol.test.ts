@@ -35,6 +35,42 @@ const SYSTEM_INIT = JSON.stringify({
   claude_code_version: '2.1.218',
 });
 
+const TASK_ID = 'task_01abc';
+const AGENT_TOOL_USE_ID = 'toolu_01AGENT';
+
+// Sub-agent lifecycle fixtures (state 9) — realistic shapes from the round-3 Task-tool
+// spike (task_nQb0y85X): the spawning tool streams as name "Agent" on CLI 2.1.218.
+const SYSTEM_TASK_STARTED = JSON.stringify({
+  type: 'system',
+  subtype: 'task_started',
+  task_id: TASK_ID,
+  tool_use_id: AGENT_TOOL_USE_ID,
+  description: 'Investigate the flaky recall-eval test',
+  subagent_type: 'general-purpose',
+  task_type: 'investigation',
+  prompt: 'Find out why tests/unit/recall-eval.test.ts flakes on CI.',
+  uuid: 'bbbbbbbb-1111-2222-3333-444444444444',
+  session_id: SESSION_ID,
+});
+const SYSTEM_TASK_UPDATED = JSON.stringify({
+  type: 'system',
+  subtype: 'task_updated',
+  task_id: TASK_ID,
+  patch: { status: 'completed', end_time: 1732400000000 },
+});
+const SYSTEM_TASK_NOTIFICATION = JSON.stringify({
+  type: 'system',
+  subtype: 'task_notification',
+  task_id: TASK_ID,
+  tool_use_id: AGENT_TOOL_USE_ID,
+  status: 'completed',
+  output_file: '/Users/x/.claude/projects/-Users-x-proj/session-uuid/subagents/agent-task_01abc.jsonl',
+  summary: 'Root cause: a shared temp dir race between two parallel test files.',
+  usage: { total_tokens: 48213, tool_uses: 9, duration_ms: 41230 },
+});
+const SYSTEM_TASK_STARTED_NO_ID = JSON.stringify({ type: 'system', subtype: 'task_started', description: 'no id' });
+const SYSTEM_UNKNOWN_SUBTYPE = JSON.stringify({ type: 'system', subtype: 'some_future_subtype', foo: 'bar' });
+
 const SYSTEM_HOOK_STARTED = JSON.stringify({ type: 'system', subtype: 'hook_started', hook_event_name: 'UserPromptSubmit' });
 const SYSTEM_HOOK_RESPONSE = JSON.stringify({ type: 'system', subtype: 'hook_response', hook_event_name: 'UserPromptSubmit', output: '' });
 const SYSTEM_STATUS = JSON.stringify({ type: 'system', subtype: 'status', message: 'Compacting…' });
@@ -184,6 +220,7 @@ const WHITESPACE_LINE = '   \n';
 /** Every fixture line, realistic and malformed alike — the "never throws" sweep. */
 const LINES: string[] = [
   SYSTEM_INIT, SYSTEM_HOOK_STARTED, SYSTEM_HOOK_RESPONSE, SYSTEM_STATUS, SYSTEM_THINKING_TOKENS, RATE_LIMIT_EVENT,
+  SYSTEM_TASK_STARTED, SYSTEM_TASK_UPDATED, SYSTEM_TASK_NOTIFICATION, SYSTEM_TASK_STARTED_NO_ID, SYSTEM_UNKNOWN_SUBTYPE,
   STREAM_MESSAGE_START, STREAM_BLOCK_START_TEXT, STREAM_BLOCK_START_THINKING, STREAM_BLOCK_START_TOOL_USE,
   STREAM_TEXT_DELTA, STREAM_THINKING_DELTA, STREAM_SIGNATURE_DELTA, STREAM_BLOCK_STOP, STREAM_MESSAGE_DELTA, STREAM_MESSAGE_STOP,
   ASSISTANT_TOOL_USE, USER_TOOL_RESULT_OK, USER_TOOL_RESULT_ERROR,
@@ -216,6 +253,49 @@ describe('parseChatLine — system frames', () => {
 
   it('rate_limit_event (top-level, not a system subtype) → ignored', () => {
     expect(parseChatLine(RATE_LIMIT_EVENT)).toEqual({ kind: 'ignored', rawType: 'rate_limit_event' });
+  });
+});
+
+describe('parseChatLine — system:task_* (sub-agent lifecycle, state 9)', () => {
+  it('task_started → a typed task-started event with the spawning tool_use_id + full description/subagent_type/task_type/prompt', () => {
+    expect(parseChatLine(SYSTEM_TASK_STARTED)).toEqual({
+      kind: 'task-started',
+      taskId: TASK_ID,
+      toolUseId: AGENT_TOOL_USE_ID,
+      description: 'Investigate the flaky recall-eval test',
+      subagentType: 'general-purpose',
+      taskType: 'investigation',
+      prompt: 'Find out why tests/unit/recall-eval.test.ts flakes on CI.',
+    });
+  });
+
+  it('task_updated → a task-updated event carrying the patch.status/end_time', () => {
+    expect(parseChatLine(SYSTEM_TASK_UPDATED)).toEqual({
+      kind: 'task-updated',
+      taskId: TASK_ID,
+      status: 'completed',
+      endTime: 1732400000000,
+    });
+  });
+
+  it('task_notification → a task-notification event with status/summary/usage (usage keys mapped from snake_case)', () => {
+    expect(parseChatLine(SYSTEM_TASK_NOTIFICATION)).toEqual({
+      kind: 'task-notification',
+      taskId: TASK_ID,
+      toolUseId: AGENT_TOOL_USE_ID,
+      status: 'completed',
+      outputFile: '/Users/x/.claude/projects/-Users-x-proj/session-uuid/subagents/agent-task_01abc.jsonl',
+      summary: 'Root cause: a shared temp dir race between two parallel test files.',
+      usage: { totalTokens: 48213, toolUses: 9, durationMs: 41230 },
+    });
+  });
+
+  it('a task_started missing task_id/description degrades to ignored, not a half-formed event', () => {
+    expect(parseChatLine(SYSTEM_TASK_STARTED_NO_ID)).toEqual({ kind: 'ignored', rawType: 'system:task_started' });
+  });
+
+  it('a wholly unrecognized system subtype still degrades to ignored (task_* are additions, not a rewrite of the noise-tolerance contract)', () => {
+    expect(parseChatLine(SYSTEM_UNKNOWN_SUBTYPE)).toEqual({ kind: 'ignored', rawType: 'system:some_future_subtype' });
   });
 });
 
@@ -380,6 +460,183 @@ describe('parseChatLine — malformed / empty lines', () => {
   it('an empty or whitespace-only line → null', () => {
     expect(parseChatLine(EMPTY_LINE)).toBeNull();
     expect(parseChatLine(WHITESPACE_LINE)).toBeNull();
+  });
+});
+
+describe('parseChatLine — assistant full-message text/thinking echoes', () => {
+  it('an assistant frame carrying a text block → assistant-text (the authoritative full text — the CLI can skip text_deltas entirely for short replies)', () => {
+    const line = JSON.stringify({
+      type: 'assistant',
+      session_id: SESSION_ID,
+      message: { role: 'assistant', model: 'claude-sonnet-5', content: [{ type: 'text', text: 'pong' }] },
+    });
+    expect(parseChatLine(line)).toEqual({ kind: 'assistant-text', text: 'pong', synthetic: false });
+  });
+
+  it('a <synthetic>-model assistant frame (local command echo, e.g. /effort) → assistant-text with synthetic: true', () => {
+    const line = JSON.stringify({
+      type: 'assistant',
+      session_id: SESSION_ID,
+      message: { role: 'assistant', model: '<synthetic>', content: [{ type: 'text', text: 'Set effort level to low' }] },
+    });
+    expect(parseChatLine(line)).toEqual({ kind: 'assistant-text', text: 'Set effort level to low', synthetic: true });
+  });
+
+  it('an assistant frame carrying a thinking block → assistant-thinking', () => {
+    const line = JSON.stringify({
+      type: 'assistant',
+      session_id: SESSION_ID,
+      message: { role: 'assistant', model: 'claude-sonnet-5', content: [{ type: 'thinking', thinking: 'hmm', signature: 'sig' }] },
+    });
+    expect(parseChatLine(line)).toEqual({ kind: 'assistant-thinking', text: 'hmm' });
+  });
+
+  it('an EMPTY text block stays ignored (nothing to render, nothing to upgrade)', () => {
+    const line = JSON.stringify({
+      type: 'assistant',
+      session_id: SESSION_ID,
+      message: { role: 'assistant', model: 'claude-sonnet-5', content: [{ type: 'text', text: '' }] },
+    });
+    expect(parseChatLine(line)).toEqual({ kind: 'ignored', rawType: 'assistant:text' });
+  });
+
+  it("a USER frame's text block must NOT surface as assistant-text (synthetic nudges / local-command stdout are not assistant bubbles)", () => {
+    const syntheticNudge = JSON.stringify({
+      type: 'user',
+      session_id: SESSION_ID,
+      isSynthetic: true,
+      message: { role: 'user', content: [{ type: 'text', text: '[Your previous response had no visible output.]' }] },
+    });
+    expect(parseChatLine(syntheticNudge)).toEqual({ kind: 'ignored', rawType: 'user:non_tool_result' });
+    const commandStdout = JSON.stringify({
+      type: 'user',
+      session_id: SESSION_ID,
+      message: { role: 'user', content: '<local-command-stdout>Set model to sonnet</local-command-stdout>' },
+    });
+    expect(parseChatLine(commandStdout)).toEqual({ kind: 'ignored', rawType: 'user:non_tool_result' });
+  });
+});
+
+// The composer's context meter is fed from THIS, not from the server's transcript reader:
+// Claude Code ≥2.1.x flushes a live session's transcript only on exit/rotation, so
+// `/agent/session-stats` reports nulls for a chat's entire life. `message.usage` on the
+// assistant frame is the only live source of how full the window is.
+describe('parseChatLine — turnUsage (live context-window footprint)', () => {
+  const withUsage = (over: Record<string, unknown> = {}, frame: Record<string, unknown> = {}) => JSON.stringify({
+    type: 'assistant',
+    session_id: SESSION_ID,
+    ...frame,
+    message: {
+      role: 'assistant',
+      model: 'claude-opus-4-5-20251101',
+      content: [{ type: 'text', text: 'pong' }],
+      usage: {
+        input_tokens: 4,
+        cache_creation_input_tokens: 12_000,
+        cache_read_input_tokens: 30_000,
+        output_tokens: 200,
+        ...over,
+      },
+    },
+  });
+
+  it('sums input + both cache buckets + output — the window footprint, not just fresh input', () => {
+    const ev = parseChatLine(withUsage());
+    expect(ev).toMatchObject({ kind: 'assistant-text', text: 'pong' });
+    expect(ev && 'turnUsage' in ev ? ev.turnUsage : undefined).toEqual({
+      input: 4, cacheCreation: 12_000, cacheRead: 30_000, output: 200,
+      total: 42_204, model: 'claude-opus-4-5-20251101',
+    });
+  });
+
+  it('rides on a tool_use frame too — a turn that ends in a tool call still moved the window', () => {
+    const line = JSON.stringify({
+      type: 'assistant',
+      session_id: SESSION_ID,
+      message: {
+        role: 'assistant',
+        model: 'claude-opus-4-5-20251101',
+        content: [{ type: 'tool_use', id: TOOL_USE_ID, name: 'Read', input: { file_path: '/tmp/a' } }],
+        usage: { input_tokens: 1, cache_read_input_tokens: 99, output_tokens: 0 },
+      },
+    });
+    const ev = parseChatLine(line);
+    expect(ev).toMatchObject({ kind: 'assistant-tool-use', toolUseId: TOOL_USE_ID });
+    expect(ev && 'turnUsage' in ev ? ev.turnUsage?.total : undefined).toBe(100);
+  });
+
+  it('a SUB-AGENT frame (parent_tool_use_id) carries no turnUsage — its tokens live in its own window', () => {
+    const ev = parseChatLine(withUsage({}, { parent_tool_use_id: AGENT_TOOL_USE_ID }));
+    expect(ev && 'turnUsage' in ev ? ev.turnUsage : undefined).toBeUndefined();
+  });
+
+  it('a <synthetic> local-command echo carries no turnUsage — no model call happened', () => {
+    const line = JSON.stringify({
+      type: 'assistant',
+      session_id: SESSION_ID,
+      message: {
+        role: 'assistant', model: '<synthetic>',
+        content: [{ type: 'text', text: 'Set effort level to low' }],
+        usage: { input_tokens: 5, output_tokens: 5 },
+      },
+    });
+    const ev = parseChatLine(line);
+    expect(ev && 'turnUsage' in ev ? ev.turnUsage : undefined).toBeUndefined();
+  });
+
+  it('an all-zero (or absent) usage block stays undefined rather than reporting a 0-token window', () => {
+    expect(parseChatLine(withUsage({ input_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, output_tokens: 0 })))
+      .toEqual({ kind: 'assistant-text', text: 'pong', synthetic: false });
+    const noUsage = JSON.stringify({
+      type: 'assistant',
+      session_id: SESSION_ID,
+      message: { role: 'assistant', model: 'claude-sonnet-5', content: [{ type: 'text', text: 'pong' }] },
+    });
+    const ev = parseChatLine(noUsage);
+    expect(ev && 'turnUsage' in ev ? ev.turnUsage : undefined).toBeUndefined();
+  });
+});
+
+describe('parseChatLine — control_response acks (set_model / rewind_conversation)', () => {
+  it('a plain success ack (set_model) → control-ack with ok: true and no payload', () => {
+    const line = JSON.stringify({
+      type: 'control_response',
+      response: { subtype: 'success', request_id: 'sm-chat-1-1' },
+    });
+    expect(parseChatLine(line)).toEqual({
+      kind: 'control-ack', requestId: 'sm-chat-1-1', ok: true, payload: undefined, error: undefined,
+    });
+  });
+
+  it("a payloaded success ack (rewind_conversation) → control-ack carrying the CLI's nested response", () => {
+    const payload = {
+      rewound: true,
+      targetMessageUuid: '13b74217-a64f-4902-a275-2a4c3dd2d67d',
+      prefillText: 'Now remember a second codeword: KIWI. Reply OK.',
+      precedingAssistantUuid: '245d4e7d-f5c0-42ab-9271-0e6707e12566',
+    };
+    const line = JSON.stringify({
+      type: 'control_response',
+      response: { subtype: 'success', request_id: 'rw-chat-1-2', response: payload },
+    });
+    expect(parseChatLine(line)).toEqual({
+      kind: 'control-ack', requestId: 'rw-chat-1-2', ok: true, payload, error: undefined,
+    });
+  });
+
+  it('an error ack → control-ack with ok: false and the error string', () => {
+    const line = JSON.stringify({
+      type: 'control_response',
+      response: { subtype: 'error', request_id: 'rw-chat-1-3', error: 'target not found' },
+    });
+    expect(parseChatLine(line)).toEqual({
+      kind: 'control-ack', requestId: 'rw-chat-1-3', ok: false, payload: undefined, error: 'target not found',
+    });
+  });
+
+  it('a control_response without a request_id degrades to ignored (nothing to match)', () => {
+    const line = JSON.stringify({ type: 'control_response', response: { subtype: 'success' } });
+    expect(parseChatLine(line)).toEqual({ kind: 'ignored', rawType: 'control_response:no_request_id' });
   });
 });
 

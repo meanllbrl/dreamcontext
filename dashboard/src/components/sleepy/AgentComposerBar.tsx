@@ -1,10 +1,8 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
-import { pushOverlay, popOverlay, isTopOverlay } from '../../lib/overlayStack';
 import {
-  SKILL_GROUPS, effortLabel, fmtTokens, fmtCost,
-  type ModelOption, type SessionStats, type SkillTrigger,
+  effortLabel, fmtTokens, fmtCost, modelLabelFor, CONTEXT_TIGHT_PCT,
+  type ModelOption, type SessionStats,
 } from '../../lib/agentComposer';
+import { Popover, SkillBrowser } from './SkillPickerPopover';
 
 /**
  * The strip pinned to the bottom of each pane, styled as the terminal's OWN status line
@@ -20,172 +18,9 @@ import {
  *                           changing either fires `/model` or `/effort` at that agent.
  *
  * Purely presentational + a self-contained popover; all injection/switching lives in
- * {@link AgentSurface}.
+ * {@link AgentSurface}. `Popover`/`SkillBrowser` live in `SkillPickerPopover.tsx` — shared
+ * verbatim with the Agent Chat (beta) composer so both surfaces use the SAME skill picker.
  */
-
-// ── A tiny popover: a trigger button + a menu that closes on outside-click / Esc ──────
-// The menu PORTALS to <body>: each pane clips its children (overflow:hidden) and its
-// `container: agentpane` makes it the containing block even for position:fixed, so a menu
-// rendered in-pane can never out-grow a narrow or right-edge pane. From <body> it is placed
-// above the trigger and clamped to the viewport, so it always fits — in any pane, any split.
-function Popover({
-  trigger, align = 'right', children,
-}: {
-  trigger: (open: boolean, toggle: () => void) => React.ReactNode;
-  /** Which trigger edge the menu prefers to grow from (it clamps to the viewport either way). */
-  align?: 'left' | 'right';
-  children: (close: () => void) => React.ReactNode;
-}) {
-  const [open, setOpen] = useState(false);
-  const anchorRef = useRef<HTMLDivElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-  // Stable per-instance id on the app's overlay stack (⌘K palette, ⌘P switcher, …):
-  // the portaled menu is a global overlay, so its Esc must arbitrate LIFO like the rest —
-  // never swallow an Esc meant for a surface stacked on top, never lose one to a
-  // background panel's earlier-registered listener.
-  const overlayId = useId();
-
-  useEffect(() => {
-    if (!open) return;
-    pushOverlay(overlayId);
-    const onDown = (e: PointerEvent) => {
-      const t = e.target as Node;
-      if (!anchorRef.current?.contains(t) && !menuRef.current?.contains(t)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape' || !isTopOverlay(overlayId)) return;
-      e.stopPropagation();
-      setOpen(false);
-    };
-    document.addEventListener('pointerdown', onDown, true);
-    document.addEventListener('keydown', onKey, true);
-    return () => {
-      popOverlay(overlayId);
-      document.removeEventListener('pointerdown', onDown, true);
-      document.removeEventListener('keydown', onKey, true);
-    };
-  }, [open, overlayId]);
-
-  // Place the menu above the trigger, clamped inside the viewport. Anchoring via `bottom`
-  // keeps the trigger edge fixed; menus are fixed-height while open (see
-  // .agent-skill-browser) so content changes never move what's under the cursor.
-  useLayoutEffect(() => {
-    if (!open) return;
-    const place = () => {
-      const a = anchorRef.current?.getBoundingClientRect();
-      const m = menuRef.current;
-      if (!a || !m) return;
-      const PAD = 8;
-      const w = m.offsetWidth;
-      let left = align === 'left' ? a.left : a.right - w;
-      left = Math.max(PAD, Math.min(left, window.innerWidth - w - PAD));
-      const bottom = window.innerHeight - a.top + 6;
-      m.style.left = `${Math.round(left)}px`;
-      m.style.bottom = `${Math.round(bottom)}px`;
-      m.style.maxHeight = `${Math.max(120, window.innerHeight - bottom - PAD)}px`;
-      m.style.visibility = 'visible';
-    };
-    place();
-    // The trigger can move without any window resize/scroll event: ⌘D pane splits, the
-    // overlay's `left` transition on sidebar toggle, tab reflows — and xterm viewports
-    // fire captured scrolls constantly while streaming, which made a scroll listener
-    // both leaky (misses the above) and busy (re-placing on every output chunk). One
-    // rAF watcher covers everything: a single getBoundingClientRect read per frame,
-    // style writes only when the anchor actually moved.
-    let last: DOMRect | undefined;
-    let raf = requestAnimationFrame(function watch() {
-      const a = anchorRef.current?.getBoundingClientRect();
-      if (a && last && (a.left !== last.left || a.top !== last.top || a.width !== last.width)) place();
-      last = a ?? last;
-      raf = requestAnimationFrame(watch);
-    });
-    window.addEventListener('resize', place);
-    return () => {
-      cancelAnimationFrame(raf);
-      window.removeEventListener('resize', place);
-    };
-  }, [open, align]);
-
-  return (
-    <div className="agent-composer-pop" ref={anchorRef}>
-      {trigger(open, () => setOpen((v) => !v))}
-      {open && createPortal(
-        // Hidden until the layout effect measures + places it — no first-frame flash at 0,0.
-        <div className="agent-composer-menu" role="menu" ref={menuRef} style={{ visibility: 'hidden' }}>
-          {children(() => setOpen(false))}
-        </div>,
-        document.body,
-      )}
-    </div>
-  );
-}
-
-// ── The Skills popover body: a two-pane "skill browser" ──────────────────────────────
-// Left: our capability chips, grouped. Right: a live detail card that spells out WHAT the
-// hovered/focused skill is and HOW it works (its phase flow + the sub-agents it dispatches).
-// Clicking a chip drops its trigger into the terminal and closes the popover.
-function SkillBrowser({ onInsert, close }: { onInsert: (snippet: string) => void; close: () => void }) {
-  // Default the detail card to the very first skill so the panel is never empty.
-  const [active, setActive] = useState<SkillTrigger>(SKILL_GROUPS[0].triggers[0]);
-  // The detail card scrolls internally (its height is FIXED so hover never resizes the
-  // popover — see .agent-skill-browser); start each skill's card from the top.
-  const detailRef = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => { detailRef.current?.scrollTo(0, 0); }, [active]);
-
-  return (
-    <div className="agent-skill-browser">
-      <div className="agent-skill-list">
-        {SKILL_GROUPS.map((group) => (
-          <div className="agent-skill-group" key={group.id}>
-            <span className="agent-skill-group-label">{group.label}</span>
-            <div className="agent-skill-chips">
-              {group.triggers.map((t) => (
-                <button
-                  key={t.insert}
-                  type="button"
-                  className={`agent-skill-chip${t.insert === active.insert ? ' on' : ''}`}
-                  title={t.hint}
-                  onMouseEnter={() => setActive(t)}
-                  onFocus={() => setActive(t)}
-                  onClick={() => { onInsert(t.insert); close(); }}
-                >{t.label}</button>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* Live detail — the "very clearly convey what it is and how it works" panel. */}
-      <div className="agent-skill-detail" aria-live="polite" ref={detailRef}>
-        <div className="agent-skill-detail-head">
-          <span className="agent-skill-detail-title">{active.label}</span>
-          <code className="agent-skill-detail-trigger">{active.insert.trim()}</code>
-        </div>
-        <p className="agent-skill-detail-what">{active.what}</p>
-
-        <span className="agent-skill-detail-h">How it works</span>
-        <ol className="agent-skill-detail-flow">
-          {active.how.map((step, i) => (
-            <li key={i}><span className="agent-skill-detail-step-n">{i + 1}</span>{step}</li>
-          ))}
-        </ol>
-
-        {active.agents && active.agents.length > 0 && (
-          <>
-            <span className="agent-skill-detail-h">Dispatches {active.agents.length} sub-agents</span>
-            <div className="agent-skill-detail-agents">
-              {active.agents.map((a) => (
-                <span className="agent-skill-detail-agent" key={a}>{a}</span>
-              ))}
-            </div>
-          </>
-        )}
-
-        <p className="agent-skill-detail-foot">Click to drop <code>{active.insert.trim()}</code> into the terminal — you finish the prompt.</p>
-      </div>
-    </div>
-  );
-}
 
 export function AgentComposerBar({
   onInsert, onPickFiles, onPickFolders, models, efforts, model, effort, onModelChange, onEffortChange, disabled, skillsDisabled = false, stats,
@@ -213,9 +48,20 @@ export function AgentComposerBar({
    *  first turn writes usage, or omitted entirely for a shell). */
   stats?: SessionStats | null;
 }) {
-  const modelLabel = models.find((m) => m.id === model)?.label ?? (model || '—');
-  const ctx = stats?.contextTokens != null && stats.contextLimit
-    ? { used: stats.contextTokens, limit: stats.contextLimit, pct: Math.min(100, Math.round((stats.contextTokens / stats.contextLimit) * 100)) }
+  // Shared with the chat composer so both surfaces name the model the same way: a picker
+  // alias, a full CLI id resolved by family, and never a bare "—".
+  // `|| '—'` only for a genuinely EMPTY model (no agent focused yet). A full CLI id like
+  // `claude-opus-4-5-20251101` now resolves to "Opus" instead of falling through to the dash.
+  const modelLabel = modelLabelFor({ models, efforts, defaultModel: '', defaultEffort: '' }, model) || '—';
+  // `contextTokens` must be non-ZERO, not merely non-null: a transcript whose only turn was
+  // a synthetic notice ("Please run /login") reports 0, and "0% 0/200k" is noise, not a
+  // reading. Same rule as the chat composer's.
+  const ctx = stats?.contextTokens
+    ? {
+      used: stats.contextTokens,
+      limit: stats.contextLimit ?? 200_000,
+      pct: Math.min(100, Math.round((stats.contextTokens / (stats.contextLimit ?? 200_000)) * 100)),
+    }
     : null;
   const showStats = !!ctx || (stats?.costUsd != null && stats.costUsd > 0);
 
@@ -228,14 +74,17 @@ export function AgentComposerBar({
           <button
             type="button"
             className={`agent-composer-btn${open ? ' open' : ''}`}
-            title="Attach files or a folder (multi-select) — drops into the terminal input"
+            title="Attach files or folders (multi-select) — drops into the terminal input"
             aria-label="Attach files or folders"
             aria-haspopup="menu"
             aria-expanded={open}
             onClick={toggle}
           >
-            <span className="agent-composer-glyph" aria-hidden>@</span>
-            <span className="agent-composer-btn-label">Files</span>
+            {/* `＋ Attach`, the same word the chat composer uses for the same menu — the two
+                surfaces sit one keystroke apart, so a control that opens identical entries
+                should not be called two different things. */}
+            <span className="agent-composer-glyph" aria-hidden>＋</span>
+            <span className="agent-composer-btn-label">Attach</span>
             <span className="agent-composer-caret" aria-hidden>▾</span>
           </button>
         )}
@@ -299,8 +148,14 @@ export function AgentComposerBar({
           }
         >
           {ctx && (
-            <span className="agent-composer-stat" data-hot={ctx.pct >= 85}>
-              <span className="agent-composer-stat-glyph" aria-hidden>◔</span>
+            // Percentage FIRST, then the raw counts — "how much room is left" is the
+            // question the readout exists to answer, and `44k/200k` alone made you do the
+            // division yourself. The bar is the same gauge the chat composer draws.
+            <span className="agent-composer-stat" data-hot={ctx.pct >= CONTEXT_TIGHT_PCT}>
+              <span className="agent-composer-gauge" aria-hidden>
+                <span className="agent-composer-gauge-fill" style={{ width: `${ctx.pct}%` }} />
+              </span>
+              <span className="agent-composer-stat-pct">{ctx.pct}%</span>
               <span className="agent-composer-stat-val">{fmtTokens(ctx.used)}<span className="agent-composer-stat-dim">/{fmtTokens(ctx.limit)}</span></span>
             </span>
           )}

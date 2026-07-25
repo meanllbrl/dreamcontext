@@ -5,6 +5,7 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import '@xterm/xterm/css/xterm.css';
 import { getActiveVault } from '../../api/client';
 import { copyPreservingUnicode } from '../../lib/clipboard';
+import { nextLineShadow } from '../../lib/lineShadow';
 import { playAskChime } from '../../lib/chime';
 import {
   readAgentSettings, AGENT_SETTINGS_EVENT, type AgentSettings, type AgentRenderer,
@@ -170,6 +171,11 @@ export interface Session {
   applyZoom: (zoom: number) => void;
   /** Write arbitrary text to the PTY (used to inject a dropped image's path). */
   sendText: (data: string) => void;
+  /** Run a slash command (e.g. `/model opus`) WITHOUT clobbering what the user has
+   *  half-typed into Claude's readline: clears the line, submits the command, then
+   *  replays the user's draft back into the fresh prompt. Pass the command WITHOUT a
+   *  trailing `\r` — submission is this method's job. */
+  runCommand: (command: string) => void;
   /** Move keyboard focus to this session's input surface (the xterm here; a chat
    *  session's composer for the ChatSession peer) — the kind-agnostic call sites in
    *  AgentSurface use this instead of reaching into `.term` directly. */
@@ -318,7 +324,7 @@ export function createSession(bypass: boolean, notify: () => void, claudeId: str
     id, bypass, kind, claudeId, container, term, fit, ws,
     status: 'connecting', opened: false,
     busy: false, asking: false, attention: false, minimized: false,
-    ensureOpen, fitAndResize, applyZoom, sendText, focus: () => term.focus(), dispose,
+    ensureOpen, fitAndResize, applyZoom, sendText, runCommand, focus: () => term.focus(), dispose,
   };
 
   function setStatus(s: TermStatus) { session.status = s; notify(); }
@@ -509,9 +515,39 @@ export function createSession(bypass: boolean, notify: () => void, claudeId: str
   ws.onerror = stopOnClose;
 
   // Write raw input bytes to the PTY — the same control frame xterm's keystrokes use.
-  const sendInput = (data: string) => {
+  // `rawSend` is the untracked wire write; `sendInput` additionally maintains the
+  // line shadow below, and is the path EVERY user-originated byte takes (xterm onData,
+  // the ⇧↵/⌥⌫/⌘⌫ remaps, composer inserts, drop-path injection, the initial prompt).
+  const rawSend = (data: string) => {
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data }));
   };
+
+  // ── Readline line-shadow (what `runCommand` restores) ────────────────────────────
+  // The raw byte log of everything sent into Claude's readline since the line last
+  // emptied (rules: `nextLineShadow`, exported pure below). Deliberately UNPARSED:
+  // Claude's readline is deterministic, so replaying the exact bytes from an empty line
+  // reproduces the user's draft — backspaces, ⌥⌫ word deletes, mid-line cursor moves and
+  // all — without this code understanding any of them.
+  let lineShadow = '';
+  const sendInput = (data: string) => { lineShadow = nextLineShadow(lineShadow, data); rawSend(data); };
+
+  /** How long after submitting a `runCommand` slash command before the saved draft is
+   *  replayed — long enough for the command's transient rerender (e.g. `/model`'s
+   *  confirmation) to settle so the typed-ahead bytes land in the fresh prompt. */
+  const RUN_COMMAND_RESTORE_MS = 350;
+
+  // Run a slash command without clobbering the user's half-typed line (hoisted — the
+  // session object literal above references it): Ctrl+E jumps to line end, Ctrl+U kills
+  // to line start (both honored natively by Claude's prompt — see the keymap note below),
+  // so the line is empty wherever the cursor sat; then the command submits, and the saved
+  // draft replays into the fresh prompt. The command's own bytes go through `rawSend`, so
+  // the shadow still equals the draft — which is exactly what the readline holds again
+  // after the replay.
+  function runCommand(command: string) {
+    const saved = lineShadow;
+    rawSend(`\x05\x15${command}\r`);
+    if (saved) setTimeout(() => rawSend(saved), RUN_COMMAND_RESTORE_MS);
+  }
 
   // ── Type an initial prompt WITHOUT submitting (composer skill/file insert) ─────────
   // Only the type-without-submit case runs here now: a spawned session pre-typed with a

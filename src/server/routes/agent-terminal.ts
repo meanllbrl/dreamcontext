@@ -872,7 +872,10 @@ function latestTranscriptModel(jsonlPath: string): string | null {
     let obj: { message?: { model?: unknown } };
     try { obj = JSON.parse(s); } catch { continue; }
     const model = obj?.message?.model;
-    if (typeof model === 'string' && model) return modelAlias(model);
+    // `<synthetic>` marks a locally-generated reply (a `/effort` echo, a "Please run /login"
+    // notice) — no model ran it, and reporting it made the composer's picker read
+    // "<synthetic>" instead of the model the session is actually on.
+    if (typeof model === 'string' && model && model !== '<synthetic>') return modelAlias(model);
   }
   return null;
 }

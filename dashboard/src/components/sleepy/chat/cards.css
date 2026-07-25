@@ -1,0 +1,582 @@
+/* Agent Chat (beta) — ORGANISM cards (atomic-design layer 3). Tokens only (var(--color-*)
+   etc.) so light/dark theming is automatic, same convention as ChatPane.css. Interactive
+   cards (survey/permission/sub-agents) share ONE width: var(--chat-card-width) — defined
+   by ChatPane.css.
+
+   The transcript's smaller pieces are NOT here: atoms (status dot, path chip, copy
+   button, diff stat, caret…) live in `atoms.css`, and the structures composed from them
+   (tool header, terminal block, diff, thinking pill, hover bar, confirm) in
+   `molecules.css`. This file owns only the card SHELLS and the surfaces that have no
+   smaller reusable unit. */
+
+/* ── Shared button atoms (survey submit, permission allow/deny, banner actions) ──── */
+
+.chat-btn {
+  padding: 7px 14px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast), transform var(--transition-fast);
+}
+.chat-btn:hover:not(:disabled) { background: var(--color-bg-tertiary); border-color: var(--color-border-hover); }
+.chat-btn:active:not(:disabled) { transform: scale(0.97); }
+.chat-btn:disabled { opacity: 0.5; cursor: default; }
+.chat-btn:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
+.chat-btn.primary { background: var(--color-accent); border-color: var(--color-accent); color: var(--color-accent-text); }
+.chat-btn.primary:hover:not(:disabled) { filter: brightness(1.08); }
+/* Decision-weight variant: a card's Allow/Deny and a banner's Retry are the moment the
+   user acts, so they get the larger pill rather than the compact utility button. */
+.chat-btn.pill {
+  padding: var(--space-2) var(--space-5);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-sm);
+}
+.chat-btn.danger { border-color: var(--color-error); color: var(--color-error); }
+.chat-btn.danger:hover:not(:disabled) { background: var(--color-error-subtle); border-color: var(--color-error); }
+
+.chat-card-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 2px; }
+
+/* ── Inline media in an answer (chatEntities.useInlineMedia) ──────────────────────────
+   A picture, clip or recording the agent produced or read is SHOWN, not linked. Capped so a
+   3000px capture or a 4K clip can't blow out the transcript's measure; an image clicks
+   through to the lightbox, a clip carries its own controls. */
+
+.chat-md-media {
+  display: block;
+  max-width: 100%;
+  margin: var(--space-2) 0;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  transition: border-color var(--transition-fast);
+}
+.chat-md-media:hover { border-color: var(--color-border-hover); }
+.chat-md-image { max-height: 420px; width: auto; height: auto; object-fit: contain; cursor: zoom-in; }
+.chat-md-video { max-height: 460px; width: 100%; background: #000; }
+/* An audio player has no natural width — without this it stretches edge to edge and reads
+   as a broken element rather than a small control. */
+.chat-md-audio { width: min(420px, 100%); border: none; background: transparent; }
+
+/* ── Blocked media: outside the project, or a format we can't play ────────────────────
+   Never a dead end. If the only thing missing is consent it offers "Allow access" (one
+   named file, one click); either way "Open ↗" hands it to the OS. */
+
+.chat-md-blocked {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: var(--space-2) 0;
+  padding: 5px 6px 5px 12px;
+  border-radius: var(--radius-full);
+  border: 1px dashed var(--color-border-hover);
+  background: var(--color-bg-secondary);
+  font-size: var(--font-size-xs, 11.5px);
+}
+.chat-md-blocked-name { color: var(--color-text); font-weight: 600; }
+.chat-md-blocked-note { color: var(--color-text-tertiary); }
+.chat-md-blocked-allow,
+.chat-md-blocked-open {
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+  border: 1px solid transparent;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter var(--transition-fast), background var(--transition-fast);
+}
+.chat-md-blocked-allow { background: var(--color-accent); color: var(--color-accent-text); }
+.chat-md-blocked-allow:hover:not(:disabled) { filter: brightness(1.1); }
+.chat-md-blocked-allow:disabled { opacity: 0.6; cursor: default; }
+.chat-md-blocked-open { background: transparent; border-color: var(--color-border-hover); color: var(--color-text-secondary); }
+.chat-md-blocked-open:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
+
+/* ── Fenced-code Copy button + language bar (chatEntities.useCopyableCodeBlocks) ─── */
+
+.chat-code-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  margin: calc(-1 * var(--space-4)) calc(-1 * var(--space-4)) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-tertiary);
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
+.chat-code-lang { color: var(--color-text-secondary); }
+.chat-code-copy {
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.chat-code-copy:hover { background: var(--color-bg-secondary); color: var(--color-text); }
+.chat-code-copy:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 1px; }
+
+/* ── User message (right accent bubble + hover bar) ──────────────────────────────── */
+
+.chat-msg-user-row {
+  align-self: flex-end;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-1);
+  max-width: min(640px, 80%);
+  position: relative;
+}
+.chat-msg-user-bubble {
+  align-self: flex-end;
+  max-width: 100%;
+  padding: var(--space-3) var(--space-5);
+  border-radius: var(--radius-2xl);
+  background: var(--color-accent);
+  color: var(--color-accent-text);
+  font-size: var(--font-size-base);
+  line-height: var(--line-height-normal);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ── Assistant message — FULL-WIDTH, NO AVATAR GUTTER (hard rule 1) ──────────────── */
+
+.chat-msg-assistant-row {
+  align-self: stretch;
+  width: 100%;
+  max-width: var(--chat-line-width, 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+  position: relative;
+}
+.chat-msg-assistant-body {
+  /* Hugs its content and grows to the transcript's measure — a one-line answer (or an
+     interrupted half-sentence) reads as a note, not as an empty full-width slab. */
+  align-self: flex-start;
+  width: fit-content;
+  max-width: 100%;
+  padding: var(--space-5) var(--space-6);
+  border-radius: var(--radius-xl);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-sm);
+  color: var(--color-text);
+}
+/* MarkdownPreview's container is a document surface of its own (border + padding +
+   background) — inside a chat card that reads as a box in a box. The card IS the
+   surface here, so the inner one is flattened. */
+.chat-msg-assistant-body .md-preview {
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
+  overflow: visible;
+}
+.chat-msg-assistant-body .markdown-body {
+  font-size: var(--font-size-base);
+  line-height: 1.6;
+}
+/* A fenced block inside a chat answer is a self-contained card (language bar + Copy),
+   so it gets a real surface instead of MarkdownPreview's inline-doc treatment. */
+.chat-msg-assistant-body .md-preview .markdown-body pre {
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  /* One step BELOW the card's surface, so the language bar (which keeps the tertiary
+     surface) reads as a header rather than melting into the code well. */
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  overflow: hidden;
+}
+.chat-msg-assistant-body .md-preview .markdown-body pre code {
+  display: block;
+  font-size: var(--font-size-sm);
+  line-height: 1.7;
+  overflow-x: auto;
+}
+.chat-msg-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: var(--color-accent);
+  animation: chat-caret-blink 900ms step-end infinite;
+}
+@keyframes chat-caret-blink { 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .chat-msg-caret { animation: none; } }
+
+/* ── Tool card — the SHELL only; the header and the three bodies are molecules ────── */
+
+.chat-toolcard {
+  align-self: stretch;
+  width: 100%;
+  max-width: var(--chat-line-width, 100%);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-secondary);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+.chat-toolcard:hover { border-color: var(--color-border-hover); }
+.chat-toolcard[data-status='error'] { border-color: var(--color-error); }
+
+.chat-toolcard-body { border-top: 1px solid var(--color-border); }
+/* A body block is the card's last row: square its top corners so it meets the header
+   flush, and let the card's own radius + overflow clip the bottom pair. */
+.chat-toolcard-body > .chat-m-terminal { border-radius: 0; }
+
+/* Generic body (any tool that is neither Bash nor an edit) */
+.chat-toolcard-generic {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+}
+.chat-toolcard-section { display: flex; flex-direction: column; gap: var(--space-1); }
+.chat-toolcard-section-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.chat-toolcard-label {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.chat-toolcard-section pre {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-tertiary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 320px;
+  overflow: auto;
+}
+
+/* ── Survey card (state 5) ────────────────────────────────────────────────────────── */
+
+.chat-surveycard {
+  align-self: flex-start;
+  width: 100%;
+  max-width: var(--chat-card-width, min(680px, 100%));
+  padding: 16px;
+  border-radius: var(--radius-xl);
+  background: var(--color-bg-elevated, var(--color-bg-secondary));
+  border: 1px solid var(--color-accent-soft);
+  box-shadow: var(--shadow-lg);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.chat-surveycard-head { display: flex; align-items: center; justify-content: space-between; }
+.chat-surveycard-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.chat-surveycard-progress { font-family: var(--font-mono); font-size: 11px; color: var(--color-text-tertiary); }
+.chat-surveycard-block { display: flex; flex-direction: column; gap: 8px; }
+.chat-surveycard-helper { color: var(--color-text-tertiary); font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; }
+.chat-surveycard-title { margin: 0; font-family: var(--font-family-display); font-size: var(--font-size-lg, 18px); color: var(--color-text); }
+.chat-surveycard-options { display: flex; flex-direction: column; gap: 6px; }
+.chat-surveycard-opt {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition-fast), border-color var(--transition-fast), transform var(--transition-fast);
+}
+.chat-surveycard-opt:hover { border-color: var(--color-border-hover); }
+.chat-surveycard-opt:active { transform: scale(0.99); }
+.chat-surveycard-opt.on { background: var(--color-accent-soft); border-color: var(--color-accent); }
+.chat-surveycard-opt-mark {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px solid var(--color-border-hover);
+  color: var(--color-accent-text);
+  font-size: 11px;
+  margin-top: 1px;
+}
+.chat-surveycard-opt-mark.box { border-radius: var(--radius-sm); }
+.chat-surveycard-opt-mark.radio { border-radius: 50%; }
+.chat-surveycard-opt.on .chat-surveycard-opt-mark { background: var(--color-accent); border-color: var(--color-accent); }
+.chat-surveycard-opt-body { display: flex; flex-direction: column; gap: 2px; }
+.chat-surveycard-opt-title { font-size: 13px; font-weight: 600; }
+.chat-surveycard-opt-desc { font-size: 11.5px; color: var(--color-text-secondary); }
+.chat-surveycard-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 2px; }
+.chat-surveycard-count { color: var(--color-text-tertiary); font-size: 11.5px; }
+.chat-surveycard-receipt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text-secondary);
+  font-size: 12.5px;
+}
+.chat-surveycard-receipt-check { color: var(--color-success); font-weight: 700; }
+
+/* ── Permission card (state 6) — header rule, then a padded decision body ─────────── */
+
+.chat-permcard {
+  align-self: flex-start;
+  width: 100%;
+  max-width: var(--chat-card-width, min(680px, 100%));
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  overflow: hidden;
+}
+.chat-permcard-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-4);
+}
+.chat-permcard-desc {
+  margin: 0;
+  color: var(--color-text);
+  font-size: var(--font-size-base);
+  line-height: var(--line-height-normal);
+}
+/* The raw-input fallback (a tool whose input is neither a command nor an edit): plain
+   data on a plain surface — the dark shell treatment belongs to `TerminalBlock` alone. */
+.chat-permcard-raw {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow: auto;
+}
+.chat-permcard-diff {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.chat-permcard-diff-head {
+  display: flex;
+  justify-content: flex-end;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-tertiary);
+}
+.chat-permcard-decide {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+.chat-permcard-always {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-text);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+.chat-permcard-always input { width: 16px; height: 16px; accent-color: var(--color-accent); cursor: pointer; }
+.chat-permcard-actions { display: flex; align-items: center; gap: var(--space-2); margin-left: auto; }
+.chat-permcard-explainer {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}
+.chat-permcard[data-mode='bypass'] .chat-permcard-explainer { color: var(--color-warning); }
+
+/* ── Bypass notice (state 6's informational twin — nothing to decide) ─────────────── */
+
+.chat-bypasscard {
+  align-self: flex-start;
+  width: 100%;
+  max-width: var(--chat-card-width, min(680px, 100%));
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-warning);
+  overflow: hidden;
+}
+.chat-bypasscard-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  background: var(--color-warning-subtle);
+}
+.chat-bypasscard-desc {
+  margin: 0;
+  color: var(--color-text);
+  font-size: var(--font-size-base);
+  line-height: var(--line-height-normal);
+}
+/* Inline code on the caution surface reads in the card's own key, not the accent's. */
+.chat-bypasscard-desc .chat-a-inlinecode {
+  background: color-mix(in srgb, var(--color-warning) 16%, transparent);
+  color: var(--color-warning);
+}
+.chat-bypasscard-note {
+  margin: 0;
+  color: var(--color-warning);
+  font-size: var(--font-size-xs);
+}
+
+/* ── Sub-agents group card (state 9) ──────────────────────────────────────────────── */
+
+.chat-subagents {
+  align-self: flex-start;
+  width: 100%;
+  max-width: var(--chat-card-width, min(680px, 100%));
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  overflow: hidden;
+}
+.chat-subagents .chat-m-cardhead-glyph { color: var(--color-warning); }
+.chat-subagents-elapsed {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+.chat-subagents-spinner {
+  width: var(--space-3);
+  height: var(--space-3);
+  border-radius: var(--radius-full);
+  border: 2px solid var(--color-accent-soft);
+  border-top-color: var(--color-accent);
+  animation: chat-spin 800ms linear infinite;
+}
+@keyframes chat-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .chat-subagents-spinner { animation: none; } }
+
+.chat-subagents-rows { display: flex; flex-direction: column; }
+.chat-subagents-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: none;
+  border-bottom: 1px solid var(--color-border);
+  /* A 3px identity bar the active row lights up — drawn on every row so switching rows
+     never shifts the text by 3px. */
+  box-shadow: inset 3px 0 0 transparent;
+  background: transparent;
+  font-family: var(--font-family-text);
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--transition-fast), box-shadow var(--transition-fast);
+}
+.chat-subagents-row:last-child { border-bottom: none; }
+/* The tint marks the row you are POINTING at, not the ones that happen to be running —
+   a live run already says so through its sweeping bar and its accent-colored line. */
+.chat-subagents-row:hover,
+.chat-subagents-row:focus-visible {
+  background: var(--color-accent-soft);
+  box-shadow: inset 3px 0 0 var(--color-accent);
+}
+.chat-subagents-row:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; }
+
+.chat-subagents-row-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.chat-subagents-row-head { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.chat-subagents-row-name {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-bold);
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-subagents-row-line {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-subagents-row[data-status='running'] .chat-subagents-row-line { color: var(--color-accent); }
+
+.chat-subagents-row-mark { flex: 0 0 auto; width: var(--space-4); text-align: center; color: var(--color-text-tertiary); font-size: var(--font-size-sm); }
+.chat-subagents-row-mark[data-status='completed'] { color: var(--color-success); }
+.chat-subagents-row-mark[data-status='error'] { color: var(--color-error); }
+/* "open →" replaces the status mark on the row you are pointing at — the drill-in is the
+   only thing a row does, so it names itself exactly when you can act on it. */
+.chat-subagents-row-open {
+  position: absolute;
+  right: var(--space-4);
+  color: var(--color-accent);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+.chat-subagents-row:hover .chat-subagents-row-mark,
+.chat-subagents-row:focus-visible .chat-subagents-row-mark { opacity: 0; }
+.chat-subagents-row:hover .chat-subagents-row-open,
+.chat-subagents-row:focus-visible .chat-subagents-row-open { opacity: 1; }
+
+/* ── Board preview card (state 4) ─────────────────────────────────────────────────── */
+
+.chat-board {
+  align-self: flex-start;
+  max-width: min(360px, 92%);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+  overflow: hidden;
+}
+.chat-board-thumb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 96px;
+  font-size: 32px;
+  background: var(--color-bg-tertiary);
+}
+.chat-board-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 11px; }
+.chat-board-name { font-size: 12px; color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-board-open {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: var(--color-accent);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.chat-board-open:hover { text-decoration: underline; }

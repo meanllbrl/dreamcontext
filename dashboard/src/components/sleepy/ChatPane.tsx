@@ -1,30 +1,41 @@
-import { useEffect, useReducer, useRef, useState } from 'react';
-import { MarkdownPreview } from '../core/MarkdownPreview';
+import { Fragment, useEffect, useReducer, useRef, useState } from 'react';
 import { GoalLivePanel } from './GoalLivePanel';
 import { api } from '../../api/client';
-import { pickFiles, pickFolders } from '../../lib/desktop';
-import { useAgentSessionStats } from '../../hooks/useAgentCapabilities';
-import {
-  SKILL_GROUPS, effortLabel, fmtTokens, fmtCost, quotePath, type ModelConfig,
-} from '../../lib/agentComposer';
+import type { ModelConfig } from '../../lib/agentComposer';
+import { classifyReference, subAgentToolUseIds, isGuardedCommand, type SubAgentRun } from './chat/chatEntities';
+import { ItemView } from './chat/TranscriptItem';
+import { SurveyCard } from './chat/SurveyCard';
+import { PermissionCard } from './chat/PermissionCard';
+import { BypassNoticeCard } from './chat/BypassNoticeCard';
+import { SubAgentCard } from './chat/SubAgentCard';
+import { SlideOver } from './chat/SlideOver';
+import { Lightbox } from './chat/Lightbox';
+import { BoardPreviewCard } from './chat/BoardPreviewCard';
+import { EmptyState, StreamErrorBanner, ReconnectingChip, SessionEndedBanner } from './chat/Banners';
+import { Composer } from './chat/Composer';
+import './chat/cards.css';
+import './chat/overlays.css';
 import type {
-  ChatSession, ChatItem, ChatUserItem, ChatTextItem, ChatThinkingItem, ChatToolItem,
-  PendingPermission, PendingQuestion,
+  ChatSession, ChatItem, ChatUserItem, ChatToolItem, PendingPermission, PendingQuestion,
 } from './chatSession';
 import './ChatPane.css';
 
 /**
- * The native conversation view for a Chat session (beta) — portaled into the session's
- * detached `container` by AgentSurface, exactly like a terminal's xterm container. Renders
- * from {@link ChatSession.getModel} (re-subscribing on every applied event — see
- * chatSession.ts's two-channel notification note) instead of scraping any screen buffer.
+ * The native conversation view for a Chat session (beta) — orchestrator over the
+ * redesigned `chat/` component tree (task T7, plan rev.3). Portaled into the session's
+ * detached `container` by AgentSurface, exactly like a terminal's xterm container.
+ * Renders from {@link ChatSession.getModel} (re-subscribing on every applied event —
+ * see chatSession.ts's two-channel notification note) instead of scraping any screen
+ * buffer. Owns only VIEW state (which slide-over/lightbox is open, the queued quote) —
+ * every mutation (send/rewind/retry/answer/alwaysAllow) is a direct `session` call, per
+ * the frozen `chat/` component contracts (T5/T6).
  *
  * NOTE on i18n: every sibling component in this directory (AgentTabs, AgentComposerBar,
  * PaneFragment, GoalLivePanel, AgentDock, AgentSetup) hardcodes its English copy — none use
- * `useI18n`/`t()`. `settings.agents.chat_view*` exist in I18nContext only because
- * SettingsPage.tsx (which DOES use i18n) needed them for its own checkbox row. This file
- * follows the established local convention of its own directory rather than introducing
- * i18n into a component family that has never used it.
+ * `useI18n`/`t()`. `settings.agents.screen*` exist in I18nContext only because
+ * SettingsPage.tsx (which DOES use i18n) needed them for its Agent-screen picker row. This
+ * file follows the established local convention of its own directory rather than
+ * introducing i18n into a component family that has never used it.
  */
 
 const WATCHDOG_MS = 4000;
@@ -35,13 +46,40 @@ function safeStringify(v: unknown): string {
   try { return JSON.stringify(v, null, 2); } catch { return String(v); }
 }
 
-// ─── Context strip (AC9) ────────────────────────────────────────────────────────────
+/** A Bash tool call's command — the text the bypass notice reports as having run. */
+function bashCommand(item: ChatToolItem): string | null {
+  if (item.name !== 'Bash' || !item.input || typeof item.input !== 'object') return null;
+  const cmd = (item.input as Record<string, unknown>).command;
+  return typeof cmd === 'string' && cmd ? cmd : null;
+}
+
+/** The tool's primary path/file argument, if it has one — mirrors `ToolCard.tsx`'s private
+ *  `primaryPath` (not exported; that file is frozen T5 ownership) so this orchestrator can
+ *  decide, WITHOUT duplicating ToolCard's own rendering, whether a tool item references an
+ *  Excalidraw board and should render as a {@link BoardPreviewCard} instead. */
+function primaryToolPath(input: unknown): string | null {
+  if (!input || typeof input !== 'object') return null;
+  const obj = input as Record<string, unknown>;
+  for (const key of ['file_path', 'path', 'notebook_path']) {
+    const v = obj[key];
+    if (typeof v === 'string' && v) return v;
+  }
+  return null;
+}
+
+// ─── Context strip — linked task chip + GoalLivePanel only ─────────────────────────
+//
+// The context/cost readout AC9 originally put here now lives in the redesigned
+// `Composer` (task T6) — the brief's "implementer picks the cleanest of the two"
+// decision landed there, so showing it here too would just duplicate the number. The
+// task-link chip and GoalLivePanel are a DIFFERENT, still-live feature (goal-skill
+// orchestration progress) the redesign never asked to remove, so they stay.
 
 interface TaskLinkInfo { name: string; objectiveLabels: string[] }
 
 /** Linked-task chip + objectives data, fetched only when `taskSlug` is supplied. Beta ships
- *  no caller that ever sets `taskSlug` (Task Manager sessions stay `kind:'agent'` — see the
- *  plan's scope call D), so this hook is a built-but-dormant mechanism in this release. */
+ *  no caller that ever sets `taskSlug` (Task Manager sessions stay `kind:'agent'`), so this
+ *  hook is a built-but-dormant mechanism in this release. */
 function useTaskLink(taskSlug?: string): TaskLinkInfo | null {
   const [info, setInfo] = useState<TaskLinkInfo | null>(null);
   useEffect(() => {
@@ -68,192 +106,36 @@ function useTaskLink(taskSlug?: string): TaskLinkInfo | null {
 
 function ChatContextStrip({ session, taskSlug }: { session: ChatSession; taskSlug?: string }) {
   const link = useTaskLink(taskSlug);
-  const stats = useAgentSessionStats(session.claudeId, session.status === 'open').data;
-  const ctx = stats?.contextTokens != null && stats.contextLimit
-    ? { used: stats.contextTokens, limit: stats.contextLimit, pct: Math.min(100, Math.round((stats.contextTokens / stats.contextLimit) * 100)) }
-    : null;
-  const showStats = !!ctx || (stats?.costUsd != null && stats.costUsd > 0);
-  if (!link && !showStats) {
+  if (!link) {
     // Still mount GoalLivePanel — it renders nothing unless a run is active for this
-    // conversation, and must poll regardless of whether the rest of the strip has content.
+    // conversation, and must poll regardless of whether a task is linked.
     return <GoalLivePanel claudeId={session.claudeId} enabled={session.status === 'open'} />;
   }
   return (
     <div className="chat-context-strip">
-      {link && (
-        <div className="chat-context-task">
-          <span className="chat-context-task-glyph" aria-hidden>📋</span>
-          <span className="chat-context-task-name">{link.name}</span>
-          {link.objectiveLabels.map((o) => (
-            <span key={o} className="chat-context-objective">{o}</span>
-          ))}
-        </div>
-      )}
+      <div className="chat-context-task">
+        <span className="chat-context-task-glyph" aria-hidden>📋</span>
+        <span className="chat-context-task-name">{link.name}</span>
+        {link.objectiveLabels.map((o) => (
+          <span key={o} className="chat-context-objective">{o}</span>
+        ))}
+      </div>
       <GoalLivePanel claudeId={session.claudeId} enabled={session.status === 'open'} />
-      {showStats && (
-        <div
-          className="chat-context-stats"
-          title={
-            `${ctx ? `Context window: ${fmtTokens(ctx.used)} of ${fmtTokens(ctx.limit)} used (${ctx.pct}%)\n` : ''}`
-            + `${stats?.costUsd != null ? `Estimated cost at public API rates: ${fmtCost(stats.costUsd)} (a Max/Pro plan is flat-rate — this is a what-if)` : ''}`
-          }
-        >
-          {ctx && (
-            <span className="chat-context-stat" data-hot={ctx.pct >= 85}>
-              <span aria-hidden>◔</span> {fmtTokens(ctx.used)}<span className="chat-context-stat-dim">/{fmtTokens(ctx.limit)}</span>
-            </span>
-          )}
-          {stats?.costUsd != null && <span className="chat-context-stat">{fmtCost(stats.costUsd)}</span>}
-        </div>
-      )}
     </div>
   );
 }
 
-// ─── Transcript items ───────────────────────────────────────────────────────────────
-
-function UserBubble({ item }: { item: ChatUserItem }) {
-  return <div className="chat-bubble user">{item.text}</div>;
-}
-
-function AssistantBubble({ item }: { item: ChatTextItem }) {
-  if (!item.text && item.done) return null; // an empty finished text block carries nothing to show
-  return (
-    <div className="chat-bubble assistant">
-      <MarkdownPreview content={item.text || '…'} />
-    </div>
-  );
-}
-
-function ThinkingBlock({ item }: { item: ChatThinkingItem }) {
-  const [open, setOpen] = useState(false);
-  if (!item.text) return null;
-  return (
-    <div className="chat-thinking-block">
-      <button type="button" className="chat-collapse-head" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
-        <span aria-hidden>💭</span> Thinking{!item.done ? '…' : ''}
-        <span className="chat-collapse-caret" aria-hidden>{open ? '▾' : '▸'}</span>
-      </button>
-      {open && <div className="chat-thinking-body">{item.text}</div>}
-    </div>
-  );
-}
-
-function ToolCard({ item }: { item: ChatToolItem }) {
-  const [open, setOpen] = useState(false);
-  const duration = item.endedAt ? item.endedAt - item.startedAt : null;
-  return (
-    <div className="chat-tool-card" data-status={item.status}>
-      <button type="button" className="chat-collapse-head" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
-        <span className="chat-tool-status" data-status={item.status} aria-hidden />
-        <span className="chat-tool-name">{item.name || 'Tool'}</span>
-        {duration != null && <span className="chat-tool-duration">{(duration / 1000).toFixed(1)}s</span>}
-        <span className="chat-collapse-caret" aria-hidden>{open ? '▾' : '▸'}</span>
-      </button>
-      {open && (
-        <div className="chat-tool-body">
-          <div className="chat-tool-section">
-            <span className="chat-tool-label">Input</span>
-            <pre>{safeStringify(item.input)}</pre>
-          </div>
-          {item.result !== undefined && (
-            <div className="chat-tool-section">
-              <span className="chat-tool-label">Result</span>
-              <pre>{safeStringify(item.result)}</pre>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ItemView({ item }: { item: ChatItem }) {
-  switch (item.kind) {
-    case 'user': return <UserBubble item={item} />;
-    case 'text': return <AssistantBubble item={item} />;
-    case 'thinking': return <ThinkingBlock item={item} />;
-    case 'tool': return <ToolCard item={item} />;
-    default: return null;
-  }
-}
-
-// ─── Permission + question cards (AC4/AC5) ─────────────────────────────────────────
-
-function PermissionCard({ item, session }: { item: PendingPermission; session: ChatSession }) {
-  return (
-    <div className="chat-permission-card">
-      <div className="chat-card-head">
-        <span className="chat-card-glyph" aria-hidden>🔐</span>
-        <span className="chat-card-title">{item.displayName ?? item.toolName}</span>
-      </div>
-      {item.description && <p className="chat-card-desc">{item.description}</p>}
-      {item.input !== undefined && <pre className="chat-card-input">{safeStringify(item.input)}</pre>}
-      <div className="chat-card-actions">
-        <button type="button" className="chat-btn" onClick={() => session.answer(item.requestId, { behavior: 'deny', message: 'Denied by user.' })}>Deny</button>
-        <button type="button" className="chat-btn primary" onClick={() => session.answer(item.requestId, { behavior: 'allow', updatedInput: item.input })}>Allow</button>
-      </div>
-    </div>
-  );
-}
-
-function QuestionCard({ item, session }: { item: PendingQuestion; session: ChatSession }) {
-  const [selected, setSelected] = useState<Record<string, string[]>>({});
-  const toggle = (q: PendingQuestion['questions'][number], label: string) => {
-    setSelected((prev) => {
-      const cur = prev[q.question] ?? [];
-      const next = q.multiSelect
-        ? (cur.includes(label) ? cur.filter((l) => l !== label) : [...cur, label])
-        : [label];
-      return { ...prev, [q.question]: next };
-    });
-  };
-  const answered = item.questions.every((q) => (selected[q.question] ?? []).length > 0);
-  const submit = () => {
-    const picked: Record<string, string> = {};
-    for (const q of item.questions) {
-      const chosen = selected[q.question] ?? [];
-      if (chosen.length) picked[q.question] = chosen.join(', ');
-    }
-    session.answerQuestion(item.requestId, item.questions, picked);
-  };
-  return (
-    <div className="chat-question-card">
-      <div className="chat-card-head">
-        <span className="chat-card-glyph" aria-hidden>❓</span>
-        <span className="chat-card-title">{item.questions[0]?.header ?? 'Question'}</span>
-      </div>
-      {item.questions.map((q) => (
-        <div key={q.question} className="chat-question-block">
-          <p className="chat-question-text">{q.question}</p>
-          <div className="chat-question-options">
-            {q.options.map((o) => (
-              <button
-                key={o.label}
-                type="button"
-                className={'chat-question-opt' + ((selected[q.question] ?? []).includes(o.label) ? ' on' : '')}
-                title={o.description}
-                onClick={() => toggle(q, o.label)}
-              >{o.label}</button>
-            ))}
-          </div>
-        </div>
-      ))}
-      <div className="chat-card-actions">
-        <button type="button" className="chat-btn primary" disabled={!answered} onClick={submit}>
-          Submit answer{item.questions.length > 1 ? 's' : ''}
-        </button>
-      </div>
-    </div>
-  );
-}
+// ─── Degraded AskUserQuestion card (AC5's capability-detection safety net) ─────────
+//
+// Not one of the 12 design states — a fallback for a future CLI regression, kept from
+// the pre-redesign ChatPane verbatim (the spike PROVED headless routing works on
+// 2.1.218; this only ever fires if a later CLI breaks it). Styled locally since it
+// isn't one of T5's card components.
 
 /**
  * Watches for an `AskUserQuestion` tool call that never surfaced a matching `question`
- * control_request within {@link WATCHDOG_MS} — the capability-detection degrade net for
- * AC5 (the spike PROVED headless routing works on 2.1.218; this is the safety fallback if
- * a future CLI ever regresses it). Cleared the moment a real pending question arrives, or
- * the tool card itself resolves (answered some other way, or errored).
+ * control_request within {@link WATCHDOG_MS}. Cleared the moment a real pending question
+ * arrives, or the tool card itself resolves (answered some other way, or errored).
  */
 function useAskQuestionWatchdog(items: ChatItem[], hasPendingQuestion: boolean): ChatToolItem | null {
   const [stuck, setStuck] = useState<ChatToolItem | null>(null);
@@ -272,10 +154,10 @@ function useAskQuestionWatchdog(items: ChatItem[], hasPendingQuestion: boolean):
 
 function DegradedQuestionCard({ item, onContinueInTerminal }: { item: ChatToolItem; onContinueInTerminal: () => void }) {
   return (
-    <div className="chat-question-card chat-question-degraded">
-      <div className="chat-card-head">
-        <span className="chat-card-glyph" aria-hidden>❓</span>
-        <span className="chat-card-title">Claude is asking a question</span>
+    <div className="chat-degrade-card">
+      <div className="chat-degrade-head">
+        <span className="chat-degrade-glyph" aria-hidden>❓</span>
+        <span className="chat-degrade-title">Claude is asking a question</span>
       </div>
       <p className="chat-degrade-note">
         This session didn't route the question through Chat — here's the raw request. Continue in Terminal view to answer it.
@@ -288,141 +170,22 @@ function DegradedQuestionCard({ item, onContinueInTerminal }: { item: ChatToolIt
   );
 }
 
-// ─── Composer ───────────────────────────────────────────────────────────────────────
+// ─── View-only state for the two overlay surfaces (state 3/9's slide-over, state 4's
+//    lightbox) + the composer's queued quote (state 11). Every OTHER piece of state
+//    this pane renders from lives in `session.getModel()` — this is purely presentation. ──
 
-/**
- * The composer's draft textarea is LOCAL React state, not derived from
- * `session.getModel().draft` on every render. This is safe because `ChatPane` never
- * unmounts while its session is alive — AgentSurface portals every live chat session's
- * pane unconditionally (mirroring how a terminal's detached xterm container survives
- * minimize by moving to the garage, not unmounting) — so local state already survives
- * minimize/restore. `session.getModel().draft` is read once, on mount, purely as a safety
- * seed for the (rare, beta) case a prompt was parked server-side before this pane existed.
- * Skill-chip/file-path inserts route through BOTH local state (immediate UI) and
- * `session.sendText` (keeps the session's own model consistent, per its documented
- * contract); free typing is local-only — `session.send()` clears the session's own
- * `draft` field on submit regardless.
- */
-function ChatComposer({
-  session, model, effort, modelConfig, onModelChange, onEffortChange, busy, connected,
-}: {
-  session: ChatSession;
-  model: string;
-  effort: string;
-  modelConfig: ModelConfig;
-  onModelChange: (id: string) => void;
-  onEffortChange: (level: string) => void;
-  busy: boolean;
-  connected: boolean;
-}) {
-  const [draft, setDraft] = useState(() => session.getModel().draft);
-  const taRef = useRef<HTMLTextAreaElement | null>(null);
-  const [showFiles, setShowFiles] = useState(false);
-  const [showSkills, setShowSkills] = useState(false);
+type SlideOverState =
+  | { mode: 'file'; path: string }
+  | { mode: 'subagent'; run: SubAgentRun }
+  | null;
 
-  useEffect(() => {
-    session.setFocusTarget(taRef.current);
-    return () => session.setFocusTarget(null);
-  }, [session]);
-
-  const insert = (text: string) => {
-    setDraft((d) => d + text);
-    session.sendText(text);
-    taRef.current?.focus();
-  };
-
-  const submit = () => {
-    const text = draft.trim();
-    if (!text || busy || !connected) return;
-    session.send(text);
-    setDraft('');
-  };
-
-  const pickPaths = async (kind: 'files' | 'folders') => {
-    const paths = kind === 'folders' ? await pickFolders() : await pickFiles();
-    if (paths.length) insert(`${paths.map(quotePath).join(' ')} `);
-    setShowFiles(false);
-  };
-
-  const disabled = busy || !connected;
-
-  return (
-    <div className="chat-composer">
-      <div className="chat-composer-toolbar">
-        <div className="chat-composer-pop">
-          <button type="button" className={`chat-composer-btn${showFiles ? ' open' : ''}`} onClick={() => { setShowFiles((v) => !v); setShowSkills(false); }}>
-            <span aria-hidden>@</span> Files <span aria-hidden>▾</span>
-          </button>
-          {showFiles && (
-            <div className="chat-composer-menu">
-              <button type="button" onClick={() => void pickPaths('files')}>Attach files…</button>
-              <button type="button" onClick={() => void pickPaths('folders')}>Attach folders…</button>
-            </div>
-          )}
-        </div>
-        <div className="chat-composer-pop">
-          <button type="button" className={`chat-composer-btn${showSkills ? ' open' : ''}`} onClick={() => { setShowSkills((v) => !v); setShowFiles(false); }}>
-            <span aria-hidden>✦</span> Skills <span aria-hidden>▾</span>
-          </button>
-          {showSkills && (
-            <div className="chat-composer-menu chat-skill-menu">
-              {SKILL_GROUPS.map((g) => (
-                <div key={g.id} className="chat-skill-group">
-                  <span className="chat-skill-group-label">{g.label}</span>
-                  <div className="chat-skill-chips">
-                    {g.triggers.map((t) => (
-                      <button key={t.insert} type="button" title={t.hint} onClick={() => { insert(t.insert); setShowSkills(false); }}>{t.label}</button>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-        <div className="chat-composer-spacer" />
-        <select
-          className="chat-composer-select"
-          value={model || modelConfig.defaultModel}
-          title="Model — applies the next time this chat is resumed (Chat sets the model at spawn; there is no live /model switch yet)"
-          onChange={(e) => onModelChange(e.target.value)}
-        >
-          {modelConfig.models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
-        </select>
-        <select
-          className="chat-composer-select"
-          value={effort || modelConfig.defaultEffort}
-          title="Effort — applies the next time this chat is resumed"
-          onChange={(e) => onEffortChange(e.target.value)}
-        >
-          {modelConfig.efforts.map((lvl) => <option key={lvl} value={lvl}>{effortLabel(lvl)}</option>)}
-        </select>
-      </div>
-      <div className="chat-composer-row">
-        <textarea
-          ref={taRef}
-          className="chat-composer-input"
-          placeholder={!connected ? 'Connecting…' : busy ? 'Claude is working…' : 'Message Claude…'}
-          value={draft}
-          disabled={disabled}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
-          }}
-        />
-        {busy ? (
-          <button type="button" className="chat-btn chat-stop-btn" title="Interrupt the in-flight turn" onClick={() => session.interrupt()}>■ Stop</button>
-        ) : (
-          <button type="button" className="chat-btn primary chat-send-btn" disabled={!draft.trim() || !connected} onClick={submit}>Send</button>
-        )}
-      </div>
-    </div>
-  );
-}
+interface LightboxState { src: string; caption?: string }
 
 // ─── Top level ──────────────────────────────────────────────────────────────────────
 
 export function ChatPane({
   session, modelConfig, model, effort, onModelChange, onEffortChange, taskSlug, onContinueInTerminal,
+  permissionMode, onPermissionModeChange, onResume, onOpenAppPage,
 }: {
   session: ChatSession;
   modelConfig: ModelConfig;
@@ -431,10 +194,27 @@ export function ChatPane({
   onModelChange: (id: string) => void;
   onEffortChange: (level: string) => void;
   /** Task Manager sessions are `kind:'agent'` in beta (no caller ever sets this yet — the
-   *  ChatContextStrip mechanism is built and dormant; see chatSession's ChatSession header
-   *  and the plan's scope call D). */
+   *  ChatContextStrip mechanism is built and dormant). */
   taskSlug?: string;
   onContinueInTerminal: () => void;
+  /** The REMEMBERED permission-mode default (`agentSettings.chatPermissionMode`) — the
+   *  `bypass` dropdown, which now leads the COMPOSER's toolbar (owner reference 07-25)
+   *  rather than floating at the pane's top-right. Changing it applies from the next chat
+   *  session (AgentSurface's `spawn()` resolves a chat's actual bypass from this
+   *  centrally); this pane only passes the current value down and reports a change. */
+  permissionMode: 'auto' | 'bypass';
+  onPermissionModeChange: (mode: 'auto' | 'bypass') => void;
+  /** Respawn this exact conversation UUID as a fresh chat session (state 12's "Session
+   *  ended" banner, which REPLACES the composer). */
+  onResume: () => void;
+  /** Ask the wider app to open a dreamcontext entity (task/knowledge/core) referenced from
+   *  chat (SlideOver's "Open in app ↗", state 3). AgentSurface is mounted above the router
+   *  with no direct page-navigation channel of its own — see its wiring note for what this
+   *  does today (collapses the overlay + a forward-compatible event) versus a true deep
+   *  link, which needs a Shell-level listener outside this task's file ownership. Omitted
+   *  entirely degrades to "Open in app" simply not being offered (SlideOver already gates
+   *  the button on `reference.appNav` existing at all). */
+  onOpenAppPage?: (page: 'tasks' | 'knowledge' | 'core', id: string) => void;
 }) {
   const [, force] = useReducer((n: number) => n + 1, 0);
   useEffect(() => session.subscribe(() => force()), [session]);
@@ -443,6 +223,10 @@ export function ChatPane({
   const hasPendingQuestion = conv.pending.some((p) => p.kind === 'question');
   const stuckQuestion = useAskQuestionWatchdog(conv.items, hasPendingQuestion);
 
+  const [slideOver, setSlideOver] = useState<SlideOverState>(null);
+  const [lightbox, setLightbox] = useState<LightboxState | null>(null);
+  const [replyQuote, setReplyQuote] = useState<string | null>(null);
+
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const stickBottomRef = useRef(true);
   useEffect(() => {
@@ -450,9 +234,104 @@ export function ChatPane({
     if (el && stickBottomRef.current) el.scrollTop = el.scrollHeight;
   });
 
+  // ── State 3/4: a clicked file reference either opens the Lightbox (an image) or the
+  //    file SlideOver (everything else, including a board — no rasterizer exists, so a
+  //    board's "Open board ↗" degrades to the same numbered text preview; see chatEntities'
+  //    Reference/classifyReference and the plan's board-thumbnail resolution). ──────────
+  const handleOpenFile = (path: string) => {
+    const ref = classifyReference(path);
+    if (ref.isImage) {
+      setLightbox({ src: `/api/agent/file?path=${encodeURIComponent(path)}&raw=1`, caption: ref.label });
+      return;
+    }
+    setSlideOver({ mode: 'file', path });
+  };
+  const handleOpenBoard = (path: string) => setSlideOver({ mode: 'file', path });
+  const handleDrillIn = (run: SubAgentRun) => setSlideOver({ mode: 'subagent', run });
+  const handleNavApp = (page: 'tasks' | 'knowledge' | 'core', id: string) => {
+    setSlideOver(null);
+    onOpenAppPage?.(page, id);
+  };
+
+  // ── Transcript pass: skip the spawning Agent/Task tool's OWN card (state 9 — it's
+  //    already represented by ONE combined SubAgentCard, rendered at the position of the
+  //    EARLIEST such tool item so it reads in-place rather than always trailing); swap a
+  //    board-referencing tool item for a BoardPreviewCard (state 4); render everything
+  //    else through the shared ItemView dispatcher (state 2/11). ─────────────────────────
+  const suppressedToolUseIds = subAgentToolUseIds(conv.subAgents);
+  // The mode this conversation is ACTUALLY running in, as the CLI itself reported it
+  // (init frame, or a successful mid-session `set_permission_mode`) — NOT the remembered
+  // `permissionMode` prop, which is only the default for the NEXT session and would
+  // mislabel a session the user switched after it started.
+  const inBypass = conv.permissionMode ? conv.permissionMode === 'bypassPermissions' : session.bypass;
+  let subAgentCardShown = false;
+  const itemNode = (item: ChatItem): React.ReactNode => {
+    if (item.kind === 'tool') {
+      if (suppressedToolUseIds.has(item.toolUseId)) {
+        if (subAgentCardShown) return null; // already represented by the one combined card
+        subAgentCardShown = true;
+        return <SubAgentCard key={`subagents-${item.id}`} runs={conv.subAgents} onDrillIn={handleDrillIn} />;
+      }
+      const path = primaryToolPath(item.input);
+      if (path && classifyReference(path).kind === 'board') {
+        return <BoardPreviewCard key={item.id} path={path} onOpenBoard={handleOpenBoard} />;
+      }
+    }
+    const view = (
+      <ItemView
+        key={item.id}
+        item={item}
+        session={session}
+        onOpenFile={handleOpenFile}
+        onQuote={(text) => setReplyQuote(text)}
+      />
+    );
+    // Under bypass the CLI never asks — so the guarded commands it ran anyway get the
+    // receipt a permission card would have been. Only the guarded ones: a notice on every
+    // Bash call is noise, and noise is how a real one gets missed.
+    if (item.kind === 'tool' && inBypass) {
+      const command = bashCommand(item);
+      if (command && isGuardedCommand(command)) {
+        return (
+          <Fragment key={item.id}>
+            {view}
+            <BypassNoticeCard command={command} toolName={item.name} />
+          </Fragment>
+        );
+      }
+    }
+    return view;
+  };
+
+  const historyNodes = conv.history.map(itemNode);
+  const liveNodes = conv.items.map(itemNode);
+  // A sub-agent run whose spawning tool call never appeared as its own ChatToolItem (an
+  // edge case in raw frame ordering) still needs its card SOMEWHERE — append it once, after
+  // the live transcript, rather than silently dropping the whole group.
+  const trailingSubAgentCard = !subAgentCardShown && conv.subAgents.length > 0
+    ? <SubAgentCard key="subagents-trailing" runs={conv.subAgents} onDrillIn={handleDrillIn} />
+    : null;
+
+  const isEmpty = conv.history.length === 0 && conv.items.length === 0 && conv.pending.length === 0;
+  // A real process exit (`meta-exit`) OR the WS having dropped — either way the composer
+  // is replaced by the Session-ended banner (state 12); `status==='connecting'` never
+  // reaches here (that's the ReconnectingChip's own condition, below).
+  const ended = session.status === 'closed' || !!conv.exited;
+
+  // Stream-interrupted retry (state 12): resend the last user message. There is no
+  // reconnect-and-resume machinery in this engine (see the plan's resolved risk) — for a
+  // genuine process exit the Session-ended banner's Resume is the real recovery path;
+  // this covers a `lastError` that leaves the session itself still open (a failed rewind/
+  // model-switch, or a relay error the process survived).
+  const retryLastMessage = () => {
+    const lastUser = [...conv.items].reverse().find((it): it is ChatUserItem => it.kind === 'user');
+    if (lastUser) session.send(lastUser.text);
+  };
+
   return (
     <div className="chat-pane" data-status={session.status}>
       <ChatContextStrip session={session} taskSlug={taskSlug} />
+      {session.status === 'connecting' && <ReconnectingChip />}
       <div
         className="chat-scroll"
         ref={scrollRef}
@@ -460,31 +339,79 @@ export function ChatPane({
           const el = e.currentTarget;
           stickBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
         }}
+        onClick={(e) => {
+          // Click-to-focus, mirroring how clicking anywhere in an xterm focuses its input:
+          // without this a click on the transcript parks focus on <body>, killing the
+          // surface-level ⌘D/⌘T/⌘W chords (they listen inside the overlay host). Text
+          // selection and real controls keep working — only a plain click refocuses.
+          if (!window.getSelection()?.isCollapsed) return;
+          if ((e.target as Element).closest('button, select, textarea, input, a')) return;
+          session.focus();
+        }}
       >
-        {conv.items.length === 0 && !conv.pending.length && (
-          <p className="chat-empty-hint">Say something to start this conversation.</p>
+        {isEmpty && <EmptyState />}
+        {conv.history.length > 0 && (
+          <>
+            {historyNodes}
+            <div className="chat-history-divider" aria-hidden>earlier conversation ↑ · resumed</div>
+          </>
         )}
-        {conv.items.map((item) => <ItemView key={item.id} item={item} />)}
+        {liveNodes}
+        {trailingSubAgentCard}
         {conv.pending
           .filter((p): p is PendingPermission => p.kind === 'permission')
-          .map((p) => <PermissionCard key={p.requestId} item={p} session={session} />)}
+          .map((p) => <PermissionCard key={p.requestId} item={p} session={session} permissionMode={permissionMode} />)}
         {conv.pending
           .filter((p): p is PendingQuestion => p.kind === 'question')
-          .map((p) => <QuestionCard key={p.requestId} item={p} session={session} />)}
+          .map((p) => <SurveyCard key={p.requestId} item={p} session={session} />)}
         {stuckQuestion && <DegradedQuestionCard item={stuckQuestion} onContinueInTerminal={onContinueInTerminal} />}
-        {conv.lastError && <div className="chat-error-banner">{conv.lastError}</div>}
-        {session.status === 'closed' && <div className="chat-closed-banner">This chat session ended.</div>}
+        {conv.lastError && <StreamErrorBanner message={conv.lastError} onRetry={retryLastMessage} />}
       </div>
-      <ChatComposer
-        session={session}
-        model={model}
-        effort={effort}
-        modelConfig={modelConfig}
-        onModelChange={onModelChange}
-        onEffortChange={onEffortChange}
-        busy={session.busy}
-        connected={session.status === 'open'}
-      />
+      {ended ? (
+        <SessionEndedBanner onResume={onResume} />
+      ) : (
+        <Composer
+          session={session}
+          model={model}
+          effort={effort}
+          modelConfig={modelConfig}
+          onModelChange={onModelChange}
+          onEffortChange={onEffortChange}
+          busy={session.busy}
+          connected={session.status === 'open'}
+          quote={replyQuote}
+          onClearQuote={() => setReplyQuote(null)}
+          permissionMode={permissionMode}
+          onPermissionModeChange={onPermissionModeChange}
+          // No task-picker mechanism exists anywhere in this codebase yet (there is no
+          // native "pick a task" dialog — TasksPage has no picker widget to open). The
+          // button stays visible (Composer.tsx is frozen T6 ownership; it has no gate to
+          // omit it) but is inert until one is built.
+          onOpenTaskPicker={() => {}}
+        />
+      )}
+      {slideOver && (
+        slideOver.mode === 'file'
+          ? (
+            <SlideOver
+              mode="file"
+              path={slideOver.path}
+              reference={classifyReference(slideOver.path)}
+              onClose={() => setSlideOver(null)}
+              onNavApp={handleNavApp}
+            />
+          )
+          : (
+            <SlideOver
+              mode="subagent"
+              run={slideOver.run}
+              conversationId={session.claudeId}
+              onClose={() => setSlideOver(null)}
+              onNavApp={handleNavApp}
+            />
+          )
+      )}
+      {lightbox && <Lightbox src={lightbox.src} caption={lightbox.caption} onClose={() => setLightbox(null)} />}
     </div>
   );
 }

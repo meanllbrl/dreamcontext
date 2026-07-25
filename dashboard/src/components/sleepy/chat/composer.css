@@ -1,0 +1,474 @@
+/* Agent Chat (beta) redesign — the composer (task T6). Design tokens only (no hardcoded
+   colors), so light/dark theming is automatic, matching every sibling in this directory.
+
+   Drag/drop of real OS files onto a chat pane is handled at the AgentSurface HOST level
+   (native DOM listeners write the dropped file to a vault temp path and call
+   `ChatSession.sendText` with the quoted path — see AgentSurface.tsx's drag-drop effect),
+   not by this composer; only clipboard PASTE of an image is handled locally here (a
+   distinct input source the surface-level handler doesn't cover). This composer's own
+   Popover-based menus (Files/Skills/model/effort) render via the shared `Popover`
+   component, whose portaled menu shell (`.agent-composer-menu`, `.agent-composer-pop`)
+   is styled by `AgentTerminal.css` — loaded globally by `AgentSurface.tsx`, so it is
+   available wherever this composer ends up mounted (see SkillPickerPopover.tsx's header). */
+
+/* The composer is ONE CARD: everything you type or set lives inside a single bordered
+   surface — textarea over a hairline-separated toolbar, with the round Send at the
+   toolbar's end. The toolbar's controls are borderless so the card reads as one field
+   rather than a tray of pills, and the session's context/cost readout sits in that
+   toolbar's middle rather than on a line of its own. */
+.chat-cmp {
+  position: relative;   /* anchors the slash-command menu, which must escape the card */
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px 12px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg);
+}
+
+.chat-cmp-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg, 14px);
+  background: var(--color-bg-secondary);
+  /* Safe: every menu in here (Files/Skills/model/effort) is PORTALED out — see the file
+     header — so clipping the card cannot hide a popover. */
+  overflow: hidden;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+.chat-cmp-card:focus-within {
+  border-color: color-mix(in srgb, var(--color-accent) 55%, var(--color-border));
+  box-shadow: 0 0 0 3px var(--color-accent-soft, color-mix(in srgb, var(--color-accent) 14%, transparent));
+}
+
+/* ── Resize handle ────────────────────────────────────────────────────────────────── */
+
+.chat-cmp-handle {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 10px;
+  cursor: ns-resize;
+  touch-action: none;
+}
+.chat-cmp-handle:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+.chat-cmp-handle-grip {
+  width: 32px;
+  height: 3px;
+  border-radius: var(--radius-full);
+  background: var(--color-border-hover);
+}
+
+/* ── Resizable body (quote / skill chip / attachments / textarea) ───────────────────── */
+
+.chat-cmp-body {
+  height: var(--chat-cmp-h, 118px);
+  min-height: 88px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 12px 8px;
+  overflow: hidden;
+}
+
+/* ── Quoted-reply chip (state 11) ────────────────────────────────────────────────── */
+
+.chat-cmp-quote {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 8px 6px 10px;
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+  border-left: 3px solid var(--color-accent);
+}
+.chat-cmp-quote-bar { display: none; } /* the left border above carries the accent — no extra element needed */
+.chat-cmp-quote-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.chat-cmp-quote-label {
+  font-size: var(--font-size-xs, 11px);
+  font-weight: 600;
+  color: var(--color-accent);
+}
+.chat-cmp-quote-text {
+  font-size: var(--font-size-xs, 11.5px);
+  color: var(--color-text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Skill chip (state 8) ────────────────────────────────────────────────────────── */
+
+.chat-cmp-skillchip {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: var(--radius-full);
+  background: var(--color-accent-soft, color-mix(in srgb, var(--color-accent) 16%, transparent));
+  color: var(--color-accent-text, var(--color-accent));
+  font-size: var(--font-size-xs, 11.5px);
+  font-weight: 600;
+}
+.chat-cmp-skillchip-label { font-family: var(--font-mono); }
+
+/* ── Attachments row (state 7) ────────────────────────────────────────────────────── */
+
+.chat-cmp-attachments {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.chat-cmp-attachment {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px 3px 3px;
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  max-width: 220px;
+}
+.chat-cmp-attachment-image { padding-left: 0; }
+.chat-cmp-thumb {
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-sm);
+  object-fit: cover;
+  flex: 0 0 auto;
+}
+.chat-cmp-attachment-glyph { flex: 0 0 auto; }
+.chat-cmp-attachment-name {
+  font-size: var(--font-size-xs, 11px);
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Shared "remove" (✕) button for quote/skill/attachment chips ─────────────────── */
+
+.chat-cmp-chip-x {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.chat-cmp-chip-x:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
+
+/* ── Textarea ─────────────────────────────────────────────────────────────────────── */
+
+.chat-cmp-row {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+
+/* ── Slash-command autocomplete ─────────────────────────────────────────────────────
+   Opens UPWARD out of the composer (which is pinned to the bottom of the pane), so it
+   never covers what you are typing. Anchored to `.chat-cmp` rather than to the textarea's
+   own row because `.chat-cmp-card` clips its overflow — see the JSX note.
+
+   Not a `Popover`: that component is click-triggered and closes on outside-mousedown,
+   whereas this must stay open while the textarea keeps focus and re-filter on every
+   keystroke. */
+.chat-cmp-slash {
+  position: absolute;
+  left: 12px;    /* line up with the card below (.chat-cmp's own horizontal padding) */
+  right: 12px;
+  bottom: calc(100% - 8px);
+  z-index: 30;
+  max-height: 260px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 5px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg, 12px);
+  background: var(--color-bg-elevated, var(--color-bg-secondary));
+  box-shadow: var(--shadow-lg, 0 12px 32px rgba(0, 0, 0, 0.28));
+}
+.chat-cmp-slash-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+  text-align: left;
+  cursor: pointer;
+}
+.chat-cmp-slash-row[data-active='true'] {
+  background: var(--color-accent-soft, color-mix(in srgb, var(--color-accent) 16%, transparent));
+  color: var(--color-accent-text, var(--color-accent));
+}
+.chat-cmp-slash-name {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs, 12px);
+  font-weight: 600;
+}
+/* No chrome of its own — the CARD is the input surface, so the textarea is just the text
+   sitting on it (that is what makes the toolbar read as part of the same field). */
+.chat-cmp-input {
+  flex: 1 1 auto;
+  height: 100%;
+  min-height: 0;
+  padding: 4px 2px;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--color-text);
+  font-family: var(--font-family-text);
+  font-size: var(--font-size-md, 14px);
+  line-height: 1.45;
+  resize: none;
+  overflow-y: auto;
+}
+.chat-cmp-input:focus { outline: none; }
+.chat-cmp-input:disabled { opacity: 0.6; }
+
+/* Send/Stop — a ROUND icon button at the toolbar's end. Empty-handed it is just an
+   outline (nothing to send yet); with content it fills in, so "can I send this?" is
+   answered by the button's weight rather than by a disabled label. */
+.chat-cmp-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1.5px solid transparent;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  transition: filter var(--transition-fast), background var(--transition-fast), border-color var(--transition-fast);
+}
+.chat-cmp-send {
+  background: var(--color-text);
+  color: var(--color-bg);
+}
+.chat-cmp-send:hover:not(:disabled) { filter: brightness(1.15); }
+.chat-cmp-send:disabled {
+  background: transparent;
+  border-color: var(--color-border-hover);
+  color: var(--color-text-tertiary);
+  cursor: default;
+}
+.chat-cmp-stop {
+  background: var(--color-error);
+  color: #fff;
+  font-size: 9px;
+}
+.chat-cmp-stop:hover { filter: brightness(1.08); }
+
+/* ── Toolbar (inside the card, under a hairline) ──────────────────────────────────── */
+
+.chat-cmp-toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 7px 10px;
+  border-top: 1px solid var(--color-border);
+  flex-wrap: wrap;
+}
+/* Model + effort + Send as one unit — see the JSX note: on a narrow pane the toolbar
+   wraps and this cluster drops as a whole instead of the Send button orphaning. */
+.chat-cmp-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+/* Toolbar controls are BORDERLESS — the card is already a bordered surface, and a row of
+   outlined pills inside it reads as boxes-in-a-box. Hover/open is the only chrome. */
+.chat-cmp-btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 8px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs, 12px);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.chat-cmp-btn-ghost:hover,
+.chat-cmp-btn-ghost.open {
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+}
+.chat-cmp-spark { color: var(--color-accent); }
+.chat-cmp-caret { font-size: 9px; opacity: 0.55; }
+
+.chat-cmp-spacer { flex: 1 1 auto; }
+
+/* Context + cost travel as ONE toolbar child, so wrapping can never leave the cost chip
+   stranded on a row by itself. */
+.chat-cmp-readout {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ── Context + cost readout (centred in the toolbar, between the two clusters) ────────
+   Deliberately NOT a row of its own: it is a status, not a control, and giving it a line
+   above the card both stole height from the transcript and made the composer jump the
+   moment the first turn reported usage. `flex: 0 1 auto` + min-width:0 lets it be the
+   first thing to give way when a pane gets narrow. */
+
+.chat-cmp-ctx {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs, 11.5px);
+  white-space: nowrap;
+  cursor: default;
+}
+.chat-cmp-ctx-track {
+  flex: 0 0 auto;
+  width: 42px;
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-tertiary);
+  overflow: hidden;
+}
+.chat-cmp-ctx-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--color-accent);
+  transition: width var(--transition-normal, 240ms) ease;
+}
+.chat-cmp-ctx-pct {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+/* The raw counts are the supporting detail behind the % — first to be dropped when the
+   pane is too narrow to carry both. */
+.chat-cmp-ctx-count {
+  font-family: var(--font-mono);
+  opacity: 0.75;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chat-cmp-ctx-cost {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs, 11px);
+  white-space: nowrap;
+  cursor: default;
+}
+/* Past the pressure threshold the gauge goes amber — the numbers stop being trivia. */
+.chat-cmp-ctx[data-tight='true'] { color: var(--color-warning); }
+.chat-cmp-ctx[data-tight='true'] .chat-cmp-ctx-pct { color: var(--color-warning); }
+.chat-cmp-ctx[data-tight='true'] .chat-cmp-ctx-fill { background: var(--color-warning); }
+
+.chat-cmp-compact-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid var(--color-warning);
+  border-radius: var(--radius-full);
+  background: var(--color-warning-subtle, color-mix(in srgb, var(--color-warning) 14%, transparent));
+  color: var(--color-warning);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: filter var(--transition-fast);
+}
+.chat-cmp-compact-btn:hover { filter: brightness(0.95); }
+
+/* ── Model / effort ───────────────────────────────────────────────────────────────────
+   Quiet TEXT triggers, not pills: what model and effort you're on is a status you read,
+   and only occasionally a control you touch — so it carries no chrome until hovered.
+   Still the same click-to-open Popover menus. */
+
+.chat-cmp-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: var(--radius-md);
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs, 12px);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+.chat-cmp-pill:hover:not(:disabled),
+.chat-cmp-pill.open { background: var(--color-bg-tertiary); color: var(--color-text); }
+.chat-cmp-pill:disabled { opacity: 0.5; cursor: default; }
+.chat-cmp-pill-label { font-weight: 600; white-space: nowrap; }
+
+/* ── Popover menu contents (the portaled shell itself is AgentTerminal.css's
+     .agent-composer-menu / .agent-composer-pop — see this file's header) ───────────── */
+
+.chat-cmp-menu-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 160px;
+}
+.chat-cmp-menu-list button {
+  text-align: left;
+  padding: 6px 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+  font-size: var(--font-size-xs, 12px);
+  cursor: pointer;
+}
+.chat-cmp-menu-list button:hover { background: var(--color-bg-tertiary); }
+.chat-cmp-menu-row.on { color: var(--color-accent); font-weight: 600; }

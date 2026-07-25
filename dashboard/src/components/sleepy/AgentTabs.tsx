@@ -9,6 +9,10 @@ import type { SessionKind } from './agentSession';
  * renames inline, and dragging it carries the session id under {@link AGENT_TAB_MIME}
  * for the pane drop-zones (split/combine) and tab-to-tab reorder. Purely presentational
  * — all state + actions arrive as props.
+ *
+ * The groups render INSIDE the overlay header (`.agent-overlay-tabs`), not above their
+ * pane: the header IS the tab bar, so the surface spends one 44px row on chrome instead
+ * of two. Every glyph here is monochrome/mono — no emoji in the strip.
  */
 
 /** The DnD payload type for an internal agent-tab drag (NOT `text/plain`, so it never
@@ -33,13 +37,23 @@ function CloseIcon() {
     </svg>
   );
 }
+/** "Open in Chat" — a line-art bubble, not the 💬 emoji: the strip stays monochrome and
+ *  this action reads as a sibling of minimize/close rather than a sticker. */
+function ChatIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M13.5 9.5a1.5 1.5 0 0 1-1.5 1.5H6l-3 2.5V4a1.5 1.5 0 0 1 1.5-1.5h7.5A1.5 1.5 0 0 1 13.5 4z" />
+    </svg>
+  );
+}
 
 export interface TabVM {
   /** Session id. */
   id: string;
   title: string;
   info: SessionStatusInfo;
-  /** Claude agent (◇) or a plain login shell (>_) — shown as a glyph before the title. */
+  /** Claude agent (◇), Claude chat (◆) or a plain login shell (>_) — a mono glyph
+   *  before the title. */
   sessionKind: SessionKind;
   /** Bypass-permissions armed for this session (shows a ⚡). */
   bypass: boolean;
@@ -156,7 +170,7 @@ export function AgentTabs({
                         : 'Claude Code agent'
                   }
                   aria-hidden
-                >{tab.sessionKind === 'shell' ? '>_' : tab.sessionKind === 'chat' ? '💬' : '◇'}</span>
+                >{tab.sessionKind === 'shell' ? '>_' : tab.sessionKind === 'chat' ? '◆' : '◇'}</span>
                 {renaming ? (
                   <input
                     className="agent-tab-rename"
@@ -192,7 +206,7 @@ export function AgentTabs({
                     aria-label={`Open ${tab.title} in Chat`}
                     onMouseDown={stop}
                     onClick={(e) => { e.stopPropagation(); onOpenInChat(tab.id); }}
-                  >💬</button>
+                  ><ChatIcon /></button>
                 )}
                 <button
                   type="button"
