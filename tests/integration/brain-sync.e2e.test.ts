@@ -39,7 +39,12 @@ function bareHead(bareDir: string, branch = 'main'): string | null {
  * unit, pushed to the project's OWN origin on the CURRENT branch — no separate
  * brain repo. Real git, local bare remote, no network.
  */
-describe('e2e: full-repo sync (whole project → origin, current branch)', () => {
+// Each case drives REAL git through several clone → commit → merge → push cycles;
+// isolated they land ~4.7s, which is under vitest's 5s default by a margin that
+// vanishes as soon as the other 300 test files are competing for the machine (the
+// suite then reports a timeout that never reproduces alone). Give the git work the
+// room it actually needs — the same hardening `recall-capture-stress` got in v0.10.5.
+describe('e2e: full-repo sync (whole project → origin, current branch)', { timeout: 60_000 }, () => {
   let bare: string;
   let projectA: string;
   let projectB: string;
