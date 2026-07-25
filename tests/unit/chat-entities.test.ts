@@ -12,6 +12,7 @@ import {
   deriveDiffStartLine, estimateTokens, formatTokenCount, formatDuration, classifyOutputLine,
   formatClock, splitInlineCode, isGuardedCommand, avatarHue,
   turnHasVisibleProgress, nextStickToBottom, BOTTOM_SLACK,
+  isAgentRun, runDurationMs, formatModelName, runMetaChips,
   type SubAgentRun, type ProgressProbe,
 } from '../../dashboard/src/components/sleepy/chat/chatEntities.js';
 
@@ -181,6 +182,119 @@ describe('subAgentToolUseIds', () => {
 
   it('empty input → empty set', () => {
     expect(subAgentToolUseIds([])).toEqual(new Set());
+  });
+});
+
+// ─── Sub-agent row readout (duration / model / tokens / tools) ───────────────────
+//
+// What the row is allowed to CLAIM. The rule these tests pin: only what the CLI actually
+// reported is shown. Duration and token/tool totals ride the `task_*` frames; the model
+// arrives separately (`resolvedModel` off the Agent tool's own result) and is simply absent
+// until it does; reasoning effort is on no channel at all, so no chip ever claims one.
+
+describe('isAgentRun', () => {
+  it('a dispatched sub-agent is an agent', () => {
+    expect(isAgentRun(run({ taskType: 'local_agent' }))).toBe(true);
+  });
+
+  it('a shell command the CLI auto-backgrounded is NOT an agent (it has no model to show)', () => {
+    expect(isAgentRun(run({ taskType: 'local_bash' }))).toBe(false);
+  });
+
+  it('a workflow run counts as an agent', () => {
+    expect(isAgentRun(run({ taskType: 'local_workflow' }))).toBe(true);
+  });
+
+  it('no taskType at all → treated as an agent (under-reporting a real agent is the worse error)', () => {
+    expect(isAgentRun(run({ taskType: undefined }))).toBe(true);
+  });
+});
+
+describe('runDurationMs', () => {
+  it("prefers the CLI's own measure over wall-clock — it times the run, not the queue wait", () => {
+    const r = run({ startedAt: 1000, usage: { durationMs: 4200 } });
+    expect(runDurationMs(r, 99_000)).toBe(4200);
+  });
+
+  it('a running task with no reported duration counts from startedAt to now', () => {
+    expect(runDurationMs(run({ status: 'running', startedAt: 1000 }), 6000)).toBe(5000);
+  });
+
+  it('a finished task is frozen at endedAt and ignores `now` entirely', () => {
+    const r = run({ status: 'completed', startedAt: 1000, endedAt: 3500 });
+    expect(runDurationMs(r, 99_000)).toBe(2500);
+  });
+
+  it('never reports a negative duration (a clock that went backwards reads as 0, not "-3s")', () => {
+    expect(runDurationMs(run({ status: 'running', startedAt: 5000 }), 2000)).toBe(0);
+  });
+});
+
+describe('formatModelName', () => {
+  it('drops the 8-digit build stamp and joins the version segments', () => {
+    expect(formatModelName('claude-haiku-4-5-20251001')).toBe('Haiku 4.5');
+    expect(formatModelName('claude-sonnet-4-5-20250929')).toBe('Sonnet 4.5');
+  });
+
+  it('handles an id with no build stamp', () => {
+    expect(formatModelName('claude-opus-5')).toBe('Opus 5');
+    expect(formatModelName('claude-fable-5')).toBe('Fable 5');
+  });
+
+  it('an unknown family is returned VERBATIM — never blanked, never relabelled', () => {
+    expect(formatModelName('gpt-4o')).toBe('gpt-4o');
+    expect(formatModelName('some-internal-build')).toBe('some-internal-build');
+  });
+
+  it('empty in, empty out', () => {
+    expect(formatModelName('')).toBe('');
+    expect(formatModelName('   ')).toBe('');
+  });
+});
+
+describe('runMetaChips', () => {
+  it('duration is the one chip every run always has', () => {
+    const r = run({ status: 'running', startedAt: 1000 });
+    expect(runMetaChips(r, 13_000)).toEqual(['12s']);
+  });
+
+  it('a full sub-agent readout: duration, model, tokens, tool uses — in that order', () => {
+    const r = run({
+      status: 'completed', startedAt: 1000, endedAt: 13_000,
+      model: 'claude-haiku-4-5-20251001',
+      usage: { durationMs: 12_000, totalTokens: 2400, toolUses: 3 },
+    });
+    expect(runMetaChips(r, 99_000)).toEqual(['12s', 'Haiku 4.5', '2.4k tokens', '3 tools']);
+  });
+
+  it('a bash task contributes duration alone — no model, no token accounting to claim', () => {
+    const r = run({ taskType: 'local_bash', status: 'completed', startedAt: 1000, endedAt: 5000 });
+    expect(runMetaChips(r, 99_000)).toEqual(['4.0s']);
+  });
+
+  it('a sub-agent whose result has not landed yet shows no model chip rather than a guess', () => {
+    const r = run({ status: 'running', startedAt: 1000, usage: { durationMs: 2000, totalTokens: 900 } });
+    expect(runMetaChips(r, 99_000)).toEqual(['2.0s', '900 tokens']);
+  });
+
+  it('a mid-run model swap is called out, not silently reduced to the last model', () => {
+    const r = run({
+      status: 'completed', startedAt: 1000, endedAt: 3000,
+      model: 'claude-opus-5',
+      modelsUsed: ['claude-haiku-4-5-20251001', 'claude-opus-5'],
+      usage: { durationMs: 2000 },
+    });
+    expect(runMetaChips(r, 99_000)).toEqual(['2.0s', 'Opus 5 +1']);
+  });
+
+  it('one tool use reads "1 tool", not "1 tools"', () => {
+    const r = run({ status: 'completed', startedAt: 1000, usage: { durationMs: 1000, toolUses: 1 } });
+    expect(runMetaChips(r, 99_000)).toEqual(['1.0s', '1 tool']);
+  });
+
+  it('zero tokens / zero tools are omitted — a chip that reads "0 tools" is noise, not data', () => {
+    const r = run({ status: 'completed', startedAt: 1000, usage: { durationMs: 1000, totalTokens: 0, toolUses: 0 } });
+    expect(runMetaChips(r, 99_000)).toEqual(['1.0s']);
   });
 });
 

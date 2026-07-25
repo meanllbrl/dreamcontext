@@ -543,7 +543,16 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Activity text takes the slack and truncates; the meta chips keep their intrinsic width, so
+   a long "Running …" step never pushes the numbers off the row. */
+.chat-subagents-row-sub {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
 .chat-subagents-row-line {
+  flex: 1 1 auto;
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
   overflow: hidden;
@@ -551,6 +560,23 @@
   white-space: nowrap;
 }
 .chat-subagents-row[data-status='running'] .chat-subagents-row-line { color: var(--color-accent); }
+
+.chat-subagents-row-meta {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+  /* The duration re-renders every second — tabular figures keep it from jittering. */
+  font-variant-numeric: tabular-nums;
+}
+/* Hairline dot between chips, never before the first one. */
+.chat-subagents-row-chip + .chat-subagents-row-chip::before {
+  content: '·';
+  margin-right: var(--space-2);
+  color: var(--color-border);
+}
 
 .chat-subagents-row-mark { flex: 0 0 auto; width: var(--space-4); text-align: center; color: var(--color-text-tertiary); font-size: var(--font-size-sm); }
 .chat-subagents-row-mark[data-status='completed'] { color: var(--color-success); }
