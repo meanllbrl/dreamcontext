@@ -915,7 +915,26 @@
 }
 @media (prefers-reduced-motion: reduce) { .chat-bgshells-spinner { animation: none; } }
 
-.chat-bgshells-rows { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+/* The list SCROLLS INSIDE ITS OWN BOX rather than growing the tray. Docked furniture takes
+   its height straight out of the transcript, and this list has no natural ceiling — a session
+   that backgrounds a dozen shells at once grew the strip taller than the pane, which buried
+   the transcript, this tray's own collapse header, and the composer under it (owner report
+   07-25: "so many background jobs, it can't be scrolled, I can't see the chat and I can't
+   collapse it either"). Capped, the header and the composer are always reachable and the rows
+   past the cap are one scroll away. `min()` so a short pane gives up a share, not 240px. */
+.chat-bgshells-rows {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: min(240px, 32vh);
+  overflow-y: auto;
+  /* A wheel that runs out of rows must not scroll the transcript behind it — the tray is a
+     separate surface, and chaining would yank the conversation while reading shell rows. */
+  overscroll-behavior: contain;
+  scrollbar-color: var(--color-border-hover) transparent;
+}
 .chat-bgshells-row {
   display: flex;
   align-items: center;

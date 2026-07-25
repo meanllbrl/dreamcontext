@@ -353,13 +353,54 @@ export function runStatusFrom(raw: string | undefined, current: SubAgentRun['sta
   return current;
 }
 
-/** Header data for the background-shells tray: how many are still going, and how many rows
- *  there are in total (a finished shell stays listed so its output remains readable). */
-export function summarizeBackgroundShells(runs: SubAgentRun[]): {
-  shells: SubAgentRun[]; running: number; total: number;
+/**
+ * How long a FINISHED background shell keeps its row in the tray after it exits.
+ *
+ * This surface originally kept every finished shell until the conversation ended, so its
+ * output stayed one click away. That is wrong for a PINNED strip: the tray sits above the
+ * composer, outside the scroller, so every row it holds is height the transcript does not
+ * get and cannot scroll past. A long session backgrounds dozens of commands, and the
+ * accumulated list grew taller than the pane — burying the transcript, the tray's own
+ * collapse header, and the composer with it, which left no way to read the chat OR to close
+ * the thing eating it.
+ *
+ * A shell's live output is worth a seat while it runs and for the moment after it lands
+ * ("what did that just do?"); past that it is history, and the command's own tool card is
+ * still in the transcript as the durable record. Two minutes is that moment.
+ */
+export const FINISHED_SHELL_TTL_MS = 2 * 60 * 1000;
+
+/** Does this shell still earn a row in the tray? Running ones always; finished ones until
+ *  {@link FINISHED_SHELL_TTL_MS} after they ended. Every reducer arm that moves a run to a
+ *  terminal status stamps `endedAt` even when the CLI frame omitted one, so a terminal run
+ *  without it is a shape we did not predict — treated as "just ended" rather than "long
+ *  expired", so the unknown case errs toward keeping the row instead of vanishing it. */
+export function isShellVisible(run: SubAgentRun, now: number): boolean {
+  if (run.status === 'running') return true;
+  return now - (run.endedAt ?? now) < FINISHED_SHELL_TTL_MS;
+}
+
+/** Header data for the background-shells tray: the rows that still earn a seat (see
+ *  {@link isShellVisible}), how many are still going, and `nextExpiryAt` — when the soonest
+ *  finished row falls out of the window, so the tray can wake exactly then instead of
+ *  holding a 1s interval open forever just in case. */
+export function summarizeBackgroundShells(runs: SubAgentRun[], now: number): {
+  shells: SubAgentRun[]; running: number; total: number; nextExpiryAt?: number;
 } {
-  const shells = runs.filter(isBackgroundShell);
-  return { shells, running: shells.filter((r) => r.status === 'running').length, total: shells.length };
+  const shells = runs.filter((r) => isBackgroundShell(r) && isShellVisible(r, now));
+  // Only a row with a real `endedAt` gets a scheduled expiry. Deriving one from `now` for the
+  // stamp-less case would make this value move every time it is read, and the tray schedules
+  // its next render FROM it — a self-feeding loop for the sake of a run shape that the
+  // reducer cannot actually produce.
+  const expiries = shells
+    .filter((r) => r.status !== 'running' && r.endedAt != null)
+    .map((r) => (r.endedAt as number) + FINISHED_SHELL_TTL_MS);
+  return {
+    shells,
+    running: shells.filter((r) => r.status === 'running').length,
+    total: shells.length,
+    nextExpiryAt: expiries.length ? Math.min(...expiries) : undefined,
+  };
 }
 
 /** Header data for the "N agents running" group card. `agents` counts only true sub-agent
@@ -636,10 +677,29 @@ export interface ScrollMetrics {
  */
 export function nextStickToBottom(prev: boolean, m: ScrollMetrics): boolean {
   if (m.clientHeight === 0) return prev;
-  if (m.scrollHeight - m.scrollTop - m.clientHeight <= BOTTOM_SLACK) return true;
+  if (isAtBottom(m)) return true;
   if (!m.userDriven) return prev;
   if (m.scrollTop < m.prevScrollTop - 1) return false;
   return prev;
+}
+
+/**
+ * Is the view at the bottom (within {@link BOTTOM_SLACK})? The measurement half of
+ * "pinned" — {@link nextStickToBottom} rule 1, and the check the pin's own re-assert makes
+ * before writing again.
+ *
+ * Why a pinned view can be nowhere near the bottom, which is the whole reason this is
+ * exported: the pane docks furniture BELOW the scroller (the background-shells tray, the
+ * auto-growing composer). When one of those GROWS, the scroller shrinks under a view that is
+ * already at its maximum — `scrollTop` stays perfectly valid, the maximum moves out from under
+ * it, and the browser dispatches NO scroll event because nothing scrolled (measured in
+ * Chromium: a tray growing by 186px left 174px of transcript below the fold, silently). So
+ * the state "we believe we are pinned, and we are not" is reachable without a single event to
+ * notice it by — no scroll handler runs, and the Latest pill stays hidden because the view
+ * still thinks it is at the bottom. Only a re-measurement finds it.
+ */
+export function isAtBottom(m: Pick<ScrollMetrics, 'scrollTop' | 'scrollHeight' | 'clientHeight'>): boolean {
+  return m.scrollHeight - m.scrollTop - m.clientHeight <= BOTTOM_SLACK;
 }
 
 /**

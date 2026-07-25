@@ -5,7 +5,7 @@ import { api, agentFileUrl } from '../../api/client';
 import type { ModelConfig } from '../../lib/agentComposer';
 import {
   classifyReference, subAgentToolUseIds, isGuardedCommand, turnHasVisibleProgress,
-  nextStickToBottom, nextRestoreTop, wheelIntent, keyIntent, touchIntent,
+  nextStickToBottom, nextRestoreTop, isAtBottom, wheelIntent, keyIntent, touchIntent,
   type SubAgentRun, type ScrollIntent,
 } from './chat/chatEntities';
 import { ItemView } from './chat/TranscriptItem';
@@ -300,6 +300,9 @@ export function ChatPane({
   /** Render mirror of `stickRef`, for the "jump to latest" affordance only. */
   const [pinned, setPinned] = useState(true);
 
+  /** In-flight re-assert frame, so a burst of pins during a stream schedules ONE. */
+  const repinFrameRef = useRef(0);
+
   const scrollToBottom = useCallback(() => {
     const el = scrollRef.current;
     // A minimized pane's container is parked in the detached garage: it measures 0 and
@@ -308,6 +311,33 @@ export function ChatPane({
     el.scrollTop = el.scrollHeight;
     prevTopRef.current = el.scrollTop;
     restoreTopRef.current = el.scrollTop;
+    // Then RE-MEASURE next frame, because "scrollTop = scrollHeight" is only true at the
+    // instant it is written. The pane docks furniture BELOW the scroller — the
+    // background-shells tray, the auto-growing composer — and when one of those grows, the
+    // scroller shrinks under a view that was at its maximum: `scrollTop` stays valid, the
+    // maximum moves away from it, and NO scroll event is dispatched because nothing scrolled
+    // (measured: a tray growing by 186px silently left 174px of transcript below the fold).
+    // Nothing in the event path can notice that, which is why the transcript could sit a card
+    // and a half short of the bottom while still believing it was pinned — no Latest pill to
+    // get back with, and the only thing that ever fixed it was the next frame of content
+    // arriving (owner report 07-25: "it goes too far down, an update fixes it, then it slides
+    // down again"). One frame later every one of those layouts has settled, so a single
+    // re-measurement covers the whole class — including the window where the ResizeObserver
+    // below is mid-resubscription.
+    if (typeof requestAnimationFrame !== 'function' || repinFrameRef.current) return;
+    repinFrameRef.current = requestAnimationFrame(() => {
+      repinFrameRef.current = 0;
+      const now = scrollRef.current;
+      if (!now || !stickRef.current || now.clientHeight === 0) return;
+      if (isAtBottom({ scrollTop: now.scrollTop, scrollHeight: now.scrollHeight, clientHeight: now.clientHeight })) return;
+      now.scrollTop = now.scrollHeight;
+      prevTopRef.current = now.scrollTop;
+      restoreTopRef.current = now.scrollTop;
+    });
+  }, []);
+
+  useEffect(() => () => {
+    if (repinFrameRef.current) cancelAnimationFrame(repinFrameRef.current);
   }, []);
 
   const setStick = useCallback((next: boolean) => {
@@ -389,6 +419,14 @@ export function ChatPane({
   // finishes, both move the edge this reads without any scroll of its own.
   useEffect(() => { syncRail(); }, [syncRail, conv]);
 
+  /** `syncRail` for the ResizeObserver below to call WITHOUT subscribing to its identity.
+   *  That identity follows `subAgentCardEl`, which changes whenever a fan-out's card mounts,
+   *  unmounts or moves — and an observer that tears down and re-subscribes on every one of
+   *  those has a window in each teardown where a height change goes unseen. The pin's own
+   *  re-assert covers that window too; this closes it. */
+  const syncRailRef = useRef(syncRail);
+  useEffect(() => { syncRailRef.current = syncRail; }, [syncRail]);
+
   /**
    * Scroll the transcript to a sub-agent's row (or, for `null`, the card as a whole) and
    * flash it. Clicking a chip is explicit intent to go LOOK at something above, so it also
@@ -438,12 +476,12 @@ export function ChatPane({
       if (stickRef.current) scrollToBottom();
       // Content growing ABOVE an unpinned view moves the card without a scroll event of
       // its own — the rail would otherwise still be showing a card that is back in view.
-      syncRail();
+      syncRailRef.current();
     });
     ro.observe(el);
     ro.observe(content);
     return () => ro.disconnect();
-  }, [scrollToBottom, syncRail]);
+  }, [scrollToBottom]);
 
   // The one height change the observer above CANNOT see: a re-home. `appendChild`-ing the
   // session's container into another slot zeroes `scrollTop` on every scroller inside it

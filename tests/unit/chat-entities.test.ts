@@ -11,7 +11,7 @@ import {
   toolGlyph, classifyReference, parseEditDiff, summarizeSubAgents, subAgentToolUseIds,
   deriveDiffStartLine, estimateTokens, formatTokenCount, formatDuration, classifyOutputLine,
   formatClock, splitInlineCode, isGuardedCommand, avatarHue,
-  turnHasVisibleProgress, nextStickToBottom, nextRestoreTop, BOTTOM_SLACK,
+  turnHasVisibleProgress, nextStickToBottom, nextRestoreTop, isAtBottom, BOTTOM_SLACK,
   wheelIntent, keyIntent, touchIntent,
   isAgentRun, runDurationMs, formatModelName, runMetaChips,
   isRunFinished, runGroupPhase, isGroupOpen, groupOutcomeNote,
@@ -700,6 +700,45 @@ describe('nextStickToBottom', () => {
     };
     expect(nextStickToBottom(true, detached)).toBe(true);
     expect(nextStickToBottom(false, detached)).toBe(false);
+  });
+});
+
+// ─── isAtBottom (the re-measurement a "pinned" view cannot do without) ───────────────
+//
+// Owner report 07-25: "when the background-agent pin is up the scroll goes too far down, an
+// update fixes it, then it slides down again". The mechanism, measured in Chromium: docked
+// furniture BELOW the scroller (the background-shells tray, the auto-growing composer) grows,
+// the scroller shrinks under a view that was at its maximum, and the maximum moves out from
+// under a `scrollTop` that is still perfectly valid — so NO scroll event is dispatched and
+// nothing in the event path can notice. A tray growing 186px left 174px of transcript below
+// the fold with the view still believing it was pinned (hence no Latest pill to get back with).
+// Only a re-measurement of the live geometry finds that, which is what the pin's own
+// next-frame re-assert does with this predicate.
+
+describe('isAtBottom', () => {
+  it('true at the bottom and anywhere inside the slack window', () => {
+    expect(isAtBottom({ scrollTop: 1500, scrollHeight: 2000, clientHeight: 500 })).toBe(true);
+    expect(isAtBottom({ scrollTop: 1500 - BOTTOM_SLACK, scrollHeight: 2000, clientHeight: 500 })).toBe(true);
+  });
+
+  it('false one pixel past the slack window', () => {
+    expect(isAtBottom({ scrollTop: 1499 - BOTTOM_SLACK, scrollHeight: 2000, clientHeight: 500 })).toBe(false);
+  });
+
+  it('catches the silent unpin: furniture grew, scrollTop never moved', () => {
+    // Same scrollTop before and after; only the scroller's own height changed.
+    const before = { scrollTop: 1500, scrollHeight: 2000, clientHeight: 500 };
+    const after = { scrollTop: 1500, scrollHeight: 2000, clientHeight: 500 - 186 };
+    expect(isAtBottom(before)).toBe(true);
+    expect(isAtBottom(after)).toBe(false);   // 186px of transcript now below the fold
+  });
+
+  it('agrees with nextStickToBottom rule 1 — one definition of "at the bottom"', () => {
+    for (const scrollTop of [0, 900, 1451, 1452, 1499, 1500]) {
+      const m = { scrollTop, scrollHeight: 2000, clientHeight: 500 };
+      expect(nextStickToBottom(false, { ...m, prevScrollTop: scrollTop, userDriven: false }))
+        .toBe(isAtBottom(m) ? true : false);
+    }
   });
 });
 
