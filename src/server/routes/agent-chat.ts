@@ -5,13 +5,17 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { join, dirname, basename, extname } from 'node:path';
 import { tmpdir } from 'node:os';
-import { writeFileSync, rmSync, readFileSync, existsSync, statSync, readdirSync, createReadStream } from 'node:fs';
+import {
+  writeFileSync, rmSync, readFileSync, existsSync, statSync, readdirSync, createReadStream,
+  realpathSync, openSync, readSync, closeSync,
+} from 'node:fs';
 import { sendJson, sendError } from '../middleware.js';
 import { isDesktop } from '../desktop.js';
 import { trackChild } from '../lifecycle.js';
 import { resolveAgentSession } from '../../lib/agent-session-map.js';
 import { safeChildPath } from '../safe-path.js';
 import { CHAT_SURFACE_BRIEFING } from '../chat-surface.js';
+import { claudeAwarePath } from '../../lib/claude-path.js';
 import { resolveBoardAssets } from './knowledge.js';
 import {
   isLoopback, rejectUpgrade, resolveVaultProjectRoot, projectRootOf,
@@ -102,6 +106,48 @@ export function isShellSafePath(p: string): boolean {
  *  caller substitutes a server-side randomUUID, losing only the client's ack matching). */
 export function sanitizeControlId(v: unknown): string {
   return typeof v === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(v) ? v : '';
+}
+
+/**
+ * Background-shell task id gate. The CLI mints these as a short lowercase-alphanumeric
+ * token (`b6jwwtq1n`, observed on 2.1.220). This is the ONLY caller-supplied component of
+ * the output path {@link backgroundOutputPath} builds, so the charset is deliberately
+ * narrower than a generic slug: no dot, no slash, no dash, which makes `..`, an absolute
+ * path, and a nested segment all structurally unrepresentable rather than merely filtered.
+ * Exported pure for tests.
+ */
+export function sanitizeBackgroundTaskId(v: unknown): string {
+  return typeof v === 'string' && /^[a-z0-9]{1,32}$/i.test(v) ? v : '';
+}
+
+/**
+ * Where the CLI streams a backgrounded command's output:
+ * `/tmp/claude-<uid>/<realpath(cwd) with '/'→'-'>/<conversationUuid>/tasks/<taskId>.output`.
+ *
+ * Empirically pinned against CLI 2.1.220 (see the task's spike record), including the two
+ * things a reasonable guess gets wrong:
+ *   • The base is HARDCODED `/tmp/claude-<uid>` — NOT `os.tmpdir()`/`$TMPDIR`. Verified by
+ *     spawning with `TMPDIR` pointed elsewhere: other temp files honoured it, the task
+ *     output still landed under `/tmp/claude-<uid>`.
+ *   • The directory segment is the slug of the REALPATH of cwd, not of cwd as given (a cwd
+ *     of `/tmp/x` produces `-private-tmp-x` on macOS, where `/tmp` → `/private/tmp`).
+ *
+ * Fully SERVER-DERIVED on purpose. The stream also hands the client an absolute
+ * `output_file` on the tool_result and on `task_notification`, and that path is never
+ * trusted or consumed — same rule the sub-agent drill-in follows for its sidechain
+ * transcript. Everything here comes from the vault (server-resolved), the conversation uuid
+ * (uuid-gated) and the task id (gated above), so no request value reaches the filesystem
+ * unvalidated.
+ */
+export function backgroundOutputPath(cwd: string, conversationId: string, taskId: string): string | null {
+  const id = sanitizeBackgroundTaskId(taskId);
+  const uuid = sanitizeUuid(conversationId);
+  if (!id || !uuid) return null;
+  let real: string;
+  try { real = realpathSync(cwd); } catch { real = cwd; }
+  const slug = real.replace(/\//g, '-');
+  const uid = typeof process.getuid === 'function' ? process.getuid() : 0;
+  return join('/tmp', `claude-${uid}`, slug, uuid, 'tasks', `${id}.output`);
 }
 
 // ─── WS upgrade ─────────────────────────────────────────────────────────────────────
@@ -274,7 +320,10 @@ function startChatSession(
   const child = spawn(shell, ['-ilc', script], {
     cwd: projectRoot,
     stdio: ['pipe', 'pipe', 'pipe'],
-    env: { ...process.env, ...tabEnv, ...deferredEnv } as Record<string, string>,
+    // claude-aware PATH: `claude` installs into ~/.local/bin, which no default PATH
+    // contains — without this the login shell 127s whenever the install's `export
+    // PATH` echo never reached the user's rc. See src/lib/claude-path.ts.
+    env: { ...process.env, PATH: claudeAwarePath(), ...tabEnv, ...deferredEnv } as Record<string, string>,
   });
 
   // Liveness guard (mirrors agent-terminal.ts:1408's `if (!alive) return;`): a stale
@@ -407,6 +456,7 @@ function startChatSession(
     let msg: {
       type?: string; text?: string; requestId?: string; behavior?: string; updatedInput?: unknown;
       message?: string; model?: string; effort?: string; targetUuid?: string; mode?: string;
+      taskId?: string;
     };
     try { msg = JSON.parse(str); } catch { return; } // malformed control frame — ignore
 
@@ -466,6 +516,27 @@ function startChatSession(
           type: 'control_request',
           request_id: requestId,
           request: { subtype: 'rewind_conversation', target_message_uuid: target, interrupt_if_running: true },
+        });
+      }
+      return;
+    }
+
+    // Stop a background shell → `stop_task` control_request. Costs ZERO model tokens: the
+    // CLI kills the child itself and reports it on the `system:background_tasks_changed` /
+    // `task_updated{status:'killed'}` / `task_notification{status:'stopped'}` frames the
+    // client already reduces (all empirically verified on 2.1.220).
+    //
+    // Deliberately fire-and-forget: the CLI answers `{subtype:'success', response:{}}` even
+    // for a task_id that never existed, so echoing an ack back would be reporting a success
+    // we did not verify. The frames above are the only honest confirmation, so we forward
+    // the request and let the roster speak.
+    if (msg.type === 'stopTask' && typeof msg.taskId === 'string') {
+      const taskId = sanitizeBackgroundTaskId(msg.taskId);
+      if (taskId) {
+        writeStdin({
+          type: 'control_request',
+          request_id: randomUUID(),
+          request: { subtype: 'stop_task', task_id: taskId },
         });
       }
       return;
@@ -685,6 +756,81 @@ export async function handleAgentChatHistory(
   let raw = '';
   try { raw = readFileSync(path, 'utf-8'); } catch { sendJson(res, 200, { items: [] }); return; }
   sendJson(res, 200, { items: parseTranscriptHistory(raw) });
+}
+
+// ─── Background-shell output reader (GET /api/agent/bg-output) ──────────────────────
+//
+// A `run_in_background` Bash streams its output to a live file on disk (see
+// `backgroundOutputPath`), which is what lets the Chat view show a background shell's
+// output for ZERO model tokens — no `TaskOutput`/`BashOutput` round-trip through the model,
+// and readable while the session is mid-turn or idle alike.
+//
+// Not served by `handleAgentFile`: that route is project-root-scoped by design and must not
+// be widened, and this file lives under `/tmp/claude-<uid>/…`. Same posture as the
+// sub-agent sidechain transcript — its own route with a fully server-DERIVED path.
+
+/** Tail cap for a background-shell output read, in bytes. A long-running dev server or
+ *  build can write megabytes; the tail is what anyone actually reads, and it bounds both the
+ *  response and the poll's per-tick cost. */
+const BG_OUTPUT_TAIL_BYTES = 256 * 1024;
+
+/**
+ * `GET /api/agent/bg-output?claudeId=<uuid>&taskId=<id>` → the tail of a background shell's
+ * live output. Desktop-gated. Answers `200` with `running:false`-shaped emptiness rather
+ * than a 404 when the file does not exist yet: a shell that has produced no output is a
+ * normal state the UI shows as "no output yet", not an error to render.
+ */
+export async function handleAgentBackgroundOutput(
+  req: IncomingMessage,
+  res: ServerResponse,
+  _params: Record<string, string>,
+  contextRoot: string | null,
+): Promise<void> {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  if (!isDesktop()) { sendError(res, 403, 'desktop_only', 'Available only in the desktop app.'); return; }
+  if (!contextRoot) { sendError(res, 400, 'no_vault', 'No vault resolved for this request.'); return; }
+
+  const url = new URL(req.url || '/', `http://${req.headers.host}`);
+  const taskId = sanitizeBackgroundTaskId(url.searchParams.get('taskId'));
+  if (!taskId) { sendError(res, 400, 'invalid_task_id', 'Query parameter "taskId" is required.'); return; }
+  const claudeId = sanitizeUuid(url.searchParams.get('claudeId'));
+  if (!claudeId) { sendError(res, 400, 'invalid_claude_id', 'Query parameter "claudeId" is required.'); return; }
+
+  // The output directory is keyed by the LIVE conversation uuid, which is what the CLI was
+  // spawned with — the roster id the client holds may be a stale pin, so resolve it the same
+  // way the history route does before deriving the path.
+  // A resumed conversation keeps writing under the uuid its CLI process was spawned with,
+  // which may be either the live id or the roster pin — try both before reporting nothing.
+  const liveId = resolveAgentSession(contextRoot, claudeId) || claudeId;
+  const cwd = projectRootOf(contextRoot);
+  const found = [...new Set([liveId, claudeId])]
+    .map((id) => backgroundOutputPath(cwd, id, taskId))
+    .find((p): p is string => !!p && existsSync(p));
+  if (!found) { sendJson(res, 200, { taskId, content: '', size: 0, truncated: false, exists: false }); return; }
+
+  let st: ReturnType<typeof statSync>;
+  try { st = statSync(found); } catch { sendJson(res, 200, { taskId, content: '', size: 0, truncated: false, exists: false }); return; }
+
+  const start = Math.max(0, st.size - BG_OUTPUT_TAIL_BYTES);
+  let content = '';
+  try {
+    if (start === 0) {
+      content = readFileSync(found, 'utf-8');
+    } else {
+      // Tail-read only the last window — never load a multi-megabyte log to slice it.
+      const fd = openSync(found, 'r');
+      try {
+        const buf = Buffer.alloc(st.size - start);
+        readSync(fd, buf, 0, buf.length, start);
+        content = buf.toString('utf-8');
+      } finally { closeSync(fd); }
+    }
+  } catch {
+    sendJson(res, 200, { taskId, content: '', size: st.size, truncated: false, exists: true });
+    return;
+  }
+
+  sendJson(res, 200, { taskId, content, size: st.size, truncated: start > 0, exists: true });
 }
 
 // ─── Project-root file reader (GET /api/agent/file) ────────────────────────────────

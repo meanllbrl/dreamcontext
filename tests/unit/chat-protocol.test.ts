@@ -529,6 +529,63 @@ describe('parseChatLine — assistant full-message text/thinking echoes', () => 
   });
 });
 
+// The one assistant frame that is NOT content: the CLI has no usable credentials and the turn
+// never reached the API. Split out because the remedy isn't on this surface — the headless
+// engine answers `/login` with "isn't available in this environment", so the UI has to route
+// the user to the interactive terminal instead of echoing advice that doesn't work here.
+//
+// Every fixture below is the REAL frame shape, captured by running
+// `claude -p --input-format stream-json --output-format stream-json --verbose` under an
+// isolated unauthenticated HOME on CLI 2.1.220.
+describe('parseChatLine — auth-required (not signed in)', () => {
+  it('the captured unauthenticated frame → auth-required, NOT an assistant bubble', () => {
+    const line = JSON.stringify({
+      type: 'assistant',
+      session_id: SESSION_ID,
+      error: 'authentication_failed',
+      is_api_error_message: true,
+      message: {
+        role: 'assistant',
+        model: '<synthetic>',
+        content: [{ type: 'text', text: 'Not logged in · Please run /login' }],
+        usage: { input_tokens: 0, output_tokens: 0, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+      },
+    });
+    expect(parseChatLine(line)).toEqual({ kind: 'auth-required', text: 'Not logged in · Please run /login' });
+  });
+
+  it('an is_api_error_message frame that names /login as the remedy also qualifies (a later CLI may drop the `error` field or reword it — an expired token and a rejected key both land here)', () => {
+    const line = JSON.stringify({
+      type: 'assistant',
+      session_id: SESSION_ID,
+      is_api_error_message: true,
+      message: { role: 'assistant', model: '<synthetic>', content: [{ type: 'text', text: 'Invalid API key · Please run /login' }] },
+    });
+    expect(parseChatLine(line)).toEqual({ kind: 'auth-required', text: 'Invalid API key · Please run /login' });
+  });
+
+  it('a MODEL answer that merely mentions /login is still an ordinary assistant bubble (no error flag → not an auth failure)', () => {
+    const line = JSON.stringify({
+      type: 'assistant',
+      session_id: SESSION_ID,
+      message: { role: 'assistant', model: 'claude-opus-5', content: [{ type: 'text', text: 'Run /login to authenticate the CLI.' }] },
+    });
+    expect(parseChatLine(line)).toEqual({
+      kind: 'assistant-text', text: 'Run /login to authenticate the CLI.', synthetic: false,
+    });
+  });
+
+  it('an api-error frame that does NOT name /login stays an ordinary bubble (overload/rate-limit notices are not sign-in problems)', () => {
+    const line = JSON.stringify({
+      type: 'assistant',
+      session_id: SESSION_ID,
+      is_api_error_message: true,
+      message: { role: 'assistant', model: '<synthetic>', content: [{ type: 'text', text: 'API Error: Overloaded' }] },
+    });
+    expect(parseChatLine(line)).toEqual({ kind: 'assistant-text', text: 'API Error: Overloaded', synthetic: true });
+  });
+});
+
 // The composer's context meter is fed from THIS, not from the server's transcript reader:
 // Claude Code ≥2.1.x flushes a live session's transcript only on exit/rotation, so
 // `/agent/session-stats` reports nulls for a chat's entire life. `message.usage` on the

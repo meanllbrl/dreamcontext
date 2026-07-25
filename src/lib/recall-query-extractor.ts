@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { buildCorpus, bm25Search, docKey, type CorpusDoc, type RecallHit } from './recall.js';
+import { claudeAwarePath } from './claude-path.js';
 
 export type ClaudeExecutor = (prompt: string, systemPrompt: string) => string;
 
@@ -47,6 +48,9 @@ export function makeClaudeExecutor(timeoutMs = DEFAULT_TIMEOUT_MS): ClaudeExecut
     timeout: timeoutMs,
     encoding: 'utf-8',
     stdio: ['pipe', 'pipe', 'pipe'],
+    // `claude` installs into ~/.local/bin, which is on no default PATH — the hook
+    // path in particular inherits whatever env the agent gave it. See claude-path.ts.
+    env: { ...process.env, PATH: claudeAwarePath() },
   });
 }
 

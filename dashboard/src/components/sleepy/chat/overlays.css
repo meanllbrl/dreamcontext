@@ -131,6 +131,7 @@
    row's height and stays borderless like its Skills/＋ neighbours. */
 
 .chat-permmode-chip {
+  flex: 0 0 auto;   /* the toolbar is a single non-wrapping row — see composer.css */
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -306,6 +307,44 @@
 @keyframes chat-pulse-soft { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 @media (prefers-reduced-motion: reduce) { .chat-banner-reconnecting-dot { animation: none; } }
 
+/* Sits in the COMPOSER's slot (an unauthenticated session has nothing to send), so it is a
+   full-width strip like the composer it replaces rather than a centred hero like the
+   session-ended banner. Warning-toned, not error-toned: nothing is broken and nothing was
+   lost — a credential is missing, and the next two clicks fix it. */
+.chat-banner-signin {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 12px 12px;
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-lg);
+  background: var(--color-warning-subtle);
+  border: 1px solid var(--color-warning);
+}
+.chat-banner-signin-head { display: flex; align-items: center; gap: var(--space-2); }
+.chat-banner-signin-title {
+  color: var(--color-text);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-bold);
+}
+.chat-banner-signin-sub {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+.chat-banner-signin-cmd {
+  align-self: flex-start;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-tertiary);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  user-select: all;   /* one click selects the whole command to copy */
+}
+
 .chat-banner-ended {
   margin: auto;
   display: flex;
@@ -318,3 +357,22 @@
 .chat-banner-ended-mark { font-size: 30px; opacity: 0.7; }
 .chat-banner-ended-title { margin: 0; font-family: var(--font-family-display); font-size: var(--font-size-lg, 18px); color: var(--color-text); }
 .chat-banner-ended-sub { margin: 0 0 4px; max-width: 380px; color: var(--color-text-tertiary); font-size: var(--font-size-sm, 13px); }
+
+/* ── Background-shell output (SlideOver mode='shell') ────────────────────────────────
+   Terminal-flavoured, unnumbered: this is a live process's stdout/stderr stream, not a
+   file with stable line numbers to cite (that's `.chat-slideover-numbered`). */
+
+.chat-slideover-shellout {
+  margin: 0;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--color-text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+}

@@ -27,6 +27,36 @@ export interface Capabilities {
   // Prerequisite breakdown (drives the in-app Setup panel + the System dependencies doctor).
   nodePty: boolean;
   claudeCli: boolean;
+  /**
+   * `claude` exists on disk but the user's shell can't see it — the install's
+   * `export PATH="$HOME/.local/bin:$PATH"` line never reached their rc. Our own
+   * spawns inject the real directory (so `claudeCli` stays true and nothing is
+   * blocked), but the user's own terminal still can't run it: the System doctor
+   * offers a one-click fix that writes the missing export.
+   */
+  claudePathBroken?: boolean;
+  /**
+   * Whether the installed `claude` is actually SIGNED IN (`claude auth status
+   * --json`, probed server-side — see src/lib/claude-auth.ts). Absent when the CLI
+   * isn't present or this isn't the desktop app.
+   *
+   * `loggedIn: null` means "couldn't tell" (an old CLI without the `auth`
+   * subcommand, a Bedrock/Vertex setup, a failed probe) — treat it as unknown, never
+   * as signed out. Advisory only: it drives what the UI SAYS, never whether a spawn
+   * is allowed; the authoritative signal is still the CLI's own runtime frame
+   * (chatProtocol's `auth-required`).
+   */
+  claudeAuth?: {
+    loggedIn: boolean | null;
+    supported: boolean;
+    method?: string;
+    email?: string;
+    subscription?: string;
+    /** The sign-in command for THIS CLI — what a terminal pane is handed, and what
+     *  the manual fallback prints. */
+    loginCommand: string;
+    error?: string;
+  };
   npm: boolean;
   /** git presence probed with the server's own env — exactly how cloud sync invokes it. */
   git: boolean;
@@ -549,11 +579,17 @@ export function createSession(bypass: boolean, notify: () => void, claudeId: str
     if (saved) setTimeout(() => rawSend(saved), RUN_COMMAND_RESTORE_MS);
   }
 
-  // ── Type an initial prompt WITHOUT submitting (composer skill/file insert) ─────────
-  // Only the type-without-submit case runs here now: a spawned session pre-typed with a
-  // composer skill trigger (e.g. `/council `) that the USER finishes. The AUTO-SUBMIT case
-  // (the Sleep consolidation) is handled server-side — `claude` gets the prompt as a
-  // positional arg (see `serverSubmitsPrompt` above), which boots the TUI with it already
+  // ── Type an initial prompt (composer skill/file insert; a shell's opening command) ────
+  // Two cases reach here. (a) Type WITHOUT submitting: a session pre-typed with a composer
+  // skill trigger (e.g. `/council `) that the USER finishes. (b) A SHELL's opening command
+  // (`submitInitial` + `kind:'shell'` — the Chat sign-in flow's `claude auth login` tab):
+  // a shell's command can't take the server-side route, because the server only ever passes a
+  // prompt to `claude` as a positional argument and a shell has no such argument — so it is
+  // typed here and submitted with a CR.
+  //
+  // The AUTO-SUBMIT case for a CLAUDE session (the Sleep consolidation) is still handled
+  // server-side — `claude` gets the prompt as a positional arg (see `serverSubmitsPrompt`
+  // above), which boots the TUI with it already
   // submitted, so it never depends on this boot-settle heuristic (which dropped the message
   // when a slow boot opened a quiet gap before the readline was ready). We still wait for the
   // boot output to SETTLE — every chunk resets a short timer — then drop the text in as one
@@ -567,9 +603,11 @@ export function createSession(bypass: boolean, notify: () => void, claudeId: str
       bootTimer = undefined;
       if (promptSent || ws.readyState !== WebSocket.OPEN) return;
       promptSent = true;
-      // Type the text but leave the line UNSUBMITTED so the user finishes it (the only case
-      // that reaches here — the auto-submit path is served server-side; see the comment above).
-      sendInput(initialPrompt);
+      // A shell's opening command is SUBMITTED (case b); everything else is typed and left for
+      // the user to finish (case a). The CR goes through `sendInput` too, so the line shadow
+      // empties with the line — a shadow still holding a submitted command would replay it
+      // into the next prompt on the first `runCommand`.
+      sendInput(isShell && submitInitial ? `${initialPrompt}\r` : initialPrompt);
     }, 1600);
   }
 

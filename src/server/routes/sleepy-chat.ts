@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { parseJsonBody, sendJson, sendError } from '../middleware.js';
+import { claudeAwarePath } from '../../lib/claude-path.js';
 
 /**
  * Sleepy "Ask" — a real, read-only Claude Code conversation that runs INSIDE the
@@ -318,6 +319,10 @@ export async function handleSleepyChatSend(
     const child = spawn(shell, ['-ilc', script, ...positionals], {
       cwd: projectRootOf(contextRoot),
       stdio: ['ignore', 'pipe', 'pipe'],
+      // claude-aware PATH — see src/lib/claude-path.ts: the CLI installs into
+      // ~/.local/bin, which is on no default PATH, so a login shell can't find it
+      // unless the install's `export PATH` echo made it into the user's rc.
+      env: { ...process.env, PATH: claudeAwarePath() },
     });
 
     // Line-buffer stdout and parse each complete NDJSON line.

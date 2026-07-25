@@ -528,8 +528,13 @@ describe('turnHasVisibleProgress', () => {
 // ─── nextStickToBottom (transcript auto-scroll) ──────────────────────────────────
 
 describe('nextStickToBottom', () => {
+  /** A user-driven scroll event — wheel, drag, touch, or a scroll key. */
   const at = (scrollTop: number, prevScrollTop = scrollTop) => ({
-    scrollTop, scrollHeight: 2000, clientHeight: 500, prevScrollTop,
+    scrollTop, scrollHeight: 2000, clientHeight: 500, prevScrollTop, userDriven: true,
+  });
+  /** The same event with no gesture behind it: the content moved, not the user. */
+  const churn = (scrollTop: number, prevScrollTop = scrollTop) => ({
+    ...at(scrollTop, prevScrollTop), userDriven: false,
   });
 
   it('sticks at the bottom and within the slack window', () => {
@@ -549,12 +554,28 @@ describe('nextStickToBottom', () => {
     expect(nextStickToBottom(true, at(1200, 900))).toBe(true);
   });
 
+  it('keeps sticking when a shrink clamps the view backwards mid-stream', () => {
+    // Owner report 07-25: a tool card collapses under a pinned view, so the browser clamps
+    // `scrollTop` down; the next block renders before that scroll event dispatches, and the
+    // handler sees a position both far from the bottom AND lower than last time. Identical
+    // to scrolling up — except no one scrolled, so the view must stay pinned.
+    expect(nextStickToBottom(true, churn(900, 1400))).toBe(true);
+  });
+
+  it('leaves an intentionally parked view parked while content churns', () => {
+    expect(nextStickToBottom(false, churn(900, 1400))).toBe(false);
+    // Reaching the bottom still re-sticks, however it happened.
+    expect(nextStickToBottom(false, churn(1500, 1000))).toBe(true);
+  });
+
   it('re-sticks when the user scrolls back down to the bottom', () => {
     expect(nextStickToBottom(false, at(1490, 1000))).toBe(true);
   });
 
   it('keeps the previous state for an unmeasurable (detached) scroller', () => {
-    const detached = { scrollTop: 0, scrollHeight: 0, clientHeight: 0, prevScrollTop: 1400 };
+    const detached = {
+      scrollTop: 0, scrollHeight: 0, clientHeight: 0, prevScrollTop: 1400, userDriven: true,
+    };
     expect(nextStickToBottom(true, detached)).toBe(true);
     expect(nextStickToBottom(false, detached)).toBe(false);
   });

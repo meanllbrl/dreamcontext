@@ -19,6 +19,7 @@ import { CardHeader } from './molecules';
 function statusMark(status: SubAgentRun['status']): string {
   if (status === 'completed') return '✓';
   if (status === 'error') return '⚠';
+  if (status === 'stopped') return '■';
   return '▸';
 }
 
@@ -50,7 +51,13 @@ function groupNoun(agents: number, total: number): string {
   return agents === total ? 'agent' : 'task';
 }
 
-export function SubAgentCard({ runs, onDrillIn }: { runs: SubAgentRun[]; onDrillIn: (run: SubAgentRun) => void }) {
+export function SubAgentCard({ runs: allRuns, onDrillIn }: { runs: SubAgentRun[]; onDrillIn: (run: SubAgentRun) => void }) {
+  // AGENT runs only. Background shells ride the identical `task_*` frames but belong to
+  // `BackgroundShellsTray`: this card's whole affordance is drilling into a sidechain
+  // transcript, and a shell has none — clicking one used to open a panel that said the
+  // transcript "hasn't flushed yet" about a file that was never going to exist. Filtered here
+  // rather than at the call site so no caller can reintroduce that.
+  const runs = allRuns.filter(isAgentRun);
   const { running, total, agents, earliestStart } = summarizeSubAgents(runs);
   // Self-ticking elapsed readout while any run is still going — cleared once none are.
   const [tick, setTick] = useState(() => Date.now());
@@ -93,7 +100,6 @@ export function SubAgentCard({ runs, onDrillIn }: { runs: SubAgentRun[]; onDrill
               <span className="chat-subagents-row-head">
                 <span className="chat-subagents-row-name">{run.name}</span>
                 {run.subagentType && <TypeBadge>{run.subagentType}</TypeBadge>}
-                {!isAgentRun(run) && <TypeBadge>shell</TypeBadge>}
               </span>
               <span className="chat-subagents-row-sub">
                 <span className="chat-subagents-row-line">{runLine(run)}</span>

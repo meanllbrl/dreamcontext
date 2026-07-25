@@ -106,7 +106,7 @@ import {
   handleAgentCouncilLive,
   attachAgentTerminal,
 } from './routes/agent-terminal.js';
-import { attachAgentChat, handleAgentChatHistory, handleAgentFile, handleAgentBoardAssets, handleAgentReveal, handleAgentGrant } from './routes/agent-chat.js';
+import { attachAgentChat, handleAgentChatHistory, handleAgentFile, handleAgentBoardAssets, handleAgentReveal, handleAgentGrant, handleAgentBackgroundOutput } from './routes/agent-chat.js';
 import { handleAgentDrop } from './routes/agent-drop.js';
 import { handleAgentSessionsGet, handleAgentSessionsPut } from './routes/agent-sessions.js';
 import { handleConnectionsList, handleConnectionsCreate, handleConnectionsDelete } from './routes/connections.js';
@@ -318,6 +318,9 @@ function buildRouter(): Router {
   router.get('/api/agent/session-model', handleAgentSessionModel);
   router.get('/api/agent/session-stats', handleAgentSessionStats);
   router.get('/api/agent/chat-history', handleAgentChatHistory);
+  // The live output of a background shell, read straight off the CLI's own task-output file
+  // (server-derived path) so the Chat view can show it for zero model tokens.
+  router.get('/api/agent/bg-output', handleAgentBackgroundOutput);
   // Chat (BETA) file preview: read one file under the active vault's PROJECT root (never
   // `_dream_context/`-scoped like `graph/content`) — the slide-over/lightbox surfaces.
   router.get('/api/agent/file', handleAgentFile);

@@ -167,7 +167,7 @@ export function AgentAvatar({ name, size = 32 }: { name: string; size?: number }
  * `running` sweeps INDETERMINATELY — the stream carries no percentage, and a made-up
  * one would be a lie the user reads as fact.
  */
-export function ProgressTrack({ status }: { status: 'running' | 'completed' | 'error' }) {
+export function ProgressTrack({ status }: { status: 'running' | 'completed' | 'error' | 'stopped' }) {
   return (
     <span
       className="chat-a-progress"

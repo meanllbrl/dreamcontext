@@ -80,6 +80,50 @@ export function ReconnectingChip() {
   );
 }
 
+/**
+ * The CLI has no usable credentials (chatProtocol's `auth-required`). Replaces the composer,
+ * because every message typed into an unauthenticated session comes straight back as the same
+ * notice — and because the fix is not on this surface: the headless engine answers `/login`
+ * with "/login isn't available in this environment.", so the OAuth flow can only run in the
+ * interactive TUI. `canSignInInApp` is whether that TUI can run in-app at all (node-pty + the
+ * CLI); without it the honest answer is the command to run in a real terminal, not a button
+ * that would open a pane that can't start.
+ *
+ * "Retry" respawns this same conversation (`--resume`), which is the recovery path whether the
+ * CLI stayed alive after the failed turn or exited — a signed-in respawn picks the transcript
+ * up where it stopped.
+ */
+export function SignInBanner({ canSignInInApp, command, onSignIn, onRetry }: {
+  canSignInInApp: boolean;
+  /** The sign-in command the INSTALLED CLI actually has (`claude auth login` on 2.1.x; plain
+   *  `claude` on one too old for the subcommand). Server-probed rather than hardcoded, so this
+   *  text can never name a command this machine doesn't have. */
+  command: string;
+  onSignIn: () => void;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="chat-banner-signin" role="alert">
+      <div className="chat-banner-signin-head">
+        <AlertIcon />
+        <span className="chat-banner-signin-title">Not signed in to Claude</span>
+      </div>
+      <p className="chat-banner-signin-sub">
+        {canSignInInApp
+          ? `Chat runs Claude headlessly, and the sign-in flow needs a real terminal. Opening one here runs ${command} — Claude Code takes it from there.`
+          : 'The in-app terminal isn’t available on this machine, so sign in from a real terminal:'}
+      </p>
+      {!canSignInInApp && <code className="chat-banner-signin-cmd">{command}</code>}
+      <div className="chat-card-actions">
+        {canSignInInApp && (
+          <button type="button" className="chat-btn primary" onClick={onSignIn}>Sign in in Terminal</button>
+        )}
+        <button type="button" className="chat-btn pill" onClick={onRetry}>Signed in — retry</button>
+      </div>
+    </div>
+  );
+}
+
 export function SessionEndedBanner({ onResume }: { onResume: () => void }) {
   return (
     <div className="chat-banner-ended">

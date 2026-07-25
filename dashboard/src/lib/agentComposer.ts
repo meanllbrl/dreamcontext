@@ -259,6 +259,21 @@ export function applySlashCommand(text: string, caret: number, command: string):
   return { text: head + text.slice(Math.max(0, caret)), caret: head.length };
 }
 
+/**
+ * Whether a composed chat message is the sign-in command. The chat engine is
+ * `claude -p --input-format stream-json`, which answers `/login` with "/login isn't available
+ * in this environment." (verified on CLI 2.1.220) — the OAuth flow exists only in the
+ * interactive TUI — so the chat composer intercepts it and opens a terminal session instead of
+ * spending a turn to tell the user nothing.
+ *
+ * Deliberately narrow: the WHOLE message must be the command (Claude Code treats a slash
+ * command as the entire message anyway — see {@link slashQueryAt}), optionally with arguments.
+ * "how do I /login?" is a question about it and must still reach the model.
+ */
+export function isSignInCommand(message: string): boolean {
+  return /^\/login(\s|$)/.test(message.trim());
+}
+
 /** Title-case an effort level for display ("high" → "High"). */
 export function effortLabel(level: string): string {
   return level ? level.charAt(0).toUpperCase() + level.slice(1) : level;

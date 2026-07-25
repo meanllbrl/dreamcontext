@@ -25,6 +25,14 @@
   padding: 8px 12px 12px;
   border-top: 1px solid var(--color-border);
   background: var(--color-bg);
+  /* Its OWN size container, not the pane's `agentpane`: this composer is portaled into a
+     detached per-session container (AgentSurface's chatPanes), and a query that resolves
+     against an ancestor would silently fall through to the widest layout wherever that
+     ancestor isn't a pane. Querying itself is always right. `inline-size` contains only the
+     width axis, so the resizable body height is untouched.
+     NOTE: this makes `.chat-cmp` the containing block even for `position: fixed`
+     descendants — every menu and hover card in here must portal to <body>. */
+  container: chatcmp / inline-size;
 }
 
 .chat-cmp-card {
@@ -122,7 +130,9 @@
   padding: 4px 8px;
   border-radius: var(--radius-full);
   background: var(--color-accent-soft, color-mix(in srgb, var(--color-accent) 16%, transparent));
-  color: var(--color-accent-text, var(--color-accent));
+  /* Accent, not `--color-accent-text` — see the slash-row note below: that token is white,
+     which on this same tint made the chip's own label invisible. */
+  color: var(--color-accent);
   font-size: var(--font-size-xs, 11.5px);
   font-weight: 600;
 }
@@ -224,15 +234,27 @@
   text-align: left;
   cursor: pointer;
 }
+/* NOT `--color-accent-text` here: that token is WHITE in both themes because it is the text
+   colour for a SOLID accent fill — over a 12–18% accent TINT it renders white-on-lavender,
+   which made the highlighted row the one row you could not read (owner report 07-25). The
+   app's own focused-row idiom (CommandPalette's `.cmdk-row--focused`) keeps the normal text
+   colour and marks the row with an accent-tinted outline instead; the inset shadow is used
+   rather than a border so the active row never shifts the list by a pixel. */
 .chat-cmp-slash-row[data-active='true'] {
   background: var(--color-accent-soft, color-mix(in srgb, var(--color-accent) 16%, transparent));
-  color: var(--color-accent-text, var(--color-accent));
+  color: var(--color-text);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 30%, transparent);
 }
 .chat-cmp-slash-name {
   font-family: var(--font-mono);
   font-size: var(--font-size-xs, 12px);
   font-weight: 600;
 }
+/* The command name is the row's ONLY content and the thing you read to choose — so it keeps
+   the full-contrast text colour rather than going accent. Accent-on-its-own-tint measures
+   ~3.7:1 in the light theme, which is fine for a decorative chip (the skill chip above, the
+   objective chip in ChatPane.css) but not for the one label a keyboard-driven picker is
+   asking you to read. The tint plus the outline already say "this is the row". */
 /* No chrome of its own — the CARD is the input surface, so the textarea is just the text
    sitting on it (that is what makes the toolbar read as part of the same field). */
 .chat-cmp-input {
@@ -292,6 +314,11 @@
 
 /* ── Toolbar (inside the card, under a hairline) ──────────────────────────────────── */
 
+/* ONE ROW at every width — never wrapped. Wrapping split a ~430px pane into a lopsided
+   two-line block (bypass/Attach/Skills up top; gauge + model + Send below), which reads as
+   broken rather than as responsive. Instead the row's only status element — the context
+   readout — sheds detail in stages (see the container queries at the end of this file), and
+   the controls go icon-only, so everything keeps fitting on the single line it belongs on. */
 .chat-cmp-toolbar {
   flex: 0 0 auto;
   display: flex;
@@ -299,11 +326,13 @@
   gap: 4px;
   padding: 7px 10px;
   border-top: 1px solid var(--color-border);
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  min-width: 0;
 }
-/* Model + effort + Send as one unit — see the JSX note: on a narrow pane the toolbar
-   wraps and this cluster drops as a whole instead of the Send button orphaning. */
+/* Model + effort + Send as one unit, and the one cluster that never shrinks: losing the
+   Send button to a squeeze would be the single worst outcome of a narrow pane. */
 .chat-cmp-toolbar-right {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -313,6 +342,7 @@
 /* Toolbar controls are BORDERLESS — the card is already a bordered surface, and a row of
    outlined pills inside it reads as boxes-in-a-box. Hover/open is the only chrome. */
 .chat-cmp-btn-ghost {
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -362,7 +392,16 @@
   color: var(--color-text-tertiary);
   font-size: var(--font-size-xs, 11.5px);
   white-space: nowrap;
-  cursor: default;
+  /* `help`, not `default`: hovering is the whole affordance once the stages start dropping
+     detail, and the cursor is the only thing that advertises it. */
+  cursor: help;
+  border-radius: var(--radius-sm, 6px);
+}
+/* Focusable (it is a `meter`, and at the narrow stages the hover card is the ONLY place the
+   reading exists) — so it needs a focus ring like any other reachable element. */
+.chat-cmp-ctx:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 3px;
 }
 .chat-cmp-ctx-track {
   flex: 0 0 auto;
@@ -371,6 +410,7 @@
   border-radius: var(--radius-full);
   background: var(--color-bg-tertiary);
   overflow: hidden;
+  transition: width var(--transition-fast);
 }
 .chat-cmp-ctx-fill {
   display: block;
@@ -425,7 +465,95 @@
   white-space: nowrap;
   transition: filter var(--transition-fast);
 }
-.chat-cmp-compact-btn:hover { filter: brightness(0.95); }
+.chat-cmp-compact-btn:hover:not(:disabled) { filter: brightness(0.95); }
+.chat-cmp-compact-btn:disabled { opacity: 0.5; cursor: default; }
+
+/* ── The readout's hover card (portaled to <body>) ────────────────────────────────────
+   Everything the toolbar stage dropped, in full — so narrowing a pane costs a hover, never
+   the information. Portaled because `.chat-cmp` is a size container and therefore the
+   containing block even for `position: fixed`; placement is done in ContextReadout.tsx. */
+
+.chat-cmp-ctxcard {
+  position: fixed;
+  z-index: 60;  /* same layer as the portaled composer menus */
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  width: 236px;
+  padding: 11px 13px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg, 14px);
+  background: var(--color-bg-secondary);
+  box-shadow: var(--shadow-xl);
+  color: var(--color-text-secondary);
+  /* Stated, not inherited: portaled to <body>, this escapes `.chat-cmp` — the same reason
+     .chat-permmode-menu names its family rather than trusting the cascade. */
+  font-family: var(--font-family-text);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+.chat-cmp-ctxcard-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.chat-cmp-ctxcard-title {
+  color: var(--color-text);
+  font-size: 12px;
+  font-weight: 600;
+}
+.chat-cmp-ctxcard-pct {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+.chat-cmp-ctxcard-pct[data-tight='true'] { color: var(--color-warning); }
+.chat-cmp-ctxcard-track {
+  display: block;
+  width: 100%;
+  height: 5px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-tertiary);
+  overflow: hidden;
+}
+.chat-cmp-ctxcard-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--color-accent);
+}
+.chat-cmp-ctxcard-fill[data-tight='true'] { background: var(--color-warning); }
+.chat-cmp-ctxcard-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  font-family: var(--font-mono);
+  color: var(--color-text-tertiary);
+}
+.chat-cmp-ctxcard-free { color: var(--color-text-secondary); }
+.chat-cmp-ctxcard-cost {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-border);
+}
+.chat-cmp-ctxcard-cost .chat-cmp-ctxcard-row { font-family: inherit; }
+.chat-cmp-ctxcard-costval {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--color-text);
+}
+.chat-cmp-ctxcard-note {
+  margin: 0;
+  color: var(--color-text-tertiary);
+  font-size: 10.5px;
+  line-height: 1.4;
+  opacity: 0.85;
+}
 
 /* ── Model / effort ───────────────────────────────────────────────────────────────────
    Quiet TEXT triggers, not pills: what model and effort you're on is a status you read,
@@ -449,7 +577,14 @@
 .chat-cmp-pill:hover:not(:disabled),
 .chat-cmp-pill.open { background: var(--color-bg-tertiary); color: var(--color-text); }
 .chat-cmp-pill:disabled { opacity: 0.5; cursor: default; }
-.chat-cmp-pill-label { font-weight: 600; white-space: nowrap; }
+.chat-cmp-pill-label {
+  font-weight: 600;
+  white-space: nowrap;
+  /* The row's last-resort give: at the tightest widths a long model name (`Sonnet 4.5`)
+     ellipsises rather than pushing Send out of the card. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 /* ── Popover menu contents (the portaled shell itself is AgentTerminal.css's
      .agent-composer-menu / .agent-composer-pop — see this file's header) ───────────── */
@@ -472,3 +607,61 @@
 }
 .chat-cmp-menu-list button:hover { background: var(--color-bg-tertiary); }
 .chat-cmp-menu-row.on { color: var(--color-accent); font-weight: 600; }
+
+/* ── Toolbar responsiveness (via `.chat-cmp`'s own `chatcmp` size container) ───────────
+   The toolbar does not wrap (see .chat-cmp-toolbar), so it degrades instead. The order is
+   by cost of losing something: the readout's redundant halves go first, then its detail,
+   then the controls' words, and only at the very end the model name's tail.
+
+   Everything the readout drops stays one hover away in `.chat-cmp-ctxcard`; everything the
+   controls drop is still named by their `title`. */
+
+/* 1. The raw counts say what the % already said, in three times the width. */
+@container chatcmp (max-width: 660px) {
+  .chat-cmp-ctx-count { display: none; }
+}
+
+/* 2. The cost is trivia next to "how much room is left" — it moves into the hover card. */
+@container chatcmp (max-width: 560px) {
+  .chat-cmp-ctx-cost { display: none; }
+}
+
+/* 3. Where the screenshot lived: the toolbar used to wrap right about here. The readout
+      becomes what the owner asked for — a gauge barely wider than `***`, detail on hover —
+      and Attach/Skills go icon-only to pay for the controls that must stay. */
+@container chatcmp (max-width: 470px) {
+  .chat-cmp-toolbar { gap: 3px; padding: 7px 8px; }
+  .chat-cmp-btn-ghost { padding: 0 6px; }
+  .chat-cmp-btn-label,
+  .chat-cmp-btn-ghost .chat-cmp-caret { display: none; }
+  .chat-cmp-ctx-pct { display: none; }
+  .chat-cmp-ctx-track { width: 22px; }
+  /* A 22px dash is too small to aim at, and hovering it is now the ONLY way to read the
+     numbers — so the gauge takes a button-sized hit area (and a button-like hover) around
+     it. The bar itself stays 4px; only the target grows. */
+  .chat-cmp-ctx { height: 28px; padding: 0 5px; }
+  .chat-cmp-ctx:hover { background: var(--color-bg-tertiary); }
+  /* Left-docked, not centred: with its label gone the gauge is a bare mark, and a bare mark
+     floating in the middle of the row reads as a stray dash rather than as a column. Beside
+     the controls it reads as what it is — this session's status. (`toolbar-right` is pinned
+     by its own `margin-left:auto`, so the trailing spacer still holds the row apart.) */
+  .chat-cmp-spacer-lead { flex: 0 0 2px; }
+  /* `/compact` survives as the bare ⚠: at ≥90% the action IS the point, and hiding a
+     control behind hover would put it out of the keyboard's reach (the card is portaled to
+     the end of <body>, so Tab from the gauge never enters it). */
+  .chat-cmp-compact-label { display: none; }
+  .chat-cmp-compact-btn { padding: 0 7px; gap: 0; }
+}
+
+/* 4. Three or four splits: the permission chip keeps only its checkbox (the state worth
+      seeing), and the model/effort names truncate before Send is ever squeezed. */
+@container chatcmp (max-width: 380px) {
+  .chat-cmp-toolbar { gap: 2px; padding: 6px 6px; }
+  .chat-cmp-readout { gap: 5px; }
+  .chat-permmode-chip { padding: 0 5px; }
+  .chat-permmode-name,
+  .chat-permmode-caret { display: none; }
+  .chat-cmp-pill { padding: 0 5px; min-width: 0; }
+  .chat-cmp-pill-label { max-width: 62px; }
+  .chat-cmp-toolbar-right { gap: 3px; }
+}

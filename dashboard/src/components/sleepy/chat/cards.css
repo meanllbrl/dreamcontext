@@ -693,3 +693,106 @@
   cursor: pointer;
 }
 .chat-board-open:hover { text-decoration: underline; }
+
+/* ── Background-shells tray (BackgroundShellsTray) ──────────────────────────────────
+   Docked above the composer, OUTSIDE the transcript scroller: a `run_in_background`
+   shell outlives the turn that started it, so its row must stay put while the process
+   runs. Sits on the composer's own chrome scale, not a transcript card's — it is
+   persistent furniture, not a message. */
+
+.chat-bgshells {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-bg-secondary);
+}
+.chat-bgshells-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2) var(--space-4);
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+.chat-bgshells-head:hover { color: var(--color-text); }
+.chat-bgshells-head:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; }
+.chat-bgshells-glyph { font-family: var(--font-mono); color: var(--color-text-tertiary); }
+/* Only a LIVE tray earns the accent — a tray of finished shells is reference material. */
+.chat-bgshells[data-running] .chat-bgshells-glyph { color: var(--color-accent); }
+.chat-bgshells-title { flex: 1 1 auto; }
+.chat-bgshells-caret { color: var(--color-text-tertiary); font-size: 10px; }
+.chat-bgshells-spinner {
+  flex: 0 0 auto;
+  width: var(--space-3);
+  height: var(--space-3);
+  border-radius: var(--radius-full);
+  border: 2px solid var(--color-accent-soft);
+  border-top-color: var(--color-accent);
+  animation: chat-spin 800ms linear infinite;
+}
+@media (prefers-reduced-motion: reduce) { .chat-bgshells-spinner { animation: none; } }
+
+.chat-bgshells-rows { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; }
+.chat-bgshells-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-4) 0 0;
+  border-top: 1px solid var(--color-border);
+}
+.chat-bgshells-open {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: var(--space-2) var(--space-4);
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+.chat-bgshells-open:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; }
+.chat-bgshells-row-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text);
+  font-size: 12.5px;
+}
+.chat-bgshells-open:hover .chat-bgshells-row-name { color: var(--color-accent); }
+.chat-bgshells-row-meta {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+.chat-bgshells-row-status[data-status='running'] { color: var(--color-accent); }
+.chat-bgshells-row-status[data-status='completed'] { color: var(--color-success); }
+.chat-bgshells-row-status[data-status='stopped'] { color: var(--color-warning); }
+.chat-bgshells-row-status[data-status='error'] { color: var(--color-error); }
+.chat-bgshells-row-actions { flex: 0 0 auto; display: inline-flex; gap: var(--space-2); }
+.chat-bgshells-btn {
+  padding: 3px 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.chat-bgshells-btn:hover { background: var(--color-bg-tertiary); color: var(--color-text); }
+.chat-bgshells-btn:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
+.chat-bgshells-btn.danger { border-color: var(--color-error); color: var(--color-error); }
+.chat-bgshells-btn.danger:hover { background: var(--color-error-subtle); color: var(--color-error); }

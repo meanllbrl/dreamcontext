@@ -92,8 +92,28 @@ export interface SubAgentResult {
   totalToolUseCount?: number;
 }
 
+/** One entry of the CLI's live background-shell roster (`system:background_tasks_changed`). */
+export interface BackgroundTaskEntry {
+  taskId: string;
+  /** `local_bash` for a backgrounded shell command. Carried verbatim so a future task type
+   *  can be told apart rather than assumed to be a shell. */
+  taskType?: string;
+  description?: string;
+}
+
 export type ChatEvent =
   | { kind: 'init'; sessionId: string; model?: string; permissionMode?: string; capabilities?: string[]; version?: string; slashCommands?: string[] }
+  /** The CLI's authoritative roster of tasks STILL RUNNING in the background, pushed on
+   *  every change (empirically verified on CLI 2.1.220: fires when a `run_in_background`
+   *  Bash starts, and again with `tasks: []` when the last one ends).
+   *
+   *  Load-bearing for two things the `task_*` frames alone can't do: it is the only frame
+   *  that says a shell is still alive RIGHT NOW (so a roster that lost an entry without a
+   *  terminal `task_updated` — a shell reaped with the process — can be reconciled), and it
+   *  carries entries for shells whose `task_started` we never saw. It deliberately does NOT
+   *  carry terminal state: a finished task simply drops out of `tasks`, so completion still
+   *  comes from `task-updated`/`task-notification`. */
+  | { kind: 'background-tasks'; tasks: BackgroundTaskEntry[] }
   /** A `Task`/`Agent`-tool sub-agent was dispatched. Empirically verified on CLI
    *  2.1.218 (a real Task-tool spike, task_nQb0y85X round 3): the sub-agent's own
    *  assistant text/thinking is NEVER streamed to the parent, and `parent_tool_use_id`
@@ -127,6 +147,17 @@ export type ChatEvent =
    *  like "Set effort level to low", creates) the transcript item. */
   | { kind: 'assistant-text'; text: string; synthetic: boolean; turnUsage?: TurnUsage }
   | { kind: 'assistant-thinking'; text: string; turnUsage?: TurnUsage }
+  /** The CLI has no usable credentials, so the turn never reached the API. Empirically
+   *  verified against CLI 2.1.220 in an isolated unauthenticated HOME: the frame is an
+   *  ordinary `assistant` text block carrying `model:'<synthetic>'`, `is_api_error_message:
+   *  true` and `error:'authentication_failed'`, with the text "Not logged in · Please run
+   *  /login" (and a matching `result` frame with `terminal_reason:'api_error'`).
+   *
+   *  Split out from `assistant-text` because the remedy is not in this surface at all: the
+   *  headless engine answers `/login` with "/login isn't available in this environment."
+   *  (also verified) — the OAuth flow only exists in the interactive TUI. The UI turns this
+   *  into a sign-in card that opens a terminal session instead of showing the user a dead end. */
+  | { kind: 'auth-required'; text: string }
   | { kind: 'tool-result'; toolUseId: string; content: unknown; isError: boolean; agentResult?: SubAgentResult }
   /** A `control_response` ack for a control request WE sent (set_model / rewind_conversation).
    *  `payload` is the CLI's nested `response` object when present (e.g. rewind's
@@ -166,6 +197,15 @@ export type ClientControl =
    *  the caller whether the switch actually landed, so a rejection can fall back to
    *  respawning the same conversation in the new mode. */
   | { type: 'setPermissionMode'; requestId: string; mode: 'auto' | 'bypass' }
+  /** Stop a background shell — the server translates this into a `stop_task`
+   *  control_request (`{subtype:'stop_task', task_id}`), which the CLI honours with zero
+   *  model tokens (empirically verified on 2.1.220).
+   *
+   *  No `requestId`: the ack is worthless as confirmation — the CLI answers
+   *  `{subtype:'success', response:{}}` even for a task_id that does not exist — so there
+   *  is nothing for a client-generated id to usefully match. The REAL confirmation is the
+   *  `task-updated`/`background-tasks` frames that follow, which the reducer applies. */
+  | { type: 'stopTask'; taskId: string }
   /** Rewind the conversation to just BEFORE the user message with this transcript uuid —
    *  translated into a `rewind_conversation` control_request (`interrupt_if_running: true`).
    *  Conversation-only: the CLI does NOT restore files through this channel. */
@@ -284,6 +324,25 @@ function fromTaskProgress(obj: Record<string, unknown>): ChatEvent {
     summary: str(obj.summary),
     usage: taskUsageOf(obj),
   };
+}
+
+/**
+ * `system:background_tasks_changed` → the running roster. An entry without a `task_id` is
+ * dropped (nothing downstream could key by it) rather than invalidating the whole frame; an
+ * EMPTY roster is a meaningful, load-bearing value (it is how "the last shell just ended"
+ * is reported), so unlike the `task_*` mappers this one never degrades to `ignored` for
+ * lack of entries.
+ */
+function fromBackgroundTasksChanged(obj: Record<string, unknown>): ChatEvent {
+  const raw = Array.isArray(obj.tasks) ? obj.tasks : [];
+  const tasks: BackgroundTaskEntry[] = [];
+  for (const t of raw) {
+    if (!isRecord(t)) continue;
+    const taskId = str(t.task_id);
+    if (!taskId) continue;
+    tasks.push({ taskId, taskType: str(t.task_type), description: str(t.description) });
+  }
+  return { kind: 'background-tasks', tasks };
 }
 
 function fromTaskNotification(obj: Record<string, unknown>): ChatEvent {
@@ -449,6 +508,22 @@ function fromToolUseResult(obj: Record<string, unknown>): SubAgentResult | undef
   };
 }
 
+/**
+ * Whether an `assistant` frame is the CLI's "no usable credentials" notice rather than a
+ * model reply. Exported for the unit fixtures: the shape is the CLI's, not ours, so it is
+ * pinned by a test against the real frame captured from an unauthenticated run.
+ *
+ * `error === 'authentication_failed'` is the CLI's own discriminant and the primary gate.
+ * The text probe is the fallback for the same condition worded differently by a later CLI
+ * (an expired OAuth token and a rejected API key both land here) — it is deliberately
+ * narrow: only an `is_api_error_message` frame that names `/login` as the remedy qualifies,
+ * so a model that merely mentions logging in can never be mistaken for one.
+ */
+export function isAuthFailure(frame: Record<string, unknown>, text: string): boolean {
+  if (str(frame.error) === 'authentication_failed') return true;
+  return bool(frame.is_api_error_message) && /(^|\s)\/login\b/.test(text);
+}
+
 function fromAssistant(obj: Record<string, unknown>): ChatEvent {
   const message = isRecord(obj.message) ? obj.message : {};
   const content = message.content;
@@ -477,6 +552,11 @@ function fromAssistant(obj: Record<string, unknown>): ChatEvent {
     };
   }
   if (blockType === 'text' && typeof block.text === 'string' && block.text) {
+    // Credentials, not content: this text is a local notice about a turn that never ran, and
+    // its fix lives in the terminal surface (see the `auth-required` doc comment). The `error`
+    // discriminant is the CLI's own; the text probe is the belt-and-braces for a future
+    // wording of the same condition that drops the field but still names the command.
+    if (isAuthFailure(obj, block.text)) return { kind: 'auth-required', text: block.text };
     // `<synthetic>` marks a locally-generated reply (e.g. `/effort`'s "Set effort level to
     // low") — no stream deltas ever accompany it, so the reducer appends it as a done item.
     return { kind: 'assistant-text', text: block.text, synthetic: message.model === '<synthetic>', turnUsage };
@@ -622,6 +702,7 @@ function fromSystem(obj: Record<string, unknown>): ChatEvent {
   if (subtype === 'task_updated') return fromTaskUpdated(obj);
   if (subtype === 'task_progress') return fromTaskProgress(obj);
   if (subtype === 'task_notification') return fromTaskNotification(obj);
+  if (subtype === 'background_tasks_changed') return fromBackgroundTasksChanged(obj);
   // hook_started / hook_response / status / thinking_tokens / any other subtype —
   // observed or future noise the parser must tolerate (global hooks + status pings
   // fire during a headless run).

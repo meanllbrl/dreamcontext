@@ -290,7 +290,12 @@ export interface SubAgentRun {
    *  model and no token accounting, and must not be labelled an "agent". */
   taskType?: string;
   prompt?: string;
-  status: 'running' | 'completed' | 'error';
+  /** `stopped` is its own terminal state, not a flavour of `completed` or `error`: a run the
+   *  USER killed (`task_updated{status:'killed'}` / `task_notification{status:'stopped'}`,
+   *  both verified on 2.1.220) neither finished nor failed, and calling it either would
+   *  misreport it. Before this existed both frames fell through the reducer's ternary and a
+   *  killed run displayed as "running" forever. */
+  status: 'running' | 'completed' | 'error' | 'stopped';
   startedAt: number;
   endedAt?: number;
   summary?: string;
@@ -315,6 +320,40 @@ export interface SubAgentRun {
  *  pre-2.1.220 spike recorded, and under-reporting a real agent is the worse error. */
 export function isAgentRun(run: SubAgentRun): boolean {
   return run.taskType !== 'local_bash';
+}
+
+/** A shell command the CLI is running in the background — the complement of
+ *  {@link isAgentRun}. These get their own surface (`BackgroundShellsTray`) rather than a row
+ *  in the sub-agent card: a shell has no sidechain transcript to drill into, but it does have
+ *  live output on disk and can be stopped, which an agent run cannot. */
+export function isBackgroundShell(run: SubAgentRun): boolean {
+  return run.taskType === 'local_bash';
+}
+
+/**
+ * The status a `task_updated`/`task_notification` frame's own status string means, given what
+ * the run is currently at. Pure and shared by both reducer arms so the two frames can never
+ * disagree about the same vocabulary.
+ *
+ * The vocabulary is the CLI's, empirically observed on 2.1.220: `completed` (natural end),
+ * `killed`/`stopped` (this is what `stop_task` produces, on task_updated and
+ * task_notification respectively), `error`/`failed`. Anything unrecognized HOLDS the current
+ * status rather than guessing — a future status word must not silently retire a running row.
+ */
+export function runStatusFrom(raw: string | undefined, current: SubAgentRun['status']): SubAgentRun['status'] {
+  if (raw === 'completed') return 'completed';
+  if (raw === 'killed' || raw === 'stopped') return 'stopped';
+  if (raw === 'error' || raw === 'failed') return 'error';
+  return current;
+}
+
+/** Header data for the background-shells tray: how many are still going, and how many rows
+ *  there are in total (a finished shell stays listed so its output remains readable). */
+export function summarizeBackgroundShells(runs: SubAgentRun[]): {
+  shells: SubAgentRun[]; running: number; total: number;
+} {
+  const shells = runs.filter(isBackgroundShell);
+  return { shells, running: shells.filter((r) => r.status === 'running').length, total: shells.length };
 }
 
 /** Header data for the "N agents running" group card. `agents` counts only true sub-agent
@@ -395,9 +434,17 @@ export function runMetaChips(run: SubAgentRun, now: number): string[] {
  * `Agent`/`Task` `ToolCard` would otherwise render alongside the `SubAgentCard` that
  * already represents it). Keyed by `tool_use_id`, not by tool name — correct
  * regardless of whether the CLI streams the tool as `Agent` or `Task`.
+ *
+ * AGENT runs only. A background shell rides the identical `task_*` frames, so before this
+ * filter existed its spawning tool_use_id landed here too — and that id belongs to the
+ * `Bash` call itself, so backgrounding a command SILENTLY ERASED its tool card from the
+ * transcript and the user never saw the command that was now running. A shell's card must
+ * always render; the tray represents its lifecycle, not its invocation.
  */
 export function subAgentToolUseIds(runs: SubAgentRun[]): Set<string> {
-  return new Set(runs.map((r) => r.toolUseId).filter((id): id is string => !!id));
+  return new Set(
+    runs.filter(isAgentRun).map((r) => r.toolUseId).filter((id): id is string => !!id),
+  );
 }
 
 // ─── Turn progress (the working indicator's condition) ────────────────────────────
@@ -448,17 +495,28 @@ export interface ScrollMetrics {
   clientHeight: number;
   /** `scrollTop` at the previous scroll event — the direction signal. */
   prevScrollTop: number;
+  /**
+   * Whether a real user gesture (wheel, touch, scrollbar drag, arrow/page key) drove this
+   * scroll event, rather than the content changing underneath a parked view.
+   */
+  userDriven: boolean;
 }
 
 /**
- * The next stick-to-bottom state for a scroll event. Two rules, in this order:
+ * The next stick-to-bottom state for a scroll event. Three rules, in this order:
  *
  * 1. At (or within {@link BOTTOM_SLACK} of) the bottom → stick. Covers arriving back by any
  *    means: wheel, drag, keyboard, or our own programmatic scroll.
- * 2. Otherwise only an UPWARD move unsticks. This is what makes it robust: content growing
- *    under a pinned view pushes the bottom away without ever moving `scrollTop` backwards,
- *    so a fast stream can no longer be mistaken for the user scrolling off (the bug that
- *    made auto-scroll die mid-answer and never recover).
+ * 2. A scroll event NO ONE asked for cannot unstick. Position alone can't tell "the user
+ *    left" from "the content moved": when a block shrinks under a pinned view (a running
+ *    tool card collapsing to its done card, the working indicator unmounting) the browser
+ *    CLAMPS `scrollTop` down to the new maximum, and if the next block renders before that
+ *    scroll event dispatches, the handler sees a position that is both far from the bottom
+ *    and lower than last time — a picture identical to scrolling up. That is what killed
+ *    auto-scroll mid-stream and left the Latest pill sitting there (owner report 07-25).
+ * 3. Only then does direction matter: an UPWARD move unsticks. Content growing under a
+ *    pinned view pushes the bottom away without ever moving `scrollTop` backwards, so a
+ *    fast stream still can't be mistaken for the user scrolling off.
  *
  * A zero-height scroller is not measurable — a minimized pane's container is detached from
  * the document, and treating that as "scrolled away" would strand the view at the top when
@@ -467,6 +525,7 @@ export interface ScrollMetrics {
 export function nextStickToBottom(prev: boolean, m: ScrollMetrics): boolean {
   if (m.clientHeight === 0) return prev;
   if (m.scrollHeight - m.scrollTop - m.clientHeight <= BOTTOM_SLACK) return true;
+  if (!m.userDriven) return prev;
   if (m.scrollTop < m.prevScrollTop - 1) return false;
   return prev;
 }

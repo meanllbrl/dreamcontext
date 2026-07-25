@@ -181,7 +181,7 @@ function NoMatch({ onClear }: { onClear: () => void }) {
       <div style={{ width: 56, height: 56, borderRadius: 15, background: 'var(--color-bg-elevated)', border: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, color: 'var(--color-text-tertiary)', marginBottom: 8 }}>⌕</div>
       <div style={{ fontFamily: 'var(--font-family-display)', fontWeight: 700, fontSize: 18, color: 'var(--color-text)' }}>No objectives match your filters</div>
       <div style={{ fontSize: 13.5, color: 'var(--color-text-tertiary)' }}>Try clearing a status or the slipping filter.</div>
-      <button onClick={onClear} className="bd-chip" style={{ marginTop: 8, padding: '8px 15px', borderRadius: 9, cursor: 'pointer', background: 'var(--color-accent-soft)', color: 'var(--color-accent-text)', fontSize: 12.5, fontWeight: 600, border: 'none' }}>✕ Clear filters</button>
+      <button onClick={onClear} className="bd-chip" style={{ marginTop: 8, padding: '8px 15px', borderRadius: 9, cursor: 'pointer', background: 'var(--color-accent-soft)', color: 'var(--color-accent)', fontSize: 12.5, fontWeight: 600, border: 'none' }}>✕ Clear filters</button>
     </div>
   );
 }

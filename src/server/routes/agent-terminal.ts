@@ -12,6 +12,8 @@ import { isDesktop } from '../desktop.js';
 import { gitAvailable } from '../../lib/git-sync/git.js';
 import { trackChild } from '../lifecycle.js';
 import { resolveAgentSession, readAgentSessionEntry } from '../../lib/agent-session-map.js';
+import { claudeAwarePath, findClaudeBin, ensureClaudeOnShellPath, claudePathExportLine } from '../../lib/claude-path.js';
+import { claudeAuthStatus } from '../../lib/claude-auth.js';
 import {
   isLoopback, rejectUpgrade, resolveVaultProjectRoot, projectRootOf,
   sanitizeUuid, sanitizeModel, sanitizeEffort, sanitizePrompt, EFFORT_LEVELS,
@@ -120,9 +122,26 @@ export async function handleAgentCapabilities(
   // login-shell spawn each). `nodePty` gates the embedded renderer; `claudeCli`
   // gates whether the spawned shell can actually find `claude`; `npm` tells the
   // UI whether the in-app installer can even run.
-  const [nodePty, claudeCli, npm] = desktop
+  const [nodePty, claudeOnPath, npm] = desktop
     ? await Promise.all([hasNodePty(), detectOnPath('claude'), detectOnPath('npm')])
     : [false, false, false];
+  // `claude` installs into ~/.local/bin, which is NOT on a default PATH — so a CLI
+  // that is genuinely installed reads as missing whenever the install's `export PATH`
+  // echo never made it into the user's rc. Fall back to the known install locations:
+  // every spawn we make injects `claudeAwarePath()`, so a binary found here really is
+  // runnable and the surface must not stay blocked. `claudePathBroken` is that exact
+  // state (on disk, invisible to the shell) — the System doctor offers the one-click
+  // echo for it, because the surfaces we DON'T control the env of (the user's own
+  // terminal, "Open in Terminal") still need the rc line.
+  const claudeBin = desktop && !claudeOnPath ? findClaudeBin() : null;
+  const claudeCli = claudeOnPath || claudeBin !== null;
+  // Installed is not the same as usable: an unauthenticated CLI answers every
+  // headless turn with `authentication_failed` and names a remedy (`/login`) that
+  // only exists in the interactive TUI. Probing here (memoized, ~0.6s, gated on the
+  // CLI actually being present) lets the Chat banner and the System doctor say
+  // "not signed in — here's the button" instead of letting a chat turn die silently.
+  // Advisory only: nothing downstream gates a spawn on it (see claude-auth.ts).
+  const claudeAuth = desktop && claudeCli ? await claudeAuthStatus() : null;
   // git is probed with the SERVER's own env (not a login shell) because that is
   // exactly how the sync engine invokes it — and unconditionally: cloud sync runs
   // in the browser dashboard too. Cheap (one --version exec).
@@ -137,6 +156,8 @@ export async function handleAgentCapabilities(
     // Prerequisite breakdown for the in-app Setup panel + the System dependencies doctor.
     nodePty,
     claudeCli,
+    claudePathBroken: claudeBin !== null,
+    ...(claudeAuth ? { claudeAuth } : {}),
     npm,
     git: gitOk,
   });
@@ -186,7 +207,18 @@ export async function handleOpenTerminal(
   // passed explicitly — the CLI's no-flag default is `manual` (and `acceptEdits` would
   // boot the TUI with "accept edits on").
   const flag = bypass ? ' --permission-mode bypassPermissions' : ' --permission-mode auto';
-  const shellCmd = `cd '${cwd.replace(/'/g, `'\\''`)}' && exec claude${flag}`;
+  // Terminal.app runs the user's OWN shell, so we can't hand it a claude-aware env
+  // the way our spawns get one — the PATH has to be part of the command. Emitted only
+  // when `claude` was found in an install directory this process doesn't already have
+  // on PATH, and APPENDED, so a `claude` the user's rc resolves is never redirected.
+  // `"$PATH":'<dir>'` — the expansion stays double-quoted (a PATH with spaces can't
+  // word-split) while the literal directory stays single-quoted (no re-expansion).
+  const claudeBin = findClaudeBin();
+  const claudeDir = claudeBin ? dirname(claudeBin) : null;
+  const pathPrefix = claudeDir && !(process.env.PATH ?? '').split(':').includes(claudeDir)
+    ? `export PATH="$PATH":'${claudeDir.replace(/'/g, `'\\''`)}' && `
+    : '';
+  const shellCmd = `cd '${cwd.replace(/'/g, `'\\''`)}' && ${pathPrefix}exec claude${flag}`;
   const appleScript = `tell application "Terminal"\n  activate\n  do script "${escapeForAppleScript(shellCmd)}"\nend tell`;
 
   try {
@@ -210,7 +242,45 @@ export async function handleOpenTerminal(
 // the package names are FIXED internal literals, never user input. The only body
 // field is `target`, validated against a closed whitelist.
 
-type InstallTarget = 'claude' | 'pty' | 'git';
+type InstallTarget = 'claude' | 'pty' | 'git' | 'claude-path';
+
+/**
+ * The step every Claude Code install ends with and the in-app installer used to
+ * skip: put the binary's directory on the shell PATH. `npm install -g
+ * @anthropic-ai/claude-code` drops the real binary in `~/.local/bin`, which no
+ * default PATH contains — so without this the install "succeeds" and every
+ * `$SHELL -ilc 'exec claude …'` spawn still dies with "command not found", and
+ * the whole agent surface stays blocked behind a CLI that is installed.
+ *
+ * Runs after a successful `claude` install and on its own as the `claude-path`
+ * target (the System doctor's Fix PATH button, for CLIs installed outside the
+ * app). Idempotent — see `ensureClaudeOnShellPath`. Never throws.
+ */
+function applyClaudePathFix(): { ok: boolean; message: string } {
+  const bin = findClaudeBin();
+  if (!bin) {
+    // Installed somewhere we don't know about, or not installed at all. Either way
+    // there is no directory to add — say so rather than editing rc files blindly.
+    return {
+      ok: false,
+      message:
+        "Couldn't find the claude binary in the usual install locations, so PATH was left alone. " +
+        'Add its directory to your shell profile by hand, then reopen the app.',
+    };
+  }
+  const dir = dirname(bin);
+  const fix = ensureClaudeOnShellPath(dir);
+  if (fix.wrote.length) {
+    return { ok: true, message: `Added ${dir} to your PATH in ${fix.wrote.join(', ')} — open a new terminal to pick it up.` };
+  }
+  if (fix.alreadyConfigured.length) {
+    return { ok: true, message: `${dir} is already on your PATH in ${fix.alreadyConfigured.join(', ')}.` };
+  }
+  return {
+    ok: false,
+    message: `Couldn't write your shell profile. Run this once, in your terminal:\n  echo '${claudePathExportLine(dir)}' >> ~/.zshrc`,
+  };
+}
 
 interface InstallRun {
   state: 'running' | 'done' | 'error';
@@ -256,8 +326,9 @@ function cliPackageRoot(): string | null {
   return null;
 }
 
-/** Build the shell command + cwd for a target. Returns null if it can't be run here. */
-function installPlan(target: InstallTarget): { script: string; cwd?: string } | null {
+/** Build the shell command + cwd for a target. Returns null if it can't be run here.
+ *  (`claude-path` is not here: it writes a shell rc, it doesn't run an installer.) */
+function installPlan(target: Exclude<InstallTarget, 'claude-path'>): { script: string; cwd?: string } | null {
   if (target === 'claude') {
     // Anthropic's official Claude Code distribution.
     return { script: 'npm install -g @anthropic-ai/claude-code' };
@@ -296,10 +367,29 @@ export async function handleAgentInstall(
     target = chunks.length ? (JSON.parse(Buffer.concat(chunks).toString('utf-8')) as { target?: unknown }).target : undefined;
   } catch { /* invalid body → 400 below */ }
 
-  if (target !== 'claude' && target !== 'pty' && target !== 'git') {
-    sendError(res, 400, 'bad_target', "Body must be { target: 'claude' | 'pty' | 'git' }.");
+  if (target !== 'claude' && target !== 'pty' && target !== 'git' && target !== 'claude-path') {
+    sendError(res, 400, 'bad_target', "Body must be { target: 'claude' | 'claude-path' | 'pty' | 'git' }.");
     return;
   }
+
+  // `claude-path` installs nothing — it only writes the shell rc export — so it
+  // completes synchronously. It still mints a run + returns a runId so the UI's
+  // start-then-poll loop is identical for every target.
+  if (target === 'claude-path') {
+    pruneInstallRuns();
+    const pathRunId = randomUUID();
+    const result = applyClaudePathFix();
+    installRuns.set(pathRunId, {
+      state: result.ok ? 'done' : 'error',
+      target,
+      output: result.message,
+      startedAt: Date.now(),
+      endedAt: Date.now(),
+    });
+    sendJson(res, 200, { ok: true, runId: pathRunId });
+    return;
+  }
+
   const plan = installPlan(target);
   if (!plan) {
     if (target === 'git') {
@@ -355,6 +445,13 @@ export async function handleAgentInstall(
         // node-pty just landed: restore the spawn-helper +x bit and bust the probe
         // cache so the very next capabilities check reports the terminal as ready.
         if (target === 'pty') { ensurePtyHelperExecutable(); resetPtyCache(); }
+        // claude just landed — in ~/.local/bin, which is not on any default PATH.
+        // Finish the install properly by writing the export the CLI's own installer
+        // would have echoed; without it every `exec claude` spawn still 127s.
+        if (target === 'claude') {
+          const fix = applyClaudePathFix();
+          run.output += `\n${fix.message}`;
+        }
         run.state = 'done';
       } else {
         run.state = 'error';
@@ -635,6 +732,7 @@ function resolveTitleCli(): Promise<{ bin: string; path: string } | null> {
     let settled = false;
     const child = spawn(shell, ['-ilc', 'command -v claude; printf "%s" "$PATH"'], {
       stdio: ['ignore', 'pipe', 'ignore'],
+      env: { ...process.env, PATH: claudeAwarePath() },
     });
     const done = (v: { bin: string; path: string } | null) => {
       if (settled) return;
@@ -694,6 +792,7 @@ function generateTitle(message: string, cwd: string): Promise<string | null> {
       : spawn(process.env.SHELL || '/bin/zsh', ['-ilc', 'exec claude "$@"', 'claude', ...args], {
           cwd,
           stdio: ['ignore', 'pipe', 'ignore'],
+          env: { ...process.env, PATH: claudeAwarePath() },
         });
     const done = (v: string | null) => {
       if (settled) return;
@@ -1205,7 +1304,11 @@ function startPtySession(
       cols: 80,
       rows: 24,
       cwd: projectRoot,
-      env: { ...process.env, TERM: 'xterm-256color', COLORFGBG: colorfgbg, ...tabEnv, ...deferredEnv, ...statusEnv } as Record<string, string>,
+      // PATH is claude-aware: the login shell inherits the directory `claude` was
+      // actually installed into, so `exec claude` resolves even when the install's
+      // `export PATH` echo never reached the user's rc. Appended, never prepended —
+      // a `claude` the rc already resolves keeps winning.
+      env: { ...process.env, PATH: claudeAwarePath(), TERM: 'xterm-256color', COLORFGBG: colorfgbg, ...tabEnv, ...deferredEnv, ...statusEnv } as Record<string, string>,
     }) as unknown as PtyLike;
   } catch (err) {
     // pty.spawn can throw synchronously (documented posix_spawnp failure when the

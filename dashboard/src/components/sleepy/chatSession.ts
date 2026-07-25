@@ -5,7 +5,7 @@ import {
   type ChatEvent, type QuestionSpec, type ClientControl,
 } from '../../lib/chatProtocol';
 import type { TermStatus } from './agentSession';
-import type { SubAgentRun } from './chat/chatEntities';
+import { runStatusFrom, type SubAgentRun } from './chat/chatEntities';
 
 /**
  * The imperative engine behind a Chat session (beta) — the headless stream-json peer of
@@ -163,6 +163,12 @@ export interface ConversationModel {
    *  from a network drop (`ws.onclose`/`onerror`, which never populate this), so the UI
    *  can show a "Session ended" + Resume banner only for a real process exit. */
   exited?: { code: number | null };
+  /** The CLI reported it has no usable credentials, so the turn never reached the API
+   *  (chatProtocol's `auth-required`). Carries the CLI's own notice text. Never cleared in
+   *  place: signing in happens in ANOTHER session (the interactive TUI — chat cannot run the
+   *  OAuth flow), and the recovery path is respawning this conversation, which builds a fresh
+   *  model. See ChatPane's SignInBanner. */
+  authRequired?: { text: string };
 }
 
 // ─── Public session API (contract C4) ──────────────────────────────────────────────
@@ -240,6 +246,12 @@ export interface ChatSession {
    *  AgentSurface's `changeChatPermissionMode`. It is never called on success, so a caller
    *  that respawns unconditionally would be throwing away a working live switch. */
   setPermissionMode: (mode: 'auto' | 'bypass', onFail?: () => void) => void;
+  /** Stop a background shell (`stop_task` control request — verified on CLI 2.1.220). Costs
+   *  no model tokens: the CLI kills the child itself and reports it on the roster/task frames
+   *  this session already reduces, so the tray updates from the CLI's own account of what
+   *  happened rather than from an optimistic local edit. No completion callback, because the
+   *  CLI's ack is not evidence — it answers success even for an unknown task id. */
+  stopTask: (taskId: string) => void;
   /** Rewind the conversation to just BEFORE this user item (transcript-uuid anchored;
    *  fetches/refreshes the uuid mapping first if the item hasn't one yet). On success the
    *  transcript truncates locally and the rewound message prefills the composer draft —
@@ -385,6 +397,7 @@ export function createChatSession(
     setModel,
     setEffort,
     setPermissionMode,
+    stopTask,
     rewind,
     retry,
     alwaysAllow,
@@ -582,6 +595,17 @@ export function createChatSession(
         }
         return;
       }
+      case 'auth-required': {
+        // The turn is OVER — it never reached the API. The CLI does send a `result` frame
+        // after this one, but clearing busy here too keeps the working indicator from
+        // outliving a turn that already failed if that frame is ever dropped. The notice text
+        // itself is NOT appended as an assistant bubble: it names a command this surface can't
+        // run, so it would read as advice that doesn't work. The banner says what to do
+        // instead.
+        session.busy = false;
+        conv = { ...conv, authRequired: { text: ev.text } };
+        return;
+      }
       case 'control-ack': {
         applyControlAck(ev);
         return;
@@ -608,10 +632,13 @@ export function createChatSession(
         if (idx === -1) return; // a status patch for a task we never saw start — drop safely
         const runs = conv.subAgents.slice();
         const cur = runs[idx];
+        const status = runStatusFrom(ev.status, cur.status);
         runs[idx] = {
           ...cur,
-          status: ev.status === 'completed' ? 'completed' : ev.status === 'error' || ev.status === 'failed' ? 'error' : cur.status,
-          endedAt: ev.endTime ?? cur.endedAt,
+          status,
+          // A run that just reached a terminal state needs an end time even when the frame
+          // omitted one, or its duration would keep ticking after it stopped.
+          endedAt: ev.endTime ?? cur.endedAt ?? (status !== 'running' ? Date.now() : undefined),
         };
         conv = { ...conv, subAgents: runs };
         return;
@@ -648,12 +675,46 @@ export function createChatSession(
         runs[idx] = {
           ...cur,
           toolUseId: cur.toolUseId ?? ev.toolUseId,
-          status: ev.status === 'completed' ? 'completed' : ev.status === 'error' || ev.status === 'failed' ? 'error' : cur.status,
+          status: runStatusFrom(ev.status, cur.status),
           summary: ev.summary ?? cur.summary,
           usage: ev.usage ?? cur.usage,
           endedAt: cur.endedAt ?? Date.now(),
         };
         conv = { ...conv, subAgents: runs };
+        return;
+      }
+      case 'background-tasks': {
+        // The CLI's authoritative roster of shells STILL RUNNING. Two jobs, and neither is
+        // "replace the list" — the roster carries no terminal state and drops a task the
+        // moment it ends, so treating it as the source of truth would delete every finished
+        // shell (and its still-readable output) from the tray.
+        //
+        //   1. Adopt a shell we never saw start (its `task_started` was missed, or the
+        //      conversation was resumed into a live roster).
+        //   2. Reconcile a shell that VANISHED from the roster without ever sending a
+        //      terminal frame — reaped with the process, say. Left alone it would spin as
+        //      "running" forever, which is the same class of bug as the killed-status
+        //      fall-through this arm's `runStatusFrom` fixed.
+        const live = new Set(ev.tasks.map((t) => t.taskId));
+        const known = new Set(conv.subAgents.map((r) => r.taskId));
+        const adopted: SubAgentRun[] = ev.tasks
+          .filter((t) => !known.has(t.taskId))
+          .map((t) => ({
+            taskId: t.taskId,
+            name: t.description ?? 'Background shell',
+            taskType: t.taskType ?? 'local_bash',
+            status: 'running' as const,
+            startedAt: Date.now(),
+          }));
+        const reconciled = conv.subAgents.map((r) => (
+          // Only ever a SHELL, and only one this roster could have spoken for: an agent run
+          // is not tracked here at all, so its absence says nothing.
+          r.status === 'running' && r.taskType === 'local_bash' && !live.has(r.taskId)
+            ? { ...r, status: 'stopped' as const, endedAt: r.endedAt ?? Date.now() }
+            : r
+        ));
+        if (adopted.length === 0 && reconciled.every((r, i) => r === conv.subAgents[i])) return;
+        conv = { ...conv, subAgents: [...reconciled, ...adopted] };
         return;
       }
       case 'tool-result': {
@@ -855,6 +916,15 @@ export function createChatSession(
     // Registered before the send, for the same reason as `setPermissionMode` above.
     pendingModels.set(requestId, model);
     if (!sendControl({ type: 'setModel', requestId, model })) pendingModels.delete(requestId);
+  }
+
+  /** Stop a background shell. Fire-and-forget by design: the CLI acks `success` even for a
+   *  task id that never existed, so there is nothing to match an ack against — the truthful
+   *  update arrives as `background_tasks_changed` + `task_updated{status:'killed'}`, which the
+   *  reducer applies. Nothing is marked stopped locally on the strength of having asked. */
+  function stopTask(taskId: string): void {
+    if (!taskId) return;
+    sendControl({ type: 'stopTask', taskId });
   }
 
   function setPermissionMode(mode: 'auto' | 'bypass', onFail?: () => void): void {

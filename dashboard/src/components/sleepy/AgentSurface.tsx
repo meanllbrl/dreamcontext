@@ -34,6 +34,7 @@ import {
 } from '../../lib/taskManagerAgent';
 import { PaneComposer } from './PaneComposer';
 import { quotePath, FALLBACK_MODEL_CONFIG } from '../../lib/agentComposer';
+import { CLAUDE_SIGNIN_EVENT } from '../../lib/claudeAuth';
 import { useAgentModelConfig } from '../../hooks/useAgentCapabilities';
 import { useServerHealth } from '../../hooks/useServerHealth';
 import { pickFiles, pickFolders } from '../../lib/desktop';
@@ -499,6 +500,61 @@ export function AgentSurface() {
       active: p.active === sid ? s.id : p.active,
     })));
   }, [spawn, sessionList, claudeKind]);
+
+  // ── Signing in to Claude from inside the surface ──────────────────────────────────
+  //
+  // Chat CANNOT do this. Its engine is `claude -p --input-format stream-json`, which answers
+  // `/login` with "/login isn't available in this environment." and reports an unauthenticated
+  // turn as an `authentication_failed` assistant frame (both verified against CLI 2.1.220 in an
+  // isolated HOME) — the sign-in flow needs a real terminal. So the chat pane's sign-in banner,
+  // and a `/login` typed into its composer, land here instead of in the void.
+  //
+  // What this opens is a SHELL tab that runs the sign-in command and submits it, so the CLI's
+  // own "Select login method" picker is the first thing on screen; the CLI opens the browser
+  // itself and prints the URL as a fallback. A shell, not a Claude agent, because the command
+  // is a shell command (`claude auth login`) — and because a login-only tab has no business
+  // pinning a conversation UUID it will never use.
+  //
+  // The command comes from the server's probe (`caps.claudeAuth.loginCommand` — claude-auth.ts),
+  // never a literal: a CLI too old for the `auth` subcommand reports plain `claude` instead, and
+  // typing a command this machine's CLI doesn't have would be worse than showing nothing. The
+  // constant below is only the pre-probe default (capabilities still loading), matching that
+  // module's CLAUDE_LOGIN_COMMAND.
+  const signInCommand = caps?.claudeAuth?.loginCommand || 'claude auth login';
+  const signInToClaude = useCallback(() => {
+    // `submitInitial` + kind 'shell' → the command is typed into the shell and submitted once
+    // its boot output settles (agentSession's armInitialPrompt case b). Bypass is meaningless
+    // for a shell and forced off by `spawn` anyway. Titled "Sign in" so the tab says why it
+    // exists; that name is outside DEFAULT_TAB_TITLE_RE, so auto-titling leaves it alone.
+    const s = spawn(false, undefined, false, 'shell', signInCommand);
+    setSessionList((prev) => [...prev, { id: s.id, title: 'Sign in', kind: s.kind, bypass: s.bypass, claudeId: s.claudeId }]);
+    if (panes.length === 0) {
+      const pid = nextPaneId();
+      setPanes([{ id: pid, tabs: [s.id], active: s.id }]);
+      setActivePaneId(pid);
+    } else {
+      const apid = panes.some((p) => p.id === activePaneId) ? activePaneId : panes[0].id;
+      setPanes((prev) => prev.map((p) => (p.id === apid ? { ...p, tabs: [...p.tabs, s.id], active: s.id } : p)));
+      setActivePaneId(apid);
+    }
+    setExpanded(true);
+  }, [spawn, panes, activePaneId, signInCommand]);
+
+  // Whether that shell can run at all on this machine — the chat banner prints the command to
+  // copy instead of offering a button when it can't (a pane that fails to open is worse than a
+  // command you can paste). Needs the embedded terminal for the pane AND the CLI for the
+  // command itself.
+  const canSignInInApp = !!(caps?.embeddedTerminal && caps?.claudeCli);
+
+  // Settings → here. The System doctor now reports the sign-in state (the server probes it
+  // via `claude auth status` — see src/lib/claude-auth.ts) and its "Sign in" button lands on
+  // this same flow, because a page below this surface in the tree has no handle on it. Same
+  // page-dispatches/surface-listens bridge as the sleep tracker and Task Manager.
+  useEffect(() => {
+    const onRequest = () => { if (canSignInInApp) signInToClaude(); };
+    window.addEventListener(CLAUDE_SIGNIN_EVENT, onRequest);
+    return () => window.removeEventListener(CLAUDE_SIGNIN_EVENT, onRequest);
+  }, [canSignInInApp, signInToClaude]);
 
   // ── Chat ↔ Terminal conversion (AC7's two directions, BETA) ──────────────────────
   //
@@ -2012,6 +2068,9 @@ export function AgentSurface() {
           onPermissionModeChange={changeChatPermissionMode}
           onResume={() => resumeChatSession(cs)}
           onOpenAppPage={onOpenAppPage}
+          onSignIn={signInToClaude}
+          canSignInInApp={canSignInInApp}
+          signInCommand={signInCommand}
         />,
         cs.container,
         `chat-${cs.id}`,

@@ -31,7 +31,15 @@ export interface SlideOverSubAgentProps {
   onClose: () => void;
   onNavApp: (page: 'tasks' | 'knowledge' | 'core', id: string) => void;
 }
-export type SlideOverProps = SlideOverFileProps | SlideOverSubAgentProps;
+export interface SlideOverShellProps {
+  mode: 'shell';
+  run: SubAgentRun;
+  conversationId: string;
+  onStop: (run: SubAgentRun) => void;
+  onClose: () => void;
+  onNavApp: (page: 'tasks' | 'knowledge' | 'core', id: string) => void;
+}
+export type SlideOverProps = SlideOverFileProps | SlideOverSubAgentProps | SlideOverShellProps;
 
 // ─── File mode ──────────────────────────────────────────────────────────────────────
 
@@ -228,13 +236,118 @@ function SubAgentSlideOver({ run, conversationId, onClose }: SlideOverSubAgentPr
   );
 }
 
+// ─── Background-shell mode ──────────────────────────────────────────────────────────
+//
+// The live output of a `run_in_background` Bash, read straight off the CLI's own task-output
+// file via `GET /api/agent/bg-output` (server-derived path). This is the whole point of the
+// route: reading a background shell costs ZERO model tokens and works while the session is
+// mid-turn, where asking the agent to run `TaskOutput` would cost a turn and have to wait.
+
+/** Poll cadence while the shell is still running. Slow enough to be free (a tail-read of a
+ *  local file), fast enough that `npm test` scrolling by feels live. */
+const SHELL_POLL_MS = 1200;
+
+function ShellSlideOver({ run, conversationId, onStop, onClose }: SlideOverShellProps) {
+  const [state, setState] = useState<{
+    loading: boolean; content: string; truncated: boolean; exists: boolean; error: string | null;
+  }>({ loading: true, content: '', truncated: false, exists: true, error: null });
+
+  const isRunning = run.status === 'running';
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const poll = () => {
+      api.get<{ content: string; truncated: boolean; exists: boolean }>(
+        `/agent/bg-output?claudeId=${encodeURIComponent(conversationId)}&taskId=${encodeURIComponent(run.taskId)}`,
+      )
+        .then((r) => {
+          if (cancelled) return;
+          setState({
+            loading: false,
+            content: typeof r?.content === 'string' ? r.content : '',
+            truncated: !!r?.truncated,
+            exists: r?.exists !== false,
+            error: null,
+          });
+        })
+        .catch((err: Error) => {
+          if (!cancelled) {
+            setState((s) => ({ ...s, loading: false, error: err.message || 'Failed to read output.' }));
+          }
+        })
+        // Chain the next tick from the SETTLED request rather than an interval, so a slow read
+        // can never stack overlapping polls. Keep polling for one extra beat after the run
+        // ends is unnecessary — `run.status` is in the dep list, so the effect re-runs and
+        // fetches the final tail exactly once when the status flips.
+        .finally(() => {
+          if (!cancelled && isRunning) timer = setTimeout(poll, SHELL_POLL_MS);
+        });
+    };
+    poll();
+
+    return () => { cancelled = true; if (timer) clearTimeout(timer); };
+  }, [conversationId, run.taskId, isRunning, run.status]);
+
+  return (
+    <>
+      <div className="chat-slideover-head">
+        <div className="chat-slideover-head-text">
+          <button type="button" className="chat-slideover-breadcrumb" onClick={onClose}>
+            <span aria-hidden>←</span> Main chat <span aria-hidden>▸</span> {run.name}
+          </button>
+          <span className="chat-slideover-subagent-meta">
+            <span className="chat-slideover-subagent-badge">background shell</span>
+            <span className="chat-slideover-subagent-status" data-status={run.status}>{run.status}</span>
+          </span>
+        </div>
+        <button type="button" className="chat-slideover-close" onClick={onClose} aria-label="Close">✕</button>
+      </div>
+      <div className="chat-slideover-actions">
+        {isRunning && (
+          <button type="button" className="chat-btn danger" onClick={() => onStop(run)}>
+            <span aria-hidden>■</span> Stop shell
+          </button>
+        )}
+        <button
+          type="button"
+          className="chat-btn"
+          onClick={() => { void navigator.clipboard?.writeText(state.content).catch(() => {}); }}
+          disabled={!state.content}
+        ><span aria-hidden>⧉</span> Copy output</button>
+      </div>
+      <div className="chat-slideover-body">
+        {run.summary && <p className="chat-slideover-status">{run.summary}</p>}
+        {state.truncated && (
+          <p className="chat-slideover-status">Showing the tail of a large output — earlier lines are on disk.</p>
+        )}
+        {state.error && <p className="chat-slideover-status error">Couldn't read the output — {state.error}</p>}
+        {state.loading && <p className="chat-slideover-status">Reading output…</p>}
+        {!state.loading && !state.error && !state.content && (
+          <p className="chat-slideover-status">
+            {state.exists
+              ? 'No output yet.'
+              : isRunning
+                ? 'This shell has not written anything yet.'
+                : 'This shell produced no output.'}
+          </p>
+        )}
+        {state.content && <pre className="chat-slideover-shellout">{state.content}</pre>}
+      </div>
+    </>
+  );
+}
+
 // ─── Shell ──────────────────────────────────────────────────────────────────────────
 
 export function SlideOver(props: SlideOverProps) {
   return (
     <div className="chat-slideover-scrim" onClick={props.onClose}>
       <div className="chat-slideover-panel" onClick={(e) => e.stopPropagation()}>
-        {props.mode === 'file' ? <FileSlideOver {...props} /> : <SubAgentSlideOver {...props} />}
+        {props.mode === 'file' && <FileSlideOver {...props} />}
+        {props.mode === 'subagent' && <SubAgentSlideOver {...props} />}
+        {props.mode === 'shell' && <ShellSlideOver {...props} />}
       </div>
     </div>
   );

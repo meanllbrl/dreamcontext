@@ -2,11 +2,12 @@ import { useEffect, useRef, useState } from 'react';
 import { pickFiles, pickFolders } from '../../../lib/desktop';
 import { useAgentSessionStats } from '../../../hooks/useAgentCapabilities';
 import {
-  effortLabel, fmtTokens, fmtCost, modelLabelFor, quotePath, CONTEXT_TIGHT_PCT,
+  effortLabel, modelLabelFor, quotePath, isSignInCommand,
   slashQueryAt, filterSlashCommands, applySlashCommand, type ModelConfig,
 } from '../../../lib/agentComposer';
 import { Popover, SkillBrowser } from '../SkillPickerPopover';
 import { PermissionModeMenu } from './PermissionModeMenu';
+import { ContextReadout } from './ContextReadout';
 import type { ChatSession } from '../chatSession';
 import './composer.css';
 
@@ -73,7 +74,7 @@ function PlusIcon() {
 
 export function Composer({
   session, model, effort, modelConfig, onModelChange, onEffortChange, busy, connected,
-  quote, onClearQuote, onOpenTaskPicker, permissionMode, onPermissionModeChange,
+  quote, onClearQuote, onOpenTaskPicker, permissionMode, onPermissionModeChange, onSignIn,
 }: {
   session: ChatSession;
   model: string;
@@ -98,6 +99,10 @@ export function Composer({
    *  chosen task reaches this composer as an attachment chip, is a later wave's concern —
    *  no such channel exists yet, so this composer only ever fires the request to open one. */
   onOpenTaskPicker: () => void;
+  /** Take over a submitted `/login` (or `/logout`): this engine is headless and answers both
+   *  with "isn't available in this environment", so sending them would spend a turn to be told
+   *  nothing. The handler opens an interactive terminal Claude tab that CAN run the flow. */
+  onSignIn: () => void;
 }) {
   const [draft, setDraft] = useState(() => session.getModel().draft);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
@@ -264,7 +269,6 @@ export function Composer({
       : null);
   // `total_cost_usd` off the result frame is already cumulative for the conversation.
   const costUsd = lastResult?.costUsd ?? stats?.costUsd ?? null;
-  const isTight = !!ctx && ctx.pct >= CONTEXT_TIGHT_PCT;
 
   const runCompact = () => {
     if (!connected) return;
@@ -282,6 +286,12 @@ export function Composer({
     const withSkill = skillChip ? `${skillChip}${bodyText}` : bodyText;
     const message = quote ? `> ${quote}\n\n${withSkill}` : withSkill;
     if (!message.trim()) return;
+
+    // `/login` is the one command this surface must not forward. The headless engine replies
+    // "/login isn't available in this environment." (verified on CLI 2.1.220) — a dead end for
+    // the user typing exactly the right thing. Hand it to the terminal instead, and keep the
+    // draft: if the sign-in tab isn't what they wanted, their text is still here.
+    if (isSignInCommand(message)) { onSignIn(); return; }
 
     session.send(message);
     setDraft('');
@@ -438,8 +448,10 @@ export function Composer({
         <Popover
           align="left"
           trigger={(open, toggle) => (
-            <button type="button" className={`chat-cmp-btn-ghost${open ? ' open' : ''}`} onClick={toggle} title="Attach files, folders or a task" aria-haspopup="menu" aria-expanded={open}>
-              <PlusIcon /> Attach <span className="chat-cmp-caret" aria-hidden>▾</span>
+            <button type="button" className={`chat-cmp-btn-ghost${open ? ' open' : ''}`} onClick={toggle} title="Attach files, folders or a task" aria-label="Attach" aria-haspopup="menu" aria-expanded={open}>
+              {/* The word and the caret are wrapped, not bare text: below the icon-only
+                  breakpoint both are dropped and the `title` carries the label instead. */}
+              <PlusIcon /> <span className="chat-cmp-btn-label">Attach</span> <span className="chat-cmp-caret" aria-hidden>▾</span>
             </button>
           )}
         >
@@ -455,8 +467,8 @@ export function Composer({
         <Popover
           align="left"
           trigger={(open, toggle) => (
-            <button type="button" className={`chat-cmp-btn-ghost${open ? ' open' : ''}`} onClick={toggle} aria-haspopup="menu" aria-expanded={open}>
-              <span className="chat-cmp-spark" aria-hidden>✦</span> Skills <span className="chat-cmp-caret" aria-hidden>▾</span>
+            <button type="button" className={`chat-cmp-btn-ghost${open ? ' open' : ''}`} onClick={toggle} title="Skills" aria-label="Skills" aria-haspopup="menu" aria-expanded={open}>
+              <span className="chat-cmp-spark" aria-hidden>✦</span> <span className="chat-cmp-btn-label">Skills</span> <span className="chat-cmp-caret" aria-hidden>▾</span>
             </button>
           )}
         >
@@ -468,41 +480,16 @@ export function Composer({
           )}
         </Popover>
 
-        <div className="chat-cmp-spacer" />
+        {/* Its own class, not a bare `.chat-cmp-spacer`: the narrow stages collapse THIS one
+            (and only this one) to left-dock the gauge against the controls. */}
+        <div className="chat-cmp-spacer chat-cmp-spacer-lead" />
 
         {/* Context + cost, in the toolbar's own dead space rather than on a line of its own:
             it belongs to the same strip as the model and effort it depends on, and it costs
-            the transcript no height. `%` first — "how much room is left" is the question;
-            the raw token counts are the supporting detail. One wrapper so a narrow pane
-            never strands the cost chip alone on a second row. */}
-        {(ctx || costUsd != null) && (
-          <div className="chat-cmp-readout">
-            {ctx && (
-              <span
-                className="chat-cmp-ctx"
-                data-tight={isTight}
-                title={`Context window: ${fmtTokens(ctx.used)} of ${fmtTokens(ctx.limit)} used (${ctx.pct}%) — ${fmtTokens(Math.max(0, ctx.limit - ctx.used))} free`}
-              >
-                <span className="chat-cmp-ctx-track" aria-hidden>
-                  <span className="chat-cmp-ctx-fill" style={{ width: `${ctx.pct}%` }} />
-                </span>
-                <span className="chat-cmp-ctx-pct">{ctx.pct}%</span>
-                <span className="chat-cmp-ctx-count">{fmtTokens(ctx.used)}/{fmtTokens(ctx.limit)}</span>
-              </span>
-            )}
-            {costUsd != null && (
-              <span
-                className="chat-cmp-ctx-cost"
-                title={`Estimated cost at public API rates: ${fmtCost(costUsd)} (a Max/Pro plan is flat-rate — this is a what-if)`}
-              >{fmtCost(costUsd)}</span>
-            )}
-            {isTight && (
-              <button type="button" className="chat-cmp-compact-btn" onClick={runCompact} title="Ask Claude to compact the conversation">
-                <span aria-hidden>⚠</span> /compact
-              </button>
-            )}
-          </div>
-        )}
+            the transcript no height. It is also the row's only elastic child — as the pane
+            narrows it sheds detail in stages down to a bare gauge, so the toolbar stays ONE
+            row instead of wrapping into a lopsided two-line block. See ContextReadout.tsx. */}
+        <ContextReadout ctx={ctx} costUsd={costUsd} onCompact={runCompact} compactEnabled={connected} />
 
         <div className="chat-cmp-spacer" />
 

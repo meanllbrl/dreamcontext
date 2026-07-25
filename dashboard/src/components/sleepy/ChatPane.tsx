@@ -12,12 +12,13 @@ import { SurveyCard } from './chat/SurveyCard';
 import { PermissionCard } from './chat/PermissionCard';
 import { BypassNoticeCard } from './chat/BypassNoticeCard';
 import { SubAgentCard } from './chat/SubAgentCard';
+import { BackgroundShellsTray } from './chat/BackgroundShellsTray';
 import { SlideOver } from './chat/SlideOver';
 import { Lightbox } from './chat/Lightbox';
 import { BoardEmbed } from './chat/BoardEmbed';
 import type { ChatAction } from './chat/chatActions';
 import {
-  EmptyState, StreamErrorBanner, ReconnectingChip, SessionEndedBanner, WorkingIndicator,
+  EmptyState, StreamErrorBanner, ReconnectingChip, SessionEndedBanner, SignInBanner, WorkingIndicator,
 } from './chat/Banners';
 import { Composer } from './chat/Composer';
 import './chat/cards.css';
@@ -46,6 +47,16 @@ import './ChatPane.css';
  */
 
 const WATCHDOG_MS = 4000;
+
+/** Keys that scroll the transcript — the keyboard half of "the user is driving" (see the
+ *  gesture window in ChatPane). Space is deliberately absent: it only scrolls a focused
+ *  scroller, and every Space that reaches this pane is being typed into the composer. */
+const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End']);
+
+/** How long a gesture keeps ownership of the scroller. Covers the frame or two between the
+ *  gesture and the scroll it produces, plus the gaps inside trackpad momentum (which keeps
+ *  emitting wheel events that refresh it). */
+const GESTURE_MS = 500;
 
 function safeStringify(v: unknown): string {
   if (v === undefined) return '';
@@ -193,6 +204,9 @@ function DegradedQuestionCard({ item, onContinueInTerminal }: { item: ChatToolIt
 type SlideOverState =
   | { mode: 'file'; path: string }
   | { mode: 'subagent'; run: SubAgentRun }
+  /** A background shell's live output — a separate mode from `subagent` because a shell has
+   *  no sidechain transcript to render; it has an output file and a stop action. */
+  | { mode: 'shell'; run: SubAgentRun }
   | null;
 
 interface LightboxState { src: string; caption?: string }
@@ -201,7 +215,8 @@ interface LightboxState { src: string; caption?: string }
 
 export function ChatPane({
   session, modelConfig, model, effort, onModelChange, onEffortChange, taskSlug, onContinueInTerminal,
-  permissionMode, onPermissionModeChange, onResume, onOpenAppPage,
+  permissionMode, onPermissionModeChange, onResume, onOpenAppPage, onSignIn, canSignInInApp,
+  signInCommand,
 }: {
   session: ChatSession;
   modelConfig: ModelConfig;
@@ -231,6 +246,17 @@ export function ChatPane({
    *  entirely degrades to "Open in app" simply not being offered (SlideOver already gates
    *  the button on `reference.appNav` existing at all). */
   onOpenAppPage?: (page: 'tasks' | 'knowledge' | 'core', id: string) => void;
+  /** Open a terminal pane that runs the sign-in command — the only surface the flow exists on
+   *  (this engine is headless; it answers `/login` with "isn't available in this environment").
+   *  Fires from the SignInBanner and from typing `/login` into the composer. */
+  onSignIn: () => void;
+  /** Whether that pane can actually open here (node-pty + the CLI). False → the banner prints
+   *  the command to copy instead of a button that would open a pane that can't start. */
+  canSignInInApp: boolean;
+  /** The sign-in command the INSTALLED CLI actually has, server-probed
+   *  (`Capabilities.claudeAuth.loginCommand`) — so the banner can never name a command this
+   *  machine doesn't have. */
+  signInCommand: string;
 }) {
   const [, force] = useReducer((n: number) => n + 1, 0);
   useEffect(() => session.subscribe(() => force()), [session]);
@@ -256,6 +282,10 @@ export function ChatPane({
   const stickRef = useRef(true);
   /** `scrollTop` at the last scroll event — the direction signal `nextStickToBottom` reads. */
   const prevTopRef = useRef(0);
+  /** When the user last drove this scroller — the other half of that signal. See below. */
+  const gestureAtRef = useRef(-Infinity);
+  /** A scrollbar drag holds the gesture open: its scroll events span the whole press. */
+  const draggingRef = useRef(false);
   /** Render mirror of `stickRef`, for the "jump to latest" affordance only. */
   const [pinned, setPinned] = useState(true);
 
@@ -272,6 +302,30 @@ export function ChatPane({
     stickRef.current = next;
     setPinned((prev) => (prev === next ? prev : next));
   }, []);
+
+  // A scroll event carries no hint of what caused it, and the transcript is a surface whose
+  // content moves on its own constantly — so `nextStickToBottom` is told, per event, whether
+  // the user is at the wheel. Outside a live gesture nothing may unpin the view.
+  const markGesture = useCallback(() => { gestureAtRef.current = performance.now(); }, []);
+  const userDriving = () => draggingRef.current || performance.now() - gestureAtRef.current < GESTURE_MS;
+
+  // Pressing the scrollbar gutter is a scroll gesture; pressing a card is not — clicking one
+  // open changes the content height, and counting that as "the user scrolled" would unpin
+  // the view on a click that never touched the scrollbar.
+  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    if (e.clientX - el.getBoundingClientRect().left <= el.clientWidth) return;
+    draggingRef.current = true;
+    markGesture();
+    const release = () => {
+      draggingRef.current = false;
+      markGesture();
+      window.removeEventListener('pointerup', release);
+      window.removeEventListener('pointercancel', release);
+    };
+    window.addEventListener('pointerup', release);
+    window.addEventListener('pointercancel', release);
+  };
 
   useEffect(() => { if (stickRef.current) scrollToBottom(); }, [conv, scrollToBottom]);
 
@@ -303,6 +357,8 @@ export function ChatPane({
   };
   const handleOpenBoard = (path: string) => setSlideOver({ mode: 'file', path });
   const handleDrillIn = (run: SubAgentRun) => setSlideOver({ mode: 'subagent', run });
+  const handleOpenShell = (run: SubAgentRun) => setSlideOver({ mode: 'shell', run });
+  const handleStopShell = (run: SubAgentRun) => session.stopTask(run.taskId);
   const handleNavApp = (page: 'tasks' | 'knowledge' | 'core', id: string) => {
     setSlideOver(null);
     onOpenAppPage?.(page, id);
@@ -401,6 +457,11 @@ export function ChatPane({
   // reaches here (that's the ReconnectingChip's own condition, below).
   const ended = session.status === 'closed' || !!conv.exited;
 
+  // Not signed in (chatProtocol's `auth-required`) — takes precedence over `ended`, because
+  // when the CLI exits on a failed-auth turn "Session ended · Resume" would send the user
+  // round the same loop forever. The missing credential is the real state to report.
+  const needsSignIn = !!conv.authRequired;
+
   // The turn is in flight but the transcript has nothing to show for it yet — before the
   // CLI's first frame (spawn + SessionStart brain preload), or in a gap between a tool
   // result and the next block. Without this the pane looks idle while it is working.
@@ -446,9 +507,14 @@ export function ChatPane({
               scrollHeight: el.scrollHeight,
               clientHeight: el.clientHeight,
               prevScrollTop: prevTopRef.current,
+              userDriven: userDriving(),
             }));
             prevTopRef.current = el.scrollTop;
           }}
+          onWheel={markGesture}
+          onTouchMove={markGesture}
+          onPointerDown={handlePointerDown}
+          onKeyDown={(e) => { if (SCROLL_KEYS.has(e.key)) markGesture(); }}
           onClick={(e) => {
             // Click-to-focus, mirroring how clicking anywhere in an xterm focuses its input:
             // without this a click on the transcript parks focus on <body>, killing the
@@ -497,7 +563,23 @@ export function ChatPane({
           </button>
         )}
       </div>
-      {ended ? (
+      {/* Docked above the composer, OUTSIDE the scroller: a background shell outlives the
+          turn that started it, so its row must not scroll away while the process runs. Shown
+          even when the session has ended — a shell dies with the CLI process, and its last
+          output is still what the user wants to read. */}
+      <BackgroundShellsTray
+        runs={conv.subAgents}
+        onOpen={handleOpenShell}
+        onStop={handleStopShell}
+      />
+      {needsSignIn ? (
+        <SignInBanner
+          canSignInInApp={canSignInInApp}
+          command={signInCommand}
+          onSignIn={onSignIn}
+          onRetry={onResume}
+        />
+      ) : ended ? (
         <SessionEndedBanner onResume={onResume} />
       ) : (
         <Composer
@@ -513,6 +595,7 @@ export function ChatPane({
           onClearQuote={() => setReplyQuote(null)}
           permissionMode={permissionMode}
           onPermissionModeChange={onPermissionModeChange}
+          onSignIn={onSignIn}
           // No task-picker mechanism exists anywhere in this codebase yet (there is no
           // native "pick a task" dialog — TasksPage has no picker widget to open). The
           // button stays visible (Composer.tsx is frozen T6 ownership; it has no gate to
@@ -520,26 +603,36 @@ export function ChatPane({
           onOpenTaskPicker={() => {}}
         />
       )}
-      {slideOver && (
-        slideOver.mode === 'file'
-          ? (
-            <SlideOver
-              mode="file"
-              path={slideOver.path}
-              reference={classifyReference(slideOver.path)}
-              onClose={() => setSlideOver(null)}
-              onNavApp={handleNavApp}
-            />
-          )
-          : (
-            <SlideOver
-              mode="subagent"
-              run={slideOver.run}
-              conversationId={session.claudeId}
-              onClose={() => setSlideOver(null)}
-              onNavApp={handleNavApp}
-            />
-          )
+      {slideOver?.mode === 'file' && (
+        <SlideOver
+          mode="file"
+          path={slideOver.path}
+          reference={classifyReference(slideOver.path)}
+          onClose={() => setSlideOver(null)}
+          onNavApp={handleNavApp}
+        />
+      )}
+      {slideOver?.mode === 'subagent' && (
+        <SlideOver
+          mode="subagent"
+          run={slideOver.run}
+          conversationId={session.claudeId}
+          onClose={() => setSlideOver(null)}
+          onNavApp={handleNavApp}
+        />
+      )}
+      {slideOver?.mode === 'shell' && (
+        <SlideOver
+          mode="shell"
+          // Re-read from the LIVE model rather than the captured click-time snapshot, so the
+          // panel's status/summary (and therefore its polling and its Stop button) follow the
+          // run as it finishes instead of freezing at whatever it was when opened.
+          run={conv.subAgents.find((r) => r.taskId === slideOver.run.taskId) ?? slideOver.run}
+          conversationId={session.claudeId}
+          onStop={handleStopShell}
+          onClose={() => setSlideOver(null)}
+          onNavApp={handleNavApp}
+        />
       )}
       {lightbox && <Lightbox src={lightbox.src} caption={lightbox.caption} onClose={() => setLightbox(null)} />}
     </div>

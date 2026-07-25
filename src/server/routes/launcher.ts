@@ -20,6 +20,7 @@ import {
   removeConnection,
   type ConnectionDirection,
 } from '../../lib/connections.js';
+import { claudeAwarePath } from '../../lib/claude-path.js';
 import { readSetupConfig, updateSetupConfig } from '../../lib/setup-config.js';
 import { dreamcontextVersion } from '../../lib/manifest.js';
 import { compareVersions } from '../../lib/version-check.js';
@@ -1259,6 +1260,10 @@ export async function handleLauncherCapture(
     const child = spawn(shell, ['-ilc', 'exec claude --model sonnet -p "$0"', prompt], {
       cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
+      // claude-aware PATH — see src/lib/claude-path.ts: the CLI installs into
+      // ~/.local/bin, which is on no default PATH, so a login shell only finds it
+      // if the install's `export PATH` echo reached the user's rc.
+      env: { ...process.env, PATH: claudeAwarePath() },
     });
     // Keep only the tail so a chatty run can't grow memory unbounded.
     child.stdout?.on('data', (chunk: Buffer) => {
