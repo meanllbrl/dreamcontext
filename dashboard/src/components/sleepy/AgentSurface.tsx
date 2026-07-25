@@ -113,6 +113,14 @@ function titleFor(s: Session | ChatSession): string {
   return `Agent ${num}`;
 }
 
+/** "Is this tab still carrying the name we gave it?" — the auto-title eligibility gate.
+ *  Deliberately kind-AGNOSTIC across the two titleable kinds: a tab converted between
+ *  terminal and chat (`openAgentInChat` / `resumeChatInTerminal`) keeps the roster title
+ *  it had before the swap, so an "Agent 3" that became a chat — or a "Chat 3" that became
+ *  a terminal — is still an unnamed tab and must stay eligible. Shells ("Terminal N") are
+ *  never auto-titled, so their pattern is intentionally absent. */
+const DEFAULT_TAB_TITLE_RE = /^(?:Agent|Chat) \d+$/;
+
 /** Where a tab will land when the drag ends, recorded during dragover (the `drop` event
  *  is unreliable in WKWebView, so we act on the source tab's reliable `dragend`). */
 type DropTarget =
@@ -1384,15 +1392,20 @@ export function AgentSurface() {
   }, [agentSettings.enabled, expanded]);
 
   // ── Auto-title: name a tab from its first user message (Settings → Agents) ────────
-  // Fires on BOTH busy edges of a live AGENT session. The idle→busy edge (turn START) is
+  // Fires on BOTH busy edges of a live AGENT or CHAT session — the chat engine is a
+  // different transport (headless stream-json, not a PTY) but the SAME identity: it
+  // spawns under `DREAMCONTEXT_TAB_SESSION` too, so its UserPromptSubmit hook records the
+  // first prompt into the very same session-map entry `/agent/title` reads. Nothing about
+  // the route is terminal-specific, so gating this on `kind === 'agent'` was the only
+  // reason chat tabs sat at "Chat N" forever. The idle→busy edge (turn START) is
   // the fast path: the UserPromptSubmit hook has usually already captured the first prompt
   // into the tab's session-map entry, so the server can title the tab seconds after the
   // user types — no waiting for the whole first turn to finish. The busy→idle edge (turn
   // COMPLETE) is the safety net for tabs the hook missed (the transcript exists by then).
-  // The title is applied ONLY if the tab still carries its default "Agent N" name (a tab
-  // you renamed is never overwritten). It settles to at most ONE successful Haiku call per
-  // tab, but a call that finds nothing yet (a not-yet-written hook entry or an unflushed
-  // transcript) leaves the tab RETRYABLE — so the tab you actually worked on gets named on
+  // The title is applied ONLY if the tab still carries its default "Agent N"/"Chat N"
+  // name (a tab you renamed is never overwritten). It settles to at most ONE successful
+  // Haiku call per tab, but a call that finds nothing yet (an unwritten hook entry or an
+  // unflushed transcript) leaves the tab RETRYABLE — so the tab you worked on gets named on
   // its next edge, instead of permanently losing its title to a slower tab's late rename.
   useEffect(() => {
     if (!agentSettings.enabled || !agentSettings.autoTitle) return;
@@ -1401,10 +1414,10 @@ export function AgentSurface() {
       busyPrevRef.current.set(id, s.busy);
       if (wasBusy === s.busy) return;             // fire on every busy edge (start + complete)…
       // …but skip if already named, ineligible, or a request is already outstanding.
-      if (s.kind !== 'agent' || autoTitledRef.current.has(id) || titleInFlightRef.current.has(id)) return;
+      if (s.kind === 'shell' || autoTitledRef.current.has(id) || titleInFlightRef.current.has(id)) return;
       const meta = sessionList.find((m) => m.id === id);
       // Permanently ineligible if the tab was renamed by the user or is a dormant restore.
-      if (!meta || meta.dormant || !/^Agent \d+$/.test(meta.title)) {
+      if (!meta || meta.dormant || !DEFAULT_TAB_TITLE_RE.test(meta.title)) {
         autoTitledRef.current.add(id);
         return;
       }
@@ -1431,7 +1444,7 @@ export function AgentSurface() {
           // Re-check the default guard inside the updater: the user may have renamed the
           // tab while Haiku was thinking — their choice wins.
           setSessionList((prev) => prev.map((m) => (
-            m.id === id && /^Agent \d+$/.test(m.title) ? { ...m, title } : m
+            m.id === id && DEFAULT_TAB_TITLE_RE.test(m.title) ? { ...m, title } : m
           )));
         })
         .catch(() => { /* best-effort: a failed title just leaves the default name */ })
