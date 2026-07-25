@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useReducer, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react';
 import { GoalLivePanel } from './GoalLivePanel';
 import { CouncilLivePanel } from './CouncilLivePanel';
 import { api } from '../../api/client';
@@ -346,7 +346,16 @@ export function ChatPane({
     window.addEventListener('pointercancel', release);
   };
 
-  useEffect(() => { if (stickRef.current) scrollToBottom(); }, [conv, scrollToBottom]);
+  // A LAYOUT effect, not a passive one, and that is the whole race: React has just mutated
+  // the DOM, so the browser is holding a scroll event for whatever `scrollTop` clamp that
+  // mutation forced. Re-pinning here — synchronously, before paint — means the handler sees
+  // the pinned position instead of the clamped one, so the shrink-then-regrow sequence a
+  // finishing turn produces (running cards collapsing, the working indicator unmounting) can
+  // no longer read as "the user scrolled up". Post-paint it was always one frame too late:
+  // scroll events fire BEFORE ResizeObserver callbacks, so the observer's re-pin can only
+  // ever clean up after a wrong decision has been made. It also drops the frame of visible
+  // lag behind every streamed token.
+  useLayoutEffect(() => { if (stickRef.current) scrollToBottom(); }, [conv, scrollToBottom]);
 
   // ── Sub-agent rail: the group card, pinned once you have scrolled past it ────────────
   //
@@ -580,7 +589,7 @@ export function ChatPane({
   // newest user message instead of plumbed through the composer, so EVERY send path counts —
   // composer submit, retry, a dropped file's re-issue, a delegated prompt.
   const lastUserItemId = lastUserItem?.id;
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!lastUserItemId) return;
     setStick(true);
     scrollToBottom();
