@@ -1,6 +1,134 @@
 [
   {
     "date": "2026-07-25",
+    "type": "feat",
+    "scope": "cli",
+    "description": "New findClaudeBin() in src/lib/claude-path.ts resolves the claude binary in two passes: direct PATH lookup (fast, ~5ms), then a login-shell probe (spawns bash/zsh -lc 'which claude', ~600ms, 5min memo). The login-shell pass catches installs in /usr/local/bin or ~/.local/bin that aren't on the non-login shell PATH the dashboard server inherits. The resolution is cached per boot and deduped in-flight so concurrent auth-status probes don't spawn redundant shells. If both passes fail, the resolution returns null and any spawn falls back to 'claude' (lets the OS try, graceful failure). The dashboard's System Dependencies panel now shows a 'Claude Code CLI: Not on PATH' warning when the direct lookup fails but the login-shell probe succeeds, with a one-click 'Fix PATH' action that copies the resolved path and opens the shell profile for manual append. Settings also surfaces the sign-in row from the auth probe (covered in a separate entry). This closes the failure mode where the dashboard couldn't spawn claude because the macOS launchd environment lacks the shell's PATH additions.",
+    "breaking": false,
+    "summary": "Claude binary resolved via cached login-shell probe when not on PATH; System Dependencies shows Fix PATH action",
+    "references": [
+      "commit:0d5515e",
+      "file:src/lib/claude-path.ts",
+      "file:dashboard/src/components/settings/SystemDependencies.tsx",
+      "file:tests/unit/claude-path.test.ts"
+    ]
+  },
+  {
+    "date": "2026-07-25",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "Chat view now shows a WorkingIndicator (three dots + elapsed seconds counter: \"Working… 4s\") during the dead window between message-sent and the CLI's first frame, and during every tool-result → next-block gap. It appears exactly when NO visible progress exists: no streaming bubble, no thinking pill, no running tool card, no waiting card. Previously the transcript sat frozen with no feedback during spawn (SessionStart hooks can take seconds) and between tool calls. The indicator is driven by turnHasVisibleProgress() (pure, tested) which ensures it never doubles up with other progress signals. Also fixes delegated chat sessions (prompt sent by the server) to be busy from spawn, not idle until the first frame — the dock chip now reads correctly from the start.",
+    "breaking": false,
+    "summary": "Working indicator shows elapsed seconds during spawn-to-first-frame dead window",
+    "references": [
+      "commit:0d5515e",
+      "file:dashboard/src/components/sleepy/chat/Banners.tsx",
+      "file:dashboard/src/components/sleepy/chat/chatEntities.ts",
+      "file:dashboard/src/components/sleepy/chatSession.ts"
+    ]
+  },
+  {
+    "date": "2026-07-25",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "Chat view now has a collapsible background-shells tray (BackgroundShellsTray.tsx) that surfaces shell sessions spawned by the chat agent (e.g., the sign-in shell tab). Each row shows the session title, live output preview, elapsed time, and a stop button. The tray appears when one or more background shells are active and collapses when empty. This makes it visible when the agent opens a shell in the background (like for /login) without switching the user away from the chat transcript. Previously a background shell spawn was invisible until you manually switched tabs.",
+    "breaking": false,
+    "summary": "Background shells tray in Chat view shows live output and stop button for running shell commands",
+    "references": [
+      "commit:0d5515e",
+      "file:dashboard/src/components/sleepy/chat/BackgroundShellsTray.tsx",
+      "file:tests/unit/agent-background-shells.test.ts"
+    ]
+  },
+  {
+    "date": "2026-07-25",
+    "type": "feat",
+    "scope": "dashboard",
+    "description": "The composer toolbar now stays one row at all widths via staged degradation: wide panes show the full bar (▬▬░░ 33% 66k/200k /bin/zsh.58); ≤660px drops counts (% already said it); ≤560px drops cost into the hover card; ≤470px collapses to a bare 22px bar left-docked next to Skills, Attach/Skills go icon-only; ≤380px the permission chip keeps only its checkbox, model/effort names ellipsise. The gauge is a real role=\"meter\" with a portaled hover card (full bar + 66k / 200k used · 134k free + cost with flat-rate caveat) and a help cursor; at narrow stages it gets a 32×28 hit area so it's aimable. The toolbar is flex-wrap: nowrap — wrapping is what produced the lopsided split, so removing it is the actual fix and the stages exist to make it survivable. /compact stays in the toolbar (icon-only ⚠) rather than moving into the card: at ≥90% the action is the point, and the portaled card never receives keyboard focus from Tab. New ContextReadout.tsx component; composer.css drives the stages via a chatcmp size container (the pane measures itself rather than an ancestor).",
+    "breaking": false,
+    "summary": "Chat composer toolbar stays one row at every width; context/usage gauge with hover detail",
+    "references": [
+      "commit:0d5515e",
+      "file:dashboard/src/components/sleepy/chat/ContextReadout.tsx",
+      "file:dashboard/src/components/sleepy/chat/Composer.tsx",
+      "file:dashboard/src/components/sleepy/chat/composer.css"
+    ]
+  },
+  {
+    "date": "2026-07-25",
+    "type": "fix",
+    "scope": "dashboard",
+    "description": "The highlighted slash-menu row painted --color-accent-text over --color-accent-soft. That token is white in BOTH themes — it's the text colour for a SOLID accent fill, so over a 12-18% accent tint it rendered white-on-lavender (invisible). Fixed to the app's own focused-row idiom (CommandPalette's .cmdk-row--focused): full-contrast --color-text plus an accent-tinted inset outline (inset shadow, not a border, so the active row doesn't shift the list by a pixel). The row's label deliberately stays --color-text rather than going accent — accent-on-its-own-tint measures ~3.7:1 in the light theme, which is fine for a decorative chip but not for the one label a keyboard picker asks you to read. The same token misuse was making two more labels invisible, so those are fixed too: .chat-cmp-skillchip and .chat-context-objective (→ accent-on-tint, the house chip idiom), plus the identical one-liner in RoadmapBoard's Clear filters chip.",
+    "breaking": false,
+    "summary": "Slash-menu highlighted row readable in both themes; accent-on-tint chips use full contrast text",
+    "references": [
+      "commit:0d5515e",
+      "file:dashboard/src/components/sleepy/chat/Composer.tsx",
+      "file:dashboard/src/components/sleepy/chat/composer.css",
+      "file:dashboard/src/components/roadmap/RoadmapBoard.tsx"
+    ]
+  },
+  {
+    "date": "2026-07-25",
+    "type": "fix",
+    "scope": "agent",
+    "description": "Root cause of the \"auto-scroll dies mid-answer\" symptom: nextStickToBottom judged \"did the user scroll away?\" by scrollTop direction alone. But during a live stream, scrollTop moves BACKWARDS for reasons other than user action: when a block shrinks (a running tool card collapses to its done card, the WorkingIndicator unmounts) the browser clamps scrollTop down to the new maximum. If the next block renders before that scroll event dispatches, the handler sees a position both far from the bottom AND lower than last time — identical to scrolling up. Pin dies, Latest pill appears, never recovers. Fix: ScrollMetrics gains userDriven (whether a real gesture — wheel, touch, scrollbar drag, arrow/page key — drove this scroll event), and the stick-to-bottom contract adds a second rule: a scroll event NO ONE asked for cannot unstick (position alone can't tell \"user left\" from \"content moved\"). ChatPane tracks gesture ownership via a 500ms window (markGesture refreshed by wheel/touchmove/scroll keys, draggingRef held during a scrollbar press) and passes userDriven per event. Clicking a card open/closed deliberately does NOT count as a gesture — that also changes content height and would unpin the view on a click that never touched the scrollbar. Regression test in chat-entities.test.ts covers shrink → clamp → grow, and parked-view staying parked under churn.",
+    "breaking": false,
+    "summary": "Auto-scroll stays pinned when content shrinks mid-stream; only real user scroll-up unsticks",
+    "references": [
+      "commit:0d5515e",
+      "file:dashboard/src/components/sleepy/ChatPane.tsx",
+      "file:dashboard/src/components/sleepy/chat/chatEntities.ts",
+      "file:tests/unit/chat-entities.test.ts"
+    ]
+  },
+  {
+    "date": "2026-07-25",
+    "type": "feat",
+    "scope": "agent",
+    "description": "SubAgentCard now renders live run metadata chips: elapsed seconds during the run, the model name (abbreviated — Opus 4.5 → Op4.5), input/output token counts, and session cost (derived from usage + model-versioned pricing). The chips update live as the run progresses. Helpers runMetaChips, isAgentRun, and runDurationMs extract the display state from the run object; cost pricing is model-version-aware (Fable /, Opus 4.5+ /, cache write 1.25x / read 0.1x). Previously sub-agent rows showed only the status badge and thinking state; now the user sees WHAT the agent is doing and HOW MUCH it is costing in real time.",
+    "breaking": false,
+    "summary": "Sub-agent rows show live duration, model, and usage (tokens + cost)",
+    "references": [
+      "commit:3402b79",
+      "file:dashboard/src/components/sleepy/chat/SubAgentCard.tsx",
+      "file:dashboard/src/components/sleepy/chat/chatEntities.ts"
+    ]
+  },
+  {
+    "date": "2026-07-25",
+    "type": "feat",
+    "scope": "agent",
+    "description": "Chat-spawned claude was byte-identical to terminal-spawned claude, so it wrote \"I created the board at x.excalidraw.md\" and you had to hunt for it. Now each chat spawn gets a surface briefing (src/server/chat-surface.ts, --append-system-prompt-file) teaching it four inline render capabilities: Excalidraw boards (![board](x.excalidraw.md) renders the pan/zoom canvas itself, same as the Knowledge page), media (inline seek-able video/audio/image, existing but the agent didn't know), clickable paths (backtick-wrapped paths with extension or trailing slash become chips that open the file/folder), and action buttons (dream-actions fence with JSON array → real buttons below the message, task/knowledge/core navigate in-app, file/board preview, reveal hands to OS, ask writes to composer). New endpoint GET /api/agent/board-assets resolves wikilink images inside boards (Obsidian convention) — containment: resolveServablePath gates board readability, wikilink search roots contain asset resolution. The agent-page-nav bridge (AgentPageNavBridge in App.tsx) now listens to dreamcontext-agent-open-page events so buttons actually navigate. Buttons max 6, parsing drops invalid targets, an in-flight fence hides rather than flashing raw JSON. Old BoardPreviewCard (🗺 emoji + scene JSON dump) deleted; slide-over renders boards live too.",
+    "breaking": false,
+    "summary": "Chat view renders inline boards, media, clickable paths, and action buttons — not prose descriptions",
+    "references": [
+      "commit:76d3f0b",
+      "file:src/server/chat-surface.ts",
+      "file:src/server/routes/agent-chat.ts",
+      "file:dashboard/src/lib/chatProtocol.ts",
+      "file:dashboard/src/components/sleepy/chat/chatEntities.ts",
+      "feature:in-app-agent-terminal"
+    ]
+  },
+  {
+    "date": "2026-07-25",
+    "type": "feat",
+    "scope": "agent",
+    "description": "An installed CLI and a usable CLI are different facts — every surface that spawns claude (embedded terminal, Chat, sleep runs, tab titling) failed the same way when credentials were missing: at the FIRST turn, after the user had already typed. Chat was the worst of them — a dead end. The CLI's own remedy (/login) is the one command a headless engine cannot run, so the notice was parsed and then dropped: your message sat there with no answer and no reason. Verified against CLI 2.1.220 in an isolated unauthenticated HOME: the frame is an ordinary assistant text block carrying error:'authentication_failed' + is_api_error_message:true (\"Not logged in · Please run /login\"), followed by a result with terminal_reason:'api_error'. Chat: that frame becomes its own auth-required event (never an assistant bubble — it names a command this surface can't run), reduced to conv.authRequired, and the composer is replaced by a sign-in banner that takes precedence over \"Session ended\" (a failed-auth exit otherwise loops the user through Resume forever). The banner opens a SHELL tab that types and submits the sign-in command; \"Signed in — retry\" respawns the same conversation with --resume. A submitted /login lands on the same flow (isSignInCommand, narrow by design: \"how do I /login?\" still reaches the model). New probe src/lib/claude-auth.ts: claude auth status --json behind a 5s memo + in-flight dedup + 10s timeout, spawning the binary directly when findClaudeBin() resolves it (~0.6s, no rc sourcing) with a login-shell fallback, PATH claude-aware either way. parseAuthStatus is pure and fixture-tested; the exit code is deliberately not the discriminant, since a logged-out CLI may exit non-zero with a perfectly good payload. GET /api/agent/capabilities gains claudeAuth, so the sign-in command is always the one the INSTALLED CLI has (a version too old for the auth subcommand is offered the TUI, never a subcommand it lacks), and Settings → System gains a \"Claude Code sign-in\" row that names the signed-in identity or warns and offers one-click sign-in (Settings reaches the surface through the dreamcontext-claude-signin window event, the same page-dispatches / surface-listens bridge the sleep tracker uses). Load-bearing rule: unknown is not signed out. A Bedrock/Vertex or apiKeyHelper machine, and any CLI without claude auth, probe as null and render muted with no sign-in offer; nothing gates a spawn on the probe. The authoritative signal stays the CLI's own runtime frame.",
+    "breaking": false,
+    "summary": "Sign in to Claude from Chat view; auth-failed frame handled as sign-in banner, not stuck conversation",
+    "references": [
+      "commit:0d5515e",
+      "file:src/lib/claude-auth.ts",
+      "file:dashboard/src/lib/claudeAuth.ts",
+      "file:src/server/routes/agent-chat.ts",
+      "file:dashboard/src/components/sleepy/ChatPane.tsx",
+      "file:dashboard/src/components/settings/SystemDependencies.tsx"
+    ]
+  },
+  {
+    "date": "2026-07-25",
     "type": "fix",
     "scope": "agent",
     "description": "Council's live chamber panel was mounted only by the terminal renderer (PaneComposer) — a /council debate driven from a Chat tab rendered nothing, though GET /api/agent/council-live scopes by conversation id identically for both pane kinds. ChatPane's context strip became a live rail (task chip + GoalLivePanel + CouncilLivePanel, collapsed via :empty when nothing is live); previously the goal bar rendered unwrapped and full-bleed whenever no task was linked, which is always in beta. Both panel stylesheets also hardcoded a terminal-dark palette and rendered as dark slabs in light mode on BOTH surfaces; every value is now a DS token or a namespaced --goal-live-* / --council-live-* property with a dark lift, and the goal graph's heat/fork hex maps moved from inline JS style into CSS attributes (which also gave the fork satellites prefers-reduced-motion). Terminal keeps the flush strip; the chat rail renders the same components as bordered cards.",
