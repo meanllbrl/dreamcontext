@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { summarizeSubAgents, formatClock, runMetaChips, isAgentRun, type SubAgentRun } from './chatEntities';
+import {
+  summarizeSubAgents, formatClock, runMetaChips, isAgentRun, useGroupCollapse, groupOutcomeNote,
+  type SubAgentRun,
+} from './chatEntities';
 import { AgentAvatar, TypeBadge, ProgressTrack } from './atoms';
 import { CardHeader } from './molecules';
 
@@ -19,6 +22,11 @@ import { CardHeader } from './molecules';
  * scrolls away under the output that follows it. {@link SubAgentRail} is the same group
  * pinned to the top of the transcript once that happens — ChatPane decides when to show it
  * and scrolls back to the row a chip names.
+ *
+ * The rows are open while the group is LIVE and collapse to the header the moment the last
+ * run lands (`useGroupCollapse`) — a finished fan-out is a record, and a record that keeps N
+ * rows of the transcript forever is just cost. The header still reports the whole outcome,
+ * and a click brings the rows back for good.
  */
 
 function statusMark(status: SubAgentRun['status']): string {
@@ -74,6 +82,10 @@ export function SubAgentCard({ runs: allRuns, onDrillIn, rootRef, highlightRunId
   // rather than at the call site so no caller can reintroduce that.
   const runs = allRuns.filter(isAgentRun);
   const { running, total, agents, earliestStart } = summarizeSubAgents(runs);
+  // Live while it is live, a header once it lands: a fan-out of N agents held N rows of the
+  // transcript forever, and a finished run's row says nothing its group summary doesn't. The
+  // rows are one click away — and stay open if the user asks for them (see isGroupOpen).
+  const { open, onToggle } = useGroupCollapse(runs);
   // Self-ticking elapsed readout while any run is still going — cleared once none are.
   const [tick, setTick] = useState(() => Date.now());
   useEffect(() => {
@@ -86,58 +98,66 @@ export function SubAgentCard({ runs: allRuns, onDrillIn, rootRef, highlightRunId
 
   const lastEnd = Math.max(0, ...runs.map((r) => r.endedAt ?? 0));
   const elapsed = earliestStart != null ? (running > 0 ? tick : lastEnd || tick) - earliestStart : null;
+  const outcome = groupOutcomeNote(runs);
 
   return (
-    <div className="chat-subagents" ref={rootRef}>
+    <div className="chat-subagents" data-open={open || undefined} ref={rootRef}>
       <CardHeader
         glyph="⚡"
         // The GROUP is what the header names — "3 agents running" for a fan-out where one
         // has already landed, since the group is what you are waiting on.
         title={`${total} ${groupNoun(agents, total)}${total === 1 ? '' : 's'} ${running > 0 ? 'running' : 'finished'}`}
+        open={open}
+        onToggle={onToggle}
         aside={(
           <>
+            {/* Collapsed, this header is the only thing left saying what happened — so a
+                failed or killed run is named here, not only on the row that is now hidden. */}
+            {outcome && <span className="chat-subagents-outcome">{outcome}</span>}
             {elapsed != null && <span className="chat-subagents-elapsed">elapsed {formatClock(elapsed)}</span>}
             {running > 0 && <span className="chat-subagents-spinner" aria-hidden />}
           </>
         )}
       />
-      <div className="chat-subagents-rows">
-        {runs.map((run) => (
-          <button
-            type="button"
-            key={run.taskId}
-            className="chat-subagents-row"
-            data-status={run.status}
-            // The rail's jump target — read by ChatPane off THIS card's subtree, so a split
-            // view's two panes can never scroll each other (no document-wide ids).
-            data-subagent-row={run.taskId}
-            data-flash={run.taskId === highlightRunId ? '1' : undefined}
-            onClick={() => onDrillIn(run)}
-          >
-            <AgentAvatar name={run.subagentType ?? run.name} />
-            <span className="chat-subagents-row-body">
-              <span className="chat-subagents-row-head">
-                <span className="chat-subagents-row-name">{run.name}</span>
-                {run.subagentType && <TypeBadge>{run.subagentType}</TypeBadge>}
-              </span>
-              <span className="chat-subagents-row-sub">
-                <span className="chat-subagents-row-line">{runLine(run)}</span>
-                {/* Duration · model · tokens · tools — only ever the fields this run actually
-                    reported (see runMetaChips). Right-anchored so the numbers stack into a
-                    scannable column while the activity text takes the slack and truncates. */}
-                <span className="chat-subagents-row-meta">
-                  {runMetaChips(run, tick).map((chip) => (
-                    <span className="chat-subagents-row-chip" key={chip}>{chip}</span>
-                  ))}
+      {open && (
+        <div className="chat-subagents-rows">
+          {runs.map((run) => (
+            <button
+              type="button"
+              key={run.taskId}
+              className="chat-subagents-row"
+              data-status={run.status}
+              // The rail's jump target — read by ChatPane off THIS card's subtree, so a split
+              // view's two panes can never scroll each other (no document-wide ids).
+              data-subagent-row={run.taskId}
+              data-flash={run.taskId === highlightRunId ? '1' : undefined}
+              onClick={() => onDrillIn(run)}
+            >
+              <AgentAvatar name={run.subagentType ?? run.name} />
+              <span className="chat-subagents-row-body">
+                <span className="chat-subagents-row-head">
+                  <span className="chat-subagents-row-name">{run.name}</span>
+                  {run.subagentType && <TypeBadge>{run.subagentType}</TypeBadge>}
+                </span>
+                <span className="chat-subagents-row-sub">
+                  <span className="chat-subagents-row-line">{runLine(run)}</span>
+                  {/* Duration · model · tokens · tools — only ever the fields this run actually
+                      reported (see runMetaChips). Right-anchored so the numbers stack into a
+                      scannable column while the activity text takes the slack and truncates. */}
+                  <span className="chat-subagents-row-meta">
+                    {runMetaChips(run, tick).map((chip) => (
+                      <span className="chat-subagents-row-chip" key={chip}>{chip}</span>
+                    ))}
+                  </span>
                 </span>
               </span>
-            </span>
-            <ProgressTrack status={run.status} />
-            <span className="chat-subagents-row-mark" data-status={run.status} aria-hidden>{statusMark(run.status)}</span>
-            <span className="chat-subagents-row-open" aria-hidden>open →</span>
-          </button>
-        ))}
-      </div>
+              <ProgressTrack status={run.status} />
+              <span className="chat-subagents-row-mark" data-status={run.status} aria-hidden>{statusMark(run.status)}</span>
+              <span className="chat-subagents-row-open" aria-hidden>open →</span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

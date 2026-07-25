@@ -1,6 +1,6 @@
 import { Suspense, useMemo } from 'react';
 import { useTheme } from '../../context/ThemeContext';
-import { extractExcalidrawScene } from '../../lib/excalidraw';
+import { boardInstanceKey, extractExcalidrawScene } from '../../lib/excalidraw';
 import { useKnowledgeAssets } from '../../hooks/useKnowledge';
 import { lazyWithReload } from '../../lib/lazyWithReload';
 import './ExcalidrawPreview.css';
@@ -23,6 +23,10 @@ interface Props {
    *  query's `isLoading` does (the canvas freezes `initialData` at mount, so the files map
    *  has to be final before it goes up; see this file's history). */
   assetsLoading?: boolean;
+  /** What this board IS — its file path — for a caller with no knowledge slug (the Chat
+   *  transcript draws boards from anywhere in the project). Identity has to name the board,
+   *  never the slot: see {@link boardInstanceKey}. */
+  boardKey?: string;
 }
 
 const Spinner = () => (
@@ -39,10 +43,12 @@ const Spinner = () => (
  * This component owns the data: it parses the scene and resolves the board's
  * externally-referenced screenshots (Obsidian stores them as wikilinks, not
  * base64) at full quality, fetched once and kept, then hands a stable
- * {elements, files} to the canvas. The canvas mounts once per board (keyed by
- * slug) so panning/zooming never re-renders or reloads it.
+ * {elements, files} to the canvas. The canvas mounts once per board — keyed by
+ * what the board IS, not by the slot it lands in (see {@link boardInstanceKey}) —
+ * so panning/zooming never re-renders or reloads it, and swapping the board inside
+ * one slot gets a fresh canvas instead of inheriting the previous board's viewport.
  */
-export function ExcalidrawPreview({ content, slug, assets, assetsLoading }: Props) {
+export function ExcalidrawPreview({ content, slug, assets, assetsLoading, boardKey }: Props) {
   const { resolved } = useTheme();
 
   const scene = useMemo(() => extractExcalidrawScene(content), [content]);
@@ -82,7 +88,7 @@ export function ExcalidrawPreview({ content, slug, assets, assetsLoading }: Prop
       ) : (
         <Suspense fallback={<Spinner />}>
           <ExcalidrawCanvas
-            key={slug ?? 'board'}
+            key={boardInstanceKey(boardKey ?? slug)}
             elements={scene.elements}
             files={files}
             appState={scene.appState}

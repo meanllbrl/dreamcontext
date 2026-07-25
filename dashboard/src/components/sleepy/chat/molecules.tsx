@@ -70,20 +70,42 @@ export function ToolHeader({
  * The header every interactive card wears — glyph, title, and a right-hand slot
  * (tool badge, elapsed clock, spinner), closed by a hairline. `tone="caution"` is the
  * amber identity the bypass notice and any other "you weren't asked" surface uses.
+ *
+ * Passing `onToggle` turns the header into the card's DISCLOSURE control, borrowing
+ * `ToolHeader`'s idiom byte for byte — one stretched hit-area button under the row, one
+ * `aria-expanded`, a `Caret` closing the aside — so a collapsed tool card and a collapsed
+ * group card read (and are announced) as the same control. A card that passes neither is
+ * untouched: no button, no caret, nothing to tab through.
  */
 export function CardHeader({
-  glyph, title, aside, tone = 'neutral',
+  glyph, title, aside, tone = 'neutral', open, onToggle,
 }: {
   glyph?: ReactNode;
   title: ReactNode;
   aside?: ReactNode;
   tone?: 'neutral' | 'caution';
+  open?: boolean;
+  onToggle?: () => void;
 }) {
   return (
-    <div className="chat-m-cardhead" data-tone={tone}>
+    <div className="chat-m-cardhead" data-tone={tone} data-interactive={onToggle ? '' : undefined}>
+      {onToggle && (
+        <button
+          type="button"
+          className="chat-m-cardhead-hit"
+          aria-expanded={!!open}
+          aria-label={typeof title === 'string' ? title : 'Details'}
+          onClick={onToggle}
+        />
+      )}
       {glyph && <span className="chat-m-cardhead-glyph" aria-hidden>{glyph}</span>}
       <span className="chat-m-cardhead-title">{title}</span>
-      {aside && <span className="chat-m-cardhead-aside">{aside}</span>}
+      {(aside || onToggle) && (
+        <span className="chat-m-cardhead-aside">
+          {aside}
+          {onToggle && <Caret open={!!open} />}
+        </span>
+      )}
     </div>
   );
 }

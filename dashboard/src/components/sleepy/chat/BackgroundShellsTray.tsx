@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react';
-import { formatClock, runDurationMs, summarizeBackgroundShells, type SubAgentRun } from './chatEntities';
+import {
+  formatClock, runDurationMs, summarizeBackgroundShells, useGroupCollapse, groupOutcomeNote,
+  type SubAgentRun,
+} from './chatEntities';
 
 /**
  * ORGANISM — the background-shells tray: a persistent strip above the composer listing every
@@ -17,7 +20,8 @@ import { formatClock, runDurationMs, summarizeBackgroundShells, type SubAgentRun
  * Why DOCKED rather than inline in the transcript: a background shell outlives the turn that
  * started it. An inline card scrolls away while the process keeps running, which is exactly
  * the state the user needs to stay aware of. Finished shells stay listed (their output is
- * still readable) until the conversation ends.
+ * still readable) until the conversation ends — but the list COLLAPSES to its header once the
+ * last one exits, so persistent furniture stays the size of what is actually live.
  */
 
 function statusWord(status: SubAgentRun['status']): string {
@@ -35,9 +39,11 @@ export function BackgroundShellsTray({
   onStop: (run: SubAgentRun) => void;
 }) {
   const { shells, running, total } = summarizeBackgroundShells(runs);
-  // Collapsed by default once nothing is running: a finished shell is reference material, a
-  // running one is live state worth having open.
-  const [expanded, setExpanded] = useState(true);
+  // Collapsed once nothing is running: a finished shell is reference material (its output is
+  // still readable, one click away), a running one is live state worth having open. The
+  // tray sits over the composer, so a list that never closes costs the transcript real
+  // height for rows about processes that exited minutes ago.
+  const { open: expanded, onToggle } = useGroupCollapse(shells);
   const [tick, setTick] = useState(() => Date.now());
   useEffect(() => {
     if (running === 0) return;
@@ -47,12 +53,19 @@ export function BackgroundShellsTray({
 
   if (total === 0) return null;
 
+  const outcome = groupOutcomeNote(shells);
+  // The group's own span: first start → last end, so the collapsed header says how long the
+  // batch took without the per-row clocks it is hiding.
+  const earliestStart = Math.min(...shells.map((s) => s.startedAt));
+  const lastEnd = Math.max(0, ...shells.map((s) => s.endedAt ?? 0));
+  const elapsed = (running > 0 ? tick : lastEnd || tick) - earliestStart;
+
   return (
     <div className="chat-bgshells" data-running={running > 0 || undefined}>
       <button
         type="button"
         className="chat-bgshells-head"
-        onClick={() => setExpanded((v) => !v)}
+        onClick={onToggle}
         aria-expanded={expanded}
       >
         <span className="chat-bgshells-glyph" aria-hidden>▶</span>
@@ -61,6 +74,10 @@ export function BackgroundShellsTray({
             ? `${running} background shell${running === 1 ? '' : 's'} running`
             : `${total} background shell${total === 1 ? '' : 's'} finished`}
         </span>
+        {/* Collapsed, this row is all that is left of the batch — so what went wrong, and how
+            long it all took, are named here rather than only on the hidden rows. */}
+        {outcome && <span className="chat-bgshells-note">{outcome}</span>}
+        <span className="chat-bgshells-clock">{formatClock(elapsed)}</span>
         {running > 0 && <span className="chat-bgshells-spinner" aria-hidden />}
         <span className="chat-bgshells-caret" aria-hidden>{expanded ? '▾' : '▸'}</span>
       </button>

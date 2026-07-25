@@ -47,3 +47,17 @@ export function extractExcalidrawScene(content: string): ExcalidrawScene | null 
 export function isExcalidrawSlug(slug: string): boolean {
   return slug.endsWith('.excalidraw');
 }
+
+/**
+ * The React identity of ONE rendered board.
+ *
+ * The canvas freezes its scene at mount and owns its viewport (zoom/scroll) for its whole
+ * life, so two different boards sharing a key means the second silently inherits the
+ * first's scene AND its zoom whenever one slot swaps between them. Identity therefore has
+ * to be derived from WHAT the board is — its file path or knowledge slug — never from the
+ * slot it happens to land in. The `'board'` fallback exists only so a caller that knows
+ * nothing still renders; every caller in this app names its board.
+ */
+export function boardInstanceKey(identity: string | null | undefined): string {
+  return (identity ?? '').trim() || 'board';
+}

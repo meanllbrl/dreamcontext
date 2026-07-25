@@ -13,6 +13,7 @@ import {
   formatClock, splitInlineCode, isGuardedCommand, avatarHue,
   turnHasVisibleProgress, nextStickToBottom, BOTTOM_SLACK,
   isAgentRun, runDurationMs, formatModelName, runMetaChips,
+  isRunFinished, runGroupPhase, isGroupOpen, groupOutcomeNote,
   type SubAgentRun, type ProgressProbe,
 } from '../../dashboard/src/components/sleepy/chat/chatEntities.js';
 
@@ -182,6 +183,88 @@ describe('subAgentToolUseIds', () => {
 
   it('empty input → empty set', () => {
     expect(subAgentToolUseIds([])).toEqual(new Set());
+  });
+});
+
+// ─── Group collapse (SubAgentCard / BackgroundShellsTray) ────────────────────────
+//
+// The rule both background-work surfaces share: open while the group is live, collapsed to
+// its summary header once every run has landed — and a user's explicit toggle outranks that,
+// but only for the phase they made it in. These tests pin the three cases the phase stamp
+// exists for; a plain sticky boolean fails one of them whichever way it is set.
+
+describe('runGroupPhase / isRunFinished', () => {
+  it('every terminal status counts as finished — including `stopped`, which is its own', () => {
+    expect(isRunFinished(run({ status: 'running' }))).toBe(false);
+    expect(isRunFinished(run({ status: 'completed' }))).toBe(true);
+    expect(isRunFinished(run({ status: 'error' }))).toBe(true);
+    expect(isRunFinished(run({ status: 'stopped' }))).toBe(true);
+  });
+
+  it('one still-running run keeps the whole group live', () => {
+    expect(runGroupPhase([
+      run({ taskId: 'a', status: 'completed' }),
+      run({ taskId: 'b', status: 'running' }),
+    ])).toBe('running');
+  });
+
+  it('all-terminal (mixed completed / error / stopped) → done', () => {
+    expect(runGroupPhase([
+      run({ taskId: 'a', status: 'completed' }),
+      run({ taskId: 'b', status: 'error' }),
+      run({ taskId: 'c', status: 'stopped' }),
+    ])).toBe('done');
+  });
+
+  it('an empty group is done (neither surface renders one)', () => {
+    expect(runGroupPhase([])).toBe('done');
+  });
+});
+
+describe('isGroupOpen', () => {
+  it('no user toggle: running is open, done is collapsed', () => {
+    expect(isGroupOpen('running', null)).toBe(true);
+    expect(isGroupOpen('done', null)).toBe(false);
+  });
+
+  it('a user who collapsed a RUNNING group keeps it collapsed — no later frame pops it open', () => {
+    const toggle = { phase: 'running' as const, open: false };
+    expect(isGroupOpen('running', toggle)).toBe(false);
+  });
+
+  it('a user who opened a FINISHED group keeps it open — no re-render slams it shut', () => {
+    const toggle = { phase: 'done' as const, open: true };
+    expect(isGroupOpen('done', toggle)).toBe(true);
+  });
+
+  it('the override is released when the group actually crosses running → done, so the auto-collapse still fires', () => {
+    // The user merely re-opened a live group (which was already open by default). Pinning
+    // that forever would defeat the whole feature.
+    expect(isGroupOpen('done', { phase: 'running', open: true })).toBe(false);
+  });
+
+  it('a new run in a landed group re-opens it, whatever the user had chosen while it was done', () => {
+    expect(isGroupOpen('running', { phase: 'done', open: false })).toBe(true);
+  });
+});
+
+describe('groupOutcomeNote', () => {
+  it('says nothing when everything landed cleanly', () => {
+    expect(groupOutcomeNote([run({ status: 'completed' }), run({ taskId: 'b', status: 'completed' })])).toBe('');
+  });
+
+  it('names failures and user-killed runs separately — `stopped` is neither a failure nor a success', () => {
+    const runs = [
+      run({ taskId: 'a', status: 'completed' }),
+      run({ taskId: 'b', status: 'error' }),
+      run({ taskId: 'c', status: 'error' }),
+      run({ taskId: 'd', status: 'stopped' }),
+    ];
+    expect(groupOutcomeNote(runs)).toBe('2 failed · 1 stopped');
+  });
+
+  it('a still-running run contributes nothing to the outcome', () => {
+    expect(groupOutcomeNote([run({ status: 'running' })])).toBe('');
   });
 });
 

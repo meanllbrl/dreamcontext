@@ -73,6 +73,22 @@
 .chat-m-cardhead[data-tone='caution'] { border-bottom-color: color-mix(in srgb, var(--color-warning) 45%, transparent); }
 .chat-m-cardhead[data-tone='caution'] .chat-m-cardhead-title { color: var(--color-warning); }
 
+/* A header that IS its card's disclosure control (the sub-agent group). Same stretched
+   hit-area as `.chat-m-toolhead` — one control, one aria-expanded — so the two collapse the
+   same way. Scoped to [data-interactive] so the non-collapsing cards that share this header
+   (permission, bypass notice) keep their pointer events untouched. */
+.chat-m-cardhead[data-interactive] { position: relative; cursor: pointer; }
+.chat-m-cardhead[data-interactive]:hover { background: var(--color-bg-tertiary); }
+.chat-m-cardhead-hit {
+  position: absolute;
+  inset: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+}
+.chat-m-cardhead-hit:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: -2px; }
+.chat-m-cardhead[data-interactive] > *:not(.chat-m-cardhead-hit) { position: relative; pointer-events: none; }
+
 /* ── Terminal block ──────────────────────────────────────────────────────────────── */
 
 .chat-m-terminal {

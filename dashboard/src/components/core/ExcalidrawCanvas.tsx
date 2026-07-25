@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { Excalidraw } from '@excalidraw/excalidraw';
 import '@excalidraw/excalidraw/index.css';
+import { registerPinchTarget, type BoardViewport, type BoardViewportPatch } from '../../lib/excalidrawPinch';
 import './ExcalidrawCanvas.css';
 
 interface Props {
@@ -13,6 +14,8 @@ interface Props {
 type ExcalidrawAPI = {
   scrollToContent: (target?: unknown, opts?: unknown) => void;
   refresh?: () => void;
+  getAppState?: () => BoardViewport;
+  updateScene?: (scene: { appState: BoardViewportPatch }) => void;
 };
 
 /**
@@ -95,6 +98,21 @@ export default function ExcalidrawCanvas({ elements, files, appState, theme }: P
       mo.observe(wrapRef.current, { subtree: true, attributes: true, attributeFilter: ['width', 'height'] });
     }
     return () => { cancelled = true; timers.forEach(clearTimeout); ro?.disconnect(); mo.disconnect(); };
+  }, []);
+
+  // Scope WebKit's pinch to THIS board. Excalidraw 0.18 drives its Safari gesture handlers
+  // from module-level state shared by every mounted editor, so without this a pinch anywhere
+  // zooms every board on the page to the same scale — see excalidrawPinch.ts for the full
+  // why. The API is read lazily inside the callbacks because `excalidrawAPI` lands after
+  // this effect runs; the registration only needs the element, which is already mounted.
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    return registerPinchTarget({
+      el,
+      getViewport: () => apiRef.current?.getAppState?.() ?? null,
+      setViewport: (patch) => apiRef.current?.updateScene?.({ appState: patch }),
+    });
   }, []);
 
   return (

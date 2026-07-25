@@ -1,10 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { pickFiles, pickFolders } from '../../../lib/desktop';
 import { useAgentSessionStats } from '../../../hooks/useAgentCapabilities';
 import {
   effortLabel, modelLabelFor, quotePath, isSignInCommand,
   slashQueryAt, filterSlashCommands, applySlashCommand, type ModelConfig,
 } from '../../../lib/agentComposer';
+import {
+  composerBodyHeight, composerHeightBounds, measureBodyChrome, measureFieldContent, readFieldMetrics,
+} from './composerHeight';
 import { Popover, SkillBrowser } from '../SkillPickerPopover';
 import { PermissionModeMenu } from './PermissionModeMenu';
 import { ContextReadout } from './ContextReadout';
@@ -48,9 +51,6 @@ interface Attachment {
    *  `pickFolders`), quoted into the outgoing message text on submit. */
   path?: string;
 }
-
-const MIN_COMPOSER_H = 88;
-const DEFAULT_COMPOSER_H = 118;
 
 function basenameOf(path: string): string {
   const clean = path.replace(/\/+$/, '');
@@ -222,16 +222,75 @@ export function Composer({
     });
   };
 
-  // ── Resizable composer (state 7) — top drag handle, up to 50% of the pane's height ─
+  // ── Composer height: auto-grow, with the drag handle as a floor (state 7) ──────────
+  //
+  // Two lines at rest, one more per typed line, capped at ten lines OR half the pane —
+  // whichever is smaller — and back to two the frame a message is sent. The rule that keeps
+  // the top drag handle and auto-grow from fighting over the same number lives (with its
+  // WHY) in composerHeight.ts: `applied = min(ceiling, max(autoGrown, draggedFloor))`.
   const rootRef = useRef<HTMLDivElement | null>(null);
-  const [bodyHeight, setBodyHeight] = useState(DEFAULT_COMPOSER_H);
-  const dragRef = useRef<{ startY: number; startH: number; max: number } | null>(null);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const rowRef = useRef<HTMLDivElement | null>(null);
+  /** What the user last dragged/keyed the composer to — a FLOOR, not the applied height. */
+  const [draggedH, setDraggedH] = useState<number | null>(null);
+  const [bodyHeight, setBodyHeight] = useState<number | null>(null);
+  const dragRef = useRef<{ startY: number; startH: number } | null>(null);
+  // Read by `resize` (a stable callback) and written by the drag, which must not re-run the
+  // measurement once per pointermove through a dependency array.
+  const draggedRef = useRef<number | null>(draggedH);
+  draggedRef.current = draggedH;
+
+  /** The pane whose half-height is the ceiling. `||`, not `??`: a pane parked in the
+   *  surface's detached garage measures 0, which is not a ceiling — it is "unknown yet". */
+  const paneHeight = () => {
+    const paneEl = rootRef.current?.closest('.chat-pane') as HTMLElement | null;
+    return (paneEl?.getBoundingClientRect().height || 0) || window.innerHeight;
+  };
+
+  /** Measure → clamp → apply. Runs in a LAYOUT effect so a sent message never paints the
+   *  tall box it was typed in, and a re-measure never shows the intermediate size. */
+  const resize = useCallback(() => {
+    const ta = taRef.current, body = bodyRef.current, row = rowRef.current;
+    if (!ta || !body || !row) return;
+    const { lineHeight, fieldChrome } = readFieldMetrics(ta);
+    setBodyHeight(composerBodyHeight({
+      contentHeight: measureFieldContent(ta),
+      lineHeight,
+      fieldChrome,
+      chromeHeight: measureBodyChrome(body, row),
+      paneHeight: paneHeight(),
+      draggedHeight: draggedRef.current,
+    }));
+  }, []);
+
+  // Every input that can change how many lines the draft occupies, or how much of the box
+  // the chips have taken: typing/paste (`draft`), an external `sendText` or a rewind prefill
+  // (also `draft`, via the draftEpoch adoption above), submit (draft → ''), and the quote /
+  // skill / attachment rows appearing or disappearing.
+  useLayoutEffect(() => { resize(); }, [resize, draft, draggedH, quote, skillChip, attachments]);
+
+  // Width changes rewrap the text (so the line COUNT moves without the draft changing) and
+  // height changes move the ceiling — neither is a React render. Guarded on the observed box
+  // actually changing, so the height we ourselves just applied can't feed a second pass back
+  // through the observer.
+  useEffect(() => {
+    const el = (rootRef.current?.closest('.chat-pane') as HTMLElement | null) ?? rootRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    let last = { w: 0, h: 0 };
+    const ro = new ResizeObserver(([entry]) => {
+      const { width: w, height: h } = entry.contentRect;
+      if (w === last.w && h === last.h) return;
+      last = { w, h };
+      resize();
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [resize]);
 
   const beginResize = (clientY: number, pointerId: number, target: Element) => {
-    const paneEl = rootRef.current?.closest('.chat-pane') as HTMLElement | null;
-    const paneH = paneEl?.getBoundingClientRect().height ?? window.innerHeight;
-    const max = Math.max(MIN_COMPOSER_H, Math.round(paneH * 0.5));
-    dragRef.current = { startY: clientY, startH: bodyHeight, max };
+    // Starts from the APPLIED height, not from the stored floor: the handle should continue
+    // from where auto-grow left the box, not jump back to the last dragged size.
+    dragRef.current = { startY: clientY, startH: bodyHeight ?? 0 };
     try { (target as Element & { setPointerCapture?: (id: number) => void }).setPointerCapture?.(pointerId); } catch { /* not a pointer target */ }
   };
   const onHandlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -240,17 +299,21 @@ export function Composer({
   const onHandlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     const st = dragRef.current;
     if (!st) return;
-    // Dragging UP (smaller clientY) grows the composer — the handle sits at its top.
-    const delta = st.startY - e.clientY;
-    setBodyHeight(Math.min(st.max, Math.max(MIN_COMPOSER_H, st.startH + delta)));
+    // Dragging UP (smaller clientY) grows the composer — the handle sits at its top. The
+    // real min/ceiling clamp is `composerBodyHeight`'s job; this only has to stay sane.
+    setDraggedH(Math.max(0, st.startH + (st.startY - e.clientY)));
   };
   const onHandlePointerUp = () => { dragRef.current = null; };
   const onHandleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    const paneEl = rootRef.current?.closest('.chat-pane') as HTMLElement | null;
-    const paneH = paneEl?.getBoundingClientRect().height ?? window.innerHeight;
-    const max = Math.max(MIN_COMPOSER_H, Math.round(paneH * 0.5));
-    if (e.key === 'ArrowUp') { e.preventDefault(); setBodyHeight((h) => Math.min(max, h + 16)); }
-    else if (e.key === 'ArrowDown') { e.preventDefault(); setBodyHeight((h) => Math.max(MIN_COMPOSER_H, h - 16)); }
+    const ta = taRef.current, body = bodyRef.current, row = rowRef.current;
+    if (!ta || !body || !row) return;
+    const { lineHeight, fieldChrome } = readFieldMetrics(ta);
+    const { min, ceiling } = composerHeightBounds({
+      lineHeight, fieldChrome, chromeHeight: measureBodyChrome(body, row), paneHeight: paneHeight(),
+    });
+    const step = (d: number) => setDraggedH((h) => Math.min(ceiling, Math.max(min, (h ?? bodyHeight ?? min) + d)));
+    if (e.key === 'ArrowUp') { e.preventDefault(); step(16); }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); step(-16); }
   };
 
   // ── Context + cost readout (state 1/11) ──────────────────────────────────────────
@@ -352,7 +415,10 @@ export function Composer({
         <span className="chat-cmp-handle-grip" aria-hidden />
       </div>
 
-      <div className="chat-cmp-body" style={{ ['--chat-cmp-h' as string]: `${bodyHeight}px` }}>
+      {/* No `--chat-cmp-h` until the first measurement lands (a layout effect, so before
+          paint) — composer.css's own two-line fallback holds the box until then, rather
+          than a JS constant that would drift from the tokens the moment one moved. */}
+      <div className="chat-cmp-body" ref={bodyRef} style={bodyHeight == null ? undefined : { ['--chat-cmp-h' as string]: `${bodyHeight}px` }}>
         {quote && (
           <div className="chat-cmp-quote">
             <span className="chat-cmp-quote-bar" aria-hidden />
@@ -388,7 +454,7 @@ export function Composer({
           </div>
         )}
 
-        <div className="chat-cmp-row">
+        <div className="chat-cmp-row" ref={rowRef}>
           <textarea
             ref={taRef}
             className="chat-cmp-input"

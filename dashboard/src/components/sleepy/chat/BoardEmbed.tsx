@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { api } from '../../../api/client';
 import { ExcalidrawPreview } from '../../core/ExcalidrawPreview';
+import { FullscreenOverlay } from '../../layout/FullscreenOverlay';
 
 /**
  * An Excalidraw board the answer named, DRAWN — in the transcript ({@link BoardEmbed}) and
@@ -73,7 +75,33 @@ export function BoardCanvas({ path }: { path: string }) {
   const { content, assets, assetsLoading, failed } = useBoardScene(path);
   if (failed) return <p className="chat-slideover-status error">Couldn't read this board.</p>;
   if (content === null) return <div className="chat-board-loading">Loading board…</div>;
-  return <ExcalidrawPreview content={content} assets={assets} assetsLoading={assetsLoading} />;
+  return <ExcalidrawPreview content={content} boardKey={path} assets={assets} assetsLoading={assetsLoading} />;
+}
+
+/**
+ * The board filling the window. PORTALED to `document.body` because `.agent-surface` sets
+ * `contain: layout paint`, which makes it the containing block for `position: fixed` — an
+ * overlay rendered in the transcript's own tree would be clipped to the pane instead of
+ * covering the app (the same reason the dock and the council chamber portal out).
+ *
+ * It is a SEPARATE mount from the inline card, not the same canvas relocated: each carries
+ * its own `boardKey` suffix, so opening full-screen fits the board to the big viewport and
+ * closing leaves the card exactly where the reader had panned it.
+ */
+function BoardFullscreen({ path, onClose }: { path: string; onClose: () => void }) {
+  const { content, assets, assetsLoading, failed } = useBoardScene(path);
+  return createPortal(
+    <FullscreenOverlay label={boardName(path)} onClose={onClose}>
+      <div className="chat-board-full">
+        {failed
+          ? <p className="chat-slideover-status error">Couldn't read this board.</p>
+          : content === null
+            ? <div className="chat-board-loading">Loading board…</div>
+            : <ExcalidrawPreview content={content} boardKey={`${path}#full`} assets={assets} assetsLoading={assetsLoading} />}
+      </div>
+    </FullscreenOverlay>,
+    document.body,
+  );
 }
 
 /** The board as a transcript card: named, drawn, with a way to open it bigger. */
@@ -85,6 +113,7 @@ export function BoardEmbed({
   onOpenBoard: (path: string) => void;
 }) {
   const { content, assets, assetsLoading, failed } = useBoardScene(path);
+  const [full, setFull] = useState(false);
 
   if (failed) {
     return (
@@ -102,6 +131,15 @@ export function BoardEmbed({
     <div className="chat-board">
       <div className="chat-board-head">
         <span className="chat-board-name"><span aria-hidden>▦</span> {boardName(path)}</span>
+        <button
+          type="button"
+          className="chat-board-full-btn"
+          onClick={() => setFull(true)}
+          title="Full screen"
+          aria-label={`Open ${boardName(path)} full screen`}
+        >
+          <span aria-hidden>⛶</span>
+        </button>
         <button type="button" className="chat-board-open" onClick={() => onOpenBoard(path)}>
           Open <span aria-hidden>↗</span>
         </button>
@@ -109,8 +147,9 @@ export function BoardEmbed({
       <div className="chat-board-canvas">
         {content === null
           ? <div className="chat-board-loading">Loading board…</div>
-          : <ExcalidrawPreview content={content} assets={assets} assetsLoading={assetsLoading} />}
+          : <ExcalidrawPreview content={content} boardKey={path} assets={assets} assetsLoading={assetsLoading} />}
       </div>
+      {full && <BoardFullscreen path={path} onClose={() => setFull(false)} />}
     </div>
   );
 }

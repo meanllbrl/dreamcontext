@@ -74,11 +74,21 @@
   background: var(--color-border-hover);
 }
 
-/* ── Resizable body (quote / skill chip / attachments / textarea) ───────────────────── */
+/* ── Auto-growing body (quote / skill chip / attachments / textarea) ─────────────────
+   The height is OWNED BY JS (`--chat-cmp-h`, written by composerHeight.ts's measure →
+   clamp → apply): two lines at rest, one more per typed line, ceilinged at ten lines or
+   half the pane. The old `min-height: 88px` is deliberately gone — a fixed floor here would
+   have overruled the measured two-line minimum (88px is nearly four lines at the current
+   token), which is exactly the drift the pixel constants were removed to stop.
+
+   The fallback below is only ever on screen before the first measurement (a layout effect,
+   so it never paints), and it is expressed in the SAME tokens the measurement reads —
+   `.chat-cmp-input`'s font-size and 1.45 line-height, its 4px padding, this box's 8px
+   bottom padding — so the two can't disagree. */
 
 .chat-cmp-body {
-  height: var(--chat-cmp-h, 118px);
-  min-height: 88px;
+  --chat-cmp-min-h: calc(2 * 1.45 * var(--font-size-md, 14px) + 16px);
+  height: var(--chat-cmp-h, var(--chat-cmp-min-h));
   display: flex;
   flex-direction: column;
   gap: 6px;

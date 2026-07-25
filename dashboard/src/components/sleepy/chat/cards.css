@@ -489,10 +489,20 @@
   overflow: hidden;
 }
 .chat-subagents .chat-m-cardhead-glyph { color: var(--color-warning); }
+/* Collapsed, the header IS the card, so its divider would be a hairline hanging over
+   nothing — the tool cards carry that border on the BODY for the same reason. */
+.chat-subagents:not([data-open]) .chat-m-cardhead { border-bottom: none; }
 .chat-subagents-elapsed {
   font-family: var(--font-mono);
   font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
+}
+/* What a COLLAPSED group must still admit to — the only red on a card whose failed row is
+   now hidden, so it has to carry the weight the row used to. */
+.chat-subagents-outcome {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-error);
 }
 .chat-subagents-spinner {
   width: var(--space-3);
@@ -821,6 +831,33 @@
 }
 .chat-board-open:hover { text-decoration: underline; }
 
+/* Full screen sits BEFORE "Open" and is a glyph, not a word: the card head is a single
+   narrow row and the two affordances differ in degree, not kind — spelling both out reads
+   as a toolbar. Muted until hover so the named action stays the primary one. */
+.chat-board-full-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm, 4px);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: color var(--transition-fast), background var(--transition-fast);
+}
+.chat-board-full-btn:hover { color: var(--color-accent); background: var(--color-bg-hover, var(--color-bg)); }
+.chat-board-full-btn:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+
+/* The full-screen copy takes the whole overlay body — the canvas sizes to its container,
+   so the height has to come from somewhere, and the overlay body is a flex column. */
+.chat-board-full { flex: 1 1 auto; min-height: 0; display: flex; }
+.chat-board-full .excalidraw-preview { flex: 1 1 auto; min-height: 0; }
+
 /* ── Background-shells tray (BackgroundShellsTray) ──────────────────────────────────
    Docked above the composer, OUTSIDE the transcript scroller: a `run_in_background`
    shell outlives the turn that started it, so its row must stay put while the process
@@ -852,6 +889,16 @@
 /* Only a LIVE tray earns the accent — a tray of finished shells is reference material. */
 .chat-bgshells[data-running] .chat-bgshells-glyph { color: var(--color-accent); }
 .chat-bgshells-title { flex: 1 1 auto; }
+/* Header readouts that only matter once the rows are hidden — what failed, and how long the
+   batch ran. Tabular figures so the ticking clock never jitters the caret. */
+.chat-bgshells-note { flex: 0 0 auto; color: var(--color-error); }
+.chat-bgshells-clock {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-weight: var(--font-weight-normal);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-tertiary);
+}
 .chat-bgshells-caret { color: var(--color-text-tertiary); font-size: 10px; }
 .chat-bgshells-spinner {
   flex: 0 0 auto;

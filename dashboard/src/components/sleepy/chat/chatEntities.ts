@@ -1,4 +1,4 @@
-import { useEffect, type RefObject } from 'react';
+import { useEffect, useState, type RefObject } from 'react';
 
 /**
  * Pure, framework-light logic shared by the Agent Chat (beta) redesign's card
@@ -371,6 +371,73 @@ export function summarizeSubAgents(runs: SubAgentRun[]): {
   return { running, total: runs.length, agents: runs.filter(isAgentRun).length, earliestStart };
 }
 
+// ─── Collapsing a finished group (SubAgentCard / BackgroundShellsTray) ────────────
+//
+// Both surfaces show a GROUP of runs that starts as live state and ends as a record, and
+// both used to stay open forever: a fan-out of N agents kept N rows of the transcript long
+// after all of them had landed, and the shells tray kept its full list docked over the
+// composer after every process had exited. Same rule as the tool cards (collapsed by
+// default except Edit/Write) — the detail is one click away, not permanently in the way.
+
+/** Has this run reached a terminal status? `stopped` counts: it is its own terminal state,
+ *  not a flavour of `completed`/`error` (see {@link SubAgentRun.status}), and a group holding
+ *  a run the user killed is just as finished as one holding a run that failed. */
+export function isRunFinished(run: SubAgentRun): boolean {
+  return run.status !== 'running';
+}
+
+/** Live vs. landed for the group as a whole — the only thing the AUTOMATIC open/closed state
+ *  reads. An empty group is `done`; neither surface renders one. */
+export type RunGroupPhase = 'running' | 'done';
+
+export function runGroupPhase(runs: SubAgentRun[]): RunGroupPhase {
+  return runs.every(isRunFinished) ? 'done' : 'running';
+}
+
+/** A user's explicit open/close, STAMPED with the phase it was made in — the whole reason
+ *  the override can be sticky without also being permanent. */
+export interface GroupToggle { phase: RunGroupPhase; open: boolean }
+
+/**
+ * Is the group open? The automatic rule is one line — open while anything is running,
+ * collapsed to the summary header once everything has landed — and the user outranks it.
+ *
+ * The override is scoped to the PHASE it was made in, which is what keeps the two failure
+ * modes apart. A plain sticky boolean gets one of them wrong whichever way you set it: a user
+ * who collapsed a live group would have it slam open again on the next frame (unstamped auto
+ * state winning), or a user who merely re-opened a live group would have pinned it open
+ * through the finish and never get the auto-collapse this exists for. Stamping means: while
+ * the phase holds, the user's choice is the answer and no re-render may touch it; when the
+ * group actually crosses running → done (or a new run starts in a landed group), the stale
+ * choice is released and the automatic transition fires exactly once.
+ */
+export function isGroupOpen(phase: RunGroupPhase, toggle: GroupToggle | null): boolean {
+  if (toggle && toggle.phase === phase) return toggle.open;
+  return phase === 'running';
+}
+
+/** {@link isGroupOpen} bound to component-local state, so the collapsed/open flag is per card
+ *  and per group by construction — it lives in the instance, and `ChatPane` is keyed by
+ *  session id, so it can leak neither across a split's panes nor across conversations. */
+export function useGroupCollapse(runs: SubAgentRun[]): { open: boolean; onToggle: () => void } {
+  const [toggle, setToggle] = useState<GroupToggle | null>(null);
+  const phase = runGroupPhase(runs);
+  const open = isGroupOpen(phase, toggle);
+  return { open, onToggle: () => setToggle({ phase, open: !open }) };
+}
+
+/** What a COLLAPSED group must still admit to beyond its count: how many failed, how many the
+ *  user killed. Empty when everything landed cleanly — a header that says "0 failed" spends
+ *  the eye's attention on a number that means nothing. */
+export function groupOutcomeNote(runs: SubAgentRun[]): string {
+  const parts: string[] = [];
+  const failed = runs.filter((r) => r.status === 'error').length;
+  const stopped = runs.filter((r) => r.status === 'stopped').length;
+  if (failed) parts.push(`${failed} failed`);
+  if (stopped) parts.push(`${stopped} stopped`);
+  return parts.join(' · ');
+}
+
 /**
  * How long a run has been going, in ms. Prefers the CLI's OWN `usage.durationMs` (it
  * measures the agent's runtime, and it keeps ticking correctly for a task that was queued
@@ -494,6 +561,34 @@ export function turnHasVisibleProgress(items: ProgressProbe[], pendingCount = 0)
  *  token that lands between a scroll and its handler never reads as the user leaving. */
 export const BOTTOM_SLACK = 48;
 
+/** Which way a user input event asks the transcript to move. `null` = it says nothing about
+ *  direction (a horizontal wheel, a key that doesn't scroll). */
+export type ScrollIntent = 'up' | 'down' | null;
+
+/** A wheel notch's intent. Negative `deltaY` is up in every delta mode — the mode only scales
+ *  the magnitude, which this doesn't care about. */
+export function wheelIntent(deltaY: number): ScrollIntent {
+  if (deltaY < 0) return 'up';
+  if (deltaY > 0) return 'down';
+  return null;
+}
+
+/** A key's intent. Space is deliberately absent: it only scrolls a focused scroller, and
+ *  every Space that reaches this pane is being typed into the composer. */
+export function keyIntent(key: string): ScrollIntent {
+  if (key === 'ArrowUp' || key === 'PageUp' || key === 'Home') return 'up';
+  if (key === 'ArrowDown' || key === 'PageDown' || key === 'End') return 'down';
+  return null;
+}
+
+/** A touch drag's intent, from the finger's movement since the last touch event. The finger
+ *  moving DOWN the screen (positive `dy`) drags the content down, i.e. scrolls UP. */
+export function touchIntent(dy: number): ScrollIntent {
+  if (dy > 0) return 'up';
+  if (dy < 0) return 'down';
+  return null;
+}
+
 export interface ScrollMetrics {
   scrollTop: number;
   scrollHeight: number;
@@ -501,8 +596,9 @@ export interface ScrollMetrics {
   /** `scrollTop` at the previous scroll event — the direction signal. */
   prevScrollTop: number;
   /**
-   * Whether a real user gesture (wheel, touch, scrollbar drag, arrow/page key) drove this
-   * scroll event, rather than the content changing underneath a parked view.
+   * Whether the user is asking to move the view UP — a wheel/touch/key gesture in that
+   * direction within the gesture window, or a live scrollbar drag (whose direction the
+   * metrics below supply). Deliberately NOT "any gesture": see rule 2.
    */
   userDriven: boolean;
 }
@@ -512,13 +608,23 @@ export interface ScrollMetrics {
  *
  * 1. At (or within {@link BOTTOM_SLACK} of) the bottom → stick. Covers arriving back by any
  *    means: wheel, drag, keyboard, or our own programmatic scroll.
- * 2. A scroll event NO ONE asked for cannot unstick. Position alone can't tell "the user
- *    left" from "the content moved": when a block shrinks under a pinned view (a running
- *    tool card collapsing to its done card, the working indicator unmounting) the browser
- *    CLAMPS `scrollTop` down to the new maximum, and if the next block renders before that
- *    scroll event dispatches, the handler sees a position that is both far from the bottom
- *    and lower than last time — a picture identical to scrolling up. That is what killed
- *    auto-scroll mid-stream and left the Latest pill sitting there (owner report 07-25).
+ * 2. A scroll event the user did not ask to move UP cannot unstick. Position alone can't
+ *    tell "the user left" from "the content moved": when a block shrinks under a pinned view
+ *    (a running tool card collapsing to its done card, the working indicator unmounting) the
+ *    browser CLAMPS `scrollTop` down to the new maximum, and if the next block renders before
+ *    that scroll event dispatches, the handler sees a position that is both far from the
+ *    bottom and lower than last time — a picture identical to scrolling up. That is what
+ *    killed auto-scroll mid-stream and left the Latest pill sitting there (owner report
+ *    07-25).
+ *
+ *    `userDriven` is therefore an UPWARD-intent signal, not a "the user touched something"
+ *    signal. Scroll events fire before ResizeObserver callbacks in the same frame, so the
+ *    handler is guaranteed to see the raced measurement BEFORE the re-pin that would have
+ *    corrected it — and a direction-blind window meant the most ordinary thing a reader does
+ *    (flick DOWN to follow the answer, whose trackpad momentum keeps the window open for the
+ *    rest of the turn) licensed exactly the unstick this rule exists to prevent. The view
+ *    then stranded mid-transcript the moment the turn's cards collapsed (owner report 07-25,
+ *    second pass: "it jumps to the middle when the agent finishes").
  * 3. Only then does direction matter: an UPWARD move unsticks. Content growing under a
  *    pinned view pushes the bottom away without ever moving `scrollTop` backwards, so a
  *    fast stream still can't be mistaken for the user scrolling off.
