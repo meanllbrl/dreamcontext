@@ -1,5 +1,46 @@
 [
   {
+    "date": "2026-07-25",
+    "type": "refactor",
+    "scope": "agent",
+    "description": "ChatPane refactored as a thin orchestrator over the chat/ component tree from waves 1–3. Bypass resolution centralized inside spawn() — kind === 'chat' now always resolves bypass from agentSettings.chatPermissionMode, overriding caller-passed value. Every chat-spawn call site (addSession, addSplitSession, openAgentInChat, dormant resume, runSleepAgent, runBrainResolveAgent, delegateAgent, skill-insert fallback, and new resumeChatSession) inherits it automatically without edits. resumeChatSession added (mirrors resumeChatInTerminal's dispose-then-respawn idiom, staying in 'chat'). Sub-agent card placement: one combined SubAgentCard rendered at earliest spawning tool item position (suppressed via subAgentToolUseIds), trailing-append fallback if no match. Board wiring: small local primaryToolPath mirrors ToolCard's private extraction (frozen file) so ChatPane can swap .excalidraw-classified tool item for BoardPreviewCard; \"Open board\" degrades to file SlideOver text preview (no board-rendering route exists). Image wiring: handleOpenFile routes images to Lightbox, everything else to file SlideOver. Context strip kept (task-link + GoalLivePanel, still-live feature) but stats readout removed (Composer now owns it, avoids duplicate). onOpenTaskPicker no-op documented (no picker mechanism exists; Composer frozen by T6); onOpenAppPage collapses overlay and fires forward-compatible dreamcontext-agent-open-page window event (unconsumed today, ready for future Shell listener). skill/references/integrations.md extended with chat/ tree, sub-agent system:task_* handling, GET /api/agent/file security, chatPermissionMode, Known limitations. Validation: dashboard tsc clean, npm run build clean, tests/unit/chat-protocol.test.ts + chat-entities.test.ts + agent-settings.test.ts 79 tests green.",
+    "breaking": false,
+    "summary": "Chat view integration wiring: bypass centralization + ChatPane orchestrator (uncommitted)",
+    "references": [
+      "file:dashboard/src/components/sleepy/ChatPane.tsx",
+      "file:dashboard/src/components/sleepy/ChatPane.css",
+      "file:dashboard/src/components/sleepy/AgentSurface.tsx",
+      "file:skill/references/integrations.md",
+      "task:agent-chat-view-beta-render-claude-sessions-as-native-app-ui-with-captured-questions"
+    ]
+  },
+  {
+    "date": "2026-07-25",
+    "type": "feat",
+    "scope": "agent",
+    "description": "Agent chat surface gained three capabilities. (1) Slash-command menu: SkillPickerPopover.tsx extracted from AgentComposerBar for reuse by chat composer, with skill cache. (2) Inline images: project-internal images render in-place; external images show an \"open ↗\" button (tooltip shows full path + why not drawable). (3) New POST /api/agent/reveal endpoint (desktop-gated): opens a file path in the OS default viewer on explicit user click. Security posture is narrow by design: image extensions only (png/jpg/jpeg/gif/webp — script/app paths rejected with 400); file must exist and be a regular file (not directory); argv-form spawn with no shell (path never interpreted as command); user-gesture-only (no auto-open). Platform dispatch: macOS open, Linux xdg-open, Windows start. Four rejection paths curl-verified (not_an_image, not_found, missing_path, \"Not a file\"). Also includes settings-write bug fix and terminal line-shadow strip (dashboard/src/lib/lineShadow.ts). Suite: 3748 passed, 1 known recall-eval failure.",
+    "breaking": false,
+    "summary": "Chat slash-command menu, inline images, and desktop-gated image reveal (uncommitted)",
+    "references": [
+      "file:dashboard/src/components/sleepy/SkillPickerPopover.tsx",
+      "file:src/server/routes/agent-chat.ts",
+      "file:dashboard/src/lib/lineShadow.ts",
+      "file:tests/unit/agent-file-read.test.ts"
+    ]
+  },
+  {
+    "date": "2026-07-25",
+    "type": "feat",
+    "scope": "agent",
+    "description": "Wave 4+ of the 12-state chat redesign integrated three reference designs 1:1, verified visually in light + dark. (1) Stream-error card (state 12): full-width banner with outline alert icon, red bold title \"The model stream was interrupted\", reason + \"Your message is safe.\", red-outlined Retry pill. (2) Permission + Bypass + mode menu (state 6): permission card uses new shared CardHeader (icon + title + tool badge + hairline); inline code backticks render as code (no markdown parser); dark terminal block for command; Deny/Allow pills; mode description below. New BypassNoticeCard (amber) for guarded commands only (rm -rf, force-push, sudo, pipe-to-shell, publish, chmod 777, dd/mkfs/kill, DROP TABLE; plain git push deliberately excluded to avoid alert fatigue). Mode menu shows identity colors (purple Auto / amber Bypass) with role=menuitemradio aria-checked (color not sole signal). (3) Sub-agent group card (state 9): CardHeader + elapsed timer + name-derived color avatars + type badge + live line + progress bar. Bar uses sweeping animation when no percentage available (never invents a percentage). Shared atoms: ToolBadge, TypeBadge, AgentAvatar, ProgressTrack, AlertIcon, CodeSentence. Shared molecule: CardHeader (used by all three cards). Two rendering bugs fixed: MarkdownPreview document surface drew box-in-box inside assistant cards (flattened); assistant card now hugs content (one-line reply not empty slab). Validation: tsc clean both roots, npm run build clean, npm test 4121 passing (one documented recall-eval gold-drift failure).",
+    "breaking": false,
+    "summary": "Chat view wave 4+ (uncommitted): 12-state native cards with atomic design layer — stream error, permission/bypass/mode menu, sub-agent group",
+    "references": [
+      "file:dashboard/src/components/sleepy/chat/",
+      "task:agent-chat-redesign-12-state-native-chat-ui-per-corrected-design-brief"
+    ]
+  },
+  {
     "date": "2026-07-24",
     "type": "change",
     "scope": "agent",
