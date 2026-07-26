@@ -1,6 +1,20 @@
 [
   {
     "date": "2026-07-26",
+    "type": "chore",
+    "scope": "release",
+    "description": "npm registry confirms 0.21.0 is latest (was stuck at 0.20.1 for four consecutive sleep cycles while the cut sat built-but-unpublished). Tag v0.21.0 pushed; desktop-release CI builds and ad-hoc-signs the .app into a GitHub Release. Shipped in this cut: the dream-view answer surface (inline charts, comparison pageviews, a pinned always-on-top checklist window under its own narrow Tauri capability, scoped per vault and conversation), Chat promoted from opt-in beta to the standard agent screen with the terminal demoted to Terminal (legacy), a message queue with editable rows plus arrow-key prompt history, ⌃C, boards genuinely full screen from every entry point, announcements as screenshot landing pages with video, and the SKILL.md insights-before-external-fetch read path. Automations was deliberately held OUT of this release (owner decision) and stays on branch worktree-automations. Also fixed en route: CI installed only root deps, so every test importing dashboard/src died at collect time with ERR_MODULE_NOT_FOUND while dev boxes stayed green.",
+    "breaking": false,
+    "summary": "v0.21.0 published to npm — Chat becomes the standard agent screen, with answers that are objects rather than prose",
+    "references": [
+      "commit:920dc04",
+      "commit:861a183",
+      "commit:a0f251c",
+      "url:https://www.npmjs.com/package/dreamcontext"
+    ]
+  },
+  {
+    "date": "2026-07-26",
     "type": "test",
     "scope": "e2e",
     "description": "Add five new e2e screenshot-capture scripts: reel-shots-app.mjs, reel-shots-chat-live.mjs, reel-shots-chat.mjs, reel-shots-roadmap.mjs, reel-shots-tutorial.mjs. These scripts drive the dashboard in headless Playwright to capture high-fidelity screenshots for announcements/video production. Work uncommitted.",
