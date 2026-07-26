@@ -7,6 +7,11 @@ dashboard/dist/
 .DS_Store
 .claude/
 
+# Marketing video production (Remotion project, renders, VO audio, captured app
+# footage). Heavy binary output, and the production line it inherits is another
+# project's private material. This repo is public — it never belongs here.
+marketing/
+
 # Obsidian vault config — editor-local (created by the excalidraw skill)
 .obsidian/
 
