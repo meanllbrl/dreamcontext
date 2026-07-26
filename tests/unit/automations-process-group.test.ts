@@ -102,7 +102,16 @@ describe.skipIf(process.platform === 'win32')('process-group containment (real p
     // Confirm the grandchild is alive BEFORE the kill (sanity check the fixture).
     expect(() => process.kill(grandchildPid as number, 0)).not.toThrow();
 
-    const result = killRunGroup(contextRoot, manifest.slug, { killImpl: process.kill });
+    // `nowMs` MUST ride the same fake clock the sidecar was written with. The
+    // run above stamps `startedAt` from `now: () => NOW`, so leaving `nowMs` to
+    // default to the real `Date.now()` makes the age check see a sidecar that is
+    // however long it has been since NOW — and once that exceeds
+    // SIDECAR_PID_REUSE_WINDOW_MS (1h) guard 4 refuses the kill and this test
+    // fails for a reason that has nothing to do with process-group containment.
+    const result = killRunGroup(contextRoot, manifest.slug, {
+      killImpl: process.kill,
+      nowMs: NOW.getTime(),
+    });
     expect(result.killed).toBe(true);
 
     // Give the OS a brief moment to actually reap the signalled processes.
