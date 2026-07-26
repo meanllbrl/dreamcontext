@@ -1,4 +1,4 @@
-import { useEffect, useState, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { agentFileUrl } from '../../../api/client';
 
 /**
@@ -947,20 +947,20 @@ export function splitWindow(historyLen: number, itemsLen: number, firstShown: nu
 // reference into the picture or the player itself, a path into a chip you can click.
 //
 // They run after EVERY render, deliberately, and that is not the same as running once. The
-// markdown subtree is written with `dangerouslySetInnerHTML`, which React re-writes from
-// scratch whenever it commits an update to that element — every child, and with it every
-// decoration these hooks added, is thrown away and replaced by the raw markup again. Keying
-// them to the message's own text (which is what they used to do) meant a re-render driven by
-// ANYTHING ELSE — another message streaming, a slide-over opening, the working indicator
-// ticking — silently reverted a whole answer to raw markdown with no effect left to notice.
+// markdown subtree is not React's to reconcile — `MarkdownPreview` writes it to the DOM
+// itself — so any markup it rewrites comes back undecorated, with no dependency change to
+// notice it happened. Keying these hooks to the message's own text (which is what they used
+// to do) meant a re-render driven by ANYTHING ELSE — another message streaming, a slide-over
+// opening, the working indicator ticking — silently reverted a whole answer to raw markdown.
 // A `<video>` became a bare `<a href="…mp4">` again, and following one of those in a window
 // with no back button IS the app closing (owner report 07-25).
 //
-// `MarkdownPreview` no longer rewrites on an unchanged render (it passes a stable
-// `dangerouslySetInnerHTML` object), so in practice these passes are cheap no-ops: every one
-// of them is guarded by a marker attribute, so a subtree that is already decorated costs
-// two `querySelectorAll` calls and nothing else. Running every time is what makes the
-// decoration self-healing rather than a one-shot that can be lost without a trace.
+// What a rewrite costs is now bounded: `MarkdownPreview` re-renders only the markdown BLOCKS
+// that changed (lib/markdownBlocks.ts), so a streamed token reaches the paragraph being typed
+// and nothing above it. These passes stay cheap either way — every one is guarded by a marker
+// attribute, so an already-decorated subtree costs two `querySelectorAll` calls and nothing
+// else. Running every time is what makes the decoration self-healing rather than a one-shot
+// that can be lost without a trace.
 
 // ─── Copyable code blocks (state 2 — fenced-code Copy button + language bar) ──────
 
@@ -1076,6 +1076,9 @@ export function inlineMediaKind(path: string): 'image' | 'video' | 'audio' | nul
   return (clean.includes('.') && MEDIA_KIND_BY_EXT[ext]) || null;
 }
 
+/** How many media elements ONE message keeps alive for re-use (see {@link useInlineMedia}). */
+const MEDIA_KEEP_MAX = 8;
+
 /** A path we should try to render ourselves, rather than leave as an ordinary link. */
 function isLocalRef(href: string): boolean {
   return !!href && !/^(https?:|data:|blob:|mailto:|#)/i.test(href) && !href.startsWith('/api/');
@@ -1124,7 +1127,25 @@ export function useInlineMedia(
     onGrant?: (path: string) => Promise<boolean>;
   } = {},
 ): void {
-  useEffect(() => {
+  // The elements this pass has built, by path. A media element that is merely DETACHED still
+  // holds its decoded frames and its buffer, so putting the same one back is free where
+  // building a new one costs a fresh request for the whole clip. That is the difference the
+  // owner saw: a message still streaming under a clip re-created the `<video>` per frame
+  // (report 07-26). Block-level markdown rendering means most re-renders no longer reach a
+  // finished clip at all; this covers the ones that do — a reference in the paragraph still
+  // being typed, or a block whose markdown genuinely changed.
+  const cache = useRef<Map<string, HTMLElement>>(new Map());
+  // Listeners on a REUSED element were bound on an earlier render, so they must not close over
+  // that render's handlers.
+  const live = useRef(handlers);
+  live.current = handlers;
+
+  // A LAYOUT effect: the reinsert has to happen in the same task as the removal. A media
+  // element removed from the document is paused once the browser reaches a stable state, so
+  // waiting until after paint (a passive effect) would stop a playing clip every time the
+  // block around it was re-rendered. It also means no frame is ever painted showing the raw
+  // `<a href="…mp4">` this pass replaces.
+  useLayoutEffect(() => {
     const root = ref.current;
     if (!root) return;
 
@@ -1152,7 +1173,7 @@ export function useInlineMedia(
         allow.addEventListener('click', () => {
           allow.disabled = true;
           allow.textContent = 'Allowing…';
-          void (handlers.onGrant?.(path) ?? Promise.resolve(false)).then((ok) => {
+          void (live.current.onGrant?.(path) ?? Promise.resolve(false)).then((ok) => {
             // Granted → swap the card back for the real thing, which now loads.
             if (ok) card.replaceWith(buildMedia(path));
             else { allow.disabled = false; allow.textContent = 'Allow access'; }
@@ -1172,6 +1193,12 @@ export function useInlineMedia(
 
     /** The element a path deserves, wired to fall back to the card if it can't load. */
     const buildMedia = (path: string): HTMLElement => {
+      // Already built one for this path and it is off the page? Put THAT one back — same
+      // resource, same buffer, same playhead, no request. A still-connected one means the
+      // answer references the file twice, which needs a second element of its own.
+      const kept = cache.current.get(path);
+      if (kept && !kept.isConnected) return kept;
+
       const kind = inlineMediaKind(path);
       const el = kind === 'video' ? document.createElement('video')
         : kind === 'audio' ? document.createElement('audio')
@@ -1188,9 +1215,12 @@ export function useInlineMedia(
         // landing mid-stream doesn't drop the frame the token was being painted in.
         el.loading = 'lazy';
         el.decoding = 'async';
-        el.addEventListener('click', () => handlers.onOpen?.(path));
+        el.addEventListener('click', () => live.current.onOpen?.(path));
       }
       el.addEventListener('error', () => {
+        // Never hand a failed element back out of the cache: its error listener is `once`, so
+        // a reused one would sit there broken instead of offering Allow/Open again.
+        if (cache.current.get(path) === el) cache.current.delete(path);
         // `<img>`/`<video>` only ever report "it failed" — ask the endpoint WHY, so a path
         // that merely needs consent offers Allow rather than a bare Open.
         // A ONE-BYTE ranged GET, not HEAD: the router serves GET only, and a HEAD would come
@@ -1199,13 +1229,18 @@ export function useInlineMedia(
         void fetch(rawUrl(path), { headers: { Range: 'bytes=0-0' } })
           .then((r): 'grant' | 'open' => (r.status === 403 ? 'grant' : 'open'))
           .catch((): 'grant' | 'open' => 'open')
-          // The probe is async, and a still-streaming message re-renders in the meantime —
-          // `dangerouslySetInnerHTML` throws the whole subtree away on every token. Swapping
-          // a DETACHED element does nothing except drop the fallback on the floor, so only
-          // replace one that is still on the page; the re-render's own pass rebuilds it.
+          // The probe is async, and the block around a still-streaming reference re-renders in
+          // the meantime. Swapping a DETACHED element does nothing except drop the fallback on
+          // the floor, so only replace one that is still on the page; the next pass rebuilds it.
           .then((reason) => { if (el.isConnected) el.replaceWith(buildFallback(path, reason)); });
       }, { once: true });
       el.src = rawUrl(path);
+      // Cap what a single message can keep alive: a detached clip still holds its buffer, and
+      // an answer with two dozen screenshots should not pin all of them off-screen. Oldest out.
+      if (cache.current.size >= MEDIA_KEEP_MAX) {
+        cache.current.delete(cache.current.keys().next().value as string);
+      }
+      cache.current.set(path, el);
       return el;
     };
 
@@ -1238,7 +1273,7 @@ export function useInlineMedia(
       a.title = `Open ${href}`;
       a.addEventListener('click', (e) => {
         e.preventDefault();
-        handlers.onOpen?.(href);
+        live.current.onOpen?.(href);
       });
     });
   }); // every render — see this section's header
