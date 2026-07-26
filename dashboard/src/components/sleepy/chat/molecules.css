@@ -264,7 +264,20 @@
 
 /* ── Message chrome ──────────────────────────────────────────────────────────────── */
 
+/* Floats OUT of flow, hanging off its message's bottom-left (bottom-RIGHT for a user
+   bubble, which is right-aligned). As an in-flow child it reserved its own ~34px of
+   height under EVERY message even while invisible, which is what put a dead band
+   between consecutive bubbles for a bar you only ever see on one of them. Now the
+   messages sit at the transcript's own gap and the bar, when shown, rides over the
+   entry below it — `z-index` because a later sibling row would otherwise paint on top
+   (both rows are `position: relative` with `z-index: auto`, so they paint in DOM
+   order). It stays laid out while hidden, so the scroller's height never moves on
+   hover — only its paint changes. */
 .chat-m-hoverbar {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 2;
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
@@ -278,6 +291,8 @@
   transition: opacity var(--transition-fast), transform var(--transition-fast);
   pointer-events: none;
 }
+/* The user's bubble is right-aligned, so its bar hangs from the right edge. */
+.chat-msg-user-row .chat-m-hoverbar { left: auto; right: 0; }
 .chat-msg-user-row:hover .chat-m-hoverbar,
 .chat-msg-assistant-row:hover .chat-m-hoverbar,
 .chat-m-hoverbar:focus-within {
