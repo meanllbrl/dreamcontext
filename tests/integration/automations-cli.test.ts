@@ -84,29 +84,34 @@ describe('automations CLI (integration)', () => {
   // subprocesses that would use the real $HOME by default.
   const realAutomationsJson = join(homedir(), '.dreamcontext', 'automations.json');
   const realHeartbeatJson = join(homedir(), '.dreamcontext', 'automations-tick.json');
-  let realAutomationsJsonExisted: boolean;
-  let realHeartbeatJsonExisted: boolean;
+  /** null ⇒ absent before this suite ran. Content, not just existence: the
+   *  guarantee this block claims is BYTE-FOR-BYTE, so it has to compare bytes. */
+  let realAutomationsJsonBefore: string | null;
+  let realHeartbeatJsonBefore: string | null;
+
+  const snapshot = (p: string): string | null => (existsSync(p) ? readFileSync(p, 'utf-8') : null);
 
   beforeAll(() => {
-    realAutomationsJsonExisted = existsSync(realAutomationsJson);
-    realHeartbeatJsonExisted = existsSync(realHeartbeatJson);
+    realAutomationsJsonBefore = snapshot(realAutomationsJson);
+    realHeartbeatJsonBefore = snapshot(realHeartbeatJson);
   });
 
   afterAll(() => {
-    // Prove non-interference (works even if either file pre-existed for an
-    // unrelated reason) — this is the actual guarantee that matters, and it
-    // holds regardless of ambient real-machine state.
-    expect(existsSync(realAutomationsJson)).toBe(realAutomationsJsonExisted);
-    expect(existsSync(realHeartbeatJson)).toBe(realHeartbeatJsonExisted);
-    // The approvals registry additionally must never exist at all — this is
-    // the specific "ships fully disabled" property under test (a wave-4 gate
-    // failure was exactly a test silently creating this file on the real
-    // machine). NOT asserted for the heartbeat file: unlike the registry, its
-    // existence is a legitimate, EXPECTED artifact of any real `tick` ever
-    // having run on this machine at all (by anyone, including a manual
-    // real-$HOME repro run outside this suite) — it is not evidence of this
-    // suite's isolation failing.
-    expect(realAutomationsJsonExisted).toBe(false);
+    // Prove non-interference by CONTENT, which is what actually matters and what
+    // the comment above has always claimed: a suite that leaks into the real
+    // machine either creates these files or edits them, and both show up here.
+    //
+    // An earlier version asserted `automations.json` must not exist AT ALL on
+    // this machine, reading that as the "ships fully disabled" property. It is
+    // not: `automations create` auto-approves on the local machine BY DESIGN, so
+    // the registry legitimately exists for anyone who has ever created a single
+    // automation — the moment the feature is actually used, that assertion fails
+    // forever, for a reason that has nothing to do with this suite's isolation.
+    // The comment already reasoned exactly this way about the heartbeat file
+    // without applying it to the registry. Byte comparison is strictly stronger
+    // than the existence check it replaces AND it is independent of ambient state.
+    expect(snapshot(realAutomationsJson)).toBe(realAutomationsJsonBefore);
+    expect(snapshot(realHeartbeatJson)).toBe(realHeartbeatJsonBefore);
   });
 
   let home: string;
