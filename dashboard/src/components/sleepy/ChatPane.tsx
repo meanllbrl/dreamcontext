@@ -24,6 +24,7 @@ import {
   EmptyState, StreamErrorBanner, ReconnectingChip, SessionEndedBanner, SignInBanner, WorkingIndicator,
 } from './chat/Banners';
 import { Composer } from './chat/Composer';
+import { shouldInterruptChat } from './chat/interruptKey';
 import './chat/cards.css';
 import './chat/overlays.css';
 import type {
@@ -298,6 +299,7 @@ export function ChatPane({
   // report 07-25). The auto-scroll below therefore keys on this session's CONVERSATION MODEL
   // identity: `conv` is a fresh object on every event THIS session applied, and the same
   // object for every render caused by anything else.
+  const paneRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const stickRef = useRef(true);
@@ -642,6 +644,34 @@ export function ChatPane({
     return () => session.setTranscriptRepin(null);
   }, [session, scrollToBottom, syncRail]);
 
+  // ── ⌃C stops the turn — the terminal renderer's reflex, on this surface too ─────────
+  // The rule itself (chord, "a live selection is a copy", "an idle session keeps ⌃C") lives
+  // in chat/interruptKey.ts; this is only where it is bound. Two deliberate choices:
+  //
+  //  • On the PANE ROOT, not `window`. Two chat panes can be on screen at once (a split), and
+  //    a window listener in each would stop BOTH turns from one keypress. Listening on the
+  //    root scopes the chord to the pane that actually contains the focused element — which
+  //    is normally the composer textarea, kept focusable all through a turn for exactly this
+  //    class of chord (see Composer's `disabled` note).
+  //  • CAPTURE phase, so the chord is read before any descendant handler can consume it.
+  //
+  // `session.busy` is read at EVENT time rather than captured as a dep: the session object is
+  // mutated in place (chatSession assigns `session.busy` and notifies), so the closure always
+  // sees the live value and this listener never needs to be torn down and re-bound mid-turn.
+  useEffect(() => {
+    const root = paneRef.current;
+    if (!root) return;
+    const onKey = (e: KeyboardEvent) => {
+      const hasSelection = !(window.getSelection()?.isCollapsed ?? true);
+      if (!shouldInterruptChat(e, { busy: session.busy, hasSelection })) return;
+      e.preventDefault();
+      e.stopPropagation();
+      session.interrupt();
+    };
+    root.addEventListener('keydown', onKey, true);
+    return () => root.removeEventListener('keydown', onKey, true);
+  }, [session]);
+
   // ── State 3/4: a clicked file reference either opens the Lightbox (an image) or the
   //    file SlideOver (everything else, including a board — no rasterizer exists, so a
   //    board's "Open board ↗" degrades to the same numbered text preview; see chatEntities'
@@ -805,7 +835,7 @@ export function ChatPane({
   };
 
   return (
-    <div className="chat-pane" data-status={session.status}>
+    <div className="chat-pane" ref={paneRef} data-status={session.status}>
       <ChatLiveRail session={session} taskSlug={taskSlug} />
       {session.status === 'connecting' && <ReconnectingChip />}
       <div className="chat-transcript">

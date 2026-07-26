@@ -611,7 +611,7 @@ export function Composer({
         {/* A round icon button, sized to sit level with the model/effort text beside it —
             the label would only repeat what ⏎ already does. */}
         {busy ? (
-          <button type="button" className="chat-cmp-btn chat-cmp-stop" title="Interrupt the in-flight turn" aria-label="Stop" onClick={() => session.interrupt()}>
+          <button type="button" className="chat-cmp-btn chat-cmp-stop" title="Interrupt the in-flight turn (⌃C)" aria-label="Stop" onClick={() => session.interrupt()}>
             <span aria-hidden>■</span>
           </button>
         ) : (
