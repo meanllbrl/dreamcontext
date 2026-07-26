@@ -1,6 +1,11 @@
-/* The article view — a meta strip + summary above a board stage that takes
-   every remaining pixel of the overlay. */
+/* The article view — a meta strip above a story that SCROLLS like a page.
+   `flex:1 / min-height:0` is stated here rather than inherited from the
+   overlay's `> :only-child` rule, because the reader stops being an only child
+   the moment a shot is zoomed (the lightbox mounts as a sibling). */
 .announcement-reader {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
@@ -33,33 +38,78 @@
   color: var(--color-text-tertiary);
 }
 
-.announcement-reader-summary {
-  margin: 0;
-  max-width: 880px;
-  font-size: var(--font-size-sm);
-  line-height: 1.6;
-  color: var(--color-text-secondary);
-}
-
-.announcement-reader-board {
-  flex: 1;
-  min-height: 0;
-}
-
-.announcement-reader-board .excalidraw-preview {
-  min-height: 0;
-}
-
 .announcement-reader-loading {
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 100%;
+  min-height: 240px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   background: var(--color-bg-secondary);
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
+}
+
+/* Story missing or malformed — the manifest copy still has to read as an
+   announcement rather than an empty overlay. */
+.announcement-reader-fallback {
+  max-width: 62ch;
+  margin: var(--space-6) auto 0;
+  text-align: center;
+}
+
+.announcement-reader-fallback h1 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-bold);
+  line-height: 1.2;
+}
+
+.announcement-reader-fallback p {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  line-height: 1.65;
+  color: var(--color-text-secondary);
+}
+
+/* Lightbox — a clicked screenshot at full viewport size. Fixed (not absolute)
+   so it covers the overlay header too; the whole backdrop is the close target. */
+.announcement-reader-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6);
+  background: rgba(0, 0, 0, 0.82);
+  cursor: zoom-out;
+}
+
+.announcement-reader-lightbox img {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: var(--radius-md);
+  box-shadow: 0 24px 60px -20px rgba(0, 0, 0, 0.8);
+}
+
+.announcement-reader-lightbox-close {
+  position: absolute;
+  top: var(--space-4);
+  right: var(--space-4);
+  width: 32px;
+  height: 32px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: var(--radius-full);
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.announcement-reader-lightbox-close:hover {
+  background: rgba(0, 0, 0, 0.75);
 }
 
 /* Newer / Older pager in the overlay header. */

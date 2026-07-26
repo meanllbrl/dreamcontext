@@ -1,0 +1,45 @@
+{
+  "hero": {
+    "eyebrow": "v0.18.0  ·  16 July 2026",
+    "headline": "A living dock, a smarter sleep",
+    "sub": "A batch of quality-of-life drops across the dashboard and the launcher — the ones you feel every day rather than the ones that need explaining.",
+    "shot": {
+      "src": "shots/dashboard-highlights/sleep.png",
+      "alt": "The Sleep Cycle page showing an Alert state with debt, the last consolidation summary, work sessions and starred highlights — with two live agent chips docked in the corner",
+      "caption": "Sleep Cycle after a consolidation — and, bottom right, the dock keeping two sessions alive."
+    }
+  },
+  "blocks": [
+    {
+      "kind": "points",
+      "items": [
+        {
+          "title": "Minimized sessions live in a dock",
+          "text": "Send an agent to the corner and it keeps running, keeps reporting — the chip shows its live state, including a goal run's progress. Click it to bring the pane back."
+        },
+        {
+          "title": "Sleep stopped duplicating knowledge",
+          "text": "Consolidation reconciles against what already exists instead of appending a second file on the same topic every cycle."
+        },
+        {
+          "title": "Delegate straight from the board",
+          "text": "Hand a task to Claude from the card itself — no copying a slug into a terminal to get started."
+        },
+        {
+          "title": "Clone from GitHub while onboarding",
+          "text": "A new project can be pulled from a repo inside the setup wizard, instead of being a thing you go and do first."
+        }
+      ]
+    },
+    {
+      "kind": "split",
+      "title": "The board it all hangs off",
+      "body": "Tasks, grouped by status and version, with the filters, views and sync state on one row. Everything above lands here: delegation starts from a card, sleep keeps the versions honest, and a docked agent keeps working while you keep planning.",
+      "shot": {
+        "src": "shots/dashboard-highlights/board.png",
+        "alt": "The task board in Kanban view with To Do, In Progress, In Review and Completed columns of task cards carrying version and tag chips"
+      },
+      "side": "right"
+    }
+  ]
+}

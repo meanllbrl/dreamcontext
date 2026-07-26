@@ -67,7 +67,7 @@
   border: 1px solid var(--color-border);
   border-radius: var(--radius-xl);
   box-shadow: var(--shadow-sm);
-  --board-preview-h: clamp(360px, 48vh, 520px);
+  --story-teaser-h: clamp(320px, 44vh, 480px);
 }
 
 .announcements-hero-title {

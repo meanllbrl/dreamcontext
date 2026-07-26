@@ -2,6 +2,22 @@
   {
     "date": "2026-07-26",
     "type": "feat",
+    "scope": "dashboard",
+    "description": "Announcements stopped being Excalidraw boards and became screenshot-driven landing pages. A board could only ever draw a picture OF the product and had to be panned and zoomed to read; a story is a JSON document (hero + blocks + closer, block kinds split/shot/points/stats/terminal/note) rendered as a scrolling page of REAL app screenshots on a 920px measure, with click-to-zoom. The parser drops malformed blocks instead of throwing (a typo in one card can't blank an announcement), requires alt text on every shot, and confines image paths to the /announcements/ asset root — absolute paths, :// URLs and .. traversal are all rejected. The manifest's board field became story; the boards and dashboard/scripts/announcements/generate.cjs are deleted; AnnouncementBoardPreview became AnnouncementStoryTeaser (a plain <img>, so no canvas to mount and no wheel-trap to defend). All five prior announcements were rewritten with screenshots captured by driving the real dashboard under Playwright, including two live Claude turns for the chat scenes, and chat-is-the-default (0.22.0) was added.",
+    "breaking": false,
+    "summary": "Announcements are screenshot landing pages, not Excalidraw boards — all five rewritten",
+    "references": [
+      "file:dashboard/src/lib/announcementStory.ts",
+      "file:dashboard/src/components/announcements/AnnouncementStory.tsx",
+      "file:dashboard/public/announcements.json",
+      "file:e2e/announce-shots.mjs",
+      "file:tests/unit/announcement-story.test.ts",
+      "task:announcements-become-screenshot-driven-landing-pages-instead-of-excalidraw-boards"
+    ]
+  },
+  {
+    "date": "2026-07-26",
+    "type": "feat",
     "scope": "agent",
     "description": "The Chat screen becomes the default surface for every Claude session and the embedded terminal is relabelled Terminal (legacy). The hard part was the EXISTING user: every agent-ui.json written before the flip carries chatView:false from the old opt-in default, so honouring an explicit false blindly would have left everyone who never found the beta toggle on the TUI. Both coercers (dashboard lib/agentSettings.ts and the server's private mirror in routes/launcher.ts) now honour chatView:false only on a blob stamped screenMigrated:true, and stamp that marker on every coerce — so the move happens exactly once and a deliberate switch back to Terminal sticks forever after. Proven end to end against a scratch HOME: a pre-flip blob GETs chatView:true; a POST with screenMigrated:true and chatView:false round-trips as terminal. Every Claude entry point already routed through claudeKind, so the flip covers ＋New, ⌘T/⌘D, restored tabs and Sleep/brain/delegate spawns without touching them. BETA labels dropped from the chat UI; Settings lists Chat (default) first, Terminal (legacy) second.",
     "breaking": false,

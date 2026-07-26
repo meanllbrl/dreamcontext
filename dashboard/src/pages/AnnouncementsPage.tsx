@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useI18n } from '../context/I18nContext';
 import { useAnnouncementInbox } from '../hooks/useAnnouncements';
-import { AnnouncementBoardPreview } from '../components/announcements/AnnouncementBoardPreview';
+import { AnnouncementStoryTeaser } from '../components/announcements/AnnouncementStoryTeaser';
 import { AnnouncementReader } from '../components/announcements/AnnouncementReader';
 import type { Announcement } from '../lib/announcements';
 import './AnnouncementsPage.css';
@@ -12,11 +12,10 @@ interface Props {
 }
 
 /**
- * News-index model: the newest announcement is a hero card with an inert board
- * teaser; every older one is a compact headline row. No live canvas ever sits
- * in the scroll path (the teaser is pointer-events: none), so the page scrolls
- * like a page. Clicking any story opens the full-screen AnnouncementReader,
- * where the landing-page board gets the whole viewport and full interactivity.
+ * News-index model: the newest announcement is a hero card showing its cover
+ * screenshot; every older one is a compact headline row. Clicking any story
+ * opens the full-screen AnnouncementReader, where the landing page — hero,
+ * screenshots, proof — gets the whole viewport.
  */
 export function AnnouncementsPage({ focus }: Props): React.ReactElement {
   const { t } = useI18n();
@@ -75,8 +74,8 @@ export function AnnouncementsPage({ focus }: Props): React.ReactElement {
               {hero.title}
             </button>
             <p className="announcements-hero-summary">{hero.summary}</p>
-            <AnnouncementBoardPreview
-              board={hero.board}
+            <AnnouncementStoryTeaser
+              story={hero.story}
               label={hero.title}
               onOpen={() => setOpenId(hero.id)}
             />

@@ -1,0 +1,61 @@
+{
+  "hero": {
+    "eyebrow": "v0.21.0  ·  25 July 2026",
+    "headline": "Your agent, as an app",
+    "sub": "The same Claude Code engine, rendered as the app instead of as scrollback. What it makes, it shows you — right where you're already looking.",
+    "shot": {
+      "src": "shots/native-agent-chat/inline-media.png",
+      "alt": "A chat turn showing git log output in a code block and an image the agent embedded inline with a caption underneath",
+      "caption": "Command output as a code block, and the picture the agent referenced rendered in place."
+    }
+  },
+  "blocks": [
+    {
+      "kind": "split",
+      "title": "Questions become buttons",
+      "body": "When Claude asks something — a choice, a permission, a survey — it stops being a line of text you have to answer by typing the right thing. It becomes a card with the options on it, and your click is the answer.",
+      "shot": {
+        "src": "shots/native-agent-chat/question-card.png",
+        "alt": "A native survey card: the question, four described options with radio buttons, a selected count and a Submit button",
+        "frame": "plain"
+      },
+      "side": "right"
+    },
+    {
+      "kind": "split",
+      "title": "Tools show their work",
+      "body": "Every tool call is its own card with a one-line description of what it's doing and a live status. Expand one to see the detail; leave them collapsed and the conversation stays a conversation instead of a wall of output.",
+      "shot": {
+        "src": "shots/native-agent-chat/tools.png",
+        "alt": "A chat turn with a Bash tool card labelled with what the command does and a running status"
+      },
+      "side": "left"
+    },
+    {
+      "kind": "points",
+      "title": "Nothing was given up to get here",
+      "items": [
+        {
+          "title": "The same engine",
+          "text": "Skills, sub-agents, slash commands, permission modes, the SessionStart brain preload — a chat session is Claude Code, headless, rendered natively."
+        },
+        {
+          "title": "Both ways, one conversation",
+          "text": "Open a terminal tab in Chat, or a chat in the terminal. They share the transcript and the conversation id, so you switch surface without losing the thread."
+        },
+        {
+          "title": "Files stay clickable",
+          "text": "Paths the agent mentions open a preview in place. Boards render on a live canvas, video and audio play inline — no hop out to find your own output."
+        }
+      ]
+    },
+    {
+      "kind": "note",
+      "text": "A chat-spawned Claude and a terminal-spawned Claude are the same binary — so the app briefs the agent about the surface it landed in. That's why it embeds a board instead of telling you where it saved one."
+    }
+  ],
+  "closer": {
+    "title": "Where it lives",
+    "body": "The agent overlay — the corner launcher, or your open/close hotkey. As of 0.22 it is the default screen for every Claude session."
+  }
+}

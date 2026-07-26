@@ -1,0 +1,326 @@
+/* An announcement story — a landing page rendered inside the app, in the app's
+   own tokens. One measure, one rhythm: every block is centred on a 920px column
+   and separated by a single vertical step, so the page reads as one document
+   however many blocks an author stacks. */
+
+.ann-story {
+  --ann-measure: 920px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8, 40px);
+  max-width: var(--ann-measure);
+  margin: 0 auto;
+  padding: var(--space-4) 0 var(--space-8);
+  color: var(--color-text-primary);
+}
+
+/* ── Hero ─────────────────────────────────────────────────────────────────── */
+
+.ann-story-hero {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  text-align: center;
+  align-items: center;
+}
+
+.ann-story-eyebrow {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: var(--font-weight-bold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-accent);
+}
+
+.ann-story-headline {
+  margin: 0;
+  max-width: 18ch;
+  font-size: clamp(28px, 3.4vw, 46px);
+  font-weight: var(--font-weight-bold);
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+
+.ann-story-sub {
+  margin: 0;
+  max-width: 62ch;
+  font-size: clamp(15px, 1.3vw, 18px);
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+}
+
+/* The hero shot gets more air above it than the copy it follows. */
+.ann-story-hero .ann-story-shot,
+.ann-story-hero .ann-story-shot-btn {
+  margin-top: var(--space-4);
+  width: 100%;
+}
+
+/* ── Shots ────────────────────────────────────────────────────────────────── */
+
+.ann-story-shot-btn {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: zoom-in;
+  text-align: inherit;
+  font: inherit;
+  color: inherit;
+}
+
+.ann-story-shot {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  min-width: 0;
+}
+
+/* Window chrome: the frame is what makes a cropped screenshot still read as
+   "this is the app", without shipping a fake browser bezel. */
+.ann-story-shot-frame {
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg, 12px);
+  background: var(--color-bg-secondary);
+  box-shadow: 0 18px 40px -24px rgba(0, 0, 0, 0.55);
+}
+
+.ann-story-shot-btn:hover .ann-story-shot-frame {
+  border-color: var(--color-accent);
+}
+
+.ann-story-shot-chrome {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg-tertiary);
+}
+
+.ann-story-shot-chrome span {
+  width: 9px;
+  height: 9px;
+  border-radius: var(--radius-full);
+  background: var(--color-border-strong, var(--color-border));
+}
+
+.ann-story-shot-img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.ann-story-shot.plain .ann-story-shot-frame {
+  background: transparent;
+}
+
+.ann-story-shot-caption {
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+  color: var(--color-text-tertiary);
+  text-align: center;
+}
+
+/* ── Block copy ───────────────────────────────────────────────────────────── */
+
+.ann-story-block-title {
+  margin: 0 0 var(--space-2);
+  font-size: clamp(19px, 1.8vw, 24px);
+  font-weight: var(--font-weight-bold);
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+}
+
+.ann-story-block-body {
+  margin: 0;
+  max-width: 62ch;
+  font-size: var(--font-size-sm);
+  line-height: 1.65;
+  color: var(--color-text-secondary);
+}
+
+/* ── Split ────────────────────────────────────────────────────────────────── */
+
+.ann-story-split {
+  display: grid;
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+  align-items: center;
+  gap: var(--space-6, 28px);
+}
+
+.ann-story-split.shot-left {
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+}
+
+/* The shot is the second child in the DOM in both directions (copy always comes
+   first for a screen reader); `shot-left` only moves it visually. */
+.ann-story-split.shot-left > .ann-story-shot,
+.ann-story-split.shot-left > .ann-story-shot-btn {
+  order: -1;
+}
+
+.ann-story-split-copy {
+  min-width: 0;
+}
+
+/* ── Full-width shot block ────────────────────────────────────────────────── */
+
+.ann-story-shotblock {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.ann-story-shotblock .ann-story-block-title {
+  margin-bottom: 0;
+}
+
+/* ── Stats ────────────────────────────────────────────────────────────────── */
+
+.ann-story-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--space-3);
+}
+
+.ann-story-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+}
+
+.ann-story-stat-value {
+  font-size: clamp(24px, 2.6vw, 32px);
+  font-weight: var(--font-weight-bold);
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  color: var(--color-accent);
+}
+
+.ann-story-stat-label {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+}
+
+.ann-story-stat-note {
+  font-size: var(--font-size-xs);
+  line-height: 1.45;
+  color: var(--color-text-tertiary);
+}
+
+/* ── Points ───────────────────────────────────────────────────────────────── */
+
+.ann-story-points-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.ann-story-point {
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-secondary);
+}
+
+.ann-story-point-title {
+  margin: 0 0 6px;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-bold);
+}
+
+.ann-story-point-text {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+}
+
+/* ── Terminal ─────────────────────────────────────────────────────────────── */
+
+.ann-story-terminal-box {
+  display: flex;
+  flex-direction: column;
+  margin: var(--space-3) 0 0;
+  padding: var(--space-4);
+  overflow-x: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-tertiary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.75;
+  color: var(--color-text-secondary);
+  white-space: pre;
+}
+
+.ann-story-terminal-line.input {
+  color: var(--color-text-primary);
+  font-weight: var(--font-weight-medium);
+}
+
+/* ── Note ─────────────────────────────────────────────────────────────────── */
+
+.ann-story-note {
+  padding: var(--space-4) var(--space-5);
+  border-left: 3px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  background: var(--color-accent-soft);
+}
+
+.ann-story-note p {
+  margin: 0;
+  max-width: 68ch;
+  font-size: var(--font-size-sm);
+  line-height: 1.6;
+  color: var(--color-text-primary);
+}
+
+/* ── Closer ───────────────────────────────────────────────────────────────── */
+
+.ann-story-closer {
+  padding-top: var(--space-6, 28px);
+  border-top: 1px solid var(--color-border);
+  text-align: center;
+}
+
+.ann-story-closer-title {
+  margin: 0 0 var(--space-2);
+  font-size: clamp(18px, 1.7vw, 22px);
+  font-weight: var(--font-weight-bold);
+}
+
+.ann-story-closer-body {
+  margin: 0 auto;
+  max-width: 60ch;
+  font-size: var(--font-size-sm);
+  line-height: 1.65;
+  color: var(--color-text-secondary);
+}
+
+/* ── Narrow ───────────────────────────────────────────────────────────────── */
+
+@media (max-width: 780px) {
+  .ann-story-split,
+  .ann-story-split.shot-left {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* Stacked, the shot always follows its copy — the visual swap only makes
+     sense while the two sit side by side. */
+  .ann-story-split.shot-left > .ann-story-shot,
+  .ann-story-split.shot-left > .ann-story-shot-btn {
+    order: 0;
+  }
+}

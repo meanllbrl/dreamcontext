@@ -14,11 +14,14 @@ export interface Announcement {
   title: string;
   summary: string;
   /**
-   * Filename of the git-tracked Excalidraw board that IS this announcement,
-   * served as a static asset from `/announcements/<board>`. Announcements are
-   * landing-page-style boards (rendered by ExcalidrawPreview), not markdown.
+   * Filename of the git-tracked story document that IS this announcement,
+   * served as a static asset from `/announcements/<story>`. A story is a JSON
+   * landing page — screenshots plus short copy, rendered by `AnnouncementStory`
+   * (see `announcementStory.ts`). It replaced the Excalidraw board format in
+   * 0.22: a board had to be panned and zoomed to read and could only ever draw
+   * a picture OF the product; a story shows the product.
    */
-  board: string;
+  story: string;
   version?: string;
   tags?: string[];
 }
@@ -38,13 +41,13 @@ function isAnnouncement(v: unknown): v is Announcement {
     isNonEmptyString(r.date) &&
     isNonEmptyString(r.title) &&
     isNonEmptyString(r.summary) &&
-    isNonEmptyString(r.board)
+    isNonEmptyString(r.story)
   );
 }
 
 /** Drop optional fields that are present but malformed, rather than the whole entry. */
 function sanitizeOptional(a: Announcement): Announcement {
-  const out: Announcement = { id: a.id, date: a.date, title: a.title, summary: a.summary, board: a.board };
+  const out: Announcement = { id: a.id, date: a.date, title: a.title, summary: a.summary, story: a.story };
   if (isNonEmptyString(a.version)) out.version = a.version;
   if (Array.isArray(a.tags) && a.tags.every((t) => typeof t === 'string')) out.tags = a.tags;
   return out;

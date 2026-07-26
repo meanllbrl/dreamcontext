@@ -25,7 +25,7 @@ function makeAnnouncement(overrides: Partial<Announcement> = {}): Announcement {
     date: '2026-01-01',
     title: 'Title',
     summary: 'Summary',
-    board: 'a1.excalidraw.md',
+    story: 'a1.json',
     ...overrides,
   };
 }
@@ -108,7 +108,7 @@ describe('parseAnnouncements', () => {
       { ...makeAnnouncement({ id: 'no-date' }), date: undefined },
       { ...makeAnnouncement({ id: 'no-title' }), title: undefined },
       { ...makeAnnouncement({ id: 'no-summary' }), summary: undefined },
-      { ...makeAnnouncement({ id: 'no-board' }), board: undefined },
+      { ...makeAnnouncement({ id: 'no-story' }), story: undefined },
       { ...makeAnnouncement(), id: '' },
       { ...makeAnnouncement(), id: undefined },
       'not an object',
