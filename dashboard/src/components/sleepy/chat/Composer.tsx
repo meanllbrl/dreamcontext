@@ -188,6 +188,8 @@ export function Composer({
   // command names `system:init` reported for this session (built-ins + this project's
   // `.claude/commands/` + plugin/skill commands). The query is derived from the caret on
   // every keystroke rather than held in state, so it can never disagree with the textarea.
+  // It opens at ANY token boundary, not only the first character — naming a skill on the
+  // third line of a prompt is as common as opening with a command.
   const commands = session.getModel().slashCommands ?? [];
   const [slashQuery, setSlashQuery] = useState<string | null>(null);
   const [slashIndex, setSlashIndex] = useState(0);

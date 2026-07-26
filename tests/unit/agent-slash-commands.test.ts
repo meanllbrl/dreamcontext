@@ -26,13 +26,18 @@ describe('slashQueryAt', () => {
     expect(slashQueryAt('/compact ', 9)).toBeNull();
   });
 
-  it('a slash mid-sentence is just a slash — a command is the WHOLE message', () => {
-    expect(slashQueryAt('see src/lib', 11)).toBeNull();
-    expect(slashQueryAt('and/or', 6)).toBeNull();
-    expect(slashQueryAt('hi\n/compact', 11)).toBeNull();
+  it('opens at ANY token boundary, not just index 0 — mid-sentence and on a later line', () => {
+    expect(slashQueryAt('also run /ver', 13)).toBe('ver');
+    expect(slashQueryAt('hi\n/compact', 11)).toBe('compact');
+    expect(slashQueryAt('a /', 3)).toBe('');
   });
 
-  it('follows the CARET, not the end of the text — clicking back into a leading token reopens it', () => {
+  it('a slash GLUED to the previous character is a path or a conjunction, never a command', () => {
+    expect(slashQueryAt('see src/lib', 11)).toBeNull();
+    expect(slashQueryAt('and/or', 6)).toBeNull();
+  });
+
+  it('follows the CARET, not the end of the text — clicking back into a token reopens it', () => {
     expect(slashQueryAt('/compact', 3)).toBe('co');
     // Caret parked after a space that follows the token → closed, even though text remains.
     expect(slashQueryAt('/compact extra', 9)).toBeNull();
@@ -84,6 +89,17 @@ describe('applySlashCommand', () => {
 
   it('completes from a bare slash', () => {
     expect(applySlashCommand('/', 1, 'clear')).toEqual({ text: '/clear ', caret: 7 });
+  });
+
+  it('rewrites ONLY the token — text typed before a mid-sentence pick survives', () => {
+    expect(applySlashCommand('also run /ver', 13, 'verify'))
+      .toEqual({ text: 'also run /verify ', caret: 17 });
+    expect(applySlashCommand('line one\n/comp', 14, 'compact'))
+      .toEqual({ text: 'line one\n/compact ', caret: 18 });
+  });
+
+  it('inserts at the caret when there is no token there, instead of swallowing the line', () => {
+    expect(applySlashCommand('hello ', 6, 'clear')).toEqual({ text: 'hello /clear ', caret: 13 });
   });
 });
 
