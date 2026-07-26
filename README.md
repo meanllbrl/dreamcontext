@@ -518,6 +518,27 @@ The dashboard's **Lab page** groups insights by category with number / line / pi
 
 **Funnel analytics** (`--render funnel`): an insight whose adapter returns a `funnel-set/v1` payload gets its own routed multi-page view — an all-funnels comparison table, then a per-funnel step lane with drop badges, a click-two-steps A→B conversion gesture, filters, breakdowns, and period compare. Long funnels can fold statistically insignificant steps into a single collapsed node via a user-set significant-change threshold, so the lane shows the shape that matters.
 
+## Automations
+
+The brain only acts while someone is in a session. **Automations** close that gap: user-authored jobs that run a headless `claude` session on a schedule, no one at the keyboard, and land their result as a dated markdown file the brain can act on next time you show up. An end-of-day digest, a Friday weekly report, a standing research check, anything you can write as a prompt. Ships **completely disabled by default**: nothing installs and nothing runs until you explicitly install the dispatcher and approve each automation on this machine.
+
+```bash
+dreamcontext automations create eod-digest --title "End of day digest" --days daily --at 18:00
+# edit automations/eod-digest.md: fill in the ## Prompt section with what the run should do
+dreamcontext automations run eod-digest --force        # live-test it right now, before trusting the schedule
+dreamcontext automations install                       # turn on the dispatcher (ticks every 5 minutes)
+dreamcontext automations approve <slug>                 # required again any time the prompt or timeout changes
+```
+
+- **All job semantics live in the prompt, not the CLI.** There is no built-in "digest" command and no hardcoded job type. The manifest's `## Prompt` section is the whole job; the CLI only carries schedule, model, reasoning effort, and timeout.
+- **Private to this machine by default.** A new automation, its run history, and its output all stay off your team's shared brain until you say otherwise with `dreamcontext automations share <slug>`. Sharing is easy to undo going forward, but not retroactive: anything already synced to your team stays in that history even after you unshare it, so `unshare` warns you plainly before doing it.
+- **A machine-local approval gates every run.** Because a scheduled run uses elevated permissions with nobody watching, an automation's prompt, timeout, model, reasoning effort, and output directory are hashed at approval time. A change to any of them (for example a synced edit from a teammate on a shared automation) blocks the automation from running here until it's reviewed again with `automations approve`. Approval never limits what a run is allowed to do once it starts, it only gates whether an unreviewed prompt gets to run at all, and it applies even to a private automation, since anyone with access to this machine could still edit it.
+- **A shared automation's output rides brain sync.** A shared run's result lands under `_dream_context/` like everything else, so it inherits the same secrets scrub that guards every commit and push (it blocks known credential shapes; it is not a general sensitive-data filter). Write automations whose output you'd be fine publishing to your team, or keep them private.
+- **Sleep reads new output and can fold real findings into your knowledge base.** During consolidation, the brain looks at what automations have written since the last cycle and, when something is genuinely new rather than a restatement of what it already knows, adds it to the right knowledge file. This applies even to private automations, since sleep is reading your own machine, not the shared brain. If that ever means a private automation's finding is about to become part of shared knowledge, consolidation pauses and asks you to look before it continues.
+- **No silent orphans.** If a run's process ever outlives the command that launched it (for instance the operator killed the wrong thing), the automation refuses to fire again until `dreamcontext automations kill <slug>` clears it, reported in the snapshot and in `show` so it is never invisible.
+
+Full protocol, the complete security model, and every command → [skill/references/automations.md](skill/references/automations.md).
+
 ## Proactive Learning (Hypotheses)
 
 Memory remembers what happened; the learning layer tests what the project *believes*. A **thesis** is a falsifiable claim the brain actively tries to validate or invalidate across sleep cycles: an observation forms a hunch, predictions get **pre-registered** (written down before the evidence that will judge them arrives), evidence accumulates as discrete cited events, and **confidence is derived from the ledger by arithmetic — never asserted by an agent on vibes**.
@@ -592,7 +613,7 @@ Or re-run the one-command installer — it detects an existing `_dream_context/`
 
 ## CLI Reference
 
-The command groups below are the ones not already covered in their feature sections above ([Teams](#built-for-teams) holds brain / federation / link / task-backend commands; [Council](#council), [Memory Recall](#memory-recall), and [Lab](#lab-insights) hold theirs).
+The command groups below are the ones not already covered in their feature sections above ([Teams](#built-for-teams) holds brain / federation / link / task-backend commands; [Council](#council), [Memory Recall](#memory-recall), [Lab](#lab-insights), and [Automations](#automations) hold theirs).
 
 ### Core (changelog & releases)
 

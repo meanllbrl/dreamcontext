@@ -29,6 +29,7 @@ import { listTheses } from '../../lib/theses/store.js';
 import type { ThesisManifest } from '../../lib/theses/types.js';
 import { readPeerSummaryCache } from '../../lib/federation-peer-summary.js';
 import { resolveLinkedRepos } from '../../lib/linked-repos.js';
+import { renderAutomationsSection } from '../../lib/automations/snapshot.js';
 import {
   applyBudget, resolveBudget, demoteMemoryBlock, demoteTaskList, HARNESS_PERSIST_CHAR_LIMIT,
   type BudgetSection,
@@ -981,6 +982,14 @@ export function generateSnapshot(rootOverride?: string): string {
     parts.push('## Sleep — Pending Analysis\n');
     parts.push(`- ${pendingCount} session(s) awaiting analysis (transcript not yet flushed).`);
     parts.push('');
+  }
+
+  // 5.9 Automations — blocked/failed/orphaned state, surfaced only when there
+  // is something to say (renderAutomationsSection returns [] on a clean brain,
+  // keeping this section's presence mechanically tied to "ships fully disabled").
+  const automationLines = renderAutomationsSection(root);
+  if (automationLines.length > 0) {
+    parts.push('## Automations\n', ...automationLines, '');
   }
   flush('awareness', { neverEvict: true });
 

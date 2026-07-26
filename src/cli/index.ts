@@ -18,6 +18,7 @@ import { registerHookCommand } from './commands/hook.js';
 import { registerDoctorCommand } from './commands/doctor.js';
 import { registerDashboardCommand } from './commands/dashboard.js';
 import { registerBookmarkCommand } from './commands/bookmark.js';
+import { registerAutomationsCommand } from './commands/automations.js';
 import { registerTriggerCommand } from './commands/trigger.js';
 import { registerTranscriptCommand } from './commands/transcript.js';
 import { registerReflectCommand } from './commands/reflect.js';
@@ -151,6 +152,7 @@ export function createProgram(): Command {
   registerDoctorCommand(program);
   registerDashboardCommand(program);
   registerBookmarkCommand(program);
+  registerAutomationsCommand(program);
   registerTriggerCommand(program);
   registerTranscriptCommand(program);
   registerReflectCommand(program);

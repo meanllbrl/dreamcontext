@@ -64,6 +64,7 @@ function baseState(over: Partial<SleepState> = {}): SleepState {
     last_sleep: null,
     last_sleep_summary: null,
     sleep_started_at: null,
+    last_consolidated_at: null,
     sessions_since_last_sleep: 0,
     sessions: [],
     bookmarks: [],
@@ -238,11 +239,14 @@ describe('sleep 360° — epoch safety (WS2)', () => {
 
   it('sleep done clears sleep_started_at and sessions_since_last_sleep', () => {
     const start = baseState({ sleep_started_at: EPOCH, sessions_since_last_sleep: 5, consolidation_depth: 'deep' });
-    const finalized = finalizeSleepState(start, 'done', '2026-06-11');
+    const finalized = finalizeSleepState(start, 'done', '2026-06-11', '2026-06-11T09:00:00.000Z');
     expect(finalized.sleep_started_at).toBeNull();
     expect(finalized.sessions_since_last_sleep).toBe(0);
     expect(finalized.consolidation_depth).toBeNull();
     expect(finalized.last_sleep).toBe('2026-06-11');
+    // The 4th param is injected, never derived from the wall clock internally —
+    // it must appear verbatim, proving finalizeSleepState never calls `new Date()`.
+    expect(finalized.last_consolidated_at).toBe('2026-06-11T09:00:00.000Z');
   });
 
   it('applyConsolidation does not mutate the input state (operates on a clone)', () => {

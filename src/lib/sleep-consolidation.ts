@@ -107,6 +107,22 @@ export interface SleepState {
   last_sleep: string | null;
   last_sleep_summary: string | null;
   sleep_started_at: string | null;
+  /**
+   * ISO timestamp of the last successfully completed consolidation. The
+   * consumption boundary for automation outputs (see
+   * `src/lib/automations/consumption.ts`'s `pendingOutputsSince`) — the ONLY
+   * field on this state that survives a cycle at millisecond granularity:
+   * `sleep_started_at` is a LOCK cleared back to null by `finalizeSleepState`
+   * at the end of every cycle, and `last_sleep` is a bare `YYYY-MM-DD` date,
+   * too coarse to bound an incremental read (a second sleep on the same day
+   * would re-surface the whole day's outputs). `null` means no cycle has ever
+   * completed, which means consume nothing — the first completed `sleep done`
+   * stamps this and every cycle after is exact; no output is lost
+   * permanently, since everything written after that first stamp is consumed
+   * normally. Old `.sleep.json` files back-fill to null via freshDefaults,
+   * same convention as `consolidation_depth` above.
+   */
+  last_consolidated_at: string | null;
   sessions_since_last_sleep: number;
   sessions: SessionRecord[];
   bookmarks: Bookmark[];
@@ -614,15 +630,21 @@ export function buildHistoryEntry(
 }
 
 /**
- * Finalize the post-consolidation state: stamp last_sleep / last_sleep_summary,
- * clear the epoch, reset the rhythm counter, and reset consolidation_depth to
- * null (no stale-depth bleed into the next cycle). Returns a clone.
+ * Finalize the post-consolidation state: stamp last_sleep / last_sleep_summary
+ * / last_consolidated_at, clear the epoch, reset the rhythm counter, and reset
+ * consolidation_depth to null (no stale-depth bleed into the next cycle).
+ * Returns a clone.
+ *
+ * `nowISO` is REQUIRED and must be injected by the caller — this function
+ * never reads the wall clock itself, so it stays deterministic under test and
+ * so no future caller can silently pick up non-injected time.
  */
-export function finalizeSleepState(state: SleepState, summary: string, today: string): SleepState {
+export function finalizeSleepState(state: SleepState, summary: string, today: string, nowISO: string): SleepState {
   const next = cloneState(state);
   next.last_sleep = today;
   next.last_sleep_summary = summary.trim();
   next.sleep_started_at = null;
+  next.last_consolidated_at = nowISO;
   next.sessions_since_last_sleep = 0;
   next.consolidation_depth = null;
   return next;

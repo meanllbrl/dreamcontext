@@ -1,0 +1,268 @@
+import { useEffect } from 'react';
+import type { AutomationRunEvent, AutomationSummary } from '../../hooks/useAutomations';
+import { useApproveAutomation, useAutomation, useRunAutomation } from '../../hooks/useAutomations';
+import { pushOverlay, popOverlay, isTopOverlay } from '../../lib/overlayStack';
+import './AutomationDetailPanel.css';
+
+/**
+ * AutomationDetailPanel — the modal that opens when you click an automation
+ * card. Three things live here that don't fit on a dense card: the full
+ * five-field approval review (mirrors the CLI's `approve` — see its comment:
+ * the registry stores only a sha256, never prior field values, so this is a
+ * complete review every time, not an old-vs-new diff), the orphaned-run
+ * warning with the exact `kill` command, and the bounded run history.
+ */
+
+interface Props {
+  summary: AutomationSummary;
+  runningSlug: string | null;
+  onClose: () => void;
+  onToast: (msg: string) => void;
+}
+
+function fmtWhen(iso: string | null): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString(undefined, {
+    year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+  });
+}
+
+function fmtDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  const s = ms / 1000;
+  if (s < 60) return `${s.toFixed(1)}s`;
+  return `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
+}
+
+function HistoryRow({ event }: { event: AutomationRunEvent }) {
+  return (
+    <div className="adp-history-row">
+      <span className={`adp-history-dot adp-history-dot--${event.status}`} />
+      <span className="adp-history-when">{fmtWhen(event.firedAt)}</span>
+      <span className="adp-history-status">{event.status}</span>
+      <span className="adp-history-duration">{fmtDuration(event.durationMs)}</span>
+      {event.costUsd !== null && <span className="adp-history-cost">${event.costUsd.toFixed(3)}</span>}
+      {event.permissionDenials > 0 && (
+        <span className="adp-history-denials" title="Permission denials during this run">
+          ⚠ {event.permissionDenials}
+        </span>
+      )}
+      {event.error && (
+        <span className="adp-history-error" title={event.error}>{event.error}</span>
+      )}
+    </div>
+  );
+}
+
+export function AutomationDetailPanel({ summary, runningSlug, onClose, onToast }: Props) {
+  const detail = useAutomation(summary.slug);
+  const runNow = useRunAutomation();
+  const approve = useApproveAutomation();
+
+  useEffect(() => {
+    const id = 'automation-detail-panel';
+    pushOverlay(id);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || !isTopOverlay(id)) return;
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')) {
+        target.blur();
+        return;
+      }
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      onClose();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => {
+      window.removeEventListener('keydown', onKey, true);
+      popOverlay(id);
+    };
+  }, [onClose]);
+
+  const automation = detail.data?.automation ?? null;
+  const approved = detail.data?.approved ?? summary.approved;
+  const approvalReason = detail.data?.approvalReason ?? summary.approvalReason;
+  const cache = detail.data?.cache ?? null;
+  // Newest first — mirrors InsightDetailPanel's history ordering. The cache is
+  // brain-synced (user/agent-editable JSON) — a malformed history must not
+  // crash the panel.
+  const history = Array.isArray(cache?.history) ? [...cache.history].reverse() : [];
+
+  const thisRunning = runningSlug === summary.slug;
+  const otherRunning = runningSlug !== null && !thisRunning;
+  const runDisabled = runNow.isPending || thisRunning || otherRunning || !approved || cache?.status === 'orphaned';
+
+  const handleRun = () => {
+    runNow.mutate(summary.slug, {
+      onSuccess: (data) => {
+        if (!data.started) onToast(`Another run (${data.job.slug}) is already in progress.`);
+        else onToast('Run started.');
+      },
+      onError: (err) => onToast(`Could not start — ${(err as Error).message}`),
+    });
+  };
+
+  const handleApprove = () => {
+    approve.mutate(summary.slug, {
+      onSuccess: () => onToast(`"${summary.slug}" approved — it will run on this machine.`),
+      onError: (err) => onToast(`Approval failed — ${(err as Error).message}`),
+    });
+  };
+
+  const reasonCopy: Record<NonNullable<typeof approvalReason>, string> = {
+    'never-approved': 'This automation has never been approved on this machine. Nothing will run until it is reviewed and approved.',
+    'manifest-changed': 'This automation was edited since it was last approved — review every field below before approving.',
+    'payload-format-changed': 'The approval format itself changed — this is not a normal manifest edit. Re-review in full.',
+  };
+
+  return (
+    <>
+      <div className="adp-overlay" onClick={onClose} />
+      <div className="adp-panel" role="dialog" aria-modal="true" aria-label={summary.title}>
+        <div className="adp-head">
+          <div className="adp-head-row">
+            {approved ? (
+              <span className="auto-badge auto-badge--approved">approved</span>
+            ) : (
+              <span className="auto-badge auto-badge--blocked">blocked — needs approval</span>
+            )}
+            {cache?.status === 'orphaned' && <span className="auto-badge auto-badge--orphaned">orphaned run</span>}
+            {!summary.enabled && <span className="auto-badge auto-badge--muted">disabled</span>}
+            <span className="adp-spacer" />
+            <button className="adp-run" onClick={handleRun} disabled={runDisabled} title={thisRunning ? 'Running…' : 'Run now'}>
+              {thisRunning || runNow.isPending ? 'Running…' : '▶ Run now'}
+            </button>
+            <span className="adp-close" onClick={onClose} title="Close (Esc)">✕</span>
+          </div>
+          <div className="adp-title">{summary.title}</div>
+          <div className="adp-slug">{summary.slug} · {summary.scheduleLabel}</div>
+        </div>
+
+        <div className="adp-body">
+          {cache?.status === 'orphaned' && (
+            <div className="adp-danger-banner">
+              <span className="adp-danger-glyph">⚠</span>
+              <div>
+                <div className="adp-danger-title">A previous run's process group may still be alive</div>
+                <div className="adp-danger-sub">
+                  The tick that started it died before cleanup — this automation refuses to run again until the
+                  orphan is cleared. There is no automatic reaper. From a terminal:
+                </div>
+                <code className="adp-danger-cmd">dreamcontext automations kill {summary.slug}</code>
+              </div>
+            </div>
+          )}
+
+          {!approved && approvalReason && (
+            <div className="adp-warn-banner">
+              <span className="adp-warn-glyph">⚠</span>
+              <div className="adp-warn-sub">{reasonCopy[approvalReason]}</div>
+            </div>
+          )}
+
+          {detail.isLoading ? (
+            <div className="adp-loading">Loading…</div>
+          ) : (
+            <div className="adp-columns">
+              <div className="adp-col-main">
+                {!approved && automation && (
+                  <>
+                    <div className="adp-section-label">Review before approving</div>
+                    <div className="adp-review">
+                      <div className="adp-review-row">
+                        <span className="adp-review-label">model</span>
+                        <span className="adp-review-value">{automation.model ?? <em>(default)</em>}</span>
+                      </div>
+                      <div className="adp-review-row">
+                        <span className="adp-review-label">timeoutMinutes</span>
+                        <span className="adp-review-value">{automation.timeoutMinutes}</span>
+                      </div>
+                      <div className="adp-review-row">
+                        <span className="adp-review-label">outputDir</span>
+                        <span className="adp-review-value">{automation.outputDir ?? <em>(default)</em>}</span>
+                      </div>
+                      <div className="adp-review-row adp-review-row--block">
+                        <span className="adp-review-label">prompt</span>
+                        <pre className="adp-review-block">{automation.prompt}</pre>
+                      </div>
+                      <div className="adp-review-row adp-review-row--block">
+                        <span className="adp-review-label">outputInstructions</span>
+                        <pre className="adp-review-block">{automation.outputInstructions || <em>(none)</em>}</pre>
+                      </div>
+                    </div>
+                    <button className="adp-approve-btn" onClick={handleApprove} disabled={approve.isPending}>
+                      {approve.isPending ? 'Approving…' : `Approve — this will run on this machine`}
+                    </button>
+                  </>
+                )}
+
+                {approved && automation && (
+                  <>
+                    <div className="adp-section-label">Prompt</div>
+                    <pre className="adp-review-block adp-review-block--static">{automation.prompt}</pre>
+                    {automation.outputInstructions && (
+                      <>
+                        <div className="adp-section-label">Output instructions</div>
+                        <pre className="adp-review-block adp-review-block--static">{automation.outputInstructions}</pre>
+                      </>
+                    )}
+                  </>
+                )}
+              </div>
+
+              <div className="adp-col-rail">
+                <div className="adp-section-label">Details</div>
+                <div className="adp-details">
+                  <div className="adp-detail-row">
+                    <span className="adp-detail-label">Model</span>
+                    <span className="adp-detail-value">{automation?.model ?? 'default'}</span>
+                  </div>
+                  <div className="adp-detail-row">
+                    <span className="adp-detail-label">Timeout</span>
+                    <span className="adp-detail-value">{summary.timeoutMinutes}m</span>
+                  </div>
+                  <div className="adp-detail-row">
+                    <span className="adp-detail-label">Catch-up</span>
+                    <span className="adp-detail-value">{summary.catchupHours}h</span>
+                  </div>
+                  <div className="adp-detail-row">
+                    <span className="adp-detail-label">Output dir</span>
+                    <span className="adp-detail-value">{automation?.outputDir ?? `automations/output/${summary.slug}/`}</span>
+                  </div>
+                  {cache?.lastRunAt && (
+                    <div className="adp-detail-row">
+                      <span className="adp-detail-label">Last run</span>
+                      <span className="adp-detail-value">{fmtWhen(cache.lastRunAt)}</span>
+                    </div>
+                  )}
+                  {cache?.outputPath && (
+                    <div className="adp-detail-row">
+                      <span className="adp-detail-label">Last output</span>
+                      <span className="adp-detail-value adp-detail-value--mono">{cache.outputPath}</span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="adp-section-label">
+                  Run history
+                  {history.length > 0 && <span className="adp-history-count">{history.length}</span>}
+                </div>
+                {history.length === 0 ? (
+                  <div className="adp-history-empty">No runs recorded yet.</div>
+                ) : (
+                  <div className="adp-history">
+                    {history.map((event, i) => (
+                      <HistoryRow key={`${event.firedAt}-${i}`} event={event} />
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}

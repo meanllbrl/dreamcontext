@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, rmSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { tmpdir, homedir } from 'node:os';
 import { execSync } from 'node:child_process';
 
 const CLI = join(__dirname, '..', '..', 'dist', 'index.js');
@@ -437,5 +437,148 @@ describe('sleep (integration)', () => {
 
     const brainLocal = JSON.parse(readFileSync(join(ctx, 'state', '.brain-local.json'), 'utf-8'));
     expect(brainLocal.needsTaskSync).toBe(false);
+  });
+
+  // ─── Change C — automation output consumption + the privacy gate ──────────
+
+  describe('automation outputs + private-derivation gate (Change C)', () => {
+    // `automations create` auto-approves and writes the machine-local registry
+    // (~/.dreamcontext/automations.json) — a test must NEVER let that land on
+    // the REAL machine's home directory. `run()`'s execSync has no explicit
+    // `env`, so it inherits `process.env` from THIS process; overriding
+    // `process.env.HOME` here therefore reaches the spawned CLI too, and
+    // `os.homedir()` (which the registry path helpers use) honours $HOME on
+    // POSIX. Restore the prior value afterwards and PROVE the real path was
+    // untouched — comparing CONTENT, not just existence, since a real dev
+    // machine may legitimately already have approvals from actual usage.
+    let fakeHome: string;
+    let originalHome: string | undefined;
+    const realRegistryPath = join(homedir(), '.dreamcontext', 'automations.json');
+    let realRegistryBefore: string | null;
+
+    beforeEach(() => {
+      originalHome = process.env.HOME;
+      realRegistryBefore = existsSync(realRegistryPath) ? readFileSync(realRegistryPath, 'utf-8') : null;
+      fakeHome = mkdtempSync(join(tmpdir(), 'dc-sleep-automations-home-'));
+      process.env.HOME = fakeHome;
+    });
+
+    afterEach(() => {
+      if (originalHome === undefined) delete process.env.HOME; else process.env.HOME = originalHome;
+      rmSync(fakeHome, { recursive: true, force: true });
+      // The load-bearing proof: the real machine's registry is byte-identical
+      // to before this test ran — not merely "the test passed".
+      const realRegistryAfter = existsSync(realRegistryPath) ? readFileSync(realRegistryPath, 'utf-8') : null;
+      expect(realRegistryAfter).toBe(realRegistryBefore);
+    });
+
+    function writeAutomationOutput(slug: string, date: string): void {
+      const dir = join(ctx, 'automations', 'output', slug);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, `${date}.md`), '# output\n', 'utf-8');
+    }
+
+    function writeMarker(slug = 'private-notes', outputPath = 'automations/output/private-notes/2026-07-26.md'): string {
+      const markerPath = join(ctx, 'state', '.sleep-private-derivation.json');
+      mkdirSync(join(ctx, 'state'), { recursive: true });
+      writeFileSync(
+        markerPath,
+        JSON.stringify({
+          derivedFrom: [{ slug, outputPath }],
+          knowledgePaths: ['knowledge/competitor-notes.md'],
+          writtenAt: '2026-07-26T10:00:00.000Z',
+        }),
+      );
+      return markerPath;
+    }
+
+    it('sleep start --json carries automationOutputs with shared attached per slug, and skipped populated', () => {
+      // Bootstrap: last_consolidated_at is null on a fresh brain, and the
+      // documented "null -> consume nothing" rule means no output written
+      // BEFORE the first completed cycle is ever picked up. Complete one
+      // first so later output files (written with the real, later
+      // wall-clock mtime) fall after the boundary.
+      run('sleep done Bootstrap cycle', tmpDir);
+
+      run('automations create eod-digest --title "EOD Digest" --days daily --at 18:00 --shared', tmpDir);
+      run('automations create private-notes --title "Private Notes" --days daily --at 09:00', tmpDir);
+
+      writeAutomationOutput('eod-digest', '2026-07-26');
+      writeAutomationOutput('private-notes', '2026-07-26');
+      // A dangling symlink: readdir lists it by name (no implicit stat), the
+      // subsequent statSync fails -> lands in `skipped` with reason
+      // 'unreadable' (consumption.ts's own documented mechanism). Cheaper
+      // than manufacturing 20+ files or a 200KB payload to hit the other
+      // two caps.
+      const eodDir = join(ctx, 'automations', 'output', 'eod-digest');
+      symlinkSync(join(eodDir, 'does-not-exist'), join(eodDir, 'broken.md'));
+
+      const output = run('sleep start --force --json', tmpDir);
+      const parsed = JSON.parse(output);
+      const bySlug: Record<string, boolean> = Object.fromEntries(
+        parsed.automationOutputs.outputs.map((o: { slug: string; shared: boolean }) => [o.slug, o.shared]),
+      );
+      expect(bySlug['eod-digest']).toBe(true);
+      expect(bySlug['private-notes']).toBe(false);
+      expect(
+        parsed.automationOutputs.skipped.some((s: { reason: string }) => s.reason === 'unreadable'),
+      ).toBe(true);
+    });
+
+    it('sleep done refuses while a private-derivation marker exists, listing the source slug and knowledge path, and never leaks a -y/--yes shortcut', () => {
+      const markerPath = writeMarker();
+
+      const refused = run('sleep done Trying to consolidate', tmpDir);
+      expect(refused).toMatch(/Refusing to consolidate/);
+      expect(refused).toContain('private-notes');
+      expect(refused).toContain('knowledge/competitor-notes.md');
+      expect(refused).toContain('--ack-private-derivation');
+      expect(existsSync(markerPath)).toBe(true); // a refusal never clears it
+
+      // Deliberately no -y/--yes alias exists for this gate — assert
+      // commander rejects it as an unknown option rather than silently
+      // acknowledging.
+      const withDashY = run('sleep done -y Trying again', tmpDir);
+      expect(withDashY).toMatch(/unknown option|error/i);
+      expect(existsSync(markerPath)).toBe(true);
+
+      const acked = run('sleep done --ack-private-derivation Consolidating with ack', tmpDir);
+      expect(acked).not.toMatch(/Refusing to consolidate/);
+      expect(existsSync(markerPath)).toBe(false);
+    });
+
+    it('B3 — a refused sleep done leaves sleep_started_at, last_consolidated_at, and the history file UNCHANGED', () => {
+      run('sleep start', tmpDir);
+      const sleepFile = join(ctx, 'state', '.sleep.json');
+      const before = JSON.parse(readFileSync(sleepFile, 'utf-8'));
+      const historyFile = join(ctx, 'state', '.sleep-history.json');
+      const historyBefore = existsSync(historyFile) ? readFileSync(historyFile, 'utf-8') : null;
+
+      writeMarker();
+      run('sleep done Should be refused', tmpDir);
+
+      const after = JSON.parse(readFileSync(sleepFile, 'utf-8'));
+      expect(after.sleep_started_at).toBe(before.sleep_started_at);
+      expect(after.last_consolidated_at).toBe(before.last_consolidated_at);
+      const historyAfter = existsSync(historyFile) ? readFileSync(historyFile, 'utf-8') : null;
+      expect(historyAfter).toBe(historyBefore);
+    });
+
+    it('sleep start clears a marker stranded by a crashed cycle — a new cycle supersedes the old disclosure', () => {
+      const markerPath = writeMarker();
+
+      run('sleep start --force', tmpDir);
+
+      expect(existsSync(markerPath)).toBe(false);
+    });
+
+    it('a REFUSED sleep start (live lock, no --force) does NOT clear a stranded marker — no new cycle actually began', () => {
+      run('sleep start', tmpDir); // holds a live (non-stale) lock
+      const markerPath = writeMarker();
+
+      const output = run('sleep start', tmpDir); // refused: live lock, no --force
+      expect(output).toContain('already in progress');
+      expect(existsSync(markerPath)).toBe(true);
+    });
   });
 });

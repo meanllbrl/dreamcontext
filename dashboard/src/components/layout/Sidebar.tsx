@@ -19,7 +19,7 @@ function readVaultLabel(): string {
   }
 }
 
-export type Page = 'tasks' | 'roadmap' | 'hypotheses' | 'lab' | 'core' | 'knowledge' | 'sleep' | 'brain' | 'council' | 'settings' | 'packs' | 'about' | 'taxonomy' | 'announcements';
+export type Page = 'tasks' | 'roadmap' | 'hypotheses' | 'lab' | 'automations' | 'core' | 'knowledge' | 'sleep' | 'brain' | 'council' | 'settings' | 'packs' | 'about' | 'taxonomy' | 'announcements';
 
 interface SidebarProps {
   activePage: Page;
@@ -48,6 +48,7 @@ const NAV_GROUPS: NavGroup[] = [
       { page: 'roadmap', labelKey: 'nav.roadmap', beta: true },
       { page: 'hypotheses', labelKey: 'nav.hypotheses', lab: true },
       { page: 'lab', labelKey: 'nav.labpage', lab: true },
+      { page: 'automations', labelKey: 'nav.automations', lab: true },
       { page: 'council', labelKey: 'nav.council', lab: true },
     ],
   },

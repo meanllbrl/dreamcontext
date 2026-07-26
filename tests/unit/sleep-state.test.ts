@@ -21,6 +21,7 @@ const NEW_DEFAULTS = {
   recall_mode: 'haiku',
   consolidation_depth: null,
   pendingMigrationNotices: [],
+  last_consolidated_at: null,
 };
 
 describe('readSleepState', () => {

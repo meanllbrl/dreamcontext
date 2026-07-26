@@ -70,6 +70,13 @@ import {
   handleLabCredentialsSet,
 } from './routes/lab.js';
 import {
+  handleAutomationsList,
+  handleAutomationsRunStatus,
+  handleAutomationsShow,
+  handleAutomationsRunNow,
+  handleAutomationsApprove,
+} from './routes/automations.js';
+import {
   handleThesesList,
   handleThesesCreate,
   handleThesesShow,
@@ -403,6 +410,18 @@ function buildRouter(): Router {
   router.get('/api/lab/:slug', handleLabShow);
   router.patch('/api/lab/:slug/tweaks', handleLabTweaks);
   router.patch('/api/lab/:slug/binding', handleLabBinding);
+
+  // Automations (scheduled headless claude jobs) — same store/registry/runner
+  // engine the CLI uses. `/runs` MUST precede `/:slug` (first match wins within
+  // a method) so it is never captured as a slug named "runs". `run`/`approve`
+  // are POSTs against an already-local manifest — no prompt travels over HTTP;
+  // approval, the sleep-lock deferral, and the orphan guard are all enforced
+  // inside `runAutomation`, not in these handlers.
+  router.get('/api/automations', handleAutomationsList);
+  router.get('/api/automations/runs', handleAutomationsRunStatus);
+  router.get('/api/automations/:slug', handleAutomationsShow);
+  router.post('/api/automations/:slug/run', handleAutomationsRunNow);
+  router.post('/api/automations/:slug/approve', handleAutomationsApprove);
 
   // Theses (proactive learning layer, opt-in via learning.enabled). Read
   // routes (list/show) work regardless of the flag — they surface `enabled`

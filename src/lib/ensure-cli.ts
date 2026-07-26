@@ -51,9 +51,18 @@ const loginShellRunner: ShellRunner = async (script, timeoutMs) => {
  * is surfaced to the user with the manual command to run.
  */
 export async function ensureCliInstalled(runner: ShellRunner = loginShellRunner): Promise<EnsureCliResult> {
-  // Already resolvable on PATH? (npx resolves global installs, so this is the
-  // exact condition the project hooks depend on.)
-  const probe = await runner('command -v dreamcontext', 15_000);
+  // Already resolvable on PATH? A plain `-lc` lookup is fast (~0.04s) and correct
+  // on most machines, but `~/.zshrc` — where nvm / `~/.local/bin` PATH exports
+  // usually live — is sourced by zsh for INTERACTIVE shells only, so a
+  // `dreamcontext` reachable solely through it reports "missing" under `-lc`
+  // alone. Try the fast path first; the `||` falls back to an interactive probe
+  // (`-ic`, ~1.3s) ONLY when the fast path resolves nothing, so the common case
+  // never pays the interactive-shell cost (this runner is called from server
+  // route handlers — see launcher.ts).
+  const probe = await runner(
+    'command -v dreamcontext || "${SHELL:-/bin/zsh}" -ic "command -v dreamcontext" 2>/dev/null',
+    15_000,
+  );
   if (probe.ok && probe.stdout.trim()) {
     return { status: 'present' };
   }
